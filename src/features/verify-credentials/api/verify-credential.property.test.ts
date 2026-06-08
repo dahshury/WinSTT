@@ -23,7 +23,10 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import fc from "fast-check";
 import { useCredentialStatusStore } from "@/entities/cloud-stt-credential";
-import type { CloudSttErrorCode, CloudSttProvider } from "@/shared/api/models";
+import type {
+	CloudSttErrorCode,
+	IntegrationCloudProvider,
+} from "@/shared/api/models";
 
 const mockInvoke = mock(async (_channel: string, _payload?: unknown) => ({
 	ok: true,
@@ -42,16 +45,15 @@ beforeEach(() => {
 	mockInvoke.mockReset();
 	useCredentialStatusStore.setState({
 		byProvider: {
-			openai: { status: "idle" },
 			elevenlabs: { status: "idle" },
 		},
 	});
 });
 
-const providerArb: fc.Arbitrary<CloudSttProvider> = fc.constantFrom(
-	"openai",
-	"elevenlabs",
-);
+// ElevenLabs is the only integrations-backed cloud STT provider that
+// `verifyCredential` probes (OpenAI removed; OpenRouter STT reuses the LLM key).
+const providerArb: fc.Arbitrary<IntegrationCloudProvider> =
+	fc.constantFrom("elevenlabs");
 
 /**
  * Build a VerifyResponse without including the `message` key when it's

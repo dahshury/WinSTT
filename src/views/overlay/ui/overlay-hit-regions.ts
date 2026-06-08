@@ -43,6 +43,7 @@ export function useResetOnOverlayShow(): void {
 				currentRealtime: "",
 				ephemeral: null,
 				isTranscribing: false,
+				processingPhase: null,
 				transcribingStartedAt: null,
 			});
 			useLlmProcessingStore.setState({

@@ -9,6 +9,7 @@ export interface SnippetsTableProps {
 	onAdd: (entry: Omit<SnippetEntry, "id">) => void;
 	onClearAll?: () => void;
 	onRemove: (id: string) => void;
+	onRemoveMany?: (ids: string[]) => void;
 	onUpdate?: (id: string, entry: Omit<SnippetEntry, "id">) => void;
 }
 
@@ -16,6 +17,7 @@ export function SnippetsTable({
 	entries,
 	onAdd,
 	onRemove,
+	onRemoveMany,
 	onClearAll,
 	onUpdate,
 }: SnippetsTableProps) {
@@ -72,6 +74,7 @@ export function SnippetsTable({
 			}}
 			onAdd={onAdd}
 			onRemove={onRemove}
+			{...(onRemoveMany ? { onRemoveMany } : {})}
 			pageSize={5}
 			paginated
 			schema={addSnippetEntrySchema}

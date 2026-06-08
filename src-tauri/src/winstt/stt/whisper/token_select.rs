@@ -176,7 +176,14 @@ pub(super) fn select_whisper_token_from_allowed(
             runner_up_logit: runner_up,
         }
     } else {
-        select_whisper_token(logits, &[], eos_token_id, nospeech_token_id, is_first_step, &[])
+        select_whisper_token(
+            logits,
+            &[],
+            eos_token_id,
+            nospeech_token_id,
+            is_first_step,
+            &[],
+        )
     }
 }
 

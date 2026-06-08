@@ -213,9 +213,11 @@ export function IntegrationsSettingsPanel() {
 			{/* ── Language Models (LLM) ───────────────────────────────────
 			 *  Powers dictation cleanup, context-aware edits and translation.
 			 *  Backed by a LOCAL Ollama server (endpoint) or a CLOUD OpenRouter
-			 *  key. These keys have nothing to do with cloud transcription —
-			 *  the grouping makes that explicit so an OpenRouter key is no
-			 *  longer mistaken for the thing that unlocks Cloud STT. */}
+			 *  key. NOTE: the OpenRouter key is dual-purpose — besides the LLM
+			 *  provider it ALSO unlocks OpenRouter cloud *transcription* models
+			 *  in the Model tab's Cloud source (it shares the single key). The
+			 *  STT-only providers (OpenAI / ElevenLabs) live in the section
+			 *  below. */}
 			<SettingSection
 				description={t("llmSectionCaption")}
 				icon={AiBrain01Icon}
@@ -300,23 +302,18 @@ export function IntegrationsSettingsPanel() {
 			</SettingSection>
 
 			{/* ── Cloud Speech-to-Text ────────────────────────────────────
-			 *  THE keys that unlock the Local/Cloud Source switcher in the
-			 *  Transcription tab. OpenAI (Whisper / GPT-4o transcribe) and ElevenLabs
-			 *  (Scribe) are the only cloud STT providers — `hasAnyCloudKey`
-			 *  in ModelSettingsPanel gates on exactly these two. */}
+			 *  STT-only provider key that unlocks the Local/Cloud Source switcher
+			 *  in the Transcription tab. ElevenLabs (Scribe) lives here; OpenRouter
+			 *  is the other cloud STT provider but reuses its LLM key above, so
+			 *  `hasAnyCloudKey` (MainModelSection / ModelPickerWindow) gates on the
+			 *  ElevenLabs key PLUS `llm.openrouterApiKey`. (OpenAI was removed — its
+			 *  Whisper / GPT-4o transcribe models are served via OpenRouter.) */}
 			<SettingSection
 				description={t("sttSectionCaption")}
 				icon={ApiIcon}
 				title={t("sttSectionTitle")}
 			>
 				<div className="flex flex-col divide-y divide-surface-1">
-					<ProviderIntegrationSection
-						keyCaption={t("openaiApiKeyCaption")}
-						keyLabel={t("openaiApiKey")}
-						placeholder={t("openaiApiKeyPlaceholder")}
-						provider="openai"
-					/>
-
 					<ProviderIntegrationSection
 						keyCaption={t("elevenlabsApiKeyCaption")}
 						keyLabel={t("elevenlabsApiKey")}

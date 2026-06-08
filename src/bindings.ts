@@ -762,6 +762,19 @@ async ttsPreviewCloud(previewUrl: string) : Promise<Result<SpeakResult, string>>
 }
 },
 /**
+ * `tts_preview_openrouter` — play a model-scoped OpenRouter voice preview.
+ * The manager performs a short live `/audio/speech` synthesis through
+ * OpenRouter for the selected model/voice/speed.
+ */
+async ttsPreviewOpenrouter(model: string, voice: string, speed: number | null) : Promise<Result<SpeakResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_preview_openrouter", { model, voice, speed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * `tts_list_models` — the full multi-provider TTS catalog (snake_case rows).
  */
 async ttsListModels() : Promise<TtsModelInfoDto[]> {
@@ -859,6 +872,34 @@ async scanOpenrouterModels() : Promise<Result<OpenRouterScanResultPayload, strin
 }
 },
 /**
+ * `scan_openrouter_stt_models` - the transcription subset of the OpenRouter
+ * catalog for the cloud STT picker. Reuses the shared catalog fetch with
+ * `output_modalities=transcription`, enriches those rows with endpoint/provider
+ * details when OpenRouter exposes them, then maps them to the STT picker shape.
+ */
+async scanOpenrouterSttModels() : Promise<Result<OpenRouterSttScanResultPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("scan_openrouter_stt_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `scan_openrouter_tts_models` — the speech (TTS) subset of the OpenRouter
+ * catalog for the cloud TTS picker. REUSES `scan_openrouter` via
+ * `scan_openrouter_speech`, keeping only `output_modalities: ["speech"]` rows,
+ * mapped to the lean `{ id, name }` shape. Mirrors `scan_openrouter_stt_models`.
+ */
+async scanOpenrouterTtsModels() : Promise<Result<OpenRouterTtsScanResultPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("scan_openrouter_tts_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * `ollama_detect` — locate an `ollama` executable (PATH or default install
  * dirs). Returns `{ installed, path? }`. Mirrors `detectOllama` — the renderer's
  * "Install Ollama" banner keys off `installed`.
@@ -911,9 +952,9 @@ async ollamaDelete(model: string) : Promise<Result<OllamaDeleteResultPayload, st
 /**
  * `verify_credential` — the ONE renderer verify seam (`INTEGRATIONS_VERIFY`).
  * Probes the provider's cheap GET endpoint with the user-typed key and returns
- * `{ ok, code?, message? }` (the WinSTT taxonomy `code`). Covers OpenAI,
- * ElevenLabs AND OpenRouter; the renderer routes all three through this channel.
- * Side-effect-free: never persists the key. Mirrors `credentials.ts`.
+ * `{ ok, code?, message? }` (the WinSTT taxonomy `code`). Covers ElevenLabs AND
+ * OpenRouter; the renderer routes both through this channel. (OpenAI was removed
+ * as a direct cloud STT provider.) Side-effect-free: never persists the key.
  */
 async verifyCredential(provider: string, apiKey: string) : Promise<Result<VerifyCredentialPayload, string>> {
     try {
@@ -1766,6 +1807,31 @@ async setOverlayHitRegions(rects: OverlayHitRect[]) : Promise<Result<null, strin
 }
 },
 /**
+ * `context_playground_set_live` — flip live polling on/off. A freshly-mounted
+ * renderer sends `{ enabled: true }`, which BOTH enables live mode AND signals
+ * "renderer ready" so a capture lands promptly (re-primes the loop). Mirrors
+ * `handleSetLive`.
+ */
+async contextPlaygroundSetLive(enabled: boolean) : Promise<void> {
+    await TAURI_INVOKE("context_playground_set_live", { enabled });
+},
+/**
+ * `context_playground_arm_deep` — arm a deep (all-modes) capture; the next
+ * external tick runs all four UIA modes side-by-side, then disarms. Mirrors
+ * `handleArmDeep`.
+ */
+async contextPlaygroundArmDeep() : Promise<void> {
+    await TAURI_INVOKE("context_playground_arm_deep");
+},
+/**
+ * One-shot capture (kept for parity with `debug_read_context`'s mode probe; the
+ * live loop is the primary path). Returns the full report so a caller can read
+ * it synchronously without subscribing to the push channel.
+ */
+async contextPlaygroundCapture(deep: boolean) : Promise<ContextDebugReport> {
+    return await TAURI_INVOKE("context_playground_capture", { deep });
+},
+/**
  * `winstt_diag` — webview → backend log bridge. The secondary windows (settings /
  * model-picker / …) are separate webviews whose console + uncaught errors are
  * invisible to the Rust log, so a blank/non-rendering window leaves no trace. The
@@ -1798,9 +1864,9 @@ async settingsWindowReady() : Promise<Result<null, string>> {
  * window (`webview`) and place the popup. For the plain windows the rect is
  * absent and we center + show.
  */
-async openWindow(name: string, x: number | null, y: number | null, width: number | null, height: number | null) : Promise<Result<null, string>> {
+async openWindow(name: string, x: number | null, y: number | null, width: number | null, height: number | null, pickerKind: string | null, pickerFeature: string | null, pickerTarget: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("open_window", { name, x, y, width, height }) };
+    return { status: "ok", data: await TAURI_INVOKE("open_window", { name, x, y, width, height, pickerKind, pickerFeature, pickerTarget }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2201,6 +2267,14 @@ export type ContextAppEntry = { id: string; label: string; exe: string; title: s
  * except the deny-list or only apps/sites explicitly selected by the user.
  */
 export type ContextAppMode = "all-except-denied" | "selected-only"
+export type ContextDebugReport = { asrPromptTail: string; asrPromptTailRaw: string; capturedAt: number; contentless: boolean; contextAwarenessEnabled: boolean; deep: boolean; denied: boolean; deniedReason: string | null; durationMs: number; filteredSnapshot: ContextSnapshotView; hasCaret: boolean; isIde: boolean; isTerminal: boolean; metrics: ContextMetrics; modes?: ContextModeResult[] | null; ocrUsed: boolean; promptFragment: string; rawSnapshot: ContextSnapshotView }
+export type ContextMetrics = { axHtmlCap: number; axHtmlChars: number; denyListSize: number; focusedTextChars: number; promptFragmentChars: number; textAfterChars: number; textBeforeChars: number }
+export type ContextModeResult = { durationMs: number; 
+/**
+ * "tree" | "split" | "default" | "selection"
+ */
+mode: string; ok: boolean; snapshot: ContextSnapshotView }
+export type ContextSnapshotView = { appExe?: string | null; axHtml?: string | null; elementName: string; focusedText: string; ocrText?: string | null; textAfter?: string | null; textBefore?: string | null; url?: string | null; windowTitle: string }
 /**
  * `customModifierSchema` — user-authored cleanup modifier. Persists the full
  * definition even while `enabled` is false so the authored name/prompt survives
@@ -2514,7 +2588,7 @@ export type HotkeySettings = {
  * Must be non-empty (Zod `.min(1).catch`).
  */
 pushToTalkKey?: string }
-export type IntegrationsSettings = { openai?: ProviderIntegrationStatus; elevenlabs?: ProviderIntegrationStatus }
+export type IntegrationsSettings = { elevenlabs?: ProviderIntegrationStatus }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
@@ -2770,11 +2844,31 @@ export type OpenRouterEndpointPayload = { name: string; model_name: string; cont
 /**
  * `OpenRouterModel` (snake_case keys per spec — NOT renamed).
  */
-export type OpenRouterModelPayload = { id: string; name: string; description?: string | null; context_length?: number | null; pricing?: JsonValue | null; provider?: string | null; maker?: string | null; model_name?: string | null; variant?: string | null; architecture?: JsonValue | null; supported_parameters?: string[] | null; endpoints?: OpenRouterEndpointPayload[] | null }
+export type OpenRouterModelPayload = { id: string; name: string; description?: string | null; context_length?: number | null; pricing?: JsonValue | null; provider?: string | null; maker?: string | null; model_name?: string | null; variant?: string | null; architecture?: JsonValue | null; supported_parameters?: string[] | null; supported_voices?: string[] | null; endpoints?: OpenRouterEndpointPayload[] | null }
 /**
  * `OpenRouterScanResult` — `{ models, reachable, error? }`.
  */
 export type OpenRouterScanResultPayload = { models: OpenRouterModelPayload[]; reachable: boolean; error?: string | null }
+/**
+ * `OpenRouterSttModel` - transcription-model row for the cloud STT picker.
+ * Built from the shared `OpenRouterModelInfo` rows plus STT card metadata.
+ */
+export type OpenRouterSttModelPayload = { id: string; name: string; description?: string | null; pricing?: JsonValue | null; endpoints?: OpenRouterEndpointPayload[] | null; accuracy_score: number; speed_score: number }
+/**
+ * `OpenRouterSttScanResult` - `{ models, reachable, error? }`. Mirrors
+ * `OpenRouterScanResult` but with transcription-specific rows.
+ */
+export type OpenRouterSttScanResultPayload = { models: OpenRouterSttModelPayload[]; reachable: boolean; error?: string | null }
+/**
+ * `OpenRouterTtsModel` — speech (TTS) model row for the cloud TTS picker.
+ * OpenRouter publishes per-model `supported_voices` in the model catalog; the
+ * renderer must pick from this list rather than accepting arbitrary text.
+ */
+export type OpenRouterTtsModelPayload = { id: string; name: string; description?: string | null; pricing?: JsonValue | null; supported_voices: string[]; quality_score: number; speed_score: number }
+/**
+ * `OpenRouterTtsScanResult` — `{ models, reachable, error? }`.
+ */
+export type OpenRouterTtsScanResultPayload = { models: OpenRouterTtsModelPayload[]; reachable: boolean; error?: string | null }
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 /**
  * Renderer-measured rectangle, in overlay-window CSS/logical pixels, that
@@ -3056,9 +3150,22 @@ export type TransformSource = "uia" | "clipboard" | "empty"
 export type TtsCacheInfoDto = { state: string; downloadedBytes: number; totalBytes: number; progress: number }
 export type TtsCloud = { 
 /**
+ * Active cloud TTS provider (ElevenLabs or OpenRouter).
+ */
+provider?: TtsCloudProvider; 
+/**
  * ElevenLabs account voice_id.
  */
 voice?: string; model?: string; 
+/**
+ * OpenRouter speech model id (e.g. `microsoft/mai-voice-2`), active when
+ * `provider == openrouter`. Dynamic — the picker scans `output_modalities=speech`.
+ */
+openrouterModel?: string; 
+/**
+ * OpenRouter voice id from the selected model's supported_voices catalog.
+ */
+openrouterVoice?: string; 
 /**
  * 0..1.
  */
@@ -3075,6 +3182,12 @@ style?: number;
  * 0.7..1.2.
  */
 speed?: number; speakerBoost?: boolean }
+/**
+ * Which cloud TTS provider the Cloud source synthesizes through. ElevenLabs
+ * (account voices via `integrations.elevenlabs.apiKey`) or OpenRouter (dedicated
+ * `/audio/speech` speech models, reusing the shared `llm.openrouterApiKey`).
+ */
+export type TtsCloudProvider = "elevenlabs" | "openrouter"
 /**
  * `{ ready }` — the `initTts` result shape (`{ ready: boolean }`).
  */

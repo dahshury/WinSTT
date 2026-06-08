@@ -216,11 +216,12 @@ export function ModelSettingsPanel() {
 	// local Kokoro TTS also rides on (`model.device` → `--tts-device`). The
 	// derivation lives in pure helpers to keep this component under the
 	// cognitive-complexity cap.
-	const { showDevice, showLanguage } = resolveModelControlVisibility(
-		selectedIsCloud,
-		languageControlMode,
-		isLocalTtsActive(tts, elevenlabs),
-	);
+	const { showDevice, showLanguage, showLifetime } =
+		resolveModelControlVisibility(
+			selectedIsCloud,
+			languageControlMode,
+			isLocalTtsActive(tts, elevenlabs),
+		);
 
 	useEffect(() => {
 		if (!showLanguage) {
@@ -426,7 +427,9 @@ export function ModelSettingsPanel() {
 					update={update}
 				/>
 			)}
-			<ModelLifetimeSection global={global} t={t} update={updateGlobal} />
+			{showLifetime && (
+				<ModelLifetimeSection global={global} t={t} update={updateGlobal} />
+			)}
 			<SwapDialogs
 				controller={controller}
 				getModel={getModel}

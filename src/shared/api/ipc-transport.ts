@@ -1,4 +1,4 @@
-import { commands } from "@/bindings";
+import { commands, type OnboardingFinishArgs } from "@/bindings";
 import { IPC } from "./ipc-channels";
 import type { MicrophoneLevelMonitorTarget } from "./ipc/stt-audio";
 
@@ -285,6 +285,9 @@ const COMMAND_INVOKERS: Partial<
 			(a.quantization as string | null | undefined) ?? null,
 		),
 
+	// NB: WAKEWORD_*_MODEL_DOWNLOAD / GET_MODEL_STATUS were RETIRED — their
+	// wrappers call `commands.*` directly (shared/api/ipc/stt-audio.ts).
+
 	// ── Model catalog / runtime / fitness ──
 	[IPC.STT_GET_MODEL_CATALOG]: () => commands.listModels(),
 	[IPC.STT_LIST_MODELS_WITH_STATE]: () => commands.listModelsWithState(),
@@ -339,6 +342,9 @@ const COMMAND_INVOKERS: Partial<
 	// ── System ──
 	[IPC.AUDIO_GET_DEVICES]: () => commands.getAudioDevices(),
 	[IPC.AUDIO_REFRESH_DEVICES]: () => commands.refreshAudioDevices(),
+	[IPC.AUDIO_GET_OUTPUT_DEVICES]: () => commands.getAudioOutputDevices(),
+	[IPC.AUDIO_REFRESH_OUTPUT_DEVICES]: () =>
+		commands.refreshAudioOutputDevices(),
 	[IPC.AUDIO_SET_SELECTED_MICROPHONE]: (a) =>
 		commands.setSelectedMicrophone(a.deviceName as string),
 	[IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR]: (a) =>
@@ -349,6 +355,17 @@ const COMMAND_INVOKERS: Partial<
 		commands.stopMicrophoneLevelMonitor(),
 	[IPC.GPU_GET_INFO]: () => commands.gpuGetInfo(),
 	[IPC.CONTEXT_LIST_APPS]: () => commands.listContextApps(),
+
+	// ── Self-window lifecycle / onboarding (no-arg + single-object) ──
+	[IPC.WINDOW_CLOSE_SELF]: () => commands.closeSelfWindow(),
+	[IPC.WINDOW_SHOW]: () => commands.showMainWindowCommand(),
+	[IPC.SETTINGS_WINDOW_READY]: () => commands.settingsWindowReady(),
+	[IPC.ONBOARDING_FINISH]: (a) =>
+		commands.onboardingFinish(a as OnboardingFinishArgs),
+
+	// ── Integrations / cloud-STT credential verification ──
+	[IPC.INTEGRATIONS_VERIFY]: (a) =>
+		commands.verifyCredential(a.provider as string, a.apiKey as string),
 
 	// ── TTS ──
 	[IPC.TTS_SPEAK]: (a) =>
@@ -392,6 +409,8 @@ const COMMAND_INVOKERS: Partial<
 	// ── LLM / Ollama / OpenRouter ──
 	[IPC.LLM_SCAN_MODELS]: () => commands.scanOllamaModels(),
 	[IPC.LLM_SCAN_OPENROUTER_MODELS]: () => commands.scanOpenrouterModels(),
+	[IPC.STT_SCAN_OPENROUTER_MODELS]: () => commands.scanOpenrouterSttModels(),
+	[IPC.TTS_SCAN_OPENROUTER_MODELS]: () => commands.scanOpenrouterTtsModels(),
 	[IPC.LLM_DETECT_OLLAMA]: () => commands.ollamaDetect(),
 	[IPC.LLM_START_OLLAMA]: () => commands.ollamaStart(),
 	[IPC.LLM_PULL_MODEL]: (a) => commands.ollamaPull(a.model as string),
@@ -472,16 +491,17 @@ const COMMAND_INVOKERS: Partial<
 	//    HISTORY_ALIGN_AUDIO stay on the adapter's POSITIONAL_STRING_PARAM path) ──
 	[IPC.HISTORY_GET_ALL]: () => commands.historyGetAll(),
 	[IPC.HISTORY_CLEAR]: () => commands.historyClear(),
-	// ── Transcript quick-actions / diagnostics / about ──
-	[IPC.TRANSCRIPT_COPY_LAST]: () => commands.copyLastTranscript(),
-	[IPC.DIAG_SAVE_BUNDLE]: () => commands.diagSaveBundle(),
-	[IPC.DIAG_WEBVIEW_LOG]: (a) =>
-		commands.winsttDiag(
-			a.label as string,
-			a.level as string,
-			a.message as string,
-		),
-	[IPC.ABOUT_GET_APP_INFO]: () => commands.aboutGetAppInfo(),
+	// SQLite-backed history (object-arg; numeric row ids passed as `{ id }`).
+	[IPC.HISTORY_LIST]: (a) =>
+		commands.historyList(a.offset as number, a.limit as number),
+	[IPC.HISTORY_DELETE_ROW]: (a) => commands.historyDeleteRow(a.id as number),
+	[IPC.HISTORY_TOGGLE]: (a) => commands.historyToggle(a.id as number),
+	[IPC.HISTORY_LOAD_AUDIO_BY_ROW]: (a) =>
+		commands.historyLoadAudioByRow(a.id as number),
+	// NB: TRANSCRIPT_COPY_LAST / DIAG_SAVE_BUNDLE / DIAG_WEBVIEW_LOG /
+	// ABOUT_GET_APP_INFO were RETIRED — their wrappers call `commands.*` directly
+	// (see shared/api/ipc/history-files.ts), so the channel + ROUTE + invoker are
+	// all gone.
 };
 
 /**
@@ -596,6 +616,31 @@ export async function invokeOrDefault<T>(
 		// Only the THROW/REJECT path lands here — distinct from the quiet
 		// resolved-undefined path above — so a backend error is never silent.
 		return handleInvokeError(channel, fallback, err, args);
+	}
+}
+
+/**
+ * Run a generated `commands.*` thunk directly (no string-channel adapter) and
+ * fall back to `fallback` if it throws — outside a Tauri runtime the generated
+ * `TAURI_INVOKE` rejects, exactly like the legacy `invoke()` resolving
+ * `undefined` → fallback. This is the migration target: a typed wrapper that
+ * preserves `invokeOrDefault`'s tolerant fallback semantics WITHOUT the
+ * IPC-channel / ROUTE / COMMAND_INVOKERS indirection.
+ *
+ * `label` is only used for the failure log so the offending call stays
+ * pinpointable (parity with `invokeOrDefault`'s channel-keyed log).
+ */
+export async function commandOrDefault<T>(
+	label: string,
+	thunk: () => Promise<T>,
+	fallback: FallbackValue<T>,
+): Promise<T> {
+	try {
+		const value = await thunk();
+		return value === undefined ? resolveFallback(fallback) : value;
+	} catch (err) {
+		console.warn(`[ipc] command "${label}" failed — returning fallback:`, err);
+		return resolveFallback(fallback);
 	}
 }
 

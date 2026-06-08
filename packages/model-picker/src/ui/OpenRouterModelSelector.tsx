@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type MouseEvent, useEffect, useState } from "react";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { parseModelSelection } from "@/shared/lib/openrouter-model-selection";
 import {
@@ -42,12 +42,15 @@ import type { OpenRouterModelSelectorProps } from "../model/openrouter-model-sel
 import { ActiveFiltersBar } from "./ActiveFiltersBar";
 import { ModelFiltersMenu } from "./ModelFiltersMenu";
 import { ModelListContentVirtualized } from "./ModelListContentVirtualized";
-import { ModelSelectorTrigger } from "./ModelSelectorTrigger";
+import { ModelSelectorTrigger, TriggerButton } from "./ModelSelectorTrigger";
 import { ReasoningControls } from "./ReasoningControls";
 
 const DEFAULT_PLACEHOLDER = "Select a model";
 const DEFAULT_LABEL = "Model";
-const OPENROUTER_SELECTOR_UI_STORAGE_KEY = "winstt:model-picker:openrouter-ui";
+const DEFAULT_OPENROUTER_SELECTOR_UI_STORAGE_KEY =
+	"winstt:model-picker:openrouter-ui";
+const DEFAULT_OPENROUTER_FAVORITE_MODELS_STORAGE_KEY =
+	"winstt:openrouter-favorite-models";
 const OPENROUTER_SORT_KEY_SET = new Set<string>(OPENROUTER_SORT_KEYS);
 
 interface PersistedOpenRouterSelectorState {
@@ -100,11 +103,11 @@ function isPersistedOpenRouterSelectorState(
 	);
 }
 
-function useModelSelectorState() {
+function useModelSelectorState(storageKey: string) {
 	const [open, setOpen] = useState(false);
 	const [initialState] = useState(() =>
 		readPersistedSelectorState(
-			OPENROUTER_SELECTOR_UI_STORAGE_KEY,
+			storageKey,
 			isPersistedOpenRouterSelectorState,
 			DEFAULT_PERSISTED_OPENROUTER_SELECTOR_STATE,
 		),
@@ -129,7 +132,7 @@ function useModelSelectorState() {
 	const [scrollToMakerRequest, setScrollToMakerRequest] =
 		useState<ScrollToMakerRequest | null>(null);
 	useEffect(() => {
-		writePersistedSelectorState(OPENROUTER_SELECTOR_UI_STORAGE_KEY, {
+		writePersistedSelectorState(storageKey, {
 			searchQuery,
 			selectedEndpointProvider,
 			selectedMakers,
@@ -138,6 +141,7 @@ function useModelSelectorState() {
 			sortKey,
 		});
 	}, [
+		storageKey,
 		searchQuery,
 		selectedEndpointProvider,
 		selectedMakers,
@@ -179,11 +183,18 @@ export function OpenRouterModelSelector({
 	description,
 	exclusionConfig,
 	disabledModelIds,
+	inline = false,
 	maxOutputTokens,
 	onMaxOutputTokensChange,
+	onOpenDetached,
 	onReasoningEffortChange,
 	onVerbosityChange,
+	popupHeightClass = "h-[min(620px,var(--available-height))]",
+	popupWidthClass = "w-[max(580px,var(--anchor-width))]",
 	reasoningEffort,
+	uiStorageKey = DEFAULT_OPENROUTER_SELECTOR_UI_STORAGE_KEY,
+	favoriteModelsStorageKey = DEFAULT_OPENROUTER_FAVORITE_MODELS_STORAGE_KEY,
+	favoriteProvidersStorageKey,
 	verbosity,
 }: OpenRouterModelSelectorProps) {
 	const filteredModels = applyModelFilters(
@@ -210,12 +221,14 @@ export function OpenRouterModelSelector({
 		setExpandedModels,
 		scrollToMakerRequest,
 		setScrollToMakerRequest,
-	} = useModelSelectorState();
+	} = useModelSelectorState(uiStorageKey);
+	const externalOpen = onOpenDetached != null;
+	const effectiveOpen = inline ? true : open;
 	// Per-MODEL favorites (the amber card star), alongside the per-MAKER `favorites`
 	// from useModelSelectorState (the rail). Mirrors the STT / Ollama model-favorite
 	// gesture so the star reads identically across every picker.
 	const { isFavorite: isFavoriteModel, toggleFavorite: toggleModelFavorite } =
-		useFavoriteSet("winstt:openrouter-favorite-models");
+		useFavoriteSet(favoriteModelsStorageKey);
 
 	const {
 		allProviders,
@@ -246,7 +259,8 @@ export function OpenRouterModelSelector({
 		setSelectedEndpointProvider,
 		setSelectedParameters,
 		sortKey,
-		isOpen: open,
+		isOpen: effectiveOpen,
+		favoriteProvidersStorageKey,
 	});
 
 	const providerModelCounts = new Map<string, number>();
@@ -298,6 +312,9 @@ export function OpenRouterModelSelector({
 		setOpen,
 		onOpen: () => handleOpenWith(selectedModel),
 	});
+	const handleOpenChange = externalOpen
+		? () => undefined
+		: openGuard.handleOpenChange;
 
 	const handleValueChange = (next: string | null) => {
 		const parsed = parseSelectionToken(next);
@@ -356,6 +373,10 @@ export function OpenRouterModelSelector({
 	);
 
 	const comboboxFilter = () => true;
+	const handleDetachedOpen = (event: MouseEvent<HTMLButtonElement>) => {
+		onOpen?.();
+		onOpenDetached?.(event.currentTarget.getBoundingClientRect());
+	};
 
 	const makerRailItems: GroupRailItem[] = allProviders.map((maker) => {
 		const iconSrc = getProviderIcon(maker);
@@ -439,14 +460,44 @@ export function OpenRouterModelSelector({
 		/>
 	);
 
+	const triggerNode = externalOpen ? (
+		<TriggerButton
+			buttonProps={{ onClick: handleDetachedOpen, type: "button" }}
+			disabled={disabled}
+			isLoading={isLoading}
+			open={false}
+			parsedModelId={parsedModelId}
+			placeholder={placeholder}
+			selectedModel={selectedModel}
+		/>
+	) : (
+		<ModelSelectorTrigger
+			disabled={disabled}
+			isLoading={isLoading}
+			open={open}
+			parsedModelId={parsedModelId}
+			placeholder={placeholder}
+			selectedModel={selectedModel}
+		/>
+	);
+
 	return (
-		<div className="flex flex-col gap-2" data-slot="openrouter-model-selector">
-			<label
-				className="text-body-sm text-foreground-secondary"
-				htmlFor="openrouter-model-selector-input"
-			>
-				{label}
-			</label>
+		<div
+			className={
+				inline
+					? "flex h-full min-h-0 flex-col [&>[data-slot=model-picker]]:min-h-0 [&>[data-slot=model-picker]]:flex-1"
+					: "flex flex-col gap-2"
+			}
+			data-slot="openrouter-model-selector"
+		>
+			{inline ? null : (
+				<label
+					className="text-body-sm text-foreground-secondary"
+					htmlFor="openrouter-model-selector-input"
+				>
+					{label}
+				</label>
+			)}
 			<ModelPicker<string, string | null>
 				activeFiltersSlot={activeFiltersBar}
 				belowListSlot={
@@ -467,23 +518,15 @@ export function OpenRouterModelSelector({
 				items={comboboxItems}
 				list={list}
 				onInputValueChange={handleSearchChange}
-				onOpenChange={openGuard.handleOpenChange}
+				onOpenChange={handleOpenChange}
 				onValueChange={handleValueChange}
-				open={open}
-				popupHeightClass="h-[min(620px,var(--available-height))]"
+				open={externalOpen ? false : open}
+				inline={inline}
+				popupHeightClass={popupHeightClass}
 				popupRef={openGuard.setPopupNode}
-				popupWidthClass="w-[max(580px,var(--anchor-width))]"
+				popupWidthClass={popupWidthClass}
 				sidebarSlot={sidebar}
-				trigger={
-					<ModelSelectorTrigger
-						disabled={disabled}
-						isLoading={isLoading}
-						open={open}
-						parsedModelId={parsedModelId}
-						placeholder={placeholder}
-						selectedModel={selectedModel}
-					/>
-				}
+				trigger={triggerNode}
 			/>
 		</div>
 	);

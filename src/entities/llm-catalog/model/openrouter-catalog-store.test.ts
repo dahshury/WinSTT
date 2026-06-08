@@ -100,4 +100,23 @@ describe("useOpenRouterCatalogStore.scanModels", () => {
 		// Forced (e.g. after saving an API key) bypasses the cache.
 		expect(fetchSpy).toHaveBeenCalledTimes(2);
 	});
+
+	test("warms the catalog without entering the loading state", async () => {
+		fetchSpy.mockClear();
+		fetchSpy.mockImplementationOnce(async () => ({
+			models: [{ id: "warm-model", name: "Warm Model" }],
+			reachable: true,
+		}));
+
+		const warm = useOpenRouterCatalogStore.getState().warmModels();
+
+		expect(useOpenRouterCatalogStore.getState().isScanning).toBe(false);
+		await warm;
+
+		const state = useOpenRouterCatalogStore.getState();
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		expect(state.isScanning).toBe(false);
+		expect(state.isLoaded).toBe(true);
+		expect(state.models).toEqual([{ id: "warm-model", name: "Warm Model" }]);
+	});
 });

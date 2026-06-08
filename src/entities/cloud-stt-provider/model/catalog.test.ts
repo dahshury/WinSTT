@@ -13,23 +13,22 @@ import {
 } from "./catalog";
 
 describe("CLOUD_PROVIDERS", () => {
-	test("contains exactly openai and elevenlabs", () => {
-		expect([...CLOUD_PROVIDERS].sort()).toEqual(["elevenlabs", "openai"]);
+	test("contains elevenlabs and openrouter (openai removed)", () => {
+		expect([...CLOUD_PROVIDERS].sort()).toEqual(["elevenlabs", "openrouter"]);
 	});
 });
 
 describe("CLOUD_CATALOG", () => {
-	test("each provider exposes at least one model", () => {
-		for (const provider of CLOUD_PROVIDERS) {
+	test("each curated provider exposes at least one model", () => {
+		// OpenRouter is excluded: its transcription rows are fetched live
+		// (useOpenRouterSttCatalogStore), so its static catalog is intentionally empty.
+		for (const provider of CLOUD_PROVIDERS.filter((p) => p !== "openrouter")) {
 			expect(CLOUD_CATALOG[provider].length).toBeGreaterThan(0);
 		}
 	});
 
-	test("openai catalog flags gpt-4o-mini-transcribe as the default", () => {
-		const openai = CLOUD_CATALOG.openai;
-		expect(
-			openai.find((m) => m.id === "gpt-4o-mini-transcribe")?.isDefault,
-		).toBe(true);
+	test("openrouter has no static catalog (dynamic scan)", () => {
+		expect(CLOUD_CATALOG.openrouter).toEqual([]);
 	});
 
 	test("elevenlabs catalog flags scribe_v1 as the default", () => {
@@ -39,12 +38,19 @@ describe("CLOUD_CATALOG", () => {
 });
 
 describe("providerOf", () => {
-	test("recognizes the openai: prefix", () => {
-		expect(providerOf("openai:whisper-1")).toBe("openai");
+	test("treats a legacy openai: prefix as unknown (provider removed)", () => {
+		expect(providerOf("openai:whisper-1")).toBeNull();
 	});
 
 	test("recognizes the elevenlabs: prefix", () => {
 		expect(providerOf("elevenlabs:scribe_v1")).toBe("elevenlabs");
+	});
+
+	test("recognizes the openrouter: prefix (incl. slashed maker ids)", () => {
+		expect(providerOf("openrouter:microsoft/mai-transcribe-1.5")).toBe(
+			"openrouter",
+		);
+		expect(providerOf("openrouter:")).toBe("openrouter");
 	});
 
 	test("returns null for unprefixed or unknown model ids", () => {
@@ -88,34 +94,34 @@ describe("pickDefaultCloudModel", () => {
 });
 
 describe("defaultCloudModelId", () => {
-	test("returns provider-prefixed default id for openai", () => {
-		expect(defaultCloudModelId("openai")).toBe("openai:gpt-4o-mini-transcribe");
-	});
-
 	test("returns provider-prefixed default id for elevenlabs", () => {
 		expect(defaultCloudModelId("elevenlabs")).toBe("elevenlabs:scribe_v1");
+	});
+
+	test("returns the bare 'openrouter:' prefix (dynamic; picker self-heals)", () => {
+		expect(defaultCloudModelId("openrouter")).toBe("openrouter:");
 	});
 });
 
 describe("getApiKeyUrl", () => {
-	test("openai routes to the platform.openai.com API keys page", () => {
-		expect(getApiKeyUrl("openai")).toBe("https://platform.openai.com/api-keys");
-	});
-
 	test("elevenlabs routes to the elevenlabs.io API keys page", () => {
 		expect(getApiKeyUrl("elevenlabs")).toBe(
 			"https://elevenlabs.io/app/settings/api-keys",
 		);
 	});
+
+	test("openrouter routes to the openrouter.ai keys page", () => {
+		expect(getApiKeyUrl("openrouter")).toBe("https://openrouter.ai/keys");
+	});
 });
 
 describe("providerDisplayName", () => {
-	test("returns 'OpenAI' for openai", () => {
-		expect(providerDisplayName("openai")).toBe("OpenAI");
-	});
-
 	test("returns 'ElevenLabs' for elevenlabs", () => {
 		expect(providerDisplayName("elevenlabs")).toBe("ElevenLabs");
+	});
+
+	test("returns 'OpenRouter' for openrouter", () => {
+		expect(providerDisplayName("openrouter")).toBe("OpenRouter");
 	});
 });
 

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { useSettingsStore } from "@/entities/setting/@x/cloud-stt-credential";
-import type { CloudSttProvider } from "@/shared/api/models";
+import type { IntegrationCloudProvider } from "@/shared/api/models";
 
 /**
  * Per-provider status for the cloud STT key probe.
@@ -24,13 +24,12 @@ export interface ProviderStatusEntry {
 }
 
 interface CredentialStatusState {
-	byProvider: Record<CloudSttProvider, ProviderStatusEntry>;
-	reset: (provider: CloudSttProvider) => void;
-	setStatus: (provider: CloudSttProvider, entry: ProviderStatusEntry) => void;
+	byProvider: Record<IntegrationCloudProvider, ProviderStatusEntry>;
+	reset: (provider: IntegrationCloudProvider) => void;
+	setStatus: (provider: IntegrationCloudProvider, entry: ProviderStatusEntry) => void;
 }
 
-const INITIAL: Record<CloudSttProvider, ProviderStatusEntry> = {
-	openai: { status: "idle" },
+const INITIAL: Record<IntegrationCloudProvider, ProviderStatusEntry> = {
 	elevenlabs: { status: "idle" },
 };
 
@@ -56,8 +55,7 @@ export const useCredentialStatusStore = create<CredentialStatusState>()(
  * idle. This keeps a freshly typed key from staying "verified" against the
  * previous value.
  */
-let lastKeys: Record<CloudSttProvider, string> = {
-	openai: "",
+let lastKeys: Record<IntegrationCloudProvider, string> = {
 	elevenlabs: "",
 };
 
@@ -68,16 +66,14 @@ let lastKeys: Record<CloudSttProvider, string> = {
 function readApiKeySnapshot(settings: {
 	integrations: {
 		elevenlabs: { apiKey: string };
-		openai: { apiKey: string };
 	};
-}): Record<CloudSttProvider, string> {
+}): Record<IntegrationCloudProvider, string> {
 	return {
-		openai: settings.integrations.openai.apiKey,
 		elevenlabs: settings.integrations.elevenlabs.apiKey,
 	};
 }
 
-const CLOUD_PROVIDERS: readonly CloudSttProvider[] = ["openai", "elevenlabs"];
+const CLOUD_PROVIDERS: readonly IntegrationCloudProvider[] = ["elevenlabs"];
 
 /**
  * True when `provider`'s key changed since the last sync AND its previous
@@ -85,9 +81,9 @@ const CLOUD_PROVIDERS: readonly CloudSttProvider[] = ["openai", "elevenlabs"];
  * masquerading as "verified" against the previous value.
  */
 function providerNeedsReset(
-	provider: CloudSttProvider,
-	next: Record<CloudSttProvider, string>,
-	prev: Record<CloudSttProvider, string>,
+	provider: IntegrationCloudProvider,
+	next: Record<IntegrationCloudProvider, string>,
+	prev: Record<IntegrationCloudProvider, string>,
 	store: CredentialStatusState,
 ): boolean {
 	return (
@@ -102,8 +98,8 @@ function providerNeedsReset(
  * `syncOnSettingsChange` so the subscriber stays trivially branchy.
  */
 function resetProvidersWithChangedKeys(
-	next: Record<CloudSttProvider, string>,
-	prev: Record<CloudSttProvider, string>,
+	next: Record<IntegrationCloudProvider, string>,
+	prev: Record<IntegrationCloudProvider, string>,
 	store: CredentialStatusState,
 ): void {
 	for (const provider of CLOUD_PROVIDERS) {
@@ -128,7 +124,6 @@ if (typeof window !== "undefined") {
 	// real subscription-fired change (key edit) is the first reset trigger.
 	const boot = useSettingsStore.getState().settings;
 	lastKeys = {
-		openai: boot.integrations.openai.apiKey,
 		elevenlabs: boot.integrations.elevenlabs.apiKey,
 	};
 	useSettingsStore.subscribe(syncOnSettingsChange);
@@ -136,7 +131,7 @@ if (typeof window !== "undefined") {
 
 /** Hook returning the live status entry for a single provider. */
 export function useCredentialStatus(
-	provider: CloudSttProvider,
+	provider: IntegrationCloudProvider,
 ): ProviderStatusEntry {
 	return useCredentialStatusStore((s) => s.byProvider[provider]);
 }

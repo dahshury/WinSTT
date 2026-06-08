@@ -1,6 +1,7 @@
 import { commands } from "@/bindings";
 import { IPC } from "../ipc-channels";
 import {
+	commandOrDefault,
 	invoke,
 	invokeOrDefault,
 	on,
@@ -332,32 +333,37 @@ const DEFAULT_WAKEWORD_MODEL_STATUS: WakewordModelStatusPayload = {
 };
 
 export const wakewordModelStatus = () =>
-	invokeOrDefault<WakewordModelStatusPayload>(
-		IPC.WAKEWORD_GET_MODEL_STATUS,
+	commandOrDefault(
+		"wakeword_model_status",
+		commands.wakewordModelStatus,
 		DEFAULT_WAKEWORD_MODEL_STATUS,
 	);
 
 export const wakewordStartModelDownload = () =>
-	invokeOrDefault<WakewordModelStatusPayload>(
-		IPC.WAKEWORD_START_MODEL_DOWNLOAD,
+	commandOrDefault(
+		"wakeword_start_model_download",
+		commands.wakewordStartModelDownload,
 		DEFAULT_WAKEWORD_MODEL_STATUS,
 	);
 
 export const wakewordPauseModelDownload = () =>
-	invokeOrDefault<WakewordModelStatusPayload>(
-		IPC.WAKEWORD_PAUSE_MODEL_DOWNLOAD,
+	commandOrDefault(
+		"wakeword_pause_model_download",
+		commands.wakewordPauseModelDownload,
 		DEFAULT_WAKEWORD_MODEL_STATUS,
 	);
 
 export const wakewordResumeModelDownload = () =>
-	invokeOrDefault<WakewordModelStatusPayload>(
-		IPC.WAKEWORD_RESUME_MODEL_DOWNLOAD,
+	commandOrDefault(
+		"wakeword_resume_model_download",
+		commands.wakewordResumeModelDownload,
 		DEFAULT_WAKEWORD_MODEL_STATUS,
 	);
 
 export const wakewordCancelModelDownload = () =>
-	invokeOrDefault<WakewordModelStatusPayload>(
-		IPC.WAKEWORD_CANCEL_MODEL_DOWNLOAD,
+	commandOrDefault(
+		"wakeword_cancel_model_download",
+		commands.wakewordCancelModelDownload,
 		DEFAULT_WAKEWORD_MODEL_STATUS,
 	);
 

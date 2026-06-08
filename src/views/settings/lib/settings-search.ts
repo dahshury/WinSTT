@@ -211,7 +211,6 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			ti("title"),
 			ti("llmSectionTitle"),
 			ti("sttSectionTitle"),
-			ti("openai"),
 			ti("elevenlabs"),
 			ti("cloudModels"),
 			ti("sourceLabel"),

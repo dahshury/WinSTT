@@ -360,4 +360,3 @@ fn normalize_accel_for_implementation(raw: &str, implementation: KeyboardImpleme
         }
     }
 }
-

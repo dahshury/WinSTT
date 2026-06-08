@@ -460,6 +460,19 @@ pub(crate) async fn process_transcription_output(
     transcription: &str,
     post_process: bool,
 ) -> ProcessedTranscription {
+    if transcription.trim().is_empty() {
+        return ProcessedTranscription {
+            final_text: String::new(),
+            post_processed_text: None,
+            post_process_prompt: None,
+            post_process_requested: false,
+            llm_meta: None,
+            dictionary_fixes: None,
+            history_tag: None,
+            privacy_markers: Vec::new(),
+        };
+    }
+
     let settings = get_settings(app);
     let winstt_settings = crate::winstt::commands::settings::read_settings(app);
     let winstt_dictation_llm = should_run_winstt_dictation_llm(&winstt_settings);

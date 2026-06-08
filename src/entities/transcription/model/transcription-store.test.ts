@@ -37,6 +37,7 @@ describe("useTranscriptionStore initial state (factory defaults)", () => {
 
 	test("starts with transcribing state cleared", () => {
 		expect(useTranscriptionStore.getInitialState().isTranscribing).toBe(false);
+		expect(useTranscriptionStore.getInitialState().processingPhase).toBeNull();
 		expect(
 			useTranscriptionStore.getInitialState().transcribingStartedAt,
 		).toBeNull();
@@ -50,6 +51,7 @@ beforeEach(() => {
 		ephemeral: null,
 		isRecordingActive: false,
 		isTranscribing: false,
+		processingPhase: null,
 		recordingSessionId: 0,
 		transcribingStartedAt: null,
 	});
@@ -68,6 +70,7 @@ describe("useTranscriptionStore", () => {
 		expect(typeof state.items[0]?.timestamp).toBe("number");
 		expect(state.currentRealtime).toBe("");
 		expect(state.isTranscribing).toBe(false);
+		expect(state.processingPhase).toBeNull();
 		expect(state.transcribingStartedAt).toBeNull();
 	});
 
@@ -125,6 +128,7 @@ describe("useTranscriptionStore", () => {
 		expect(state.currentRealtime).toBe("");
 		expect(state.ephemeral).toBeNull();
 		expect(state.isTranscribing).toBe(false);
+		expect(state.processingPhase).toBeNull();
 		expect(state.transcribingStartedAt).toBeNull();
 	});
 
@@ -141,6 +145,7 @@ describe("useTranscriptionStore", () => {
 			ephemeral: { text: "old message", timestamp: 1 },
 			isRecordingActive: false,
 			isTranscribing: true,
+			processingPhase: "uploading",
 			recordingSessionId: 7,
 			transcribingStartedAt: 123,
 		});
@@ -150,6 +155,7 @@ describe("useTranscriptionStore", () => {
 		expect(state.ephemeral).toBeNull();
 		expect(state.isRecordingActive).toBe(true);
 		expect(state.isTranscribing).toBe(false);
+		expect(state.processingPhase).toBeNull();
 		expect(state.recordingSessionId).toBe(8);
 		expect(state.transcribingStartedAt).toBeNull();
 	});
@@ -158,13 +164,18 @@ describe("useTranscriptionStore", () => {
 		useTranscriptionStore.getState().setTranscribing(true);
 		const started = useTranscriptionStore.getState().transcribingStartedAt;
 		expect(useTranscriptionStore.getState().isTranscribing).toBe(true);
+		expect(useTranscriptionStore.getState().processingPhase).toBe(
+			"transcribing",
+		);
 		expect(typeof started).toBe("number");
-		useTranscriptionStore.getState().setTranscribing(true);
+		useTranscriptionStore.getState().setTranscribing(true, "uploading");
 		expect(useTranscriptionStore.getState().transcribingStartedAt).toBe(
 			started,
 		);
+		expect(useTranscriptionStore.getState().processingPhase).toBe("uploading");
 		useTranscriptionStore.getState().setTranscribing(false);
 		expect(useTranscriptionStore.getState().isTranscribing).toBe(false);
+		expect(useTranscriptionStore.getState().processingPhase).toBeNull();
 		expect(useTranscriptionStore.getState().transcribingStartedAt).toBeNull();
 	});
 
@@ -174,6 +185,7 @@ describe("useTranscriptionStore", () => {
 		useTranscriptionStore.getState().clearAll();
 		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
 		expect(useTranscriptionStore.getState().isTranscribing).toBe(false);
+		expect(useTranscriptionStore.getState().processingPhase).toBeNull();
 		expect(useTranscriptionStore.getState().recordingSessionId).toBe(0);
 	});
 

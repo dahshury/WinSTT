@@ -1,5 +1,6 @@
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
 import { type RefObject, useLayoutEffect, useRef, useState } from "react";
+import type { TranscriptionProcessingPhase } from "@/entities/transcription";
 import { AudioVisualizer } from "@/features/audio-visualizer";
 import { TranscriptPreview } from "@/features/transcript-preview";
 import { ScrollingText } from "@/shared/ui/scrolling-text";
@@ -18,6 +19,7 @@ import {
 	ICON_PRESET_PX,
 	TRANSCRIBING_WORDS,
 	TRANSFORMING_WORDS,
+	UPLOADING_WORDS,
 } from "./overlay-shell";
 
 interface FloatingPillProps {
@@ -33,6 +35,7 @@ interface FloatingPillProps {
 	text: string;
 	thinkingStartedAt: number | null;
 	thinkingText: string;
+	transcribingPhase: TranscriptionProcessingPhase | null;
 	transcribingStartedAt: number | null;
 	zoom: number;
 }
@@ -249,6 +252,7 @@ function FloatingBottomPill({
 	text,
 	thinkingStartedAt,
 	thinkingText,
+	transcribingPhase,
 	transcribingStartedAt,
 	zoom,
 }: FloatingPillProps) {
@@ -268,7 +272,9 @@ function FloatingBottomPill({
 		transcribingStartedAt,
 	});
 	const processingText = isThinking ? thinkingText : "";
-	const processingWords = isThinking ? undefined : TRANSCRIBING_WORDS;
+	const transcribingWords =
+		transcribingPhase === "uploading" ? UPLOADING_WORDS : TRANSCRIBING_WORDS;
+	const processingWords = isThinking ? undefined : transcribingWords;
 	return (
 		<LazyMotion features={domAnimation} strict>
 			<div className="flex h-screen w-screen items-end justify-center overflow-hidden pb-3">

@@ -5,6 +5,8 @@ import {
 	ReasoningEffortDropdown,
 } from "@picker";
 import type { OpenRouterModel } from "@/shared/api/models";
+import { IPC } from "@/shared/api/ipc-channels";
+import { ipcSend } from "@/shared/api/ipc-client";
 import { FormControl } from "@/shared/ui/form-control";
 import { Toggle } from "@/shared/ui/toggle";
 import { RECOMMENDED_OLLAMA_MODELS } from "@/entities/llm-catalog";
@@ -19,6 +21,31 @@ import type {
 	TranslateFn,
 	Verbosity,
 } from "./types";
+
+type LlmFeature = "dictation" | "transforms";
+
+function openDetachedLlmPicker(
+	rect: DOMRect,
+	payload:
+		| { feature: LlmFeature; pickerKind: "llm-ollama" }
+		| {
+				feature: LlmFeature;
+				pickerKind: "llm-openrouter";
+				pickerTarget: "fallback" | "primary";
+		  },
+): void {
+	ipcSend(IPC.MODEL_PICKER_OPEN, {
+		x: rect.x,
+		y: rect.y,
+		width: rect.width,
+		height: rect.height,
+		pickerKind: payload.pickerKind,
+		pickerFeature: payload.feature,
+		...("pickerTarget" in payload
+			? { pickerTarget: payload.pickerTarget }
+			: {}),
+	});
+}
 
 /** Shared error banner used by both Ollama and OpenRouter sections.
  *  Null-renders on empty message so callers can pass their error state
@@ -104,6 +131,7 @@ interface OllamaSectionProps {
 	 *  block. Off in the Playground (which has room to breathe). */
 	dense?: boolean | undefined;
 	enabled: boolean;
+	feature?: LlmFeature | undefined;
 	librarySearch: import("@picker").OllamaModelSelectorProps["librarySearch"];
 	model: string;
 	ollamaError: string | null;
@@ -125,6 +153,7 @@ interface OllamaSectionProps {
 function OllamaSection(props: OllamaSectionProps) {
 	const {
 		dense,
+		feature,
 		t,
 		tc,
 		librarySearch,
@@ -158,6 +187,15 @@ function OllamaSection(props: OllamaSectionProps) {
 					}}
 					onDiscardPull={pullBundle.discardPausedPull}
 					onOpen={scanOllama}
+					onOpenDetached={
+						feature
+							? (rect) =>
+									openDetachedLlmPicker(rect, {
+										feature,
+										pickerKind: "llm-ollama",
+									})
+							: undefined
+					}
 					onPull={(name) => {
 						pullBundle.pullModel(name).catch(() => undefined);
 					}}
@@ -203,6 +241,7 @@ function OllamaSection(props: OllamaSectionProps) {
 interface OpenRouterSectionProps {
 	apiKeyMissing: boolean;
 	fallbackExclusion: ReturnType<typeof computeModelExclusionConfig>;
+	feature?: LlmFeature | undefined;
 	maxOutputTokens: number | null;
 	onMaxOutputTokensChange: (value: number | null) => void;
 	onReasoningEffortChange: (value: ReasoningEffort) => void;
@@ -224,6 +263,7 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 	const {
 		t,
 		apiKeyMissing,
+		feature,
 		maxOutputTokens,
 		onMaxOutputTokensChange,
 		onReasoningEffortChange,
@@ -255,6 +295,16 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 						onChange={setModel}
 						onMaxOutputTokensChange={onMaxOutputTokensChange}
 						onOpen={scanOpenRouter}
+						onOpenDetached={
+							feature
+								? (rect) =>
+										openDetachedLlmPicker(rect, {
+											feature,
+											pickerKind: "llm-openrouter",
+											pickerTarget: "primary",
+										})
+								: undefined
+						}
 						onReasoningEffortChange={onReasoningEffortChange}
 						onVerbosityChange={onVerbosityChange}
 						reasoningEffort={reasoningEffort}
@@ -276,6 +326,16 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 						models={openrouterModels ? [...openrouterModels] : []}
 						onChange={setFallbackModel}
 						onOpen={scanOpenRouter}
+						onOpenDetached={
+							feature
+								? (rect) =>
+										openDetachedLlmPicker(rect, {
+											feature,
+											pickerKind: "llm-openrouter",
+											pickerTarget: "fallback",
+										})
+								: undefined
+						}
 						placeholder={t("openrouterFallbackModelPlaceholder")}
 						value={openrouterFallbackModel}
 					/>
@@ -308,6 +368,7 @@ interface ProviderSectionArgs {
 	dense?: boolean | undefined;
 	fallbackExclusion: ReturnType<typeof computeModelExclusionConfig>;
 	featureSnapshot: LlmFeatureDraft;
+	feature?: LlmFeature | undefined;
 	librarySearch: import("@picker").OllamaModelSelectorProps["librarySearch"];
 	ollamaCatalog: OllamaCatalogState;
 	ollamaPullBundle: OllamaPullBundle;
@@ -330,6 +391,7 @@ export function ProviderSection(args: ProviderSectionArgs) {
 			<OllamaSection
 				dense={args.dense}
 				enabled={featureSnapshot.enabled}
+				feature={args.feature}
 				librarySearch={args.librarySearch}
 				model={featureSnapshot.model}
 				ollamaError={args.ollamaCatalog.error}
@@ -354,6 +416,7 @@ export function ProviderSection(args: ProviderSectionArgs) {
 		<OpenRouterSection
 			apiKeyMissing={!args.openrouterApiKey}
 			fallbackExclusion={args.fallbackExclusion}
+			feature={args.feature}
 			maxOutputTokens={featureSnapshot.maxOutputTokens}
 			onMaxOutputTokensChange={(v) => args.updateAny({ maxOutputTokens: v })}
 			onReasoningEffortChange={(v) => args.updateAny({ reasoningEffort: v })}

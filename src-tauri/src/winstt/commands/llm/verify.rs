@@ -1,5 +1,5 @@
-// The `verify_credential` provider-key probe internals (shared OpenAI / OpenRouter
-// / ElevenLabs classification). Split out of the `llm` command root; the
+// The `verify_credential` provider-key probe internals (shared OpenRouter /
+// ElevenLabs classification). Split out of the `llm` command root; the
 // `#[tauri::command] verify_credential` entry STAYS in the root (`llm.rs`) — the
 // codebase keeps every command's `#[tauri::command]` in its module root so the
 // macro-generated `__cmd__*` wrapper resolves at the registered command path —
@@ -20,7 +20,6 @@ use crate::winstt::commands::settings::{read_settings, SECRET_PRESENT_SENTINEL};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum VerifyProbe {
-    OpenAi,
     OpenRouter,
     ElevenLabs,
 }
@@ -32,7 +31,6 @@ pub(super) fn resolve_verify_api_key(app: &AppHandle, probe: VerifyProbe, api_ke
     }
     let settings = read_settings(app);
     match probe {
-        VerifyProbe::OpenAi => settings.integrations.openai.api_key,
         VerifyProbe::OpenRouter => settings.llm.openrouter_api_key,
         VerifyProbe::ElevenLabs => settings.integrations.elevenlabs.api_key,
     }
@@ -41,7 +39,6 @@ pub(super) fn resolve_verify_api_key(app: &AppHandle, probe: VerifyProbe, api_ke
 impl VerifyProbe {
     fn url(self) -> &'static str {
         match self {
-            VerifyProbe::OpenAi => "https://api.openai.com/v1/models",
             VerifyProbe::OpenRouter => "https://openrouter.ai/api/v1/auth/key",
             VerifyProbe::ElevenLabs => "https://api.elevenlabs.io/v1/user",
         }
@@ -53,7 +50,7 @@ pub(super) async fn probe_verify(probe: VerifyProbe, api_key: &str) -> VerifyCre
     let mut rb = client.get(probe.url()).timeout(Duration::from_secs(10));
     rb = match probe {
         VerifyProbe::ElevenLabs => rb.header("xi-api-key", api_key),
-        VerifyProbe::OpenAi | VerifyProbe::OpenRouter => rb.bearer_auth(api_key),
+        VerifyProbe::OpenRouter => rb.bearer_auth(api_key),
     };
     match rb.send().await {
         Ok(resp) => {

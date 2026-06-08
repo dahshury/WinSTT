@@ -10,12 +10,20 @@ export interface OpenRouterModelSelectorProps {
 	disabled?: boolean;
 	/** Specific model IDs to hide from the list (e.g., the primary model when this selector is for a fallback). */
 	disabledModelIds?: readonly string[];
+	/** Storage key for persisted search/filter/sort UI state. Defaults to the shared LLM OpenRouter picker key. */
+	uiStorageKey?: string | undefined;
 	/**
 	 * Exclusion configuration for fallback selectors. When a primary model has been chosen,
 	 * the fallback selector should refuse to pick the same one. Compute via
 	 * `computeModelExclusionConfig(primaryValue)` from the same lib.
 	 */
-	exclusionConfig?: ModelExclusionConfig;
+	exclusionConfig?: ModelExclusionConfig | undefined;
+	/** Storage key for favorited model cards. Defaults to the shared LLM OpenRouter picker key. */
+	favoriteModelsStorageKey?: string | undefined;
+	/** Storage key for favorited author/provider rail entries. Defaults to the shared LLM OpenRouter picker key. */
+	favoriteProvidersStorageKey?: string | undefined;
+	/** Render the list as an always-open inline panel (no trigger/popup). */
+	inline?: boolean | undefined;
 	isLoading?: boolean;
 	label?: string;
 	/** Optional max-output-tokens override. Renders only when a handler is supplied. */
@@ -24,6 +32,8 @@ export interface OpenRouterModelSelectorProps {
 	onChange: (value: string) => void;
 	/** Called when the user edits the max-output-tokens field; presence enables the field. */
 	onMaxOutputTokensChange?: (value: number | null) => void;
+	/** Opens a detached picker window from the trigger rect instead of the inline popup. */
+	onOpenDetached?: ((rect: DOMRect) => void) | undefined;
 	/**
 	 * Called when the dropdown opens. Use this to refresh the model catalog
 	 * lazily so the user does not need to click a separate refresh button.
@@ -34,6 +44,8 @@ export interface OpenRouterModelSelectorProps {
 	/** Called when the user picks a different verbosity; presence enables the field. */
 	onVerbosityChange?: (value: Verbosity) => void;
 	placeholder?: string;
+	popupHeightClass?: string | undefined;
+	popupWidthClass?: string | undefined;
 	/** Current reasoning effort. Defaults to "medium" when undefined. */
 	reasoningEffort?: ReasoningEffort;
 	value: string;

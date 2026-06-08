@@ -286,6 +286,11 @@ fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pic
         "width": panel.width,
         "height": panel.height,
         "origin": panel.origin,
+        "mode": {
+            "kind": state.mode.kind,
+            "feature": state.mode.feature,
+            "target": state.mode.target,
+        },
     });
 
     let _ = window.show();
@@ -334,7 +339,7 @@ fn place_device_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pi
 }
 
 pub(super) fn place_picker(app: &AppHandle, label: &'static str, window: &tauri::WebviewWindow) {
-    let state = with_picker_state(label, |s| *s);
+    let state = with_picker_state(label, |s| s.clone());
     if label == "model-picker" {
         place_model_picker(app, window, state);
     } else {

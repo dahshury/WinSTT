@@ -1,17 +1,17 @@
-// ── Cloud STT catalog (openai / elevenlabs) ─────────────────────────────────────────────────────
+// ── Cloud STT catalog (elevenlabs; openrouter is dynamic) ───────────────────────────────────────
 //
 // IMPORTANT: cloud STT models are DELIBERATELY NOT folded into `catalog_rows()` /
 // `models_with_state()`. The reused React renderer routes its picker between the LOCAL grid
 // (`list_models` → `catalog_rows`, schema `rawModelInfoSchema`) and the CLOUD picker
 // (`features/select-cloud-stt-model`, which reads its own hardcoded `CLOUD_CATALOG` — never the
-// backend) purely off the `openai:` / `elevenlabs:` prefix (`providerOf`). Cloud rows have none of
-// the local-engine editorial fields the local grid requires (per-quant byte sizes, WER/RTFx,
+// backend) purely off the `elevenlabs:` / `openrouter:` prefix (`providerOf`). Cloud rows have none
+// of the local-engine editorial fields the local grid requires (per-quant byte sizes, WER/RTFx,
 // quant set), so injecting them into `catalog_rows()` would surface malformed local cards.
 //
-// This block is the BACKEND-SIDE MIRROR of the renderer's `CLOUD_CATALOG` (byte-identical ids /
-// defaults), exposed as a specta-typed payload so a future "enumerate cloud STT models" command
-// (or settings-validation) has a single source of truth. The authoritative pure table lives in
-// `winstt::cloud_stt` (`OPENAI_CLOUD_MODELS` / `ELEVENLABS_CLOUD_MODELS`); this only reshapes it.
+// This block is the BACKEND-SIDE MIRROR of the renderer's curated `CLOUD_CATALOG` (byte-identical
+// ids / defaults), exposed as a specta-typed payload. The authoritative pure table lives in
+// `winstt::cloud_stt` (`ELEVENLABS_CLOUD_MODELS`); this only reshapes it. OpenRouter has no curated
+// catalog (its transcription models are fetched live), so it contributes no rows here.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -31,7 +31,8 @@ pub struct CloudCatalogModel {
     pub is_default: bool,
 }
 
-/// The cloud STT catalog for one provider id (`"openai"` / `"elevenlabs"`); empty for unknown.
+/// The cloud STT catalog for one provider id (`"elevenlabs"`); empty for unknown / dynamic
+/// (`openrouter`).
 pub fn cloud_catalog_rows(provider_id: &str) -> Vec<CloudCatalogModel> {
     use crate::winstt::cloud_stt::{cloud_models_for, CloudSttProvider};
 
@@ -54,7 +55,5 @@ pub fn cloud_catalog_rows(provider_id: &str) -> Vec<CloudCatalogModel> {
 /// The full cloud STT catalog across every provider, flattened. Drives any backend
 /// enumerate-cloud-models surface.
 pub fn all_cloud_catalog_rows() -> Vec<CloudCatalogModel> {
-    let mut rows = cloud_catalog_rows("openai");
-    rows.extend(cloud_catalog_rows("elevenlabs"));
-    rows
+    cloud_catalog_rows("elevenlabs")
 }

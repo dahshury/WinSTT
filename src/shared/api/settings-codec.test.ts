@@ -23,7 +23,7 @@ describe("decodeSettingsPayload", () => {
 		expect(settings.general.recordingMode).toBe("ptt");
 	});
 
-	// Regression: a main-process bug serialized `integrations.openai = ""`
+	// Regression: a main-process bug serialized `integrations.elevenlabs = ""`
 	// (string) into the broadcast payload. The old "fail → return parse({})"
 	// path silently reset `model.model` to the schema default ("tiny"), and
 	// every receiving window then echoed tiny back, producing the
@@ -38,7 +38,6 @@ describe("decodeSettingsPayload", () => {
 			integrations: {
 				// The exact shape the secrets-walker bug produced — string
 				// where the schema expects an object.
-				openai: "",
 				elevenlabs: "",
 			},
 		});
@@ -46,8 +45,8 @@ describe("decodeSettingsPayload", () => {
 		expect(settings.model.model).toBe("nemo-canary-180m-flash");
 		expect(settings.model.backend).toBe("onnx_asr");
 		// Corrupted section falls back to its OWN defaults, not the global:
-		expect(typeof settings.integrations.openai).toBe("object");
-		expect(settings.integrations.openai.apiKey).toBe("");
+		expect(typeof settings.integrations.elevenlabs).toBe("object");
+		expect(settings.integrations.elevenlabs.apiKey).toBe("");
 	});
 
 	test("section fallback still migrates legacy model unload timeout to global", () => {
@@ -56,7 +55,7 @@ describe("decodeSettingsPayload", () => {
 				modelUnloadTimeout: "hour1",
 			},
 			integrations: {
-				openai: "",
+				elevenlabs: "",
 			},
 		});
 		expect(settings.global.modelUnloadTimeout).toBe("hour1");

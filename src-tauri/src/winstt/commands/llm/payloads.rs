@@ -143,6 +143,8 @@ pub struct OpenRouterModelPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supported_parameters: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub supported_voices: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoints: Option<Vec<OpenRouterEndpointPayload>>,
 }
 
@@ -201,6 +203,7 @@ impl From<OpenRouterModelInfo> for OpenRouterModelPayload {
             variant: m.variant,
             architecture: m.architecture,
             supported_parameters: m.supported_parameters,
+            supported_voices: m.supported_voices,
             endpoints: m
                 .endpoints
                 .map(|eps| eps.into_iter().map(Into::into).collect()),
@@ -213,6 +216,59 @@ impl From<OpenRouterModelInfo> for OpenRouterModelPayload {
 #[serde(rename_all = "camelCase")]
 pub struct OpenRouterScanResultPayload {
     pub models: Vec<OpenRouterModelPayload>,
+    pub reachable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// `OpenRouterSttModel` - transcription-model row for the cloud STT picker.
+/// Built from the shared `OpenRouterModelInfo` rows plus STT card metadata.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
+pub struct OpenRouterSttModelPayload {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoints: Option<Vec<OpenRouterEndpointPayload>>,
+    pub accuracy_score: f32,
+    pub speed_score: f32,
+}
+
+/// `OpenRouterSttScanResult` - `{ models, reachable, error? }`. Mirrors
+/// `OpenRouterScanResult` but with transcription-specific rows.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenRouterSttScanResultPayload {
+    pub models: Vec<OpenRouterSttModelPayload>,
+    pub reachable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// `OpenRouterTtsModel` — speech (TTS) model row for the cloud TTS picker.
+/// OpenRouter publishes per-model `supported_voices` in the model catalog; the
+/// renderer must pick from this list rather than accepting arbitrary text.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
+pub struct OpenRouterTtsModelPayload {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<serde_json::Value>,
+    pub supported_voices: Vec<String>,
+    pub quality_score: f32,
+    pub speed_score: f32,
+}
+
+/// `OpenRouterTtsScanResult` — `{ models, reachable, error? }`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenRouterTtsScanResultPayload {
+    pub models: Vec<OpenRouterTtsModelPayload>,
     pub reachable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,

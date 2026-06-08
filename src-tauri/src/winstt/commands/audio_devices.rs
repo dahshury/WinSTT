@@ -267,7 +267,9 @@ fn cached_output_devices() -> Option<Vec<AudioOutputDevicePayload>> {
 }
 
 fn replace_output_device_cache(devices: Vec<AudioOutputDevicePayload>) -> bool {
-    let mut cache = OUTPUT_DEVICE_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+    let mut cache = OUTPUT_DEVICE_CACHE
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let changed = cache.as_ref() != Some(&devices);
     *cache = Some(devices);
     changed
@@ -667,7 +669,9 @@ mod tests {
     #[test]
     fn replace_output_device_cache_reports_only_real_list_changes() {
         {
-            let mut cache = OUTPUT_DEVICE_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+            let mut cache = OUTPUT_DEVICE_CACHE
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             *cache = None;
         }
 

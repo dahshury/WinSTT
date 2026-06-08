@@ -163,6 +163,7 @@ export function useLlmSettingsPanel() {
 		isScanning: openrouterScanning,
 		error: openrouterError,
 		scanModels: scanOpenRouter,
+		warmModels: warmOpenRouter,
 	} = useOpenRouterCatalogStore(
 		useShallow((s) => ({
 			models: s.models,
@@ -170,6 +171,7 @@ export function useLlmSettingsPanel() {
 			isScanning: s.isScanning,
 			error: s.error,
 			scanModels: s.scanModels,
+			warmModels: s.warmModels,
 		})),
 	);
 
@@ -220,9 +222,9 @@ export function useLlmSettingsPanel() {
 			shouldScanOpenRouter("openrouter", openrouterApiKey, openrouterLoaded) &&
 			usesOpenRouter
 		) {
-			scanOpenRouter();
+			warmOpenRouter();
 		}
-	}, [usesOpenRouter, openrouterApiKey, openrouterLoaded, scanOpenRouter]);
+	}, [usesOpenRouter, openrouterApiKey, openrouterLoaded, warmOpenRouter]);
 
 	// After a scan, ensure each feature's Ollama model still exists. When the
 	// user deletes the last installed model, disable the enabled Ollama feature
@@ -394,7 +396,7 @@ export function useLlmSettingsPanel() {
 		isLoaded: openrouterLoaded,
 		isScanning: openrouterScanning,
 		models: openrouterModels,
-		scanModels: scanOpenRouter,
+		scanModels: warmOpenRouter,
 	};
 
 	return {

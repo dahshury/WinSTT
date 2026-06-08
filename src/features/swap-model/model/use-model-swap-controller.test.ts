@@ -314,8 +314,8 @@ describe("resolveCurrentMainModel / resolveCurrentRealtimeModel", () => {
 });
 
 describe("isCloudModel", () => {
-	test("true for openai:... ids", () => {
-		expect(t.isCloudModel("openai:whisper-1")).toBe(true);
+	test("true for openrouter:... ids", () => {
+		expect(t.isCloudModel("openrouter:openai/whisper-1")).toBe(true);
 	});
 
 	test("false for plain local ids", () => {
@@ -357,7 +357,7 @@ describe("dispatchChange / dispatchGate", () => {
 			kind: "main",
 			quantization: undefined,
 			update: mock(() => undefined) as never,
-			value: "openai:whisper-1",
+			value: "openrouter:openai/whisper-1",
 		});
 		expect(issueSwap).toHaveBeenCalled();
 		expect(gate).not.toHaveBeenCalled();
@@ -413,13 +413,13 @@ describe("runIssueSwap — cloud persistence (regression: cloud combo showed no 
 	test("persists a cloud model despite the empty catalog lookup", () => {
 		const update = mock(() => undefined);
 		t.runIssueSwap({
-			...cloudArgs("openai:gpt-4o-mini-transcribe"),
+			...cloudArgs("openrouter:openai/gpt-4o-mini-transcribe"),
 			update: update as never,
 		});
 		// Without the fix `applyMainSwap` bailed on `!info` and never called
 		// update, leaving model.model unchanged → the cloud combo stayed empty.
 		expect(update).toHaveBeenCalledWith({
-			model: "openai:gpt-4o-mini-transcribe",
+			model: "openrouter:openai/gpt-4o-mini-transcribe",
 			backend: "onnx_asr",
 		});
 	});
@@ -491,7 +491,7 @@ describe("runHandleMainChange / runHandleRealtimeChange", () => {
 			kind: "main",
 			quantization: undefined,
 			update: mock(() => undefined) as never,
-			value: "openai:whisper-1",
+			value: "openrouter:openai/whisper-1",
 		});
 		expect(issueSwap).toHaveBeenCalled();
 	});

@@ -2,7 +2,7 @@ import { useCredentialStatusStore } from "@/entities/cloud-stt-credential";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcInvoke } from "@/shared/api/ipc-client";
-import type { CloudSttErrorCode, CloudSttProvider } from "@/shared/api/models";
+import type { CloudSttErrorCode, IntegrationCloudProvider } from "@/shared/api/models";
 
 interface VerifyResponse {
 	code?: CloudSttErrorCode;
@@ -26,7 +26,7 @@ export function errorMessage(err: unknown): string {
  * failures (CC 2 — one `try/catch`).
  */
 export async function invokeVerify(
-	provider: CloudSttProvider,
+	provider: IntegrationCloudProvider,
 	apiKey: string,
 ): Promise<VerifyResponse> {
 	try {
@@ -42,7 +42,7 @@ export async function invokeVerify(
 
 /** Persist the verified/invalid flag and update settings for a provider. */
 function persistVerifiedSetting(
-	provider: CloudSttProvider,
+	provider: IntegrationCloudProvider,
 	verified: boolean,
 ): void {
 	useSettingsStore.getState().updateIntegrations({
@@ -51,7 +51,7 @@ function persistVerifiedSetting(
 }
 
 /** Apply the per-status side effects when verify succeeds (CC 1). */
-function commitVerifiedResult(provider: CloudSttProvider): void {
+function commitVerifiedResult(provider: IntegrationCloudProvider): void {
 	useCredentialStatusStore
 		.getState()
 		.setStatus(provider, { status: "verified" });
@@ -60,7 +60,7 @@ function commitVerifiedResult(provider: CloudSttProvider): void {
 
 /** Apply the per-status side effects for an offline (network) result (CC 1). */
 function commitOfflineResult(
-	provider: CloudSttProvider,
+	provider: IntegrationCloudProvider,
 	message: string | undefined,
 ): void {
 	useCredentialStatusStore
@@ -70,7 +70,7 @@ function commitOfflineResult(
 
 /** Apply the per-status side effects when the key is invalid (CC 1). */
 function commitInvalidResult(
-	provider: CloudSttProvider,
+	provider: IntegrationCloudProvider,
 	message: string | undefined,
 ): void {
 	useCredentialStatusStore
@@ -85,7 +85,7 @@ function commitInvalidResult(
  * isolation (CC 3 — three branches: ok / network / invalid).
  */
 export function applyVerifyResponse(
-	provider: CloudSttProvider,
+	provider: IntegrationCloudProvider,
 	response: VerifyResponse,
 ): VerifyResponse {
 	if (response.ok) {
@@ -111,7 +111,7 @@ export function applyVerifyResponse(
  * "your key is wrong" from "we couldn't reach the provider right now".
  */
 export async function verifyCredential(
-	provider: CloudSttProvider,
+	provider: IntegrationCloudProvider,
 	apiKey: string,
 ): Promise<VerifyResponse> {
 	const credStore = useCredentialStatusStore.getState();

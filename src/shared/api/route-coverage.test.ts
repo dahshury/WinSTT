@@ -63,6 +63,25 @@ function extractRouteKeys(adapterSource: string): Set<string> {
 	);
 }
 
+/**
+ * IPC keys that the TYPED transport routes: every `[IPC.KEY]:` in the
+ * `COMMAND_INVOKERS` map (ipc-transport.ts). A channel covered here is routed
+ * end-to-end through a generated `commands.*` binding and does NOT need a
+ * redundant `command` entry in the adapter ROUTE table — the invoker wins.
+ */
+function extractInvokerKeys(transportSource: string): Set<string> {
+	const start = transportSource.indexOf("const COMMAND_INVOKERS");
+	if (start === -1) {
+		throw new Error("Could not isolate COMMAND_INVOKERS map");
+	}
+	const end = transportSource.indexOf("const CRITICAL_SEND_CHANNELS", start);
+	const slice =
+		end > start
+			? transportSource.slice(start, end)
+			: transportSource.slice(start);
+	return collectCaptures(slice, /\[IPC\.([A-Z0-9_]+)\]\s*:/g);
+}
+
 /** IPC keys that declare an active bridge direction in IPC_DIRECTIONS. */
 function extractRequiredIpcKeys(ipcSource: string): string[] {
 	const out = new Set<string>();
@@ -84,11 +103,16 @@ function extractBindingsCmds(bindingsSource: string): Set<string> {
 }
 
 const adapterSource = read("native-bridge-adapter.ts");
+const transportSource = read("ipc-transport.ts");
 const ipcSource = read("ipc-channels.ts");
 const bindingsSource = read("../../bindings.ts");
 
 const routeCmds = extractRouteCmds(adapterSource);
 const routeKeys = extractRouteKeys(adapterSource);
+const invokerKeys = extractInvokerKeys(transportSource);
+// A channel is "routed" if EITHER the adapter ROUTE or the typed transport
+// (COMMAND_INVOKERS) handles it — both are valid renderer→main transports.
+const routedKeys = new Set<string>([...routeKeys, ...invokerKeys]);
 const requiredIpcKeys = extractRequiredIpcKeys(ipcSource);
 const bindingsCmds = extractBindingsCmds(bindingsSource);
 
@@ -106,11 +130,12 @@ describe("IPC route coverage (adapter ROUTE ↔ generated bindings)", () => {
 		expect(missing).toEqual([]);
 	});
 
-	test("every IPC channel with a bridge direction has an adapter route", () => {
-		const missing = requiredIpcKeys.filter((key) => !routeKeys.has(key));
-		// A missing event route means listeners never fire. A missing invoke/send
-		// route can still be hidden by a typed-command wrapper today, but the
-		// adapter should remain complete as the fallback transport.
+	test("every IPC channel with a bridge direction has a route (adapter OR typed)", () => {
+		const missing = requiredIpcKeys.filter((key) => !routedKeys.has(key));
+		// A missing event route means listeners never fire. A renderer→main
+		// command channel is "routed" by either an adapter ROUTE entry or a typed
+		// COMMAND_INVOKERS entry — the migration moves channels from the former to
+		// the latter, so both count.
 		expect(missing).toEqual([]);
 	});
 

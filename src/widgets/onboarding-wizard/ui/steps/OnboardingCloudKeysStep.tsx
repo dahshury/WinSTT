@@ -9,7 +9,7 @@ import { useCredentialStatus } from "@/entities/cloud-stt-credential";
 import { useSettingsStore } from "@/entities/setting";
 import { CloudModelSelect } from "@/features/select-cloud-stt-model";
 import { verifyCredential } from "@/features/verify-credentials";
-import type { CloudSttProvider } from "@/shared/api/models";
+import type { IntegrationCloudProvider } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
@@ -20,20 +20,15 @@ import { useOnboardingWizardStore } from "../../model/wizard-store";
 
 interface ProviderMeta {
 	caption: string;
-	id: CloudSttProvider;
+	// Onboarding collects only the integrations-backed STT keys (OpenAI /
+	// ElevenLabs); OpenRouter is configured later via its shared LLM key.
+	id: IntegrationCloudProvider;
 	keyPlaceholder: string;
 	keyUrl: string;
 	label: string;
 }
 
 const PROVIDERS: readonly ProviderMeta[] = [
-	{
-		id: "openai",
-		label: "OpenAI",
-		caption: "Whisper API — broad language support.",
-		keyUrl: "https://platform.openai.com/api-keys",
-		keyPlaceholder: "sk-…",
-	},
 	{
 		id: "elevenlabs",
 		label: "ElevenLabs",
@@ -43,7 +38,7 @@ const PROVIDERS: readonly ProviderMeta[] = [
 	},
 ];
 
-const PROVIDER_OPTIONS: readonly SwitcherOption<CloudSttProvider>[] =
+const PROVIDER_OPTIONS: readonly SwitcherOption<IntegrationCloudProvider>[] =
 	PROVIDERS.map((p) => ({
 		value: p.id,
 		label: p.label,
@@ -67,12 +62,14 @@ const MotionBaseButton = m.create(BaseButton);
  */
 export function OnboardingCloudKeysStep() {
 	const t = useTranslations("onboarding");
-	const [provider, setProvider] = useState<CloudSttProvider>("openai");
+	const [provider, setProvider] = useState<IntegrationCloudProvider>("elevenlabs");
 	const apiKey = useSettingsStore(
 		(s) => s.settings.integrations[provider].apiKey,
 	);
 	const activeModel = useSettingsStore((s) => s.settings.model.model);
 	const integrations = useSettingsStore((s) => s.settings.integrations);
+	// OpenRouter STT reuses the single LLM key (no integrations entry).
+	const openrouterKey = useSettingsStore((s) => s.settings.llm.openrouterApiKey);
 	const updateIntegrations = useSettingsStore((s) => s.updateIntegrations);
 	const updateModelSettings = useSettingsStore((s) => s.updateModelSettings);
 	const status = useCredentialStatus(provider);
@@ -83,8 +80,10 @@ export function OnboardingCloudKeysStep() {
 	const verifyDisabled = !hasKey || status.status === "verifying";
 	const activeProvider = providerOf(activeModel);
 	const activeProviderHasKey =
-		activeProvider !== null &&
-		integrations[activeProvider].apiKey.trim().length > 0;
+		activeProvider === "openrouter"
+			? openrouterKey.trim().length > 0
+			: activeProvider !== null &&
+				integrations[activeProvider].apiKey.trim().length > 0;
 
 	useEffect(() => {
 		setCloudSttReady(activeProviderHasKey);
@@ -110,7 +109,7 @@ export function OnboardingCloudKeysStep() {
 				layout="stacked"
 			>
 				<ElevatedSurface>
-					<Switcher<CloudSttProvider>
+					<Switcher<IntegrationCloudProvider>
 						fullWidth
 						onChange={setProvider}
 						options={PROVIDER_OPTIONS}

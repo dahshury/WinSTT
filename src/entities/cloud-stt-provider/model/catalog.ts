@@ -24,29 +24,13 @@ export interface CloudModel {
  * a curated id the SDK has dropped is still shown (union, never drops).
  */
 const CURATED_CLOUD_MODELS: Record<CloudSttProvider, readonly CloudModel[]> = {
-	openai: [
-		{
-			id: "gpt-4o-mini-transcribe",
-			displayName: "GPT-4o mini transcribe",
-			description: "Fast and cheap general-purpose transcription.",
-			isDefault: true,
-		},
-		{
-			id: "gpt-4o-transcribe",
-			displayName: "GPT-4o transcribe",
-			description: "Higher-accuracy GPT-4o transcription.",
-		},
-		// NOTE: gpt-4o-transcribe-diarize and the dated gpt-4o-*-transcribe
-		// snapshots are intentionally absent — the AI SDK transcribes them with
-		// response_format=verbose_json, which they reject (only whisper-1 + the
-		// two base gpt-4o aliases work). The generator filters them out of the
-		// dynamic list; keeping them here would re-add them via the merge union.
-		{
-			id: "whisper-1",
-			displayName: "Whisper v1",
-			description: "Legacy Whisper hosted model.",
-		},
-	],
+	// OpenRouter transcription models are fetched live (filtered by
+	// output_modalities=transcription) by `useOpenRouterSttCatalogStore`, so there
+	// is no curated/generated static list — the picker reads its rows from the scan
+	// store, not `CLOUD_CATALOG.openrouter`.
+	// OpenAI was removed as a direct cloud STT provider — its models (whisper-1 /
+	// gpt-4o-transcribe) are served via `openrouter:openai/*`.
+	openrouter: [],
 	elevenlabs: [
 		{
 			id: "scribe_v1",
@@ -70,28 +54,29 @@ const CURATED_CLOUD_MODELS: Record<CloudSttProvider, readonly CloudModel[]> = {
  * refreshes the list with no edits here.
  */
 export const CLOUD_CATALOG: Record<CloudSttProvider, readonly CloudModel[]> = {
-	openai: mergeCloudModels(
-		CURATED_CLOUD_MODELS.openai,
-		GENERATED_CLOUD_MODEL_IDS.openai.map((id) => ({ id })),
-	),
 	elevenlabs: mergeCloudModels(
 		CURATED_CLOUD_MODELS.elevenlabs,
 		GENERATED_CLOUD_MODEL_IDS.elevenlabs.map((id) => ({ id })),
 	),
+	// Dynamic: populated at runtime from the OpenRouter STT scan store.
+	openrouter: [],
 };
 
 export const CLOUD_PROVIDERS: readonly CloudSttProvider[] = [
-	"openai",
 	"elevenlabs",
+	"openrouter",
 ];
 
 export function providerOf(modelId: string): CloudSttProvider | null {
-	if (modelId.startsWith("openai:")) {
-		return "openai";
-	}
 	if (modelId.startsWith("elevenlabs:")) {
 		return "elevenlabs";
 	}
+	if (modelId.startsWith("openrouter:")) {
+		return "openrouter";
+	}
+	// Note: a legacy `openai:` id is intentionally NOT a provider anymore — the
+	// settings migration rewrites it to `openrouter:openai/*`; any that slip
+	// through resolve to null (treated as a stale/local id → fallback).
 	return null;
 }
 
@@ -111,6 +96,12 @@ export function pickDefaultCloudModel(
 }
 
 export function defaultCloudModelId(provider: CloudSttProvider): string {
+	// OpenRouter has no static catalog — return the bare provider prefix so the
+	// picker recognises the provider and self-heals to the first live-scanned
+	// transcription model once `useOpenRouterSttCatalogStore` resolves.
+	if (provider === "openrouter") {
+		return "openrouter:";
+	}
 	const def = pickDefaultCloudModel(CLOUD_CATALOG[provider]);
 	if (def === null) {
 		throw new Error(`No models defined for cloud provider ${provider}`);
@@ -119,13 +110,21 @@ export function defaultCloudModelId(provider: CloudSttProvider): string {
 }
 
 export function getApiKeyUrl(provider: CloudSttProvider): string {
-	return provider === "openai"
-		? "https://platform.openai.com/api-keys"
-		: "https://elevenlabs.io/app/settings/api-keys";
+	switch (provider) {
+		case "elevenlabs":
+			return "https://elevenlabs.io/app/settings/api-keys";
+		case "openrouter":
+			return "https://openrouter.ai/keys";
+	}
 }
 
 export function providerDisplayName(provider: CloudSttProvider): string {
-	return provider === "openai" ? "OpenAI" : "ElevenLabs";
+	switch (provider) {
+		case "elevenlabs":
+			return "ElevenLabs";
+		case "openrouter":
+			return "OpenRouter";
+	}
 }
 
 /**

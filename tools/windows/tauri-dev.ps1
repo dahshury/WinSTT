@@ -75,4 +75,62 @@ if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Scope Global -Er
     $global:PSNativeCommandUseErrorActionPreference = $false
 }
 
-bun run tauri dev
+function Test-ExternalTerminationNoiseLine {
+    param([string]$Line)
+
+    return (
+        $Line.Contains('[tao::platform_impl::platform::event_loop::runner][WARN] NewEvents emitted without explicit RedrawEventsCleared') -or
+        $Line.Contains('[tao::platform_impl::platform::event_loop::runner][WARN] RedrawRequested dispatched without explicit MainEventsCleared') -or
+        (
+            $Line.Contains("process didn't exit successfully:") -and
+            $Line.Contains('target\debug\winstt.exe') -and
+            $Line.Contains('(exit code: 1)')
+        ) -or
+        $Line.Contains('script "tauri" exited with code 1')
+    )
+}
+
+$tauriDevOutput = New-Object System.Collections.Generic.List[string]
+$tauriDevTail = New-Object System.Collections.Generic.Queue[string]
+$tauriDevTailLimit = 8
+& bun run tauri dev 2>&1 | ForEach-Object {
+    $line = $_.ToString()
+    $tauriDevOutput.Add($line)
+    $tauriDevTail.Enqueue($line)
+    while ($tauriDevTail.Count -gt $tauriDevTailLimit) {
+        Write-Host $tauriDevTail.Dequeue()
+    }
+}
+$tauriDevExitCode = $LASTEXITCODE
+
+if ($tauriDevExitCode -eq 0) {
+    foreach ($line in $tauriDevTail) {
+        Write-Host $line
+    }
+    exit 0
+}
+
+$tauriDevText = $tauriDevOutput -join "`n"
+# Task Manager's forced termination gives the child process exit code 1 without
+# delivering any shutdown event to Rust. Keep this match narrow so build errors
+# and other dev-tool failures still fail the launcher.
+$wasExternallyTerminated =
+    $tauriDevText.Contains("process didn't exit successfully:") -and
+    $tauriDevText.Contains('target\debug\winstt.exe') -and
+    $tauriDevText.Contains('(exit code: 1)') -and
+    $tauriDevText.Contains('script "tauri" exited with code 1')
+
+if ($wasExternallyTerminated) {
+    foreach ($line in $tauriDevTail) {
+        if (-not (Test-ExternalTerminationNoiseLine $line)) {
+            Write-Host $line
+        }
+    }
+    Write-Host "WinSTT dev app was terminated externally; treating the dev session stop as clean."
+    exit 0
+}
+
+foreach ($line in $tauriDevTail) {
+    Write-Host $line
+}
+exit $tauriDevExitCode

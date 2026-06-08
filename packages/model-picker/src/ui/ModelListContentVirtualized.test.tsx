@@ -8,6 +8,7 @@ import { useOpenedFlag } from "../core/Collapsible";
 import * as components from "../lib/model-list-content-virtualized-components";
 import * as utils from "../lib/model-list-content-virtualized-utils";
 import type { VirtualizedItem } from "../lib/model-list-content-virtualized-utils";
+import { InlineModelMeta } from "../lib/model-list-meta-chips";
 import { ModelListContentVirtualized } from "./ModelListContentVirtualized";
 
 const helpers = {
@@ -214,15 +215,18 @@ describe("computeVariantClasses", () => {
 
 describe("computeHeaderPricing", () => {
 	test("null when hasProviders is true", () => {
-		expect(helpers.computeHeaderPricing([makeEndpoint()], true)).toBeNull();
+		expect(
+			helpers.computeHeaderPricing(makeModel({}), [makeEndpoint()], true),
+		).toBeNull();
 	});
 
 	test("null when no endpoints", () => {
-		expect(helpers.computeHeaderPricing([], false)).toBeNull();
+		expect(helpers.computeHeaderPricing(makeModel({}), [], false)).toBeNull();
 	});
 
 	test("returns pricing tier from first endpoint", () => {
 		const result = helpers.computeHeaderPricing(
+			makeModel({}),
 			[makeEndpoint({ pricing: { prompt: "0", completion: "0" } as never })],
 			false,
 		);
@@ -277,6 +281,46 @@ describe("computeModelHeaderState", () => {
 		expect(state.isProviderSelected).toBe(true);
 		expect(state.selectedProvider?.provider_name).toBe("Together");
 		expect(state.pricingInfo).toBeNull();
+	});
+
+	test("uses model-level pricing when endpoint enrichment is absent", () => {
+		const m = makeModel({
+			pricing: { prompt: "0", completion: "0" } as never,
+		});
+		const state = helpers.computeModelHeaderState(m, m.id, undefined, false);
+		expect(state.pricingInfo?.tier).toBe("free");
+	});
+});
+
+describe("InlineModelMeta", () => {
+	test("renders OpenRouter transcription pricing without collapsed provider counts", () => {
+		const m = makeModel({
+			architecture: {
+				input_modalities: ["audio"],
+				output_modalities: ["transcription"],
+			},
+			context_length: undefined,
+			endpoints: [
+				makeEndpoint({ provider_name: "A", tag: "a" }),
+				makeEndpoint({ provider_name: "B", tag: "b" }),
+			],
+			pricing: { prompt: "0.0000015", completion: "0" } as never,
+		});
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<InlineModelMeta
+					hasEndpoints
+					hasProviders
+					model={m}
+					pricingInfo={null}
+					uniqueEndpoints={m.endpoints ?? []}
+				/>
+			</TooltipProvider.Provider>,
+		);
+		const text = container.textContent ?? "";
+		expect(text).toContain("$1.50 per 1M input tokens");
+		expect(text).toContain("Transcription");
+		expect(text).not.toContain("2 providers");
 	});
 });
 

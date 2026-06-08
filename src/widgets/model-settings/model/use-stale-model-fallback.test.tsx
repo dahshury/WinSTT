@@ -124,9 +124,9 @@ describe("useStaleModelFallback", () => {
 			catalogLoaded: true,
 			catalogModels: CATALOG,
 			statesById: STATES,
-			// providerOf returns "openai" → main effect bails before the
+			// providerOf returns "openrouter" → main effect bails before the
 			// needsModelFallback check.
-			currentMainModel: "openai:gpt-4o-transcribe",
+			currentMainModel: "openrouter:openai/gpt-4o-transcribe",
 			// Keep realtime valid so the second effect doesn't fire either.
 			currentRealtimeModel: "tiny",
 			update,

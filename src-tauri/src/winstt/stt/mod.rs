@@ -305,9 +305,7 @@ pub fn build_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>> {
         // Whisper family (whisper / lite-whisper / distil / crisper) — PROVEN via the STT spike.
         EngineKind::WhisperHf => Ok(Box::new(whisper::WhisperEngine::load(&cfg)?)),
         // Own engine files not yet ported.
-        EngineKind::WhisperOrt => Err(SttError::Unsupported(
-            "WhisperOrt engine not yet ported",
-        )),
+        EngineKind::WhisperOrt => Err(SttError::Unsupported("WhisperOrt engine not yet ported")),
         EngineKind::Moonshine => Ok(Box::new(moonshine::MoonshineEngine::load(&cfg)?)),
         // All other families dispatch through `families::build_family_engine` (SenseVoice /
         // Dolphin / NeMo {Ctc,Rnnt,Tdt,Aed} / Kaldi / GigaAM / Cohere). Their numerics are

@@ -87,9 +87,13 @@ export function computeVariantClasses(
 }
 
 export function computeHeaderPricing(
+	model: OpenRouterModel,
 	uniqueEndpoints: OpenRouterEndpoint[],
 	hasProviders: boolean,
 ): ReturnType<typeof getPricingTier> | null {
+	if (model.pricing) {
+		return getPricingTier(model.pricing);
+	}
 	if (hasProviders) {
 		return null;
 	}
@@ -131,7 +135,7 @@ export function computeModelHeaderState(
 		isProviderSelected: flags.isProviderSelected,
 		selectedProvider,
 		variantClasses: computeVariantClasses(model),
-		pricingInfo: computeHeaderPricing(uniqueEndpoints, hasProviders),
+		pricingInfo: computeHeaderPricing(model, uniqueEndpoints, hasProviders),
 	};
 }
 

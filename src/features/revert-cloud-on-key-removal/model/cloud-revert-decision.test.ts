@@ -14,7 +14,7 @@ import {
 } from "./cloud-revert-decision";
 
 function keys(over: Partial<KeySnapshot> = {}): KeySnapshot {
-	return { openai: "", elevenlabs: "", openrouter: "", ...over };
+	return { elevenlabs: "", openrouter: "", ...over };
 }
 
 function surfaces(over: Partial<SurfaceSnapshot> = {}): SurfaceSnapshot {
@@ -56,19 +56,19 @@ function model(over: Partial<ModelInfo> & Pick<ModelInfo, "id">): ModelInfo {
 describe("detectClearedKeys", () => {
 	test("no transition → empty set", () => {
 		const cleared = detectClearedKeys(
-			keys({ openai: "sk" }),
-			keys({ openai: "sk" }),
+			keys({ elevenlabs: "el" }),
+			keys({ elevenlabs: "el" }),
 		);
 		expect(cleared.size).toBe(0);
 	});
 
 	test("non-empty → empty flags the provider", () => {
-		const cleared = detectClearedKeys(keys({ openai: "sk" }), keys());
-		expect([...cleared]).toEqual(["openai"]);
+		const cleared = detectClearedKeys(keys({ elevenlabs: "el" }), keys());
+		expect([...cleared]).toEqual(["elevenlabs"]);
 	});
 
 	test("whitespace-only previous key is not a real removal", () => {
-		const cleared = detectClearedKeys(keys({ openai: "   " }), keys());
+		const cleared = detectClearedKeys(keys({ elevenlabs: "   " }), keys());
 		expect(cleared.size).toBe(0);
 	});
 
@@ -81,9 +81,9 @@ describe("detectClearedKeys", () => {
 	});
 
 	test("detects several providers cleared at once", () => {
-		const before = keys({ openai: "a", elevenlabs: "b", openrouter: "c" });
+		const before = keys({ elevenlabs: "b", openrouter: "c" });
 		const cleared = detectClearedKeys(before, keys());
-		expect(cleared.size).toBe(3);
+		expect(cleared.size).toBe(2);
 	});
 });
 
@@ -91,27 +91,30 @@ describe("planReverts", () => {
 	test("no cleared keys → no work", () => {
 		const plan = planReverts(
 			new Set(),
-			surfaces({ model: "openai:whisper-1" }),
+			surfaces({ model: "elevenlabs:scribe_v1" }),
 		);
 		expect(planHasWork(plan)).toBe(false);
 	});
 
-	test("openai cleared while the active model is openai reverts STT", () => {
+	test("openrouter cleared while the active model is openrouter reverts STT", () => {
 		const plan = planReverts(
-			new Set(["openai"]),
-			surfaces({ model: "openai:whisper-1" }),
+			new Set(["openrouter"]),
+			surfaces({ model: "openrouter:openai/whisper-1" }),
 		);
 		expect(plan.stt).toBe(true);
 	});
 
-	test("openai cleared while on a local model does NOT revert STT", () => {
-		const plan = planReverts(new Set(["openai"]), surfaces({ model: "tiny" }));
+	test("openrouter cleared while on a local model does NOT revert STT", () => {
+		const plan = planReverts(
+			new Set(["openrouter"]),
+			surfaces({ model: "tiny" }),
+		);
 		expect(plan.stt).toBe(false);
 	});
 
-	test("openai cleared while on an elevenlabs model does NOT revert STT", () => {
+	test("openrouter cleared while on an elevenlabs model does NOT revert STT", () => {
 		const plan = planReverts(
-			new Set(["openai"]),
+			new Set(["openrouter"]),
 			surfaces({ model: "elevenlabs:scribe_v1" }),
 		);
 		expect(plan.stt).toBe(false);
@@ -151,8 +154,11 @@ describe("affectedProviders", () => {
 	}
 
 	test("STT revert maps to the active model's provider", () => {
-		const set = affectedProviders(plan({ stt: true }), "openai:whisper-1");
-		expect([...set]).toEqual(["openai"]);
+		const set = affectedProviders(
+			plan({ stt: true }),
+			"openrouter:openai/whisper-1",
+		);
+		expect([...set]).toEqual(["openrouter"]);
 	});
 
 	test("LLM reverts map to openrouter", () => {
@@ -188,7 +194,6 @@ describe("resolveLocalSttTarget", () => {
 
 describe("clearableProviderLabel", () => {
 	test("maps each provider to its display name", () => {
-		expect(clearableProviderLabel("openai")).toBe("OpenAI");
 		expect(clearableProviderLabel("elevenlabs")).toBe("ElevenLabs");
 		expect(clearableProviderLabel("openrouter")).toBe("OpenRouter");
 	});

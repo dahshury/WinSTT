@@ -47,6 +47,28 @@ function migrateLegacyGlobalSettings(payload: unknown): unknown {
 	};
 }
 
+// OpenAI was removed as a direct cloud STT provider. A persisted
+// `model.model = "openai:<id>"` selection is rewritten to the equivalent
+// OpenRouter route (`openrouter:openai/<id>`), so an existing OpenAI cloud
+// transcription selection keeps working (via the OpenRouter key) instead of
+// silently reverting to a local model.
+function migrateOpenaiSttModel(payload: unknown): unknown {
+	const root = objectRecord(payload);
+	if (!root) {
+		return payload;
+	}
+	const model = objectRecord(root.model);
+	const id = model?.model;
+	if (typeof id !== "string" || !id.startsWith("openai:")) {
+		return payload;
+	}
+	const bareId = id.slice("openai:".length);
+	return {
+		...root,
+		model: { ...model, model: `openrouter:openai/${bareId}` },
+	};
+}
+
 const appSettingsBaseSchema = z.object({
 	global: globalSettingsSchema.prefault({}),
 	model: modelSettingsSchema.prefault({}),
@@ -68,7 +90,7 @@ const appSettingsBaseSchema = z.object({
 export const appSettingsSectionSchemas = appSettingsBaseSchema.shape;
 
 export const appSettingsSchema = z.preprocess(
-	migrateLegacyGlobalSettings,
+	(payload) => migrateOpenaiSttModel(migrateLegacyGlobalSettings(payload)),
 	appSettingsBaseSchema,
 );
 

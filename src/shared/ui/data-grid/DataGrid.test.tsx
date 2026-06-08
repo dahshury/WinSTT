@@ -131,9 +131,8 @@ describe("DataGrid", () => {
 	test("the search box is a searchbox (not a textbox) and filters rows", () => {
 		render(<Harness data={FRUITS} />);
 		// The grid's search must not register as a `textbox` (Dictionary's add
-		// field relies on being the only textbox) and must not be a toolbar.
+		// field relies on being the only textbox).
 		expect(screen.queryAllByRole("textbox")).toHaveLength(0);
-		expect(screen.queryByRole("toolbar")).toBeNull();
 		const search = screen.getByRole("searchbox", { name: "Search" });
 
 		fireEvent.change(search, { target: { value: "Apple" } });
@@ -157,6 +156,12 @@ describe("DataGrid", () => {
 
 		const previous = screen.getByRole("button", { name: "Previous page" });
 		const next = screen.getByRole("button", { name: "Next page" });
+		expect(
+			screen
+				.getByRole("button", { name: "Page 1" })
+				.getAttribute("aria-current"),
+		).toBe("page");
+		expect(screen.getByRole("button", { name: "Page 2" })).toBeDefined();
 		expect((previous as HTMLButtonElement).disabled).toBe(true);
 		expect((next as HTMLButtonElement).disabled).toBe(false);
 

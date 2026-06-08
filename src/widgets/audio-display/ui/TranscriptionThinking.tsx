@@ -1,4 +1,6 @@
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
+import { providerOf } from "@/entities/cloud-stt-provider";
+import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import { useLlmProcessingStore } from "@/features/llm-processing";
 import {
@@ -7,6 +9,38 @@ import {
 } from "@/shared/ui/thinking-indicator";
 
 const TRANSCRIBING_WORDS = ["Transcribing"] as const;
+const UPLOADING_WORDS = ["Uploading"] as const;
+type TranscriptionThinkingSettings = ReturnType<
+	typeof useSettingsStore.getState
+>["settings"];
+
+function hasConfiguredDictationModel(
+	settings: TranscriptionThinkingSettings,
+): boolean {
+	const dictation = settings.llm.dictation;
+	if (!dictation.enabled || settings.general?.recordingMode === "listen") {
+		return false;
+	}
+	if (dictation.provider === "openrouter") {
+		return settings.llm.openrouterApiKey.trim().length > 0;
+	}
+	return dictation.model.trim().length > 0;
+}
+
+function shouldShowTranscribingStatus(
+	settings: TranscriptionThinkingSettings,
+): boolean {
+	return (
+		providerOf(settings.model?.model ?? "") !== null ||
+		hasConfiguredDictationModel(settings)
+	);
+}
+
+function isCloudSttModelSelected(
+	settings: TranscriptionThinkingSettings,
+): boolean {
+	return providerOf(settings.model?.model ?? "") !== null;
+}
 
 /**
  * Main-window twin of the pill's thinking state.
@@ -27,21 +61,33 @@ export function TranscriptionThinking() {
 	const thinkingText = useLlmProcessingStore((s) => s.thinkingText);
 	const thinkingStartedAt = useLlmProcessingStore((s) => s.thinkingStartedAt);
 	const isTranscribing = useTranscriptionStore((s) => s.isTranscribing);
+	const processingPhase = useTranscriptionStore((s) => s.processingPhase);
 	const transcribingStartedAt = useTranscriptionStore(
 		(s) => s.transcribingStartedAt,
 	);
+	const showTranscribingStatus = useSettingsStore((s) =>
+		shouldShowTranscribingStatus(s.settings),
+	);
+	const isCloudSttModel = useSettingsStore((s) =>
+		isCloudSttModelSelected(s.settings),
+	);
+	const visibleTranscribing = isTranscribing && showTranscribingStatus;
 
-	const isProcessing = isThinking || isTranscribing;
+	const isProcessing = isThinking || visibleTranscribing;
 	const startedAt = getProcessingStartedAt({
 		isThinking,
-		isTranscribing,
+		isTranscribing: visibleTranscribing,
 		thinkingStartedAt,
 		transcribingStartedAt,
 	});
 	const reasoning = isThinking ? thinkingText : "";
+	const transcribingWords =
+		isCloudSttModel && processingPhase === "uploading"
+			? UPLOADING_WORDS
+			: TRANSCRIBING_WORDS;
 	const wordProps = isThinking
 		? { reserveDefaultWords: true }
-		: { reserveDefaultWords: true, words: TRANSCRIBING_WORDS };
+		: { reserveDefaultWords: true, words: transcribingWords };
 
 	return (
 		<LazyMotion features={domAnimation} strict>

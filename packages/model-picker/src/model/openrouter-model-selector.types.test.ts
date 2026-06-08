@@ -23,11 +23,14 @@ describe("OpenRouterModelSelectorProps type", () => {
 				excludeAllProviders: false,
 				excludedProviderSlug: undefined,
 			},
+			favoriteModelsStorageKey: "winstt:test:favorite-models",
+			favoriteProvidersStorageKey: "winstt:test:favorite-providers",
 			isLoading: false,
 			label: "Model",
 			models: [],
 			onChange: () => undefined,
 			placeholder: "Search…",
+			uiStorageKey: "winstt:test:openrouter-ui",
 			value: "",
 		};
 		expect(full.disabledModelIds).toEqual(["openai/gpt-4o"]);

@@ -14,13 +14,20 @@ import {
 	getFamilyConfig,
 	variantDisplayName,
 } from "@picker/stt/lib/family-helpers";
+import { formatModelName } from "@picker/lib/model-selector-utils";
 import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
-import { providerDisplayName, providerOf } from "@/entities/cloud-stt-provider";
+import {
+	providerDisplayName,
+	providerOf,
+	useOpenRouterSttCatalogStore,
+} from "@/entities/cloud-stt-provider";
 import { useCatalogStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcSend } from "@/shared/api/ipc-client";
+import type { OpenRouterSttModel } from "@/shared/api/models";
+import { createProviderIconResolver } from "@/shared/lib/provider-icon-resolver";
 import { surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { FOOTER_TOOLTIP_DELAY } from "./FooterMenuChip";
@@ -54,6 +61,7 @@ function FooterModelGlyph({
 			<span
 				aria-hidden="true"
 				className="size-[11px] shrink-0 bg-foreground-dim"
+				data-logo-src={logoSrc}
 				style={{
 					maskImage: `url("${logoSrc}")`,
 					maskPosition: "center",
@@ -82,6 +90,50 @@ function FooterModelGlyph({
  *  the full picker can be shown without being clipped by the 420×150 main
  *  window. Sends its own viewport rect so the window anchors above it. */
 const CHIP_SLOT = '[data-slot="stt-model-selector-trigger"]';
+const OPENROUTER_SELECTION_PREFIX = "openrouter:";
+const resolveFooterProviderIcon = createProviderIconResolver({
+	meta: "meta-llama",
+	mistral: "mistralai",
+	xai: "x-ai",
+});
+
+function stripOpenrouterPrefix(modelId: string): string {
+	return modelId.startsWith(OPENROUTER_SELECTION_PREFIX)
+		? modelId.slice(OPENROUTER_SELECTION_PREFIX.length)
+		: modelId;
+}
+
+function parseOpenrouterModelId(modelId: string): {
+	maker?: string;
+	modelName: string;
+} {
+	const parts = modelId.split("/").filter(Boolean);
+	if (parts.length <= 1) {
+		return { modelName: parts[0] ?? modelId };
+	}
+	return {
+		maker: (parts[0] as string).replace(/^~+/, ""),
+		modelName: parts.slice(1).join("/"),
+	};
+}
+
+function resolveOpenrouterFooterModel(
+	currentModel: string,
+	models: readonly OpenRouterSttModel[],
+): { label: string; logoSrc?: string } {
+	const bareId = stripOpenrouterPrefix(currentModel);
+	const catalogModel = models.find((model) => model.id === bareId);
+	const parsed = parseOpenrouterModelId(catalogModel?.id ?? bareId);
+	const label =
+		formatModelName(parsed.modelName, parsed.maker) ||
+		formatModelName(catalogModel?.name ?? "", parsed.maker) ||
+		currentModel;
+	const logoSrc = parsed.maker ? resolveFooterProviderIcon(parsed.maker) : null;
+	return {
+		label,
+		...(logoSrc ? { logoSrc } : {}),
+	};
+}
 
 function FooterModelChip({
 	ariaLabel,
@@ -167,8 +219,14 @@ export function ActiveModelChip({
 	const cloudProvider = providerOf(currentModel);
 	const getModel = useCatalogStore((s) => s.getModel);
 	const catalogModels = useCatalogStore((s) => s.models);
+	const openrouterModels = useOpenRouterSttCatalogStore((s) => s.models);
+	// OpenRouter STT shares the LLM key and has no `integrations.*` entry (so no
+	// persisted `verified` flag) — treat it as unverified/unknown rather than
+	// indexing a missing provider.
 	const cloudVerified = useSettingsStore((s) =>
-		cloudProvider ? s.settings.integrations[cloudProvider].verified : null,
+		cloudProvider && cloudProvider !== "openrouter"
+			? s.settings.integrations[cloudProvider].verified
+			: null,
 	);
 	// The footer chip shows the size-free variant name so the always-visible
 	// main window matches the detached picker + settings tab (e.g.
@@ -185,6 +243,10 @@ export function ActiveModelChip({
 	// family HugeIcon (still more specific than the old generic icon).
 	const familyConfig = modelInfo ? getFamilyConfig(modelInfo.family) : null;
 	if (cloudProvider) {
+		const cloudDisplay =
+			cloudProvider === "openrouter"
+				? resolveOpenrouterFooterModel(currentModel, openrouterModels)
+				: null;
 		const status =
 			cloudVerified === true
 				? tIntegrations("providerStatusValid")
@@ -193,7 +255,8 @@ export function ActiveModelChip({
 			<FooterModelChip
 				ariaLabel={tModel("model")}
 				icon={AiCloud01Icon}
-				label={label}
+				label={cloudDisplay?.label ?? label}
+				logoSrc={cloudDisplay?.logoSrc}
 				tooltip={tIntegrations("providerStatus", {
 					provider: providerDisplayName(cloudProvider),
 					status,

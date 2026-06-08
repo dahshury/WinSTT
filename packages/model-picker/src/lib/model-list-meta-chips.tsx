@@ -1,9 +1,17 @@
 "use client";
 
-import { BookOpen02Icon } from "@hugeicons/core-free-icons";
+import {
+	BookOpen02Icon,
+	Coins01Icon,
+	Mic01Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
-import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
+import type {
+	OpenRouterEndpoint,
+	OpenRouterModel,
+	OpenRouterPricing,
+} from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { EndpointFeatureIcons } from "../ui/EndpointFeatureIcons";
@@ -117,6 +125,202 @@ function PricingChip({
 	);
 }
 
+function parseRawPrice(raw: string | number | undefined): number | null {
+	if (raw === undefined) {
+		return null;
+	}
+	const parsed = typeof raw === "number" ? raw : Number.parseFloat(raw);
+	if (!Number.isFinite(parsed)) {
+		return null;
+	}
+	return parsed;
+}
+
+function formatUsd(value: number): string {
+	const abs = Math.abs(value);
+	const maximumFractionDigits = abs >= 1 ? 2 : abs >= 0.01 ? 4 : 6;
+	const minimumFractionDigits = abs >= 1 ? 2 : 0;
+	return `$${value.toLocaleString("en-US", {
+		maximumFractionDigits,
+		minimumFractionDigits,
+	})}`;
+}
+
+function formatTokenRate(raw: string | number | undefined): string | null {
+	const parsed = parseRawPrice(raw);
+	return parsed === null ? null : formatUsd(parsed * 1_000_000);
+}
+
+function formatRequestRate(raw: string | number | undefined): string | null {
+	const parsed = parseRawPrice(raw);
+	return parsed === null ? null : formatUsd(parsed);
+}
+
+function hasNonZeroPrice(raw: string | number | undefined): boolean {
+	const parsed = parseRawPrice(raw);
+	return parsed !== null && parsed !== 0;
+}
+
+function formatTokenPricing(
+	pricing: OpenRouterPricing | undefined,
+): string | null {
+	const prompt = formatTokenRate(pricing?.prompt);
+	const completion = formatTokenRate(pricing?.completion);
+	if (!(prompt || completion)) {
+		return null;
+	}
+	if (prompt && completion) {
+		if (
+			!(
+				hasNonZeroPrice(pricing?.prompt) || hasNonZeroPrice(pricing?.completion)
+			)
+		) {
+			return "$0 per 1M tokens";
+		}
+		if (hasNonZeroPrice(pricing?.completion)) {
+			return `${prompt} input / ${completion} output per 1M tokens`;
+		}
+		return `${prompt} per 1M input tokens`;
+	}
+	if (prompt) {
+		return `${prompt} per 1M input tokens`;
+	}
+	return `${completion} per 1M output tokens`;
+}
+
+function formatRequestPricing(raw: string | number | undefined): string | null {
+	const request = formatRequestRate(raw);
+	return request ? `${request} per request` : null;
+}
+
+function formatTranscriptionPricing(
+	pricing: OpenRouterPricing | undefined,
+): string | null {
+	const tokenPricing = formatTokenPricing(pricing);
+	const requestPricing = formatRequestPricing(pricing?.request);
+	if (requestPricing && tokenPricing) {
+		return `${requestPricing} + ${tokenPricing}`;
+	}
+	return requestPricing ?? tokenPricing;
+}
+
+function formatPricingDetail(
+	label: string,
+	raw: string | number | undefined,
+	unit: string,
+	multiplier = 1,
+): string | null {
+	const parsed = parseRawPrice(raw);
+	if (parsed === null) {
+		return null;
+	}
+	return `${label}: ${formatUsd(parsed * multiplier)} ${unit}`;
+}
+
+function transcriptionPricingDetails(
+	pricing: OpenRouterPricing | undefined,
+): string[] {
+	return [
+		formatPricingDetail("Input", pricing?.prompt, "per 1M tokens", 1_000_000),
+		formatPricingDetail(
+			"Output",
+			pricing?.completion,
+			"per 1M tokens",
+			1_000_000,
+		),
+		formatPricingDetail("Request", pricing?.request, "per API request"),
+	].filter((detail): detail is string => detail !== null);
+}
+
+function hasRawPricing(pricing: OpenRouterPricing | undefined): boolean {
+	return (
+		parseRawPrice(pricing?.prompt) !== null ||
+		parseRawPrice(pricing?.completion) !== null ||
+		parseRawPrice(pricing?.request) !== null
+	);
+}
+
+function PricingBreakdown({
+	details,
+}: {
+	details: readonly string[];
+}): ReactNode {
+	if (details.length === 0) {
+		return null;
+	}
+	return (
+		<ul className="mt-1 space-y-0.5 text-foreground-muted text-xs-tight leading-relaxed">
+			{details.map((detail) => (
+				<li key={detail}>{detail}</li>
+			))}
+		</ul>
+	);
+}
+
+function TranscriptionPricingChip({
+	pricing,
+}: {
+	pricing: OpenRouterPricing | undefined;
+}) {
+	const value = formatTranscriptionPricing(pricing);
+	if (!value) {
+		return null;
+	}
+	const details = transcriptionPricingDetails(pricing);
+	return (
+		<Tooltip>
+			<TooltipTrigger
+				render={(props) => (
+					<div
+						{...(props as ComponentPropsWithoutRef<"div">)}
+						className="inline-flex shrink-0 cursor-default items-center gap-1 font-semibold text-[11px] text-foreground-muted tabular-nums"
+					>
+						<HugeiconsIcon className="size-3 opacity-70" icon={Coins01Icon} />
+						<span>{value}</span>
+					</div>
+				)}
+			/>
+			<TooltipContent className="max-w-xs" side="top">
+				<p className="font-semibold text-body-sm">OpenRouter pricing</p>
+				<p className="text-foreground-muted text-xs-tight leading-relaxed">
+					Model-level STT price from OpenRouter. Token fields are converted from
+					OpenRouter's raw per-token values to USD per 1M tokens; request is a
+					fixed API-call charge.
+				</p>
+				<PricingBreakdown details={details} />
+				<p className="mt-1 text-foreground-muted text-xs-tight leading-relaxed">
+					Some speech-to-text providers bill by audio duration instead; the
+					final charge for a completed transcription is reported by usage.cost.
+				</p>
+			</TooltipContent>
+		</Tooltip>
+	);
+}
+
+function TranscriptionChip() {
+	return (
+		<Tooltip>
+			<TooltipTrigger
+				render={(props) => (
+					<div
+						{...(props as ComponentPropsWithoutRef<"div">)}
+						className="inline-flex shrink-0 cursor-default items-center gap-1 text-[11px] text-foreground-muted"
+					>
+						<HugeiconsIcon className="size-3 opacity-70" icon={Mic01Icon} />
+						<span>Transcription</span>
+					</div>
+				)}
+			/>
+			<TooltipContent className="max-w-xs" side="top">
+				<p className="font-semibold text-body-sm">Speech-to-text</p>
+				<p className="text-foreground-muted text-xs-tight leading-relaxed">
+					This model is available through OpenRouter's transcription endpoint.
+				</p>
+			</TooltipContent>
+		</Tooltip>
+	);
+}
+
 function FeaturedEndpointChip({
 	endpoint,
 }: {
@@ -199,10 +403,17 @@ export function InlineModelMeta({
 		hasProviders,
 	);
 	const modalities = model.architecture?.input_modalities;
+	const outputModalities = model.architecture?.output_modalities;
+	const isTranscriptionModel =
+		outputModalities?.some((m) => m.toLowerCase() === "transcription") ?? false;
 	const hasVariantToken = !!(variant && variantClasses);
+	const hasTranscriptionPricing =
+		isTranscriptionModel && hasRawPricing(model.pricing);
 	if (
 		!(
 			hasVariantToken ||
+			isTranscriptionModel ||
+			hasTranscriptionPricing ||
 			shouldRenderInlineMeta(
 				model.context_length,
 				pricingInfo,
@@ -241,7 +452,14 @@ export function InlineModelMeta({
 		) : null,
 	);
 	pushFact(
-		pricingInfo ? <PricingChip key="price" pricingInfo={pricingInfo} /> : null,
+		hasTranscriptionPricing ? (
+			<TranscriptionPricingChip key="price" pricing={model.pricing} />
+		) : pricingInfo ? (
+			<PricingChip key="price" pricingInfo={pricingInfo} />
+		) : null,
+	);
+	pushFact(
+		isTranscriptionModel ? <TranscriptionChip key="transcription" /> : null,
 	);
 	pushFact(
 		featuredEndpoint ? (

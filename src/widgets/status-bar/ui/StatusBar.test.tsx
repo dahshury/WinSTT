@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useConnectionStore } from "@/entities/connection";
+import { useOpenRouterSttCatalogStore } from "@/entities/cloud-stt-provider";
 import {
 	type ModelInfo,
 	useCatalogStore,
@@ -73,6 +74,13 @@ beforeEach(() => {
 	// Empty model-state map so the swap gate sees no cached/uncached entry
 	// and hot-swaps directly instead of raising the download dialog.
 	useModelStateStore.setState({ statesById: {} });
+	useOpenRouterSttCatalogStore.setState({
+		models: [],
+		isLoaded: false,
+		isScanning: false,
+		isReachable: false,
+		error: null,
+	});
 });
 
 afterEach(() => {
@@ -178,6 +186,49 @@ describe("StatusBar", () => {
 		// The previous behaviour leaked the raw model id into the chip.
 		expect(screen.getByText("Canary Flash")).toBeDefined();
 		expect(screen.queryByText("nemo-canary-180m-flash")).toBeNull();
+	});
+
+	test("formats OpenRouter STT selections with maker icon and model name", () => {
+		useOpenRouterSttCatalogStore.setState({
+			models: [
+				{
+					id: "microsoft/mai-transcribe-1.5",
+					name: "Microsoft: MAI Transcribe 1.5",
+					accuracy_score: 0.88,
+					speed_score: 0.88,
+				},
+			],
+			isLoaded: true,
+			isReachable: true,
+			isScanning: false,
+			error: null,
+		});
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				model: {
+					...initialSettings.model,
+					model: "openrouter:microsoft/mai-transcribe-1.5",
+				},
+			},
+		});
+		const { container } = render(
+			<IntlProvider>
+				<StatusBar />
+			</IntlProvider>,
+		);
+		act(() => {
+			useModelSwapStore.setState({ activeMain: null, fromMain: null });
+		});
+		const trigger = container.querySelector(
+			'[data-slot="stt-model-selector-trigger"]',
+		);
+		expect(screen.getByText("Mai Transcribe 1.5")).toBeDefined();
+		expect(screen.queryByText("openrouter:microsoft/mai-transcribe-1.5")).toBe(
+			null,
+		);
+		expect(trigger?.querySelector("[data-logo-src]")?.getAttribute("data-logo-src"))
+			.toBe("/provider-icons/microsoft.svg");
 	});
 
 	test("shows the swap transition in the picker trigger while a main-model swap is in flight", () => {

@@ -6,6 +6,8 @@ interface EphemeralMessage {
 	timestamp: number;
 }
 
+export type TranscriptionProcessingPhase = "transcribing" | "uploading";
+
 /**
  * Cap on the in-memory live feed. Without this, `addFinalSentence` allocates
  * a fresh `[...items, new]` array per dictation forever — O(N²) total work
@@ -26,10 +28,14 @@ interface TranscriptionState {
 	isRecordingActive: boolean;
 	isTranscribing: boolean;
 	items: TranscriptionItem[];
+	processingPhase: TranscriptionProcessingPhase | null;
 	recordingSessionId: number;
 	setRealtimeText: (text: string) => void;
 	setRecordingActive: (active: boolean) => void;
-	setTranscribing: (active: boolean) => void;
+	setTranscribing: (
+		active: boolean,
+		phase?: TranscriptionProcessingPhase,
+	) => void;
 	showEphemeral: (text: string) => void;
 	transcribingStartedAt: number | null;
 }
@@ -63,6 +69,7 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 	// the main process and the renderer processing STT_RECORDING_START.
 	isRecordingActive: false,
 	isTranscribing: false,
+	processingPhase: null,
 	recordingSessionId: 0,
 	transcribingStartedAt: null,
 	beginRecordingSession: () =>
@@ -71,6 +78,7 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 			ephemeral: null,
 			isRecordingActive: true,
 			isTranscribing: false,
+			processingPhase: null,
 			recordingSessionId: state.recordingSessionId + 1,
 			transcribingStartedAt: null,
 		})),
@@ -90,6 +98,7 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 				items: trimmed,
 				currentRealtime: "",
 				isTranscribing: false,
+				processingPhase: null,
 				transcribingStartedAt: null,
 			};
 		});
@@ -106,15 +115,20 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 	},
 	setRealtimeText: (text) => set({ currentRealtime: text }),
 	setRecordingActive: (active) => set({ isRecordingActive: active }),
-	setTranscribing: (active) =>
+	setTranscribing: (active, phase = "transcribing") =>
 		set((state) => {
 			if (active) {
 				return {
 					isTranscribing: true,
+					processingPhase: phase,
 					transcribingStartedAt: state.transcribingStartedAt ?? Date.now(),
 				};
 			}
-			return { isTranscribing: false, transcribingStartedAt: null };
+			return {
+				isTranscribing: false,
+				processingPhase: null,
+				transcribingStartedAt: null,
+			};
 		}),
 	showEphemeral: (text) => set({ ephemeral: { text, timestamp: Date.now() } }),
 	clearEphemeral: () => set({ ephemeral: null }),
@@ -125,6 +139,7 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 			ephemeral: null,
 			isRecordingActive: false,
 			isTranscribing: false,
+			processingPhase: null,
 			recordingSessionId: 0,
 			transcribingStartedAt: null,
 		}),

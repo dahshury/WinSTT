@@ -77,6 +77,7 @@ export interface OllamaModelSelectorProps {
 	onDiscardPull?: ((modelName: string) => void) | undefined;
 	/** Called when the dropdown opens — used to refresh the catalog. */
 	onOpen?: (() => void) | undefined;
+	onOpenDetached?: ((rect: DOMRect) => void) | undefined;
 	/** Start (or restart) a pull. Omit to hide the recommended UI. */
 	onPull?: ((modelName: string) => void) | undefined;
 	/** Resume a previously-paused pull. Omit to hide the recommended UI. */
@@ -85,6 +86,8 @@ export interface OllamaModelSelectorProps {
 	onStopPull?: ((modelName: string) => void) | undefined;
 	pausedPulls?: Readonly<Record<string, PausedPullState>> | undefined;
 	placeholder?: string | undefined;
+	popupHeightClass?: string | undefined;
+	popupWidthClass?: string | undefined;
 	/** Active pulls keyed by model name. Omit to hide the recommended UI. */
 	pulls?: Readonly<Record<string, OllamaPullProgress>> | undefined;
 	/** Curated list of suggested models. When supplied alongside pull

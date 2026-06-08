@@ -8,11 +8,11 @@ afterEach(() => {
 describe("useRevertNoticeStore", () => {
 	test("push adds a notice; re-pushing the same provider replaces it", () => {
 		const { push } = useRevertNoticeStore.getState();
-		push("openai");
-		push("openai");
+		push("openrouter");
+		push("openrouter");
 		const { notices } = useRevertNoticeStore.getState();
 		expect(notices).toHaveLength(1);
-		expect(notices[0]?.provider).toBe("openai");
+		expect(notices[0]?.provider).toBe("openrouter");
 	});
 
 	test("dismiss removes the matching notice", () => {

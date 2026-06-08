@@ -297,11 +297,29 @@ struct PickerAnchor {
     screen_bottom: f64,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
+pub(super) struct PickerMode {
+    kind: String,
+    feature: Option<String>,
+    target: Option<String>,
+}
+
+impl Default for PickerMode {
+    fn default() -> Self {
+        Self {
+            kind: "stt".to_string(),
+            feature: None,
+            target: None,
+        }
+    }
+}
+
+#[derive(Clone)]
 struct PickerState {
     anchor: Option<PickerAnchor>,
     width: f64,
     height: f64,
+    mode: PickerMode,
 }
 
 static PICKER_STATE: Mutex<Option<HashMap<&'static str, PickerState>>> = Mutex::new(None);
@@ -314,6 +332,14 @@ fn picker_default_size(label: &str) -> (f64, f64) {
     }
 }
 
+fn model_picker_size_for_kind(kind: &str) -> (f64, f64) {
+    match kind {
+        "llm-ollama" => (620.0, 620.0),
+        "llm-openrouter" => (580.0, 620.0),
+        _ => picker_default_size("model-picker"),
+    }
+}
+
 fn with_picker_state<R>(label: &'static str, f: impl FnOnce(&mut PickerState) -> R) -> R {
     let mut guard = PICKER_STATE.lock().expect("picker-state mutex poisoned");
     let map = guard.get_or_insert_with(HashMap::new);
@@ -322,6 +348,7 @@ fn with_picker_state<R>(label: &'static str, f: impl FnOnce(&mut PickerState) ->
         anchor: None,
         width: w,
         height: h,
+        mode: PickerMode::default(),
     });
     f(entry)
 }
@@ -591,6 +618,9 @@ pub fn open_window(
     y: Option<f64>,
     width: Option<f64>,
     height: Option<f64>,
+    picker_kind: Option<String>,
+    picker_feature: Option<String>,
+    picker_target: Option<String>,
 ) -> Result<(), String> {
     log::debug!("open_window('{name}') invoked");
     // Resolve the static label so it can key the picker-state map / emit.
@@ -603,6 +633,23 @@ pub fn open_window(
         .inspect_err(|e| log::error!("open_window('{name}') ensure_window failed: {e}"))?;
 
     if is_picker(label) {
+        if label == "model-picker" {
+            let next_kind = picker_kind
+                .as_deref()
+                .filter(|kind| matches!(*kind, "llm-ollama" | "llm-openrouter" | "stt"))
+                .unwrap_or("stt");
+            let (default_width, default_height) = model_picker_size_for_kind(next_kind);
+            with_picker_state(label, |s| {
+                s.mode = PickerMode {
+                    kind: next_kind.to_string(),
+                    feature: picker_feature.clone(),
+                    target: picker_target.clone(),
+                };
+                s.width = default_width;
+                s.height = default_height;
+            });
+        }
+
         // Device picker open is a toggle. The model picker is a full-screen
         // transparent backdrop with a renderer-owned panel, so a visible open
         // should repair/re-anchor a stale invisible backdrop instead of closing.

@@ -20,11 +20,14 @@ export function DataGridColumnHeader({
 }: {
 	header: Header<RowData, unknown>;
 }) {
-	const { labels, resizable } = useDataGrid();
+	const { labels, resizable, tableLayout } = useDataGrid();
 	const column = header.column;
 	const canSort = column.getCanSort();
 	const sorted = column.getIsSorted();
 	const title = column.columnDef.meta?.title ?? "";
+	const dense = tableLayout.dense ?? true;
+	const cellBorder = tableLayout.cellBorder ?? true;
+	const headerBorder = tableLayout.headerBorder ?? true;
 	const ariaSort =
 		sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : "none";
 	const content = header.isPlaceholder
@@ -35,6 +38,9 @@ export function DataGridColumnHeader({
 		<TableHead
 			aria-sort={canSort ? ariaSort : undefined}
 			className={cn(
+				dense && "px-2 py-1.5",
+				headerBorder && "border-border/80 border-b",
+				cellBorder && "border-border/70 border-r last:border-r-0",
 				resizable && "relative",
 				column.columnDef.meta?.headClassName,
 			)}

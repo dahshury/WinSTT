@@ -167,26 +167,9 @@ const ROUTE: Partial<Record<string, Route>> = {
 		kind: "event",
 		event: "stt:wakeword-detection-end",
 	},
-	[IPC.WAKEWORD_GET_MODEL_STATUS]: {
-		kind: "command",
-		cmd: "wakeword_model_status",
-	},
-	[IPC.WAKEWORD_START_MODEL_DOWNLOAD]: {
-		kind: "command",
-		cmd: "wakeword_start_model_download",
-	},
-	[IPC.WAKEWORD_PAUSE_MODEL_DOWNLOAD]: {
-		kind: "command",
-		cmd: "wakeword_pause_model_download",
-	},
-	[IPC.WAKEWORD_RESUME_MODEL_DOWNLOAD]: {
-		kind: "command",
-		cmd: "wakeword_resume_model_download",
-	},
-	[IPC.WAKEWORD_CANCEL_MODEL_DOWNLOAD]: {
-		kind: "command",
-		cmd: "wakeword_cancel_model_download",
-	},
+	// WAKEWORD_*_MODEL_DOWNLOAD / GET_MODEL_STATUS commands are typed in
+	// COMMAND_INVOKERS (ipc-transport.ts) — the invoker wins, so the redundant
+	// `command` routes were removed. The model-status EVENT route stays.
 	[IPC.WAKEWORD_MODEL_STATUS]: {
 		kind: "event",
 		event: "wakeword:model-status",
@@ -319,14 +302,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 		kind: "command",
 		cmd: "refresh_audio_devices",
 	},
-	[IPC.AUDIO_GET_OUTPUT_DEVICES]: {
-		kind: "command",
-		cmd: "get_audio_output_devices",
-	},
-	[IPC.AUDIO_REFRESH_OUTPUT_DEVICES]: {
-		kind: "command",
-		cmd: "refresh_audio_output_devices",
-	},
+	// AUDIO_{GET,REFRESH}_OUTPUT_DEVICES are typed in COMMAND_INVOKERS.
 	[IPC.AUDIO_DEVICES_CHANGED]: {
 		kind: "event",
 		event: "audio:devices-changed",
@@ -363,28 +339,18 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.WINDOW_MINIMIZE]: { kind: "window", op: "minimize" },
 	[IPC.WINDOW_MAXIMIZE]: { kind: "window", op: "maximize" },
 	[IPC.WINDOW_CLOSE]: { kind: "window", op: "hide" },
-	// Self-closing secondary windows (settings / onboarding) route through the
-	// `close_self_window` command (not a bare webview hide) so the Settings modal
-	// can re-enable the main pill as it closes — a renderer-side `.hide()` never
-	// reaches Rust, leaving the pill input-disabled. Resolves its own label from
-	// the calling webview; non-settings callers get a plain hide.
-	[IPC.WINDOW_CLOSE_SELF]: { kind: "command", cmd: "close_self_window" },
-	// WINDOW_SHOW means "show the MAIN window" (the reference handled it in the main
-	// process). The only caller is the tray menu's "Show Window" item — routing it
-	// to the generic `getCurrentWindow().show()` would re-show the *tray-menu*
-	// window (the caller), never the pill. Target the main window explicitly via
-	// the command, which also force-raises it above other apps.
-	[IPC.WINDOW_SHOW]: { kind: "command", cmd: "show_main_window_command" },
+	// WINDOW_CLOSE_SELF (`close_self_window`) and WINDOW_SHOW
+	// (`show_main_window_command`) are typed in COMMAND_INVOKERS. CLOSE_SELF lets
+	// the Settings modal re-enable the main pill as it closes (a renderer `.hide()`
+	// never reaches Rust); WINDOW_SHOW targets the MAIN window explicitly (not the
+	// tray-menu caller) and force-raises it.
 	[IPC.WINDOW_QUIT]: { kind: "window", op: "quit" },
 	[IPC.WINDOW_OPEN_SETTINGS]: {
 		kind: "command",
 		cmd: "open_window",
 		inject: { name: "settings" },
 	},
-	[IPC.SETTINGS_WINDOW_READY]: {
-		kind: "command",
-		cmd: "settings_window_ready",
-	},
+	// SETTINGS_WINDOW_READY is typed in COMMAND_INVOKERS.
 	[IPC.MODEL_PICKER_OPEN]: {
 		kind: "command",
 		cmd: "open_window",
@@ -427,7 +393,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 		cmd: "resize_window",
 		inject: { name: "tray-menu" },
 	},
-	[IPC.ONBOARDING_FINISH]: { kind: "command", cmd: "onboarding_finish" },
+	// ONBOARDING_FINISH is typed in COMMAND_INVOKERS.
 
 	// ── Context-awareness playground (debug-only) ──
 	[IPC.CONTEXT_PLAYGROUND_OPEN]: {
@@ -468,7 +434,6 @@ const ROUTE: Partial<Record<string, Route>> = {
 
 	// ── TTS (slice 06) ──
 	[IPC.TTS_SPEAK]: { kind: "command", cmd: "tts_speak" },
-	[IPC.TTS_SPEAK_SELECTION]: { kind: "command", cmd: "tts_speak_selection" },
 	[IPC.TTS_CANCEL]: { kind: "command", cmd: "tts_cancel" },
 	[IPC.TTS_SET_SPEED]: { kind: "command", cmd: "tts_set_speed" },
 	[IPC.TTS_INIT]: { kind: "command", cmd: "tts_init" },
@@ -478,6 +443,10 @@ const ROUTE: Partial<Record<string, Route>> = {
 		cmd: "tts_list_cloud_voices",
 	},
 	[IPC.TTS_CLOUD_PREVIEW]: { kind: "command", cmd: "tts_preview_cloud" },
+	[IPC.TTS_OPENROUTER_PREVIEW]: {
+		kind: "command",
+		cmd: "tts_preview_openrouter",
+	},
 	[IPC.TTS_CLOUD_SUBSCRIPTION]: {
 		kind: "command",
 		cmd: "tts_cloud_subscription",
@@ -556,6 +525,14 @@ const ROUTE: Partial<Record<string, Route>> = {
 		kind: "command",
 		cmd: "scan_openrouter_models",
 	},
+	[IPC.STT_SCAN_OPENROUTER_MODELS]: {
+		kind: "command",
+		cmd: "scan_openrouter_stt_models",
+	},
+	[IPC.TTS_SCAN_OPENROUTER_MODELS]: {
+		kind: "command",
+		cmd: "scan_openrouter_tts_models",
+	},
 	[IPC.LLM_DETECT_OLLAMA]: { kind: "command", cmd: "ollama_detect" },
 	[IPC.LLM_START_OLLAMA]: { kind: "command", cmd: "ollama_start" },
 	[IPC.LLM_PULL_MODEL]: { kind: "command", cmd: "ollama_pull" },
@@ -566,15 +543,11 @@ const ROUTE: Partial<Record<string, Route>> = {
 		cmd: "ollama_fetch_library",
 	},
 	[IPC.LLM_FETCH_OLLAMA_TAGS]: { kind: "command", cmd: "ollama_fetch_tags" },
-	[IPC.LLM_SEARCH_OLLAMA_LIBRARY]: {
-		kind: "command",
-		cmd: "ollama_search_library",
-	},
 	[IPC.LLM_GET_WARMUP_STATUS]: {
 		kind: "command",
 		cmd: "llm_get_warmup_status",
 	},
-	[IPC.INTEGRATIONS_VERIFY]: { kind: "command", cmd: "verify_credential" },
+	// INTEGRATIONS_VERIFY (`verify_credential`) is typed in COMMAND_INVOKERS.
 	[IPC.LLM_CATALOG]: { kind: "event", event: "llm:catalog" },
 	[IPC.LLM_PULL_PROGRESS]: { kind: "event", event: "llm:pull-progress" },
 	[IPC.LLM_PROCESSING_START]: { kind: "event", event: "llm:processing-start" },
@@ -638,7 +611,6 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.STT_CLOUD_PROVIDER_ERROR]: { kind: "event", event: "stt:cloud-error" },
 
 	// ── File transcription (slice 07/08) ──
-	[IPC.FILE_TRANSCRIBE]: { kind: "command", cmd: "file_transcribe_enqueue" },
 	[IPC.FILE_QUEUE_ENQUEUE]: { kind: "command", cmd: "file_transcribe_enqueue" },
 	[IPC.FILE_QUEUE_PICK_AND_ENQUEUE]: {
 		kind: "command",
@@ -691,7 +663,6 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.LID_OPENED]: { kind: "event", event: "lid:opened" },
 
 	// ── Sound (slice 05/11) ──
-	[IPC.SOUND_GET_DATA]: { kind: "command", cmd: "sound_get_data" },
 	[IPC.SOUND_LIBRARY_ADD]: { kind: "command", cmd: "sound_library_add" },
 	[IPC.SOUND_LIBRARY_PICK_AND_ADD]: {
 		kind: "command",
@@ -707,36 +678,27 @@ const ROUTE: Partial<Record<string, Route>> = {
 	// ── History (slice 10) ──
 	[IPC.HISTORY_GET_ALL]: { kind: "command", cmd: "history_get_all" },
 	[IPC.HISTORY_CLEAR]: { kind: "command", cmd: "history_clear" },
+	// HISTORY_DELETE / LOAD_AUDIO / ALIGN_AUDIO stay on the adapter's
+	// POSITIONAL_STRING_PARAM path (bare-positional string id). HISTORY_LIST /
+	// DELETE_ROW / TOGGLE / LOAD_AUDIO_BY_ROW are typed in COMMAND_INVOKERS.
 	[IPC.HISTORY_DELETE]: { kind: "command", cmd: "history_delete" },
 	[IPC.HISTORY_LOAD_AUDIO]: { kind: "command", cmd: "history_load_audio" },
 	[IPC.HISTORY_ALIGN_AUDIO]: { kind: "command", cmd: "align_words" },
-	[IPC.HISTORY_LIST]: { kind: "command", cmd: "history_list" },
-	[IPC.HISTORY_ADD]: { kind: "command", cmd: "history_add" },
-	[IPC.HISTORY_DELETE_ROW]: { kind: "command", cmd: "history_delete_row" },
-	[IPC.HISTORY_TOGGLE]: { kind: "command", cmd: "history_toggle" },
-	[IPC.HISTORY_RECENT]: { kind: "command", cmd: "history_recent" },
-	[IPC.HISTORY_LOAD_AUDIO_BY_ROW]: {
-		kind: "command",
-		cmd: "history_load_audio_by_row",
-	},
 	[IPC.HISTORY_ADDED]: { kind: "event", event: "history:added" },
 	[IPC.HISTORY_DELETED]: { kind: "event", event: "history:deleted" },
 	[IPC.HISTORY_ROW_ADDED]: { kind: "event", event: "history:row-added" },
 	[IPC.HISTORY_ROW_DELETED]: { kind: "event", event: "history:row-deleted" },
 	[IPC.HISTORY_ROW_TOGGLED]: { kind: "event", event: "history:row-toggled" },
 
-	// ── Transcript quick-actions ──
-	[IPC.TRANSCRIPT_COPY_LAST]: { kind: "command", cmd: "copy_last_transcript" },
+	// TRANSCRIPT_COPY_LAST / DIAG_SAVE_BUNDLE / DIAG_WEBVIEW_LOG /
+	// ABOUT_GET_APP_INFO are RETIRED — their wrappers call `commands.*` directly.
 
-	// ── Diagnostics / custom models / about (slice 11) ──
+	// ── Diagnostics / custom models (plugin routes stay on the adapter) ──
 	[IPC.DIAG_OPEN_LOGS_FOLDER]: { kind: "plugin", plugin: "opener:logs" },
-	[IPC.DIAG_SAVE_BUNDLE]: { kind: "command", cmd: "diag_save_bundle" },
-	[IPC.DIAG_WEBVIEW_LOG]: { kind: "command", cmd: "winstt_diag" },
 	[IPC.CUSTOM_MODELS_OPEN_FOLDER]: {
 		kind: "plugin",
 		plugin: "opener:custom-models",
 	},
-	[IPC.ABOUT_GET_APP_INFO]: { kind: "command", cmd: "about_get_app_info" },
 
 	// ── Updater (secure → plugin) ──
 	[IPC.UPDATER_GET_STATUS_HISTORY]: {
@@ -767,9 +729,6 @@ const POSITIONAL_STRING_PARAM: Partial<Record<string, string>> = {
 	[IPC.HISTORY_LOAD_AUDIO]: "id",
 	[IPC.HISTORY_ALIGN_AUDIO]: "entryId",
 	[IPC.HISTORY_DELETE]: "id",
-	[IPC.HISTORY_DELETE_ROW]: "id",
-	[IPC.HISTORY_TOGGLE]: "id",
-	[IPC.HISTORY_LOAD_AUDIO_BY_ROW]: "id",
 };
 
 function normalizeArgs(

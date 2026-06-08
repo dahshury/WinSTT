@@ -44,6 +44,7 @@ beforeEach(() => {
 		ephemeral: null,
 		isRecordingActive: false,
 		isTranscribing: false,
+		processingPhase: null,
 		recordingSessionId: 0,
 		transcribingStartedAt: null,
 	});
@@ -77,6 +78,7 @@ afterEach(() => {
 		ephemeral: null,
 		isRecordingActive: false,
 		isTranscribing: false,
+		processingPhase: null,
 		recordingSessionId: 0,
 		transcribingStartedAt: null,
 	});
@@ -361,10 +363,12 @@ describe("OverlayPage", () => {
 			ephemeral: null,
 			isRecordingActive: true,
 			isTranscribing: true,
+			processingPhase: "uploading",
 			transcribingStartedAt: 100,
 		});
 		const { container } = renderOverlay();
 		expect(container.textContent).toContain("Transcribing");
+		expect(container.textContent).not.toContain("Uploading");
 		expect(container.querySelector(".rounded-2xl")).not.toBeNull();
 	});
 
@@ -392,6 +396,83 @@ describe("OverlayPage", () => {
 				'[data-overlay-floating-surface="true"][data-processing="true"]',
 			),
 		).toBeNull();
+	});
+
+	test("shows an uploading indicator for cloud STT before transcription starts", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: {
+					...initialSettings.general,
+					liveTranscriptionDisplay: "both",
+					overlayMode: "floating-bottom",
+				},
+				llm: {
+					...initialSettings.llm,
+					dictation: {
+						...initialSettings.llm.dictation,
+						enabled: false,
+					},
+				},
+				model: {
+					...initialSettings.model,
+					model: "openrouter:openai/gpt-4o-transcribe",
+				},
+			},
+		});
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: true,
+			isTranscribing: true,
+			processingPhase: "uploading",
+			transcribingStartedAt: 100,
+		});
+		const { container } = renderOverlay();
+		const surface = container.querySelector(
+			'[data-overlay-floating-surface="true"][data-processing="true"]',
+		);
+		const output = surface?.querySelector("output");
+		expect(surface).not.toBeNull();
+		expect(output?.getAttribute("data-thinking-word")).toBe("Uploading");
+		expect(output?.getAttribute("data-thinking-word")).not.toBe("Thinking");
+	});
+
+	test("shows a transcribing indicator for cloud STT after upload handoff", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: {
+					...initialSettings.general,
+					liveTranscriptionDisplay: "both",
+					overlayMode: "floating-bottom",
+				},
+				llm: {
+					...initialSettings.llm,
+					dictation: {
+						...initialSettings.llm.dictation,
+						enabled: false,
+					},
+				},
+				model: {
+					...initialSettings.model,
+					model: "openrouter:openai/gpt-4o-transcribe",
+				},
+			},
+		});
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: true,
+			isTranscribing: true,
+			processingPhase: "transcribing",
+			transcribingStartedAt: 100,
+		});
+		const { container } = renderOverlay();
+		const output = container.querySelector(
+			'[data-overlay-floating-surface="true"][data-processing="true"] output',
+		);
+		expect(output?.getAttribute("data-thinking-word")).toBe("Transcribing");
 	});
 
 	test("renders processing inside the floating visualizer surface instead of a separate bubble", () => {
@@ -1078,6 +1159,7 @@ describe("OverlayPage", () => {
 				ephemeral: { text: "no audio detected", timestamp: 0 },
 				isRecordingActive: true,
 				isTranscribing: true,
+				processingPhase: "uploading",
 				transcribingStartedAt: 100,
 			});
 			useLlmProcessingStore.setState({
@@ -1099,6 +1181,7 @@ describe("OverlayPage", () => {
 		// NOT clobbered — the arming IPC's value survives the content reset.
 		expect(t.isRecordingActive).toBe(true);
 		expect(t.isTranscribing).toBe(false);
+		expect(t.processingPhase).toBeNull();
 		expect(t.transcribingStartedAt).toBeNull();
 		expect(useLlmProcessingStore.getState().isThinking).toBe(false);
 		expect(useLlmProcessingStore.getState().isTransforming).toBe(false);

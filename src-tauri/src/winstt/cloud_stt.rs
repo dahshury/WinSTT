@@ -22,34 +22,43 @@
 //     and the curated cloud catalog the picker renders. [CLOUD_CATALOG / catalog.ts]
 
 /// Cloud STT providers. Mirrors `CloudSttProvider`.
+///
+/// OpenAI was removed as a direct cloud STT provider — its transcription models
+/// (whisper-1 / gpt-4o-transcribe) are all served by OpenRouter as `openai/*`,
+/// so the direct integration was redundant. ElevenLabs stays (its Scribe model
+/// is NOT on OpenRouter).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloudSttProvider {
-    OpenAi,
     ElevenLabs,
+    /// OpenRouter's dedicated transcription endpoint (`/api/v1/audio/transcriptions`).
+    /// Unlike ElevenLabs the model list is DYNAMIC (fetched + filtered by
+    /// `output_modalities=transcription`) and the key is shared with the LLM
+    /// post-process path (`settings.llm.openrouter_api_key`), not `integrations.*`.
+    OpenRouter,
 }
 
 impl CloudSttProvider {
     pub fn id(self) -> &'static str {
         match self {
-            CloudSttProvider::OpenAi => "openai",
             CloudSttProvider::ElevenLabs => "elevenlabs",
+            CloudSttProvider::OpenRouter => "openrouter",
         }
     }
 
     pub fn from_id(id: &str) -> Option<Self> {
         match id {
-            "openai" => Some(CloudSttProvider::OpenAi),
             "elevenlabs" => Some(CloudSttProvider::ElevenLabs),
+            "openrouter" => Some(CloudSttProvider::OpenRouter),
             _ => None,
         }
     }
 
-    /// Transcription endpoint. OpenAI: /v1/audio/transcriptions (Whisper +
-    /// gpt-4o-*-transcribe). ElevenLabs: /v1/speech-to-text (scribe_v1).
+    /// Transcription endpoint. ElevenLabs: /v1/speech-to-text (scribe_v1).
+    /// OpenRouter: /api/v1/audio/transcriptions (OpenAI-compatible JSON+base64).
     pub fn endpoint(self) -> &'static str {
         match self {
-            CloudSttProvider::OpenAi => "https://api.openai.com/v1/audio/transcriptions",
             CloudSttProvider::ElevenLabs => "https://api.elevenlabs.io/v1/speech-to-text",
+            CloudSttProvider::OpenRouter => "https://openrouter.ai/api/v1/audio/transcriptions",
         }
     }
 
@@ -57,8 +66,8 @@ impl CloudSttProvider {
     /// probeUrlFor in credentials.ts.
     pub fn verify_endpoint(self) -> &'static str {
         match self {
-            CloudSttProvider::OpenAi => "https://api.openai.com/v1/models",
             CloudSttProvider::ElevenLabs => "https://api.elevenlabs.io/v1/user",
+            CloudSttProvider::OpenRouter => "https://openrouter.ai/api/v1/auth/key",
         }
     }
 }
@@ -129,12 +138,13 @@ pub struct CloudTranscription {
 
 /// Provider hard limits (uncompressed audio BYTES). Bail BEFORE shipping
 /// bytes. Mirrors PROVIDER_AUDIO_LIMIT_BYTES.
-///   OpenAI:     25 MB (whisper-1 + gpt-4o-*-transcribe)
 ///   ElevenLabs: 1 GB  (scribe_v1)
 pub fn provider_audio_limit_bytes(provider: CloudSttProvider) -> u64 {
     match provider {
-        CloudSttProvider::OpenAi => 25 * 1024 * 1024,
         CloudSttProvider::ElevenLabs => 1024 * 1024 * 1024,
+        // OpenRouter doesn't publish a uniform cap; the dominant backends
+        // (Whisper-class) cap at 25 MB, so use that as the safe pre-flight limit.
+        CloudSttProvider::OpenRouter => 25 * 1024 * 1024,
     }
 }
 
@@ -298,34 +308,6 @@ pub struct CloudModel {
     pub is_default: bool,
 }
 
-/// OpenAI cloud STT models. Curated metadata fused with the AI SDK's generated
-/// id union; mirrors `CURATED_CLOUD_MODELS.openai` ∪ `GENERATED_CLOUD_MODEL_IDS.openai`.
-///
-/// NOTE: dated `gpt-4o-*-transcribe` snapshots and `gpt-4o-transcribe-diarize`
-/// are intentionally absent — the AI SDK / our upload posts
-/// `response_format=verbose_json`, which only `whisper-1` and the two base
-/// `gpt-4o` aliases accept (catalog.ts header).
-pub const OPENAI_CLOUD_MODELS: &[CloudModel] = &[
-    CloudModel {
-        id: "gpt-4o-mini-transcribe",
-        display_name: "GPT-4o mini transcribe",
-        description: "Fast and cheap general-purpose transcription.",
-        is_default: true,
-    },
-    CloudModel {
-        id: "gpt-4o-transcribe",
-        display_name: "GPT-4o transcribe",
-        description: "Higher-accuracy GPT-4o transcription.",
-        is_default: false,
-    },
-    CloudModel {
-        id: "whisper-1",
-        display_name: "Whisper v1",
-        description: "Legacy Whisper hosted model.",
-        is_default: false,
-    },
-];
-
 /// ElevenLabs cloud STT models. Mirrors `CURATED_CLOUD_MODELS.elevenlabs` ∪
 /// `GENERATED_CLOUD_MODEL_IDS.elevenlabs`.
 pub const ELEVENLABS_CLOUD_MODELS: &[CloudModel] = &[
@@ -344,20 +326,24 @@ pub const ELEVENLABS_CLOUD_MODELS: &[CloudModel] = &[
 ];
 
 /// The curated cloud STT catalog for `provider` (the renderer's `CLOUD_CATALOG[provider]`).
+/// OpenRouter has NO curated catalog — its transcription models are fetched live
+/// (`scan_openrouter_stt_models`) and filtered by `output_modalities=transcription`,
+/// so the picker drives selection there. The backend only ever receives a concrete
+/// `openrouter:<id>` the renderer already resolved.
 pub fn cloud_models_for(provider: CloudSttProvider) -> &'static [CloudModel] {
     match provider {
-        CloudSttProvider::OpenAi => OPENAI_CLOUD_MODELS,
         CloudSttProvider::ElevenLabs => ELEVENLABS_CLOUD_MODELS,
+        CloudSttProvider::OpenRouter => &[],
     }
 }
 
 /// Recover the provider from a prefixed `<provider>:<id>` model id, or `None`
 /// for a local-catalog / custom id. Mirrors `providerOf` (catalog.ts).
 pub fn provider_of(model_id: &str) -> Option<CloudSttProvider> {
-    if model_id.starts_with("openai:") {
-        Some(CloudSttProvider::OpenAi)
-    } else if model_id.starts_with("elevenlabs:") {
+    if model_id.starts_with("elevenlabs:") {
         Some(CloudSttProvider::ElevenLabs)
+    } else if model_id.starts_with("openrouter:") {
+        Some(CloudSttProvider::OpenRouter)
     } else {
         None
     }
@@ -427,7 +413,8 @@ pub fn samples_to_wav_bytes(samples: &[f32]) -> Result<Vec<u8>, CloudSttError> {
 
 /// Parse a provider transcription JSON body into the common payload.
 /// OpenAI verbose_json: { text, language, duration }. ElevenLabs:
-/// { text, language_code?, … }. Mirrors buildTranscribeResult.
+/// { text, language_code?, … }. OpenRouter: { text, usage: { seconds, … } }.
+/// Mirrors buildTranscribeResult.
 pub fn parse_transcription_json(
     provider: CloudSttProvider,
     json: &serde_json::Value,
@@ -438,14 +425,22 @@ pub fn parse_transcription_json(
         .unwrap_or_default()
         .to_string();
     let language = match provider {
-        CloudSttProvider::OpenAi => json.get("language").and_then(|l| l.as_str()),
+        // OpenRouter's dedicated endpoint returns only text + usage; no language
+        // field is documented, so this is best-effort and usually None.
+        CloudSttProvider::OpenRouter => json.get("language").and_then(|l| l.as_str()),
         CloudSttProvider::ElevenLabs => json
             .get("language_code")
             .or_else(|| json.get("language"))
             .and_then(|l| l.as_str()),
     }
     .map(str::to_string);
-    let duration_seconds = json.get("duration").and_then(|d| d.as_f64());
+    let duration_seconds = match provider {
+        CloudSttProvider::OpenRouter => json
+            .get("usage")
+            .and_then(|u| u.get("seconds"))
+            .and_then(|d| d.as_f64()),
+        _ => json.get("duration").and_then(|d| d.as_f64()),
+    };
     CloudTranscription {
         text,
         language,
@@ -487,20 +482,22 @@ mod tests {
     #[test]
     fn provider_id_roundtrip() {
         assert_eq!(
-            CloudSttProvider::from_id("openai"),
-            Some(CloudSttProvider::OpenAi)
-        );
-        assert_eq!(
             CloudSttProvider::from_id("elevenlabs"),
             Some(CloudSttProvider::ElevenLabs)
         );
+        assert_eq!(
+            CloudSttProvider::from_id("openrouter"),
+            Some(CloudSttProvider::OpenRouter)
+        );
+        // OpenAI was removed as a direct provider (now served via openrouter:openai/*).
+        assert_eq!(CloudSttProvider::from_id("openai"), None);
         assert_eq!(CloudSttProvider::from_id("azure"), None);
     }
 
     #[test]
     fn audio_limits_match_spec() {
         assert_eq!(
-            provider_audio_limit_bytes(CloudSttProvider::OpenAi),
+            provider_audio_limit_bytes(CloudSttProvider::OpenRouter),
             25 * 1024 * 1024
         );
         assert_eq!(
@@ -508,11 +505,11 @@ mod tests {
             1024 * 1024 * 1024
         );
         assert!(exceeds_audio_limit(
-            CloudSttProvider::OpenAi,
+            CloudSttProvider::OpenRouter,
             26 * 1024 * 1024
         ));
         assert!(!exceeds_audio_limit(
-            CloudSttProvider::OpenAi,
+            CloudSttProvider::OpenRouter,
             10 * 1024 * 1024
         ));
     }
@@ -555,13 +552,13 @@ mod tests {
             classify_verify(CloudSttProvider::ElevenLabs, 401, body),
             VerifyResult::Ok
         );
-        // openai 401 is a hard auth failure
-        match classify_verify(CloudSttProvider::OpenAi, 401, "bad") {
+        // a non-ElevenLabs 401 is a hard auth failure
+        match classify_verify(CloudSttProvider::OpenRouter, 401, "bad") {
             VerifyResult::Failed { code, .. } => assert_eq!(code, CloudSttErrorCode::Auth),
             _ => panic!("expected failure"),
         }
         assert_eq!(
-            classify_verify(CloudSttProvider::OpenAi, 200, "{}"),
+            classify_verify(CloudSttProvider::OpenRouter, 200, "{}"),
             VerifyResult::Ok
         );
     }
@@ -596,8 +593,8 @@ mod tests {
     fn preflight_rejects_missing_key_and_oversize() {
         let big = vec![0u8; 26 * 1024 * 1024];
         let req = CloudTranscribeRequest {
-            provider: CloudSttProvider::OpenAi,
-            model_id: "whisper-1".into(),
+            provider: CloudSttProvider::OpenRouter,
+            model_id: "openai/whisper-1".into(),
             api_key: "".into(),
             language: None,
             media_type: "audio/wav".into(),
@@ -627,24 +624,60 @@ mod tests {
     }
 
     #[test]
-    fn parse_openai_verbose_json() {
-        let json = serde_json::json!({
-            "text": "hello there",
-            "language": "english",
-            "duration": 2.5
-        });
-        let out = parse_transcription_json(CloudSttProvider::OpenAi, &json);
-        assert_eq!(out.text, "hello there");
-        assert_eq!(out.language.as_deref(), Some("english"));
-        assert_eq!(out.duration_seconds, Some(2.5));
-    }
-
-    #[test]
     fn parse_elevenlabs_language_code() {
         let json = serde_json::json!({ "text": "bonjour", "language_code": "fr" });
         let out = parse_transcription_json(CloudSttProvider::ElevenLabs, &json);
         assert_eq!(out.text, "bonjour");
         assert_eq!(out.language.as_deref(), Some("fr"));
+    }
+
+    #[test]
+    fn openrouter_provider_roundtrip_and_endpoints() {
+        assert_eq!(
+            CloudSttProvider::from_id("openrouter"),
+            Some(CloudSttProvider::OpenRouter)
+        );
+        assert_eq!(CloudSttProvider::OpenRouter.id(), "openrouter");
+        assert_eq!(
+            CloudSttProvider::OpenRouter.endpoint(),
+            "https://openrouter.ai/api/v1/audio/transcriptions"
+        );
+        // Dynamic catalog: no curated rows.
+        assert!(cloud_models_for(CloudSttProvider::OpenRouter).is_empty());
+        assert_eq!(
+            provider_audio_limit_bytes(CloudSttProvider::OpenRouter),
+            25 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn openrouter_prefix_splits_slashed_model_id() {
+        // OpenRouter ids carry a maker slash (e.g. microsoft/mai-transcribe-1.5);
+        // split_model_id peels only the provider prefix at the FIRST colon.
+        assert_eq!(
+            provider_of("openrouter:microsoft/mai-transcribe-1.5"),
+            Some(CloudSttProvider::OpenRouter)
+        );
+        assert_eq!(
+            split_model_id("openrouter:microsoft/mai-transcribe-1.5"),
+            Some((
+                CloudSttProvider::OpenRouter,
+                "microsoft/mai-transcribe-1.5".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_openrouter_usage_seconds() {
+        // OpenRouter's dedicated endpoint: { text, usage: { seconds, … } }.
+        let json = serde_json::json!({
+            "text": "hello from openrouter",
+            "usage": { "seconds": 9.2, "total_tokens": 113 }
+        });
+        let out = parse_transcription_json(CloudSttProvider::OpenRouter, &json);
+        assert_eq!(out.text, "hello from openrouter");
+        assert_eq!(out.duration_seconds, Some(9.2));
+        assert_eq!(out.language, None);
     }
 
     #[test]
@@ -657,13 +690,15 @@ mod tests {
     #[test]
     fn provider_of_recognizes_cloud_prefixes() {
         assert_eq!(
-            provider_of("openai:whisper-1"),
-            Some(CloudSttProvider::OpenAi)
-        );
-        assert_eq!(
             provider_of("elevenlabs:scribe_v1"),
             Some(CloudSttProvider::ElevenLabs)
         );
+        assert_eq!(
+            provider_of("openrouter:openai/whisper-1"),
+            Some(CloudSttProvider::OpenRouter)
+        );
+        // OpenAI is no longer a direct provider — `openai:` is now an unknown prefix.
+        assert_eq!(provider_of("openai:whisper-1"), None);
         // local-catalog ids + custom ids carry no prefix.
         assert_eq!(provider_of("tiny"), None);
         assert_eq!(provider_of("nemo-canary-1b-v2"), None);
@@ -673,8 +708,11 @@ mod tests {
     #[test]
     fn split_model_id_peels_the_bare_provider_id() {
         assert_eq!(
-            split_model_id("openai:gpt-4o-transcribe"),
-            Some((CloudSttProvider::OpenAi, "gpt-4o-transcribe".to_string()))
+            split_model_id("openrouter:openai/gpt-4o-transcribe"),
+            Some((
+                CloudSttProvider::OpenRouter,
+                "openai/gpt-4o-transcribe".to_string()
+            ))
         );
         assert_eq!(
             split_model_id("elevenlabs:scribe_v1_experimental"),
@@ -688,11 +726,7 @@ mod tests {
 
     #[test]
     fn default_cloud_model_matches_curated_catalog() {
-        // Mirrors catalog.ts: openai default = gpt-4o-mini-transcribe, elevenlabs = scribe_v1.
-        assert_eq!(
-            default_cloud_model_id(CloudSttProvider::OpenAi),
-            "openai:gpt-4o-mini-transcribe"
-        );
+        // Mirrors catalog.ts: elevenlabs default = scribe_v1.
         assert_eq!(
             default_cloud_model_id(CloudSttProvider::ElevenLabs),
             "elevenlabs:scribe_v1"
@@ -701,14 +735,12 @@ mod tests {
 
     #[test]
     fn cloud_catalog_mirrors_renderer() {
-        // Exactly one default per provider; ids match the renderer's CLOUD_CATALOG.
-        let openai = cloud_models_for(CloudSttProvider::OpenAi);
-        assert_eq!(openai.iter().filter(|m| m.is_default).count(), 1);
-        assert!(openai.iter().any(|m| m.id == "whisper-1"));
-        assert!(openai.iter().any(|m| m.id == "gpt-4o-transcribe"));
+        // Exactly one default per curated provider; ids match the renderer's CLOUD_CATALOG.
         let el = cloud_models_for(CloudSttProvider::ElevenLabs);
         assert_eq!(el.iter().filter(|m| m.is_default).count(), 1);
         assert!(el.iter().any(|m| m.id == "scribe_v1"));
+        // OpenRouter has no curated catalog (dynamic scan).
+        assert!(cloud_models_for(CloudSttProvider::OpenRouter).is_empty());
     }
 
     #[test]

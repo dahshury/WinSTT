@@ -51,6 +51,7 @@ function buildComboboxItems(
 }
 
 interface UseModelSelectorFiltersProps {
+	favoriteProvidersStorageKey?: string | undefined;
 	isOpen?: boolean;
 	models: OpenRouterModel[];
 	searchQuery: string;
@@ -134,6 +135,7 @@ function computeHasActiveFilters(
 }
 
 export function useModelSelectorFilters({
+	favoriteProvidersStorageKey,
 	models,
 	searchQuery,
 	selectedMakers,
@@ -148,7 +150,9 @@ export function useModelSelectorFilters({
 	sortKey = null,
 	isOpen = false,
 }: UseModelSelectorFiltersProps) {
-	const { favorites, toggleFavorite } = useFavoriteProviders();
+	const { favorites, toggleFavorite } = useFavoriteProviders(
+		favoriteProvidersStorageKey,
+	);
 
 	const deferredSearchQuery = useDeferredValue(searchQuery);
 

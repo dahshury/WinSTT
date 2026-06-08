@@ -1,6 +1,6 @@
 [package]
 name = "winstt"
-version = "0.1.0"
+version = "0.1.1"
 description = "WinSTT — Windows speech-to-text"
 authors = ["dahshury", "WinSTT contributors", "cjpais (Handy foundation)"]
 edition = "2021"
@@ -133,6 +133,7 @@ sentencepiece-rs = "0.2.2"        # Pure-Rust SentencePiece `.model` reader for 
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }        # diag bundle
 symphonia = { version = "0.6.0", default-features = false, features = ["wav", "pcm", "adpcm", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
 base85 = "2.0.0"                 # Whisper alignment-heads table (RFC1924)
+base64 = "0.22"                  # base64-encode the WAV body for OpenRouter's JSON /audio/transcriptions endpoint
 half = "2"                       # f16 tensor element type (matches ort's half)
 # sherpa-onnx ships only /MT (static-CRT) Windows libs; the `static` default clashes with Rust's /MD
 # CRT (LNK2038/LNK2005). Use `shared` → link sherpa-onnx as a DLL so its /MT CRT stays isolated.

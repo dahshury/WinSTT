@@ -1,5 +1,4 @@
 //! The tauri-specta `Builder` construction: full command list +
-//! `#[cfg(any(debug_assertions, feature = "context-playground"))]` extension +
 //! event registry. Pure declarative, no shared state.
 
 use tauri_specta::{collect_commands, collect_events, Builder};
@@ -130,6 +129,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::tts::tts_install_resume,
         winstt::commands::tts::tts_install_cancel,
         winstt::commands::tts::tts_preview_cloud,
+        winstt::commands::tts::tts_preview_openrouter,
         winstt::commands::tts::tts_list_models,
         winstt::commands::tts::tts_list_models_with_state,
         winstt::commands::tts::tts_predownload_model,
@@ -141,6 +141,8 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::llm::process_transform,
         winstt::commands::llm::scan_ollama_models,
         winstt::commands::llm::scan_openrouter_models,
+        winstt::commands::llm::scan_openrouter_stt_models,
+        winstt::commands::llm::scan_openrouter_tts_models,
         winstt::commands::llm::ollama_detect,
         winstt::commands::llm::ollama_start,
         winstt::commands::llm::ollama_pull,
@@ -234,6 +236,9 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::preview::confirm_paste,
         winstt::commands::preview::cancel_preview,
         winstt::commands::overlay::set_overlay_hit_regions,
+        winstt::commands::context_playground::context_playground_set_live,
+        winstt::commands::context_playground::context_playground_arm_deep,
+        winstt::commands::context_playground::context_playground_capture,
         winstt::commands::windows::winstt_diag,
         winstt::commands::windows::settings_window_ready,
         winstt::commands::windows::open_window,
@@ -254,26 +259,6 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::updater::winstt_updater_clear_status_history,
         winstt::commands::updater::winstt_updater_get_status_history,
         winstt::commands::updater::winstt_updater_install,
-    ]);
-
-    // Context-playground: a `#[cfg(feature = "context-playground")]` dev tool.
-    //
-    // FOOTGUN: tauri-specta rc.21 `Builder::commands()` REPLACES the command
-    // list — it is NOT additive (see builder.rs: `commands, ..self`). So a
-    // second `.commands()` call is only safe when it is skipped for normal
-    // builds: gating it on the feature means dev/release builds keep the full
-    // ~240-command set above. Do NOT widen this to
-    // `any(debug_assertions, ...)` — that fires the replace on EVERY debug
-    // build and clobbers the whole command surface (and the generated
-    // `bindings.ts`) down to just these four. To expose these in dev without
-    // the feature, the full list must be duplicated under a cfg branch, not
-    // appended via a second `.commands()`.
-    #[cfg(feature = "context-playground")]
-    let builder = builder.commands(collect_commands![
-        winstt::commands::context::debug_read_context,
-        winstt::commands::context_playground::context_playground_set_live,
-        winstt::commands::context_playground::context_playground_arm_deep,
-        winstt::commands::context_playground::context_playground_capture,
     ]);
 
     builder.events(collect_events![

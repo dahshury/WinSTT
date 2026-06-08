@@ -86,6 +86,14 @@ export function DictionarySettingsPanel() {
 					onRemove={(id) => {
 						updateDictionary(dictionary.filter((e) => e.id !== id));
 					}}
+					onRemoveMany={(ids) => {
+						const selected = new Set(ids);
+						const currentDictionary =
+							useSettingsStore.getState().settings.dictionary ?? [];
+						updateDictionary(
+							currentDictionary.filter((entry) => !selected.has(entry.id)),
+						);
+					}}
 					onUpdate={handleUpdate}
 				/>
 				{/* Threshold for the server-side deterministic fuzzy corrector. The

@@ -298,7 +298,14 @@ pub fn ide_kind_from_exe(app_exe: Option<&str>) -> Option<IdeKind> {
         return exact;
     }
     const JETBRAINS: &[&str] = &[
-        "idea", "pycharm", "webstorm", "rubymine", "clion", "goland", "rustrover", "rider",
+        "idea",
+        "pycharm",
+        "webstorm",
+        "rubymine",
+        "clion",
+        "goland",
+        "rustrover",
+        "rider",
         "phpstorm",
     ];
     if exe.ends_with(".exe") && JETBRAINS.iter().any(|p| exe.starts_with(p)) {

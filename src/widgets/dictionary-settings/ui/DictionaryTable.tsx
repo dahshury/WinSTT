@@ -13,6 +13,7 @@ export interface DictionaryTableProps {
 	onAdd: (entry: Omit<DictionaryEntry, "id">) => void;
 	onClearAll?: () => void;
 	onRemove: (id: string) => void;
+	onRemoveMany?: (ids: string[]) => void;
 	onUpdate?: (id: string, entry: Omit<DictionaryEntry, "id">) => void;
 }
 
@@ -20,6 +21,7 @@ export function DictionaryTable({
 	entries,
 	onAdd,
 	onRemove,
+	onRemoveMany,
 	onClearAll,
 	onUpdate,
 }: DictionaryTableProps) {
@@ -96,6 +98,7 @@ export function DictionaryTable({
 			}}
 			onAdd={onAdd}
 			onRemove={onRemove}
+			{...(onRemoveMany ? { onRemoveMany } : {})}
 			pageSize={5}
 			paginated
 			schema={addSchema}

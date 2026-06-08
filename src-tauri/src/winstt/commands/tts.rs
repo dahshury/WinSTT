@@ -371,6 +371,31 @@ pub async fn tts_preview_cloud(
     Ok(SpeakResult { request_id })
 }
 
+/// `tts_preview_openrouter` — play a model-scoped OpenRouter voice preview.
+/// The manager performs a short live `/audio/speech` synthesis through
+/// OpenRouter for the selected model/voice/speed.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_preview_openrouter(
+    app: AppHandle,
+    tts: State<'_, Arc<TtsManager>>,
+    model: String,
+    voice: String,
+    speed: Option<f32>,
+) -> Result<SpeakResult, String> {
+    if model.trim().is_empty() || voice.trim().is_empty() {
+        return Ok(SpeakResult::default());
+    }
+    let mgr = tts.inner().clone();
+    let request_id = mgr.next_request_id();
+    reserve_tts_playback_layer(&app);
+    let rid = request_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        mgr.read_openrouter_preview(&rid, &model, &voice, speed.unwrap_or(1.0));
+    });
+    Ok(SpeakResult { request_id })
+}
+
 // ===========================================================================
 // Multi-provider TTS catalog (the model-aware picker). Mirrors the STT
 // list_models / list_models_with_state + per-quant download lifecycle, but for

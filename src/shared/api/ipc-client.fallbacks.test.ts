@@ -6,7 +6,6 @@ import {
 	contextMenuShow,
 	dialogOpenFile,
 	fetchModelCatalog,
-	fileTranscribe,
 	gpuGetInfo,
 	hotkeyRegister,
 	hotkeyStartRecording,
@@ -40,7 +39,6 @@ describe("ipc-client non-bridge fallbacks", () => {
 		expect(await contextMenuShow([])).toEqual({ selectedId: null });
 		expect(await updaterGetStatusHistory()).toEqual([]);
 		expect(await updaterClearStatusHistory()).toEqual({ cleared: true });
-		expect(await fileTranscribe("C:\\test.wav")).toEqual({ requestId: "" });
 		expect(await clipboardReadText()).toBe("");
 		expect(await processWithLlm("hello")).toBe("hello");
 	});

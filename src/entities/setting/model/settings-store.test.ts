@@ -233,27 +233,11 @@ describe("useSettingsStore mutators", () => {
 		});
 	});
 
-	test("updateIntegrations({ openai }) shallow-merges only the openai branch", () => {
-		// Seed both providers so we can prove the unrelated branch is preserved.
+	test("updateIntegrations({ elevenlabs }) shallow-merges the elevenlabs branch and preserves prior fields", () => {
+		// ElevenLabs is the only integrations-backed cloud provider (OpenAI
+		// removed; OpenRouter STT reuses the LLM key). Prove a partial patch
+		// replaces `apiKey` while a `verified` flag set by a prior call survives.
 		useSettingsStore.getState().updateIntegrations({
-			openai: { apiKey: "sk-old", verified: true },
-			elevenlabs: { apiKey: "el-old" },
-		});
-		useSettingsStore
-			.getState()
-			.updateIntegrations({ openai: { apiKey: "sk-new" } });
-
-		const integrations = useSettingsStore.getState().settings.integrations;
-		// openai.apiKey replaced, but `verified` from the prior call survives.
-		expect(integrations.openai.apiKey).toBe("sk-new");
-		expect(integrations.openai.verified).toBe(true);
-		// elevenlabs branch untouched.
-		expect(integrations.elevenlabs.apiKey).toBe("el-old");
-	});
-
-	test("updateIntegrations({ elevenlabs }) shallow-merges only the elevenlabs branch", () => {
-		useSettingsStore.getState().updateIntegrations({
-			openai: { apiKey: "sk-stable" },
 			elevenlabs: { apiKey: "el-old", verified: true },
 		});
 		useSettingsStore
@@ -261,15 +245,13 @@ describe("useSettingsStore mutators", () => {
 			.updateIntegrations({ elevenlabs: { apiKey: "el-new" } });
 
 		const integrations = useSettingsStore.getState().settings.integrations;
+		// elevenlabs.apiKey replaced, but `verified` from the prior call survives.
 		expect(integrations.elevenlabs.apiKey).toBe("el-new");
 		expect(integrations.elevenlabs.verified).toBe(true);
-		// openai branch untouched.
-		expect(integrations.openai.apiKey).toBe("sk-stable");
 	});
 
 	test("updateIntegrations({}) (empty patch) leaves integrations unchanged in value", () => {
 		useSettingsStore.getState().updateIntegrations({
-			openai: { apiKey: "sk-keep" },
 			elevenlabs: { apiKey: "el-keep" },
 		});
 		const before = useSettingsStore.getState().settings.integrations;
@@ -277,18 +259,7 @@ describe("useSettingsStore mutators", () => {
 		const after = useSettingsStore.getState().settings.integrations;
 		expect(after).toEqual(before);
 		// Per-provider sub-objects retain their fields.
-		expect(after.openai.apiKey).toBe("sk-keep");
 		expect(after.elevenlabs.apiKey).toBe("el-keep");
-	});
-
-	test("updateIntegrations patches both providers at once", () => {
-		useSettingsStore.getState().updateIntegrations({
-			openai: { apiKey: "sk-both" },
-			elevenlabs: { apiKey: "el-both" },
-		});
-		const integrations = useSettingsStore.getState().settings.integrations;
-		expect(integrations.openai.apiKey).toBe("sk-both");
-		expect(integrations.elevenlabs.apiKey).toBe("el-both");
 	});
 
 	test("partialize only persists `settings` (NOT `isLoaded`) — kills `() => undefined` and `{}` mutants", () => {

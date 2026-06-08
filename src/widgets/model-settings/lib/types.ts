@@ -41,4 +41,5 @@ export type ElevenIntegration =
 export interface ModelControlVisibility {
 	showDevice: boolean;
 	showLanguage: boolean;
+	showLifetime: boolean;
 }

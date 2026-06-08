@@ -55,7 +55,9 @@ use verify::{probe_verify, resolve_verify_api_key, VerifyProbe};
 pub use payloads::{
     OllamaDeleteResultPayload, OllamaDetectResultPayload, OllamaModelDetailsPayload,
     OllamaModelPayload, OllamaPullResultPayload, OllamaScanResultPayload, OllamaStartResultPayload,
-    OpenRouterModelPayload, OpenRouterScanResultPayload, VerifyCredentialPayload,
+    OpenRouterModelPayload, OpenRouterScanResultPayload, OpenRouterSttModelPayload,
+    OpenRouterSttScanResultPayload, OpenRouterTtsModelPayload, OpenRouterTtsScanResultPayload,
+    VerifyCredentialPayload,
 };
 // `detect_ollama_executable` / `spawn_ollama_serve` are crate-internal and called
 // by `managers::llm_manager` through `winstt::commands::llm::*`; the `pub(crate) use`
@@ -283,6 +285,48 @@ struct OpenRouterFallbackRequest<'a> {
     options: llm::OpenRouterRequestOptions,
 }
 
+fn score_from_wer_percent(wer: f32) -> f32 {
+    (1.0 - wer / 30.0).clamp(0.0, 1.0)
+}
+
+/// Normalized 0..1 guidance scores for OpenRouter STT rows. Accuracy uses
+/// published WER where OpenRouter exposes one in the speech-to-text collection;
+/// the remaining rows use conservative catalog-positioning estimates so the
+/// cloud picker can show the same accuracy/speed trade-off as local models.
+fn openrouter_stt_scores(id: &str) -> (f32, f32) {
+    match id {
+        "openai/whisper-large-v3" => (score_from_wer_percent(10.3), 0.65),
+        "openai/whisper-large-v3-turbo" => (score_from_wer_percent(12.0), 0.86),
+        "nvidia/parakeet-tdt-0.6b-v3" => (score_from_wer_percent(6.34), 0.82),
+        "openai/gpt-4o-transcribe" => (0.92, 0.72),
+        "microsoft/mai-transcribe-1.5" => (0.88, 0.88),
+        "google/chirp-3" => (0.86, 0.80),
+        "openai/gpt-4o-mini-transcribe" => (0.84, 0.82),
+        "qwen/qwen3-asr-flash-2026-02-10" => (0.84, 0.90),
+        "mistralai/voxtral-mini-transcribe" => (0.82, 0.84),
+        "openai/whisper-1" => (0.78, 0.62),
+        _ => (0.50, 0.50),
+    }
+}
+
+/// Normalized 0..1 guidance scores for OpenRouter speech rows. OpenRouter does
+/// not publish a common TTS benchmark table, so these mirror the local TTS
+/// catalog's editorial quality/speed convention.
+fn openrouter_tts_scores(id: &str) -> (f32, f32) {
+    match id {
+        "google/gemini-3.1-flash-tts-preview" => (0.90, 0.86),
+        "hexgrad/kokoro-82m" => (0.90, 0.85),
+        "microsoft/mai-voice-2" => (0.88, 0.78),
+        "canopylabs/orpheus-3b-0.1-ft" => (0.86, 0.72),
+        "sesame/csm-1b" => (0.84, 0.70),
+        "x-ai/grok-voice-tts-1.0" => (0.84, 0.82),
+        "mistralai/voxtral-mini-tts-2603" => (0.84, 0.82),
+        "zyphra/zonos-v0.1-hybrid" => (0.82, 0.78),
+        "zyphra/zonos-v0.1-transformer" => (0.80, 0.74),
+        _ => (0.50, 0.50),
+    }
+}
+
 async fn run_openrouter_with_fallback(
     mgr: &Arc<LlmManager>,
     request: OpenRouterFallbackRequest<'_>,
@@ -407,6 +451,80 @@ pub async fn scan_openrouter_models(
     let scan = mgr.scan_openrouter_enriched(&api_key).await;
     Ok(OpenRouterScanResultPayload {
         models: scan.models.into_iter().map(Into::into).collect(),
+        reachable: scan.reachable,
+        error: scan.error,
+    })
+}
+
+/// `scan_openrouter_stt_models` - the transcription subset of the OpenRouter
+/// catalog for the cloud STT picker. Reuses the shared catalog fetch with
+/// `output_modalities=transcription`, enriches those rows with endpoint/provider
+/// details when OpenRouter exposes them, then maps them to the STT picker shape.
+#[tauri::command]
+#[specta::specta]
+pub async fn scan_openrouter_stt_models(
+    app: AppHandle,
+    llm_manager: State<'_, Arc<LlmManager>>,
+) -> Result<OpenRouterSttScanResultPayload, String> {
+    let settings = read_settings(&app);
+    let api_key = settings.llm.openrouter_api_key.clone();
+    let mgr = llm_manager.inner().clone();
+    let scan = mgr.scan_openrouter_transcription_enriched(&api_key).await;
+    Ok(OpenRouterSttScanResultPayload {
+        models: scan
+            .models
+            .into_iter()
+            .map(|m| {
+                let (accuracy_score, speed_score) = openrouter_stt_scores(&m.id);
+                OpenRouterSttModelPayload {
+                    id: m.id,
+                    name: m.name,
+                    description: m.description,
+                    pricing: m.pricing,
+                    endpoints: m
+                        .endpoints
+                        .map(|eps| eps.into_iter().map(Into::into).collect()),
+                    accuracy_score,
+                    speed_score,
+                }
+            })
+            .collect(),
+        reachable: scan.reachable,
+        error: scan.error,
+    })
+}
+
+/// `scan_openrouter_tts_models` — the speech (TTS) subset of the OpenRouter
+/// catalog for the cloud TTS picker. REUSES `scan_openrouter` via
+/// `scan_openrouter_speech`, keeping only `output_modalities: ["speech"]` rows,
+/// mapped to the lean `{ id, name }` shape. Mirrors `scan_openrouter_stt_models`.
+#[tauri::command]
+#[specta::specta]
+pub async fn scan_openrouter_tts_models(
+    app: AppHandle,
+    llm_manager: State<'_, Arc<LlmManager>>,
+) -> Result<OpenRouterTtsScanResultPayload, String> {
+    let settings = read_settings(&app);
+    let api_key = settings.llm.openrouter_api_key.clone();
+    let mgr = llm_manager.inner().clone();
+    let scan = mgr.scan_openrouter_speech(&api_key).await;
+    Ok(OpenRouterTtsScanResultPayload {
+        models: scan
+            .models
+            .into_iter()
+            .map(|m| {
+                let (quality_score, speed_score) = openrouter_tts_scores(&m.id);
+                OpenRouterTtsModelPayload {
+                    id: m.id,
+                    name: m.name,
+                    description: m.description,
+                    pricing: m.pricing,
+                    supported_voices: m.supported_voices.unwrap_or_default(),
+                    quality_score,
+                    speed_score,
+                }
+            })
+            .collect(),
         reachable: scan.reachable,
         error: scan.error,
     })
@@ -559,9 +677,9 @@ pub async fn ollama_delete(
 
 /// `verify_credential` — the ONE renderer verify seam (`INTEGRATIONS_VERIFY`).
 /// Probes the provider's cheap GET endpoint with the user-typed key and returns
-/// `{ ok, code?, message? }` (the WinSTT taxonomy `code`). Covers OpenAI,
-/// ElevenLabs AND OpenRouter; the renderer routes all three through this channel.
-/// Side-effect-free: never persists the key. Mirrors `credentials.ts`.
+/// `{ ok, code?, message? }` (the WinSTT taxonomy `code`). Covers ElevenLabs AND
+/// OpenRouter; the renderer routes both through this channel. (OpenAI was removed
+/// as a direct cloud STT provider.) Side-effect-free: never persists the key.
 #[tauri::command]
 #[specta::specta]
 pub async fn verify_credential(
@@ -570,7 +688,6 @@ pub async fn verify_credential(
     api_key: String,
 ) -> Result<VerifyCredentialPayload, String> {
     let probe = match provider.as_str() {
-        "openai" => VerifyProbe::OpenAi,
         "openrouter" => VerifyProbe::OpenRouter,
         "elevenlabs" => VerifyProbe::ElevenLabs,
         _ => {

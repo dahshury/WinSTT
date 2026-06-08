@@ -778,7 +778,7 @@
     "appleIntelligenceDescription": "Runs Apple's on-device foundation model. No setup required — works offline on macOS 15+ Apple Silicon.",
     "openrouterApiKey": "OpenRouter API Key",
     "openrouterApiKeyCaption": "Stored locally; sent only to OpenRouter",
-    "openrouterApiKeyTooltip": "Get a key at openrouter.ai/keys. Required for the OpenRouter provider.",
+    "openrouterApiKeyTooltip": "Get a key at openrouter.ai/keys. Powers the OpenRouter LLM provider and unlocks OpenRouter cloud transcription models (Model tab → Cloud).",
     "openrouterApiKeyPlaceholder": "sk-or-v1-…",
     "openrouterModel": "Model",
     "openrouterModelCaption": "Choose any OpenRouter model",

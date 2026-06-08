@@ -18,9 +18,10 @@ describe("IntegrationsSettingsPanel", () => {
 	test("groups keys under the LLM and Cloud STT capability sections", () => {
 		// The panel must make it unambiguous which key unlocks which feature:
 		// OpenRouter/Ollama sit under "Language Models (LLM)", while the
-		// OpenAI/ElevenLabs cloud-STT keys sit under "Cloud Speech-to-Text".
-		// A user who adds only an OpenRouter key should see it grouped away
-		// from the STT section — that's the whole point of the split.
+		// ElevenLabs cloud-STT key sits under "Cloud Speech-to-Text" (OpenAI was
+		// removed as a direct cloud STT provider). A user who adds only an
+		// OpenRouter key should see it grouped away from the STT section — that's
+		// the whole point of the split.
 		const { getAllByRole, getByText, queryByText } = render(
 			<IntlProvider>
 				<IntegrationsSettingsPanel />

@@ -5,6 +5,8 @@ import type {
 	OllamaModelPayload,
 	OllamaScanResultPayload,
 	OpenRouterModelPayload,
+	OpenRouterSttModelPayload,
+	OpenRouterTtsModelPayload,
 } from "@/bindings";
 
 // Re-exported from the Rust contract (bindings.ts) so consumers get the real
@@ -128,11 +130,16 @@ export interface OpenRouterModel
 	context_length?: number;
 	description?: string;
 	endpoints?: OpenRouterEndpoint[];
+	/** Optional transcription guidance score, used when OpenRouter STT rows are adapted into the shared picker. */
+	accuracy_score?: number;
 	maker?: string;
 	model_name?: string;
 	pricing?: OpenRouterPricing;
 	provider?: string;
+	/** Optional transcription guidance score, used when OpenRouter STT rows are adapted into the shared picker. */
+	speed_score?: number;
 	supported_parameters?: string[];
+	supported_voices?: string[];
 	variant?: OpenRouterVariant | null;
 }
 
@@ -140,6 +147,48 @@ export interface OpenRouterModel
 export interface OpenRouterScanResult {
 	error?: string;
 	models: OpenRouterModel[];
+	reachable: boolean;
+}
+
+/**
+ * A transcription model from OpenRouter
+ * `/api/v1/models?output_modalities=transcription`. Anchored to the Rust
+ * `OpenRouterSttModelPayload` with the card metadata needed by the shared
+ * OpenRouter picker.
+ */
+export interface OpenRouterSttModel
+	extends Pick<OpenRouterSttModelPayload, "id" | "name"> {
+	accuracy_score: number;
+	description?: string;
+	endpoints?: OpenRouterEndpoint[];
+	pricing?: OpenRouterPricing;
+	speed_score: number;
+}
+
+/** `scan_openrouter_stt_models` result the cloud STT picker store consumes. */
+export interface OpenRouterSttScanResult {
+	error?: string;
+	models: OpenRouterSttModel[];
+	reachable: boolean;
+}
+
+/**
+ * A speech (TTS) model from OpenRouter `/api/v1/models?output_modalities=speech`.
+ * Lean `{ id, name }` for the cloud TTS picker.
+ */
+export interface OpenRouterTtsModel
+	extends Pick<OpenRouterTtsModelPayload, "id" | "name"> {
+	description?: string;
+	pricing?: OpenRouterPricing;
+	quality_score: number;
+	speed_score: number;
+	supported_voices: string[];
+}
+
+/** `scan_openrouter_tts_models` result the cloud TTS picker store consumes. */
+export interface OpenRouterTtsScanResult {
+	error?: string;
+	models: OpenRouterTtsModel[];
 	reachable: boolean;
 }
 
@@ -152,6 +201,15 @@ export interface OpenRouterScanResult {
 // typed enums, so they stay on the frozen OpenAPI spec.
 export type CloudSttProvider = components["schemas"]["CloudSttProvider"];
 export type CloudSttErrorCode = components["schemas"]["CloudSttErrorCode"];
+
+/**
+ * Cloud STT providers whose API key lives in `settings.integrations.<provider>`
+ * (the STT-only provider: ElevenLabs — OpenAI was removed). Excludes `openrouter`,
+ * which reuses the single LLM key (`settings.llm.openrouterApiKey`) and therefore
+ * has NO `integrations` entry / credential-store row. Use this for any surface that
+ * indexes `settings.integrations[provider]` or the cloud-STT credential store.
+ */
+export type IntegrationCloudProvider = Exclude<CloudSttProvider, "openrouter">;
 
 // ── Python-WS-only concepts with no Rust command (kept on @spec) ─────────────
 export type ServerStatus = components["schemas"]["ServerStatus"];

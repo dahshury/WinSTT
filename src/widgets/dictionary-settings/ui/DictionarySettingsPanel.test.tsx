@@ -99,15 +99,12 @@ describe("DictionarySettingsPanel", () => {
 			</IntlProvider>,
 		);
 
-		fireEvent.click(
-			screen.getByRole("button", { name: /edit\s+"Kubernetes"/i }),
-		);
-		fireEvent.change(screen.getByDisplayValue("Kubernetes"), {
+		fireEvent.doubleClick(screen.getByText("Kubernetes"));
+		const input = screen.getByDisplayValue("Kubernetes");
+		fireEvent.change(input, {
 			target: { value: " DirectML " },
 		});
-		fireEvent.click(
-			screen.getByRole("button", { name: /save\s+"Kubernetes"/i }),
-		);
+		fireEvent.keyDown(input, { key: "Enter" });
 
 		await waitFor(() => {
 			expect(

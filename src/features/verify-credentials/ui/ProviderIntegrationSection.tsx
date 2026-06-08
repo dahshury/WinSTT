@@ -15,7 +15,10 @@ import {
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcInvoke } from "@/shared/api/ipc-client";
-import type { CloudSttErrorCode, CloudSttProvider } from "@/shared/api/models";
+import type {
+	CloudSttErrorCode,
+	IntegrationCloudProvider,
+} from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
@@ -28,7 +31,7 @@ interface ProviderIntegrationSectionProps {
 	keyCaption: string;
 	keyLabel: string;
 	placeholder: string;
-	provider: CloudSttProvider;
+	provider: IntegrationCloudProvider;
 }
 
 interface VerifyResponse {

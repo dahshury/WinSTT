@@ -128,9 +128,6 @@ export function useCloudKeyAutoRevert(
 	debounceMs: number = REVERT_DEBOUNCE_MS,
 	enabled = true,
 ): void {
-	const openaiKey = useSettingsStore(
-		(s) => s.settings.integrations.openai.apiKey,
-	);
 	const elevenlabsKey = useSettingsStore(
 		(s) => s.settings.integrations.elevenlabs.apiKey,
 	);
@@ -148,7 +145,6 @@ export function useCloudKeyAutoRevert(
 
 	// Seeded with the boot values so the first settle sees no transition.
 	const prevKeysRef = useRef<KeySnapshot>({
-		openai: openaiKey,
 		elevenlabs: elevenlabsKey,
 		openrouter: openrouterKey,
 	});
@@ -157,7 +153,6 @@ export function useCloudKeyAutoRevert(
 	useEffect(() => {
 		if (!enabled) {
 			prevKeysRef.current = {
-				openai: openaiKey,
 				elevenlabs: elevenlabsKey,
 				openrouter: openrouterKey,
 			};
@@ -177,7 +172,6 @@ export function useCloudKeyAutoRevert(
 			// Closed-over values are the latest: any change reset this timer with a
 			// fresh closure, so when it fires nothing newer is pending.
 			const next: KeySnapshot = {
-				openai: openaiKey,
 				elevenlabs: elevenlabsKey,
 				openrouter: openrouterKey,
 			};
@@ -196,7 +190,6 @@ export function useCloudKeyAutoRevert(
 			}
 		};
 	}, [
-		openaiKey,
 		elevenlabsKey,
 		openrouterKey,
 		model,

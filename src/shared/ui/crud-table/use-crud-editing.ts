@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ZodType } from "zod";
 import type { CrudField } from "./CrudTable";
 
@@ -19,7 +19,6 @@ export interface CrudEditingState<TEntry> {
 	startEdit: (entry: TEntry) => void;
 	cancelEdit: () => void;
 	handleUpdate: (entry: TEntry) => void;
-	isEditSaveDisabled: boolean;
 }
 
 /**
@@ -40,10 +39,13 @@ export function useCrudEditing<TEntry, TAdd>({
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [editValues, setEditValues] = useState<Record<string, string>>({});
 	const [editErrors, setEditErrors] = useState<Record<string, string>>({});
+	const editValuesRef = useRef<Record<string, string>>({});
 
 	const setEditField = (name: string, value: string): void => {
-		setEditValues((prev) => ({ ...prev, [name]: value }));
+		const next = { ...editValuesRef.current, [name]: value };
+		editValuesRef.current = next;
 		if (editErrors[name]) {
+			setEditValues(next);
 			setEditErrors((prev) => {
 				const { [name]: _omit, ...rest } = prev;
 				return rest;
@@ -78,12 +80,14 @@ export function useCrudEditing<TEntry, TAdd>({
 			next[f.name] = seed[f.name] ?? "";
 		}
 		setEditingId(getId(entry));
+		editValuesRef.current = next;
 		setEditValues(next);
 		setEditErrors({});
 	};
 
 	const cancelEdit = (): void => {
 		setEditingId(null);
+		editValuesRef.current = {};
 		setEditValues({});
 		setEditErrors({});
 	};
@@ -92,7 +96,7 @@ export function useCrudEditing<TEntry, TAdd>({
 		if (!onUpdate) {
 			return;
 		}
-		const draft = buildDraft(editValues);
+		const draft = buildDraft(editValuesRef.current);
 		const result = (updateSchema?.(entry) ?? schema).safeParse(draft);
 		if (!result.success) {
 			const next: Record<string, string> = {};
@@ -102,16 +106,13 @@ export function useCrudEditing<TEntry, TAdd>({
 					next[key] = issue.message;
 				}
 			}
+			setEditValues(draft);
 			setEditErrors(next);
 			return;
 		}
 		onUpdate(getId(entry), result.data);
 		cancelEdit();
 	};
-
-	const isEditSaveDisabled = !fields.every(
-		(f) => (editValues[f.name] ?? "").trim().length > 0,
-	);
 
 	return {
 		editingId,
@@ -121,6 +122,5 @@ export function useCrudEditing<TEntry, TAdd>({
 		startEdit,
 		cancelEdit,
 		handleUpdate,
-		isEditSaveDisabled,
 	};
 }

@@ -30,8 +30,9 @@ const TEXT_FONT_SIZE_PX: Record<SizePreset, number> = {
 	xl: 20,
 };
 
-const TRANSCRIBING_WORDS = ["Transcribing"] as const;
 const TRANSFORMING_WORDS = ["Transforming text"] as const;
+const TRANSCRIBING_WORDS = ["Transcribing"] as const;
+const UPLOADING_WORDS = ["Uploading"] as const;
 
 /**
  * Live mm:ss elapsed-time string for the dynamic island's recording timer
@@ -289,6 +290,7 @@ export {
 	breatheVariants,
 	TRANSCRIBING_WORDS,
 	TRANSFORMING_WORDS,
+	UPLOADING_WORDS,
 	CancelButton,
 	LivePulse,
 	useDelayedUnmount,

@@ -1,11 +1,13 @@
+import { commands } from "@/bindings";
 import { IPC } from "../ipc-channels";
 import {
+	commandOrDefault,
 	invokeOrDefault,
 	invokeSecureOrDefault,
+	noop,
 	on,
 	onCast,
 	onTyped,
-	send,
 } from "../ipc-transport";
 
 // Dialog
@@ -396,14 +398,6 @@ export const onTransformHistoryDeleted = (
 	cb: (payload: { id: string }) => void,
 ) => onCast<{ id: string }>(IPC.TRANSFORM_HISTORY_DELETED, cb);
 
-// File transcription
-export const fileTranscribe = (filePath: string) =>
-	invokeOrDefault<{ requestId: string }>(
-		IPC.FILE_TRANSCRIBE,
-		{ requestId: "" },
-		{ filePath },
-	);
-
 export const onFileTranscriptionProgress = (
 	cb: (data: { fileName: string; progress: number; message: string }) => void,
 ) => onCast(IPC.FILE_TRANSCRIPTION_PROGRESS, cb);
@@ -500,7 +494,7 @@ export const onSpeakerSegments = (
 // Resolves `true` once the text is on the clipboard, `false` when there's no
 // completed entry / it's empty / the clipboard write fails.
 export const copyLastTranscript = (): Promise<boolean> =>
-	invokeOrDefault<boolean>(IPC.TRANSCRIPT_COPY_LAST, false);
+	commandOrDefault("copy_last_transcript", commands.copyLastTranscript, false);
 
 // ── Diagnostics ──────────────────────────────────────────────────────
 // Open the userData folder in the OS file explorer. Returns `{ ok, error? }`
@@ -518,15 +512,18 @@ export const diagOpenLogsFolder = (): Promise<{
 // Prompt the user to save a zip containing debug.log + stt-server.log +
 // system-info.txt. `cancelled === true` means the user dismissed the save
 // dialog; `ok === true` means the zip was written to disk.
+// Mirrors the generated `DiagSaveBundleResult` (tauri-specta serializes Rust
+// `Option<T>` as `T | null`) so the wrapper can return the binding result
+// without a lossy re-map.
 export interface DiagSaveBundleResult {
-	cancelled?: boolean;
-	error?: string;
+	cancelled?: boolean | null;
+	error?: string | null;
 	ok: boolean;
-	path?: string;
+	path?: string | null;
 }
 
 export const diagSaveBundle = (): Promise<DiagSaveBundleResult> =>
-	invokeOrDefault(IPC.DIAG_SAVE_BUNDLE, {
+	commandOrDefault("diag_save_bundle", commands.diagSaveBundle, {
 		ok: false,
 		error: "IPC unavailable",
 	});
@@ -539,7 +536,11 @@ export const webviewDiagLog = (
 	label: string,
 	level: "info" | "warn" | "error",
 	message: string,
-): void => send(IPC.DIAG_WEBVIEW_LOG, { label, level, message });
+): void => {
+	// Fire-and-forget: a failed diag log must never throw into the caller (and
+	// outside a Tauri runtime the generated invoke rejects).
+	void commands.winsttDiag(label, level, message).catch(noop);
+};
 
 export interface OpenCustomModelsFolderResult {
 	error?: string;
@@ -566,7 +567,8 @@ const ABOUT_APP_INFO_FALLBACK: AboutAppInfo = {
 };
 
 export const aboutGetAppInfo = (): Promise<AboutAppInfo> =>
-	invokeOrDefault<AboutAppInfo>(
-		IPC.ABOUT_GET_APP_INFO,
+	commandOrDefault(
+		"about_get_app_info",
+		commands.aboutGetAppInfo,
 		ABOUT_APP_INFO_FALLBACK,
 	);

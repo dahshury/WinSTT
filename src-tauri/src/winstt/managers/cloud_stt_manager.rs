@@ -11,6 +11,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use base64::Engine as _;
 use tauri::{AppHandle, Emitter};
 use tokio_util::sync::CancellationToken;
 
@@ -179,12 +180,14 @@ impl CloudSttManager {
     }
 
     /// Read the provider's API key off the WinSTT settings store (decrypted).
-    /// Mirrors `loadApiKey` reading `integrations.<provider>.apiKey`.
+    /// ElevenLabs reads `integrations.elevenlabs.apiKey`; OpenRouter shares the
+    /// single LLM key (`llm.openrouterApiKey`) so one key powers both cloud
+    /// post-processing AND cloud transcription.
     fn api_key_for(&self, provider: CloudSttProvider) -> String {
         let settings = read_settings(&self.app);
         match provider {
-            CloudSttProvider::OpenAi => settings.integrations.openai.api_key,
             CloudSttProvider::ElevenLabs => settings.integrations.elevenlabs.api_key,
+            CloudSttProvider::OpenRouter => settings.llm.openrouter_api_key,
         }
     }
 
@@ -193,41 +196,53 @@ impl CloudSttManager {
         req: CloudTranscribeRequest,
         cancel: &CancellationToken,
     ) -> Result<CloudTranscription, CloudSttError> {
-        let part = reqwest::multipart::Part::bytes(req.audio_wav.clone())
-            .file_name("audio.wav")
-            .mime_str(&req.media_type)
-            .map_err(|e| CloudSttError::new(CloudSttErrorCode::ProviderError, e.to_string()))?;
+        let provider = req.provider;
+        let endpoint = provider.endpoint();
+        let timeout = Duration::from_secs(CLOUD_TRANSCRIBE_TIMEOUT_SECS);
 
-        let mut form = reqwest::multipart::Form::new().part("file", part);
-        match req.provider {
-            CloudSttProvider::OpenAi => {
-                form = form
-                    .text("model", req.model_id.clone())
-                    .text("response_format", "verbose_json");
-                if let Some(lang) = req.language.clone() {
-                    if !lang.is_empty() {
-                        form = form.text("language", lang);
-                    }
-                }
-            }
+        // ElevenLabs takes a multipart file upload. OpenRouter's dedicated
+        // `/audio/transcriptions` endpoint is OpenAI-compatible but takes a JSON
+        // body with the WAV bytes base64-encoded under `input_audio` (no
+        // multipart). Both then share the send / status / parse / cancel logic below.
+        let rb = match provider {
             CloudSttProvider::ElevenLabs => {
-                form = form.text("model_id", req.model_id.clone());
+                let part = reqwest::multipart::Part::bytes(req.audio_wav.clone())
+                    .file_name("audio.wav")
+                    .mime_str(&req.media_type)
+                    .map_err(|e| {
+                        CloudSttError::new(CloudSttErrorCode::ProviderError, e.to_string())
+                    })?;
+                let mut form = reqwest::multipart::Form::new()
+                    .part("file", part)
+                    .text("model_id", req.model_id.clone());
                 if let Some(lang) = req.language.clone() {
                     if !lang.is_empty() {
                         form = form.text("language_code", lang);
                     }
                 }
+                self.client
+                    .post(endpoint)
+                    .multipart(form)
+                    .timeout(timeout)
+                    .header("xi-api-key", &req.api_key)
             }
-        }
-
-        let mut rb = self
-            .client
-            .post(req.provider.endpoint())
-            .multipart(form)
-            .timeout(Duration::from_secs(CLOUD_TRANSCRIBE_TIMEOUT_SECS));
-        rb = match req.provider {
-            CloudSttProvider::OpenAi => rb.bearer_auth(&req.api_key),
-            CloudSttProvider::ElevenLabs => rb.header("xi-api-key", &req.api_key),
+            CloudSttProvider::OpenRouter => {
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&req.audio_wav);
+                let mut body = serde_json::json!({
+                    "model": req.model_id,
+                    "input_audio": { "data": b64, "format": "wav" },
+                });
+                if let Some(lang) = req.language.clone() {
+                    if !lang.is_empty() {
+                        body["language"] = serde_json::Value::String(lang);
+                    }
+                }
+                self.client
+                    .post(endpoint)
+                    .json(&body)
+                    .timeout(timeout)
+                    .bearer_auth(&req.api_key)
+            }
         };
 
         // Race the whole upload against the per-request cancel token. On cancel
@@ -235,7 +250,6 @@ impl CloudSttManager {
         // connection (the only way to cancel a reqwest request); return `Aborted`
         // so the toast is suppressed. cancel_all() (overlay X / model swap) and
         // cancel(id) both fire this token.
-        let provider = req.provider;
         let upload = async move {
             let resp = rb
                 .send()
@@ -285,7 +299,7 @@ impl CloudSttManager {
             .get(provider.verify_endpoint())
             .timeout(Duration::from_secs(15));
         rb = match provider {
-            CloudSttProvider::OpenAi => rb.bearer_auth(api_key),
+            CloudSttProvider::OpenRouter => rb.bearer_auth(api_key),
             CloudSttProvider::ElevenLabs => rb.header("xi-api-key", api_key),
         };
         match rb.send().await {

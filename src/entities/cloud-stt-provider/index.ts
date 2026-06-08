@@ -7,3 +7,4 @@ export {
 	providerDisplayName,
 	providerOf,
 } from "./model/catalog";
+export { useOpenRouterSttCatalogStore } from "./model/openrouter-stt-catalog-store";

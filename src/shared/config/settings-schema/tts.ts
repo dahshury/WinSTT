@@ -41,8 +41,17 @@ export const ttsSettingsSchema = z.object({
 	// sub-object default cleanly when absent from persisted JSON.
 	cloud: z
 		.object({
+			// Which cloud TTS provider the Cloud source uses. ElevenLabs (account
+			// voices) or OpenRouter (dedicated /audio/speech models, reusing the
+			// shared `llm.openrouterApiKey`).
+			provider: z.enum(["elevenlabs", "openrouter"]).default("elevenlabs"),
 			voice: z.string().default(""),
 			model: z.string().default("eleven_multilingual_v2"),
+			// OpenRouter speech model id (e.g. "microsoft/mai-voice-2"), active when
+			// provider === "openrouter". Dynamic — picker scans output_modalities=speech.
+			openrouterModel: z.string().default(""),
+			// OpenRouter voice id from the selected model's supported_voices catalog.
+			openrouterVoice: z.string().default(""),
 			stability: z.number().min(0).max(1).default(0.5),
 			similarity: z.number().min(0).max(1).default(0.75),
 			style: z.number().min(0).max(1).default(0),
@@ -67,6 +76,8 @@ const providerIntegrationStatusSchema = z.object({
 });
 
 export const integrationsSchema = z.object({
-	openai: providerIntegrationStatusSchema.prefault({}),
+	// OpenAI was removed as a direct cloud STT provider (served via OpenRouter as
+	// `openai/*`); a persisted `integrations.openai` from an older build is
+	// dropped by zod (unknown key).
 	elevenlabs: providerIntegrationStatusSchema.prefault({}),
 });

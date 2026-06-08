@@ -200,6 +200,7 @@ pub fn finalize_chat_answer(content: &str, fallback: &str) -> (String, Option<St
         if !t.is_empty() {
             return (t.to_string(), None);
         }
+        return (fallback.to_string(), None);
     }
     let inline = split_inline_thinking(content);
     let mut reasoning = if inline.thinking.is_empty() {
@@ -310,6 +311,17 @@ mod tests {
     fn finalize_prefers_structured_envelope() {
         let (answer, reasoning) = finalize_chat_answer(r#"{"text":"clean output"}"#, "fallback");
         assert_eq!(answer, "clean output");
+        assert!(reasoning.is_none());
+    }
+
+    #[test]
+    fn finalize_empty_structured_envelope_uses_fallback_without_leaking_json() {
+        let (answer, reasoning) = finalize_chat_answer(r#"{"text":""}"#, "");
+        assert_eq!(answer, "");
+        assert!(reasoning.is_none());
+
+        let (answer, reasoning) = finalize_chat_answer(r#"{"text":""}"#, "original text");
+        assert_eq!(answer, "original text");
         assert!(reasoning.is_none());
     }
 

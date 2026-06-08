@@ -6,18 +6,21 @@ import { useSttSourceSwitch } from "./use-stt-source-switch";
 
 const initialSettings = useSettingsStore.getState().settings;
 
-function setKeys(openai: string, elevenlabs: string): void {
+// ElevenLabs is the only integrations-backed cloud STT provider; OpenRouter STT
+// reuses the single LLM key (`settings.llm.openrouterApiKey`), not an
+// integrations entry (OpenAI was removed as a direct cloud STT provider).
+function setKeys(elevenlabs: string, openrouter: string): void {
 	useSettingsStore.setState({
 		settings: {
 			...initialSettings,
 			integrations: {
-				openai: { apiKey: openai, verified: null, lastVerifiedAt: null },
 				elevenlabs: {
 					apiKey: elevenlabs,
 					verified: null,
 					lastVerifiedAt: null,
 				},
 			},
+			llm: { ...initialSettings.llm, openrouterApiKey: openrouter },
 		},
 	});
 }
@@ -59,7 +62,7 @@ function renderSwitch(args: Partial<Args> = {}) {
 
 describe("useSttSourceSwitch", () => {
 	test("initialises source from initialSourceIsCloud", () => {
-		setKeys("sk-openai", "");
+		setKeys("el-key", "");
 		const local = renderSwitch({ initialSourceIsCloud: false });
 		expect(local.result.current.source).toBe("local");
 		const cloud = renderSwitch({ initialSourceIsCloud: true });
@@ -76,7 +79,7 @@ describe("useSttSourceSwitch", () => {
 	});
 
 	test("enables the Cloud option with no badge once a key exists", () => {
-		setKeys("sk-openai", "");
+		setKeys("el-key", "");
 		const { result } = renderSwitch({ hasAnyCloudKey: true });
 		const cloudOpt = result.current.sourceOpts.find((o) => o.value === "cloud");
 		expect(cloudOpt?.disabled).toBe(false);
@@ -84,8 +87,8 @@ describe("useSttSourceSwitch", () => {
 	});
 
 	test("flipping to Cloud from a local model auto-picks the first keyed provider's default", () => {
-		// Only ElevenLabs keyed → the auto-pick must skip OpenAI and land on it.
-		setKeys("", "sk-eleven");
+		// Only ElevenLabs keyed → the auto-pick lands on its default model.
+		setKeys("sk-eleven", "");
 		const { result, onModelChange } = renderSwitch({
 			selectedModel: "tiny",
 			initialSourceIsCloud: false,
@@ -97,9 +100,9 @@ describe("useSttSourceSwitch", () => {
 	});
 
 	test("flipping to Cloud does NOT clobber an already-valid keyed cloud selection", () => {
-		setKeys("sk-openai", "");
+		setKeys("sk-eleven", "");
 		const { result, onModelChange } = renderSwitch({
-			selectedModel: "openai:whisper-1",
+			selectedModel: "elevenlabs:scribe_v1",
 			initialSourceIsCloud: true,
 		});
 		act(() => result.current.onSourceChange("cloud"));
@@ -107,24 +110,24 @@ describe("useSttSourceSwitch", () => {
 	});
 
 	test("flipping to Cloud re-picks when the persisted cloud model's provider has no key", () => {
-		// Persisted ElevenLabs model but only OpenAI keyed → not valid, re-pick OpenAI.
-		setKeys("sk-openai", "");
+		// Persisted OpenRouter model but only ElevenLabs keyed → not valid, re-pick ElevenLabs.
+		setKeys("sk-eleven", "");
 		const { result, onModelChange } = renderSwitch({
-			selectedModel: "elevenlabs:scribe_v1",
+			selectedModel: "openrouter:openai/whisper-1",
 			initialSourceIsCloud: false,
 		});
 		act(() => result.current.onSourceChange("cloud"));
-		expect(onModelChange).toHaveBeenCalledWith("openai:gpt-4o-mini-transcribe");
+		expect(onModelChange).toHaveBeenCalledWith("elevenlabs:scribe_v1");
 	});
 
 	test("flipping to Local from a cloud model lands on the local default", () => {
 		// Symmetric with the Cloud direction: leaving a cloud selection must pick a
 		// local model so the picker (and the detached window it opens) shows local
 		// instead of staying stranded on the previous cloud id.
-		setKeys("sk-openai", "");
+		setKeys("sk-eleven", "");
 		const pickLocalDefault = mock<() => string | null>(() => "base");
 		const { result, onModelChange } = renderSwitch({
-			selectedModel: "openai:gpt-4o-mini-transcribe",
+			selectedModel: "elevenlabs:scribe_v1",
 			initialSourceIsCloud: true,
 			pickLocalDefault,
 		});
@@ -134,7 +137,7 @@ describe("useSttSourceSwitch", () => {
 	});
 
 	test("flipping to Local from a local model is a no-op", () => {
-		setKeys("sk-openai", "");
+		setKeys("sk-eleven", "");
 		const { result, onModelChange } = renderSwitch({
 			selectedModel: "tiny",
 			initialSourceIsCloud: false,
@@ -145,10 +148,10 @@ describe("useSttSourceSwitch", () => {
 	});
 
 	test("flipping to Local leaves source and model untouched when there is no cached local candidate", () => {
-		setKeys("sk-openai", "");
+		setKeys("sk-eleven", "");
 		const pickLocalDefault = mock<() => string | null>(() => null);
 		const { result, onModelChange } = renderSwitch({
-			selectedModel: "openai:gpt-4o-mini-transcribe",
+			selectedModel: "elevenlabs:scribe_v1",
 			initialSourceIsCloud: true,
 			pickLocalDefault,
 		});

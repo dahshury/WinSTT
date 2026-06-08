@@ -195,8 +195,7 @@ fn run_catalog_mode(cat_id: &str) {
     // Mirror prod (backend.rs): the fp16 ORT_ENABLE_EXTENDED downgrade is gated on the whisper
     // family AND fp16. Without it, fp16 whisper encoders fail to commit (graph-fusion error), so
     // catalog-mode fp16 A/B runs couldn't load at all.
-    let whisper_fp16_workaround =
-        family_slug == "whisper" && effective_quant == Quantization::Fp16;
+    let whisper_fp16_workaround = family_slug == "whisper" && effective_quant == Quantization::Fp16;
     let cfg = EngineConfig {
         model_name: cat_id.to_string(),
         family: family_slug.to_string(),

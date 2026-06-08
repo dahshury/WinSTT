@@ -9655,9 +9655,10 @@ dependencies = [
 
 [[package]]
 name = "winstt"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "base85",
  "bzip2",
  "chrono",

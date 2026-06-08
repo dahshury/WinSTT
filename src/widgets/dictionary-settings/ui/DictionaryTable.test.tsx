@@ -40,28 +40,53 @@ describe("DictionaryTable", () => {
 		expect(screen.getByText("Auto")).toBeDefined();
 	});
 
-	test("clicking the per-row delete button calls onRemove with the entry id", () => {
+	test("selecting a row and clicking delete calls onRemove with the entry id", () => {
 		const { onRemove } = renderWith({ entries: [sampleEntry] });
-		const deleteBtn = screen.getByRole("button", {
-			name: /delete\s+"Kubernetes"/i,
-		});
-		fireEvent.click(deleteBtn);
+		fireEvent.click(
+			screen.getByRole("checkbox", {
+				name: /select\s+"Kubernetes"/i,
+			}),
+		);
+		fireEvent.click(screen.getByRole("button", { name: /delete \(1\)/i }));
+
 		expect(onRemove).toHaveBeenCalledWith("1");
+	});
+
+	test("selected rows use the batch remove callback when provided", () => {
+		const onRemove = mock(() => undefined);
+		const onRemoveMany = mock(() => undefined);
+		renderWith({
+			entries: [sampleEntry, { id: "2", term: "DirectML" }],
+			onRemove,
+			onRemoveMany,
+		});
+
+		fireEvent.click(
+			screen.getByRole("checkbox", {
+				name: /select\s+"Kubernetes"/i,
+			}),
+		);
+		fireEvent.click(
+			screen.getByRole("checkbox", {
+				name: /select\s+"DirectML"/i,
+			}),
+		);
+		fireEvent.click(screen.getByRole("button", { name: /delete \(2\)/i }));
+
+		expect(onRemoveMany).toHaveBeenCalledWith(["1", "2"]);
+		expect(onRemove).not.toHaveBeenCalled();
 	});
 
 	test("editing a row calls onUpdate with the trimmed term", () => {
 		const onUpdate = mock(() => undefined);
 		renderWith({ entries: [sampleEntry], onUpdate });
 
-		fireEvent.click(
-			screen.getByRole("button", { name: /edit\s+"Kubernetes"/i }),
-		);
-		fireEvent.change(screen.getByDisplayValue("Kubernetes"), {
+		fireEvent.doubleClick(screen.getByText("Kubernetes"));
+		const input = screen.getByDisplayValue("Kubernetes");
+		fireEvent.change(input, {
 			target: { value: " DirectML " },
 		});
-		fireEvent.click(
-			screen.getByRole("button", { name: /save\s+"Kubernetes"/i }),
-		);
+		fireEvent.keyDown(input, { key: "Enter" });
 
 		expect(onUpdate).toHaveBeenCalledWith("1", { term: "DirectML" });
 	});
@@ -73,15 +98,12 @@ describe("DictionaryTable", () => {
 			onUpdate,
 		});
 
-		fireEvent.click(
-			screen.getByRole("button", { name: /edit\s+"Kubernetes"/i }),
-		);
-		fireEvent.change(screen.getByDisplayValue("Kubernetes"), {
+		fireEvent.doubleClick(screen.getByText("Kubernetes"));
+		const input = screen.getByDisplayValue("Kubernetes");
+		fireEvent.change(input, {
 			target: { value: " directml " },
 		});
-		fireEvent.click(
-			screen.getByRole("button", { name: /save\s+"Kubernetes"/i }),
-		);
+		fireEvent.keyDown(input, { key: "Enter" });
 
 		expect(onUpdate).not.toHaveBeenCalled();
 		expect(screen.getByRole("alert").textContent).toContain("Already added");

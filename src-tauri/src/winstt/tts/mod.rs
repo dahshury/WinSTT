@@ -28,6 +28,7 @@ pub mod supertonic;
 mod cloud;
 mod download;
 mod local;
+mod openrouter;
 mod service;
 mod splitter;
 #[cfg(test)]
@@ -43,6 +44,7 @@ pub use self::cloud::{
 pub use self::download::{download_kokoro_assets, DownloadControl, DownloadError};
 pub use self::kokoro::{KokoroConfig, KokoroDevice, KokoroEngine, KOKORO_SAMPLE_RATE};
 pub use self::local::KokoroLocalEngine;
+pub use self::openrouter::OpenRouterTtsEngine;
 pub use self::service::{
     tts_error_category, TtsChunkPayload, TtsEventEmitter, TtsManager, TtsSource,
 };

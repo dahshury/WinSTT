@@ -258,9 +258,11 @@ export function MainModelSection({
 }: MainModelSectionProps): ReactNode {
 	const tIntegrations = useTranslations("integrations");
 	const integrations = useSettingsStore((s) => s.settings.integrations);
+	// OpenRouter STT reuses the single LLM OpenRouter key (not an integrations entry).
+	const openrouterKey = useSettingsStore((s) => s.settings.llm.openrouterApiKey);
 	const hasAnyCloudKey =
-		integrations.openai.apiKey.trim().length > 0 ||
-		integrations.elevenlabs.apiKey.trim().length > 0;
+		integrations.elevenlabs.apiKey.trim().length > 0 ||
+		openrouterKey.trim().length > 0;
 	const isCloud = providerOf(selectedModel) !== null;
 	// The Cloud tab is only reachable when at least one provider key is
 	// configured. Persisted cloud selections without a key are flipped back

@@ -46,13 +46,13 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
 use crate::winstt::catalog;
-use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::downloads::{
     transfer_url_blocking, TransferControl, TransferOutcome, TransferRequest,
 };
 use crate::winstt::stt::cache_probe::{self, CacheState, ProbeModel};
 use crate::winstt::stt::resolver;
 use crate::winstt::stt::Quantization;
+use crate::winstt::sync_ext::MutexExt;
 
 // Re-import the submodule helpers so the impl's call sites resolve unchanged, and so the
 // `#[cfg(test)] mod tests` block's `use super::*` keeps reaching `key` / `file_belongs_to_quant` /

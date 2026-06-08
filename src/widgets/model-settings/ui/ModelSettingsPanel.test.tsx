@@ -90,12 +90,15 @@ describe("ModelSettingsPanel", () => {
 		expect(screen.queryByLabelText("Initial Prompt")).toBeNull();
 	});
 
-	test("shows the unload timeout as a global model setting even when STT and TTS are cloud", () => {
+	test("hides the unload timeout when the active STT model is cloud", () => {
 		useSettingsStore.setState({
 			settings: {
 				...DEFAULT_SETTINGS,
 				global: { modelUnloadTimeout: "min10" },
-				model: { ...DEFAULT_SETTINGS.model, model: "openai:whisper-1" },
+				model: {
+					...DEFAULT_SETTINGS.model,
+					model: "openrouter:openai/whisper-1",
+				},
 				tts: { ...DEFAULT_SETTINGS.tts, source: "cloud" },
 			} as typeof DEFAULT_SETTINGS,
 		});
@@ -104,9 +107,7 @@ describe("ModelSettingsPanel", () => {
 				<ModelSettingsPanel />
 			</IntlProvider>,
 		);
-		expect(screen.getAllByText("Model Unload Timeout").length).toBeGreaterThan(
-			0,
-		);
+		expect(screen.queryByText("Model Unload Timeout")).toBeNull();
 	});
 
 	test("hides update interval for a native-streaming realtime model in dictation modes", () => {

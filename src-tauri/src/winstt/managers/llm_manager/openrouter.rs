@@ -23,6 +23,7 @@ pub struct OpenRouterModelInfo {
     pub variant: Option<String>,
     pub architecture: Option<serde_json::Value>,
     pub supported_parameters: Option<Vec<String>>,
+    pub supported_voices: Option<Vec<String>>,
     /// Per-provider hosting endpoints, filled by the catalog scan's concurrency-
     /// capped `/endpoints` fan-out (the picker's provider rail / pricing / quant /
     /// feature chips). `None` until enriched; a soft fetch failure leaves it `None`.
@@ -58,6 +59,16 @@ pub struct OpenRouterScan {
 /// `OPENROUTER_ENRICHMENT_CONCURRENCY` in llm.ts — the full catalog is 300+ models
 /// so an uncapped fan-out would hammer OpenRouter into 429s.
 const OPENROUTER_ENRICHMENT_CONCURRENCY: usize = 10;
+
+fn openrouter_models_url(output_modality: Option<&str>) -> reqwest::Url {
+    let mut url = reqwest::Url::parse("https://openrouter.ai/api/v1/models")
+        .expect("static OpenRouter models URL is valid");
+    if let Some(modality) = output_modality {
+        url.query_pairs_mut()
+            .append_pair("output_modalities", modality);
+    }
+    url
+}
 
 impl LlmManager {
     fn remember_openrouter_supported_parameters(&self, models: &[OpenRouterModelInfo]) {
@@ -225,16 +236,26 @@ impl LlmManager {
         Ok(extract_openrouter_text(&content, fallback))
     }
 
-    /// Scan the OpenRouter catalog (`GET /api/v1/models`) with the stored key.
-    /// Returns `(reachable, models, error)`. Models carry id/name/description/
-    /// context_length/pricing/maker/model_name/variant/architecture/
-    /// supported_parameters so the picker rows render. This is the LEAN scan (no
-    /// `/endpoints` fan-out); `scan_openrouter_enriched` adds that for the picker,
-    /// while the in-chat lazy `supported_parameters` lookup uses this lean path.
+    /// Scan the default OpenRouter text catalog (`GET /api/v1/models`) with the
+    /// stored key. Returns `(reachable, models, error)`. Models carry
+    /// id/name/description/context_length/pricing/maker/model_name/variant/
+    /// architecture/supported_parameters so the picker rows render. This is the
+    /// LEAN scan (no `/endpoints` fan-out); `scan_openrouter_enriched` adds that
+    /// for the picker, while the in-chat lazy `supported_parameters` lookup uses
+    /// this lean path.
     pub async fn scan_openrouter(&self, api_key: &str) -> OpenRouterScan {
+        self.scan_openrouter_with_output_modality(api_key, None)
+            .await
+    }
+
+    async fn scan_openrouter_with_output_modality(
+        &self,
+        api_key: &str,
+        output_modality: Option<&str>,
+    ) -> OpenRouterScan {
         let mut rb = self
             .client
-            .get("https://openrouter.ai/api/v1/models")
+            .get(openrouter_models_url(output_modality))
             .timeout(std::time::Duration::from_secs(15))
             .header("HTTP-Referer", "https://github.com/dahshury/winstt")
             .header("X-Title", "WinSTT");
@@ -277,6 +298,45 @@ impl LlmManager {
             error: None,
         };
         self.remember_openrouter_supported_parameters(&scan.models);
+        scan
+    }
+
+    /// The transcription subset of the catalog. REUSES the lean `scan_openrouter`
+    /// fetch + parse (NO second HTTP path / no duplicate parser) and just keeps
+    /// the rows whose `architecture.output_modalities` advertises `transcription`
+    /// — the dedicated `/audio/transcriptions`-capable models the cloud STT
+    /// picker offers. The command maps these to lean `{id,name}` rows.
+    pub async fn scan_openrouter_transcription(&self, api_key: &str) -> OpenRouterScan {
+        let mut scan = self
+            .scan_openrouter_with_output_modality(api_key, Some("transcription"))
+            .await;
+        if scan.error.is_none() {
+            scan.models.retain(model_outputs_transcription);
+        }
+        scan
+    }
+
+    /// Transcription scan plus per-model `/endpoints` enrichment. The STT
+    /// catalog is small compared with the full text catalog, so enriching it is
+    /// cheap and lets the cloud STT picker show OpenRouter's provider choices
+    /// when the endpoint detail API exposes them.
+    pub async fn scan_openrouter_transcription_enriched(&self, api_key: &str) -> OpenRouterScan {
+        let mut scan = self.scan_openrouter_transcription(api_key).await;
+        if scan.error.is_none() && !scan.models.is_empty() {
+            self.enrich_models_with_endpoints(api_key, &mut scan.models)
+                .await;
+        }
+        scan
+    }
+
+    /// The speech (TTS) subset of the catalog. Like `scan_openrouter_transcription`
+    /// but keeps `output_modalities ∋ "speech"` rows — the dedicated
+    /// `/audio/speech` models the cloud TTS picker offers. REUSES `scan_openrouter`.
+    pub async fn scan_openrouter_speech(&self, api_key: &str) -> OpenRouterScan {
+        let mut scan = self.scan_openrouter(api_key).await;
+        if scan.error.is_none() {
+            scan.models.retain(model_outputs_speech);
+        }
         scan
     }
 
@@ -354,6 +414,31 @@ fn parse_openrouter_models(json: &serde_json::Value) -> Vec<OpenRouterModelInfo>
         .unwrap_or_default()
 }
 
+/// True when a parsed catalog row advertises `transcription` in
+/// `architecture.output_modalities` — i.e. it's served by OpenRouter's dedicated
+/// `/audio/transcriptions` endpoint. Operates on the already-parsed
+/// [`OpenRouterModelInfo`] (whose `architecture` is the raw JSON object) so the
+/// transcription scan reuses `scan_openrouter`'s fetch + parse rather than a
+/// second pass. A row with no `output_modalities` array is excluded (we're
+/// filtering the FULL catalog, so unknown ⇒ not a transcription model).
+fn model_outputs_transcription(m: &OpenRouterModelInfo) -> bool {
+    model_outputs(m, "transcription")
+}
+
+/// True when a parsed catalog row advertises `speech` in
+/// `architecture.output_modalities` — i.e. it's a `/audio/speech` (TTS) model.
+fn model_outputs_speech(m: &OpenRouterModelInfo) -> bool {
+    model_outputs(m, "speech")
+}
+
+fn model_outputs(m: &OpenRouterModelInfo, modality: &str) -> bool {
+    m.architecture
+        .as_ref()
+        .and_then(|a| a.get("output_modalities"))
+        .and_then(|o| o.as_array())
+        .is_some_and(|arr| arr.iter().any(|x| x.as_str() == Some(modality)))
+}
+
 const OPENROUTER_VARIANTS: [&str; 7] = [
     "free", "extended", "exacto", "nitro", "floor", "thinking", "online",
 ];
@@ -379,6 +464,14 @@ fn parse_openrouter_model(m: &serde_json::Value) -> Option<OpenRouterModelInfo> 
         architecture: m.get("architecture").filter(|v| !v.is_null()).cloned(),
         supported_parameters: m
             .get("supported_parameters")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            }),
+        supported_voices: m
+            .get("supported_voices")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
@@ -554,6 +647,7 @@ fn extract_openrouter_text(content: &str, fallback: &str) -> String {
             if !out.is_empty() {
                 return out.to_string();
             }
+            return fallback.to_string();
         }
     }
     // Not a JSON envelope (model ignored response_format) — use raw prose.
@@ -592,5 +686,94 @@ mod tests {
         assert_eq!(models[0].id, "openai/gpt-4o");
         assert_eq!(models[0].maker.as_deref(), Some("openai"));
         assert_eq!(models[0].context_length, Some(128000));
+    }
+
+    #[test]
+    fn transcription_catalog_uses_output_modality_query() {
+        assert_eq!(
+            openrouter_models_url(None).as_str(),
+            "https://openrouter.ai/api/v1/models"
+        );
+        assert_eq!(
+            openrouter_models_url(Some("transcription")).as_str(),
+            "https://openrouter.ai/api/v1/models?output_modalities=transcription"
+        );
+    }
+
+    #[test]
+    fn transcription_filter_reuses_catalog_parse() {
+        // The transcription scan reuses `parse_openrouter_models` (the LLM fetch)
+        // and keeps only `output_modalities: ["transcription"]` rows. Filtering the
+        // FULL catalog, a non-transcription model (text out) and an architecture-less
+        // row are both dropped.
+        let json = serde_json::json!({
+            "data": [
+                {
+                    "id": "microsoft/mai-transcribe-1.5",
+                    "name": "Microsoft: MAI-Transcribe 1.5",
+                    "architecture": {
+                        "input_modalities": ["audio"],
+                        "output_modalities": ["transcription"]
+                    }
+                },
+                {
+                    "id": "openai/gpt-4o",
+                    "name": "GPT-4o",
+                    "architecture": { "output_modalities": ["text"] }
+                },
+                { "id": "some/no-arch-model", "name": "No Arch" }
+            ]
+        });
+        let mut models = parse_openrouter_models(&json);
+        models.retain(model_outputs_transcription);
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["microsoft/mai-transcribe-1.5"]);
+        assert_eq!(models[0].name, "Microsoft: MAI-Transcribe 1.5");
+    }
+
+    #[test]
+    fn speech_filter_keeps_supported_voices() {
+        let json = serde_json::json!({
+            "data": [
+                {
+                    "id": "microsoft/mai-voice-2",
+                    "name": "Microsoft: MAI-Voice-2",
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "output_modalities": ["speech"]
+                    },
+                    "supported_voices": [
+                        "en-US-Harper:MAI-Voice-2",
+                        "es-MX-Valeria:MAI-Voice-2"
+                    ]
+                },
+                {
+                    "id": "openai/gpt-4o",
+                    "name": "GPT-4o",
+                    "architecture": { "output_modalities": ["text"] }
+                }
+            ]
+        });
+        let mut models = parse_openrouter_models(&json);
+        models.retain(model_outputs_speech);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "microsoft/mai-voice-2");
+        let voices = models[0].supported_voices.as_ref().expect("voices");
+        assert_eq!(
+            voices,
+            &vec![
+                "en-US-Harper:MAI-Voice-2".to_string(),
+                "es-MX-Valeria:MAI-Voice-2".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_structured_text_uses_fallback_without_leaking_json() {
+        assert_eq!(extract_openrouter_text(r#"{"text":""}"#, ""), "");
+        assert_eq!(
+            extract_openrouter_text(r#"{"text":""}"#, "original text"),
+            "original text"
+        );
     }
 }

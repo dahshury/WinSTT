@@ -11,6 +11,7 @@ interface Model {
 	isTranscribing: boolean;
 	itemTexts: string[];
 	lastItemHasSegments: boolean;
+	processingPhase: "transcribing" | null;
 	realtime: string;
 }
 
@@ -28,6 +29,7 @@ function resetStore(): void {
 			ephemeral: null,
 			isRecordingActive: false,
 			isTranscribing: false,
+			processingPhase: null,
 			recordingSessionId: 0,
 			transcribingStartedAt: null,
 		},
@@ -43,6 +45,7 @@ function freshModel(): Model {
 		isRecordingActive: false,
 		isTranscribing: false,
 		lastItemHasSegments: false,
+		processingPhase: null,
 	};
 }
 
@@ -63,6 +66,7 @@ class AddFinalCmd implements fc.Command<Model, Real> {
 		m.realtime = "";
 		m.isTranscribing = false;
 		m.lastItemHasSegments = false;
+		m.processingPhase = null;
 		const state = snapshot(real);
 		if (state.items.length > MAX_LIVE_ITEMS) {
 			throw new Error(`items exceeded cap: ${state.items.length}`);
@@ -77,6 +81,9 @@ class AddFinalCmd implements fc.Command<Model, Real> {
 		}
 		if (state.isTranscribing) {
 			throw new Error("addFinalSentence did not clear isTranscribing");
+		}
+		if (state.processingPhase !== null) {
+			throw new Error("addFinalSentence did not clear processingPhase");
 		}
 		// last item text must match what we pushed
 		const last = state.items.at(-1);
@@ -146,6 +153,7 @@ class SetTranscribingCmd implements fc.Command<Model, Real> {
 	run(m: Model, real: Real): void {
 		real.getState().setTranscribing(this.active);
 		m.isTranscribing = this.active;
+		m.processingPhase = this.active ? "transcribing" : null;
 		const state = snapshot(real);
 		if (state.isTranscribing !== this.active) {
 			throw new Error("setTranscribing did not persist");
@@ -155,6 +163,9 @@ class SetTranscribingCmd implements fc.Command<Model, Real> {
 		}
 		if (!this.active && state.transcribingStartedAt !== null) {
 			throw new Error("setTranscribing(false) did not clear timestamp");
+		}
+		if (state.processingPhase !== m.processingPhase) {
+			throw new Error("setTranscribing did not persist processingPhase");
 		}
 	}
 	toString(): string {
@@ -211,6 +222,7 @@ class ClearAllCmd implements fc.Command<Model, Real> {
 		m.isRecordingActive = false;
 		m.isTranscribing = false;
 		m.lastItemHasSegments = false;
+		m.processingPhase = null;
 		const s = snapshot(real);
 		if (s.items.length !== 0) {
 			throw new Error("clearAll did not empty items");
@@ -226,6 +238,9 @@ class ClearAllCmd implements fc.Command<Model, Real> {
 		}
 		if (s.isTranscribing !== false || s.transcribingStartedAt !== null) {
 			throw new Error("clearAll did not clear transcribing state");
+		}
+		if (s.processingPhase !== null) {
+			throw new Error("clearAll did not clear processingPhase");
 		}
 		if (s.recordingSessionId !== 0) {
 			throw new Error("clearAll did not reset recordingSessionId");
@@ -331,6 +346,7 @@ test("transcription-store: clearAll is idempotent (twice == once)", () => {
 					after1.ephemeral === after2.ephemeral &&
 					after1.isRecordingActive === after2.isRecordingActive &&
 					after1.isTranscribing === after2.isTranscribing &&
+					after1.processingPhase === after2.processingPhase &&
 					after1.transcribingStartedAt === after2.transcribingStartedAt
 				);
 			},

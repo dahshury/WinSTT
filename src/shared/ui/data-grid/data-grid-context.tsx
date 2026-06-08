@@ -41,9 +41,27 @@ export interface DataGridLabels {
 	formatSortBy: (column: string) => string;
 }
 
+export interface DataGridTableLayout {
+	/** Compact row height and cell padding. */
+	dense?: boolean;
+	/** Vertical dividers between cells. */
+	cellBorder?: boolean;
+	/** Horizontal dividers between rows. */
+	rowBorder?: boolean;
+	/** Zebra-strip body rows. */
+	striped?: boolean;
+	/** Slightly lift the header row from the body. */
+	headerBackground?: boolean;
+	/** Divider below the header. */
+	headerBorder?: boolean;
+	/** CSS table layout algorithm. Resizable grids always force fixed layout. */
+	width?: "auto" | "fixed";
+}
+
 export interface DataGridContextValue {
 	labels: DataGridLabels;
 	resizable: boolean;
+	tableLayout: DataGridTableLayout;
 	/**
 	 * Row-type-erased table instance. The chrome renders exclusively via
 	 * `flexRender` and column metadata, neither of which needs the concrete row

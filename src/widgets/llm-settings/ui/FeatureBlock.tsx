@@ -267,6 +267,7 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 					beginOllamaSwap={beginOllamaSwap}
 					dense
 					fallbackExclusion={fallbackExclusion}
+					feature={feature}
 					featureSnapshot={featureSnapshot}
 					librarySearch={librarySearch}
 					ollamaCatalog={ollamaCatalog}

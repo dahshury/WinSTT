@@ -1,7 +1,11 @@
 import type { RowData, Table } from "@tanstack/react-table";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
-import { DataGridContext, type DataGridLabels } from "./data-grid-context";
+import {
+	DataGridContext,
+	type DataGridLabels,
+	type DataGridTableLayout,
+} from "./data-grid-context";
 
 // Keep the entry list scrolling inside its own frame rather than growing
 // unbounded and pushing the rest of a fixed-height settings panel off-screen.
@@ -19,15 +23,22 @@ export function DataGrid<TData>({
 	labels,
 	resizable = false,
 	table,
+	tableLayout = {},
 }: {
 	children: ReactNode;
 	labels: DataGridLabels;
 	resizable?: boolean;
 	table: Table<TData>;
+	tableLayout?: DataGridTableLayout;
 }) {
 	return (
 		<DataGridContext.Provider
-			value={{ labels, resizable, table: table as unknown as Table<RowData> }}
+			value={{
+				labels,
+				resizable,
+				table: table as unknown as Table<RowData>,
+				tableLayout,
+			}}
 		>
 			{children}
 		</DataGridContext.Provider>

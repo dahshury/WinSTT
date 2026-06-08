@@ -3,7 +3,7 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import type { ComponentPropsWithoutRef, MouseEvent, ReactNode } from "react";
 import type { OllamaModel, OllamaPullProgress } from "@/shared/api/models";
 import { Button } from "@/shared/ui/button";
 import { PulseDot } from "@/shared/ui/pulse-dot";
@@ -136,6 +136,10 @@ interface OllamaTriggerProps {
 	toName: string | undefined;
 }
 
+type TriggerButtonElementProps = ComponentPropsWithoutRef<"button"> & {
+	"data-state"?: "closed" | "open";
+};
+
 /** Pick the right label component for one side of the switching row. Prefers
  *  the resolved `OllamaModel` (publisher chip + name); falls back to the bare
  *  text label when the picked model isn't installed yet (typed pull target). */
@@ -218,42 +222,76 @@ function buildSwitchingAriaLabel(
 	return `Switching${fromClause} to ${formatOllamaDisplayName(toName)}`;
 }
 
-export function OllamaTrigger(props: OllamaTriggerProps) {
+function OllamaTriggerButtonView({
+	buttonProps,
+	props,
+}: {
+	buttonProps: TriggerButtonElementProps;
+	props: OllamaTriggerProps;
+}) {
 	const { disabled, isLoading, isSwitching, activePull } = props;
 	const ariaLabel = buildSwitchingAriaLabel(props);
+	return (
+		<Button
+			{...buttonProps}
+			aria-label={ariaLabel}
+			className={`${OLLAMA_TRIGGER_GLASS_CLASSES} ${buildSwitchingClassName(isSwitching)}`}
+			data-loading={isLoading || undefined}
+			data-slot="ollama-model-selector-trigger"
+			data-switching={isSwitching}
+			disabled={disabled || isLoading || isSwitching}
+			type="button"
+		>
+			<span
+				aria-hidden="true"
+				className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent opacity-0 transition-opacity duration-200 group-data-[state=open]:opacity-100 group-data-[switching=true]:opacity-100"
+			/>
+			<OllamaBody ariaLabel={ariaLabel} props={props} />
+			{isSwitching ? (
+				<SwitchingPill />
+			) : (
+				<HugeiconsIcon
+					className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"
+					icon={ArrowDown01Icon}
+				/>
+			)}
+			{isSwitching ? <SwapSweepBar /> : null}
+			{activePull && !isSwitching ? (
+				<TriggerPullProgressOverlay summary={activePull} />
+			) : null}
+		</Button>
+	);
+}
+
+export function OllamaTrigger(props: OllamaTriggerProps) {
 	return (
 		<Combobox.Trigger
 			nativeButton
 			render={(triggerProps) => (
-				<Button
-					{...(triggerProps as ComponentPropsWithoutRef<"button">)}
-					aria-label={ariaLabel}
-					className={`${OLLAMA_TRIGGER_GLASS_CLASSES} ${buildSwitchingClassName(isSwitching)}`}
-					data-loading={isLoading || undefined}
-					data-slot="ollama-model-selector-trigger"
-					data-switching={isSwitching}
-					disabled={disabled || isLoading || isSwitching}
-					type="button"
-				>
-					<span
-						aria-hidden="true"
-						className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent opacity-0 transition-opacity duration-200 group-data-[state=open]:opacity-100 group-data-[switching=true]:opacity-100"
-					/>
-					<OllamaBody ariaLabel={ariaLabel} props={props} />
-					{isSwitching ? (
-						<SwitchingPill />
-					) : (
-						<HugeiconsIcon
-							className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"
-							icon={ArrowDown01Icon}
-						/>
-					)}
-					{isSwitching ? <SwapSweepBar /> : null}
-					{activePull && !isSwitching ? (
-						<TriggerPullProgressOverlay summary={activePull} />
-					) : null}
-				</Button>
+				<OllamaTriggerButtonView
+					buttonProps={triggerProps as TriggerButtonElementProps}
+					props={props}
+				/>
 			)}
+		/>
+	);
+}
+
+export function OllamaTriggerButton({
+	onActivate,
+	...props
+}: OllamaTriggerProps & {
+	onActivate: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
+	return (
+		<OllamaTriggerButtonView
+			buttonProps={{
+				"aria-expanded": false,
+				"data-state": "closed",
+				onClick: onActivate,
+				type: "button",
+			}}
+			props={props}
 		/>
 	);
 }

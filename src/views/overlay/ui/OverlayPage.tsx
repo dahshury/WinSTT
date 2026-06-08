@@ -1,5 +1,6 @@
 import { domMax, LazyMotion } from "motion/react";
 import { type ReactNode, useEffect } from "react";
+import { providerOf } from "@/entities/cloud-stt-provider";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import {
@@ -82,6 +83,9 @@ export function OverlayPage() {
 	const willRunDictationLlm = useSettingsStore((s) =>
 		shouldShowTranscribingForPostProcessing(s.settings),
 	);
+	const isCloudSttModel = useSettingsStore(
+		(s) => providerOf(s.settings.model?.model ?? "") !== null,
+	);
 	const mainModelId = useSettingsStore((s) => s.settings.model?.model ?? "");
 	const realtimeModelId = useSettingsStore(
 		(s) => s.settings.model?.realtimeModel ?? "",
@@ -109,10 +113,14 @@ export function OverlayPage() {
 	const isRecordingActive = useTranscriptionStore((s) => s.isRecordingActive);
 	const recordingSessionId = useTranscriptionStore((s) => s.recordingSessionId);
 	const isTranscribing = useTranscriptionStore((s) => s.isTranscribing);
+	const processingPhase = useTranscriptionStore((s) => s.processingPhase);
 	const transcribingStartedAt = useTranscriptionStore(
 		(s) => s.transcribingStartedAt,
 	);
-	const showTranscribing = isTranscribing && willRunDictationLlm;
+	const showTranscribing =
+		isTranscribing && (willRunDictationLlm || isCloudSttModel);
+	const displayedTranscribingPhase =
+		showTranscribing && isCloudSttModel ? processingPhase : null;
 	const isThinking = useLlmProcessingStore((s) => s.isThinking);
 	const isTransforming = useLlmProcessingStore((s) => s.isTransforming);
 	const thinkingText = useLlmProcessingStore((s) => s.thinkingText);
@@ -244,6 +252,7 @@ export function OverlayPage() {
 							text={text}
 							thinkingStartedAt={thinkingStartedAt}
 							thinkingText={thinkingText}
+							transcribingPhase={displayedTranscribingPhase}
 							transcribingStartedAt={transcribingStartedAt}
 						/>
 					</DynamicIslandProvider>
@@ -265,6 +274,7 @@ export function OverlayPage() {
 				text={text}
 				thinkingStartedAt={thinkingStartedAt}
 				thinkingText={thinkingText}
+				transcribingPhase={displayedTranscribingPhase}
 				transcribingStartedAt={transcribingStartedAt}
 				zoom={zoom}
 			/>

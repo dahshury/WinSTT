@@ -101,8 +101,6 @@ pub fn recording_mode(app: &AppHandle) -> RecordingMode {
 /// SecretMap (the legacy post-processing LLM keys, now single-store + sealed).
 fn try_open_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
     settings.llm.openrouter_api_key = try_decrypt_secret(&settings.llm.openrouter_api_key)?;
-    settings.integrations.openai.api_key =
-        try_decrypt_secret(&settings.integrations.openai.api_key)?;
     settings.integrations.elevenlabs.api_key =
         try_decrypt_secret(&settings.integrations.elevenlabs.api_key)?;
     for value in settings.core.post_process_api_keys.values_mut() {
@@ -117,8 +115,6 @@ fn try_open_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
 /// secrets AND the embedded `core.post_process_api_keys` SecretMap.
 pub(super) fn try_seal_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
     settings.llm.openrouter_api_key = try_encrypt_secret(&settings.llm.openrouter_api_key)?;
-    settings.integrations.openai.api_key =
-        try_encrypt_secret(&settings.integrations.openai.api_key)?;
     settings.integrations.elevenlabs.api_key =
         try_encrypt_secret(&settings.integrations.elevenlabs.api_key)?;
     for value in settings.core.post_process_api_keys.values_mut() {
@@ -135,7 +131,6 @@ fn mask_secret_for_renderer(value: &mut String) {
 
 pub(super) fn sanitize_settings_for_renderer(settings: &mut WinsttSettings) {
     mask_secret_for_renderer(&mut settings.llm.openrouter_api_key);
-    mask_secret_for_renderer(&mut settings.integrations.openai.api_key);
     mask_secret_for_renderer(&mut settings.integrations.elevenlabs.api_key);
     // The embedded legacy post-process API keys never cross to the renderer in
     // plaintext (the renderer doesn't use `core` at all, but mask defensively so
@@ -155,10 +150,6 @@ pub(super) fn preserve_masked_secrets(previous: &WinsttSettings, next: &mut Wins
     preserve_masked_secret(
         &previous.llm.openrouter_api_key,
         &mut next.llm.openrouter_api_key,
-    );
-    preserve_masked_secret(
-        &previous.integrations.openai.api_key,
-        &mut next.integrations.openai.api_key,
     );
     preserve_masked_secret(
         &previous.integrations.elevenlabs.api_key,
@@ -257,7 +248,9 @@ pub fn seed_defaults(app: &AppHandle) {
         }
     };
     if let Some(legacy) = crate::settings::load_legacy_app_settings(app) {
-        log::info!("[settings] core-migration: seeding embedded `core` from legacy settings_store.json");
+        log::info!(
+            "[settings] core-migration: seeding embedded `core` from legacy settings_store.json"
+        );
         current.core = legacy;
     }
 
@@ -326,7 +319,6 @@ mod tests {
     fn seal_then_open_round_trips_secret_fields() {
         let mut s = WinsttSettings::default();
         s.llm.openrouter_api_key = "sk-or-v1-secret".into();
-        s.integrations.openai.api_key = "sk-openai-secret".into();
         s.integrations.elevenlabs.api_key = "xi-el-secret".into();
 
         let mut sealed = s.clone();
@@ -341,7 +333,6 @@ mod tests {
         let mut opened = sealed.clone();
         try_open_secrets(&mut opened).unwrap();
         assert_eq!(opened.llm.openrouter_api_key, "sk-or-v1-secret");
-        assert_eq!(opened.integrations.openai.api_key, "sk-openai-secret");
         assert_eq!(opened.integrations.elevenlabs.api_key, "xi-el-secret");
     }
 
@@ -365,8 +356,12 @@ mod tests {
 
         let mut sealed = s.clone();
         try_seal_secrets(&mut sealed).unwrap();
-        assert!(is_encrypted(sealed.core.post_process_api_keys.get("openai").unwrap()));
-        assert!(is_encrypted(sealed.core.post_process_api_keys.get("groq").unwrap()));
+        assert!(is_encrypted(
+            sealed.core.post_process_api_keys.get("openai").unwrap()
+        ));
+        assert!(is_encrypted(
+            sealed.core.post_process_api_keys.get("groq").unwrap()
+        ));
         assert_eq!(sealed.core.post_process_api_keys.get("custom").unwrap(), "");
         // Plaintext must not leak into the on-disk envelope.
         assert!(!sealed
@@ -417,7 +412,6 @@ mod tests {
         let mut s = WinsttSettings::default();
         try_seal_secrets(&mut s).unwrap();
         assert_eq!(s.llm.openrouter_api_key, "");
-        assert_eq!(s.integrations.openai.api_key, "");
         assert_eq!(s.integrations.elevenlabs.api_key, "");
     }
 
@@ -435,13 +429,11 @@ mod tests {
     fn renderer_sanitization_masks_non_empty_secrets() {
         let mut s = WinsttSettings::default();
         s.llm.openrouter_api_key = "sk-or-v1-secret".into();
-        s.integrations.openai.api_key = "sk-openai-secret".into();
         s.integrations.elevenlabs.api_key = "xi-el-secret".into();
 
         sanitize_settings_for_renderer(&mut s);
 
         assert_eq!(s.llm.openrouter_api_key, SECRET_PRESENT_SENTINEL);
-        assert_eq!(s.integrations.openai.api_key, SECRET_PRESENT_SENTINEL);
         assert_eq!(s.integrations.elevenlabs.api_key, SECRET_PRESENT_SENTINEL);
     }
 
@@ -452,7 +444,6 @@ mod tests {
         sanitize_settings_for_renderer(&mut s);
 
         assert_eq!(s.llm.openrouter_api_key, "");
-        assert_eq!(s.integrations.openai.api_key, "");
         assert_eq!(s.integrations.elevenlabs.api_key, "");
     }
 
@@ -460,18 +451,15 @@ mod tests {
     fn masked_secret_patch_preserves_previous_plaintext_secret() {
         let mut previous = WinsttSettings::default();
         previous.llm.openrouter_api_key = "sk-or-v1-secret".into();
-        previous.integrations.openai.api_key = "sk-openai-secret".into();
         previous.integrations.elevenlabs.api_key = "xi-el-secret".into();
 
         let mut next = previous.clone();
         next.llm.openrouter_api_key = SECRET_PRESENT_SENTINEL.into();
-        next.integrations.openai.api_key = SECRET_PRESENT_SENTINEL.into();
         next.integrations.elevenlabs.api_key = SECRET_PRESENT_SENTINEL.into();
 
         preserve_masked_secrets(&previous, &mut next);
 
         assert_eq!(next.llm.openrouter_api_key, "sk-or-v1-secret");
-        assert_eq!(next.integrations.openai.api_key, "sk-openai-secret");
         assert_eq!(next.integrations.elevenlabs.api_key, "xi-el-secret");
     }
 
@@ -479,18 +467,15 @@ mod tests {
     fn empty_secret_patch_still_clears_previous_secret() {
         let mut previous = WinsttSettings::default();
         previous.llm.openrouter_api_key = "sk-or-v1-secret".into();
-        previous.integrations.openai.api_key = "sk-openai-secret".into();
         previous.integrations.elevenlabs.api_key = "xi-el-secret".into();
 
         let mut next = previous.clone();
         next.llm.openrouter_api_key.clear();
-        next.integrations.openai.api_key.clear();
         next.integrations.elevenlabs.api_key.clear();
 
         preserve_masked_secrets(&previous, &mut next);
 
         assert_eq!(next.llm.openrouter_api_key, "");
-        assert_eq!(next.integrations.openai.api_key, "");
         assert_eq!(next.integrations.elevenlabs.api_key, "");
     }
 }

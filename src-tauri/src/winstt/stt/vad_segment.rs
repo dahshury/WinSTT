@@ -284,13 +284,13 @@ pub fn vad_segment_decode(
     // 2. Raw regions → merged chunks (onnx-asr constants @ 16 kHz).
     let pad = SR * 30 / 1000; // 480
     let min_speech = (SR * 250 / 1000).saturating_sub(2 * pad); // 3040
-    // PACK-TO-CAP: onnx-asr's 100 ms min_silence splits on every thinking-pause, and since
-    // `compact_silences` already caps every retained gap at 200 ms, ~every pause in spontaneous
-    // dictation exceeds it → dozens of 1–2 s chunks. Short chunks are exactly where Whisper (and
-    // the fragile lite-whisper low-rank encoder especially) hallucinate "..." walls and repeat
-    // text. whisperX instead packs speech into fixed near-window chunks; we do the same by merging
-    // across any pause and letting ONLY the max-chunk cap force a split (on a real region boundary).
-    // This hands the decoder long, coherent context — the configuration that transcribes cleanly.
+                                                                // PACK-TO-CAP: onnx-asr's 100 ms min_silence splits on every thinking-pause, and since
+                                                                // `compact_silences` already caps every retained gap at 200 ms, ~every pause in spontaneous
+                                                                // dictation exceeds it → dozens of 1–2 s chunks. Short chunks are exactly where Whisper (and
+                                                                // the fragile lite-whisper low-rank encoder especially) hallucinate "..." walls and repeat
+                                                                // text. whisperX instead packs speech into fixed near-window chunks; we do the same by merging
+                                                                // across any pause and letting ONLY the max-chunk cap force a split (on a real region boundary).
+                                                                // This hands the decoder long, coherent context — the configuration that transcribes cleanly.
     let min_silence = max_chunk;
     let compacted_mask = speech_mask(vad, &compacted);
     let raw = find_segments(&compacted_mask, VAD_FRAME_SAMPLES, compacted.len());
@@ -440,7 +440,11 @@ mod tests {
             (24000, 28000),
         ];
         let merged = merge_segments(&segs, 28000, cap, 3040, cap, 480);
-        assert_eq!(merged.len(), 1, "all sub-cap speech should pack into one chunk");
+        assert_eq!(
+            merged.len(),
+            1,
+            "all sub-cap speech should pack into one chunk"
+        );
         assert!(merged[0].1 - merged[0].0 <= cap + 2 * 480);
     }
 

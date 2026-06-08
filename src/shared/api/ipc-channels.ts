@@ -14,11 +14,8 @@ export const IPC = {
 	STT_WAKEWORD_DETECTED: "stt:wakeword-detected",
 	STT_WAKEWORD_DETECTION_START: "stt:wakeword-detection-start",
 	STT_WAKEWORD_DETECTION_END: "stt:wakeword-detection-end",
-	WAKEWORD_GET_MODEL_STATUS: "wakeword:get-model-status",
-	WAKEWORD_START_MODEL_DOWNLOAD: "wakeword:start-model-download",
-	WAKEWORD_PAUSE_MODEL_DOWNLOAD: "wakeword:pause-model-download",
-	WAKEWORD_RESUME_MODEL_DOWNLOAD: "wakeword:resume-model-download",
-	WAKEWORD_CANCEL_MODEL_DOWNLOAD: "wakeword:cancel-model-download",
+	// WAKEWORD_*_MODEL_DOWNLOAD / GET_MODEL_STATUS commands were RETIRED — their
+	// wrappers call `commands.*` directly. The model-status EVENT stays.
 	WAKEWORD_MODEL_STATUS: "wakeword:model-status",
 	STT_MODEL_DOWNLOAD_START: "stt:model-download-start",
 	STT_MODEL_DOWNLOAD_PROGRESS: "stt:model-download-progress",
@@ -174,9 +171,6 @@ export const IPC = {
 	CONTEXT_MENU_SHOW: "context-menu:show",
 	CLIPBOARD_OPERATE: "clipboard:operate",
 
-	// File transcription (renderer → main)
-	FILE_TRANSCRIBE: "file:transcribe",
-
 	// File transcription events (main → renderer)
 	FILE_TRANSCRIPTION_PROGRESS: "file:transcription-progress",
 	FILE_TRANSCRIPTION_COMPLETE: "file:transcription-complete",
@@ -222,7 +216,6 @@ export const IPC = {
 	LID_OPENED: "lid:opened",
 
 	// Sound (renderer → main invoke, main → renderer push)
-	SOUND_GET_DATA: "sound:get-data",
 	SOUND_PLAY: "sound:play",
 	SOUND_LIBRARY_ADD: "sound:library-add",
 	SOUND_LIBRARY_PICK_AND_ADD: "sound:library-pick-and-add",
@@ -239,7 +232,6 @@ export const IPC = {
 	LLM_CANCEL_PULL_MODEL: "llm:cancel-pull-model",
 	LLM_DELETE_MODEL: "llm:delete-model",
 	LLM_PROCESS_TEXT_CUSTOM: "llm:process-text-custom",
-	LLM_SEARCH_OLLAMA_LIBRARY: "llm:search-ollama-library",
 	LLM_FETCH_OLLAMA_LIBRARY: "llm:fetch-ollama-library",
 	LLM_FETCH_OLLAMA_TAGS: "llm:fetch-ollama-tags",
 
@@ -250,6 +242,14 @@ export const IPC = {
 	// cheapest auth-checking endpoint and persists verified/lastVerifiedAt
 	// back into the store via SETTINGS_CHANGED.
 	INTEGRATIONS_VERIFY: "integrations:verify",
+
+	// Cloud STT model discovery (renderer → main): list OpenRouter transcription
+	// models (output_modalities=transcription) for the cloud picker. Uses the
+	// shared OpenRouter LLM key.
+	STT_SCAN_OPENROUTER_MODELS: "stt:scan-openrouter-models",
+	// Cloud TTS model discovery: list OpenRouter speech models
+	// (output_modalities=speech). Same shared OpenRouter key.
+	TTS_SCAN_OPENROUTER_MODELS: "tts:scan-openrouter-models",
 
 	// Cloud STT error events (main → renderer) — fired by stt-cloud.ts
 	// when an AI SDK transcribe() call fails. Each maps to a distinct
@@ -288,7 +288,6 @@ export const IPC = {
 
 	// TTS commands (renderer → main)
 	TTS_SPEAK: "tts:speak",
-	TTS_SPEAK_SELECTION: "tts:speak-selection",
 	TTS_CANCEL: "tts:cancel",
 	// Set the read-aloud speed from the pill's speed control. Applies to the
 	// active read's UPCOMING sentences (next-sentence, natural pitch) and persists
@@ -305,6 +304,9 @@ export const IPC = {
 	// renderer can't (CSP blocks external hosts) — so browsing voices costs no
 	// ElevenLabs character credits (unlike a real synthesis).
 	TTS_CLOUD_PREVIEW: "tts:cloud-preview",
+	// Generate an OpenRouter voice preview for the selected model/voice/speed
+	// through a live /audio/speech synthesis.
+	TTS_OPENROUTER_PREVIEW: "tts:openrouter-preview",
 	// Read the ElevenLabs key's subscription tier (GET /v1/user/subscription) so
 	// the picker can hide cloned/professional voices on a free plan (they 402 on
 	// synthesis). Returns `{ tier: null }` when the key lacks user-read scope.
@@ -443,10 +445,8 @@ export const IPC = {
 	// `{userData}/recordings/` WAV files. Pagination + retention live here;
 	// the legacy persisted store history above is kept until callers migrate.
 	HISTORY_LIST: "history:list",
-	HISTORY_ADD: "history:add",
 	HISTORY_DELETE_ROW: "history:delete-row",
 	HISTORY_TOGGLE: "history:toggle",
-	HISTORY_RECENT: "history:recent",
 	HISTORY_LOAD_AUDIO_BY_ROW: "history:load-audio-by-row",
 
 	// SQLite history broadcasts (main → renderer)
@@ -454,20 +454,12 @@ export const IPC = {
 	HISTORY_ROW_DELETED: "history:row-deleted",
 	HISTORY_ROW_TOGGLED: "history:row-toggled",
 
-	// Transcript quick-actions (renderer → main) — the tray menu's "Copy Last
-	// Transcript". Reads the history DB directly, so it works while offline.
-	TRANSCRIPT_COPY_LAST: "transcript:copy-last",
-
-	// Diagnostics bundle (renderer → main)
+	// Diagnostics — logs-folder opener (plugin route; the save-bundle / webview-log
+	// channels were retired in favor of direct `commands.*` calls).
 	DIAG_OPEN_LOGS_FOLDER: "diag:open-logs-folder",
-	DIAG_SAVE_BUNDLE: "diag:save-bundle",
-	DIAG_WEBVIEW_LOG: "diag:webview-log",
 
 	// Custom-models management (renderer → main)
 	CUSTOM_MODELS_OPEN_FOLDER: "custom-models:open-folder",
-
-	// About panel metadata (renderer → main).
-	ABOUT_GET_APP_INFO: "about:get-app-info",
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];
@@ -544,11 +536,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_GET_LIVE_RESOURCES]: ["invoke"],
 	[IPC.STT_ASSESS_DICTATION_FIT]: ["invoke"],
 	[IPC.STT_ASSESS_OLLAMA_FIT]: ["invoke"],
-	[IPC.WAKEWORD_GET_MODEL_STATUS]: ["invoke"],
-	[IPC.WAKEWORD_START_MODEL_DOWNLOAD]: ["invoke"],
-	[IPC.WAKEWORD_PAUSE_MODEL_DOWNLOAD]: ["invoke"],
-	[IPC.WAKEWORD_RESUME_MODEL_DOWNLOAD]: ["invoke"],
-	[IPC.WAKEWORD_CANCEL_MODEL_DOWNLOAD]: ["invoke"],
 
 	// Hotkey
 	[IPC.HOTKEY_PRESSED]: ["on"],
@@ -629,7 +616,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.CLIPBOARD_OPERATE]: ["invoke", "secure"],
 
 	// File transcription
-	[IPC.FILE_TRANSCRIBE]: ["invoke"],
 	[IPC.FILE_TRANSCRIPTION_PROGRESS]: ["on"],
 	[IPC.FILE_TRANSCRIPTION_COMPLETE]: ["on"],
 	[IPC.FILE_TRANSCRIPTION_ERROR]: ["on"],
@@ -666,7 +652,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.LID_OPENED]: ["on"],
 
 	// Sound
-	[IPC.SOUND_GET_DATA]: ["invoke"],
 	[IPC.SOUND_PLAY]: ["on"],
 	[IPC.SOUND_LIBRARY_ADD]: ["invoke"],
 	[IPC.SOUND_LIBRARY_PICK_AND_ADD]: ["invoke"],
@@ -683,12 +668,13 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.LLM_CANCEL_PULL_MODEL]: ["invoke"],
 	[IPC.LLM_DELETE_MODEL]: ["invoke"],
 	[IPC.LLM_PROCESS_TEXT_CUSTOM]: ["invoke"],
-	[IPC.LLM_SEARCH_OLLAMA_LIBRARY]: ["invoke"],
 	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: ["invoke"],
 	[IPC.LLM_FETCH_OLLAMA_TAGS]: ["invoke"],
 
 	// Integrations / cloud STT credentials
 	[IPC.INTEGRATIONS_VERIFY]: ["invoke"],
+	[IPC.STT_SCAN_OPENROUTER_MODELS]: ["invoke"],
+	[IPC.TTS_SCAN_OPENROUTER_MODELS]: ["invoke"],
 
 	// Cloud STT error events (main → renderer)
 	[IPC.STT_CLOUD_AUTH_FAILED]: ["on"],
@@ -717,13 +703,13 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 
 	// TTS (renderer → main)
 	[IPC.TTS_SPEAK]: ["invoke"],
-	[IPC.TTS_SPEAK_SELECTION]: ["invoke"],
 	[IPC.TTS_CANCEL]: ["send"],
 	[IPC.TTS_SET_SPEED]: ["send"],
 	[IPC.TTS_INIT]: ["invoke"],
 	[IPC.TTS_LIST_VOICES]: ["invoke"],
 	[IPC.TTS_CLOUD_LIST_VOICES]: ["invoke"],
 	[IPC.TTS_CLOUD_PREVIEW]: ["invoke"],
+	[IPC.TTS_OPENROUTER_PREVIEW]: ["invoke"],
 	[IPC.TTS_CLOUD_SUBSCRIPTION]: ["invoke"],
 	[IPC.TTS_DOWNLOAD_ESTIMATE]: ["invoke"],
 	[IPC.TTS_INSTALL_PAUSE]: ["send"],
@@ -792,10 +778,8 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 
 	// SQLite-backed transcription history
 	[IPC.HISTORY_LIST]: ["invoke"],
-	[IPC.HISTORY_ADD]: ["invoke"],
 	[IPC.HISTORY_DELETE_ROW]: ["invoke"],
 	[IPC.HISTORY_TOGGLE]: ["invoke"],
-	[IPC.HISTORY_RECENT]: ["invoke"],
 	[IPC.HISTORY_LOAD_AUDIO_BY_ROW]: ["invoke"],
 	[IPC.HISTORY_ROW_ADDED]: ["on"],
 	[IPC.HISTORY_ROW_DELETED]: ["on"],
@@ -814,19 +798,12 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_DIARIZATION_TOGGLE_COMPLETED]: ["on"],
 	[IPC.STT_DIARIZATION_TOGGLE_FAILED]: ["on"],
 
-	// Transcript quick-actions (renderer → main)
-	[IPC.TRANSCRIPT_COPY_LAST]: ["invoke"],
-
-	// Diagnostics bundle (renderer → main)
+	// Diagnostics — logs-folder opener (plugin route)
 	[IPC.DIAG_OPEN_LOGS_FOLDER]: ["invoke"],
-	[IPC.DIAG_SAVE_BUNDLE]: ["invoke"],
-	[IPC.DIAG_WEBVIEW_LOG]: ["send"],
 
 	// Custom-models management (renderer → main)
 	[IPC.CUSTOM_MODELS_OPEN_FOLDER]: ["invoke"],
 
-	// About panel
-	[IPC.ABOUT_GET_APP_INFO]: ["invoke"],
 	[IPC.SETTINGS_REMOVE_APPLICATION_DATA]: ["invoke"],
 	[IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS]: ["invoke"],
 };

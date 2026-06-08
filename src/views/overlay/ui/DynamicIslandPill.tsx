@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import type { TranscriptionProcessingPhase } from "@/entities/transcription";
 import { AudioVisualizer } from "@/features/audio-visualizer";
 import { TranscriptPreview } from "@/features/transcript-preview";
 import {
@@ -20,6 +21,7 @@ import {
 	type SizePreset,
 	TEXT_FONT_SIZE_PX,
 	TRANSCRIBING_WORDS,
+	UPLOADING_WORDS,
 	useDelayedUnmount,
 	useRecordingElapsed,
 } from "./overlay-shell";
@@ -46,6 +48,7 @@ interface IslandStateArgs {
 	text: string;
 	thinkingStartedAt: number | null;
 	thinkingText: string;
+	transcribingPhase: TranscriptionProcessingPhase | null;
 	transcribingStartedAt: number | null;
 }
 
@@ -77,6 +80,7 @@ function DynamicIslandPillContent({
 	sizePreset,
 	text,
 	thinkingText,
+	transcribingPhase,
 	thinkingStartedAt,
 	transcribingStartedAt,
 }: IslandStateArgs) {
@@ -121,9 +125,11 @@ function DynamicIslandPillContent({
 		transcribingStartedAt,
 	});
 	const processingText = isThinking ? thinkingText : "";
+	const transcribingWords =
+		transcribingPhase === "uploading" ? UPLOADING_WORDS : TRANSCRIBING_WORDS;
 	const processingWordProps = isThinking
 		? { reserveDefaultWords: true }
-		: { reserveDefaultWords: true, words: TRANSCRIBING_WORDS };
+		: { reserveDefaultWords: true, words: transcribingWords };
 
 	if (isProcessing) {
 		return (
@@ -259,6 +265,7 @@ function DynamicIslandPill(args: IslandStateArgs & { revealed: boolean }) {
 		text,
 		thinkingStartedAt: args.thinkingStartedAt,
 		thinkingText: args.thinkingText,
+		transcribingPhase: args.transcribingPhase,
 		transcribingStartedAt: args.transcribingStartedAt,
 	};
 	const contentArgsRef = useRef(currentContentArgs);

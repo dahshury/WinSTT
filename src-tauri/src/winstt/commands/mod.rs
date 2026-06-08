@@ -130,10 +130,9 @@ pub mod updater;
 /// DEBUG-ONLY context-awareness playground backend: live poll loop +
 /// `context-playground:report` push (`context_playground_set_live` /
 /// `context_playground_arm_deep` / `context_playground_capture`). The module
-/// always compiles, but the commands (and the `debug_read_context` probe) are
-/// only REGISTERED under `#[cfg(any(debug_assertions, feature =
-/// "context-playground"))]` — i.e. in dev builds or with the explicit feature,
-/// matching `CONTEXT_PLAYGROUND_ENABLED` on the renderer side.
+/// always compiles; visibility is still gated on the renderer/window spec side,
+/// but the routed commands stay registered so debug builds and generated
+/// bindings do not drift.
 pub mod context_playground;
 
 // ── slice: window management ──

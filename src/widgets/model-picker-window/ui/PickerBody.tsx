@@ -1,11 +1,33 @@
-import { SttModelSelector } from "@picker";
+import { Cancel01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import {
+	computeModelExclusionConfig,
+	OllamaModelSelector,
+	type OllamaModelSelectorProps,
+	OpenRouterModelSelector,
+	SttModelSelector,
+} from "@picker";
+import { type KeyboardEvent, type ReactNode, useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { providerOf } from "@/entities/cloud-stt-provider";
+import {
+	assessOllamaFit,
+	RECOMMENDED_OLLAMA_MODELS,
+	useLlmCatalogStore,
+	useOllamaLibraryStore,
+	useOpenRouterCatalogStore,
+} from "@/entities/llm-catalog";
 import { isVisibleSttModel } from "@/entities/model-catalog";
+import { useSettingsStore } from "@/entities/setting";
 import { CloudModelSelect } from "@/features/select-cloud-stt-model";
+import type { OllamaPullProgress } from "@/shared/api/models";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { Button } from "@/shared/ui/button";
+import { Tooltip } from "@/shared/ui/tooltip";
 import {
 	type CatalogModels,
 	close,
+	type DetachedModelPickerMode,
 	type GetFitAssessment,
 	PANEL_HEIGHT,
 	type QuantActions,
@@ -23,11 +45,281 @@ interface PickerBodyProps {
 	hasAnyCloudKey: boolean;
 	onDeleteQuant: QuantActions["handleDeleteQuant"];
 	canDeleteQuant: (modelId: string, quantization: OnnxQuantization) => boolean;
+	mode: DetachedModelPickerMode;
 	onDownloadAction: QuantActions["handleDownloadAction"];
 	onDownloadSnapshot: QuantActions["handleDownloadSnapshot"];
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
 	statesById: StatesById;
 	systemInfo: SystemInfo;
+}
+
+type DetachedLlmFeature = Extract<
+	DetachedModelPickerMode,
+	{ kind: "llm-ollama" }
+>["feature"];
+type DetachedOllamaMode = Extract<
+	DetachedModelPickerMode,
+	{ kind: "llm-ollama" }
+>;
+type DetachedOpenRouterMode = Extract<
+	DetachedModelPickerMode,
+	{ kind: "llm-openrouter" }
+>;
+
+function useFeatureSnapshot(feature: DetachedLlmFeature) {
+	return useSettingsStore((s) =>
+		feature === "transforms"
+			? s.settings.llm.transforms
+			: s.settings.llm.dictation,
+	);
+}
+
+function useFeatureUpdaters() {
+	const updateDictation = useSettingsStore((s) => s.updateLlmDictation);
+	const updateTransforms = useSettingsStore((s) => s.updateLlmTransforms);
+	return { updateDictation, updateTransforms };
+}
+
+function useOllamaPulls() {
+	const pullsRaw = useLlmCatalogStore((s) => s.pulls);
+	const pulls: Record<string, OllamaPullProgress> = {};
+	for (const [name, state] of Object.entries(pullsRaw)) {
+		pulls[name] = state.progress;
+	}
+	return pulls;
+}
+
+function DetachedLlmPickerFrame({ children }: { children: ReactNode }) {
+	const handleKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
+		if (event.key !== "Escape") {
+			return;
+		}
+		event.preventDefault();
+		event.stopPropagation();
+		close();
+	};
+
+	return (
+		<div
+			className="flex h-full min-h-0 flex-col"
+			onKeyDownCapture={handleKeyDownCapture}
+			onClick={(event) => {
+				if (event.target === event.currentTarget) {
+					close();
+				}
+			}}
+		>
+			<div className="flex h-8 shrink-0 items-center justify-end border-divider border-b bg-surface-1/65 px-2">
+				<Tooltip content="Close">
+					<Button
+						aria-label="Close"
+						className="flex h-6 w-6 rounded-md bg-transparent p-0 text-foreground-muted transition-colors duration-150 hover:bg-surface-3 hover:text-foreground"
+						onClick={close}
+					>
+						<HugeiconsIcon aria-hidden="true" icon={Cancel01Icon} size={13} />
+					</Button>
+				</Tooltip>
+			</div>
+			{children}
+		</div>
+	);
+}
+
+function useLibrarySearchProps(): OllamaModelSelectorProps["librarySearch"] {
+	const libraryState = useOllamaLibraryStore(
+		useShallow((s) => ({
+			catalog: s.catalog,
+			error: s.error,
+			isLoaded: s.isLoaded,
+			isLoading: s.isLoading,
+			tagsByModel: s.tagsByModel,
+			loadCatalog: s.loadCatalog,
+			fetchTags: s.fetchTags,
+		})),
+	);
+	return {
+		catalog: libraryState.catalog,
+		error: libraryState.error,
+		isLoaded: libraryState.isLoaded,
+		isLoading: libraryState.isLoading,
+		tagsByModel: libraryState.tagsByModel,
+		loadCatalog: () => {
+			libraryState.loadCatalog().catch(() => undefined);
+		},
+		fetchTags: (model) => {
+			libraryState.fetchTags(model).catch(() => undefined);
+		},
+	};
+}
+
+function DetachedOllamaPicker({
+	mode,
+	systemInfo,
+}: {
+	mode: DetachedOllamaMode;
+	systemInfo: SystemInfo;
+}) {
+	const featureSnapshot = useFeatureSnapshot(mode.feature);
+	const { updateDictation, updateTransforms } = useFeatureUpdaters();
+	const {
+		cancelPull,
+		deleteModel,
+		discardPausedPull,
+		isLoaded,
+		isScanning,
+		models,
+		pausedPulls,
+		pullModel,
+		resumePull,
+		scanModels,
+	} = useLlmCatalogStore(
+		useShallow((s) => ({
+			cancelPull: s.cancelPull,
+			deleteModel: s.deleteModel,
+			discardPausedPull: s.discardPausedPull,
+			isLoaded: s.isLoaded,
+			isScanning: s.isScanning,
+			models: s.models,
+			pausedPulls: s.pausedPulls,
+			pullModel: s.pullModel,
+			resumePull: s.resumePull,
+			scanModels: s.scanModels,
+		})),
+	);
+	const pulls = useOllamaPulls();
+	const librarySearch = useLibrarySearchProps();
+	useEffect(() => {
+		if (!isLoaded) {
+			scanModels().catch(() => undefined);
+		}
+	}, [isLoaded, scanModels]);
+	const setModel = (modelName: string) => {
+		if (mode.feature === "transforms") {
+			updateTransforms({ provider: "ollama", model: modelName });
+		} else {
+			updateDictation({ provider: "ollama", model: modelName });
+		}
+		close();
+	};
+	const getFit = (sizeBytes: number) => {
+		const fit = assessOllamaFit(sizeBytes, systemInfo);
+		return {
+			availableBytes: fit.availableBytes,
+			fits: fit.fits,
+			requiredBytes: fit.requiredBytes,
+			shortfall: fit.shortfall,
+		};
+	};
+	return (
+		<div className="min-h-0 flex-1 [&>*]:size-full">
+			<OllamaModelSelector
+				inline
+				isLoading={isScanning}
+				librarySearch={librarySearch}
+				models={models}
+				onChange={setModel}
+				onDelete={(name) => {
+					deleteModel(name).catch(() => undefined);
+				}}
+				onDiscardPull={discardPausedPull}
+				onOpen={() => {
+					scanModels().catch(() => undefined);
+				}}
+				onPull={(name) => {
+					pullModel(name).catch(() => undefined);
+				}}
+				onResumePull={(name) => {
+					resumePull(name).catch(() => undefined);
+				}}
+				onStopPull={(name) => {
+					cancelPull(name).catch(() => undefined);
+				}}
+				pausedPulls={pausedPulls}
+				popupHeightClass={PANEL_HEIGHT}
+				popupWidthClass="w-full"
+				pulls={pulls}
+				recommendedModels={RECOMMENDED_OLLAMA_MODELS}
+				swap={null}
+				systemFit={getFit}
+				value={featureSnapshot.model}
+			/>
+		</div>
+	);
+}
+
+function DetachedOpenRouterPicker({ mode }: { mode: DetachedOpenRouterMode }) {
+	const featureSnapshot = useFeatureSnapshot(mode.feature);
+	const { updateDictation, updateTransforms } = useFeatureUpdaters();
+	const openrouterApiKey = useSettingsStore(
+		(s) => s.settings.llm.openrouterApiKey,
+	);
+	const { isLoaded, isScanning, models, warmModels } =
+		useOpenRouterCatalogStore(
+			useShallow((s) => ({
+				isLoaded: s.isLoaded,
+				isScanning: s.isScanning,
+				models: s.models,
+				warmModels: s.warmModels,
+			})),
+		);
+	useEffect(() => {
+		if (openrouterApiKey.trim().length > 0 && !isLoaded) {
+			warmModels().catch(() => undefined);
+		}
+	}, [isLoaded, openrouterApiKey, warmModels]);
+	const value =
+		mode.target === "fallback"
+			? featureSnapshot.openrouterFallbackModel
+			: featureSnapshot.openrouterModel;
+	const setModel = (modelName: string) => {
+		if (mode.feature === "transforms") {
+			updateTransforms(
+				mode.target === "fallback"
+					? {
+							provider: "openrouter",
+							openrouterFallbackModel: modelName,
+						}
+					: { provider: "openrouter", openrouterModel: modelName },
+			);
+		} else {
+			updateDictation(
+				mode.target === "fallback"
+					? {
+							provider: "openrouter",
+							openrouterFallbackModel: modelName,
+						}
+					: { provider: "openrouter", openrouterModel: modelName },
+			);
+		}
+		close();
+	};
+	return (
+		<div className="min-h-0 flex-1 [&>*]:size-full">
+			<OpenRouterModelSelector
+				disabled={openrouterApiKey.trim().length === 0}
+				exclusionConfig={
+					mode.target === "fallback"
+						? computeModelExclusionConfig(featureSnapshot.openrouterModel)
+						: undefined
+				}
+				inline
+				isLoading={isScanning}
+				models={[...models]}
+				onChange={setModel}
+				onOpen={() => {
+					warmModels().catch(() => undefined);
+				}}
+				placeholder={
+					mode.target === "fallback"
+						? "Select fallback model"
+						: "Select a model"
+				}
+				popupHeightClass={PANEL_HEIGHT}
+				popupWidthClass="w-full"
+				value={value}
+			/>
+		</div>
+	);
 }
 
 /**
@@ -46,6 +338,7 @@ export function PickerBody({
 	fileQueueBusy,
 	getFitAssessment,
 	hasAnyCloudKey,
+	mode,
 	onDeleteQuant,
 	canDeleteQuant,
 	onDownloadAction,
@@ -60,6 +353,21 @@ export function PickerBody({
 	// browses the models for whatever source the persisted model already uses.
 	// A persisted cloud model whose key was removed falls back to the local list
 	// (the key-removal banner explains why), matching the Settings behaviour.
+	if (mode.kind === "llm-ollama") {
+		return (
+			<DetachedLlmPickerFrame>
+				<DetachedOllamaPicker mode={mode} systemInfo={systemInfo} />
+			</DetachedLlmPickerFrame>
+		);
+	}
+	if (mode.kind === "llm-openrouter") {
+		return (
+			<DetachedLlmPickerFrame>
+				<DetachedOpenRouterPicker mode={mode} />
+			</DetachedLlmPickerFrame>
+		);
+	}
+
 	const isCloud = providerOf(currentModel) !== null;
 	const showCloud = isCloud && hasAnyCloudKey;
 
@@ -67,11 +375,12 @@ export function PickerBody({
 		// Bottom-aligned so the short Cloud panel hugs the chip instead of
 		// floating at the top of the (chip-height-capped) window. In Cloud mode
 		// the empty area above the control is the flex container itself — a
-		// pointer-down on it (not a child) closes the picker, same as the
-		// backdrop. In Local mode the grid fills via `flex-1`, leaving no gap.
+		// completed click on it (not a child) closes the picker, same as the
+		// backdrop, without passing the click through to the selector underneath.
+		// In Local mode the grid fills via `flex-1`, leaving no gap.
 		<div
 			className="flex h-full flex-col justify-end gap-2"
-			onPointerDown={(e) => {
+			onClick={(e) => {
 				if (e.target === e.currentTarget) {
 					close();
 				}

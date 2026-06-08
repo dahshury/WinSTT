@@ -146,7 +146,7 @@ export type OllamaPullProgressStatus = z.infer<
 	typeof OllamaPullProgressStatusSchema
 >;
 
-export const CloudSttProviderSchema = z.enum(["openai", "elevenlabs"]);
+export const CloudSttProviderSchema = z.enum(["elevenlabs", "openrouter"]);
 export type CloudSttProvider = z.infer<typeof CloudSttProviderSchema>;
 
 export const CloudSttErrorCodeSchema = z.enum([

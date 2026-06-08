@@ -67,12 +67,16 @@ export function ModelPickerWindow() {
 	const currentModel = modelSettings?.model;
 	const update = useSettingsStore((s) => s.updateModelSettings);
 	const integrations = useSettingsStore((s) => s.settings.integrations);
+	// OpenRouter STT reuses the single LLM OpenRouter key (not an integrations entry).
+	const openrouterKey = useSettingsStore(
+		(s) => s.settings.llm.openrouterApiKey,
+	);
 	// Cloud is only reachable with a configured key; a persisted cloud model
 	// whose key was removed falls back to the local picker (the key-removal
 	// banner already explains why).
 	const hasAnyCloudKey =
-		integrations.openai.apiKey.trim().length > 0 ||
-		integrations.elevenlabs.apiKey.trim().length > 0;
+		integrations.elevenlabs.apiKey.trim().length > 0 ||
+		openrouterKey.trim().length > 0;
 	const effectiveSourceIsCloud =
 		providerOf(currentModel ?? "") !== null && hasAnyCloudKey;
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
@@ -326,18 +330,21 @@ export function ModelPickerWindow() {
 		panelInteractive,
 		panelRevealed,
 		warmPanel,
+		mode,
 		shouldMountBody,
 		dropdownStateClass,
 	} = usePanelRect(catalogLoaded);
 
 	return (
-		// Full-screen transparent backdrop. A pointer-down that lands on the
+		// Full-screen transparent backdrop. A completed click that lands on the
 		// backdrop itself (anything that isn't the panel — the visualizer, the
 		// dictation text, the desktop) closes the picker. The panel is a child
-		// so clicks on it never match `target === currentTarget`.
+		// so clicks on it never match `target === currentTarget`. Closing on click
+		// instead of pointer-down consumes the dismiss gesture before the hidden
+		// window can pass the same click through to the selector underneath.
 		<div
 			className="fixed inset-0 overflow-hidden"
-			onPointerDown={(e) => {
+			onClick={(e) => {
 				if (e.target === e.currentTarget) {
 					close();
 				}
@@ -378,8 +385,15 @@ export function ModelPickerWindow() {
 						hasAnyCloudKey={hasAnyCloudKey}
 						// Re-mount so `source` re-initialises when the persisted model's
 						// source flips (or a key is added/removed) — no derived effect.
-						key={effectiveSourceIsCloud ? "cloud" : "local"}
+						key={
+							mode.kind === "stt"
+								? effectiveSourceIsCloud
+									? "cloud"
+									: "local"
+								: `${mode.kind}:${mode.feature}:${"target" in mode ? mode.target : ""}`
+						}
 						canDeleteQuant={canDeleteQuant}
+						mode={mode}
 						onDeleteQuant={handleGuardedDeleteQuant}
 						onDownloadAction={handleDownloadActionGated}
 						onDownloadSnapshot={handleDownloadSnapshot}

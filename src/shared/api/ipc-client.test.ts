@@ -369,8 +369,6 @@ describe("send wrappers (still on the adapter)", () => {
 		ipc.windowMaximize();
 		ipc.windowClose();
 		ipc.windowOpenSettings();
-		ipc.settingsWindowReady();
-		ipc.windowCloseSelf();
 		const channels = (
 			api.send as unknown as { mock: { calls: unknown[][] } }
 		).mock.calls.map((c) => c[0]);
@@ -379,10 +377,98 @@ describe("send wrappers (still on the adapter)", () => {
 			IPC.WINDOW_MAXIMIZE,
 			IPC.WINDOW_CLOSE,
 			IPC.WINDOW_OPEN_SETTINGS,
-			IPC.SETTINGS_WINDOW_READY,
-			IPC.WINDOW_CLOSE_SELF,
 		]);
 		expect(tauriCalls).toHaveLength(0);
+	});
+
+	test("settingsWindowReady / windowCloseSelf route through typed commands", () => {
+		const api = installMockApi();
+		ipc.settingsWindowReady();
+		ipc.windowCloseSelf();
+		// Typed (COMMAND_INVOKERS) — the adapter string-channel send is bypassed.
+		expect(api.send).not.toHaveBeenCalled();
+		expect(tauriCalls.map((c) => c.cmd)).toEqual([
+			"settings_window_ready",
+			"close_self_window",
+		]);
+	});
+});
+
+// Wrappers RETIRED off the string-channel layer entirely: they call the generated
+// `commands.*` directly (no IPC channel / ROUTE / COMMAND_INVOKERS entry), with a
+// fallback preserved via `commandOrDefault` for the non-bridge / throw path.
+describe("wrappers migrated to direct commands.* (no channel)", () => {
+	test("aboutGetAppInfo calls about_get_app_info and returns the info", async () => {
+		installMockApi();
+		setTauriInvoke(() => ({ version: "1.2.3", copyright: "© WinSTT" }));
+		const info = await ipc.aboutGetAppInfo();
+		expect(lastTauriCall().cmd).toBe("about_get_app_info");
+		expect(info).toEqual({ version: "1.2.3", copyright: "© WinSTT" });
+	});
+
+	test("aboutGetAppInfo falls back to empty info when the command throws", async () => {
+		installMockApi();
+		setTauriInvoke(() => {
+			throw new Error("boom");
+		});
+		expect(await ipc.aboutGetAppInfo()).toEqual({ version: "", copyright: "" });
+	});
+
+	test("diagSaveBundle calls diag_save_bundle", async () => {
+		installMockApi();
+		setTauriInvoke(() => ({ ok: true, path: "C:\\bundle.zip" }));
+		const result = await ipc.diagSaveBundle();
+		expect(lastTauriCall().cmd).toBe("diag_save_bundle");
+		expect(result.ok).toBe(true);
+	});
+
+	test("copyLastTranscript calls copy_last_transcript and returns the bool", async () => {
+		installMockApi();
+		setTauriInvoke(() => true);
+		expect(await ipc.copyLastTranscript()).toBe(true);
+		expect(lastTauriCall().cmd).toBe("copy_last_transcript");
+	});
+
+	test("copyLastTranscript falls back to false when the command throws", async () => {
+		installMockApi();
+		setTauriInvoke(() => {
+			throw new Error("no db");
+		});
+		expect(await ipc.copyLastTranscript()).toBe(false);
+	});
+
+	test("webviewDiagLog forwards label/level/message to winstt_diag", () => {
+		installMockApi();
+		setTauriInvoke(() => undefined);
+		ipc.webviewDiagLog("main", "warn", "hello");
+		expect(lastTauriCall()).toEqual({
+			cmd: "winstt_diag",
+			args: { label: "main", level: "warn", message: "hello" },
+		});
+	});
+
+	test("wakewordModelStatus calls wakeword_model_status and returns the payload", async () => {
+		installMockApi();
+		setTauriInvoke(() => ({ available: true, downloading: false }));
+		const status = await ipc.wakewordModelStatus();
+		expect(lastTauriCall().cmd).toBe("wakeword_model_status");
+		expect(status.available).toBe(true);
+	});
+
+	test("wakewordStartModelDownload calls wakeword_start_model_download", async () => {
+		installMockApi();
+		setTauriInvoke(() => ({ available: false, downloading: true }));
+		await ipc.wakewordStartModelDownload();
+		expect(lastTauriCall().cmd).toBe("wakeword_start_model_download");
+	});
+
+	test("wakewordModelStatus falls back to the default status when it throws", async () => {
+		installMockApi();
+		setTauriInvoke(() => {
+			throw new Error("offline");
+		});
+		const status = await ipc.wakewordModelStatus();
+		expect(status).toEqual({ available: false, downloading: false });
 	});
 });
 
@@ -572,18 +658,6 @@ describe("invokeOrDefault wrappers", () => {
 			template: [{ id: "ok", label: "OK" }],
 			x: 10,
 			y: 20,
-		});
-	});
-
-	test("fileTranscribe forwards filePath", async () => {
-		const api = installMockApi({
-			invokeImpl: () => ({ requestId: "req-1" }),
-		});
-		expect(await ipc.fileTranscribe("C:\\a.wav")).toEqual({
-			requestId: "req-1",
-		});
-		expect(api.invoke).toHaveBeenCalledWith(IPC.FILE_TRANSCRIBE, {
-			filePath: "C:\\a.wav",
 		});
 	});
 
@@ -1193,12 +1267,10 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 		ipc.windowMaximize();
 		ipc.windowClose();
 		ipc.windowOpenSettings();
-		ipc.settingsWindowReady();
 		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_MINIMIZE);
 		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_MAXIMIZE);
 		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_CLOSE);
 		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_OPEN_SETTINGS);
-		expect(api.send).toHaveBeenCalledWith(IPC.SETTINGS_WINDOW_READY);
 	});
 
 	test("loopbackStart forwards device index to start_listen", () => {
@@ -1289,12 +1361,6 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.cancelOllamaModelPull("llama3.2:1b");
 		expect(result.cancelled).toBe(false);
-	});
-
-	test("fileTranscribe falls back to { requestId: '' } when outside a bridge context", async () => {
-		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
-		const result = await ipc.fileTranscribe("/some/file.wav");
-		expect(result.requestId).toBe("");
 	});
 
 	test("loopbackListDevices falls back to [] when outside a bridge context", async () => {

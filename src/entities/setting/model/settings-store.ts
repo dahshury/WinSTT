@@ -13,7 +13,6 @@ type GeneralSettings = AppSettingsOutput["general"];
 type LlmSettings = AppSettingsOutput["llm"];
 interface IntegrationPatch {
 	elevenlabs?: Partial<Integrations["elevenlabs"]>;
-	openai?: Partial<Integrations["openai"]>;
 }
 
 type ModelSection = AppSettingsOutput["model"];
@@ -57,7 +56,6 @@ function mergeIntegrations(
 	const current = settings.integrations;
 	return {
 		...current,
-		openai: { ...current.openai, ...patch.openai },
 		elevenlabs: { ...current.elevenlabs, ...patch.elevenlabs },
 	};
 }
@@ -98,11 +96,11 @@ function normalizeSettings(settings: AppSettingsOutput): AppSettingsOutput {
  *
  * The backend store is the source of truth for API keys — it seals them at
  * rest and re-hydrates them through the decrypt path on load. Persisting the
- * plaintext keys here (``integrations.openai.apiKey``,
- * ``integrations.elevenlabs.apiKey``, ``llm.openrouterApiKey``) would defeat
- * that sealing by leaving a cleartext copy in localStorage. Blank them on the
- * way out; the schema requires the fields to exist (so we keep ``""`` rather
- * than deleting them), and the backend overwrites them on the next sync.
+ * plaintext keys here (``integrations.elevenlabs.apiKey``,
+ * ``llm.openrouterApiKey``) would defeat that sealing by leaving a cleartext
+ * copy in localStorage. Blank them on the way out; the schema requires the
+ * fields to exist (so we keep ``""`` rather than deleting them), and the backend
+ * overwrites them on the next sync.
  */
 function stripSecrets(settings: AppSettingsOutput): AppSettingsOutput {
 	return {
@@ -110,7 +108,6 @@ function stripSecrets(settings: AppSettingsOutput): AppSettingsOutput {
 		llm: { ...settings.llm, openrouterApiKey: "" },
 		integrations: {
 			...settings.integrations,
-			openai: { ...settings.integrations.openai, apiKey: "" },
 			elevenlabs: { ...settings.integrations.elevenlabs, apiKey: "" },
 		},
 	};
@@ -135,7 +132,6 @@ interface SettingsState {
 	 */
 	updateIntegrations: (patch: {
 		elevenlabs?: Partial<AppSettingsOutput["integrations"]["elevenlabs"]>;
-		openai?: Partial<AppSettingsOutput["integrations"]["openai"]>;
 	}) => void;
 	updateLlmDictation: (
 		patch: Partial<AppSettingsOutput["llm"]["dictation"]>,

@@ -156,6 +156,18 @@ function ModelHeaderProvidersButton({
 	);
 }
 
+function modelPerf(
+	model: OpenRouterModel,
+): { accuracyScore: number; speedScore: number } | undefined {
+	return typeof model.accuracy_score === "number" ||
+		typeof model.speed_score === "number"
+		? {
+				accuracyScore: model.accuracy_score ?? 0.5,
+				speedScore: model.speed_score ?? 0.5,
+			}
+		: undefined;
+}
+
 export function ModelHeader({
 	model,
 	isExpanded,
@@ -221,6 +233,7 @@ export function ModelHeader({
 				/>
 			}
 			name={formatModelName(model.model_name ?? model.name, model.maker)}
+			perf={modelPerf(model)}
 			selected={state.isSelected}
 			// No leading indicator at all — selection is shown ONLY by the card's
 			// accent highlight (CARD_SELECTED), exactly like the STT picker. `false`

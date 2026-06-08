@@ -20,6 +20,8 @@ import type {
 	OllamaPullResult,
 	OllamaScanResult,
 	OpenRouterScanResult,
+	OpenRouterSttScanResult,
+	OpenRouterTtsScanResult,
 } from "../models";
 import type { CacheState } from "./models";
 
@@ -33,6 +35,10 @@ export type {
 	OllamaScanResult,
 	OpenRouterModel,
 	OpenRouterScanResult,
+	OpenRouterSttModel,
+	OpenRouterSttScanResult,
+	OpenRouterTtsModel,
+	OpenRouterTtsScanResult,
 } from "../models";
 
 const OLLAMA_SCAN_FALLBACK: OllamaScanResult = {
@@ -44,6 +50,18 @@ const OLLAMA_SCAN_FALLBACK: OllamaScanResult = {
 const OLLAMA_DETECT_FALLBACK: OllamaDetectResult = { installed: false };
 
 const OPENROUTER_SCAN_FALLBACK: OpenRouterScanResult = {
+	models: [],
+	reachable: false,
+	error: "IPC unavailable",
+};
+
+const OPENROUTER_STT_SCAN_FALLBACK: OpenRouterSttScanResult = {
+	models: [],
+	reachable: false,
+	error: "IPC unavailable",
+};
+
+const OPENROUTER_TTS_SCAN_FALLBACK: OpenRouterTtsScanResult = {
 	models: [],
 	reachable: false,
 	error: "IPC unavailable",
@@ -68,6 +86,26 @@ export const fetchOpenRouterModels = (): Promise<OpenRouterScanResult> =>
 	invokeOrDefault<OpenRouterScanResult>(
 		IPC.LLM_SCAN_OPENROUTER_MODELS,
 		OPENROUTER_SCAN_FALLBACK,
+	);
+
+/**
+ * List OpenRouter transcription models (`output_modalities=transcription`) for
+ * the cloud STT picker. Uses the shared OpenRouter LLM key on the main side.
+ */
+export const fetchOpenRouterSttModels = (): Promise<OpenRouterSttScanResult> =>
+	invokeOrDefault<OpenRouterSttScanResult>(
+		IPC.STT_SCAN_OPENROUTER_MODELS,
+		OPENROUTER_STT_SCAN_FALLBACK,
+	);
+
+/**
+ * List OpenRouter speech (TTS) models (`output_modalities=speech`) for the cloud
+ * TTS picker. Uses the shared OpenRouter LLM key on the main side.
+ */
+export const fetchOpenRouterTtsModels = (): Promise<OpenRouterTtsScanResult> =>
+	invokeOrDefault<OpenRouterTtsScanResult>(
+		IPC.TTS_SCAN_OPENROUTER_MODELS,
+		OPENROUTER_TTS_SCAN_FALLBACK,
 	);
 
 export const processWithLlm = (text: string): Promise<string> =>
@@ -302,6 +340,22 @@ export const ttsCloudPreview = (payload: {
 }): Promise<TtsSpeakResult> =>
 	invokeOrDefault<TtsSpeakResult>(
 		IPC.TTS_CLOUD_PREVIEW,
+		{ requestId: "" },
+		payload,
+	);
+
+/**
+ * Play a selected OpenRouter model voice preview through the TTS playback
+ * pipeline. The backend performs a short live `/audio/speech` synthesis for
+ * the selected model/voice/speed.
+ */
+export const ttsOpenRouterPreview = (payload: {
+	model: string;
+	speed?: number;
+	voice: string;
+}): Promise<TtsSpeakResult> =>
+	invokeOrDefault<TtsSpeakResult>(
+		IPC.TTS_OPENROUTER_PREVIEW,
 		{ requestId: "" },
 		payload,
 	);

@@ -40,7 +40,11 @@ import {
 import { OllamaSortMenu } from "./OllamaSortMenu";
 import { ListBody, matchingTypedModelTag } from "./OllamaModelRows";
 import { buildQuantShelfDeps } from "./OllamaQuantShelf";
-import { OllamaTrigger, pickPrimaryPull } from "./OllamaTrigger";
+import {
+	OllamaTrigger,
+	OllamaTriggerButton,
+	pickPrimaryPull,
+} from "./OllamaTrigger";
 import type {
 	MakerGroupDeps,
 	OllamaModelSelectorProps,
@@ -184,11 +188,14 @@ export function OllamaModelSelector({
 	onDelete,
 	onDiscardPull,
 	onOpen,
+	onOpenDetached,
 	onPull,
 	onResumePull,
 	onStopPull,
 	pausedPulls = EMPTY_PAUSED,
 	placeholder = DEFAULT_PLACEHOLDER,
+	popupHeightClass = "h-[min(620px,var(--available-height))]",
+	popupWidthClass = "w-[max(620px,var(--anchor-width))]",
 	pulls = EMPTY_PULLS,
 	recommendedModels,
 	swap,
@@ -217,6 +224,8 @@ export function OllamaModelSelector({
 	// and collapses the whole picker. ``handleOpenChange`` vetoes that close when
 	// the click landed inside our own sort popup.
 	const [open, setOpen] = useState(false);
+	const externalOpen = onOpenDetached != null;
+	const effectiveOpen = inline ? true : open;
 
 	// localStorage-backed per-model favorites — same affordance as the STT
 	// picker. The star toggle on each installed row flips membership; favorited
@@ -317,6 +326,9 @@ export function OllamaModelSelector({
 			onOpen?.();
 		},
 	});
+	const handleOpenChange = externalOpen
+		? () => undefined
+		: openGuard.handleOpenChange;
 	// Combobox.Root's built-in filter is used so keyboard typeahead +
 	// item-focus stay in sync with our visible installed rows. We mirror
 	// the filtered list for our own grouping/recommended rendering.
@@ -327,7 +339,7 @@ export function OllamaModelSelector({
 	const typedModelTagsState = typedModelInfo
 		? librarySearch?.tagsByModel[typedModelInfo.baseSlug]
 		: undefined;
-	const shouldResolveTypedModel = canPullModels && Boolean(open || inline);
+	const shouldResolveTypedModel = canPullModels && Boolean(effectiveOpen);
 	const typedModelBaseSlug = shouldResolveTypedModel
 		? typedModelInfo?.baseSlug
 		: undefined;
@@ -434,6 +446,38 @@ export function OllamaModelSelector({
 				onToggleFavorite={toggleAuthorFavorite}
 			/>
 		) : undefined;
+	const activePull = pickPrimaryPull(pulls);
+	const triggerNode = externalOpen ? (
+		<OllamaTriggerButton
+			activePull={activePull}
+			disabled={disabled}
+			fromModel={swapFromModel}
+			fromName={swapFromName}
+			isLoading={isLoading}
+			isSwitching={!!swapToName}
+			onActivate={(event) => {
+				onOpen?.();
+				onOpenDetached?.(event.currentTarget.getBoundingClientRect());
+			}}
+			placeholder={placeholder}
+			selected={selected}
+			toModel={swapToModel}
+			toName={swapToName}
+		/>
+	) : (
+		<OllamaTrigger
+			activePull={activePull}
+			disabled={disabled}
+			fromModel={swapFromModel}
+			fromName={swapFromName}
+			isLoading={isLoading}
+			isSwitching={!!swapToName}
+			placeholder={placeholder}
+			selected={selected}
+			toModel={swapToModel}
+			toName={swapToName}
+		/>
+	);
 
 	return (
 		<ModelPicker<OllamaModel, OllamaModel | null>
@@ -450,31 +494,18 @@ export function OllamaModelSelector({
 			itemToStringLabel={(m) => m?.name ?? ""}
 			list={selectorListSlot(body)}
 			onInputValueChange={setQuery}
-			onOpenChange={openGuard.handleOpenChange}
+			onOpenChange={handleOpenChange}
 			onValueChange={(next) => forwardOllamaSelection(next, handleSelect)}
-			open={open}
-			popupHeightClass="h-[min(620px,var(--available-height))]"
+			open={externalOpen ? false : open}
+			popupHeightClass={popupHeightClass}
 			popupRef={(node) => {
 				openGuard.setPopupNode(node);
 			}}
-			popupWidthClass="w-[max(620px,var(--anchor-width))]"
+			popupWidthClass={popupWidthClass}
 			searchPlaceholder="Search models or enter an Ollama tag"
 			selectedItemKey={soleActivePullName ?? (value || undefined)}
 			sidebarSlot={sidebarSlot}
-			trigger={
-				<OllamaTrigger
-					activePull={pickPrimaryPull(pulls)}
-					disabled={disabled}
-					fromModel={swapFromModel}
-					fromName={swapFromName}
-					isLoading={isLoading}
-					isSwitching={!!swapToName}
-					placeholder={placeholder}
-					selected={selected}
-					toModel={swapToModel}
-					toName={swapToName}
-				/>
-			}
+			trigger={triggerNode}
 			value={selected ?? null}
 		/>
 	);

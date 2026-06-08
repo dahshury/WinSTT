@@ -64,6 +64,40 @@ export function isInsideMenuPopup(
 	);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function eventTargetFromDetails(eventDetails: unknown): EventTarget | null {
+	if (!isRecord(eventDetails)) {
+		return null;
+	}
+	const event = eventDetails.event;
+	return event instanceof Event ? event.target : null;
+}
+
+function htmlElementFromTarget(target: EventTarget | null): HTMLElement | null {
+	let node: Node | null = target instanceof Node ? target : null;
+	while (node) {
+		if (node instanceof HTMLElement) {
+			return node;
+		}
+		const parent = node.parentNode;
+		node = parent instanceof Node ? parent : null;
+	}
+	return null;
+}
+
+export function resolveCloseTarget(
+	eventDetails: unknown,
+	fallbackTarget: HTMLElement | null,
+): HTMLElement | null {
+	return (
+		htmlElementFromTarget(eventTargetFromDetails(eventDetails)) ??
+		fallbackTarget
+	);
+}
+
 export function shouldInterceptClose(
 	reason: string | undefined,
 	itemPressReason: string,
@@ -127,7 +161,10 @@ export function useModelPickerCloseGuard({
 		applyCloseWith(
 			extractCloseReason(eventDetails),
 			itemPressReason,
-			isInsideMenuPopup(lastClickTargetRef.current, popupRef.current),
+			isInsideMenuPopup(
+				resolveCloseTarget(eventDetails, lastClickTargetRef.current),
+				popupRef.current,
+			),
 			setOpen,
 		);
 	};

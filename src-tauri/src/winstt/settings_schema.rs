@@ -1265,14 +1265,35 @@ impl Default for LlmSettings {
 // SECRET: cloud TTS reuses `integrations.elevenlabs.apiKey` (no new key here).
 // ===========================================================================
 
+/// Which cloud TTS provider the Cloud source synthesizes through. ElevenLabs
+/// (account voices via `integrations.elevenlabs.apiKey`) or OpenRouter (dedicated
+/// `/audio/speech` speech models, reusing the shared `llm.openrouterApiKey`).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TtsCloudProvider {
+    #[default]
+    Elevenlabs,
+    Openrouter,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TtsCloud {
+    /// Active cloud TTS provider (ElevenLabs or OpenRouter).
+    #[serde(default)]
+    pub provider: TtsCloudProvider,
     /// ElevenLabs account voice_id.
     #[serde(default)]
     pub voice: String,
     #[serde(default = "TtsCloud::default_model")]
     pub model: String,
+    /// OpenRouter speech model id (e.g. `microsoft/mai-voice-2`), active when
+    /// `provider == openrouter`. Dynamic — the picker scans `output_modalities=speech`.
+    #[serde(default)]
+    pub openrouter_model: String,
+    /// OpenRouter voice id from the selected model's supported_voices catalog.
+    #[serde(default)]
+    pub openrouter_voice: String,
     /// 0..1.
     #[serde(default = "TtsCloud::default_stability")]
     pub stability: f64,
@@ -1307,8 +1328,11 @@ impl TtsCloud {
 impl Default for TtsCloud {
     fn default() -> Self {
         Self {
+            provider: TtsCloudProvider::default(),
             voice: String::new(),
             model: Self::default_model(),
+            openrouter_model: String::new(),
+            openrouter_voice: String::new(),
             stability: Self::default_stability(),
             similarity: Self::default_similarity(),
             style: 0.0,
@@ -1421,8 +1445,9 @@ impl Default for ProviderIntegrationStatus {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct IntegrationsSettings {
-    #[serde(default)]
-    pub openai: ProviderIntegrationStatus,
+    // OpenAI was removed as a direct cloud STT provider (its models are served by
+    // OpenRouter as `openai/*`). A persisted `integrations.openai` key from an
+    // older build is simply ignored on load (unknown field).
     #[serde(default)]
     pub elevenlabs: ProviderIntegrationStatus,
 }
@@ -1430,7 +1455,6 @@ pub struct IntegrationsSettings {
 impl Default for IntegrationsSettings {
     fn default() -> Self {
         Self {
-            openai: ProviderIntegrationStatus::default(),
             elevenlabs: ProviderIntegrationStatus::default(),
         }
     }
@@ -1672,11 +1696,7 @@ pub const REALTIME_EFFECTIVE_KEYS: &[&str] = &[
 ];
 
 /// Secret dot-paths — encrypted at rest by the persistence layer.
-pub const SECRET_KEYS: &[&str] = &[
-    "llm.openrouterApiKey",
-    "integrations.openai.apiKey",
-    "integrations.elevenlabs.apiKey",
-];
+pub const SECRET_KEYS: &[&str] = &["llm.openrouterApiKey", "integrations.elevenlabs.apiKey"];
 
 /// Returns true if a change to `dot_path` unconditionally requires an app/server
 /// restart. This should remain false for all user-editable settings in the Rust port.
@@ -1807,7 +1827,10 @@ mod tests {
         assert!(!s.llm.dictation.enabled);
         assert!(!s.llm.dictation.dictionary_auto_add_enabled);
         assert_eq!(s.llm.dictation.base.provider, LlmProvider::Ollama);
-        assert_eq!(s.llm.dictation.base.reasoning_effort, ThinkingEffort::Medium);
+        assert_eq!(
+            s.llm.dictation.base.reasoning_effort,
+            ThinkingEffort::Medium
+        );
         assert_eq!(s.llm.dictation.base.thinking_effort, ThinkingEffort::Off);
         assert_eq!(s.llm.dictation.presets.len(), 4);
         assert_eq!(s.llm.dictation.presets[0].key, PresetKey::Neutral);
@@ -1829,8 +1852,8 @@ mod tests {
         assert!(s.tts.cloud.speaker_boost);
 
         // integrations
-        assert_eq!(s.integrations.openai.api_key, "");
-        assert_eq!(s.integrations.openai.verified, None);
+        assert_eq!(s.integrations.elevenlabs.api_key, "");
+        assert_eq!(s.integrations.elevenlabs.verified, None);
         assert_eq!(s.integrations.elevenlabs.last_verified_at, None);
     }
 
@@ -1976,7 +1999,6 @@ mod tests {
     #[test]
     fn secret_classification() {
         assert!(is_secret("llm.openrouterApiKey"));
-        assert!(is_secret("integrations.openai.apiKey"));
         assert!(is_secret("integrations.elevenlabs.apiKey"));
         assert!(!is_secret("model.model"));
         assert!(!is_secret("llm.endpoint"));

@@ -807,13 +807,14 @@ mod tests {
 
     #[test]
     fn cloud_catalog_rows_prefix_ids_and_keep_local_grid_clean() {
-        let openai = cloud_catalog_rows("openai");
-        assert!(openai.iter().any(|m| m.model == "openai:whisper-1"));
-        assert_eq!(openai.iter().filter(|m| m.is_default).count(), 1);
-        assert!(openai.iter().all(|m| m.provider == "openai"));
-
         let el = cloud_catalog_rows("elevenlabs");
         assert!(el.iter().any(|m| m.model == "elevenlabs:scribe_v1"));
+        assert_eq!(el.iter().filter(|m| m.is_default).count(), 1);
+        assert!(el.iter().all(|m| m.provider == "elevenlabs"));
+
+        // OpenAI was removed; OpenRouter is dynamic — neither contributes curated rows.
+        assert!(cloud_catalog_rows("openai").is_empty());
+        assert!(cloud_catalog_rows("openrouter").is_empty());
 
         // unknown provider → empty (never panics).
         assert!(cloud_catalog_rows("azure").is_empty());
@@ -825,7 +826,7 @@ mod tests {
             "cloud ids must not leak into the local STT grid"
         );
 
-        assert_eq!(all_cloud_catalog_rows().len(), openai.len() + el.len());
+        assert_eq!(all_cloud_catalog_rows().len(), el.len());
     }
 
     #[test]

@@ -53,14 +53,16 @@ describe("SnippetsSettingsPanel", () => {
 			</IntlProvider>,
 		);
 
-		fireEvent.click(screen.getByRole("button", { name: /edit\s+"\/sig"/i }));
-		fireEvent.change(screen.getByDisplayValue("/sig"), {
+		fireEvent.doubleClick(screen.getByText("/sig"));
+		const triggerInput = screen.getByDisplayValue("/sig");
+		const expansionInput = screen.getByDisplayValue("Best regards");
+		fireEvent.change(triggerInput, {
 			target: { value: " /bye " },
 		});
-		fireEvent.change(screen.getByDisplayValue("Best regards"), {
+		fireEvent.change(expansionInput, {
 			target: { value: " See you soon " },
 		});
-		fireEvent.click(screen.getByRole("button", { name: /save\s+"\/sig"/i }));
+		fireEvent.keyDown(expansionInput, { key: "Enter" });
 
 		await waitFor(() => {
 			expect(useSettingsStore.getState().settings.snippets).toEqual([

@@ -2,15 +2,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcOn, ipcSend } from "@/shared/api/ipc-client";
 import {
+	DEFAULT_MODEL_PICKER_MODE,
 	DESIRED_HEIGHT,
 	DESIRED_WIDTH,
+	desiredSizeForMode,
+	type DetachedModelPickerMode,
 	MODEL_PICKER_CLOSE_MS,
+	normalizeDetachedModelPickerMode,
 	type PanelPhase,
 	type PanelRect,
 } from "../lib/picker-helpers";
 
 interface PanelRectState {
 	panel: PanelRect | null;
+	mode: DetachedModelPickerMode;
 	panelPhase: PanelPhase;
 	panelRevealed: boolean;
 	panelInteractive: boolean;
@@ -57,9 +62,13 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 		() =>
 			ipcOn(IPC.MODEL_PICKER_ANCHOR, (rect) => {
 				if (rect) {
+					const payload = rect as PanelRect & { mode?: unknown };
 					openGenerationRef.current += 1;
 					clearCloseTimer();
-					setPanel(rect as PanelRect);
+					setPanel({
+						...payload,
+						mode: normalizeDetachedModelPickerMode(payload.mode),
+					});
 					setPanelPhase("open");
 					return;
 				}
@@ -95,14 +104,14 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 		[clearCloseTimer, setPanel, setPanelPhase],
 	);
 
-	// Report the desired footprint once. Main clamps it to the room above
-	// the chip and sends back the final panel rect via MODEL_PICKER_ANCHOR.
+	const mode = panel?.mode ?? DEFAULT_MODEL_PICKER_MODE;
+
+	// Report the desired footprint for the active picker body. Main clamps it to
+	// the room around the chip and sends back the final panel rect via
+	// MODEL_PICKER_ANCHOR.
 	useEffect(() => {
-		ipcSend(IPC.MODEL_PICKER_RESIZE, {
-			width: DESIRED_WIDTH,
-			height: DESIRED_HEIGHT,
-		});
-	}, []);
+		ipcSend(IPC.MODEL_PICKER_RESIZE, desiredSizeForMode(mode));
+	}, [mode]);
 
 	// Pre-warm the (heavy) picker body during the window's idle pre-create
 	// rather than on first open. The detached picker window is created hidden +
@@ -126,6 +135,7 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 		width: DESIRED_WIDTH,
 		height: DESIRED_HEIGHT,
 		origin: "bottom-right",
+		mode,
 	};
 	const shouldMountBody = panelRevealed || catalogLoaded;
 	const dropdownStateClass =
@@ -133,6 +143,7 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 
 	return {
 		panel,
+		mode,
 		panelPhase,
 		panelRevealed,
 		panelInteractive,

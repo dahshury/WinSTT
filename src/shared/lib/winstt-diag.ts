@@ -5,6 +5,21 @@
  */
 import { webviewDiagLog } from "@/shared/api/ipc-client";
 
+const BENIGN_ERROR_MESSAGES = new Set([
+	"ResizeObserver loop completed with undelivered notifications.",
+	"ResizeObserver loop limit exceeded",
+]);
+
+export function isBenignWebviewErrorMessage(message: string): boolean {
+	const withoutPrefix = message.trim().startsWith("onerror: ")
+		? message.trim().slice("onerror: ".length)
+		: message.trim();
+	const locationIndex = withoutPrefix.indexOf(" @ ");
+	const bareMessage =
+		locationIndex === -1 ? withoutPrefix : withoutPrefix.slice(0, locationIndex);
+	return BENIGN_ERROR_MESSAGES.has(bareMessage);
+}
+
 function report(
 	label: string,
 	level: "info" | "warn" | "error",
@@ -26,6 +41,10 @@ export function installWebviewDiag(label: string): void {
 	report(label, "info", "entry script start");
 
 	window.addEventListener("error", (e) => {
+		if (isBenignWebviewErrorMessage(e.message)) {
+			e.preventDefault();
+			return;
+		}
 		const where = e.filename ? ` @ ${e.filename}:${e.lineno}:${e.colno}` : "";
 		report(label, "error", `onerror: ${e.message}${where}`);
 	});

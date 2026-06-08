@@ -6,6 +6,7 @@ import {
 	onNoAudioDetected,
 	onRealtimeText,
 	onRecordingStart,
+	onRecordingStop,
 	onSpeakerSegments,
 	onSttSessionAborted,
 	onTranscriptionStart,
@@ -36,15 +37,21 @@ export function useTranscriptionFeed(): void {
 			beginRecordingSession();
 		});
 
-		// `recording_stop` only snaps the visualizer level to zero. Keep the
-		// pill armed until a terminal event so the floating-bottom close runs
-		// once instead of closing on key release and again after transcription.
+		// `recording_stop` arrives on PTT release / VAD endpoint. Mark the final
+		// decode as pending immediately so cloud STT can swap the pill to
+		// "Uploading" while the backend finishes packaging the utterance.
+		const unsubStop = onRecordingStop(() => {
+			if (useTranscriptionStore.getState().isRecordingActive) {
+				setTranscribing(true, "uploading");
+			}
+		});
+
 		const unsubRealtime = onRealtimeText(({ text }) => {
 			setRealtimeText(text);
 		});
 
 		const unsubTranscriptionStart = onTranscriptionStart(() => {
-			setTranscribing(true);
+			setTranscribing(true, "transcribing");
 		});
 
 		const unsubFinal = onFullSentence((text) => {
@@ -91,6 +98,7 @@ export function useTranscriptionFeed(): void {
 
 		return () => {
 			unsubStart();
+			unsubStop();
 			unsubRealtime();
 			unsubTranscriptionStart();
 			unsubFinal();

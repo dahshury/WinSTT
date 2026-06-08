@@ -20,7 +20,6 @@ interface Overrides {
 	dictationProvider?: "ollama" | "openrouter" | "apple-intelligence";
 	elevenlabsKey?: string;
 	model?: string;
-	openaiKey?: string;
 	openrouterKey?: string;
 	transformsProvider?: "ollama" | "openrouter" | "apple-intelligence";
 	ttsSource?: "local" | "cloud";
@@ -31,10 +30,6 @@ function buildSettings(over: Overrides): AppSettingsOutput {
 		...DEFAULT_SETTINGS,
 		model: { ...DEFAULT_SETTINGS.model, model: over.model ?? "tiny" },
 		integrations: {
-			openai: {
-				...DEFAULT_SETTINGS.integrations.openai,
-				apiKey: over.openaiKey ?? "",
-			},
 			elevenlabs: {
 				...DEFAULT_SETTINGS.integrations.elevenlabs,
 				apiKey: over.elevenlabsKey ?? "",
@@ -137,10 +132,10 @@ describe("useCloudKeyAutoRevert", () => {
 		expect(useRevertNoticeStore.getState().notices).toHaveLength(0);
 	});
 
-	test("clearing the OpenAI key while on an OpenAI model swaps STT back to local", async () => {
-		seed({ openaiKey: "sk", model: "openai:whisper-1" });
+	test("clearing the OpenRouter key while on an OpenRouter STT model swaps STT back to local", async () => {
+		seed({ openrouterKey: "sk-or", model: "openrouter:openai/whisper-1" });
 		renderHook(() => useCloudKeyAutoRevert(FAST_DEBOUNCE_MS));
-		act(() => seed({ openaiKey: "", model: "openai:whisper-1" }));
+		act(() => seed({ openrouterKey: "", model: "openrouter:openai/whisper-1" }));
 		await waitFor(() => {
 			expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
 		});
@@ -148,7 +143,7 @@ describe("useCloudKeyAutoRevert", () => {
 		expect(useModelSwapStore.getState().activeMain).toBe("tiny");
 		expect(
 			useRevertNoticeStore.getState().notices.map((n) => n.provider),
-		).toEqual(["openai"]);
+		).toEqual(["openrouter"]);
 	});
 
 	test("clearing the ElevenLabs key while on cloud TTS reverts TTS to local", async () => {
@@ -164,10 +159,10 @@ describe("useCloudKeyAutoRevert", () => {
 	});
 
 	test("clearing a key for an inactive provider does nothing", async () => {
-		// OpenAI key present but the active model is local — removing it is a no-op.
-		seed({ openaiKey: "sk", model: "tiny" });
+		// OpenRouter key present but the active model is local — removing it is a no-op.
+		seed({ openrouterKey: "sk-or", model: "tiny" });
 		renderHook(() => useCloudKeyAutoRevert(FAST_DEBOUNCE_MS));
-		act(() => seed({ openaiKey: "", model: "tiny" }));
+		act(() => seed({ openrouterKey: "", model: "tiny" }));
 		await act(async () => {
 			await new Promise((r) => setTimeout(r, FAST_DEBOUNCE_MS * 6));
 		});
@@ -180,7 +175,7 @@ describe("useCloudKeyAutoRevert", () => {
 		// Imported/persisted broken state: cloud STT model selected but the
 		// provider key is absent. No clear transition ever happens, so the
 		// steady-state safety net must repair it on mount.
-		seed({ openaiKey: "", model: "openai:whisper-1" });
+		seed({ openrouterKey: "", model: "openrouter:openai/whisper-1" });
 		renderHook(() => useCloudKeyAutoRevert(FAST_DEBOUNCE_MS));
 		await waitFor(() => {
 			expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
@@ -191,13 +186,13 @@ describe("useCloudKeyAutoRevert", () => {
 	});
 
 	test("a cloud model WITH its key present at boot is left untouched", async () => {
-		seed({ openaiKey: "sk", model: "openai:whisper-1" });
+		seed({ openrouterKey: "sk-or", model: "openrouter:openai/whisper-1" });
 		renderHook(() => useCloudKeyAutoRevert(FAST_DEBOUNCE_MS));
 		await act(async () => {
 			await new Promise((r) => setTimeout(r, FAST_DEBOUNCE_MS * 6));
 		});
 		expect(useSettingsStore.getState().settings.model.model).toBe(
-			"openai:whisper-1",
+			"openrouter:openai/whisper-1",
 		);
 		expect(useModelSwapStore.getState().activeMain).toBeNull();
 		expect(useRevertNoticeStore.getState().notices).toHaveLength(0);

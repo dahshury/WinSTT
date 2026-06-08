@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import * as helpers from "../lib/openrouter-model-selector-test-helpers";
 import { OpenRouterModelSelector } from "./OpenRouterModelSelector";
@@ -31,6 +31,34 @@ describe("OpenRouterModelSelector", () => {
 			</TooltipProvider.Provider>,
 		);
 		expect(container.firstElementChild).not.toBeNull();
+	});
+
+	test("onOpenDetached opens the detached picker without opening the in-page popup", () => {
+		const onOpenDetached = mock(() => undefined);
+		const onChange = mock(() => undefined);
+		render(
+			<TooltipProvider.Provider>
+				<OpenRouterModelSelector
+					models={[makeModel()]}
+					onChange={onChange}
+					onOpenDetached={onOpenDetached}
+					value="openai/gpt-4o"
+				/>
+			</TooltipProvider.Provider>,
+		);
+
+		const trigger = document.querySelector(
+			'[data-slot="model-selector-trigger"]',
+		);
+		expect(trigger).not.toBeNull();
+
+		fireEvent.click(trigger as Element);
+
+		expect(onOpenDetached).toHaveBeenCalledTimes(1);
+		expect(trigger.getAttribute("data-state")).toBe("closed");
+		expect(trigger.getAttribute("aria-expanded")).toBe("false");
+		expect(screen.queryByRole("listbox")).toBeNull();
+		expect(onChange).not.toHaveBeenCalled();
 	});
 });
 
@@ -514,6 +542,30 @@ describe("OpenRouterModelSelector helpers", () => {
 			// item-press reason is not intercepted even inside popup
 			expect(result).toBe(true);
 			expect(called).toBe(true);
+		});
+	});
+
+	describe("resolveCloseTarget", () => {
+		test("prefers the Base UI event target over a stale tracked popup click", () => {
+			const stalePopupTarget = makeElement("button", { role: "menuitem" });
+			const outsideTarget = makeElement("button");
+			const event = new PointerEvent("pointerdown");
+			outsideTarget.dispatchEvent(event);
+
+			expect(
+				helpers.resolveCloseTarget(
+					{ reason: "outside-press", event },
+					stalePopupTarget,
+				),
+			).toBe(outsideTarget);
+		});
+
+		test("falls back to the tracked target when Base UI has no native target", () => {
+			const trackedTarget = makeElement("button", { role: "menuitem" });
+
+			expect(
+				helpers.resolveCloseTarget({ reason: "none" }, trackedTarget),
+			).toBe(trackedTarget);
 		});
 	});
 

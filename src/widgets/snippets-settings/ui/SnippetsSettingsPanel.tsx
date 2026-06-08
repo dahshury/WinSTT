@@ -27,6 +27,14 @@ export function SnippetsSettingsPanel() {
 					onRemove={(id) => {
 						updateSnippets(snippets.filter((e) => e.id !== id));
 					}}
+					onRemoveMany={(ids) => {
+						const selected = new Set(ids);
+						const currentSnippets =
+							useSettingsStore.getState().settings.snippets ?? [];
+						updateSnippets(
+							currentSnippets.filter((entry) => !selected.has(entry.id)),
+						);
+					}}
 					onUpdate={(id, entry) => {
 						const currentSnippets =
 							useSettingsStore.getState().settings.snippets ?? [];

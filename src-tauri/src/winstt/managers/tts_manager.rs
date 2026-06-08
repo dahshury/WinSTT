@@ -30,9 +30,11 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::winstt::commands::settings::read_settings;
 use crate::winstt::managers::tts_download_manager::{TtsDownloadErr, TtsDownloadManager};
-use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::model_swap::ModelSwapCoordinator;
-use crate::winstt::settings_schema::{DeviceType, TtsSource as SettingsTtsSource};
+use crate::winstt::settings_schema::{
+    DeviceType, TtsCloudProvider, TtsSource as SettingsTtsSource,
+};
+use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::tts::catalog::{self, TtsEngineId};
 use crate::winstt::tts::local_engines::{
     piper_voice_infos, ChatterboxLocalEngine, KittenLocalEngine, PiperLocalEngine,
@@ -45,9 +47,10 @@ use crate::winstt::tts::phonemize::{
 use crate::winstt::tts::supertonic::SUPERTONIC_LANGUAGES;
 use crate::winstt::tts::{
     clamp_speed, classify_cloud_status, parse_cloud_voices, parse_detail_status, split_sentences,
-    CloudVoiceSettings, ElevenLabsEngine, KokoroLocalEngine, LocalTtsConfig, SynthesisChunk,
-    TtsDevice, TtsEngine, TtsError, TtsResult, TtsSource, VoiceInfo, DEFAULT_MAX_SENTENCE_LEN,
-    ELEVENLABS_SUBSCRIPTION_URL, ELEVENLABS_VOICES_URL, KOKORO_VOICE_CATALOG, SUPPORTED_LANGUAGES,
+    CloudVoiceSettings, ElevenLabsEngine, KokoroLocalEngine, LocalTtsConfig, OpenRouterTtsEngine,
+    SynthesisChunk, TtsDevice, TtsEngine, TtsError, TtsResult, TtsSource, VoiceInfo,
+    DEFAULT_MAX_SENTENCE_LEN, ELEVENLABS_SUBSCRIPTION_URL, ELEVENLABS_VOICES_URL,
+    KOKORO_VOICE_CATALOG, SUPPORTED_LANGUAGES,
 };
 
 mod chunk_sink;
@@ -98,6 +101,8 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
+
+const OPENROUTER_PREVIEW_TEXT: &str = "This is a WinSTT voice preview.";
 
 fn tts_idle_unload_duration(timeout: crate::settings::ModelUnloadTimeout) -> Option<Duration> {
     timeout.to_seconds().map(Duration::from_secs)
@@ -298,6 +303,13 @@ impl TtsManager {
         (key, model, settings)
     }
 
+    /// Resolve OpenRouter cloud-TTS inputs: the SHARED `llm.openrouterApiKey` +
+    /// the selected `tts.cloud.openrouterModel`. Voice is passed per-call.
+    fn openrouter_tts_config(&self) -> (String, String) {
+        let s = read_settings(&self.app);
+        (s.llm.openrouter_api_key, s.tts.cloud.openrouter_model)
+    }
+
     /// Fingerprint the engine-relevant settings so `ensure_engine` rebuilds only
     /// when the source / key / model / device actually changes (voice/lang/speed
     /// are passed per-call to the engine, so they don't force a rebuild).
@@ -312,13 +324,22 @@ impl TtsManager {
                 TtsSource::Local,
                 format!("local|{}|{device_tag}", s.tts.model),
             ),
-            SettingsTtsSource::Cloud => (
-                TtsSource::Cloud,
-                format!(
-                    "cloud|{}|{}",
-                    s.integrations.elevenlabs.api_key, s.tts.cloud.model
+            SettingsTtsSource::Cloud => match s.tts.cloud.provider {
+                TtsCloudProvider::Elevenlabs => (
+                    TtsSource::Cloud,
+                    format!(
+                        "cloud|elevenlabs|{}|{}",
+                        s.integrations.elevenlabs.api_key, s.tts.cloud.model
+                    ),
                 ),
-            ),
+                TtsCloudProvider::Openrouter => (
+                    TtsSource::Cloud,
+                    format!(
+                        "cloud|openrouter|{}|{}",
+                        s.llm.openrouter_api_key, s.tts.cloud.openrouter_model
+                    ),
+                ),
+            },
         }
     }
 
@@ -463,8 +484,17 @@ impl TtsManager {
             let engine: Arc<dyn TtsEngine> = match source {
                 TtsSource::Local => self.build_local_engine(),
                 TtsSource::Cloud => {
-                    let (key, model, settings) = self.cloud_config();
-                    Arc::new(ElevenLabsEngine::new(key, model, settings))
+                    let provider = read_settings(&self.app).tts.cloud.provider;
+                    match provider {
+                        TtsCloudProvider::Elevenlabs => {
+                            let (key, model, settings) = self.cloud_config();
+                            Arc::new(ElevenLabsEngine::new(key, model, settings))
+                        }
+                        TtsCloudProvider::Openrouter => {
+                            let (key, model) = self.openrouter_tts_config();
+                            Arc::new(OpenRouterTtsEngine::new(key, model))
+                        }
+                    }
                 }
             };
             // Swap the new engine in and hold the PREVIOUS one so we can free its
@@ -981,7 +1011,10 @@ impl TtsManager {
             ),
             TtsSource::Cloud => (
                 if voice.is_empty() {
-                    s.tts.cloud.voice.clone()
+                    match s.tts.cloud.provider {
+                        TtsCloudProvider::Elevenlabs => s.tts.cloud.voice.clone(),
+                        TtsCloudProvider::Openrouter => s.tts.cloud.openrouter_voice.clone(),
+                    }
                 } else {
                     voice.to_string()
                 },
@@ -1058,6 +1091,57 @@ impl TtsManager {
             Err(TtsError::Cancelled) => self.emit_event(
                 "tts:completed",
                 serde_json::json!({ "requestId": request_id, "cancelled": true, "elapsedMs": elapsed_ms }),
+            ),
+            Err(e) => self.emit_event(
+                "tts:failed",
+                serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
+            ),
+        }
+    }
+
+    fn openrouter_preview_bytes(&self, model: &str, voice: &str, speed: f32) -> TtsResult<Vec<u8>> {
+        let (api_key, _) = self.openrouter_tts_config();
+        let engine = OpenRouterTtsEngine::new(api_key, model.to_string());
+        engine.fetch_preview(voice, OPENROUTER_PREVIEW_TEXT, speed)
+    }
+
+    /// Play a model-scoped OpenRouter voice preview via a short live
+    /// `/audio/speech` synthesis.
+    pub fn read_openrouter_preview(&self, request_id: &str, model: &str, voice: &str, speed: f32) {
+        let cancel = self.cancel_flag(request_id);
+        let started = std::time::Instant::now();
+        self.emit_event(
+            "tts:started",
+            serde_json::json!({ "requestId": request_id }),
+        );
+
+        let model = model.trim();
+        let voice = voice.trim();
+        let result = if model.is_empty() {
+            Err(TtsError::Cloud(
+                "No OpenRouter speech model selected".to_string(),
+            ))
+        } else if voice.is_empty() {
+            Err(TtsError::Cloud("No OpenRouter voice selected".to_string()))
+        } else {
+            self.openrouter_preview_bytes(model, voice, speed)
+        };
+
+        let was_cancelled = cancel.load(Ordering::Acquire);
+        self.drop_request(request_id);
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        match result {
+            Ok(bytes) if !was_cancelled && !bytes.is_empty() => {
+                let payload = chunk_payload(request_id, &SynthesisChunk::mp3(bytes, 0, true));
+                let _ = self.app.emit("tts:chunk", payload);
+                self.emit_event(
+                    "tts:completed",
+                    serde_json::json!({ "requestId": request_id, "cancelled": false, "elapsedMs": elapsed_ms }),
+                );
+            }
+            Ok(_) => self.emit_event(
+                "tts:completed",
+                serde_json::json!({ "requestId": request_id, "cancelled": was_cancelled, "elapsedMs": elapsed_ms }),
             ),
             Err(e) => self.emit_event(
                 "tts:failed",

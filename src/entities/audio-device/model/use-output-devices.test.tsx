@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
 	act,
 	type RenderHookResult,
@@ -121,25 +121,41 @@ interface FakeBackendDevice {
 	name: string;
 }
 
-// A native bridge whose `invoke` serves the backend OUTPUT-device list for the
-// two output commands (and `undefined` otherwise), plus an `on` that records
-// event listeners. Mutating `state.devices` then firing
+// The `get/refresh_audio_output_devices` commands are now TYPED — their wrappers
+// call the generated `commands.*` which bottom out in `@tauri-apps/api/core`
+// `invoke` (NOT `window.nativeBridge.invoke`). `use-input-devices.test.tsx`
+// registers a PROCESS-GLOBAL `mock.module("@tauri-apps/api/core")` that never
+// tears down, so we must re-register our OWN ("last registration wins") that
+// serves the OUTPUT-device list from a shared mutable reference. The mock reads
+// `outputDeviceState.devices` live so a hot-plug mid-test is reflected. Events
+// still flow through `window.nativeBridge.on`.
+const OUTPUT_DEVICE_CMDS = new Set([
+	"get_audio_output_devices",
+	"refresh_audio_output_devices",
+]);
+
+let outputDeviceState: { devices: FakeBackendDevice[] } = { devices: [] };
+
+mock.module("@tauri-apps/api/core", () => ({
+	invoke: (cmd: string) =>
+		Promise.resolve(
+			OUTPUT_DEVICE_CMDS.has(cmd) ? outputDeviceState.devices : undefined,
+		),
+	// `bindings.ts` imports `Channel` too; an unused stub keeps the binding satisfied.
+	Channel: class {},
+}));
+
+// A native bridge that records event listeners; the backend OUTPUT-device list
+// is served from the `@tauri-apps/api/core` mock above (via the shared
+// `outputDeviceState`). Mutating `state.devices` then firing
 // `AUDIO_OUTPUT_DEVICES_CHANGED` simulates a real-time hot-plug push.
 function installFakeBackendBridge(state: { devices: FakeBackendDevice[] }): {
 	listeners: Map<string, NativeBridgeListener[]>;
 } {
 	const listeners = new Map<string, NativeBridgeListener[]>();
+	outputDeviceState = state;
 	window.nativeBridge = {
 		...window.nativeBridge,
-		invoke: async (channel: string) => {
-			if (
-				channel === IPC.AUDIO_GET_OUTPUT_DEVICES ||
-				channel === IPC.AUDIO_REFRESH_OUTPUT_DEVICES
-			) {
-				return state.devices;
-			}
-			return undefined;
-		},
 		on: (channel, cb) => {
 			const list = listeners.get(channel) ?? [];
 			list.push(cb);
@@ -175,6 +191,9 @@ afterEach(async () => {
 	} catch {
 		// ignore
 	}
+	// Clear the shared device list the typed-command core mock reads, so a stale
+	// list can't leak into a later test.
+	outputDeviceState = { devices: [] };
 	_resetOutputDevicesCacheForTests();
 });
 

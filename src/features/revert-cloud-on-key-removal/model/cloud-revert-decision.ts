@@ -6,16 +6,17 @@ import type { TranscriberBackend } from "@/shared/api/schema.zod";
 
 /**
  * Every cloud integration whose API key, once removed, must revert the
- * surfaces it backs to a local engine. `openai` / `elevenlabs` gate the cloud
- * STT model (and, for elevenlabs, cloud TTS); `openrouter` gates the LLM
- * dictation / transforms providers.
+ * surfaces it backs to a local engine. `elevenlabs` gates the cloud STT model
+ * AND cloud TTS; `openrouter` gates the LLM dictation / transforms providers AND
+ * an active `openrouter:*` STT selection. `openrouter` is part of
+ * `CloudSttProvider`, so this union is `CloudSttProvider` (the explicit
+ * `| "openrouter"` is kept for readability). (OpenAI was removed.)
  */
 export type ClearableProvider = CloudSttProvider | "openrouter";
 
-/** The three API keys we watch, flattened from settings. */
+/** The API keys we watch, flattened from settings. */
 export interface KeySnapshot {
 	elevenlabs: string;
-	openai: string;
 	openrouter: string;
 }
 
@@ -59,9 +60,6 @@ export function detectClearedKeys(
 	next: KeySnapshot,
 ): ReadonlySet<ClearableProvider> {
 	const cleared = new Set<ClearableProvider>();
-	if (wasCleared(prev.openai, next.openai)) {
-		cleared.add("openai");
-	}
 	if (wasCleared(prev.elevenlabs, next.elevenlabs)) {
 		cleared.add("elevenlabs");
 	}
@@ -148,9 +146,6 @@ export function resolveLocalSttTarget(
 
 /** Human-readable label for a cleared provider (used in the revert toast). */
 export function clearableProviderLabel(provider: ClearableProvider): string {
-	if (provider === "openai") {
-		return "OpenAI";
-	}
 	if (provider === "elevenlabs") {
 		return "ElevenLabs";
 	}

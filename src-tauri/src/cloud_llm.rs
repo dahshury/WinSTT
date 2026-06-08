@@ -71,7 +71,12 @@ fn normalize_base_url(base_url: &str) -> String {
 /// An empty `api_key` still yields `AuthData::Key("")` (the OpenAI adapter sends
 /// `Authorization: Bearer `, which local OpenAI-compatible servers ignore) — this
 /// matches the old client's "no key required for custom" behavior.
-pub fn service_target(adapter: AdapterKind, base_url: &str, api_key: &str, model: &str) -> ServiceTarget {
+pub fn service_target(
+    adapter: AdapterKind,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+) -> ServiceTarget {
     ServiceTarget {
         endpoint: Endpoint::from_owned(normalize_base_url(base_url)),
         auth: AuthData::from_single(api_key.to_string()),
@@ -156,12 +161,23 @@ mod tests {
 
     #[test]
     fn anthropic_maps_to_native_adapter() {
-        assert!(matches!(adapter_kind_for("anthropic"), AdapterKind::Anthropic));
+        assert!(matches!(
+            adapter_kind_for("anthropic"),
+            AdapterKind::Anthropic
+        ));
     }
 
     #[test]
     fn other_providers_map_to_openai_compat() {
-        for id in ["openai", "openrouter", "groq", "zai", "cerebras", "bedrock_mantle", "custom"] {
+        for id in [
+            "openai",
+            "openrouter",
+            "groq",
+            "zai",
+            "cerebras",
+            "bedrock_mantle",
+            "custom",
+        ] {
             assert!(
                 matches!(adapter_kind_for(id), AdapterKind::OpenAI),
                 "provider {id} should use the OpenAI-compat adapter"
@@ -172,10 +188,19 @@ mod tests {
     #[test]
     fn base_url_gets_one_trailing_slash() {
         // Missing slash → appended (so Url::join keeps the /v1 segment).
-        assert_eq!(normalize_base_url("https://api.openai.com/v1"), "https://api.openai.com/v1/");
+        assert_eq!(
+            normalize_base_url("https://api.openai.com/v1"),
+            "https://api.openai.com/v1/"
+        );
         // Already-slashed → unchanged (no double slash).
-        assert_eq!(normalize_base_url("https://openrouter.ai/api/v1/"), "https://openrouter.ai/api/v1/");
+        assert_eq!(
+            normalize_base_url("https://openrouter.ai/api/v1/"),
+            "https://openrouter.ai/api/v1/"
+        );
         // Whitespace trimmed.
-        assert_eq!(normalize_base_url("  https://api.z.ai/api/paas/v4  "), "https://api.z.ai/api/paas/v4/");
+        assert_eq!(
+            normalize_base_url("  https://api.z.ai/api/paas/v4  "),
+            "https://api.z.ai/api/paas/v4/"
+        );
     }
 }

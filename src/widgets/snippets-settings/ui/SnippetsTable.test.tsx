@@ -27,11 +27,38 @@ describe("SnippetsTable", () => {
 		expect(screen.getByText("/sig")).toBeDefined();
 	});
 
-	test("clicking per-row delete fires onRemove with the entry id", () => {
+	test("selecting a row and clicking delete fires onRemove with the entry id", () => {
 		const { onRemove } = renderWith({ entries: [sample] });
-		const deleteBtn = screen.getByRole("button", { name: /delete\s+"\/sig"/i });
-		fireEvent.click(deleteBtn);
+		fireEvent.click(
+			screen.getByRole("checkbox", { name: /select\s+"\/sig"/i }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: /delete \(1\)/i }));
+
 		expect(onRemove).toHaveBeenCalledWith("1");
+	});
+
+	test("selected rows use the batch remove callback when provided", () => {
+		const onRemove = mock(() => undefined);
+		const onRemoveMany = mock(() => undefined);
+		renderWith({
+			entries: [
+				sample,
+				{ id: "2", trigger: "/bye", expansion: "See you soon" },
+			],
+			onRemove,
+			onRemoveMany,
+		});
+
+		fireEvent.click(
+			screen.getByRole("checkbox", { name: /select\s+"\/sig"/i }),
+		);
+		fireEvent.click(
+			screen.getByRole("checkbox", { name: /select\s+"\/bye"/i }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: /delete \(2\)/i }));
+
+		expect(onRemoveMany).toHaveBeenCalledWith(["1", "2"]);
+		expect(onRemove).not.toHaveBeenCalled();
 	});
 
 	test("editing a row calls onUpdate with trimmed trigger and expansion", () => {
@@ -41,14 +68,16 @@ describe("SnippetsTable", () => {
 			onUpdate,
 		});
 
-		fireEvent.click(screen.getByRole("button", { name: /edit\s+"sig"/i }));
-		fireEvent.change(screen.getByDisplayValue("sig"), {
+		fireEvent.doubleClick(screen.getByText("sig"));
+		const triggerInput = screen.getByDisplayValue("sig");
+		const expansionInput = screen.getByDisplayValue("Best regards");
+		fireEvent.change(triggerInput, {
 			target: { value: " /bye " },
 		});
-		fireEvent.change(screen.getByDisplayValue("Best regards"), {
+		fireEvent.change(expansionInput, {
 			target: { value: " See you soon " },
 		});
-		fireEvent.click(screen.getByRole("button", { name: /save\s+"sig"/i }));
+		fireEvent.keyDown(expansionInput, { key: "Enter" });
 
 		expect(onUpdate).toHaveBeenCalledWith("2", {
 			expansion: "See you soon",
@@ -58,6 +87,7 @@ describe("SnippetsTable", () => {
 
 	test("Add button is disabled with empty inputs", () => {
 		renderWith({});
+		expect(screen.getByRole("searchbox", { name: /search/i })).toBeDefined();
 		// The Add action now lives in the expansion field's trailing slot as an
 		// icon button, so it's found by its accessible name, not its text.
 		const addBtn = screen.getByRole("button", { name: /add/i });

@@ -1013,7 +1013,7 @@ export interface components {
          * @description Identifier for a cloud STT provider. The renderer-side picker persists the colon-prefixed `<provider>:<model_id>` to `settings.model.model`, and the main process routes accordingly.
          * @enum {string}
          */
-        CloudSttProvider: "openai" | "elevenlabs";
+        CloudSttProvider: "elevenlabs" | "openrouter";
         /**
          * @description Stable classification of a cloud STT failure surfaced to the renderer. `auth` = the provider rejected the API key. `network` = transport-level failure (DNS, TLS, timeout). `key_missing` = no API key configured for this provider. `rate_limit` = provider returned 429 / quota exceeded. `provider_error` = catch-all for any other 4xx/5xx response.
          * @enum {string}
@@ -1030,7 +1030,6 @@ export interface components {
         };
         /** @description Per-provider cloud STT integration status. One entry per supported provider; entries persist even when `apiKey` is empty so the UI can show the most recent probe result on revisit. */
         Integrations: {
-            openai: components["schemas"]["ProviderIntegrationStatus"];
             elevenlabs: components["schemas"]["ProviderIntegrationStatus"];
         };
         AppSettings: {

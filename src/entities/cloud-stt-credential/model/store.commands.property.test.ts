@@ -1,14 +1,16 @@
 import { beforeEach, test } from "bun:test";
 import fc from "fast-check";
 import { useSettingsStore } from "@/entities/setting/@x/cloud-stt-credential";
-import type { CloudSttProvider } from "@/shared/api/models";
+import type { IntegrationCloudProvider } from "@/shared/api/models";
 import {
 	type CredentialStatus,
 	type ProviderStatusEntry,
 	useCredentialStatusStore,
 } from "./store";
 
-const PROVIDERS: CloudSttProvider[] = ["openai", "elevenlabs"];
+// ElevenLabs is the only integrations-backed cloud STT provider (OpenAI was
+// removed; OpenRouter STT reuses the LLM key, not an integrations entry).
+const PROVIDERS: IntegrationCloudProvider[] = ["elevenlabs"];
 const STATUSES: CredentialStatus[] = [
 	"idle",
 	"verifying",
@@ -18,7 +20,7 @@ const STATUSES: CredentialStatus[] = [
 ];
 
 interface Model {
-	byProvider: Record<CloudSttProvider, CredentialStatus>;
+	byProvider: Record<IntegrationCloudProvider, CredentialStatus>;
 }
 
 type Real = typeof useCredentialStatusStore;
@@ -27,12 +29,10 @@ function resetAll(): void {
 	window.localStorage.removeItem("winstt-settings");
 	useSettingsStore.getState().resetSettings();
 	useSettingsStore.getState().updateIntegrations({
-		openai: { apiKey: "" },
 		elevenlabs: { apiKey: "" },
 	});
 	useCredentialStatusStore.setState({
 		byProvider: {
-			openai: { status: "idle" },
 			elevenlabs: { status: "idle" },
 		},
 	});
@@ -41,7 +41,7 @@ function resetAll(): void {
 beforeEach(resetAll);
 
 function freshModel(): Model {
-	return { byProvider: { openai: "idle", elevenlabs: "idle" } };
+	return { byProvider: { elevenlabs: "idle" } };
 }
 
 function assertInvariants(real: Real): void {
@@ -59,9 +59,9 @@ function assertInvariants(real: Real): void {
 }
 
 class SetStatusCmd implements fc.Command<Model, Real> {
-	readonly provider: CloudSttProvider;
+	readonly provider: IntegrationCloudProvider;
 	readonly entry: ProviderStatusEntry;
-	constructor(provider: CloudSttProvider, entry: ProviderStatusEntry) {
+	constructor(provider: IntegrationCloudProvider, entry: ProviderStatusEntry) {
 		this.provider = provider;
 		this.entry = entry;
 	}
@@ -69,18 +69,11 @@ class SetStatusCmd implements fc.Command<Model, Real> {
 		return true;
 	}
 	run(m: Model, real: Real): void {
-		const otherProvider: CloudSttProvider =
-			this.provider === "openai" ? "elevenlabs" : "openai";
-		const otherBefore = real.getState().byProvider[otherProvider];
 		real.getState().setStatus(this.provider, this.entry);
 		m.byProvider[this.provider] = this.entry.status;
 		const after = real.getState();
 		if (after.byProvider[this.provider].status !== this.entry.status) {
 			throw new Error("setStatus did not persist");
-		}
-		// orthogonality: other provider untouched (reference equality holds)
-		if (after.byProvider[otherProvider] !== otherBefore) {
-			throw new Error("setStatus mutated other provider");
 		}
 		assertInvariants(real);
 	}
@@ -90,25 +83,19 @@ class SetStatusCmd implements fc.Command<Model, Real> {
 }
 
 class ResetCmd implements fc.Command<Model, Real> {
-	readonly provider: CloudSttProvider;
-	constructor(provider: CloudSttProvider) {
+	readonly provider: IntegrationCloudProvider;
+	constructor(provider: IntegrationCloudProvider) {
 		this.provider = provider;
 	}
 	check(): boolean {
 		return true;
 	}
 	run(m: Model, real: Real): void {
-		const otherProvider: CloudSttProvider =
-			this.provider === "openai" ? "elevenlabs" : "openai";
-		const otherBefore = real.getState().byProvider[otherProvider];
 		real.getState().reset(this.provider);
 		m.byProvider[this.provider] = "idle";
 		const after = real.getState();
 		if (after.byProvider[this.provider].status !== "idle") {
 			throw new Error("reset did not flip to idle");
-		}
-		if (after.byProvider[otherProvider] !== otherBefore) {
-			throw new Error("reset mutated other provider");
 		}
 		assertInvariants(real);
 	}
@@ -118,9 +105,9 @@ class ResetCmd implements fc.Command<Model, Real> {
 }
 
 class UpdateApiKeyCmd implements fc.Command<Model, Real> {
-	readonly provider: CloudSttProvider;
+	readonly provider: IntegrationCloudProvider;
 	readonly key: string;
-	constructor(provider: CloudSttProvider, key: string) {
+	constructor(provider: IntegrationCloudProvider, key: string) {
 		this.provider = provider;
 		this.key = key;
 	}
@@ -134,10 +121,6 @@ class UpdateApiKeyCmd implements fc.Command<Model, Real> {
 		const keyChanged = prevKey !== this.key;
 		const wasNonIdle = m.byProvider[this.provider] !== "idle";
 
-		const otherProvider: CloudSttProvider =
-			this.provider === "openai" ? "elevenlabs" : "openai";
-		const otherStatusBefore = m.byProvider[otherProvider];
-
 		useSettingsStore
 			.getState()
 			.updateIntegrations({ [this.provider]: { apiKey: this.key } });
@@ -145,7 +128,6 @@ class UpdateApiKeyCmd implements fc.Command<Model, Real> {
 		if (keyChanged && wasNonIdle) {
 			m.byProvider[this.provider] = "idle";
 		}
-		// other provider's status is unchanged (its key didn't change)
 
 		const after = real.getState();
 		if (
@@ -153,11 +135,6 @@ class UpdateApiKeyCmd implements fc.Command<Model, Real> {
 		) {
 			throw new Error(
 				`status mismatch after updateKey: model=${m.byProvider[this.provider]} real=${after.byProvider[this.provider].status}`,
-			);
-		}
-		if (after.byProvider[otherProvider].status !== otherStatusBefore) {
-			throw new Error(
-				"other provider's status changed on single-provider key update",
 			);
 		}
 		assertInvariants(real);
@@ -168,7 +145,7 @@ class UpdateApiKeyCmd implements fc.Command<Model, Real> {
 }
 
 const statusArb = fc.constantFrom<CredentialStatus>(...STATUSES);
-const providerArb = fc.constantFrom<CloudSttProvider>(...PROVIDERS);
+const providerArb = fc.constantFrom<IntegrationCloudProvider>(...PROVIDERS);
 const entryArb: fc.Arbitrary<ProviderStatusEntry> = fc.record({
 	status: statusArb,
 	lastError: fc.option(fc.string({ maxLength: 24 }), { nil: undefined }),

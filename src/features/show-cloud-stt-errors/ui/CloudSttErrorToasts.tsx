@@ -59,7 +59,7 @@ function iconFor(kind: CloudToastKind): IconSvgElement {
 }
 
 function providerLabel(provider: CloudSttProvider): string {
-	return provider === "openai" ? "OpenAI" : "ElevenLabs";
+	return provider === "openrouter" ? "OpenRouter" : "ElevenLabs";
 }
 
 const nextToastId = (() => {

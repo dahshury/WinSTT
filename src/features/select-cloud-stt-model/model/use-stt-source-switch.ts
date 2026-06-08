@@ -74,6 +74,8 @@ export function useSttSourceSwitch({
 }: UseSttSourceSwitchArgs): UseSttSourceSwitchResult {
 	const t = useTranslations("integrations");
 	const integrations = useSettingsStore((s) => s.settings.integrations);
+	// OpenRouter STT reuses the single LLM OpenRouter key, not an integrations entry.
+	const openrouterKey = useSettingsStore((s) => s.settings.llm.openrouterApiKey);
 	const [source, setSource] = useState<SttSource>(
 		initialSourceIsCloud ? "cloud" : "local",
 	);
@@ -82,8 +84,10 @@ export function useSttSourceSwitch({
 		const current = providerOf(selectedModel);
 		if (next === "cloud") {
 			setSource(next);
-			const keyed = CLOUD_PROVIDERS.filter(
-				(p) => integrations[p].apiKey.trim().length > 0,
+			const keyed = CLOUD_PROVIDERS.filter((p) =>
+				p === "openrouter"
+					? openrouterKey.trim().length > 0
+					: integrations[p].apiKey.trim().length > 0,
 			);
 			const alreadyValid = current !== null && keyed.includes(current);
 			if (!alreadyValid && keyed[0] !== undefined) {

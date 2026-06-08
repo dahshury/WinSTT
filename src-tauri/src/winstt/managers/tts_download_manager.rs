@@ -24,9 +24,9 @@ use tauri::{AppHandle, Emitter};
 use crate::winstt::downloads::{
     transfer_url_blocking, TransferControl, TransferOutcome, TransferProgress, TransferRequest,
 };
+use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::tts::catalog::{self, TtsEngineId, TtsModelEntry};
 use crate::winstt::tts::local_engines::{piper_voice_def, PIPER_DEFAULT_VOICE};
-use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::tts::voice_by_id;
 
 /// The Kitten ONNX graph filename for a catalog id. Both nano models ship the same

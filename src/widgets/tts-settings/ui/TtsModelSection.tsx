@@ -18,6 +18,7 @@ import {
 	ttsCloudPreview,
 	ttsDeleteModel,
 	ttsInstallCancel,
+	ttsOpenRouterPreview,
 	ttsSpeak,
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
@@ -58,6 +59,7 @@ import {
 import { useTtsModelDownloads } from "../model/use-tts-model-downloads";
 import { useTtsVoiceCatalog } from "../model/use-tts-voice-catalog";
 import { CloudTtsControls } from "./CloudTtsControls";
+import { OpenRouterTtsControls } from "./OpenRouterTtsControls";
 import { TtsControls } from "./TtsControls";
 import { TtsInstallBanner } from "./TtsInstallBanner";
 
@@ -67,6 +69,8 @@ export function TtsModelSection() {
 	const tts = useSettingsStore((s) => s.settings.tts);
 	const update = useSettingsStore((s) => s.updateTtsSettings);
 	const integrations = useSettingsStore((s) => s.settings.integrations);
+	// OpenRouter is a 2nd cloud TTS provider — reuses the shared LLM key.
+	const openrouterKey = useSettingsStore((s) => s.settings.llm.openrouterApiKey);
 	const goToIntegrations = useSettingsTabStore((s) => s.setActiveTab);
 
 	// Cloud is only selectable once the ElevenLabs key is present AND the last
@@ -85,13 +89,45 @@ export function TtsModelSection() {
 	const cloud = useCloudTtsVoices(elevenVerified);
 	// Cloud gating (allowed / no-voice-access) is derived in a module helper so
 	// this component stays under the complexity budget — see `deriveCloudGate`.
-	const { cloudAllowed, noVoiceAccess } = deriveCloudGate(
+	const { cloudAllowed: elevenCloudAllowed, noVoiceAccess } = deriveCloudGate(
 		elevenVerified,
 		cloud,
 	);
+	// OpenRouter cloud TTS is available whenever the shared OpenRouter key is set
+	// (no separate verify — the speak call surfaces a typed error if it's bad).
+	const openrouterConfigured = openrouterKey.trim().length > 0;
+	// The Cloud source is selectable if EITHER cloud provider is available.
+	const cloudAllowed = elevenCloudAllowed || openrouterConfigured;
 	const effectiveSource =
 		tts?.source === "cloud" && cloudAllowed ? "cloud" : "local";
 	const isCloud = effectiveSource === "cloud";
+	// Resolve the active cloud provider to one that's actually available so a
+	// persisted `openrouter` choice never strands the picker when only ElevenLabs
+	// is keyed (and vice-versa).
+	const persistedCloudProvider = tts?.cloud?.provider ?? "elevenlabs";
+	let cloudProvider: "elevenlabs" | "openrouter" = "elevenlabs";
+	if (persistedCloudProvider === "openrouter" && openrouterConfigured) {
+		cloudProvider = "openrouter";
+	} else if (elevenCloudAllowed) {
+		cloudProvider = "elevenlabs";
+	} else if (openrouterConfigured) {
+		cloudProvider = "openrouter";
+	}
+	// Only offer the provider sub-switch when BOTH cloud providers are available.
+	const showCloudProviderToggle = elevenCloudAllowed && openrouterConfigured;
+	const cloudProviderOpts: SwitcherOption<"elevenlabs" | "openrouter">[] = [
+		{ value: "elevenlabs", label: "ElevenLabs", disabled: !elevenCloudAllowed },
+		{
+			value: "openrouter",
+			label: "OpenRouter",
+			disabled: !openrouterConfigured,
+		},
+	];
+	const handleCloudProviderChange = (next: "elevenlabs" | "openrouter"): void => {
+		update({
+			cloud: { ...(tts?.cloud ?? DEFAULT_SETTINGS.tts.cloud), provider: next },
+		});
+	};
 
 	// Enable gate (state + handlers live in the model hook — see
 	// use-tts-install-gate). `handleLocalEnabledToggle` is the LOCAL path: it
@@ -236,6 +272,16 @@ export function TtsModelSection() {
 		if (!cloud.lockedVoiceIds.has(nextVoiceId)) {
 			previewVoice(nextVoiceId, previewLang);
 		}
+	};
+
+	const previewOpenRouterVoice = (modelId: string, voiceId: string): void => {
+		ttsCancel();
+		setPreviewVoiceId(`openrouter:${modelId}:${voiceId}`);
+		ttsOpenRouterPreview({
+			model: modelId,
+			voice: voiceId,
+			speed: tts?.cloud?.speed ?? DEFAULT_SETTINGS.tts.cloud.speed,
+		});
 	};
 
 	const handleVoiceChange = (nextVoice: string): void => {
@@ -414,17 +460,46 @@ export function TtsModelSection() {
 							</p>
 						) : null}
 						{isCloud ? (
-							<CloudTtsControls
-								activeRequestId={playback.requestId}
-								error={cloud.error}
-								groups={cloud.groups}
-								isLoading={isLoading}
-								isLoadingVoices={cloud.isLoading}
-								isSpeaking={isSpeaking}
-								previewVoice={previewCloudVoice}
-								previewVoiceId={previewVoiceId}
-								t={t}
-							/>
+							<>
+								{showCloudProviderToggle ? (
+									<SettingField
+										label="Cloud provider"
+										layout="row"
+										tooltip="Which cloud TTS service to synthesize with: ElevenLabs or OpenRouter."
+									>
+										<ElevatedSurface className="w-52">
+											<Switcher
+												fullWidth
+												onChange={handleCloudProviderChange}
+												options={cloudProviderOpts}
+												value={cloudProvider}
+											/>
+										</ElevatedSurface>
+									</SettingField>
+								) : null}
+								{cloudProvider === "openrouter" ? (
+									<OpenRouterTtsControls
+										activeRequestId={playback.requestId}
+										isLoading={isLoading}
+										isSpeaking={isSpeaking}
+										previewVoice={previewOpenRouterVoice}
+										previewVoiceId={previewVoiceId}
+										t={t}
+									/>
+								) : (
+									<CloudTtsControls
+										activeRequestId={playback.requestId}
+										error={cloud.error}
+										groups={cloud.groups}
+										isLoading={isLoading}
+										isLoadingVoices={cloud.isLoading}
+										isSpeaking={isSpeaking}
+										previewVoice={previewCloudVoice}
+										previewVoiceId={previewVoiceId}
+										t={t}
+									/>
+								)}
+							</>
 						) : (
 							<>
 								<SettingField

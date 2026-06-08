@@ -57,6 +57,7 @@ export function resolveModelControlVisibility(
 	return {
 		showLanguage: !selectedIsCloud && languageControlMode !== "hidden",
 		showDevice: !selectedIsCloud || localTtsActive,
+		showLifetime: !selectedIsCloud,
 	};
 }
 

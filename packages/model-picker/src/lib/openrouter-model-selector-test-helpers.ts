@@ -15,6 +15,7 @@ export {
 	nodeMatchesPopupSelector,
 	nodeRoleIsPopup,
 	nodeSlotIsPopup,
+	resolveCloseTarget,
 	shouldInterceptClose,
 	walkAncestors,
 } from "./model-picker-close-guard";

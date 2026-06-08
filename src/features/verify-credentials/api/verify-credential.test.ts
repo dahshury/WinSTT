@@ -24,7 +24,6 @@ beforeEach(() => {
 	mockInvoke.mockReset();
 	useCredentialStatusStore.setState({
 		byProvider: {
-			openai: { status: "idle" },
 			elevenlabs: { status: "idle" },
 		},
 	});
@@ -54,7 +53,7 @@ describe("errorMessage", () => {
 describe("invokeVerify", () => {
 	test("returns the IPC response on success", async () => {
 		mockInvoke.mockImplementationOnce(async () => ({ ok: true }));
-		const r = await invokeVerify("openai", "sk-abc");
+		const r = await invokeVerify("elevenlabs", "sk-abc");
 		expect(r).toEqual({ ok: true });
 	});
 
@@ -62,7 +61,7 @@ describe("invokeVerify", () => {
 		mockInvoke.mockImplementationOnce(async () => {
 			throw new Error("ECONNREFUSED");
 		});
-		const r = await invokeVerify("openai", "sk-abc");
+		const r = await invokeVerify("elevenlabs", "sk-abc");
 		expect(r.ok).toBe(false);
 		expect(r.code).toBe("network");
 		expect(r.message).toBe("ECONNREFUSED");
@@ -73,58 +72,58 @@ describe("invokeVerify", () => {
 		// literal `throw` statements). We need a non-Error rejection so the
 		// `String(err)` fallback in `errorMessage` is exercised.
 		mockInvoke.mockImplementationOnce(() => Promise.reject("kaboom"));
-		const r = await invokeVerify("openai", "sk-abc");
+		const r = await invokeVerify("elevenlabs", "sk-abc");
 		expect(r.message).toBe("kaboom");
 	});
 });
 
 describe("applyVerifyResponse", () => {
 	test("ok=true sets status to verified", () => {
-		applyVerifyResponse("openai", { ok: true });
-		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe(
+		applyVerifyResponse("elevenlabs", { ok: true });
+		expect(useCredentialStatusStore.getState().byProvider.elevenlabs.status).toBe(
 			"verified",
 		);
 	});
 
 	test("ok=false + code=network sets status to offline with the message", () => {
-		applyVerifyResponse("openai", {
+		applyVerifyResponse("elevenlabs", {
 			ok: false,
 			code: "network",
 			message: "down",
 		});
-		const entry = useCredentialStatusStore.getState().byProvider.openai;
+		const entry = useCredentialStatusStore.getState().byProvider.elevenlabs;
 		expect(entry.status).toBe("offline");
 		expect(entry.lastError).toBe("down");
 	});
 
 	test("ok=false + other code sets status to invalid with the message", () => {
-		applyVerifyResponse("openai", { ok: false, code: "auth", message: "401" });
-		const entry = useCredentialStatusStore.getState().byProvider.openai;
+		applyVerifyResponse("elevenlabs", { ok: false, code: "auth", message: "401" });
+		const entry = useCredentialStatusStore.getState().byProvider.elevenlabs;
 		expect(entry.status).toBe("invalid");
 		expect(entry.lastError).toBe("401");
 	});
 
 	test("returns the response unchanged", () => {
 		const r = { ok: false, code: "auth" as const, message: "nope" };
-		expect(applyVerifyResponse("openai", r)).toBe(r);
+		expect(applyVerifyResponse("elevenlabs", r)).toBe(r);
 	});
 });
 
 describe("verifyCredential", () => {
 	test("blank key short-circuits to idle without an IPC call", async () => {
-		const result = await verifyCredential("openai", "   ");
+		const result = await verifyCredential("elevenlabs", "   ");
 		expect(result.code).toBe("key_missing");
 		expect(mockInvoke).not.toHaveBeenCalled();
-		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe(
+		expect(useCredentialStatusStore.getState().byProvider.elevenlabs.status).toBe(
 			"idle",
 		);
 	});
 
 	test("ok response flips status to verified", async () => {
 		mockInvoke.mockImplementationOnce(async () => ({ ok: true }));
-		const result = await verifyCredential("openai", "sk-abc");
+		const result = await verifyCredential("elevenlabs", "sk-abc");
 		expect(result.ok).toBe(true);
-		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe(
+		expect(useCredentialStatusStore.getState().byProvider.elevenlabs.status).toBe(
 			"verified",
 		);
 	});
@@ -146,9 +145,9 @@ describe("verifyCredential", () => {
 			code: "auth",
 			message: "bad key",
 		}));
-		const result = await verifyCredential("openai", "sk-bad");
+		const result = await verifyCredential("elevenlabs", "sk-bad");
 		expect(result.ok).toBe(false);
-		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe(
+		expect(useCredentialStatusStore.getState().byProvider.elevenlabs.status).toBe(
 			"invalid",
 		);
 	});
@@ -157,10 +156,10 @@ describe("verifyCredential", () => {
 		let observedDuringInvoke: string | undefined;
 		mockInvoke.mockImplementationOnce(async () => {
 			observedDuringInvoke =
-				useCredentialStatusStore.getState().byProvider.openai.status;
+				useCredentialStatusStore.getState().byProvider.elevenlabs.status;
 			return { ok: true };
 		});
-		await verifyCredential("openai", "sk-abc");
+		await verifyCredential("elevenlabs", "sk-abc");
 		expect(observedDuringInvoke).toBe("verifying");
 	});
 });
