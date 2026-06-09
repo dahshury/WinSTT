@@ -6,12 +6,13 @@
  *     patterns while keeping file sizes suitable for docs.
  */
 import type { ComponentType } from "react";
+import { withBasePath } from "@/lib/site";
 
 function DemoVideo({ src }: { src: string }) {
   return (
     <video
       className="demo-video"
-      src={`/demos/${src}.webm`}
+      src={withBasePath(`/demos/${src}.webm`)}
       autoPlay
       loop
       muted

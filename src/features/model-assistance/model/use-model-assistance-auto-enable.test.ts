@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { type ModelInfo, useCatalogStore } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
-import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import {
 	type DictationCleanupAutoInputs,
 	resolveDictationCleanupAutoAction,
@@ -86,14 +85,12 @@ beforeEach(() => {
 		models: [assistanceModel()],
 	});
 	seedSettings();
-	useLlmModelPickerStore.getState().close();
 });
 
 afterEach(() => {
 	cleanup();
 	useCatalogStore.setState({ isLoaded: false, models: [] });
 	useSettingsStore.setState({ isLoaded: true, settings: DEFAULT_SETTINGS });
-	useLlmModelPickerStore.getState().close();
 });
 
 describe("resolveDictationCleanupAutoAction", () => {
@@ -143,7 +140,7 @@ describe("resolveDictationCleanupAutoAction", () => {
 
 describe("useModelAssistanceAutoEnable", () => {
 	test("enables dictation cleanup and disables smart endpoint for a selected model that needs help", async () => {
-		renderHook(() => useModelAssistanceAutoEnable(true));
+		renderHook(() => useModelAssistanceAutoEnable({ enabled: true }));
 
 		await waitFor(() => {
 			const state = useSettingsStore.getState().settings;
@@ -154,14 +151,17 @@ describe("useModelAssistanceAutoEnable", () => {
 
 	test("opens the Ollama picker with enable intent when no cleanup model is selected", async () => {
 		seedSettings({ dictationModel: "" });
+		const onOpenOllamaPicker = mock(() => undefined);
 
-		renderHook(() => useModelAssistanceAutoEnable(true));
+		renderHook(() =>
+			useModelAssistanceAutoEnable({
+				enabled: true,
+				onOpenOllamaPicker,
+			}),
+		);
 
 		await waitFor(() => {
-			const picker = useLlmModelPickerStore.getState();
-			expect(picker.open).toBe(true);
-			expect(picker.feature).toBe("dictation");
-			expect(picker.enableOnInstall).toBe(true);
+			expect(onOpenOllamaPicker).toHaveBeenCalledTimes(1);
 		});
 		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
 			false,
@@ -169,7 +169,7 @@ describe("useModelAssistanceAutoEnable", () => {
 	});
 
 	test("does not fight a manual disable until the selected model changes", async () => {
-		renderHook(() => useModelAssistanceAutoEnable(true));
+		renderHook(() => useModelAssistanceAutoEnable({ enabled: true }));
 
 		await waitFor(() => {
 			expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(

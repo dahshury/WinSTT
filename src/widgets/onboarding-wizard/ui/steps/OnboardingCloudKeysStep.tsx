@@ -62,14 +62,17 @@ const MotionBaseButton = m.create(BaseButton);
  */
 export function OnboardingCloudKeysStep() {
 	const t = useTranslations("onboarding");
-	const [provider, setProvider] = useState<IntegrationCloudProvider>("elevenlabs");
+	const [provider, setProvider] =
+		useState<IntegrationCloudProvider>("elevenlabs");
 	const apiKey = useSettingsStore(
 		(s) => s.settings.integrations[provider].apiKey,
 	);
 	const activeModel = useSettingsStore((s) => s.settings.model.model);
 	const integrations = useSettingsStore((s) => s.settings.integrations);
 	// OpenRouter STT reuses the single LLM key (no integrations entry).
-	const openrouterKey = useSettingsStore((s) => s.settings.llm.openrouterApiKey);
+	const openrouterKey = useSettingsStore(
+		(s) => s.settings.llm.openrouterApiKey,
+	);
 	const updateIntegrations = useSettingsStore((s) => s.updateIntegrations);
 	const updateModelSettings = useSettingsStore((s) => s.updateModelSettings);
 	const status = useCredentialStatus(provider);

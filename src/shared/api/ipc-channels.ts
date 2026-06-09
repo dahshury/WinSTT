@@ -104,11 +104,6 @@ export const IPC = {
 	SETTINGS_CHANGED: "settings:changed",
 	SETTINGS_SAVE_ERROR: "settings:save-error",
 
-	// Server management (renderer → main)
-	STT_SERVER_SPAWN: "stt-server:spawn",
-	STT_SERVER_KILL: "stt-server:kill",
-	STT_SERVER_GET_STATUS: "stt-server:status",
-
 	// Window controls (renderer → main)
 	WINDOW_MINIMIZE: "window:minimize",
 	WINDOW_MAXIMIZE: "window:maximize",
@@ -143,7 +138,7 @@ export const IPC = {
 	// Context-awareness playground (DEBUG-ONLY — gated by
 	// `shared/config/debug-flags.ts` CONTEXT_PLAYGROUND_ENABLED; never wired
 	// when the flag is off, so end users never see these channels).
-	// OPEN: tray → main, show the playground window.
+	// OPEN: tray debug menu request; the typed Tauri path opens the same window.
 	// SET_LIVE: renderer → main, toggle the foreground-polling loop.
 	// ARM_DEEP: renderer → main, run all four UIA modes on the next external focus.
 	// CLOSE: renderer → main, hide the window.
@@ -166,9 +161,6 @@ export const IPC = {
 
 	// Dialog (renderer → main)
 	DIALOG_OPEN_FILE: "dialog:open-file",
-	APP_MENU_SET_TEMPLATE: "app-menu:set-template",
-	APP_MENU_RESET: "app-menu:reset",
-	CONTEXT_MENU_SHOW: "context-menu:show",
 	CLIPBOARD_OPERATE: "clipboard:operate",
 
 	// File transcription events (main → renderer)
@@ -259,6 +251,7 @@ export const IPC = {
 	STT_CLOUD_KEY_MISSING: "stt:cloud-key-missing",
 	STT_CLOUD_RATE_LIMITED: "stt:cloud-rate-limited",
 	STT_CLOUD_PROVIDER_ERROR: "stt:cloud-provider-error",
+	CLOUD_CONNECTIVITY: "cloud:connectivity",
 
 	// Transforms (renderer → main)
 	TRANSFORMS_APPLY: "transforms:apply",
@@ -304,8 +297,8 @@ export const IPC = {
 	// renderer can't (CSP blocks external hosts) — so browsing voices costs no
 	// ElevenLabs character credits (unlike a real synthesis).
 	TTS_CLOUD_PREVIEW: "tts:cloud-preview",
-	// Generate an OpenRouter voice preview for the selected model/voice/speed
-	// through a live /audio/speech synthesis.
+	// Retired from string-channel routing; the wrapper calls the generated
+	// `tts_preview_openrouter` binding directly.
 	TTS_OPENROUTER_PREVIEW: "tts:openrouter-preview",
 	// Read the ElevenLabs key's subscription tier (GET /v1/user/subscription) so
 	// the picker can hide cloned/professional voices on a free plan (they 402 on
@@ -412,7 +405,6 @@ export const IPC = {
 	// the updater's `quitAndInstall`. The renderer wires this to the
 	// "Restart to install" button shown once status === "downloaded".
 	UPDATER_QUIT_AND_INSTALL: "updater:quit-and-install",
-	WINDOW_TELEMETRY: "window:telemetry",
 	SECURE_GET_KEY: "secure:get-key",
 	SECURE_INVOKE: "secure:invoke",
 
@@ -567,11 +559,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.SETTINGS_CHANGED]: ["on"],
 	[IPC.SETTINGS_SAVE_ERROR]: ["on"],
 
-	// Server management
-	[IPC.STT_SERVER_SPAWN]: ["invoke"],
-	[IPC.STT_SERVER_KILL]: ["invoke"],
-	[IPC.STT_SERVER_GET_STATUS]: ["invoke"],
-
 	// Window controls
 	[IPC.WINDOW_MINIMIZE]: ["send"],
 	[IPC.WINDOW_MAXIMIZE]: ["send"],
@@ -610,9 +597,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 
 	// Dialog & menus
 	[IPC.DIALOG_OPEN_FILE]: ["invoke"],
-	[IPC.APP_MENU_SET_TEMPLATE]: ["invoke"],
-	[IPC.APP_MENU_RESET]: ["invoke"],
-	[IPC.CONTEXT_MENU_SHOW]: ["invoke"],
 	[IPC.CLIPBOARD_OPERATE]: ["invoke", "secure"],
 
 	// File transcription
@@ -682,6 +666,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_CLOUD_KEY_MISSING]: ["on"],
 	[IPC.STT_CLOUD_RATE_LIMITED]: ["on"],
 	[IPC.STT_CLOUD_PROVIDER_ERROR]: ["on"],
+	[IPC.CLOUD_CONNECTIVITY]: ["on"],
 
 	// Transforms
 	[IPC.TRANSFORMS_APPLY]: ["invoke"],
@@ -709,7 +694,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_LIST_VOICES]: ["invoke"],
 	[IPC.TTS_CLOUD_LIST_VOICES]: ["invoke"],
 	[IPC.TTS_CLOUD_PREVIEW]: ["invoke"],
-	[IPC.TTS_OPENROUTER_PREVIEW]: ["invoke"],
+	[IPC.TTS_OPENROUTER_PREVIEW]: [],
 	[IPC.TTS_CLOUD_SUBSCRIPTION]: ["invoke"],
 	[IPC.TTS_DOWNLOAD_ESTIMATE]: ["invoke"],
 	[IPC.TTS_INSTALL_PAUSE]: ["send"],
@@ -759,9 +744,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.UPDATER_STATUS]: ["on"],
 	[IPC.UPDATER_CHECK_NOW]: ["invoke"],
 	[IPC.UPDATER_QUIT_AND_INSTALL]: ["invoke"],
-
-	// Window telemetry
-	[IPC.WINDOW_TELEMETRY]: ["on"],
 
 	// Secure-IPC plumbing — preload uses these internally, not exposed to renderer
 	[IPC.SECURE_GET_KEY]: [],

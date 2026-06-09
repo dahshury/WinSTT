@@ -7,6 +7,10 @@ import {
 import type { OpenRouterModel } from "@/shared/api/models";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcSend } from "@/shared/api/ipc-client";
+import {
+	ollamaLlmSelectorUiStorageKey,
+	openRouterLlmSelectorUiStorageKey,
+} from "@/shared/lib/model-picker-ui-storage-keys";
 import { FormControl } from "@/shared/ui/form-control";
 import { Toggle } from "@/shared/ui/toggle";
 import { RECOMMENDED_OLLAMA_MODELS } from "@/entities/llm-catalog";
@@ -209,6 +213,9 @@ function OllamaSection(props: OllamaSectionProps) {
 					recommendedModels={RECOMMENDED_OLLAMA_MODELS}
 					swap={swap}
 					systemFit={pullBundle.getFit}
+					uiStorageKey={
+						feature ? ollamaLlmSelectorUiStorageKey(feature) : undefined
+					}
 					value={model}
 				/>
 			</FormControl>
@@ -308,6 +315,11 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 						onReasoningEffortChange={onReasoningEffortChange}
 						onVerbosityChange={onVerbosityChange}
 						reasoningEffort={reasoningEffort}
+						uiStorageKey={
+							feature
+								? openRouterLlmSelectorUiStorageKey(feature, "primary")
+								: undefined
+						}
 						value={openrouterModel}
 						verbosity={verbosity}
 					/>
@@ -337,6 +349,11 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 								: undefined
 						}
 						placeholder={t("openrouterFallbackModelPlaceholder")}
+						uiStorageKey={
+							feature
+								? openRouterLlmSelectorUiStorageKey(feature, "fallback")
+								: undefined
+						}
 						value={openrouterFallbackModel}
 					/>
 				</FormControl>

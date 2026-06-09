@@ -200,12 +200,13 @@ export function OllamaModelSelector({
 	recommendedModels,
 	swap,
 	systemFit,
+	uiStorageKey = OLLAMA_SELECTOR_UI_STORAGE_KEY,
 	value,
 }: OllamaModelSelectorProps) {
 	const selected = models.find((m) => m.name === value);
 	const [persistedUiState] = useState(() =>
 		readPersistedSelectorState(
-			OLLAMA_SELECTOR_UI_STORAGE_KEY,
+			uiStorageKey,
 			isPersistedOllamaSelectorUiState,
 			DEFAULT_PERSISTED_OLLAMA_SELECTOR_UI_STATE,
 		),
@@ -231,12 +232,12 @@ export function OllamaModelSelector({
 	// picker. The star toggle on each installed row flips membership; favorited
 	// models surface as a "Favorites" group pinned to the top of the list.
 	useEffect(() => {
-		writePersistedSelectorState(OLLAMA_SELECTOR_UI_STORAGE_KEY, {
+		writePersistedSelectorState(uiStorageKey, {
 			activeRailId,
 			query,
 			sortKey,
 		});
-	}, [activeRailId, query, sortKey]);
+	}, [activeRailId, query, sortKey, uiStorageKey]);
 
 	const { isFavorite, toggleFavorite } = useFavoriteOllamaModels();
 	// Per-window starred-AUTHOR set (the publisher rail tiles) — the maker-

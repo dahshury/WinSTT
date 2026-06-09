@@ -294,94 +294,6 @@ async initializeShortcuts() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async getAvailableModels() : Promise<Result<ModelInfo[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_available_models") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getModelInfo(modelId: string) : Promise<Result<ModelInfo | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_model_info", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async downloadModel(modelId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("download_model", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async deleteModel(modelId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_model", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async cancelDownload(modelId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_download", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setActiveModel(modelId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_active_model", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getCurrentModel() : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_current_model") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getTranscriptionModelStatus() : Promise<Result<string | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_transcription_model_status") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async isModelLoading() : Promise<Result<boolean, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("is_model_loading") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async hasAnyModelsAvailable() : Promise<Result<boolean, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("has_any_models_available") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async hasAnyModelsOrDownloads() : Promise<Result<boolean, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("has_any_models_or_downloads") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async getWindowsMicrophonePermissionStatus() : Promise<WindowsMicrophonePermissionStatus> {
     return await TAURI_INVOKE("get_windows_microphone_permission_status");
 },
@@ -466,67 +378,8 @@ async getClamshellMicrophone() : Promise<Result<string, string>> {
 async isRecording() : Promise<boolean> {
     return await TAURI_INVOKE("is_recording");
 },
-async setModelUnloadTimeout(timeout: ModelUnloadTimeoutLegacy) : Promise<void> {
-    await TAURI_INVOKE("set_model_unload_timeout", { timeout });
-},
-async getModelLoadStatus() : Promise<Result<ModelLoadStatus, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_model_load_status") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async unloadModelManually() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("unload_model_manually") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getHistoryEntries(cursor: number | null, limit: number | null) : Promise<Result<PaginatedHistoryLegacy, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_history_entries", { cursor, limit }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async toggleHistoryEntrySaved(id: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("toggle_history_entry_saved", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getAudioFilePath(fileName: string) : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_audio_file_path", { fileName }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async deleteHistoryEntry(id: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_history_entry", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async retryHistoryEntryTranscription(id: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("retry_history_entry_transcription", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 /**
- * Stub implementation for Linux and other unsupported platforms.
+ * Checks if Windows reports a built-in lid switch.
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -814,8 +667,13 @@ async ttsDownloadCancel(modelId: string, quantization: string) : Promise<void> {
 /**
  * `tts_delete_model` — delete a model's cached files from disk.
  */
-async ttsDeleteModel(modelId: string, quantization: string) : Promise<void> {
-    await TAURI_INVOKE("tts_delete_model", { modelId, quantization });
+async ttsDeleteModel(modelId: string, quantization: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_delete_model", { modelId, quantization }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * `process_text` — dictation cleanup/compose. Composes the full system prompt
@@ -1166,28 +1024,48 @@ async winsttSetParameter(parameter: string, value: JsonValue) : Promise<void> {
  * `(model_id, quantization)` tuple, INTO the HF cache without changing the loaded model.
  * Emits `stt:model-download-start` immediately so the badge flips to "downloading".
  */
-async predownloadQuant(modelId: string, quantization: string) : Promise<void> {
-    await TAURI_INVOKE("predownload_quant", { modelId, quantization });
+async predownloadQuant(modelId: string, quantization: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("predownload_quant", { modelId, quantization }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * `download_pause_quant` — pause the in-flight per-quant download (.partial preserved on disk for
  * the next Range-resume). The renderer flips the badge optimistically; this confirms it.
  */
-async downloadPauseQuant(modelId: string, quantization: string) : Promise<void> {
-    await TAURI_INVOKE("download_pause_quant", { modelId, quantization });
+async downloadPauseQuant(modelId: string, quantization: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_pause_quant", { modelId, quantization }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * `download_resume_quant` — resume a paused per-quant download (skips already-cached files).
  */
-async downloadResumeQuant(modelId: string, quantization: string) : Promise<void> {
-    await TAURI_INVOKE("download_resume_quant", { modelId, quantization });
+async downloadResumeQuant(modelId: string, quantization: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_resume_quant", { modelId, quantization }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * `download_cancel_quant` — cancel an in-flight per-quant download; the current file's `.partial`
  * is unlinked, previously-completed files are kept (delete_model_quantization wipes those too).
  */
-async downloadCancelQuant(modelId: string, quantization: string) : Promise<void> {
-    await TAURI_INVOKE("download_cancel_quant", { modelId, quantization });
+async downloadCancelQuant(modelId: string, quantization: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_cancel_quant", { modelId, quantization }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * `delete_model_quantization` — drop just the weight files matching `quantization` from the HF
@@ -1205,8 +1083,8 @@ async deleteModelQuantization(modelId: string, quantization: string) : Promise<R
 }
 },
 /**
- * `delete_model_cache` — wipe the entire HF snapshot directory for `model_id`. Positional-string
- * channel (`POSITIONAL_STRING_PARAM` → `{ modelId }`). Re-broadcasts cache-changed.
+ * `delete_model_cache` — wipe the entire HF snapshot directory for `model_id`.
+ * Re-broadcasts cache-changed.
  * 
  * `async` so the blocking snapshot-dir scan + remove runs on the blocking pool instead of
  * stalling the main thread (async commands register identically to sync ones).
@@ -1807,10 +1685,9 @@ async setOverlayHitRegions(rects: OverlayHitRect[]) : Promise<Result<null, strin
 }
 },
 /**
- * `context_playground_set_live` — flip live polling on/off. A freshly-mounted
- * renderer sends `{ enabled: true }`, which BOTH enables live mode AND signals
- * "renderer ready" so a capture lands promptly (re-primes the loop). Mirrors
- * `handleSetLive`.
+ * `context_playground_set_live` — flip live polling on/off. Enabling starts a
+ * fresh poll loop; disabling cancels stale loops and leaves one "live-off"
+ * heartbeat for the debug window.
  */
 async contextPlaygroundSetLive(enabled: boolean) : Promise<void> {
     await TAURI_INVOKE("context_playground_set_live", { enabled });
@@ -1873,7 +1750,9 @@ async openWindow(name: string, x: number | null, y: number | null, width: number
 }
 },
 /**
- * `close_window` — HIDE (not destroy) the labelled window so re-open keeps state.
+ * `close_window` — HIDE the labelled keep-alive windows so re-open keeps state.
+ * Debug-only context-playground is destroyed on close to mirror the Electron
+ * reference and force a fresh live-capture renderer on next open.
  */
 async closeWindow(name: string) : Promise<Result<null, string>> {
     try {
@@ -2006,16 +1885,18 @@ async cancelCurrentOperation() : Promise<void> {
  * renderer's opener-plugin route reveals it in the OS file manager. Mirrors
  * `getCustomModelsFolder` + `handleOpenCustomModelsFolder` in `custom-models.ts`.
  */
-async openCustomModelsFolder() : Promise<string> {
-    return await TAURI_INVOKE("open_custom_models_folder");
+async openCustomModelsFolder() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_custom_models_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * `cancel_download` — cancel the legacy single-slot whole-model swap-download (no quantization).
- * The renderer's `cancelDownload()` sends NO args (matches the param-less signature). This is the
- * command the adapter's `STT_CANCEL_DOWNLOAD` channel must route to; lib.rs currently registers
- * Handy's `commands::models::cancel_download` (which needs a `model_id` and would reject the
- * arg-less call) — see the lib-wiring report to repoint it here. Renamed `winstt_cancel_download`
- * to avoid the duplicate-command-name clash with Handy's during registration.
+ * The renderer's `cancelDownload()` sends no args, so this stays a distinct arg-less command
+ * rather than sharing the per-model/per-quantization cancel routes.
  */
 async winsttCancelDownload() : Promise<void> {
     await TAURI_INVOKE("winstt_cancel_download");
@@ -2331,7 +2212,6 @@ export type DroppedFile = { filePath: string; fileName?: string }
  * OpenRouter verbosity (`low`/`medium`/`high`).
  */
 export type EffortLevel = "low" | "medium" | "high"
-export type EngineType = "Whisper" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
 /**
  * `general.fileTranscriptionSaveLocation`. `auto` = beside source, `ask` = dialog.
  */
@@ -2719,8 +2599,6 @@ state: string; downloaded_bytes: number; total_bytes: number;
  * 0.0..1.0 (1.0 when cached).
  */
 progress: number }
-export type ModelInfo = { id: string; name: string; description: string; filename: string; url: string | null; sha256: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean }
-export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 export type ModelSettings = { 
 /**
  * Catalog id (`tiny`…`large-v3-turbo`, onnx families) OR `<provider>:<id>`
@@ -2890,7 +2768,6 @@ export type OverlayPositionLegacy = "none" | "top" | "bottom"
  * `PaginatedHistory` (camelCase `hasMore`) returned by `history_list`.
  */
 export type PaginatedHistory = { entries: HistoryRow[]; hasMore: boolean }
-export type PaginatedHistoryLegacy = { entries: HistoryEntry[]; has_more: boolean }
 /**
  * The partial section patch the renderer posts to `winstt_set_settings`.
  * 

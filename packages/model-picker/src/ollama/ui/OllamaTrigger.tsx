@@ -18,13 +18,16 @@ import {
 	formatOllamaDisplayName,
 	getOllamaFamily,
 } from "../lib/family-helpers";
-import { OllamaToolCapabilityBadge, PublisherChip } from "./OllamaModelChips";
+import { installedCapabilityBadges, PublisherChip } from "./OllamaModelChips";
 import type { TriggerPullSummary } from "./ollama-selector-types";
 
 // ── Trigger ───────────────────────────────────────────────────────────
 
 function SelectedTriggerContent({ model }: { model: OllamaModel }) {
 	const family = getOllamaFamily(model);
+	const capabilityBadges = installedCapabilityBadges(
+		model.capabilities ?? undefined,
+	);
 	return (
 		<div className="flex min-w-0 flex-1 items-center gap-2">
 			<PublisherChip family={family} />
@@ -32,10 +35,11 @@ function SelectedTriggerContent({ model }: { model: OllamaModel }) {
 				className="flex-1 font-medium text-foreground"
 				text={formatOllamaDisplayName(model.name)}
 			/>
-			<OllamaToolCapabilityBadge
-				capabilities={model.capabilities}
-				className="shrink-0"
-			/>
+			{capabilityBadges ? (
+				<div className="flex shrink-0 items-center gap-1">
+					{capabilityBadges}
+				</div>
+			) : null}
 		</div>
 	);
 }

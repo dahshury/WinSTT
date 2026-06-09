@@ -219,12 +219,6 @@ export const sttIsConnected = () =>
 
 export const notifyRendererReady = () => commands.winsttEmitReady();
 
-// Server management
-export const sttServerSpawn = () => invoke<void>(IPC.STT_SERVER_SPAWN);
-export const sttServerKill = () => invoke<void>(IPC.STT_SERVER_KILL);
-export const sttServerStatus = () =>
-	invokeOrDefault<ServerStatus>(IPC.STT_SERVER_GET_STATUS, "idle");
-
 // Window controls
 export const windowMinimize = () => send(IPC.WINDOW_MINIMIZE);
 export const windowMaximize = () => send(IPC.WINDOW_MAXIMIZE);
@@ -232,6 +226,82 @@ export const windowClose = () => send(IPC.WINDOW_CLOSE);
 export const windowOpenSettings = () => send(IPC.WINDOW_OPEN_SETTINGS);
 export const settingsWindowReady = () => send(IPC.SETTINGS_WINDOW_READY);
 export const windowCloseSelf = () => send(IPC.WINDOW_CLOSE_SELF);
+
+function commandResultError(value: unknown): unknown | null {
+	if (
+		value !== null &&
+		typeof value === "object" &&
+		"status" in value &&
+		(value as { status: unknown }).status === "error"
+	) {
+		return (value as { error?: unknown }).error ?? "Unknown command error";
+	}
+	return null;
+}
+
+async function runWindowCommand(
+	label: string,
+	thunk: () => Promise<unknown>,
+): Promise<void> {
+	try {
+		const value = await thunk();
+		const error = commandResultError(value);
+		if (error !== null) {
+			throw error;
+		}
+	} catch (error) {
+		console.error(`[ipc] window command "${label}" failed:`, error);
+	}
+}
+
+export const trayWindowOpenSettings = () =>
+	runWindowCommand("open_window(settings)", () =>
+		commands.openWindow("settings", null, null, null, null, null, null, null),
+	);
+
+export const windowOpenContextPlayground = () =>
+	runWindowCommand("open_window(context-playground)", () =>
+		commands.openWindow(
+			"context-playground",
+			null,
+			null,
+			null,
+			null,
+			null,
+			null,
+			null,
+		),
+	);
+
+export const windowShowMain = () =>
+	runWindowCommand("show_main_window_command", () =>
+		commands.showMainWindowCommand(),
+	);
+
+export const windowCloseNamed = (name: string) =>
+	runWindowCommand(`close_window(${name})`, () => commands.closeWindow(name));
+
+export const windowResizeNamed = (
+	name: string,
+	width: number,
+	height: number,
+) =>
+	runWindowCommand(`resize_window(${name})`, () =>
+		commands.resizeWindow(name, width, height),
+	);
+
+export const windowQuitApp = () =>
+	runWindowCommand("quit_app", () => commands.quitApp());
+
+export const contextPlaygroundSetLive = (enabled: boolean) =>
+	runWindowCommand(`context_playground_set_live(${enabled})`, () =>
+		commands.contextPlaygroundSetLive(enabled),
+	);
+
+export const contextPlaygroundArmDeep = () =>
+	runWindowCommand("context_playground_arm_deep", () =>
+		commands.contextPlaygroundArmDeep(),
+	);
 
 export interface RealtimeTextPayload {
 	text: string;

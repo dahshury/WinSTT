@@ -1,5 +1,3 @@
-import { Cancel01Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
 import {
 	computeModelExclusionConfig,
 	OllamaModelSelector,
@@ -22,8 +20,10 @@ import { useSettingsStore } from "@/entities/setting";
 import { CloudModelSelect } from "@/features/select-cloud-stt-model";
 import type { OllamaPullProgress } from "@/shared/api/models";
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import { Button } from "@/shared/ui/button";
-import { Tooltip } from "@/shared/ui/tooltip";
+import {
+	ollamaLlmSelectorUiStorageKey,
+	openRouterLlmSelectorUiStorageKey,
+} from "@/shared/lib/model-picker-ui-storage-keys";
 import {
 	type CatalogModels,
 	close,
@@ -109,17 +109,6 @@ function DetachedLlmPickerFrame({ children }: { children: ReactNode }) {
 				}
 			}}
 		>
-			<div className="flex h-8 shrink-0 items-center justify-end border-divider border-b bg-surface-1/65 px-2">
-				<Tooltip content="Close">
-					<Button
-						aria-label="Close"
-						className="flex h-6 w-6 rounded-md bg-transparent p-0 text-foreground-muted transition-colors duration-150 hover:bg-surface-3 hover:text-foreground"
-						onClick={close}
-					>
-						<HugeiconsIcon aria-hidden="true" icon={Cancel01Icon} size={13} />
-					</Button>
-				</Tooltip>
-			</div>
 			{children}
 		</div>
 	);
@@ -241,6 +230,7 @@ function DetachedOllamaPicker({
 				recommendedModels={RECOMMENDED_OLLAMA_MODELS}
 				swap={null}
 				systemFit={getFit}
+				uiStorageKey={ollamaLlmSelectorUiStorageKey(mode.feature)}
 				value={featureSnapshot.model}
 			/>
 		</div>
@@ -316,6 +306,10 @@ function DetachedOpenRouterPicker({ mode }: { mode: DetachedOpenRouterMode }) {
 				}
 				popupHeightClass={PANEL_HEIGHT}
 				popupWidthClass="w-full"
+				uiStorageKey={openRouterLlmSelectorUiStorageKey(
+					mode.feature,
+					mode.target,
+				)}
 				value={value}
 			/>
 		</div>

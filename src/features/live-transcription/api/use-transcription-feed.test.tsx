@@ -66,6 +66,21 @@ describe("useTranscriptionFeed", () => {
 		expect(useTranscriptionStore.getState().currentRealtime).toBe("preview");
 	});
 
+	test("empty realtime drops do not erase visible live text during an active recording", () => {
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			currentRealtime: "",
+		});
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_REALTIME_TEXT, { text: "first words" });
+		fire(IPC.STT_REALTIME_TEXT, { text: "" });
+		expect(useTranscriptionStore.getState().currentRealtime).toBe(
+			"first words",
+		);
+	});
+
 	test("full sentence appends to items", () => {
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,

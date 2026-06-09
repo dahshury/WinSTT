@@ -17,6 +17,7 @@ import {
 	ttsCancel,
 	ttsCloudPreview,
 	ttsDeleteModel,
+	dialogOpenFile,
 	ttsInstallCancel,
 	ttsOpenRouterPreview,
 	ttsSpeak,
@@ -70,7 +71,9 @@ export function TtsModelSection() {
 	const update = useSettingsStore((s) => s.updateTtsSettings);
 	const integrations = useSettingsStore((s) => s.settings.integrations);
 	// OpenRouter is a 2nd cloud TTS provider — reuses the shared LLM key.
-	const openrouterKey = useSettingsStore((s) => s.settings.llm.openrouterApiKey);
+	const openrouterKey = useSettingsStore(
+		(s) => s.settings.llm.openrouterApiKey,
+	);
 	const goToIntegrations = useSettingsTabStore((s) => s.setActiveTab);
 
 	// Cloud is only selectable once the ElevenLabs key is present AND the last
@@ -123,7 +126,9 @@ export function TtsModelSection() {
 			disabled: !openrouterConfigured,
 		},
 	];
-	const handleCloudProviderChange = (next: "elevenlabs" | "openrouter"): void => {
+	const handleCloudProviderChange = (
+		next: "elevenlabs" | "openrouter",
+	): void => {
 		update({
 			cloud: { ...(tts?.cloud ?? DEFAULT_SETTINGS.tts.cloud), provider: next },
 		});
@@ -290,11 +295,9 @@ export function TtsModelSection() {
 		// any previously-picked clip are plain values.
 		if (nextVoice === TTS_CLONE_ADD) {
 			void (async () => {
-				const { open } = await import("@tauri-apps/plugin-dialog");
-				const picked = await open({
-					multiple: false,
-					filters: [{ name: "Audio", extensions: ["wav"] }],
-				});
+				const picked = await dialogOpenFile([
+					{ name: "Audio", extensions: ["wav"] },
+				]);
 				if (typeof picked === "string") {
 					update({ voice: picked });
 				}

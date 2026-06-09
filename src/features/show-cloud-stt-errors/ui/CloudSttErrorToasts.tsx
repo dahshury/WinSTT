@@ -25,7 +25,8 @@ type CloudToastKind =
 	| "network"
 	| "key_missing"
 	| "rate_limit"
-	| "provider_error";
+	| "provider_error"
+	| "restored";
 
 interface CloudToast {
 	icon: IconSvgElement;
@@ -41,6 +42,12 @@ interface CloudErrorPayload {
 	message?: string;
 	provider: CloudSttProvider;
 	retryAfter?: number;
+}
+
+interface CloudConnectivityPayload {
+	message?: string;
+	provider: CloudSttProvider;
+	status?: "offline" | "online";
 }
 
 function iconFor(kind: CloudToastKind): IconSvgElement {
@@ -123,7 +130,7 @@ export function CloudSttErrorToasts() {
 		});
 		const offNet = ipcOn(IPC.STT_CLOUD_NETWORK_ERROR, (data) => {
 			const p = data as CloudErrorPayload;
-			push("network", t("toastNetworkError"), p, false);
+			push("network", p.message ?? t("toastNetworkError"), p, false);
 		});
 		const offMissing = ipcOn(IPC.STT_CLOUD_KEY_MISSING, (data) => {
 			const p = data as CloudErrorPayload;
@@ -140,9 +147,9 @@ export function CloudSttErrorToasts() {
 				provider: providerLabel(p.provider),
 			});
 			const detail = p.retryAfter
-				? ` — ${t("toastRateLimitedRetry", { seconds: Math.round(p.retryAfter) })}`
+				? ` - ${t("toastRateLimitedRetry", { seconds: Math.round(p.retryAfter) })}`
 				: "";
-			push("rate_limit", `${head}${detail}`, p, false);
+			push("rate_limit", p.message ?? `${head}${detail}`, p, false);
 		});
 		const offProvider = ipcOn(IPC.STT_CLOUD_PROVIDER_ERROR, (data) => {
 			const p = data as CloudErrorPayload;
@@ -156,6 +163,20 @@ export function CloudSttErrorToasts() {
 				false,
 			);
 		});
+		const offConnectivity = ipcOn(IPC.CLOUD_CONNECTIVITY, (data) => {
+			const p = data as CloudConnectivityPayload;
+			if (p.status === "online") {
+				push(
+					"restored",
+					p.message ??
+						`${providerLabel(p.provider)} cloud connectivity is back.`,
+					p,
+					false,
+				);
+			} else {
+				push("network", p.message ?? t("toastNetworkError"), p, false);
+			}
+		});
 
 		return () => {
 			offAuth();
@@ -163,6 +184,7 @@ export function CloudSttErrorToasts() {
 			offMissing();
 			offRate();
 			offProvider();
+			offConnectivity();
 		};
 	}, [t]);
 
@@ -193,7 +215,8 @@ export function CloudSttErrorToasts() {
 				<div
 					aria-live="assertive"
 					className={cn(
-						"pointer-events-auto rounded-md border border-error/40 p-3 shadow-lg",
+						"pointer-events-auto rounded-md border p-3 shadow-lg",
+						toast.kind === "restored" ? "border-border" : "border-error/40",
 						surfaceBg(level),
 					)}
 					key={toast.id}
@@ -202,7 +225,12 @@ export function CloudSttErrorToasts() {
 					<div className="flex items-start gap-2">
 						<HugeiconsIcon
 							aria-hidden="true"
-							className="mt-0.5 shrink-0 text-error"
+							className={cn(
+								"mt-0.5 shrink-0",
+								toast.kind === "restored"
+									? "text-foreground-secondary"
+									: "text-error",
+							)}
 							icon={toast.icon}
 							size={16}
 						/>

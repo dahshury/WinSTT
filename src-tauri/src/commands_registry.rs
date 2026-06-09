@@ -76,17 +76,6 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::check_apple_intelligence_available,
         commands::initialize_enigo,
         commands::initialize_shortcuts,
-        commands::models::get_available_models,
-        commands::models::get_model_info,
-        commands::models::download_model,
-        commands::models::delete_model,
-        commands::models::cancel_download,
-        commands::models::set_active_model,
-        commands::models::get_current_model,
-        commands::models::get_transcription_model_status,
-        commands::models::is_model_loading,
-        commands::models::has_any_models_available,
-        commands::models::has_any_models_or_downloads,
         commands::audio::get_windows_microphone_permission_status,
         commands::audio::open_microphone_privacy_settings,
         commands::audio::get_available_microphones,
@@ -100,14 +89,6 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::audio::set_clamshell_microphone,
         commands::audio::get_clamshell_microphone,
         commands::audio::is_recording,
-        commands::transcription::set_model_unload_timeout,
-        commands::transcription::get_model_load_status,
-        commands::transcription::unload_model_manually,
-        commands::history::get_history_entries,
-        commands::history::toggle_history_entry_saved,
-        commands::history::get_audio_file_path,
-        commands::history::delete_history_entry,
-        commands::history::retry_history_entry_transcription,
         helpers::clamshell::is_laptop,
         // ── WinSTT commands (lib_wiring.md §3) ──
         winstt::commands::settings::winstt_get_settings,
@@ -236,6 +217,10 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::preview::confirm_paste,
         winstt::commands::preview::cancel_preview,
         winstt::commands::overlay::set_overlay_hit_regions,
+        // Debug-only raw context playground surface. These command ids stay in the
+        // stable registry for binding compatibility, but the command bodies
+        // return/no-op without reading UIA data in release builds unless the
+        // explicit `context-playground` Cargo feature is enabled.
         winstt::commands::context_playground::context_playground_set_live,
         winstt::commands::context_playground::context_playground_arm_deep,
         winstt::commands::context_playground::context_playground_capture,
@@ -272,4 +257,212 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::events::TtsLifecyclePayload,
         winstt::commands::events::FileTranscribeProgressPayload,
     ])
+}
+
+#[cfg(test)]
+mod command_registry_tests {
+    use regex::Regex;
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    const INTENTIONAL_COMMAND_EXCLUSIONS: &[(&str, &str)] = &[(
+        "winstt::commands::context::debug_read_context",
+        "debug-only context probe; keep it off the normal registry instead of exposing raw snapshots",
+    )];
+
+    #[test]
+    fn tauri_command_definitions_are_registered_or_explicitly_excluded() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let source_dir = manifest_dir.join("src");
+        let registry_source = fs::read_to_string(source_dir.join("commands_registry.rs"))
+            .expect("commands_registry.rs should be readable");
+        let registered = registered_command_paths(&registry_source);
+        let exclusions = intentional_exclusions();
+
+        let mut missing = Vec::new();
+        let mut seen_exclusions = BTreeSet::new();
+
+        for file in rust_files(&source_dir) {
+            let source = fs::read_to_string(&file)
+                .unwrap_or_else(|err| panic!("{} should be readable: {err}", file.display()));
+            let relative = relative_source_path(&source_dir, &file);
+            for (line, name) in command_names_in_source(&source) {
+                let registry_path =
+                    expected_registry_path(&relative, &name).unwrap_or_else(|err| panic!("{err}"));
+                if exclusions.contains(registry_path.as_str()) {
+                    seen_exclusions.insert(registry_path.clone());
+                } else if !registered.contains(registry_path.as_str()) {
+                    missing.push(format!("{relative}:{line} -> {registry_path}"));
+                }
+            }
+        }
+
+        let stale_exclusions: Vec<_> = exclusions
+            .iter()
+            .filter(|path| !seen_exclusions.contains(**path))
+            .copied()
+            .collect();
+
+        assert!(
+            missing.is_empty() && stale_exclusions.is_empty(),
+            "{}{}",
+            if missing.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "Tauri commands missing from collect_commands![]:\n{}\nAdd them to src/commands_registry.rs or add an intentional exclusion with a reason.\n",
+                    missing.join("\n")
+                )
+            },
+            if stale_exclusions.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "Stale command registry exclusions:\n{}\nRemove exclusions when commands are removed or registered.\n",
+                    stale_exclusions.join("\n")
+                )
+            }
+        );
+    }
+
+    fn intentional_exclusions() -> BTreeSet<&'static str> {
+        INTENTIONAL_COMMAND_EXCLUSIONS
+            .iter()
+            .map(|(path, reason)| {
+                assert!(
+                    !reason.trim().is_empty(),
+                    "command registry exclusions need a reason"
+                );
+                *path
+            })
+            .collect()
+    }
+
+    fn rust_files(source_dir: &Path) -> Vec<PathBuf> {
+        fn visit(dir: &Path, files: &mut Vec<PathBuf>) {
+            for entry in fs::read_dir(dir)
+                .unwrap_or_else(|err| panic!("{} should be readable: {err}", dir.display()))
+            {
+                let path = entry.expect("directory entry should be readable").path();
+                if path.is_dir() {
+                    visit(&path, files);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    files.push(path);
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        visit(source_dir, &mut files);
+        files.sort();
+        files
+    }
+
+    fn command_names_in_source(source: &str) -> Vec<(usize, String)> {
+        let command_re = Regex::new(
+            r"(?ms)#\s*\[\s*tauri::command[^\]]*\]\s*(?:#\s*\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .expect("command regex should compile");
+
+        command_re
+            .captures_iter(source)
+            .map(|captures| {
+                let full = captures.get(0).expect("full command match");
+                let line = source[..full.start()].lines().count() + 1;
+                let name = captures.get(1).expect("command name").as_str().to_owned();
+                (line, name)
+            })
+            .collect()
+    }
+
+    fn registered_command_paths(registry_source: &str) -> BTreeSet<String> {
+        let command_path_re =
+            Regex::new(r"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)\s*,")
+                .expect("registered command regex should compile");
+        command_path_re
+            .captures_iter(collect_commands_macro_body(registry_source))
+            .map(|captures| captures[1].to_owned())
+            .collect()
+    }
+
+    fn collect_commands_macro_body(source: &str) -> &str {
+        let start = source
+            .find("collect_commands![")
+            .expect("commands_registry.rs should contain collect_commands![]")
+            + "collect_commands![".len();
+        let mut depth = 1usize;
+        for (offset, ch) in source[start..].char_indices() {
+            match ch {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &source[start..start + offset];
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("collect_commands![] should have a closing bracket");
+    }
+
+    fn expected_registry_path(source: &str, name: &str) -> Result<String, String> {
+        let maybe_module = |prefix: &str| {
+            source
+                .strip_prefix(prefix)
+                .and_then(|path| path.strip_suffix(".rs"))
+                .map(|path| path.replace('/', "::"))
+        };
+
+        match source {
+            "src/commands_registry.rs" => Ok(name.to_string()),
+            "src/tray.rs" => Ok(format!("tray::{name}")),
+            "src/helpers/clamshell.rs" => Ok(format!("helpers::clamshell::{name}")),
+            "src/shortcut/mod.rs" => Ok(format!("shortcut::{name}")),
+            "src/commands/mod.rs" => Ok(format!("commands::{name}")),
+            _ if source.starts_with("src/shortcut/") => {
+                let module = maybe_module("src/shortcut/").ok_or_else(|| {
+                    format!("{source} should be under src/shortcut/ and end with .rs")
+                })?;
+                match module.as_str() {
+                    "accelerator_commands" | "post_process_commands" | "settings_commands" => {
+                        Ok(format!("shortcut::{name}"))
+                    }
+                    "handy_keys" => Ok(format!("shortcut::handy_keys::{name}")),
+                    _ => Ok(format!("shortcut::{module}::{name}")),
+                }
+            }
+            _ if source.starts_with("src/commands/") => {
+                let module = maybe_module("src/commands/").ok_or_else(|| {
+                    format!("{source} should be under src/commands/ and end with .rs")
+                })?;
+                Ok(format!("commands::{module}::{name}"))
+            }
+            _ if source.starts_with("src/winstt/commands/") => {
+                let module_path = maybe_module("src/winstt/commands/").ok_or_else(|| {
+                    format!("{source} should be under src/winstt/commands/ and end with .rs")
+                })?;
+                if module_path == "mod" {
+                    Ok(format!("winstt::commands::{name}"))
+                } else {
+                    Ok(format!("winstt::commands::{module_path}::{name}"))
+                }
+            }
+            _ => Err(format!(
+                "No command registry path mapping for {source}. Add a mapping before defining #[tauri::command] there."
+            )),
+        }
+    }
+
+    fn relative_source_path(source_dir: &Path, file: &Path) -> String {
+        let relative = file
+            .strip_prefix(
+                source_dir
+                    .parent()
+                    .expect("source dir should have a parent"),
+            )
+            .expect("source file should be under manifest dir");
+        relative.to_string_lossy().replace('\\', "/")
+    }
 }

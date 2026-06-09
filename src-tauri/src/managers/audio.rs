@@ -771,6 +771,12 @@ impl AudioRecordingManager {
         self.recording_generation.load(Ordering::SeqCst)
     }
 
+    pub fn is_active_recording_generation(&self, generation: u64) -> bool {
+        generation != 0
+            && self.recording_generation.load(Ordering::SeqCst) == generation
+            && matches!(*self.state.lock_recover(), RecordingState::Recording { .. })
+    }
+
     pub fn speech_seen_since_recording_start(&self) -> bool {
         self.speech_seen.load(Ordering::SeqCst)
     }

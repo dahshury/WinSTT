@@ -12,11 +12,9 @@ import { useRealtimePreviewFallback } from "@/features/realtime-preview-fallback
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { gpuGetInfo } from "@/shared/api/ipc-client";
-import { installNativeBridge } from "@/shared/api/native-bridge-adapter";
 import { diagBeacon, installWebviewDiag } from "@/shared/lib/winstt-diag";
 import { SettingsPage } from "@/views/settings";
 
-installNativeBridge();
 installWebviewDiag("settings");
 
 const container = document.getElementById("root");

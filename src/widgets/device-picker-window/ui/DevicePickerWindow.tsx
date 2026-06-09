@@ -9,12 +9,12 @@ import {
 	useInputDevices,
 	useMicrophoneLevels,
 } from "@/entities/audio-device";
-import { IPC } from "@/shared/api/ipc-channels";
 import {
-	ipcSend,
 	onSettingsChanged,
 	settingsLoad,
 	settingsSave,
+	windowCloseNamed,
+	windowResizeNamed,
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { surfaceClasses } from "@/shared/lib/surface";
@@ -31,7 +31,7 @@ const PANEL_LEVEL = 5;
 const PANEL_SHADOW_LEVEL = 7;
 
 function close(): void {
-	ipcSend(IPC.DEVICE_PICKER_CLOSE);
+	windowCloseNamed("device-picker");
 }
 
 /**
@@ -77,7 +77,7 @@ export function DevicePickerWindow() {
 		}
 		const report = () => {
 			const r = el.getBoundingClientRect();
-			ipcSend(IPC.DEVICE_PICKER_RESIZE, { width: r.width, height: r.height });
+			windowResizeNamed("device-picker", r.width, r.height);
 		};
 		const observer = new ResizeObserver(report);
 		observer.observe(el);

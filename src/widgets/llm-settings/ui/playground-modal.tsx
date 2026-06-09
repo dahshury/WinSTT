@@ -344,10 +344,12 @@ function PlaygroundModalBody({
 		<div className="flex w-[44rem] max-w-[94vw] flex-col">
 			<header className="flex shrink-0 items-center gap-2 px-6 pt-6 pb-3">
 				<HugeiconsIcon className="text-accent" icon={PlayIcon} size={18} />
-				<DialogTitle>{t("playgroundModalTitle")}</DialogTitle>
+				<DialogTitle className="min-w-0 flex-1 truncate">
+					{t("playgroundModalTitle")}
+				</DialogTitle>
 				<IconButton
 					aria-label={tc("cancel")}
-					className="ml-auto"
+					className="ml-auto bg-surface-4 ring-1 ring-divider hover:bg-surface-5"
 					icon={<HugeiconsIcon icon={Cancel01Icon} size={16} />}
 					onClick={onClose}
 				/>
@@ -355,7 +357,7 @@ function PlaygroundModalBody({
 			{/* The viewport carries the max-height + overflow so the body scrolls
 			    even though the popup is content-sized (a `flex-1` child of a
 			    `max-h` popup never gets a definite height to scroll within). */}
-			<ScrollArea viewportClassName="max-h-[76vh] px-6 pb-6">
+			<ScrollArea viewportClassName="max-h-[76vh] px-6 pb-6" verticalOnly>
 				<div className="flex flex-col gap-4">
 					<FormControl
 						label={t("playgroundConfigLabel")}

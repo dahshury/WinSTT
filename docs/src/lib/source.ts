@@ -1,6 +1,7 @@
 import { docs } from "@source/server";
 import { type InferPageType, loader } from "fumadocs-core/source";
 import { lucideIconsPlugin } from "fumadocs-core/source/lucide-icons";
+import { absoluteDocsUrl } from "@/lib/site";
 
 export const source = loader({
   baseUrl: "/docs",
@@ -12,7 +13,7 @@ export function getPageImage(page: InferPageType<typeof source>) {
   const segments = [...page.slugs, "image.png"];
   return {
     segments,
-    url: `/og/docs/${segments.join("/")}`,
+    url: absoluteDocsUrl(`/og/docs/${segments.join("/")}`),
   };
 }
 

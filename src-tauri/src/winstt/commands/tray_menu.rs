@@ -40,10 +40,6 @@ const TASKBAR_MARGIN: f64 = 8.0;
 /// subsequent open/close is a pure reposition with no visibility transition.
 const OFFSCREEN: f64 = -9999.0;
 
-/// True once the tray menu has been parked-shown off-screen at least once, so
-/// `place_tray_menu` knows the webview has already painted and a reposition is
-/// all that's required (no `show()` flicker). Set by `install_tray_menu_lifecycle`.
-static TRAY_MENU_PRESHOWN: AtomicBool = AtomicBool::new(false);
 static TRAY_MENU_LIFECYCLE_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// Last anchor point the tray menu was shown at, in LOGICAL screen pixels.
@@ -178,16 +174,14 @@ fn is_tray_menu_on_screen(window: &tauri::WebviewWindow) -> bool {
 /// fires an OS show animation + a transparent-surface repaint, the source of the
 /// "hard flicker"). The first open before the pre-show has landed falls back to a
 /// real `show()` so the menu still appears.
+/// Current Tauri path intentionally uses real show/hide so focus loss reliably
+/// dismisses the popup when the user clicks outside it.
 fn place_tray_menu(app: &AppHandle, anchor: (f64, f64)) -> Result<(), String> {
     install_tray_menu_lifecycle(app);
     let window = ensure_window(app, TRAY_MENU_LABEL)?;
     position_tray_menu(app, &window, anchor)?;
-    // If the window was never park-shown yet (cold first open before the
-    // lifecycle pre-show ran), show it for real; otherwise it is already shown
-    // off-screen and the reposition above brought it on screen flicker-free.
-    if !TRAY_MENU_PRESHOWN.load(Ordering::SeqCst) {
-        window.show().map_err(|e| e.to_string())?;
-    }
+    window.show().map_err(|e| e.to_string())?;
+    let _ = window.unminimize();
     let _ = window.set_focus();
     Ok(())
 }
@@ -230,7 +224,7 @@ pub fn reanchor_tray_menu(app: AppHandle) -> Result<(), String> {
 #[specta::specta]
 pub fn hide_tray_menu(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(TRAY_MENU_LABEL) {
-        park_tray_menu_offscreen(&window);
+        hide_tray_menu_window(&window);
     }
     if let Some(state) = app.try_state::<TrayMenuAnchor>() {
         if let Ok(mut guard) = state.0.lock() {
@@ -245,15 +239,18 @@ pub fn hide_tray_menu(app: AppHandle) -> Result<(), String> {
 /// reposition with no OS show animation / transparent-surface repaint — the fix
 /// for the open flicker. Before the lifecycle pre-show has run the window may
 /// still be genuinely hidden; parking it is harmless in that case.
-fn park_tray_menu_offscreen(window: &tauri::WebviewWindow) {
+/// Current Tauri path parks and then hides the window, preserving the webview
+/// without leaving an always-visible transparent popup on the desktop.
+fn hide_tray_menu_window(window: &tauri::WebviewWindow) {
     let _ = window.set_position(LogicalPosition::new(OFFSCREEN, OFFSCREEN));
+    let _ = window.hide();
 }
 
 /// Hide the tray menu directly (no command roundtrip). Used by the blur/resize
 /// window-event handler the tray-click wiring installs. Clears the stored anchor.
 fn hide_tray_menu_internal(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(TRAY_MENU_LABEL) {
-        park_tray_menu_offscreen(&window);
+        hide_tray_menu_window(&window);
     }
     if let Some(state) = app.try_state::<TrayMenuAnchor>() {
         if let Ok(mut guard) = state.0.lock() {
@@ -384,11 +381,7 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
     // OS show animation flicker AND the visible "grow/jump" from the post-mount
     // resize landing after the window was already on screen.
     let _ = window.set_position(LogicalPosition::new(OFFSCREEN, OFFSCREEN));
-    if let Err(e) = window.show() {
-        log::warn!("tray-menu pre-show (offscreen) failed: {e}");
-    } else {
-        TRAY_MENU_PRESHOWN.store(true, Ordering::SeqCst);
-    }
+    let _ = window.hide();
 }
 
 #[cfg(test)]

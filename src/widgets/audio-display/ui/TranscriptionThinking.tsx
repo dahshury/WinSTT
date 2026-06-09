@@ -68,24 +68,28 @@ export function TranscriptionThinking() {
 	const showTranscribingStatus = useSettingsStore((s) =>
 		shouldShowTranscribingStatus(s.settings),
 	);
+	const showThinkingStatus = useSettingsStore((s) =>
+		hasConfiguredDictationModel(s.settings),
+	);
 	const isCloudSttModel = useSettingsStore((s) =>
 		isCloudSttModelSelected(s.settings),
 	);
 	const visibleTranscribing = isTranscribing && showTranscribingStatus;
+	const visibleThinking = isThinking && showThinkingStatus;
 
-	const isProcessing = isThinking || visibleTranscribing;
+	const isProcessing = visibleThinking || visibleTranscribing;
 	const startedAt = getProcessingStartedAt({
-		isThinking,
+		isThinking: visibleThinking,
 		isTranscribing: visibleTranscribing,
 		thinkingStartedAt,
 		transcribingStartedAt,
 	});
-	const reasoning = isThinking ? thinkingText : "";
+	const reasoning = visibleThinking ? thinkingText : "";
 	const transcribingWords =
 		isCloudSttModel && processingPhase === "uploading"
 			? UPLOADING_WORDS
 			: TRANSCRIBING_WORDS;
-	const wordProps = isThinking
+	const wordProps = visibleThinking
 		? { reserveDefaultWords: true }
 		: { reserveDefaultWords: true, words: transcribingWords };
 

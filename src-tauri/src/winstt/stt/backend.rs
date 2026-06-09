@@ -40,8 +40,12 @@
 use crate::audio_toolkit::apply_custom_words;
 use crate::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
 use crate::winstt::audio_conditioning::peak_normalize;
+use crate::winstt::stt::vad_segment::{
+    compact_for_transcription, vad_segment_decode, VAD_COMPACT_MIN_S,
+};
 use crate::winstt::stt::{EngineConfig, TranscribeOptions, Transcriber};
 use anyhow::Result;
+use std::borrow::Cow;
 use tauri::{AppHandle, Manager};
 
 /// Which load/decode path a model id routes to. Decided by id namespace (cloud prefix → catalog
@@ -357,7 +361,6 @@ impl SttBackend for WinsttSttBackend {
         // If the compacted result still exceeds an engine window (Whisper's 30 s mel wall, AED
         // token caps), the same path chunks it on speech boundaries.
         const MAX_CHUNK_S: f32 = 28.0; // headroom under Whisper's 30 s mel wall
-        const VAD_COMPACT_MIN_S: f32 = 5.0;
         let transcribe_once = |engine: &mut dyn Transcriber| -> Result<String> {
             engine
                 .transcribe(&conditioned, &opts)
@@ -372,7 +375,7 @@ impl SttBackend for WinsttSttBackend {
             conditioned.len() > (VAD_COMPACT_MIN_S * 16_000.0) as usize && non_native_offline;
         let text = if should_vad_compact {
             match build_segmentation_vad(app) {
-                Ok(mut vad) => crate::winstt::stt::vad_segment::vad_segment_decode(
+                Ok(mut vad) => vad_segment_decode(
                     engine,
                     &conditioned,
                     MAX_CHUNK_S,
@@ -432,6 +435,16 @@ impl SttBackend for WinsttSttBackend {
         // When the selected model carries a cloud prefix (openai:/elevenlabs:), there is NO local
         // engine — ship the captured audio to the provider via CloudSttManager.
         let ws = crate::winstt::commands::settings::read_settings(app);
+        let (provider, _) = crate::winstt::cloud_stt::split_model_id(model_id)
+            .ok_or_else(|| anyhow::anyhow!("'{model_id}' is not a cloud STT model id"))?;
+        let api_key = match provider {
+            crate::winstt::cloud_stt::CloudSttProvider::ElevenLabs => {
+                ws.integrations.elevenlabs.api_key.clone()
+            }
+            crate::winstt::cloud_stt::CloudSttProvider::OpenRouter => {
+                ws.llm.openrouter_api_key.clone()
+            }
+        };
         let cloud = app
             .state::<std::sync::Arc<crate::winstt::managers::CloudSttManager>>()
             .inner()
@@ -442,6 +455,27 @@ impl SttBackend for WinsttSttBackend {
             (None, [language]) => Some(language.clone()),
             _ => None,
         };
+        let upload_audio = if audio.len() > (VAD_COMPACT_MIN_S * 16_000.0) as usize {
+            match build_segmentation_vad(app) {
+                Ok(mut vad) => {
+                    let compacted = compact_for_transcription(audio, &mut vad);
+                    if compacted.len() < audio.len() {
+                        log::debug!(
+                            "[cloud-stt] compacted upload audio {:.2}s -> {:.2}s",
+                            audio.len() as f32 / 16_000.0,
+                            compacted.len() as f32 / 16_000.0
+                        );
+                    }
+                    compacted
+                }
+                Err(err) => {
+                    log::warn!("Cloud STT VAD compaction unavailable ({err}); uploading raw audio");
+                    Cow::Borrowed(audio)
+                }
+            }
+        } else {
+            Cow::Borrowed(audio)
+        };
         // `transcribe()` is SYNC. When it's called from a tokio worker (actions.rs `spawn(async)`
         // → a multi-thread runtime worker), a bare `block_on` panics "Cannot start a runtime from
         // within a runtime"; we must `block_in_place` to hand the worker thread back to the pool
@@ -449,7 +483,8 @@ impl SttBackend for WinsttSttBackend {
         // (the loopback consumer), there is NO ambient runtime — `block_in_place` itself would
         // panic, and a bare `block_on` is correct. Branch on whether we're inside a runtime.
         // (See the same hazard documented at resolver.rs:582-585.)
-        let cloud_fut = cloud.transcribe_samples(model_id, audio, language);
+        let cloud_fut =
+            cloud.transcribe_samples(model_id, upload_audio.as_ref(), language, api_key);
         let result = if tokio::runtime::Handle::try_current().is_ok() {
             tokio::task::block_in_place(|| tauri::async_runtime::block_on(cloud_fut))
         } else {

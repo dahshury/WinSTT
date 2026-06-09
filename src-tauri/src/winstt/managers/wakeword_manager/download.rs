@@ -17,8 +17,8 @@ use tauri::{AppHandle, Emitter};
 use super::{
     WakeWordDownloadPhase, WakeWordModelDownloadSnapshot, WakeWordModelStatusPayload,
     DOWNLOAD_CONTROL_CANCEL, DOWNLOAD_CONTROL_PAUSE, DOWNLOAD_PROGRESS_EMIT_INTERVAL,
-    KWS_MODEL_DOWNLOAD_URL, LEGACY_PORCUPINE_WHEEL_SHA256, LEGACY_PORCUPINE_WHEEL_URL,
-    WAKEWORD_MODEL_STATUS_EVENT,
+    KWS_MODEL_DOWNLOAD_SHA256, KWS_MODEL_DOWNLOAD_URL, LEGACY_PORCUPINE_WHEEL_SHA256,
+    LEGACY_PORCUPINE_WHEEL_URL, WAKEWORD_MODEL_STATUS_EVENT,
 };
 use crate::winstt::downloads::{transfer_url, TransferControl, TransferOutcome, TransferRequest};
 use crate::winstt::wakeword::{
@@ -186,6 +186,7 @@ pub(super) fn download_kws_model_bundle(
         if requested_download_action(control) == Some(WakeWordDownloadOutcome::Cancelled) {
             return Ok(WakeWordDownloadOutcome::Cancelled);
         }
+        verify_sha256(&archive_path, KWS_MODEL_DOWNLOAD_SHA256)?;
         extract_kws_archive(&archive_path, &staging_dir)?;
 
         let staged_bundle = staging_dir.join(KWS_BUNDLE_DIRNAME);
@@ -607,5 +608,49 @@ pub(super) fn mark_download_failed(
         guard.error = Some(error);
         guard.phase = WakeWordDownloadPhase::Failed;
         guard.speed_bps = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+    use crate::winstt::managers::wakeword_manager::KWS_MODEL_DOWNLOAD_SHA256;
+
+    #[test]
+    fn kws_download_hash_is_pinned_sha256_hex() {
+        assert_eq!(KWS_MODEL_DOWNLOAD_SHA256.len(), 64);
+        assert!(KWS_MODEL_DOWNLOAD_SHA256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn verify_sha256_accepts_matching_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wakeword.bin");
+        fs::write(&path, b"wakeword").unwrap();
+
+        assert!(verify_sha256(
+            &path,
+            "d4ab8e6f44016607d98b969f31ffb9b3e6415636cfa711ae43c640d5ead8aa47"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn verify_sha256_rejects_mismatched_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wakeword.bin");
+        fs::write(&path, b"wakeword").unwrap();
+
+        let err = verify_sha256(
+            &path,
+            "d121be3103007b41edf96f8262925f8c7d61894afe9a041843b631f69445bc57",
+        )
+        .unwrap_err();
+
+        assert!(err.contains("sha256 mismatch"));
     }
 }

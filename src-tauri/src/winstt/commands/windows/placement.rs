@@ -325,7 +325,11 @@ fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pic
 /// event is needed — just position + size + show.
 fn place_device_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: PickerState) {
     let Some(anchor) = state.anchor else {
-        let _ = window.show();
+        // A transparent always-on-top device picker without an anchor has no
+        // visible panel, but still captures input. Keep it hidden until a tray
+        // row supplies a real rect.
+        log::warn!("device-picker open requested without an anchor; keeping it hidden");
+        let _ = window.hide();
         return;
     };
     let work = work_area_for_point(app, (anchor.screen_left, anchor.screen_top));

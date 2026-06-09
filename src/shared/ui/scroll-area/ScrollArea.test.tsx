@@ -68,6 +68,18 @@ describe("ScrollArea", () => {
 		expect(viewport.className).toContain("custom-viewport");
 	});
 
+	test("hides the native viewport scrollbar behind the custom scrollbar", () => {
+		render(
+			<ScrollArea>
+				<div data-testid="c">x</div>
+			</ScrollArea>,
+		);
+		const contentLayer = screen.getByTestId("c").parentElement as HTMLElement;
+		const viewport = contentLayer.parentElement as HTMLElement;
+		expect(viewport.className).toContain("[scrollbar-width:none]");
+		expect(viewport.className).toContain("[&::-webkit-scrollbar]:hidden");
+	});
+
 	test("forwards a viewportRef so callers can imperatively scroll", () => {
 		function Probe() {
 			const ref = useRef<HTMLDivElement>(null);

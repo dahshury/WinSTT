@@ -338,7 +338,7 @@ export function SttModelList({
 }: SttModelListProps) {
 	return (
 		<div
-			className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+			className="flex min-h-0 flex-1 flex-col overflow-y-auto [overflow-y:overlay]"
 			data-slot="stt-model-list"
 		>
 			{/* Live region for assistive tech — Combobox.Status content is

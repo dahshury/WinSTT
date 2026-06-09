@@ -77,7 +77,11 @@ function fire(channel: string, ...args: unknown[]) {
 	}
 }
 
-function matchesHistoryRead(cmd: string, channel: string, tauriCommand: string) {
+function matchesHistoryRead(
+	cmd: string,
+	channel: string,
+	tauriCommand: string,
+) {
 	return cmd === channel || cmd === tauriCommand;
 }
 

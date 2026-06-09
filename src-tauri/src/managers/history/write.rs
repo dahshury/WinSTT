@@ -4,12 +4,12 @@
 //! create/update/delete operations plus small formatting helpers; it emits
 //! [`HistoryUpdatePayload`] events for real-time frontend updates.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Local, Utc};
 use log::{debug, error};
 use rusqlite::params;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use tauri_specta::Event;
 
 use super::{HistoryEntry, HistoryManager, HistoryUpdatePayload, TransformHistoryDbEntry};
@@ -236,6 +236,10 @@ impl HistoryManager {
         Ok(())
     }
 
+    pub fn try_get_audio_file_path(&self, file_name: &str) -> Result<PathBuf> {
+        resolve_history_audio_file_path(&self.recordings_dir, file_name)
+    }
+
     pub fn get_audio_file_path(&self, file_name: &str) -> PathBuf {
         self.recordings_dir.join(file_name)
     }
@@ -246,11 +250,19 @@ impl HistoryManager {
         // Get the entry to find the file name
         if let Some(entry) = self.get_entry_by_id(id).await? {
             // Delete the audio file first
-            let file_path = self.get_audio_file_path(&entry.file_name);
-            if file_path.exists() {
-                if let Err(e) = fs::remove_file(&file_path) {
-                    error!("Failed to delete audio file {}: {}", entry.file_name, e);
-                    // Continue with database deletion even if file deletion fails
+            match self.try_get_audio_file_path(&entry.file_name) {
+                Ok(file_path) if file_path.exists() => {
+                    if let Err(e) = fs::remove_file(&file_path) {
+                        error!("Failed to delete audio file {}: {}", entry.file_name, e);
+                        // Continue with database deletion even if file deletion fails
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    error!(
+                        "Skipping audio file deletion for invalid history file name {}: {}",
+                        entry.file_name, e
+                    );
                 }
             }
         }
@@ -288,5 +300,177 @@ impl HistoryManager {
         } else {
             format!("Recording {}", timestamp)
         }
+    }
+}
+
+fn resolve_history_audio_file_path(recordings_dir: &Path, file_name: &str) -> Result<PathBuf> {
+    validate_history_audio_file_name(file_name)?;
+
+    let candidate = recordings_dir.join(file_name);
+    ensure_recording_path_is_contained(recordings_dir, &candidate)?;
+    Ok(candidate)
+}
+
+fn validate_history_audio_file_name(file_name: &str) -> Result<()> {
+    if file_name.is_empty() || file_name.trim().is_empty() {
+        return Err(anyhow!("History audio file name must not be empty"));
+    }
+    if file_name != file_name.trim() || file_name.ends_with('.') {
+        return Err(anyhow!(
+            "History audio file name must not have leading or trailing whitespace or dots"
+        ));
+    }
+    if file_name.contains('/') || file_name.contains('\\') {
+        return Err(anyhow!(
+            "History audio file name must be a basename without path separators"
+        ));
+    }
+    if file_name
+        .chars()
+        .any(|ch| ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+    {
+        return Err(anyhow!(
+            "History audio file name contains unsupported characters"
+        ));
+    }
+
+    let mut components = Path::new(file_name).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(()),
+        _ => Err(anyhow!(
+            "History audio file name must be a single normal path component"
+        )),
+    }
+}
+
+fn ensure_recording_path_is_contained(recordings_dir: &Path, candidate: &Path) -> Result<()> {
+    let recordings_dir = recordings_dir
+        .canonicalize()
+        .with_context(|| format!("Recordings directory does not exist: {:?}", recordings_dir))?;
+
+    let candidate_to_check = match fs::symlink_metadata(candidate) {
+        Ok(_) => candidate
+            .canonicalize()
+            .with_context(|| format!("Failed to resolve recording path: {:?}", candidate))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let parent = candidate
+                .parent()
+                .ok_or_else(|| anyhow!("History audio path has no parent directory"))?;
+            let parent = parent.canonicalize().with_context(|| {
+                format!("Recording parent directory does not exist: {:?}", parent)
+            })?;
+            let file_name = candidate
+                .file_name()
+                .ok_or_else(|| anyhow!("History audio path has no file name"))?;
+            parent.join(file_name)
+        }
+        Err(e) => return Err(e).with_context(|| format!("Failed to inspect {:?}", candidate)),
+    };
+
+    if candidate_to_check.starts_with(&recordings_dir) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "History audio path escapes the recordings directory"
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_history_audio_file_path;
+    use std::fs;
+    #[cfg(any(unix, windows))]
+    use std::io;
+    use tempfile::TempDir;
+
+    #[test]
+    fn history_audio_path_accepts_basename_in_recordings_dir() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let expected = temp_dir.path().join("entry.wav");
+        fs::write(&expected, b"RIFF").expect("write wav placeholder");
+
+        let resolved =
+            resolve_history_audio_file_path(temp_dir.path(), "entry.wav").expect("valid basename");
+
+        assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn history_audio_path_allows_missing_basename_for_legacy_rows() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let expected = temp_dir.path().join("missing.wav");
+
+        let resolved = resolve_history_audio_file_path(temp_dir.path(), "missing.wav")
+            .expect("valid missing basename");
+
+        assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn history_audio_path_rejects_traversal_and_nested_paths() {
+        let temp_dir = TempDir::new().expect("temp dir");
+
+        for file_name in [
+            "",
+            "   ",
+            ".",
+            "..",
+            "../secret.wav",
+            "..\\secret.wav",
+            "nested/entry.wav",
+            "nested\\entry.wav",
+            "C:\\temp\\entry.wav",
+            "C:entry.wav",
+            "entry.wav:ads",
+            "bad?.wav",
+            " entry.wav",
+            "entry.wav ",
+            "entry.",
+        ] {
+            assert!(
+                resolve_history_audio_file_path(temp_dir.path(), file_name).is_err(),
+                "{file_name:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn history_audio_path_rejects_existing_symlink_escape_when_supported() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let outside_dir = TempDir::new().expect("outside temp dir");
+        let outside_file = outside_dir.path().join("outside.wav");
+        fs::write(&outside_file, b"RIFF").expect("write outside wav placeholder");
+        let link = temp_dir.path().join("entry.wav");
+
+        if create_file_symlink(&outside_file, &link).is_err() {
+            return;
+        }
+
+        assert!(resolve_history_audio_file_path(temp_dir.path(), "entry.wav").is_err());
+    }
+
+    #[test]
+    fn history_audio_path_rejects_broken_symlink_when_supported() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let outside_dir = TempDir::new().expect("outside temp dir");
+        let missing_target = outside_dir.path().join("missing.wav");
+        let link = temp_dir.path().join("entry.wav");
+
+        if create_file_symlink(&missing_target, &link).is_err() {
+            return;
+        }
+
+        assert!(resolve_history_audio_file_path(temp_dir.path(), "entry.wav").is_err());
+    }
+
+    #[cfg(unix)]
+    fn create_file_symlink(target: &std::path::Path, link: &std::path::Path) -> io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    #[cfg(windows)]
+    fn create_file_symlink(target: &std::path::Path, link: &std::path::Path) -> io::Result<()> {
+        std::os::windows::fs::symlink_file(target, link)
     }
 }

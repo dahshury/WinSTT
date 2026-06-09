@@ -9,10 +9,11 @@ function readSettingsEntry(): string {
 }
 
 describe("settings entry bootstrap", () => {
-	test("installs the native bridge before settings hooks use IPC", () => {
+	test("uses HtmlLang as the shared native bridge bootstrap", () => {
 		const source = readSettingsEntry();
 
-		expect(source).toContain("installNativeBridge()");
+		expect(source).toContain("<HtmlLang />");
+		expect(source).not.toContain("installNativeBridge()");
 	});
 
 	test("hydrates GPU info for the settings compute-device selector", () => {

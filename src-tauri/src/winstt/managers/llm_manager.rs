@@ -122,7 +122,7 @@ impl LlmManager {
         self.cancelled.is_cancelled(request_id, false)
     }
 
-    fn clear_cancel(&self, request_id: &str) {
+    pub(crate) fn clear_cancel(&self, request_id: &str) {
         self.cancelled.clear(request_id);
     }
 

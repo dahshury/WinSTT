@@ -36,7 +36,9 @@ use std::time::Duration;
 use log::warn;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::winstt::cloud_stt::CloudSttErrorCode;
+use crate::winstt::cloud_stt::{
+    classify_cloud_failure_message, emit_cloud_failure, CloudSttErrorCode, CloudSttProvider,
+};
 use crate::winstt::llm::{
     self, build_dictation_system_prompt, build_system_prompt, DictationSideEffects, Vocab,
 };
@@ -62,7 +64,9 @@ pub use payloads::{
 // `detect_ollama_executable` / `spawn_ollama_serve` are crate-internal and called
 // by `managers::llm_manager` through `winstt::commands::llm::*`; the `pub(crate) use`
 // both re-exports that path AND brings them into scope for the commands below.
-pub(crate) use ollama_proc::{detect_ollama_executable, spawn_ollama_serve};
+pub(crate) use ollama_proc::{
+    authorize_ollama_model_management_label, detect_ollama_executable, spawn_ollama_serve,
+};
 
 struct LlmCommandProcessingGuard {
     app: AppHandle,
@@ -146,6 +150,7 @@ pub(crate) async fn process_dictation_text(
             run_openrouter_with_fallback(
                 &mgr,
                 OpenRouterFallbackRequest {
+                    app,
                     api_key: &api_key,
                     primary: &selection,
                     fallback: &fallback,
@@ -154,6 +159,7 @@ pub(crate) async fn process_dictation_text(
                     text: &text,
                     feature: "dictation",
                     request_id: &request_id,
+                    timeout_ms: settings.llm.timeout,
                     options: openrouter_options(&settings.llm.dictation.base),
                 },
             )
@@ -233,6 +239,7 @@ pub async fn process_transform(
             run_openrouter_with_fallback(
                 &mgr,
                 OpenRouterFallbackRequest {
+                    app: &app,
                     api_key: &api_key,
                     primary: &selection,
                     fallback: &fallback,
@@ -241,6 +248,7 @@ pub async fn process_transform(
                     text: &text,
                     feature: &transform_id,
                     request_id: &request_id,
+                    timeout_ms: settings.llm.timeout,
                     options: openrouter_options(&settings.llm.transforms.base),
                 },
             )
@@ -274,6 +282,7 @@ pub async fn process_transform(
 /// configured), retry with the fallback model. On total failure, return the
 /// original text. Mirrors `runOpenRouterWithFallback`.
 struct OpenRouterFallbackRequest<'a> {
+    app: &'a AppHandle,
     api_key: &'a str,
     primary: &'a str,
     fallback: &'a str,
@@ -282,6 +291,7 @@ struct OpenRouterFallbackRequest<'a> {
     text: &'a str,
     feature: &'a str,
     request_id: &'a str,
+    timeout_ms: i64,
     options: llm::OpenRouterRequestOptions,
 }
 
@@ -332,6 +342,7 @@ async fn run_openrouter_with_fallback(
     request: OpenRouterFallbackRequest<'_>,
 ) -> String {
     let OpenRouterFallbackRequest {
+        app,
         api_key,
         primary,
         fallback,
@@ -340,41 +351,52 @@ async fn run_openrouter_with_fallback(
         text,
         feature,
         request_id,
+        timeout_ms,
         options,
     } = request;
 
-    match mgr
-        .openrouter_chat(
+    let timeout = openrouter_attempt_timeout(timeout_ms);
+    match run_openrouter_attempt(
+        mgr,
+        OpenRouterAttempt {
             api_key,
-            primary,
+            model: primary,
             system_prompt,
             user_prompt,
             text,
-            options.clone(),
-            Some(request_id),
-        )
-        .await
+            options: options.clone(),
+            request_id,
+            timeout,
+        },
+    )
+    .await
     {
         Ok(answer) => answer,
-        // User aborted (overlay X / model swap): paste the original and do NOT
-        // run the fallback model — the dictation/transform is being torn down.
         Err(err) if err == llm::OPENROUTER_CANCELLED => text.to_string(),
-        Err(primary_err) if !fallback.is_empty() => {
+        Err(primary_err)
+            if !fallback.is_empty()
+                && should_try_openrouter_fallback(&classify_cloud_failure_message(
+                    &primary_err,
+                )) =>
+        {
             warn!(
                 "[llm][{request_id}] {feature} OpenRouter primary model '{primary}' failed; trying fallback '{fallback}': {}",
                 llm::compact_error_for_log(&primary_err)
             );
-            match mgr
-                .openrouter_chat(
+            match run_openrouter_attempt(
+                mgr,
+                OpenRouterAttempt {
                     api_key,
-                    fallback,
+                    model: fallback,
                     system_prompt,
                     user_prompt,
                     text,
                     options,
-                    Some(request_id),
-                )
-                .await
+                    request_id,
+                    timeout,
+                },
+            )
+            .await
             {
                 Ok(answer) => answer,
                 Err(fallback_err) => {
@@ -382,20 +404,97 @@ async fn run_openrouter_with_fallback(
                         "[llm][{request_id}] {feature} OpenRouter fallback model '{fallback}' failed; returning original text: {}",
                         llm::compact_error_for_log(&fallback_err)
                     );
+                    emit_openrouter_failsoft_notice(app, feature, &fallback_err);
                     text.to_string()
                 }
             }
         }
         Err(primary_err) => {
             warn!(
-                "[llm][{request_id}] {feature} OpenRouter model '{primary}' failed with no fallback; returning original text: {}",
+                "[llm][{request_id}] {feature} OpenRouter model '{primary}' failed with no usable fallback; returning original text: {}",
                 llm::compact_error_for_log(&primary_err)
             );
+            emit_openrouter_failsoft_notice(app, feature, &primary_err);
             text.to_string()
         }
     }
 }
 
+struct OpenRouterAttempt<'a> {
+    api_key: &'a str,
+    model: &'a str,
+    system_prompt: &'a str,
+    user_prompt: &'a str,
+    text: &'a str,
+    options: llm::OpenRouterRequestOptions,
+    request_id: &'a str,
+    timeout: Duration,
+}
+
+fn openrouter_attempt_timeout(timeout_ms: i64) -> Duration {
+    Duration::from_millis(timeout_ms.clamp(1_000, 30_000) as u64)
+}
+
+fn should_try_openrouter_fallback(code: &CloudSttErrorCode) -> bool {
+    !matches!(
+        code,
+        CloudSttErrorCode::Auth
+            | CloudSttErrorCode::KeyMissing
+            | CloudSttErrorCode::Network
+            | CloudSttErrorCode::Timeout
+            | CloudSttErrorCode::Aborted
+    )
+}
+
+async fn run_openrouter_attempt(
+    mgr: &Arc<LlmManager>,
+    attempt: OpenRouterAttempt<'_>,
+) -> Result<String, String> {
+    let OpenRouterAttempt {
+        api_key,
+        model,
+        system_prompt,
+        user_prompt,
+        text,
+        options,
+        request_id,
+        timeout,
+    } = attempt;
+    match tokio::time::timeout(
+        timeout,
+        mgr.openrouter_chat(
+            api_key,
+            model,
+            system_prompt,
+            user_prompt,
+            text,
+            options,
+            Some(request_id),
+        ),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            mgr.clear_cancel(request_id);
+            Err(format!(
+                "OpenRouter request timed out after {}ms",
+                timeout.as_millis()
+            ))
+        }
+    }
+}
+
+fn emit_openrouter_failsoft_notice(app: &AppHandle, feature: &str, err: &str) {
+    let code = classify_cloud_failure_message(err);
+    let compact = llm::compact_error_for_log(err);
+    let message = if feature == "dictation" {
+        format!("OpenRouter post-processing failed; pasted the original transcription. {compact}")
+    } else {
+        format!("OpenRouter transform failed; kept the original text. {compact}")
+    };
+    emit_cloud_failure(app, CloudSttProvider::OpenRouter, code, message, None);
+}
 /// `scan_ollama_models` — `/api/tags` + `/api/show` capability enrich. Returns
 /// the `OllamaScanResult` the picker store consumes (`{ models, reachable,
 /// error? }`). A connection failure → `reachable: false`; an HTTP/parse error
@@ -593,8 +692,17 @@ pub async fn ollama_start(
 pub async fn ollama_pull(
     app: AppHandle,
     llm_manager: State<'_, Arc<LlmManager>>,
+    webview: tauri::WebviewWindow,
     model: String,
 ) -> Result<OllamaPullResultPayload, String> {
+    if let Err(e) = authorize_ollama_model_management_label(webview.label(), "pull Ollama model") {
+        return Ok(OllamaPullResultPayload {
+            success: false,
+            model,
+            cancelled: None,
+            error: Some(e),
+        });
+    }
     if let Err(e) = validate_model_name(&model) {
         return Ok(OllamaPullResultPayload {
             success: false,
@@ -655,8 +763,17 @@ pub async fn ollama_pull(
 pub async fn ollama_delete(
     app: AppHandle,
     llm_manager: State<'_, Arc<LlmManager>>,
+    webview: tauri::WebviewWindow,
     model: String,
 ) -> Result<OllamaDeleteResultPayload, String> {
+    if let Err(e) = authorize_ollama_model_management_label(webview.label(), "delete Ollama model")
+    {
+        return Ok(OllamaDeleteResultPayload {
+            success: false,
+            model,
+            error: Some(e),
+        });
+    }
     if let Err(e) = validate_model_name(&model) {
         return Ok(OllamaDeleteResultPayload {
             success: false,

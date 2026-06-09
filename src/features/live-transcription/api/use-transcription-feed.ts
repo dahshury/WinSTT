@@ -13,6 +13,17 @@ import {
 	onTranscriptionFailed,
 } from "@/shared/api/ipc-client";
 
+function shouldIgnoreEmptyRealtimeDrop(text: string): boolean {
+	const state = useTranscriptionStore.getState();
+	// Cold realtime can briefly publish text -> empty -> text before two
+	// windows agree. Keep the visible words until a real lifecycle reset lands.
+	return (
+		state.isRecordingActive &&
+		state.currentRealtime.trim().length > 0 &&
+		text.trim().length === 0
+	);
+}
+
 export function useTranscriptionFeed(): void {
 	const t = useTranslations("transcription");
 	const addFinalSentence = useTranscriptionStore((s) => s.addFinalSentence);
@@ -47,6 +58,9 @@ export function useTranscriptionFeed(): void {
 		});
 
 		const unsubRealtime = onRealtimeText(({ text }) => {
+			if (shouldIgnoreEmptyRealtimeDrop(text)) {
+				return;
+			}
 			setRealtimeText(text);
 		});
 

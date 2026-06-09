@@ -41,6 +41,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import type { CSSProperties, ElementType, ReactNode } from "react";
+import { withBasePath } from "@/lib/site";
 
 // Curated icon registry so MDX can pass `icon="mic"` instead of a JSX element.
 const ICONS: Record<string, LucideIcon> = {
@@ -116,9 +117,12 @@ export interface ScreenshotProps {
 }
 
 function resolveSrc(src: string): string {
-  if (src.startsWith("/") || src.startsWith("http")) return src;
-  if (/\.(png|jpe?g|webp|gif|avif)$/i.test(src)) return `/screenshots/${src}`;
-  return `/screenshots/${src}.png`;
+  if (src.startsWith("http")) return src;
+  if (src.startsWith("/")) return withBasePath(src);
+  if (/\.(png|jpe?g|webp|gif|avif)$/i.test(src)) {
+    return withBasePath(`/screenshots/${src}`);
+  }
+  return withBasePath(`/screenshots/${src}.png`);
 }
 
 function mediaStem(src: string): string {
@@ -261,9 +265,10 @@ export interface VideoProps {
 }
 
 function resolveVideo(src: string): string {
-  if (src.startsWith("/") || src.startsWith("http")) return src;
-  if (/\.(webm|mp4)$/i.test(src)) return `/demos/${src}`;
-  return `/demos/${src}.webm`;
+  if (src.startsWith("http")) return src;
+  if (src.startsWith("/")) return withBasePath(src);
+  if (/\.(webm|mp4)$/i.test(src)) return withBasePath(`/demos/${src}`);
+  return withBasePath(`/demos/${src}.webm`);
 }
 
 function resolvePoster(src: string, poster: string | false | undefined) {
@@ -276,7 +281,7 @@ function resolvePoster(src: string, poster: string | false | undefined) {
     stem === "overlay-floating" ||
     stem === "overlay-island"
   ) {
-    return `/screenshots/${stem}.png`;
+    return withBasePath(`/screenshots/${stem}.png`);
   }
   return undefined;
 }
@@ -381,7 +386,11 @@ export function Hero({
           <div className="hero-badges">
             {badges.map((b) =>
               b.href ? (
-                <a key={b.label} className="hero-badge" href={b.href}>
+                <a
+                  key={b.label}
+                  className="hero-badge"
+                  href={withBasePath(b.href)}
+                >
                   {b.label}
                 </a>
               ) : (
@@ -398,7 +407,7 @@ export function Hero({
               <a
                 key={c.label}
                 className={`hero-cta ${c.primary ? "hero-cta--primary" : ""}`}
-                href={c.href}
+                href={withBasePath(c.href)}
               >
                 {c.label}
                 <ArrowRight size={15} aria-hidden="true" />
@@ -452,7 +461,7 @@ export function BentoCell({
     <Tag
       className="bento-cell feature-card"
       data-span={span}
-      href={href}
+      href={href ? withBasePath(href) : undefined}
       style={
         accent ? ({ "--cell-accent": accent } as CSSProperties) : undefined
       }

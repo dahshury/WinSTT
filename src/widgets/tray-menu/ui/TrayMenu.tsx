@@ -3,27 +3,32 @@ import {
 	ArrowRight01Icon,
 	Bug01Icon,
 	Mic01Icon,
+	Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	buildInputDeviceOptions,
+	MicrophoneLevelMeter,
 	useInputDevices,
+	useMicrophoneLevels,
 } from "@/entities/audio-device";
-import { IPC } from "@/shared/api/ipc-channels";
 import {
 	copyLastTranscript,
-	diagOpenLogsFolder,
-	diagSaveBundle,
 	fileQueuePickAndEnqueue,
-	ipcSend,
 	onConnectionChange,
 	onSettingsChanged,
 	settingsLoad,
 	settingsSave,
 	sttIsConnected,
+	trayWindowOpenSettings,
 	updaterCheckNow,
+	windowCloseNamed,
+	windowOpenContextPlayground,
+	windowQuitApp,
+	windowResizeNamed,
+	windowShowMain,
 } from "@/shared/api/ipc-client";
 import { CONTEXT_PLAYGROUND_ENABLED } from "@/shared/config/debug-flags";
 import type { RecordingMode } from "@/shared/config/recording-mode-color";
@@ -35,6 +40,7 @@ import {
 	surfaceHoverBg,
 } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
+import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 import { Switcher } from "@/shared/ui/switcher";
 
 interface TrayMenuState {
@@ -82,6 +88,18 @@ const INITIAL_TRAY_MENU_STATE: TrayMenuState = {
 	receivePrereleaseUpdates: false,
 };
 
+function isEditableShortcutTarget(target: EventTarget | null): boolean {
+	if (!(target instanceof HTMLElement)) {
+		return false;
+	}
+	return (
+		target.isContentEditable ||
+		target instanceof HTMLInputElement ||
+		target instanceof HTMLTextAreaElement ||
+		target instanceof HTMLSelectElement
+	);
+}
+
 export function TrayMenu() {
 	const [state, dispatch] = useReducer(
 		trayMenuReducer,
@@ -94,6 +112,11 @@ export function TrayMenu() {
 		receivePrereleaseUpdates,
 	} = state;
 	const containerRef = useRef<HTMLDivElement | null>(null);
+	const deviceListRef = useRef<HTMLDivElement | null>(null);
+	const [devicePickerOpen, setDevicePickerOpen] = useState(false);
+	const [highlightedDeviceId, setHighlightedDeviceId] = useState<string | null>(
+		null,
+	);
 	const t = useTranslations("tray");
 	const tAudio = useTranslations("audio");
 	const { devices, defaultDevice } = useInputDevices();
@@ -139,7 +162,7 @@ export function TrayMenu() {
 		}
 		const reportSize = () => {
 			const rect = el.getBoundingClientRect();
-			ipcSend(IPC.TRAY_MENU_RESIZE, { width: rect.width, height: rect.height });
+			windowResizeNamed("tray-menu", rect.width, rect.height);
 		};
 		const observer = new ResizeObserver(reportSize);
 		observer.observe(el);
@@ -147,15 +170,15 @@ export function TrayMenu() {
 		return () => observer.disconnect();
 	}, []);
 
-	const closeTrayMenu = () => ipcSend(IPC.TRAY_MENU_CLOSE);
+	const closeTrayMenu = () => windowCloseNamed("tray-menu");
 
 	const handleShowWindow = () => {
-		ipcSend(IPC.WINDOW_SHOW);
+		windowShowMain();
 		closeTrayMenu();
 	};
 
 	const handleSettings = () => {
-		ipcSend(IPC.WINDOW_OPEN_SETTINGS);
+		trayWindowOpenSettings();
 		closeTrayMenu();
 	};
 
@@ -175,18 +198,22 @@ export function TrayMenu() {
 		});
 	};
 
-	// Open the detached device picker anchored to this row. Sending the row's
-	// viewport rect (the main process converts it to screen space via the
-	// tray-menu window bounds) keeps the popup glued above the row instead of
-	// expanding inline and ballooning the tiny tray window off-screen.
-	const handleOpenDevicePicker = (e: React.MouseEvent<HTMLButtonElement>) => {
-		const r = e.currentTarget.getBoundingClientRect();
-		ipcSend(IPC.DEVICE_PICKER_OPEN, {
-			x: r.left,
-			y: r.top,
-			width: r.width,
-			height: r.height,
+	// Keep the tray microphone selector inside the tray webview. The detached
+	// transparent picker can become an invisible always-on-top input capture
+	// window if it fails to paint, which makes the app look hung.
+	const handleOpenDevicePicker = () => {
+		setDevicePickerOpen((open) => !open);
+	};
+
+	const handleSelectDevice = async (id: string) => {
+		const next = id === "default" ? null : Number.parseInt(id, 10);
+		const settings = await settingsLoad();
+		await settingsSave({
+			...settings,
+			audio: { ...settings.audio, inputDeviceIndex: next },
 		});
+		setDevicePickerOpen(false);
+		closeTrayMenu();
 	};
 
 	const handleTranscribeFile = async () => {
@@ -201,26 +228,62 @@ export function TrayMenu() {
 		});
 	};
 
-	const handleQuit = () => {
-		ipcSend(IPC.WINDOW_QUIT);
-	};
-
-	const handleOpenLogsFolder = async () => {
-		await diagOpenLogsFolder();
-		closeTrayMenu();
-	};
-
-	const handleSaveDiagBundle = async () => {
-		closeTrayMenu();
-		await diagSaveBundle();
-	};
-
-	// DEBUG-ONLY: open the context-awareness playground. Hidden from end users —
-	// the whole branch is compiled out when CONTEXT_PLAYGROUND_ENABLED is false.
 	const handleOpenContextPlayground = () => {
-		ipcSend(IPC.CONTEXT_PLAYGROUND_OPEN);
-		closeTrayMenu();
+		windowOpenContextPlayground();
 	};
+
+	const handleQuit = () => {
+		windowQuitApp();
+	};
+
+	useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (
+				event.defaultPrevented ||
+				event.repeat ||
+				isEditableShortcutTarget(event.target)
+			) {
+				return;
+			}
+
+			if (event.key === "Escape") {
+				event.preventDefault();
+				if (devicePickerOpen) {
+					setDevicePickerOpen(false);
+					return;
+				}
+				closeTrayMenu();
+				return;
+			}
+
+			switch (event.key.toLowerCase()) {
+				case "w":
+					event.preventDefault();
+					handleShowWindow();
+					return;
+				case ",":
+					event.preventDefault();
+					handleSettings();
+					return;
+				case "t":
+					if (!isConnected) {
+						return;
+					}
+					event.preventDefault();
+					void handleTranscribeFile();
+					return;
+				case "q":
+					event.preventDefault();
+					handleQuit();
+					return;
+				default:
+					return;
+			}
+		};
+
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [devicePickerOpen, isConnected]);
 
 	const recordingModeOptions: ReadonlyArray<{
 		value: RecordingMode;
@@ -235,10 +298,16 @@ export function TrayMenu() {
 	const defaultLabel = defaultDevice
 		? `${tAudio("systemDefault")} (${defaultDevice.name})`
 		: tAudio("systemDefault");
-	const { currentDeviceLabel } = buildInputDeviceOptions(
-		devices,
-		inputDeviceIndex,
-		defaultLabel,
+	const { deviceOptions, currentDeviceId, currentDeviceLabel } =
+		buildInputDeviceOptions(
+			devices,
+			inputDeviceIndex,
+			defaultLabel,
+			defaultDevice?.name,
+		);
+	const levels = useMicrophoneLevels(
+		devicePickerOpen,
+		deviceOptions.map((option) => option.id),
 	);
 
 	// Match the settings window's panel treatment. The settings content card sits
@@ -251,158 +320,228 @@ export function TrayMenu() {
 	const activeLevel = Math.min(menuLevel + 2, 8);
 	const hoverBg = surfaceHoverBg(hoverLevel);
 	const activeBg = surfaceActivePseudoBg(activeLevel);
+	const devicePopupLevel = Math.min(menuLevel + 2, 8);
 	return (
 		<SurfaceProvider value={menuLevel}>
 			<div
-				// FIXED compact width — ~31% narrower than the old ~280px menu. The big
-				// win is the recording-mode switcher: a 4-wide text row (~270px) is now
-				// a 2×2 grid (~half the width), so the menu no longer has to be wide to
-				// hold it.
-				//
-				// Why fixed, not the old `w-max`: with `w-max` the menu shrinks to its
-				// widest *non-shrinking* row (now the switcher), and the text labels —
-				// which sit in `truncate` spans inside `min-w-0` flex rows — collapse and
-				// ellipsize to fit that narrower box. Pinning the width to fit the real
-				// labels keeps every action fully readable; only the genuinely variable
-				// device name (its own `max-w`) still truncates. The width matches the
-				// window's initial size (windows.rs), so the ResizeObserver settles it
-				// with no first-frame jump.
 				className={cn(
-					"w-[192px] rounded-xl p-1 ring-1 ring-divider-strong",
-					surfaceClasses(menuLevel, Math.max(menuLevel, 7)),
-					"font-sans text-body-sm text-foreground",
+					"relative flex flex-row-reverse items-start justify-end gap-2 transition-[width] duration-100 ease-out",
+					devicePickerOpen ? "w-[440px]" : "w-[192px]",
 				)}
 				ref={containerRef}
 			>
-				<MenuItem
-					activeBg={activeBg}
-					hoverBg={hoverBg}
-					onClick={handleShowWindow}
-					shortcut="Ctrl+Shift+W"
-				>
-					{t("showWindow")}
-				</MenuItem>
-				<MenuItem
-					activeBg={activeBg}
-					hoverBg={hoverBg}
-					onClick={handleSettings}
-					shortcut="Ctrl+,"
-				>
-					{t("openSettings")}
-				</MenuItem>
-				<MenuItem
-					activeBg={activeBg}
-					hoverBg={hoverBg}
-					onClick={handleCopyLastTranscript}
-				>
-					{t("copyLastTranscript")}
-				</MenuItem>
-
-				<MenuSeparator />
-
-				<div className="p-1">
-					<Switcher
-						columns={2}
-						fullWidth
-						onChange={handleModeChange}
-						options={recordingModeOptions}
-						value={recordingMode}
-					/>
-				</div>
-
-				<MenuSeparator />
-
-				<Button
-					className={cn(
-						"w-full justify-between gap-2 rounded px-2.5 py-1.5 text-left transition-colors",
-						hoverBg,
-						"hover:text-foreground",
-						activeBg,
-					)}
-					onClick={handleOpenDevicePicker}
-				>
-					<span className="flex min-w-0 items-center gap-2">
-						<HugeiconsIcon
-							aria-hidden="true"
-							className="shrink-0 text-foreground-dim"
-							icon={Mic01Icon}
-							size={13}
+				{devicePickerOpen && (
+					<div
+						className={cn(
+							"relative max-h-56 w-[240px] overflow-y-auto rounded-xl p-1 ring-1 ring-divider-strong",
+							surfaceClasses(devicePopupLevel, 7),
+							"font-sans text-body-sm text-foreground",
+						)}
+						ref={deviceListRef}
+					>
+						<MenuHighlightLayer
+							containerRef={deviceListRef}
+							value={currentDeviceId}
 						/>
-						{/* Cap the device name so a long label (e.g. "System Default
-						    (Microphone (Realtek(R) Audio))") truncates here instead of
-						    eating the whole fixed-width row (keeps the chevron visible). */}
-						<span className="max-w-[9rem] truncate">{currentDeviceLabel}</span>
-					</span>
-					<HugeiconsIcon
-						aria-hidden="true"
-						className="shrink-0 text-foreground-muted"
-						icon={ArrowRight01Icon}
-						size={11}
-					/>
-				</Button>
-
-				<MenuSeparator />
-
-				<MenuItem
-					activeBg={activeBg}
-					disabled={!isConnected}
-					hoverBg={hoverBg}
-					onClick={handleTranscribeFile}
-					shortcut="Ctrl+Shift+T"
-				>
-					{t("transcribeFile")}
-				</MenuItem>
-				<MenuItem
-					activeBg={activeBg}
-					hoverBg={hoverBg}
-					onClick={handleCheckForUpdates}
-				>
-					{t("checkForUpdates")}
-				</MenuItem>
-
-				<MenuSeparator />
-
-				<MenuItem
-					activeBg={activeBg}
-					hoverBg={hoverBg}
-					onClick={handleOpenLogsFolder}
-				>
-					{t("openLogsFolder")}
-				</MenuItem>
-				<MenuItem
-					activeBg={activeBg}
-					hoverBg={hoverBg}
-					onClick={handleSaveDiagBundle}
-				>
-					{t("saveDiagnosticBundle")}
-				</MenuItem>
-
-				{CONTEXT_PLAYGROUND_ENABLED && (
-					<>
-						<MenuSeparator />
-						{/* eslint-disable i18next/no-literal-string -- debug-only menu item, gated off in release */}
-						<MenuItem
-							activeBg={activeBg}
-							hoverBg={hoverBg}
-							icon={Bug01Icon}
-							onClick={handleOpenContextPlayground}
-						>
-							Context Playground (debug)
-						</MenuItem>
-						{/* eslint-enable i18next/no-literal-string */}
-					</>
+						{deviceOptions.map((option) => {
+							const active = option.id === currentDeviceId;
+							return (
+								<Button
+									aria-pressed={active}
+									className={cn(
+										"relative z-raised w-full justify-between gap-2 rounded px-2 py-1.5 text-left transition-colors",
+										active ? "font-medium text-foreground" : "text-foreground",
+										hoverBg,
+										activeBg,
+									)}
+									data-menu-option={option.id}
+									key={option.id}
+									onBlur={() =>
+										setHighlightedDeviceId((cur) =>
+											cur === option.id ? null : cur,
+										)
+									}
+									onClick={() => void handleSelectDevice(option.id)}
+									onFocus={() => setHighlightedDeviceId(option.id)}
+									onMouseEnter={() => setHighlightedDeviceId(option.id)}
+									onMouseLeave={() =>
+										setHighlightedDeviceId((cur) =>
+											cur === option.id ? null : cur,
+										)
+									}
+									{...(highlightedDeviceId === option.id
+										? { "data-highlighted": "" }
+										: {})}
+								>
+									<span className="flex min-w-0 items-center gap-2">
+										<HugeiconsIcon
+											aria-hidden="true"
+											className="shrink-0 text-foreground-dim"
+											icon={option.icon ?? Mic01Icon}
+											size={13}
+											strokeWidth={active ? 2 : 1.5}
+										/>
+										<span className="truncate">{option.label}</span>
+									</span>
+									<span className="flex shrink-0 items-center gap-1.5">
+										{active ? (
+											<HugeiconsIcon
+												aria-hidden="true"
+												className="text-accent"
+												icon={Tick02Icon}
+												size={13}
+											/>
+										) : null}
+										<MicrophoneLevelMeter
+											active={active}
+											level={levels[option.id] ?? 0}
+										/>
+									</span>
+								</Button>
+							);
+						})}
+					</div>
 				)}
-
-				<MenuSeparator />
-
-				<MenuItem
-					activeBg={activeBg}
-					hoverBg={hoverBg}
-					onClick={handleQuit}
-					shortcut="Ctrl+Q"
+				<div
+					// FIXED compact width — ~31% narrower than the old ~280px menu. The big
+					// win is the recording-mode switcher: a 4-wide text row (~270px) is now
+					// a 2×2 grid (~half the width), so the menu no longer has to be wide to
+					// hold it.
+					//
+					// Why fixed, not the old `w-max`: with `w-max` the menu shrinks to its
+					// widest *non-shrinking* row (now the switcher), and the text labels —
+					// which sit in `truncate` spans inside `min-w-0` flex rows — collapse and
+					// ellipsize to fit that narrower box. Pinning the width to fit the real
+					// labels keeps every action fully readable; only the genuinely variable
+					// device name (its own `max-w`) still truncates. The width matches the
+					// window's initial size (windows.rs), so the ResizeObserver settles it
+					// with no first-frame jump.
+					className={cn(
+						"w-[192px] rounded-xl p-1 ring-1 ring-divider-strong",
+						surfaceClasses(menuLevel, Math.max(menuLevel, 7)),
+						"font-sans text-body-sm text-foreground",
+					)}
 				>
-					{t("quit")}
-				</MenuItem>
+					<MenuItem
+						activeBg={activeBg}
+						hoverBg={hoverBg}
+						onClick={handleShowWindow}
+						shortcut="W"
+					>
+						{t("showWindow")}
+					</MenuItem>
+					<MenuItem
+						activeBg={activeBg}
+						hoverBg={hoverBg}
+						onClick={handleSettings}
+						shortcut=","
+					>
+						{t("openSettings")}
+					</MenuItem>
+					<MenuItem
+						activeBg={activeBg}
+						hoverBg={hoverBg}
+						onClick={handleCopyLastTranscript}
+					>
+						{t("copyLastTranscript")}
+					</MenuItem>
+
+					<MenuSeparator />
+
+					<div className="p-1">
+						<Switcher
+							columns={2}
+							fullWidth
+							onChange={handleModeChange}
+							options={recordingModeOptions}
+							value={recordingMode}
+						/>
+					</div>
+
+					<MenuSeparator />
+
+					<div className="relative">
+						<Button
+							className={cn(
+								"w-full justify-between gap-2 rounded px-2.5 py-1.5 text-left transition-colors",
+								hoverBg,
+								"hover:text-foreground",
+								activeBg,
+							)}
+							onClick={handleOpenDevicePicker}
+						>
+							<span className="flex min-w-0 items-center gap-2">
+								<HugeiconsIcon
+									aria-hidden="true"
+									className="shrink-0 text-foreground-dim"
+									icon={Mic01Icon}
+									size={13}
+								/>
+								{/* Cap the device name so a long label (e.g. "System Default
+							    (Microphone (Realtek(R) Audio))") truncates here instead of
+							    eating the whole fixed-width row (keeps the chevron visible). */}
+								<span className="max-w-[9rem] truncate">
+									{currentDeviceLabel}
+								</span>
+							</span>
+							<HugeiconsIcon
+								aria-hidden="true"
+								className={cn(
+									"shrink-0 text-foreground-muted transition-transform",
+									devicePickerOpen && "rotate-180",
+								)}
+								icon={ArrowRight01Icon}
+								size={11}
+							/>
+						</Button>
+					</div>
+
+					<MenuSeparator />
+
+					<MenuItem
+						activeBg={activeBg}
+						disabled={!isConnected}
+						hoverBg={hoverBg}
+						onClick={handleTranscribeFile}
+						shortcut="T"
+					>
+						{t("transcribeFile")}
+					</MenuItem>
+					<MenuItem
+						activeBg={activeBg}
+						hoverBg={hoverBg}
+						onClick={handleCheckForUpdates}
+					>
+						{t("checkForUpdates")}
+					</MenuItem>
+
+					{CONTEXT_PLAYGROUND_ENABLED && (
+						<>
+							<MenuSeparator />
+							{/* eslint-disable i18next/no-literal-string -- debug-only menu item, gated off in release */}
+							<MenuItem
+								activeBg={activeBg}
+								hoverBg={hoverBg}
+								icon={Bug01Icon}
+								onClick={handleOpenContextPlayground}
+							>
+								Context Playground (debug)
+							</MenuItem>
+							{/* eslint-enable i18next/no-literal-string */}
+						</>
+					)}
+
+					<MenuSeparator />
+
+					<MenuItem
+						activeBg={activeBg}
+						hoverBg={hoverBg}
+						onClick={handleQuit}
+						shortcut="Q"
+					>
+						{t("quit")}
+					</MenuItem>
+				</div>
 			</div>
 		</SurfaceProvider>
 	);

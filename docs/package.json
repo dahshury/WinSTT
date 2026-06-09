@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build && tsc --noEmit",
+    "build:pages": "vite build && tsc --noEmit && node scripts/prepare-pages.mjs",
     "preview": "vite preview",
     "start": "node .output/server/index.mjs",
     "types:check": "tsc --noEmit",

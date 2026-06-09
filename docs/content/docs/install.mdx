@@ -7,6 +7,12 @@ WinSTT ships as a self-contained portable `.exe`: download one file, run it, and
 
 <Screenshot src="onboarding" alt="The first-run onboarding wizard that appears after install: choose local Whisper or a cloud provider, then test your microphone." label="WinSTT — first run" caption="On first launch, a quick setup wizard gets you transcribing — pick local or cloud and you're done." />
 
+<Callout type="success" title="One-click latest Windows download">
+  Download the current default Windows build directly:
+  [WinSTT.exe](https://github.com/dahshury/WinSTT/releases/latest/download/WinSTT.exe).
+  This link always follows the latest non-draft GitHub Release.
+</Callout>
+
 ## Which installer?
 
 Every release publishes three portable builds on the [GitHub Releases](https://github.com/dahshury/WinSTT/releases) page. All three wrap the **same** Tauri app and Rust speech engine — only the bundled ONNX Runtime (ORT) execution provider differs. Pick by your hardware:
@@ -72,9 +78,10 @@ All three builds share the same baseline; the GPU builds add an optional acceler
 
 <StepFlow>
   <Step title="Download the installer">
-    Grab the build that matches your hardware from the
-    [GitHub Releases](https://github.com/dahshury/WinSTT/releases) page. The unmarked
-    `WinSTT-Portable-<ver>.exe` is the DirectML default.
+    Grab the latest default Windows build:
+    [WinSTT.exe](https://github.com/dahshury/WinSTT/releases/latest/download/WinSTT.exe).
+    For alternate builds and signatures, use the
+    [GitHub Releases](https://github.com/dahshury/WinSTT/releases) page.
   </Step>
   <Step title="Verify the signature (recommended)">
     Each `.exe` ships a [minisign](/docs/verify-releases) `.minisig` sidecar so you can

@@ -106,6 +106,7 @@ impl OpenRouterTtsEngine {
             .bearer_auth(&self.api_key)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(&body)
+            .timeout(Duration::from_secs(30))
             .send()
             .await
             .map_err(|e| TtsError::Cloud(format!("OpenRouter speech request failed: {e}")))?;

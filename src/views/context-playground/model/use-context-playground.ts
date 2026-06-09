@@ -5,7 +5,12 @@ import type {
 	ContextPlaygroundWaitReason,
 } from "@/shared/api/context-debug-types";
 import { IPC } from "@/shared/api/ipc-channels";
-import { ipcOn, ipcSend } from "@/shared/api/ipc-client";
+import {
+	contextPlaygroundArmDeep,
+	contextPlaygroundSetLive,
+	ipcOn,
+	windowCloseNamed,
+} from "@/shared/api/ipc-client";
 import { useEscapeToClose } from "@/shared/lib/window-effects";
 
 /**
@@ -18,8 +23,8 @@ import { useEscapeToClose } from "@/shared/lib/window-effects";
  *   - `waiting` is the reason the loop currently can't capture (the playground
  *     itself holds focus, or live mode is off).
  *
- * On mount it sends `SET_LIVE { enabled: true }`, which both flips live polling
- * on in main AND signals "renderer ready" so a capture lands promptly.
+ * On mount it enables live polling, which both flips the backend loop on and
+ * signals that the renderer is ready so a capture lands promptly.
  */
 export interface ContextPlaygroundController {
 	armDeep: () => void;
@@ -37,7 +42,10 @@ export function useContextPlayground(): ContextPlaygroundController {
 	);
 	const [live, setLive] = useState(true);
 	const [deepArmed, setDeepArmed] = useState(false);
-	const close = useCallback(() => ipcSend(IPC.CONTEXT_PLAYGROUND_CLOSE), []);
+	const close = useCallback(() => {
+		contextPlaygroundSetLive(false);
+		windowCloseNamed("context-playground");
+	}, []);
 	useEscapeToClose(close);
 
 	useEffect(() => {
@@ -52,8 +60,9 @@ export function useContextPlayground(): ContextPlaygroundController {
 				setWaiting(push.reason);
 			}
 		});
-		ipcSend(IPC.CONTEXT_PLAYGROUND_SET_LIVE, { enabled: true });
+		contextPlaygroundSetLive(true);
 		return () => {
+			contextPlaygroundSetLive(false);
 			unsubscribe();
 		};
 	}, []);
@@ -61,12 +70,12 @@ export function useContextPlayground(): ContextPlaygroundController {
 	const toggleLive = () => {
 		const next = !live;
 		setLive(next);
-		ipcSend(IPC.CONTEXT_PLAYGROUND_SET_LIVE, { enabled: next });
+		contextPlaygroundSetLive(next);
 	};
 
 	const armDeep = () => {
 		setDeepArmed(true);
-		ipcSend(IPC.CONTEXT_PLAYGROUND_ARM_DEEP);
+		contextPlaygroundArmDeep();
 	};
 
 	return { armDeep, deepArmed, live, report, toggleLive, waiting };

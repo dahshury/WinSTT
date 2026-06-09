@@ -11,18 +11,17 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use base64::Engine as _;
-use tauri::{AppHandle, Emitter};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::winstt::cancel_registry::CancelRegistry;
 use crate::winstt::cloud_stt::{
     classify_http_failure, classify_transport_error, classify_verify, default_cloud_model_id,
-    parse_transcription_json, preflight, samples_to_wav_bytes, split_model_id, CloudSttError,
-    CloudSttErrorCode, CloudSttProvider, CloudTranscribeRequest, CloudTranscription, VerifyResult,
-    CLOUD_TRANSCRIBE_TIMEOUT_SECS,
+    emit_cloud_failure, parse_transcription_json, preflight, samples_to_wav_bytes, split_model_id,
+    CloudSttError, CloudSttErrorCode, CloudSttProvider, CloudTranscribeRequest, CloudTranscription,
+    VerifyResult, CLOUD_TRANSCRIBE_TIMEOUT_SECS,
 };
-use crate::winstt::commands::settings::read_settings;
 
 pub struct CloudSttManager {
     app: AppHandle,
@@ -76,20 +75,13 @@ impl CloudSttManager {
     /// include `provider` + `retryAfter` exactly like the reference handler's
     /// `notifyRenderer` payload.
     fn emit_error(&self, provider: CloudSttProvider, err: &CloudSttError) {
-        if !err.code.should_notify() {
-            return;
-        }
-        let fanout = fanout_code(err.code);
-        let mut payload = serde_json::Map::new();
-        payload.insert("code".into(), serde_json::json!(fanout));
-        payload.insert("provider".into(), serde_json::json!(provider.id()));
-        payload.insert("message".into(), serde_json::json!(err.message));
-        if let Some(retry) = err.retry_after_seconds {
-            payload.insert("retryAfter".into(), serde_json::json!(retry));
-        }
-        let _ = self
-            .app
-            .emit("stt:cloud-error", serde_json::Value::Object(payload));
+        emit_cloud_failure(
+            &self.app,
+            provider,
+            err.code,
+            err.message.clone(),
+            err.retry_after_seconds,
+        );
     }
 
     /// Transcribe one utterance via the cloud provider. Honors the pre-flight
@@ -127,8 +119,8 @@ impl CloudSttManager {
     /// LIVE pipeline entry point. Called from `TranscriptionManager::transcribe`
     /// when the selected model id carries a cloud prefix. Resolves the provider +
     /// bare model id from `model_id` (`<provider>:<id>`), pulls the matching API
-    /// key off the settings store (decrypted by `read_settings`), encodes the
-    /// 16 kHz mono f32 capture into an in-memory WAV, and runs the upload. Returns
+    /// key supplied by the caller, encodes the 16 kHz mono f32 capture into an
+    /// in-memory WAV, and runs the upload. Returns
     /// the transcript text (the contract `TranscriptionManager::transcribe`
     /// expects); on any failure it emits `stt:cloud-error` (via `transcribe`) and
     /// returns the typed error.
@@ -140,6 +132,7 @@ impl CloudSttManager {
         model_id: &str,
         samples: &[f32],
         language: Option<String>,
+        api_key: String,
     ) -> Result<String, CloudSttError> {
         let (provider, bare_id) = split_model_id(model_id).ok_or_else(|| {
             CloudSttError::new(
@@ -158,8 +151,6 @@ impl CloudSttManager {
             bare_id
         };
 
-        let api_key = self.api_key_for(provider);
-
         // Encode BEFORE the preflight so the size guard sees the real byte count.
         let audio_wav = samples_to_wav_bytes(samples).inspect_err(|e| {
             self.emit_error(provider, e);
@@ -177,18 +168,6 @@ impl CloudSttManager {
         let request_id = self.next_request_id();
         let result = self.transcribe(&request_id, req).await?;
         Ok(result.text)
-    }
-
-    /// Read the provider's API key off the WinSTT settings store (decrypted).
-    /// ElevenLabs reads `integrations.elevenlabs.apiKey`; OpenRouter shares the
-    /// single LLM key (`llm.openrouterApiKey`) so one key powers both cloud
-    /// post-processing AND cloud transcription.
-    fn api_key_for(&self, provider: CloudSttProvider) -> String {
-        let settings = read_settings(&self.app);
-        match provider {
-            CloudSttProvider::ElevenLabs => settings.integrations.elevenlabs.api_key,
-            CloudSttProvider::OpenRouter => settings.llm.openrouter_api_key,
-        }
     }
 
     async fn do_upload(
@@ -227,7 +206,10 @@ impl CloudSttManager {
                     .header("xi-api-key", &req.api_key)
             }
             CloudSttProvider::OpenRouter => {
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&req.audio_wav);
+                let mut b64 = String::with_capacity(
+                    base64::encoded_len(req.audio_wav.len(), true).unwrap_or(0),
+                );
+                STANDARD.encode_string(&req.audio_wav, &mut b64);
                 let mut body = serde_json::json!({
                     "model": req.model_id,
                     "input_audio": { "data": b64, "format": "wav" },
@@ -326,6 +308,7 @@ impl CloudSttManager {
 /// network / provider channels respectively (matching the reference
 /// `ERROR_CODE_CHANNEL` mapping). `aborted` never reaches here (suppressed
 /// by `should_notify`).
+#[cfg(test)]
 fn fanout_code(code: CloudSttErrorCode) -> &'static str {
     match code {
         CloudSttErrorCode::Auth => "auth_failed",

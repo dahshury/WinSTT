@@ -207,7 +207,9 @@ function GpuChip({ isGpu, gpuName, resource, t }: GpuChipProps): ReactNode {
 					icon={icon}
 					size={12}
 				/>
-				<span className={cn("relative z-raised font-medium text-2xs", colorClass)}>
+				<span
+					className={cn("relative z-raised font-medium text-2xs", colorClass)}
+				>
 					{label}
 				</span>
 			</output>

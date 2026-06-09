@@ -391,23 +391,15 @@ describe("formatLanguageCoverage", () => {
 		expect(formatLanguageCoverage(model({ languages: ["en"] }))).toBe("EN");
 	});
 
-	test("two or three languages are slash-joined", () => {
+	test("multiple listed languages collapse to multilingual", () => {
 		expect(formatLanguageCoverage(model({ languages: ["en", "fr"] }))).toBe(
-			"EN/FR",
+			"Multilingual",
 		);
 		expect(
 			formatLanguageCoverage(model({ languages: ["en", "fr", "de"] })),
-		).toBe("EN/FR/DE");
-	});
-
-	test("four or more languages collapse to first + count", () => {
+		).toBe("Multilingual");
 		expect(
 			formatLanguageCoverage(model({ languages: ["en", "fr", "de", "es"] })),
-		).toBe("EN +3");
-		expect(
-			formatLanguageCoverage(
-				model({ languages: ["en", "fr", "de", "es", "it"] }),
-			),
-		).toBe("EN +4");
+		).toBe("Multilingual");
 	});
 });

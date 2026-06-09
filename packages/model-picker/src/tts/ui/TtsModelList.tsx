@@ -152,7 +152,7 @@ export function TtsModelList({
 }: TtsModelListProps) {
 	return (
 		<div
-			className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+			className="flex min-h-0 flex-1 flex-col overflow-y-auto [overflow-y:overlay]"
 			data-slot="tts-model-list"
 		>
 			<Combobox.Status className="sr-only">

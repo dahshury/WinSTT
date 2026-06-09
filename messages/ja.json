@@ -107,7 +107,13 @@
     "updatesStatusError": "アップデートの確認に失敗しました: {message}",
     "updatesDownloading": "ダウンロード中…",
     "updatesDownloadingPercent": "{percent}% — アップデートをダウンロード中",
-    "updatesRestartToInstall": "再起動してインストール"
+    "updatesRestartToInstall": "再起動してインストール",
+    "diagnosticsTitle": "診断",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "ログフォルダーを開く",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "診断バンドルを保存...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "全体統計",

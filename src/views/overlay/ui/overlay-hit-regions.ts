@@ -1,8 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { useTranscriptionStore } from "@/entities/transcription";
 import { useVisualizerStore } from "@/features/audio-visualizer";
 import { useLlmProcessingStore } from "@/features/llm-processing";
+import {
+	setOverlayHitRegions,
+	type OverlayHitRect,
+} from "@/shared/api/ipc/overlay";
 
 /**
  * Clear the stale CONTENT the pill reads from the moment the overlay
@@ -87,13 +90,6 @@ export function useTransparentBody(): void {
 	}, []);
 }
 
-interface OverlayHitRect {
-	x: number;
-	y: number;
-	width: number;
-	height: number;
-}
-
 const OVERLAY_HIT_REGION_SELECTOR = "[data-overlay-hit-region='true']";
 const OVERLAY_HIT_REGION_MARGIN_PX = 6;
 
@@ -152,7 +148,7 @@ export function useOverlayNativeHitRegions(): void {
 				return;
 			}
 			lastPayloadRef.current = payload;
-			void invoke("set_overlay_hit_regions", { rects }).catch(() => {
+			void setOverlayHitRegions(rects).catch(() => {
 				// Outside Tauri/test contexts this command is unavailable. The native
 				// lifecycle still restores click-through on hide; ignore transient misses.
 			});

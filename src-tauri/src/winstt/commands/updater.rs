@@ -8,6 +8,7 @@ use std::{
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
+use crate::command_auth;
 use crate::winstt::commands::settings::read_settings;
 
 const GITHUB_RELEASES_API: &str =
@@ -15,6 +16,9 @@ const GITHUB_RELEASES_API: &str =
 const LATEST_JSON_ASSET: &str = "latest.json";
 const STATUS_EVENT: &str = "updater:status";
 const MAX_STATUS_HISTORY: usize = 200;
+const PORTABLE_UPDATES_DISABLED_REASON: &str = "portable-updates-disabled";
+const UPDATER_CHECK_ALLOWED_WINDOWS: &[&str] = &["settings", "tray-menu", "main"];
+const UPDATER_INSTALL_ALLOWED_WINDOWS: &[&str] = &["settings"];
 
 #[derive(Clone, Default)]
 pub struct UpdaterRuntimeState {
@@ -97,6 +101,21 @@ struct ReleaseCandidate {
     version: Version,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UpdaterOperation {
+    CheckAndDownload,
+    Install,
+}
+
+impl UpdaterOperation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CheckAndDownload => "check-and-download",
+            Self::Install => "install",
+        }
+    }
+}
+
 fn lock_state(state: &UpdaterRuntimeState) -> std::sync::MutexGuard<'_, UpdaterStateInner> {
     state
         .inner
@@ -153,6 +172,44 @@ fn latest_json_url(release: &GitHubRelease) -> Option<&str> {
         .iter()
         .find(|asset| asset.name.eq_ignore_ascii_case(LATEST_JSON_ASSET))
         .map(|asset| asset.browser_download_url.as_str())
+}
+
+fn blocked_result(reason: impl Into<String>) -> UpdaterCommandResult {
+    UpdaterCommandResult {
+        reason: Some(reason.into()),
+        triggered: false,
+    }
+}
+
+#[cfg(test)]
+fn is_updater_operation_allowed(caller: &str, operation: UpdaterOperation) -> bool {
+    match operation {
+        UpdaterOperation::CheckAndDownload => {
+            command_auth::label_in(caller, UPDATER_CHECK_ALLOWED_WINDOWS)
+        }
+        UpdaterOperation::Install => {
+            command_auth::label_in(caller, UPDATER_INSTALL_ALLOWED_WINDOWS)
+        }
+    }
+}
+
+fn authorize_updater_operation(
+    caller: &tauri::WebviewWindow,
+    operation: UpdaterOperation,
+) -> Result<(), String> {
+    let allowed = match operation {
+        UpdaterOperation::CheckAndDownload => UPDATER_CHECK_ALLOWED_WINDOWS,
+        UpdaterOperation::Install => UPDATER_INSTALL_ALLOWED_WINDOWS,
+    };
+    command_auth::authorize_webview(caller, "updater", operation.as_str(), allowed, " updater")
+}
+
+fn portable_update_policy_block_reason(is_portable: bool) -> Option<&'static str> {
+    is_portable.then_some(PORTABLE_UPDATES_DISABLED_REASON)
+}
+
+fn updater_policy_block_reason() -> Option<&'static str> {
+    portable_update_policy_block_reason(crate::portable::is_portable())
 }
 
 fn select_release(
@@ -401,9 +458,15 @@ pub fn winstt_updater_clear_status_history(
 #[specta::specta]
 pub async fn winstt_updater_check_and_download(
     app: AppHandle,
+    webview: tauri::WebviewWindow,
     state: State<'_, UpdaterRuntimeState>,
     include_prerelease_updates: Option<bool>,
 ) -> Result<UpdaterCommandResult, String> {
+    authorize_updater_operation(&webview, UpdaterOperation::CheckAndDownload)?;
+    if let Some(reason) = updater_policy_block_reason() {
+        return Ok(blocked_result(reason));
+    }
+
     let state = state.inner().clone();
     if !begin_check(&state) {
         return Ok(UpdaterCommandResult {
@@ -440,14 +503,17 @@ pub async fn winstt_updater_check_and_download(
 #[specta::specta]
 pub fn winstt_updater_install(
     app: AppHandle,
+    webview: tauri::WebviewWindow,
     state: State<'_, UpdaterRuntimeState>,
 ) -> Result<UpdaterCommandResult, String> {
+    authorize_updater_operation(&webview, UpdaterOperation::Install)?;
+    if let Some(reason) = updater_policy_block_reason() {
+        return Ok(blocked_result(reason));
+    }
+
     let state = state.inner().clone();
     let Some(pending) = lock_state(&state).pending.take() else {
-        return Ok(UpdaterCommandResult {
-            reason: Some("no-update-downloaded".to_string()),
-            triggered: false,
-        });
+        return Ok(blocked_result("no-update-downloaded"));
     };
 
     let version = pending.update.version.clone();
@@ -540,5 +606,32 @@ mod tests {
         let selected = select_release(vec![release("v0.1.0", false, &[])], &current, false);
 
         assert!(selected.is_none());
+    }
+
+    #[test]
+    fn updater_check_is_limited_to_main_settings_and_tray_menu() {
+        command_auth::assert_label_rules(
+            &["main", "settings", "tray-menu"],
+            &["overlay", "model-picker", "device-picker", "history"],
+            |caller| is_updater_operation_allowed(caller, UpdaterOperation::CheckAndDownload),
+        );
+    }
+
+    #[test]
+    fn updater_install_is_settings_only() {
+        command_auth::assert_label_rules(
+            &["settings"],
+            &["main", "tray-menu", "overlay", "model-picker", "history"],
+            |caller| is_updater_operation_allowed(caller, UpdaterOperation::Install),
+        );
+    }
+
+    #[test]
+    fn portable_policy_blocks_updates() {
+        assert_eq!(
+            portable_update_policy_block_reason(true),
+            Some(PORTABLE_UPDATES_DISABLED_REASON)
+        );
+        assert_eq!(portable_update_policy_block_reason(false), None);
     }
 }

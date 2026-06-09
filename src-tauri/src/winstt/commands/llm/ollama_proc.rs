@@ -3,16 +3,21 @@
 // command root; `detect_ollama_executable` / `spawn_ollama_serve` are re-exported
 // there to keep the `winstt::commands::llm::*` paths the manager calls.
 
+use std::path::{Path, PathBuf};
+
 use tauri::{AppHandle, Emitter};
 
 use super::payloads::OllamaDetectResultPayload;
+use crate::command_auth;
+
+const OLLAMA_MODEL_MANAGEMENT_ALLOWED_WINDOWS: &[&str] =
+    &["settings", "model-picker", "onboarding"];
 
 // ── Ollama executable detection + spawn (mirrors detectOllama / startOllama) ──
 
 pub(crate) async fn detect_ollama_executable() -> OllamaDetectResultPayload {
-    // Detection shells out + touches the filesystem; do it on the blocking pool
-    // so the async runtime isn't stalled (and we avoid relying on tokio's
-    // optional `process`/`fs` features — `std` is always available).
+    // Detection touches the filesystem; do it on the blocking pool so the async
+    // runtime is not stalled.
     tokio::task::spawn_blocking(detect_ollama_executable_blocking)
         .await
         .unwrap_or(OllamaDetectResultPayload {
@@ -22,54 +27,159 @@ pub(crate) async fn detect_ollama_executable() -> OllamaDetectResultPayload {
 }
 
 fn detect_ollama_executable_blocking() -> OllamaDetectResultPayload {
-    // 1. PATH lookup (`where` on Windows, `which` elsewhere).
-    let lookup = if cfg!(windows) { "where" } else { "which" };
-    let mut cmd = std::process::Command::new(lookup);
-    cmd.arg("ollama");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    if let Ok(out) = cmd.output() {
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            if let Some(line) = stdout.lines().map(str::trim).find(|l| !l.is_empty()) {
-                return OllamaDetectResultPayload {
-                    installed: true,
-                    path: Some(line.to_string()),
-                };
-            }
-        }
-    }
-    // 2. Default install locations (Windows).
-    for candidate in ollama_default_paths() {
-        if std::fs::metadata(&candidate).is_ok() {
-            return OllamaDetectResultPayload {
-                installed: true,
-                path: Some(candidate),
-            };
-        }
-    }
-    OllamaDetectResultPayload {
-        installed: false,
-        path: None,
-    }
+    detect_ollama_from_candidates(ollama_default_paths(), ollama_path_candidates())
+        .map(|path| OllamaDetectResultPayload {
+            installed: true,
+            path: Some(path_to_payload_string(&path)),
+        })
+        .unwrap_or(OllamaDetectResultPayload {
+            installed: false,
+            path: None,
+        })
 }
 
-fn ollama_default_paths() -> Vec<String> {
+fn detect_ollama_from_candidates(
+    default_paths: impl IntoIterator<Item = PathBuf>,
+    path_candidates: impl IntoIterator<Item = PathBuf>,
+) -> Option<PathBuf> {
+    default_paths
+        .into_iter()
+        .chain(path_candidates)
+        .find(|candidate| validate_ollama_executable_path(candidate).is_ok())
+}
+
+fn ollama_default_paths() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        out.push(format!("{local}\\Programs\\Ollama\\ollama.exe"));
+
+    #[cfg(windows)]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            out.push(
+                PathBuf::from(local)
+                    .join("Programs")
+                    .join("Ollama")
+                    .join("ollama.exe"),
+            );
+        }
+        if let Ok(pf) = std::env::var("ProgramFiles") {
+            out.push(PathBuf::from(pf).join("Ollama").join("ollama.exe"));
+        }
+        if let Ok(pf) = std::env::var("ProgramW6432") {
+            out.push(PathBuf::from(pf).join("Ollama").join("ollama.exe"));
+        }
     }
-    if let Ok(pf) = std::env::var("ProgramFiles") {
-        out.push(format!("{pf}\\Ollama\\ollama.exe"));
+
+    #[cfg(target_os = "macos")]
+    {
+        out.push(
+            PathBuf::from("/Applications")
+                .join("Ollama.app")
+                .join("Contents")
+                .join("Resources")
+                .join("ollama"),
+        );
+        out.push(PathBuf::from("/opt/homebrew/bin/ollama"));
+        out.push(PathBuf::from("/usr/local/bin/ollama"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        out.push(PathBuf::from("/usr/local/bin/ollama"));
+        out.push(PathBuf::from("/usr/bin/ollama"));
+    }
+
+    out
+}
+
+fn ollama_path_candidates() -> Vec<PathBuf> {
+    let Some(path) = std::env::var_os("PATH") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for dir in std::env::split_paths(&path).filter(|dir| dir.is_absolute()) {
+        for file_name in ollama_path_executable_names() {
+            out.push(dir.join(file_name));
+        }
     }
     out
 }
 
+#[cfg(windows)]
+fn ollama_path_executable_names() -> &'static [&'static str] {
+    &["ollama.exe"]
+}
+
+#[cfg(not(windows))]
+fn ollama_path_executable_names() -> &'static [&'static str] {
+    &["ollama"]
+}
+
+fn validate_ollama_executable_path(candidate: &Path) -> Result<(), String> {
+    if candidate.as_os_str().is_empty() {
+        return Err("Ollama executable path is empty".to_string());
+    }
+    if !candidate.is_absolute() {
+        return Err("Ollama executable path must be absolute".to_string());
+    }
+    if !has_expected_ollama_file_name(candidate) {
+        return Err("Ollama executable path must point to the Ollama binary".to_string());
+    }
+    let metadata = std::fs::metadata(candidate)
+        .map_err(|e| format!("Ollama executable path is not accessible: {e}"))?;
+    if !metadata.is_file() {
+        return Err("Ollama executable path is not a file".to_string());
+    }
+    if !has_execute_permission(&metadata) {
+        return Err("Ollama executable path is not executable".to_string());
+    }
+    Ok(())
+}
+
+fn has_expected_ollama_file_name(candidate: &Path) -> bool {
+    let Some(file_name) = candidate.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        file_name.eq_ignore_ascii_case("ollama.exe")
+    }
+    #[cfg(not(windows))]
+    {
+        file_name == "ollama"
+    }
+}
+
+#[cfg(windows)]
+fn has_execute_permission(metadata: &std::fs::Metadata) -> bool {
+    metadata.is_file()
+}
+
+#[cfg(unix)]
+fn has_execute_permission(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+fn path_to_payload_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn resolve_ollama_spawn_path(exec_path: &str) -> Result<PathBuf, String> {
+    if exec_path.trim() != exec_path || exec_path.is_empty() {
+        return Err("Invalid Ollama executable path".to_string());
+    }
+    if exec_path.contains('\0') {
+        return Err("Invalid Ollama executable path".to_string());
+    }
+    let path = PathBuf::from(exec_path);
+    validate_ollama_executable_path(&path)?;
+    Ok(path)
+}
+
 pub(crate) fn spawn_ollama_serve(exec_path: &str) -> Result<(), String> {
+    let exec_path = resolve_ollama_spawn_path(exec_path)
+        .map_err(|e| format!("Refusing to start Ollama: {e}"))?;
     let mut cmd = std::process::Command::new(exec_path);
     cmd.arg("serve");
     cmd.stdin(std::process::Stdio::null());
@@ -103,8 +213,149 @@ pub(super) fn validate_model_name(model: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn is_ollama_model_management_allowed(caller: &str) -> bool {
+    command_auth::label_in(caller, OLLAMA_MODEL_MANAGEMENT_ALLOWED_WINDOWS)
+}
+
+pub(crate) fn authorize_ollama_model_management_label(
+    caller: &str,
+    action: &str,
+) -> Result<(), String> {
+    command_auth::authorize_label(
+        caller,
+        "llm",
+        action,
+        OLLAMA_MODEL_MANAGEMENT_ALLOWED_WINDOWS,
+        " through Ollama model management",
+    )
+}
+
 /// Broadcast an `llm:pull-progress` event to all renderers (the plain channel the
 /// reused `onOllamaPullProgress` listener parses).
 pub(super) fn emit_pull_progress(app: &AppHandle, payload: serde_json::Value) {
     let _ = app.emit("llm:pull-progress", payload);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ollama_file_name() -> &'static str {
+        #[cfg(windows)]
+        {
+            "ollama.exe"
+        }
+        #[cfg(not(windows))]
+        {
+            "ollama"
+        }
+    }
+
+    fn write_test_binary(path: &Path) {
+        std::fs::create_dir_all(path.parent().expect("binary parent")).expect("parent dir");
+        std::fs::write(path, b"test binary").expect("write binary");
+        mark_executable(path);
+    }
+
+    #[cfg(windows)]
+    fn mark_executable(_path: &Path) {}
+
+    #[cfg(unix)]
+    fn mark_executable(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = std::fs::metadata(path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).expect("set executable");
+    }
+
+    #[test]
+    fn detect_prefers_default_install_path_over_path_candidate() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let default_candidate = tmp.path().join("known").join(ollama_file_name());
+        let path_candidate = tmp.path().join("path").join(ollama_file_name());
+        write_test_binary(&default_candidate);
+        write_test_binary(&path_candidate);
+
+        let detected = detect_ollama_from_candidates([default_candidate.clone()], [path_candidate])
+            .expect("detected");
+
+        assert_eq!(detected, default_candidate);
+    }
+
+    #[test]
+    fn detect_uses_path_candidate_when_default_install_path_is_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let missing_default = tmp.path().join("missing").join(ollama_file_name());
+        let path_candidate = tmp.path().join("path").join(ollama_file_name());
+        write_test_binary(&path_candidate);
+
+        let detected = detect_ollama_from_candidates([missing_default], [path_candidate.clone()])
+            .expect("detected");
+
+        assert_eq!(detected, path_candidate);
+    }
+
+    #[test]
+    fn detect_rejects_directory_candidates() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let directory_candidate = tmp.path().join("path").join(ollama_file_name());
+        std::fs::create_dir_all(&directory_candidate).expect("candidate dir");
+
+        let detected = detect_ollama_from_candidates(Vec::<PathBuf>::new(), [directory_candidate]);
+
+        assert!(detected.is_none());
+    }
+
+    #[test]
+    fn spawn_validation_rejects_relative_path_lookup_input() {
+        let result = resolve_ollama_spawn_path(ollama_file_name());
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn spawn_validation_rejects_wrong_binary_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wrong_name = if cfg!(windows) {
+            "ollama.cmd"
+        } else {
+            "ollama.exe"
+        };
+        let candidate = tmp.path().join(wrong_name);
+        write_test_binary(&candidate);
+
+        let result = resolve_ollama_spawn_path(&path_to_payload_string(&candidate));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn spawn_validation_accepts_absolute_ollama_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let candidate = tmp.path().join("install").join(ollama_file_name());
+        write_test_binary(&candidate);
+
+        let resolved =
+            resolve_ollama_spawn_path(&path_to_payload_string(&candidate)).expect("valid path");
+
+        assert_eq!(resolved, candidate);
+    }
+
+    #[test]
+    fn ollama_model_management_authorization_matches_renderer_flows() {
+        command_auth::assert_label_rules(
+            &["settings", "model-picker", "onboarding"],
+            &[
+                "main",
+                "overlay",
+                "tray-menu",
+                "device-picker",
+                "history",
+                "context-playground",
+            ],
+            is_ollama_model_management_allowed,
+        );
+    }
 }

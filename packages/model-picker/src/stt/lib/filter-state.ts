@@ -154,22 +154,10 @@ export function filterSttModels(
 	return models.filter((m) => matchesAllFilters(m, query, ctx));
 }
 
-function firstLangUpper(languages: readonly string[]): string {
-	return languages[0]?.toUpperCase() ?? "";
-}
-
-/** Coverage rule keyed by language count; `null` value = "use the +N fallback". */
-const COVERAGE_BY_COUNT: Record<number, (langs: readonly string[]) => string> =
-	{
-		0: () => "Multilingual",
-		1: (langs) => firstLangUpper(langs),
-		2: (langs) => langs.map((l) => l.toUpperCase()).join("/"),
-		3: (langs) => langs.map((l) => l.toUpperCase()).join("/"),
-	};
-
-/** Format a model's language coverage for the pill: "Multilingual" / "EN" / "EN+99". */
+/** Format a model's language coverage for compact selector pills. */
 export function formatLanguageCoverage(m: ModelInfo): string {
-	const langs = m.languages;
-	const rule = COVERAGE_BY_COUNT[langs.length];
-	return rule?.(langs) ?? `${firstLangUpper(langs)} +${langs.length - 1}`;
+	if (m.languages.length !== 1) {
+		return "Multilingual";
+	}
+	return m.languages.at(0)?.toUpperCase() ?? "Multilingual";
 }

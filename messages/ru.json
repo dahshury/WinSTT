@@ -107,7 +107,13 @@
     "updatesStatusError": "Ошибка проверки обновлений: {message}",
     "updatesDownloading": "Загрузка…",
     "updatesDownloadingPercent": "{percent}% — Загрузка обновления",
-    "updatesRestartToInstall": "Перезапустить для установки"
+    "updatesRestartToInstall": "Перезапустить для установки",
+    "diagnosticsTitle": "Диагностика",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Открыть папку журналов",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Сохранить диагностический пакет...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Общая статистика",

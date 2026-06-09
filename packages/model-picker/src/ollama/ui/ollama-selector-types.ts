@@ -66,6 +66,8 @@ export interface OllamaModelSelectorProps {
 	 *  the picker in a dedicated surface and by render tests. */
 	inline?: boolean | undefined;
 	isLoading?: boolean | undefined;
+	/** Storage key for persisted search/filter/sort UI state. Defaults to the shared Ollama picker key. */
+	uiStorageKey?: string | undefined;
 	/** When provided, the popup grows a third "Library" section that lists
 	 *  scraped ollama.com search results with paginated pull actions. */
 	librarySearch?: OllamaLibrarySearchProps | undefined;

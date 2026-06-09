@@ -24,6 +24,7 @@ export interface ScrollToMakerRequest {
 	maker: string;
 	modelId?: string;
 	nonce: number;
+	providerSlug?: string;
 }
 
 export interface ParsedSelectionToken {
@@ -132,13 +133,18 @@ export function parseSelectionToken(
 
 export function buildScrollRequestForModel(
 	prev: ScrollToMakerRequest | null,
-	model: OpenRouterModel,
+	model: Pick<OpenRouterModel, "id" | "maker">,
+	providerSlug?: string,
 ): ScrollToMakerRequest {
-	return {
+	const request: ScrollToMakerRequest = {
 		maker: model.maker as string,
 		modelId: model.id,
 		nonce: (prev?.nonce ?? 0) + 1,
 	};
+	if (providerSlug !== undefined) {
+		request.providerSlug = providerSlug;
+	}
+	return request;
 }
 
 export function applyToggleExpanded(

@@ -79,8 +79,8 @@ export function AppMock() {
       className="relative mx-auto select-none overflow-hidden rounded-lg"
       style={{
         // Match the real Electron mainWindow: 420×150, frameless, #09090b.
-        width: "420px",
-        height: "150px",
+        width: "min(100%, 420px)",
+        aspectRatio: "14 / 5",
         background: "#09090b",
         border: "1px solid var(--border)",
         boxShadow:

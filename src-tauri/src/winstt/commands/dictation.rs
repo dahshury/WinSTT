@@ -306,7 +306,8 @@ impl SttEvents {
     /// realtime/ephemeral state and arms `isRecordingActive` (the overlay pill gate).
     pub fn recording_start(app: &AppHandle) {
         log::info!("[stt] emit stt:recording-start (visualizer arm)");
-        crate::winstt::ducking::duck_from_settings(app);
+        // Ducking is sequenced by `TranscribeAction::start` after the recording
+        // chime, so the user's configured recording sound is not attenuated.
         crate::tray::on_tray_recording_start(app);
         let _ = app.emit("stt:recording-start", ());
     }
@@ -452,7 +453,7 @@ impl SttEvents {
 #[specta::specta]
 pub fn winstt_emit_ready(app: AppHandle) {
     let _ = read_settings(&app); // touch settings so a corrupt blob surfaces early
-    crate::splash::mark_renderer_boot_done();
+    crate::splash::mark_renderer_boot_done(&app);
     SttEvents::connection_change(&app, true);
     SttEvents::server_status(&app, "running");
 }

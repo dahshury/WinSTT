@@ -438,7 +438,7 @@ describe("OverlayPage", () => {
 		expect(output?.getAttribute("data-thinking-word")).not.toBe("Thinking");
 	});
 
-	test("shows a transcribing indicator for cloud STT after upload handoff", () => {
+	test("keeps a transcribing indicator for cloud STT after upload handoff", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
@@ -460,6 +460,11 @@ describe("OverlayPage", () => {
 				},
 			},
 		});
+		useLlmProcessingStore.setState({
+			isThinking: true,
+			thinkingStartedAt: 200,
+			thinkingText: "",
+		});
 		useTranscriptionStore.setState({
 			currentRealtime: "",
 			ephemeral: null,
@@ -473,6 +478,50 @@ describe("OverlayPage", () => {
 			'[data-overlay-floating-surface="true"][data-processing="true"] output',
 		);
 		expect(output?.getAttribute("data-thinking-word")).toBe("Transcribing");
+		expect(output?.getAttribute("data-thinking-word")).not.toBe("Thinking");
+	});
+
+	test("keeps the dynamic island on transcribing when dictation cleanup is off", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: {
+					...initialSettings.general,
+					liveTranscriptionDisplay: "both",
+					overlayMode: "dynamic-island",
+				},
+				llm: {
+					...initialSettings.llm,
+					dictation: {
+						...initialSettings.llm.dictation,
+						enabled: false,
+					},
+				},
+				model: {
+					...initialSettings.model,
+					model: "openrouter:openai/gpt-4o-transcribe",
+				},
+			},
+		});
+		useLlmProcessingStore.setState({
+			isThinking: true,
+			thinkingStartedAt: 200,
+			thinkingText: "",
+		});
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: true,
+			isTranscribing: true,
+			processingPhase: "transcribing",
+			transcribingStartedAt: 100,
+		});
+		const { container } = renderOverlay();
+		const output = container.querySelector(
+			'[data-overlay-processing-content="true"] output',
+		);
+		expect(output?.getAttribute("data-thinking-word")).toBe("Transcribing");
+		expect(output?.getAttribute("data-thinking-word")).not.toBe("Thinking");
 	});
 
 	test("renders processing inside the floating visualizer surface instead of a separate bubble", () => {
@@ -789,6 +838,14 @@ describe("OverlayPage", () => {
 					...initialSettings.general,
 					overlayMode: "floating-bottom",
 				},
+				llm: {
+					...initialSettings.llm,
+					dictation: {
+						...initialSettings.llm.dictation,
+						enabled: true,
+						model: "llama3",
+					},
+				},
 			},
 		});
 		useLlmProcessingStore.setState({
@@ -827,6 +884,14 @@ describe("OverlayPage", () => {
 				general: {
 					...initialSettings.general,
 					overlayMode: "dynamic-island",
+				},
+				llm: {
+					...initialSettings.llm,
+					dictation: {
+						...initialSettings.llm.dictation,
+						enabled: true,
+						model: "llama3",
+					},
 				},
 			},
 		});
@@ -869,6 +934,19 @@ describe("OverlayPage", () => {
 			return passthroughSetInterval(...args);
 		}) as typeof globalThis.setInterval;
 		try {
+			useSettingsStore.setState({
+				settings: {
+					...initialSettings,
+					llm: {
+						...initialSettings.llm,
+						dictation: {
+							...initialSettings.llm.dictation,
+							enabled: true,
+							model: "llama3",
+						},
+					},
+				},
+			});
 			useLlmProcessingStore.setState({
 				isThinking: true,
 				thinkingStartedAt: 100,

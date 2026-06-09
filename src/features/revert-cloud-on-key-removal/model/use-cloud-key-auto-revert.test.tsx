@@ -135,7 +135,9 @@ describe("useCloudKeyAutoRevert", () => {
 	test("clearing the OpenRouter key while on an OpenRouter STT model swaps STT back to local", async () => {
 		seed({ openrouterKey: "sk-or", model: "openrouter:openai/whisper-1" });
 		renderHook(() => useCloudKeyAutoRevert(FAST_DEBOUNCE_MS));
-		act(() => seed({ openrouterKey: "", model: "openrouter:openai/whisper-1" }));
+		act(() =>
+			seed({ openrouterKey: "", model: "openrouter:openai/whisper-1" }),
+		);
 		await waitFor(() => {
 			expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
 		});

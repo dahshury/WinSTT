@@ -3,6 +3,8 @@
 This folder contains the TanStack Start + Fumadocs documentation site for
 WinSTT.
 
+Public site: [https://dahshury.github.io/WinSTT/](https://dahshury.github.io/WinSTT/).
+
 ## Run Locally
 
 From the repository root:
@@ -10,6 +12,7 @@ From the repository root:
 ```powershell
 bun run docs:dev
 bun run docs:build
+bun run docs:build:pages
 bun run docs:videos
 ```
 
@@ -18,10 +21,15 @@ Or from this folder:
 ```powershell
 bun run dev
 bun run build
+bun run build:pages
 ```
 
 The development server defaults to Vite's local URL. The root `docs:dev` script
 is the preferred entry point when working from the main WinSTT checkout.
+
+`build:pages` enables the static output shape expected by GitHub Pages and
+writes the Pages fallback files into `.output/public/`. The repository workflow
+deploys that folder on pushes to `main`.
 
 ## Content Layout
 

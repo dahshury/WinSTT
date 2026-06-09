@@ -30,9 +30,10 @@
 // The push payloads are BYTE-IDENTICAL to `ContextPlaygroundPush` in
 // context-debug-types.ts so the reused renderer listener needs no changes.
 
-// Compatibility behavior: visibility is a frontend debug flag, not a Rust cfg.
-// Keep these commands registered unconditionally so flipping the renderer flag
-// does not require rebuilding the backend with a matching Cargo feature.
+// Release behavior: keep command signatures stable for the generated bindings,
+// but hard-disable the capture path unless this is a debug build or the explicit
+// `context-playground` Cargo feature is enabled. A mismatched renderer flag can
+// therefore never turn the raw UIA snapshot surface on in shipped builds.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -57,10 +58,13 @@ const POLL_INTERVAL_MS: u64 = 750;
 const AX_HTML_CAP: u64 = 60_000;
 /// ASR prompt-tail sanitize cap (mirrors the 250-char Whisper prior-text window).
 const ASR_TAIL_MAX: usize = 250;
+const CONTEXT_PLAYGROUND_BUILD_ENABLED: bool =
+    cfg!(any(debug_assertions, feature = "context-playground"));
+const CONTEXT_PLAYGROUND_DISABLED_REASON: &str = "context playground is disabled in this build";
 
 // ── module-level state (mirrors the reference handler's module statics) ─────────
 
-static LIVE_ENABLED: AtomicBool = AtomicBool::new(true);
+static LIVE_ENABLED: AtomicBool = AtomicBool::new(false);
 static ARMED_DEEP: AtomicBool = AtomicBool::new(false);
 static CAPTURING: AtomicBool = AtomicBool::new(false);
 /// Generation token — bumped on every (re)start so a stale loop exits.
@@ -286,6 +290,41 @@ fn build_report(
     }
 }
 
+fn disabled_report() -> ContextDebugReport {
+    ContextDebugReport {
+        asr_prompt_tail: String::new(),
+        asr_prompt_tail_raw: String::new(),
+        captured_at: now_ms(),
+        contentless: true,
+        context_awareness_enabled: false,
+        deep: false,
+        denied: true,
+        denied_reason: Some(CONTEXT_PLAYGROUND_DISABLED_REASON.to_string()),
+        duration_ms: 0,
+        filtered_snapshot: ContextSnapshotView::default(),
+        has_caret: false,
+        is_ide: false,
+        is_terminal: false,
+        metrics: ContextMetrics {
+            ax_html_cap: AX_HTML_CAP,
+            ax_html_chars: 0,
+            deny_list_size: 0,
+            focused_text_chars: 0,
+            prompt_fragment_chars: 0,
+            text_after_chars: 0,
+            text_before_chars: 0,
+        },
+        modes: None,
+        ocr_used: false,
+        prompt_fragment: String::new(),
+        raw_snapshot: ContextSnapshotView::default(),
+    }
+}
+
+fn warn_disabled(command: &str) {
+    log::warn!("{command}: {CONTEXT_PLAYGROUND_DISABLED_REASON}");
+}
+
 // ── focus / push helpers ───────────────────────────────────────────────────────
 
 /// True when one of OUR webview windows currently holds OS focus (so the next
@@ -453,7 +492,10 @@ fn start_polling(app: AppHandle) {
             );
             match decision {
                 TickDecision::SkipCapturing => {}
-                TickDecision::WaitOff => push_waiting(&app, "live-off"),
+                TickDecision::WaitOff => {
+                    push_waiting(&app, "live-off");
+                    return;
+                }
                 TickDecision::WaitOwn => push_waiting(&app, "own-window-focused"),
                 TickDecision::CaptureLive => run_capture(&app, context.as_ref(), false),
                 TickDecision::CaptureDeep => {
@@ -466,17 +508,32 @@ fn start_polling(app: AppHandle) {
     });
 }
 
+pub(crate) fn stop_context_playground_polling() {
+    LIVE_ENABLED.store(false, Ordering::SeqCst);
+    ARMED_DEEP.store(false, Ordering::SeqCst);
+    LOOP_GEN.fetch_add(1, Ordering::SeqCst);
+}
+
 // ── commands ───────────────────────────────────────────────────────────────────
 
-/// `context_playground_set_live` — flip live polling on/off. A freshly-mounted
-/// renderer sends `{ enabled: true }`, which BOTH enables live mode AND signals
-/// "renderer ready" so a capture lands promptly (re-primes the loop). Mirrors
-/// `handleSetLive`.
+/// `context_playground_set_live` — flip live polling on/off. Enabling starts a
+/// fresh poll loop; disabling cancels stale loops and leaves one "live-off"
+/// heartbeat for the debug window.
 #[tauri::command]
 #[specta::specta]
 pub fn context_playground_set_live(app: AppHandle, enabled: bool) {
-    LIVE_ENABLED.store(enabled, Ordering::SeqCst);
-    start_polling(app);
+    if !CONTEXT_PLAYGROUND_BUILD_ENABLED {
+        let _ = (app, enabled);
+        warn_disabled("context_playground_set_live");
+        return;
+    }
+    if enabled {
+        LIVE_ENABLED.store(true, Ordering::SeqCst);
+        start_polling(app);
+    } else {
+        stop_context_playground_polling();
+        push_waiting(&app, "live-off");
+    }
 }
 
 /// `context_playground_arm_deep` — arm a deep (all-modes) capture; the next
@@ -485,6 +542,11 @@ pub fn context_playground_set_live(app: AppHandle, enabled: bool) {
 #[tauri::command]
 #[specta::specta]
 pub fn context_playground_arm_deep(app: AppHandle) {
+    if !CONTEXT_PLAYGROUND_BUILD_ENABLED {
+        let _ = app;
+        warn_disabled("context_playground_arm_deep");
+        return;
+    }
     ARMED_DEEP.store(true, Ordering::SeqCst);
     start_polling(app);
 }
@@ -499,6 +561,11 @@ pub fn context_playground_capture(
     context: State<'_, Arc<ContextManager>>,
     deep: bool,
 ) -> ContextDebugReport {
+    if !CONTEXT_PLAYGROUND_BUILD_ENABLED {
+        let _ = (app, context, deep);
+        warn_disabled("context_playground_capture");
+        return disabled_report();
+    }
     let settings = read_settings(&app);
     let deny_list = settings.general.context_deny_list.clone();
     let context_awareness_enabled = settings.general.context_awareness;

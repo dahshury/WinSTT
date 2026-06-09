@@ -26,7 +26,10 @@ export interface ProviderStatusEntry {
 interface CredentialStatusState {
 	byProvider: Record<IntegrationCloudProvider, ProviderStatusEntry>;
 	reset: (provider: IntegrationCloudProvider) => void;
-	setStatus: (provider: IntegrationCloudProvider, entry: ProviderStatusEntry) => void;
+	setStatus: (
+		provider: IntegrationCloudProvider,
+		entry: ProviderStatusEntry,
+	) => void;
 }
 
 const INITIAL: Record<IntegrationCloudProvider, ProviderStatusEntry> = {

@@ -7,26 +7,23 @@ import {
 } from "@tanstack/react-router";
 import { RootProvider } from "fumadocs-ui/provider/tanstack";
 import type * as React from "react";
+import { absoluteDocsUrl, siteConfig } from "@/lib/site";
 import appCss from "@/styles/app.css?url";
 
-const docsBaseUrl =
-  (import.meta as { env?: { VITE_DOCS_URL?: string } }).env?.VITE_DOCS_URL ??
-  "http://localhost:3001";
-const docsDescription =
-  "Documentation for WinSTT - Windows speech-to-text desktop application";
+const docsDescription = siteConfig.description;
 
 export const Route = createRootRoute({
   head: () => ({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "WinSTT Docs" },
+      { title: `${siteConfig.name} Docs` },
       { name: "description", content: docsDescription },
       { property: "og:type", content: "website" },
-      { property: "og:site_name", content: "WinSTT Docs" },
-      { property: "og:title", content: "WinSTT Docs" },
+      { property: "og:site_name", content: `${siteConfig.name} Docs` },
+      { property: "og:title", content: `${siteConfig.name} Docs` },
       { property: "og:description", content: docsDescription },
-      { property: "og:url", content: docsBaseUrl },
+      { property: "og:url", content: absoluteDocsUrl("/") },
     ],
     links: [
       { rel: "stylesheet", href: appCss },

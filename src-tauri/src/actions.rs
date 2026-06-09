@@ -18,12 +18,6 @@ mod transcribe;
 use misc_actions::{CancelAction, ReadAloudAction, RepasteAction, TestAction, TransformAction};
 use transcribe::TranscribeAction;
 
-// Re-exported for external consumers (commands/history.rs) so the public paths
-// `crate::actions::process_transcription_output` / `::ProcessedTranscription`
-// stay valid after the split. `PostProcessMeta`/`ProcessedTranscription` were
-// directly under `crate::actions` before the split; keep them reachable there.
-pub(crate) use post_process::process_transcription_output;
-
 #[derive(Clone, serde::Serialize)]
 pub(super) struct RecordingErrorEvent {
     pub(super) error_type: String,

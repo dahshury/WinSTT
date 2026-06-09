@@ -53,7 +53,7 @@ function extractRouteCmds(adapterSource: string): string[] {
 /** IPC keys that the adapter routes: every `[IPC.KEY]:` in ROUTE. */
 function extractRouteKeys(adapterSource: string): Set<string> {
 	const start = adapterSource.indexOf("const ROUTE:");
-	const end = adapterSource.indexOf("const POSITIONAL_STRING_PARAM");
+	const end = adapterSource.indexOf("function normalizeArgs", start);
 	if (start === -1 || end === -1 || end <= start) {
 		throw new Error("Could not isolate native bridge ROUTE table");
 	}
@@ -118,8 +118,18 @@ const bindingsCmds = extractBindingsCmds(bindingsSource);
 
 describe("IPC route coverage (adapter ROUTE ↔ generated bindings)", () => {
 	test("the extractors find a non-trivial set (guards against a broken regex / moved file)", () => {
-		expect(routeCmds.length).toBeGreaterThan(50);
+		expect(routeKeys.size).toBeGreaterThan(50);
+		expect(invokerKeys.size).toBeGreaterThan(50);
+		expect(routedKeys.size).toBeGreaterThan(100);
 		expect(bindingsCmds.size).toBeGreaterThan(50);
+	});
+
+	test("typed command channels are not duplicated in the adapter ROUTE table", () => {
+		const duplicated = [...routeKeys]
+			.filter((key) => invokerKeys.has(key))
+			.sort();
+
+		expect(duplicated).toEqual([]);
 	});
 
 	test("every adapter ROUTE cmd exists as a backend command in bindings.ts", () => {

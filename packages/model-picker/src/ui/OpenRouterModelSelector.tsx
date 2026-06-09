@@ -1,6 +1,6 @@
 "use client";
 
-import { type MouseEvent, useEffect, useState } from "react";
+import { type MouseEvent, useEffect, useRef, useState } from "react";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { parseModelSelection } from "@/shared/lib/openrouter-model-selection";
 import {
@@ -103,7 +103,7 @@ function isPersistedOpenRouterSelectorState(
 	);
 }
 
-function useModelSelectorState(storageKey: string) {
+function useModelSelectorState({ storageKey }: { storageKey: string }) {
 	const [open, setOpen] = useState(false);
 	const [initialState] = useState(() =>
 		readPersistedSelectorState(
@@ -221,7 +221,9 @@ export function OpenRouterModelSelector({
 		setExpandedModels,
 		scrollToMakerRequest,
 		setScrollToMakerRequest,
-	} = useModelSelectorState(uiStorageKey);
+	} = useModelSelectorState({
+		storageKey: uiStorageKey,
+	});
 	const externalOpen = onOpenDetached != null;
 	const effectiveOpen = inline ? true : open;
 	// Per-MODEL favorites (the amber card star), alongside the per-MAKER `favorites`
@@ -303,10 +305,50 @@ export function OpenRouterModelSelector({
 				setExpandedModels((prev) => applyToggleExpanded(prev, model.id, true));
 			}
 			setScrollToMakerRequest((prev) =>
-				buildScrollRequestForModel(prev, model),
+				buildScrollRequestForModel(prev, model, parsedProviderSlug),
 			);
 		}
 	};
+	const inlineScrollKeyRef = useRef<string | null>(null);
+	const selectedModelId = selectedModel?.id;
+	const selectedModelMaker = selectedModel?.maker;
+	const selectedScrollKey = selectedModelId
+		? `${selectedModelId}@${parsedProviderSlug ?? ""}`
+		: null;
+	useEffect(() => {
+		if (
+			!(inline && selectedModelId && selectedModelMaker && selectedScrollKey)
+		) {
+			return;
+		}
+		if (inlineScrollKeyRef.current === selectedScrollKey) {
+			return;
+		}
+		inlineScrollKeyRef.current = selectedScrollKey;
+		onOpen?.();
+		if (parsedProviderSlug) {
+			setExpandedModels((prev) =>
+				applyToggleExpanded(prev, selectedModelId, true),
+			);
+		}
+		setScrollToMakerRequest((prev) =>
+			buildScrollRequestForModel(
+				prev,
+				{
+					id: selectedModelId,
+					maker: selectedModelMaker,
+				},
+				parsedProviderSlug,
+			),
+		);
+	}, [
+		inline,
+		onOpen,
+		parsedProviderSlug,
+		selectedModelId,
+		selectedModelMaker,
+		selectedScrollKey,
+	]);
 
 	const openGuard = useModelPickerCloseGuard({
 		setOpen,
@@ -390,7 +432,7 @@ export function OpenRouterModelSelector({
 			icon: iconSrc ? (
 				<img
 					alt=""
-					className="size-5 rounded-[3px] object-cover"
+					className="size-5 rounded-[3px] object-contain"
 					height={20}
 					src={publicAsset(iconSrc)}
 					width={20}

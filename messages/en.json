@@ -107,7 +107,13 @@
     "updatesStatusError": "Update check failed: {message}",
     "updatesDownloading": "Downloading…",
     "updatesDownloadingPercent": "{percent}% — Downloading update",
-    "updatesRestartToInstall": "Restart to install"
+    "updatesRestartToInstall": "Restart to install",
+    "diagnosticsTitle": "Diagnostics",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Open Logs Folder",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Save Diagnostic Bundle...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Overall Stats",

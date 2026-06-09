@@ -25,6 +25,8 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use super::llm::authorize_ollama_model_management_label;
+
 // ── Pull-cancel registry (module-local; consulted by the streaming pull drain) ──
 
 static PULL_CANCELLED: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
@@ -139,7 +141,11 @@ pub fn set_warmup_status(status: LlmWarmupStatus) {
 /// streaming drain in `ollama_pull` to abort. Returns `{ cancelled: true }` on registration.
 #[tauri::command]
 #[specta::specta]
-pub fn ollama_cancel_pull(model: String) -> Result<CancelPullResult, String> {
+pub fn ollama_cancel_pull(
+    webview: tauri::WebviewWindow,
+    model: String,
+) -> Result<CancelPullResult, String> {
+    authorize_ollama_model_management_label(webview.label(), "cancel Ollama model pull")?;
     mark_pull_cancelled(&model);
     Ok(CancelPullResult { cancelled: true })
 }

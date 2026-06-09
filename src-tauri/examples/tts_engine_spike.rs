@@ -8,7 +8,7 @@
 //   cargo run --release --example tts_engine_spike -- supertonic M3 fr "Bonjour, ceci est une courte démonstration."
 //
 // Model files live under  E:/DL/Projects/WinSTT/.tts-cache/<engine>/  (override WINSTT_TTS_CACHE).
-// espeak-ng is auto-pointed at the repo's bundled resources copy.
+// espeak-ng is auto-pointed at the app-data runtime if it has been installed.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -34,11 +34,18 @@ fn cache_root() -> PathBuf {
 
 fn ensure_espeak() {
     if std::env::var_os("ESPEAK_NG_LIBRARY").is_none() {
-        let lib = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/resources/espeakng_loader/espeak-ng.dll"
-        );
-        if std::path::Path::new(lib).exists() {
+        if let Some(lib) = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .map(|local| {
+                local
+                    .join("winstt")
+                    .join("tts")
+                    .join("runtime")
+                    .join("espeakng_loader")
+                    .join("espeak-ng.dll")
+            })
+            .filter(|lib| lib.exists())
+        {
             std::env::set_var("ESPEAK_NG_LIBRARY", lib);
         }
     }

@@ -107,7 +107,13 @@
     "updatesStatusError": "Güncelleme kontrolü başarısız: {message}",
     "updatesDownloading": "İndiriliyor…",
     "updatesDownloadingPercent": "%{percent} — Güncelleme indiriliyor",
-    "updatesRestartToInstall": "Yüklemek için yeniden başlat"
+    "updatesRestartToInstall": "Yüklemek için yeniden başlat",
+    "diagnosticsTitle": "Tanılama",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Günlük Klasörünü Aç",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Tanı Paketini Kaydet...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Genel İstatistikler",

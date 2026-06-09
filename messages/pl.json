@@ -107,7 +107,13 @@
     "updatesStatusError": "Sprawdzenie aktualizacji nie powiodło się: {message}",
     "updatesDownloading": "Pobieranie…",
     "updatesDownloadingPercent": "{percent}% — Pobieranie aktualizacji",
-    "updatesRestartToInstall": "Uruchom ponownie, aby zainstalować"
+    "updatesRestartToInstall": "Uruchom ponownie, aby zainstalować",
+    "diagnosticsTitle": "Diagnostyka",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Otwórz folder logów",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Zapisz pakiet diagnostyczny...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Statystyki ogólne",

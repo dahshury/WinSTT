@@ -1,9 +1,10 @@
 import appIconUrl from "@app-icon";
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
+import { repositoryUrl, siteConfig } from "@/lib/site";
 
 export const gitConfig = {
-  user: "dahshury",
-  repo: "WinSTT",
+  user: siteConfig.owner,
+  repo: siteConfig.repo,
   branch: "main",
 };
 
@@ -19,15 +20,19 @@ export function baseOptions(): BaseLayoutProps {
             alt="WinSTT logo"
             style={{ display: "block", borderRadius: 4 }}
           />
-          WinSTT
+          {siteConfig.name}
         </span>
       ),
+      url: "/",
       transparentMode: "top",
     },
     themeSwitch: {
       enabled: false,
     },
-    githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
+    searchToggle: {
+      enabled: false,
+    },
+    githubUrl: repositoryUrl,
     links: [
       {
         text: "Documentation",

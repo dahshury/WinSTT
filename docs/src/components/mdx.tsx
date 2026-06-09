@@ -1,3 +1,4 @@
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
 import defaultMdxComponents from "fumadocs-ui/mdx";
 import type { MDXComponents } from "mdx/types";
 import { AppMock } from "@/components/app-mock";
@@ -43,6 +44,8 @@ const winsttComponents = {
   ShortcutLegend,
   Stat,
   StatGrid,
+  Tab,
+  Tabs,
   Step,
   StepFlow,
   Video,

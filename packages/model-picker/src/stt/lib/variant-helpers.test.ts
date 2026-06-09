@@ -58,7 +58,17 @@ describe("isMultilingual", () => {
 			),
 		).toBe(true);
 	});
-	test("false when supportsLanguageDetection is off (constrained-language model)", () => {
+	test("true for multi-language models even without language detection", () => {
+		expect(
+			isMultilingual(
+				model({
+					languages: ["en", "de", "fr"],
+					supportsLanguageDetection: false,
+				}),
+			),
+		).toBe(true);
+	});
+	test("false when exactly one language is listed", () => {
 		expect(
 			isMultilingual(
 				model({ languages: ["ru"], supportsLanguageDetection: false }),
@@ -166,7 +176,7 @@ describe("summarizeFamily", () => {
 		expect(s.sizeRange).toBe("39M – 1.5B");
 	});
 
-	test("explicit non-English languages are upper-cased, deduped, sorted", () => {
+	test("single-language non-English variants are upper-cased, deduped, sorted", () => {
 		const s = summarizeFamily([
 			model({
 				id: "a",
@@ -177,7 +187,7 @@ describe("summarizeFamily", () => {
 			model({
 				id: "b",
 				sizeLabel: "39M",
-				languages: ["de", "ru"],
+				languages: ["de"],
 				supportsLanguageDetection: false,
 			}),
 			model({
@@ -188,5 +198,23 @@ describe("summarizeFamily", () => {
 			}),
 		]);
 		expect(s.languageNote).toBe("Multilingual · DE · RU");
+	});
+
+	test("multi-language finite lists roll up as multilingual, not a language dump", () => {
+		const s = summarizeFamily([
+			model({
+				id: "multi-finite",
+				sizeLabel: "39M",
+				languages: ["de", "ru"],
+				supportsLanguageDetection: false,
+			}),
+			model({
+				id: "ru",
+				sizeLabel: "39M",
+				languages: ["ru"],
+				supportsLanguageDetection: false,
+			}),
+		]);
+		expect(s.languageNote).toBe("Multilingual · RU");
 	});
 });

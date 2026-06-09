@@ -5,8 +5,10 @@ import {
 	resolveEffectiveQuant,
 	resolveQuantCache,
 } from "@picker/stt/lib/cache-helpers";
-import { useSystemResourcesStore } from "@/entities/system-resources";
-import { assessDictationFitClient } from "@/entities/system-resources/lib/fit-assessor";
+import {
+	assessDictationFitClient,
+	useSystemResourcesStore,
+} from "@/entities/system-resources";
 import type { FitAssessmentEntry } from "@/shared/api/ipc-client";
 import {
 	ONNX_QUANTIZATIONS,

@@ -10,8 +10,10 @@ import {
 	useModelSwapStore,
 } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
-import { useSystemResourcesStore } from "@/entities/system-resources";
-import { assessDictationFitClient } from "@/entities/system-resources/lib/fit-assessor";
+import {
+	assessDictationFitClient,
+	useSystemResourcesStore,
+} from "@/entities/system-resources";
 import { useConnectionListener } from "@/features/connect-server";
 import {
 	DownloadConfirmationDialog,

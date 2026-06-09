@@ -60,7 +60,7 @@ function makeModel(overrides: Partial<ModelInfo> = {}): ModelInfo {
 function renderCard(model: ModelInfo) {
 	const onSelect = mock(() => undefined);
 	const utils = render(
-		<TooltipProvider.Provider>
+		<TooltipProvider.Provider closeDelay={0} delay={0}>
 			<Combobox.Root items={[model]}>
 				<Combobox.List>
 					{() => (
@@ -98,6 +98,41 @@ describe("SttModelCard custom-model handling", () => {
 		expect(
 			screen.getByText("Fast English notes with a lightweight footprint."),
 		).toBeDefined();
+	});
+
+	test("renders multi-language models as a Multilingual tag without requiring language detection", () => {
+		renderCard(
+			makeModel({
+				languages: ["en", "de", "fr"],
+				supportsLanguageDetection: false,
+			}),
+		);
+		expect(screen.getByText("Multilingual")).toBeDefined();
+		expect(screen.queryByText("EN/DE/FR")).toBeNull();
+	});
+
+	test("shows the supported language roster when hovering the Multilingual tag", async () => {
+		renderCard(
+			makeModel({
+				languages: ["en", "de", "fr"],
+				supportsLanguageDetection: false,
+			}),
+		);
+		const tag = screen.getByText("Multilingual");
+		fireEvent.pointerEnter(tag);
+		fireEvent.mouseEnter(tag);
+		fireEvent.focus(tag);
+		expect(
+			await screen.findByText("Supports 3 languages: English, French, German"),
+		).toBeDefined();
+	});
+
+	test("keeps one-language models explicit", () => {
+		renderCard(
+			makeModel({ languages: ["ru"], supportsLanguageDetection: false }),
+		);
+		expect(screen.getByText("RU")).toBeDefined();
+		expect(screen.queryByText("Multilingual")).toBeNull();
 	});
 
 	test("surfaces native streaming without adding a non-streaming final-policy fact", () => {

@@ -51,7 +51,7 @@ pub const ELEVENLABS_SUBSCRIPTION_URL: &str = "https://api.elevenlabs.io/v1/user
 pub const CLOUD_OUTPUT_FORMAT: &str = "mp3_44100_128";
 
 /// Build the JSON request body for `POST /v1/text-to-speech/{voice_id}`.
-/// REAL CODE — unit-tested. Field names are ElevenLabs' on-wire snake_case.
+/// REAL CODE â€” unit-tested. Field names are ElevenLabs' on-wire snake_case.
 pub fn build_cloud_body(req: &CloudSynthesisRequest) -> serde_json::Value {
     serde_json::json!({
         "text": req.text,
@@ -74,38 +74,117 @@ pub fn build_cloud_url(voice_id: &str) -> String {
 /// Classify an ElevenLabs HTTP status + optional `detail.status` body field into
 /// a human-readable reason. Mirrors `tts-cloud.ts` HTTP_STATUS_MESSAGE +
 /// memory `project_elevenlabs_scoped_key_verify` (a scoped key missing
-/// `voices_read` is NOT an invalid key). REAL CODE — tested.
+/// `voices_read` is NOT an invalid key). REAL CODE â€” tested.
 pub fn classify_cloud_status(status: u16, detail_status: Option<&str>) -> String {
-    if let Some(d) = detail_status {
-        match d {
-            "quota_exceeded" => return "ElevenLabs: character quota exceeded".to_string(),
-            "missing_permissions" => {
-                return "ElevenLabs: this API key is missing a required permission".to_string()
-            }
-            "invalid_api_key" => return "ElevenLabs: invalid API key".to_string(),
-            "voice_not_found" => return "ElevenLabs: voice not found".to_string(),
-            _ => {}
-        }
+    let detail = detail_status.unwrap_or_default().to_ascii_lowercase();
+    let detail = detail.as_str();
+
+    if matches!(detail, "quota_exceeded" | "not_enough_credits")
+        || detail.contains("quota")
+        || detail.contains("credit")
+    {
+        return "ElevenLabs: character quota or credits exhausted".to_string();
     }
+    if matches!(detail, "too_many_concurrent_requests") || detail.contains("concurrent") {
+        return "ElevenLabs: too many concurrent requests".to_string();
+    }
+    if detail.contains("rate_limit") || detail.contains("too_many_requests") {
+        return "ElevenLabs: rate limited".to_string();
+    }
+    if matches!(detail, "invalid_api_key" | "missing_api_key") || detail.contains("api_key") {
+        return "ElevenLabs: invalid or missing API key".to_string();
+    }
+    if matches!(detail, "missing_permissions" | "forbidden") || detail.contains("permission") {
+        return "ElevenLabs: this API key is missing a required permission".to_string();
+    }
+    if matches!(detail, "voice_not_found" | "model_not_found")
+        || detail.contains("voice_not_found")
+        || detail.contains("model_not_found")
+    {
+        return "ElevenLabs: selected voice or model is no longer available".to_string();
+    }
+    if matches!(
+        detail,
+        "invalid_voice_settings" | "invalid_request" | "value_error" | "string_pattern_mismatch"
+    ) || detail.contains("validation")
+        || detail.contains("invalid")
+    {
+        return "ElevenLabs: invalid TTS request".to_string();
+    }
+    if detail.contains("unusual_activity") || detail.contains("blocked") {
+        return "ElevenLabs: account or request temporarily blocked".to_string();
+    }
+
     match status {
-        401 | 403 => "ElevenLabs: invalid API key".to_string(),
-        402 => "ElevenLabs: this voice needs a paid plan (cloned & professional voices require a subscription)".to_string(),
+        400 | 422 => "ElevenLabs: invalid TTS request".to_string(),
+        401 | 403 => "ElevenLabs: invalid API key or missing required permission".to_string(),
+        402 => "ElevenLabs: plan, quota, or credits do not allow this request".to_string(),
+        404 => "ElevenLabs: selected voice or model is no longer available".to_string(),
+        408 => "ElevenLabs: request timed out".to_string(),
+        409 => "ElevenLabs: request conflicts with the current resource state".to_string(),
         429 => "ElevenLabs: rate limited".to_string(),
+        500..=599 => "ElevenLabs: provider is temporarily unavailable".to_string(),
         s => format!("ElevenLabs error: HTTP {s}"),
     }
 }
 
 /// Pull the `detail.status` discriminator out of an ElevenLabs error body, if
-/// present (the body shape is `{"detail": {"status": "...", "message": "..."}}`
-/// OR `{"detail": "..."}`). REAL CODE — tested.
+/// present. ElevenLabs can return object-shaped detail payloads, string detail
+/// payloads, FastAPI validation arrays, or an empty body depending on the edge.
 pub fn parse_detail_status(body: &str) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(body).ok()?;
-    v.get("detail")?
-        .get("status")?
-        .as_str()
-        .map(|s| s.to_string())
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let detail = value.get("detail")?;
+    if let Some(status) = detail.get("status").and_then(|value| value.as_str()) {
+        return Some(status.to_string());
+    }
+    if let Some(items) = detail.as_array() {
+        for item in items {
+            if let Some(status) = item.get("status").and_then(|value| value.as_str()) {
+                return Some(status.to_string());
+            }
+            if let Some(kind) = item.get("type").and_then(|value| value.as_str()) {
+                return Some(kind.to_string());
+            }
+        }
+    }
+    None
 }
 
+pub fn parse_detail_message(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let detail = value.get("detail")?;
+    if let Some(message) = detail.get("message").and_then(|value| value.as_str()) {
+        return Some(message.to_string());
+    }
+    if let Some(message) = detail.as_str() {
+        return Some(message.to_string());
+    }
+    if let Some(items) = detail.as_array() {
+        for item in items {
+            if let Some(message) = item.get("msg").and_then(|value| value.as_str()) {
+                return Some(message.to_string());
+            }
+            if let Some(message) = item.get("message").and_then(|value| value.as_str()) {
+                return Some(message.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn classify_cloud_error_body(status: u16, body: &str) -> String {
+    let detail_status = parse_detail_status(body);
+    let detail_message = parse_detail_message(body);
+    let mut message = classify_cloud_status(status, detail_status.as_deref());
+    if let Some(detail_message) = detail_message {
+        let detail_message = detail_message.trim();
+        if !detail_message.is_empty() {
+            message.push_str(": ");
+            message.push_str(detail_message);
+        }
+    }
+    message
+}
 /// One live ElevenLabs voice (from `/v2/voices`). Surfaced to the renderer
 /// cloud-voice picker (includes the account's cloned voices).
 #[derive(Clone, Debug, PartialEq)]
@@ -117,7 +196,7 @@ pub struct CloudVoice {
     pub preview_url: Option<String>,
 }
 
-/// Parse a `/v2/voices` JSON body into `CloudVoice`s. REAL CODE — tested.
+/// Parse a `/v2/voices` JSON body into `CloudVoice`s. REAL CODE â€” tested.
 pub fn parse_cloud_voices(body: &str) -> Vec<CloudVoice> {
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -196,6 +275,7 @@ impl ElevenLabsEngine {
             self.client
                 .get(ELEVENLABS_VOICES_URL)
                 .header("xi-api-key", &self.api_key)
+                .timeout(Duration::from_secs(30))
                 .send(),
         )
         .map_err(|e| TtsError::Cloud(format!("ElevenLabs voices request failed: {e}")))?;
@@ -203,10 +283,7 @@ impl ElevenLabsEngine {
         let body = block_on(resp.text())
             .map_err(|e| TtsError::Cloud(format!("ElevenLabs voices read failed: {e}")))?;
         if !(200..300).contains(&status) {
-            return Err(TtsError::Cloud(classify_cloud_status(
-                status,
-                parse_detail_status(&body).as_deref(),
-            )));
+            return Err(TtsError::Cloud(classify_cloud_error_body(status, &body)));
         }
         Ok(parse_cloud_voices(&body))
     }
@@ -220,7 +297,7 @@ impl ElevenLabsEngine {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| TtsError::Cloud(format!("preview client failed: {e}")))?;
-        let resp = block_on(client.get(url).send())
+        let resp = block_on(client.get(url).timeout(Duration::from_secs(30)).send())
             .map_err(|e| TtsError::Cloud(format!("preview fetch failed: {e}")))?;
         if !resp.status().is_success() {
             return Err(TtsError::Cloud(format!("preview HTTP {}", resp.status())));
@@ -358,7 +435,7 @@ impl ElevenLabsEngine {
         }))
     }
 
-    /// One-shot ElevenLabs convert → mp3 bytes. Async so it can be raced against a
+    /// One-shot ElevenLabs convert â†’ mp3 bytes. Async so it can be raced against a
     /// cancel signal: dropping this future aborts the in-flight reqwest POST.
     async fn fetch_mp3(&self, req: &CloudSynthesisRequest, voice: &str) -> TtsResult<Vec<u8>> {
         let resp = self
@@ -367,16 +444,14 @@ impl ElevenLabsEngine {
             .header("xi-api-key", &self.api_key)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(&build_cloud_body(req))
+            .timeout(Duration::from_secs(30))
             .send()
             .await
             .map_err(|e| TtsError::Cloud(format!("ElevenLabs request failed: {e}")))?;
         let status = resp.status().as_u16();
         if !(200..300).contains(&status) {
             let body = resp.text().await.unwrap_or_default();
-            return Err(TtsError::Cloud(classify_cloud_status(
-                status,
-                parse_detail_status(&body).as_deref(),
-            )));
+            return Err(TtsError::Cloud(classify_cloud_error_body(status, &body)));
         }
         let bytes = resp
             .bytes()
@@ -406,7 +481,7 @@ impl TtsEngine for ElevenLabsEngine {
     }
 
     /// Cloud override of the default wrapper: race the in-flight POST against the
-    /// sink's cancel flag (flipped by `tts_cancel` / `cancel_all` — the TTS island
+    /// sink's cancel flag (flipped by `tts_cancel` / `cancel_all` â€” the TTS island
     /// X or the dictation overlay X). On cancel the request future is dropped,
     /// which aborts the ElevenLabs HTTP call mid-flight instead of only stopping
     /// the next sentence.
@@ -489,5 +564,27 @@ mod tests {
         let url = validate_preview_url("https://8.8.8.8/preview.mp3").unwrap();
         assert_eq!(url.scheme(), "https");
         assert_eq!(url.host_str(), Some("8.8.8.8"));
+    }
+
+    #[test]
+    fn classify_elevenlabs_empty_400_body() {
+        let message = classify_cloud_error_body(400, "");
+        assert!(message.contains("invalid"));
+    }
+
+    #[test]
+    fn classify_elevenlabs_validation_array_body() {
+        let body = r#"{"detail":[{"type":"string_pattern_mismatch","msg":"String should match pattern"}]}"#;
+        let message = classify_cloud_error_body(422, body);
+        assert!(message.contains("invalid"));
+        assert!(message.contains("String should match pattern"));
+    }
+
+    #[test]
+    fn classify_elevenlabs_quota_detail_status() {
+        let body = r#"{"detail":{"status":"quota_exceeded","message":"quota reached"}}"#;
+        let message = classify_cloud_error_body(429, body);
+        assert!(message.contains("quota"));
+        assert!(message.contains("quota reached"));
     }
 }

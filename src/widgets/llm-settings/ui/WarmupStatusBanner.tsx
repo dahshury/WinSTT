@@ -133,7 +133,7 @@ function buildModelMissingProps(
 
 function buildLoadFailedProps(
 	model: string,
-	errorBody: string | undefined,
+	errorBody: string | null | undefined,
 	t: TranslateFn,
 	onOpenManager?: () => void,
 ): StatusBannerProps {
@@ -141,7 +141,7 @@ function buildLoadFailedProps(
 		severity: "error",
 		title: t("warmupModelLoadFailedTitle", { model }),
 		description: t("warmupModelLoadFailedDescription"),
-		detail: errorBody,
+		detail: errorBody ?? undefined,
 		action: onOpenManager
 			? { label: t("warmupOpenManager"), onClick: onOpenManager }
 			: undefined,

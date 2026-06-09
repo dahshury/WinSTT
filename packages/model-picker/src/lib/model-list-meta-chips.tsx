@@ -14,9 +14,13 @@ import type {
 } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
-import { EndpointFeatureIcons } from "../ui/EndpointFeatureIcons";
+import { FeatureSourceIcons } from "../ui/EndpointFeatureIcons";
 import { ModelModalityIcons } from "../ui/ModelModalityIcons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
+import {
+	type FeatureSource,
+	hasDisplayableFeatures,
+} from "./endpoint-feature-icons-test-helpers";
 import {
 	getFeaturedEndpoint,
 	getPricingClassName,
@@ -321,22 +325,48 @@ function TranscriptionChip() {
 	);
 }
 
-function FeaturedEndpointChip({
+function buildInlineFeatureSource(
+	endpoint: OpenRouterEndpoint | null,
+	model: OpenRouterModel,
+): FeatureSource {
+	const source: FeatureSource = { id: model.id };
+	if (model.variant !== undefined) {
+		source.variant = model.variant;
+	}
+	if (endpoint?.quantization !== undefined) {
+		source.quantization = endpoint.quantization;
+	}
+	const supportedParameters = Array.from(
+		new Set([
+			...(endpoint?.supported_parameters ?? []),
+			...(model.supported_parameters ?? []),
+		]),
+	);
+	if (supportedParameters.length > 0) {
+		source.supported_parameters = supportedParameters;
+	}
+	return source;
+}
+
+function FeatureSourceChip({
 	endpoint,
+	model,
 }: {
 	endpoint: OpenRouterEndpoint | null;
+	model: OpenRouterModel;
 }) {
-	if (!endpoint) {
+	const iconSource = buildInlineFeatureSource(endpoint, model);
+	if (!hasDisplayableFeatures(iconSource)) {
 		return null;
 	}
 	return (
 		<div className="flex items-center">
-			<EndpointFeatureIcons
+			<FeatureSourceIcons
 				className="gap-1"
-				endpoint={endpoint}
 				flat
 				maxIcons={4}
 				size="sm"
+				source={iconSource}
 			/>
 		</div>
 	);
@@ -409,11 +439,14 @@ export function InlineModelMeta({
 	const hasVariantToken = !!(variant && variantClasses);
 	const hasTranscriptionPricing =
 		isTranscriptionModel && hasRawPricing(model.pricing);
+	const featureSource = buildInlineFeatureSource(featuredEndpoint, model);
+	const hasFeatureIcons = hasDisplayableFeatures(featureSource);
 	if (
 		!(
 			hasVariantToken ||
 			isTranscriptionModel ||
 			hasTranscriptionPricing ||
+			hasFeatureIcons ||
 			shouldRenderInlineMeta(
 				model.context_length,
 				pricingInfo,
@@ -462,8 +495,12 @@ export function InlineModelMeta({
 		isTranscriptionModel ? <TranscriptionChip key="transcription" /> : null,
 	);
 	pushFact(
-		featuredEndpoint ? (
-			<FeaturedEndpointChip endpoint={featuredEndpoint} key="features" />
+		hasFeatureIcons ? (
+			<FeatureSourceChip
+				endpoint={featuredEndpoint}
+				key="features"
+				model={model}
+			/>
 		) : null,
 	);
 	pushFact(

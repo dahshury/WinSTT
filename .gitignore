@@ -37,6 +37,8 @@ skills-lock.json
 .crush/
 
 # Playwright
+.playwright-cli/
+.coverage
 playwright-report/
 test-results/
 blob-report/
@@ -73,3 +75,20 @@ target-verify*/
 
 tools/windows/*.log
 spike_out.log
+
+# Generated codebase audit artifacts
+/tmp_*
+/frontend_*.csv
+/backend_*.csv
+/packages_tracked_*.csv
+/docs_tracked_*.csv
+/src_dir_lines.csv
+/tauri_tracked_*.csv
+/tauri_dir_lines.csv
+/highlevel_ref_inventory.csv
+/ref_*inventory.csv
+/ref_*summary*.csv
+/dir_nonbinary_recursive_lines.csv
+/extension_track_lines.csv
+/large_files.txt
+/transport_command_call_counts.csv

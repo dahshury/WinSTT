@@ -107,7 +107,13 @@
     "updatesStatusError": "Kiểm tra cập nhật thất bại: {message}",
     "updatesDownloading": "Đang tải xuống…",
     "updatesDownloadingPercent": "{percent}% — Đang tải xuống bản cập nhật",
-    "updatesRestartToInstall": "Khởi động lại để cài đặt"
+    "updatesRestartToInstall": "Khởi động lại để cài đặt",
+    "diagnosticsTitle": "Chẩn đoán",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Mở thư mục nhật ký",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Lưu gói chẩn đoán...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Thống kê tổng quan",

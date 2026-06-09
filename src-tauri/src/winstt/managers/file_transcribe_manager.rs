@@ -705,6 +705,12 @@ use crate::audio_toolkit::audio::FrameResampler;
 /// a no-op. Mirrors `_TARGET_SAMPLE_RATE` in `server/.../file_transcribe.py`.
 const TARGET_SAMPLE_RATE: usize = 16_000;
 
+/// Upper bound for one-shot file transcription. The STT path still transcribes a
+/// single in-memory PCM buffer, so decoded audio must be bounded independently of
+/// compressed file size.
+const MAX_DECODED_AUDIO_MINUTES: usize = 60;
+const MAX_DECODED_PCM_SAMPLES: usize = TARGET_SAMPLE_RATE * MAX_DECODED_AUDIO_MINUTES * 60;
+
 /// Frame size the resampler emits in (30 ms @ 16 kHz). Chosen to match the
 /// recorder/loopback frame cadence; the last partial frame is zero-padded on
 /// `finish()` (≤30 ms of trailing silence, trimmed by VAD before transcription).
@@ -761,13 +767,15 @@ fn decode_audio_to_pcm(path: &std::path::Path) -> Result<Vec<f32>, String> {
         .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
         .map_err(|e| format!("no decoder for audio codec: {e}"))?;
 
-    // Accumulated mono samples at the file's NATIVE rate; resampled to 16 kHz once
-    // the whole stream is decoded (the source rate isn't reliably known until the
-    // first decoded buffer carries its `AudioSpec`).
-    let mut mono: Vec<f32> = Vec::new();
+    // Accumulated mono samples at the final 16 kHz target rate. Resample each
+    // decoded packet as it arrives so compressed media cannot expand into both a
+    // large native-rate buffer and a second resampled buffer.
+    let mut pcm: Vec<f32> = Vec::new();
     let mut source_rate: Option<u32> = None;
+    let mut resampler: Option<FrameResampler> = None;
     // Scratch buffer reused across packets for the interleaved f32 copy.
     let mut interleaved: Vec<f32> = Vec::new();
+    let mut mono_chunk: Vec<f32> = Vec::new();
 
     loop {
         let packet = match format.next_packet() {
@@ -794,7 +802,18 @@ fn decode_audio_to_pcm(path: &std::path::Path) -> Result<Vec<f32>, String> {
             Ok(decoded) => {
                 let spec = decoded.spec();
                 if source_rate.is_none() {
-                    source_rate = Some(spec.rate());
+                    let rate = spec.rate();
+                    source_rate = Some(rate);
+                    if rate as usize != TARGET_SAMPLE_RATE {
+                        let frame_dur = std::time::Duration::from_millis(RESAMPLE_FRAME_MS);
+                        resampler = Some(FrameResampler::new(
+                            rate as usize,
+                            TARGET_SAMPLE_RATE,
+                            frame_dur,
+                        ));
+                    }
+                } else if source_rate != Some(spec.rate()) {
+                    return Err("audio stream changed sample rate mid-file".to_string());
                 }
                 let channels = spec.channels().count().max(1);
                 let frames = decoded.frames();
@@ -807,16 +826,18 @@ fn decode_audio_to_pcm(path: &std::path::Path) -> Result<Vec<f32>, String> {
                 decoded.copy_to_vec_interleaved::<f32>(&mut interleaved);
 
                 if channels <= 1 {
-                    mono.extend_from_slice(&interleaved);
+                    append_decoded_mono(&mut pcm, &mut resampler, &interleaved)?;
                 } else {
                     // Downmix to mono by averaging channels (matches the Python
                     // FileAudioSource `np.mean(arr, axis=1)` / ffmpeg `-ac 1`).
-                    mono.reserve(frames);
+                    mono_chunk.clear();
+                    mono_chunk.reserve(frames);
                     let inv = 1.0 / channels as f32;
                     for frame in interleaved.chunks_exact(channels) {
                         let sum: f32 = frame.iter().copied().sum();
-                        mono.push(sum * inv);
+                        mono_chunk.push(sum * inv);
                     }
+                    append_decoded_mono(&mut pcm, &mut resampler, &mono_chunk)?;
                 }
             }
             // A single corrupt packet is recoverable — skip it and resync on the
@@ -827,30 +848,66 @@ fn decode_audio_to_pcm(path: &std::path::Path) -> Result<Vec<f32>, String> {
         }
     }
 
-    if mono.is_empty() {
+    if let Some(resampler) = &mut resampler {
+        let mut limit_error = None;
+        resampler.finish(|frame| {
+            if limit_error.is_none() {
+                limit_error = append_pcm_limited(&mut pcm, frame).err();
+            }
+        });
+        if let Some(error) = limit_error {
+            return Err(error);
+        }
+    }
+
+    if pcm.is_empty() {
         return Err("file contained no decodable audio".to_string());
     }
 
-    let in_rate = source_rate.unwrap_or(TARGET_SAMPLE_RATE as u32) as usize;
-    Ok(resample_to_target(mono, in_rate))
+    Ok(pcm)
 }
 
-/// Resample mono f32 PCM from `in_rate` Hz to 16 kHz using the project's
-/// recording-grade `FftFixedIn` resampler (overlap-save, stateful — the same
-/// resampler the live recorder/loopback path uses, so file decodes inherit the
-/// recording-resample-quality fix). A no-op (re-frame only) when already 16 kHz.
-fn resample_to_target(mono: Vec<f32>, in_rate: usize) -> Vec<f32> {
-    if in_rate == TARGET_SAMPLE_RATE {
-        return mono;
+fn append_decoded_mono(
+    pcm: &mut Vec<f32>,
+    resampler: &mut Option<FrameResampler>,
+    mono: &[f32],
+) -> Result<(), String> {
+    let Some(resampler) = resampler else {
+        return append_pcm_limited(pcm, mono);
+    };
+
+    let mut limit_error = None;
+    resampler.push(mono, |frame| {
+        if limit_error.is_none() {
+            limit_error = append_pcm_limited(pcm, frame).err();
+        }
+    });
+    if let Some(error) = limit_error {
+        return Err(error);
     }
-    let frame_dur = std::time::Duration::from_millis(RESAMPLE_FRAME_MS);
-    let mut resampler = FrameResampler::new(in_rate, TARGET_SAMPLE_RATE, frame_dur);
-    let mut out: Vec<f32> = Vec::with_capacity(
-        (mono.len() as u64 * TARGET_SAMPLE_RATE as u64 / in_rate.max(1) as u64) as usize + 1,
-    );
-    resampler.push(&mono, |frame| out.extend_from_slice(frame));
-    resampler.finish(|frame| out.extend_from_slice(frame));
-    out
+    Ok(())
+}
+
+fn append_pcm_limited(pcm: &mut Vec<f32>, samples: &[f32]) -> Result<(), String> {
+    append_pcm_limited_with_max(pcm, samples, MAX_DECODED_PCM_SAMPLES)
+}
+
+fn append_pcm_limited_with_max(
+    pcm: &mut Vec<f32>,
+    samples: &[f32],
+    max_samples: usize,
+) -> Result<(), String> {
+    if pcm.len().saturating_add(samples.len()) > max_samples {
+        return Err(decoded_audio_limit_error());
+    }
+    pcm.extend_from_slice(samples);
+    Ok(())
+}
+
+fn decoded_audio_limit_error() -> String {
+    format!(
+        "decoded audio exceeds the {MAX_DECODED_AUDIO_MINUTES}-minute file transcription limit; split the file into shorter clips"
+    )
 }
 
 fn now_millis() -> u128 {
@@ -858,4 +915,31 @@ fn now_millis() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_pcm_limited_with_max_allows_exact_limit() {
+        let mut pcm = vec![0.0; 3];
+        let samples = [1.0, 2.0];
+
+        let result = append_pcm_limited_with_max(&mut pcm, &samples, 5);
+
+        assert!(result.is_ok());
+        assert_eq!(pcm, vec![0.0, 0.0, 0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn append_pcm_limited_with_max_rejects_over_limit_without_extending() {
+        let mut pcm = vec![0.0; 3];
+        let samples = [1.0, 2.0, 3.0];
+
+        let result = append_pcm_limited_with_max(&mut pcm, &samples, 5);
+
+        assert_eq!(result, Err(decoded_audio_limit_error()));
+        assert_eq!(pcm, vec![0.0, 0.0, 0.0]);
+    }
 }

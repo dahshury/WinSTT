@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { OllamaModel } from "@/shared/api/models";
 import { OllamaModelSelector } from "./OllamaModelSelector";
@@ -14,6 +14,10 @@ function model(): OllamaModel {
 }
 
 describe("OllamaModelSelector detached-open mode", () => {
+	beforeEach(() => {
+		window.localStorage.clear();
+	});
+
 	test("onOpenDetached opens the detached picker without opening the in-page popup", () => {
 		const onOpenDetached = mock(() => undefined);
 		const onChange = mock(() => undefined);
@@ -38,5 +42,32 @@ describe("OllamaModelSelector detached-open mode", () => {
 		expect(trigger.getAttribute("aria-expanded")).toBe("false");
 		expect(screen.queryByRole("listbox")).toBeNull();
 		expect(onChange).not.toHaveBeenCalled();
+	});
+
+	test("inline detached mode restores persisted search query for its scoped key", () => {
+		const uiStorageKey = "winstt:test:ollama-inline-ui";
+		window.localStorage.setItem(
+			uiStorageKey,
+			JSON.stringify({
+				activeRailId: "llama",
+				query: "llama3",
+				sortKey: null,
+			}),
+		);
+
+		render(
+			<OllamaModelSelector
+				inline
+				models={[model()]}
+				onChange={() => undefined}
+				uiStorageKey={uiStorageKey}
+				value="llama3:8b"
+			/>,
+		);
+
+		const search = screen.getByPlaceholderText(
+			"Search models or enter an Ollama tag",
+		) as HTMLInputElement;
+		expect(search.value).toBe("llama3");
 	});
 });

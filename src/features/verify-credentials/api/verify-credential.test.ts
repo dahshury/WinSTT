@@ -80,9 +80,9 @@ describe("invokeVerify", () => {
 describe("applyVerifyResponse", () => {
 	test("ok=true sets status to verified", () => {
 		applyVerifyResponse("elevenlabs", { ok: true });
-		expect(useCredentialStatusStore.getState().byProvider.elevenlabs.status).toBe(
-			"verified",
-		);
+		expect(
+			useCredentialStatusStore.getState().byProvider.elevenlabs.status,
+		).toBe("verified");
 	});
 
 	test("ok=false + code=network sets status to offline with the message", () => {
@@ -97,7 +97,11 @@ describe("applyVerifyResponse", () => {
 	});
 
 	test("ok=false + other code sets status to invalid with the message", () => {
-		applyVerifyResponse("elevenlabs", { ok: false, code: "auth", message: "401" });
+		applyVerifyResponse("elevenlabs", {
+			ok: false,
+			code: "auth",
+			message: "401",
+		});
 		const entry = useCredentialStatusStore.getState().byProvider.elevenlabs;
 		expect(entry.status).toBe("invalid");
 		expect(entry.lastError).toBe("401");
@@ -114,18 +118,18 @@ describe("verifyCredential", () => {
 		const result = await verifyCredential("elevenlabs", "   ");
 		expect(result.code).toBe("key_missing");
 		expect(mockInvoke).not.toHaveBeenCalled();
-		expect(useCredentialStatusStore.getState().byProvider.elevenlabs.status).toBe(
-			"idle",
-		);
+		expect(
+			useCredentialStatusStore.getState().byProvider.elevenlabs.status,
+		).toBe("idle");
 	});
 
 	test("ok response flips status to verified", async () => {
 		mockInvoke.mockImplementationOnce(async () => ({ ok: true }));
 		const result = await verifyCredential("elevenlabs", "sk-abc");
 		expect(result.ok).toBe(true);
-		expect(useCredentialStatusStore.getState().byProvider.elevenlabs.status).toBe(
-			"verified",
-		);
+		expect(
+			useCredentialStatusStore.getState().byProvider.elevenlabs.status,
+		).toBe("verified");
 	});
 
 	test("network failure (thrown) maps to offline", async () => {
@@ -147,9 +151,9 @@ describe("verifyCredential", () => {
 		}));
 		const result = await verifyCredential("elevenlabs", "sk-bad");
 		expect(result.ok).toBe(false);
-		expect(useCredentialStatusStore.getState().byProvider.elevenlabs.status).toBe(
-			"invalid",
-		);
+		expect(
+			useCredentialStatusStore.getState().byProvider.elevenlabs.status,
+		).toBe("invalid");
 	});
 
 	test("flips to verifying before the IPC resolves", async () => {

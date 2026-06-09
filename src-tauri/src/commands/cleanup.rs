@@ -5,8 +5,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 
+use crate::command_auth;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::winstt::commands::settings::{
@@ -39,13 +40,44 @@ pub struct RemoveDownloadedModelsResult {
     pub errors: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum CleanupOperation {
+    RemoveApplicationData,
+    RemoveDownloadedModels,
+}
+
+impl CleanupOperation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::RemoveApplicationData => "remove application data",
+            Self::RemoveDownloadedModels => "remove downloaded models",
+        }
+    }
+}
+
+const CLEANUP_ALLOWED_WINDOWS: &[&str] = &["settings"];
+
+#[cfg(test)]
+fn is_cleanup_operation_allowed(caller: &str, _operation: CleanupOperation) -> bool {
+    command_auth::label_in(caller, CLEANUP_ALLOWED_WINDOWS)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn remove_application_data(
     app: AppHandle,
+    webview: WebviewWindow,
     llm_manager: State<'_, Arc<LlmManager>>,
     delete_ollama_models: bool,
 ) -> Result<RemoveApplicationDataResult, String> {
+    command_auth::authorize_webview(
+        &webview,
+        "cleanup",
+        CleanupOperation::RemoveApplicationData.as_str(),
+        CLEANUP_ALLOWED_WINDOWS,
+        "",
+    )?;
+
     let settings = crate::winstt::commands::settings::read_settings(&app);
     let (deleted_ollama_models, ollama_errors) = if delete_ollama_models {
         delete_configured_ollama_models(&settings, llm_manager.inner().clone()).await
@@ -78,6 +110,7 @@ pub async fn remove_application_data(
 #[allow(clippy::too_many_arguments)]
 pub async fn remove_downloaded_models(
     app: AppHandle,
+    webview: WebviewWindow,
     transcription: State<'_, Arc<TranscriptionManager>>,
     model_manager: State<'_, Arc<ModelManager>>,
     downloads: State<'_, Arc<DownloadManager>>,
@@ -86,6 +119,14 @@ pub async fn remove_downloaded_models(
     llm_manager: State<'_, Arc<LlmManager>>,
     delete_ollama_models: bool,
 ) -> Result<RemoveDownloadedModelsResult, String> {
+    command_auth::authorize_webview(
+        &webview,
+        "cleanup",
+        CleanupOperation::RemoveDownloadedModels.as_str(),
+        CLEANUP_ALLOWED_WINDOWS,
+        "",
+    )?;
+
     let original_settings = read_settings(&app);
     let (deleted_ollama_models, ollama_errors) = if delete_ollama_models {
         delete_configured_ollama_models(&original_settings, llm_manager.inner().clone()).await
@@ -807,6 +848,29 @@ mod tests {
         assert!(llm.transforms.enabled);
         assert!(delete_disabled.contains(&"llmDictation".to_string()));
         assert!(!delete_disabled.contains(&"llmTransforms".to_string()));
+    }
+
+    #[test]
+    fn cleanup_authorization_matches_settings_only_policy() {
+        for operation in [
+            CleanupOperation::RemoveApplicationData,
+            CleanupOperation::RemoveDownloadedModels,
+        ] {
+            command_auth::assert_label_rules(
+                &["settings"],
+                &[
+                    "main",
+                    "overlay",
+                    "tray-menu",
+                    "model-picker",
+                    "device-picker",
+                    "history",
+                    "onboarding",
+                    "context-playground",
+                ],
+                |caller| is_cleanup_operation_allowed(caller, operation),
+            );
+        }
     }
 
     #[test]

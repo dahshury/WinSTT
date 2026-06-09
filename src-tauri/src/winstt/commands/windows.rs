@@ -6,14 +6,17 @@
 //
 // Creation policy (matches the reference's keep-alive semantics):
 //   - `main` is created eagerly in lib.rs setup (NOT here).
-//   - settings/history/onboarding/pickers/overlay/tray-menu and optional context-playground
-//     are created LAZILY on first `open_window` and HIDDEN (not destroyed) on
-//     `close_window`, so re-open preserves renderer state.
+//   - settings/history/onboarding/pickers/overlay/tray-menu are created LAZILY on
+//     first `open_window` and HIDDEN (not destroyed) on `close_window`, so re-open
+//     preserves renderer state.
+//   - optional context-playground is created lazily but DESTROYED on close, matching
+//     the Electron debug window and resetting its live-capture renderer state.
 //
 // Two placement regimes (ported from the reference window creators):
 //   - PLAIN windows (settings/history/onboarding and optional context-playground): created at
 //     a fixed size, CENTERED (settings on the main pill, the rest on the primary
-//     display), opaque backgroundColor, shown + focused. Hide-on-close.
+//     display), opaque backgroundColor, shown + focused. Hide-on-close except for
+//     the debug-only context-playground, which is destroy-on-close.
 //   - PICKER windows (model-picker/device-picker): a frameless transparent popup
 //     anchored around the chip/row that opened it. The renderer sends the trigger's
 //     viewport rect in `open_window`; we convert it to screen space via the OPENER
@@ -242,12 +245,11 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         ignore_cursor: false,
         background: SUBSTRATE,
     },
-    // Context-playground — debug-only framed/resizable window, always-on-top.
+    // Context-playground — debug-only decorated/resizable window.
     // Ported from context-playground-window.ts (600×780, min 440×420).
     // AUDIT #6: present in dev (debug_assertions) or with the `context-playground`
     // feature; dropped from `spec_for`/`open_window` in shipping builds. It is NOT
-    // in POST_STARTUP_PREWARM_LABELS, so it is never prewarmed — only created
-    // on-demand from the tray's "Context Playground (debug)" entry. Pairs with
+    // in POST_STARTUP_PREWARM_LABELS, so it is never prewarmed. Pairs with
     // `CONTEXT_PLAYGROUND_ENABLED` (= `import.meta.env.DEV`) in debug-flags.ts.
     #[cfg(any(debug_assertions, feature = "context-playground"))]
     WindowSpec {
@@ -259,9 +261,9 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         min_width: 440.0,
         min_height: 420.0,
         resizable: true,
-        decorations: false,
+        decorations: true,
         transparent: false,
-        always_on_top: true,
+        always_on_top: false,
         skip_taskbar: false,
         shadow: true,
         ignore_cursor: false,
@@ -273,9 +275,98 @@ fn spec_for(label: &str) -> Option<&'static WindowSpec> {
     WINDOW_SPECS.iter().find(|s| s.label == label)
 }
 
+fn known_window_label(label: &str) -> Result<&'static str, String> {
+    spec_for(label)
+        .map(|s| s.label)
+        .ok_or_else(|| format!("unknown window '{label}'"))
+}
+
 /// Is this a transparent anchored popup (model-picker / device-picker)?
 fn is_picker(label: &str) -> bool {
     label == "model-picker" || label == "device-picker"
+}
+
+#[derive(Clone, Copy, Debug)]
+enum WindowOperation {
+    Open,
+    Close,
+    Resize,
+    Anchor,
+}
+
+impl WindowOperation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Close => "close",
+            Self::Resize => "resize",
+            Self::Anchor => "anchor",
+        }
+    }
+}
+
+fn is_window_operation_allowed(caller: &str, operation: WindowOperation, target: &str) -> bool {
+    match operation {
+        WindowOperation::Open => match target {
+            // Main app surfaces that legitimately open secondary work surfaces.
+            "settings" => matches!(caller, "main" | "tray-menu"),
+            "history" | "onboarding" => caller == "main",
+            "model-picker" => matches!(caller, "main" | "settings"),
+            "device-picker" => caller == "tray-menu",
+            #[cfg(any(debug_assertions, feature = "context-playground"))]
+            "context-playground" => caller == "tray-menu",
+            // `tray-menu` is opened by the tray command, `overlay` by recording
+            // lifecycle code, and `main` is owned by setup/show_main_window.
+            _ => false,
+        },
+        WindowOperation::Close => match target {
+            "main" | "overlay" => false,
+            "settings" | "history" | "onboarding" => caller == target,
+            "model-picker" => matches!(caller, "main" | "settings" | "model-picker"),
+            "device-picker" => matches!(caller, "tray-menu" | "device-picker"),
+            "tray-menu" => caller == "tray-menu",
+            #[cfg(any(debug_assertions, feature = "context-playground"))]
+            "context-playground" => caller == "context-playground",
+            _ => false,
+        },
+        WindowOperation::Resize => match target {
+            "model-picker" => caller == "model-picker",
+            "device-picker" => caller == "device-picker",
+            "tray-menu" => caller == "tray-menu",
+            _ => false,
+        },
+        WindowOperation::Anchor => {
+            target == caller
+                && matches!(
+                    target,
+                    "settings"
+                        | "history"
+                        | "onboarding"
+                        | "model-picker"
+                        | "device-picker"
+                        | "tray-menu"
+                )
+        }
+    }
+}
+
+fn authorize_window_operation(
+    caller: &tauri::WebviewWindow,
+    operation: WindowOperation,
+    target: &str,
+) -> Result<(), String> {
+    let caller_label = caller.label();
+    if is_window_operation_allowed(caller_label, operation, target) {
+        return Ok(());
+    }
+    log::warn!(
+        "blocked window {}: caller='{caller_label}' target='{target}'",
+        operation.as_str()
+    );
+    Err(format!(
+        "window '{caller_label}' may not {} '{target}'",
+        operation.as_str()
+    ))
 }
 
 // ── Picker placement state ──────────────────────────────────────────────────
@@ -470,7 +561,7 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
             if picker_label == "model-picker" {
                 close_model_picker_with_animation(&app_handle, &window);
             } else {
-                let _ = close_window(app_handle.clone(), picker_label.to_string());
+                let _ = close_window_internal(&app_handle, picker_label);
             }
         });
     }
@@ -624,10 +715,11 @@ pub fn open_window(
 ) -> Result<(), String> {
     log::debug!("open_window('{name}') invoked");
     // Resolve the static label so it can key the picker-state map / emit.
-    let label: &'static str = match spec_for(&name) {
-        Some(spec) => spec.label,
-        None => return Err(format!("unknown window '{name}'")),
-    };
+    let label = known_window_label(&name)?;
+    #[cfg(any(debug_assertions, feature = "context-playground"))]
+    let close_tray_after_context_open =
+        label == "context-playground" && webview.label() == "tray-menu";
+    authorize_window_operation(&webview, WindowOperation::Open, label)?;
 
     let window = ensure_window(&app, label)
         .inspect_err(|e| log::error!("open_window('{name}') ensure_window failed: {e}"))?;
@@ -676,59 +768,98 @@ pub fn open_window(
     // Plain window: center, then show + focus. The window is opaque (SUBSTRATE
     // background) so it shows cleanly without a white flash; no native opacity
     // animation (see settings_modal.rs for why the layered fade was removed).
-    center_window(&app, &window, label == "settings");
-    window.show().map_err(|e| e.to_string())?;
-    let _ = window.unminimize();
-    let _ = window.set_focus();
-    // Settings is a modal child of the pill: disable the pill (after Settings has
-    // grabbed focus) so it can't be focused/clicked while open. Re-enabled when
-    // Settings closes (close_self_window / close_window / CloseRequested).
-    if label == "settings" {
-        set_main_modal(&app, true);
+    let show_result = (|| {
+        center_window(&app, &window, label == "settings");
+        window.show().map_err(|e| e.to_string())?;
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        // Settings is a modal child of the pill: disable the pill (after Settings has
+        // grabbed focus) so it can't be focused/clicked while open. Re-enabled when
+        // Settings closes (close_self_window / close_window / CloseRequested).
+        if label == "settings" {
+            set_main_modal(&app, true);
+        }
+        Ok(())
+    })();
+
+    if let Err(e) = show_result {
+        #[cfg(any(debug_assertions, feature = "context-playground"))]
+        if label == "context-playground" {
+            crate::winstt::commands::context_playground::stop_context_playground_polling();
+            let _ = window.destroy();
+        }
+        return Err(e);
     }
+
+    #[cfg(any(debug_assertions, feature = "context-playground"))]
+    if close_tray_after_context_open {
+        let _ = crate::winstt::commands::tray_menu::hide_tray_menu(app.clone());
+    }
+
     Ok(())
 }
 
-/// `close_window` — HIDE (not destroy) the labelled window so re-open keeps state.
-#[tauri::command]
-#[specta::specta]
-pub fn close_window(app: AppHandle, name: String) -> Result<(), String> {
-    // The tray-menu is kept always-shown and parked OFF-SCREEN (see tray_menu.rs
-    // OFFSCREEN) so re-open is a flicker-free reposition. The renderer's primary
-    // dismiss — a menu-item click — routes here via TRAY_MENU_CLOSE; a real hide()
-    // would leave it OS-hidden, and place_tray_menu no longer calls show() once it
-    // has been pre-shown, so the menu would never reappear. Park it instead, mirroring
-    // the reference's tray-menu:close → hideTrayMenu → moveOffscreen.
-    if name == "tray-menu" {
-        return crate::winstt::commands::tray_menu::hide_tray_menu(app);
+/// Internal Rust lifecycle close path. Use this for native close events and
+/// backend-owned cleanup after the caller has already been established by code.
+pub(crate) fn close_window_internal(app: &AppHandle, name: &str) -> Result<(), String> {
+    let label = known_window_label(name)?;
+    if label == "main" {
+        return Err("main window cannot be closed through close_window".into());
     }
-    if name == "settings" {
-        if let Some(window) = app.get_webview_window(&name) {
-            return close_settings_window(app, window);
+
+    // Tray menu close uses its dedicated keep-alive path so the webview state is
+    // preserved while the OS still sees a real hidden/shown popup for blur.
+    if label == "tray-menu" {
+        return crate::winstt::commands::tray_menu::hide_tray_menu(app.clone());
+    }
+    if label == "settings" {
+        if let Some(window) = app.get_webview_window(label) {
+            return close_settings_window(app.clone(), window);
         }
-        set_main_modal(&app, false);
+        set_main_modal(app, false);
         return Ok(());
     }
-    if let Some(window) = app.get_webview_window(&name) {
-        if name == "model-picker" {
-            close_model_picker_with_animation(&app, &window);
+    #[cfg(any(debug_assertions, feature = "context-playground"))]
+    if label == "context-playground" {
+        crate::winstt::commands::context_playground::stop_context_playground_polling();
+        if let Some(window) = app.get_webview_window(label) {
+            window.destroy().map_err(|e| e.to_string())?;
+        }
+        return Ok(());
+    }
+    if let Some(window) = app.get_webview_window(label) {
+        if label == "model-picker" {
+            close_model_picker_with_animation(app, &window);
             return Ok(());
         }
         window.hide().map_err(|e| e.to_string())?;
     }
     // A closed picker forgets its anchor so a stray resize can't re-show it.
-    if let Some(label) = spec_for(&name).map(|s| s.label) {
-        if is_picker(label) {
-            with_picker_state(label, |s| s.anchor = None);
-        }
-        // The device-picker is a tray-menu submenu: choosing a device (or Esc)
-        // collapses the WHOLE menu, matching the reference's device-picker
-        // `handleClose` (hideDevicePicker + hideTrayMenu).
-        if label == "device-picker" {
-            let _ = crate::winstt::commands::tray_menu::hide_tray_menu(app.clone());
-        }
+    if is_picker(label) {
+        with_picker_state(label, |s| s.anchor = None);
+    }
+    // The device-picker is a tray-menu submenu: choosing a device (or Esc)
+    // collapses the WHOLE menu, matching the reference's device-picker
+    // `handleClose` (hideDevicePicker + hideTrayMenu).
+    if label == "device-picker" {
+        let _ = crate::winstt::commands::tray_menu::hide_tray_menu(app.clone());
     }
     Ok(())
+}
+
+/// `close_window` — HIDE the labelled keep-alive windows so re-open keeps state.
+/// Debug-only context-playground is destroyed on close to mirror the Electron
+/// reference and force a fresh live-capture renderer on next open.
+#[tauri::command]
+#[specta::specta]
+pub fn close_window(
+    app: AppHandle,
+    webview: tauri::WebviewWindow,
+    name: String,
+) -> Result<(), String> {
+    let label = known_window_label(&name)?;
+    authorize_window_operation(&webview, WindowOperation::Close, label)?;
+    close_window_internal(&app, label)
 }
 
 /// `close_self_window` — hide the CALLING window (resolved from its own webview
@@ -758,25 +889,30 @@ pub fn close_self_window(app: AppHandle, webview: tauri::WebviewWindow) -> Resul
 /// the inner size.
 #[tauri::command]
 #[specta::specta]
-pub fn resize_window(app: AppHandle, name: String, width: f64, height: f64) -> Result<(), String> {
-    let label: Option<&'static str> = spec_for(&name).map(|s| s.label);
+pub fn resize_window(
+    app: AppHandle,
+    webview: tauri::WebviewWindow,
+    name: String,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let label = known_window_label(&name)?;
+    authorize_window_operation(&webview, WindowOperation::Resize, label)?;
 
-    if let Some(label) = label {
-        if is_picker(label) {
-            with_picker_state(label, |s| {
-                s.width = width.max(1.0).ceil();
-                s.height = height.max(1.0).ceil();
-            });
-            if let Some(window) = app.get_webview_window(label) {
-                if window.is_visible().unwrap_or(false) {
-                    place_picker(&app, label, &window);
-                }
+    if is_picker(label) {
+        with_picker_state(label, |s| {
+            s.width = width.max(1.0).ceil();
+            s.height = height.max(1.0).ceil();
+        });
+        if let Some(window) = app.get_webview_window(label) {
+            if window.is_visible().unwrap_or(false) {
+                place_picker(&app, label, &window);
             }
-            return Ok(());
         }
+        return Ok(());
     }
 
-    if let Some(window) = app.get_webview_window(&name) {
+    if let Some(window) = app.get_webview_window(label) {
         // NO-OP GUARD (the reference's `sizeUnchanged` in tray-menu-window.ts): the
         // renderer's ResizeObserver fires on EVERY reflow — hover, focus ring,
         // sub-pixel layout — and frequently reports the SAME content size. Without
@@ -803,7 +939,7 @@ pub fn resize_window(app: AppHandle, name: String, width: f64, height: f64) -> R
             // against its initial (larger) footprint — mirrors the reference's resize →
             // re-anchor in tray-menu-window.ts. Only fires when the size ACTUALLY
             // changed, so a steady-state ResizeObserver storm no longer re-anchors.
-            if label == Some("tray-menu") {
+            if label == "tray-menu" {
                 let _ = crate::winstt::commands::tray_menu::reanchor_tray_menu(app.clone());
             }
         }
@@ -815,8 +951,17 @@ pub fn resize_window(app: AppHandle, name: String, width: f64, height: f64) -> R
 /// screen px. Used to place a detached window next to its trigger directly.
 #[tauri::command]
 #[specta::specta]
-pub fn anchor_window(app: AppHandle, name: String, x: f64, y: f64) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(&name) {
+pub fn anchor_window(
+    app: AppHandle,
+    webview: tauri::WebviewWindow,
+    name: String,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    let label = known_window_label(&name)?;
+    authorize_window_operation(&webview, WindowOperation::Anchor, label)?;
+
+    if let Some(window) = app.get_webview_window(label) {
         window
             .set_position(LogicalPosition::new(x, y))
             .map_err(|e| e.to_string())?;
@@ -826,7 +971,9 @@ pub fn anchor_window(app: AppHandle, name: String, x: f64, y: f64) -> Result<(),
 
 #[cfg(test)]
 mod tests {
-    use super::{is_picker, spec_for};
+    use super::{
+        is_picker, is_window_operation_allowed, known_window_label, spec_for, WindowOperation,
+    };
 
     #[test]
     fn known_labels_resolve() {
@@ -852,5 +999,111 @@ mod tests {
         assert!(is_picker("device-picker"));
         assert!(!is_picker("settings"));
         assert!(!is_picker("history"));
+    }
+
+    #[test]
+    fn known_window_label_rejects_unknown_targets() {
+        assert_eq!(known_window_label("settings"), Ok("settings"));
+        assert!(known_window_label("arbitrary-window").is_err());
+    }
+
+    fn assert_window_rules(rules: &[(&str, WindowOperation, &str)], expected: bool) {
+        for (caller, operation, target) in rules {
+            assert_eq!(
+                is_window_operation_allowed(caller, *operation, target),
+                expected,
+                "{caller} should {}be allowed to {} {target}",
+                if expected { "" } else { "not " },
+                operation.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn window_open_authorization_allows_current_renderer_flows() {
+        assert_window_rules(
+            &[
+                ("main", WindowOperation::Open, "settings"),
+                ("tray-menu", WindowOperation::Open, "settings"),
+                ("main", WindowOperation::Open, "model-picker"),
+                ("settings", WindowOperation::Open, "model-picker"),
+                ("tray-menu", WindowOperation::Open, "device-picker"),
+                #[cfg(any(debug_assertions, feature = "context-playground"))]
+                ("tray-menu", WindowOperation::Open, "context-playground"),
+            ],
+            true,
+        );
+    }
+
+    #[test]
+    fn window_authorization_blocks_cross_window_control() {
+        assert_window_rules(
+            &[
+                ("model-picker", WindowOperation::Open, "settings"),
+                ("settings", WindowOperation::Open, "device-picker"),
+                ("tray-menu", WindowOperation::Open, "overlay"),
+                ("main", WindowOperation::Resize, "tray-menu"),
+                ("model-picker", WindowOperation::Resize, "settings"),
+                ("overlay", WindowOperation::Close, "settings"),
+                ("settings", WindowOperation::Close, "tray-menu"),
+                ("tray-menu", WindowOperation::Close, "main"),
+                ("main", WindowOperation::Close, "overlay"),
+            ],
+            false,
+        );
+    }
+
+    #[cfg(any(debug_assertions, feature = "context-playground"))]
+    #[test]
+    fn context_playground_is_a_normal_visible_window() {
+        let spec = spec_for("context-playground").expect("context playground spec");
+
+        assert!(spec.resizable);
+        assert!(spec.decorations);
+        assert!(!spec.transparent);
+        assert!(!spec.always_on_top);
+        assert!(!spec.skip_taskbar);
+    }
+
+    #[test]
+    fn window_resize_and_anchor_authorization_is_self_scoped() {
+        assert_window_rules(
+            &[
+                ("tray-menu", WindowOperation::Resize, "tray-menu"),
+                ("model-picker", WindowOperation::Resize, "model-picker"),
+                ("device-picker", WindowOperation::Resize, "device-picker"),
+                ("model-picker", WindowOperation::Anchor, "model-picker"),
+            ],
+            true,
+        );
+        assert_window_rules(
+            &[("model-picker", WindowOperation::Anchor, "device-picker")],
+            false,
+        );
+    }
+
+    #[test]
+    fn window_close_authorization_allows_current_renderer_flows() {
+        assert_window_rules(
+            &[
+                ("main", WindowOperation::Close, "model-picker"),
+                ("model-picker", WindowOperation::Close, "model-picker"),
+                ("settings", WindowOperation::Close, "model-picker"),
+                ("tray-menu", WindowOperation::Close, "device-picker"),
+                ("device-picker", WindowOperation::Close, "device-picker"),
+                ("tray-menu", WindowOperation::Close, "tray-menu"),
+                ("settings", WindowOperation::Close, "settings"),
+            ],
+            true,
+        );
+        #[cfg(any(debug_assertions, feature = "context-playground"))]
+        assert_window_rules(
+            &[(
+                "context-playground",
+                WindowOperation::Close,
+                "context-playground",
+            )],
+            true,
+        );
     }
 }

@@ -20,7 +20,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["$APPDATA/**", "$RESOURCE/**"],
+          "allow": ["$RESOURCE/**"],
           "requireLiteralLeadingDot": false
         }
       }
@@ -33,7 +33,6 @@
     "resources": [
       "../LICENSE",
       "../THIRD_PARTY_NOTICES.md",
-      "resources/*.json",
       "resources/*.png",
       "resources/*.wav",
       "resources/models/**/*"

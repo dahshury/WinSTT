@@ -222,9 +222,12 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			tAbout("appVersion"),
 			tAbout("updatesTitle"),
 			tAbout("receivePrereleaseUpdates"),
+			tAbout("diagnosticsTitle"),
+			tAbout("openLogsFolder"),
+			tAbout("saveDiagnosticBundle"),
 			tg("startOnLogin"),
 			tg("sendCrashReports"),
-			"startup login crash reports reset defaults updates version",
+			"startup login crash reports reset defaults updates version logs diagnostics diagnostic bundle support",
 		].join(" "),
 	};
 }

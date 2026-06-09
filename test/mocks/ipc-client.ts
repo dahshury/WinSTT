@@ -219,10 +219,6 @@ export function ipcClientMock(): Record<string, unknown> {
 
     // Connection / server
     sttIsConnected: () => invokeOrDefault<boolean>(IPC.STT_IS_CONNECTED, false),
-    sttServerSpawn: () => invoke<void>(IPC.STT_SERVER_SPAWN),
-    sttServerKill: () => invoke<void>(IPC.STT_SERVER_KILL),
-    sttServerStatus: () =>
-      invokeOrDefault<string>(IPC.STT_SERVER_GET_STATUS, "idle"),
 
     // Window controls
     windowMinimize: () => send(IPC.WINDOW_MINIMIZE),
@@ -364,28 +360,12 @@ export function ipcClientMock(): Record<string, unknown> {
     onVadSensitivityAdapted: (cb: (p: unknown) => void) =>
       onTyped(IPC.STT_VAD_SENSITIVITY_ADAPTED, (d: unknown) => d, cb),
 
-    // Dialog / menus
+    // Dialog
     dialogOpenFile: (filters?: unknown, title?: unknown) =>
       invokeOrDefault<string | null>(IPC.DIALOG_OPEN_FILE, null, {
         filters,
         title,
       }),
-    appMenuSetTemplate: (template: unknown[]) =>
-      invokeOrDefault<{ applied: boolean; itemCount: number }>(
-        IPC.APP_MENU_SET_TEMPLATE,
-        { applied: false, itemCount: 0 },
-        template,
-      ),
-    appMenuReset: () =>
-      invokeOrDefault<{ applied: boolean }>(IPC.APP_MENU_RESET, {
-        applied: false,
-      }),
-    contextMenuShow: (template: unknown[], x?: number, y?: number) =>
-      invokeOrDefault<{ selectedId: string | null }>(
-        IPC.CONTEXT_MENU_SHOW,
-        { selectedId: null },
-        { template, x, y },
-      ),
 
     // Clipboard
     clipboardReadText: async () => {
@@ -429,10 +409,6 @@ export function ipcClientMock(): Record<string, unknown> {
       ),
     onUpdaterStatus: (cb: (e: unknown) => void) =>
       onCast(IPC.UPDATER_STATUS, cb),
-
-    // Window telemetry
-    onWindowTelemetry: (cb: (p: unknown) => void) =>
-      onCast(IPC.WINDOW_TELEMETRY, cb),
 
     // Transcription history
     fetchTranscriptionHistory: () =>

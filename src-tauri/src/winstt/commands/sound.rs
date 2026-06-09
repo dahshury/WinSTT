@@ -27,6 +27,7 @@ use specta::Type;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 
+use crate::command_auth;
 use crate::winstt::commands::settings::read_settings;
 
 const ORIGINAL_DEFAULT_SOUND_RESOURCE: &str = "resources/recording_sound_default.wav";
@@ -41,6 +42,47 @@ const BUILTIN_RECORDING_SOUND_FILES: &[&str] = &[
 /// collision-free library filename id (no `uuid` crate dependency — mirrors the
 /// codebase's `format!("fq-{counter}-{millis}")` idiom in file_transcribe_manager).
 static SOUND_ID_SEQ: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug)]
+enum SoundLibraryOperation {
+    Add,
+    PickAndAdd,
+    Remove,
+    ReadFile,
+    ReadActiveSound,
+}
+
+impl SoundLibraryOperation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Add => "add recording sound",
+            Self::PickAndAdd => "open recording sound picker",
+            Self::Remove => "remove recording sound",
+            Self::ReadFile => "read recording sound",
+            Self::ReadActiveSound => "read active recording sound",
+        }
+    }
+}
+
+const SOUND_LIBRARY_ALLOWED_WINDOWS: &[&str] = &["settings"];
+
+fn authorize_sound_library_operation(
+    caller: &tauri::WebviewWindow,
+    operation: SoundLibraryOperation,
+) -> Result<(), String> {
+    command_auth::authorize_webview(
+        caller,
+        "sound",
+        operation.as_str(),
+        SOUND_LIBRARY_ALLOWED_WINDOWS,
+        "",
+    )
+}
+
+#[cfg(test)]
+fn is_sound_library_operation_allowed(caller: &str) -> bool {
+    command_auth::label_in(caller, SOUND_LIBRARY_ALLOWED_WINDOWS)
+}
 
 /// A unique id for a new library file (`<nanos>-<seq>`). Unique within the folder;
 /// the renderer never parses it, only stores it.
@@ -252,9 +294,13 @@ fn sound_add_success(entry: SoundLibraryEntry) -> SoundLibraryAddResult {
 #[specta::specta]
 pub fn sound_library_add(
     _app: AppHandle,
+    webview: tauri::WebviewWindow,
     _source_path: String,
     _name: Option<String>,
 ) -> SoundLibraryAddResult {
+    if let Err(err) = authorize_sound_library_operation(&webview, SoundLibraryOperation::Add) {
+        return sound_add_failed(err);
+    }
     sound_add_failed("Recording sounds must be selected through the native picker")
 }
 
@@ -264,8 +310,13 @@ pub fn sound_library_add(
 #[specta::specta]
 pub async fn sound_library_pick_and_add(
     app: AppHandle,
+    webview: tauri::WebviewWindow,
     name: Option<String>,
 ) -> SoundLibraryAddResult {
+    if let Err(err) = authorize_sound_library_operation(&webview, SoundLibraryOperation::PickAndAdd)
+    {
+        return sound_add_failed(err);
+    }
     let Some(chosen) = app
         .dialog()
         .file()
@@ -289,7 +340,17 @@ pub async fn sound_library_pick_and_add(
 /// Mirrors `handleRemove`.
 #[tauri::command]
 #[specta::specta]
-pub fn sound_library_remove(app: AppHandle, path: String) -> SoundLibraryRemoveResult {
+pub fn sound_library_remove(
+    app: AppHandle,
+    webview: tauri::WebviewWindow,
+    path: String,
+) -> SoundLibraryRemoveResult {
+    if let Err(err) = authorize_sound_library_operation(&webview, SoundLibraryOperation::Remove) {
+        return SoundLibraryRemoveResult {
+            ok: false,
+            error: Some(err),
+        };
+    }
     if path.is_empty() {
         return SoundLibraryRemoveResult {
             ok: false,
@@ -323,7 +384,12 @@ pub fn sound_library_remove(app: AppHandle, path: String) -> SoundLibraryRemoveR
 /// Returns `None` on any error (the renderer treats null as "couldn't load").
 #[tauri::command]
 #[specta::specta]
-pub fn sound_library_read_file(app: AppHandle, path: String) -> Option<Vec<u8>> {
+pub fn sound_library_read_file(
+    app: AppHandle,
+    webview: tauri::WebviewWindow,
+    path: String,
+) -> Option<Vec<u8>> {
+    authorize_sound_library_operation(&webview, SoundLibraryOperation::ReadFile).ok()?;
     if path.is_empty() {
         let default_path = default_recording_sound_path(&app)?;
         return std::fs::read(default_path).ok();
@@ -406,7 +472,8 @@ fn active_recording_sound_path(app: &AppHandle) -> Option<PathBuf> {
 /// `ipcMain.handle("sound:get-data", ...)` body in `sound.ts`.
 #[tauri::command]
 #[specta::specta]
-pub fn sound_get_data(app: AppHandle) -> Option<Vec<u8>> {
+pub fn sound_get_data(app: AppHandle, webview: tauri::WebviewWindow) -> Option<Vec<u8>> {
+    authorize_sound_library_operation(&webview, SoundLibraryOperation::ReadActiveSound).ok()?;
     let path = active_recording_sound_path(&app)?;
     std::fs::read(&path).ok()
 }
@@ -444,6 +511,35 @@ pub fn play_recording_chime(app: &AppHandle) {
     std::thread::spawn(move || {
         if let Err(e) = crate::audio_feedback::play_audio_file(&path, selected_device, 1.0) {
             log::error!("Failed to play recording chime '{}': {e}", path.display());
+        }
+    });
+}
+
+fn recording_generation_is_active(app: &AppHandle, recording_generation: u64) -> bool {
+    app.try_state::<std::sync::Arc<crate::managers::audio::AudioRecordingManager>>()
+        .is_some_and(|audio| audio.is_active_recording_generation(recording_generation))
+}
+
+/// Play the recording chime at normal system volume, then apply the configured
+/// system-audio duck only if this same recording is still actively capturing.
+pub fn play_recording_chime_then_duck(app: &AppHandle, recording_generation: u64) {
+    let Some(path) = active_recording_sound_path(app) else {
+        crate::winstt::ducking::duck_from_settings(app);
+        return;
+    };
+    let duck_armed = crate::winstt::ducking::arm_dictation_duck_from_settings(app);
+    let selected_device = crate::settings::get_settings(app).selected_output_device;
+    let app_handle = app.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = crate::audio_feedback::play_audio_file(&path, selected_device, 1.0) {
+            log::error!("Failed to play recording chime '{}': {e}", path.display());
+        }
+        if duck_armed {
+            if recording_generation_is_active(&app_handle, recording_generation) {
+                crate::winstt::ducking::complete_armed_dictation_duck();
+            } else {
+                crate::winstt::ducking::request_restore();
+            }
         }
     });
 }
@@ -507,5 +603,23 @@ mod tests {
                 .is_none()
         );
         assert!(built_in_recording_sound_resource("recording_sound_ui_earcon_1.wav").is_none());
+    }
+
+    #[test]
+    fn sound_library_authorization_matches_settings_only_policy() {
+        command_auth::assert_label_rules(
+            &["settings"],
+            &[
+                "main",
+                "overlay",
+                "tray-menu",
+                "model-picker",
+                "device-picker",
+                "history",
+                "onboarding",
+                "context-playground",
+            ],
+            is_sound_library_operation_allowed,
+        );
     }
 }

@@ -107,7 +107,13 @@
     "updatesStatusError": "فشل التحقق من التحديث: {message}",
     "updatesDownloading": "جارٍ التنزيل…",
     "updatesDownloadingPercent": "{percent}% — جارٍ تنزيل التحديث",
-    "updatesRestartToInstall": "أعد التشغيل للتثبيت"
+    "updatesRestartToInstall": "أعد التشغيل للتثبيت",
+    "diagnosticsTitle": "التشخيصات",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "فتح مجلد السجلات",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "حفظ حزمة التشخيص...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "إحصائيات إجمالية",

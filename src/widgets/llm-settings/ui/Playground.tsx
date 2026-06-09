@@ -1,6 +1,14 @@
 import { PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useReducer } from "react";
+import {
+	useCallback,
+	useLayoutEffect,
+	useRef,
+	useReducer,
+	useState,
+	type KeyboardEvent,
+	type MouseEvent,
+} from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -13,8 +21,8 @@ import { InputGroupButton } from "@/shared/ui/input-group";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 
 interface PlaygroundProps {
-	/** Disables the Run button regardless of sample content (e.g. no model
-	 *  resolvable for the chosen provider). */
+	/** Disables the Run button regardless of sample
+	 *  content (e.g. no model resolvable for the chosen provider). */
 	disabled?: boolean;
 	/** Short explanation rendered beside the Run button when `disabled`. */
 	disabledReason?: string | undefined;
@@ -62,12 +70,23 @@ function playgroundReducer(
 	}
 }
 
+const INPUT_MIN_ROWS = 4;
+const INPUT_MAX_ROWS = 10;
+
+function textareaHeightLimit(ref: HTMLTextAreaElement | null): number {
+	if (!ref) return 120;
+	const computed = getComputedStyle(ref);
+	const lineHeight = Number.parseFloat(computed.lineHeight);
+	if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
+		return 120;
+	}
+	return lineHeight * INPUT_MAX_ROWS;
+}
+
 /**
  * Input/output/run surface for the LLM Playground. Sends `sample` through the
- * caller-supplied `run` and displays the result. Laid out as flat `FormControl`
- * rows on the modal's surface (matching the rest of the settings) — no nested
- * card — and a standard primary action button. Pure observation, no
- * clipboard/selection/paste side effects.
+ * caller-supplied `run` and displays the result. Updated to a message-composer
+ * layout with an embedded Run action in the input surface.
  */
 export function Playground({
 	run,
@@ -77,10 +96,35 @@ export function Playground({
 	const t = useTranslations("llm");
 	const [state, dispatch] = useReducer(playgroundReducer, INITIAL_STATE);
 	const { sample, output, error, running } = state;
+	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const [isFocused, setIsFocused] = useState(false);
+	const [isHovered, setIsHovered] = useState(false);
 
 	const canRun = !(running || disabled) && sample.trim().length > 0;
 
-	const handleRun = async () => {
+	const autoResize = useCallback(() => {
+		const el = textareaRef.current;
+		if (!el) return;
+		el.style.height = "auto";
+		const minHeight =
+			Number.parseFloat(getComputedStyle(el).lineHeight) * INPUT_MIN_ROWS;
+		const maxHeight = textareaHeightLimit(el);
+		const nextHeight = Math.min(
+			Math.max(el.scrollHeight, Number.isFinite(minHeight) ? minHeight : 96),
+			maxHeight,
+		);
+		el.style.height = `${nextHeight}px`;
+		el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+	}, []);
+
+	useLayoutEffect(() => {
+		autoResize();
+	}, [sample, autoResize]);
+
+	const handleRun = useCallback(async () => {
+		if (!canRun) {
+			return;
+		}
 		dispatch({ type: "run-start" });
 		try {
 			const result = await run(sample);
@@ -91,21 +135,64 @@ export function Playground({
 				error: err instanceof Error ? err.message : String(err),
 			});
 		}
-	};
+	}, [canRun, run, sample]);
 
-	// Inputs sit one surface step above the panel they're on — the same lift the
-	// other controls in this modal (selectors, text fields) use.
-	const inputLevel = Math.min(useSurface() + 1, 8);
-	// The sample input is a fluidfunctionalism input-message composer: ONE
-	// surfaced frame that owns the ring + focus glow, with the textarea AND the
-	// Run action living inside it. The Run button is the embedded "send" action
-	// (bottom-right) rather than a detached primary button below the field.
-	const composerClass = cn(
-		"flex flex-col rounded-lg ring-1 ring-divider transition-[box-shadow] duration-150",
-		"focus-within:shadow-[0_0_0_4px_var(--color-accent-glow),var(--shadow-elevated)] focus-within:ring-accent/70",
-		surfaceClasses(inputLevel),
+	const handleSubmit = useCallback(() => {
+		void handleRun();
+	}, [handleRun]);
+
+	const focusComposer = useCallback(() => {
+		if (disabled) {
+			return;
+		}
+		textareaRef.current?.focus();
+	}, [disabled]);
+
+	const handleMouseDown = useCallback(
+		(event: MouseEvent<HTMLDivElement>) => {
+			if (disabled || running) return;
+			const target = event.target as HTMLElement;
+			if (target === textareaRef.current) {
+				return;
+			}
+			if (target.closest("button, a, input, textarea, [role='button']")) {
+				return;
+			}
+			event.preventDefault();
+			focusComposer();
+		},
+		[disabled, running, focusComposer],
 	);
-	// The output is a plain surfaced read-only box — no composer chrome.
+
+	const handleTextareaKeyDown = useCallback(
+		(event: KeyboardEvent<HTMLTextAreaElement>) => {
+			if (event.nativeEvent.isComposing) {
+				return;
+			}
+			if (event.key === "Enter" && !event.shiftKey) {
+				event.preventDefault();
+				handleSubmit();
+			}
+		},
+		[handleSubmit],
+	);
+
+	// Inputs sit one surface step above the panel they're on — same lift as other
+	// controls in this modal.
+	const inputLevel = Math.min(useSurface() + 1, 8);
+
+	const composerClass = cn(
+		"flex min-h-[120px] w-full flex-col rounded-2xl border transition-[border-color,box-shadow] duration-150",
+		"p-2",
+		isFocused
+			? "border-accent/60 ring-2 ring-accent/20"
+			: isHovered
+				? "border-border-hover"
+				: "border-divider/90",
+		surfaceClasses(inputLevel),
+		disabled && "pointer-events-none opacity-70",
+	);
+
 	const outputClass = cn(
 		"box-border w-full max-w-full resize-y overflow-y-auto whitespace-pre-wrap rounded-lg p-2.5",
 		"text-body text-foreground caret-accent outline-none transition-colors [overflow-wrap:anywhere]",
@@ -115,27 +202,29 @@ export function Playground({
 
 	return (
 		<div className="flex flex-col">
-			<div
-				aria-hidden="true"
-				className="mt-2 h-px w-full bg-[var(--color-divider-strong)]"
-			/>
 			<FormControl label={t("playgroundSample")} tooltip={t("playgroundHint")}>
 				<SurfaceProvider value={inputLevel}>
-					<div className={composerClass}>
+					<div
+						aria-label={t("playgroundSample")}
+						className={composerClass}
+						onMouseDown={handleMouseDown}
+						onMouseEnter={() => setIsHovered(true)}
+						onMouseLeave={() => setIsHovered(false)}
+					>
 						<textarea
+							ref={textareaRef}
 							aria-label={t("playgroundSample")}
-							className="min-h-[120px] w-full resize-y bg-transparent px-3 pt-2.5 pb-1 text-body text-foreground caret-accent outline-none [overflow-wrap:anywhere] placeholder:text-foreground-muted"
+							className="w-full min-h-0 resize-none bg-transparent px-3 pt-2.5 pb-1 text-body text-foreground caret-accent outline-none [overflow-wrap:anywhere] placeholder:text-foreground-muted"
 							onChange={(e) =>
 								dispatch({ type: "set-sample", value: e.target.value })
 							}
+							onFocus={() => setIsFocused(true)}
+							onBlur={() => setIsFocused(false)}
+							onKeyDown={handleTextareaKeyDown}
 							placeholder={t("playgroundSamplePlaceholder")}
 							value={sample}
 						/>
-						{/* Action row: inline run status on the left, the embedded Run
-						    "send" action on the right — a neutral surfaced icon button
-						    (the same embedded-action treatment as the snippet add /
-						    hotkey play buttons), NOT a detached blue CTA. */}
-						<div className="flex items-center justify-between gap-2 px-1.5 pb-1.5">
+						<div className="mt-1 flex items-center justify-between gap-2 px-1.5 pb-1.5">
 							<span className="min-w-0 flex-1 truncate text-xs-tight">
 								{error ? <span className="text-error">{error}</span> : null}
 								{!error && disabled && disabledReason ? (
@@ -151,6 +240,7 @@ export function Playground({
 								disabled={!canRun}
 								onClick={handleRun}
 								tone="surface"
+								type="button"
 							>
 								{running ? (
 									<PulseDot className="size-2.5" />

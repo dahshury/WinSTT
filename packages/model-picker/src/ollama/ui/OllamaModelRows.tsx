@@ -60,7 +60,6 @@ import { makerGroupCount, type MakerGroup } from "../lib/maker-groups";
 import {
 	installedCapabilityBadges,
 	OllamaMakerIcon,
-	OllamaToolCapabilityBadge,
 	RecommendedStar,
 	WontFitChip,
 } from "./OllamaModelChips";
@@ -450,25 +449,16 @@ function LibraryRowHeader({
 	// Demote status badges + capability pills off the name row to the card's
 	// subordinate `badges` wrap-row (mirrors RecommendedRow), so the name owns
 	// the top line.
+	const capabilityBadges = installedCapabilityBadges(caps);
 	const hasBadges =
 		status.installedCount > 0 ||
 		Boolean(status.activePull) ||
 		Boolean(status.pausedPull);
 	const badges =
-		hasBadges || caps.length > 0 ? (
+		hasBadges || capabilityBadges ? (
 			<>
 				<LibraryRowBadges progressPercent={progressPercent} status={status} />
-				<OllamaToolCapabilityBadge capabilities={caps} />
-				{caps
-					.filter((cap) => cap.trim().toLowerCase() !== "tools")
-					.map((cap) => (
-						<span
-							className="rounded-full border border-border/60 px-1.5 py-px text-[9px] text-foreground-muted"
-							key={cap}
-						>
-							{cap}
-						</span>
-					))}
+				{capabilityBadges}
 			</>
 		) : undefined;
 	return (
@@ -1068,7 +1058,7 @@ export function ListBody(props: ListBodyProps) {
 
 	return (
 		<Combobox.List
-			className="min-h-0 flex-1 overflow-y-auto p-0"
+			className="min-h-0 flex-1 overflow-y-auto [overflow-y:overlay] p-0"
 			data-slot="ollama-model-list"
 		>
 			{/* A global sort flattens EVERY model into one sorted column (matching the

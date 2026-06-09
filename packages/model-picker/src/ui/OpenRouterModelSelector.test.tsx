@@ -1,11 +1,15 @@
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import * as helpers from "../lib/openrouter-model-selector-test-helpers";
 import { OpenRouterModelSelector } from "./OpenRouterModelSelector";
 
 describe("OpenRouterModelSelector", () => {
+	beforeEach(() => {
+		window.localStorage.clear();
+	});
+
 	test("renders without crashing for empty model list", () => {
 		const { container } = render(
 			<TooltipProvider.Provider>
@@ -59,6 +63,110 @@ describe("OpenRouterModelSelector", () => {
 		expect(trigger.getAttribute("aria-expanded")).toBe("false");
 		expect(screen.queryByRole("listbox")).toBeNull();
 		expect(onChange).not.toHaveBeenCalled();
+	});
+
+	test("inline detached mode restores persisted search query and filters on open", () => {
+		const uiStorageKey = "winstt:test:openrouter-inline-ui";
+		window.localStorage.setItem(
+			uiStorageKey,
+			JSON.stringify({
+				searchQuery: "claude",
+				selectedEndpointProvider: null,
+				selectedMakers: ["anthropic"],
+				selectedParameters: [],
+				selectedVariant: null,
+				sortKey: null,
+			}),
+		);
+
+		render(
+			<TooltipProvider.Provider>
+				<OpenRouterModelSelector
+					inline
+					models={[
+						makeModel({
+							id: "anthropic/claude-3-5-sonnet",
+							maker: "anthropic",
+							name: "Claude 3.5 Sonnet",
+						}),
+					]}
+					onChange={() => undefined}
+					uiStorageKey={uiStorageKey}
+					value="anthropic/claude-3-5-sonnet"
+				/>
+			</TooltipProvider.Provider>,
+		);
+
+		const search = screen.getByPlaceholderText(
+			"Search models",
+		) as HTMLInputElement;
+		expect(search.value).toBe("claude");
+		expect(screen.queryByLabelText("Active filters")).not.toBeNull();
+	});
+
+	test("inline detached mode requests selected model focus on open", async () => {
+		const onOpen = mock(() => undefined);
+		const models = [
+			makeModel({
+				endpoints: [
+					makeEndpoint({
+						provider_name: "DeepInfra",
+						tag: "deepinfra",
+					}),
+					makeEndpoint({
+						provider_name: "Together",
+						tag: "together",
+					}),
+				],
+			}),
+			makeModel({
+				id: "anthropic/claude-3-5-sonnet",
+				maker: "anthropic",
+				name: "Claude 3.5 Sonnet",
+			}),
+		];
+		const { rerender } = render(
+			<TooltipProvider.Provider>
+				<OpenRouterModelSelector
+					inline
+					models={models}
+					onChange={() => undefined}
+					onOpen={onOpen}
+					uiStorageKey="winstt:test:openrouter-inline-focus-ui"
+					value="openai/gpt-4o@deepinfra"
+				/>
+			</TooltipProvider.Provider>,
+		);
+
+		await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(1));
+
+		rerender(
+			<TooltipProvider.Provider>
+				<OpenRouterModelSelector
+					inline
+					models={models}
+					onChange={() => undefined}
+					onOpen={onOpen}
+					uiStorageKey="winstt:test:openrouter-inline-focus-ui"
+					value="openai/gpt-4o@deepinfra"
+				/>
+			</TooltipProvider.Provider>,
+		);
+		expect(onOpen).toHaveBeenCalledTimes(1);
+
+		rerender(
+			<TooltipProvider.Provider>
+				<OpenRouterModelSelector
+					inline
+					models={models}
+					onChange={() => undefined}
+					onOpen={onOpen}
+					uiStorageKey="winstt:test:openrouter-inline-focus-ui"
+					value="anthropic/claude-3-5-sonnet"
+				/>
+			</TooltipProvider.Provider>,
+		);
+		await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(2));
 	});
 });
 
@@ -441,6 +549,15 @@ describe("OpenRouterModelSelector helpers", () => {
 			);
 			expect(req.nonce).toBe(8);
 			expect(req.maker).toBe("anthropic");
+		});
+
+		test("carries provider slug for provider-specific selections", () => {
+			const req = helpers.buildScrollRequestForModel(
+				null,
+				makeModel({ maker: "openai" }),
+				"deepinfra",
+			);
+			expect(req.providerSlug).toBe("deepinfra");
 		});
 	});
 

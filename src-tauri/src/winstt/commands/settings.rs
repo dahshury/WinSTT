@@ -47,14 +47,16 @@ use specta::Type;
 use tauri::{AppHandle, Emitter};
 
 use crate::winstt::settings_schema::{
-    is_secret, AudioSettings, DictionaryEntry, GeneralSettings, GlobalSettings, HotkeySettings,
-    IntegrationsSettings, LiveTranscriptionDisplay, LlmSettings, ModelSettings, PresetEntry,
-    PresetKey, QualitySettings, SnippetEntry, TtsSettings, WinsttSettings, SECRET_KEYS,
+    is_secret, AudioSettings, CustomModifier, DictionaryEntry, GeneralSettings, GlobalSettings,
+    HotkeySettings, IntegrationsSettings, LiveTranscriptionDisplay, LlmFeatureBase, LlmSettings,
+    ModelSettings, PresetEntry, PresetKey, QualitySettings, SnippetEntry, SoundLibraryEntry,
+    Transform, TtsCloud, TtsSettings, WinsttSettings, SECRET_KEYS,
 };
 
 use self::persistence::{
-    normalize_cross_field_settings, preserve_masked_secrets, sanitize_settings_for_renderer,
-    try_read_settings, try_seal_secrets, word_by_word_pasting_effective, write_settings_value,
+    normalize_cross_field_settings, preserve_masked_secrets, read_settings_for_renderer,
+    sanitize_settings_for_renderer, try_read_settings, try_seal_secrets,
+    word_by_word_pasting_effective, write_settings_value,
 };
 use self::runtime::{
     apply_audio_runtime_settings, apply_autostart_setting, apply_history_retention_settings,
@@ -149,9 +151,7 @@ pub struct PartialWinsttSettings {
 #[tauri::command]
 #[specta::specta]
 pub fn winstt_get_settings(app: AppHandle) -> WinsttSettings {
-    let mut settings = read_settings(&app);
-    sanitize_settings_for_renderer(&mut settings);
-    settings
+    read_settings_for_renderer(&app)
 }
 
 /// `winstt_set_settings` merges a PARTIAL section patch, validates, seals
@@ -367,9 +367,815 @@ fn preserve_main_owned_general(
 /// Re-run the Zod cross-field rules: no duplicate preset keys, at most one tone key,
 /// `level` only for summarize/concise, `targetLang` only for translate.
 fn validate_settings(settings: &WinsttSettings) -> Result<(), String> {
+    validate_model_settings(&settings.model)?;
+    validate_quality_settings(&settings.quality)?;
+    validate_audio_settings(&settings.audio)?;
+    validate_general_settings(&settings.general)?;
+    validate_hotkey(
+        "hotkey.pushToTalkKey",
+        &settings.hotkey.push_to_talk_key,
+        true,
+    )?;
+    validate_dictionary(&settings.dictionary)?;
+    validate_snippets(&settings.snippets)?;
+    validate_llm_settings(&settings.llm)?;
+    validate_tts_settings(&settings.tts)?;
+    validate_integrations(&settings.integrations)?;
     validate_presets(&settings.llm.dictation.presets)?;
+    validate_presets(&settings.llm.transforms.presets)?;
     crate::winstt::llm::validate_loopback_ollama_endpoint(&settings.llm.endpoint)?;
     Ok(())
+}
+
+const MAX_ID_LEN: usize = 128;
+const MAX_MODEL_ID_LEN: usize = 256;
+const MAX_ENDPOINT_LEN: usize = 256;
+const MAX_SECRET_LEN: usize = 8 * 1024;
+const MAX_HOTKEY_LEN: usize = 96;
+const MAX_LANGUAGE_LEN: usize = 32;
+const MAX_LANGUAGE_CANDIDATES: usize = 16;
+const MAX_PROMPT_LEN: usize = 16 * 1024;
+const MAX_SHORT_TEXT_LEN: usize = 256;
+const MAX_REPLACEMENT_LEN: usize = 2 * 1024;
+const MAX_SNIPPET_EXPANSION_LEN: usize = 16 * 1024;
+const MAX_DICTIONARY_ENTRIES: usize = 2_000;
+const MAX_SNIPPETS: usize = 1_000;
+const MAX_CUSTOM_MODIFIERS: usize = 128;
+const MAX_TRANSFORMS: usize = 128;
+const MAX_PRESETS: usize = 10;
+const MAX_SOUND_LIBRARY_ENTRIES: usize = 50;
+const MAX_CONTEXT_LIST_ENTRIES: usize = 256;
+const MAX_CONTEXT_ENTRY_LEN: usize = 253;
+const MAX_CUSTOM_WAKE_WORDS: usize = 32;
+const MAX_DEVICE_SENSITIVITY_ENTRIES: usize = 128;
+const MAX_DEVICE_ID_LEN: usize = 512;
+const MAX_PATH_LEN: usize = 4096;
+const MAX_OUTPUT_TOKENS: i64 = 200_000;
+const BUILTIN_RECORDING_SOUND_FILES: &[&str] = &[
+    "marimba_start.wav",
+    "recording_sound_ui_earcon_1.wav",
+    "recording_sound_ui_earcon_4.wav",
+];
+
+fn validate_model_settings(model: &ModelSettings) -> Result<(), String> {
+    validate_model_id("model.model", &model.model, true)?;
+    validate_model_id("model.realtimeModel", &model.realtime_model, true)?;
+    validate_short_text("model.language", &model.language, MAX_LANGUAGE_LEN, false)?;
+    validate_collection_len(
+        "model.languageCandidates",
+        model.language_candidates.len(),
+        MAX_LANGUAGE_CANDIDATES,
+    )?;
+    for (index, language) in model.language_candidates.iter().enumerate() {
+        validate_short_text(
+            &format!("model.languageCandidates[{index}]"),
+            language,
+            MAX_LANGUAGE_LEN,
+            false,
+        )?;
+    }
+    validate_quantization(&model.model, &model.onnx_quantization)?;
+    validate_text("model.initialPrompt", &model.initial_prompt, MAX_PROMPT_LEN)?;
+    validate_text(
+        "model.initialPromptRealtime",
+        &model.initial_prompt_realtime,
+        MAX_PROMPT_LEN,
+    )?;
+    Ok(())
+}
+
+fn validate_quality_settings(quality: &QualitySettings) -> Result<(), String> {
+    for (path, value, min, max) in [
+        (
+            "quality.realtimeProcessingPause",
+            quality.realtime_processing_pause,
+            0.0,
+            30.0,
+        ),
+        (
+            "quality.initRealtimeAfterSeconds",
+            quality.init_realtime_after_seconds,
+            0.0,
+            30.0,
+        ),
+        (
+            "quality.earlyTranscriptionOnSilence",
+            quality.early_transcription_on_silence,
+            0.0,
+            30.0,
+        ),
+        (
+            "quality.smartEndpointSpeed",
+            quality.smart_endpoint_speed,
+            0.5,
+            3.0,
+        ),
+        (
+            "quality.endOfSentenceDetectionPause",
+            quality.end_of_sentence_detection_pause,
+            0.1,
+            5.0,
+        ),
+        (
+            "quality.midSentenceDetectionPause",
+            quality.mid_sentence_detection_pause,
+            0.1,
+            10.0,
+        ),
+        (
+            "quality.unknownSentenceDetectionPause",
+            quality.unknown_sentence_detection_pause,
+            0.1,
+            5.0,
+        ),
+    ] {
+        validate_finite_range(path, value, min, max)?;
+    }
+    Ok(())
+}
+
+fn validate_audio_settings(audio: &AudioSettings) -> Result<(), String> {
+    validate_optional_non_negative_i64("audio.inputDeviceIndex", audio.input_device_index)?;
+    for (path, value, min, max) in [
+        ("audio.sampleRate", audio.sample_rate, 8_000, 192_000),
+        ("audio.bufferSize", audio.buffer_size, 64, 16_384),
+        ("audio.webrtcSensitivity", audio.webrtc_sensitivity, 0, 3),
+        (
+            "audio.extraRecordingBufferMs",
+            audio.extra_recording_buffer_ms,
+            0,
+            2_000,
+        ),
+    ] {
+        validate_i64_range(path, value, min, max)?;
+    }
+    for (path, value, min, max) in [
+        (
+            "audio.sileroSensitivity",
+            audio.silero_sensitivity,
+            0.0,
+            1.0,
+        ),
+        (
+            "audio.postSpeechSilenceDuration",
+            audio.post_speech_silence_duration,
+            0.0,
+            30.0,
+        ),
+        (
+            "audio.minGapBetweenRecordings",
+            audio.min_gap_between_recordings,
+            0.0,
+            30.0,
+        ),
+        (
+            "audio.preRecordingBufferDuration",
+            audio.pre_recording_buffer_duration,
+            0.0,
+            30.0,
+        ),
+    ] {
+        validate_finite_range(path, value, min, max)?;
+    }
+    validate_collection_len(
+        "audio.sileroSensitivityByDeviceName",
+        audio.silero_sensitivity_by_device_name.len(),
+        MAX_DEVICE_SENSITIVITY_ENTRIES,
+    )?;
+    for (device, sensitivity) in &audio.silero_sensitivity_by_device_name {
+        validate_short_text(
+            "audio.sileroSensitivityByDeviceName key",
+            device,
+            MAX_SHORT_TEXT_LEN,
+            true,
+        )?;
+        validate_finite_range(
+            &format!("audio.sileroSensitivityByDeviceName[{device}]"),
+            *sensitivity,
+            0.0,
+            1.0,
+        )?;
+    }
+    validate_optional_non_negative_i64("audio.clamshellMicrophone", audio.clamshell_microphone)?;
+    Ok(())
+}
+
+fn validate_general_settings(general: &GeneralSettings) -> Result<(), String> {
+    validate_i64_range(
+        "general.systemAudioReductionWhileDictating",
+        general.system_audio_reduction_while_dictating,
+        0,
+        100,
+    )?;
+    validate_recording_sound_path(&general.recording_sound_path, "general.recordingSoundPath")?;
+    validate_sound_library(&general.recording_sound_library)?;
+    validate_hotkey("general.repasteHotkey", &general.repaste_hotkey, true)?;
+    validate_optional_non_negative_i64(
+        "general.loopbackDeviceIndex",
+        general.loopback_device_index,
+    )?;
+    validate_short_text("general.wakeWord", &general.wake_word, 64, false)?;
+    validate_collection_len(
+        "general.customWakeWords",
+        general.custom_wake_words.len(),
+        MAX_CUSTOM_WAKE_WORDS,
+    )?;
+    for (index, wake_word) in general.custom_wake_words.iter().enumerate() {
+        validate_short_text(
+            &format!("general.customWakeWords[{index}]"),
+            wake_word,
+            64,
+            true,
+        )?;
+    }
+    validate_finite_range(
+        "general.wakeWordSensitivity",
+        general.wake_word_sensitivity,
+        0.0,
+        1.0,
+    )?;
+    validate_finite_range(
+        "general.wakeWordTimeout",
+        general.wake_word_timeout,
+        1.0,
+        30.0,
+    )?;
+    for (path, value, min, max) in [
+        (
+            "general.visualizerBarCount",
+            general.visualizer_bar_count,
+            3,
+            21,
+        ),
+        (
+            "general.visualizerRadialDotCount",
+            general.visualizer_radial_dot_count,
+            6,
+            48,
+        ),
+        (
+            "general.visualizerRadialRadius",
+            general.visualizer_radial_radius,
+            20,
+            90,
+        ),
+        (
+            "general.visualizerGridRows",
+            general.visualizer_grid_rows,
+            3,
+            8,
+        ),
+        (
+            "general.visualizerGridColumns",
+            general.visualizer_grid_columns,
+            3,
+            8,
+        ),
+        (
+            "general.visualizerGridSpeed",
+            general.visualizer_grid_speed,
+            1,
+            10,
+        ),
+        (
+            "general.visualizerWaveLineWidth",
+            general.visualizer_wave_line_width,
+            1,
+            6,
+        ),
+        (
+            "general.visualizerWaveSmoothing",
+            general.visualizer_wave_smoothing,
+            0,
+            100,
+        ),
+        (
+            "general.visualizerWaveColorShift",
+            general.visualizer_wave_color_shift,
+            0,
+            100,
+        ),
+        (
+            "general.visualizerAuraBlur",
+            general.visualizer_aura_blur,
+            0,
+            100,
+        ),
+        (
+            "general.visualizerAuraBloom",
+            general.visualizer_aura_bloom,
+            0,
+            100,
+        ),
+        (
+            "general.visualizerAuraColorShift",
+            general.visualizer_aura_color_shift,
+            0,
+            100,
+        ),
+        (
+            "general.historyMaxEntries",
+            general.history_max_entries,
+            10,
+            10_000,
+        ),
+    ] {
+        validate_i64_range(path, value, min, max)?;
+    }
+    validate_context_list("general.contextAllowList", &general.context_allow_list)?;
+    validate_context_list("general.contextDenyList", &general.context_deny_list)?;
+    if let Some(onboarded_at) = general.onboarded_at {
+        validate_i64_range("general.onboardedAt", onboarded_at, 0, i64::MAX)?;
+    }
+    validate_text(
+        "general.outputDeviceId",
+        &general.output_device_id,
+        MAX_DEVICE_ID_LEN,
+    )?;
+    validate_finite_range(
+        "general.wordCorrectionThreshold",
+        general.word_correction_threshold,
+        0.0,
+        1.0,
+    )?;
+    Ok(())
+}
+
+fn validate_dictionary(dictionary: &[DictionaryEntry]) -> Result<(), String> {
+    validate_collection_len("dictionary", dictionary.len(), MAX_DICTIONARY_ENTRIES)?;
+    for (index, entry) in dictionary.iter().enumerate() {
+        let base = format!("dictionary[{index}]");
+        validate_short_text(&format!("{base}.id"), &entry.id, MAX_ID_LEN, true)?;
+        validate_short_text(
+            &format!("{base}.term"),
+            &entry.term,
+            MAX_SHORT_TEXT_LEN,
+            true,
+        )?;
+        if let Some(replacement) = &entry.replacement {
+            validate_text(
+                &format!("{base}.replacement"),
+                replacement,
+                MAX_REPLACEMENT_LEN,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_snippets(snippets: &[SnippetEntry]) -> Result<(), String> {
+    validate_collection_len("snippets", snippets.len(), MAX_SNIPPETS)?;
+    for (index, entry) in snippets.iter().enumerate() {
+        let base = format!("snippets[{index}]");
+        validate_short_text(&format!("{base}.id"), &entry.id, MAX_ID_LEN, true)?;
+        validate_short_text(
+            &format!("{base}.trigger"),
+            &entry.trigger,
+            MAX_SHORT_TEXT_LEN,
+            true,
+        )?;
+        validate_text(
+            &format!("{base}.expansion"),
+            &entry.expansion,
+            MAX_SNIPPET_EXPANSION_LEN,
+        )?;
+        if entry.expansion.trim().is_empty() {
+            return Err(format!("{base}.expansion must not be empty"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_llm_settings(llm: &LlmSettings) -> Result<(), String> {
+    validate_text("llm.endpoint", &llm.endpoint, MAX_ENDPOINT_LEN)?;
+    validate_text(
+        "llm.openrouterApiKey",
+        &llm.openrouter_api_key,
+        MAX_SECRET_LEN,
+    )?;
+    validate_i64_range("llm.timeout", llm.timeout, 1_000, 30_000)?;
+    validate_llm_feature_base("llm.dictation", &llm.dictation.base)?;
+    validate_presets_len("llm.dictation.presets", &llm.dictation.presets)?;
+    validate_custom_modifiers(
+        "llm.dictation.customModifiers",
+        &llm.dictation.custom_modifiers,
+    )?;
+    validate_llm_feature_base("llm.transforms", &llm.transforms.base)?;
+    validate_presets_len("llm.transforms.presets", &llm.transforms.presets)?;
+    validate_custom_modifiers(
+        "llm.transforms.customModifiers",
+        &llm.transforms.custom_modifiers,
+    )?;
+    validate_hotkey("llm.transforms.hotkey", &llm.transforms.hotkey, true)?;
+    validate_transforms(&llm.transforms.prompts)?;
+    Ok(())
+}
+
+fn validate_llm_feature_base(path: &str, base: &LlmFeatureBase) -> Result<(), String> {
+    validate_model_id(&format!("{path}.model"), &base.model, false)?;
+    validate_model_id(
+        &format!("{path}.openrouterModel"),
+        &base.openrouter_model,
+        false,
+    )?;
+    validate_model_id(
+        &format!("{path}.openrouterFallbackModel"),
+        &base.openrouter_fallback_model,
+        false,
+    )?;
+    if let Some(tokens) = base.max_output_tokens {
+        validate_i64_range(
+            &format!("{path}.maxOutputTokens"),
+            tokens,
+            1,
+            MAX_OUTPUT_TOKENS,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_custom_modifiers(path: &str, items: &[CustomModifier]) -> Result<(), String> {
+    validate_collection_len(path, items.len(), MAX_CUSTOM_MODIFIERS)?;
+    for (index, modifier) in items.iter().enumerate() {
+        let base = format!("{path}[{index}]");
+        validate_short_text(&format!("{base}.id"), &modifier.id, MAX_ID_LEN, true)?;
+        validate_short_text(
+            &format!("{base}.name"),
+            &modifier.name,
+            MAX_SHORT_TEXT_LEN,
+            false,
+        )?;
+        validate_text(&format!("{base}.prompt"), &modifier.prompt, MAX_PROMPT_LEN)?;
+    }
+    Ok(())
+}
+
+fn validate_transforms(transforms: &[Transform]) -> Result<(), String> {
+    validate_collection_len("llm.transforms.prompts", transforms.len(), MAX_TRANSFORMS)?;
+    for (index, transform) in transforms.iter().enumerate() {
+        let base = format!("llm.transforms.prompts[{index}]");
+        validate_short_text(&format!("{base}.id"), &transform.id, MAX_ID_LEN, true)?;
+        validate_short_text(
+            &format!("{base}.name"),
+            &transform.name,
+            MAX_SHORT_TEXT_LEN,
+            false,
+        )?;
+        validate_text(&format!("{base}.prompt"), &transform.prompt, MAX_PROMPT_LEN)?;
+        validate_hotkey(&format!("{base}.hotkey"), &transform.hotkey, false)?;
+    }
+    Ok(())
+}
+
+fn validate_tts_settings(tts: &TtsSettings) -> Result<(), String> {
+    if crate::winstt::tts::catalog::find(&tts.model).is_none() {
+        return Err(format!(
+            "tts.model is not in the TTS catalog: {}",
+            tts.model
+        ));
+    }
+    validate_model_id("tts.model", &tts.model, true)?;
+    validate_short_text("tts.voice", &tts.voice, MAX_MODEL_ID_LEN, true)?;
+    validate_short_text("tts.lang", &tts.lang, MAX_LANGUAGE_LEN, true)?;
+    validate_finite_range("tts.speed", tts.speed, 0.5, 2.0)?;
+    validate_hotkey("tts.hotkey", &tts.hotkey, true)?;
+    validate_tts_cloud(&tts.cloud)?;
+    Ok(())
+}
+
+fn validate_tts_cloud(cloud: &TtsCloud) -> Result<(), String> {
+    validate_short_text("tts.cloud.voice", &cloud.voice, MAX_MODEL_ID_LEN, false)?;
+    validate_model_id("tts.cloud.model", &cloud.model, true)?;
+    validate_model_id("tts.cloud.openrouterModel", &cloud.openrouter_model, false)?;
+    validate_short_text(
+        "tts.cloud.openrouterVoice",
+        &cloud.openrouter_voice,
+        MAX_MODEL_ID_LEN,
+        false,
+    )?;
+    validate_finite_range("tts.cloud.stability", cloud.stability, 0.0, 1.0)?;
+    validate_finite_range("tts.cloud.similarity", cloud.similarity, 0.0, 1.0)?;
+    validate_finite_range("tts.cloud.style", cloud.style, 0.0, 1.0)?;
+    validate_finite_range("tts.cloud.speed", cloud.speed, 0.7, 1.2)?;
+    Ok(())
+}
+
+fn validate_integrations(integrations: &IntegrationsSettings) -> Result<(), String> {
+    validate_text(
+        "integrations.elevenlabs.apiKey",
+        &integrations.elevenlabs.api_key,
+        MAX_SECRET_LEN,
+    )?;
+    if let Some(last_verified_at) = integrations.elevenlabs.last_verified_at {
+        validate_i64_range(
+            "integrations.elevenlabs.lastVerifiedAt",
+            last_verified_at,
+            0,
+            i64::MAX,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_presets_len(path: &str, presets: &[PresetEntry]) -> Result<(), String> {
+    validate_collection_len(path, presets.len(), MAX_PRESETS)?;
+    for (index, preset) in presets.iter().enumerate() {
+        if let Some(target_lang) = &preset.target_lang {
+            validate_short_text(
+                &format!("{path}[{index}].targetLang"),
+                target_lang,
+                MAX_LANGUAGE_LEN,
+                true,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_sound_library(library: &[SoundLibraryEntry]) -> Result<(), String> {
+    validate_collection_len(
+        "general.recordingSoundLibrary",
+        library.len(),
+        MAX_SOUND_LIBRARY_ENTRIES,
+    )?;
+    for (index, entry) in library.iter().enumerate() {
+        let base = format!("general.recordingSoundLibrary[{index}]");
+        validate_short_text(&format!("{base}.id"), &entry.id, MAX_ID_LEN, true)?;
+        validate_short_text(
+            &format!("{base}.name"),
+            &entry.name,
+            MAX_SHORT_TEXT_LEN,
+            true,
+        )?;
+        validate_recording_sound_path(&entry.path, &format!("{base}.path"))?;
+        if entry.path.is_empty() || entry.path.starts_with("builtin:") {
+            return Err(format!(
+                "{base}.path must point to a managed custom sound file"
+            ));
+        }
+        if !has_extension(&entry.path, &["wav", "mp3"]) {
+            return Err(format!("{base}.path must be a .wav or .mp3 file"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_recording_sound_path(path: &str, field: &str) -> Result<(), String> {
+    validate_text(field, path, MAX_PATH_LEN)?;
+    if path.is_empty() {
+        return Ok(());
+    }
+    if let Some(file_name) = path.strip_prefix("builtin:") {
+        if BUILTIN_RECORDING_SOUND_FILES.contains(&file_name) {
+            return Ok(());
+        }
+        return Err(format!(
+            "{field} is not an allowed built-in recording sound"
+        ));
+    }
+    if has_parent_segment(path) {
+        return Err(format!("{field} must not contain path traversal segments"));
+    }
+    if !has_extension(path, &["wav", "mp3", "ogg", "flac", "m4a", "aac"]) {
+        return Err(format!("{field} must use a supported audio extension"));
+    }
+    Ok(())
+}
+
+fn validate_context_list(path: &str, entries: &[String]) -> Result<(), String> {
+    validate_collection_len(path, entries.len(), MAX_CONTEXT_LIST_ENTRIES)?;
+    for (index, entry) in entries.iter().enumerate() {
+        let field = format!("{path}[{index}]");
+        validate_short_text(&field, entry, MAX_CONTEXT_ENTRY_LEN, true)?;
+        if entry.contains(['/', '\\']) {
+            return Err(format!(
+                "{field} must be an executable basename or host suffix"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_quantization(model_id: &str, quantization: &str) -> Result<(), String> {
+    validate_short_text(
+        "model.onnxQuantization",
+        quantization,
+        MAX_SHORT_TEXT_LEN,
+        false,
+    )?;
+    let quant = quantization.trim();
+    if quant != quantization {
+        return Err(
+            "model.onnxQuantization must not contain leading or trailing whitespace".into(),
+        );
+    }
+    const KNOWN_QUANTIZATIONS: &[&str] = &[
+        "", "auto", "fp16", "fp16w", "q4", "q4f16", "bnb4", "int8", "uint8",
+    ];
+    if !KNOWN_QUANTIZATIONS.contains(&quant) {
+        return Err(format!("unknown model.onnxQuantization: {quant}"));
+    }
+    if quant.is_empty() || quant == "auto" {
+        return Ok(());
+    }
+    if let Some(entry) = crate::winstt::catalog::find(model_id) {
+        if !entry.available_quantizations.contains(&quant) {
+            return Err(format!(
+                "model.onnxQuantization '{quant}' is not available for model '{}'",
+                entry.id
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_model_id(path: &str, value: &str, required: bool) -> Result<(), String> {
+    validate_short_text(path, value, MAX_MODEL_ID_LEN, required)?;
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.trim() != value {
+        return Err(format!(
+            "{path} must not contain leading or trailing whitespace"
+        ));
+    }
+    if value.contains("..") || value.contains('\\') || value.contains("://") {
+        return Err(format!("{path} has an invalid model id format"));
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/' | ':' | '@'))
+    {
+        return Err(format!("{path} contains unsupported model id characters"));
+    }
+    if let Some((provider, bare_id)) = crate::winstt::cloud_stt::split_model_id(value) {
+        if bare_id.is_empty() {
+            return Err(format!("{path} cloud model id is missing a provider model"));
+        }
+        if provider == crate::winstt::cloud_stt::CloudSttProvider::ElevenLabs
+            && !crate::winstt::cloud_stt::cloud_models_for(provider)
+                .iter()
+                .any(|model| model.id == bare_id)
+        {
+            return Err(format!("{path} is not in the ElevenLabs STT catalog"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_hotkey(path: &str, value: &str, required: bool) -> Result<(), String> {
+    validate_short_text(path, value, MAX_HOTKEY_LEN, required)?;
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.trim() != value {
+        return Err(format!(
+            "{path} must not contain leading or trailing whitespace"
+        ));
+    }
+    let mut seen = Vec::<String>::new();
+    let tokens: Vec<&str> = value.split('+').collect();
+    if tokens.len() > 8 {
+        return Err(format!("{path} has too many key parts"));
+    }
+    for token in tokens {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(format!("{path} contains an empty key part"));
+        }
+        if token.len() > 32 || !is_supported_hotkey_token(token) {
+            return Err(format!("{path} contains unsupported key token '{token}'"));
+        }
+        let normalized = token.to_ascii_lowercase();
+        if seen.iter().any(|existing| existing == &normalized) {
+            return Err(format!("{path} contains duplicate key token '{token}'"));
+        }
+        seen.push(normalized);
+    }
+    Ok(())
+}
+
+fn is_supported_hotkey_token(token: &str) -> bool {
+    let lower = token.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "lctrl"
+            | "rctrl"
+            | "ctrl"
+            | "control"
+            | "lshift"
+            | "rshift"
+            | "shift"
+            | "lalt"
+            | "ralt"
+            | "alt"
+            | "altgr"
+            | "lmeta"
+            | "rmeta"
+            | "meta"
+            | "super"
+            | "win"
+            | "windows"
+            | "cmd"
+            | "command"
+            | "space"
+            | "tab"
+            | "enter"
+            | "return"
+            | "escape"
+            | "esc"
+            | "backspace"
+            | "delete"
+            | "forwarddelete"
+            | "insert"
+            | "home"
+            | "end"
+            | "pageup"
+            | "pagedown"
+            | "arrowleft"
+            | "arrowright"
+            | "arrowup"
+            | "arrowdown"
+    ) || is_function_key(&lower)
+        || (token.len() == 1 && token.chars().all(|c| c.is_ascii_graphic() && c != '+'))
+}
+
+fn is_function_key(token: &str) -> bool {
+    let Some(number) = token.strip_prefix('f') else {
+        return false;
+    };
+    matches!(number.parse::<u8>(), Ok(1..=24))
+}
+
+fn validate_text(path: &str, value: &str, max_len: usize) -> Result<(), String> {
+    if value.len() > max_len {
+        return Err(format!("{path} must be at most {max_len} bytes"));
+    }
+    if value.contains('\0') {
+        return Err(format!("{path} must not contain NUL bytes"));
+    }
+    Ok(())
+}
+
+fn validate_short_text(
+    path: &str,
+    value: &str,
+    max_len: usize,
+    required: bool,
+) -> Result<(), String> {
+    validate_text(path, value, max_len)?;
+    if value.chars().any(char::is_control) {
+        return Err(format!("{path} must not contain control characters"));
+    }
+    if required && value.trim().is_empty() {
+        return Err(format!("{path} must not be empty"));
+    }
+    Ok(())
+}
+
+fn validate_collection_len(path: &str, len: usize, max_len: usize) -> Result<(), String> {
+    if len > max_len {
+        return Err(format!("{path} has {len} entries; maximum is {max_len}"));
+    }
+    Ok(())
+}
+
+fn validate_i64_range(path: &str, value: i64, min: i64, max: i64) -> Result<(), String> {
+    if value < min || value > max {
+        return Err(format!("{path} must be between {min} and {max}"));
+    }
+    Ok(())
+}
+
+fn validate_optional_non_negative_i64(path: &str, value: Option<i64>) -> Result<(), String> {
+    if let Some(value) = value {
+        validate_i64_range(path, value, 0, i64::MAX)?;
+    }
+    Ok(())
+}
+
+fn validate_finite_range(path: &str, value: f64, min: f64, max: f64) -> Result<(), String> {
+    if !value.is_finite() || value < min || value > max {
+        return Err(format!(
+            "{path} must be a finite number between {min} and {max}"
+        ));
+    }
+    Ok(())
+}
+
+fn has_extension(path: &str, allowed: &[&str]) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            let ext = ext.to_ascii_lowercase();
+            allowed.iter().any(|allowed| *allowed == ext)
+        })
+        .unwrap_or(false)
+}
+
+fn has_parent_segment(path: &str) -> bool {
+    path.split(['/', '\\']).any(|part| part == "..")
 }
 
 fn validate_presets(presets: &[PresetEntry]) -> Result<(), String> {
@@ -493,6 +1299,105 @@ mod tests {
     }
 
     // ── restart-need: the reference parity ──────────────────────────────────────────
+
+    fn assert_validation_error(settings: WinsttSettings, expected: &str) {
+        let err = validate_settings(&settings).unwrap_err();
+        assert!(
+            err.contains(expected),
+            "expected validation error containing '{expected}', got '{err}'"
+        );
+    }
+
+    #[test]
+    fn validates_default_settings() {
+        assert!(validate_settings(&WinsttSettings::default()).is_ok());
+    }
+
+    #[test]
+    fn accepts_frontend_auto_quantization_default() {
+        let mut settings = WinsttSettings::default();
+        settings.model.onnx_quantization = "auto".into();
+        assert!(validate_settings(&settings).is_ok());
+    }
+
+    #[test]
+    fn rejects_malformed_model_id() {
+        let mut settings = WinsttSettings::default();
+        settings.model.model = "https://example.com/model.onnx".into();
+        assert_validation_error(settings, "model.model");
+    }
+
+    #[test]
+    fn rejects_unpublished_catalog_quantization() {
+        let mut settings = WinsttSettings::default();
+        settings.model.model = "tiny".into();
+        settings.model.onnx_quantization = "int8".into();
+        assert_validation_error(settings, "model.onnxQuantization");
+    }
+
+    #[test]
+    fn accepts_dynamic_openrouter_cloud_stt_id() {
+        let mut settings = WinsttSettings::default();
+        settings.model.model = "openrouter:microsoft/mai-transcribe-1.5".into();
+        settings.model.onnx_quantization = "auto".into();
+        assert!(validate_settings(&settings).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_elevenlabs_cloud_stt_id() {
+        let mut settings = WinsttSettings::default();
+        settings.model.model = "elevenlabs:not_real".into();
+        assert_validation_error(settings, "ElevenLabs STT catalog");
+    }
+
+    #[test]
+    fn rejects_unknown_tts_model() {
+        let mut settings = WinsttSettings::default();
+        settings.tts.model = "not-a-tts-model".into();
+        assert_validation_error(settings, "tts.model");
+    }
+
+    #[test]
+    fn rejects_malformed_hotkey() {
+        let mut settings = WinsttSettings::default();
+        settings.tts.hotkey = "LCtrl++Space".into();
+        assert_validation_error(settings, "tts.hotkey");
+    }
+
+    #[test]
+    fn rejects_oversized_dictionary() {
+        let mut settings = WinsttSettings::default();
+        settings.dictionary = (0..=MAX_DICTIONARY_ENTRIES)
+            .map(|index| DictionaryEntry {
+                id: format!("dict-{index}"),
+                term: "WinSTT".into(),
+                auto_added: None,
+                replacement: None,
+            })
+            .collect();
+        assert_validation_error(settings, "dictionary");
+    }
+
+    #[test]
+    fn rejects_invalid_recording_sound_builtin() {
+        let mut settings = WinsttSettings::default();
+        settings.general.recording_sound_path = "builtin:../recording_sound_default.wav".into();
+        assert_validation_error(settings, "recordingSoundPath");
+    }
+
+    #[test]
+    fn rejects_out_of_range_numeric_setting() {
+        let mut settings = WinsttSettings::default();
+        settings.quality.smart_endpoint_speed = f64::NAN;
+        assert_validation_error(settings, "quality.smartEndpointSpeed");
+    }
+
+    #[test]
+    fn rejects_context_entries_with_path_separators() {
+        let mut settings = WinsttSettings::default();
+        settings.general.context_deny_list = vec!["C:/secret/app.exe".into()];
+        assert_validation_error(settings, "contextDenyList");
+    }
 
     #[test]
     fn former_startup_only_key_change_does_not_force_restart() {

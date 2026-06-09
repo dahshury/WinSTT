@@ -107,7 +107,13 @@
     "updatesStatusError": "Falha na verificação de atualizações: {message}",
     "updatesDownloading": "A transferir…",
     "updatesDownloadingPercent": "{percent}% — A transferir atualização",
-    "updatesRestartToInstall": "Reiniciar para instalar"
+    "updatesRestartToInstall": "Reiniciar para instalar",
+    "diagnosticsTitle": "Diagnóstico",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Abrir pasta de registos",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Guardar pacote de diagnóstico...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Estatísticas gerais",

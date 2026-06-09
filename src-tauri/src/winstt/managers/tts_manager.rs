@@ -10,15 +10,15 @@
 // lifecycle, and owns the per-request cancel set.
 //
 // 1:1 with the reference `tts.ts` orchestrator:
-//   - handleSpeak → read_aloud (enabled-gate + source-aware engine + settings
+//   - handleSpeak â†’ read_aloud (enabled-gate + source-aware engine + settings
 //     fallbacks for voice/lang/speed)
-//   - handleCloudPreview → read_preview_url
-//   - handleListVoices → list_voices_catalog ({ voices, languages })
-//   - handleCloudListVoices → list_cloud_voices ({ voices, error })
-//   - handleCloudSubscription → cloud_subscription ({ tier, creditsExhausted })
-//   - handleDownloadEstimate → download_estimate ({ alreadyInstalled, components,
+//   - handleCloudPreview â†’ read_preview_url
+//   - handleListVoices â†’ list_voices_catalog ({ voices, languages })
+//   - handleCloudListVoices â†’ list_cloud_voices ({ voices, error })
+//   - handleCloudSubscription â†’ cloud_subscription ({ tier, creditsExhausted })
+//   - handleDownloadEstimate â†’ download_estimate ({ alreadyInstalled, components,
 //     totalBytes, unavailable? })
-//   - cancel / cancel_all / handleSetSpeed → cancel / cancel_all / set_speed
+//   - cancel / cancel_all / handleSetSpeed â†’ cancel / cancel_all / set_speed
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -28,6 +28,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::winstt::cloud_stt::{
+    classify_cloud_failure_message, emit_cloud_failure, CloudSttProvider,
+};
 use crate::winstt::commands::settings::read_settings;
 use crate::winstt::managers::tts_download_manager::{TtsDownloadErr, TtsDownloadManager};
 use crate::winstt::model_swap::ModelSwapCoordinator;
@@ -60,7 +63,7 @@ use chunk_sink::{chunk_payload, kitten_model_filename, EmitChunkSink};
 pub use payloads::*;
 
 /// Live engine + the source it was built for + the settings it was built from.
-/// Re-picked (lazily, per call) when `tts.source` / voice / key changes — so the
+/// Re-picked (lazily, per call) when `tts.source` / voice / key changes â€” so the
 /// command layer never has to remember to call `reload_engine`.
 struct ActiveEngine {
     source: TtsSource,
@@ -75,7 +78,7 @@ struct ActiveEngine {
 pub struct TtsManager {
     app: AppHandle,
     active: Mutex<ActiveEngine>,
-    /// request_id → shared cancel flag. The flag is the SAME `Arc<AtomicBool>` the
+    /// request_id â†’ shared cancel flag. The flag is the SAME `Arc<AtomicBool>` the
     /// active read's sink polls between chunks, so a `cancel` flips it mid-read.
     cancelled: Mutex<HashMap<String, Arc<AtomicBool>>>,
     seq: AtomicU64,
@@ -83,7 +86,7 @@ pub struct TtsManager {
     synth_lock: Mutex<()>,
     /// Live read-aloud speed (f32 bits). `read_aloud` samples this PER SENTENCE so
     /// the pill's mid-read speed change (`tts_set_speed`) applies to the NEXT
-    /// sentence at natural pitch ("next-sentence" — `tts.ts` `handleSetSpeed`).
+    /// sentence at natural pitch ("next-sentence" â€” `tts.ts` `handleSetSpeed`).
     current_speed: AtomicU32,
     /// Local-model idle tracking shared with the global model unload timeout.
     active_reads: AtomicU32,
@@ -250,7 +253,7 @@ impl TtsManager {
         log::info!("[tts] local model session dropped ({reason})");
     }
 
-    // ── settings ───────────────────────────────────────────────────────────
+    // â”€â”€ settings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// True when TTS is enabled in settings. The the reference `handleSpeak` throws
     /// `"TTS is disabled in settings"` when this is false.
@@ -267,7 +270,7 @@ impl TtsManager {
     }
 
     /// Resolve the local Kokoro config from settings (voice / lang / speed +
-    /// the STT model device, which TTS shares — memory
+    /// the STT model device, which TTS shares â€” memory
     /// `project_tts_device_follows_model_device`). `model.device` is `Auto`
     /// (DirectML with CPU fallback) or `Cpu`. Kokoro now lives under its catalog
     /// id's per-model cache dir (`tts/kokoro-82m/`), same as the other engines.
@@ -343,7 +346,7 @@ impl TtsManager {
         }
     }
 
-    /// Per-model cache dir (`%LOCALAPPDATA%/winstt/tts/<model-id>/`) — matches the
+    /// Per-model cache dir (`%LOCALAPPDATA%/winstt/tts/<model-id>/`) â€” matches the
     /// TTS download manager's layout so the engine loads what the manager fetched.
     fn model_cache_dir(&self, model_id: &str) -> PathBuf {
         crate::portable::app_data_dir(&self.app)
@@ -374,7 +377,7 @@ impl TtsManager {
             Some(TtsEngineId::Chatterbox) => {
                 Arc::new(ChatterboxLocalEngine::new(self.model_cache_dir(&model_id)))
             }
-            // Kokoro (and any unknown id) → the existing Kokoro engine + cache.
+            // Kokoro (and any unknown id) â†’ the existing Kokoro engine + cache.
             _ => Arc::new(KokoroLocalEngine::new(self.local_config())),
         }
     }
@@ -498,11 +501,11 @@ impl TtsManager {
                 }
             };
             // Swap the new engine in and hold the PREVIOUS one so we can free its
-            // native ORT session(s) explicitly below — a Chatterbox graph is ~1.6 GB
+            // native ORT session(s) explicitly below â€” a Chatterbox graph is ~1.6 GB
             // resident, so relying on `Arc`-drop alone would leave the old model
             // wandering in memory if any in-flight synthesis clone still holds a ref.
             log::info!(
-                "[tts] engine swap ({old_source:?} '{old_fp}' → {source:?} '{fingerprint}') — unloading previous model"
+                "[tts] engine swap ({old_source:?} '{old_fp}' â†’ {source:?} '{fingerprint}') â€” unloading previous model"
             );
             outgoing = Some(std::mem::replace(&mut a.engine, engine));
             a.source = source;
@@ -534,14 +537,14 @@ impl TtsManager {
             .unwrap_or(TtsSource::Local)
     }
 
-    // ── voice catalogs ──────────────────────────────────────────────────────
+    // â”€â”€ voice catalogs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Raw 54-voice list (used by the bare-array command if any).
     pub fn list_voices(&self) -> Vec<VoiceInfo> {
         KOKORO_VOICE_CATALOG.to_vec()
     }
 
-    /// `{ voices, languages }` — the `TtsVoiceCatalog` the local picker renders
+    /// `{ voices, languages }` â€” the `TtsVoiceCatalog` the local picker renders
     /// (mirrors the reference `handleListVoices`, which returns `{ voices, languages }`).
     pub fn list_voices_catalog(&self, model_id: Option<String>) -> VoiceCatalogPayload {
         // Pick the voice set for the requested (or currently-selected) local model.
@@ -580,7 +583,7 @@ impl TtsManager {
     }
 
     /// Live ElevenLabs `GET /v2/voices` (includes the account's cloned voices).
-    /// Never throws across the IPC boundary — returns `{ voices: [], error }` when
+    /// Never throws across the IPC boundary â€” returns `{ voices: [], error }` when
     /// the key is missing / invalid / the request fails (mirrors the reference
     /// `handleCloudListVoices`).
     pub async fn list_cloud_voices(&self) -> CloudVoiceCatalogPayload {
@@ -634,7 +637,7 @@ impl TtsManager {
         }
     }
 
-    /// `GET /v1/user/subscription` → `{ tier, creditsExhausted }`. Both default to
+    /// `GET /v1/user/subscription` â†’ `{ tier, creditsExhausted }`. Both default to
     /// "unknown / false" on a missing-scope key or request failure so we never
     /// wrongly block cloud TTS on data we couldn't read (mirrors the reference
     /// `handleCloudSubscription`). `creditsExhausted` is true only when the monthly
@@ -690,7 +693,7 @@ impl TtsManager {
         }
     }
 
-    // ── install / download estimate ─────────────────────────────────────────
+    // â”€â”€ install / download estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Side-effect-free estimate of what enabling LOCAL Kokoro TTS will download:
     /// the two model files (`kokoro-v1.0.fp16.onnx`, `voices-v1.0.bin`). Mirrors
@@ -698,7 +701,7 @@ impl TtsManager {
     /// totalBytes, unavailable? }`). Cloud has no local engine, so it reports
     /// `alreadyInstalled: true` with no components.
     pub async fn download_estimate(&self) -> DownloadEstimatePayload {
-        // Cloud source has nothing local to install — never gate it on disk files.
+        // Cloud source has nothing local to install â€” never gate it on disk files.
         if self.is_cloud_source() {
             return DownloadEstimatePayload {
                 already_installed: true,
@@ -766,7 +769,7 @@ impl TtsManager {
             let (target_source, target_fingerprint) = self.engine_fingerprint();
             let target_key = tts_engine_key(target_source, &target_fingerprint);
             if self.lifecycle.is_warm(&target_key) {
-                log::debug!("[tts] warm-up skipped — engine '{target_key}' is already warm");
+                log::debug!("[tts] warm-up skipped â€” engine '{target_key}' is already warm");
                 return Ok(());
             }
             let Some(_claim) = self.lifecycle.try_claim(target_key.clone()) else {
@@ -807,7 +810,7 @@ impl TtsManager {
             let _synth_guard = match self.synth_lock.try_lock() {
                 Ok(guard) => guard,
                 Err(std::sync::TryLockError::WouldBlock) => {
-                    log::debug!("[tts] warm-up yielded — real synthesis is using '{engine_key}'");
+                    log::debug!("[tts] warm-up yielded â€” real synthesis is using '{engine_key}'");
                     self.lifecycle.mark_warm(engine_key);
                     return Ok(());
                 }
@@ -848,7 +851,7 @@ impl TtsManager {
         }
     }
 
-    // ── cancellation ────────────────────────────────────────────────────────
+    // â”€â”€ cancellation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn cancel_flag(&self, request_id: &str) -> Arc<AtomicBool> {
         let mut m = self.cancelled.lock_recover();
@@ -916,20 +919,39 @@ impl TtsManager {
         );
     }
 
-    // ── lifecycle emit ──────────────────────────────────────────────────────
+    fn selected_cloud_provider(&self) -> CloudSttProvider {
+        match read_settings(&self.app).tts.cloud.provider {
+            TtsCloudProvider::Elevenlabs => CloudSttProvider::ElevenLabs,
+            TtsCloudProvider::Openrouter => CloudSttProvider::OpenRouter,
+        }
+    }
+
+    fn emit_cloud_tts_failure(&self, provider: CloudSttProvider, context: &str, err: &TtsError) {
+        let reason = err.to_string();
+        let code = classify_cloud_failure_message(&reason);
+        emit_cloud_failure(
+            &self.app,
+            provider,
+            code,
+            format!("{context} failed: {reason}"),
+            None,
+        );
+    }
+
+    // â”€â”€ lifecycle emit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Emit a plain lifecycle event with the EXACT WinSTT IPC shape (camelCase
     /// keys) so the reused renderer's `onTtsStarted`/`onTtsCompleted`/`onTtsFailed`
-    /// listeners fire unchanged. The adapter maps `TTS_STARTED`→`tts:started`, etc.
+    /// listeners fire unchanged. The adapter maps `TTS_STARTED`â†’`tts:started`, etc.
     fn emit_event(&self, event: &str, payload: serde_json::Value) {
         let _ = self.app.emit(event, payload);
     }
 
-    // ── reads ───────────────────────────────────────────────────────────────
+    // â”€â”€ reads â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Read `text` aloud sentence-by-sentence under ONE `request_id` so the
     /// renderer plays it gap-free. Each chunk forwards to `tts:chunk`. `get_speed`
-    /// is sampled per sentence (mid-read speed change → NEXT sentence). Blocking —
+    /// is sampled per sentence (mid-read speed change â†’ NEXT sentence). Blocking â€”
     /// the command runs it on a worker.
     ///
     /// Enforces the reference `handleSpeak` contract: throws (emits `tts:failed`)
@@ -949,7 +971,7 @@ impl TtsManager {
         // immediately after start flips THIS read's flag (and `cancel_all` lists it).
         let cancel = self.cancel_flag(request_id);
 
-        // Enabled-gate (the reference throws `ValidationError("TTS is disabled …")`).
+        // Enabled-gate (the reference throws `ValidationError("TTS is disabled â€¦")`).
         if !self.is_enabled() {
             self.drop_request(request_id);
             self.emit_event(
@@ -982,7 +1004,7 @@ impl TtsManager {
 
         let (source, engine, engine_key) = self.ensure_engine();
         // Auto-download the selected local model's assets (with progress) before
-        // synthesizing — mirrors the STT first-use download. Kokoro self-downloads.
+        // synthesizing â€” mirrors the STT first-use download. Kokoro self-downloads.
         if matches!(source, TtsSource::Local) {
             if let Err(e) = self.ensure_local_model_assets() {
                 self.drop_request(request_id);
@@ -1023,7 +1045,7 @@ impl TtsManager {
         };
 
         // Lazily fetch the requested local voice if it wasn't in the (small) model
-        // download — Kokoro ships only its default voice and pulls the other 53
+        // download â€” Kokoro ships only its default voice and pulls the other 53
         // per-voice on first use. No-op for already-cached voices, cloning models,
         // and the bundled-voice engines. A fetch failure surfaces as a synth failure
         // rather than silently producing nothing (the prior "voice doesn't respond").
@@ -1092,10 +1114,15 @@ impl TtsManager {
                 "tts:completed",
                 serde_json::json!({ "requestId": request_id, "cancelled": true, "elapsedMs": elapsed_ms }),
             ),
-            Err(e) => self.emit_event(
-                "tts:failed",
-                serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
-            ),
+            Err(e) => {
+                if matches!(source, TtsSource::Cloud) {
+                    self.emit_cloud_tts_failure(self.selected_cloud_provider(), "Cloud TTS", e);
+                }
+                self.emit_event(
+                    "tts:failed",
+                    serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
+                );
+            }
         }
     }
 
@@ -1143,18 +1170,25 @@ impl TtsManager {
                 "tts:completed",
                 serde_json::json!({ "requestId": request_id, "cancelled": was_cancelled, "elapsedMs": elapsed_ms }),
             ),
-            Err(e) => self.emit_event(
-                "tts:failed",
-                serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
-            ),
+            Err(e) => {
+                self.emit_cloud_tts_failure(
+                    CloudSttProvider::OpenRouter,
+                    "OpenRouter TTS preview",
+                    &e,
+                );
+                self.emit_event(
+                    "tts:failed",
+                    serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
+                );
+            }
         }
     }
 
     /// Play a cloud voice's FREE pre-generated sample (`preview_url`) instead of
-    /// synthesizing — browsing voices costs no ElevenLabs credits. Fetches the mp3
+    /// synthesizing â€” browsing voices costs no ElevenLabs credits. Fetches the mp3
     /// (key-free, https-only) and forwards it as ONE `tts:chunk` (mp3) under the
     /// same `tts:started`/`tts:completed`/`tts:failed` lifecycle a real read uses.
-    /// Mirrors `tts.ts` `handleCloudPreview` + `previewCloudClip`. Blocking — the
+    /// Mirrors `tts.ts` `handleCloudPreview` + `previewCloudClip`. Blocking â€” the
     /// command runs it on a worker.
     pub fn read_preview_url(&self, request_id: &str, preview_url: &str) {
         let cancel = self.cancel_flag(request_id);
@@ -1165,7 +1199,7 @@ impl TtsManager {
         );
 
         // The CDN preview is key-free; build a throwaway cloud engine for the https
-        // GET (it refuses non-https). No synth lock — this is a plain download.
+        // GET (it refuses non-https). No synth lock â€” this is a plain download.
         let engine = ElevenLabsEngine::new(
             String::new(),
             "eleven_multilingual_v2".to_string(),

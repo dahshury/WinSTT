@@ -42,6 +42,7 @@
     "check:cleanup": "bun run lint && bun run typecheck && bun run check:deadcode",
     "docs:dev": "cd docs && bun run dev",
     "docs:build": "cd docs && bun run build",
+    "docs:build:pages": "cd docs && bun run build:pages",
     "docs:videos": "cd tools/remotion-demos && npm run render:all"
   },
   "dependencies": {

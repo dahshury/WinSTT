@@ -105,13 +105,21 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 	);
 
 	const mode = panel?.mode ?? DEFAULT_MODEL_PICKER_MODE;
+	const { height: desiredHeight, width: desiredWidth } =
+		desiredSizeForMode(mode);
 
 	// Report the desired footprint for the active picker body. Main clamps it to
 	// the room around the chip and sends back the final panel rect via
 	// MODEL_PICKER_ANCHOR.
 	useEffect(() => {
-		ipcSend(IPC.MODEL_PICKER_RESIZE, desiredSizeForMode(mode));
-	}, [mode]);
+		if (panelPhaseRef.current === "closing") {
+			return;
+		}
+		ipcSend(IPC.MODEL_PICKER_RESIZE, {
+			height: desiredHeight,
+			width: desiredWidth,
+		});
+	}, [desiredHeight, desiredWidth]);
 
 	// Pre-warm the (heavy) picker body during the window's idle pre-create
 	// rather than on first open. The detached picker window is created hidden +

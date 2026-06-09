@@ -119,7 +119,7 @@ const OLLAMA_TOOL_CAPABILITY_ENDPOINT = {
 	tag: "ollama",
 } as OpenRouterEndpoint;
 
-export function OllamaToolCapabilityBadge({
+function OllamaToolCapabilityBadge({
 	capabilities,
 	className,
 }: {

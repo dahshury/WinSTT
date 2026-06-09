@@ -178,7 +178,7 @@ function ProviderCard({
 				cn(surfaceBg(level), surfaceHoverBg(Math.min(level + 1, 8))),
 			)}
 			onClick={selectProvider}
-			value={`${model.id}@${endpoint.provider_name}`}
+			value={`${model.id}@${providerSlug}`}
 		>
 			<span className={getSelectionDotClassName(isSelected)} />
 

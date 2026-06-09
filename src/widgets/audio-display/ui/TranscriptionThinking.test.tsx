@@ -92,13 +92,31 @@ describe("TranscriptionThinking", () => {
 			processingPhase: "transcribing",
 			transcribingStartedAt: 100,
 		});
+		useLlmProcessingStore.setState({
+			isThinking: true,
+			thinkingStartedAt: 200,
+			thinkingText: "",
+		});
 		const { container } = render(<TranscriptionThinking />);
 		expect(
 			container.querySelector("output")?.getAttribute("data-thinking-word"),
 		).toBe("Transcribing");
 	});
 
-	test("shows Thinking while LLM processing is active", () => {
+	test("shows Thinking while configured dictation cleanup is active", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				llm: {
+					...initialSettings.llm,
+					dictation: {
+						...initialSettings.llm.dictation,
+						enabled: true,
+						model: "llama3",
+					},
+				},
+			},
+		});
 		useLlmProcessingStore.setState({
 			isThinking: true,
 			thinkingStartedAt: 100,

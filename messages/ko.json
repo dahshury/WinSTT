@@ -107,7 +107,13 @@
     "updatesStatusError": "업데이트 확인 실패: {message}",
     "updatesDownloading": "다운로드 중…",
     "updatesDownloadingPercent": "{percent}% — 업데이트 다운로드 중",
-    "updatesRestartToInstall": "재시작하여 설치"
+    "updatesRestartToInstall": "재시작하여 설치",
+    "diagnosticsTitle": "진단",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "로그 폴더 열기",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "진단 번들 저장...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "전체 통계",

@@ -256,7 +256,10 @@ export function ScrollArea({
 			{...rest}
 		>
 			<BaseScrollArea.Viewport
-				className={cn("h-full w-full", viewportClassName)}
+				className={cn(
+					"h-full w-full [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+					viewportClassName,
+				)}
 				data-rubber-band={rubberBandOnTouch ? undefined : "off"}
 				data-rubber-band-managed={rubberBandOnTouch ? "local" : undefined}
 				ref={(node) => {

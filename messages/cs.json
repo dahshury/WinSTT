@@ -107,7 +107,13 @@
     "updatesStatusError": "Kontrola aktualizací selhala: {message}",
     "updatesDownloading": "Stahování…",
     "updatesDownloadingPercent": "{percent} % — Stahování aktualizace",
-    "updatesRestartToInstall": "Restartovat pro instalaci"
+    "updatesRestartToInstall": "Restartovat pro instalaci",
+    "diagnosticsTitle": "Diagnostika",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Otevřít složku protokolů",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Uložit diagnostický balíček...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Celkové statistiky",

@@ -1,6 +1,8 @@
 import { useCallback } from "react";
-import { useSystemResourcesStore } from "@/entities/system-resources";
-import { assessDictationFitClient } from "@/entities/system-resources/lib/fit-assessor";
+import {
+	assessDictationFitClient,
+	useSystemResourcesStore,
+} from "@/entities/system-resources";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import {
 	localModelIdOrNull,

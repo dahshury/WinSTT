@@ -2,9 +2,11 @@
 
 import {
 	Brain01Icon,
+	BubbleChatIcon,
 	CodeIcon,
 	GlobeIcon,
 	Layers01Icon,
+	SparklesIcon,
 	Wrench01Icon,
 	ZapIcon,
 } from "@hugeicons/core-free-icons";
@@ -12,6 +14,13 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import type { OpenRouterEndpoint } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
+
+export interface FeatureSource {
+	id?: string | undefined;
+	quantization?: string | null | undefined;
+	supported_parameters?: readonly string[] | null | undefined;
+	variant?: string | null | undefined;
+}
 
 export interface FeatureIconConfig {
 	bgClass: string;
@@ -62,6 +71,15 @@ const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 			"Supports reasoning output. The model can show its step-by-step thinking process and explain how it arrives at conclusions.",
 		...NEUTRAL_FEATURE_CHROME,
 	},
+	include_reasoning: {
+		icon: <HugeiconsIcon className="size-3" icon={SparklesIcon} />,
+		iconSm: <HugeiconsIcon className="size-2.5" icon={SparklesIcon} />,
+		label: "Inc. Reasoning",
+		shortLabel: "+R",
+		description:
+			"Can include reasoning in response. The model can optionally include its internal reasoning process in the output when requested.",
+		...NEUTRAL_FEATURE_CHROME,
+	},
 	structured_outputs: {
 		icon: <HugeiconsIcon className="size-3" icon={CodeIcon} />,
 		iconSm: <HugeiconsIcon className="size-2.5" icon={CodeIcon} />,
@@ -69,6 +87,15 @@ const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 		shortLabel: "{}",
 		description:
 			"Supports structured output schema. The model can return data in a predefined JSON schema format, ensuring consistent output structure.",
+		...NEUTRAL_FEATURE_CHROME,
+	},
+	response_format: {
+		icon: <HugeiconsIcon className="size-3" icon={BubbleChatIcon} />,
+		iconSm: <HugeiconsIcon className="size-2.5" icon={BubbleChatIcon} />,
+		label: "JSON",
+		shortLabel: "JS",
+		description:
+			"Supports JSON response format. The model can return responses in valid JSON format, useful for programmatic integration.",
 		...NEUTRAL_FEATURE_CHROME,
 	},
 	web_search_options: {
@@ -87,8 +114,22 @@ const FEATURE_PRIORITY = [
 	"parallel_tool_calls",
 	"reasoning",
 	"structured_outputs",
+	"include_reasoning",
+	"response_format",
 	"web_search_options",
 ] as const;
+
+const REASONING_PARAM_KEYS: ReadonlySet<string> = new Set([
+	"reasoning",
+	"include_reasoning",
+]);
+
+const REASONING_ID_PATTERNS: readonly RegExp[] = [
+	/(?:^|\/)o[134](?:-|$)/i,
+	/[-/]reasoning(?:[-/]|$)/i,
+	/[-/]think(?:ing)?(?:[-/]|$)/i,
+	/[-/]reasoner(?:[-/]|$)/i,
+];
 
 const QUANTIZATION_LABELS: Record<string, string> = {
 	fp32: "FP32",
@@ -105,7 +146,7 @@ const QUANTIZATION_LABELS: Record<string, string> = {
 };
 
 export function getQuantizationLabel(
-	endpoint: OpenRouterEndpoint,
+	endpoint: FeatureSource,
 ): string | undefined {
 	const quant = endpoint.quantization;
 	if (!quant) {
@@ -116,6 +157,34 @@ export function getQuantizationLabel(
 		return;
 	}
 	return QUANTIZATION_LABELS[normalized];
+}
+
+function hasImplicitReasoningSupport(source: FeatureSource): boolean {
+	if (source.variant === "thinking") {
+		return true;
+	}
+	const id = source.id;
+	return id ? REASONING_ID_PATTERNS.some((re) => re.test(id)) : false;
+}
+
+function sourceSupportsReasoning(source: FeatureSource): boolean {
+	return (
+		hasImplicitReasoningSupport(source) ||
+		(source.supported_parameters?.some((p) => REASONING_PARAM_KEYS.has(p)) ??
+			false)
+	);
+}
+
+function buildSupportedParamsSet(source: FeatureSource): Set<string> {
+	const supportedParamsSet = new Set<string>(source.supported_parameters ?? []);
+	if (
+		!supportedParamsSet.has("reasoning") &&
+		!supportedParamsSet.has("include_reasoning") &&
+		hasImplicitReasoningSupport(source)
+	) {
+		supportedParamsSet.add("reasoning");
+	}
+	return supportedParamsSet;
 }
 
 export interface ChipChromeOptions {
@@ -199,8 +268,15 @@ export function buildFeatures(
 	endpoint: OpenRouterEndpoint,
 	maxIcons: number,
 ): Array<{ key: string; config: FeatureIconConfig }> {
-	const supportedParamsSet = new Set(endpoint.supported_parameters ?? []);
-	const quantLabel = getQuantizationLabel(endpoint);
+	return buildFeaturesFromSource(endpoint, maxIcons);
+}
+
+export function buildFeaturesFromSource(
+	source: FeatureSource,
+	maxIcons: number,
+): Array<{ key: string; config: FeatureIconConfig }> {
+	const supportedParamsSet = buildSupportedParamsSet(source);
+	const quantLabel = getQuantizationLabel(source);
 	const features: Array<{ key: string; config: FeatureIconConfig }> = [];
 
 	if (quantLabel) {
@@ -209,4 +285,13 @@ export function buildFeatures(
 
 	appendSupportedParams(features, supportedParamsSet, maxIcons);
 	return features;
+}
+
+export function hasDisplayableFeatures(source: FeatureSource): boolean {
+	const supportedParamsSet = buildSupportedParamsSet(source);
+	return (
+		!!getQuantizationLabel(source) ||
+		sourceSupportsReasoning(source) ||
+		FEATURE_PRIORITY.some((param) => supportedParamsSet.has(param))
+	);
 }

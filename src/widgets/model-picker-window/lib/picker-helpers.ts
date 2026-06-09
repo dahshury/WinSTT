@@ -20,9 +20,9 @@ import type { OnnxQuantization } from "@/shared/config/defaults";
 // both surfaces always look identical.
 export const DESIRED_WIDTH = STT_PICKER_WIDTH_PX;
 export const DESIRED_HEIGHT = 560;
-export const OPENROUTER_PICKER_WIDTH = 580;
-export const OLLAMA_PICKER_WIDTH = 620;
-export const LLM_PICKER_HEIGHT = 620;
+const OPENROUTER_PICKER_WIDTH = 580;
+const OLLAMA_PICKER_WIDTH = 620;
+const LLM_PICKER_HEIGHT = 620;
 export const PANEL_HEIGHT = "h-full";
 // Keep in sync with `MODEL_PICKER_CLOSE_MS` in `src-tauri/.../windows.rs` and
 // `--dropdown-close-dur` in `src/app/styles/globals.css`.

@@ -24,8 +24,9 @@ import {
 	surfaceHoverBg,
 	useSurface,
 } from "@/shared/lib/surface";
-import { ButtonGroup } from "@/shared/ui/button-group";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
+import { LanguageMultiCombobox } from "@/shared/ui/language-multi-combobox";
+import { FilterMenuTriggerButton } from "../../core/FilterMenuTriggerButton";
 import {
 	activeFilterCount,
 	EMPTY_FILTER_STATE,
@@ -218,26 +219,21 @@ function FilterSection({
 function LanguageFilterSection({
 	availableLanguages,
 	selected,
-	onToggle,
+	onChange,
 }: {
 	availableLanguages: string[];
-	onToggle: (code: string) => void;
+	onChange: (next: string[]) => void;
 	selected: string[];
 }) {
-	const level = useSurface();
-	if (availableLanguages.length === 0) {
+	const options = [...new Set([...availableLanguages, ...selected])]
+		.sort((a, b) => languageLabel(a).localeCompare(languageLabel(b)))
+		.map((code) => ({
+			badge: code.toUpperCase(),
+			id: code,
+			label: languageLabel(code),
+		}));
+	if (options.length === 0) {
 		return null;
-	}
-	// Order by the *displayed* name, not the raw ISO code, so the grid reads
-	// alphabetically (Arabic, Chinese, French…). Then pack into fixed rows of
-	// three so each row is a full-width joined segment control — every row's
-	// edges line up instead of the old ragged wrap.
-	const sorted = [...availableLanguages].sort((a, b) =>
-		languageLabel(a).localeCompare(languageLabel(b)),
-	);
-	const rows: string[][] = [];
-	for (let i = 0; i < sorted.length; i += 3) {
-		rows.push(sorted.slice(i, i + 3));
 	}
 	return (
 		<div className="flex flex-col gap-1.5 p-2">
@@ -246,72 +242,20 @@ function LanguageFilterSection({
 				Show models that can transcribe a language (multilingual models always
 				match).
 			</p>
-			<div className="flex flex-col gap-1">
-				{rows.map((row) => (
-					<ButtonGroup className="w-full" connected key={row.join("-")}>
-						{row.map((code) => {
-							const isOn = selected.includes(code);
-							return (
-								<BaseButton
-									className={cn(
-										"inline-flex h-7 min-w-0 flex-1 cursor-pointer items-center justify-center px-2 font-medium text-[11px] leading-none transition-colors",
-										isOn
-											? "bg-accent text-white"
-											: cn(
-													surfaceHoverBg(Math.min(level + 1, 8)),
-													"text-foreground-secondary hover:text-foreground",
-												),
-									)}
-									key={code}
-									onClick={() => onToggle(code)}
-									title={languageLabel(code)}
-									type="button"
-								>
-									<span className="truncate">{languageLabel(code)}</span>
-								</BaseButton>
-							);
-						})}
-					</ButtonGroup>
-				))}
+			<div className="w-full">
+				<LanguageMultiCombobox
+					ariaLabel="Language filter"
+					emptyLabel="No languages found"
+					onChange={onChange}
+					options={options}
+					placeholder="Select languages"
+					removeLabel={(language) => `Remove ${language}`}
+					selectedCountLabel={(count) => `${count} languages selected`}
+					selectedHeading="Selected languages"
+					value={selected}
+				/>
 			</div>
 		</div>
-	);
-}
-
-function TriggerButton({
-	count,
-	buttonProps,
-}: {
-	buttonProps: ComponentPropsWithoutRef<"button">;
-	count: number;
-}) {
-	const isActive = count > 0;
-	const label = count > 0 ? `Sort & filter (${count} active)` : "Sort & filter";
-	return (
-		<BaseButton
-			{...buttonProps}
-			aria-label={label}
-			className={cn(
-				"relative inline-flex size-7 items-center justify-center rounded-sm border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent",
-				isActive
-					? "border-accent/40 bg-accent/10 text-accent hover:bg-accent/15"
-					: "border-transparent bg-transparent text-foreground-secondary hover:bg-surface-hover",
-			)}
-			title={label}
-			type="button"
-		>
-			<HugeiconsIcon className="size-4" icon={FilterIcon} />
-			{count > 0 ? (
-				<span
-					className={cn(
-						"absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full",
-						"border border-divider bg-accent px-1 font-semibold text-[9px] text-white tabular-nums leading-none",
-					)}
-				>
-					{count}
-				</span>
-			) : null}
-		</BaseButton>
 	);
 }
 
@@ -329,15 +273,14 @@ export function SttFiltersMenu({
 	// The trigger badge counts filters + the active sort as one combined signal.
 	const activeFilters = activeFilterCount(effectiveFilters);
 	const count = activeFilters + (sort === null ? 0 : 1);
+	const hasLanguageFilterOptions =
+		availableLanguages.length > 0 || effectiveFilters.languages.length > 0;
 	const canClear =
 		activeFilters > lockedActiveFilterCount(effectiveFilters, locked) ||
 		sort !== null;
-	const toggleLanguage = (code: string) => {
-		const next = effectiveFilters.languages.includes(code)
-			? effectiveFilters.languages.filter((c) => c !== code)
-			: [...effectiveFilters.languages, code];
+	const setLanguages = (languages: string[]) => {
 		onFiltersChange(
-			applyLockedFilters({ ...effectiveFilters, languages: next }, locked),
+			applyLockedFilters({ ...effectiveFilters, languages }, locked),
 		);
 	};
 	const clear = () => {
@@ -350,9 +293,10 @@ export function SttFiltersMenu({
 			<Popover.Trigger
 				nativeButton
 				render={(props) => (
-					<TriggerButton
+					<FilterMenuTriggerButton
 						buttonProps={props as ComponentPropsWithoutRef<"button">}
 						count={count}
+						label="Sort & filter"
 					/>
 				)}
 			/>
@@ -369,8 +313,8 @@ export function SttFiltersMenu({
 						)}
 						data-slot="stt-filters-menu-content"
 					>
-						{/* Re-provide the popup's own surface level downward so every chip,
-						    checkbox row and language button lifts relative to it. */}
+						{/* Re-provide the popup's own surface level downward so chips,
+						    checkbox rows and the language combobox lift relative to it. */}
 						<SurfaceProvider value={level}>
 							<div className="flex items-center justify-between px-2 py-1.5">
 								<span className="font-semibold text-foreground-muted text-xs-tight uppercase tracking-wide">
@@ -393,12 +337,14 @@ export function SttFiltersMenu({
 								locked={locked}
 								onFiltersChange={onFiltersChange}
 							/>
-							{availableLanguages.length > 0 ? <SectionDivider /> : null}
-							<LanguageFilterSection
-								availableLanguages={availableLanguages}
-								onToggle={toggleLanguage}
-								selected={effectiveFilters.languages}
-							/>
+							{hasLanguageFilterOptions ? <SectionDivider /> : null}
+							{hasLanguageFilterOptions ? (
+								<LanguageFilterSection
+									availableLanguages={availableLanguages}
+									onChange={setLanguages}
+									selected={effectiveFilters.languages}
+								/>
+							) : null}
 						</SurfaceProvider>
 					</Popover.Popup>
 				</Popover.Positioner>

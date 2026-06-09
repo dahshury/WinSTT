@@ -44,6 +44,7 @@ export function CrudAddForm({
 	setField,
 	handleSubmit,
 }: CrudAddFormProps) {
+	const showJoinedLabels = fields.length > 1;
 	const addInputGroup = (
 		field: CrudField,
 		isLast: boolean,
@@ -102,19 +103,21 @@ export function CrudAddForm({
 		>
 			{addFormLayout === "joined" ? (
 				<>
-					<div
-						aria-hidden="true"
-						className="flex text-2xs text-foreground-secondary"
-					>
-						{fields.map((field) => (
-							<div
-								className={cn("min-w-0 px-2", field.width ?? "flex-1")}
-								key={field.name}
-							>
-								{field.label}
-							</div>
-						))}
-					</div>
+					{showJoinedLabels ? (
+						<div
+							aria-hidden="true"
+							className="flex text-2xs text-foreground-secondary"
+						>
+							{fields.map((field) => (
+								<div
+									className={cn("min-w-0 px-2", field.width ?? "flex-1")}
+									key={field.name}
+								>
+									{field.label}
+								</div>
+							))}
+						</div>
+					) : null}
 					<ButtonGroup
 						aria-label={labels.add}
 						className={cn(

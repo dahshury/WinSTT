@@ -107,7 +107,13 @@
     "updatesStatusError": "Uppdateringskontroll misslyckades: {message}",
     "updatesDownloading": "Laddar ned…",
     "updatesDownloadingPercent": "{percent}% — Laddar ned uppdatering",
-    "updatesRestartToInstall": "Starta om för att installera"
+    "updatesRestartToInstall": "Starta om för att installera",
+    "diagnosticsTitle": "Diagnostik",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Öppna loggmappen",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Spara diagnostikpaket...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Övergripande statistik",

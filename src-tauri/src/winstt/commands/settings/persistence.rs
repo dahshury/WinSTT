@@ -16,7 +16,7 @@ fn store_path() -> std::path::PathBuf {
 ///
 /// This is the single read path every consumer uses (managers for LLM / cloud-STT /
 /// verify read API keys straight off the returned struct). Renderer-facing commands
-/// must call `sanitize_settings_for_renderer` before returning or emitting this tree.
+/// must use `read_settings_for_renderer` instead of masking this internal view.
 /// The on-disk store holds the sealed `enc:v1:` envelopes; legacy plaintext (no
 /// prefix) passes through unchanged.
 ///
@@ -25,8 +25,10 @@ fn store_path() -> std::path::PathBuf {
 pub fn read_settings(app: &AppHandle) -> WinsttSettings {
     match try_read_settings_raw(app) {
         Ok(mut settings) => {
-            if let Err(err) = try_open_secrets(&mut settings) {
-                log::warn!("[settings] failed to open WinSTT settings secrets: {err}");
+            if let Err(err) = try_open_secrets_fail_closed(&mut settings) {
+                log::warn!(
+                    "[settings] failed to open WinSTT settings secrets; returning settings with secrets cleared: {err}"
+                );
             }
             settings
         }
@@ -41,6 +43,31 @@ pub(super) fn try_read_settings(app: &AppHandle) -> Result<WinsttSettings, Strin
     let mut settings = try_read_settings_raw(app)?;
     try_open_secrets(&mut settings)?;
     Ok(settings)
+}
+
+/// Read the settings for renderer IPC.
+///
+/// This path masks every non-empty secret value after a best-effort open attempt,
+/// so the renderer can keep showing "a secret exists" without receiving plaintext
+/// or an encrypted envelope.
+pub(super) fn read_settings_for_renderer(app: &AppHandle) -> WinsttSettings {
+    match try_read_settings_raw(app) {
+        Ok(mut settings) => {
+            if let Err(err) = try_open_secrets(&mut settings) {
+                log::warn!(
+                    "[settings] failed to open WinSTT settings secrets for renderer; masking stored secret markers: {err}"
+                );
+            }
+            sanitize_settings_for_renderer(&mut settings);
+            settings
+        }
+        Err(err) => {
+            log::warn!("[settings] failed to read WinSTT settings for renderer: {err}");
+            let mut settings = WinsttSettings::default();
+            sanitize_settings_for_renderer(&mut settings);
+            settings
+        }
+    }
 }
 
 /// Read the persisted settings WITHOUT opening secrets (the on-disk form, where the
@@ -107,6 +134,24 @@ fn try_open_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
         *value = try_decrypt_secret(value)?;
     }
     Ok(())
+}
+
+fn try_open_secrets_fail_closed(settings: &mut WinsttSettings) -> Result<(), String> {
+    match try_open_secrets(settings) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            clear_secret_fields(settings);
+            Err(err)
+        }
+    }
+}
+
+fn clear_secret_fields(settings: &mut WinsttSettings) {
+    settings.llm.openrouter_api_key.clear();
+    settings.integrations.elevenlabs.api_key.clear();
+    for value in settings.core.post_process_api_keys.values_mut() {
+        value.clear();
+    }
 }
 
 /// Seal (encrypt) the secret fields on a settings tree in place, ready for
@@ -423,6 +468,46 @@ mod tests {
         let err = try_open_secrets(&mut s).unwrap_err();
         assert!(err.contains("malformed encrypted secret envelope"));
         assert_eq!(s.llm.openrouter_api_key, "enc:v1:not-hex-!!!");
+    }
+
+    #[test]
+    fn internal_open_failure_clears_all_secret_fields() {
+        let mut s = WinsttSettings::default();
+        s.model.model = "nemo-canary-180m-flash".into();
+        s.llm.openrouter_api_key = "sk-or-v1-secret".into();
+        s.integrations.elevenlabs.api_key = "enc:v1:not-hex-!!!".into();
+        s.core
+            .post_process_api_keys
+            .insert("openai".into(), "sk-pp-secret".into());
+
+        let err = try_open_secrets_fail_closed(&mut s).unwrap_err();
+
+        assert!(err.contains("malformed encrypted secret envelope"));
+        assert_eq!(s.llm.openrouter_api_key, "");
+        assert_eq!(s.integrations.elevenlabs.api_key, "");
+        assert_eq!(s.core.post_process_api_keys.get("openai").unwrap(), "");
+        assert_eq!(s.model.model, "nemo-canary-180m-flash");
+    }
+
+    #[test]
+    fn renderer_sanitization_masks_after_open_failure() {
+        let mut s = WinsttSettings::default();
+        s.llm.openrouter_api_key = "sk-or-v1-secret".into();
+        s.integrations.elevenlabs.api_key = "enc:v1:not-hex-!!!".into();
+        s.core
+            .post_process_api_keys
+            .insert("openai".into(), "sk-pp-secret".into());
+
+        let err = try_open_secrets(&mut s).unwrap_err();
+        sanitize_settings_for_renderer(&mut s);
+
+        assert!(err.contains("malformed encrypted secret envelope"));
+        assert_eq!(s.llm.openrouter_api_key, SECRET_PRESENT_SENTINEL);
+        assert_eq!(s.integrations.elevenlabs.api_key, SECRET_PRESENT_SENTINEL);
+        assert_eq!(
+            s.core.post_process_api_keys.get("openai").unwrap(),
+            SECRET_PRESENT_SENTINEL
+        );
     }
 
     #[test]

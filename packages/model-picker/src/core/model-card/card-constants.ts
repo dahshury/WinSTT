@@ -14,7 +14,7 @@ import { cn } from "@/shared/lib/cn";
 export const CARD_BASE = cn(
 	// `group` enables the hover-reveal of `group-hover:` descendants (e.g. the
 	// Ollama delete button) — without it that button stays invisible/unclickable.
-	"group relative mx-2 my-1.5 flex cursor-pointer flex-col gap-2.5 overflow-hidden rounded-lg px-3.5 py-3 outline-none",
+	"group relative my-1.5 flex cursor-pointer flex-col gap-2.5 overflow-hidden rounded-lg px-3.5 py-3 outline-none",
 	"border border-border bg-surface-3 shadow-surface-2",
 	"transition-[transform,border-color,background-color,box-shadow] duration-150 ease-out",
 	"hover:-translate-y-px hover:border-border-hover hover:bg-surface-4 hover:shadow-surface-3",

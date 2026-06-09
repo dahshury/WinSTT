@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray-menu-capability",
+  "description": "Tray menu renderer permissions for user-triggered update checks. File picking and transcript copy run through Rust commands.",
+  "windows": ["tray-menu"],
+  "permissions": ["updater:default"]
+}

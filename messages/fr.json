@@ -107,7 +107,13 @@
     "updatesStatusError": "Échec de la recherche de mise à jour : {message}",
     "updatesDownloading": "Téléchargement…",
     "updatesDownloadingPercent": "{percent} % — Téléchargement de la mise à jour",
-    "updatesRestartToInstall": "Redémarrer pour installer"
+    "updatesRestartToInstall": "Redémarrer pour installer",
+    "diagnosticsTitle": "Diagnostics",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Ouvrir le dossier des journaux",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Enregistrer le bundle de diagnostic...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Statistiques Globales",

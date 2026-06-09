@@ -1,11 +1,13 @@
 "use client";
 
 import type { ComponentPropsWithoutRef } from "react";
-import type { OpenRouterEndpoint } from "@/shared/api/models";
+import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import {
 	buildFeatures,
+	buildFeaturesFromSource,
 	type FeatureIconConfig,
+	type FeatureSource,
 	getChipIcon,
 	getChipLabelClass,
 	getChipSizeClass,
@@ -19,6 +21,32 @@ interface EndpointFeatureIconsProps {
 	maxIcons?: number;
 	showLabels?: boolean;
 	size?: "sm" | "md";
+}
+
+interface ModelFeatureIconsProps {
+	className?: string;
+	flat?: boolean;
+	maxIcons?: number;
+	model: OpenRouterModel;
+	showLabels?: boolean;
+	size?: "sm" | "md";
+}
+
+interface FeatureSourceIconsProps {
+	className?: string | undefined;
+	flat?: boolean;
+	maxIcons?: number;
+	showLabels?: boolean;
+	size?: "sm" | "md";
+	source: FeatureSource;
+}
+
+interface FeatureIconsProps {
+	className?: string | undefined;
+	features: Array<{ key: string; config: FeatureIconConfig }>;
+	flat: boolean;
+	showLabels: boolean;
+	size: "sm" | "md";
 }
 
 function ChipBody({
@@ -40,16 +68,13 @@ function ChipBody({
 	);
 }
 
-export function EndpointFeatureIcons({
-	endpoint,
-	maxIcons = 4,
-	showLabels = false,
-	size = "sm",
-	flat = false,
+function FeatureIcons({
+	features,
+	showLabels,
+	size,
+	flat,
 	className,
-}: EndpointFeatureIconsProps) {
-	const features = buildFeatures(endpoint, maxIcons);
-
+}: FeatureIconsProps) {
 	if (features.length === 0) {
 		return null;
 	}
@@ -80,6 +105,7 @@ export function EndpointFeatureIcons({
 												),
 										getChipSizeClass({ flat, isSmall, shouldShowLabel }),
 									)}
+									data-feature-key={key}
 								>
 									<ChipBody
 										config={config}
@@ -99,5 +125,64 @@ export function EndpointFeatureIcons({
 				);
 			})}
 		</div>
+	);
+}
+
+export function FeatureSourceIcons({
+	source,
+	maxIcons = 4,
+	showLabels = false,
+	size = "sm",
+	flat = false,
+	className,
+}: FeatureSourceIconsProps) {
+	const features = buildFeaturesFromSource(source, maxIcons);
+	return (
+		<FeatureIcons
+			className={className}
+			features={features}
+			flat={flat}
+			showLabels={showLabels}
+			size={size}
+		/>
+	);
+}
+
+export function EndpointFeatureIcons({
+	endpoint,
+	maxIcons = 4,
+	showLabels = false,
+	size = "sm",
+	flat = false,
+	className,
+}: EndpointFeatureIconsProps) {
+	const features = buildFeatures(endpoint, maxIcons);
+	return (
+		<FeatureIcons
+			className={className}
+			features={features}
+			flat={flat}
+			showLabels={showLabels}
+			size={size}
+		/>
+	);
+}
+
+export function ModelFeatureIcons({
+	model,
+	maxIcons = 4,
+	showLabels = false,
+	size = "sm",
+	flat = false,
+	className,
+}: ModelFeatureIconsProps) {
+	return (
+		<FeatureSourceIcons
+			className={className}
+			flat={flat}
+			showLabels={showLabels}
+			size={size}
+			source={model}
+		/>
 	);
 }

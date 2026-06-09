@@ -447,6 +447,25 @@ describe("wrappers migrated to direct commands.* (no channel)", () => {
 		});
 	});
 
+	test("windowOpenContextPlayground opens the normal context debug window", async () => {
+		installMockApi();
+		setTauriInvoke(() => null);
+		await ipc.windowOpenContextPlayground();
+		expect(lastTauriCall()).toEqual({
+			cmd: "open_window",
+			args: {
+				name: "context-playground",
+				x: null,
+				y: null,
+				width: null,
+				height: null,
+				pickerKind: null,
+				pickerFeature: null,
+				pickerTarget: null,
+			},
+		});
+	});
+
 	test("wakewordModelStatus calls wakeword_model_status and returns the payload", async () => {
 		installMockApi();
 		setTauriInvoke(() => ({ available: true, downloading: false }));
@@ -470,6 +489,28 @@ describe("wrappers migrated to direct commands.* (no channel)", () => {
 		const status = await ipc.wakewordModelStatus();
 		expect(status).toEqual({ available: false, downloading: false });
 	});
+
+	test("ttsOpenRouterPreview calls tts_preview_openrouter directly", async () => {
+		const api = installMockApi();
+		setTauriInvoke(() => ({ requestId: "tts-preview-1" }));
+
+		await expect(
+			ipc.ttsOpenRouterPreview({
+				model: "openai/gpt-4o-mini-tts",
+				voice: "alloy",
+			}),
+		).resolves.toEqual({ requestId: "tts-preview-1" });
+
+		expect(lastTauriCall()).toEqual({
+			cmd: "tts_preview_openrouter",
+			args: {
+				model: "openai/gpt-4o-mini-tts",
+				voice: "alloy",
+				speed: null,
+			},
+		});
+		expect(api.invoke).not.toHaveBeenCalled();
+	});
 });
 
 // The contextBridge clone guard (`toCloneableArgs`) only runs on the nativeBridge
@@ -478,6 +519,22 @@ describe("wrappers migrated to direct commands.* (no channel)", () => {
 // map), so they'd never reach the clone guard. We exercise it through NON-migrated
 // channels (`autostart:set` send / `autostart:get` invoke) instead — same guard,
 // real adapter path.
+describe("diagnostics wrappers", () => {
+	test("diagOpenLogsFolder routes through the opener channel", async () => {
+		const api = installMockApi({
+			invokeImpl: (channel) =>
+				channel === IPC.DIAG_OPEN_LOGS_FOLDER
+					? { ok: true, path: "C:\\logs" }
+					: undefined,
+		});
+
+		const result = await ipc.diagOpenLogsFolder();
+
+		expect(api.invoke).toHaveBeenCalledWith(IPC.DIAG_OPEN_LOGS_FOLDER);
+		expect(result).toEqual({ ok: true, path: "C:\\logs" });
+	});
+});
+
 describe("toCloneableArgs (contextBridge clone guard)", () => {
 	test("passes plain payloads through unchanged (structuredClone fast path)", () => {
 		const api = installMockApi();
@@ -598,6 +655,72 @@ describe("invokeOrDefault wrappers", () => {
 		expect(result.disabledFeatures).toContain("sttModel");
 	});
 
+	test("deleteModelCache routes the legacy string id through delete_model_cache", async () => {
+		const api = installMockApi();
+		setTauriInvoke(() => null);
+
+		await ipc.deleteModelCache("Systran/faster-whisper-large-v3");
+
+		expect(lastTauriCall()).toEqual({
+			cmd: "delete_model_cache",
+			args: { modelId: "Systran/faster-whisper-large-v3" },
+		});
+		expect(api.invoke).not.toHaveBeenCalled();
+	});
+
+	test("deleteModelCache rejects Err(String) results instead of falling back", async () => {
+		installMockApi();
+		setTauriInvoke(() => {
+			throw "cache busy";
+		});
+		const originalError = console.error;
+		console.error = mock(() => undefined) as typeof console.error;
+		try {
+			await expect(
+				ipc.deleteModelCache("Systran/faster-whisper-large-v3"),
+			).rejects.toBe("cache busy");
+		} finally {
+			console.error = originalError;
+		}
+	});
+
+	test("legacy string history wrappers route through typed commands", async () => {
+		const api = installMockApi();
+		const audio = "data:audio/wav;base64,AA==";
+		const timings = [{ start: 0, end: 0.4, text: "hello" }];
+		setTauriInvoke((cmd) => {
+			if (cmd === "history_delete") {
+				return { deleted: true };
+			}
+			if (cmd === "history_load_audio") {
+				return audio;
+			}
+			if (cmd === "align_words") {
+				return timings;
+			}
+			return undefined;
+		});
+
+		await expect(
+			ipc.deleteTranscriptionHistoryEntry("entry-1"),
+		).resolves.toEqual({
+			deleted: true,
+		});
+		await expect(ipc.loadTranscriptionHistoryAudio("entry-2")).resolves.toBe(
+			audio,
+		);
+		await expect(ipc.alignTranscriptionHistoryAudio("entry-3")).resolves.toBe(
+			timings,
+		);
+
+		expect(tauriCalls).toEqual([
+			{ cmd: "history_delete", args: { id: "entry-1" } },
+			{ cmd: "history_load_audio", args: { id: "entry-2" } },
+			{ cmd: "align_words", args: { entryId: "entry-3" } },
+		]);
+		expect(api.invoke).not.toHaveBeenCalled();
+	});
+
 	test("processWithLlm routes through process_text with an empty context", async () => {
 		const api = installMockApi();
 		setTauriInvoke(() => "processed!");
@@ -627,37 +750,6 @@ describe("invokeOrDefault wrappers", () => {
 		expect(api.invoke).toHaveBeenCalledWith(IPC.DIALOG_OPEN_FILE, {
 			filters: [{ name: "Audio", extensions: ["wav"] }],
 			title: "Pick",
-		});
-	});
-
-	test("appMenuSetTemplate forwards template and returns result", async () => {
-		const api = installMockApi({
-			invokeImpl: () => ({ applied: true, itemCount: 4 }),
-		});
-		const out = await ipc.appMenuSetTemplate([{ label: "File" }]);
-		expect(out).toEqual({ applied: true, itemCount: 4 });
-		expect(api.invoke).toHaveBeenCalledWith(IPC.APP_MENU_SET_TEMPLATE, [
-			{ label: "File" },
-		]);
-	});
-
-	test("appMenuReset returns parsed result", async () => {
-		installMockApi({
-			invokeImpl: () => ({ applied: true }),
-		});
-		expect(await ipc.appMenuReset()).toEqual({ applied: true });
-	});
-
-	test("contextMenuShow passes template and coordinates", async () => {
-		const api = installMockApi({
-			invokeImpl: () => ({ selectedId: "ok" }),
-		});
-		const out = await ipc.contextMenuShow([{ id: "ok", label: "OK" }], 10, 20);
-		expect(out).toEqual({ selectedId: "ok" });
-		expect(api.invoke).toHaveBeenCalledWith(IPC.CONTEXT_MENU_SHOW, {
-			template: [{ id: "ok", label: "OK" }],
-			x: 10,
-			y: 20,
 		});
 	});
 
@@ -743,17 +835,6 @@ describe("invokeOrDefault wrappers", () => {
 				text: "unchanged sample",
 			},
 		});
-	});
-
-	test("sttServerSpawn and sttServerKill resolve via invoke", async () => {
-		const api = installMockApi();
-		await ipc.sttServerSpawn();
-		await ipc.sttServerKill();
-		const channels = (
-			api.invoke as unknown as { mock: { calls: unknown[][] } }
-		).mock.calls.map((c) => c[0]);
-		expect(channels).toContain(IPC.STT_SERVER_SPAWN);
-		expect(channels).toContain(IPC.STT_SERVER_KILL);
 	});
 
 	test("cancelDownload resolves to undefined fallback", async () => {
@@ -1051,19 +1132,12 @@ describe("typed event subscriptions", () => {
 		expect(cb).not.toHaveBeenCalled();
 	});
 
-	test("onUpdaterStatus and onWindowTelemetry pass payload through", () => {
+	test("onUpdaterStatus passes payload through", () => {
 		const api = installMockApi();
 		const updater = mock(() => undefined);
-		const tele = mock(() => undefined);
 		ipc.onUpdaterStatus(updater);
-		ipc.onWindowTelemetry(tele);
 		fire(api, IPC.UPDATER_STATUS, { status: "downloaded", timestamp: 1 });
-		fire(api, IPC.WINDOW_TELEMETRY, {
-			event: "moved",
-			bounds: { x: 0, y: 0, width: 1, height: 1 },
-		});
 		expect(updater).toHaveBeenCalled();
-		expect(tele).toHaveBeenCalled();
 	});
 
 	test("onLlmCatalog returns no-op when outside a bridge context", () => {
@@ -1232,11 +1306,6 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 		expect(await ipc.sttIsConnected()).toBe(false);
 	});
 
-	test("sttServerStatus falls back to 'idle' when outside a bridge context", async () => {
-		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
-		expect(await ipc.sttServerStatus()).toBe("idle");
-	});
-
 	test("settingsSave forwards the full settings object to winstt_set_settings", () => {
 		installMockApi();
 		const settings = { model: { model: "tiny" } } as Parameters<
@@ -1371,25 +1440,6 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 	test("dialogOpenFile falls back to null when outside a bridge context", async () => {
 		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		expect(await ipc.dialogOpenFile()).toBeNull();
-	});
-
-	test("appMenuSetTemplate falls back to { applied: false, itemCount: 0 } when outside a bridge context", async () => {
-		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
-		const result = await ipc.appMenuSetTemplate([]);
-		expect(result.applied).toBe(false);
-		expect(result.itemCount).toBe(0);
-	});
-
-	test("appMenuReset falls back to { applied: false } when outside a bridge context", async () => {
-		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
-		const result = await ipc.appMenuReset();
-		expect(result.applied).toBe(false);
-	});
-
-	test("contextMenuShow falls back to { selectedId: null } when outside a bridge context", async () => {
-		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
-		const result = await ipc.contextMenuShow([]);
-		expect(result.selectedId).toBeNull();
 	});
 
 	test("clipboardWriteText resolves to a writeText response (no throw, no bridge)", async () => {

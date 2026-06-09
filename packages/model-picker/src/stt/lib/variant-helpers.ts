@@ -11,16 +11,13 @@ export function isEnglishOnly(model: ModelInfo): boolean {
 
 /**
  * Whether to surface the compact "Multilingual" badge instead of listing
- * the language codes on the model card. Driven by ``supportsLanguageDetection``
- * because that's the catalog's actual "this is a many-language model"
- * signal — Whisper (99 langs), Canary (25 langs), and Parakeet TDT v3
- * (25 langs) all have it set. The old check (`languages.length === 0`)
- * only fired when the catalog couldn't fill the whitelist; once the
- * runtime HF refresh populated real lists, every multilingual card
- * started rendering a 25-99-code chip wall instead.
+ * the language codes on the model card. A single-language model keeps the
+ * language visible; every other STT coverage shape is shown as Multilingual.
+ * Empty lists are the legacy "broad/unknown whitelist" bucket, while populated
+ * multi-language lists keep their full roster in the card tooltip.
  */
 export function isMultilingual(model: ModelInfo): boolean {
-	return model.supportsLanguageDetection;
+	return !isEnglishOnly(model) && model.languages.length !== 1;
 }
 
 /** Per-variant flags consumed by the variant row + summary. */

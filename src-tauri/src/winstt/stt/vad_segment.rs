@@ -16,6 +16,8 @@
 //! speech/noise mask at the shared `VAD_SPEECH_THRESHOLD`); `merge_segments` then merges regions
 //! separated by sub-`min_silence` gaps up to the `max_chunk` cap and cuts in the silence otherwise.
 
+use std::borrow::Cow;
+
 use crate::audio_toolkit::vad::{SileroVad, VoiceActivityDetector, VAD_FRAME_SAMPLES};
 
 use super::{TranscribeOptions, Transcriber};
@@ -23,6 +25,7 @@ use super::{TranscribeOptions, Transcriber};
 const SR: usize = 16_000;
 const MAX_RETAINED_SILENCE: usize = SR * 200 / 1000;
 const MIN_DECODE_CHUNK: usize = SR * 750 / 1000;
+pub const VAD_COMPACT_MIN_S: f32 = 5.0;
 
 fn speech_mask(vad: &mut SileroVad, audio: &[f32]) -> Vec<bool> {
     vad.reset();
@@ -227,6 +230,30 @@ fn compact_silences(audio: &[f32], segs: &[(usize, usize)], max_silence: usize) 
     }
 
     out
+}
+
+fn compact_silences_for_segments<'a>(audio: &'a [f32], segs: &[(usize, usize)]) -> Cow<'a, [f32]> {
+    if segs.is_empty() {
+        return Cow::Borrowed(audio);
+    }
+    let compacted = compact_silences(audio, segs, MAX_RETAINED_SILENCE);
+    if compacted.len() < audio.len() {
+        Cow::Owned(compacted)
+    } else {
+        Cow::Borrowed(audio)
+    }
+}
+
+/// Remove long non-speech gaps before transcription.
+///
+/// This keeps up to 200 ms of natural silence around speech runs. Local final
+/// decode uses the same primitive before chunking; cloud STT uses it before
+/// upload so pause-heavy recordings send less audio and ask the provider to
+/// process less duration.
+pub fn compact_for_transcription<'a>(audio: &'a [f32], vad: &mut SileroVad) -> Cow<'a, [f32]> {
+    let mask = speech_mask(vad, audio);
+    let raw = find_segments(&mask, VAD_FRAME_SAMPLES, audio.len());
+    compact_silences_for_segments(audio, &raw)
 }
 
 /// Last `n` chars of `s` (char-safe), for the optional Whisper prior-chunk continuation prompt.
@@ -502,6 +529,24 @@ mod tests {
         let compacted = compact_silences(&audio, &[(100, 200), (250, 300)], 100);
 
         assert_eq!(compacted, audio[0..400].to_vec());
+    }
+
+    #[test]
+    fn transcription_compaction_borrows_when_no_speech_segments_are_found() {
+        let audio: Vec<f32> = (0..500).map(|n| n as f32).collect();
+        let compacted = compact_silences_for_segments(&audio, &[]);
+
+        assert!(matches!(compacted, Cow::Borrowed(_)));
+        assert_eq!(compacted.as_ref(), audio.as_slice());
+    }
+
+    #[test]
+    fn transcription_compaction_removes_long_silence_between_segments() {
+        let audio: Vec<f32> = (0..32_000).map(|n| n as f32).collect();
+        let compacted = compact_silences_for_segments(&audio, &[(1_600, 3_200), (24_000, 25_600)]);
+
+        assert!(matches!(compacted, Cow::Owned(_)));
+        assert!(compacted.len() < audio.len());
     }
 
     #[test]

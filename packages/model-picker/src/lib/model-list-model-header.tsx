@@ -255,7 +255,7 @@ export function MakerHeaderIcon({ maker }: { maker: string }) {
 	return (
 		<img
 			alt=""
-			className="size-4 shrink-0 rounded-[3px] object-cover"
+			className="size-4 shrink-0 rounded-[3px] object-contain"
 			height={16}
 			src={publicAsset(iconSrc)}
 			width={16}

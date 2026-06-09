@@ -4,6 +4,11 @@ import { HomeLayout } from "fumadocs-ui/layouts/home";
 import { AppMock } from "@/components/app-mock";
 import { MediaGrid, Screenshot } from "@/components/docs-ui";
 import { baseOptions } from "@/lib/layout.shared";
+import {
+  latestWindowsDownloadUrl,
+  repositoryUrl,
+  withBasePath,
+} from "@/lib/site";
 
 export const Route = createFileRoute("/")({
   component: HomePage,
@@ -417,7 +422,7 @@ function HomePage() {
             and entirely on your hardware. Free forever, source on GitHub.
           </p>
 
-          <div className="flex items-center gap-4 mt-6">
+          <div className="flex flex-wrap items-center justify-center gap-2 mt-6">
             {privacyBadges.map((badge) => (
               <div
                 key={badge.label}
@@ -436,9 +441,9 @@ function HomePage() {
             ))}
           </div>
 
-          <div className="flex gap-3 mt-8">
+          <div className="flex flex-wrap justify-center gap-3 mt-8">
             <a
-              href="https://github.com/dahshury/WinSTT/releases"
+              href={latestWindowsDownloadUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-110"
@@ -493,7 +498,7 @@ function HomePage() {
               </svg>
             </Link>
             <a
-              href="https://github.com/dahshury/WinSTT"
+              href={repositoryUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-125"
@@ -682,7 +687,7 @@ function HomePage() {
             {features.map((feature) => (
               <a
                 key={feature.title}
-                href={feature.href}
+                href={withBasePath(feature.href)}
                 className="feature-card group p-5 rounded-xl"
                 style={{
                   background: "var(--surface-2)",

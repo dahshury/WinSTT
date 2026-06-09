@@ -107,7 +107,13 @@
     "updatesStatusError": "La comprobación de actualizaciones ha fallado: {message}",
     "updatesDownloading": "Descargando…",
     "updatesDownloadingPercent": "{percent}% — Descargando actualización",
-    "updatesRestartToInstall": "Reiniciar para instalar"
+    "updatesRestartToInstall": "Reiniciar para instalar",
+    "diagnosticsTitle": "Diagnóstico",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Abrir carpeta de registros",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Guardar paquete de diagnóstico...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Estadísticas Generales",

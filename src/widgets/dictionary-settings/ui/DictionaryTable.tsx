@@ -54,6 +54,7 @@ export function DictionaryTable({
 
 	return (
 		<CrudTable
+			addFormLayout="joined"
 			columnControls
 			columns={[
 				{

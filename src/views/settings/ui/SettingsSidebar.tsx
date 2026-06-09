@@ -264,17 +264,18 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 			    h-12 band gives the column a compact title region. Draggable for window move;
 			    opening search tweens a field over the wordmark. */}
 			{collapsed ? (
-				<div className="flex flex-col items-center gap-1 px-2 pb-1">
+				<div className="relative flex h-12 shrink-0 items-center justify-center px-2">
 					{/* Dedicated window-move handle. It must be its OWN element, never a
 					    wrapper around the buttons: an interactive control can't live inside
 					    an `-webkit-app-region: drag` region because on touch devices the OS
 					    caption path swallows the tap before the `no-drag` carve-out is
 					    consulted, leaving the button unclickable by touch (Tauri #4746). A
-					    short full-width strip keeps the rail draggable while the buttons
-					    below sit on plain client pixels. */}
+					    short full-width strip keeps the rail draggable while the button
+					    stays centered on the same row as the expanded Search/Settings
+					    controls. */}
 					<div
 						aria-hidden="true"
-						className="titlebar-drag h-3.5 w-full shrink-0"
+						className="titlebar-drag absolute inset-x-0 top-0 h-3.5"
 						data-slot="settings-sidebar-top-drag"
 					/>
 					{toggleButton}

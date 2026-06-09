@@ -122,6 +122,7 @@ export function OverlayPage() {
 	const displayedTranscribingPhase =
 		showTranscribing && isCloudSttModel ? processingPhase : null;
 	const isThinking = useLlmProcessingStore((s) => s.isThinking);
+	const showThinking = isThinking && willRunDictationLlm;
 	const isTransforming = useLlmProcessingStore((s) => s.isTransforming);
 	const thinkingText = useLlmProcessingStore((s) => s.thinkingText);
 	const thinkingStartedAt = useLlmProcessingStore((s) => s.thinkingStartedAt);
@@ -138,7 +139,7 @@ export function OverlayPage() {
 	// at the same time; during that overlap STT renders in the bottom pill.
 	const ttsReservesIsland = ttsStatus !== "idle";
 	const sttSessionActive =
-		isRecordingActive || isThinking || isTranscribing || isPreviewActive;
+		isRecordingActive || showThinking || isTranscribing || isPreviewActive;
 	useTtsIslandBridge(sttSessionActive);
 
 	useEffect(() => {
@@ -164,7 +165,7 @@ export function OverlayPage() {
 			isRecordingActive,
 			isSpeaking,
 			hasText,
-			isThinking,
+			isThinking: showThinking,
 			isTranscribing: showTranscribing,
 		}) || isPreviewActive;
 	// Sticky once-on: hold the pill mounted for the rest of the active session
@@ -177,7 +178,7 @@ export function OverlayPage() {
 	// reuse a visible latch from the previous session and flash before this
 	// session has speech/text.
 	const sessionActive =
-		isRecordingActive || isThinking || showTranscribing || isPreviewActive;
+		isRecordingActive || showThinking || showTranscribing || isPreviewActive;
 	const stickyShow = useStickyPillReveal({
 		recordingSessionId,
 		sessionActive,
@@ -193,7 +194,7 @@ export function OverlayPage() {
 	// live text to "in-app" only, the bubble stays hidden for transcription.
 	// Processing owns the persistent visualizer surface instead of opening a
 	// second bubble above an empty chip.
-	const isProcessing = isThinking || showTranscribing;
+	const isProcessing = showThinking || showTranscribing;
 	const showBubble = stickyShow && showText && !isProcessing;
 
 	// TTS keeps the Dynamic Island while active; STT falls back to the
@@ -242,7 +243,7 @@ export function OverlayPage() {
 							flags={{
 								isRecordingActive,
 								isSpeaking,
-								isThinking,
+								isThinking: showThinking,
 								isTranscribing: showTranscribing,
 								showLiveTranscription,
 								isPreviewActive,
@@ -264,7 +265,7 @@ export function OverlayPage() {
 			<FloatingBottomPill
 				flags={{
 					isSpeaking,
-					isThinking,
+					isThinking: showThinking,
 					isTranscribing: showTranscribing,
 					showBubble,
 					stickyShow,

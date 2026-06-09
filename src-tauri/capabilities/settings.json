@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings-capability",
+  "description": "Settings window permissions for file picking, diagnostics, clipboard fallbacks, startup, updater, and platform permission panels.",
+  "windows": ["settings"],
+  "permissions": [
+    "dialog:default",
+    "opener:allow-open-path",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text",
+    "autostart:default",
+    "global-shortcut:default",
+    "updater:default",
+    "macos-permissions:default"
+  ]
+}

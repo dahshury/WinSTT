@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-export const DEFAULT_OPENROUTER_FAVORITE_PROVIDERS_STORAGE_KEY =
+const DEFAULT_OPENROUTER_FAVORITE_PROVIDERS_STORAGE_KEY =
 	"winstt:openrouter-favorite-providers";
 const DEFAULT_FAVORITES = ["openai", "google", "anthropic"];
 

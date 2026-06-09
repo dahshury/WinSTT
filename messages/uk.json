@@ -107,7 +107,13 @@
     "updatesStatusError": "Помилка перевірки оновлень: {message}",
     "updatesDownloading": "Завантаження…",
     "updatesDownloadingPercent": "{percent}% — Завантаження оновлення",
-    "updatesRestartToInstall": "Перезапустити для встановлення"
+    "updatesRestartToInstall": "Перезапустити для встановлення",
+    "diagnosticsTitle": "Діагностика",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Відкрити папку журналів",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Зберегти пакет діагностики...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Загальна статистика",

@@ -107,7 +107,13 @@
     "updatesStatusError": "Verifica aggiornamento non riuscita: {message}",
     "updatesDownloading": "Download in corso…",
     "updatesDownloadingPercent": "{percent}% — Download dell'aggiornamento",
-    "updatesRestartToInstall": "Riavvia per installare"
+    "updatesRestartToInstall": "Riavvia per installare",
+    "diagnosticsTitle": "Diagnostica",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Apri cartella log",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Salva pacchetto diagnostico...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Statistiche generali",

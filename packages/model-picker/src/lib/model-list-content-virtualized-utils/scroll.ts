@@ -1,6 +1,8 @@
 import type { ScrollToIndexOpts } from "virtua";
 import type { VirtualizedItem } from "./items";
 
+export const GROUP_HEADER_SCROLL_OFFSET_PX = 32;
+
 interface ItemSizeHandle {
 	getItemOffset: (index: number) => number;
 	getItemSize: (index: number) => number;
@@ -45,17 +47,37 @@ export interface ScrollRequest {
 	maker: string;
 	modelId?: string | undefined;
 	nonce: number;
+	providerSlug?: string | undefined;
 }
 
 export function findScrollTargetIndex(
 	items: VirtualizedItem[],
 	request: ScrollRequest,
 ): number {
+	const byProviderRow =
+		request.modelId && request.providerSlug
+			? items.findIndex(
+					(item) =>
+						item.type === "providers" && item.model.id === request.modelId,
+				)
+			: -1;
+	if (byProviderRow >= 0) {
+		return byProviderRow;
+	}
 	const byId = findIndexByModelId(items, request.modelId);
 	if (byId >= 0) {
 		return byId;
 	}
 	return findIndexByMaker(items, request.maker);
+}
+
+export function getScrollTargetOffset(
+	items: VirtualizedItem[],
+	targetIndex: number,
+): number {
+	return items[targetIndex]?.type === "header"
+		? 0
+		: -GROUP_HEADER_SCROLL_OFFSET_PX;
 }
 
 export function resolveActiveMaker(
@@ -122,6 +144,9 @@ export function applyScrollToMakerRequest(
 	if (targetIndex < 0) {
 		return lastNonce;
 	}
-	scrollToIndex(targetIndex, { align: "start" } satisfies ScrollToIndexOpts);
+	scrollToIndex(targetIndex, {
+		align: "start",
+		offset: getScrollTargetOffset(virtualItems, targetIndex),
+	} satisfies ScrollToIndexOpts);
 	return scrollToMakerRequest.nonce;
 }

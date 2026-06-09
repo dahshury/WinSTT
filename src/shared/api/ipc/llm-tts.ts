@@ -1,6 +1,8 @@
+import { commands, type Result, type SpeakResult } from "@/bindings";
 import type { CustomModifier, PresetEntry } from "@/shared/lib/preset-prompts";
 import { IPC } from "../ipc-channels";
 import {
+	commandOrDefault,
 	hasNativeBridge,
 	invokeOrDefault,
 	noop,
@@ -234,6 +236,15 @@ export interface TtsSpeakResult {
 	requestId: string;
 }
 
+function unwrapSpeakResult(
+	result: Result<SpeakResult, string>,
+): TtsSpeakResult {
+	if (result.status === "ok") {
+		return result.data;
+	}
+	throw result.error;
+}
+
 export interface TtsChunkPayload {
 	channels: number;
 	format: string;
@@ -354,10 +365,17 @@ export const ttsOpenRouterPreview = (payload: {
 	speed?: number;
 	voice: string;
 }): Promise<TtsSpeakResult> =>
-	invokeOrDefault<TtsSpeakResult>(
-		IPC.TTS_OPENROUTER_PREVIEW,
+	commandOrDefault(
+		"tts_preview_openrouter",
+		async () =>
+			unwrapSpeakResult(
+				await commands.ttsPreviewOpenrouter(
+					payload.model,
+					payload.voice,
+					payload.speed ?? null,
+				),
+			),
 		{ requestId: "" },
-		payload,
 	);
 
 /**

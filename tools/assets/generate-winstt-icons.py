@@ -5,7 +5,7 @@ Mirrors the reference app's icon pipeline
 so the Rust/Tauri port carries the IDENTICAL VR-visor mascot everywhere:
 
   src-tauri/icons/        app + installer icons (tauri.conf bundle.icon)
-    32x32.png 64x64.png 128x128.png 128x128@2x.png icon.png icon.ico icon.icns
+    32x32.png 128x128.png 128x128@2x.png icon.ico icon.icns
 
   src-tauri/resources/    system-tray icons read by src/tray.rs get_icon_path()
     tray_idle.png            (dark theme  -> the mark)
@@ -14,7 +14,6 @@ so the Rust/Tauri port carries the IDENTICAL VR-visor mascot everywhere:
     tray_idle_dark.png       (light theme -> the mark)
     tray_recording_dark.png  (light theme -> red dot)
     tray_transcribing_dark.png (light theme -> three dots, dark ink)
-    handy.png                (colored/linux -> the mark)        [kept name; tray.rs reads it]
     recording.png            (colored/linux -> red dot)
     transcribing.png         (colored/linux -> three dots, accent ink)
 
@@ -115,10 +114,8 @@ def save_app_icons(master: Image.Image) -> list[str]:
         written.append(str(ICONS / name))
 
     emit(master.resize((32, 32), Image.LANCZOS), "32x32.png")
-    emit(master.resize((64, 64), Image.LANCZOS), "64x64.png")
     emit(master.resize((128, 128), Image.LANCZOS), "128x128.png")
     emit(master.resize((256, 256), Image.LANCZOS), "128x128@2x.png")
-    emit(master.resize((512, 512), Image.LANCZOS), "icon.png")
 
     members = [master.resize((s, s), Image.LANCZOS) for s in ICO_SIZES]
     base = members[-1]  # 256
@@ -159,8 +156,7 @@ def save_tray_icons(master: Image.Image) -> list[str]:
         "tray_idle_dark.png": idle,
         "tray_recording_dark.png": rec_red,
         "tray_transcribing_dark.png": tray_three_dots(THEME_INK["light"], TRAY_SIZE),
-        # colored / linux -> accent ink + the mark (filenames kept as tray.rs reads)
-        "handy.png": idle,
+        # colored / linux -> accent ink (filenames kept as tray.rs reads)
         "recording.png": rec_red,
         "transcribing.png": tray_three_dots(THEME_INK["color"], TRAY_SIZE),
     }

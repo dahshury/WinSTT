@@ -23,6 +23,7 @@ import { ipcSend } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
+import { LanguageMultiCombobox } from "@/shared/ui/language-multi-combobox";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
 import { Switcher } from "@/shared/ui/switcher";
@@ -42,7 +43,6 @@ import type {
 	TFn,
 	UpdateModelFn,
 } from "../lib/types";
-import { LanguageMultiCombobox } from "./LanguageMultiCombobox";
 
 interface MainModelSectionProps {
 	catalogLoaded: boolean;
@@ -259,7 +259,9 @@ export function MainModelSection({
 	const tIntegrations = useTranslations("integrations");
 	const integrations = useSettingsStore((s) => s.settings.integrations);
 	// OpenRouter STT reuses the single LLM OpenRouter key (not an integrations entry).
-	const openrouterKey = useSettingsStore((s) => s.settings.llm.openrouterApiKey);
+	const openrouterKey = useSettingsStore(
+		(s) => s.settings.llm.openrouterApiKey,
+	);
 	const hasAnyCloudKey =
 		integrations.elevenlabs.apiKey.trim().length > 0 ||
 		openrouterKey.trim().length > 0;

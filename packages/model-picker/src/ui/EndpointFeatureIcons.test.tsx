@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "@testing-library/react";
-import type { OpenRouterEndpoint } from "@/shared/api/models";
+import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import * as helpers from "../lib/endpoint-feature-icons-test-helpers";
-import { EndpointFeatureIcons } from "./EndpointFeatureIcons";
+import {
+	EndpointFeatureIcons,
+	ModelFeatureIcons,
+} from "./EndpointFeatureIcons";
 
 function makeEndpoint(opts?: Partial<OpenRouterEndpoint>): OpenRouterEndpoint {
 	return {
@@ -15,10 +18,28 @@ function makeEndpoint(opts?: Partial<OpenRouterEndpoint>): OpenRouterEndpoint {
 	} as unknown as OpenRouterEndpoint;
 }
 
+function makeModel(opts?: Partial<OpenRouterModel>): OpenRouterModel {
+	return {
+		id: "anthropic/claude-3.7-sonnet",
+		name: "Claude 3.7 Sonnet",
+		supported_parameters: [],
+		variant: null,
+		...opts,
+	} as unknown as OpenRouterModel;
+}
+
 function renderIt(endpoint: OpenRouterEndpoint) {
 	return render(
 		<TooltipProvider.Provider>
 			<EndpointFeatureIcons endpoint={endpoint} />
+		</TooltipProvider.Provider>,
+	);
+}
+
+function renderModel(model: OpenRouterModel) {
+	return render(
+		<TooltipProvider.Provider>
+			<ModelFeatureIcons flat model={model} />
 		</TooltipProvider.Provider>,
 	);
 }
@@ -146,6 +167,45 @@ describe("appendSupportedParams", () => {
 	});
 });
 
+describe("buildFeaturesFromSource", () => {
+	test("supports model-level structured outputs without endpoint enrichment", () => {
+		const features = helpers.buildFeaturesFromSource(
+			{
+				id: "anthropic/claude-3.7-sonnet",
+				supported_parameters: ["structured_outputs", "response_format"],
+			},
+			4,
+		);
+		expect(features.map((feature) => feature.key)).toEqual([
+			"structured_outputs",
+			"response_format",
+		]);
+	});
+
+	test("keeps explicit include_reasoning as its own capability chip", () => {
+		const features = helpers.buildFeaturesFromSource(
+			{ supported_parameters: ["include_reasoning"] },
+			4,
+		);
+		expect(features.map((feature) => feature.key)).toEqual([
+			"include_reasoning",
+		]);
+	});
+
+	test("infers reasoning for thinking variants and known reasoning ids", () => {
+		expect(
+			helpers
+				.buildFeaturesFromSource({ variant: "thinking" }, 4)
+				.map((feature) => feature.key),
+		).toEqual(["reasoning"]);
+		expect(
+			helpers
+				.buildFeaturesFromSource({ id: "deepseek/deepseek-reasoner" }, 4)
+				.map((feature) => feature.key),
+		).toEqual(["reasoning"]);
+	});
+});
+
 describe("getQuantizationLabel", () => {
 	test("returns undefined when quantization is null", () => {
 		expect(
@@ -204,6 +264,12 @@ describe("EndpointFeatureIcons", () => {
 			makeEndpoint({ supported_parameters: ["tools", "reasoning"] }),
 		);
 		expect(container.firstElementChild).not.toBeNull();
+		expect(
+			container.querySelector('[data-feature-key="tools"]'),
+		).not.toBeNull();
+		expect(
+			container.querySelector('[data-feature-key="reasoning"]'),
+		).not.toBeNull();
 	});
 
 	test("renders quantization label when present", () => {
@@ -235,5 +301,23 @@ describe("EndpointFeatureIcons", () => {
 		// Quantization absent — only feature icons. Maxes 4 by default.
 		const innerChips = container.querySelectorAll("[role]");
 		expect(innerChips.length).toBeLessThanOrEqual(8); // tooltip wrappers + chips
+	});
+});
+
+describe("ModelFeatureIcons", () => {
+	test("renders model-level capability badges when endpoints are absent", () => {
+		const { container } = renderModel(
+			makeModel({
+				endpoints: undefined,
+				supported_parameters: ["structured_outputs"],
+				variant: "thinking",
+			}),
+		);
+		expect(
+			container.querySelector('[data-feature-key="reasoning"]'),
+		).not.toBeNull();
+		expect(
+			container.querySelector('[data-feature-key="structured_outputs"]'),
+		).not.toBeNull();
 	});
 });

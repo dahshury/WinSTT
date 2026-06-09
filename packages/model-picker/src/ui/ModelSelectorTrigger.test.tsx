@@ -13,6 +13,7 @@ const asOpenRouterModel = (m: {
 	name: string;
 	maker: string;
 	endpoints: never[];
+	variant?: OpenRouterModel["variant"];
 }): OpenRouterModel => m as unknown as OpenRouterModel;
 
 const sampleModel: OpenRouterModel = asOpenRouterModel({
@@ -20,6 +21,14 @@ const sampleModel: OpenRouterModel = asOpenRouterModel({
 	name: "GPT-4o",
 	maker: "openai",
 	endpoints: [],
+});
+
+const freeModel: OpenRouterModel = asOpenRouterModel({
+	id: "openai/gpt-4o-mini:free",
+	name: "GPT-4o Mini",
+	maker: "openai",
+	endpoints: [],
+	variant: "free",
 });
 
 describe("isMissingModelId", () => {
@@ -74,6 +83,25 @@ describe("ModelSelectorTrigger", () => {
 		);
 		// Some piece of the model id appears
 		expect(container.textContent).toContain("GPT-4o");
+	});
+
+	test("renders selected model variant badge while closed", () => {
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<Combobox.Root>
+					<ModelSelectorTrigger
+						disabled={false}
+						isLoading={false}
+						open={false}
+						parsedModelId={freeModel.id}
+						placeholder="Pick a model"
+						selectedModel={freeModel}
+					/>
+				</Combobox.Root>
+			</TooltipProvider.Provider>,
+		);
+		expect(container.textContent).toContain("GPT-4o Mini");
+		expect(container.textContent).toContain("Free");
 	});
 
 	test("renders the placeholder text when parsedModelId is a non-empty string but no model", () => {

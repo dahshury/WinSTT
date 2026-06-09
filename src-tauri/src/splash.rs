@@ -25,8 +25,10 @@
 //     the reference's `showOnce` (did-finish-load + server-ready, 15 s fallback);
 //     it must NOT be closed synchronously during setup (that flashed a blank pill).
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use serde_json::json;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// Splash window label. Not in the WINDOW_SPECS table (windows.rs) because it is
 /// a transient startup-only window with no IPC and no lazy `open_window` path.
@@ -44,6 +46,8 @@ const SPLASH_MAX_LIFETIME_MS: u64 = 60_000;
 /// never wins the handoff race.
 const READY_TIMEOUT_MS: u64 = 15_000;
 const SPLASH_CLOSE_ANIMATION_MS: u64 = 180;
+const SPLASH_PAINT_WAIT_TIMEOUT_MS: u64 = 5_000;
+const STARTUP_PROGRESS_TOTAL_PHASES: usize = 32;
 
 /// Set once the MAIN window's renderer reports `on_page_load(Finished)` — i.e. the
 /// React pill has actually painted ("the application fully loads"). The single
@@ -62,10 +66,116 @@ static RENDERER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 /// returns promptly in all of those). The single-process analog of the reference's
 /// `server-ready` event ("the backend is up and warm").
 static STT_BOOT_DONE: AtomicBool = AtomicBool::new(false);
+static STARTUP_PROGRESS_PHASE: AtomicUsize = AtomicUsize::new(0);
+static SPLASH_PAGE_READY: AtomicBool = AtomicBool::new(false);
 
 /// Guards the tiny CSS fade-out delay so repeated handoff/backstop calls don't
 /// spawn duplicate destroy timers against the same transient window.
 static SPLASH_CLOSING: AtomicBool = AtomicBool::new(false);
+
+fn startup_percent_for_phase(phase: usize) -> u64 {
+    let bounded_phase = phase.min(STARTUP_PROGRESS_TOTAL_PHASES);
+    let percent = (bounded_phase as f64 / STARTUP_PROGRESS_TOTAL_PHASES as f64) * 100.0;
+    percent.round() as u64
+}
+
+fn startup_progress_payload(label: &str, phase: usize, percent: u64) -> serde_json::Value {
+    json!({
+        "label": label,
+        "phase": phase,
+        "total": STARTUP_PROGRESS_TOTAL_PHASES,
+        "percent": percent,
+    })
+}
+
+fn splash_progress_script(payload: &serde_json::Value, complete: bool) -> String {
+    format!(
+        r#"
+(() => {{
+	const payload = {payload};
+	const complete = {complete};
+	const value = Number(payload.percent);
+	if (!Number.isFinite(value)) {{
+		return;
+	}}
+	const previous = Number(window.__winsttSplashProgressValue ?? -1);
+	if (Number.isFinite(previous) && value < previous) {{
+		return;
+	}}
+	window.__winsttSplashProgressValue = value;
+	const clamped = Math.max(0, Math.min(100, value));
+	const bar = document.querySelector('.bar');
+	const progressText = document.getElementById('progress-text');
+	const phaseText = document.getElementById('progress-phase');
+	if (bar) {{
+		bar.style.width = `${{clamped}}%`;
+	}}
+	if (progressText) {{
+		progressText.textContent = complete ? 'Ready' : `${{Math.round(clamped)}}%`;
+	}}
+	if (phaseText && payload.label) {{
+		phaseText.textContent = payload.label;
+	}}
+}})();
+"#,
+        payload = payload,
+        complete = complete
+    )
+}
+
+fn apply_startup_progress_to_splash(app: &AppHandle, payload: &serde_json::Value, complete: bool) {
+    if !SPLASH_PAGE_READY.load(Ordering::SeqCst) {
+        return;
+    }
+    let Some(window) = app.get_webview_window(SPLASH_LABEL) else {
+        return;
+    };
+    let script = splash_progress_script(payload, complete);
+    if let Err(e) = window.eval(&script) {
+        log::debug!("[splash] progress eval failed: {e}");
+    }
+}
+
+fn replay_startup_progress(app: &AppHandle) {
+    SPLASH_PAGE_READY.store(true, Ordering::SeqCst);
+    let payload = startup_progress_payload("Starting WinSTT", 0, 0);
+    apply_startup_progress_to_splash(app, &payload, false);
+}
+
+pub fn emit_startup_progress(app: &AppHandle, label: &str) {
+    let phase = STARTUP_PROGRESS_PHASE.fetch_add(1, Ordering::SeqCst) + 1;
+    let payload = startup_progress_payload(label, phase, startup_percent_for_phase(phase));
+    let _ = app.emit("startup-progress", payload.clone());
+    apply_startup_progress_to_splash(app, &payload, false);
+}
+
+pub fn emit_startup_complete(app: &AppHandle, label: &str) {
+    let phase = STARTUP_PROGRESS_PHASE.load(Ordering::SeqCst);
+    let payload = startup_progress_payload(label, phase, 100);
+    let _ = app.emit("startup-complete", payload.clone());
+    apply_startup_progress_to_splash(app, &payload, true);
+}
+
+pub fn reset_startup_progress() {
+    STARTUP_PROGRESS_PHASE.store(0, Ordering::SeqCst);
+    SPLASH_PAGE_READY.store(false, Ordering::SeqCst);
+    RENDERER_PAINTED.store(false, Ordering::SeqCst);
+    RENDERER_BOOT_DONE.store(false, Ordering::SeqCst);
+    STT_BOOT_DONE.store(false, Ordering::SeqCst);
+}
+
+pub fn wait_until_painted() -> bool {
+    let started = Instant::now();
+    let timeout = Duration::from_millis(SPLASH_PAINT_WAIT_TIMEOUT_MS);
+    while !SPLASH_PAGE_READY.load(Ordering::SeqCst) {
+        if started.elapsed() >= timeout {
+            log::warn!("[splash] timed out waiting for splash paint; continuing startup");
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
 
 #[derive(Clone, Copy, Debug)]
 struct ReadySnapshot {
@@ -101,22 +211,34 @@ fn reload_main_renderer(app: &AppHandle) {
 
 /// Record that the main renderer has painted. Called from the main window's
 /// `on_page_load(Finished)` handler. Idempotent.
-pub fn mark_renderer_painted() {
+pub fn mark_renderer_painted(app: &AppHandle) {
+    if RENDERER_PAINTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
     RENDERER_PAINTED.store(true, Ordering::SeqCst);
+    emit_startup_progress(app, "main renderer painted");
 }
 
 /// Record that the main renderer finished its first bootstrap pass. Called by
 /// `winstt_emit_ready` after the renderer has primed startup IPC state.
 /// Idempotent.
-pub fn mark_renderer_boot_done() {
+pub fn mark_renderer_boot_done(app: &AppHandle) {
+    if RENDERER_BOOT_DONE.swap(true, Ordering::SeqCst) {
+        return;
+    }
     RENDERER_BOOT_DONE.store(true, Ordering::SeqCst);
+    emit_startup_progress(app, "main renderer bootstrap ready");
 }
 
 /// Record that the STT engine has finished its boot load+warm (or had nothing to
 /// load). Called at the tail of the boot thread in `initialize_core_logic`.
 /// Idempotent.
-pub fn mark_stt_boot_done() {
+pub fn mark_stt_boot_done(app: &AppHandle) {
+    if STT_BOOT_DONE.swap(true, Ordering::SeqCst) {
+        return;
+    }
     STT_BOOT_DONE.store(true, Ordering::SeqCst);
+    emit_startup_progress(app, "STT boot/warmup complete");
 }
 
 /// Whether a splash window currently exists. Used by the setup hook to decide
@@ -173,6 +295,14 @@ pub fn spawn_ready_watcher(app: &AppHandle, show_window: bool) {
                 snapshot.stt_boot_done
             );
         }
+        emit_startup_complete(
+            &app,
+            if timed_out {
+                "startup ready (timeout fallback)"
+            } else {
+                "startup ready"
+            },
+        );
         let recover_renderer = show_window && timed_out && !snapshot.renderer_ready();
         // Window ops must run on the main thread on Windows; the event loop is live
         // by now (paint/timeout can only happen after `setup` returns).
@@ -200,8 +330,10 @@ pub fn create_splash_window(app: &AppHandle) {
     if app.get_webview_window(SPLASH_LABEL).is_some() {
         return;
     }
+    reset_startup_progress();
     SPLASH_CLOSING.store(false, Ordering::SeqCst);
 
+    let app_for_page_load = app.clone();
     let mut builder =
         WebviewWindowBuilder::new(app, SPLASH_LABEL, WebviewUrl::App("splash.html".into()))
             .title("WinSTT")
@@ -222,6 +354,11 @@ pub fn create_splash_window(app: &AppHandle) {
             .shadow(false)
             // Center on the primary display (the reference `center: true`).
             .center()
+            .on_page_load(move |_window, payload| {
+                if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                    replay_startup_progress(&app_for_page_load);
+                }
+            })
             .visible(false);
 
     // CRITICAL: share the ONE WebView2 user-data folder every other window uses
@@ -271,10 +408,10 @@ pub fn close_splash_window(app: &AppHandle) {
         if SPLASH_CLOSING.swap(true, Ordering::SeqCst) {
             return;
         }
-        if let Err(e) = window.eval("document.body.classList.add('is-closing');") {
-            log::warn!("[splash] close animation eval failed: {e}");
-        }
         std::thread::spawn(move || {
+            if let Err(e) = window.eval("document.body.classList.add('is-closing');") {
+                log::warn!("[splash] close animation eval failed: {e}");
+            }
             std::thread::sleep(std::time::Duration::from_millis(SPLASH_CLOSE_ANIMATION_MS));
             if let Err(e) = window.destroy() {
                 log::warn!("[splash] destroy failed: {e}");

@@ -5,7 +5,6 @@ import {
 	invokeOrDefault,
 	invokeSecureOrDefault,
 	noop,
-	on,
 	onCast,
 	onTyped,
 } from "../ipc-transport";
@@ -64,57 +63,6 @@ export const soundLibraryReadFile = (filePath: string) =>
 	invokeOrDefault<Uint8Array | null>(IPC.SOUND_LIBRARY_READ_FILE, null, {
 		path: filePath,
 	});
-
-export type AppMenuTemplateItem =
-	| { type: "separator" }
-	| {
-			label: string;
-			enabled?: boolean;
-			checked?: boolean;
-			accelerator?: string;
-			actionId?: string;
-			submenu?: AppMenuTemplateItem[];
-	  };
-
-export const appMenuSetTemplate = (template: AppMenuTemplateItem[]) =>
-	invokeOrDefault<{ applied: boolean; itemCount: number }>(
-		IPC.APP_MENU_SET_TEMPLATE,
-		{ applied: false, itemCount: 0 },
-		template,
-	);
-
-export const appMenuReset = () =>
-	invokeOrDefault<{ applied: boolean }>(IPC.APP_MENU_RESET, { applied: false });
-
-export type ContextMenuTemplateItem =
-	| { type: "separator" }
-	| {
-			id?: string;
-			type?: "normal" | "checkbox" | "radio";
-			label?: string;
-			sublabel?: string;
-			role?: string;
-			accelerator?: string;
-			enabled?: boolean;
-			visible?: boolean;
-			checked?: boolean;
-			submenu?: ContextMenuTemplateItem[];
-	  };
-
-export const contextMenuShow = (
-	template: ContextMenuTemplateItem[],
-	x?: number,
-	y?: number,
-) =>
-	invokeOrDefault<{ selectedId: string | null }>(
-		IPC.CONTEXT_MENU_SHOW,
-		{ selectedId: null },
-		{
-			template,
-			x,
-			y,
-		},
-	);
 
 type ClipboardOperateResponse =
 	| { operation: "readText"; text: string }
@@ -222,25 +170,6 @@ export const updaterQuitAndInstall = () =>
 	invokeOrDefault<UpdaterQuitAndInstallResult>(IPC.UPDATER_QUIT_AND_INSTALL, {
 		triggered: false,
 	});
-
-export interface WindowTelemetryPayload {
-	bounds: { x: number; y: number; width: number; height: number };
-	event:
-		| "moved"
-		| "resized"
-		| "focused"
-		| "blurred"
-		| "shown"
-		| "hidden"
-		| "minimized"
-		| "restored"
-		| "maximized"
-		| "unmaximized";
-}
-
-export const onWindowTelemetry = (
-	cb: (payload: WindowTelemetryPayload) => void,
-) => onCast(IPC.WINDOW_TELEMETRY, cb);
 
 // Transcription history
 export interface TranscriptionHistoryEntry {
@@ -497,13 +426,16 @@ export const copyLastTranscript = (): Promise<boolean> =>
 	commandOrDefault("copy_last_transcript", commands.copyLastTranscript, false);
 
 // ── Diagnostics ──────────────────────────────────────────────────────
-// Open the userData folder in the OS file explorer. Returns `{ ok, error? }`
-// so the tray can toast on failure (rare — would require the OS shell to
-// reject opening %APPDATA%).
-export const diagOpenLogsFolder = (): Promise<{
-	ok: boolean;
+// Open the log folder in the OS file explorer through the native opener route.
+// The backend resolves and creates the real directory; the opener plugin reveals
+// that returned path. `{ ok:false }` is a no-bridge/dev fallback.
+export interface DiagOpenLogsFolderResult {
 	error?: string;
-}> =>
+	ok: boolean;
+	path?: string;
+}
+
+export const diagOpenLogsFolder = (): Promise<DiagOpenLogsFolderResult> =>
 	invokeOrDefault(IPC.DIAG_OPEN_LOGS_FOLDER, {
 		ok: false,
 		error: "IPC unavailable",

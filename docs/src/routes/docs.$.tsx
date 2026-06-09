@@ -14,6 +14,7 @@ import { createContext, Suspense, useContext } from "react";
 import { LLMCopyButton, ViewOptions } from "@/components/ai/page-actions";
 import { useMDXComponents } from "@/components/mdx";
 import { baseOptions, gitConfig } from "@/lib/layout.shared";
+import { absoluteDocsUrl, repositoryRawUrl, repositoryUrl } from "@/lib/site";
 import { source } from "@/lib/source";
 
 type PageMeta = { markdownUrl: string; githubUrl: string };
@@ -46,15 +47,16 @@ const serverLoader = createServerFn({ method: "GET" })
     const page = source.getPage(slugs);
     if (!page) throw notFound();
 
-    const slug = page.slugs.join("/");
     return {
       path: page.path,
-      url: page.url,
+      url: absoluteDocsUrl(page.url),
       title: page.data.title,
       description: page.data.description ?? "",
-      imageUrl: `/og/docs/${[...page.slugs, "image.png"].join("/")}`,
-      markdownUrl: `/api/llms-mdx/docs/${slug}`,
-      githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/content/docs/${page.path}`,
+      imageUrl: absoluteDocsUrl(
+        `/og/docs/${[...page.slugs, "image.png"].join("/")}`,
+      ),
+      markdownUrl: `${repositoryRawUrl}/${gitConfig.branch}/docs/content/docs/${page.path}`,
+      githubUrl: `${repositoryUrl}/blob/${gitConfig.branch}/docs/content/docs/${page.path}`,
       pageTree: await source.serializePageTree(source.getPageTree()),
     };
   });
@@ -109,7 +111,7 @@ function Page() {
           collapsible: false,
           footer: (
             <Link
-              href={`https://github.com/${gitConfig.user}/${gitConfig.repo}`}
+              href={repositoryUrl}
               external
               aria-label={`GitHub repository ${gitConfig.user}/${gitConfig.repo}`}
               className="inline-flex w-fit items-center gap-2 rounded-lg border bg-fd-secondary/50 px-2.5 py-2 text-sm text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground"

@@ -107,7 +107,13 @@
     "updatesStatusError": "בדיקת עדכונים נכשלה: {message}",
     "updatesDownloading": "מוריד…",
     "updatesDownloadingPercent": "{percent}% — מוריד עדכון",
-    "updatesRestartToInstall": "הפעל מחדש להתקנה"
+    "updatesRestartToInstall": "הפעל מחדש להתקנה",
+    "diagnosticsTitle": "אבחון",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "פתח תיקיית יומנים",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "שמור חבילת אבחון...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "סטטיסטיקה כללית",

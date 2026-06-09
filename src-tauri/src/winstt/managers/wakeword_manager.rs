@@ -52,6 +52,8 @@ use download::{
 };
 
 pub(super) const KWS_MODEL_DOWNLOAD_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2";
+pub(super) const KWS_MODEL_DOWNLOAD_SHA256: &str =
+    "f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a";
 pub(super) const LEGACY_PORCUPINE_WHEEL_URL: &str = "https://files.pythonhosted.org/packages/49/73/56fe355fe0f124616935510fb68bb46800df343cef0996eeb0b4869745a5/pvporcupine-1.9.5-py3-none-any.whl";
 pub(super) const LEGACY_PORCUPINE_WHEEL_SHA256: &str =
     "8f4e95c966f72258b417743e13e8c571d2fb79cdf2fe59571e6766638787481d";

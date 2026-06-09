@@ -155,12 +155,9 @@ function toCloneableArgs(channel: string, args: unknown[]): unknown[] {
 }
 
 /**
- * The wrappers below ALWAYS pass either a single options-object or nothing, so
- * `args[0]` is the only payload that matters. Return it when it's a non-array
- * object; otherwise `{}` (a bare positional value or no args → the matching
- * `COMMAND_INVOKERS` entry reads no keys from it). Channels whose wrapper passes
- * a BARE positional (e.g. `deleteModelCache(id)`) are deliberately NOT in the
- * map — they stay on the adapter's `POSITIONAL_STRING_PARAM` path.
+ * Most wrappers pass either a single options-object or nothing, so `args[0]` is
+ * the object payload when present. Legacy string-id invokers receive the raw
+ * `args` array too, preserving their bare positional wrapper contract.
  */
 function firstObjArg(args: unknown[]): Record<string, unknown> {
 	const first = args[0];
@@ -168,6 +165,15 @@ function firstObjArg(args: unknown[]): Record<string, unknown> {
 		return first as Record<string, unknown>;
 	}
 	return {};
+}
+
+function stringCommandArg(
+	a: Record<string, unknown>,
+	args: readonly unknown[],
+	key: string,
+): string {
+	const named = a[key];
+	return (typeof named === "string" ? named : args[0]) as string;
 }
 
 async function readDevSettingsBridgeJson(
@@ -248,7 +254,7 @@ function unwrapResult(v: unknown): unknown {
 /**
  * The typed transport for `kind:"command"` channels: each entry calls the
  * matching generated `commands.METHOD(...)` from `@/bindings` with the wrapper's
- * args extracted from the single options-object in POSITIONAL order. The
+ * args extracted from the wrapper payload in POSITIONAL order. The
  * `commands.METHOD(...)` call is what tsc type-checks — a Rust command signature
  * change (renamed/reordered/retyped param) now BREAKS THE BUILD here instead of
  * silently mis-routing through the untyped `invoke(channel, ...)` adapter path.
@@ -260,12 +266,15 @@ function unwrapResult(v: unknown): unknown {
  * positional params, against the wrapper body's object keys.
  *
  * DELIBERATELY EXCLUDED (left on the adapter): window-family `inject` routes,
- * secureInvoke channels, the STT connection/server-status noop shims, the
- * bare-positional-string history/cache channels, and the few channels whose
- * wrapper arg-shape doesn't line up 1:1 with the command params.
+ * secureInvoke channels, the STT connection/server-status noop shims, and the
+ * few channels whose wrapper arg-shape doesn't line up 1:1 with the command
+ * params.
  */
 const COMMAND_INVOKERS: Partial<
-	Record<string, (a: Record<string, unknown>) => Promise<unknown>>
+	Record<
+		string,
+		(a: Record<string, unknown>, args: readonly unknown[]) => Promise<unknown>
+	>
 > = {
 	// ── STT dictation core ──
 	[IPC.STT_SET_PARAMETER]: (a) =>
@@ -317,6 +326,8 @@ const COMMAND_INVOKERS: Partial<
 			a.modelId as string,
 			a.quantization as string,
 		),
+	[IPC.STT_DELETE_MODEL_CACHE]: (a, args) =>
+		commands.deleteModelCache(stringCommandArg(a, args, "modelId")),
 	[IPC.STT_CANCEL_DOWNLOAD]: () => commands.winsttCancelDownload(),
 
 	// ── Settings ──
@@ -486,11 +497,15 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.SOUND_LIBRARY_READ_FILE]: (a) =>
 		commands.soundLibraryReadFile(a.path as string),
 
-	// ── History (object-arg commands only; bare-positional-string channels
-	//    STT_DELETE_MODEL_CACHE / HISTORY_DELETE / HISTORY_LOAD_AUDIO /
-	//    HISTORY_ALIGN_AUDIO stay on the adapter's POSITIONAL_STRING_PARAM path) ──
+	// ── History ──
 	[IPC.HISTORY_GET_ALL]: () => commands.historyGetAll(),
 	[IPC.HISTORY_CLEAR]: () => commands.historyClear(),
+	[IPC.HISTORY_DELETE]: (a, args) =>
+		commands.historyDelete(stringCommandArg(a, args, "id")),
+	[IPC.HISTORY_LOAD_AUDIO]: (a, args) =>
+		commands.historyLoadAudio(stringCommandArg(a, args, "id")),
+	[IPC.HISTORY_ALIGN_AUDIO]: (a, args) =>
+		commands.alignWords(stringCommandArg(a, args, "entryId")),
 	// SQLite-backed history (object-arg; numeric row ids passed as `{ id }`).
 	[IPC.HISTORY_LIST]: (a) =>
 		commands.historyList(a.offset as number, a.limit as number),
@@ -536,7 +551,7 @@ export function send(channel: string, ...args: unknown[]) {
 			// resolve that error-Result and slip past the critical `.catch` below,
 			// silently swallowing the write failure (the audit-#13 regression the
 			// adapter's raw `core.invoke` reject path used to surface).
-			const p = invoker(firstObjArg(args)).then(unwrapResult);
+			const p = invoker(firstObjArg(args), args).then(unwrapResult);
 			if (CRITICAL_SEND_CHANNELS.has(channel)) {
 				// Mirror the adapter's critical-send log so a failed swap / save is
 				// diagnosable instead of looking like a no-op.
@@ -566,7 +581,7 @@ export function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 		if (invoker) {
 			// A thrown Result-error propagates to invokeOrDefault's catch →
 			// handleInvokeError, preserving the #13 critical-channel logging.
-			return invoker(firstObjArg(args)).then((v) => unwrapResult(v) as T);
+			return invoker(firstObjArg(args), args).then((v) => unwrapResult(v) as T);
 		}
 		return window.nativeBridge.invoke(
 			channel,

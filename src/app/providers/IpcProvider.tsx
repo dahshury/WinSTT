@@ -15,7 +15,6 @@ import { useRealtimePreviewFallback } from "@/features/realtime-preview-fallback
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { useVadCalibration } from "@/features/vad-calibration";
-import { installNativeBridge } from "@/shared/api/native-bridge-adapter";
 import {
 	audioGetDevices,
 	fetchRuntimeInfo,
@@ -24,12 +23,6 @@ import {
 	settingsLoad,
 	webviewDiagLog,
 } from "@/shared/api/ipc-client";
-
-// Install the `window.nativeBridge` → Tauri polyfill at module-load time — BEFORE
-// React's first render fires the IPC hooks below (and before any entry's
-// createRoot().render()). The whole WinSTT renderer talks to the backend through
-// this single seam; see shared/api/native-bridge-adapter.ts.
-installNativeBridge();
 
 const STARTUP_READY_PROBE_TIMEOUT_MS = 2500;
 let startupReadyPromise: Promise<void> | null = null;

@@ -130,7 +130,10 @@ impl ShortcutAction for TranscribeAction {
             // `general.recording_sound` and fires on a worker thread (non-blocking).
             // Listen mode goes through loopback_manager (not this path), matching the
             // reference's "suppressed in listen mode".
-            crate::winstt::commands::sound::play_recording_chime(app);
+            crate::winstt::commands::sound::play_recording_chime_then_duck(
+                app,
+                rm.recording_generation(),
+            );
         } else {
             crate::transcription_coordinator::finish_dictation_session(session_id);
             utils::unregister_cancel_shortcut_if_idle(app);

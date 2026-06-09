@@ -2,6 +2,8 @@
 
 **Date:** 2026-06-03. All sizes measured from `src-tauri/target/release/` + `src-tauri/resources/` + `dist/` on this machine.
 
+> Historical note: the tracked `resources/espeakng_loader/` copy was removed after this analysis. Current builds install the eSpeak NG runtime on demand under app data instead of bundling that tree.
+
 ## 1. What ships today (the installed app)
 
 Tauri bundles the **main binary + the DLLs next to it + `resources/**/*`**; WebView2 is a download-bootstrapper (NOT a bundled runtime). The 26 MB `handy_app_lib.dll` (cdylib) is a build artifact and does **not** ship (the exe statically links the lib).

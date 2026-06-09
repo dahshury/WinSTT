@@ -10,6 +10,8 @@ import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { PulseDot } from "@/shared/ui/pulse-dot";
+import { VariantBadge } from "../lib/model-list-meta-chips";
+import { getVariantClasses } from "../lib/model-selector-display-utils";
 import { formatMaker, formatModelName } from "../lib/model-selector-utils";
 import { getProviderIconWithFallback } from "../lib/provider-icons";
 import {
@@ -65,6 +67,22 @@ function MakerBadge({ maker }: { maker: string | undefined }) {
 	);
 }
 
+function SelectedVariantBadge({
+	variant,
+}: {
+	variant: OpenRouterModel["variant"];
+}) {
+	if (!variant) {
+		return null;
+	}
+	return (
+		<VariantBadge
+			variant={variant}
+			variantClasses={getVariantClasses(variant)}
+		/>
+	);
+}
+
 function SelectedModelContent({
 	selectedModel,
 }: {
@@ -74,12 +92,13 @@ function SelectedModelContent({
 		<div className="flex min-w-0 flex-1 items-center gap-2">
 			<MakerBadge maker={selectedModel.maker} />
 			<TruncatedText
-				className="font-medium text-body text-foreground leading-tight tracking-tight"
+				className="min-w-0 flex-1 font-medium text-body text-foreground leading-tight tracking-tight"
 				text={formatModelName(
 					selectedModel.model_name ?? selectedModel.name,
 					selectedModel.maker,
 				)}
 			/>
+			<SelectedVariantBadge variant={selectedModel.variant} />
 		</div>
 	);
 }

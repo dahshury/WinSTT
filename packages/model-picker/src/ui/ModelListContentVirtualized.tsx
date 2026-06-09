@@ -41,6 +41,7 @@ export interface ModelListContentVirtualizedProps {
 				maker: string;
 				modelId?: string | undefined;
 				nonce: number;
+				providerSlug?: string | undefined;
 		  }
 		| null
 		| undefined;
@@ -84,7 +85,9 @@ function restoreScrollAnchor(
 	if (!handle || !anchor || virtualItems.length === 0) {
 		return;
 	}
-	const index = virtualItems.findIndex((item) => getRowKey(item) === anchor.key);
+	const index = virtualItems.findIndex(
+		(item) => getRowKey(item) === anchor.key,
+	);
 	const nextOffset =
 		index >= 0
 			? Math.max(0, handle.getItemOffset(index) + anchor.offsetWithinItem)
@@ -173,7 +176,9 @@ export function ModelListContentVirtualized({
 		sortHeaderLabel || !showFavoritesGroup ? undefined : isFavoriteModel,
 		!sortHeaderLabel,
 	);
-	const virtualItemsSignature = virtualItems.map(virtualItemRevision).join("\u001f");
+	const virtualItemsSignature = virtualItems
+		.map(virtualItemRevision)
+		.join("\u001f");
 	const stickyHeaderItem =
 		stickySectionId === null
 			? undefined
@@ -274,7 +279,7 @@ export function ModelListContentVirtualized({
 				</div>
 			) : null}
 			<VList
-				className="min-h-0 flex-1 overscroll-contain"
+				className="min-h-0 flex-1 overscroll-contain overflow-y-auto [overflow-y:overlay]"
 				data-slot="model-list-scroll-container"
 				onScroll={handleVirtualScroll}
 				ref={virtualizerHandleRef}

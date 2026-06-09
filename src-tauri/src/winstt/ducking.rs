@@ -110,6 +110,9 @@ pub struct DuckState {
     active_reasons: u8,
     /// Effect: we have issued the duck and captured the previous volume.
     ducked: bool,
+    /// A duck intent has been armed, but the volume change is intentionally
+    /// delayed until a prerequisite sound finishes.
+    delayed_duck_pending: bool,
     /// The pct captured for the active/pending duck.
     pending_reduction_pct: u8,
     /// The playback volume captured before the active duck.
@@ -121,6 +124,7 @@ impl DuckState {
         Self {
             active_reasons: 0,
             ducked: false,
+            delayed_duck_pending: false,
             pending_reduction_pct: 100,
             saved_volume: None,
         }
@@ -150,6 +154,31 @@ impl DuckState {
         }
     }
 
+    pub fn request_delayed_duck_for(&mut self, reason: DuckReason, reduction_pct: u8) -> bool {
+        let bit = reason.bit();
+        if self.active_reasons & bit != 0 {
+            return false;
+        }
+        let was_idle = self.active_reasons == 0;
+        self.active_reasons |= bit;
+        if !was_idle {
+            return false;
+        }
+        self.pending_reduction_pct = reduction_pct.min(100);
+        self.delayed_duck_pending = true;
+        true
+    }
+
+    pub fn complete_delayed_duck_for(&mut self, reason: DuckReason) -> DuckAction {
+        if self.active_reasons & reason.bit() == 0 || !self.delayed_duck_pending {
+            return DuckAction::NoOp;
+        }
+        self.delayed_duck_pending = false;
+        DuckAction::Duck {
+            reduction_pct: self.pending_reduction_pct,
+        }
+    }
+
     /// Request a restore. No-op if we never intended to duck. Mirrors
     /// unmuteSystemAudio's `if (!desiredMuted) return`.
     pub fn request_restore(&mut self) -> DuckAction {
@@ -165,6 +194,7 @@ impl DuckState {
         if self.active_reasons != 0 {
             return DuckAction::NoOp;
         }
+        self.delayed_duck_pending = false;
         DuckAction::Restore
     }
 
@@ -174,6 +204,7 @@ impl DuckState {
     /// stays un-ducked so a later restore is correctly skipped (mirrors the
     /// guard in applyRestore: `if (!isDucked) return`).
     pub fn on_duck_complete(&mut self, saved: Option<f32>) {
+        self.delayed_duck_pending = false;
         self.ducked = saved.is_some();
         self.saved_volume = saved;
     }
@@ -182,6 +213,7 @@ impl DuckState {
     /// clearing isDucked + savedVolume even when SetVolume failed (so we don't
     /// loop forever).
     pub fn on_restore_complete(&mut self) {
+        self.delayed_duck_pending = false;
         self.ducked = false;
         self.saved_volume = None;
     }
@@ -244,9 +276,26 @@ fn spawn_restore_if_needed() {
     });
 }
 
+fn settings_duck_reduction_pct(app: &tauri::AppHandle) -> u8 {
+    crate::winstt::commands::settings::read_settings_raw(app)
+        .general
+        .system_audio_reduction_while_dictating
+        .clamp(0, 100) as u8
+}
+
 /// Apply `general.systemAudioReductionWhileDictating` for a recording start.
 pub fn duck_from_settings(app: &tauri::AppHandle) {
     duck_from_settings_for(app, DuckReason::Dictation);
+}
+
+/// Arm dictation ducking without applying it yet. The recording-sound path uses
+/// this to play the chime at normal volume, then complete the duck afterward.
+pub fn arm_dictation_duck_from_settings(app: &tauri::AppHandle) -> bool {
+    let pct = settings_duck_reduction_pct(app);
+    if pct == 0 {
+        return false;
+    }
+    lock_state().request_delayed_duck_for(DuckReason::Dictation, pct)
 }
 
 /// Apply `general.systemAudioReductionWhileDictating` for Read Aloud playback.
@@ -255,10 +304,7 @@ pub fn duck_read_aloud_from_settings(app: &tauri::AppHandle) {
 }
 
 fn duck_from_settings_for(app: &tauri::AppHandle, reason: DuckReason) {
-    let pct = crate::winstt::commands::settings::read_settings_raw(app)
-        .general
-        .system_audio_reduction_while_dictating
-        .clamp(0, 100) as u8;
+    let pct = settings_duck_reduction_pct(app);
     if pct == 0 {
         return;
     }
@@ -272,18 +318,29 @@ pub fn request_duck(reduction_pct: u8) {
 fn request_duck_for(reason: DuckReason, reduction_pct: u8) {
     let action = lock_state().request_duck_for(reason, reduction_pct);
     if let DuckAction::Duck { reduction_pct } = action {
-        std::thread::spawn(move || {
-            let saved = perform_duck(reduction_pct);
-            let should_restore = {
-                let mut guard = lock_state();
-                guard.on_duck_complete(saved);
-                !guard.desired_muted() && guard.should_restore()
-            };
-            if should_restore {
-                spawn_restore_if_needed();
-            }
-        });
+        spawn_duck(reduction_pct);
     }
+}
+
+pub fn complete_armed_dictation_duck() {
+    let action = lock_state().complete_delayed_duck_for(DuckReason::Dictation);
+    if let DuckAction::Duck { reduction_pct } = action {
+        spawn_duck(reduction_pct);
+    }
+}
+
+fn spawn_duck(reduction_pct: u8) {
+    std::thread::spawn(move || {
+        let saved = perform_duck(reduction_pct);
+        let should_restore = {
+            let mut guard = lock_state();
+            guard.on_duck_complete(saved);
+            !guard.desired_muted() && guard.should_restore()
+        };
+        if should_restore {
+            spawn_restore_if_needed();
+        }
+    });
 }
 
 pub fn request_restore() {
@@ -490,6 +547,31 @@ mod tests {
 
         assert_eq!(s.request_restore(), DuckAction::Restore);
         assert!(s.should_restore());
+        assert!(!s.desired_muted());
+    }
+
+    #[test]
+    fn delayed_duck_completes_only_when_still_desired() {
+        let mut s = DuckState::new();
+        assert!(s.request_delayed_duck_for(DuckReason::Dictation, 60));
+        assert_eq!(
+            s.complete_delayed_duck_for(DuckReason::Dictation),
+            DuckAction::Duck { reduction_pct: 60 }
+        );
+        s.on_duck_complete(Some(0.7));
+        assert!(s.should_restore());
+    }
+
+    #[test]
+    fn delayed_duck_cancelled_before_completion_is_noop() {
+        let mut s = DuckState::new();
+        assert!(s.request_delayed_duck_for(DuckReason::Dictation, 60));
+        assert_eq!(s.request_restore(), DuckAction::Restore);
+        assert_eq!(
+            s.complete_delayed_duck_for(DuckReason::Dictation),
+            DuckAction::NoOp
+        );
+        assert!(!s.should_restore());
         assert!(!s.desired_muted());
     }
 

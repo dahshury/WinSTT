@@ -15,7 +15,7 @@ import {
 	PlugSocketIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, type ReactNode } from "react";
+import { useCallback, useEffect, type ReactNode } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore, useSettingsTabStore } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
@@ -168,7 +168,14 @@ export function SettingsPage() {
 	// shares the `llm` section with the LLM provider/enabled flags — a revert
 	// from another window loses the cross-window user-dirty merge.
 	useCloudKeyAutoRevert(undefined, hydrationStatus === "ready");
-	useModelAssistanceAutoEnable(canRenderSettings);
+	const openLlmModelPicker = useLlmModelPickerStore((s) => s.openFor);
+	const openDictationCleanupPicker = useCallback(() => {
+		openLlmModelPicker("dictation", true);
+	}, [openLlmModelPicker]);
+	useModelAssistanceAutoEnable({
+		enabled: canRenderSettings,
+		onOpenOllamaPicker: openDictationCleanupPicker,
+	});
 	const t = useTranslations("settings");
 	// Per-tab search keywords (section headings + setting names) so the sidebar
 	// search surfaces a tab by its contents, not just its label/tooltip.
@@ -274,13 +281,15 @@ export function SettingsPage() {
 					value={activeTab}
 				>
 					<SettingsSidebar links={links} />
-					{/* Content card — a rounded, shadowed panel inset with a small margin
-						    so the surface-1 substrate shows around it. The sidebar reads as
-						    built into the window while each tab's content floats a layer above.
+					{/* Content card — a rounded, shadowed panel inset vertically so the
+						    surface-1 substrate shows above and below it. Horizontally it runs
+						    flush from the sidebar to the window edge so both side gutters match.
+						    The sidebar reads as built into the window while each tab's content
+						    floats a layer above.
 						    Lifts to surface-3 (a clear ~8% step above the surface-1 sidebar) so
 						    the colour difference is obvious; nested SettingSection controls lift
 						    from there as usual. */}
-					<div className="relative min-w-0 flex-1 py-2.5 pe-2.5">
+					<div className="relative min-w-0 flex-1 py-2.5">
 						{/* Drag strip — the thin surface-1 margin above the content card. The
 							    window is frameless, so this gives the right (content) side a grab
 							    handle that lines up with the sidebar's own top drag strip, making

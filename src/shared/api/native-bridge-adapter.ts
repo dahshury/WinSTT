@@ -1,23 +1,24 @@
-// PORT — WU-0 (docs/archive/port/10_frontend_port_plan.md §2/§3).
+// PORT - WU-0 (docs/archive/port/10_frontend_port_plan.md sections 2/3).
 //
-// THE single new renderer file the WinSTT→Tauri port introduces. It installs a
+// THE single new renderer file the WinSTT-to-Tauri port introduced. It installs a
 // `window.nativeBridge` polyfill backed by `@tauri-apps/api` so the entire
 // ~401-file WinSTT renderer (and `ipc-client.ts` itself) runs VERBATIM. Every
-// `nativeBridge.{send,invoke,secureInvoke,on,getPathForFile}` call routes through
-// the ROUTE table below to either:
-//   - a Tauri command   (invoke(cmd, args))   — `lib_wiring.md §3`
-//   - a Tauri event      (listen(event, cb))   — `lib_wiring.md §4`
+// `nativeBridge.{send,invoke,secureInvoke,on,getPathForFile}` call routes either
+// through typed `COMMAND_INVOKERS` in `ipc-transport.ts` or through the legacy
+// ROUTE table below for event/plugin/window/noop compatibility cases:
+//   - a Tauri command    (invoke(cmd, args))
+//   - a Tauri event      (listen(event, cb))
 //   - a window op        (getCurrentWindow().minimize() …)
 //   - a Tauri plugin     (dialog / clipboard / os / opener / updater / autostart)
-//   - a polyfill / noop  (no backend — shimmed locally)
+//   - a polyfill / noop  (no backend, shimmed locally)
 //
 // Encryption (secureInvoke) collapses to plain invoke: Tauri's IPC is already
 // process-isolated, so the reference secure channel has no analogue.
 //
-// install() is idempotent and called once from `app/providers/IpcProvider` (and
-// safe to import from any entry before a view mounts). Channels that are NOT in
-// ROUTE log a single warning and resolve to `undefined` (the renderer's
-// `invokeOrDefault` then supplies its declared fallback).
+// install() is idempotent and is centralized in `app/layouts/HtmlLang`, which is
+// mounted by every window entry. Channels that are NOT in ROUTE log a single
+// warning and resolve to `undefined` (the renderer's `invokeOrDefault` then
+// supplies its declared fallback).
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import {
@@ -116,21 +117,10 @@ interface UpdaterResult {
 // and the §1b/§3 mapping. Commands marked ⚠MISSING in the plan still route to a
 // command name here; the backend command is filed under the owning slice's WU.
 const ROUTE: Partial<Record<string, Route>> = {
-	// ── STT dictation core (send/invoke commands) ──
-	[IPC.STT_SET_PARAMETER]: { kind: "command", cmd: "winstt_set_parameter" },
-	[IPC.STT_GET_PARAMETER]: { kind: "command", cmd: "winstt_get_parameter" },
-	[IPC.STT_CALL_METHOD]: { kind: "command", cmd: "winstt_call_method" },
+	// ── STT shims and overlay controls ──
 	[IPC.STT_IS_CONNECTED]: { kind: "noop" }, // engine in-proc → always-connected shim (returns false → ipc-client default; overridden in install)
-	[IPC.STT_ABORT_OPERATION]: {
-		kind: "command",
-		cmd: "cancel_current_operation",
-	},
 	[IPC.OVERLAY_SET_IGNORE_MOUSE]: { kind: "window", op: "ignore-mouse" },
-	[IPC.STT_SERVER_SPAWN]: { kind: "noop" },
-	[IPC.STT_SERVER_KILL]: { kind: "noop" },
-	[IPC.STT_SERVER_GET_STATUS]: { kind: "noop" },
 	[IPC.STT_GET_SERVER_READY]: { kind: "noop" },
-	[IPC.STT_RELOAD_MODEL]: { kind: "command", cmd: "set_winstt_model" },
 
 	// ── STT events (main → renderer) ──
 	[IPC.STT_REALTIME_TEXT]: { kind: "event", event: "realtime-update" },
@@ -186,37 +176,8 @@ const ROUTE: Partial<Record<string, Route>> = {
 	},
 
 	// ── Model catalog / picker / download (slices 01/03) ──
-	[IPC.STT_GET_MODEL_CATALOG]: { kind: "command", cmd: "list_models" },
-	[IPC.STT_LIST_MODELS_WITH_STATE]: {
-		kind: "command",
-		cmd: "list_models_with_state",
-	},
 	[IPC.STT_MODEL_CATALOG]: { kind: "event", event: "stt:model-catalog" },
-	[IPC.STT_GET_RUNTIME_INFO]: { kind: "command", cmd: "get_runtime_info" },
 	[IPC.STT_RUNTIME_INFO]: { kind: "event", event: "stt:runtime-info" },
-	[IPC.STT_GET_LIVE_RESOURCES]: { kind: "command", cmd: "get_live_resources" },
-	[IPC.STT_ASSESS_DICTATION_FIT]: {
-		kind: "command",
-		cmd: "assess_dictation_fit",
-	},
-	[IPC.STT_ASSESS_OLLAMA_FIT]: { kind: "command", cmd: "assess_ollama_fit" },
-	[IPC.STT_PREDOWNLOAD_QUANT]: { kind: "command", cmd: "predownload_quant" },
-	[IPC.STT_DOWNLOAD_PAUSE]: { kind: "command", cmd: "download_pause_quant" },
-	[IPC.STT_DOWNLOAD_RESUME]: { kind: "command", cmd: "download_resume_quant" },
-	[IPC.STT_DOWNLOAD_CANCEL_QUANT]: {
-		kind: "command",
-		cmd: "download_cancel_quant",
-	},
-	[IPC.STT_DELETE_MODEL_QUANTIZATION]: {
-		kind: "command",
-		cmd: "delete_model_quantization",
-	},
-	[IPC.STT_DELETE_MODEL_CACHE]: { kind: "command", cmd: "delete_model_cache" },
-	// The renderer's `cancelDownload()` sends NO args. `cancel_download` is Handy's
-	// command (requires `model_id` → the arg-less invoke rejects on deserialize);
-	// the WinSTT arg-less variant is `winstt_cancel_download` (commands/download.rs),
-	// registered in lib.rs to avoid the duplicate-name clash.
-	[IPC.STT_CANCEL_DOWNLOAD]: { kind: "command", cmd: "winstt_cancel_download" },
 	[IPC.STT_MODEL_DOWNLOAD_START]: {
 		kind: "event",
 		event: "stt:model-download-start",
@@ -259,30 +220,10 @@ const ROUTE: Partial<Record<string, Route>> = {
 	},
 
 	// ── Settings ──
-	[IPC.SETTINGS_LOAD]: { kind: "command", cmd: "winstt_get_settings" },
-	[IPC.SETTINGS_SAVE]: { kind: "command", cmd: "winstt_set_settings" },
-	[IPC.SETTINGS_REMOVE_APPLICATION_DATA]: {
-		kind: "command",
-		cmd: "remove_application_data",
-	},
-	[IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS]: {
-		kind: "command",
-		cmd: "remove_downloaded_models",
-	},
 	[IPC.SETTINGS_CHANGED]: { kind: "event", event: "settings:changed" },
 	[IPC.SETTINGS_SAVE_ERROR]: { kind: "event", event: "settings:save-error" },
 
 	// ── Hotkey ──
-	[IPC.HOTKEY_REGISTER]: { kind: "command", cmd: "hotkey_register" },
-	[IPC.HOTKEY_UNREGISTER]: { kind: "command", cmd: "hotkey_unregister" },
-	[IPC.HOTKEY_START_RECORDING]: {
-		kind: "command",
-		cmd: "hotkey_start_recording",
-	},
-	[IPC.HOTKEY_STOP_RECORDING]: {
-		kind: "command",
-		cmd: "hotkey_stop_recording",
-	},
 	[IPC.HOTKEY_PRESSED]: { kind: "event", event: "hotkey:pressed" },
 	[IPC.HOTKEY_RELEASED]: { kind: "event", event: "hotkey:released" },
 	[IPC.HOTKEY_RECORDING_UPDATE]: {
@@ -297,12 +238,6 @@ const ROUTE: Partial<Record<string, Route>> = {
 	// ── System ──
 	[IPC.AUTOSTART_SET]: { kind: "plugin", plugin: "autostart:set" },
 	[IPC.AUTOSTART_GET]: { kind: "plugin", plugin: "autostart:get" },
-	[IPC.AUDIO_GET_DEVICES]: { kind: "command", cmd: "get_audio_devices" },
-	[IPC.AUDIO_REFRESH_DEVICES]: {
-		kind: "command",
-		cmd: "refresh_audio_devices",
-	},
-	// AUDIO_{GET,REFRESH}_OUTPUT_DEVICES are typed in COMMAND_INVOKERS.
 	[IPC.AUDIO_DEVICES_CHANGED]: {
 		kind: "event",
 		event: "audio:devices-changed",
@@ -315,25 +250,11 @@ const ROUTE: Partial<Record<string, Route>> = {
 		kind: "event",
 		event: "audio:output-devices-changed",
 	},
-	[IPC.AUDIO_SET_SELECTED_MICROPHONE]: {
-		kind: "command",
-		cmd: "set_selected_microphone",
-	},
-	[IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR]: {
-		kind: "command",
-		cmd: "start_microphone_level_monitor",
-	},
-	[IPC.AUDIO_STOP_MICROPHONE_LEVEL_MONITOR]: {
-		kind: "command",
-		cmd: "stop_microphone_level_monitor",
-	},
 	[IPC.AUDIO_MICROPHONE_LEVELS]: {
 		kind: "event",
 		event: "audio:microphone-levels",
 	},
-	[IPC.GPU_GET_INFO]: { kind: "command", cmd: "gpu_get_info" },
 	[IPC.APP_GET_SYSTEM_LOCALE]: { kind: "plugin", plugin: "os:locale" },
-	[IPC.CONTEXT_LIST_APPS]: { kind: "command", cmd: "list_context_apps" },
 
 	// ── Window controls / navigation ──
 	[IPC.WINDOW_MINIMIZE]: { kind: "window", op: "minimize" },
@@ -428,44 +349,8 @@ const ROUTE: Partial<Record<string, Route>> = {
 	// ── Dialog / clipboard / menus ──
 	[IPC.DIALOG_OPEN_FILE]: { kind: "plugin", plugin: "dialog:open" },
 	[IPC.CLIPBOARD_OPERATE]: { kind: "plugin", plugin: "clipboard:operate" },
-	[IPC.APP_MENU_SET_TEMPLATE]: { kind: "noop" },
-	[IPC.APP_MENU_RESET]: { kind: "noop" },
-	[IPC.CONTEXT_MENU_SHOW]: { kind: "noop" },
 
 	// ── TTS (slice 06) ──
-	[IPC.TTS_SPEAK]: { kind: "command", cmd: "tts_speak" },
-	[IPC.TTS_CANCEL]: { kind: "command", cmd: "tts_cancel" },
-	[IPC.TTS_SET_SPEED]: { kind: "command", cmd: "tts_set_speed" },
-	[IPC.TTS_INIT]: { kind: "command", cmd: "tts_init" },
-	[IPC.TTS_LIST_VOICES]: { kind: "command", cmd: "tts_list_voices" },
-	[IPC.TTS_CLOUD_LIST_VOICES]: {
-		kind: "command",
-		cmd: "tts_list_cloud_voices",
-	},
-	[IPC.TTS_CLOUD_PREVIEW]: { kind: "command", cmd: "tts_preview_cloud" },
-	[IPC.TTS_OPENROUTER_PREVIEW]: {
-		kind: "command",
-		cmd: "tts_preview_openrouter",
-	},
-	[IPC.TTS_CLOUD_SUBSCRIPTION]: {
-		kind: "command",
-		cmd: "tts_cloud_subscription",
-	},
-	[IPC.TTS_DOWNLOAD_ESTIMATE]: {
-		kind: "command",
-		cmd: "tts_download_estimate",
-	},
-	[IPC.TTS_INSTALL_PAUSE]: { kind: "command", cmd: "tts_install_pause" },
-	[IPC.TTS_INSTALL_RESUME]: { kind: "command", cmd: "tts_install_resume" },
-	[IPC.TTS_INSTALL_CANCEL]: { kind: "command", cmd: "tts_install_cancel" },
-	[IPC.TTS_REPORT_PLAYBACK_STARTED]: {
-		kind: "command",
-		cmd: "tts_report_playback_started",
-	},
-	[IPC.TTS_REPORT_PLAYBACK_ENDED]: {
-		kind: "command",
-		cmd: "tts_report_playback_ended",
-	},
 	[IPC.TTS_STARTED]: { kind: "event", event: "tts:started" },
 	[IPC.TTS_CHUNK]: { kind: "event", event: "tts:chunk" },
 	[IPC.TTS_COMPLETED]: { kind: "event", event: "tts:completed" },
@@ -494,16 +379,6 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.TTS_INSTALL_PAUSED]: { kind: "event", event: "tts:install-paused" },
 	[IPC.TTS_INSTALL_RESUMED]: { kind: "event", event: "tts:install-resumed" },
 	// ── Multi-provider TTS catalog (model-aware picker) ──
-	[IPC.TTS_LIST_MODELS]: { kind: "command", cmd: "tts_list_models" },
-	[IPC.TTS_LIST_MODELS_WITH_STATE]: {
-		kind: "command",
-		cmd: "tts_list_models_with_state",
-	},
-	[IPC.TTS_PREDOWNLOAD]: { kind: "command", cmd: "tts_predownload_model" },
-	[IPC.TTS_DOWNLOAD_PAUSE]: { kind: "command", cmd: "tts_download_pause" },
-	[IPC.TTS_DOWNLOAD_RESUME]: { kind: "command", cmd: "tts_download_resume" },
-	[IPC.TTS_DOWNLOAD_CANCEL]: { kind: "command", cmd: "tts_download_cancel" },
-	[IPC.TTS_DELETE_MODEL]: { kind: "command", cmd: "tts_delete_model" },
 	[IPC.TTS_CATALOG_MODEL_DOWNLOAD_PROGRESS]: {
 		kind: "event",
 		event: "tts:catalog-model-download-progress",
@@ -518,35 +393,6 @@ const ROUTE: Partial<Record<string, Route>> = {
 	},
 
 	// ── LLM / Ollama / OpenRouter (slice 07) ──
-	[IPC.LLM_PROCESS_TEXT]: { kind: "command", cmd: "process_text" },
-	[IPC.LLM_PROCESS_TEXT_CUSTOM]: { kind: "command", cmd: "process_text" },
-	[IPC.LLM_SCAN_MODELS]: { kind: "command", cmd: "scan_ollama_models" },
-	[IPC.LLM_SCAN_OPENROUTER_MODELS]: {
-		kind: "command",
-		cmd: "scan_openrouter_models",
-	},
-	[IPC.STT_SCAN_OPENROUTER_MODELS]: {
-		kind: "command",
-		cmd: "scan_openrouter_stt_models",
-	},
-	[IPC.TTS_SCAN_OPENROUTER_MODELS]: {
-		kind: "command",
-		cmd: "scan_openrouter_tts_models",
-	},
-	[IPC.LLM_DETECT_OLLAMA]: { kind: "command", cmd: "ollama_detect" },
-	[IPC.LLM_START_OLLAMA]: { kind: "command", cmd: "ollama_start" },
-	[IPC.LLM_PULL_MODEL]: { kind: "command", cmd: "ollama_pull" },
-	[IPC.LLM_CANCEL_PULL_MODEL]: { kind: "command", cmd: "ollama_cancel_pull" },
-	[IPC.LLM_DELETE_MODEL]: { kind: "command", cmd: "ollama_delete" },
-	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: {
-		kind: "command",
-		cmd: "ollama_fetch_library",
-	},
-	[IPC.LLM_FETCH_OLLAMA_TAGS]: { kind: "command", cmd: "ollama_fetch_tags" },
-	[IPC.LLM_GET_WARMUP_STATUS]: {
-		kind: "command",
-		cmd: "llm_get_warmup_status",
-	},
 	// INTEGRATIONS_VERIFY (`verify_credential`) is typed in COMMAND_INVOKERS.
 	[IPC.LLM_CATALOG]: { kind: "event", event: "llm:catalog" },
 	[IPC.LLM_PULL_PROGRESS]: { kind: "event", event: "llm:pull-progress" },
@@ -560,12 +406,8 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.LLM_WARMUP_STATUS]: { kind: "event", event: "llm:warmup-status" },
 
 	// ── Transforms (slice 13) ──
-	// applyTransform() sends no args → `apply_transform` captures the selection,
-	// runs the composed presets+modifiers prompt, pastes back, and emits
-	// transforms:applied/failed. runLlmPreview sends { text, feature, config }
-	// → `apply_transform_preview` (no selection/paste). WU-13 owns both commands.
-	[IPC.TRANSFORMS_APPLY]: { kind: "command", cmd: "apply_transform" },
-	[IPC.TRANSFORMS_PREVIEW]: { kind: "command", cmd: "apply_transform_preview" },
+	// Transform commands are typed in COMMAND_INVOKERS; the adapter keeps the
+	// broadcast events for every window.
 	[IPC.TRANSFORMS_APPLIED]: { kind: "event", event: "transforms:applied" },
 	[IPC.TRANSFORMS_FAILED]: { kind: "event", event: "transforms:failed" },
 	[IPC.TRANSFORMS_PROCESSING_START]: {
@@ -576,18 +418,6 @@ const ROUTE: Partial<Record<string, Route>> = {
 		kind: "event",
 		event: "transforms:processing-end",
 	},
-	[IPC.TRANSFORM_HISTORY_GET_ALL]: {
-		kind: "command",
-		cmd: "transform_history_get_all",
-	},
-	[IPC.TRANSFORM_HISTORY_CLEAR]: {
-		kind: "command",
-		cmd: "transform_history_clear",
-	},
-	[IPC.TRANSFORM_HISTORY_DELETE]: {
-		kind: "command",
-		cmd: "transform_history_delete",
-	},
 	[IPC.TRANSFORM_HISTORY_ADDED]: {
 		kind: "event",
 		event: "transform-history:added",
@@ -597,11 +427,9 @@ const ROUTE: Partial<Record<string, Route>> = {
 		event: "transform-history:deleted",
 	},
 
-	// Preview-before-pasting: finalized transcript is held back, rendered in the
-	// overlay pill, then confirmed/cancelled by the user.
+	// Preview commands are typed in COMMAND_INVOKERS; the adapter keeps the
+	// finalized transcript event.
 	[IPC.STT_PREVIEW_READY]: { kind: "event", event: "stt:preview-ready" },
-	[IPC.PREVIEW_CONFIRM_PASTE]: { kind: "command", cmd: "confirm_paste" },
-	[IPC.PREVIEW_CANCEL]: { kind: "command", cmd: "cancel_preview" },
 
 	// ── Cloud STT (slice 07) — the 5 error channels fan out from one event ──
 	[IPC.STT_CLOUD_AUTH_FAILED]: { kind: "event", event: "stt:cloud-error" },
@@ -609,27 +437,9 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.STT_CLOUD_KEY_MISSING]: { kind: "event", event: "stt:cloud-error" },
 	[IPC.STT_CLOUD_RATE_LIMITED]: { kind: "event", event: "stt:cloud-error" },
 	[IPC.STT_CLOUD_PROVIDER_ERROR]: { kind: "event", event: "stt:cloud-error" },
+	[IPC.CLOUD_CONNECTIVITY]: { kind: "event", event: "cloud:connectivity" },
 
 	// ── File transcription (slice 07/08) ──
-	[IPC.FILE_QUEUE_ENQUEUE]: { kind: "command", cmd: "file_transcribe_enqueue" },
-	[IPC.FILE_QUEUE_PICK_AND_ENQUEUE]: {
-		kind: "command",
-		cmd: "file_transcribe_pick_and_enqueue",
-	},
-	[IPC.FILE_QUEUE_CANCEL]: { kind: "command", cmd: "file_transcribe_cancel" },
-	[IPC.FILE_QUEUE_RETRY]: { kind: "command", cmd: "file_transcribe_retry" },
-	[IPC.FILE_QUEUE_COPY]: { kind: "command", cmd: "file_transcribe_copy" },
-	[IPC.FILE_QUEUE_CLEAR]: { kind: "command", cmd: "file_transcribe_clear" },
-	[IPC.FILE_QUEUE_PAUSE]: { kind: "command", cmd: "file_transcribe_pause" },
-	[IPC.FILE_QUEUE_RESUME]: { kind: "command", cmd: "file_transcribe_resume" },
-	[IPC.FILE_QUEUE_DISCARD_ALL]: {
-		kind: "command",
-		cmd: "file_transcribe_discard_all",
-	},
-	[IPC.FILE_QUEUE_GET_ACTIVE]: {
-		kind: "command",
-		cmd: "file_transcribe_get_active",
-	},
 	[IPC.FILE_TRANSCRIPTION_PROGRESS]: {
 		kind: "event",
 		event: "file:transcription-progress",
@@ -647,12 +457,6 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.FILE_QUEUE_ACTIVE]: { kind: "event", event: "file:queue-active" },
 
 	// ── Loopback / listen / diarization (slice 09) ──
-	[IPC.LOOPBACK_LIST_DEVICES]: {
-		kind: "command",
-		cmd: "loopback_list_devices",
-	},
-	[IPC.LOOPBACK_START]: { kind: "command", cmd: "start_listen" },
-	[IPC.LOOPBACK_STOP]: { kind: "command", cmd: "stop_listen" },
 	[IPC.STT_LOOPBACK_STARTED]: { kind: "event", event: "stt:loopback-started" },
 	[IPC.STT_LOOPBACK_STOPPED]: { kind: "event", event: "stt:loopback-stopped" },
 	[IPC.STT_DEVICE_SWITCH_FAILED]: {
@@ -663,27 +467,11 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.LID_OPENED]: { kind: "event", event: "lid:opened" },
 
 	// ── Sound (slice 05/11) ──
-	[IPC.SOUND_LIBRARY_ADD]: { kind: "command", cmd: "sound_library_add" },
-	[IPC.SOUND_LIBRARY_PICK_AND_ADD]: {
-		kind: "command",
-		cmd: "sound_library_pick_and_add",
-	},
-	[IPC.SOUND_LIBRARY_REMOVE]: { kind: "command", cmd: "sound_library_remove" },
-	[IPC.SOUND_LIBRARY_READ_FILE]: {
-		kind: "command",
-		cmd: "sound_library_read_file",
-	},
 	[IPC.SOUND_PLAY]: { kind: "event", event: "sound:play" },
 
 	// ── History (slice 10) ──
-	[IPC.HISTORY_GET_ALL]: { kind: "command", cmd: "history_get_all" },
-	[IPC.HISTORY_CLEAR]: { kind: "command", cmd: "history_clear" },
-	// HISTORY_DELETE / LOAD_AUDIO / ALIGN_AUDIO stay on the adapter's
-	// POSITIONAL_STRING_PARAM path (bare-positional string id). HISTORY_LIST /
-	// DELETE_ROW / TOGGLE / LOAD_AUDIO_BY_ROW are typed in COMMAND_INVOKERS.
-	[IPC.HISTORY_DELETE]: { kind: "command", cmd: "history_delete" },
-	[IPC.HISTORY_LOAD_AUDIO]: { kind: "command", cmd: "history_load_audio" },
-	[IPC.HISTORY_ALIGN_AUDIO]: { kind: "command", cmd: "align_words" },
+	// Legacy string-id history commands are typed in COMMAND_INVOKERS.
+	// HISTORY_LIST / DELETE_ROW / TOGGLE / LOAD_AUDIO_BY_ROW are typed there too.
 	[IPC.HISTORY_ADDED]: { kind: "event", event: "history:added" },
 	[IPC.HISTORY_DELETED]: { kind: "event", event: "history:deleted" },
 	[IPC.HISTORY_ROW_ADDED]: { kind: "event", event: "history:row-added" },
@@ -715,40 +503,16 @@ const ROUTE: Partial<Record<string, Route>> = {
 		plugin: "updater:quit-and-install",
 	},
 	[IPC.UPDATER_STATUS]: { kind: "event", event: "updater:status" },
-
-	// ── Window telemetry — noop in Tauri (no analogue needed by views v1) ──
-	[IPC.WINDOW_TELEMETRY]: { kind: "noop" },
 };
 
 // ── Arg-shape normalization ────────────────────────────────────────────────────
-// WinSTT wrappers pass either a single object (`{ parameter, value }`) or a bare
-// positional value. Tauri `invoke` needs a single object keyed by the Rust fn's
-// parameter names. The three positional-string channels are wrapped here.
-const POSITIONAL_STRING_PARAM: Partial<Record<string, string>> = {
-	[IPC.STT_DELETE_MODEL_CACHE]: "modelId",
-	[IPC.HISTORY_LOAD_AUDIO]: "id",
-	[IPC.HISTORY_ALIGN_AUDIO]: "entryId",
-	[IPC.HISTORY_DELETE]: "id",
-};
-
-function normalizeArgs(
-	channel: string,
-	args: unknown[],
-): Record<string, unknown> {
-	const positionalKey = POSITIONAL_STRING_PARAM[channel];
-	if (
-		positionalKey !== undefined &&
-		args.length > 0 &&
-		typeof args[0] !== "object"
-	) {
-		return { [positionalKey]: args[0] };
-	}
+function normalizeArgs(args: unknown[]): Record<string, unknown> {
 	const first = args[0];
 	if (first !== null && typeof first === "object" && !Array.isArray(first)) {
 		return first as Record<string, unknown>;
 	}
-	// Array payload (e.g. appMenuSetTemplate) or no args → wrap under `value`
-	// so the Rust side can deserialize a single named param if it ever needs to.
+	// Array payload or no args → wrap under `value` so the Rust side can
+	// deserialize a single named param if it ever needs to.
 	if (first !== undefined) {
 		return { value: first };
 	}
@@ -1110,7 +874,7 @@ export function installNativeBridge(): void {
 			}
 			if (route.kind === "command") {
 				const call = core.invoke(route.cmd, {
-					...normalizeArgs(channel, args),
+					...normalizeArgs(args),
 					...route.inject,
 				});
 				if (CRITICAL_SEND_CHANNELS.has(channel)) {
@@ -1150,7 +914,7 @@ export function installNativeBridge(): void {
 			}
 			if (route.kind === "command") {
 				return core.invoke(route.cmd, {
-					...normalizeArgs(channel, args),
+					...normalizeArgs(args),
 					...route.inject,
 				});
 			}
@@ -1160,7 +924,7 @@ export function installNativeBridge(): void {
 			if (route.kind === "plugin") {
 				return callPlugin(route.plugin, args[0]);
 			}
-			// STT_IS_CONNECTED / server-ready / server-status shims (WU-13 connect-server):
+			// STT_IS_CONNECTED / server-ready shims (WU-13 connect-server):
 			// the STT engine is in-proc in Tauri (no external server process), so the
 			// connection is permanently "connected" and the recorder is "ready". This
 			// flips ConnectionIndicator straight to the green GPU/CPU chip on boot.
@@ -1169,9 +933,6 @@ export function installNativeBridge(): void {
 				channel === IPC.STT_GET_SERVER_READY
 			) {
 				return Promise.resolve(true);
-			}
-			if (channel === IPC.STT_SERVER_GET_STATUS) {
-				return Promise.resolve("running");
 			}
 			return Promise.resolve(undefined);
 		},

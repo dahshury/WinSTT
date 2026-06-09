@@ -106,7 +106,7 @@ const RENDERER_DEV_SERVER_WAIT_TIMEOUT: Duration = Duration::from_millis(15_000)
 const RENDERER_DEV_SERVER_CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
 
 #[cfg(debug_assertions)]
-pub(crate) fn wait_for_renderer_dev_server(startup: &mut StartupProfiler) {
+pub(crate) fn wait_for_renderer_dev_server(startup: &mut StartupProfiler, app: &AppHandle) {
     let addr: SocketAddr = RENDERER_DEV_SERVER_ADDR
         .parse()
         .expect("renderer dev server address must be a valid socket address");
@@ -124,6 +124,7 @@ pub(crate) fn wait_for_renderer_dev_server(startup: &mut StartupProfiler) {
                     );
                 }
                 startup.mark("renderer dev server reachable");
+                crate::splash::emit_startup_progress(app, "renderer dev server reachable");
                 return;
             }
             Err(error) => {
@@ -133,6 +134,7 @@ pub(crate) fn wait_for_renderer_dev_server(startup: &mut StartupProfiler) {
                         RENDERER_DEV_SERVER_WAIT_TIMEOUT.as_millis()
                     );
                     startup.mark("renderer dev server wait timed out");
+                    crate::splash::emit_startup_progress(app, "renderer dev server wait timed out");
                     return;
                 }
             }
@@ -147,7 +149,7 @@ pub(crate) fn wait_for_renderer_dev_server(startup: &mut StartupProfiler) {
 }
 
 #[cfg(not(debug_assertions))]
-pub(crate) fn wait_for_renderer_dev_server(_startup: &mut StartupProfiler) {}
+pub(crate) fn wait_for_renderer_dev_server(_startup: &mut StartupProfiler, _app: &AppHandle) {}
 
 fn force_process_exit_success() -> ! {
     #[cfg(windows)]

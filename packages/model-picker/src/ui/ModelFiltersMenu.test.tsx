@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
-import { render } from "@testing-library/react";
-import * as components from "../lib/model-filters-menu-components";
+import { fireEvent, render, screen } from "@testing-library/react";
+import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import * as utils from "../lib/model-filters-menu-utils";
-import { DropdownMenu } from "./DropdownMenu";
 import { ModelFiltersMenu } from "./ModelFiltersMenu";
 
-const helpers = { ...components, ...utils };
+const helpers = { ...utils };
 
 describe("ModelFiltersMenu", () => {
 	test("renders without crashing", () => {
@@ -25,7 +24,83 @@ describe("ModelFiltersMenu", () => {
 		);
 		expect(container.firstElementChild).not.toBeNull();
 	});
+
+	test("renders the shared trigger count for filters and sort", () => {
+		render(
+			<TooltipProvider.Provider>
+				<ModelFiltersMenu
+					models={[]}
+					onEndpointProviderSelect={() => undefined}
+					onParametersChange={() => undefined}
+					onSortChange={() => undefined}
+					onVariantSelect={() => undefined}
+					selectedEndpointProvider="deepinfra"
+					selectedMakers={["openai", "anthropic"]}
+					selectedParameters={["tools"]}
+					selectedVariant="free"
+					sortKey="price"
+				/>
+			</TooltipProvider.Provider>,
+		);
+
+		expect(
+			screen.getByRole("button", { name: "Sort & filter (6 active)" }),
+		).not.toBeNull();
+		expect(screen.getByText("6")).not.toBeNull();
+	});
+
+	test("opens a flat accordion filter surface", async () => {
+		render(
+			<TooltipProvider.Provider>
+				<ModelFiltersMenu
+					allProviders={["openai"]}
+					favoriteProviders={[]}
+					models={[makeModel()]}
+					onEndpointProviderSelect={() => undefined}
+					onMakersChange={() => undefined}
+					onParametersChange={() => undefined}
+					onSortChange={() => undefined}
+					onVariantSelect={() => undefined}
+					selectedEndpointProvider={null}
+					selectedMakers={[]}
+					selectedParameters={[]}
+					selectedVariant={null}
+					sortKey={null}
+				/>
+			</TooltipProvider.Provider>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Sort & filter" }));
+
+		expect(await screen.findByText("Sort by")).not.toBeNull();
+		expect(screen.getByText("Variant")).not.toBeNull();
+		expect(screen.getByText("Author")).not.toBeNull();
+		expect(screen.getByText("Capabilities")).not.toBeNull();
+		expect(screen.getByText("Endpoint provider")).not.toBeNull();
+		expect(screen.queryByText("Model Author")).toBeNull();
+	});
 });
+
+function makeModel(overrides: Partial<OpenRouterModel> = {}): OpenRouterModel {
+	return {
+		id: "openai/gpt-4o:free",
+		maker: "openai",
+		name: "GPT-4o Free",
+		supported_parameters: ["tools"],
+		variant: "free",
+		endpoints: [
+			{
+				context_length: 128_000,
+				model_name: "GPT-4o",
+				name: "DeepInfra",
+				pricing: {} as OpenRouterEndpoint["pricing"],
+				provider_name: "deepinfra",
+				tag: "deepinfra",
+			} as OpenRouterEndpoint,
+		],
+		...overrides,
+	} as OpenRouterModel;
+}
 
 describe("ModelFiltersMenu helpers", () => {
 	describe("countNonNull", () => {
@@ -122,89 +197,5 @@ describe("ModelFiltersMenu helpers", () => {
 		test("returns false when empty", () => {
 			expect(helpers.shouldRenderEndpointSubmenu([])).toBe(false);
 		});
-	});
-});
-
-describe("MaybeAuthorSubmenu", () => {
-	const { MaybeAuthorSubmenu } = helpers;
-
-	test("returns null when allProviders is empty", () => {
-		const { container } = render(
-			<DropdownMenu>
-				<MaybeAuthorSubmenu
-					allProviders={[]}
-					favoriteProviders={[]}
-					onMakersChange={() => undefined}
-					onToggleFavorite={() => undefined}
-					providerCounts={new Map()}
-					selectedMakers={[]}
-				/>
-			</DropdownMenu>,
-		);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("returns null when onMakersChange is undefined", () => {
-		const { container } = render(
-			<DropdownMenu>
-				<MaybeAuthorSubmenu
-					allProviders={["openai"]}
-					favoriteProviders={[]}
-					onMakersChange={undefined}
-					onToggleFavorite={undefined}
-					providerCounts={new Map()}
-					selectedMakers={[]}
-				/>
-			</DropdownMenu>,
-		);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("renders a non-null element when providers present and handler set (structural check)", () => {
-		// MaybeAuthorSubmenu renders AuthorFilterSubmenu which uses DropdownMenuSub — requires full menu
-		// context for positive render. Verify it returns a non-null React element structurally.
-		const { MaybeAuthorSubmenu } = helpers;
-		const element = (
-			<MaybeAuthorSubmenu
-				allProviders={["openai"]}
-				favoriteProviders={[]}
-				onMakersChange={() => undefined}
-				onToggleFavorite={undefined}
-				providerCounts={new Map([["openai", 3]])}
-				selectedMakers={[]}
-			/>
-		);
-		expect(element).not.toBeNull();
-	});
-});
-
-describe("MaybeEndpointSubmenu", () => {
-	const { MaybeEndpointSubmenu } = helpers;
-
-	test("returns null when endpointProviders is empty", () => {
-		const { container } = render(
-			<DropdownMenu>
-				<MaybeEndpointSubmenu
-					endpointProviders={[]}
-					onEndpointProviderSelect={() => undefined}
-					selectedEndpointProvider={null}
-				/>
-			</DropdownMenu>,
-		);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("returns non-null element when endpointProviders non-empty (structural check)", () => {
-		// MaybeEndpointSubmenu renders EndpointProviderFilterSubmenu which uses DropdownMenuSub.
-		// Verify it returns a non-null React element without mounting.
-		const { MaybeEndpointSubmenu } = helpers;
-		const element = (
-			<MaybeEndpointSubmenu
-				endpointProviders={[["openai", 3]]}
-				onEndpointProviderSelect={() => undefined}
-				selectedEndpointProvider={null}
-			/>
-		);
-		expect(element).not.toBeNull();
 	});
 });

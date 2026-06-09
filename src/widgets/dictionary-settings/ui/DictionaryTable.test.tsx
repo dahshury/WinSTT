@@ -28,6 +28,17 @@ describe("DictionaryTable", () => {
 		expect(screen.getAllByRole("textbox").length).toBe(1);
 	});
 
+	test("renders the term add action as one joined input group without a visible label strip", () => {
+		const { container } = renderWith({});
+		const group = screen.getByRole("toolbar", { name: /add/i });
+		expect(group).toBeDefined();
+		expect(group.className).toContain("divide-x");
+		const hiddenTermLabels = Array.from(
+			container.querySelectorAll('[aria-hidden="true"]'),
+		).filter((el) => el.textContent?.trim() === "Term");
+		expect(hiddenTermLabels).toHaveLength(0);
+	});
+
 	test("renders existing entries as single-column term rows", () => {
 		renderWith({ entries: [sampleEntry] });
 		expect(screen.getByText("Kubernetes")).toBeDefined();

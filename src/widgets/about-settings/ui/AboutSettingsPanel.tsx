@@ -3,6 +3,7 @@ import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { type AboutAppInfo, aboutGetAppInfo } from "@/shared/api/ipc-client";
 import { AppInfoSection, EMPTY_APP_INFO } from "./AppInfoSection";
+import { DiagnosticsSection } from "./DiagnosticsSection";
 import { ResetSection } from "./ResetSection";
 import { StartupSection } from "./StartupSection";
 import { UpdatesSection } from "./UpdatesSection";
@@ -35,6 +36,7 @@ export function AboutSettingsPanel() {
 		<div className="flex flex-col gap-2">
 			<AppInfoSection info={info} t={t} />
 			<UpdatesSection t={t} />
+			<DiagnosticsSection t={t} />
 			<StartupSection general={general} t={tg} update={update} />
 			<ResetSection />
 		</div>

@@ -227,8 +227,9 @@ describe("StatusBar", () => {
 		expect(screen.queryByText("openrouter:microsoft/mai-transcribe-1.5")).toBe(
 			null,
 		);
-		expect(trigger?.querySelector("[data-logo-src]")?.getAttribute("data-logo-src"))
-			.toBe("/provider-icons/microsoft.svg");
+		expect(
+			trigger?.querySelector("[data-logo-src]")?.getAttribute("data-logo-src"),
+		).toBe("/provider-icons/microsoft.svg");
 	});
 
 	test("shows the swap transition in the picker trigger while a main-model swap is in flight", () => {

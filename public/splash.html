@@ -18,8 +18,7 @@
 			body.is-closing .card{animation:splash-out .18s ease-in forwards}
 			@keyframes splash-out{to{opacity:0;filter:blur(2px);transform:translateY(-4px) scale(.98)}}
 			.logo{width:76px;height:76px;object-fit:contain;
-			 filter:drop-shadow(0 4px 16px rgba(139,92,246,.45));animation:breathe 2.4s ease-in-out infinite}
-			@keyframes breathe{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-3px) scale(1.03)}}
+			 filter:drop-shadow(0 4px 16px rgba(139,92,246,.45))}
 			.word{position:relative;display:inline-block;font-family:ui-monospace,'Cascadia Code','Consolas',monospace;font-weight:600;font-size:13px;
 			 letter-spacing:.28em;text-indent:.28em;color:#a1a1aa;text-transform:uppercase}
 			.word::before{position:absolute;inset:0;content:attr(data-text);color:transparent;
@@ -28,11 +27,10 @@
 			 animation:t-shimmer 1.8s linear infinite}
 			@keyframes t-shimmer{0%{background-position:150% 0}100%{background-position:-150% 0}}
 			.track{position:relative;width:160px;height:3px;border-radius:99px;background:#1c1c22;overflow:hidden}
-			.bar{position:absolute;top:0;height:100%;width:40%;border-radius:99px;
-			 background:linear-gradient(90deg,transparent,#8b5cf6,#a78bfa,transparent);animation:slide 1.15s ease-in-out infinite}
-			@keyframes slide{0%{left:-45%}100%{left:105%}}
-			.hint{font-size:11px;letter-spacing:.04em;color:#71717a}
-			@media (prefers-reduced-motion:reduce){.card,.logo,.bar,.word::before{animation:none!important}}
+			.bar{position:absolute;top:0;height:100%;width:0%;border-radius:99px;
+			 background:linear-gradient(90deg,#8b5cf6,#a78bfa);transition:width .28s ease}
+			.hint,.phase{font-size:11px;letter-spacing:.04em;color:#71717a;text-align:center;min-height:14px}
+			@media (prefers-reduced-motion:reduce){.card,.logo,.word::before{animation:none!important}}
 		</style>
 	</head>
 	<body>
@@ -40,7 +38,8 @@
 			<img class="logo" src="/icon.png" alt="" />
 			<div class="word" data-text="WinSTT">WinSTT</div>
 			<div class="track"><div class="bar"></div></div>
-			<div class="hint">Starting…</div>
+			<div class="hint" id="progress-text">Starting…</div>
+			<div class="phase" id="progress-phase"></div>
 		</div>
 	</body>
 </html>

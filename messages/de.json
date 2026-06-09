@@ -107,7 +107,13 @@
     "updatesStatusError": "Update-Prüfung fehlgeschlagen: {message}",
     "updatesDownloading": "Wird heruntergeladen…",
     "updatesDownloadingPercent": "{percent}% — Update wird heruntergeladen",
-    "updatesRestartToInstall": "Neu starten und installieren"
+    "updatesRestartToInstall": "Neu starten und installieren",
+    "diagnosticsTitle": "Diagnose",
+    "diagnosticsDescription": "Open logs or save a diagnostic bundle for support.",
+    "openLogsFolder": "Protokollordner öffnen",
+    "openLogsFolderSummary": "Open the folder where WinSTT writes local log files.",
+    "saveDiagnosticBundle": "Diagnosepaket speichern...",
+    "saveDiagnosticBundleSummary": "Create a zip with logs and system info for bug reports."
   },
   "history": {
     "summaryTitle": "Gesamtstatistik",

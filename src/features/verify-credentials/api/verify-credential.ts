@@ -2,7 +2,10 @@ import { useCredentialStatusStore } from "@/entities/cloud-stt-credential";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcInvoke } from "@/shared/api/ipc-client";
-import type { CloudSttErrorCode, IntegrationCloudProvider } from "@/shared/api/models";
+import type {
+	CloudSttErrorCode,
+	IntegrationCloudProvider,
+} from "@/shared/api/models";
 
 interface VerifyResponse {
 	code?: CloudSttErrorCode;

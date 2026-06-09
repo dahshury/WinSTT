@@ -18,6 +18,7 @@ import {
 	surfaceHoverBg,
 	useSurface,
 } from "@/shared/lib/surface";
+import { FilterMenuTriggerButton } from "../../core/FilterMenuTriggerButton";
 import {
 	OLLAMA_SORT_CHIP_LABEL,
 	OLLAMA_SORT_KEYS,
@@ -95,43 +96,6 @@ function SortSection({
 	);
 }
 
-function TriggerButton({
-	count,
-	buttonProps,
-}: {
-	buttonProps: ComponentPropsWithoutRef<"button">;
-	count: number;
-}) {
-	const isActive = count > 0;
-	const label = count > 0 ? "Sort (1 active)" : "Sort";
-	return (
-		<BaseButton
-			{...buttonProps}
-			aria-label={label}
-			className={cn(
-				"relative inline-flex size-7 items-center justify-center rounded-sm border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent",
-				isActive
-					? "border-accent/40 bg-accent/10 text-accent hover:bg-accent/15"
-					: "border-transparent bg-transparent text-foreground-secondary hover:bg-surface-hover",
-			)}
-			title={label}
-			type="button"
-		>
-			<HugeiconsIcon className="size-4" icon={ArrowUpDownIcon} />
-			{count > 0 ? (
-				<span
-					className={cn(
-						"absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full",
-						"border border-accent/30 bg-accent/20 px-1 font-semibold text-[9px] text-accent tabular-nums leading-none",
-					)}
-				>
-					{count}
-				</span>
-			) : null}
-		</BaseButton>
-	);
-}
-
 /**
  * Sort-only menu for the Ollama picker — a small button that opens a Popover
  * containing just the Sort chips. Models the {@link import("../../stt/ui/SttFiltersMenu").SttFiltersMenu}
@@ -147,9 +111,11 @@ export function OllamaSortMenu({ sort, onSortChange }: OllamaSortMenuProps) {
 			<Popover.Trigger
 				nativeButton
 				render={(props) => (
-					<TriggerButton
+					<FilterMenuTriggerButton
 						buttonProps={props as ComponentPropsWithoutRef<"button">}
 						count={count}
+						icon={ArrowUpDownIcon}
+						label="Sort"
 					/>
 				)}
 			/>

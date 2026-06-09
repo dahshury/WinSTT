@@ -16,7 +16,9 @@ export function isBenignWebviewErrorMessage(message: string): boolean {
 		: message.trim();
 	const locationIndex = withoutPrefix.indexOf(" @ ");
 	const bareMessage =
-		locationIndex === -1 ? withoutPrefix : withoutPrefix.slice(0, locationIndex);
+		locationIndex === -1
+			? withoutPrefix
+			: withoutPrefix.slice(0, locationIndex);
 	return BENIGN_ERROR_MESSAGES.has(bareMessage);
 }
 

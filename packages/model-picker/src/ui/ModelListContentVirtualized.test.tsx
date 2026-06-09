@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Combobox } from "@base-ui/react/combobox";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { asInvalid } from "@test/lib/cast";
-import { render, renderHook } from "@testing-library/react";
+import { fireEvent, render, renderHook, screen } from "@testing-library/react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import { useOpenedFlag } from "../core/Collapsible";
 import * as components from "../lib/model-list-content-virtualized-components";
@@ -322,6 +322,61 @@ describe("InlineModelMeta", () => {
 		expect(text).toContain("Transcription");
 		expect(text).not.toContain("2 providers");
 	});
+
+	test("renders model-level OpenRouter capability badges without endpoints", () => {
+		const m = makeModel({
+			context_length: undefined,
+			endpoints: [],
+			supported_parameters: ["structured_outputs"],
+			variant: "thinking",
+		});
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<InlineModelMeta
+					hasEndpoints={false}
+					hasProviders={false}
+					model={m}
+					pricingInfo={null}
+					uniqueEndpoints={[]}
+				/>
+			</TooltipProvider.Provider>,
+		);
+		expect(
+			container.querySelector('[data-feature-key="reasoning"]'),
+		).not.toBeNull();
+		expect(
+			container.querySelector('[data-feature-key="structured_outputs"]'),
+		).not.toBeNull();
+	});
+
+	test("merges featured endpoint quantization with model-level capabilities", () => {
+		const endpoints = [
+			makeEndpoint({
+				quantization: "fp16",
+				supported_parameters: [],
+			}),
+		];
+		const m = makeModel({
+			context_length: undefined,
+			endpoints,
+			supported_parameters: ["structured_outputs"],
+		});
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<InlineModelMeta
+					hasEndpoints
+					hasProviders={false}
+					model={m}
+					pricingInfo={null}
+					uniqueEndpoints={endpoints}
+				/>
+			</TooltipProvider.Provider>,
+		);
+		expect(container.textContent).toContain("FP16");
+		expect(
+			container.querySelector('[data-feature-key="structured_outputs"]'),
+		).not.toBeNull();
+	});
 });
 
 describe("isAnyModelSelected", () => {
@@ -632,6 +687,14 @@ describe("findActiveVirtualIndex", () => {
 });
 
 describe("findIndexByModelId / findIndexByMaker / findScrollTargetIndex", () => {
+	const multiProviderModel = makeModel({
+		id: "openai/multi",
+		maker: "openai",
+		endpoints: [
+			makeEndpoint({ provider_name: "DeepInfra", tag: "deepinfra" }),
+			makeEndpoint({ provider_name: "Together", tag: "together" }),
+		],
+	});
 	const items: VirtualizedItem[] = [
 		{
 			type: "model",
@@ -650,6 +713,14 @@ describe("findIndexByModelId / findIndexByMaker / findScrollTargetIndex", () => 
 			isExpanded: false,
 			hasProviders: false,
 			sectionId: "b",
+		},
+		{
+			type: "providers",
+			model: multiProviderModel,
+			endpoints: multiProviderModel.endpoints ?? [],
+			index: 2,
+			isOpen: true,
+			sectionId: "openai",
 		},
 	];
 
@@ -683,6 +754,17 @@ describe("findIndexByModelId / findIndexByMaker / findScrollTargetIndex", () => 
 		).toBe(1);
 	});
 
+	test("findScrollTargetIndex prefers provider row when provider slug is selected", () => {
+		expect(
+			helpers.findScrollTargetIndex(items, {
+				maker: "openai",
+				modelId: "openai/multi",
+				nonce: 1,
+				providerSlug: "deepinfra",
+			}),
+		).toBe(2);
+	});
+
 	test("findScrollTargetIndex falls back to maker", () => {
 		expect(helpers.findScrollTargetIndex(items, { maker: "a", nonce: 1 })).toBe(
 			0,
@@ -693,6 +775,36 @@ describe("findIndexByModelId / findIndexByMaker / findScrollTargetIndex", () => 
 		expect(
 			helpers.findScrollTargetIndex(items, { maker: "nope", nonce: 1 }),
 		).toBe(-1);
+	});
+});
+
+describe("getScrollTargetOffset", () => {
+	test("keeps section headers flush to the top", () => {
+		const items = helpers.buildVirtualItems(
+			[["openai", [makeModel({ id: "openai/a" })]]],
+			new Set(),
+		);
+		expect(helpers.getScrollTargetOffset(items, 0)).toBe(0);
+	});
+
+	test("offsets model and provider rows below the sticky header", () => {
+		const model = makeModel({
+			id: "openai/multi-offset",
+			endpoints: [
+				makeEndpoint({ provider_name: "A", tag: "a" }),
+				makeEndpoint({ provider_name: "B", tag: "b" }),
+			],
+		});
+		const items = helpers.buildVirtualItems(
+			[["openai", [model]]],
+			new Set([model.id]),
+		);
+		expect(helpers.getScrollTargetOffset(items, 1)).toBe(
+			-helpers.GROUP_HEADER_SCROLL_OFFSET_PX,
+		);
+		expect(helpers.getScrollTargetOffset(items, 2)).toBe(
+			-helpers.GROUP_HEADER_SCROLL_OFFSET_PX,
+		);
 	});
 });
 
@@ -1065,20 +1177,58 @@ describe("applyScrollToMakerRequest", () => {
 		);
 	});
 
-	test("calls scrollToIndex with correct index and returns new nonce", () => {
+	test("calls scrollToIndex with correct index and offset, then returns new nonce", () => {
 		const items = [makeVirtualItem("openai", "openai/gpt-4o", 0)];
 		const request = { maker: "openai", modelId: "openai/gpt-4o", nonce: 2 };
-		const scrolledIndices: number[] = [];
+		const scrolled: Array<{ index: number; offset: number | undefined }> = [];
 		const result = helpers.applyScrollToMakerRequest(
 			request,
 			null,
 			items,
-			(idx, _opts) => {
-				scrolledIndices.push(idx);
+			(index, opts) => {
+				scrolled.push({ index, offset: opts?.offset });
 			},
 		);
 		expect(result).toBe(2);
-		expect(scrolledIndices[0]).toBe(0);
+		expect(scrolled[0]).toEqual({
+			index: 0,
+			offset: -helpers.GROUP_HEADER_SCROLL_OFFSET_PX,
+		});
+	});
+
+	test("scrolls provider selections to the providers row", () => {
+		const model = makeModel({
+			id: "openai/multi-scroll",
+			endpoints: [
+				makeEndpoint({ provider_name: "A", tag: "a" }),
+				makeEndpoint({ provider_name: "B", tag: "b" }),
+			],
+		});
+		const items = helpers.buildVirtualItems(
+			[["openai", [model]]],
+			new Set([model.id]),
+		);
+		const request = {
+			maker: "openai",
+			modelId: model.id,
+			nonce: 4,
+			providerSlug: "b",
+		};
+		const scrolled: Array<{ index: number; offset: number | undefined }> = [];
+		const result = helpers.applyScrollToMakerRequest(
+			request,
+			null,
+			items,
+			(index, opts) => {
+				scrolled.push({ index, offset: opts?.offset });
+			},
+		);
+
+		expect(result).toBe(4);
+		expect(scrolled[0]).toEqual({
+			index: 2,
+			offset: -helpers.GROUP_HEADER_SCROLL_OFFSET_PX,
+		});
 	});
 
 	test("does not consume a request before scrollToIndex is ready", () => {
@@ -1164,5 +1314,47 @@ describe("VirtualizedRow", () => {
 			</TooltipProvider.Provider>,
 		);
 		expect(container.firstChild).not.toBeNull();
+	});
+
+	test("provider row selection emits provider slug instead of display name", () => {
+		const m = makeModel({ id: "openai/vr3" });
+		const item: VirtualizedItem = {
+			type: "providers",
+			model: m,
+			endpoints: [
+				makeEndpoint({
+					provider_name: "Together AI",
+					tag: "together",
+				}),
+			],
+			isOpen: true,
+			index: 1,
+		};
+		let selected: {
+			modelId: string | undefined;
+			providerSlug?: string;
+		} | null = null;
+		render(
+			<TooltipProvider.Provider>
+				<Combobox.Root items={[m.id]}>
+					<VirtualizedRow
+						item={item}
+						onSelectModel={(modelId, providerSlug) => {
+							selected = { modelId, providerSlug };
+						}}
+						onToggleModelExpanded={() => undefined}
+						parsedModelId={undefined}
+						parsedProviderSlug={undefined}
+					/>
+				</Combobox.Root>
+			</TooltipProvider.Provider>,
+		);
+
+		fireEvent.click(screen.getByText("Together AI"));
+
+		expect(selected).toEqual({
+			modelId: "openai/vr3",
+			providerSlug: "together",
+		});
 	});
 });

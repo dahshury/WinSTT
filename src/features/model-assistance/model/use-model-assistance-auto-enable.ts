@@ -4,7 +4,6 @@ import {
 	useCatalogStore,
 } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
-import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 
 export type DictationCleanupAutoAction = "enable" | "none" | "openOllamaPicker";
 
@@ -15,6 +14,11 @@ export interface DictationCleanupAutoInputs {
 	openrouterApiKey: string;
 	provider: string;
 	wordByWordPasting: boolean;
+}
+
+export interface ModelAssistanceAutoEnableOptions {
+	enabled?: boolean;
+	onOpenOllamaPicker?: () => void;
 }
 
 export function resolveDictationCleanupAutoAction(
@@ -39,7 +43,10 @@ export function resolveDictationCleanupAutoAction(
 	return "none";
 }
 
-export function useModelAssistanceAutoEnable(enabled = true): void {
+export function useModelAssistanceAutoEnable({
+	enabled = true,
+	onOpenOllamaPicker,
+}: ModelAssistanceAutoEnableOptions = {}): void {
 	const selectedModelId = useSettingsStore(
 		(s) => s.settings.model?.model ?? "",
 	);
@@ -55,7 +62,6 @@ export function useModelAssistanceAutoEnable(enabled = true): void {
 	const updateQualitySettings = useSettingsStore(
 		(s) => s.updateQualitySettings,
 	);
-	const openLlmModelPicker = useLlmModelPickerStore((s) => s.openFor);
 	const processedModelRef = useRef<string | null>(null);
 
 	useEffect(() => {
@@ -82,14 +88,14 @@ export function useModelAssistanceAutoEnable(enabled = true): void {
 			return;
 		}
 		if (action === "openOllamaPicker") {
-			openLlmModelPicker("dictation", true);
+			onOpenOllamaPicker?.();
 		}
 	}, [
 		dictation.enabled,
 		dictation.model,
 		dictation.provider,
 		enabled,
-		openLlmModelPicker,
+		onOpenOllamaPicker,
 		openrouterApiKey,
 		selectedModel,
 		selectedModelId,

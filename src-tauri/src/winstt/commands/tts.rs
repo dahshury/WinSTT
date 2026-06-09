@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::command_auth;
 use crate::winstt::managers::tts_manager::{
     CloudSubscriptionPayload, CloudVoiceCatalogPayload, DownloadEstimatePayload,
     VoiceCatalogPayload,
@@ -583,13 +584,52 @@ pub fn tts_download_cancel(
     dl.cancel(&model_id, &quantization);
 }
 
+const TTS_CACHE_MUTATION_ALLOWED_WINDOWS: &[&str] = &["settings"];
+
+#[cfg(test)]
+fn is_tts_cache_mutation_allowed(caller: &str) -> bool {
+    command_auth::label_in(caller, TTS_CACHE_MUTATION_ALLOWED_WINDOWS)
+}
+
 /// `tts_delete_model` — delete a model's cached files from disk.
 #[tauri::command]
 #[specta::specta]
 pub fn tts_delete_model(
     dl: State<'_, Arc<TtsDownloadManager>>,
+    webview: tauri::WebviewWindow,
     model_id: String,
     _quantization: String,
-) {
+) -> Result<(), String> {
+    command_auth::authorize_webview(
+        &webview,
+        "tts",
+        "delete TTS cache",
+        TTS_CACHE_MUTATION_ALLOWED_WINDOWS,
+        " through TTS model cache",
+    )?;
     dl.delete(&model_id);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_tts_cache_mutation_allowed;
+
+    #[test]
+    fn tts_cache_mutation_authorization_matches_settings_only_policy() {
+        crate::command_auth::assert_label_rules(
+            &["settings"],
+            &[
+                "main",
+                "overlay",
+                "tray-menu",
+                "model-picker",
+                "device-picker",
+                "history",
+                "onboarding",
+                "context-playground",
+            ],
+            is_tts_cache_mutation_allowed,
+        );
+    }
 }
