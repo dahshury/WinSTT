@@ -75,13 +75,34 @@ jobs:
           workspaces: "src-tauri -> target"
           key: release-windows-x64
 
+      - name: Reset stale sherpa prebuilt cache
+        shell: pwsh
+        run: |
+          $paths = @(
+            "src-tauri\target\sherpa-onnx-prebuilt",
+            "src-tauri\target\debug\build\sherpa-onnx-*",
+            "src-tauri\target\debug\.fingerprint\sherpa-onnx-*",
+            "src-tauri\target\release\build\sherpa-onnx-*",
+            "src-tauri\target\release\.fingerprint\sherpa-onnx-*"
+          )
+          foreach ($path in $paths) {
+            Remove-Item -Recurse -Force $path -ErrorAction SilentlyContinue
+          }
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.6"
 
       - name: Install renderer dependencies
-        run: bun install --frozen-lockfile
+        shell: pwsh
+        run: |
+          bun install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) {
+            bun pm cache rm
+            bun install --frozen-lockfile
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Tauri release binary
         shell: pwsh
@@ -159,7 +180,11 @@ jobs:
           bun-version: "1.3.6"
 
       - name: Install renderer dependencies
-        run: bun install --frozen-lockfile
+        run: |
+          bun install --frozen-lockfile || {
+            bun pm cache rm
+            bun install --frozen-lockfile
+          }
 
       - name: Build Linux artifacts
         env:
