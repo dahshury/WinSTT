@@ -184,6 +184,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::ollama_library::ollama_search_library,
         winstt::commands::ollama_pull::ollama_cancel_pull,
         winstt::commands::ollama_pull::llm_get_warmup_status,
+        winstt::commands::ollama_pull::llm_retry_warmup,
         winstt::commands::verify::verify_integration_credential,
         winstt::commands::file_transcribe::file_transcribe_clear,
         winstt::commands::file_transcribe::file_transcribe_copy,

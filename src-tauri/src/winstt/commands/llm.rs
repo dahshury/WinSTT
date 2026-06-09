@@ -111,6 +111,7 @@ pub(crate) struct DictationProcessResult {
     pub text: String,
     pub dictionary_fixes: usize,
     pub side_effects: DictationSideEffects,
+    pub failsoft_error: Option<String>,
 }
 
 pub(crate) async fn process_dictation_text(
@@ -137,6 +138,7 @@ pub(crate) async fn process_dictation_text(
     // Apple Intelligence soft-fails to the original text — its CLI is macOS-only
     // and this is a Windows app (mirrors runAppleIntelligencePath's fail-soft).
     let mut side_effects = DictationSideEffects::default();
+    let mut failsoft_error: Option<String> = None;
     let answer = match settings.llm.dictation.base.provider {
         LlmProvider::Openrouter => {
             let api_key = settings.llm.openrouter_api_key.clone();
@@ -147,7 +149,7 @@ pub(crate) async fn process_dictation_text(
                 .base
                 .openrouter_fallback_model
                 .clone();
-            run_openrouter_with_fallback(
+            let outcome = run_openrouter_with_fallback(
                 &mgr,
                 OpenRouterFallbackRequest {
                     app,
@@ -163,7 +165,9 @@ pub(crate) async fn process_dictation_text(
                     options: openrouter_options(&settings.llm.dictation.base),
                 },
             )
-            .await
+            .await;
+            failsoft_error = outcome.failsoft_error;
+            outcome.text
         }
         LlmProvider::AppleIntelligence => text.clone(),
         LlmProvider::Ollama => match mgr
@@ -184,10 +188,12 @@ pub(crate) async fn process_dictation_text(
                 output.text
             }
             Err(err) => {
+                let compact = llm::compact_error_for_log(&err);
                 warn!(
                     "[llm][{request_id}] dictation Ollama model '{model}' failed; returning original text: {}",
-                    llm::compact_error_for_log(&err)
+                    compact
                 );
+                failsoft_error = Some(format!("Ollama model '{model}' failed: {compact}"));
                 text.clone()
             }
         },
@@ -201,6 +207,7 @@ pub(crate) async fn process_dictation_text(
         text,
         dictionary_fixes,
         side_effects,
+        failsoft_error,
     })
 }
 
@@ -253,6 +260,7 @@ pub async fn process_transform(
                 },
             )
             .await
+            .text
         }
         LlmProvider::AppleIntelligence => text.clone(),
         LlmProvider::Ollama => mgr
@@ -337,10 +345,31 @@ fn openrouter_tts_scores(id: &str) -> (f32, f32) {
     }
 }
 
+struct OpenRouterFallbackOutcome {
+    text: String,
+    failsoft_error: Option<String>,
+}
+
+impl OpenRouterFallbackOutcome {
+    fn success(text: String) -> Self {
+        Self {
+            text,
+            failsoft_error: None,
+        }
+    }
+
+    fn failsoft(text: &str, error: String) -> Self {
+        Self {
+            text: text.to_string(),
+            failsoft_error: Some(error),
+        }
+    }
+}
+
 async fn run_openrouter_with_fallback(
     mgr: &Arc<LlmManager>,
     request: OpenRouterFallbackRequest<'_>,
-) -> String {
+) -> OpenRouterFallbackOutcome {
     let OpenRouterFallbackRequest {
         app,
         api_key,
@@ -371,8 +400,10 @@ async fn run_openrouter_with_fallback(
     )
     .await
     {
-        Ok(answer) => answer,
-        Err(err) if err == llm::OPENROUTER_CANCELLED => text.to_string(),
+        Ok(answer) => OpenRouterFallbackOutcome::success(answer),
+        Err(err) if err == llm::OPENROUTER_CANCELLED => {
+            OpenRouterFallbackOutcome::success(text.to_string())
+        }
         Err(primary_err)
             if !fallback.is_empty()
                 && should_try_openrouter_fallback(&classify_cloud_failure_message(
@@ -398,14 +429,20 @@ async fn run_openrouter_with_fallback(
             )
             .await
             {
-                Ok(answer) => answer,
+                Ok(answer) => OpenRouterFallbackOutcome::success(answer),
                 Err(fallback_err) => {
                     warn!(
                         "[llm][{request_id}] {feature} OpenRouter fallback model '{fallback}' failed; returning original text: {}",
                         llm::compact_error_for_log(&fallback_err)
                     );
                     emit_openrouter_failsoft_notice(app, feature, &fallback_err);
-                    text.to_string()
+                    let compact = llm::compact_error_for_log(&fallback_err);
+                    OpenRouterFallbackOutcome::failsoft(
+                        text,
+                        format!(
+                            "OpenRouter fallback model '{fallback}' failed after primary model '{primary}' failed: {compact}"
+                        ),
+                    )
                 }
             }
         }
@@ -415,7 +452,11 @@ async fn run_openrouter_with_fallback(
                 llm::compact_error_for_log(&primary_err)
             );
             emit_openrouter_failsoft_notice(app, feature, &primary_err);
-            text.to_string()
+            let compact = llm::compact_error_for_log(&primary_err);
+            OpenRouterFallbackOutcome::failsoft(
+                text,
+                format!("OpenRouter model '{primary}' failed: {compact}"),
+            )
         }
     }
 }

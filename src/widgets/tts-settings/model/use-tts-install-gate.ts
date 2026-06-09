@@ -74,6 +74,7 @@ export function pickCachedTtsModel(
 }
 
 export interface TtsEnabledReconcileInput {
+	cloudFallbackAllowed: boolean;
 	enabled: boolean;
 	isCloud: boolean;
 	model: string;
@@ -83,13 +84,18 @@ export interface TtsEnabledReconcileInput {
 }
 
 export function resolveTtsEnabledModelPatch({
+	cloudFallbackAllowed,
 	enabled,
 	isCloud,
 	model,
 	models,
 	statesById,
 	statesLoaded,
-}: TtsEnabledReconcileInput): { enabled?: false; model?: string } | null {
+}: TtsEnabledReconcileInput): {
+	enabled?: false;
+	model?: string;
+	source?: "cloud";
+} | null {
 	if (!enabled || isCloud || !statesLoaded) {
 		return null;
 	}
@@ -99,6 +105,9 @@ export function resolveTtsEnabledModelPatch({
 	const fallback = pickCachedTtsModel(models, statesById);
 	if (fallback !== null) {
 		return fallback === model ? null : { model: fallback };
+	}
+	if (cloudFallbackAllowed) {
+		return { source: "cloud" };
 	}
 	return { enabled: false };
 }

@@ -7,6 +7,7 @@ import {
 	handleTtsCompletedPayload,
 	stopTts,
 } from "./use-tts-playback";
+import { useTtsPlaybackStore } from "./tts-playback-store";
 
 // Lightweight queue stub — verifies that the module-level handlers
 // forward exactly the right payloads without coupling to the real
@@ -22,6 +23,7 @@ interface QueueCalls {
 // contains the single boundary cast to the real queue type, returning the
 // exact stub object it was handed.
 interface StubQueue {
+	readonly currentRequestId: string | null;
 	enqueue: (chunk: TtsChunkPayload) => void;
 	markComplete: (id: string) => void;
 	stop: () => void;
@@ -65,9 +67,13 @@ function installTauriInvokeRecorder(): {
 	};
 }
 
-function makeStubQueue(): { queue: TtsPlaybackQueue; calls: QueueCalls } {
+function makeStubQueue(currentRequestId: string | null = "r"): {
+	queue: TtsPlaybackQueue;
+	calls: QueueCalls;
+} {
 	const calls: QueueCalls = { enqueue: [], markComplete: [], stop: 0 };
 	const queue = asQueue({
+		currentRequestId,
 		enqueue: (chunk: TtsChunkPayload) => {
 			calls.enqueue.push(chunk);
 		},
@@ -129,6 +135,14 @@ describe("handleTtsChunkPayload", () => {
 });
 
 describe("handleTtsCompletedPayload", () => {
+	afterEach(() => {
+		useTtsPlaybackStore.setState({
+			status: "idle",
+			requestId: null,
+			error: null,
+		});
+	});
+
 	test("marks the queue complete on a normal completion", () => {
 		const { queue, calls } = makeStubQueue();
 		handleTtsCompletedPayload(queue, {
@@ -149,6 +163,18 @@ describe("handleTtsCompletedPayload", () => {
 		});
 		expect(calls.markComplete).toEqual(["r"]);
 		expect(calls.stop).toBe(1);
+	});
+
+	test("clears loading when completion arrives before any playable audio", () => {
+		const { queue } = makeStubQueue(null);
+		useTtsPlaybackStore.getState().markStarted("r");
+		handleTtsCompletedPayload(queue, {
+			requestId: "r",
+			cancelled: false,
+			elapsedMs: 100,
+		});
+		expect(useTtsPlaybackStore.getState().status).toBe("idle");
+		expect(useTtsPlaybackStore.getState().requestId).toBeNull();
 	});
 });
 

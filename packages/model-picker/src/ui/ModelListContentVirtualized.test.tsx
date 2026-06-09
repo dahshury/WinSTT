@@ -323,6 +323,120 @@ describe("InlineModelMeta", () => {
 		expect(text).not.toContain("2 providers");
 	});
 
+	test("renders duration-priced transcription models as hourly equivalents", () => {
+		const cases = [
+			{
+				expected: "$0.96/h",
+				id: "google/chirp-3",
+				name: "Google: Chirp 3",
+				pricing: { prompt: "0.016", completion: "0" },
+			},
+			{
+				expected: "$0.36/h",
+				id: "microsoft/mai-transcribe-1.5",
+				name: "Microsoft: MAI-Transcribe 1.5",
+				pricing: { prompt: "0.36", completion: "0" },
+			},
+			{
+				expected: "$0.18/h",
+				id: "mistralai/voxtral-mini-transcribe",
+				name: "Mistral: Voxtral Mini Transcribe",
+				pricing: { prompt: "0.003", completion: "0" },
+			},
+			{
+				expected: "$0.09/h",
+				id: "nvidia/parakeet-tdt-0.6b-v3",
+				name: "NVIDIA: Parakeet TDT 0.6B v3",
+				pricing: { prompt: "0.0015", completion: "0" },
+			},
+			{
+				expected: "$0.36/h",
+				id: "openai/whisper-1",
+				name: "OpenAI: Whisper 1",
+				pricing: { prompt: "0.006", completion: "0" },
+			},
+			{
+				expected: "$0.09/h",
+				id: "openai/whisper-large-v3",
+				name: "OpenAI: Whisper Large V3",
+				pricing: { prompt: "0.0015", completion: "0" },
+			},
+			{
+				expected: "$0.04/h",
+				id: "openai/whisper-large-v3-turbo",
+				name: "OpenAI: Whisper Large V3 Turbo",
+				pricing: { prompt: "0.04", completion: "0" },
+			},
+			{
+				expected: "$0.126/h",
+				id: "qwen/qwen3-asr-flash-2026-02-10",
+				name: "Qwen: Qwen3 ASR Flash",
+				pricing: { prompt: "0.000035", completion: "0" },
+			},
+		] as const;
+
+		for (const testCase of cases) {
+			const m = makeModel({
+				architecture: {
+					input_modalities: ["audio"],
+					output_modalities: ["transcription"],
+				},
+				context_length: undefined,
+				endpoints: [],
+				id: testCase.id,
+				name: testCase.name,
+				pricing: testCase.pricing as never,
+			});
+			const { container, unmount } = render(
+				<TooltipProvider.Provider>
+					<InlineModelMeta
+						hasEndpoints={false}
+						hasProviders={false}
+						model={m}
+						pricingInfo={null}
+						uniqueEndpoints={[]}
+					/>
+				</TooltipProvider.Provider>,
+			);
+			const text = container.textContent ?? "";
+			expect(text).toContain(testCase.expected);
+			expect(text).not.toContain("per 1M input tokens");
+			expect(text).not.toContain("/min");
+			expect(text).not.toContain("/s");
+			unmount();
+		}
+	});
+
+	test("keeps token-priced transcription models on token pricing", () => {
+		const m = makeModel({
+			architecture: {
+				input_modalities: ["audio"],
+				output_modalities: ["transcription"],
+			},
+			context_length: 128_000,
+			endpoints: [],
+			id: "openai/gpt-4o-transcribe",
+			name: "OpenAI: GPT-4o Transcribe",
+			pricing: { prompt: "0.0000025", completion: "0.00001" } as never,
+		});
+		const { container } = render(
+			<TooltipProvider.Provider>
+				<InlineModelMeta
+					hasEndpoints={false}
+					hasProviders={false}
+					model={m}
+					pricingInfo={null}
+					uniqueEndpoints={[]}
+				/>
+			</TooltipProvider.Provider>,
+		);
+		const text = container.textContent ?? "";
+		expect(text).toContain("$2.50 input / $10.00 output per 1M tokens");
+		expect(text).not.toContain("/h");
+		expect(text).not.toContain("/min");
+		expect(text).not.toContain("/s");
+	});
+
 	test("renders model-level OpenRouter capability badges without endpoints", () => {
 		const m = makeModel({
 			context_length: undefined,

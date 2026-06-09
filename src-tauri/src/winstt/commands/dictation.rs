@@ -371,11 +371,14 @@ impl SttEvents {
     /// `stt:transcription-failed` — a genuine transcriber error (honest pill vs the
     /// misleading "no audio detected"). TERMINAL. Memory:
     /// project_whisper_incomplete_vocab_and_transcription_failed.
-    pub fn transcription_failed(app: &AppHandle) {
+    pub fn transcription_failed(app: &AppHandle, message: Option<&str>) {
         crate::winstt::ducking::request_restore();
         crate::tray::on_tray_transcription_stop(app);
         crate::tray::on_tray_idle(app);
-        let _ = app.emit("stt:transcription-failed", ());
+        let _ = app.emit(
+            "stt:transcription-failed",
+            serde_json::json!({ "message": message }),
+        );
     }
 
     /// `stt:audio-level` — RMS audio level (0.0..1.0) for the live visualizer.

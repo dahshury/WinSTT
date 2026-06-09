@@ -529,6 +529,11 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
                 payload.event(),
                 payload.url()
             );
+            if diag_label == "overlay"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            {
+                crate::winstt::commands::overlay::mark_overlay_page_loaded();
+            }
         });
     }
 

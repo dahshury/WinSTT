@@ -1366,15 +1366,17 @@ mod tests {
 
     #[test]
     fn rejects_oversized_dictionary() {
-        let mut settings = WinsttSettings::default();
-        settings.dictionary = (0..=MAX_DICTIONARY_ENTRIES)
-            .map(|index| DictionaryEntry {
-                id: format!("dict-{index}"),
-                term: "WinSTT".into(),
-                auto_added: None,
-                replacement: None,
-            })
-            .collect();
+        let settings = WinsttSettings {
+            dictionary: (0..=MAX_DICTIONARY_ENTRIES)
+                .map(|index| DictionaryEntry {
+                    id: format!("dict-{index}"),
+                    term: "WinSTT".into(),
+                    auto_added: None,
+                    replacement: None,
+                })
+                .collect(),
+            ..Default::default()
+        };
         assert_validation_error(settings, "dictionary");
     }
 

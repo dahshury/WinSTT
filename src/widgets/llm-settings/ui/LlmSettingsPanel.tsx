@@ -35,6 +35,7 @@ export function LlmSettingsPanel() {
 		openrouterCatalogState,
 		providerOpts,
 		checkOllamaReachable,
+		retryOllamaWarmup,
 		disableDictationConflicts,
 		updateShared,
 		updateDictation,
@@ -77,6 +78,7 @@ export function LlmSettingsPanel() {
 					openrouterApiKey={openrouterApiKey}
 					openrouterCatalog={openrouterCatalogState}
 					providerOpts={providerOpts}
+					retryOllamaWarmup={retryOllamaWarmup}
 					setShowApiKeyDialog={setShowApiKeyDialogFor("dictation")}
 					setShowModelPicker={setShowModelPickerFor("dictation")}
 					setShowOllamaDialog={setShowOllamaDialogFor("dictation")}
@@ -113,6 +115,7 @@ export function LlmSettingsPanel() {
 					openrouterApiKey={openrouterApiKey}
 					openrouterCatalog={openrouterCatalogState}
 					providerOpts={providerOpts}
+					retryOllamaWarmup={retryOllamaWarmup}
 					setShowApiKeyDialog={setShowApiKeyDialogFor("transforms")}
 					setShowModelPicker={setShowModelPickerFor("transforms")}
 					setShowOllamaDialog={setShowOllamaDialogFor("transforms")}

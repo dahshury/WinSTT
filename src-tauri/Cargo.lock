@@ -9645,7 +9645,7 @@ dependencies = [
 
 [[package]]
 name = "winstt"
-version = "0.1.1"
+version = "0.1.2-alpha.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

@@ -68,9 +68,9 @@ function resetStore(): void {
 describe("useTtsPlaybackStore transitions", () => {
 	afterEach(resetStore);
 
-	test("markStarted → speaking with the request id", () => {
+	test("markStarted enters loading with the request id", () => {
 		useTtsPlaybackStore.getState().markStarted("r1");
-		expect(useTtsPlaybackStore.getState().status).toBe("speaking");
+		expect(useTtsPlaybackStore.getState().status).toBe("loading");
 		expect(useTtsPlaybackStore.getState().requestId).toBe("r1");
 	});
 

@@ -133,14 +133,22 @@ export function OverlayPage() {
 	// lead-in after PTT — and also drives the breathing glow + island width.
 	const isSpeaking = useVisualizerStore((s) => s.isSpeaking);
 	const ttsStatus = useTtsPlaybackStore((s) => s.status);
+	const ttsRequestId = useTtsPlaybackStore((s) => s.requestId);
 	// Editable preview-before-pasting pill open (recording is done, paste held).
 	const isPreviewActive = useTranscriptPreviewStore((s) => s.isActive);
-	// STT owns the active dictation surface, but TTS can reserve the top island
-	// at the same time; during that overlap STT renders in the bottom pill.
-	const ttsReservesIsland = ttsStatus !== "idle";
+	const hasEphemeral = ephemeral !== null;
 	const sttSessionActive =
-		isRecordingActive || showThinking || isTranscribing || isPreviewActive;
+		isRecordingActive ||
+		showThinking ||
+		isTranscribing ||
+		isPreviewActive ||
+		hasEphemeral;
 	useTtsIslandBridge(sttSessionActive);
+	const ttsSessionActive =
+		ttsRequestId !== null &&
+		(ttsStatus === "loading" ||
+			ttsStatus === "speaking" ||
+			ttsStatus === "paused");
 
 	useEffect(() => {
 		const unsub = onSettingsChanged((incoming) => {
@@ -153,9 +161,9 @@ export function OverlayPage() {
 	// ignore-mouse state change on the same tick.
 	// Keeping it out of renderer state avoids a cancel-click race.
 
-	const text = realtime.trim() || ephemeral?.text || "";
+	const text = ephemeral?.text ?? realtime.trim();
 	const hasText = text.length > 0;
-	const showText = showLiveTranscription && hasText;
+	const showText = (showLiveTranscription || hasEphemeral) && hasText;
 	// Reveal the pill once the user actually speaks (real VAD `isSpeaking`) or words
 	// are transcribed (`hasText`), or the LLM is thinking — NOT on the bare
 	// recording-start. See `computePillReveal` for the rationale (the pill used to pop
@@ -167,7 +175,9 @@ export function OverlayPage() {
 			hasText,
 			isThinking: showThinking,
 			isTranscribing: showTranscribing,
-		}) || isPreviewActive;
+		}) ||
+		isPreviewActive ||
+		hasEphemeral;
 	// Sticky once-on: hold the pill mounted for the rest of the active session
 	// even if `currentRealtime` momentarily empties between realtime chunks.
 	// Without this, the AnimatePresence around chip + bubble unmounts on every
@@ -178,7 +188,11 @@ export function OverlayPage() {
 	// reuse a visible latch from the previous session and flash before this
 	// session has speech/text.
 	const sessionActive =
-		isRecordingActive || showThinking || showTranscribing || isPreviewActive;
+		isRecordingActive ||
+		showThinking ||
+		showTranscribing ||
+		isPreviewActive ||
+		hasEphemeral;
 	const stickyShow = useStickyPillReveal({
 		recordingSessionId,
 		sessionActive,
@@ -197,12 +211,10 @@ export function OverlayPage() {
 	const isProcessing = showThinking || showTranscribing;
 	const showBubble = stickyShow && showText && !isProcessing;
 
-	// TTS keeps the Dynamic Island while active; STT falls back to the
-	// floating-bottom pill during overlap instead of cancelling the read.
-	const showTtsIsland = ttsReservesIsland;
-	const effectiveOverlayMode = ttsReservesIsland
-		? "floating-bottom"
-		: overlayMode;
+	// STT owns the dictation surface whenever a dictation session is active.
+	// TTS uses the island only while it has a live request and STT is idle.
+	const showTtsIsland = ttsSessionActive && !sttSessionActive;
+	const effectiveOverlayMode = showTtsIsland ? "floating-bottom" : overlayMode;
 	// Active speech/transform pill (dynamic-island or floating-bottom). The
 	// forced TTS read-aloud pill is a separate, always-mounted animated layer
 	// (`TtsIslandLayer`) so it can slide in AND out from the top instead of popping.

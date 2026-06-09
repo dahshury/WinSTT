@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import { useTranslations } from "use-intl";
-import { providerOf } from "@/entities/cloud-stt-provider";
+import {
+	CLOUD_PROVIDERS,
+	defaultCloudModelId,
+	providerOf,
+} from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
 import {
 	isSelectableRealtimeModel,
@@ -68,6 +72,9 @@ export function ModelSettingsPanel() {
 	const tts = useSettingsStore((s) => s.settings.tts);
 	const elevenlabs = useSettingsStore(
 		(s) => s.settings.integrations.elevenlabs,
+	);
+	const openrouterKey = useSettingsStore(
+		(s) => s.settings.llm.openrouterApiKey,
 	);
 	const recordingMode = useSettingsStore(
 		(s) => s.settings.general?.recordingMode ?? "ptt",
@@ -146,6 +153,14 @@ export function ModelSettingsPanel() {
 		selectedInfo,
 		selectedIsCloud,
 	);
+	const keyedCloudProvider = CLOUD_PROVIDERS.find((provider) =>
+		provider === "openrouter"
+			? openrouterKey.trim().length > 0
+			: elevenlabs.apiKey.trim().length > 0,
+	);
+	const cloudFallbackModel = keyedCloudProvider
+		? defaultCloudModelId(keyedCloudProvider)
+		: null;
 	const languageAutoDetect = languageAutoDetectEnabled(settings);
 	// Stale-model fallback for both slots lives in its own hook. Keep it after
 	// selectedInfo is known so realtime fallback uses the user's source-language
@@ -159,6 +174,7 @@ export function ModelSettingsPanel() {
 		settings?.realtimeModel,
 		update,
 		settings,
+		cloudFallbackModel,
 	);
 	const languageAutoDetectSupported =
 		languageControlMode === "auto" || languageControlMode === "candidate-auto";

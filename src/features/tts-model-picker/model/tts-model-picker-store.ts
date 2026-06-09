@@ -20,7 +20,8 @@ interface TtsModelPickerState {
 	 *  `enabled` untouched. */
 	enableOnInstall: boolean;
 	open: boolean;
-	openFor: (enableOnInstall: boolean) => void;
+	openFor: (enableOnInstall: boolean, sourceOnInstall?: "local") => void;
+	sourceOnInstall: "local" | null;
 }
 
 /**
@@ -36,15 +37,24 @@ export const useTtsModelPickerStore = create<TtsModelPickerState>(
 	(set, get) => ({
 		enableOnInstall: false,
 		open: false,
-		openFor: (enableOnInstall) => set({ open: true, enableOnInstall }),
-		close: () => set({ open: false, enableOnInstall: false }),
+		sourceOnInstall: null,
+		openFor: (enableOnInstall, sourceOnInstall) =>
+			set({
+				open: true,
+				enableOnInstall,
+				sourceOnInstall: sourceOnInstall ?? null,
+			}),
+		close: () =>
+			set({ open: false, enableOnInstall: false, sourceOnInstall: null }),
 		commitInstalled: (modelId) => {
 			if (!get().open) {
 				return;
 			}
 			const settings = useSettingsStore.getState();
+			const sourceOnInstall = get().sourceOnInstall;
+			const sourcePatch = sourceOnInstall ? { source: sourceOnInstall } : {};
 			if (!get().enableOnInstall) {
-				settings.updateTtsSettings({ model: modelId });
+				settings.updateTtsSettings({ model: modelId, ...sourcePatch });
 				return;
 			}
 			// Fold the default Speak-selection hotkey in alongside `enabled: true`
@@ -52,11 +62,12 @@ export const useTtsModelPickerStore = create<TtsModelPickerState>(
 			// read-aloud turns on (parity with the old install-gate enable patch).
 			const currentHotkey = settings.settings.tts?.hotkey ?? "";
 			const patch = currentHotkey.trim()
-				? { model: modelId, enabled: true as const }
+				? { model: modelId, enabled: true as const, ...sourcePatch }
 				: {
 						model: modelId,
 						enabled: true as const,
 						hotkey: DEFAULT_SETTINGS.tts.hotkey,
+						...sourcePatch,
 					};
 			settings.updateTtsSettings(patch);
 		},

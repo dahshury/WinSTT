@@ -1,6 +1,6 @@
 [package]
 name = "winstt"
-version = "0.1.1"
+version = "0.1.2-alpha.0"
 description = "WinSTT — Windows speech-to-text"
 authors = ["dahshury", "WinSTT contributors", "cjpais (Handy foundation)"]
 edition = "2021"

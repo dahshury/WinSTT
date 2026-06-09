@@ -537,7 +537,11 @@ export function resolveOllamaModelReconcilePatch(
 	models: readonly OllamaModel[],
 	current: string,
 	enabled: boolean,
-): Partial<Pick<LlmFeatureDraft, "enabled" | "model">> | null {
+	openrouterApiKey = "",
+	currentOpenRouterModel = "",
+): Partial<
+	Pick<LlmFeatureDraft, "enabled" | "model" | "openrouterModel" | "provider">
+> | null {
 	if (provider !== "ollama") {
 		return null;
 	}
@@ -549,6 +553,17 @@ export function resolveOllamaModelReconcilePatch(
 	const replacement = models[0]?.name;
 	if (replacement !== undefined) {
 		return replacement === current ? null : { model: replacement };
+	}
+	if (enabled && openrouterApiKey.trim().length > 0) {
+		return {
+			enabled: true,
+			model: "",
+			openrouterModel:
+				currentOpenRouterModel.length > 0
+					? currentOpenRouterModel
+					: DEFAULT_OPENROUTER_MODEL,
+			provider: "openrouter",
+		};
 	}
 	if (!enabled && current.length === 0) {
 		return null;

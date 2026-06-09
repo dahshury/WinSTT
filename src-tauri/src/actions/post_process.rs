@@ -36,6 +36,7 @@ pub(crate) struct PostProcessMeta {
     pub model: String,
     pub duration_ms: i64,
     pub completion_tokens: Option<i64>,
+    pub error: Option<String>,
 }
 
 async fn post_process_transcription(
@@ -129,6 +130,7 @@ async fn post_process_transcription(
         model: model.clone(),
         duration_ms: started.elapsed().as_millis() as i64,
         completion_tokens,
+        error: None,
     };
 
     if provider.supports_structured_output {
@@ -364,6 +366,7 @@ async fn process_winstt_dictation_llm(
                 model,
                 duration_ms: started.elapsed().as_millis() as i64,
                 completion_tokens: None,
+                error: result.failsoft_error.clone(),
             },
             result.dictionary_fixes as i64,
             result.side_effects,
@@ -500,15 +503,21 @@ pub(crate) async fn process_transcription_output(
         if let Some((processed_text, meta, dict_fixes, side_effects)) =
             process_winstt_dictation_llm(app, &winstt_settings, &final_text).await
         {
-            post_processed_text = Some(processed_text.clone());
-            final_text = processed_text;
+            let llm_failed = meta.error.is_some();
+            if llm_failed {
+                final_text = processed_text;
+            } else {
+                post_processed_text = Some(processed_text.clone());
+                final_text = processed_text;
+                history_tag = side_effects.history_tag.clone();
+                privacy_markers = side_effects.privacy_markers.clone();
+            }
             dictionary_fixes = Some(dict_fixes);
-            history_tag = side_effects.history_tag;
-            privacy_markers = side_effects.privacy_markers;
             llm_meta = serde_json::to_string(&serde_json::json!({
                 "model": meta.model,
                 "processingMs": meta.duration_ms,
                 "tokens": meta.completion_tokens,
+                "error": meta.error,
                 "learnedProperNounCount": side_effects.learned_proper_nouns.len(),
                 "learnedSnippetCount": side_effects.learned_snippets.len(),
                 "suggestedModifierCount": side_effects.suggested_modifier_presets.len(),

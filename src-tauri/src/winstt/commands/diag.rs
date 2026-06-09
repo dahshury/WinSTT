@@ -1,13 +1,13 @@
 // Reference: frontend/electron/ipc/diag-bundle.ts. No manager — reads logs + zips them.
 //
 // The About panel's "Open logs folder" / "Save diagnostic bundle" actions map to:
-//   diag_open_logs_folder -> String  (the log dir; the adapter opens it via the opener plugin)
+//   diag_open_logs_folder -> DiagOpenLogsFolderResult { ok, error?, path? }
 //   diag_save_bundle      -> DiagSaveBundleResult { ok, cancelled?, error?, path? }
 //
-// `diag_open_logs_folder` returns the *path* (not a void) because the nativeBridge polyfill's
-// `opener:logs` route invokes this command, then hands the returned string to
-// `@tauri-apps/plugin-opener`'s `openPath`. Returning the path keeps the open-folder behaviour in
-// the (capability-gated) plugin rather than shelling out from Rust.
+// `diag_open_logs_folder` opens from Rust instead of the JS opener plugin. The log path is
+// portable-aware (`Data/logs` beside the exe in portable mode), which cannot be represented
+// cleanly as a narrow static opener scope. The command still returns the resolved path so the
+// renderer/test surface stays inspectable.
 //
 // `diag_save_bundle` mirrors the reference handler: prompt for a save location (Desktop +
 // `winstt-diag-<ts>.zip` default), collect whatever log files exist, append a `system-info.txt`,
@@ -23,10 +23,15 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_opener::OpenerExt;
 use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
+
+use crate::command_auth;
+
+const LOGS_FOLDER_ALLOWED_WINDOWS: &[&str] = &["settings"];
 
 /// Result of `diag_save_bundle`. Field names mirror the renderer's
 /// `DiagSaveBundleResult` interface exactly; `ok` is always present, the rest are
@@ -41,6 +46,37 @@ pub struct DiagSaveBundleResult {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+}
+
+/// Result of `diag_open_logs_folder`. This mirrors the renderer-facing
+/// `DiagOpenLogsFolderResult`: `ok` is always present; details are omitted when
+/// not applicable.
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagOpenLogsFolderResult {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+impl DiagOpenLogsFolderResult {
+    fn ok_with(path: PathBuf) -> Self {
+        Self {
+            ok: true,
+            error: None,
+            path: Some(path.to_string_lossy().into_owned()),
+        }
+    }
+
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            error: Some(message.into()),
+            path: None,
+        }
+    }
 }
 
 impl DiagSaveBundleResult {
@@ -79,17 +115,44 @@ fn logs_dir(app: &AppHandle) -> PathBuf {
     crate::portable::app_log_dir(app).unwrap_or_else(|_| PathBuf::from("."))
 }
 
-/// `diag_open_logs_folder` — return the log directory path. The polyfill opens it
-/// via the opener plugin (capability-gated). Returns an empty string only if the
-/// dir can't be resolved, which the polyfill treats as a no-op success.
+#[cfg(test)]
+fn is_logs_folder_opener_allowed(caller: &str) -> bool {
+    command_auth::label_in(caller, LOGS_FOLDER_ALLOWED_WINDOWS)
+}
+
+/// `diag_open_logs_folder` — create and open the log directory, returning the
+/// path that was opened. Restricted to the settings window, where the About tab
+/// lives.
 #[tauri::command]
 #[specta::specta]
-pub fn diag_open_logs_folder(app: AppHandle) -> String {
-    let dir = logs_dir(&app);
-    // Create lazily so the first-ever click reveals an existing (if empty) folder
-    // rather than failing on a not-yet-written log dir.
-    let _ = std::fs::create_dir_all(&dir);
-    dir.to_string_lossy().into_owned()
+pub fn diag_open_logs_folder(app: AppHandle, webview: WebviewWindow) -> DiagOpenLogsFolderResult {
+    if let Err(err) = command_auth::authorize_webview(
+        &webview,
+        "diagnostics",
+        "open the logs folder",
+        LOGS_FOLDER_ALLOWED_WINDOWS,
+        "",
+    ) {
+        return DiagOpenLogsFolderResult::failed(err);
+    }
+
+    let dir = match crate::portable::app_log_dir(&app) {
+        Ok(dir) => dir,
+        Err(err) => {
+            return DiagOpenLogsFolderResult::failed(format!("Failed to get log directory: {err}"));
+        }
+    };
+
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        return DiagOpenLogsFolderResult::failed(format!("Failed to create log directory: {err}"));
+    }
+
+    let path = dir.to_string_lossy().into_owned();
+    if let Err(err) = app.opener().open_path(path, None::<String>) {
+        return DiagOpenLogsFolderResult::failed(format!("Failed to open log directory: {err}"));
+    }
+
+    DiagOpenLogsFolderResult::ok_with(dir)
 }
 
 fn pad2(n: u32) -> String {
@@ -283,5 +346,23 @@ mod tests {
         assert!(name.ends_with(".zip"));
         // winstt-diag-YYYYMMDD-HHMMSS.zip = 12 + 8 + 1 + 6 + 4 = 31 chars
         assert_eq!(name.len(), 31);
+    }
+
+    #[test]
+    fn logs_folder_opener_authorization_matches_about_panel() {
+        command_auth::assert_label_rules(
+            &["settings"],
+            &[
+                "main",
+                "overlay",
+                "tray-menu",
+                "model-picker",
+                "device-picker",
+                "history",
+                "onboarding",
+                "context-playground",
+            ],
+            is_logs_folder_opener_allowed,
+        );
     }
 }

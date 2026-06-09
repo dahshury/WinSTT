@@ -758,10 +758,8 @@ export const onLlmLearnedProperNouns = (
 	cb: (payload: { nouns: readonly string[] }) => void,
 ): (() => void) => onCast(IPC.LLM_LEARNED_PROPER_NOUNS, cb);
 
-// Warmup status — main-process broadcaster is still WIP. Until it lands,
-// the invoke handler is missing in main, so `invokeOrDefault` falls back
-// to `null` and the subscriber never fires. Renderer code consuming this
-// surface treats `null` as "no warmup info yet, hide the banner".
+// Warmup status is cached by the backend. Renderer code treats `null` as
+// "no active warmup info, hide the banner".
 export const getLlmWarmupStatus = () =>
 	invokeOrDefault<LlmWarmupStatus | null>(IPC.LLM_GET_WARMUP_STATUS, null);
 

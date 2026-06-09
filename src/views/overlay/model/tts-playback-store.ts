@@ -4,12 +4,18 @@ import type { TtsPlaybackQueue } from "../lib/playback-queue";
 
 /**
  * Lifecycle of an audible TTS read, as surfaced in the overlay pill:
- *   - `idle`     — nothing playing.
- *   - `speaking` — synthesis started and/or audio is playing.
- *   - `paused`   — the user paused (AudioContext suspended); audio resumes in place.
- *   - `error`    — synthesis/playback failed; the reason is held in `error`.
+ *   - `idle`     - nothing playing.
+ *   - `loading`  - synthesis started, waiting for the first playable chunk.
+ *   - `speaking` - audio is playing.
+ *   - `paused`   - the user paused (AudioContext suspended); audio resumes in place.
+ *   - `error`    - synthesis/playback failed; the reason is held in `error`.
  */
-export type TtsPlaybackStatus = "idle" | "speaking" | "paused" | "error";
+export type TtsPlaybackStatus =
+	| "idle"
+	| "loading"
+	| "speaking"
+	| "paused"
+	| "error";
 
 interface TtsPlaybackStore {
 	/** Failure reason while `status === "error"`, else `null`. */
@@ -35,7 +41,7 @@ export const useTtsPlaybackStore = create<TtsPlaybackStore>()((set) => ({
 	requestId: null,
 	error: null,
 	markStarted: (requestId) =>
-		set({ status: "speaking", requestId, error: null }),
+		set({ status: "loading", requestId, error: null }),
 	// Audio actually scheduled — confirm `speaking` unless the user paused
 	// before the first buffer landed (don't stomp a `paused` intent).
 	markPlaying: () =>
@@ -53,7 +59,9 @@ export const useTtsPlaybackStore = create<TtsPlaybackStore>()((set) => ({
 	setPausedStatus: (paused) =>
 		set((s) => {
 			if (paused) {
-				return s.status === "speaking" ? { ...s, status: "paused" } : s;
+				return s.status === "speaking" || s.status === "loading"
+					? { ...s, status: "paused" }
+					: s;
 			}
 			return s.status === "paused" ? { ...s, status: "speaking" } : s;
 		}),

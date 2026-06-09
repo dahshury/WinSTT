@@ -126,12 +126,15 @@ interface LlmCatalogState {
 	resumePull: (
 		model: string,
 	) => Promise<{ success: boolean; error?: string | undefined }>;
-	scanModels: () => Promise<void>;
+	scanModels: (opts?: { force?: boolean }) => Promise<void>;
 	setError: (error: string | null) => void;
 	setModels: (models: OllamaModel[]) => void;
 	setPullProgress: (progress: OllamaPullProgress) => void;
 	setScanning: (scanning: boolean) => void;
 }
+
+let pendingScan: Promise<void> | null = null;
+let queuedForcedScan = false;
 
 const isTerminalStatus = (status: OllamaPullProgress["status"]): boolean =>
 	status === "success" || status === "error" || status === "cancelled";
@@ -354,17 +357,33 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 		const { pulls, pausedPulls } = get();
 		set(nextPullSlices({ pulls, pausedPulls }, progress));
 	},
-	scanModels: async () => {
+	scanModels: async (opts) => {
+		if (pendingScan) {
+			if (opts?.force) {
+				queuedForcedScan = true;
+			}
+			await pendingScan;
+			return;
+		}
 		if (get().isScanning) {
 			return;
 		}
-		set({ isScanning: true, error: null });
-		try {
-			const result = await fetchOllamaModels();
-			set(makeScanSuccessState(result));
-		} catch (err) {
-			set(makeScanErrorState(err));
-		}
+		const run = async () => {
+			do {
+				queuedForcedScan = false;
+				set({ isScanning: true, error: null });
+				try {
+					const result = await fetchOllamaModels();
+					set(makeScanSuccessState(result));
+				} catch (err) {
+					set(makeScanErrorState(err));
+				}
+			} while (queuedForcedScan);
+		};
+		pendingScan = run().finally(() => {
+			pendingScan = null;
+		});
+		await pendingScan;
 	},
 	pullModel: async (model) => {
 		const { pulls, pausedPulls } = get();
@@ -414,7 +433,7 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	deleteModel: async (model) => {
 		const result = await deleteOllamaModel(model);
 		if (result.success) {
-			await get().scanModels();
+			await get().scanModels({ force: true });
 		}
 		return { success: result.success, error: result.error };
 	},

@@ -197,11 +197,79 @@ function formatRequestPricing(raw: string | number | undefined): string | null {
 	return request ? `${request} per request` : null;
 }
 
-function formatTranscriptionPricing(
-	pricing: OpenRouterPricing | undefined,
-): string | null {
-	const tokenPricing = formatTokenPricing(pricing);
-	const requestPricing = formatRequestPricing(pricing?.request);
+const TRANSCRIPTION_DURATION_UNIT_BY_MODEL_ID = {
+	"google/chirp-3": "min",
+	"microsoft/mai-transcribe-1.5": "h",
+	"mistralai/voxtral-mini-transcribe": "min",
+	"nvidia/parakeet-tdt-0.6b-v3": "min",
+	"openai/whisper-1": "min",
+	"openai/whisper-large-v3": "min",
+	"openai/whisper-large-v3-turbo": "h",
+	"qwen/qwen3-asr-flash-2026-02-10": "s",
+} as const;
+
+type TranscriptionDurationUnit =
+	(typeof TRANSCRIPTION_DURATION_UNIT_BY_MODEL_ID)[keyof typeof TRANSCRIPTION_DURATION_UNIT_BY_MODEL_ID];
+type TranscriptionDurationModelId =
+	keyof typeof TRANSCRIPTION_DURATION_UNIT_BY_MODEL_ID;
+
+function isTranscriptionDurationModelId(
+	id: string,
+): id is TranscriptionDurationModelId {
+	return Object.hasOwn(TRANSCRIPTION_DURATION_UNIT_BY_MODEL_ID, id);
+}
+
+function transcriptionDurationText(model: OpenRouterModel): string {
+	return `${model.id} ${model.name} ${model.description ?? ""}`.toLowerCase();
+}
+
+function getTranscriptionDurationUnit(
+	model: OpenRouterModel,
+): TranscriptionDurationUnit | null {
+	if (isTranscriptionDurationModelId(model.id)) {
+		return TRANSCRIPTION_DURATION_UNIT_BY_MODEL_ID[model.id];
+	}
+	const text = transcriptionDurationText(model);
+	if (/\bper[-\s]?second\b|\/second\b|\/s\b/.test(text)) {
+		return "s";
+	}
+	if (/\bper[-\s]?minute\b|\/minute\b|\/min\b/.test(text)) {
+		return "min";
+	}
+	if (/\bper[-\s]?hour\b|\/hour\b|\/h\b/.test(text)) {
+		return "h";
+	}
+	return null;
+}
+
+function durationUnitHourlyMultiplier(unit: TranscriptionDurationUnit): number {
+	switch (unit) {
+		case "h":
+			return 1;
+		case "min":
+			return 60;
+		case "s":
+			return 3_600;
+	}
+}
+
+function formatTranscriptionHourlyRate(model: OpenRouterModel): string | null {
+	const unit = getTranscriptionDurationUnit(model);
+	if (!unit) {
+		return null;
+	}
+	const pricing = model.pricing;
+	const prompt = parseRawPrice(pricing?.prompt);
+	if (prompt === null || prompt <= 0) {
+		return null;
+	}
+	return `${formatUsd(prompt * durationUnitHourlyMultiplier(unit))}/h`;
+}
+
+function formatTranscriptionPricing(model: OpenRouterModel): string | null {
+	const audioPricing = formatTranscriptionHourlyRate(model);
+	const tokenPricing = audioPricing ?? formatTokenPricing(model.pricing);
+	const requestPricing = formatRequestPricing(model.pricing?.request);
 	if (requestPricing && tokenPricing) {
 		return `${requestPricing} + ${tokenPricing}`;
 	}
@@ -221,9 +289,15 @@ function formatPricingDetail(
 	return `${label}: ${formatUsd(parsed * multiplier)} ${unit}`;
 }
 
-function transcriptionPricingDetails(
-	pricing: OpenRouterPricing | undefined,
-): string[] {
+function transcriptionPricingDetails(model: OpenRouterModel): string[] {
+	const pricing = model.pricing;
+	const audioPricing = formatTranscriptionHourlyRate(model);
+	if (audioPricing) {
+		return [
+			`Audio: ${audioPricing}`,
+			formatPricingDetail("Request", pricing?.request, "per API request"),
+		].filter((detail): detail is string => detail !== null);
+	}
 	return [
 		formatPricingDetail("Input", pricing?.prompt, "per 1M tokens", 1_000_000),
 		formatPricingDetail(
@@ -261,16 +335,12 @@ function PricingBreakdown({
 	);
 }
 
-function TranscriptionPricingChip({
-	pricing,
-}: {
-	pricing: OpenRouterPricing | undefined;
-}) {
-	const value = formatTranscriptionPricing(pricing);
+function TranscriptionPricingChip({ model }: { model: OpenRouterModel }) {
+	const value = formatTranscriptionPricing(model);
 	if (!value) {
 		return null;
 	}
-	const details = transcriptionPricingDetails(pricing);
+	const details = transcriptionPricingDetails(model);
 	return (
 		<Tooltip>
 			<TooltipTrigger
@@ -287,9 +357,9 @@ function TranscriptionPricingChip({
 			<TooltipContent className="max-w-xs" side="top">
 				<p className="font-semibold text-body-sm">OpenRouter pricing</p>
 				<p className="text-foreground-muted text-xs-tight leading-relaxed">
-					Model-level STT price from OpenRouter. Token fields are converted from
-					OpenRouter's raw per-token values to USD per 1M tokens; request is a
-					fixed API-call charge.
+					Model-level STT price from OpenRouter. Token fields are converted to
+					USD per 1M tokens; duration-priced speech models are normalized to $/h
+					for comparison; request is a fixed API-call charge.
 				</p>
 				<PricingBreakdown details={details} />
 				<p className="mt-1 text-foreground-muted text-xs-tight leading-relaxed">
@@ -486,7 +556,7 @@ export function InlineModelMeta({
 	);
 	pushFact(
 		hasTranscriptionPricing ? (
-			<TranscriptionPricingChip key="price" pricing={model.pricing} />
+			<TranscriptionPricingChip key="price" model={model} />
 		) : pricingInfo ? (
 			<PricingChip key="price" pricingInfo={pricingInfo} />
 		) : null,

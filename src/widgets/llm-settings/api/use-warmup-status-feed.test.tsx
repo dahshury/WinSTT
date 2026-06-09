@@ -79,9 +79,12 @@ describe("useWarmupStatusFeed", () => {
 		});
 	});
 
-	test("does NOT call setStatus when the on-mount snapshot resolves null", async () => {
-		// A fresh server with no warmup pass yet returns null; the store must
-		// stay at its initial null (no spurious banner).
+	test("clears stale store status when the on-mount snapshot resolves null", async () => {
+		// A cleared backend snapshot means no Ollama feature is active. Apply
+		// the null so a remounted settings window cannot keep an old banner.
+		useWarmupStatusStore.setState({
+			status: makeStatus({ endpoint: "stale-before-mount" }),
+		});
 		snapshotImpl = async () => null;
 		renderHook(() => useWarmupStatusFeed());
 		// Give the snapshot promise a chance to resolve.

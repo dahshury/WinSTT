@@ -10,7 +10,7 @@ import {
 import { useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
-import { fetchOllamaModels } from "@/shared/api/ipc-client";
+import { fetchOllamaModels, retryLlmWarmup } from "@/shared/api/ipc-client";
 import { detectAppleIntelligencePlatform } from "@/shared/lib/apple-intelligence-platform";
 import { useWarmupStatusFeed } from "../api/use-warmup-status-feed";
 import {
@@ -58,6 +58,7 @@ export function useLlmSettingsPanel() {
 	// failed to load" right next to the toggle that the user just enabled.
 	useWarmupStatusFeed();
 	const warmupStatus = useWarmupStatusStore((s) => s.status);
+	const setWarmupStatus = useWarmupStatusStore((s) => s.setStatus);
 
 	const snapshot = readLlmSnapshot(llm);
 	const { endpoint, openrouterApiKey, dictation, transforms } = snapshot;
@@ -191,6 +192,12 @@ export function useLlmSettingsPanel() {
 		return result.reachable;
 	};
 
+	const retryOllamaWarmup = async () => {
+		const snapshot = await retryLlmWarmup();
+		setWarmupStatus(snapshot);
+		setOllamaReachable(snapshot?.reachable ?? null);
+	};
+
 	const anyOllamaEnabled =
 		(dictation.enabled && dictation.provider === "ollama") ||
 		(transforms.enabled && transforms.provider === "ollama");
@@ -238,6 +245,8 @@ export function useLlmSettingsPanel() {
 			ollamaModels,
 			dictation.model,
 			dictation.enabled,
+			openrouterApiKey,
+			dictation.openrouterModel,
 		);
 		if (patch) {
 			updateDictation(patch);
@@ -246,8 +255,10 @@ export function useLlmSettingsPanel() {
 		dictation.enabled,
 		dictation.provider,
 		dictation.model,
+		dictation.openrouterModel,
 		ollamaLoaded,
 		ollamaModels,
+		openrouterApiKey,
 		updateDictation,
 	]);
 
@@ -260,6 +271,8 @@ export function useLlmSettingsPanel() {
 			ollamaModels,
 			transforms.model,
 			transforms.enabled,
+			openrouterApiKey,
+			transforms.openrouterModel,
 		);
 		if (patch) {
 			updateTransforms(patch);
@@ -268,8 +281,10 @@ export function useLlmSettingsPanel() {
 		transforms.enabled,
 		transforms.provider,
 		transforms.model,
+		transforms.openrouterModel,
 		ollamaLoaded,
 		ollamaModels,
+		openrouterApiKey,
 		updateTransforms,
 	]);
 
@@ -416,6 +431,7 @@ export function useLlmSettingsPanel() {
 		toneOpts,
 		levelOpts,
 		checkOllamaReachable,
+		retryOllamaWarmup,
 		disableDictationConflicts,
 		updateShared,
 		updateDictation,

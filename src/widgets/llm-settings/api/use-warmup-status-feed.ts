@@ -17,9 +17,7 @@ export function useWarmupStatusFeed(): void {
 	useEffect(() => {
 		getLlmWarmupStatus()
 			.then((snapshot) => {
-				if (snapshot) {
-					setStatus(snapshot);
-				}
+				setStatus(snapshot);
 			})
 			.catch(() => undefined);
 		const unsubscribe = onLlmWarmupStatus(setStatus);

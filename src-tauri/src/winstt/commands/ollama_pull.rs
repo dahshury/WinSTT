@@ -19,11 +19,15 @@
 // (plain event) and have this command return the last snapshot once a snapshot store is added.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use tauri::State;
+
+use crate::winstt::managers::LlmManager;
 
 use super::llm::authorize_ollama_model_management_label;
 
@@ -135,6 +139,12 @@ pub fn set_warmup_status(status: LlmWarmupStatus) {
     }
 }
 
+pub fn clear_warmup_status() {
+    if let Ok(mut last) = LAST_WARMUP_STATUS.lock() {
+        *last = None;
+    }
+}
+
 // ── Commands ────────────────────────────────────────────────────────────────────
 
 /// `ollama_cancel_pull` → `LLM_CANCEL_PULL_MODEL`. Flags the model's in-flight pull for the
@@ -158,6 +168,18 @@ pub fn llm_get_warmup_status() -> Result<Option<LlmWarmupStatus>, String> {
     // No snapshot store yet — the warmup loop in LlmManager (07_*) will populate one and emit
     // `llm:warmup-status`. Until then, mirror WinSTT's WIP behavior: no info → null → banner hidden.
     Ok(LAST_WARMUP_STATUS.lock().ok().and_then(|last| last.clone()))
+}
+
+/// `llm_retry_warmup` → user-triggered retry for the inline warmup banner.
+/// Runs the same coalesced warmup pass as the periodic loop, then returns the
+/// latest snapshot so the settings UI updates even if it missed the event.
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_retry_warmup(
+    llm_manager: State<'_, Arc<LlmManager>>,
+) -> Result<Option<LlmWarmupStatus>, String> {
+    llm_manager.warm_enabled_models().await;
+    llm_get_warmup_status()
 }
 
 #[cfg(test)]
@@ -184,5 +206,22 @@ mod tests {
     fn warmup_outcome_serializes_kebab() {
         let json = serde_json::to_string(&LlmWarmupOutcome::ModelNotFound).unwrap();
         assert_eq!(json, "\"model-not-found\"");
+    }
+
+    #[test]
+    fn warmup_status_can_be_cleared_to_null() {
+        set_warmup_status(LlmWarmupStatus {
+            endpoint: "http://localhost:11434".into(),
+            in_progress: false,
+            models: Vec::new(),
+            ollama_installed: false,
+            reachable: false,
+            timestamp: 1.0,
+        });
+        assert!(llm_get_warmup_status().unwrap().is_some());
+
+        clear_warmup_status();
+
+        assert!(llm_get_warmup_status().unwrap().is_none());
     }
 }

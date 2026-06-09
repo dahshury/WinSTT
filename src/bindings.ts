@@ -1344,6 +1344,19 @@ async llmGetWarmupStatus() : Promise<Result<LlmWarmupStatus | null, string>> {
 }
 },
 /**
+ * `llm_retry_warmup` → user-triggered retry for the inline warmup banner.
+ * Runs the same coalesced warmup pass as the periodic loop, then returns the
+ * latest snapshot so the settings UI updates even if it missed the event.
+ */
+async llmRetryWarmup() : Promise<Result<LlmWarmupStatus | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_retry_warmup") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * `verify_integration_credential` — the ONE renderer verify seam. Probes the
  * provider's cheap GET endpoint with the user-typed (possibly unsaved) key and
  * returns `{ ok, code?, message? }`. Side-effect-free: it never persists the key
@@ -1564,11 +1577,11 @@ async aboutGetNotices() : Promise<string> {
     return await TAURI_INVOKE("about_get_notices");
 },
 /**
- * `diag_open_logs_folder` — return the log directory path. The polyfill opens it
- * via the opener plugin (capability-gated). Returns an empty string only if the
- * dir can't be resolved, which the polyfill treats as a no-op success.
+ * `diag_open_logs_folder` — create and open the log directory, returning the
+ * path that was opened. Restricted to the settings window, where the About tab
+ * lives.
  */
-async diagOpenLogsFolder() : Promise<string> {
+async diagOpenLogsFolder() : Promise<DiagOpenLogsFolderResult> {
     return await TAURI_INVOKE("diag_open_logs_folder");
 },
 /**
@@ -2178,6 +2191,12 @@ export type DeletedResult = { deleted: boolean }
  * persisted user knob. In this port, changes trigger an in-process model reload.
  */
 export type DeviceType = "auto" | "cpu"
+/**
+ * Result of `diag_open_logs_folder`. This mirrors the renderer-facing
+ * `DiagOpenLogsFolderResult`: `ok` is always present; details are omitted when
+ * not applicable.
+ */
+export type DiagOpenLogsFolderResult = { ok: boolean; error?: string | null; path?: string | null }
 /**
  * Result of `diag_save_bundle`. Field names mirror the renderer's
  * `DiagSaveBundleResult` interface exactly; `ok` is always present, the rest are
@@ -2975,12 +2994,16 @@ export type TranscriberBackend = "faster_whisper" | "onnx_asr"
  * Legacy `TranscriptionHistoryEntry` (ipc-client.ts) — the karaoke `HistoryTable`
  * + the settings panel sync. STRING id, epoch-MILLIS timestamp.
  */
-export type TranscriptionHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; audioFilePath?: string | null; originalText?: string | null; llmModel?: string | null; 
+export type TranscriptionHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; audioFilePath?: string | null; originalText?: string | null; llmModel?: string | null;
+/**
+ * Recorded post-processing error when an LLM was requested but failed soft.
+ */
+llmError?: string | null;
 /**
  * LLM post-processing wall-time in ms (the footer's "processing time"),
  * when an LLM ran.
  */
-llmProcessingMs?: number | null; 
+llmProcessingMs?: number | null;
 /**
  * LLM generation speed (output tokens / processing second), when the
  * provider reported token usage and the pass took a measurable duration.
@@ -3015,7 +3038,7 @@ export type TransformApplyResult = { before: string; after: string; source: Tran
  * the same core fields as `TranscriptionHistoryEntry` so the current table,
  * copy controls, and before/after diff view can be shared unchanged.
  */
-export type TransformHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; originalText?: string | null; llmModel?: string | null; llmProcessingMs?: number | null; llmTokensPerSecond?: number | null; source: string }
+export type TransformHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; originalText?: string | null; llmModel?: string | null; llmError?: string | null; llmProcessingMs?: number | null; llmTokensPerSecond?: number | null; source: string }
 /**
  * The selection source the capture resolved. Mirrors WinSTT's
  * `ApplyResult.source` ("uia" | "clipboard" | "empty").

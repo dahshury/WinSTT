@@ -59,6 +59,18 @@ export function handleTtsCompletedPayload(
 	queue.markComplete(payload.requestId);
 	if (payload.cancelled) {
 		queue.stop();
+		const store = useTtsPlaybackStore.getState();
+		if (store.requestId === payload.requestId || payload.requestId === "") {
+			store.markEnded();
+		}
+		return;
+	}
+	const store = useTtsPlaybackStore.getState();
+	if (
+		store.requestId === payload.requestId &&
+		queue.currentRequestId !== payload.requestId
+	) {
+		store.markEnded();
 	}
 }
 

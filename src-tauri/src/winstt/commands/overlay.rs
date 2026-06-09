@@ -22,7 +22,11 @@
 //   - floating-bottom                          → centered in work area, 60px gap
 //     above the taskbar.
 //
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Mutex,
+};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -48,6 +52,8 @@ static OVERLAY_DESIRED_VISIBLE: AtomicBool = AtomicBool::new(false);
 /// visible. Hide disables this before the renderer's close animation can report
 /// stale rects back to Rust.
 static OVERLAY_HIT_REGIONS_ENABLED: AtomicBool = AtomicBool::new(false);
+static OVERLAY_PAGE_LOADED: AtomicBool = AtomicBool::new(false);
+static LATEST_OVERLAY_HIT_REGIONS: Mutex<Vec<OverlayHitRect>> = Mutex::new(Vec::new());
 
 /// The transparent overlay window can host both the STT pill and the TTS
 /// read-aloud island. Track each owner separately so hiding one does not tear
@@ -214,6 +220,25 @@ fn ensure_overlay_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     }
 }
 
+pub(crate) fn mark_overlay_page_loaded() {
+    OVERLAY_PAGE_LOADED.store(true, Ordering::SeqCst);
+}
+
+pub(crate) fn wait_for_overlay_page_loaded(timeout: Duration) -> bool {
+    if OVERLAY_PAGE_LOADED.load(Ordering::SeqCst) {
+        return true;
+    }
+
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if OVERLAY_PAGE_LOADED.load(Ordering::SeqCst) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    OVERLAY_PAGE_LOADED.load(Ordering::SeqCst)
+}
+
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn overlay_opacity_byte(opacity: f64) -> u8 {
     (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
@@ -311,11 +336,12 @@ fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>,
     // re-show (`show_recording_overlay` is called again when the LLM clean-up is
     // about to run): the island vanished after "Transcribing" and only popped
     // back when the thinking indicator changed the pill's size. On a fresh show
-    // the window is hidden (opacity 0 below) while the renderer paints and reports
-    // its first region, so an empty start is correct there; on a re-show the
-    // existing region already matches the on-screen pill, so leave it untouched
-    // and let the renderer's ResizeObserver morph it smoothly.
-    if !was_visible {
+    // the renderer may have already painted and reported a TTS island while the
+    // native window was hidden. Apply that cached region first; otherwise start
+    // empty while the renderer paints and reports its first visible region. On a
+    // re-show the existing region already matches the on-screen pill, so leave it
+    // untouched and let the renderer's ResizeObserver morph it smoothly.
+    if !was_visible && !apply_latest_overlay_hit_regions(&window) {
         set_empty_overlay_hit_region(&window);
     }
     if let Some((x, y)) = position {
@@ -487,6 +513,27 @@ fn set_empty_overlay_hit_region(window: &tauri::WebviewWindow) {
     }
 }
 
+fn remember_overlay_hit_regions(rects: &[OverlayHitRect]) {
+    if let Ok(mut latest) = LATEST_OVERLAY_HIT_REGIONS.lock() {
+        *latest = rects.to_vec();
+    }
+}
+
+fn apply_latest_overlay_hit_regions(window: &tauri::WebviewWindow) -> bool {
+    let rects = LATEST_OVERLAY_HIT_REGIONS
+        .lock()
+        .map(|latest| latest.clone())
+        .unwrap_or_default();
+    if rects.is_empty() {
+        return false;
+    }
+    if let Err(error) = apply_overlay_hit_regions(window, &rects) {
+        log::warn!("[overlay] failed to apply cached overlay hit region: {error}");
+        return false;
+    }
+    true
+}
+
 /// Renderer feedback loop for native hit-testing. The overlay window is larger
 /// than the visual pill so the renderer has layout room, but this command clips
 /// the native window to only the currently painted pill/control rectangles.
@@ -496,6 +543,7 @@ pub fn set_overlay_hit_regions(app: AppHandle, rects: Vec<OverlayHitRect>) -> Re
     let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
         return Ok(());
     };
+    remember_overlay_hit_regions(&rects);
     if !OVERLAY_HIT_REGIONS_ENABLED.load(Ordering::SeqCst) {
         // During the close grace window, keep the last painted region alive.
         // SetWindowRgn clips rendering, not just hit-testing, so clearing here
@@ -538,6 +586,13 @@ pub fn reserve_tts_overlay(app: &AppHandle) {
     TTS_OVERLAY_ACTIVE.store(true, Ordering::SeqCst);
     if RECORDING_OVERLAY_ACTIVE.load(Ordering::SeqCst) {
         place_and_show_stacked(app, "tts");
+    } else {
+        place_and_show(
+            app,
+            OverlayMode::DynamicIsland,
+            ResolvedPosition::Top,
+            "tts",
+        );
     }
 }
 

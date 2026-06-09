@@ -104,7 +104,7 @@ function DynamicIslandPillContent({
 	}
 
 	const isProcessing = isThinking || isTranscribing;
-	if (!(isRecordingActive || isProcessing)) {
+	if (!(isRecordingActive || isProcessing || text.length > 0)) {
 		// Belt-and-suspenders — the shell's `empty` preset (width 0) already
 		// hides the island; this guard prevents stale renders from leaking
 		// an empty padded box during the brief transition out.
@@ -117,7 +117,8 @@ function DynamicIslandPillContent({
 	// the transcription, like Apple's notch readout.
 	const timerFontSize = Math.max(10, Math.round(textFontSize * 0.8));
 	const showText =
-		isRecordingActive && showLiveTranscription && text.length > 0;
+		text.length > 0 &&
+		((isRecordingActive && showLiveTranscription) || !isRecordingActive);
 	const processingStartedAt = getProcessingStartedAt({
 		isThinking,
 		isTranscribing,
@@ -246,7 +247,7 @@ function DynamicIslandPill(args: IslandStateArgs & { revealed: boolean }) {
 					isSpeaking: flags.isSpeaking,
 					isThinking: flags.isThinking,
 					isTranscribing: flags.isTranscribing,
-					hasShownText: flags.showLiveTranscription && text.length > 0,
+					hasShownText: text.length > 0,
 				})
 			: "empty";
 

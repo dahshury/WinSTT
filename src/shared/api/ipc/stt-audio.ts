@@ -330,8 +330,20 @@ export const onFullSentence = (cb: (text: string) => void) =>
 export const onNoAudioDetected = (cb: () => void) =>
 	on(IPC.STT_NO_AUDIO_DETECTED, cb);
 
-export const onTranscriptionFailed = (cb: () => void) =>
-	on(IPC.STT_TRANSCRIPTION_FAILED, cb);
+export interface TranscriptionFailedPayload {
+	message?: string | null;
+}
+
+export const onTranscriptionFailed = (
+	cb: (payload: TranscriptionFailedPayload) => void,
+) =>
+	on(IPC.STT_TRANSCRIPTION_FAILED, (payload) => {
+		if (payload !== null && typeof payload === "object") {
+			cb(payload as TranscriptionFailedPayload);
+			return;
+		}
+		cb({});
+	});
 
 export const onRecordingStart = (cb: () => void) =>
 	on(IPC.STT_RECORDING_START, cb);

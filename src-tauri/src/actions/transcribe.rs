@@ -498,8 +498,10 @@ impl ShortcutAction for TranscribeAction {
                             // failed)" pill) rather than the misleading "no audio
                             // detected" lie (memory:
                             // project_whisper_incomplete_vocab_and_transcription_failed).
+                            let failure_reason = err.to_string();
                             crate::winstt::commands::dictation::SttEvents::transcription_failed(
                                 &ah,
+                                Some(&failure_reason),
                             );
                             // Save entry with empty text so user can retry
                             if wav_saved {

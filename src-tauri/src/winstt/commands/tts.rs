@@ -11,6 +11,7 @@
 // / {tier,creditsExhausted} / TtsDownloadEstimatePayload).
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -20,6 +21,8 @@ use crate::winstt::managers::tts_manager::{
     VoiceCatalogPayload,
 };
 use crate::winstt::managers::TtsManager;
+
+const TTS_OVERLAY_READY_TIMEOUT: Duration = Duration::from_millis(750);
 
 /// Result of a speak/preview start — the request id the renderer correlates the
 /// `tts:chunk` stream + cancel against. Mirrors `TtsSpeakResult` in
@@ -35,6 +38,9 @@ pub struct SpeakResult {
 /// be able to cancel the pending synthesis with Escape.
 pub fn reserve_tts_playback_layer(app: &AppHandle) {
     crate::winstt::commands::overlay::reserve_tts_overlay(app);
+    if !crate::winstt::commands::overlay::wait_for_overlay_page_loaded(TTS_OVERLAY_READY_TIMEOUT) {
+        log::warn!("[tts] overlay did not report ready before playback stream started");
+    }
     crate::shortcut::register_cancel_shortcut(app);
 }
 

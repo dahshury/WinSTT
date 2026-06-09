@@ -16,6 +16,15 @@ export type TranscriptionProcessingPhase = "transcribing" | "uploading";
  * is just the live UI feed.
  */
 const MAX_LIVE_ITEMS = 500;
+const EPHEMERAL_HOLD_MS = 7000;
+let ephemeralTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearEphemeralTimer(): void {
+	if (ephemeralTimer !== null) {
+		clearTimeout(ephemeralTimer);
+		ephemeralTimer = null;
+	}
+}
 
 interface TranscriptionState {
 	addFinalSentence: (text: string) => void;
@@ -36,7 +45,7 @@ interface TranscriptionState {
 		active: boolean,
 		phase?: TranscriptionProcessingPhase,
 	) => void;
-	showEphemeral: (text: string) => void;
+	showEphemeral: (text: string, holdMs?: number) => void;
 	transcribingStartedAt: number | null;
 }
 
@@ -72,7 +81,8 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 	processingPhase: null,
 	recordingSessionId: 0,
 	transcribingStartedAt: null,
-	beginRecordingSession: () =>
+	beginRecordingSession: () => {
+		clearEphemeralTimer();
 		set((state) => ({
 			currentRealtime: "",
 			ephemeral: null,
@@ -81,7 +91,8 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 			processingPhase: null,
 			recordingSessionId: state.recordingSessionId + 1,
 			transcribingStartedAt: null,
-		})),
+		}));
+	},
 	addFinalSentence: (text) => {
 		const id = crypto.randomUUID();
 		const timestamp = Date.now();
@@ -130,9 +141,27 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 				transcribingStartedAt: null,
 			};
 		}),
-	showEphemeral: (text) => set({ ephemeral: { text, timestamp: Date.now() } }),
-	clearEphemeral: () => set({ ephemeral: null }),
-	clearAll: () =>
+	showEphemeral: (text, holdMs = EPHEMERAL_HOLD_MS) => {
+		clearEphemeralTimer();
+		const timestamp = Date.now();
+		set({ ephemeral: { text, timestamp } });
+		if (holdMs > 0) {
+			ephemeralTimer = setTimeout(() => {
+				set((state) =>
+					state.ephemeral?.timestamp === timestamp
+						? { ephemeral: null }
+						: state,
+				);
+				ephemeralTimer = null;
+			}, holdMs);
+		}
+	},
+	clearEphemeral: () => {
+		clearEphemeralTimer();
+		set({ ephemeral: null });
+	},
+	clearAll: () => {
+		clearEphemeralTimer();
 		set({
 			items: [],
 			currentRealtime: "",
@@ -142,5 +171,6 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 			processingPhase: null,
 			recordingSessionId: 0,
 			transcribingStartedAt: null,
-		}),
+		});
+	},
 }));

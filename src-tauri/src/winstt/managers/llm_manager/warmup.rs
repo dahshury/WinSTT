@@ -14,7 +14,8 @@ use super::{
     OLLAMA_RECENT_WARM_SKIP, OLLAMA_WARMUP_INTERVAL, OLLAMA_WARMUP_TIMEOUT,
 };
 use crate::winstt::commands::ollama_pull::{
-    set_warmup_status, LlmWarmupModelStatus, LlmWarmupOutcome, LlmWarmupStatus,
+    clear_warmup_status as clear_last_warmup_status, set_warmup_status, LlmWarmupModelStatus,
+    LlmWarmupOutcome, LlmWarmupStatus,
 };
 use crate::winstt::commands::settings::{enabled_ollama_models, read_settings};
 use crate::winstt::llm::validate_loopback_ollama_endpoint;
@@ -72,14 +73,7 @@ impl LlmManager {
         let models = enabled_ollama_models(&settings);
         if models.is_empty() {
             self.evict_stale_warmed_models(&endpoint, &[]).await;
-            self.publish_warmup_status(LlmWarmupStatus {
-                endpoint,
-                in_progress: false,
-                models: Vec::new(),
-                ollama_installed: false,
-                reachable: false,
-                timestamp: warmup_timestamp(),
-            });
+            self.clear_warmup_status();
             return;
         }
 
@@ -273,5 +267,12 @@ impl LlmManager {
     fn publish_warmup_status(&self, status: LlmWarmupStatus) {
         set_warmup_status(status.clone());
         let _ = self.app.emit("llm:warmup-status", status);
+    }
+
+    fn clear_warmup_status(&self) {
+        clear_last_warmup_status();
+        let _ = self
+            .app
+            .emit("llm:warmup-status", Option::<LlmWarmupStatus>::None);
     }
 }

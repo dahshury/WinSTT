@@ -64,6 +64,9 @@ pub struct TranscriptionHistoryEntry {
     pub original_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_model: Option<String>,
+    /// Recorded post-processing error when an LLM was requested but failed soft.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_error: Option<String>,
     /// LLM post-processing wall-time in ms (the footer's "processing time"),
     /// when an LLM ran.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,6 +106,8 @@ pub struct TransformHistoryEntry {
     pub original_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_processing_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -235,8 +240,9 @@ fn to_transcription_entry(
         .as_deref()
         .map(parse_llm_meta)
         .unwrap_or_default();
-    let llm_tokens_per_second = match (meta.tokens, meta.processing_ms) {
-        (Some(tokens), Some(ms)) if tokens > 0 && ms > 0 => {
+    let llm_failed = meta.error.is_some();
+    let llm_tokens_per_second = match (llm_failed, meta.tokens, meta.processing_ms) {
+        (false, Some(tokens), Some(ms)) if tokens > 0 && ms > 0 => {
             Some(tokens as f64 / (ms as f64 / 1000.0))
         }
         _ => None,
@@ -261,7 +267,8 @@ fn to_transcription_entry(
         audio_file_path,
         original_text,
         llm_model: meta.model,
-        llm_processing_ms: meta.processing_ms,
+        llm_error: meta.error,
+        llm_processing_ms: if llm_failed { None } else { meta.processing_ms },
         llm_tokens_per_second,
         dictionary_fixes: entry.dictionary_fixes,
         history_tag: entry.history_tag.clone(),
@@ -294,6 +301,7 @@ fn to_transform_entry(entry: &TransformHistoryDbEntry) -> TransformHistoryEntry 
             Some(entry.before_text.clone())
         },
         llm_model: meta.model,
+        llm_error: meta.error,
         llm_processing_ms: meta.processing_ms,
         llm_tokens_per_second,
         source: entry.source.clone(),
@@ -317,6 +325,7 @@ fn emit_transform_history_deleted(app: &AppHandle, id: i64) {
 #[derive(Default)]
 struct LlmMeta {
     model: Option<String>,
+    error: Option<String>,
     processing_ms: Option<i64>,
     tokens: Option<i64>,
 }
@@ -328,6 +337,11 @@ fn parse_llm_meta(raw: &str) -> LlmMeta {
     LlmMeta {
         model: value
             .get("model")
+            .and_then(|m| m.as_str())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty()),
+        error: value
+            .get("error")
             .and_then(|m| m.as_str())
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty()),

@@ -206,6 +206,7 @@ describe("resolveTtsEnabledModelPatch", () => {
 	test("does not patch when TTS is disabled", () => {
 		expect(
 			resolveTtsEnabledModelPatch({
+				cloudFallbackAllowed: false,
 				enabled: false,
 				isCloud: false,
 				model: TEST_MODEL,
@@ -219,6 +220,7 @@ describe("resolveTtsEnabledModelPatch", () => {
 	test("does not patch cloud TTS", () => {
 		expect(
 			resolveTtsEnabledModelPatch({
+				cloudFallbackAllowed: false,
 				enabled: true,
 				isCloud: true,
 				model: TEST_MODEL,
@@ -232,6 +234,7 @@ describe("resolveTtsEnabledModelPatch", () => {
 	test("waits for cache state before reconciling", () => {
 		expect(
 			resolveTtsEnabledModelPatch({
+				cloudFallbackAllowed: false,
 				enabled: true,
 				isCloud: false,
 				model: TEST_MODEL,
@@ -245,6 +248,7 @@ describe("resolveTtsEnabledModelPatch", () => {
 	test("keeps enabled TTS when the selected model is cached", () => {
 		expect(
 			resolveTtsEnabledModelPatch({
+				cloudFallbackAllowed: false,
 				enabled: true,
 				isCloud: false,
 				model: TEST_MODEL,
@@ -258,6 +262,7 @@ describe("resolveTtsEnabledModelPatch", () => {
 	test("switches enabled TTS to another cached model when the selected one was deleted", () => {
 		expect(
 			resolveTtsEnabledModelPatch({
+				cloudFallbackAllowed: false,
 				enabled: true,
 				isCloud: false,
 				model: "deleted",
@@ -274,6 +279,7 @@ describe("resolveTtsEnabledModelPatch", () => {
 	test("disables enabled local TTS when no cached models remain", () => {
 		expect(
 			resolveTtsEnabledModelPatch({
+				cloudFallbackAllowed: false,
 				enabled: true,
 				isCloud: false,
 				model: TEST_MODEL,
@@ -282,6 +288,20 @@ describe("resolveTtsEnabledModelPatch", () => {
 				statesLoaded: true,
 			}),
 		).toEqual({ enabled: false });
+	});
+
+	test("switches enabled local TTS to cloud when no cached models remain and cloud is available", () => {
+		expect(
+			resolveTtsEnabledModelPatch({
+				cloudFallbackAllowed: true,
+				enabled: true,
+				isCloud: false,
+				model: TEST_MODEL,
+				models: [{ id: TEST_MODEL }],
+				statesById: { [TEST_MODEL]: makeState(TEST_MODEL, "not_cached") },
+				statesLoaded: true,
+			}),
+		).toEqual({ source: "cloud" });
 	});
 });
 

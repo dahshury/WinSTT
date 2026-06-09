@@ -7,7 +7,7 @@
 // Tauri command `open_custom_models_folder`, then hands the returned absolute path
 // to `@tauri-apps/plugin-opener`'s `openPath`. So this command must RETURN THE PATH
 // (a String) rather than shelling out — the actual reveal stays inside the
-// capability-gated opener plugin, mirroring how `diag_open_logs_folder` works.
+// capability-gated opener plugin.
 //
 // Path: `<appData>/models/custom` — the same per-user directory the Python server
 // scanned via `--custom-models-dir` in the reference build (`getCustomModelsFolder`

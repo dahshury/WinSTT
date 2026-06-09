@@ -157,6 +157,7 @@ function HistoryRow({
 	// Optional parts (wpm, the LLM trio) drop out cleanly when absent. `logo`
 	// swaps the glyph for a maker brand mark (the model chip).
 	const meta: {
+		danger?: boolean;
 		icon: IconSvgElement;
 		key: string;
 		logo?: string | null;
@@ -211,12 +212,17 @@ function HistoryRow({
 	// long the pass took, and its generation speed. Each chip is independent —
 	// e.g. tokens/s drops out when the provider reported no usage.
 	if (entry.llmModel) {
+		const llmError = entry.llmError?.trim();
 		// Title carries the full model id so truncation stays inspectable on hover.
+		// When the cleanup fail-softed, keep the model visible but mark it as failed.
 		meta.push({
+			danger: Boolean(llmError),
 			icon: CpuIcon,
 			key: "model",
 			logo: resolveProviderIcon(makerFromModelId(entry.llmModel)),
-			title: entry.llmModel,
+			title: llmError
+				? `${entry.llmModel}\nPost-processing failed: ${llmError}`
+				: entry.llmModel,
 			truncate: true,
 			value: entry.llmModel,
 		});
@@ -325,23 +331,31 @@ function HistoryRow({
 									<img
 										alt=""
 										aria-hidden="true"
-										className="size-3.5 shrink-0 rounded-[3px] object-contain"
+										className={cn(
+											"size-3.5 shrink-0 rounded-[3px] object-contain",
+											part.danger && "grayscale opacity-70",
+										)}
 										src={part.logo}
 									/>
 								) : (
 									<HugeiconsIcon
 										aria-hidden="true"
-										className="size-3.5 shrink-0 text-foreground-muted"
+										className={cn(
+											"size-3.5 shrink-0",
+											part.danger ? "text-error" : "text-foreground-muted",
+										)}
 										icon={part.icon}
 										strokeWidth={1.75}
 									/>
 								)}
 								<span
-									className={
+									className={cn(
 										part.truncate
 											? "max-w-[10rem] truncate"
-											: "whitespace-nowrap"
-									}
+											: "whitespace-nowrap",
+										part.danger &&
+											"text-error line-through decoration-2 decoration-error/80",
+									)}
 								>
 									{part.value}
 								</span>

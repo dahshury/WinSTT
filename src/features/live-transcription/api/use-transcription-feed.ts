@@ -75,6 +75,7 @@ export function useTranscriptionFeed(): void {
 		});
 
 		const unsubNoAudio = onNoAudioDetected(() => {
+			setRealtimeText("");
 			showEphemeral(t("noAudioDetected"));
 			setRecordingActive(false);
 			setTranscribing(false);
@@ -82,8 +83,10 @@ export function useTranscriptionFeed(): void {
 
 		// Genuine backend transcriber error — report it honestly in the same
 		// ephemeral pill slot instead of the misleading "(no audio detected)".
-		const unsubTranscriptionFailed = onTranscriptionFailed(() => {
-			showEphemeral(t("transcriptionFailed"));
+		const unsubTranscriptionFailed = onTranscriptionFailed((payload = {}) => {
+			const message = payload.message?.trim() || t("transcriptionFailed");
+			setRealtimeText("");
+			showEphemeral(message);
 			setRecordingActive(false);
 			setTranscribing(false);
 		});

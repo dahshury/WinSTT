@@ -83,7 +83,7 @@ pub fn classify_cloud_status(status: u16, detail_status: Option<&str>) -> String
         || detail.contains("quota")
         || detail.contains("credit")
     {
-        return "ElevenLabs: character quota or credits exhausted".to_string();
+        return "ElevenLabs: character quota exceeded or credits exhausted".to_string();
     }
     if matches!(detail, "too_many_concurrent_requests") || detail.contains("concurrent") {
         return "ElevenLabs: too many concurrent requests".to_string();
@@ -101,7 +101,7 @@ pub fn classify_cloud_status(status: u16, detail_status: Option<&str>) -> String
         || detail.contains("voice_not_found")
         || detail.contains("model_not_found")
     {
-        return "ElevenLabs: selected voice or model is no longer available".to_string();
+        return "ElevenLabs: selected voice not found or model is no longer available".to_string();
     }
     if matches!(
         detail,
@@ -118,12 +118,12 @@ pub fn classify_cloud_status(status: u16, detail_status: Option<&str>) -> String
     match status {
         400 | 422 => "ElevenLabs: invalid TTS request".to_string(),
         401 | 403 => "ElevenLabs: invalid API key or missing required permission".to_string(),
-        402 => "ElevenLabs: plan, quota, or credits do not allow this request".to_string(),
-        404 => "ElevenLabs: selected voice or model is no longer available".to_string(),
+        402 => "ElevenLabs: paid plan, quota, or credits do not allow this request".to_string(),
+        404 => "ElevenLabs: selected voice not found or model is no longer available".to_string(),
         408 => "ElevenLabs: request timed out".to_string(),
         409 => "ElevenLabs: request conflicts with the current resource state".to_string(),
         429 => "ElevenLabs: rate limited".to_string(),
-        500..=599 => "ElevenLabs: provider is temporarily unavailable".to_string(),
+        s @ 500..=599 => format!("ElevenLabs: provider is temporarily unavailable (HTTP {s})"),
         s => format!("ElevenLabs error: HTTP {s}"),
     }
 }

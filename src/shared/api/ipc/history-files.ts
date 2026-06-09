@@ -190,6 +190,8 @@ export interface TranscriptionHistoryEntry {
 	 * like `qwen2.5:7b`). Omitted when no LLM ran.
 	 */
 	llmModel?: string;
+	/** Recorded post-processing error when the selected LLM failed soft. */
+	llmError?: string;
 	/**
 	 * LLM post-processing wall-time in ms (the history footer's "processing
 	 * time"). Omitted when no LLM ran.

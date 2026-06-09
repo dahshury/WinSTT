@@ -21,6 +21,21 @@ type UpdateModelFn = ReturnType<
 >["updateModelSettings"];
 type ModelPatch = Parameters<UpdateModelFn>[0];
 
+// Cloud STT ids route by provider prefix; the backend field is still required
+// by the settings patch type, so persist the same benign backend the swap path
+// uses for cloud selections.
+const CLOUD_MODEL_BACKEND = "onnx_asr" as const;
+
+function cloudFallbackPatch(
+	cloudFallbackModel: string | null,
+	currentMainModel: string | undefined,
+): ModelPatch | null {
+	if (!cloudFallbackModel || cloudFallbackModel === currentMainModel) {
+		return null;
+	}
+	return { model: cloudFallbackModel, backend: CLOUD_MODEL_BACKEND };
+}
+
 /**
  * Pure decision for the main slot: returns the ``{ model, backend }`` patch
  * to apply, or ``null`` when no fallback is warranted. Extracted from the
@@ -39,12 +54,16 @@ function resolveMainPatch(
 	catalogModels: CatalogModels,
 	statesById: StatesById,
 	statesLoaded: boolean,
+	cloudFallbackModel: string | null,
 ): ModelPatch | null {
 	if (providerOf(currentMainModel ?? "") !== null) {
 		return null;
 	}
-	if (catalogModels.length === 0 || !statesLoaded) {
+	if (!statesLoaded) {
 		return null;
+	}
+	if (catalogModels.length === 0) {
+		return cloudFallbackPatch(cloudFallbackModel, currentMainModel);
 	}
 	const current = catalogModels.find((m) => m.id === currentMainModel);
 	const currentCached =
@@ -63,7 +82,10 @@ function resolveMainPatch(
 			statesById,
 			isVisibleSttModel,
 		);
-		if (!cachedReplacement || cachedReplacement === currentMainModel) {
+		if (!cachedReplacement) {
+			return cloudFallbackPatch(cloudFallbackModel, currentMainModel);
+		}
+		if (cachedReplacement === currentMainModel) {
 			return null;
 		}
 		const replacementEntry = catalogModels.find(
@@ -75,7 +97,10 @@ function resolveMainPatch(
 		return { model: cachedReplacement, backend: replacementEntry.backend };
 	}
 	const next = pickCachedSttModel(catalogModels, statesById, isVisibleSttModel);
-	if (!next || next === currentMainModel) {
+	if (!next) {
+		return cloudFallbackPatch(cloudFallbackModel, currentMainModel);
+	}
+	if (next === currentMainModel) {
 		return null;
 	}
 	const fallbackEntry = catalogModels.find((m) => m.id === next);
@@ -195,6 +220,7 @@ export function useStaleModelFallback(
 	currentRealtimeModel: string | undefined,
 	update: UpdateModelFn,
 	sourceLanguageSelection?: SourceLanguageSelection,
+	cloudFallbackModel: string | null = null,
 ): void {
 	useEffect(() => {
 		if (!catalogLoaded) {
@@ -205,6 +231,7 @@ export function useStaleModelFallback(
 			catalogModels,
 			statesById,
 			statesLoaded,
+			cloudFallbackModel,
 		);
 		if (patch) {
 			update(patch);
@@ -215,6 +242,7 @@ export function useStaleModelFallback(
 		statesById,
 		statesLoaded,
 		currentMainModel,
+		cloudFallbackModel,
 		update,
 	]);
 

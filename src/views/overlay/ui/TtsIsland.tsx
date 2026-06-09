@@ -7,6 +7,7 @@ import {
 	useVisualizerStore,
 } from "@/features/audio-visualizer";
 import { ttsSetSpeed } from "@/shared/api/ipc-client";
+import { Spinner } from "@/shared/ui/spinner";
 import {
 	DynamicIsland,
 	DynamicIslandProvider,
@@ -176,6 +177,7 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 	const speed = useSettingsStore((s) =>
 		cloud ? (s.settings.tts?.cloud?.speed ?? 1) : (s.settings.tts?.speed ?? 1),
 	);
+	const loading = status === "loading";
 	const paused = status === "paused";
 	return (
 		<DynamicIsland
@@ -186,7 +188,14 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 		>
 			<div className="flex h-full items-center justify-between gap-2 px-4">
 				<div className="flex items-center">
-					{paused ? (
+					{loading ? (
+						<div className="flex size-6 items-center justify-center text-white/70">
+							<Spinner
+								aria-label="Generating speech"
+								className="size-3 border-[1.5px]"
+							/>
+						</div>
+					) : paused ? (
 						<div className="flex size-6 items-center justify-center text-white/60">
 							<IslandControlGlyph kind="pause" size={12} />
 						</div>
@@ -196,14 +205,16 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 				</div>
 				<div className="pointer-events-auto flex items-center gap-2">
 					<SpeedButton cloud={cloud} speed={speed} />
-					<IslandControlButton
-						kind={paused ? "play" : "pause"}
-						label={paused ? "Resume reading" : "Pause reading"}
-						onClick={paused ? resumeTts : pauseTts}
-					/>
+					{loading ? null : (
+						<IslandControlButton
+							kind={paused ? "play" : "pause"}
+							label={paused ? "Resume reading" : "Pause reading"}
+							onClick={paused ? resumeTts : pauseTts}
+						/>
+					)}
 					<IslandControlButton
 						kind="discard"
-						label="Stop reading"
+						label={loading ? "Cancel speech generation" : "Stop reading"}
 						onClick={discardTts}
 					/>
 				</div>

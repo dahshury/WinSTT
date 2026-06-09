@@ -397,6 +397,42 @@ describe("LlmSettingsPanel helpers — resolveOllamaModelReconcilePatch", () => 
 		).toEqual({ model: "", enabled: false });
 	});
 
+	test("switches enabled Ollama feature to OpenRouter when no local models remain and cloud is configured", () => {
+		expect(
+			helpers.resolveOllamaModelReconcilePatch(
+				"ollama",
+				[],
+				"deleted",
+				true,
+				"sk-or-test",
+				"",
+			),
+		).toEqual({
+			enabled: true,
+			model: "",
+			openrouterModel: helpers.DEFAULT_OPENROUTER_MODEL,
+			provider: "openrouter",
+		});
+	});
+
+	test("preserves existing OpenRouter model when falling back to cloud", () => {
+		expect(
+			helpers.resolveOllamaModelReconcilePatch(
+				"ollama",
+				[],
+				"deleted",
+				true,
+				"sk-or-test",
+				"anthropic/claude-sonnet-4",
+			),
+		).toEqual({
+			enabled: true,
+			model: "",
+			openrouterModel: "anthropic/claude-sonnet-4",
+			provider: "openrouter",
+		});
+	});
+
 	test("does not patch an already-disabled empty Ollama selection", () => {
 		expect(
 			helpers.resolveOllamaModelReconcilePatch("ollama", [], "", false),

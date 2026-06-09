@@ -611,6 +611,40 @@ describe("useLlmCatalogStore.deleteModel", () => {
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
 	});
 
+	test("queues a fresh scan when deletion happens during an existing scan", async () => {
+		fetchSpy.mockClear();
+		let resolveFirstScan: (
+			value: Awaited<ReturnType<typeof fetchSpy>>,
+		) => void = () => undefined;
+		fetchSpy
+			.mockImplementationOnce(
+				() =>
+					new Promise<Awaited<ReturnType<typeof fetchSpy>>>((resolve) => {
+						resolveFirstScan = resolve;
+					}),
+			)
+			.mockImplementationOnce(async () => ({
+				models: [{ name: "fallback", size: 1, modifiedAt: "" }],
+				reachable: true,
+			}));
+
+		const initialScan = useLlmCatalogStore.getState().scanModels();
+		await Promise.resolve();
+		const deleteResult = useLlmCatalogStore.getState().deleteModel("llama3");
+
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		resolveFirstScan({
+			models: [{ name: "llama3", size: 1, modifiedAt: "" }],
+			reachable: true,
+		});
+		await Promise.all([initialScan, deleteResult]);
+
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+		expect(useLlmCatalogStore.getState().models).toEqual([
+			{ name: "fallback", size: 1, modifiedAt: "" },
+		]);
+	});
+
 	test("returns error without scan when deletion fails", async () => {
 		fetchSpy.mockClear();
 		// Mock deleteOllamaModel to return failure — done via module-level mock override

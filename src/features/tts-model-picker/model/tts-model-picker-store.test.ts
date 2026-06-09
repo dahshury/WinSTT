@@ -19,14 +19,23 @@ describe("useTtsModelPickerStore", () => {
 		const s = useTtsModelPickerStore.getState();
 		expect(s.open).toBe(true);
 		expect(s.enableOnInstall).toBe(true);
+		expect(s.sourceOnInstall).toBeNull();
+	});
+
+	test("openFor can remember a local-source commit", () => {
+		useTtsModelPickerStore.getState().openFor(true, "local");
+		const s = useTtsModelPickerStore.getState();
+		expect(s.open).toBe(true);
+		expect(s.sourceOnInstall).toBe("local");
 	});
 
 	test("close resets the coordination state", () => {
-		useTtsModelPickerStore.getState().openFor(true);
+		useTtsModelPickerStore.getState().openFor(true, "local");
 		useTtsModelPickerStore.getState().close();
 		const s = useTtsModelPickerStore.getState();
 		expect(s.open).toBe(false);
 		expect(s.enableOnInstall).toBe(false);
+		expect(s.sourceOnInstall).toBeNull();
 	});
 
 	test("commitInstalled with enable intent turns read-aloud on with the model", () => {
@@ -37,6 +46,21 @@ describe("useTtsModelPickerStore", () => {
 		const tts = useSettingsStore.getState().settings.tts;
 		expect(tts.model).toBe("piper-en-us");
 		expect(tts.enabled).toBe(true);
+	});
+
+	test("commitInstalled can switch back to the local source after a forced local pick", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initial,
+				tts: { ...initial.tts, enabled: true, source: "cloud" },
+			},
+		});
+		useTtsModelPickerStore.getState().openFor(true, "local");
+		useTtsModelPickerStore.getState().commitInstalled("piper-en-us");
+		const tts = useSettingsStore.getState().settings.tts;
+		expect(tts.model).toBe("piper-en-us");
+		expect(tts.enabled).toBe(true);
+		expect(tts.source).toBe("local");
 	});
 
 	test("enable with an empty hotkey folds the default speak binding in", () => {

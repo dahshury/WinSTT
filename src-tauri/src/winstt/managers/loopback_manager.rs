@@ -445,7 +445,8 @@ fn transcribe_and_emit(app: &AppHandle, transcription: &TranscriptionManager, au
         Ok(t) => t,
         Err(e) => {
             log::error!("[loopback] transcription failed: {e}");
-            SttEvents::transcription_failed(app);
+            let message = e.to_string();
+            SttEvents::transcription_failed(app, Some(&message));
             return;
         }
     };

@@ -1327,7 +1327,7 @@ describe("OverlayPage", () => {
 		).not.toBeNull();
 	});
 
-	test("keeps TTS in the island and forces STT to the floating pill during overlap", () => {
+	test("keeps STT in the island and pauses TTS during overlap", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
@@ -1352,8 +1352,39 @@ describe("OverlayPage", () => {
 		const { container, getByRole } = renderOverlay();
 
 		expect(useTtsPlaybackStore.getState().status).toBe("paused");
-		expect(container.querySelector("#winstt-tts-island")).not.toBeNull();
-		expect(container.querySelector("#winstt-overlay-island")).toBeNull();
+		expect(container.querySelector("#winstt-tts-island")).toBeNull();
+		expect(container.querySelector("#winstt-overlay-island")).not.toBeNull();
+		expect(
+			getByRole("button", { name: /cancel transcription/i }),
+		).not.toBeNull();
+	});
+
+	test("stale TTS error does not replace the STT island layout", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: {
+					...initialSettings.general,
+					overlayMode: "dynamic-island",
+					liveTranscriptionDisplay: "both",
+				},
+			},
+		});
+		useTtsPlaybackStore.setState({
+			status: "error",
+			requestId: null,
+			error: "failed",
+		});
+		useTranscriptionStore.setState({
+			currentRealtime: "dictating",
+			ephemeral: null,
+			isRecordingActive: true,
+		});
+
+		const { container, getByRole } = renderOverlay();
+
+		expect(container.querySelector("#winstt-tts-island")).toBeNull();
+		expect(container.querySelector("#winstt-overlay-island")).not.toBeNull();
 		expect(
 			getByRole("button", { name: /cancel transcription/i }),
 		).not.toBeNull();

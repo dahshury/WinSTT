@@ -59,6 +59,7 @@ interface HookArgs {
 	catalogModels: ModelInfo[];
 	currentMainModel: string | undefined;
 	currentRealtimeModel: string | undefined;
+	cloudFallbackModel?: string | null;
 	statesById: StatesById;
 	statesLoaded?: boolean;
 	update: Update;
@@ -75,6 +76,8 @@ function renderFallback(args: HookArgs) {
 				p.currentMainModel,
 				p.currentRealtimeModel,
 				p.update,
+				undefined,
+				p.cloudFallbackModel ?? null,
 			),
 		{ initialProps: args },
 	);
@@ -241,6 +244,27 @@ describe("useStaleModelFallback", () => {
 			update,
 		});
 		expect(update).not.toHaveBeenCalled();
+	});
+
+	test("falls back the main model to cloud when no cached local model remains and cloud is keyed", () => {
+		const update = mock<Update>(() => undefined);
+		renderFallback({
+			catalogLoaded: true,
+			catalogModels: CATALOG,
+			statesById: {
+				tiny: stateEntry(100, false),
+				base: stateEntry(200, false),
+				large: stateEntry(900, false),
+			},
+			currentMainModel: "base",
+			currentRealtimeModel: "",
+			cloudFallbackModel: "elevenlabs:scribe_v1",
+			update,
+		});
+		expect(update).toHaveBeenCalledWith({
+			model: "elevenlabs:scribe_v1",
+			backend: "onnx_asr",
+		});
 	});
 
 	test("falls back the main model AND patches backend together when the saved id is stale", () => {

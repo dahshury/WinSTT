@@ -48,6 +48,9 @@ import {
 import { useCloudTtsVoices } from "../model/use-cloud-tts-voices";
 import { useTtsDownloadProgress } from "../model/use-tts-download-progress";
 import {
+	buildTtsEnablePatch,
+	isTtsModelCached,
+	pickCachedTtsModel,
 	resolveTtsEnabledModelPatch,
 	useTtsInstallGate,
 } from "../model/use-tts-install-gate";
@@ -57,6 +60,7 @@ import {
 	useTtsCatalogStore,
 	useTtsModelStateStore,
 } from "@/entities/tts-catalog";
+import { useTtsModelPickerStore } from "@/features/tts-model-picker";
 import { useTtsModelDownloads } from "../model/use-tts-model-downloads";
 import { useTtsVoiceCatalog } from "../model/use-tts-voice-catalog";
 import { CloudTtsControls } from "./CloudTtsControls";
@@ -151,6 +155,7 @@ export function TtsModelSection() {
 	const voice = tts?.voice ?? "af_heart";
 	const lang = tts?.lang ?? DEFAULT_SETTINGS.tts.lang;
 	const speed = tts?.speed ?? DEFAULT_SETTINGS.tts.speed;
+	const hotkey = tts?.hotkey ?? "";
 
 	const catalog = useTtsVoiceCatalog(enabled, model, voice, update);
 	// Multi-provider TTS model picker data + per-quant download wiring.
@@ -163,6 +168,10 @@ export function TtsModelSection() {
 	} = useTtsModelDownloads();
 	const currentTtsQuant = ttsStatesById[model]?.effectiveQuantization ?? "";
 	const selectedModelInfo = useTtsCatalogStore((s) => s.getModel(model));
+	const selectedLocalModelCached = isTtsModelCached(ttsStatesById[model]);
+	const cachedLocalModel = ttsStatesLoaded
+		? pickCachedTtsModel(ttsModels, ttsStatesById)
+		: null;
 	const isCloningModel = (selectedModelInfo?.cloning ?? "none") !== "none";
 	const isSupertonicModel =
 		selectedModelInfo?.engine === "supertonic" || model === SUPERTONIC_MODEL_ID;
@@ -174,6 +183,7 @@ export function TtsModelSection() {
 		: speed;
 	useEffect(() => {
 		const patch = resolveTtsEnabledModelPatch({
+			cloudFallbackAllowed: cloudAllowed,
 			enabled,
 			isCloud,
 			model,
@@ -185,6 +195,7 @@ export function TtsModelSection() {
 			update(patch);
 		}
 	}, [
+		cloudAllowed,
 		enabled,
 		isCloud,
 		model,
@@ -375,15 +386,53 @@ export function TtsModelSection() {
 	// straight away. Local routes through the gate so the Kokoro install dialog
 	// can intercept the off→on edge.
 	const handleEnabledToggle = (next: boolean): void => {
-		if (isCloud) {
-			update({ enabled: next });
+		if (!next) {
+			if (isCloud) {
+				update({ enabled: false });
+				return;
+			}
+			handleLocalEnabledToggle(false);
 			return;
 		}
-		handleLocalEnabledToggle(next);
+		if (isCloud) {
+			update(buildTtsEnablePatch(hotkey, DEFAULT_SETTINGS.tts.hotkey));
+			return;
+		}
+		if (selectedLocalModelCached || !cloudAllowed) {
+			handleLocalEnabledToggle(true);
+			return;
+		}
+		if (cachedLocalModel) {
+			update({
+				...buildTtsEnablePatch(hotkey, DEFAULT_SETTINGS.tts.hotkey),
+				model: cachedLocalModel,
+			});
+			return;
+		}
+		if (ttsStatesLoaded) {
+			update({
+				...buildTtsEnablePatch(hotkey, DEFAULT_SETTINGS.tts.hotkey),
+				source: "cloud",
+			});
+			return;
+		}
+		handleLocalEnabledToggle(true);
 	};
 
 	const handleSourceChange = (next: "local" | "cloud"): void => {
-		update({ source: next });
+		if (next === "cloud" || !enabled || !cloudAllowed) {
+			update({ source: next });
+			return;
+		}
+		if (selectedLocalModelCached) {
+			update({ source: "local" });
+			return;
+		}
+		if (cachedLocalModel) {
+			update({ source: "local", model: cachedLocalModel });
+			return;
+		}
+		useTtsModelPickerStore.getState().openFor(true, "local");
 	};
 
 	// Local ⇄ Cloud segmented switch — mirrors the STT model `SourceArea`.

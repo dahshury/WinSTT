@@ -179,6 +179,7 @@ interface FeatureBlockComponentProps extends FeatureBlockProps {
 		label: string;
 		value: string;
 	}>;
+	retryOllamaWarmup: () => Promise<void>;
 }
 
 export function FeatureBlock(props: FeatureBlockComponentProps) {
@@ -193,6 +194,7 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 		openrouterApiKey,
 		ollamaReachable,
 		providerOpts,
+		retryOllamaWarmup,
 		setShowOllamaDialog,
 		setShowApiKeyDialog,
 		setShowModelPicker,
@@ -292,7 +294,7 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 					<WarmupStatusBanner
 						feature={feature}
 						model={featureSnapshot.model}
-						onRetry={checkOllamaReachable}
+						onRetry={retryOllamaWarmup}
 						provider={featureSnapshot.provider}
 						status={warmupStatus}
 					/>
