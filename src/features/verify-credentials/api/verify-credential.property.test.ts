@@ -22,27 +22,39 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import fc from "fast-check";
+import * as realBindings from "@/bindings";
 import { useCredentialStatusStore } from "@/entities/cloud-stt-credential";
 import type {
 	CloudSttErrorCode,
 	IntegrationCloudProvider,
 } from "@/shared/api/models";
 
-const mockInvoke = mock(async (_channel: string, _payload?: unknown) => ({
-	ok: true,
+// `invokeVerify` now calls the generated `commands.verifyCredential` binding
+// directly; mock it to return the tauri-specta `Result` (`{ status:"ok", data }`).
+const mockVerify = mock(async (_provider: string, _apiKey: string) => ({
+	status: "ok" as const,
+	data: { ok: true } as { ok: boolean; code?: string; message?: string },
 }));
 
-mock.module("@/shared/api/ipc-client", () => ({
-	...ipcClientMock(),
-	ipcInvoke: (channel: string, payload?: unknown) =>
-		mockInvoke(channel, payload),
+// Spread the REAL bindings and override only `verifyCredential` — a bare
+// `{ commands: { verifyCredential } }` would clobber every other `commands.*`
+// for any test that runs later in the same worker (bun `mock.module` is global).
+mock.module("@/bindings", () => ({
+	...realBindings,
+	commands: {
+		...realBindings.commands,
+		verifyCredential: (provider: string, apiKey: string) =>
+			mockVerify(provider, apiKey),
+	},
 }));
+
+mock.module("@/shared/api/ipc-client", () => ipcClientMock());
 
 const { applyVerifyResponse, errorMessage, invokeVerify, missingKeyResponse } =
 	await import("./verify-credential");
 
 beforeEach(() => {
-	mockInvoke.mockReset();
+	mockVerify.mockReset();
 	useCredentialStatusStore.setState({
 		byProvider: {
 			elevenlabs: { status: "idle" },
@@ -260,7 +272,7 @@ describe("invokeVerify — error-classification property", () => {
 					fc.constant(undefined),
 				),
 				async (provider, key, errVal) => {
-					mockInvoke.mockImplementationOnce(() => Promise.reject(errVal));
+					mockVerify.mockImplementationOnce(() => Promise.reject(errVal));
 					const r = await invokeVerify(provider, key);
 					return r.ok === false && r.code === "network";
 				},
@@ -278,7 +290,10 @@ describe("invokeVerify — error-classification property", () => {
 				errorCodeArb,
 				async (provider, key, ok, code) => {
 					const expected = { ok, code: code as CloudSttErrorCode };
-					mockInvoke.mockImplementationOnce(async () => expected);
+					mockVerify.mockImplementationOnce(async () => ({
+						status: "ok" as const,
+						data: expected,
+					}));
 					const r = await invokeVerify(provider, key);
 					return r.ok === expected.ok && r.code === expected.code;
 				},

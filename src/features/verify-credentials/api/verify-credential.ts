@@ -1,9 +1,9 @@
+import { commands } from "@/bindings";
 import { useCredentialStatusStore } from "@/entities/cloud-stt-credential";
 import { useSettingsStore } from "@/entities/setting";
-import { IPC } from "@/shared/api/ipc-channels";
-import { ipcInvoke } from "@/shared/api/ipc-client";
 import type {
 	CloudSttErrorCode,
+	CloudSttProvider,
 	IntegrationCloudProvider,
 } from "@/shared/api/models";
 
@@ -11,6 +11,30 @@ interface VerifyResponse {
 	code?: CloudSttErrorCode;
 	message?: string;
 	ok: boolean;
+}
+
+/**
+ * The ONE renderer verify seam — calls the generated `verify_credential`
+ * binding directly (no IPC string channel) and collapses its tauri-specta
+ * `Result` to the bare `VerifyResponse`: `ok` → the payload; `error` → THROW
+ * (the caller's `try/catch` maps it to `{ ok:false, code:"network" }`), exactly
+ * as the old `ipcInvoke(INTEGRATIONS_VERIFY)` → `unwrapResult` did. Shared by
+ * every verify call site so the unwrap rule lives in one place.
+ */
+export async function verifyCredentialCommand(
+	provider: CloudSttProvider,
+	apiKey: string,
+): Promise<VerifyResponse> {
+	const result = await commands.verifyCredential(provider, apiKey);
+	if (result.status === "error") {
+		throw result.error;
+	}
+	const { ok, code, message } = result.data;
+	return {
+		ok,
+		...(code != null ? { code: code as CloudSttErrorCode } : {}),
+		...(message != null ? { message } : {}),
+	};
 }
 
 /** Stable response when the API key is blank — never hits IPC (CC 1). */
@@ -33,10 +57,7 @@ export async function invokeVerify(
 	apiKey: string,
 ): Promise<VerifyResponse> {
 	try {
-		return await ipcInvoke<VerifyResponse>(IPC.INTEGRATIONS_VERIFY, {
-			provider,
-			apiKey,
-		});
+		return await verifyCredentialCommand(provider, apiKey);
 	} catch (err) {
 		const message = errorMessage(err);
 		return { ok: false, code: "network", message };

@@ -245,6 +245,13 @@ function unwrapSpeakResult(
 	throw result.error;
 }
 
+function unwrapResult<T>(result: Result<T, string>): T {
+	if (result.status === "ok") {
+		return result.data;
+	}
+	throw result.error;
+}
+
 export interface TtsChunkPayload {
 	channels: number;
 	format: string;
@@ -757,6 +764,13 @@ export const onLlmLearnedProperNouns = (
 // surface treats `null` as "no warmup info yet, hide the banner".
 export const getLlmWarmupStatus = () =>
 	invokeOrDefault<LlmWarmupStatus | null>(IPC.LLM_GET_WARMUP_STATUS, null);
+
+export const retryLlmWarmup = (): Promise<LlmWarmupStatus | null> =>
+	commandOrDefault(
+		"llm_retry_warmup",
+		async () => unwrapResult(await commands.llmRetryWarmup()),
+		null,
+	);
 
 export const onLlmWarmupStatus = (
 	cb: (status: LlmWarmupStatus | null) => void,

@@ -1,14 +1,29 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { IPC } from "@/shared/api/ipc-channels";
 import { TitleBar } from "./TitleBar";
+
+// WINDOW_OPEN_SETTINGS is now a typed COMMAND_INVOKERS channel → `open_window`,
+// so the settings button reaches the backend through the generated binding
+// (TAURI invoke) rather than the adapter `nativeBridge.send`. Record both so the
+// settings click and the (still-send) minimize/close ops can each be asserted.
+const tauriCalls: Array<{ args: unknown; cmd: string }> = [];
+
+mock.module("@tauri-apps/api/core", () => ({
+	invoke: (cmd: string, args?: Record<string, unknown>) => {
+		tauriCalls.push({ cmd, args });
+		return Promise.resolve(undefined);
+	},
+	Channel: class {},
+}));
 
 const originalApi = window.nativeBridge;
 let sendCalls: Array<{ channel: string; args: unknown[] }>;
 
 beforeEach(() => {
 	sendCalls = [];
+	tauriCalls.length = 0;
 	window.nativeBridge = {
 		...originalApi,
 		send: (channel: string, ...args: unknown[]) => {
@@ -59,13 +74,18 @@ describe("TitleBar", () => {
 		expect(buttons.length).toBeGreaterThanOrEqual(3);
 	});
 
-	test("clicking the settings button sends WINDOW_OPEN_SETTINGS", () => {
+	test("clicking the settings button opens the settings window", () => {
 		renderWithIntl();
 		const buttons = screen.getAllByRole("button");
 		fireEvent.click(buttons[0]!);
-		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_OPEN_SETTINGS)).toBe(
-			true,
-		);
+		// Typed command path: `open_window("settings")`, not a nativeBridge.send.
+		expect(
+			tauriCalls.some(
+				(c) =>
+					c.cmd === "open_window" &&
+					(c.args as { name?: string }).name === "settings",
+			),
+		).toBe(true);
 	});
 
 	test("clicking minimize and close sends their channels", () => {

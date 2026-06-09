@@ -114,11 +114,13 @@ export const IPC = {
 	WINDOW_SHOW: "window:show",
 	WINDOW_QUIT: "window:quit",
 
-	// Tray menu (renderer → main)
-	TRAY_MENU_CLOSE: "tray-menu:close",
-	TRAY_MENU_RESIZE: "tray-menu:resize",
+	// Tray-menu close/resize and the detached device-picker open/close/resize are
+	// handled by the typed `windowCloseNamed`/`windowResizeNamed` wrappers
+	// (`commands.closeWindow`/`resizeWindow`), so they have no string channel here.
 
-	// Detached model-picker window (renderer → main)
+	// Detached model-picker window: OPEN/CLOSE/RESIZE are typed in
+	// COMMAND_INVOKERS (call `open_window`/`close_window`/`resize_window`); only
+	// the two placement events below are still string channels.
 	MODEL_PICKER_OPEN: "model-picker:open",
 	MODEL_PICKER_CLOSE: "model-picker:close",
 	MODEL_PICKER_RESIZE: "model-picker:resize",
@@ -130,23 +132,14 @@ export const IPC = {
 	// after the dropdown close duration.
 	MODEL_PICKER_CLOSING: "model-picker:closing",
 
-	// Detached input-device-picker window (renderer → main)
-	DEVICE_PICKER_OPEN: "device-picker:open",
-	DEVICE_PICKER_CLOSE: "device-picker:close",
-	DEVICE_PICKER_RESIZE: "device-picker:resize",
-
 	// Context-awareness playground (DEBUG-ONLY — gated by
 	// `shared/config/debug-flags.ts` CONTEXT_PLAYGROUND_ENABLED; never wired
 	// when the flag is off, so end users never see these channels).
-	// OPEN: tray debug menu request; the typed Tauri path opens the same window.
-	// SET_LIVE: renderer → main, toggle the foreground-polling loop.
-	// ARM_DEEP: renderer → main, run all four UIA modes on the next external focus.
-	// CLOSE: renderer → main, hide the window.
-	// REPORT: main → renderer, push a capture report (or a "waiting" heartbeat).
-	CONTEXT_PLAYGROUND_OPEN: "context-playground:open",
-	CONTEXT_PLAYGROUND_SET_LIVE: "context-playground:set-live",
-	CONTEXT_PLAYGROUND_ARM_DEEP: "context-playground:arm-deep",
-	CONTEXT_PLAYGROUND_CLOSE: "context-playground:close",
+	// The OPEN/CLOSE/SET_LIVE/ARM_DEEP commands are issued via the typed
+	// `windowOpenContextPlayground`/`windowCloseNamed`/`contextPlaygroundSetLive`/
+	// `contextPlaygroundArmDeep` wrappers (`commands.*`), so only the push REPORT
+	// channel remains. REPORT: main → renderer, push a capture report (or a
+	// "waiting" heartbeat).
 	CONTEXT_PLAYGROUND_REPORT: "context-playground:report",
 
 	// First-run onboarding wizard (renderer → main).
@@ -227,13 +220,11 @@ export const IPC = {
 	LLM_FETCH_OLLAMA_LIBRARY: "llm:fetch-ollama-library",
 	LLM_FETCH_OLLAMA_TAGS: "llm:fetch-ollama-tags",
 
-	// Integrations / cloud STT credentials (renderer → main)
-	// VERIFY is the only handler — set/remove flow through the existing
-	// SETTINGS_SAVE pipe (apiKey is a normal settings field, encrypted at
-	// rest by the secret-storage layer). VERIFY probes the provider's
-	// cheapest auth-checking endpoint and persists verified/lastVerifiedAt
-	// back into the store via SETTINGS_CHANGED.
-	INTEGRATIONS_VERIFY: "integrations:verify",
+	// Integrations / cloud STT credential verification (`verify_credential`) is
+	// issued via the typed `verifyCredentialCommand` wrapper
+	// (features/verify-credentials → `commands.verifyCredential`), so it has no
+	// string channel here. set/remove still flow through the SETTINGS_SAVE pipe
+	// (apiKey is a normal settings field, encrypted at rest).
 
 	// Cloud STT model discovery (renderer → main): list OpenRouter transcription
 	// models (output_modalities=transcription) for the cloud picker. Uses the
@@ -569,27 +560,16 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.WINDOW_SHOW]: ["send"],
 	[IPC.WINDOW_QUIT]: ["send"],
 
-	// Tray menu
-	[IPC.TRAY_MENU_CLOSE]: ["send"],
-	[IPC.TRAY_MENU_RESIZE]: ["send"],
-
-	// Detached model-picker window
+	// Detached model-picker window (OPEN/CLOSE/RESIZE are typed commands now;
+	// only the two placement events carry a bridge direction).
 	[IPC.MODEL_PICKER_OPEN]: ["send"],
 	[IPC.MODEL_PICKER_CLOSE]: ["send"],
 	[IPC.MODEL_PICKER_RESIZE]: ["send"],
 	[IPC.MODEL_PICKER_ANCHOR]: ["on"],
 	[IPC.MODEL_PICKER_CLOSING]: ["on"],
 
-	// Detached input-device-picker window
-	[IPC.DEVICE_PICKER_OPEN]: ["send"],
-	[IPC.DEVICE_PICKER_CLOSE]: ["send"],
-	[IPC.DEVICE_PICKER_RESIZE]: ["send"],
-
-	// Context-awareness playground (debug-only)
-	[IPC.CONTEXT_PLAYGROUND_OPEN]: ["send"],
-	[IPC.CONTEXT_PLAYGROUND_SET_LIVE]: ["send"],
-	[IPC.CONTEXT_PLAYGROUND_ARM_DEEP]: ["send"],
-	[IPC.CONTEXT_PLAYGROUND_CLOSE]: ["send"],
+	// Context-awareness playground (debug-only) — only the push REPORT event
+	// remains; the command channels are issued via typed `commands.*` wrappers.
 	[IPC.CONTEXT_PLAYGROUND_REPORT]: ["on"],
 
 	// First-run onboarding
@@ -655,8 +635,8 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: ["invoke"],
 	[IPC.LLM_FETCH_OLLAMA_TAGS]: ["invoke"],
 
-	// Integrations / cloud STT credentials
-	[IPC.INTEGRATIONS_VERIFY]: ["invoke"],
+	// Cloud STT / TTS OpenRouter model discovery (credential VERIFY now goes
+	// through the typed `verifyCredentialCommand` wrapper — no channel here).
 	[IPC.STT_SCAN_OPENROUTER_MODELS]: ["invoke"],
 	[IPC.TTS_SCAN_OPENROUTER_MODELS]: ["invoke"],
 

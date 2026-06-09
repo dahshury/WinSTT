@@ -363,12 +363,11 @@ describe("send wrappers (still on the adapter)", () => {
 		expect(tauriCalls).toHaveLength(0);
 	});
 
-	test("window controls send their channels (window-family — not migrated)", () => {
+	test("window controls send their channels (window-op family — not migrated)", () => {
 		const api = installMockApi();
 		ipc.windowMinimize();
 		ipc.windowMaximize();
 		ipc.windowClose();
-		ipc.windowOpenSettings();
 		const channels = (
 			api.send as unknown as { mock: { calls: unknown[][] } }
 		).mock.calls.map((c) => c[0]);
@@ -376,9 +375,30 @@ describe("send wrappers (still on the adapter)", () => {
 			IPC.WINDOW_MINIMIZE,
 			IPC.WINDOW_MAXIMIZE,
 			IPC.WINDOW_CLOSE,
-			IPC.WINDOW_OPEN_SETTINGS,
 		]);
+		// minimize/maximize/close are window-op routes (no backend command).
 		expect(tauriCalls).toHaveLength(0);
+	});
+
+	test("windowOpenSettings routes through the typed open_window command", () => {
+		const api = installMockApi();
+		ipc.windowOpenSettings();
+		// WINDOW_OPEN_SETTINGS is typed in COMMAND_INVOKERS → `open_window("settings")`;
+		// the adapter string-channel send is bypassed.
+		expect(api.send).not.toHaveBeenCalled();
+		expect(lastTauriCall()).toEqual({
+			cmd: "open_window",
+			args: {
+				name: "settings",
+				x: null,
+				y: null,
+				width: null,
+				height: null,
+				pickerKind: null,
+				pickerFeature: null,
+				pickerTarget: null,
+			},
+		});
 	});
 
 	test("settingsWindowReady / windowCloseSelf route through typed commands", () => {
@@ -511,6 +531,25 @@ describe("wrappers migrated to direct commands.* (no channel)", () => {
 		});
 		expect(api.invoke).not.toHaveBeenCalled();
 	});
+
+	test("retryLlmWarmup calls llm_retry_warmup and returns the latest snapshot", async () => {
+		installMockApi();
+		const snapshot = {
+			endpoint: "http://localhost:11434",
+			inProgress: false,
+			models: [{ model: "gemma3:4b", outcome: "ok" }],
+			ollamaInstalled: true,
+			reachable: true,
+			timestamp: 1_700_000_000_000,
+		};
+		setTauriInvoke(() => snapshot);
+
+		await expect(ipc.retryLlmWarmup()).resolves.toEqual(snapshot);
+		expect(lastTauriCall()).toEqual({
+			cmd: "llm_retry_warmup",
+			args: undefined,
+		});
+	});
 });
 
 // The contextBridge clone guard (`toCloneableArgs`) only runs on the nativeBridge
@@ -520,7 +559,7 @@ describe("wrappers migrated to direct commands.* (no channel)", () => {
 // channels (`autostart:set` send / `autostart:get` invoke) instead — same guard,
 // real adapter path.
 describe("diagnostics wrappers", () => {
-	test("diagOpenLogsFolder routes through the opener channel", async () => {
+	test("diagOpenLogsFolder routes through the logs opener channel", async () => {
 		const api = installMockApi({
 			invokeImpl: (channel) =>
 				channel === IPC.DIAG_OPEN_LOGS_FOLDER
@@ -1335,11 +1374,10 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 		ipc.windowMinimize();
 		ipc.windowMaximize();
 		ipc.windowClose();
-		ipc.windowOpenSettings();
 		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_MINIMIZE);
 		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_MAXIMIZE);
 		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_CLOSE);
-		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_OPEN_SETTINGS);
+		// windowOpenSettings is a typed open_window command — covered separately.
 	});
 
 	test("loopbackStart forwards device index to start_listen", () => {

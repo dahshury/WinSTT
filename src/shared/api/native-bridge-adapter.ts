@@ -4,13 +4,16 @@
 // `window.nativeBridge` polyfill backed by `@tauri-apps/api` so the entire
 // ~401-file WinSTT renderer (and `ipc-client.ts` itself) runs VERBATIM. Every
 // `nativeBridge.{send,invoke,secureInvoke,on,getPathForFile}` call routes either
-// through typed `COMMAND_INVOKERS` in `ipc-transport.ts` or through the legacy
-// ROUTE table below for event/plugin/window/noop compatibility cases:
-//   - a Tauri command    (invoke(cmd, args))
+// through typed `COMMAND_INVOKERS` in `ipc-transport.ts` (EVERY renderer→main
+// command — each entry calls a generated `commands.*` binding) or through the
+// ROUTE table below for the remaining event/plugin/window/noop cases:
 //   - a Tauri event      (listen(event, cb))
 //   - a window op        (getCurrentWindow().minimize() …)
 //   - a Tauri plugin     (dialog / clipboard / os / opener / updater / autostart)
 //   - a polyfill / noop  (no backend, shimmed locally)
+//
+// There is no longer a `kind:"command"` ROUTE variant — type-safe command
+// routing lives entirely in `COMMAND_INVOKERS`.
 //
 // Encryption (secureInvoke) collapses to plain invoke: Tauri's IPC is already
 // process-isolated, so the reference secure channel has no analogue.
@@ -62,8 +65,11 @@ type WindowOp =
 	| "quit"
 	| "ignore-mouse";
 
+// Every renderer→main COMMAND now routes through the typed COMMAND_INVOKERS map
+// in `ipc-transport.ts` (each entry calls a generated `commands.*` binding), so
+// the adapter ROUTE table carries only event / window-op / plugin / noop kinds —
+// there is no longer a `kind:"command"` variant.
 type Route =
-	| { kind: "command"; cmd: string; inject?: Record<string, unknown> }
 	| { kind: "event"; event: string }
 	| { kind: "window"; op: WindowOp }
 	| { kind: "plugin"; plugin: PluginTarget }
@@ -110,6 +116,12 @@ interface UpdaterStatusEntry extends UpdaterStatusEntryInput {
 interface UpdaterResult {
 	reason?: string;
 	triggered: boolean;
+}
+
+interface DiagOpenLogsFolderResult {
+	error?: string;
+	ok: boolean;
+	path?: string;
 }
 
 // ── The ROUTE table: WinSTT channel → Tauri target ─────────────────────────────
@@ -266,81 +278,24 @@ const ROUTE: Partial<Record<string, Route>> = {
 	// never reaches Rust); WINDOW_SHOW targets the MAIN window explicitly (not the
 	// tray-menu caller) and force-raises it.
 	[IPC.WINDOW_QUIT]: { kind: "window", op: "quit" },
-	[IPC.WINDOW_OPEN_SETTINGS]: {
-		kind: "command",
-		cmd: "open_window",
-		inject: { name: "settings" },
-	},
-	// SETTINGS_WINDOW_READY is typed in COMMAND_INVOKERS.
-	[IPC.MODEL_PICKER_OPEN]: {
-		kind: "command",
-		cmd: "open_window",
-		inject: { name: "model-picker" },
-	},
-	[IPC.MODEL_PICKER_CLOSE]: {
-		kind: "command",
-		cmd: "close_window",
-		inject: { name: "model-picker" },
-	},
-	[IPC.MODEL_PICKER_RESIZE]: {
-		kind: "command",
-		cmd: "resize_window",
-		inject: { name: "model-picker" },
-	},
+	// WINDOW_OPEN_SETTINGS / MODEL_PICKER_OPEN|CLOSE|RESIZE are typed in
+	// COMMAND_INVOKERS (they call `open_window`/`close_window`/`resize_window`
+	// with the window label as the first positional arg). SETTINGS_WINDOW_READY
+	// is typed there too. Only the picker placement EVENTS stay on the adapter.
 	[IPC.MODEL_PICKER_ANCHOR]: { kind: "event", event: "model-picker:anchor" },
 	[IPC.MODEL_PICKER_CLOSING]: { kind: "event", event: "model-picker:closing" },
-	[IPC.DEVICE_PICKER_OPEN]: {
-		kind: "command",
-		cmd: "open_window",
-		inject: { name: "device-picker" },
-	},
-	[IPC.DEVICE_PICKER_CLOSE]: {
-		kind: "command",
-		cmd: "close_window",
-		inject: { name: "device-picker" },
-	},
-	[IPC.DEVICE_PICKER_RESIZE]: {
-		kind: "command",
-		cmd: "resize_window",
-		inject: { name: "device-picker" },
-	},
-	[IPC.TRAY_MENU_CLOSE]: {
-		kind: "command",
-		cmd: "close_window",
-		inject: { name: "tray-menu" },
-	},
-	[IPC.TRAY_MENU_RESIZE]: {
-		kind: "command",
-		cmd: "resize_window",
-		inject: { name: "tray-menu" },
-	},
+	// DEVICE_PICKER_* and TRAY_MENU_* command channels were RETIRED — the only
+	// renderer callers go through the typed `windowCloseNamed`/`windowResizeNamed`
+	// wrappers (shared/api/ipc/stt-audio.ts → `commands.closeWindow`/`resizeWindow`),
+	// so the string-channel routes had zero callers and the channels are gone.
 	// ONBOARDING_FINISH is typed in COMMAND_INVOKERS.
 
 	// ── Context-awareness playground (debug-only) ──
-	[IPC.CONTEXT_PLAYGROUND_OPEN]: {
-		kind: "command",
-		cmd: "open_window",
-		inject: { name: "context-playground" },
-	},
-	// The live/deep controls drive the Rust poll loop. The backend registers these
-	// commands under `#[cfg(any(debug_assertions, feature = "context-playground"))]`
-	// — i.e. exactly when the playground window can be opened. In a shipped build
-	// (no debug_assertions, feature off) the window never opens, so the renderer
-	// hook never fires these and the missing command ids are never invoked.
-	// SET_LIVE carries `{ enabled }` (start/stop polling); ARM_DEEP takes no args.
-	[IPC.CONTEXT_PLAYGROUND_SET_LIVE]: {
-		kind: "command",
-		cmd: "context_playground_set_live",
-	},
-	[IPC.CONTEXT_PLAYGROUND_ARM_DEEP]: {
-		kind: "command",
-		cmd: "context_playground_arm_deep",
-	},
-	[IPC.CONTEXT_PLAYGROUND_CLOSE]: {
-		kind: "command",
-		cmd: "close_window",
-		inject: { name: "context-playground" },
-	},
+	// CONTEXT_PLAYGROUND_OPEN/CLOSE/SET_LIVE/ARM_DEEP command channels were
+	// RETIRED — the view calls `windowOpenContextPlayground`/`windowCloseNamed`/
+	// `contextPlaygroundSetLive`/`contextPlaygroundArmDeep` (typed `commands.*`
+	// wrappers) directly, so nothing routed through these. Only the push REPORT
+	// event stays on the adapter.
 	[IPC.CONTEXT_PLAYGROUND_REPORT]: {
 		kind: "event",
 		event: "context-playground:report",
@@ -505,20 +460,6 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.UPDATER_STATUS]: { kind: "event", event: "updater:status" },
 };
 
-// ── Arg-shape normalization ────────────────────────────────────────────────────
-function normalizeArgs(args: unknown[]): Record<string, unknown> {
-	const first = args[0];
-	if (first !== null && typeof first === "object" && !Array.isArray(first)) {
-		return first as Record<string, unknown>;
-	}
-	// Array payload or no args → wrap under `value` so the Rust side can
-	// deserialize a single named param if it ever needs to.
-	if (first !== undefined) {
-		return { value: first };
-	}
-	return {};
-}
-
 // ── Event payload reshape ──────────────────────────────────────────────────────
 // Most §4b plain events are byte-identical to WinSTT's IPC shape (identity).
 // The exceptions: wake-word (Tauri `WakeWordDetectedPayload` → `{}`/word),
@@ -671,17 +612,21 @@ async function callPlugin(
 			const os = await import("@tauri-apps/plugin-os");
 			return (await os.locale()) ?? "";
 		}
-		case "opener:logs":
+		case "opener:logs": {
+			try {
+				return await core.invoke<DiagOpenLogsFolderResult>(
+					"diag_open_logs_folder",
+				);
+			} catch (e) {
+				return { ok: false, error: String(e) };
+			}
+		}
 		case "opener:custom-models": {
 			const opener = await import("@tauri-apps/plugin-opener");
 			// The backend owns the real folder path; for the polyfill we route to a
 			// command if present, else fall back to a best-effort no-op success.
 			try {
-				const cmd =
-					target === "opener:logs"
-						? "diag_open_logs_folder"
-						: "open_custom_models_folder";
-				const path = await core.invoke<string>(cmd);
+				const path = await core.invoke<string>("open_custom_models_folder");
 				if (typeof path === "string" && path.length > 0) {
 					await opener.openPath(path);
 				}
@@ -811,23 +756,6 @@ async function wireDragDrop(): Promise<void> {
 	}
 }
 
-// ── Critical-channel surfacing ──────────────────────────────────────────────
-// Backend failures on these flows used to vanish: a `command` invoke that
-// rejected was swallowed (the `send` arm `void`s the promise; the `invoke` arm's
-// rejection was eaten by ipc-client's `invokeOrDefault` catch). A rejected
-// download / model-state / settings-save then looked identical to "no value" —
-// exactly how the "download stuck at 0% / RAM unknown" bugs shipped unreported.
-//
-// For a `send` (fire-and-forget) on a critical channel we cannot return a
-// rejected promise to the caller, so we at least log the rejection LOUDLY here.
-// For an `invoke` the rejection propagates to ipc-client, which re-surfaces it
-// for critical channels (see CRITICAL_REJECT_CHANNELS / CRITICAL_LOG_ONLY_CHANNELS
-// there).
-const CRITICAL_SEND_CHANNELS: ReadonlySet<string> = new Set([
-	IPC.STT_RELOAD_MODEL, // model swap (sent, not invoked) — a failed swap must not be silent
-	IPC.SETTINGS_SAVE, // persisting settings (sent) — a write failure must surface
-]);
-
 // ── Install ──────────────────────────────────────────────────────────────────
 let installed = false;
 
@@ -867,30 +795,15 @@ export function installNativeBridge(): void {
 			if (!route) {
 				// An unmapped send is a renamed/deleted command (a real wiring bug),
 				// not a benign no-op — surface it as an ERROR. (See the invoke arm.)
+				// Commands no longer reach the adapter `send` (they route through the
+				// typed COMMAND_INVOKERS in ipc-transport before this point); only
+				// window-op / plugin sends do.
 				console.error(
 					`[ipc-adapter] unmapped send channel "${channel}" — dropped`,
 				);
 				return;
 			}
-			if (route.kind === "command") {
-				const call = core.invoke(route.cmd, {
-					...normalizeArgs(args),
-					...route.inject,
-				});
-				if (CRITICAL_SEND_CHANNELS.has(channel)) {
-					// Fire-and-forget, but a rejected critical write must not vanish —
-					// log it loudly so the failed swap / save is diagnosable instead of
-					// looking like a no-op. (Non-critical sends stay quiet/tolerant.)
-					void call.catch((err) => {
-						console.error(
-							`[ipc-adapter] critical send "${channel}" → command "${route.cmd}" failed:`,
-							err,
-						);
-					});
-				} else {
-					void call;
-				}
-			} else if (route.kind === "window") {
+			if (route.kind === "window") {
 				void windowOp(route.op, args);
 			} else if (route.kind === "plugin") {
 				void callPlugin(route.plugin, args[0]);
@@ -912,12 +825,6 @@ export function installNativeBridge(): void {
 				);
 				return Promise.resolve(undefined);
 			}
-			if (route.kind === "command") {
-				return core.invoke(route.cmd, {
-					...normalizeArgs(args),
-					...route.inject,
-				});
-			}
 			if (route.kind === "window") {
 				return windowOp(route.op, args);
 			}
@@ -938,19 +845,12 @@ export function installNativeBridge(): void {
 		},
 
 		secureInvoke(channel: string, payload?: unknown): Promise<unknown> {
-			// Encryption dropped — Tauri IPC is process-isolated. Route exactly like invoke.
+			// Encryption dropped — Tauri IPC is process-isolated. The only secure
+			// channels left (clipboard / updater) are plugin routes; commands route
+			// through the typed COMMAND_INVOKERS before reaching the adapter.
 			const route = ROUTE[channel];
-			if (!route) {
-				return Promise.resolve(undefined);
-			}
-			if (route.kind === "plugin") {
+			if (route?.kind === "plugin") {
 				return callPlugin(route.plugin, payload);
-			}
-			if (route.kind === "command") {
-				return core.invoke(
-					route.cmd,
-					(payload ?? {}) as Record<string, unknown>,
-				);
 			}
 			return Promise.resolve(undefined);
 		},

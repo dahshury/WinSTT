@@ -426,13 +426,13 @@ export const copyLastTranscript = (): Promise<boolean> =>
 	commandOrDefault("copy_last_transcript", commands.copyLastTranscript, false);
 
 // ── Diagnostics ──────────────────────────────────────────────────────
-// Open the log folder in the OS file explorer through the native opener route.
-// The backend resolves and creates the real directory; the opener plugin reveals
-// that returned path. `{ ok:false }` is a no-bridge/dev fallback.
+// Open the log folder in the OS file explorer through the native adapter route.
+// The backend resolves, creates, and opens the portable-aware directory;
+// `{ ok:false }` is a no-bridge/dev fallback.
 export interface DiagOpenLogsFolderResult {
-	error?: string;
+	error?: string | null;
 	ok: boolean;
-	path?: string;
+	path?: string | null;
 }
 
 export const diagOpenLogsFolder = (): Promise<DiagOpenLogsFolderResult> =>

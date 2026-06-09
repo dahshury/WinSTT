@@ -374,9 +374,35 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.ONBOARDING_FINISH]: (a) =>
 		commands.onboardingFinish(a as OnboardingFinishArgs),
 
-	// ── Integrations / cloud-STT credential verification ──
-	[IPC.INTEGRATIONS_VERIFY]: (a) =>
-		commands.verifyCredential(a.provider as string, a.apiKey as string),
+	// ── Detached window open/close/resize (the `open_window`/`close_window`/
+	// `resize_window` family). The legacy adapter ROUTE injected `{ name }`;
+	// here the window label is the first positional arg of the generated binding.
+	// `open_window` takes the trigger rect + optional picker-context columns
+	// (kind/feature/target) — all `null` for the plain settings window. ──
+	[IPC.WINDOW_OPEN_SETTINGS]: () =>
+		commands.openWindow("settings", null, null, null, null, null, null, null),
+	[IPC.MODEL_PICKER_OPEN]: (a) =>
+		commands.openWindow(
+			"model-picker",
+			(a.x as number | null | undefined) ?? null,
+			(a.y as number | null | undefined) ?? null,
+			(a.width as number | null | undefined) ?? null,
+			(a.height as number | null | undefined) ?? null,
+			(a.pickerKind as string | null | undefined) ?? null,
+			(a.pickerFeature as string | null | undefined) ?? null,
+			(a.pickerTarget as string | null | undefined) ?? null,
+		),
+	[IPC.MODEL_PICKER_CLOSE]: () => commands.closeWindow("model-picker"),
+	[IPC.MODEL_PICKER_RESIZE]: (a) =>
+		commands.resizeWindow(
+			"model-picker",
+			a.width as number,
+			a.height as number,
+		),
+
+	// Integrations / cloud-STT credential verification (`verify_credential`) is
+	// RETIRED from the channel layer — `verifyCredentialCommand`
+	// (features/verify-credentials) calls `commands.verifyCredential` directly.
 
 	// ── TTS ──
 	[IPC.TTS_SPEAK]: (a) =>

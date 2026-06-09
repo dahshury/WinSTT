@@ -13,12 +13,11 @@ import {
 	providerOf,
 } from "@/entities/cloud-stt-provider";
 import { useSettingsStore } from "@/entities/setting";
-import { IPC } from "@/shared/api/ipc-channels";
-import { ipcInvoke } from "@/shared/api/ipc-client";
 import type {
 	CloudSttErrorCode,
 	IntegrationCloudProvider,
 } from "@/shared/api/models";
+import { verifyCredentialCommand } from "../api/verify-credential";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
@@ -115,10 +114,7 @@ export function ProviderIntegrationSection({
 		credStore.setStatus(provider, { status: "verifying" });
 		let response: VerifyResponse;
 		try {
-			response = await ipcInvoke<VerifyResponse>(IPC.INTEGRATIONS_VERIFY, {
-				provider,
-				apiKey: key,
-			});
+			response = await verifyCredentialCommand(provider, key);
 		} catch (err) {
 			if (myReqId !== reqIdRef.current) {
 				return;

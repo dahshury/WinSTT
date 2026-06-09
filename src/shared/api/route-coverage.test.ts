@@ -53,7 +53,10 @@ function extractRouteCmds(adapterSource: string): string[] {
 /** IPC keys that the adapter routes: every `[IPC.KEY]:` in ROUTE. */
 function extractRouteKeys(adapterSource: string): Set<string> {
 	const start = adapterSource.indexOf("const ROUTE:");
-	const end = adapterSource.indexOf("function normalizeArgs", start);
+	// The ROUTE table closes right before the event-reshape section; use that
+	// comment as the stable end marker (the table no longer has a trailing
+	// `normalizeArgs` helper — commands route through COMMAND_INVOKERS now).
+	const end = adapterSource.indexOf("// ── Event payload reshape", start);
 	if (start === -1 || end === -1 || end <= start) {
 		throw new Error("Could not isolate native bridge ROUTE table");
 	}

@@ -1,16 +1,36 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
+import * as realBindings from "@/bindings";
 import { useCredentialStatusStore } from "@/entities/cloud-stt-credential";
 
-const mockInvoke = mock(async (_channel: string, _payload?: unknown) => ({
-	ok: true,
+// `invokeVerify` now calls the generated `commands.verifyCredential` binding
+// directly (no IPC string channel). Mock it to return the tauri-specta `Result`
+// shape (`{ status:"ok", data }`) so `verifyCredentialCommand`'s unwrap is
+// exercised; a thrown rejection still flows through the network-fallback path.
+const mockVerify = mock(async (_provider: string, _apiKey: string) => ({
+	status: "ok" as const,
+	data: { ok: true } as { ok: boolean; code?: string; message?: string },
 }));
 
-mock.module("@/shared/api/ipc-client", () => ({
-	...ipcClientMock(),
-	ipcInvoke: (channel: string, payload?: unknown) =>
-		mockInvoke(channel, payload),
+// Spread the REAL bindings and override only `verifyCredential`. A bare
+// `{ commands: { verifyCredential } }` would clobber every other `commands.*`
+// for any test that runs later in the same worker (bun `mock.module` is global),
+// silently breaking unrelated suites (e.g. AboutSettingsPanel diagnostics).
+mock.module("@/bindings", () => ({
+	...realBindings,
+	commands: {
+		...realBindings.commands,
+		verifyCredential: (provider: string, apiKey: string) =>
+			mockVerify(provider, apiKey),
+	},
 }));
+
+mock.module("@/shared/api/ipc-client", () => ipcClientMock());
+
+/** Build the success `Result` the binding returns for a given payload. */
+function okResult(data: { ok: boolean; code?: string; message?: string }) {
+	return { status: "ok" as const, data };
+}
 
 const {
 	applyVerifyResponse,
@@ -21,7 +41,7 @@ const {
 } = await import("./verify-credential");
 
 beforeEach(() => {
-	mockInvoke.mockReset();
+	mockVerify.mockReset();
 	useCredentialStatusStore.setState({
 		byProvider: {
 			elevenlabs: { status: "idle" },
@@ -51,14 +71,14 @@ describe("errorMessage", () => {
 });
 
 describe("invokeVerify", () => {
-	test("returns the IPC response on success", async () => {
-		mockInvoke.mockImplementationOnce(async () => ({ ok: true }));
+	test("returns the unwrapped command payload on success", async () => {
+		mockVerify.mockImplementationOnce(async () => okResult({ ok: true }));
 		const r = await invokeVerify("elevenlabs", "sk-abc");
 		expect(r).toEqual({ ok: true });
 	});
 
 	test("maps a thrown error to {ok:false, code:'network'}", async () => {
-		mockInvoke.mockImplementationOnce(async () => {
+		mockVerify.mockImplementationOnce(async () => {
 			throw new Error("ECONNREFUSED");
 		});
 		const r = await invokeVerify("elevenlabs", "sk-abc");
@@ -71,9 +91,19 @@ describe("invokeVerify", () => {
 		// Bun's `Promise.reject` bypasses `useThrowOnlyError` (which inspects
 		// literal `throw` statements). We need a non-Error rejection so the
 		// `String(err)` fallback in `errorMessage` is exercised.
-		mockInvoke.mockImplementationOnce(() => Promise.reject("kaboom"));
+		mockVerify.mockImplementationOnce(() => Promise.reject("kaboom"));
 		const r = await invokeVerify("elevenlabs", "sk-abc");
 		expect(r.message).toBe("kaboom");
+	});
+
+	test("a Result error status rejects → maps to network", async () => {
+		mockVerify.mockImplementationOnce(async () => ({
+			status: "error" as const,
+			error: "backend boom",
+		}));
+		const r = await invokeVerify("elevenlabs", "sk-abc");
+		expect(r.code).toBe("network");
+		expect(r.message).toBe("backend boom");
 	});
 });
 
@@ -117,14 +147,14 @@ describe("verifyCredential", () => {
 	test("blank key short-circuits to idle without an IPC call", async () => {
 		const result = await verifyCredential("elevenlabs", "   ");
 		expect(result.code).toBe("key_missing");
-		expect(mockInvoke).not.toHaveBeenCalled();
+		expect(mockVerify).not.toHaveBeenCalled();
 		expect(
 			useCredentialStatusStore.getState().byProvider.elevenlabs.status,
 		).toBe("idle");
 	});
 
 	test("ok response flips status to verified", async () => {
-		mockInvoke.mockImplementationOnce(async () => ({ ok: true }));
+		mockVerify.mockImplementationOnce(async () => okResult({ ok: true }));
 		const result = await verifyCredential("elevenlabs", "sk-abc");
 		expect(result.ok).toBe(true);
 		expect(
@@ -133,7 +163,7 @@ describe("verifyCredential", () => {
 	});
 
 	test("network failure (thrown) maps to offline", async () => {
-		mockInvoke.mockImplementationOnce(async () => {
+		mockVerify.mockImplementationOnce(async () => {
 			throw new Error("ETIMEDOUT");
 		});
 		const result = await verifyCredential("elevenlabs", "key");
@@ -144,11 +174,9 @@ describe("verifyCredential", () => {
 	});
 
 	test("auth failure (response.code !== network) maps to invalid", async () => {
-		mockInvoke.mockImplementationOnce(async () => ({
-			ok: false,
-			code: "auth",
-			message: "bad key",
-		}));
+		mockVerify.mockImplementationOnce(async () =>
+			okResult({ ok: false, code: "auth", message: "bad key" }),
+		);
 		const result = await verifyCredential("elevenlabs", "sk-bad");
 		expect(result.ok).toBe(false);
 		expect(
@@ -158,10 +186,10 @@ describe("verifyCredential", () => {
 
 	test("flips to verifying before the IPC resolves", async () => {
 		let observedDuringInvoke: string | undefined;
-		mockInvoke.mockImplementationOnce(async () => {
+		mockVerify.mockImplementationOnce(async () => {
 			observedDuringInvoke =
 				useCredentialStatusStore.getState().byProvider.elevenlabs.status;
-			return { ok: true };
+			return okResult({ ok: true });
 		});
 		await verifyCredential("elevenlabs", "sk-abc");
 		expect(observedDuringInvoke).toBe("verifying");

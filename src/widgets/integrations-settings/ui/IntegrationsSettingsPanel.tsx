@@ -8,9 +8,11 @@ import {
 	SettingSection,
 	useSettingsStore,
 } from "@/entities/setting";
-import { ProviderIntegrationSection } from "@/features/verify-credentials";
-import { IPC } from "@/shared/api/ipc-channels";
-import { ipcInvoke } from "@/shared/api/ipc-client";
+import {
+	ProviderIntegrationSection,
+	type VerifyResponse,
+	verifyCredentialCommand,
+} from "@/features/verify-credentials";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
@@ -31,12 +33,6 @@ type OpenRouterStatus =
 	| "verified"
 	| "invalid"
 	| "offline";
-
-interface VerifyResponse {
-	code?: "auth" | "network" | "rate_limit" | "provider_error";
-	message?: string;
-	ok: boolean;
-}
 
 /** Pure mapper from a verify-credentials IPC response to an OpenRouter status
  *  pill state. Pulled out of the component so the async verify runner stays
@@ -144,10 +140,7 @@ export function IntegrationsSettingsPanel() {
 		// the await — the stale-request check just feeds the same setter,
 		// which keeps react-doctor/async-defer-await happy: the awaited value
 		// is consumed unconditionally, never thrown away by a fast-skip path.
-		const settled = await ipcInvoke<VerifyResponse>(IPC.INTEGRATIONS_VERIFY, {
-			provider: "openrouter",
-			apiKey: key,
-		}).then(
+		const settled = await verifyCredentialCommand("openrouter", key).then(
 			(response) => ({ ok: true as const, response }),
 			(err: unknown) => ({ ok: false as const, err }),
 		);

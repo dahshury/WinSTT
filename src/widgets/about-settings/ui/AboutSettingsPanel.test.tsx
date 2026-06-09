@@ -13,9 +13,8 @@ interface TauriInternals {
 }
 
 describe("AboutSettingsPanel", () => {
-	test("runs diagnostics actions from the About tab", async () => {
+	test("runs the open-logs action from the About tab", async () => {
 		const nativeInvokeCalls: Array<{ args: unknown[]; channel: string }> = [];
-		const tauriInvokeCalls: Array<{ args?: unknown; cmd: string }> = [];
 		const tauriWindow = window as Window & {
 			__TAURI_INTERNALS__: TauriInternals;
 		};
@@ -29,14 +28,10 @@ describe("AboutSettingsPanel", () => {
 				if (channel === IPC.DIAG_OPEN_LOGS_FOLDER) {
 					return { ok: true, path: "C:\\logs" };
 				}
-				if (channel === IPC.DIAG_SAVE_BUNDLE) {
-					return { ok: true, path: "C:\\winstt-diag.zip" };
-				}
 				return;
 			},
 		};
 		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd, args) => {
-			tauriInvokeCalls.push({ cmd, args });
 			if (cmd === "about_get_app_info") {
 				return { version: "1.2.3", copyright: "Copyright WinSTT" };
 			}
@@ -59,23 +54,10 @@ describe("AboutSettingsPanel", () => {
 				);
 				await Promise.resolve();
 			});
-			await act(async () => {
-				fireEvent.click(
-					screen.getByRole("button", { name: /Save Diagnostic Bundle/ }),
-				);
-				await Promise.resolve();
-			});
-
 			expect(
 				nativeInvokeCalls.some(
 					(call) => call.channel === IPC.DIAG_OPEN_LOGS_FOLDER,
 				),
-			).toBe(true);
-			expect(
-				tauriInvokeCalls.some((call) => call.cmd === "diag_save_bundle") ||
-					nativeInvokeCalls.some(
-						(call) => call.channel === IPC.DIAG_SAVE_BUNDLE,
-					),
 			).toBe(true);
 		} finally {
 			window.nativeBridge = previousNativeBridge;

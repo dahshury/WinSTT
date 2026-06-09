@@ -66,7 +66,7 @@ describe("channelsByDirection", () => {
 		const sendChannels = new Set(channelsByDirection("send"));
 		expect(sendChannels.has(IPC.SETTINGS_SAVE)).toBe(true);
 		expect(sendChannels.has(IPC.STT_RELOAD_MODEL)).toBe(true);
-		expect(sendChannels.has(IPC.TRAY_MENU_RESIZE)).toBe(true);
+		expect(sendChannels.has(IPC.MODEL_PICKER_RESIZE)).toBe(true);
 		expect(sendChannels.has(IPC.SETTINGS_LOAD)).toBe(false);
 	});
 

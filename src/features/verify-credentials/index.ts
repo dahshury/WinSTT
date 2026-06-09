@@ -1,2 +1,6 @@
-export { verifyCredential } from "./api/verify-credential";
+export {
+	verifyCredential,
+	verifyCredentialCommand,
+	type VerifyResponse,
+} from "./api/verify-credential";
 export { ProviderIntegrationSection } from "./ui/ProviderIntegrationSection";
