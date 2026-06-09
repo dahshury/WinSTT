@@ -8,11 +8,6 @@ on:
         required: true
         type: boolean
         default: true
-      prerelease:
-        description: "Mark the GitHub release as a prerelease (also inferred for x.y.z-alpha/beta versions)"
-        required: true
-        type: boolean
-        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -44,6 +39,11 @@ jobs:
 
           if [ "$version" != "$package_version" ] || [ "$version" != "$cargo_version" ]; then
             echo "::error::Version mismatch: tauri=$version package=$package_version cargo=$cargo_version"
+            exit 1
+          fi
+
+          if [[ "$version" != *"-alpha"* ]]; then
+            echo "::error::Alpha-only release policy is active; version must include -alpha. Got: $version"
             exit 1
           fi
 
@@ -230,11 +230,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_DRAFT: ${{ inputs.draft }}
-          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           $draft = [System.Convert]::ToBoolean($env:RELEASE_DRAFT)
-          $prerelease = [System.Convert]::ToBoolean($env:RELEASE_PRERELEASE) -or ($env:VERSION -match "-")
+          $prerelease = $true
           tools/release/upload-github-assets.ps1 `
             -AssetsRoot release-assets `
             -Version $env:VERSION `

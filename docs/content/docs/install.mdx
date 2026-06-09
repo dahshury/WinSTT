@@ -3,14 +3,16 @@ title: Install
 description: Pick the right portable installer — DirectML, CPU, or OpenVINO — and check the system requirements. No Python, no setup, no accounts.
 ---
 
+import { latestReleaseUrl, latestWindowsDownloadUrl } from "@/lib/site";
+
 WinSTT ships as a self-contained portable `.exe`: download one file, run it, and dictate. There is no installer wizard, no Python, no model download required to start.
 
 <Screenshot src="onboarding" alt="The first-run onboarding wizard that appears after install: choose local Whisper or a cloud provider, then test your microphone." label="WinSTT — first run" caption="On first launch, a quick setup wizard gets you transcribing — pick local or cloud and you're done." />
 
 <Callout type="success" title="One-click latest Windows download">
   Download the current default Windows build directly:
-  [WinSTT.exe](https://github.com/dahshury/WinSTT/releases/latest/download/WinSTT.exe).
-  This link always follows the latest non-draft GitHub Release.
+  <a href={latestWindowsDownloadUrl}>WinSTT.exe</a>.
+  This link follows the current alpha release published with these docs.
 </Callout>
 
 ## Which installer?
@@ -79,9 +81,9 @@ All three builds share the same baseline; the GPU builds add an optional acceler
 <StepFlow>
   <Step title="Download the installer">
     Grab the latest default Windows build:
-    [WinSTT.exe](https://github.com/dahshury/WinSTT/releases/latest/download/WinSTT.exe).
+    <a href={latestWindowsDownloadUrl}>WinSTT.exe</a>.
     For alternate builds and signatures, use the
-    [GitHub Releases](https://github.com/dahshury/WinSTT/releases) page.
+    <a href={latestReleaseUrl}>current alpha GitHub Release</a>.
   </Step>
   <Step title="Verify the signature (recommended)">
     Each `.exe` ships a [minisign](/docs/verify-releases) `.minisig` sidecar so you can

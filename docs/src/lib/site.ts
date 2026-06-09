@@ -9,11 +9,18 @@ export const siteConfig = {
 export const repositorySlug = `${siteConfig.owner}/${siteConfig.repo}`;
 export const repositoryUrl = `https://github.com/${repositorySlug}`;
 export const repositoryRawUrl = `https://raw.githubusercontent.com/${repositorySlug}`;
+const env = (
+  import.meta as {
+    env?: { VITE_DOCS_URL?: string; VITE_WINSTT_VERSION?: string };
+  }
+).env;
 export const docsUrl =
-  (import.meta as { env?: { VITE_DOCS_URL?: string } }).env?.VITE_DOCS_URL ??
-  "http://localhost:3001";
-export const latestWindowsDownloadUrl = `${repositoryUrl}/releases/latest/download/WinSTT.exe`;
-export const latestReleaseUrl = `${repositoryUrl}/releases/latest`;
+  env?.VITE_DOCS_URL ?? "http://localhost:3001";
+export const currentAppVersion = env?.VITE_WINSTT_VERSION ?? "0.0.0-alpha.0";
+export const currentReleaseTag = `v${currentAppVersion}`;
+const encodedCurrentReleaseTag = encodeURIComponent(currentReleaseTag);
+export const latestWindowsDownloadUrl = `${repositoryUrl}/releases/download/${encodedCurrentReleaseTag}/WinSTT.exe`;
+export const latestReleaseUrl = `${repositoryUrl}/releases/tag/${encodedCurrentReleaseTag}`;
 
 const externalUrlPattern = /^[a-z][a-z\d+\-.]*:/i;
 

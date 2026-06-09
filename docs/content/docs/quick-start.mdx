@@ -3,6 +3,8 @@ title: Quick Start
 description: Download, launch, and dictate your first sentence in under two minutes — no Python, no accounts, no setup.
 ---
 
+import { latestWindowsDownloadUrl } from "@/lib/site";
+
 Go from a fresh download to text at your cursor in five steps — the onboarding wizard
 picks a model and tests your mic for you, then you hold a hotkey and speak.
 
@@ -25,7 +27,7 @@ models and never leaves your machine.
 <StepFlow>
   <Step title="Download the installer">
     Download the latest default Windows build directly:
-    [WinSTT.exe](https://github.com/dahshury/WinSTT/releases/latest/download/WinSTT.exe).
+    <a href={latestWindowsDownloadUrl}>WinSTT.exe</a>.
     It is the DirectML build that runs on any modern AMD, Intel, or NVIDIA GPU and falls
     back to CPU automatically. Not sure which one? See [Which installer?](/docs/install)
     for the CPU and OpenVINO variants and their system requirements. The installer is
