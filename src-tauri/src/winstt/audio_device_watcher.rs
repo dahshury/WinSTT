@@ -153,9 +153,9 @@ mod platform_impl {
     use objc2_core_audio::{
         kAudioHardwareNoError, kAudioHardwarePropertyDefaultInputDevice,
         kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
-        kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeGlobal,
-        kAudioObjectSystemObject, AudioObjectAddPropertyListener, AudioObjectID,
-        AudioObjectPropertyAddress, AudioObjectRemovePropertyListener,
+        kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
+        AudioObjectAddPropertyListener, AudioObjectID, AudioObjectPropertyAddress,
+        AudioObjectRemovePropertyListener,
     };
     use tauri::AppHandle;
 
@@ -208,7 +208,7 @@ mod platform_impl {
                 let address = AudioObjectPropertyAddress {
                     mSelector: selector,
                     mScope: kAudioObjectPropertyScopeGlobal,
-                    mElement: kAudioObjectPropertyElementMaster,
+                    mElement: kAudioObjectPropertyElementMain,
                 };
                 let status = unsafe {
                     AudioObjectAddPropertyListener(

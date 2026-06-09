@@ -5,7 +5,7 @@
 //! the available GPU devices for the settings UI.
 
 use crate::settings::{get_settings, OrtAcceleratorSetting, WhisperAcceleratorSetting};
-use log::{info, warn};
+use log::info;
 use serde::Serialize;
 use specta::Type;
 use std::sync::OnceLock;
@@ -64,7 +64,7 @@ fn cached_gpu_devices() -> &'static [GpuDeviceOption] {
         // on those CPUs — GPU-accelerated whisper won't work there anyway.
         #[cfg(target_arch = "x86_64")]
         if !std::arch::is_x86_feature_detected!("fma") {
-            warn!("CPU lacks FMA3 support — skipping GPU device enumeration");
+            log::warn!("CPU lacks FMA3 support — skipping GPU device enumeration");
             return Vec::new();
         }
 
