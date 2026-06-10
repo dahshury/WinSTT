@@ -2,6 +2,7 @@
 
 import { FilterIcon, Tag01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useTranslations } from "use-intl";
 import type { ModelVariant } from "../lib/model-variant-utils";
 import {
 	SelectedTick,
@@ -31,10 +32,11 @@ interface AllVariantsItemProps {
 }
 
 function AllVariantsItem({ isSelected, onSelect }: AllVariantsItemProps) {
+	const t = useTranslations("modelPicker");
 	return (
 		<DropdownMenuItem onClick={onSelect}>
 			<HugeiconsIcon className="me-2 size-4" icon={FilterIcon} />
-			<span className="flex-1">All Variants</span>
+			<span className="flex-1">{t("allVariants")}</span>
 			<SelectedTick visible={isSelected} />
 		</DropdownMenuItem>
 	);
@@ -46,6 +48,7 @@ export function VariantFilterSubmenu({
 	selectedVariant,
 	onVariantSelect,
 }: VariantFilterSubmenuProps) {
+	const t = useTranslations("modelPicker");
 	const renderVariantItem = (variant: ModelVariant | "none") => (
 		<VariantMenuItem
 			count={getVariantCount(variantCounts, variant)}
@@ -60,11 +63,11 @@ export function VariantFilterSubmenu({
 		<DropdownMenuSub>
 			<DropdownMenuSubTrigger>
 				<HugeiconsIcon className="me-2 size-4" icon={Tag01Icon} />
-				<span>Model Variant</span>
+				<span>{t("modelVariant")}</span>
 			</DropdownMenuSubTrigger>
 			<DropdownMenuSubContent className="w-52">
 				<DropdownMenuGroup>
-					<DropdownMenuLabel>Variant</DropdownMenuLabel>
+					<DropdownMenuLabel>{t("variant")}</DropdownMenuLabel>
 				</DropdownMenuGroup>
 				<DropdownMenuSeparator />
 				<DropdownMenuGroup>

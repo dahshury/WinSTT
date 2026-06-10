@@ -13,7 +13,7 @@ import { formatProviderName } from "./openrouter-provider-utils";
 const ITEM_CLASS =
 	"flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-body outline-none data-[highlighted]:bg-surface-hover";
 
-function renderAllProviders(isSelected: boolean) {
+function renderAllProviders(isSelected: boolean, label: string) {
 	return (
 		<Combobox.Item
 			className={ITEM_CLASS}
@@ -21,7 +21,7 @@ function renderAllProviders(isSelected: boolean) {
 			value={ALL_PROVIDERS_VALUE}
 		>
 			<HugeiconsIcon className="me-2 size-4" icon={ServerStack01Icon} />
-			<span className="flex-1">All Providers</span>
+			<span className="flex-1">{label}</span>
 			<SelectedTick visible={isSelected} />
 		</Combobox.Item>
 	);
@@ -44,7 +44,10 @@ function renderProviderItem(
 
 export function renderProviderRow(provider: string, ctx: ItemContext) {
 	if (provider === ALL_PROVIDERS_VALUE) {
-		return renderAllProviders(ctx.selectedEndpointProvider === null);
+		return renderAllProviders(
+			ctx.selectedEndpointProvider === null,
+			ctx.allLabel,
+		);
 	}
 	const count = ctx.counts.get(provider) ?? 0;
 	return renderProviderItem(

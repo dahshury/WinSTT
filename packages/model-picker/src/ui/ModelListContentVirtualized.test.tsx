@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { Combobox } from "@base-ui/react/combobox";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { asInvalid } from "@test/lib/cast";
-import { fireEvent, render, renderHook, screen } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	renderHook,
+	screen,
+} from "../test/render-with-intl";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import { useOpenedFlag } from "../core/Collapsible";
 import * as components from "../lib/model-list-content-virtualized-components";

@@ -1,5 +1,14 @@
 import { create } from "zustand";
 import {
+	mergeProgressIntoSnapshot,
+	mergeSeedIntoSnapshot,
+	monotonicPercent,
+	percentFromFraction,
+	type QuantCacheSeedSource,
+	type QuantDownloadSeed,
+	quantDownloadSeedFromCache,
+} from "@/features/model-download/lib/download-progress-core";
+import {
 	cancelDownload as ipcCancelDownload,
 	deleteModelCache as ipcDeleteModelCache,
 	deleteModelQuantization as ipcDeleteModelQuantization,
@@ -7,6 +16,12 @@ import {
 	predownloadModelQuant as ipcPredownloadModelQuant,
 	resumeModelDownload as ipcResumeModelDownload,
 } from "@/shared/api/ipc-client";
+
+export {
+	type QuantCacheSeedSource,
+	type QuantDownloadSeed,
+	quantDownloadSeedFromCache,
+} from "@/features/model-download/lib/download-progress-core";
 
 export interface DownloadProgressPayload {
 	downloadedBytes?: number;
@@ -35,21 +50,6 @@ export interface QuantDownloadState {
 	quantization: string;
 	speedBps: number;
 	totalBytes: number;
-}
-
-export interface QuantDownloadSeed {
-	downloadedBytes: number;
-	progress: number | null;
-	totalBytes: number;
-}
-
-export interface QuantCacheSeedSource {
-	downloadedBytes?: number | null;
-	downloaded_bytes?: number | null;
-	progress?: number | null;
-	state?: string;
-	totalBytes?: number | null;
-	total_bytes?: number | null;
 }
 
 /** Composite key used in the ``quantDownloads`` map. Empty quant maps to
@@ -145,80 +145,6 @@ const PROGRESS_PAYLOAD_DEFAULTS = {
 	speedBps: 0,
 	etaSeconds: 0,
 } satisfies Partial<DownloadProgressPayload>;
-
-function percentFromFraction(progress: number): number {
-	return Math.max(0, Math.min(100, Math.round(progress * 100)));
-}
-
-function monotonicPercent(
-	previous: number | null | undefined,
-	next: number,
-): number {
-	return previous == null ? next : Math.max(previous, next);
-}
-
-function seedProgress(
-	previous: number | null | undefined,
-	seed: QuantDownloadSeed | undefined,
-): number | null {
-	if (seed?.progress == null) {
-		return previous ?? null;
-	}
-	return monotonicPercent(previous, seed.progress);
-}
-
-function seedDownloadedBytes(
-	previous: number | undefined,
-	seed: QuantDownloadSeed | undefined,
-): number {
-	return Math.max(previous ?? 0, seed?.downloadedBytes ?? 0);
-}
-
-function seedTotalBytes(
-	previous: number | undefined,
-	seed: QuantDownloadSeed | undefined,
-	downloadedBytes: number,
-): number {
-	return Math.max(previous ?? 0, seed?.totalBytes ?? 0, downloadedBytes);
-}
-
-function cacheBytes(cache: QuantCacheSeedSource | null | undefined): {
-	downloaded: number;
-	total: number;
-} {
-	return {
-		downloaded: Math.max(
-			0,
-			cache?.downloadedBytes ?? cache?.downloaded_bytes ?? 0,
-		),
-		total: Math.max(0, cache?.totalBytes ?? cache?.total_bytes ?? 0),
-	};
-}
-
-/** Convert a persisted partial-cache snapshot into the live 0-100 snapshot
- *  scale. A partial cache is capped at 99%; 100% is reserved for `cached`. */
-export function quantDownloadSeedFromCache(
-	cache: QuantCacheSeedSource | null | undefined,
-): QuantDownloadSeed | undefined {
-	if (cache?.state !== "partial") {
-		return undefined;
-	}
-	const { downloaded, total } = cacheBytes(cache);
-	const progressValue = cache?.progress;
-	const rawProgress =
-		typeof progressValue === "number"
-			? Math.round(progressValue * 100)
-			: total > 0
-				? Math.round((downloaded / total) * 100)
-				: null;
-	const progress =
-		rawProgress == null ? null : Math.min(99, Math.max(0, rawProgress));
-	return {
-		downloadedBytes: downloaded,
-		totalBytes: Math.max(total, downloaded),
-		progress,
-	};
-}
 
 export function normalizeProgressPayload(payload: DownloadProgressPayload) {
 	const merged = { ...PROGRESS_PAYLOAD_DEFAULTS, ...payload };
@@ -317,10 +243,6 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 			const key = quantKey(modelId, quantization);
 			const existing = s.quantDownloads[key];
 			const resolvedOwner = owner ?? existing?.owner;
-			const downloadedBytes = seedDownloadedBytes(
-				existing?.downloadedBytes,
-				seed,
-			);
 			return {
 				quantDownloads: {
 					...s.quantDownloads,
@@ -328,13 +250,7 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 						modelId,
 						quantization,
 						...ownerPatch(resolvedOwner),
-						progress: seedProgress(existing?.progress, seed),
-						downloadedBytes,
-						totalBytes: seedTotalBytes(
-							existing?.totalBytes,
-							seed,
-							downloadedBytes,
-						),
+						...mergeSeedIntoSnapshot(existing, seed),
 						speedBps: existing?.speedBps ?? 0,
 						paused: false,
 					},
@@ -393,7 +309,6 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 				if (owner === undefined && seed === undefined) {
 					return s;
 				}
-				const downloadedBytes = seedDownloadedBytes(undefined, seed);
 				return {
 					quantDownloads: {
 						...s.quantDownloads,
@@ -401,9 +316,7 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 							modelId,
 							quantization,
 							...ownerPatch(owner),
-							progress: seedProgress(undefined, seed),
-							downloadedBytes,
-							totalBytes: seedTotalBytes(undefined, seed, downloadedBytes),
+							...mergeSeedIntoSnapshot(undefined, seed),
 							speedBps: 0,
 							paused: false,
 						},
@@ -411,16 +324,13 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 				};
 			}
 			const resolvedOwner = owner ?? entry.owner;
-			const downloadedBytes = seedDownloadedBytes(entry.downloadedBytes, seed);
 			return {
 				quantDownloads: {
 					...s.quantDownloads,
 					[key]: {
 						...entry,
 						...ownerPatch(resolvedOwner),
-						progress: seedProgress(entry.progress, seed),
-						downloadedBytes,
-						totalBytes: seedTotalBytes(entry.totalBytes, seed, downloadedBytes),
+						...mergeSeedIntoSnapshot(entry, seed),
 						paused: false,
 					},
 				},
@@ -445,11 +355,6 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 			const key = quantKey(modelId, quantization);
 			const entry = s.quantDownloads[key];
 			const merged = { ...PROGRESS_PAYLOAD_DEFAULTS, ...payload };
-			const progress = percentFromFraction(payload.progress);
-			const downloadedBytes = Math.max(
-				entry?.downloadedBytes ?? 0,
-				merged.downloadedBytes,
-			);
 			return {
 				quantDownloads: {
 					...s.quantDownloads,
@@ -457,13 +362,7 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 						modelId,
 						quantization,
 						...ownerPatch(entry?.owner),
-						progress: monotonicPercent(entry?.progress, progress),
-						downloadedBytes,
-						totalBytes: Math.max(
-							entry?.totalBytes ?? 0,
-							merged.totalBytes,
-							downloadedBytes,
-						),
+						...mergeProgressIntoSnapshot(entry, merged),
 						speedBps: merged.speedBps,
 						paused: entry?.paused ?? false,
 					},

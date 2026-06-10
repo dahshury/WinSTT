@@ -1,4 +1,3 @@
-use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
 use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
@@ -59,38 +58,31 @@ impl ShortcutAction for TranscribeAction {
 
         let mut recording_error: Option<String> = None;
         if is_always_on {
-            // Always-on mode: Play audio feedback immediately, then apply mute after sound finishes
-            debug!("Always-on mode: Playing audio feedback immediately");
-            let rm_clone = Arc::clone(&rm);
-            let app_clone = app.clone();
-            // The blocking helper exits immediately if audio feedback is disabled,
-            // so we can always reuse this thread to ensure mute happens right after playback.
-            std::thread::spawn(move || {
-                play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                rm_clone.apply_mute();
-            });
+            // Always-on mode: the mic stream is already open, so mute can apply
+            // immediately. The start chime is the winstt recording sound played
+            // below (play_recording_chime_then_duck) — it routes to the OUTPUT
+            // device and is independent of the INPUT mute applied here.
+            debug!("Always-on mode: applying mute");
+            rm.apply_mute();
 
             if let Err(e) = rm.try_start_recording(&binding_id) {
                 debug!("Recording failed: {}", e);
                 recording_error = Some(e);
             }
         } else {
-            // On-demand mode: Start recording first, then play audio feedback, then apply mute
-            // This allows the microphone to be activated before playing the sound
-            debug!("On-demand mode: Starting recording first, then audio feedback");
+            // On-demand mode: start recording first, then apply mute once the mic
+            // stream is active. The start chime (winstt recording sound) plays
+            // below on the output device, so muting the input does not silence it.
+            debug!("On-demand mode: starting recording first, then muting input");
             let recording_start_time = Instant::now();
             match rm.try_start_recording(&binding_id) {
                 Ok(()) => {
                     debug!("Recording started in {:?}", recording_start_time.elapsed());
-                    // Small delay to ensure microphone stream is active
-                    let app_clone = app.clone();
+                    // Small delay to ensure microphone stream is active before mute.
                     let rm_clone = Arc::clone(&rm);
                     std::thread::spawn(move || {
                         std::thread::sleep(std::time::Duration::from_millis(100));
-                        debug!("Handling delayed audio feedback/mute sequence");
-                        // Helper handles disabled audio feedback by returning early, so we reuse it
-                        // to keep mute sequencing consistent in every mode.
-                        play_feedback_sound_blocking(&app_clone, SoundType::Start);
+                        debug!("Applying delayed input mute");
                         rm_clone.apply_mute();
                     });
                 }
@@ -150,7 +142,7 @@ impl ShortcutAction for TranscribeAction {
                     "unknown"
                 };
                 let _ = app.emit(
-                    "recording-error",
+                    crate::winstt::commands::events::names::RECORDING_ERROR,
                     RecordingErrorEvent {
                         error_type: error_type.to_string(),
                         detail: Some(err),
@@ -189,11 +181,11 @@ impl ShortcutAction for TranscribeAction {
         // zeroes `isSpeaking` regardless.
         crate::winstt::commands::dictation::SttEvents::recording_stop(app);
 
-        // Unmute before playing audio feedback so the stop sound is audible
+        // Restore the input mute applied at recording start. The winstt sound
+        // system has a single recording chime (played on start by
+        // play_recording_chime_then_duck) and no separate stop sound, so there is
+        // no stop chime to gate this on.
         rm.remove_mute();
-
-        // Play audio feedback for recording stop
-        play_feedback_sound(app, SoundType::Stop);
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
@@ -476,7 +468,9 @@ impl ShortcutAction for TranscribeAction {
                                             ),
                                             Err(e) => {
                                                 error!("Failed to paste transcription: {}", e);
-                                                let _ = ah_clone.emit("paste-error", ());
+                                                crate::winstt::commands::events::emit_paste_error(
+                                                    &ah_clone,
+                                                );
                                             }
                                         }
                                         utils::hide_recording_overlay(&ah_clone);

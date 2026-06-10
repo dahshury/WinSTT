@@ -1,5 +1,6 @@
-import type { components } from "@spec/schema";
-
+// Canonical Whisper model ids. This const IS the source of truth for the
+// renderer (no Rust command enumerates them). Kept in lockstep with
+// `schema.zod.ts`'s `WhisperModel` type, which is the canonical type form.
 export const WHISPER_MODELS = [
 	"tiny",
 	"tiny.en",
@@ -13,7 +14,7 @@ export const WHISPER_MODELS = [
 	"large-v2",
 	"large-v3",
 	"large-v3-turbo",
-] as const satisfies readonly components["schemas"]["WhisperModel"][];
+] as const;
 
 // onnx-asr quantization tier — the suffix it adds to the model filename
 // when resolving HF assets (e.g. ``encoder_model_int8.onnx``). Different

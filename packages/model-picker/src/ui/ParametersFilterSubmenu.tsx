@@ -2,6 +2,7 @@
 
 import { Settings01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useTranslations } from "use-intl";
 import {
 	FILTERABLE_PARAMETERS,
 	type FilterableParameter,
@@ -35,6 +36,7 @@ export function ParametersFilterSubmenu({
 	selectedParameters,
 	onParametersChange,
 }: ParametersFilterSubmenuProps) {
+	const t = useTranslations("modelPicker");
 	const selectedSet = new Set(selectedParameters);
 
 	const toggleParameter = (param: FilterableParameter) => {
@@ -59,12 +61,12 @@ export function ParametersFilterSubmenu({
 		<DropdownMenuSub>
 			<DropdownMenuSubTrigger>
 				<HugeiconsIcon className="me-2 size-4" icon={Settings01Icon} />
-				<span>Supported Parameters</span>
+				<span>{t("supportedParameters")}</span>
 				<SelectedCountBadge count={selectedParameters.length} />
 			</DropdownMenuSubTrigger>
 			<DropdownMenuSubContent className="w-56">
 				<DropdownMenuGroup>
-					<DropdownMenuLabel>Capabilities</DropdownMenuLabel>
+					<DropdownMenuLabel>{t("capabilities")}</DropdownMenuLabel>
 				</DropdownMenuGroup>
 				<DropdownMenuSeparator />
 				<ClearAllSection

@@ -18,7 +18,7 @@ pub(crate) fn trigger_update_check(app: AppHandle) -> Result<(), String> {
     if !settings.update_checks_enabled {
         return Ok(());
     }
-    app.emit("check-for-updates", ())
+    app.emit(winstt::commands::events::names::UPDATER_CHECK, ())
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -249,14 +249,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
 
     builder.events(collect_events![
         managers::history::HistoryUpdatePayload,
-        winstt::commands::events::RealtimeStabilizedPayload,
         winstt::commands::events::RealtimeUpdatePayload,
-        winstt::commands::events::WakeWordDetectedPayload,
-        winstt::commands::events::SpeakerSegmentsPayload,
-        winstt::commands::events::WordAlignmentPayload,
-        winstt::commands::events::VadSensitivityAdaptedPayload,
-        winstt::commands::events::TtsLifecyclePayload,
-        winstt::commands::events::FileTranscribeProgressPayload,
     ])
 }
 

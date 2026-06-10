@@ -1,4 +1,3 @@
-use crate::audio_feedback;
 use crate::audio_toolkit::audio::{list_input_devices, list_output_devices};
 use crate::managers::audio::AudioRecordingManager;
 use crate::settings::{get_settings, write_settings};
@@ -249,20 +248,18 @@ pub fn get_selected_output_device(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn play_test_sound(app: AppHandle, sound_type: String) {
-    let sound = match sound_type.as_str() {
-        "start" => audio_feedback::SoundType::Start,
-        "stop" => audio_feedback::SoundType::Stop,
-        _ => {
-            warn!("Unknown sound type: {}", sound_type);
-            return;
-        }
-    };
-    // `play_test_sound` plays the chime synchronously to completion
-    // (`sink.sleep_until_end()`), which would otherwise block a Tauri async
-    // runtime worker for the duration of the sound. Offload to the blocking
-    // pool so the executor stays free.
+    // The winstt sound system has a single recording chime (no separate
+    // start/stop theme), so `sound_type` only selects whether anything plays:
+    // the legacy "start"/"stop" preview both map to the active recording chime.
+    if !matches!(sound_type.as_str(), "start" | "stop") {
+        warn!("Unknown sound type: {}", sound_type);
+        return;
+    }
+    // The chime plays synchronously to completion (`sink.sleep_until_end()`),
+    // which would otherwise block a Tauri async runtime worker for the duration
+    // of the sound. Offload to the blocking pool so the executor stays free.
     let _ = tauri::async_runtime::spawn_blocking(move || {
-        audio_feedback::play_test_sound(&app, sound);
+        crate::winstt::commands::sound::play_recording_chime_blocking(&app);
     })
     .await;
 }

@@ -30,7 +30,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 use crate::managers::transcription::TranscriptionManager;
 
@@ -494,7 +494,7 @@ fn transcribe_and_emit(app: &AppHandle, transcription: &TranscriptionManager, au
     let _ = app.run_on_main_thread(move || {
         if let Err(e) = crate::utils::paste(to_paste, app_for_paste.clone()) {
             log::error!("[loopback] failed to paste transcription: {e}");
-            let _ = app_for_paste.emit("paste-error", ());
+            crate::winstt::commands::events::emit_paste_error(&app_for_paste);
         }
     });
 }

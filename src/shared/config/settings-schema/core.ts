@@ -31,7 +31,11 @@ export const modelSettingsSchema = z.object({
 	// is no longer "auto" — it now means EXPLICIT fp32 (the full-precision
 	// base export), a normal selectable badge. Concrete tiers (int8/fp16/…)
 	// pass through verbatim.
-	onnxQuantization: z.string().default("auto"),
+	//
+	// Default MUST mirror the canonical Rust default (`ModelSettings`'
+	// `onnx_quantization: String::new()`), enforced by the Rust↔zod parity gate
+	// (`defaults-parity.test.ts`). `""` = explicit fp32 on a fresh install.
+	onnxQuantization: z.string().default(""),
 	initialPrompt: z.string().default(""),
 	initialPromptRealtime: z.string().default(""),
 	// Whisper-native task=translate. When true and the active model is a

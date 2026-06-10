@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTtsModelStateStore } from "@/entities/tts-catalog";
-import { quantDownloadSeedFromCache } from "@/features/model-download/model/download-store";
+import {
+	mergeProgressIntoSnapshot,
+	mergeSeedIntoSnapshot,
+	quantDownloadSeedFromCache,
+} from "@/features/model-download";
 import {
 	onTtsModelDownloadCompleteCatalog,
 	onTtsModelDownloadProgressCatalog,
@@ -11,7 +15,10 @@ import {
 } from "@/shared/api/ipc-client";
 
 /** Live per-(model,quant) download snapshot the TTS picker's quant shelf reads.
- *  Structurally matches the picker's `QuantDownloadSnapshot`. */
+ *  Structurally matches the picker's `QuantDownloadSnapshot`. The byte fields
+ *  (`downloadedBytes`/`totalBytes`/`progress`) are the shared
+ *  `ProgressSnapshotFields` the model-download core merges; `paused` is the only
+ *  TTS-local addition. */
 export interface TtsDownloadSnapshot {
 	downloadedBytes: number;
 	paused: boolean;
@@ -24,17 +31,6 @@ export interface TtsDownloadSnapshot {
 type DownloadAction = "cancel" | "pause" | "resume" | "start";
 
 const keyOf = (modelId: string, quant: string): string => `${modelId}@${quant}`;
-
-function percentFromFraction(progress: number): number {
-	return Math.max(0, Math.min(100, Math.round(progress * 100)));
-}
-
-function monotonicPercent(
-	previous: number | null | undefined,
-	next: number,
-): number {
-	return previous == null ? next : Math.max(previous, next);
-}
 
 /**
  * Drives the TTS picker's per-quant download controls: subscribes to the catalog
@@ -65,26 +61,13 @@ export function useTtsModelDownloads(): {
 			const key = keyOf(p.model, p.quantization);
 			setSnaps((prev) => {
 				const previous = prev[key];
-				const downloadedBytes = Math.max(
-					previous?.downloadedBytes ?? 0,
-					p.downloadedBytes,
-				);
+				// Backend sends a 0.0–1.0 fraction; the shared core scales to the
+				// 0–100 the QuantShelf renders and keeps the bar monotonic — without
+				// this a finished download (fraction 1.0) rendered as a stuck "1%".
 				return {
 					...prev,
 					[key]: {
-						downloadedBytes,
-						totalBytes: Math.max(
-							previous?.totalBytes ?? 0,
-							p.totalBytes,
-							downloadedBytes,
-						),
-						// Backend sends a 0.0–1.0 fraction; the shared QuantShelf (and the STT
-						// path's download-store) work in 0–100, so scale here — without this a
-						// finished download (fraction 1.0) rendered as a stuck "1%".
-						progress: monotonicPercent(
-							previous?.progress,
-							percentFromFraction(p.progress),
-						),
+						...mergeProgressIntoSnapshot(previous, p),
 						paused: previous?.paused ?? false,
 					},
 				};
@@ -125,20 +108,7 @@ export function useTtsModelDownloads(): {
 				setSnaps((prev) => ({
 					...prev,
 					[key]: {
-						downloadedBytes: Math.max(
-							prev[key]?.downloadedBytes ?? 0,
-							seed?.downloadedBytes ?? 0,
-						),
-						totalBytes: Math.max(
-							prev[key]?.totalBytes ?? 0,
-							seed?.totalBytes ?? 0,
-							prev[key]?.downloadedBytes ?? 0,
-							seed?.downloadedBytes ?? 0,
-						),
-						progress:
-							seed?.progress == null
-								? (prev[key]?.progress ?? null)
-								: monotonicPercent(prev[key]?.progress, seed.progress),
+						...mergeSeedIntoSnapshot(prev[key], seed),
 						paused: false,
 					},
 				}));
@@ -147,11 +117,7 @@ export function useTtsModelDownloads(): {
 				setSnaps((prev) => ({
 					...prev,
 					[key]: {
-						...(prev[key] ?? {
-							downloadedBytes: seed?.downloadedBytes ?? 0,
-							totalBytes: seed?.totalBytes ?? 0,
-							progress: seed?.progress ?? null,
-						}),
+						...mergeSeedIntoSnapshot(prev[key], seed),
 						paused: true,
 					},
 				}));
@@ -159,38 +125,15 @@ export function useTtsModelDownloads(): {
 				ttsDownloadResume(modelId, quant);
 				setSnaps((prev) => {
 					const previous = prev[key];
-					if (!previous) {
-						if (!seed) {
-							return prev;
-						}
-						return {
-							...prev,
-							[key]: {
-								downloadedBytes: seed.downloadedBytes,
-								totalBytes: seed.totalBytes,
-								progress: seed.progress,
-								paused: false,
-							},
-						};
+					// No live entry and nothing to seed → don't create a
+					// zero-progress ghost (locked by the resume-without-snapshot test).
+					if (!previous && !seed) {
+						return prev;
 					}
 					return {
 						...prev,
 						[key]: {
-							...previous,
-							downloadedBytes: Math.max(
-								previous.downloadedBytes,
-								seed?.downloadedBytes ?? 0,
-							),
-							totalBytes: Math.max(
-								previous.totalBytes,
-								seed?.totalBytes ?? 0,
-								previous.downloadedBytes,
-								seed?.downloadedBytes ?? 0,
-							),
-							progress:
-								seed?.progress == null
-									? previous.progress
-									: monotonicPercent(previous.progress, seed.progress),
+							...mergeSeedIntoSnapshot(previous, seed),
 							paused: false,
 						},
 					};

@@ -311,7 +311,7 @@ fn schedule_overlay_hide_reapply(window: tauri::WebviewWindow, generation: u64, 
 
 /// Position + reveal the overlay window without re-activating it (showInactive
 /// parity → no focus steal, so the user's target app stays the keyboard sink).
-/// `reason` ("recording" | "tts") is forwarded to the renderer's `show-overlay`
+/// `reason` ("recording" | "tts") is forwarded to the renderer's `overlay:show`
 /// event (informational; the OverlayPage paints from its Zustand stores either way).
 fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>, reason: &str) {
     // The overlay is normally prewarmed shortly after the main pill paints. Keep
@@ -365,8 +365,8 @@ fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>,
     #[cfg(target_os = "windows")]
     force_overlay_topmost(&window);
     // Tell the renderer the overlay window is now on screen (parity with the legacy
-    // `show-overlay` event; the OverlayPage also self-clears on visibilitychange).
-    let _ = window.emit("show-overlay", reason);
+    // `overlay:show` event; the OverlayPage also self-clears on visibilitychange).
+    let _ = window.emit(crate::winstt::commands::events::names::OVERLAY_SHOW, reason);
     if was_visible {
         let _ = set_overlay_window_opacity(&window, 1.0);
         return;
@@ -655,7 +655,7 @@ pub fn hide_recording_overlay(app: &AppHandle) {
     }
 }
 
-/// Hide the shared overlay window. Emits `hide-overlay` first so the renderer
+/// Hide the shared overlay window. Emits `overlay:hide` first so the renderer
 /// can play its exit, then applies an opacity-zero/offscreen/hide pass with
 /// retries. The delay is mode-specific: the dynamic island needs the longer
 /// slide-up grace; floating-bottom only needs enough time for its opacity fade.
@@ -669,7 +669,7 @@ fn hide_overlay_window_with_options(app: &AppHandle, force_renderer_grace: bool)
     let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
         return;
     };
-    let _ = window.emit("hide-overlay", ());
+    let _ = window.emit(crate::winstt::commands::events::names::OVERLAY_HIDE, ());
     // Restore click-through while hidden so a stale transparent overlay can never
     // keep capturing the cursor after the session/read has ended.
     let _ = window.set_ignore_cursor_events(true);

@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "../../test/render-with-intl";
 import type { ModelInfo } from "@/entities/model-catalog";
 import { SttModelSelector } from "./SttModelSelector";
 

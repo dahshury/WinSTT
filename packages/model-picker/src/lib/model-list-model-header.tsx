@@ -8,6 +8,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef } from "react";
+import { useTranslations } from "use-intl";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
@@ -42,6 +43,7 @@ function ProvidersExpandButton({
 	providerCount: number;
 	onToggleExpanded: (modelId: string, nextOpen?: boolean) => void;
 }) {
+	const t = useTranslations("modelPicker");
 	const toggleProvidersList = (event: React.MouseEvent<HTMLButtonElement>) => {
 		event.preventDefault();
 		event.stopPropagation();
@@ -79,7 +81,7 @@ function ProvidersExpandButton({
 				)}
 			/>
 			<TooltipContent className="max-w-xs" side="top">
-				<p className="font-semibold text-body-sm">Hosting providers</p>
+				<p className="font-semibold text-body-sm">{t("hostingProviders")}</p>
 				<p className="text-foreground-muted text-xs-tight leading-relaxed">
 					{getProviderCountTooltip(providerCount)}
 				</p>

@@ -16,6 +16,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef } from "react";
+import { useTranslations } from "use-intl";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -135,6 +136,7 @@ function SortSection({
 	// Chips lift relative to the popup substrate (provided below) so each reads
 	// as its own minimal surface instead of a hard-coded flat token; the active
 	// chip is the single app accent.
+	const t = useTranslations("modelPicker");
 	const level = useSurface();
 	const idleChip = cn(
 		surfaceBg(Math.min(level + 1, 8)),
@@ -143,10 +145,9 @@ function SortSection({
 	);
 	return (
 		<div className="flex flex-col gap-2 p-2">
-			<SectionHeader icon={ArrowUpDownIcon} label="Sort by" />
+			<SectionHeader icon={ArrowUpDownIcon} label={t("sortBy")} />
 			<p className="text-[11px] text-foreground-muted leading-snug">
-				Flatten the makers into one ordered list. Tap the active option again to
-				go back to grouped.
+				{t("flattenMakers")}
 			</p>
 			<div className="flex flex-wrap gap-1.5">
 				{STT_SORT_KEYS.map((key) => {
@@ -232,26 +233,26 @@ function LanguageFilterSection({
 			id: code,
 			label: languageLabel(code),
 		}));
+	const t = useTranslations("modelPicker");
 	if (options.length === 0) {
 		return null;
 	}
 	return (
 		<div className="flex flex-col gap-1.5 p-2">
-			<SectionHeader icon={LanguageSkillIcon} label="Language" />
+			<SectionHeader icon={LanguageSkillIcon} label={t("language")} />
 			<p className="text-[11px] text-foreground-muted leading-snug">
-				Show models that can transcribe a language (multilingual models always
-				match).
+				{t("languageHint")}
 			</p>
 			<div className="w-full">
 				<LanguageMultiCombobox
-					ariaLabel="Language filter"
-					emptyLabel="No languages found"
+					ariaLabel={t("languageFilter")}
+					emptyLabel={t("noLanguagesFound")}
 					onChange={onChange}
 					options={options}
-					placeholder="Select languages"
-					removeLabel={(language) => `Remove ${language}`}
-					selectedCountLabel={(count) => `${count} languages selected`}
-					selectedHeading="Selected languages"
+					placeholder={t("selectLanguages")}
+					removeLabel={(language) => t("removeLanguage", { language })}
+					selectedCountLabel={(count) => t("languagesSelected", { count })}
+					selectedHeading={t("selectedLanguages")}
 					value={selected}
 				/>
 			</div>
@@ -267,6 +268,7 @@ export function SttFiltersMenu({
 	sort,
 	onSortChange,
 }: SttFiltersMenuProps) {
+	const t = useTranslations("modelPicker");
 	const level = Math.min(useSurface() + 1, 8);
 	const locked = lockedFilterSet(lockedFilterKeys);
 	const effectiveFilters = applyLockedFilters(filters, locked);
@@ -296,7 +298,7 @@ export function SttFiltersMenu({
 					<FilterMenuTriggerButton
 						buttonProps={props as ComponentPropsWithoutRef<"button">}
 						count={count}
-						label="Sort & filter"
+						label={t("sortAndFilter")}
 					/>
 				)}
 			/>
@@ -318,7 +320,7 @@ export function SttFiltersMenu({
 						<SurfaceProvider value={level}>
 							<div className="flex items-center justify-between px-2 py-1.5">
 								<span className="font-semibold text-foreground-muted text-xs-tight uppercase tracking-wide">
-									Sort &amp; filter
+									{t("sortAndFilter")}
 								</span>
 								{canClear ? (
 									<BaseButton
@@ -326,7 +328,7 @@ export function SttFiltersMenu({
 										onClick={clear}
 										type="button"
 									>
-										Clear all
+										{t("clearAll")}
 									</BaseButton>
 								) : null}
 							</div>

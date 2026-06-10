@@ -1,18 +1,8 @@
-use crate::settings::SoundTheme;
-use crate::settings::{self, AppSettings};
 use cpal::traits::HostTrait;
-use log::{debug, error, warn};
+use log::{debug, warn};
 use rodio::DeviceSinkBuilder;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
-use std::thread;
-use tauri::{AppHandle, Manager};
-
-pub enum SoundType {
-    Start,
-    Stop,
-}
 
 /// Failures from resolving an output device, opening the rodio stream, reading
 /// the sound file, or queuing it for playback. Replaces the previous
@@ -36,86 +26,11 @@ pub enum AudioFeedbackError {
     Play(#[from] rodio::PlayError),
 }
 
-fn resolve_sound_path(
-    app: &AppHandle,
-    settings: &AppSettings,
-    sound_type: SoundType,
-) -> Option<PathBuf> {
-    let sound_file = get_sound_path(settings, sound_type);
-    let base_dir = get_sound_base_dir(settings);
-    match base_dir {
-        tauri::path::BaseDirectory::AppData => {
-            crate::portable::resolve_app_data(app, &sound_file).ok()
-        }
-        _ => app.path().resolve(&sound_file, base_dir).ok(),
-    }
-}
-
-fn get_sound_path(settings: &AppSettings, sound_type: SoundType) -> String {
-    match (settings.sound_theme, sound_type) {
-        (SoundTheme::Custom, SoundType::Start) => "custom_start.wav".to_string(),
-        (SoundTheme::Custom, SoundType::Stop) => "custom_stop.wav".to_string(),
-        (_, SoundType::Start) => settings.sound_theme.to_start_path(),
-        (_, SoundType::Stop) => settings.sound_theme.to_stop_path(),
-    }
-}
-
-fn get_sound_base_dir(settings: &AppSettings) -> tauri::path::BaseDirectory {
-    match settings.sound_theme {
-        SoundTheme::Custom => tauri::path::BaseDirectory::AppData,
-        _ => tauri::path::BaseDirectory::Resource,
-    }
-}
-
-pub fn play_feedback_sound(app: &AppHandle, sound_type: SoundType) {
-    let settings = settings::get_settings(app);
-    if !settings.audio_feedback {
-        return;
-    }
-    if let Some(path) = resolve_sound_path(app, &settings, sound_type) {
-        play_sound_async(app, path);
-    }
-}
-
-pub fn play_feedback_sound_blocking(app: &AppHandle, sound_type: SoundType) {
-    let settings = settings::get_settings(app);
-    if !settings.audio_feedback {
-        return;
-    }
-    if let Some(path) = resolve_sound_path(app, &settings, sound_type) {
-        play_sound_blocking(app, &path);
-    }
-}
-
-pub fn play_test_sound(app: &AppHandle, sound_type: SoundType) {
-    let settings = settings::get_settings(app);
-    if let Some(path) = resolve_sound_path(app, &settings, sound_type) {
-        play_sound_blocking(app, &path);
-    }
-}
-
-fn play_sound_async(app: &AppHandle, path: PathBuf) {
-    let app_handle = app.clone();
-    thread::spawn(move || {
-        if let Err(e) = play_sound_at_path(&app_handle, path.as_path()) {
-            error!("Failed to play sound '{}': {}", path.display(), e);
-        }
-    });
-}
-
-fn play_sound_blocking(app: &AppHandle, path: &Path) {
-    if let Err(e) = play_sound_at_path(app, path) {
-        error!("Failed to play sound '{}': {}", path.display(), e);
-    }
-}
-
-fn play_sound_at_path(app: &AppHandle, path: &Path) -> Result<(), AudioFeedbackError> {
-    let settings = settings::get_settings(app);
-    let volume = settings.audio_feedback_volume;
-    let selected_device = settings.selected_output_device.clone();
-    play_audio_file(path, selected_device, volume)
-}
-
+/// Low-level rodio playback helper shared by the winstt recording-sound system
+/// (`winstt::commands::sound`). Plays `path` synchronously (blocks until the sink
+/// drains) on `selected_device` (cpal name, or the system default when `None`) at
+/// `volume`. Takes its routing/volume as parameters — it reads no settings, so
+/// every sound the app produces flows through the one winstt sound pathway.
 pub(crate) fn play_audio_file(
     path: &std::path::Path,
     selected_device: Option<String>,

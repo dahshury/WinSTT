@@ -3,6 +3,7 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { StarIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useTranslations } from "use-intl";
 import { FAVORITES_GROUP_VALUE } from "../favorites";
 import { GROUP_HEADER_CLASSES } from "./card-constants";
 
@@ -20,6 +21,7 @@ export function FavoritesGroupLabel({
 	count: number;
 	noun?: string;
 }) {
+	const t = useTranslations("modelPicker");
 	return (
 		<Combobox.GroupLabel
 			className={GROUP_HEADER_CLASSES}
@@ -29,7 +31,7 @@ export function FavoritesGroupLabel({
 				<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
 			</span>
 			<span className="font-semibold text-[10px] text-foreground-muted uppercase tracking-[0.12em]">
-				Favorites
+				{t("favorites")}
 			</span>
 			<span className="text-[10px] text-foreground-dim">
 				· {count === 1 ? `1 ${noun}` : `${count} ${noun}s`}

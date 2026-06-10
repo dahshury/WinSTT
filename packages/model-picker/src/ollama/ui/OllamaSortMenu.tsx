@@ -10,6 +10,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef } from "react";
+import { useTranslations } from "use-intl";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -47,6 +48,7 @@ function SortSection({
 	onChange: (next: OllamaSortValue) => void;
 	value: OllamaSortValue;
 }) {
+	const t = useTranslations("modelPicker");
 	// Chips lift relative to the popup substrate (provided below) so each reads
 	// as its own minimal surface; the active chip is the single app accent.
 	const level = useSurface();
@@ -63,12 +65,11 @@ function SortSection({
 					icon={ArrowUpDownIcon}
 				/>
 				<span className="font-medium text-body-sm text-foreground">
-					Sort by
+					{t("sortBy")}
 				</span>
 			</div>
 			<p className="text-[11px] text-foreground-muted leading-snug">
-				Flatten the installed models into one ordered list. Tap the active
-				option again to go back to grouped.
+				{t("flattenInstalled")}
 			</p>
 			<div className="flex flex-wrap gap-1.5">
 				{OLLAMA_SORT_KEYS.map((key) => {
@@ -103,6 +104,7 @@ function SortSection({
  * is sort-only. The trigger carries a count badge (1 when a sort is active).
  */
 export function OllamaSortMenu({ sort, onSortChange }: OllamaSortMenuProps) {
+	const t = useTranslations("modelPicker");
 	const level = Math.min(useSurface() + 1, 8);
 	const count = sort === null ? 0 : 1;
 
@@ -115,7 +117,7 @@ export function OllamaSortMenu({ sort, onSortChange }: OllamaSortMenuProps) {
 						buttonProps={props as ComponentPropsWithoutRef<"button">}
 						count={count}
 						icon={ArrowUpDownIcon}
-						label="Sort"
+						label={t("sort")}
 					/>
 				)}
 			/>
@@ -137,7 +139,7 @@ export function OllamaSortMenu({ sort, onSortChange }: OllamaSortMenuProps) {
 						<SurfaceProvider value={level}>
 							<div className="flex items-center justify-between px-2 py-1.5">
 								<span className="font-semibold text-foreground-muted text-xs-tight uppercase tracking-wide">
-									Sort
+									{t("sort")}
 								</span>
 								{count > 0 ? (
 									<BaseButton
@@ -145,7 +147,7 @@ export function OllamaSortMenu({ sort, onSortChange }: OllamaSortMenuProps) {
 										onClick={() => onSortChange(null)}
 										type="button"
 									>
-										Clear
+										{t("clear")}
 									</BaseButton>
 								) : null}
 							</div>

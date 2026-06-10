@@ -51,7 +51,7 @@ impl TranscriptionManager {
 
         // Emit unloaded event
         let _ = self.app_handle.emit(
-            "model-state-changed",
+            crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
             ModelStateEvent {
                 event_type: "unloaded".to_string(),
                 model_id: None,
@@ -178,7 +178,7 @@ impl TranscriptionManager {
         // Best-effort display name (catalog → display, else the raw id).
         let model_name = self.backend.display_name_for(&model_id);
         let _ = self.app_handle.emit(
-            "model-state-changed",
+            crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
             ModelStateEvent {
                 event_type: "loading_completed".to_string(),
                 model_id: Some(model_id),
@@ -394,7 +394,7 @@ impl TranscriptionManager {
 
         let emit_failed = |msg: &str, model_name: &str| {
             let _ = self.app_handle.emit(
-                "model-state-changed",
+                crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
                 ModelStateEvent {
                     event_type: "loading_failed".to_string(),
                     model_id: Some(model_id.to_string()),
@@ -407,7 +407,7 @@ impl TranscriptionManager {
         // emit loading_started (parity with the legacy path's event surface) — BEFORE the resolve,
         // matching the original ordering so the picker chip shows "Switching…" immediately.
         let _ = self.app_handle.emit(
-            "model-state-changed",
+            crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
             ModelStateEvent {
                 event_type: "loading_started".to_string(),
                 model_id: Some(model_id.to_string()),
@@ -462,7 +462,7 @@ impl TranscriptionManager {
         self.touch_activity();
 
         let _ = self.app_handle.emit(
-            "model-state-changed",
+            crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
             ModelStateEvent {
                 event_type: "loading_completed".to_string(),
                 model_id: Some(model_id.to_string()),

@@ -16,7 +16,7 @@
 
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 /// Backend-owned preview paste session. The renderer may confirm edited text,
 /// but the paste sink only runs while this captured pending session exists.
@@ -242,7 +242,7 @@ pub async fn confirm_paste(app: AppHandle, text: String) -> Result<(), String> {
         if !text_to_paste.is_empty() {
             if let Err(e) = crate::clipboard::paste(text_to_paste, app_for_paste.clone()) {
                 log::error!("[preview] confirm paste failed: {e}");
-                let _ = app_for_paste.emit("paste-error", ());
+                crate::winstt::commands::events::emit_paste_error(&app_for_paste);
             }
         }
         // Tear down AFTER the paste so the geometry/focus changes can't race the

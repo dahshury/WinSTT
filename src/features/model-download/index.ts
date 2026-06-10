@@ -1,7 +1,14 @@
 export { useDownloadListener } from "./api/use-download-listener";
 export {
-	isQuantDownloading,
+	mergeProgressIntoSnapshot,
+	mergeSeedIntoSnapshot,
+	type ProgressSnapshotFields,
+	type QuantCacheSeedSource,
 	type QuantDownloadSeed,
+	quantDownloadSeedFromCache,
+} from "./lib/download-progress-core";
+export {
+	isQuantDownloading,
 	type QuantDownloadState,
 	type SttDownloadOwner,
 	useDownloadStore,

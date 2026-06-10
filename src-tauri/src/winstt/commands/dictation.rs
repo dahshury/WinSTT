@@ -390,33 +390,33 @@ impl SttEvents {
     }
 
     /// `stt:realtime-text` — the live (raw) realtime preview. NOTE: the adapter maps
-    /// STT_REALTIME_TEXT → the `realtime-update` event
+    /// STT_REALTIME_TEXT → the `realtime:update` event
     /// (RealtimeUpdatePayload `{text,is_final}`), so the realtime worker emits THAT; this
     /// helper exists for parity / direct use.
-    /// ORDERING (risk §6): emit `realtime-stabilized` BEFORE `realtime-update`.
+    /// ORDERING (risk §6): emit `realtime:stabilized` BEFORE `realtime:update`.
     pub fn realtime_text(app: &AppHandle, text: &str) {
         Self::realtime_text_with_final(app, text, false);
     }
 
     pub fn realtime_text_with_final(app: &AppHandle, text: &str, is_final: bool) {
         let _ = app.emit(
-            "realtime-update",
+            crate::winstt::commands::events::names::REALTIME_UPDATE,
             serde_json::json!({ "text": text, "is_final": is_final }),
         );
     }
 
-    /// `realtime-stabilized` — the UI-safe MONOTONIC live preview (stabilizer output).
-    /// Emitted BEFORE `realtime-update` on every realtime tick (mirrors RealtimeSTT's
+    /// `realtime:stabilized` — the UI-safe MONOTONIC live preview (stabilizer output).
+    /// Emitted BEFORE `realtime:update` on every realtime tick (mirrors RealtimeSTT's
     /// `on_realtime_transcription_stabilized` → `..._update` ordering in
     /// recorder_service.py:2852-2853). The renderer's live-preview pane consumes this;
-    /// `realtime-update` carries the raw assembled text for noise-break/logging consumers.
+    /// `realtime:update` carries the raw assembled text for noise-break/logging consumers.
     pub fn realtime_stabilized(app: &AppHandle, text: &str) {
         Self::realtime_stabilized_with_final(app, text, false);
     }
 
     pub fn realtime_stabilized_with_final(app: &AppHandle, text: &str, is_final: bool) {
         let _ = app.emit(
-            "realtime-stabilized",
+            crate::winstt::commands::events::names::REALTIME_STABILIZED,
             serde_json::json!({ "text": text, "is_final": is_final }),
         );
     }

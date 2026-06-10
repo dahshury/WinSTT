@@ -8,6 +8,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef } from "react";
+import { useTranslations } from "use-intl";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
@@ -131,6 +132,7 @@ function ProviderPricingTooltip({
 }: {
 	pricingInfo: ReturnType<typeof getPricingTier>;
 }) {
+	const t = useTranslations("modelPicker");
 	return (
 		<Tooltip>
 			<TooltipTrigger
@@ -144,9 +146,9 @@ function ProviderPricingTooltip({
 				)}
 			/>
 			<TooltipContent className="max-w-xs" side="top">
-				<p className="font-semibold text-body-sm">Pricing</p>
+				<p className="font-semibold text-body-sm">{t("pricing")}</p>
 				<p className="text-foreground-muted text-xs-tight leading-relaxed">
-					Approximate cost per 1M tokens for this provider (input/output).
+					{t("pricingProviderTip")}
 				</p>
 			</TooltipContent>
 		</Tooltip>

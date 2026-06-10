@@ -190,9 +190,12 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
     {
         use tauri::Listener;
         let app_for_ww = app_handle.clone();
-        app_handle.listen("wake_word_detected", move |_event| {
-            crate::actions::start_dictation_from_wakeword(&app_for_ww);
-        });
+        app_handle.listen(
+            crate::winstt::commands::events::names::WAKEWORD_DETECTED,
+            move |_event| {
+                crate::actions::start_dictation_from_wakeword(&app_for_ww);
+            },
+        );
     }
     advance_startup_phase(startup, app_handle, "event bridges installed");
 
@@ -299,9 +302,12 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
 
     // Refresh tray menu when model state changes
     let app_handle_for_listener = app_handle.clone();
-    app_handle.listen("model-state-changed", move |_| {
-        tray::update_tray_menu(&app_handle_for_listener, &tray::TrayIconState::Idle, None);
-    });
+    app_handle.listen(
+        crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
+        move |_| {
+            tray::update_tray_menu(&app_handle_for_listener, &tray::TrayIconState::Idle, None);
+        },
+    );
 
     // Get the autostart manager and configure based on user setting
     let autostart_manager = app_handle.autolaunch();

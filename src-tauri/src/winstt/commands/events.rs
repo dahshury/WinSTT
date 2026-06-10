@@ -9,21 +9,54 @@
 // `winstt::commands::events::*` (note in modDecls/libWiring).
 //
 // NOTE: high-frequency streaming channels (llm:reasoning-delta, tts:chunk,
-// stt:cloud-error, file-transcribe-progress, wake_word_detected, realtime-*) are
+// stt:cloud-error, file-transcribe-progress, wakeword:detected, realtime-*) are
 // emitted as PLAIN string events from the managers (matching WinSTT's IPC shape
 // so the reused renderer's listeners work unchanged — lib_wiring §4b). The typed
 // events below are the structured payloads the renderer consumes type-safely.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use tauri::{AppHandle, Emitter};
 use tauri_specta::Event;
 
-/// Realtime preview after stabilization (committed-watermark accumulator).
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
-#[serde(rename_all = "camelCase")]
-pub struct RealtimeStabilizedPayload {
-    pub text: String,
-    pub is_final: bool,
+/// Canonical backend event names. Every renderer-facing event the backend emits
+/// is named here ONCE (`namespace:kebab`) so the emit site and the frontend
+/// listener can never drift independently — the renamed string lives in exactly
+/// one place. The `emit-coverage` frontend test asserts each ROUTE event resolves
+/// to one of these consts, and each const has a frontend listener (or an explicit
+/// allowlist entry). Add a const here when introducing a new event.
+pub mod names {
+    /// Wake-word detected (INACTIVE → LISTENING cue). Renderer reshapes to `{ word }`.
+    pub const WAKEWORD_DETECTED: &str = "wakeword:detected";
+    /// Raw realtime preview (pre-stabilization) — drives the noise-break heuristic.
+    pub const REALTIME_UPDATE: &str = "realtime:update";
+    /// UI-safe MONOTONIC realtime preview (stabilizer output).
+    pub const REALTIME_STABILIZED: &str = "realtime:stabilized";
+    /// Model load/swap lifecycle changed — refreshes the tray menu.
+    pub const MODEL_STATE_CHANGED: &str = "model:state-changed";
+    /// A paste into the focused app failed (clipboard/typing path).
+    pub const PASTE_ERROR: &str = "output:paste-error";
+    /// A recording could not start / aborted with an error.
+    pub const RECORDING_ERROR: &str = "recording:error";
+    /// The shared overlay window was shown.
+    pub const OVERLAY_SHOW: &str = "overlay:show";
+    /// The shared overlay window was hidden.
+    pub const OVERLAY_HIDE: &str = "overlay:hide";
+    /// Startup progress tick (splash window + parity broadcast).
+    pub const STARTUP_PROGRESS: &str = "startup:progress";
+    /// Startup finished.
+    pub const STARTUP_COMPLETE: &str = "startup:complete";
+    /// Proper nouns the cleanup model identified during the last structured-output pass.
+    pub const LLM_LEARNED_PROPER_NOUNS: &str = "llm:learned-proper-nouns";
+    /// Manual "check for updates" trigger (main → renderer fan-out).
+    pub const UPDATER_CHECK: &str = "updater:check";
+}
+
+/// Emit the shared `output:paste-error` event. Centralizes the previously
+/// duplicated `paste-error` emits (clipboard / preview / transcribe / loopback
+/// paths all signal the same renderer toast).
+pub fn emit_paste_error(app: &AppHandle) {
+    let _ = app.emit(names::PASTE_ERROR, ());
 }
 
 /// Raw realtime preview (pre-stabilization) — drives the noise-break heuristic.
@@ -35,73 +68,14 @@ pub struct RealtimeUpdatePayload {
 }
 
 /// Wake-word detected (INACTIVE → LISTENING transition cue).
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
+///
+/// Emitted as a PLAIN string event (`names::WAKEWORD_DETECTED`) rather than a
+/// typed `collect_events!` payload: the renderer listens on the exact event
+/// string and reshapes the JSON, and a Rust-internal listener (lib.rs) starts a
+/// dictation cycle off the same string. This struct just fixes the emitted shape.
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WakeWordDetectedPayload {
     pub word: String,
     pub word_index: i32,
-}
-
-/// Diarized speaker segments for a listen-mode window.
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
-#[serde(rename_all = "camelCase")]
-pub struct SpeakerSegment {
-    pub speaker: i32,
-    pub start: f32,
-    pub end: f32,
-    pub text: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
-#[serde(rename_all = "camelCase")]
-pub struct SpeakerSegmentsPayload {
-    pub segments: Vec<SpeakerSegment>,
-}
-
-/// One word with start/end seconds — the `align_words` result for history playback.
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
-#[serde(rename_all = "camelCase")]
-pub struct WordTiming {
-    pub text: String,
-    pub start: f32,
-    pub end: f32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
-#[serde(rename_all = "camelCase")]
-pub struct WordAlignmentPayload {
-    pub entry_id: String,
-    pub words: Vec<WordTiming>,
-}
-
-/// Per-device VAD sensitivity calibration result (renderer persists it).
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
-#[serde(rename_all = "camelCase")]
-pub struct VadSensitivityAdaptedPayload {
-    pub device_id: String,
-    pub sensitivity: f32,
-}
-
-/// TTS lifecycle event (started / completed / failed / download-progress).
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
-#[serde(rename_all = "camelCase")]
-pub struct TtsLifecyclePayload {
-    pub request_id: String,
-    /// "started" | "completed" | "failed" | "download-progress"
-    pub phase: String,
-    pub message: Option<String>,
-    /// 0.0..1.0 for download-progress.
-    pub progress: Option<f32>,
-}
-
-/// Per-file/per-chunk file-transcription progress.
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
-#[serde(rename_all = "camelCase")]
-pub struct FileTranscribeProgressPayload {
-    pub id: String,
-    pub path: String,
-    pub status: String,
-    pub progress: f32,
-    pub text: Option<String>,
-    pub error: Option<String>,
 }

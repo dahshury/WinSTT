@@ -4,6 +4,7 @@ import { Combobox } from "@base-ui/react/combobox";
 import { SparklesIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
+import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { SelectedCountBadge } from "../lib/author-filter-submenu-components";
@@ -37,6 +38,7 @@ export function AuthorFilterSubmenu({
 	onMakersChange,
 	onToggleFavorite,
 }: AuthorFilterSubmenuProps) {
+	const t = useTranslations("modelPicker");
 	const [search, setSearch] = useState("");
 	const level = Math.min(useSurface() + 1, 8);
 
@@ -56,7 +58,7 @@ export function AuthorFilterSubmenu({
 		<DropdownMenuSub>
 			<DropdownMenuSubTrigger>
 				<HugeiconsIcon className="me-2 size-4" icon={SparklesIcon} />
-				<span>Model Author</span>
+				<span>{t("modelAuthor")}</span>
 				<SelectedCountBadge count={selectedMakers.length} />
 			</DropdownMenuSubTrigger>
 			<DropdownMenuSubContent className="w-64 p-0">
@@ -81,7 +83,7 @@ export function AuthorFilterSubmenu({
 							/>
 						</div>
 						<Combobox.Empty className="py-4 text-center text-body text-foreground-muted">
-							No authors found.
+							{t("noAuthorsFound")}
 						</Combobox.Empty>
 						<Combobox.List className="h-64 overflow-y-auto">
 							<Combobox.Collection>

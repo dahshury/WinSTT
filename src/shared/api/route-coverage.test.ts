@@ -4,28 +4,27 @@ import { describe, expect, test } from "bun:test";
 
 // ── Route-coverage guard ────────────────────────────────────────────────────────
 //
-// The renderer crosses the IPC boundary through an UNTYPED string-channel adapter
-// (`native-bridge-adapter.ts`): each route names a backend command as a bare
-// `cmd: "snake_case_name"` literal. The generated `bindings.ts` (tauri-specta)
-// is the authoritative list of commands the Rust backend actually exposes — but
-// it's imported by zero renderer files, so a Rust command rename / deletion goes
-// undetected and the route silently 404s at runtime (an unmapped/renamed command
-// is the class behind the "download 0% / RAM unknown" silent failures).
+// The renderer crosses the IPC boundary two ways:
+//   1. Typed transport — `COMMAND_INVOKERS` (ipc-transport.ts) and the adapter's
+//      plugin/window routes (native-bridge-adapter.ts) call generated
+//      `commands.METHOD(...)` bindings from `@/bindings`. tsc type-checks the
+//      ARGUMENTS, but NOT that `METHOD` still exists after a Rust rename — a
+//      deleted/renamed command keeps compiling against a `commands` shape that
+//      drifts from the backend, then 404s at runtime (the class behind the
+//      "download 0% / RAM unknown" silent failures).
+//   2. Event/plugin/window routes — the adapter ROUTE table.
 //
-// This test closes that gap WITHOUT the full `bindings.ts` adoption: it asserts
-// every `cmd` string referenced in the adapter's ROUTE table exists as a real
-// command in `bindings.ts`. It will go red the instant the two contracts drift.
+// This test closes gap 1 by asserting every `commands.METHOD` the renderer's IPC
+// layer calls is a real generated command method in `bindings.ts`, and gap 2 by
+// asserting every IPC channel with a bridge direction is routed by either the
+// adapter ROUTE or the typed COMMAND_INVOKERS. It goes red the instant the
+// renderer↔backend command contract drifts.
 //
-// We read both files as TEXT and extract the command strings at runtime, rather
-// than `import { commands } from "@/bindings"`, on purpose:
-//   1. `bindings.ts` currently has known duplicate-identifier type exports
-//      (e.g. AutoSubmitKey, ModelUnloadTimeout, OverlayPosition, PaginatedHistory)
-//      that make a typed import a tsc error until the dup-export fix lands.
-//   2. The generated `commands` object's methods are async wrappers — the backend
-//      command name lives INSIDE each method as `TAURI_INVOKE("snake_case", …)`,
-//      not as an object key (the keys are camelCase JS method names). The literal
-//      we must match against ROUTE is the `TAURI_INVOKE` argument either way.
-// Reading the text gives us exactly that set with neither blocker.
+// We read the files as TEXT and extract identifiers at runtime rather than
+// `import { commands } from "@/bindings"` because the generated `commands` object
+// exposes camelCase JS method names; the assertion we need is "the method name
+// the IPC layer references is one the generator emitted" — exactly what the text
+// extraction gives us with no import-shape coupling.
 
 const HERE = import.meta.dir; // …/src/shared/api
 
@@ -43,11 +42,6 @@ function collectCaptures(source: string, re: RegExp): Set<string> {
 		}
 	}
 	return out;
-}
-
-/** Backend command names the adapter routes to: every `cmd: "…"` in ROUTE. */
-function extractRouteCmds(adapterSource: string): string[] {
-	return [...collectCaptures(adapterSource, /\bcmd:\s*"([a-z0-9_]+)"/g)].sort();
 }
 
 /** IPC keys that the adapter routes: every `[IPC.KEY]:` in ROUTE. */
@@ -100,9 +94,32 @@ function extractRequiredIpcKeys(ipcSource: string): string[] {
 	return [...out].sort();
 }
 
-/** Backend command names tauri-specta generated: every `TAURI_INVOKE("…")`. */
-function extractBindingsCmds(bindingsSource: string): Set<string> {
-	return collectCaptures(bindingsSource, /TAURI_INVOKE\(\s*"([a-z0-9_]+)"/g);
+/**
+ * Generated command METHOD names the IPC layer calls: every `commands.METHOD(`
+ * referenced in a transport/adapter source. These are the camelCase JS method
+ * names the renderer drives, which must each exist on the generated `commands`.
+ */
+function extractCommandMethodCalls(source: string): Set<string> {
+	// Generated command methods are camelCase (lowercase first letter); the regex
+	// requires that so a doc-comment placeholder like `commands.METHOD(...)` (all
+	// caps) is not mistaken for a real call.
+	return collectCaptures(source, /\bcommands\.([a-z][A-Za-z0-9]*)\s*\(/g);
+}
+
+/** Generated command METHOD names tauri-specta emitted: every `async method(`. */
+function extractBindingsMethods(bindingsSource: string): Set<string> {
+	const start = bindingsSource.indexOf("export const commands");
+	if (start === -1) {
+		throw new Error("Could not isolate the generated `commands` object");
+	}
+	// The `commands` object is followed by `export const events` in the generated
+	// file; stop there so we don't pick up unrelated `async` helpers below it.
+	const end = bindingsSource.indexOf("export const events", start);
+	const slice =
+		end > start
+			? bindingsSource.slice(start, end)
+			: bindingsSource.slice(start);
+	return collectCaptures(slice, /^async\s+([A-Za-z][A-Za-z0-9]*)\s*\(/gm);
 }
 
 const adapterSource = read("native-bridge-adapter.ts");
@@ -110,21 +127,30 @@ const transportSource = read("ipc-transport.ts");
 const ipcSource = read("ipc-channels.ts");
 const bindingsSource = read("../../bindings.ts");
 
-const routeCmds = extractRouteCmds(adapterSource);
 const routeKeys = extractRouteKeys(adapterSource);
 const invokerKeys = extractInvokerKeys(transportSource);
 // A channel is "routed" if EITHER the adapter ROUTE or the typed transport
 // (COMMAND_INVOKERS) handles it — both are valid renderer→main transports.
 const routedKeys = new Set<string>([...routeKeys, ...invokerKeys]);
 const requiredIpcKeys = extractRequiredIpcKeys(ipcSource);
-const bindingsCmds = extractBindingsCmds(bindingsSource);
 
-describe("IPC route coverage (adapter ROUTE ↔ generated bindings)", () => {
+// Every generated command method the renderer's IPC layer invokes (transport map
+// + adapter plugin/window routes).
+const calledMethods = new Set<string>([
+	...extractCommandMethodCalls(transportSource),
+	...extractCommandMethodCalls(adapterSource),
+]);
+const bindingsMethods = extractBindingsMethods(bindingsSource);
+
+describe("IPC route coverage (typed transport ↔ generated bindings)", () => {
 	test("the extractors find a non-trivial set (guards against a broken regex / moved file)", () => {
 		expect(routeKeys.size).toBeGreaterThan(50);
 		expect(invokerKeys.size).toBeGreaterThan(50);
 		expect(routedKeys.size).toBeGreaterThan(100);
-		expect(bindingsCmds.size).toBeGreaterThan(50);
+		expect(bindingsMethods.size).toBeGreaterThan(100);
+		// The transport calls dozens of commands; the adapter a handful. A tiny set
+		// here means the `commands.METHOD(` regex broke or a file moved.
+		expect(calledMethods.size).toBeGreaterThan(50);
 	});
 
 	test("typed command channels are not duplicated in the adapter ROUTE table", () => {
@@ -135,11 +161,13 @@ describe("IPC route coverage (adapter ROUTE ↔ generated bindings)", () => {
 		expect(duplicated).toEqual([]);
 	});
 
-	test("every adapter ROUTE cmd exists as a backend command in bindings.ts", () => {
-		const missing = routeCmds.filter((cmd) => !bindingsCmds.has(cmd));
-		// A non-empty list means a renamed/deleted Rust command (or a typo in the
-		// adapter): the route would 404 silently at runtime. The message names the
-		// offenders so the fix is obvious.
+	test("every `commands.METHOD` the IPC layer calls exists in generated bindings.ts", () => {
+		const missing = [...calledMethods]
+			.filter((method) => !bindingsMethods.has(method))
+			.sort();
+		// A non-empty list means a renamed/deleted Rust command (or a typo in a
+		// transport/adapter wrapper): the call would no longer reach the backend.
+		// The message names the offenders so the fix is obvious.
 		expect(missing).toEqual([]);
 	});
 
@@ -150,13 +178,5 @@ describe("IPC route coverage (adapter ROUTE ↔ generated bindings)", () => {
 		// COMMAND_INVOKERS entry — the migration moves channels from the former to
 		// the latter, so both count.
 		expect(missing).toEqual([]);
-	});
-
-	test("no adapter ROUTE cmd is referenced under multiple spellings (catches copy-paste drift)", () => {
-		// `routeCmds` is already de-duplicated; this asserts the de-dup didn't hide a
-		// near-miss by checking each entry is a syntactically valid command token.
-		for (const cmd of routeCmds) {
-			expect(cmd).toMatch(/^[a-z][a-z0-9_]*$/);
-		}
 	});
 });

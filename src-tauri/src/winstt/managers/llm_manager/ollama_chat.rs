@@ -142,7 +142,7 @@ impl LlmManager {
             Err(err) => {
                 log::warn!("[llm] failed to auto-apply dictation learning: {err}");
                 let _ = self.app.emit(
-                    "llm-learned-proper-nouns",
+                    crate::winstt::commands::events::names::LLM_LEARNED_PROPER_NOUNS,
                     serde_json::json!({ "nouns": side_effects.learned_proper_nouns }),
                 );
             }

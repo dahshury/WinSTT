@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { render } from "@testing-library/react";
+import { render } from "../test/render-with-intl";
 import type { FilterableParameter } from "../lib/openrouter-provider-utils";
 import * as components from "../lib/parameters-filter-submenu-components";
 import * as utils from "../lib/parameters-filter-submenu-utils";

@@ -1,6 +1,12 @@
-import type { components } from "@spec/schema";
-
-type BaseTranscriptionItem = components["schemas"]["TranscriptionItem"];
+// Renderer-side live-feed item shape. The transcription stream is produced
+// in-process by the native bridge (no Rust command emits this struct), so this
+// is a hand-written type rather than a bindings re-point.
+interface BaseTranscriptionItem {
+	id: string;
+	type: "realtime" | "final";
+	text: string;
+	timestamp: number;
+}
 
 export interface SpeakerSegment {
 	end: number;

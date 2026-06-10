@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "../../test/render-with-intl";
 import type { TtsModelInfo } from "@/entities/tts-catalog";
 import { TtsModelSelector } from "./TtsModelSelector";
 

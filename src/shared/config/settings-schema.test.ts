@@ -58,12 +58,14 @@ describe("modelSettingsSchema defaults", () => {
 		expect(() => modelSettingsSchema.parse({ backend: "" })).toThrow();
 	});
 
-	test("onnxQuantization defaults to 'auto' (RAM/VRAM-aware recommended precision)", () => {
-		// Locks the `default("auto")` for onnxQuantization. "auto" resolves to
-		// the hardware-aware recommended precision (fit_aware_auto_quant); ""
-		// now means EXPLICIT fp32, not "auto". Mutating this default would
-		// surface a stale value to consumers.
-		expect(modelSettingsSchema.parse({}).onnxQuantization).toBe("auto");
+	test("onnxQuantization defaults to '' (explicit fp32, mirrors the canonical Rust default)", () => {
+		// Locks the `default("")` for onnxQuantization to the canonical Rust
+		// default (`ModelSettings`' `onnx_quantization: String::new()`), enforced
+		// by the Rust↔zod parity gate. "" = EXPLICIT fp32 (the full base export);
+		// "auto" is the separate hardware-aware recommended sentinel
+		// (fit_aware_auto_quant). Mutating this default would re-introduce the
+		// drift the parity gate guards against.
+		expect(modelSettingsSchema.parse({}).onnxQuantization).toBe("");
 	});
 
 	test("initialPrompt and initialPromptRealtime default to empty strings", () => {

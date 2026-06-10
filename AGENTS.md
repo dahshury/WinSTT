@@ -42,5 +42,27 @@ only `tauri build` produces a standalone exe.
 - Moving `src-tauri/` invalidates absolute paths baked into `target/` — clear
   `target/debug/build/{tauri,winstt}-*` + matching `.fingerprint/*` if codegen paths break.
 
+## IPC & events conventions
+
+- **New frontend → backend calls use generated bindings directly.** Import
+  `{ commands }` from `@/bindings` (tauri-specta) and call `commands.theCommand(...)`.
+  The legacy string-channel funnel (`ipc-channels.ts` → `ipc-transport.ts`
+  `COMMAND_INVOKERS` → `native-bridge-adapter.ts` ROUTE) is **FROZEN**: do not add
+  new channel constants, invoker entries, or ROUTE entries. It shrinks
+  opportunistically; it never grows.
+- **A new Rust command needs only 2 edits:** (a) the `#[tauri::command] #[specta::specta]`
+  fn, and (b) its entry in `collect_commands![]` (`commands_registry.rs`). A
+  completeness guard test enforces (b); regenerate `bindings.ts` via the
+  `export_bindings` test, then call it from the renderer through `commands.*`.
+- **Event names are `namespace:kebab`, defined once as Rust consts.** Every
+  renderer-facing event name lives in the `names` module in
+  `src-tauri/src/winstt/commands/events.rs` (e.g. `WAKEWORD_DETECTED =
+  "wakeword:detected"`). Emit with `app.emit(names::THE_EVENT, payload)` and listen
+  on the SAME string in the adapter ROUTE — never duplicate the literal. The
+  `emit-coverage` test (`src/shared/api/emit-coverage.test.ts`) fails if a renderer
+  ROUTE event has no backend emitter, or a canonical backend event has no listener
+  (the prefix-drift bug class); add an allowlist entry with a reason for a
+  deliberately dead/internal edge.
+
 For the Electron/Python app's instructions, see
 [`examples/winstt-electron/AGENTS.md`](examples/winstt-electron/AGENTS.md).

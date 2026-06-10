@@ -502,7 +502,7 @@ pub fn sound_get_data(app: AppHandle, webview: tauri::WebviewWindow) -> Option<V
 /// playback keep their Web-Audio sinkId routing (unchanged).
 ///
 /// Fire-and-forget on a worker thread: rodio's `sink.sleep_until_end()` blocks,
-/// and the press path must not. Mirrors `audio_feedback::play_sound_async`.
+/// and the press path must not.
 pub fn play_recording_chime(app: &AppHandle) {
     let Some(path) = active_recording_sound_path(app) else {
         return;
@@ -513,6 +513,23 @@ pub fn play_recording_chime(app: &AppHandle) {
             log::error!("Failed to play recording chime '{}': {e}", path.display());
         }
     });
+}
+
+/// Play the ACTIVE recording chime synchronously (blocks until playback ends).
+///
+/// Used by the Settings UI "test sound" command, which is invoked on the blocking
+/// pool and expects the sound to play to completion. Shares gating + file
+/// selection with [`active_recording_sound_path`] (so a disabled chime stays
+/// silent and the same default/custom file is used) — the single recording-sound
+/// pathway the rest of the app uses, no separate AppSettings sound theme.
+pub(crate) fn play_recording_chime_blocking(app: &AppHandle) {
+    let Some(path) = active_recording_sound_path(app) else {
+        return;
+    };
+    let selected_device = crate::settings::get_settings(app).selected_output_device;
+    if let Err(e) = crate::audio_feedback::play_audio_file(&path, selected_device, 1.0) {
+        log::error!("Failed to play recording chime '{}': {e}", path.display());
+    }
 }
 
 fn recording_generation_is_active(app: &AppHandle, recording_generation: u64) -> bool {

@@ -3,6 +3,7 @@
 import { Input } from "@base-ui/react/input";
 import { BrainIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import type {
@@ -69,6 +70,7 @@ export function ReasoningControls({
 	supportsMaxTokens,
 	supportsVerbosity,
 }: ReasoningControlsProps) {
+	const t = useTranslations("modelPicker");
 	const showReasoning = isReasoningSelected && !!onReasoningEffortChange;
 	const showVerbosity = supportsVerbosity && !!onVerbosityChange;
 	const showMaxTokens = supportsMaxTokens && !!onMaxOutputTokensChange;
@@ -101,7 +103,7 @@ export function ReasoningControls({
 		>
 			{showReasoning ? (
 				<div className="min-w-0 space-y-1">
-					<FieldLabel tip={REASONING_TIP}>Reasoning effort</FieldLabel>
+					<FieldLabel tip={REASONING_TIP}>{t("reasoningEffort")}</FieldLabel>
 					<ReasoningEffortDropdown
 						disabled={!onReasoningEffortChange}
 						onChange={(next) => onReasoningEffortChange?.(next)}
@@ -111,7 +113,7 @@ export function ReasoningControls({
 			) : null}
 			{showVerbosity ? (
 				<div className="min-w-0 space-y-1">
-					<FieldLabel tip={VERBOSITY_TIP}>Verbosity</FieldLabel>
+					<FieldLabel tip={VERBOSITY_TIP}>{t("verbosity")}</FieldLabel>
 					<VerbosityDropdown
 						disabled={!onVerbosityChange}
 						onChange={(next) => onVerbosityChange?.(next)}
@@ -121,7 +123,9 @@ export function ReasoningControls({
 			) : null}
 			{showMaxTokens ? (
 				<div className="min-w-0 space-y-1">
-					<FieldLabel tip={RESPONSE_LENGTH_TIP}>Max output tokens</FieldLabel>
+					<FieldLabel tip={RESPONSE_LENGTH_TIP}>
+						{t("maxOutputTokens")}
+					</FieldLabel>
 					<div className="flex h-9 items-center gap-1 rounded-sm border border-border bg-surface-secondary/60 px-2">
 						<HugeiconsIcon
 							aria-hidden="true"

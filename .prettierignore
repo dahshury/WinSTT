@@ -1,6 +1,5 @@
 # Generated / vendored — do not format
 src/bindings.ts
-spec/generated/
 **/*.generated.ts
 src-tauri/target/
 src-tauri/gen/

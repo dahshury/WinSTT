@@ -509,11 +509,10 @@ impl WakeWordManager {
             "Wake word detected: '{}' (index {})",
             result.word, result.word_index
         );
-        // Reuse the canonical specta-typed payload registered in lib.rs / events.rs
-        // so the renderer's `wake_word_detected` listener reads `{ word, wordIndex }`
-        // unchanged (camelCase via the struct's serde rename).
+        // Emit the canonical `wakeword:detected` event so the renderer's listener
+        // reads `{ word, wordIndex }` (camelCase via the struct's serde rename).
         let _ = self.app.emit(
-            "wake_word_detected",
+            crate::winstt::commands::events::names::WAKEWORD_DETECTED,
             WakeWordDetectedPayload {
                 word: result.word.clone(),
                 word_index: result.word_index,

@@ -1,8 +1,13 @@
-import type { components } from "@spec/schema";
 import { create } from "zustand";
 import type { GpuInfo, ServerStatus } from "@/shared/api/models";
 
-type ConnectionStatus = components["schemas"]["ConnectionStatus"];
+/**
+ * Renderer-side connection state for the backend relay. No real WebSocket
+ * exists in the Tauri port (the native bridge is in-process), so this is a
+ * renderer-only vocabulary kept in lockstep with `schema.zod.ts`'s
+ * `ConnectionStatus`.
+ */
+type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 /**
  * Live ORT runtime snapshot published by the server. Honest about what

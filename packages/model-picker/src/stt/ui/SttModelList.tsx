@@ -8,6 +8,7 @@ import {
 	ServerStack01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useTranslations } from "use-intl";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type {
 	FitAssessmentEntry,
@@ -194,6 +195,7 @@ function FavoritesGroup({
  * dimension + direction, e.g. "Sorted · Speed · fastest first".
  */
 function SortedLabel({ sortKey }: { sortKey: SttSortKey | null }) {
+	const t = useTranslations("modelPicker");
 	// No `data-rail-section`: the maker rail is hidden while sorting, so we keep
 	// the scroll-spy from latching onto this header and leaving the rail with no
 	// active tile once the sort is cleared.
@@ -203,7 +205,7 @@ function SortedLabel({ sortKey }: { sortKey: SttSortKey | null }) {
 				<HugeiconsIcon className="size-3" icon={ArrowUpDownIcon} />
 			</span>
 			<span className="font-semibold text-[10px] text-foreground-muted uppercase tracking-[0.12em]">
-				Sorted
+				{t("sorted")}
 			</span>
 			{sortKey ? (
 				<span className="text-[10px] text-foreground-dim">
@@ -269,6 +271,7 @@ function SortedGroup({
  * section and stays out of the way for users who don't use custom models.
  */
 function OpenCustomModelsFolderRow() {
+	const t = useTranslations("modelPicker");
 	const handleOpen = () => {
 		// Fire-and-forget; the main process toasts on failure (rare — would
 		// require the OS shell to reject opening %APPDATA%). We deliberately
@@ -289,16 +292,17 @@ function OpenCustomModelsFolderRow() {
 		>
 			<HugeiconsIcon className="size-4 shrink-0" icon={FolderOpenIcon} />
 			<span className="flex-1 truncate text-left">
-				Open custom models folder
+				{t("openCustomModelsFolder")}
 			</span>
 			<span className="text-[10px] text-foreground-dim">
-				Drop HuggingFace ONNX bundles here
+				{t("dropOnnxBundlesHere")}
 			</span>
 		</BaseButton>
 	);
 }
 
 function EmptyState({ hasActiveFilters }: { hasActiveFilters: boolean }) {
+	const t = useTranslations("modelPicker");
 	return (
 		<div className="mx-auto flex w-full max-w-[280px] flex-col items-center gap-2 px-4 py-8 text-center">
 			<div className="flex size-10 items-center justify-center rounded-full bg-surface-secondary">
@@ -307,11 +311,11 @@ function EmptyState({ hasActiveFilters }: { hasActiveFilters: boolean }) {
 					icon={ServerStack01Icon}
 				/>
 			</div>
-			<p className="text-balance font-semibold text-body">No models found</p>
+			<p className="text-balance font-semibold text-body">
+				{t("noModelsFound")}
+			</p>
 			<p className="text-balance text-foreground-muted text-xs-tight">
-				{hasActiveFilters
-					? "Try clearing filters or adjusting your search."
-					: "Waiting for the catalog to load…"}
+				{hasActiveFilters ? t("emptyHintFilters") : t("emptyHintLoading")}
 			</p>
 		</div>
 	);

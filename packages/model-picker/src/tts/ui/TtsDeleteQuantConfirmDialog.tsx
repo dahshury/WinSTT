@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "use-intl";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 
 export interface TtsPendingDelete {
@@ -23,23 +24,17 @@ export function TtsDeleteQuantConfirmDialog({
 	onCancel,
 	onConfirm,
 }: TtsDeleteQuantConfirmDialogProps) {
+	const t = useTranslations("modelPicker");
 	return (
 		<ConfirmDialog
-			confirmLabel="Delete"
-			description={
-				<>
-					This removes the on-disk{" "}
-					<span className="font-medium text-foreground">
-						{pending?.quantLabel}
-					</span>{" "}
-					weights for{" "}
-					<span className="font-medium text-foreground">
-						{pending?.displayName}
-					</span>
-					. Other precisions of the same model stay cached. You can re-download
-					this variant anytime from the picker.
-				</>
-			}
+			confirmLabel={t("delete")}
+			description={t.rich("deleteQuantDescriptionTts", {
+				quant: pending?.quantLabel ?? "",
+				name: pending?.displayName ?? "",
+				strong: (chunks) => (
+					<span className="font-medium text-foreground">{chunks}</span>
+				),
+			})}
 			onConfirm={onConfirm}
 			onOpenChange={(next) => {
 				if (!next) {
@@ -47,7 +42,9 @@ export function TtsDeleteQuantConfirmDialog({
 				}
 			}}
 			open={pending !== null}
-			title={`Delete ${pending?.quantLabel ?? "this"} weights?`}
+			title={t("deleteQuantTitle", {
+				quant: pending?.quantLabel ?? t("thisQuantFallback"),
+			})}
 		/>
 	);
 }

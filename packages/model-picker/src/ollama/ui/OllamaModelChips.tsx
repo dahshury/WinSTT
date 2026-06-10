@@ -8,6 +8,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import { useTranslations } from "use-intl";
 import type { OpenRouterEndpoint } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { Tooltip as ContentTooltip } from "@/shared/ui/tooltip";
@@ -85,6 +86,7 @@ function ThinkingChip({
 }: {
 	capabilities: readonly string[] | undefined;
 }) {
+	const t = useTranslations("modelPicker");
 	if (!normalizedCapabilitySet(capabilities).has("thinking")) {
 		return null;
 	}
@@ -97,14 +99,11 @@ function ThinkingChip({
 						className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/60 px-1.5 py-px font-medium text-[9.5px] text-foreground-muted leading-none"
 					>
 						<HugeiconsIcon className="size-2.5" icon={Brain01Icon} />
-						Reasoning
+						{t("reasoning")}
 					</span>
 				)}
 			/>
-			<TooltipContent>
-				Supports thinking output. The model can show its step-by-step reasoning
-				before producing the final answer.
-			</TooltipContent>
+			<TooltipContent>{t("reasoningTip")}</TooltipContent>
 		</Tooltip>
 	);
 }
@@ -146,6 +145,7 @@ function CapabilityChips({
 }: {
 	capabilities: readonly string[] | undefined;
 }) {
+	const t = useTranslations("modelPicker");
 	const labels = visibleCapabilities(capabilities, { excludeTools: true });
 	if (labels.length === 0) {
 		return null;
@@ -165,9 +165,7 @@ function CapabilityChips({
 							</span>
 						)}
 					/>
-					<TooltipContent>
-						Reported by Ollama for this local model.
-					</TooltipContent>
+					<TooltipContent>{t("ollamaCapabilityTip")}</TooltipContent>
 				</Tooltip>
 			))}
 		</>
@@ -193,13 +191,20 @@ export function installedCapabilityBadges(
 }
 
 export function WontFitChip({ fit }: { fit: OllamaFitInfo | undefined }) {
+	const t = useTranslations("modelPicker");
 	if (!fit || fit.fits) {
 		return null;
 	}
 	const tooltip =
 		fit.shortfall === "vram"
-			? `Needs ~${formatOllamaSize(fit.requiredBytes)} of VRAM — only ${formatOllamaSize(fit.availableBytes)} available`
-			: `Needs ~${formatOllamaSize(fit.requiredBytes)} of RAM — only ${formatOllamaSize(fit.availableBytes)} available`;
+			? t("wontFitVram", {
+					required: formatOllamaSize(fit.requiredBytes),
+					available: formatOllamaSize(fit.availableBytes),
+				})
+			: t("wontFitRam", {
+					required: formatOllamaSize(fit.requiredBytes),
+					available: formatOllamaSize(fit.availableBytes),
+				});
 	return (
 		<Tooltip>
 			<TooltipTrigger
@@ -209,7 +214,7 @@ export function WontFitChip({ fit }: { fit: OllamaFitInfo | undefined }) {
 						className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-error/10 px-1.5 font-medium text-[10px] text-error leading-none ring-1 ring-error/30 ring-inset"
 					>
 						<HugeiconsIcon className="size-2.5" icon={AlertCircleIcon} />
-						Won't fit
+						{t("wontFit")}
 					</span>
 				)}
 			/>
@@ -222,14 +227,12 @@ export function WontFitChip({ fit }: { fit: OllamaFitInfo | undefined }) {
  *  recommended models live inside their maker group rather than a separate
  *  maker-less "Recommended" section. */
 export function RecommendedStar() {
+	const t = useTranslations("modelPicker");
 	return (
-		<ContentTooltip
-			content="Recommended for dictation post-processing"
-			side="top"
-		>
+		<ContentTooltip content={t("recommendedTip")} side="top">
 			<span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-amber-400/[0.12] px-1.5 font-medium text-[10px] text-amber-400 leading-none">
 				<HugeiconsIcon className="size-2.5 fill-amber-400" icon={StarIcon} />
-				Recommended
+				{t("recommended")}
 			</span>
 		</ContentTooltip>
 	);

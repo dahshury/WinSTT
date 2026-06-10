@@ -4,6 +4,7 @@ import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef } from "react";
+import { useTranslations } from "use-intl";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
@@ -103,7 +104,7 @@ function SelectedModelContent({
 	);
 }
 
-function renderSelectedContent({
+function SelectedContent({
 	selectedModel,
 	parsedModelId,
 	placeholder,
@@ -112,6 +113,7 @@ function renderSelectedContent({
 	parsedModelId: string | undefined;
 	placeholder: string;
 }) {
+	const t = useTranslations("modelPicker");
 	if (selectedModel) {
 		return <SelectedModelContent selectedModel={selectedModel} />;
 	}
@@ -120,10 +122,10 @@ function renderSelectedContent({
 		return (
 			<div className="flex min-w-0 flex-1 items-center gap-2">
 				<Badge className="shrink-0 text-2xs" variant="secondary">
-					OpenRouter
+					{t("openrouter")}
 				</Badge>
 				<span className="truncate font-medium text-body text-foreground tracking-tight">
-					Auto
+					{t("auto")}
 				</span>
 			</div>
 		);
@@ -176,11 +178,11 @@ export function TriggerButton({
 					</span>
 				</div>
 			) : (
-				renderSelectedContent({
-					selectedModel,
-					parsedModelId,
-					placeholder,
-				})
+				<SelectedContent
+					parsedModelId={parsedModelId}
+					placeholder={placeholder}
+					selectedModel={selectedModel}
+				/>
 			)}
 			<HugeiconsIcon
 				className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"

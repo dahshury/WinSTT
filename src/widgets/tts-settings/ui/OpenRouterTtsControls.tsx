@@ -13,7 +13,7 @@ import {
 } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
-import { useOpenRouterTtsCatalogStore } from "../model/openrouter-tts-catalog-store";
+import { useOpenRouterTtsCatalogStore } from "@/entities/openrouter-catalog";
 import { TtsPreviewButton } from "./TtsPreviewButton";
 
 export interface OpenRouterTtsControlsProps {

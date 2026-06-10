@@ -11,7 +11,10 @@
 //   - a polyfill / noop  (no backend, shimmed locally)
 //
 // There is no longer a `kind:"command"` ROUTE variant — type-safe command
-// routing lives entirely in `COMMAND_INVOKERS`.
+// routing lives entirely in `COMMAND_INVOKERS`. The plugin/window routes that DO
+// reach a backend command (updater, custom-models, diag, quit) invoke it through
+// the generated `commands.*` bindings (`@/bindings`); there are NO untyped
+// `invoke("string")` calls left in this file (the typed-IPC invariant).
 //
 // Encryption (secureInvoke) collapses to plain invoke: Tauri's IPC is already
 // process-isolated, so the reference secure channel has no analogue.
@@ -21,11 +24,8 @@
 // warning and resolve to `undefined` (the renderer's `invokeOrDefault` then
 // supplies its declared fallback).
 
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import {
-	emit as tauriEmit,
-	listen as tauriListen,
-} from "@tauri-apps/api/event";
+import { listen as tauriListen } from "@tauri-apps/api/event";
+import { commands, type UpdaterCommandResult } from "@/bindings";
 import { IPC } from "./ipc-channels";
 
 // Exhaustiveness guard for discriminated-union switches. Reaching it is a
@@ -36,17 +36,14 @@ function assertNever(x: never): never {
 	throw new Error(`unhandled: ${JSON.stringify(x)}`);
 }
 
-// `@tauri-apps/api/core` + `/event` are statically imported so `install()` can
-// run SYNCHRONOUSLY (before React's first render fires the IPC hooks). The heavy
+// `@tauri-apps/api/event` is statically imported so `install()` can run
+// SYNCHRONOUSLY (before React's first render fires the IPC hooks). The heavy
 // plugins (dialog/clipboard/os/updater/…) stay dynamic in callPlugin().
-const core = {
-	invoke: tauriInvoke as <T>(
-		cmd: string,
-		args?: Record<string, unknown>,
-	) => Promise<T>,
-};
+//
+// Renderer→main commands route through generated `commands.*` (`@/bindings`)
+// per the adapter's typed-IPC invariant — there is no untyped `invoke(string)`
+// here. The remaining string transport is event LISTENING (`evt.listen`).
 const evt = {
-	emit: tauriEmit as (event: string, payload?: unknown) => Promise<void>,
 	listen: tauriListen as unknown as (
 		event: string,
 		handler: (e: { payload: unknown }) => void,
@@ -88,40 +85,6 @@ type PluginTarget =
 	| "autostart:set"
 	| "autostart:get";
 
-type UpdaterStatus =
-	| "idle"
-	| "checking"
-	| "available"
-	| "downloading"
-	| "not-available"
-	| "downloaded"
-	| "error";
-
-interface UpdaterStatusEntryInput {
-	bytesPerSecond?: number;
-	message?: string;
-	percent?: number;
-	status: UpdaterStatus;
-	total?: number;
-	transferred?: number;
-	version?: string;
-}
-
-interface UpdaterStatusEntry extends UpdaterStatusEntryInput {
-	timestamp: number;
-}
-
-interface UpdaterResult {
-	reason?: string;
-	triggered: boolean;
-}
-
-interface DiagOpenLogsFolderResult {
-	error?: string;
-	ok: boolean;
-	path?: string;
-}
-
 // ── The ROUTE table: WinSTT channel → Tauri target ─────────────────────────────
 // Grounded in `frontend/src/shared/api/ipc-channels.ts` (IPC + IPC_DIRECTIONS)
 // and the §1b/§3 mapping. Commands marked ⚠MISSING in the plan still route to a
@@ -133,7 +96,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.STT_GET_SERVER_READY]: { kind: "noop" },
 
 	// ── STT events (main → renderer) ──
-	[IPC.STT_REALTIME_TEXT]: { kind: "event", event: "realtime-update" },
+	[IPC.STT_REALTIME_TEXT]: { kind: "event", event: "realtime:update" },
 	[IPC.STT_FULL_SENTENCE]: { kind: "event", event: "stt:full-sentence" },
 	[IPC.STT_NO_AUDIO_DETECTED]: {
 		kind: "event",
@@ -158,7 +121,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.STT_SERVER_STATUS]: { kind: "event", event: "stt:server-status" },
 	[IPC.STT_SESSION_ABORTED]: { kind: "event", event: "stt:session-aborted" },
 	[IPC.STT_AUDIO_LEVEL]: { kind: "event", event: "stt:audio-level" },
-	[IPC.STT_WAKEWORD_DETECTED]: { kind: "event", event: "wake_word_detected" },
+	[IPC.STT_WAKEWORD_DETECTED]: { kind: "event", event: "wakeword:detected" },
 	[IPC.STT_WAKEWORD_DETECTION_START]: {
 		kind: "event",
 		event: "stt:wakeword-detection-start",
@@ -359,7 +322,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.LLM_REASONING_DELTA]: { kind: "event", event: "llm:reasoning-delta" },
 	[IPC.LLM_LEARNED_PROPER_NOUNS]: {
 		kind: "event",
-		event: "llm-learned-proper-nouns",
+		event: "llm:learned-proper-nouns",
 	},
 	[IPC.LLM_WARMUP_STATUS]: { kind: "event", event: "llm:warmup-status" },
 
@@ -466,7 +429,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 // ── Event payload reshape ──────────────────────────────────────────────────────
 // Most §4b plain events are byte-identical to WinSTT's IPC shape (identity).
 // The exceptions: wake-word (Tauri `WakeWordDetectedPayload` → `{}`/word),
-// realtime-update (`{text}` already), and the cloud-error fan-out (one event,
+// realtime:update (`{text}` already), and the cloud-error fan-out (one event,
 // 5 channels, code-discriminated).
 const CLOUD_ERROR_CODE_FOR_CHANNEL: Partial<Record<string, string>> = {
 	[IPC.STT_CLOUD_AUTH_FAILED]: "auth_failed",
@@ -539,24 +502,23 @@ function reshape(channel: string, payload: unknown): unknown {
 // The Rust updater facade owns GitHub release selection, download/install state,
 // and the shared status history. This bridge keeps the ported Electron-style IPC
 // names stable for the renderer.
-let updaterCheckPromise: Promise<UpdaterResult> | null = null;
+let updaterCheckPromise: Promise<UpdaterCommandResult> | null = null;
 
 async function checkAndDownloadUpdate(
 	includePrereleaseUpdates?: boolean,
-): Promise<UpdaterResult> {
+): Promise<UpdaterCommandResult> {
 	if (updaterCheckPromise) {
 		return updaterCheckPromise;
 	}
 
 	updaterCheckPromise = (async () => {
-		const payload =
-			includePrereleaseUpdates === undefined
-				? {}
-				: { includePrereleaseUpdates };
-		return core.invoke<UpdaterResult>(
-			"winstt_updater_check_and_download",
-			payload,
+		const res = await commands.winsttUpdaterCheckAndDownload(
+			includePrereleaseUpdates ?? null,
 		);
+		if (res.status === "error") {
+			throw new Error(res.error);
+		}
+		return res.data;
 	})();
 
 	try {
@@ -566,13 +528,17 @@ async function checkAndDownloadUpdate(
 	}
 }
 
-async function installPendingUpdateAndRelaunch(): Promise<UpdaterResult> {
-	return core.invoke<UpdaterResult>("winstt_updater_install");
+async function installPendingUpdateAndRelaunch(): Promise<UpdaterCommandResult> {
+	const res = await commands.winsttUpdaterInstall();
+	if (res.status === "error") {
+		throw new Error(res.error);
+	}
+	return res.data;
 }
 
 async function wireUpdaterCheckTrigger(): Promise<void> {
 	try {
-		await evt.listen("check-for-updates", () => {
+		await evt.listen("updater:check", () => {
 			void checkAndDownloadUpdate();
 		});
 	} catch {
@@ -617,9 +583,7 @@ async function callPlugin(
 		}
 		case "opener:logs": {
 			try {
-				return await core.invoke<DiagOpenLogsFolderResult>(
-					"diag_open_logs_folder",
-				);
+				return await commands.diagOpenLogsFolder();
 			} catch (e) {
 				return { ok: false, error: String(e) };
 			}
@@ -629,7 +593,11 @@ async function callPlugin(
 			// The backend owns the real folder path; for the polyfill we route to a
 			// command if present, else fall back to a best-effort no-op success.
 			try {
-				const path = await core.invoke<string>("open_custom_models_folder");
+				const res = await commands.openCustomModelsFolder();
+				if (res.status === "error") {
+					return { ok: false, error: res.error };
+				}
+				const path = res.data;
 				if (typeof path === "string" && path.length > 0) {
 					await opener.openPath(path);
 				}
@@ -639,11 +607,9 @@ async function callPlugin(
 			}
 		}
 		case "updater:status-history":
-			return core.invoke<UpdaterStatusEntry[]>(
-				"winstt_updater_get_status_history",
-			);
+			return commands.winsttUpdaterGetStatusHistory();
 		case "updater:clear-status-history":
-			return core.invoke("winstt_updater_clear_status_history");
+			return commands.winsttUpdaterClearStatusHistory();
 		case "updater:check-now":
 			return checkAndDownloadUpdate(
 				(args as { includePrereleaseUpdates?: boolean } | undefined)
@@ -691,7 +657,7 @@ async function windowOp(op: WindowOp, args: unknown[]): Promise<void> {
 			await win.close();
 			return;
 		case "quit": {
-			await core.invoke("quit_app");
+			await commands.quitApp();
 			return;
 		}
 		case "ignore-mouse": {

@@ -12,6 +12,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import { useTranslations } from "use-intl";
 import type {
 	OllamaLibraryHit,
 	OllamaLibraryTag,
@@ -144,6 +145,7 @@ function OllamaDeleteButton({
 	model: OllamaModel;
 	onDelete: (name: string) => void;
 }) {
+	const t = useTranslations("modelPicker");
 	return (
 		<Tooltip>
 			<TooltipTrigger
@@ -163,7 +165,7 @@ function OllamaDeleteButton({
 					</Button>
 				)}
 			/>
-			<TooltipContent side="top">Delete</TooltipContent>
+			<TooltipContent side="top">{t("delete")}</TooltipContent>
 		</Tooltip>
 	);
 }
@@ -373,23 +375,24 @@ function LibraryRowBadges({
 	status: LibraryRowStatus;
 	progressPercent: number | null;
 }) {
+	const t = useTranslations("modelPicker");
 	return (
 		<>
 			{status.installedCount > 0 ? (
 				<span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/[0.08] px-1.5 py-px font-medium text-[10px] text-emerald-300/80">
-					✓ {status.installedCount}{" "}
-					{status.installedCount === 1 ? "installed" : "installed variants"}
+					{"✓ "}
+					{t("installedCount", { count: status.installedCount })}
 				</span>
 			) : null}
 			{status.activePull ? (
 				<span className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-1.5 py-px font-medium text-[10px] text-accent">
 					<PulseDot className="size-1.5" />
-					Downloading {progressPercent ?? 0}%
+					{t("downloadingPercent", { percent: progressPercent ?? 0 })}
 				</span>
 			) : null}
 			{!status.activePull && status.pausedPull ? (
 				<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/[0.08] px-1.5 py-px font-medium text-[10px] text-amber-300/80">
-					Paused at {progressPercent ?? 0}%
+					{t("pausedAtPercent", { percent: progressPercent ?? 0 })}
 				</span>
 			) : null}
 		</>
@@ -497,13 +500,18 @@ function LibraryRowFooter({
 	status: LibraryRowStatus;
 	progressPercent: number | null;
 }) {
+	const t = useTranslations("modelPicker");
 	const hitPublisher = getOllamaPublisher(familySlugFromName(hit.name));
 	return (
 		<div className="mt-1 px-2">
 			<div className="flex items-center gap-2 text-[10px] text-foreground-muted">
-				<span>by {hitPublisher.label}</span>
-				{hit.pulls ? <span>· {hit.pulls} pulls</span> : null}
-				{hit.updated ? <span>· Updated {hit.updated}</span> : null}
+				<span>{t("byPublisher", { publisher: hitPublisher.label })}</span>
+				{hit.pulls ? (
+					<span>· {t("pullsCount", { count: hit.pulls })}</span>
+				) : null}
+				{hit.updated ? (
+					<span>· {t("updatedAt", { date: hit.updated })}</span>
+				) : null}
 			</div>
 			<LibraryRowProgress
 				hit={hit}
@@ -527,11 +535,12 @@ function LibraryRowShelf({
 	shelfDeps: QuantShelfDeps;
 	tagsState: LibraryRowProps["tagsState"];
 }) {
+	const t = useTranslations("modelPicker");
 	if (tagsState?.isLoading && (tagsState?.tags.length ?? 0) === 0) {
 		return (
 			<div className="flex items-center gap-2 text-foreground-muted text-xs">
 				<PulseDot className="size-2" />
-				Loading quantizations…
+				{t("loadingQuantizations")}
 			</div>
 		);
 	}
@@ -801,18 +810,19 @@ function buildTypedModelMetaEntries(
 }
 
 function TypedModelFetchStatus({ tagsState }: { tagsState: OllamaTagsState }) {
+	const t = useTranslations("modelPicker");
 	if (tagsState?.isLoading && tagsState.tags.length === 0) {
 		return (
 			<div className="flex items-center gap-2 text-foreground-muted text-xs">
 				<PulseDot className="size-2" />
-				Fetching quantizations…
+				{t("fetchingQuantizations")}
 			</div>
 		);
 	}
 	if (tagsState?.error) {
 		return (
 			<div className="rounded bg-error/10 p-2 text-error text-xs">
-				Could not fetch quantizations. The typed tag is still available.
+				{t("fetchQuantizationsError")}
 			</div>
 		);
 	}

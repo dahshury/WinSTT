@@ -44,6 +44,8 @@ export function applyProviderChange(
 }
 
 export interface ItemContext {
+	/** Translated label for the synthetic "All Providers" row. */
+	allLabel: string;
 	counts: Map<string, number>;
 	selectedEndpointProvider: string | null;
 }

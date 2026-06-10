@@ -133,6 +133,7 @@ describe("SelectedTick", () => {
 
 describe("renderProviderRow", () => {
 	const ctx = {
+		allLabel: "All Providers",
 		counts: new Map([["openai", 3]]),
 		selectedEndpointProvider: null as string | null,
 	};

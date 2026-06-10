@@ -145,14 +145,20 @@ fn replay_startup_progress(app: &AppHandle) {
 pub fn emit_startup_progress(app: &AppHandle, label: &str) {
     let phase = STARTUP_PROGRESS_PHASE.fetch_add(1, Ordering::SeqCst) + 1;
     let payload = startup_progress_payload(label, phase, startup_percent_for_phase(phase));
-    let _ = app.emit("startup-progress", payload.clone());
+    let _ = app.emit(
+        crate::winstt::commands::events::names::STARTUP_PROGRESS,
+        payload.clone(),
+    );
     apply_startup_progress_to_splash(app, &payload, false);
 }
 
 pub fn emit_startup_complete(app: &AppHandle, label: &str) {
     let phase = STARTUP_PROGRESS_PHASE.load(Ordering::SeqCst);
     let payload = startup_progress_payload(label, phase, 100);
-    let _ = app.emit("startup-complete", payload.clone());
+    let _ = app.emit(
+        crate::winstt::commands::events::names::STARTUP_COMPLETE,
+        payload.clone(),
+    );
     apply_startup_progress_to_splash(app, &payload, true);
 }
 

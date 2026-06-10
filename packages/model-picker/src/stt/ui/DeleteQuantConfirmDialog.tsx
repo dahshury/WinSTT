@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "use-intl";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 
@@ -31,23 +32,17 @@ export function DeleteQuantConfirmDialog({
 	onCancel,
 	onConfirm,
 }: DeleteQuantConfirmDialogProps) {
+	const t = useTranslations("modelPicker");
 	return (
 		<ConfirmDialog
-			confirmLabel="Delete"
-			description={
-				<>
-					This removes the on-disk{" "}
-					<span className="font-medium text-foreground">
-						{pending?.quantLabel}
-					</span>{" "}
-					weights for{" "}
-					<span className="font-medium text-foreground">
-						{pending?.displayName}
-					</span>
-					. Other quantizations of the same model stay cached. You can
-					re-download this variant anytime from the picker.
-				</>
-			}
+			confirmLabel={t("delete")}
+			description={t.rich("deleteQuantDescription", {
+				quant: pending?.quantLabel ?? "",
+				name: pending?.displayName ?? "",
+				strong: (chunks) => (
+					<span className="font-medium text-foreground">{chunks}</span>
+				),
+			})}
 			onConfirm={onConfirm}
 			onOpenChange={(next) => {
 				if (!next) {
@@ -55,7 +50,9 @@ export function DeleteQuantConfirmDialog({
 				}
 			}}
 			open={pending !== null}
-			title={`Delete ${pending?.quantLabel ?? "this"} weights?`}
+			title={t("deleteQuantTitle", {
+				quant: pending?.quantLabel ?? t("thisQuantFallback"),
+			})}
 		/>
 	);
 }

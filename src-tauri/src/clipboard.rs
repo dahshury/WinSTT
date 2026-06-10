@@ -7,7 +7,7 @@ use log::info;
 #[cfg(target_os = "linux")]
 use std::process::Command;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[cfg(target_os = "linux")]
@@ -667,7 +667,7 @@ pub fn submit_after_dictation_paste_on_main_thread(app_handle: &AppHandle) -> Re
         .run_on_main_thread(move || {
             if let Err(e) = submit_after_dictation_paste(app_for_submit.clone()) {
                 log::error!("auto-submit after streaming paste failed: {e}");
-                let _ = app_for_submit.emit("paste-error", ());
+                crate::winstt::commands::events::emit_paste_error(&app_for_submit);
             }
         })
         .map_err(|e| format!("failed to schedule auto-submit on main thread: {e}"))
@@ -684,7 +684,7 @@ pub fn paste_streaming_edit_on_main_thread(
         .run_on_main_thread(move || {
             if let Err(e) = paste_streaming_edit(backspace_chars, text, app_for_paste.clone()) {
                 log::error!("streaming paste on main thread failed: {e}");
-                let _ = app_for_paste.emit("paste-error", ());
+                crate::winstt::commands::events::emit_paste_error(&app_for_paste);
             }
         })
         .map_err(|e| format!("failed to schedule streaming paste on main thread: {e}"))
@@ -710,7 +710,7 @@ pub fn paste_on_main_thread(
             };
             if let Err(e) = result {
                 log::error!("paste on main thread failed: {e}");
-                let _ = app_for_paste.emit("paste-error", ());
+                crate::winstt::commands::events::emit_paste_error(&app_for_paste);
             }
         })
         .map_err(|e| format!("failed to schedule paste on main thread: {e}"))
@@ -725,7 +725,7 @@ pub fn paste_replace_field_on_main_thread(
         .run_on_main_thread(move || {
             if let Err(e) = paste_replace_field(text, app_for_paste.clone()) {
                 log::error!("full-field replace paste on main thread failed: {e}");
-                let _ = app_for_paste.emit("paste-error", ());
+                crate::winstt::commands::events::emit_paste_error(&app_for_paste);
             }
         })
         .map_err(|e| format!("failed to schedule full-field replace paste on main thread: {e}"))

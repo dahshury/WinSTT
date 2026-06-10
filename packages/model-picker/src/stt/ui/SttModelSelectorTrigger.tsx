@@ -4,6 +4,7 @@ import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, MouseEvent } from "react";
+import { useTranslations } from "use-intl";
 import { type ModelInfo, useModelSwapStore } from "@/entities/model-catalog";
 import { Button } from "@/shared/ui/button";
 import { PulseDot } from "@/shared/ui/pulse-dot";
@@ -171,6 +172,7 @@ function DownloadingBody({
 	selectedModel: ModelInfo | undefined;
 	toModel: ModelInfo | undefined;
 }) {
+	const t = useTranslations("modelPicker");
 	const multi = count >= 2;
 	const singleTargetLabel = toModel
 		? variantDisplayName(toModel, peers)
@@ -190,7 +192,7 @@ function DownloadingBody({
 				<SelectedContent peers={peers} selectedModel={selectedModel} />
 			) : (
 				<span className="font-medium text-body text-foreground-muted italic tracking-tight">
-					(no model)
+					{t("noModel")}
 				</span>
 			)}
 			<span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-surface-secondary/60 px-2 py-0.5 font-medium text-[10px] text-foreground-secondary leading-none">

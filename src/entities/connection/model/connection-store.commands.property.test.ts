@@ -1,10 +1,11 @@
 import { test } from "bun:test";
-import type { components } from "@spec/schema";
 import fc from "fast-check";
 import type { GpuInfo, ServerStatus } from "@/shared/api/models";
 import { type RuntimeInfo, useConnectionStore } from "./connection-store";
 
-type ConnectionStatus = components["schemas"]["ConnectionStatus"];
+// Mirrors the renderer-only `ConnectionStatus` union in `connection-store.ts`
+// (kept private there); the store's setter accepts these four values.
+type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 const CONNECTION_STATUSES: ConnectionStatus[] = [
 	"disconnected",

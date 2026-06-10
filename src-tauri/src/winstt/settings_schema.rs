@@ -1527,6 +1527,28 @@ impl Default for WinsttSettings {
     }
 }
 
+/// Canonical Rust↔zod settings-defaults parity fixture, as pretty JSON with a
+/// trailing newline.
+///
+/// This is the renderer-facing default surface: `WinsttSettings::default()`
+/// serialized with the backend-only `core` section removed. `core` is the
+/// embedded `AppSettings` view, which the renderer never sees (zod strips it),
+/// and which also carries machine-dependent (`core.appLanguage` reads the host
+/// locale) and `HashMap`-ordered fields that cannot live in a byte-stable
+/// committed fixture. Both the `cargo run --example export_settings_fixture`
+/// regenerator and the Rust parity test go through this one function so they
+/// never drift.
+pub fn default_fixture_json() -> String {
+    let mut value = serde_json::to_value(WinsttSettings::default())
+        .expect("WinsttSettings::default serializes");
+    if let Some(map) = value.as_object_mut() {
+        map.remove("core");
+    }
+    let mut json = serde_json::to_string_pretty(&value).expect("pretty-print settings fixture");
+    json.push('\n');
+    json
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WinsttSettingsWire {
@@ -1924,6 +1946,23 @@ mod tests {
         assert_eq!(s.integrations.elevenlabs.api_key, "");
         assert_eq!(s.integrations.elevenlabs.verified, None);
         assert_eq!(s.integrations.elevenlabs.last_verified_at, None);
+    }
+
+    #[test]
+    fn default_fixture_matches_committed() {
+        // Rust is canonical. This locks `WinsttSettings::default()` (minus the
+        // backend-only `core` section) to the committed parity fixture, which the
+        // zod side (`defaults-parity.test.ts`) must reproduce from
+        // `appSettingsSchema.parse({})`. Any new field or changed default fails
+        // here AND on the zod side, catching Rust↔zod drift in CI.
+        let generated = default_fixture_json();
+        let committed = include_str!("../../../spec/fixtures/winstt-settings.default.json");
+        assert_eq!(
+            generated, committed,
+            "settings default fixture is out of date — regenerate with \
+             `cargo run --example export_settings_fixture` (from src-tauri) and commit \
+             spec/fixtures/winstt-settings.default.json",
+        );
     }
 
     #[test]

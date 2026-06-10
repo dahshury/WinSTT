@@ -7,6 +7,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import { useTranslations } from "use-intl";
 import type {
 	OpenRouterEndpoint,
 	OpenRouterModel,
@@ -68,6 +69,7 @@ function ContextChip({
 }: {
 	contextLength: number | null | undefined;
 }) {
+	const t = useTranslations("modelPicker");
 	if (!isPositiveNumber(contextLength)) {
 		return null;
 	}
@@ -88,10 +90,9 @@ function ContextChip({
 				)}
 			/>
 			<TooltipContent className="max-w-xs" side="top">
-				<p className="font-semibold text-body-sm">Context window</p>
+				<p className="font-semibold text-body-sm">{t("contextWindow")}</p>
 				<p className="text-foreground-muted text-xs-tight leading-relaxed">
-					Maximum tokens this model can read in a single request: prompt plus
-					prior conversation.
+					{t("contextWindowTip")}
 				</p>
 			</TooltipContent>
 		</Tooltip>
@@ -103,6 +104,7 @@ function PricingChip({
 }: {
 	pricingInfo: ReturnType<typeof getPricingTier> | null;
 }) {
+	const t = useTranslations("modelPicker");
 	if (!pricingInfo) {
 		return null;
 	}
@@ -119,10 +121,9 @@ function PricingChip({
 				)}
 			/>
 			<TooltipContent className="max-w-xs" side="top">
-				<p className="font-semibold text-body-sm">Pricing</p>
+				<p className="font-semibold text-body-sm">{t("pricing")}</p>
 				<p className="text-foreground-muted text-xs-tight leading-relaxed">
-					Approximate cost per 1M tokens (input/output). Expand to compare
-					per-provider pricing.
+					{t("pricingTip")}
 				</p>
 			</TooltipContent>
 		</Tooltip>
@@ -336,6 +337,7 @@ function PricingBreakdown({
 }
 
 function TranscriptionPricingChip({ model }: { model: OpenRouterModel }) {
+	const t = useTranslations("modelPicker");
 	const value = formatTranscriptionPricing(model);
 	if (!value) {
 		return null;
@@ -355,16 +357,13 @@ function TranscriptionPricingChip({ model }: { model: OpenRouterModel }) {
 				)}
 			/>
 			<TooltipContent className="max-w-xs" side="top">
-				<p className="font-semibold text-body-sm">OpenRouter pricing</p>
+				<p className="font-semibold text-body-sm">{t("openrouterPricing")}</p>
 				<p className="text-foreground-muted text-xs-tight leading-relaxed">
-					Model-level STT price from OpenRouter. Token fields are converted to
-					USD per 1M tokens; duration-priced speech models are normalized to $/h
-					for comparison; request is a fixed API-call charge.
+					{t("openrouterPricingTip")}
 				</p>
 				<PricingBreakdown details={details} />
 				<p className="mt-1 text-foreground-muted text-xs-tight leading-relaxed">
-					Some speech-to-text providers bill by audio duration instead; the
-					final charge for a completed transcription is reported by usage.cost.
+					{t("openrouterPricingDurationNote")}
 				</p>
 			</TooltipContent>
 		</Tooltip>
@@ -372,6 +371,7 @@ function TranscriptionPricingChip({ model }: { model: OpenRouterModel }) {
 }
 
 function TranscriptionChip() {
+	const t = useTranslations("modelPicker");
 	return (
 		<Tooltip>
 			<TooltipTrigger
@@ -381,14 +381,14 @@ function TranscriptionChip() {
 						className="inline-flex shrink-0 cursor-default items-center gap-1 text-[11px] text-foreground-muted"
 					>
 						<HugeiconsIcon className="size-3 opacity-70" icon={Mic01Icon} />
-						<span>Transcription</span>
+						<span>{t("transcription")}</span>
 					</div>
 				)}
 			/>
 			<TooltipContent className="max-w-xs" side="top">
-				<p className="font-semibold text-body-sm">Speech-to-text</p>
+				<p className="font-semibold text-body-sm">{t("speechToText")}</p>
 				<p className="text-foreground-muted text-xs-tight leading-relaxed">
-					This model is available through OpenRouter's transcription endpoint.
+					{t("speechToTextTip")}
 				</p>
 			</TooltipContent>
 		</Tooltip>

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "../test/render-with-intl";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import * as utils from "../lib/model-filters-menu-utils";
 import { ModelFiltersMenu } from "./ModelFiltersMenu";

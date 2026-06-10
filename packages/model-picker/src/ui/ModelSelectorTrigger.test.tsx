@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Combobox } from "@base-ui/react/combobox";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
-import { render } from "@testing-library/react";
+import { render } from "../test/render-with-intl";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { ModelSelectorTrigger, TriggerButton } from "./ModelSelectorTrigger";
 import { isMissingModelId } from "./model-selector-trigger-helpers";

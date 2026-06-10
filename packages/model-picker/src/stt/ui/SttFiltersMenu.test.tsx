@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "../../test/render-with-intl";
 import { EMPTY_FILTER_STATE, type SttFilterState } from "../lib/filter-state";
 import { SttFiltersMenu } from "./SttFiltersMenu";
 

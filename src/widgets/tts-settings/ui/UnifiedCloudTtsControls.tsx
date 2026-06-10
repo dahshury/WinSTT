@@ -10,7 +10,7 @@ import {
 	providerForModelId,
 	resolveActiveCloudProvider,
 } from "../lib/cloud-tts-picker";
-import { useOpenRouterTtsCatalogStore } from "../model/openrouter-tts-catalog-store";
+import { useOpenRouterTtsCatalogStore } from "@/entities/openrouter-catalog";
 import { CloudTtsControls } from "./CloudTtsControls";
 import { OpenRouterTtsControls } from "./OpenRouterTtsControls";
 

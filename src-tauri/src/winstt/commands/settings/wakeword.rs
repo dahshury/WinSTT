@@ -204,7 +204,7 @@ fn emit_recording_error(app: &AppHandle, detail: &str) {
         "unknown"
     };
     let _ = app.emit(
-        "recording-error",
+        crate::winstt::commands::events::names::RECORDING_ERROR,
         serde_json::json!({
             "error_type": error_type,
             "detail": detail,

@@ -4,6 +4,7 @@ import { Combobox } from "@base-ui/react/combobox";
 import { ServerStack01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
+import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { renderProviderRow } from "../lib/endpoint-provider-filter-submenu-render";
@@ -33,6 +34,7 @@ export function EndpointProviderFilterSubmenu({
 	selectedEndpointProvider,
 	onEndpointProviderSelect,
 }: EndpointProviderFilterSubmenuProps) {
+	const t = useTranslations("modelPicker");
 	const [search, setSearch] = useState("");
 	const level = Math.min(useSurface() + 1, 8);
 	const queryLower = search.toLowerCase();
@@ -47,13 +49,17 @@ export function EndpointProviderFilterSubmenu({
 		applyProviderChange(value, onEndpointProviderSelect);
 	};
 
-	const itemCtx: ItemContext = { counts, selectedEndpointProvider };
+	const itemCtx: ItemContext = {
+		allLabel: t("allProviders"),
+		counts,
+		selectedEndpointProvider,
+	};
 
 	return (
 		<DropdownMenuSub>
 			<DropdownMenuSubTrigger>
 				<HugeiconsIcon className="me-2 size-4" icon={ServerStack01Icon} />
-				<span>Endpoint Provider</span>
+				<span>{t("endpointProvider")}</span>
 			</DropdownMenuSubTrigger>
 			<DropdownMenuSubContent className="w-64 p-0">
 				<Combobox.Root
@@ -76,7 +82,7 @@ export function EndpointProviderFilterSubmenu({
 							/>
 						</div>
 						<Combobox.Empty className="py-4 text-center text-body text-foreground-muted">
-							No providers found.
+							{t("noProvidersFound")}
 						</Combobox.Empty>
 						<Combobox.List className="h-64 overflow-y-auto">
 							<Combobox.Collection>

@@ -1,0 +1,192 @@
+{
+  "audio": {
+    "bufferSize": 512,
+    "clamshellMicrophone": null,
+    "extraRecordingBufferMs": 0,
+    "inputDeviceIndex": null,
+    "microphoneRelease": "immediate",
+    "minGapBetweenRecordings": 0.0,
+    "postSpeechSilenceDuration": 0.7,
+    "preRecordingBufferDuration": 1.0,
+    "sampleRate": 16000,
+    "sileroDeactivityDetection": true,
+    "sileroSensitivity": 0.7,
+    "sileroSensitivityByDeviceName": {},
+    "sileroUseOnnx": false,
+    "webrtcSensitivity": 3
+  },
+  "dictionary": [],
+  "general": {
+    "autoStart": false,
+    "autoSubmit": false,
+    "autoSubmitKey": "enter",
+    "contextAllowList": [],
+    "contextAppMode": "all-except-denied",
+    "contextAwareness": false,
+    "contextDenyList": [
+      "1password.exe",
+      "bitwarden.exe",
+      "keepass.exe",
+      "keepassxc.exe",
+      "dashlane.exe",
+      "lastpass.exe"
+    ],
+    "customWakeWords": [],
+    "fileTranscriptionFormat": "txt",
+    "fileTranscriptionSaveLocation": "auto",
+    "historyMaxEntries": 1000,
+    "liveTranscriptionDisplay": "both",
+    "loopbackDeviceIndex": null,
+    "manualToggleStop": false,
+    "minimizeToTray": true,
+    "onboarded": false,
+    "onboardedAt": null,
+    "onboardedTrack": "",
+    "outputDeviceId": "",
+    "overlayMode": "dynamic-island",
+    "overlayPosition": "auto",
+    "previewBeforePasting": false,
+    "receivePrereleaseUpdates": false,
+    "recordingMode": "ptt",
+    "recordingRetention": "cap",
+    "recordingSound": true,
+    "recordingSoundLibrary": [],
+    "recordingSoundPath": "",
+    "repasteHotkey": "LCtrl+LShift+V",
+    "sendCrashReports": true,
+    "showRecordingOverlay": true,
+    "speakerDiarization": false,
+    "startMinimized": false,
+    "systemAudioReductionWhileDictating": 60,
+    "visualizerAuraBloom": 0,
+    "visualizerAuraBlur": 20,
+    "visualizerAuraColorShift": 5,
+    "visualizerAuraShape": "circle",
+    "visualizerBarCount": 9,
+    "visualizerGridColumns": 5,
+    "visualizerGridRows": 5,
+    "visualizerGridSpeed": 6,
+    "visualizerRadialDotCount": 24,
+    "visualizerRadialRadius": 57,
+    "visualizerSize": "xs",
+    "visualizerType": "bar",
+    "visualizerWaveColorShift": 5,
+    "visualizerWaveLineWidth": 2,
+    "visualizerWaveSmoothing": 50,
+    "wakeWord": "alexa",
+    "wakeWordSensitivity": 0.6,
+    "wakeWordTimeout": 5.0,
+    "wordByWordPasting": false,
+    "wordCorrectionThreshold": 0.18
+  },
+  "global": {
+    "modelUnloadTimeout": "min15"
+  },
+  "hotkey": {
+    "pushToTalkKey": "LCtrl+LMeta"
+  },
+  "integrations": {
+    "elevenlabs": {
+      "apiKey": "",
+      "lastVerifiedAt": null,
+      "verified": null
+    }
+  },
+  "llm": {
+    "dictation": {
+      "customModifiers": [],
+      "dictionaryAutoAddEnabled": false,
+      "enabled": false,
+      "maxOutputTokens": null,
+      "model": "",
+      "openrouterFallbackModel": "",
+      "openrouterModel": "",
+      "presets": [
+        {
+          "key": "neutral"
+        },
+        {
+          "key": "reorder"
+        },
+        {
+          "key": "restructure"
+        },
+        {
+          "key": "rewordForClarity"
+        }
+      ],
+      "provider": "ollama",
+      "reasoningEffort": "medium",
+      "thinkingEffort": "off",
+      "verbosity": "medium"
+    },
+    "endpoint": "http://localhost:11434",
+    "openrouterApiKey": "",
+    "timeout": 5000,
+    "transforms": {
+      "customModifiers": [],
+      "enabled": false,
+      "hotkey": "LCtrl+LShift+T",
+      "maxOutputTokens": null,
+      "model": "",
+      "openrouterFallbackModel": "",
+      "openrouterModel": "",
+      "presets": [
+        {
+          "key": "neutral"
+        }
+      ],
+      "prompts": [],
+      "provider": "ollama",
+      "reasoningEffort": "medium",
+      "thinkingEffort": "off",
+      "verbosity": "medium"
+    }
+  },
+  "model": {
+    "autoDetectLanguage": false,
+    "backend": "faster_whisper",
+    "device": "auto",
+    "initialPrompt": "",
+    "initialPromptRealtime": "",
+    "language": "en",
+    "languageCandidates": [],
+    "model": "tiny",
+    "onnxQuantization": "",
+    "realtimeModel": "tiny",
+    "translateToEnglish": false
+  },
+  "quality": {
+    "earlyTranscriptionOnSilence": 0.2,
+    "endOfSentenceDetectionPause": 0.45,
+    "initRealtimeAfterSeconds": 0.2,
+    "midSentenceDetectionPause": 2.0,
+    "realtimeProcessingPause": 0.02,
+    "smartEndpoint": true,
+    "smartEndpointSpeed": 2.0,
+    "unknownSentenceDetectionPause": 1.3,
+    "useMainModelForRealtime": false
+  },
+  "snippets": [],
+  "tts": {
+    "cloud": {
+      "model": "eleven_multilingual_v2",
+      "openrouterModel": "",
+      "openrouterVoice": "",
+      "provider": "elevenlabs",
+      "similarity": 0.75,
+      "speakerBoost": true,
+      "speed": 1.0,
+      "stability": 0.5,
+      "style": 0.0,
+      "voice": ""
+    },
+    "enabled": false,
+    "hotkey": "LCtrl+Space",
+    "lang": "en-us",
+    "model": "kokoro-82m",
+    "source": "local",
+    "speed": 1.0,
+    "voice": "af_heart"
+  }
+}

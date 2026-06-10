@@ -3,6 +3,7 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { ServerStack01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useTranslations } from "use-intl";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
 import { isFavoritesGroupValue } from "../../core/favorites";
 import {
@@ -76,6 +77,7 @@ function EngineLabel({ engine }: { engine: TtsEngineKey }) {
 }
 
 function EmptyState({ hasActiveFilters }: { hasActiveFilters: boolean }) {
+	const t = useTranslations("modelPicker");
 	return (
 		<div className="mx-auto flex w-full max-w-[280px] flex-col items-center gap-2 px-4 py-8 text-center">
 			<div className="flex size-10 items-center justify-center rounded-full bg-surface-secondary">
@@ -84,11 +86,11 @@ function EmptyState({ hasActiveFilters }: { hasActiveFilters: boolean }) {
 					icon={ServerStack01Icon}
 				/>
 			</div>
-			<p className="text-balance font-semibold text-body">No voices found</p>
+			<p className="text-balance font-semibold text-body">
+				{t("noVoicesFound")}
+			</p>
 			<p className="text-balance text-foreground-muted text-xs-tight">
-				{hasActiveFilters
-					? "Try clearing filters or adjusting your search."
-					: "Waiting for the catalog to load…"}
+				{hasActiveFilters ? t("emptyHintFilters") : t("emptyHintLoading")}
 			</p>
 		</div>
 	);

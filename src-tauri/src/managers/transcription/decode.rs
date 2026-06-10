@@ -189,7 +189,7 @@ impl TranscriptionManager {
                             self.clear_warmed_model();
                             let detail = e.to_string();
                             let _ = self.app_handle.emit(
-                                "model-state-changed",
+                                crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
                                 ModelStateEvent {
                                     event_type: "unloaded".to_string(),
                                     model_id: None,
@@ -237,7 +237,7 @@ impl TranscriptionManager {
                     self.clear_warmed_model();
 
                     let _ = self.app_handle.emit(
-                        "model-state-changed",
+                        crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
                         ModelStateEvent {
                             event_type: "unloaded".to_string(),
                             model_id: None,

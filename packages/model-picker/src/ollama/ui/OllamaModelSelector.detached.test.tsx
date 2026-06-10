@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "../../test/render-with-intl";
 import type { OllamaModel } from "@/shared/api/models";
 import { OllamaModelSelector } from "./OllamaModelSelector";
 

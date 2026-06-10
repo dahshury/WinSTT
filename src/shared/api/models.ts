@@ -1,4 +1,3 @@
-import type { components } from "@spec/schema";
 import type {
 	AudioDevicePayload,
 	GpuInfoEntry,
@@ -24,29 +23,117 @@ export type { AudioDevicePayload as AudioDevice };
 export type { GpuInfoEntry as GpuInfo };
 
 // ── Ollama (clean re-point to bindings) ────────────────────────────────────
-// Field names already matched @spec byte-for-byte (`modifiedAt`, `details`,
-// `parameterSize`, …); the only drift is nullability (`?: T | null` here vs
-// `?: T` in @spec), absorbed at the call sites via `?? 0` / `?.` guards.
+// Field names match bindings byte-for-byte (`modifiedAt`, `details`,
+// `parameterSize`, …); the only drift is nullability (`?: T | null` in bindings
+// vs `?: T`), absorbed at the call sites via `?? 0` / `?.` guards.
 export type OllamaModel = OllamaModelPayload;
 export type OllamaScanResult = OllamaScanResultPayload;
 
-// These Ollama catalog/library concepts are renderer-side scraping results with
-// NO Rust command that returns them as a typed payload, so they stay on the
-// frozen OpenAPI spec.
-export type OllamaDetectResult = components["schemas"]["OllamaDetectResult"];
-export type OllamaPullProgress = components["schemas"]["OllamaPullProgress"];
+// Ollama catalog/library + pull/detect/delete results. The Rust commands
+// serialize their optional fields with `skip_serializing_if = Option::is_none`,
+// so absent fields are genuinely absent (undefined) at runtime — never literal
+// `null`. The generated bindings widen those to `?: T | null`; these consumers
+// (llm-catalog-store / ollama-library-store) were written against the precise
+// `?: T` shape, so we hand-mirror it here (an HONEST, narrower mirror than the
+// over-declared bindings, and exactly what the deleted `@spec` types carried).
+
+/** Coalesced status stage from the streaming `/api/pull` response. */
 export type OllamaPullProgressStatus =
-	components["schemas"]["OllamaPullProgressStatus"];
-export type OllamaPullResult = components["schemas"]["OllamaPullResult"];
-export type OllamaDeleteResult = components["schemas"]["OllamaDeleteResult"];
-export type RecommendedOllamaModel =
-	components["schemas"]["RecommendedOllamaModel"];
-export type OllamaLibraryHit = components["schemas"]["OllamaLibraryHit"];
-export type OllamaLibraryCatalogResult =
-	components["schemas"]["OllamaLibraryCatalogResult"];
-export type OllamaLibraryTag = components["schemas"]["OllamaLibraryTag"];
-export type OllamaLibraryTagsResult =
-	components["schemas"]["OllamaLibraryTagsResult"];
+	| "pulling"
+	| "downloading"
+	| "verifying"
+	| "writing"
+	| "success"
+	| "error"
+	| "cancelled";
+
+/** Streaming progress event for a model pull (`llm:pull-progress` channel). */
+export interface OllamaPullProgress {
+	model: string;
+	status: OllamaPullProgressStatus;
+	statusText?: string;
+	digest?: string;
+	completed?: number;
+	total?: number;
+	percent?: number;
+	error?: string;
+}
+
+/** `ollama_detect` result. */
+export interface OllamaDetectResult {
+	installed: boolean;
+	path?: string;
+}
+
+/** `ollama_pull` result. */
+export interface OllamaPullResult {
+	success: boolean;
+	model: string;
+	cancelled?: boolean;
+	error?: string;
+}
+
+/** `ollama_delete` result. */
+export interface OllamaDeleteResult {
+	success: boolean;
+	model: string;
+	error?: string;
+}
+
+/** A single search hit scraped from ollama.com/library. */
+export interface OllamaLibraryHit {
+	name: string;
+	description?: string;
+	pulls?: string;
+	updated?: string;
+	capabilities?: string[];
+}
+
+/** `ollama_fetch_library` result — the full scraped library catalog. */
+export interface OllamaLibraryCatalogResult {
+	hits: OllamaLibraryHit[];
+	error?: string;
+}
+
+/** A single pullable tag of a library model (e.g. `gemma3:4b`). */
+export interface OllamaLibraryTag {
+	name: string;
+	sizeBytes?: number;
+	sizeLabel?: string;
+	contextWindow?: string;
+	quantization?: string;
+	parameterSize?: string;
+	isLatest?: boolean;
+}
+
+/** `ollama_fetch_tags` result for a single library model. */
+export interface OllamaLibraryTagsResult {
+	model: string;
+	tags: OllamaLibraryTag[];
+	error?: string;
+}
+
+/**
+ * A curated entry shown in the "Recommended" tab of the model manager.
+ * Renderer-only — the recommended list is hardcoded client-side
+ * (`entities/llm-catalog/lib/recommended-models.ts`) and has no Rust command,
+ * so this is a hand-written mirror rather than a bindings re-point.
+ */
+export interface RecommendedOllamaModel {
+	/** Ollama model identifier including tag (e.g. `llama3.2:1b`). */
+	name: string;
+	/** Human-readable name shown in the UI. */
+	displayName: string;
+	/** Model family (e.g. `llama`, `gemma`, `qwen`, `phi`). */
+	family?: string;
+	/** Parameter count label (e.g. `1.2B`, `3B`). */
+	paramSize: string;
+	/** Approximate on-disk size of the default quantization, in bytes. */
+	sizeBytes: number;
+	description: string;
+	/** Free-form tags, e.g. `fast`, `tiny`, `instruct`. */
+	tags?: string[];
+}
 
 // ── OpenRouter ──────────────────────────────────────────────────────────────
 // The Rust command (`scan_openrouter_models`) types `pricing` and
@@ -200,10 +287,18 @@ export interface OpenRouterTtsScanResult {
 // message }) in bindings, but it types `code` as a bare `string | null` — it
 // does NOT expose the closed `CloudSttProvider` / `CloudSttErrorCode` literal
 // unions the renderer relies on (exhaustive `Record<CloudSttProvider, …>`,
-// `code === "network"` routing). There is no Rust command emitting those as
-// typed enums, so they stay on the frozen OpenAPI spec.
-export type CloudSttProvider = components["schemas"]["CloudSttProvider"];
-export type CloudSttErrorCode = components["schemas"]["CloudSttErrorCode"];
+// `code === "network"` routing). The Rust `CloudSttErrorCode` enum
+// (winstt/cloud_stt.rs) carries internal-only variants (`audio_too_large`,
+// `aborted`, `timeout`) the renderer never receives, so deriving it would widen
+// the union past what the UI handles. These mirror the renderer-facing subset —
+// kept in lockstep with `schema.zod.ts`'s `CloudSttProvider`/`CloudSttErrorCode`.
+export type CloudSttProvider = "elevenlabs" | "openrouter";
+export type CloudSttErrorCode =
+	| "auth"
+	| "network"
+	| "key_missing"
+	| "rate_limit"
+	| "provider_error";
 
 /**
  * Cloud STT providers whose API key lives in `settings.integrations.<provider>`
@@ -214,11 +309,66 @@ export type CloudSttErrorCode = components["schemas"]["CloudSttErrorCode"];
  */
 export type IntegrationCloudProvider = Exclude<CloudSttProvider, "openrouter">;
 
-// ── Python-WS-only concepts with no Rust command (kept on @spec) ─────────────
-export type ServerStatus = components["schemas"]["ServerStatus"];
-export type AllowedParameter = components["schemas"]["AllowedParameter"];
-export type AllowedMethod = components["schemas"]["AllowedMethod"];
-export type AppSettingsSaveInput = components["schemas"]["AppSettings"];
+// ── STT IPC parameter/method/status vocabularies ─────────────────────────────
+// These mirror the dictation IPC surface (winstt_get_parameter / _set_parameter
+// / winstt_call_method) and the server-status broadcast. They have no
+// specta-emitted Rust source, so they are hand-mirrored here (kept in lockstep
+// with `schema.zod.ts`'s `AllowedParameter` / `AllowedMethod` / `ServerStatus`).
+
+/** STT server lifecycle status, broadcast on the `stt:server-status` channel. */
+export type ServerStatus = "idle" | "starting" | "running" | "error";
+
+/** Parameters accepted by `winstt_get_parameter` / `winstt_set_parameter`. */
+export type AllowedParameter =
+	| "model"
+	| "language"
+	| "silero_sensitivity"
+	| "wake_word_activation_delay"
+	| "post_speech_silence_duration"
+	| "listen_start"
+	| "recording_stop_time"
+	| "last_transcription_bytes"
+	| "last_transcription_bytes_b64"
+	| "speech_end_silence_start"
+	| "is_recording"
+	| "use_wake_words"
+	| "silence_timing"
+	| "silence_endpoint_enabled"
+	| "smart_endpoint_enabled"
+	| "detection_speed"
+	| "input_device_index"
+	| "end_of_sentence_detection_pause"
+	| "mid_sentence_detection_pause"
+	| "unknown_sentence_detection_pause"
+	| "initial_prompt"
+	| "initial_prompt_realtime"
+	| "onnx_quantization"
+	| "translate_to_english"
+	| "model_unload_timeout_seconds"
+	| "webrtc_sensitivity"
+	| "silero_deactivity_detection"
+	| "always_on_microphone"
+	| "lazy_stream_close"
+	| "lazy_close_timeout_seconds";
+
+/** Methods callable via `winstt_call_method`. */
+export type AllowedMethod =
+	| "set_microphone"
+	| "abort"
+	| "stop"
+	| "clear_audio_queue"
+	| "wakeup"
+	| "shutdown"
+	| "text"
+	| "request_diarization_toggle";
+
+/**
+ * The settings payload accepted by the `SETTINGS_SAVE` IPC. The renderer's zod
+ * `settingsSchema` is the canonical shape; this alias stays intentionally loose
+ * (the IPC casts the validated settings object through it) so callers don't have
+ * to thread the full schema type. See `shared/api/ipc/stt-audio.ts`.
+ */
+export type AppSettingsSaveInput = Record<string, unknown>;
 
 // LLM warmup status is emitted by Rust commands and generated in bindings.ts.
 export type { LlmWarmupModelStatus, LlmWarmupOutcome, LlmWarmupStatus };

@@ -17,6 +17,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { type ComponentPropsWithoutRef, type ReactNode, useState } from "react";
+import { useTranslations } from "use-intl";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
@@ -143,18 +144,21 @@ function ActiveFilterHeader({
 	count: number;
 	onClearAll: () => void;
 }) {
+	const t = useTranslations("modelPicker");
 	if (count <= 0) {
 		return null;
 	}
 	return (
 		<div className="flex items-center justify-between px-3 py-2">
-			<span className="text-foreground-muted text-xs">{count} active</span>
+			<span className="text-foreground-muted text-xs">
+				{t("activeCount", { count })}
+			</span>
 			<BaseButton
 				className="font-medium text-accent text-xs hover:underline"
 				onClick={onClearAll}
 				type="button"
 			>
-				Clear all
+				{t("clearAll")}
 			</BaseButton>
 		</div>
 	);
@@ -259,11 +263,11 @@ function SortFilterSection({
 	onSortChange: (next: OpenRouterSortValue) => void;
 	sortKey: OpenRouterSortValue;
 }) {
+	const t = useTranslations("modelPicker");
 	return (
 		<div className="flex flex-col gap-2 px-3 pt-1 pb-3">
 			<p className="text-[11px] text-foreground-muted leading-snug">
-				Flatten providers into one ordered list. Tap the active option again to
-				return to grouped.
+				{t("flattenProviders")}
 			</p>
 			<div className="flex flex-wrap gap-1.5">
 				{OPENROUTER_SORT_KEYS.map((key) => (
@@ -451,6 +455,7 @@ function AuthorFilterSection({
 	providerCounts: Map<string, number>;
 	selectedMakers: string[];
 }) {
+	const t = useTranslations("modelPicker");
 	return (
 		<>
 			<SearchInput
@@ -462,7 +467,7 @@ function AuthorFilterSection({
 				<div className="flex flex-col gap-0.5">
 					{filteredAuthors.length === 0 ? (
 						<div className="py-4 text-center text-body-sm text-foreground-muted">
-							No authors found.
+							{t("noAuthorsFound")}
 						</div>
 					) : null}
 					{filteredAuthors.map((provider) => (
@@ -551,6 +556,7 @@ function EndpointProviderFilterSection({
 	providerSearch: string;
 	selectedEndpointProvider: string | null;
 }) {
+	const t = useTranslations("modelPicker");
 	return (
 		<>
 			<SearchInput
@@ -562,12 +568,12 @@ function EndpointProviderFilterSection({
 				<div className="flex flex-col gap-0.5">
 					<ProviderRow
 						isSelected={selectedEndpointProvider === null}
-						label="All providers"
+						label={t("allProviders")}
 						onClick={() => onEndpointProviderSelect(null)}
 					/>
 					{filteredEndpointProviders.length === 0 ? (
 						<div className="py-4 text-center text-body-sm text-foreground-muted">
-							No providers found.
+							{t("noProvidersFound")}
 						</div>
 					) : null}
 					{filteredEndpointProviders.map(([provider, count]) => {
