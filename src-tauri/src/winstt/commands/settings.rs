@@ -75,8 +75,7 @@ pub(crate) use self::learning::auto_apply_dictation_learning;
 pub(crate) use self::persistence::read_settings_raw;
 pub use self::persistence::{read_settings, recording_mode, seed_defaults, write_core_settings};
 pub(crate) use self::runtime::{
-    core_timeout_from_winstt, enabled_ollama_models, should_warm_tts, warm_stt_model_async,
-    warm_tts_async,
+    core_timeout_from_winstt, enabled_ollama_models, should_warm_tts, warm_tts_async,
 };
 pub(crate) use self::wakeword::{
     rearm_wakeword_runtime_if_active, sync_wakeword_runtime_from_settings_in_background,

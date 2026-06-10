@@ -61,7 +61,7 @@ pub struct OllamaManager {
     catalog_cache: Mutex<Option<CacheEntry<OllamaLibraryCatalogResult>>>,
     /// Models whose in-flight pull was cancelled — the streaming pull drain polls this.
     pull_cancelled: Mutex<HashSet<String>>,
-    /// Last published warmup snapshot (renderer reads it via `llm_get_warmup_status`).
+    /// Last published warmup snapshot (renderer reads it via `llm_warmup_status`).
     last_warmup_status: Mutex<Option<LlmWarmupStatus>>,
 }
 

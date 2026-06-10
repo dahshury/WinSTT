@@ -349,7 +349,7 @@ impl LlmManager {
     }
 
     /// Catalog scan + per-model `/endpoints` enrichment. Used by the picker
-    /// (`scan_openrouter_models`); the lean `scan_openrouter` (no fan-out) backs
+    /// (`openrouter_refresh_models`); the lean `scan_openrouter` (no fan-out) backs
     /// the in-chat lazy `supported_parameters` lookup so a dictation never fires
     /// 300+ endpoint requests.
     pub async fn scan_openrouter_enriched(&self, api_key: &str) -> OpenRouterScan {

@@ -369,8 +369,6 @@ export function ipcClientMock(): Record<string, unknown> {
 		onLoopbackStopped: (cb: () => void) => on(IPC.STT_LOOPBACK_STOPPED, cb),
 		onDeviceSwitchFailed: (cb: (p: unknown) => void) =>
 			onTyped(IPC.STT_DEVICE_SWITCH_FAILED, (d: unknown) => d, cb),
-		onVadSensitivityAdapted: (cb: (p: unknown) => void) =>
-			onTyped(IPC.STT_VAD_SENSITIVITY_ADAPTED, (d: unknown) => d, cb),
 
 		// Dialog
 		dialogOpenFile: (filters?: unknown, title?: unknown) =>

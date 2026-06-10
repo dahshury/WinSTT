@@ -455,17 +455,3 @@ export const onWakewordModelStatus = (
 
 export const onAudioLevel = (cb: (level: number) => void) =>
 	onTyped(IPC.STT_AUDIO_LEVEL, (d: { level: number }) => d.level, cb);
-
-// VAD sensitivity adaptation — emitted by the STT server when the
-// adaptive Silero calibrator settles on a new value. Main-side relay is
-// still WIP; until it's hooked up, the subscriber never fires and the
-// renderer's calibration store stays at its last persisted value.
-export interface VadSensitivityAdaptedEvent {
-	newSensitivity: number;
-	noiseFloorRms?: number;
-	speechPeakRms?: number;
-}
-
-export const onVadSensitivityAdapted = (
-	cb: (event: VadSensitivityAdaptedEvent) => void,
-): (() => void) => onCast(IPC.STT_VAD_SENSITIVITY_ADAPTED, cb);

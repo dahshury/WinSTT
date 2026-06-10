@@ -34,7 +34,7 @@ pub struct ContextAppEntry {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn list_context_apps() -> Vec<ContextAppEntry> {
+pub async fn context_list_apps() -> Vec<ContextAppEntry> {
     tauri::async_runtime::spawn_blocking(list_context_apps_blocking)
         .await
         .unwrap_or_default()

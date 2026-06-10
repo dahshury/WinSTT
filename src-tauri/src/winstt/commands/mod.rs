@@ -18,14 +18,14 @@ pub mod stt;
 
 // ── slice: model catalog + picker + download ──
 /// The RICH editorial catalog (embedded catalog_data.json → CatalogModelInfo + ModelStateEntry
-/// + ModelsWithState) the detached picker renders. Pure data; no commands. Consumed by stt::list_models
-///   and runtime::list_models_with_state.
+/// + ModelsWithState) the detached picker renders. Pure data; no commands. Consumed by stt::stt_list_models
+///   and runtime::stt_list_models_with_state.
 pub mod catalog_data;
-/// Per-quant download commands (predownload_quant / download_pause_quant / download_resume_quant /
+/// Per-quant download commands (stt_predownload_quant / download_pause_quant / download_resume_quant /
 /// download_cancel_quant / delete_model_quantization / delete_model_cache / cancel_download) → the
 /// DownloadManager (managers::download_manager). Registered in lib.rs collect_commands![].
 pub mod download;
-/// Runtime + fitness commands (get_runtime_info / list_models_with_state / assess_dictation_fit /
+/// Runtime + fitness commands (get_runtime_info / stt_list_models_with_state / assess_dictation_fit /
 /// assess_ollama_fit / gpu_get_info). Registered in lib.rs collect_commands![].
 pub mod runtime;
 /// PLAIN-event emit façade for the model-swap lifecycle + runtime-info push (stt:model-swap-started/
@@ -60,11 +60,11 @@ pub mod preview;
 pub mod tts;
 // ── slice: LLM/Ollama long-tail ──
 pub mod cloud_stt;
-/// Ollama public-library scraper: ollama_fetch_library / ollama_fetch_tags /
+/// Ollama public-library scraper: ollama_refresh_library / ollama_refresh_tags /
 /// ollama_search_library (no JSON API → HTML scrape, mirrors ollama-registry.ts).
 pub mod ollama_library;
 /// Ollama pull-cancel registry + warmup-status command: ollama_cancel_pull /
-/// llm_get_warmup_status (+ pull-progress/warmup payload types).
+/// llm_warmup_status (+ pull-progress/warmup payload types).
 pub mod ollama_pull;
 // ── slice: cloud-STT + credential verification ──
 pub mod listen;
@@ -73,9 +73,9 @@ pub mod listen;
 pub mod verify;
 pub mod wakeword;
 // ── slice: loopback device list ──
-/// PLAIN-event emit helpers for the listen channels (vad-sensitivity-adapted,
-/// device-switch-failed, speaker-segments). No commands — called by the producers
-/// (calibrator consumer / device-switch path / DiarizationManager). NOT collected.
+/// PLAIN-event emit helpers for the listen channels (device-switch-failed,
+/// speaker-segments). No commands — called by the producers (device-switch path /
+/// DiarizationManager). NOT collected.
 pub mod listen_events;
 /// `loopback_list_devices` — enumerate WASAPI loopback output devices for the
 /// listen-mode device picker. Registered in lib.rs collect_commands![].

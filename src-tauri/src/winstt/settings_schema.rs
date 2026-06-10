@@ -601,9 +601,8 @@ pub struct AudioSettings {
     /// Pre-roll buffer captured before trigger (s). STARTUP.
     #[serde(default = "AudioSettings::default_pre_recording_buffer_duration")]
     pub pre_recording_buffer_duration: f64,
-    /// Adaptive-VAD calibration keyed by input-device name (server publishes
-    /// `vad_sensitivity_adapted`). HOT-SWAP (re-applied on device switch).
-    /// Zod `.catch({})`.
+    /// Per-device Silero VAD sensitivity, keyed by input-device name. Re-applied
+    /// to the live sensitivity on device switch. HOT-SWAP. Zod `.catch({})`.
     #[serde(default)]
     pub silero_sensitivity_by_device_name: HashMap<String, f64>,
     /// Alt mic index when laptop lid closed; `null` = disabled. HOT-SWAP. Zod `.catch(null)`.

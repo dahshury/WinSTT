@@ -8,10 +8,7 @@
  */
 
 import type { AllowedParameter } from "@/shared/api/models";
-import type {
-	AppSettingsOutput as AppSettings,
-	DictionaryEntry,
-} from "@/shared/config/settings-schema";
+import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
 import {
 	computeSilenceEndpointEnabled,
 	computeSilenceTiming,
@@ -30,21 +27,6 @@ import {
 export interface SyncDeps {
 	sttRequestDiarizationToggle: (enabled: boolean) => void;
 	sttSetParameter: <V>(param: AllowedParameter, value: V) => void;
-	/**
-	 * Push the server-side custom-word (vocab-biasing) list. Backed by the
-	 * `update_custom_words` Tauri command (`commands.updateCustomWords`), which
-	 * writes `settings.custom_words`; the recorder reads that field at
-	 * transcription time (`apply_custom_words` in `managers/transcription.rs`).
-	 * Optional so the existing test harness (and any non-Tauri host) can omit it.
-	 */
-	updateCustomWords?: (words: string[]) => void;
-	/**
-	 * Push the deterministic fuzzy-corrector threshold. Backed by the
-	 * `change_word_correction_threshold_setting` Tauri command
-	 * (`commands.changeWordCorrectionThresholdSetting`), which writes
-	 * `settings.word_correction_threshold`.
-	 */
-	changeWordCorrectionThreshold?: (threshold: number) => void;
 }
 
 /**
@@ -53,28 +35,13 @@ export interface SyncDeps {
  */
 export const AUDIO_PARAM_MAP: Record<string, AllowedParameter> = {};
 
-/**
- * ``global.modelUnloadTimeout`` enum → server seconds. ``-1`` is the
- * "never unload" sentinel (server normalises to None internally).
- * Mirrors the table in ``electron/ipc/stt-process.ts`` so the CLI-arg
- * boot and the runtime hot-swap pick the same value for the same enum.
- */
-const MODEL_UNLOAD_TIMEOUT_SECONDS: Record<string, number> = {
-	immediately: 0,
-	never: -1,
-	min2: 120,
-	min5: 300,
-	min10: 600,
-	min15: 900,
-	hour1: 3600,
-};
-
-const DEFAULT_MODEL_UNLOAD_SECONDS = 900;
-
-export function resolveModelUnloadTimeoutSeconds(value: unknown): number {
-	const raw = typeof value === "string" ? value : "min15";
-	return MODEL_UNLOAD_TIMEOUT_SECONDS[raw] ?? DEFAULT_MODEL_UNLOAD_SECONDS;
-}
+// NOTE: `global.modelUnloadTimeout` is NOT pushed here via `set_parameter`. It is
+// persisted canonically via `winstt_set_settings` (the `settingsSave` debounced write);
+// the backend's on-save handler (`apply_model_runtime_settings` →
+// `sync_core_model_unload_timeout`) mirrors it into the `AppSettings` shadow AND
+// warms/reloads the model. The former `set_parameter("model_unload_timeout_seconds")`
+// push was a second write path into the same shadow field — removed so each setting has
+// exactly one writer.
 
 /** Whether a parameter must be pushed given the initial/incremental mode. */
 export function shouldSendParam<V>(
@@ -161,13 +128,9 @@ export function syncModelParams(
 		"onnx_quantization",
 		isInitial,
 	);
-	sendIfChanged(
-		deps,
-		model?.translateToEnglish,
-		prevModel?.translateToEnglish,
-		"translate_to_english",
-		isInitial,
-	);
+	// `model.translateToEnglish` is persisted canonically via `winstt_set_settings`
+	// (the STT pipeline reads `WinsttSettings.model.translate_to_english`). No legacy
+	// `set_parameter` push: that fed an AppSettings-shadow write nothing read.
 	syncInitialPromptStatics(deps, model, prevModel, isInitial);
 }
 
@@ -200,56 +163,6 @@ function syncInitialPromptStatics(
 		"initial_prompt_realtime",
 		isInitial,
 	);
-}
-
-/**
- * Translate the enum-valued ``global.modelUnloadTimeout`` setting to the
- * seconds the server CLI expects, then push only on actual changes.
- * Unlike the static-prefix sync above, this one converts the enum to a
- * number before the equality check — the renderer stores the enum, but
- * we want the comparison to operate on the seconds the server actually
- * sees so a no-op enum migration doesn't churn a hot-swap.
- */
-export function modelUnloadTimeoutNeedsPush(
-	current: unknown,
-	previous: unknown,
-	isInitial: boolean,
-): boolean {
-	if (current == null) {
-		return false;
-	}
-	return isInitial || current !== previous;
-}
-
-function syncModelUnloadTimeout(
-	deps: SyncDeps,
-	global: AppSettings["global"] | undefined,
-	prevGlobal: AppSettings["global"] | undefined,
-	isInitial: boolean,
-): void {
-	const current = global?.modelUnloadTimeout;
-	if (
-		!modelUnloadTimeoutNeedsPush(
-			current,
-			prevGlobal?.modelUnloadTimeout,
-			isInitial,
-		)
-	) {
-		return;
-	}
-	deps.sttSetParameter(
-		"model_unload_timeout_seconds",
-		resolveModelUnloadTimeoutSeconds(current),
-	);
-}
-
-function syncGlobalParams(
-	deps: SyncDeps,
-	settings: AppSettings,
-	prev: AppSettings | undefined,
-): void {
-	const isInitial = !prev;
-	syncModelUnloadTimeout(deps, settings.global, prev?.global, isInitial);
 }
 
 /** Mapping of quality keys → AllowedParameter names. */
@@ -392,123 +305,22 @@ export function syncDiarizationParams(
 	}
 }
 
-/**
- * Default fuzzy-corrector threshold. Mirrors the server's
- * ``TextCorrectionConfig`` default (and the renderer schema's
- * ``general.wordCorrectionThreshold`` default) so a settings tree missing the
- * field pushes the same value the matcher would use if it were never sent.
- */
-const DEFAULT_WORD_CORRECTION_THRESHOLD = 0.18;
-
-/**
- * Derive the server-side custom-words list from the persisted dictionary.
- *
- * Only entries WITHOUT a ``replacement`` are considered — those are the
- * "vocab-biasing" terms the fuzzy matcher should bias toward. Entries WITH a
- * ``replacement`` are deterministic find-and-replace pairs handled separately
- * by the post-processor; feeding them to the server-side matcher would
- * double-correct them. Mirrors ``readCurrentCustomWords`` in the reference's
- * ``custom-words-sync.ts``. Returns trimmed, de-duplicated terms in insertion
- * order.
- */
-function deriveCustomWords(
-	dictionary: readonly DictionaryEntry[] | undefined,
-): string[] {
-	if (!dictionary?.length) {
-		return [];
-	}
-	const seen = new Set<string>();
-	const out: string[] = [];
-	for (const entry of dictionary) {
-		const term = typeof entry.term === "string" ? entry.term.trim() : "";
-		const replacement =
-			typeof entry.replacement === "string" ? entry.replacement.trim() : "";
-		if (!term || replacement || seen.has(term)) {
-			continue;
-		}
-		seen.add(term);
-		out.push(term);
-	}
-	return out;
-}
-
-/** Resolve ``general.wordCorrectionThreshold`` to a number, defaulting safely. */
-function resolveWordCorrectionThreshold(value: unknown): number {
-	return typeof value === "number" ? value : DEFAULT_WORD_CORRECTION_THRESHOLD;
-}
-
-/** Order-insensitive value equality for the derived string lists. */
-function listsEqual(a: readonly string[], b: readonly string[]): boolean {
-	if (a.length !== b.length) {
-		return false;
-	}
-	for (let i = 0; i < a.length; i++) {
-		if (a[i] !== b[i]) {
-			return false;
-		}
-	}
-	return true;
-}
-
-/**
- * Push the Dictionary (custom words) + threshold to the backend so they take
- * effect.
- *
- * Unlike the `set_parameter`-routed knobs above, these settings are NOT
- * `AllowedParameter`s — the Tauri backend persists them into its settings store
- * and reads them straight off disk at transcription time (`apply_custom_words`
- * in `managers/transcription.rs`). So "taking effect" just means writing the
- * value via the dedicated command. Mirrors the reference's
- * `installCustomWordsSync`:
- *
- *   - `dictionary` (entries without `replacement`) → `update_custom_words`
- *   - `general.wordCorrectionThreshold` → `change_word_correction_threshold_setting`
- *
- * Pushed on initial connect (`prev` undefined) and whenever the derived value
- * actually changes — so unrelated settings edits don't churn a disk write. Each
- * dep is optional + guarded; a host that didn't wire it silently skips that push.
- *
- * NOTE: `settings.snippets` is deliberately NOT pushed here. Snippet expansion
- * is a post-transcription text-processing concern (mirrors the reference's
- * `text-processing.ts replaceWithSnippets`), not an STT-engine input — the
- * reference never sends snippets to the recorder, so neither do we.
- */
-function syncDictionaryParams(
-	deps: SyncDeps,
-	settings: AppSettings,
-	prev: AppSettings | undefined,
-): void {
-	const isInitial = !prev;
-
-	const words = deriveCustomWords(settings.dictionary);
-	const prevWords = deriveCustomWords(prev?.dictionary);
-	if (deps.updateCustomWords && (isInitial || !listsEqual(words, prevWords))) {
-		deps.updateCustomWords(words);
-	}
-
-	const threshold = resolveWordCorrectionThreshold(
-		settings.general?.wordCorrectionThreshold,
-	);
-	const prevThreshold = resolveWordCorrectionThreshold(
-		prev?.general?.wordCorrectionThreshold,
-	);
-	if (
-		deps.changeWordCorrectionThreshold &&
-		(isInitial || threshold !== prevThreshold)
-	) {
-		deps.changeWordCorrectionThreshold(threshold);
-	}
-}
+// NOTE: the Dictionary (custom words) and `general.wordCorrectionThreshold` are NOT
+// synced here. They are persisted canonically via `winstt_set_settings` (the
+// `settingsSave` debounced write), and the STT pipeline reads them straight from
+// `WinsttSettings` at transcription time (`ws.dictionary` /
+// `ws.general.word_correction_threshold` in `winstt/stt/backend.rs`). The former
+// `update_custom_words` / `change_word_correction_threshold_setting` push was a second
+// write path into the AppSettings shadow that nothing read — removed so each setting
+// has exactly one writer.
 
 export function syncToServer(
 	deps: SyncDeps,
 	settings: AppSettings,
 	prev?: AppSettings,
 ): void {
-	syncGlobalParams(deps, settings, prev);
 	syncAudioParams(deps, settings, prev);
 	syncModelParams(deps, settings, prev);
 	syncQualityParams(deps, settings, prev);
 	syncDiarizationParams(deps, settings, prev);
-	syncDictionaryParams(deps, settings, prev);
 }

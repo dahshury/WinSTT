@@ -54,6 +54,16 @@ only `tauri build` produces a standalone exe.
   fn, and (b) its entry in `collect_commands![]` (`commands_registry.rs`). A
   completeness guard test enforces (b); regenerate `bindings.ts` via the
   `export_bindings` test, then call it from the renderer through `commands.*`.
+- **Command names are `domain_verb_object`.** The ~200 commands share one global
+  namespace, so the `domain` prefix (`stt`/`tts`/`llm`/`ollama`/`openrouter`/
+  `wakeword`/`history`/`file_transcribe`/…) is mandatory — never a bare verb like
+  `list_models`. Verb conventions: `list_*` for local/cached reads,
+  `refresh_*` for network re-scans (e.g. `ollama_refresh_models`,
+  `openrouter_refresh_stt_models`), `get_*` only when no plainer noun fits (prefer
+  `wakeword_model_status` over `get_wakeword_status`). The generated binding is the
+  command's camelCase (`stt_list_models` → `commands.sttListModels`); a rename means
+  editing the fn + registry + `bindings.ts` (hand-edit or regenerate) + any
+  `COMMAND_INVOKERS` entry together.
 - **Event names are `namespace:kebab`, defined once as Rust consts.** Every
   renderer-facing event name lives in the `names` module in
   `src-tauri/src/winstt/commands/events.rs` (e.g. `WAKEWORD_DETECTED =

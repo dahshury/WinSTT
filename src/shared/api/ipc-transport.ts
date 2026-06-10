@@ -298,8 +298,8 @@ const COMMAND_INVOKERS: Partial<
 	// wrappers call `commands.*` directly (shared/api/ipc/stt-audio.ts).
 
 	// ── Model catalog / runtime / fitness ──
-	[IPC.STT_GET_MODEL_CATALOG]: () => commands.listModels(),
-	[IPC.STT_LIST_MODELS_WITH_STATE]: () => commands.listModelsWithState(),
+	[IPC.STT_GET_MODEL_CATALOG]: () => commands.sttListModels(),
+	[IPC.STT_LIST_MODELS_WITH_STATE]: () => commands.sttListModelsWithState(),
 	[IPC.STT_GET_RUNTIME_INFO]: () => commands.getRuntimeInfo(),
 	[IPC.STT_GET_LIVE_RESOURCES]: (a) =>
 		commands.getLiveResources((a.forceRefresh as boolean | undefined) ?? null),
@@ -314,7 +314,7 @@ const COMMAND_INVOKERS: Partial<
 
 	// ── Per-quant download lifecycle ──
 	[IPC.STT_PREDOWNLOAD_QUANT]: (a) =>
-		commands.predownloadQuant(a.modelId as string, a.quantization as string),
+		commands.sttPredownloadQuant(a.modelId as string, a.quantization as string),
 	[IPC.STT_DOWNLOAD_PAUSE]: (a) =>
 		commands.downloadPauseQuant(a.modelId as string, a.quantization as string),
 	[IPC.STT_DOWNLOAD_RESUME]: (a) =>
@@ -365,7 +365,7 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.AUDIO_STOP_MICROPHONE_LEVEL_MONITOR]: () =>
 		commands.stopMicrophoneLevelMonitor(),
 	[IPC.GPU_GET_INFO]: () => commands.gpuGetInfo(),
-	[IPC.CONTEXT_LIST_APPS]: () => commands.listContextApps(),
+	[IPC.CONTEXT_LIST_APPS]: () => commands.contextListApps(),
 
 	// ── Self-window lifecycle / onboarding (no-arg + single-object) ──
 	[IPC.WINDOW_CLOSE_SELF]: () => commands.closeSelfWindow(),
@@ -448,20 +448,20 @@ const COMMAND_INVOKERS: Partial<
 		commands.ttsDeleteModel(a.modelId as string, a.quantization as string),
 
 	// ── LLM / Ollama / OpenRouter ──
-	[IPC.LLM_SCAN_MODELS]: () => commands.scanOllamaModels(),
-	[IPC.LLM_SCAN_OPENROUTER_MODELS]: () => commands.scanOpenrouterModels(),
-	[IPC.STT_SCAN_OPENROUTER_MODELS]: () => commands.scanOpenrouterSttModels(),
-	[IPC.TTS_SCAN_OPENROUTER_MODELS]: () => commands.scanOpenrouterTtsModels(),
+	[IPC.LLM_SCAN_MODELS]: () => commands.ollamaRefreshModels(),
+	[IPC.LLM_SCAN_OPENROUTER_MODELS]: () => commands.openrouterRefreshModels(),
+	[IPC.STT_SCAN_OPENROUTER_MODELS]: () => commands.openrouterRefreshSttModels(),
+	[IPC.TTS_SCAN_OPENROUTER_MODELS]: () => commands.openrouterRefreshTtsModels(),
 	[IPC.LLM_DETECT_OLLAMA]: () => commands.ollamaDetect(),
 	[IPC.LLM_START_OLLAMA]: () => commands.ollamaStart(),
 	[IPC.LLM_PULL_MODEL]: (a) => commands.ollamaPull(a.model as string),
 	[IPC.LLM_CANCEL_PULL_MODEL]: (a) =>
 		commands.ollamaCancelPull(a.model as string),
 	[IPC.LLM_DELETE_MODEL]: (a) => commands.ollamaDelete(a.model as string),
-	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: () => commands.ollamaFetchLibrary(),
+	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: () => commands.ollamaRefreshLibrary(),
 	[IPC.LLM_FETCH_OLLAMA_TAGS]: (a) =>
-		commands.ollamaFetchTags(a.model as string),
-	[IPC.LLM_GET_WARMUP_STATUS]: () => commands.llmGetWarmupStatus(),
+		commands.ollamaRefreshTags(a.model as string),
+	[IPC.LLM_GET_WARMUP_STATUS]: () => commands.llmWarmupStatus(),
 
 	// ── Transforms ──
 	[IPC.LLM_PROCESS_TEXT]: (a) =>

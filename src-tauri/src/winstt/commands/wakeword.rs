@@ -1,7 +1,7 @@
 // Reference: frontend/electron/ipc/wakeword. Wraps managers::WakeWordManager.
 //
-// Wake-word commands. set_wake_word rebuilds the detector from the chosen preset
-// (or custom phrase) + sensitivity + timeout; list_wake_word_presets feeds the
+// Wake-word commands. wakeword_set_model rebuilds the detector from the chosen preset
+// (or custom phrase) + sensitivity + timeout; wakeword_list_presets feeds the
 // renderer dropdown. The detection itself is armed from the audio consumer feed,
 // not a command.
 
@@ -21,10 +21,10 @@ pub struct WakeWordPresetPayload {
     pub phrase: String,
 }
 
-/// `set_wake_word` — reconfigure the wake word. Empty `name` disables it.
+/// `wakeword_set_model` — reconfigure the wake word. Empty `name` disables it.
 #[tauri::command]
 #[specta::specta]
-pub fn set_wake_word(
+pub fn wakeword_set_model(
     wakeword: State<'_, Arc<WakeWordManager>>,
     name: String,
     sensitivity: f32,
@@ -33,10 +33,10 @@ pub fn set_wake_word(
     wakeword.set_wake_word(&name, sensitivity, timeout_seconds)
 }
 
-/// `list_wake_word_presets` — built-in presets for the dropdown.
+/// `wakeword_list_presets` — built-in presets for the dropdown.
 #[tauri::command]
 #[specta::specta]
-pub fn list_wake_word_presets(
+pub fn wakeword_list_presets(
     wakeword: State<'_, Arc<WakeWordManager>>,
 ) -> Vec<WakeWordPresetPayload> {
     wakeword

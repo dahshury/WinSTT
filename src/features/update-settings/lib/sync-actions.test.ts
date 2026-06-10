@@ -4,9 +4,7 @@ import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-
 import {
 	AUDIO_PARAM_MAP,
 	diarizationNeedsPush,
-	modelUnloadTimeoutNeedsPush,
 	readDiarizationEnabled,
-	resolveModelUnloadTimeoutSeconds,
 	type SyncDeps,
 	sendIfChanged,
 	shouldSendParam,
@@ -170,33 +168,6 @@ describe("syncModelParams", () => {
 			settingsWith({ model: { model: "tiny", language: "en" } as never }),
 		);
 		expect(calls).toEqual([]);
-	});
-});
-
-describe("global model unload timeout sync", () => {
-	test("pushes global timeout on initial connect", () => {
-		const { deps, calls } = makeDeps();
-		syncToServer(
-			deps,
-			settingsWith({ global: { modelUnloadTimeout: "hour1" } } as never),
-		);
-		expect(calls).toContainEqual({
-			kind: "sttSetParameter",
-			args: ["model_unload_timeout_seconds", 3600],
-		});
-	});
-
-	test("pushes global timeout when it changes", () => {
-		const { deps, calls } = makeDeps();
-		syncToServer(
-			deps,
-			settingsWith({ global: { modelUnloadTimeout: "never" } } as never),
-			settingsWith({ global: { modelUnloadTimeout: "min5" } } as never),
-		);
-		expect(calls).toContainEqual({
-			kind: "sttSetParameter",
-			args: ["model_unload_timeout_seconds", -1],
-		});
 	});
 });
 
@@ -405,45 +376,8 @@ describe("syncToServer", () => {
 	});
 });
 
-describe("resolveModelUnloadTimeoutSeconds", () => {
-	test.each([
-		["immediately", 0],
-		["never", -1],
-		["min2", 120],
-		["min5", 300],
-		["min10", 600],
-		["min15", 900],
-		["hour1", 3600],
-	])("maps '%s' to %d seconds", (key, seconds) => {
-		expect(resolveModelUnloadTimeoutSeconds(key)).toBe(seconds);
-	});
-
-	test("falls back to 900s default on unknown string", () => {
-		expect(resolveModelUnloadTimeoutSeconds("totally-bogus")).toBe(900);
-	});
-
-	test("falls back to 900s default on non-string input", () => {
-		expect(resolveModelUnloadTimeoutSeconds(null)).toBe(900);
-		expect(resolveModelUnloadTimeoutSeconds(undefined)).toBe(900);
-		expect(resolveModelUnloadTimeoutSeconds(42)).toBe(900);
-	});
-});
-
-describe("modelUnloadTimeoutNeedsPush", () => {
-	test("false when current is null/undefined", () => {
-		expect(modelUnloadTimeoutNeedsPush(null, "min5", false)).toBe(false);
-		expect(modelUnloadTimeoutNeedsPush(undefined, "min5", true)).toBe(false);
-	});
-
-	test("true on initial when current is set", () => {
-		expect(modelUnloadTimeoutNeedsPush("min5", undefined, true)).toBe(true);
-	});
-
-	test("true on incremental when current differs from previous", () => {
-		expect(modelUnloadTimeoutNeedsPush("never", "min5", false)).toBe(true);
-	});
-
-	test("false on incremental when current === previous", () => {
-		expect(modelUnloadTimeoutNeedsPush("min5", "min5", false)).toBe(false);
-	});
-});
+// `global.modelUnloadTimeout` is no longer pushed via `set_parameter` — it is
+// persisted canonically via `winstt_set_settings`, whose on-save handler mirrors it
+// into the AppSettings shadow and warms/reloads the model (single writer). The old
+// `resolveModelUnloadTimeoutSeconds` / `modelUnloadTimeoutNeedsPush` push helpers and
+// their tests were removed with that second write path.

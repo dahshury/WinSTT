@@ -89,7 +89,7 @@ export interface OllamaLibraryHit {
 	capabilities?: string[];
 }
 
-/** `ollama_fetch_library` result — the full scraped library catalog. */
+/** `ollama_refresh_library` result — the full scraped library catalog. */
 export interface OllamaLibraryCatalogResult {
 	hits: OllamaLibraryHit[];
 	error?: string;
@@ -106,7 +106,7 @@ export interface OllamaLibraryTag {
 	isLatest?: boolean;
 }
 
-/** `ollama_fetch_tags` result for a single library model. */
+/** `ollama_refresh_tags` result for a single library model. */
 export interface OllamaLibraryTagsResult {
 	model: string;
 	tags: OllamaLibraryTag[];
@@ -136,7 +136,7 @@ export interface RecommendedOllamaModel {
 }
 
 // ── OpenRouter ──────────────────────────────────────────────────────────────
-// The Rust command (`scan_openrouter_models`) types `pricing` and
+// The Rust command (`openrouter_refresh_models`) types `pricing` and
 // `architecture` as opaque `serde_json::Value` (so bindings exposes them as
 // `JsonValue | null`) and does NOT fan out per-model `/endpoints` enrichment
 // (`endpoints` is absent at runtime — see the TODO in
@@ -233,7 +233,7 @@ export interface OpenRouterModel
 	variant?: OpenRouterVariant | null;
 }
 
-/** `scan_openrouter_models` result the picker store consumes. */
+/** `openrouter_refresh_models` result the picker store consumes. */
 export interface OpenRouterScanResult {
 	error?: string;
 	models: OpenRouterModel[];
@@ -255,7 +255,7 @@ export interface OpenRouterSttModel
 	speed_score: number;
 }
 
-/** `scan_openrouter_stt_models` result the cloud STT picker store consumes. */
+/** `openrouter_refresh_stt_models` result the cloud STT picker store consumes. */
 export interface OpenRouterSttScanResult {
 	error?: string;
 	models: OpenRouterSttModel[];
@@ -275,7 +275,7 @@ export interface OpenRouterTtsModel
 	supported_voices: string[];
 }
 
-/** `scan_openrouter_tts_models` result the cloud TTS picker store consumes. */
+/** `openrouter_refresh_tts_models` result the cloud TTS picker store consumes. */
 export interface OpenRouterTtsScanResult {
 	error?: string;
 	models: OpenRouterTtsModel[];

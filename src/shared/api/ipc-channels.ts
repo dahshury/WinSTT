@@ -43,7 +43,6 @@ export const IPC = {
 	STT_GET_LIVE_RESOURCES: "stt:get-live-resources",
 	STT_ASSESS_DICTATION_FIT: "stt:assess-dictation-fit",
 	STT_ASSESS_OLLAMA_FIT: "stt:assess-ollama-fit",
-	STT_VAD_SENSITIVITY_ADAPTED: "stt:vad-sensitivity-adapted",
 	STT_SPEAKER_SEGMENTS: "stt:speaker-segments",
 	STT_DIARIZATION_TOGGLE_STARTED: "stt:diarization-toggle-started",
 	STT_DIARIZATION_TOGGLE_COMPLETED: "stt:diarization-toggle-completed",
@@ -764,9 +763,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	// LLM warmup status
 	[IPC.LLM_GET_WARMUP_STATUS]: ["invoke"],
 	[IPC.LLM_WARMUP_STATUS]: ["on"],
-
-	// VAD calibration broadcast (server → main → renderer)
-	[IPC.STT_VAD_SENSITIVITY_ADAPTED]: ["on"],
 
 	// Speaker diarization (server → main → renderer)
 	[IPC.STT_SPEAKER_SEGMENTS]: ["on"],

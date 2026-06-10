@@ -11,7 +11,7 @@
 //
 // IPC mapping (app/src/shared/api/native-bridge-adapter.ts ROUTE):
 //   IPC.STT_GET_RUNTIME_INFO        (`stt:get-runtime-info`)                         → get_runtime_info
-//   IPC.STT_LIST_MODELS_WITH_STATE  (`stt:list-models-with-state`)                   → list_models_with_state  (⚠ adapter ROUTE fix)
+//   IPC.STT_LIST_MODELS_WITH_STATE  (`stt:list-models-with-state`)                   → stt_list_models_with_state  (⚠ adapter ROUTE fix)
 //   IPC.STT_ASSESS_DICTATION_FIT    (`stt:assess-dictation-fit`, { modelId, quantization, device }) → assess_dictation_fit
 //   IPC.STT_ASSESS_OLLAMA_FIT       (`stt:assess-ollama-fit`,    { sizeBytes })      → assess_ollama_fit
 //   IPC.GPU_GET_INFO                (`gpu:get-info`)                                 → gpu_get_info
@@ -148,7 +148,7 @@ pub fn runtime_info_snapshot(
     }
 }
 
-/// `list_models_with_state` — the `{ models, states, system_info }` payload `fetchModelsWithState`
+/// `stt_list_models_with_state` — the `{ models, states, system_info }` payload `fetchModelsWithState`
 /// consumes (model-state-store.ts). `states[*].cache_by_quantization` is keyed per precision and the
 /// `effective_quantization` badge bridge tells the picker WHICH precision's cache state to trust.
 ///
@@ -167,7 +167,7 @@ pub fn runtime_info_snapshot(
 /// `generate_handler!` — no `lib.rs` change is needed.
 #[tauri::command]
 #[specta::specta]
-pub async fn list_models_with_state(
+pub async fn stt_list_models_with_state(
     app: AppHandle,
     downloads: State<'_, Arc<DownloadManager>>,
 ) -> Result<ModelsWithState, ()> {

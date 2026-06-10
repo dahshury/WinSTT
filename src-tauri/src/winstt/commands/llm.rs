@@ -9,8 +9,8 @@
 // (LlmManager::openrouter_chat, with fallback model). Apple Intelligence
 // soft-fails to the original text (macOS-only CLI; this is a Windows app).
 //
-// scan_ollama_models → OllamaScanResult (/api/tags + /api/show enrich).
-// scan_openrouter_models → OpenRouterScanResult (/api/v1/models with stored key).
+// ollama_refresh_models → OllamaScanResult (/api/tags + /api/show enrich).
+// openrouter_refresh_models → OpenRouterScanResult (/api/v1/models with stored key).
 // ollama_detect/ollama_start → locate + spawn a local `ollama serve`.
 // ollama_pull → stream /api/pull, emitting llm:pull-progress (cancel-aware).
 // ollama_delete → DELETE /api/delete.
@@ -543,14 +543,14 @@ fn emit_openrouter_failsoft_notice(app: &AppHandle, feature: &str, err: &str) {
     };
     emit_cloud_failure(app, CloudSttProvider::OpenRouter, code, message, None);
 }
-/// `scan_ollama_models` — `/api/tags` + `/api/show` capability enrich. Returns
+/// `ollama_refresh_models` — `/api/tags` + `/api/show` capability enrich. Returns
 /// the `OllamaScanResult` the picker store consumes (`{ models, reachable,
 /// error? }`). A connection failure → `reachable: false`; an HTTP/parse error
 /// → `reachable: true` with `error` set (the daemon answered, just badly) — this
 /// drives the "Ollama not running" vs "Ollama errored" distinction in the UI.
 #[tauri::command]
 #[specta::specta]
-pub async fn scan_ollama_models(
+pub async fn ollama_refresh_models(
     app: AppHandle,
     llm_manager: State<'_, Arc<LlmManager>>,
 ) -> Result<OllamaScanResultPayload, String> {
@@ -581,14 +581,14 @@ pub async fn scan_ollama_models(
     }
 }
 
-/// `scan_openrouter_models` — `GET /api/v1/models` with the stored key, then a
+/// `openrouter_refresh_models` — `GET /api/v1/models` with the stored key, then a
 /// concurrency-capped per-model `/endpoints` fan-out (provider rail / per-provider
 /// pricing / quant / feature chips). Returns the `OpenRouterScanResult`
 /// (`{ models, reachable, error? }`) the picker store consumes. Each `/endpoints`
 /// fetch fails soft, so enrichment never blanks the catalog.
 #[tauri::command]
 #[specta::specta]
-pub async fn scan_openrouter_models(
+pub async fn openrouter_refresh_models(
     app: AppHandle,
     llm_manager: State<'_, Arc<LlmManager>>,
 ) -> Result<OpenRouterScanResultPayload, String> {
@@ -603,13 +603,13 @@ pub async fn scan_openrouter_models(
     })
 }
 
-/// `scan_openrouter_stt_models` - the transcription subset of the OpenRouter
+/// `openrouter_refresh_stt_models` - the transcription subset of the OpenRouter
 /// catalog for the cloud STT picker. Reuses the shared catalog fetch with
 /// `output_modalities=transcription`, enriches those rows with endpoint/provider
 /// details when OpenRouter exposes them, then maps them to the STT picker shape.
 #[tauri::command]
 #[specta::specta]
-pub async fn scan_openrouter_stt_models(
+pub async fn openrouter_refresh_stt_models(
     app: AppHandle,
     llm_manager: State<'_, Arc<LlmManager>>,
 ) -> Result<OpenRouterSttScanResultPayload, String> {
@@ -641,13 +641,13 @@ pub async fn scan_openrouter_stt_models(
     })
 }
 
-/// `scan_openrouter_tts_models` — the speech (TTS) subset of the OpenRouter
+/// `openrouter_refresh_tts_models` — the speech (TTS) subset of the OpenRouter
 /// catalog for the cloud TTS picker. REUSES `scan_openrouter` via
 /// `scan_openrouter_speech`, keeping only `output_modalities: ["speech"]` rows,
-/// mapped to the lean `{ id, name }` shape. Mirrors `scan_openrouter_stt_models`.
+/// mapped to the lean `{ id, name }` shape. Mirrors `openrouter_refresh_stt_models`.
 #[tauri::command]
 #[specta::specta]
-pub async fn scan_openrouter_tts_models(
+pub async fn openrouter_refresh_tts_models(
     app: AppHandle,
     llm_manager: State<'_, Arc<LlmManager>>,
 ) -> Result<OpenRouterTtsScanResultPayload, String> {

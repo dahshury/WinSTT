@@ -7,7 +7,7 @@
 // the thin free functions below, which delegate to the process-global handle:
 //
 //   - ollama_cancel_pull    → LLM_CANCEL_PULL_MODEL  → returns { cancelled: bool }
-//   - llm_get_warmup_status → LLM_GET_WARMUP_STATUS  → returns LlmWarmupStatus | null
+//   - llm_warmup_status     → LLM_GET_WARMUP_STATUS  → returns LlmWarmupStatus | null
 //   - llm_retry_warmup      → re-runs a warmup pass, then returns the snapshot
 //
 // CANCEL CONTRACT: `ollama_pull` (in llm.rs, wired against `LlmManager::ollama_pull_stream`'s
@@ -17,7 +17,7 @@
 // spec/openapi.yaml so the reused renderer's `onOllamaPullProgress` listener parses it unchanged).
 //
 // WARMUP CONTRACT: `llm_manager::warmup` publishes a snapshot via `set_warmup_status` / clears it via
-// `clear_warmup_status` (and emits `llm:warmup-status`). `llm_get_warmup_status` returns the last
+// `clear_warmup_status` (and emits `llm:warmup-status`). `llm_warmup_status` returns the last
 // snapshot, or `null` before any pass has run (the renderer treats `null` as "no info, hide the banner").
 
 use std::sync::Arc;
@@ -148,11 +148,11 @@ pub fn ollama_cancel_pull(
     Ok(CancelPullResult { cancelled: true })
 }
 
-/// `llm_get_warmup_status` → `LLM_GET_WARMUP_STATUS`. Last warmup snapshot, or `null` when no
+/// `llm_warmup_status` → `LLM_GET_WARMUP_STATUS`. Last warmup snapshot, or `null` when no
 /// warmup pass has published one yet (renderer hides the banner on `null`).
 #[tauri::command]
 #[specta::specta]
-pub fn llm_get_warmup_status(
+pub fn llm_warmup_status(
     ollama_manager: State<'_, Arc<OllamaManager>>,
 ) -> Result<Option<LlmWarmupStatus>, String> {
     Ok(ollama_manager.warmup_status())

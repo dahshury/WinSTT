@@ -512,7 +512,7 @@ pub const ELEVENLABS_CLOUD_MODELS: &[CloudModel] = &[
 
 /// The curated cloud STT catalog for `provider` (the renderer's `CLOUD_CATALOG[provider]`).
 /// OpenRouter has NO curated catalog â€” its transcription models are fetched live
-/// (`scan_openrouter_stt_models`) and filtered by `output_modalities=transcription`,
+/// (`openrouter_refresh_stt_models`) and filtered by `output_modalities=transcription`,
 /// so the picker drives selection there. The backend only ever receives a concrete
 /// `openrouter:<id>` the renderer already resolved.
 pub fn cloud_models_for(provider: CloudSttProvider) -> &'static [CloudModel] {

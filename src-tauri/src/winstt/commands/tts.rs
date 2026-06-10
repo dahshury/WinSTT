@@ -463,7 +463,7 @@ pub async fn tts_preview_openrouter(
 
 // ===========================================================================
 // Multi-provider TTS catalog (the model-aware picker). Mirrors the STT
-// list_models / list_models_with_state + per-quant download lifecycle, but for
+// stt_list_models / stt_list_models_with_state + per-quant download lifecycle, but for
 // the TTS_CATALOG (Kokoro / Kitten / Piper / Supertonic) downloaded from HF.
 // ===========================================================================
 

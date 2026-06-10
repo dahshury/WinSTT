@@ -144,12 +144,6 @@ const ROUTE_EVENTS_WITHOUT_BACKEND_EMITTER = new Set<string>([
 	"stt:model-catalog",
 	// Only diarization-toggle started/completed are emitted; -failed never fires.
 	"stt:diarization-toggle-failed",
-	// VAD calibration + device-switch failure are a DEAD feature end-to-end: the
-	// producers (vad_calibrator::VadCalibrator, the audio.rs selected-index
-	// fallback) are implemented but never wired. The plain emit helpers were
-	// removed; the renderer hooks remain as harmless no-ops. See follow-ups.
-	"stt:vad-sensitivity-adapted",
-	"stt:device-switch-failed",
 ]);
 
 // B) Canonical backend event names with no frontend listener — Rust-internal

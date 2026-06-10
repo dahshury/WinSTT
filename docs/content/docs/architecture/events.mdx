@@ -29,7 +29,6 @@ fires per audio frame).
 | `RealtimeUpdatePayload` | `text` | Raw live-preview text (pre-stabilization) |
 | `RealtimeStabilizedPayload` | `text` | Live preview past the committed watermark |
 | `WakeWordDetectedPayload` | `word`, `word_index` | A configured wake word matched |
-| `VadSensitivityAdaptedPayload` | sensitivity | Auto-calibrated Silero sensitivity for the device |
 | `SpeakerSegmentsPayload` | segments | Diarized speaker segments (listen mode) |
 | `WordAlignmentPayload` | word timings | Per-word timestamps for history playback |
 | `TtsLifecyclePayload` | `request_id`, `phase`, `progress?` | TTS started / completed / failed / download-progress |
@@ -52,7 +51,6 @@ fires per audio frame).
 |-------|---------|
 | `stt:vad-start` / `stt:vad-stop` | Speech onset / offset (smoothed) |
 | `stt:audio-level` | Per-frame mic level + spectrum (visualizer) |
-| `vad-sensitivity-adapted` | VAD sensitivity recalibrated |
 
 ### Wake word & realtime
 

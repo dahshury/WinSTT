@@ -21,14 +21,6 @@ async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async changeWordCorrectionThresholdSetting(threshold: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_word_correction_threshold_setting", { threshold }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async getAvailableTypingTools() : Promise<string[]> {
     return await TAURI_INVOKE("get_available_typing_tools");
 },
@@ -75,14 +67,6 @@ async deletePostProcessPrompt(id: string) : Promise<Result<null, string>> {
 async setPostProcessSelectedPrompt(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_post_process_selected_prompt", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async updateCustomWords(words: string[]) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_custom_words", { words }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -396,18 +380,18 @@ async winsttSetSettings(settings: PartialWinsttSettings) : Promise<Result<SetSet
 }
 },
 /**
- * `list_models` — the full 65-model RICH catalog (editorial fields the picker renders:
+ * `stt_list_models` — the full 65-model RICH catalog (editorial fields the picker renders:
  * backend / languages / description / size_label / per-quant byte sizes / accuracy+speed scores).
  * Backed by the embedded `catalog_data.json` (see `catalog_data.rs`); the per-device quant set is
  * CUDA-filtered. The adapter routes `STT_GET_MODEL_CATALOG` here, and the renderer's
  * `fetchModelCatalog` → `rawModelInfoSchema.safeParse` consumes these rows verbatim.
  * 
  * NOTE: the WITH_STATE channel needs the `{models,states,system_info}` OBJECT shape instead — that
- * is `list_models_with_state` (commands/runtime.rs). The adapter routes `STT_GET_MODEL_CATALOG`
- * here and `STT_LIST_MODELS_WITH_STATE` → `list_models_with_state` (native-bridge-adapter.ts ROUTE).
+ * is `stt_list_models_with_state` (commands/runtime.rs). The adapter routes `STT_GET_MODEL_CATALOG`
+ * here and `STT_LIST_MODELS_WITH_STATE` → `stt_list_models_with_state` (native-bridge-adapter.ts ROUTE).
  */
-async listModels() : Promise<CatalogModelInfo[]> {
-    return await TAURI_INVOKE("list_models");
+async sttListModels() : Promise<CatalogModelInfo[]> {
+    return await TAURI_INVOKE("stt_list_models");
 },
 /**
  * `picker_quantizations_for` — the quant suffixes the picker should offer for a
@@ -678,58 +662,58 @@ async processTransform(text: string, transformId: string) : Promise<Result<strin
 }
 },
 /**
- * `scan_ollama_models` — `/api/tags` + `/api/show` capability enrich. Returns
+ * `ollama_refresh_models` — `/api/tags` + `/api/show` capability enrich. Returns
  * the `OllamaScanResult` the picker store consumes (`{ models, reachable,
  * error? }`). A connection failure → `reachable: false`; an HTTP/parse error
  * → `reachable: true` with `error` set (the daemon answered, just badly) — this
  * drives the "Ollama not running" vs "Ollama errored" distinction in the UI.
  */
-async scanOllamaModels() : Promise<Result<OllamaScanResultPayload, string>> {
+async ollamaRefreshModels() : Promise<Result<OllamaScanResultPayload, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("scan_ollama_models") };
+    return { status: "ok", data: await TAURI_INVOKE("ollama_refresh_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * `scan_openrouter_models` — `GET /api/v1/models` with the stored key, then a
+ * `openrouter_refresh_models` — `GET /api/v1/models` with the stored key, then a
  * concurrency-capped per-model `/endpoints` fan-out (provider rail / per-provider
  * pricing / quant / feature chips). Returns the `OpenRouterScanResult`
  * (`{ models, reachable, error? }`) the picker store consumes. Each `/endpoints`
  * fetch fails soft, so enrichment never blanks the catalog.
  */
-async scanOpenrouterModels() : Promise<Result<OpenRouterScanResultPayload, string>> {
+async openrouterRefreshModels() : Promise<Result<OpenRouterScanResultPayload, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("scan_openrouter_models") };
+    return { status: "ok", data: await TAURI_INVOKE("openrouter_refresh_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * `scan_openrouter_stt_models` - the transcription subset of the OpenRouter
+ * `openrouter_refresh_stt_models` - the transcription subset of the OpenRouter
  * catalog for the cloud STT picker. Reuses the shared catalog fetch with
  * `output_modalities=transcription`, enriches those rows with endpoint/provider
  * details when OpenRouter exposes them, then maps them to the STT picker shape.
  */
-async scanOpenrouterSttModels() : Promise<Result<OpenRouterSttScanResultPayload, string>> {
+async openrouterRefreshSttModels() : Promise<Result<OpenRouterSttScanResultPayload, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("scan_openrouter_stt_models") };
+    return { status: "ok", data: await TAURI_INVOKE("openrouter_refresh_stt_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * `scan_openrouter_tts_models` — the speech (TTS) subset of the OpenRouter
+ * `openrouter_refresh_tts_models` — the speech (TTS) subset of the OpenRouter
  * catalog for the cloud TTS picker. REUSES `scan_openrouter` via
  * `scan_openrouter_speech`, keeping only `output_modalities: ["speech"]` rows,
- * mapped to the lean `{ id, name }` shape. Mirrors `scan_openrouter_stt_models`.
+ * mapped to the lean `{ id, name }` shape. Mirrors `openrouter_refresh_stt_models`.
  */
-async scanOpenrouterTtsModels() : Promise<Result<OpenRouterTtsScanResultPayload, string>> {
+async openrouterRefreshTtsModels() : Promise<Result<OpenRouterTtsScanResultPayload, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("scan_openrouter_tts_models") };
+    return { status: "ok", data: await TAURI_INVOKE("openrouter_refresh_tts_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -819,21 +803,21 @@ async cloudSttCancel(requestId: string) : Promise<void> {
     await TAURI_INVOKE("cloud_stt_cancel", { requestId });
 },
 /**
- * `set_wake_word` — reconfigure the wake word. Empty `name` disables it.
+ * `wakeword_set_model` — reconfigure the wake word. Empty `name` disables it.
  */
-async setWakeWord(name: string, sensitivity: number, timeoutSeconds: number) : Promise<Result<null, string>> {
+async wakewordSetModel(name: string, sensitivity: number, timeoutSeconds: number) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_wake_word", { name, sensitivity, timeoutSeconds }) };
+    return { status: "ok", data: await TAURI_INVOKE("wakeword_set_model", { name, sensitivity, timeoutSeconds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * `list_wake_word_presets` — built-in presets for the dropdown.
+ * `wakeword_list_presets` — built-in presets for the dropdown.
  */
-async listWakeWordPresets() : Promise<WakeWordPresetPayload[]> {
-    return await TAURI_INVOKE("list_wake_word_presets");
+async wakewordListPresets() : Promise<WakeWordPresetPayload[]> {
+    return await TAURI_INVOKE("wakeword_list_presets");
 },
 async wakewordModelStatus() : Promise<WakeWordModelStatusPayload> {
     return await TAURI_INVOKE("wakeword_model_status");
@@ -985,26 +969,28 @@ async winsttGetParameter(parameter: string) : Promise<JsonValue> {
  * knobs that don't need an immediate reaction are folded into the live recorder
  * settings; the rest are accepted as no-ops until their owning subsystem lands so
  * the renderer's fire-and-forget `send()` never errors.
- * 
- * The `language` / `translate_to_english` / `initial_prompt` / `custom_words` /
- * `word_correction_threshold` knobs route into the persisted settings so the
- * next `TranscriptionManager::transcribe` (which re-reads `get_settings`) picks
- * them up live — that mirrors the reference's `set_parameter`, which forwarded
- * these to the running recorder. `onnx_quantization` / `model` trigger a reload
- * through the model slice and are accepted here as no-ops (the model-swap
- * command owns the real reload).
+ *
+ * Every persisted setting is owned SOLELY by `WinsttSettings` (written via
+ * `winstt_set_settings`, read straight from there by the STT pipeline): `language` /
+ * `translate_to_english` / `custom_words` / `initial_prompt` from the STT config, and
+ * `model_unload_timeout_seconds` whose on-save handler (`apply_model_runtime_settings`)
+ * mirrors the value into the `AppSettings` shadow AND warms/reloads the model. So this
+ * command has NO settings-write branch — there is no second AppSettings-shadow write
+ * path. `onnx_quantization` / `model` trigger a reload through the model slice; all of
+ * these are accepted here as no-ops so the renderer's fire-and-forget `send()` (if ever
+ * sent) never errors (the reference's `set_parameter` was also best-effort).
  */
 async winsttSetParameter(parameter: string, value: JsonValue) : Promise<void> {
     await TAURI_INVOKE("winstt_set_parameter", { parameter, value });
 },
 /**
- * `predownload_quant` — start a byte-level pause/resume capable download for one
+ * `stt_predownload_quant` — start a byte-level pause/resume capable download for one
  * `(model_id, quantization)` tuple, INTO the HF cache without changing the loaded model.
  * Emits `stt:model-download-start` immediately so the badge flips to "downloading".
  */
-async predownloadQuant(modelId: string, quantization: string) : Promise<Result<null, string>> {
+async sttPredownloadQuant(modelId: string, quantization: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("predownload_quant", { modelId, quantization }) };
+    return { status: "ok", data: await TAURI_INVOKE("stt_predownload_quant", { modelId, quantization }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1086,7 +1072,7 @@ async getRuntimeInfo() : Promise<RuntimeInfoPayload> {
     return await TAURI_INVOKE("get_runtime_info");
 },
 /**
- * `list_models_with_state` — the `{ models, states, system_info }` payload `fetchModelsWithState`
+ * `stt_list_models_with_state` — the `{ models, states, system_info }` payload `fetchModelsWithState`
  * consumes (model-state-store.ts). `states[*].cache_by_quantization` is keyed per precision and the
  * `effective_quantization` badge bridge tells the picker WHICH precision's cache state to trust.
  * 
@@ -1104,9 +1090,9 @@ async getRuntimeInfo() : Promise<RuntimeInfoPayload> {
  * off this list path (it runs lazily on load only). Async Tauri commands register identically in
  * `generate_handler!` — no `lib.rs` change is needed.
  */
-async listModelsWithState() : Promise<Result<ModelsWithState, null>> {
+async sttListModelsWithState() : Promise<Result<ModelsWithState, null>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_models_with_state") };
+    return { status: "ok", data: await TAURI_INVOKE("stt_list_models_with_state") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1220,8 +1206,8 @@ async stopMicrophoneLevelMonitor() : Promise<void> {
 async loopbackListDevices() : Promise<LoopbackDevicePayload[]> {
     return await TAURI_INVOKE("loopback_list_devices");
 },
-async listContextApps() : Promise<ContextAppEntry[]> {
-    return await TAURI_INVOKE("list_context_apps");
+async contextListApps() : Promise<ContextAppEntry[]> {
+    return await TAURI_INVOKE("context_list_apps");
 },
 /**
  * `tts_set_speed` — set the read-aloud speed from the pill's speed control.
@@ -1275,22 +1261,22 @@ async ttsReportPlaybackEnded(requestId: string) : Promise<void> {
     await TAURI_INVOKE("tts_report_playback_ended", { requestId });
 },
 /**
- * `ollama_fetch_library` → `LLM_FETCH_OLLAMA_LIBRARY`. Full library catalog in one shot.
+ * `ollama_refresh_library` → `LLM_FETCH_OLLAMA_LIBRARY`. Full library catalog in one shot.
  */
-async ollamaFetchLibrary() : Promise<Result<OllamaLibraryCatalogResult, string>> {
+async ollamaRefreshLibrary() : Promise<Result<OllamaLibraryCatalogResult, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("ollama_fetch_library") };
+    return { status: "ok", data: await TAURI_INVOKE("ollama_refresh_library") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * `ollama_fetch_tags` → `LLM_FETCH_OLLAMA_TAGS`. Pullable tags for one library model.
+ * `ollama_refresh_tags` → `LLM_FETCH_OLLAMA_TAGS`. Pullable tags for one library model.
  */
-async ollamaFetchTags(model: string) : Promise<Result<OllamaLibraryTagsResult, string>> {
+async ollamaRefreshTags(model: string) : Promise<Result<OllamaLibraryTagsResult, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("ollama_fetch_tags", { model }) };
+    return { status: "ok", data: await TAURI_INVOKE("ollama_refresh_tags", { model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1321,12 +1307,12 @@ async ollamaCancelPull(model: string) : Promise<Result<CancelPullResult, string>
 }
 },
 /**
- * `llm_get_warmup_status` → `LLM_GET_WARMUP_STATUS`. Last warmup snapshot, or `null` while the
+ * `llm_warmup_status` → `LLM_GET_WARMUP_STATUS`. Last warmup snapshot, or `null` while the
  * warmup broadcaster is unwired (renderer hides the banner on `null`).
  */
-async llmGetWarmupStatus() : Promise<Result<LlmWarmupStatus | null, string>> {
+async llmWarmupStatus() : Promise<Result<LlmWarmupStatus | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("llm_get_warmup_status") };
+    return { status: "ok", data: await TAURI_INVOKE("llm_warmup_status") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1937,7 +1923,6 @@ realtimeStabilizedPayload: RealtimeStabilizedPayload,
 realtimeUpdatePayload: RealtimeUpdatePayload,
 speakerSegmentsPayload: SpeakerSegmentsPayload,
 ttsLifecyclePayload: TtsLifecyclePayload,
-vadSensitivityAdaptedPayload: VadSensitivityAdaptedPayload,
 wakeWordDetectedPayload: WakeWordDetectedPayload,
 wordAlignmentPayload: WordAlignmentPayload
 }>({
@@ -1947,7 +1932,6 @@ realtimeStabilizedPayload: "realtime-stabilized-payload",
 realtimeUpdatePayload: "realtime-update-payload",
 speakerSegmentsPayload: "speaker-segments-payload",
 ttsLifecyclePayload: "tts-lifecycle-payload",
-vadSensitivityAdaptedPayload: "vad-sensitivity-adapted-payload",
 wakeWordDetectedPayload: "wake-word-detected-payload",
 wordAlignmentPayload: "word-alignment-payload"
 })
@@ -2047,9 +2031,8 @@ minGapBetweenRecordings?: number;
  */
 preRecordingBufferDuration?: number; 
 /**
- * Adaptive-VAD calibration keyed by input-device name (server publishes
- * `vad_sensitivity_adapted`). HOT-SWAP (re-applied on device switch).
- * Zod `.catch({})`.
+ * Per-device Silero VAD sensitivity, keyed by input-device name. Re-applied
+ * to the live sensitivity on device switch. HOT-SWAP. Zod `.catch({})`.
  */
 sileroSensitivityByDeviceName?: Partial<{ [key in string]: number }>; 
 /**
@@ -3133,10 +3116,6 @@ export type TtsSource = "local" | "cloud"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type UpdaterCommandResult = { triggered: boolean; reason?: string | null }
 export type UpdaterStatusEntry = { bytesPerSecond?: number | null; message?: string | null; percent?: number | null; status: string; total?: number | null; transferred?: number | null; timestamp: number; version?: string | null }
-/**
- * Per-device VAD sensitivity calibration result (renderer persists it).
- */
-export type VadSensitivityAdaptedPayload = { deviceId: string; sensitivity: number }
 /**
  * Verify-credential outcome — `{ ok, code?, message? }`. The renderer's
  * verify-credentials feature reads `code === "network"` to split offline from

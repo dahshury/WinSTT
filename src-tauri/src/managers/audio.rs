@@ -436,6 +436,17 @@ impl AudioRecordingManager {
                         warn!(
                             "[audio] selected microphone index {index} is unavailable; falling back to default input"
                         );
+                        // Tell the renderer the queued index couldn't be opened so it
+                        // reverts the UI selection to "System default" and toasts. We
+                        // report fallback_index=None: the chosen fallback re-resolves
+                        // the OS default on every open, so pinning today's concrete
+                        // index would lie on the next device reshuffle.
+                        crate::winstt::commands::listen_events::emit_device_switch_failed(
+                            &self.app_handle,
+                            index,
+                            &format!("device #{index} is no longer available"),
+                            None,
+                        );
                     }
                     found.or_else(|| choose_default_device(&devices))
                 } else if let Some(name) = device_name {

@@ -69,18 +69,18 @@ pub(crate) fn catalog_accelerator(accel: crate::winstt::stt::Accelerator) -> Cat
     }
 }
 
-/// `list_models` — the full 65-model RICH catalog (editorial fields the picker renders:
+/// `stt_list_models` — the full 65-model RICH catalog (editorial fields the picker renders:
 /// backend / languages / description / size_label / per-quant byte sizes / accuracy+speed scores).
 /// Backed by the embedded `catalog_data.json` (see `catalog_data.rs`); the per-device quant set is
 /// CUDA-filtered. The adapter routes `STT_GET_MODEL_CATALOG` here, and the renderer's
 /// `fetchModelCatalog` → `rawModelInfoSchema.safeParse` consumes these rows verbatim.
 ///
 /// NOTE: the WITH_STATE channel needs the `{models,states,system_info}` OBJECT shape instead — that
-/// is `list_models_with_state` (commands/runtime.rs). The adapter routes `STT_GET_MODEL_CATALOG`
-/// here and `STT_LIST_MODELS_WITH_STATE` → `list_models_with_state` (native-bridge-adapter.ts ROUTE).
+/// is `stt_list_models_with_state` (commands/runtime.rs). The adapter routes `STT_GET_MODEL_CATALOG`
+/// here and `STT_LIST_MODELS_WITH_STATE` → `stt_list_models_with_state` (native-bridge-adapter.ts ROUTE).
 #[tauri::command]
 #[specta::specta]
-pub fn list_models(app: AppHandle) -> Vec<CatalogModelInfo> {
+pub fn stt_list_models(app: AppHandle) -> Vec<CatalogModelInfo> {
     let accel = picker_accelerator(&app);
     catalog_data::catalog_rows(accel)
 }

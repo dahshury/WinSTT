@@ -2,7 +2,7 @@
 //
 // IMPORTANT: cloud STT models are DELIBERATELY NOT folded into `catalog_rows()` /
 // `models_with_state()`. The reused React renderer routes its picker between the LOCAL grid
-// (`list_models` → `catalog_rows`, schema `rawModelInfoSchema`) and the CLOUD picker
+// (`stt_list_models` → `catalog_rows`, schema `rawModelInfoSchema`) and the CLOUD picker
 // (`features/select-cloud-stt-model`, which reads its own hardcoded `CLOUD_CATALOG` — never the
 // backend) purely off the `elevenlabs:` / `openrouter:` prefix (`providerOf`). Cloud rows have none
 // of the local-engine editorial fields the local grid requires (per-quant byte sizes, WER/RTFx,

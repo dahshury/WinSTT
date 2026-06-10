@@ -68,11 +68,10 @@ Voice activity detection (VAD) is how WinSTT tells speech apart from silence and
   speech, which is why the default is now 0.7.
 </SettingRow>
 
-WinSTT also **learns** a sensitivity per microphone. As you record, `vad_sensitivity_adapted`
-events nudge a per-device value stored in `audio.sileroSensitivityByDeviceName` (a map keyed by
-device name). Each device boots with its own last-known value, and the calibration survives
-device switching and restarts. This map isn't user-editable — it's auto-populated and only
-visible in debug logs.
+WinSTT keeps a sensitivity **per microphone** in `audio.sileroSensitivityByDeviceName` (a map
+keyed by device name). When you switch input device, the live sensitivity is seeded from that
+device's last-known value, so each mic boots with its own setting instead of whatever the
+previously-active device used, and the value survives restarts.
 
 <SettingRow label="Silero Deactivity Detection" settingKey="audio.sileroDeactivityDetection" default="true">
   Master switch for the Silero stage, doubling as the section header. With it off, only WebRTC

@@ -242,7 +242,7 @@ pub struct ProbeModel {
 /// drives it on the shared runtime. A scan failure (no cache dir yet, IO error) degrades to an EMPTY
 /// map → every model reads `not_cached`, which is the honest cold-start answer.
 ///
-/// PICKER-OPEN HOT PATH (audit #7): this is the list path (`list_models_with_state`). It does NOT
+/// PICKER-OPEN HOT PATH (audit #7): this is the list path (`stt_list_models_with_state`). It does NOT
 /// run `verify_external_data_complete` — that stat/parses every cached `.onnx` (the Rust analogue of
 /// the documented Python `list_models_onnx_parse_loop_starvation` bug). Every `.onnx` present on
 /// disk is treated as complete here; the LOAD path (`resolver::resolve` → `all_onnx_complete`) does

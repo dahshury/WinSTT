@@ -13,9 +13,6 @@ pub mod settings_schema;
 /// Full 65-model STT catalog + quant/EP auto-policy (pure data + string logic).
 pub mod catalog;
 
-/// Adaptive Silero VAD sensitivity calibrator (SNR-driven, EMA-blended).
-pub mod vad_calibrator;
-
 /// Shared in-flight request cancel registry (cloud STT / LLM / TTS).
 pub mod cancel_registry;
 

@@ -9,7 +9,7 @@
 // `stt:model-download-*` / `stt:model-cache-changed` broadcasts (download_manager.rs).
 //
 // IPC mapping (app/src/shared/api/native-bridge-adapter.ts ROUTE):
-//   IPC.STT_PREDOWNLOAD_QUANT       (`stt:predownload-quant`,        { modelId, quantization }) → predownload_quant
+//   IPC.STT_PREDOWNLOAD_QUANT       (`stt:predownload-quant`,        { modelId, quantization }) → stt_predownload_quant
 //   IPC.STT_DOWNLOAD_PAUSE          (`stt:download-pause`,           { modelId, quantization }) → download_pause_quant
 //   IPC.STT_DOWNLOAD_RESUME         (`stt:download-resume`,          { modelId, quantization }) → download_resume_quant
 //   IPC.STT_DOWNLOAD_CANCEL_QUANT   (`stt:download-cancel-quant`,    { modelId, quantization }) → download_cancel_quant
@@ -120,12 +120,12 @@ fn is_stt_cache_mutation_allowed(caller: &str) -> bool {
     command_auth::label_in(caller, STT_CACHE_MUTATION_ALLOWED_WINDOWS)
 }
 
-/// `predownload_quant` — start a byte-level pause/resume capable download for one
+/// `stt_predownload_quant` — start a byte-level pause/resume capable download for one
 /// `(model_id, quantization)` tuple, INTO the HF cache without changing the loaded model.
 /// Emits `stt:model-download-start` immediately so the badge flips to "downloading".
 #[tauri::command]
 #[specta::specta]
-pub fn predownload_quant(
+pub fn stt_predownload_quant(
     downloads: State<'_, Arc<DownloadManager>>,
     model_id: String,
     quantization: String,
@@ -133,7 +133,9 @@ pub fn predownload_quant(
     validate_download_quantization_target(&model_id, &quantization, "start STT download")?;
     // DIAGNOSTIC: trace the download trigger (the reported "clicking download does nothing /
     // resets the selector" — confirms the command is actually reached + with what args).
-    log::info!("[download] predownload_quant requested: model='{model_id}' quant='{quantization}'");
+    log::info!(
+        "[download] stt_predownload_quant requested: model='{model_id}' quant='{quantization}'"
+    );
     downloads.predownload_quant(model_id, quantization);
     Ok(())
 }

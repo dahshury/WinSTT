@@ -6,9 +6,9 @@
 // doesn't hammer Ollama's CDN.
 //
 // Commands (registered in lib.rs collect_commands![]):
-//   - ollama_fetch_library  → LLM_FETCH_OLLAMA_LIBRARY  (full catalog, ~230 models, 1h TTL)
-//   - ollama_fetch_tags     → LLM_FETCH_OLLAMA_TAGS     (per-model tags)
-//   - ollama_search_library → LLM_SEARCH_OLLAMA_LIBRARY (paginated search — routed but unused by v1
+//   - ollama_refresh_library → LLM_FETCH_OLLAMA_LIBRARY  (full catalog, ~230 models, 1h TTL)
+//   - ollama_refresh_tags    → LLM_FETCH_OLLAMA_TAGS     (per-model tags)
+//   - ollama_search_library  → LLM_SEARCH_OLLAMA_LIBRARY (paginated search — routed but unused by v1
 //                                                         renderer; provided for parity)
 //
 // Payload shapes mirror `spec/openapi.yaml` (OllamaLibraryHit / *SearchResult / *CatalogResult /
@@ -509,19 +509,19 @@ async fn fetch_ollama_library_tags(mgr: &OllamaManager, model: &str) -> OllamaLi
 
 // ── Commands ────────────────────────────────────────────────────────────────────
 
-/// `ollama_fetch_library` → `LLM_FETCH_OLLAMA_LIBRARY`. Full library catalog in one shot.
+/// `ollama_refresh_library` → `LLM_FETCH_OLLAMA_LIBRARY`. Full library catalog in one shot.
 #[tauri::command]
 #[specta::specta]
-pub async fn ollama_fetch_library(
+pub async fn ollama_refresh_library(
     ollama_manager: State<'_, Arc<OllamaManager>>,
 ) -> Result<OllamaLibraryCatalogResult, String> {
     Ok(fetch_ollama_library_catalog(&ollama_manager).await)
 }
 
-/// `ollama_fetch_tags` → `LLM_FETCH_OLLAMA_TAGS`. Pullable tags for one library model.
+/// `ollama_refresh_tags` → `LLM_FETCH_OLLAMA_TAGS`. Pullable tags for one library model.
 #[tauri::command]
 #[specta::specta]
-pub async fn ollama_fetch_tags(
+pub async fn ollama_refresh_tags(
     ollama_manager: State<'_, Arc<OllamaManager>>,
     model: String,
 ) -> Result<OllamaLibraryTagsResult, String> {

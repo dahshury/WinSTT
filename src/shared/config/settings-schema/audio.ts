@@ -19,13 +19,12 @@ export const audioSettingsSchema = z.object({
 	postSpeechSilenceDuration: z.number().default(0.7),
 	minGapBetweenRecordings: z.number().default(0),
 	preRecordingBufferDuration: z.number().default(1.0),
-	// Adaptive-VAD calibration map keyed by input-device name. The server
-	// publishes `vad_sensitivity_adapted` after each successful recording
-	// with the new Silero value; we store it under the currently-selected
-	// device's name and re-apply on subsequent device switches so each mic
-	// boots into adaptation with its own last-known sensitivity instead of
-	// whatever the previously-active device drifted to. `.catch({})` keeps
-	// older builds without this key from wiping the whole audio section.
+	// Per-device Silero sensitivity, keyed by input-device name. On device
+	// switch we re-apply the selected device's stored value to the live
+	// `sileroSensitivity` so each mic boots with its own last-known
+	// sensitivity instead of whatever the previously-active device used.
+	// `.catch({})` keeps older builds without this key from wiping the whole
+	// audio section.
 	sileroSensitivityByDeviceName: z
 		.record(z.string(), z.number().min(0).max(1))
 		.default({})

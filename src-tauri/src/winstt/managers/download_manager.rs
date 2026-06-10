@@ -15,7 +15,7 @@
 //       `stt:model-download-complete` { model, quantization?, cancelled }
 //       `stt:model-cache-changed`     { modelId }
 //   - REAL per-quant + whole-model delete (wipes the HF cache files + re-broadcasts cache-changed),
-//   - a `cache_snapshot()` probe the picker's `list_models_with_state` overlays so badges reflect
+//   - a `cache_snapshot()` probe the picker's `stt_list_models_with_state` overlays so badges reflect
 //     real on-disk state (delegates to `winstt::stt::cache_probe`).
 //
 // The byte-streaming engine rides hf-hub's `download_file().progress(..)` (which fetches into the
@@ -108,7 +108,7 @@ impl TransferControl for DownloadHandle {
 /// How long a cached HF-scan result stays fresh before the next `cache_snapshot_async` re-scans.
 /// Short enough that a download landing outside our own broadcast (e.g. a manual cache edit) still
 /// surfaces within a couple seconds; long enough that the picker's rapid back-to-back
-/// `list_models_with_state` calls (mount + focus + every keystroke filter) reuse one fs scan.
+/// `stt_list_models_with_state` calls (mount + focus + every keystroke filter) reuse one fs scan.
 const CACHE_SCAN_TTL: Duration = Duration::from_millis(2000);
 
 /// Max concurrent per-quant download workers (audit #17, Tier-2 B). "Download all" / rapid quant
@@ -134,7 +134,7 @@ pub struct DownloadManager {
     inflight: Mutex<BTreeMap<String, Arc<DownloadHandle>>>,
     /// Legacy single-slot whole-model download cancel flag (the no-quantization path).
     legacy_cancel: AtomicBool,
-    /// Short-TTL memo of the raw HF cache scan (audit #7): the picker fires `list_models_with_state`
+    /// Short-TTL memo of the raw HF cache scan (audit #7): the picker fires `stt_list_models_with_state`
     /// repeatedly, and each call otherwise re-walks the whole HF cache. Holds the catalog-wide probe
     /// result + when it was taken; invalidated by `emit_cache_changed` (a download landed) so a fresh
     /// badge is never stale past a real cache mutation.
@@ -225,7 +225,7 @@ impl DownloadManager {
     }
 
     /// `stt:model-cache-changed` — drives `onModelCacheChanged` → model-state refetch. Also drops
-    /// the cached scan memo (audit #7) so the very next `list_models_with_state` re-walks the cache
+    /// the cached scan memo (audit #7) so the very next `stt_list_models_with_state` re-walks the cache
     /// and reflects the just-changed on-disk state instead of a stale snapshot.
     pub fn emit_cache_changed(&self, model: &str) {
         self.invalidate_scan_memo();
@@ -251,7 +251,7 @@ impl DownloadManager {
         // badge. This is the common case behind "download all" / rapid quant toggling and is what
         // turns the per-quant `std::thread::spawn` storm into a no-op. The probe is a local-only
         // `scan_cache()` walk (no HF HEAD/tree fetch) keyed exactly like the picker badge, so a
-        // short-circuit here can never disagree with what `list_models_with_state` shows. Only fires
+        // short-circuit here can never disagree with what `stt_list_models_with_state` shows. Only fires
         // when NO in-flight handle exists yet (a re-issue against a live/paused download must fall
         // through to the registry path below so pause/cancel/resume stay intact).
         if !self.is_downloading(&model, &quantization)
@@ -378,7 +378,7 @@ impl DownloadManager {
             onnx_name,
             quantizations: vec![quantization.to_string()],
         };
-        // `predownload_quant` is a SYNC `#[tauri::command]`, which Tauri runs on its multi-thread
+        // `stt_predownload_quant` is a SYNC `#[tauri::command]`, which Tauri runs on its multi-thread
         // async-runtime worker; a bare `block_on` there panics ("cannot start a runtime from within
         // a runtime"). `block_in_place` releases the worker so the nested `block_on` is safe (same
         // reason as `delete_quantization` / `delete_model_cache` below).
@@ -537,11 +537,11 @@ impl DownloadManager {
         self.emit_cache_changed(model);
     }
 
-    // ── Cache probe (overlay for list_models_with_state) ──
+    // ── Cache probe (overlay for stt_list_models_with_state) ──
 
     /// Async cache probe (audit #7: the picker-open hot path). `await`s the HF cache scan directly
     /// instead of blocking the command thread, memoizes the raw catalog-wide probe for a short TTL
-    /// (so the picker's repeated `list_models_with_state` calls reuse one fs walk), then overlays the
+    /// (so the picker's repeated `stt_list_models_with_state` calls reuse one fs walk), then overlays the
     /// in-flight registry. The TTL memo is dropped by `emit_cache_changed` whenever a download lands.
     pub async fn cache_snapshot_async(
         &self,

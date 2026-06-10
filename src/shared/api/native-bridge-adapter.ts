@@ -137,12 +137,6 @@ const ROUTE: Partial<Record<string, Route>> = {
 		kind: "event",
 		event: "wakeword:model-status",
 	},
-	[IPC.STT_VAD_SENSITIVITY_ADAPTED]: {
-		kind: "event",
-		// Backend emits with the `stt:` namespace (listen_events.rs); the renderer
-		// MUST listen on the exact same string or the event silently never arrives.
-		event: "stt:vad-sensitivity-adapted",
-	},
 	[IPC.STT_SPEAKER_SEGMENTS]: {
 		kind: "event",
 		event: "stt:speaker-segments",

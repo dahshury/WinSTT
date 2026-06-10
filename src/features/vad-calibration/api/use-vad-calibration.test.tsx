@@ -15,19 +15,6 @@ const { useVadCalibration } = await import("./use-vad-calibration");
 
 const originalNativeBridge = window.nativeBridge;
 
-const settingsSaveCalls: Array<{
-	audio: {
-		sileroSensitivity: number;
-		sileroSensitivityByDeviceName: Record<string, number>;
-	};
-}> = [];
-let onVadAdaptedCb:
-	| ((payload: {
-			newSensitivity: number;
-			noiseFloorRms: number;
-			speechPeakRms: number;
-	  }) => void)
-	| null = null;
 let audioGetDevicesImpl: () => Promise<
 	Array<{ index: number; name: string; isDefault: boolean }>
 > = async () => [];
@@ -35,20 +22,7 @@ let audioGetDevicesImpl: () => Promise<
 function installNativeBridgeStub(): void {
 	window.nativeBridge = {
 		getPathForFile: () => "",
-		send: (channel: string, payload?: unknown) => {
-			if (channel === IPC.SETTINGS_SAVE) {
-				const settings = (payload as { settings?: unknown } | undefined)
-					?.settings;
-				settingsSaveCalls.push(
-					settings as {
-						audio: {
-							sileroSensitivity: number;
-							sileroSensitivityByDeviceName: Record<string, number>;
-						};
-					},
-				);
-			}
-		},
+		send: () => undefined,
 		invoke: async (channel: string) => {
 			if (channel === IPC.AUDIO_GET_DEVICES) {
 				return audioGetDevicesImpl();
@@ -56,15 +30,7 @@ function installNativeBridgeStub(): void {
 			return;
 		},
 		secureInvoke: async () => undefined,
-		on: (channel: string, cb: (...args: unknown[]) => void) => {
-			if (channel === IPC.STT_VAD_SENSITIVITY_ADAPTED) {
-				onVadAdaptedCb = (payload) => cb(payload);
-				return () => {
-					onVadAdaptedCb = null;
-				};
-			}
-			return () => undefined;
-		},
+		on: () => () => undefined,
 	};
 }
 
@@ -73,9 +39,7 @@ function freshSettings() {
 }
 
 beforeEach(() => {
-	settingsSaveCalls.length = 0;
 	audioGetDevicesImpl = async () => [];
-	onVadAdaptedCb = null;
 	installNativeBridgeStub();
 	useSettingsStore.setState({
 		settings: freshSettings(),
@@ -90,7 +54,6 @@ afterEach(() => {
 	}
 	window.nativeBridge = originalNativeBridge;
 	useSettingsStore.setState({ settings: freshSettings() });
-	onVadAdaptedCb = null;
 	audioGetDevicesImpl = async () => [];
 });
 
@@ -99,87 +62,6 @@ function renderHookWithProviders() {
 	mountedHooks.push(handle as unknown as RenderHookResult<unknown, unknown>);
 	return handle;
 }
-
-async function waitForDeviceListLoaded(name: string) {
-	await waitFor(() => {
-		// The hook only reacts once useInputDevices has data — devices list
-		// arrives via the audio_get_devices IPC promise resolving.
-		const { devices } =
-			(window.nativeBridge as unknown as {
-				invoke: () => Promise<unknown[]>;
-				devices?: unknown;
-			}) ?? {};
-		if (!devices) {
-			// fallback: just yield a tick
-			return;
-		}
-	});
-	return name;
-}
-
-describe("useVadCalibration — adapt event persistence", () => {
-	test("on adapt event with a known current device, persists per-device + bumps live value", async () => {
-		audioGetDevicesImpl = async () => [
-			{ index: 5, name: "Bluetooth Headset", isDefault: false },
-		];
-		// Saved selection = index 5 → Bluetooth Headset
-		useSettingsStore.setState({
-			settings: {
-				...freshSettings(),
-				audio: { ...freshSettings().audio, inputDeviceIndex: 5 },
-			},
-		});
-		renderHookWithProviders();
-		// Wait for the input-device list to load through the IPC stub.
-		await waitFor(() => {
-			expect(onVadAdaptedCb).not.toBeNull();
-		});
-		await waitForDeviceListLoaded("Bluetooth Headset");
-		// Give useInputDevices a tick to populate.
-		await new Promise((r) => setTimeout(r, 30));
-
-		act(() => {
-			onVadAdaptedCb?.({
-				newSensitivity: 0.53,
-				noiseFloorRms: 120.0,
-				speechPeakRms: 6000.0,
-			});
-		});
-
-		const after = useSettingsStore.getState().settings.audio;
-		expect(after?.sileroSensitivity).toBe(0.53);
-		expect(after?.sileroSensitivityByDeviceName?.["Bluetooth Headset"]).toBe(
-			0.53,
-		);
-		// Persisted to persisted store immediately so a fast close doesn't lose it.
-		expect(settingsSaveCalls.length).toBeGreaterThanOrEqual(1);
-		expect(
-			settingsSaveCalls.at(-1)?.audio?.sileroSensitivityByDeviceName?.[
-				"Bluetooth Headset"
-			],
-		).toBe(0.53);
-	});
-
-	test("on adapt event with no resolvable device, still bumps live value (skips map)", () => {
-		// Empty device list → currentDeviceName is null
-		audioGetDevicesImpl = async () => [];
-		renderHookWithProviders();
-		// Without waiting for devices the current name is null.
-		act(() => {
-			onVadAdaptedCb?.({
-				newSensitivity: 0.42,
-				noiseFloorRms: 100.0,
-				speechPeakRms: 5000.0,
-			});
-		});
-		const after = useSettingsStore.getState().settings.audio;
-		expect(after?.sileroSensitivity).toBe(0.42);
-		// Map untouched
-		expect(Object.keys(after?.sileroSensitivityByDeviceName ?? {}).length).toBe(
-			0,
-		);
-	});
-});
 
 describe("useVadCalibration — device-switch sync", () => {
 	test("seeds live sensitivity from the per-device map when device changes", async () => {

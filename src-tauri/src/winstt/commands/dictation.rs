@@ -53,13 +53,15 @@ const DICTATION_BINDING: &str = "transcribe";
 /// settings; the rest are accepted as no-ops until their owning subsystem lands so
 /// the renderer's fire-and-forget `send()` never errors.
 ///
-/// The `language` / `translate_to_english` / `initial_prompt` / `custom_words` /
-/// `word_correction_threshold` knobs route into the persisted settings so the
-/// next `TranscriptionManager::transcribe` (which re-reads `get_settings`) picks
-/// them up live — that mirrors the reference's `set_parameter`, which forwarded
-/// these to the running recorder. `onnx_quantization` / `model` trigger a reload
-/// through the model slice and are accepted here as no-ops (the model-swap
-/// command owns the real reload).
+/// Every persisted setting is owned SOLELY by `WinsttSettings` (written via
+/// `winstt_set_settings`, read straight from there by the STT pipeline): `language` /
+/// `translate_to_english` / `custom_words` / `initial_prompt` from the STT config, and
+/// `model_unload_timeout_seconds` whose on-save handler (`apply_model_runtime_settings`)
+/// mirrors the value into the `AppSettings` shadow AND warms/reloads the model. So this
+/// command has NO settings-write branch — there is no second AppSettings-shadow write
+/// path. `onnx_quantization` / `model` trigger a reload through the model slice; all of
+/// these are accepted here as no-ops so the renderer's fire-and-forget `send()` (if ever
+/// sent) never errors (the reference's `set_parameter` was also best-effort).
 #[tauri::command]
 #[specta::specta]
 pub fn winstt_set_parameter(app: AppHandle, parameter: String, value: serde_json::Value) {
@@ -77,76 +79,16 @@ pub fn winstt_set_parameter(app: AppHandle, parameter: String, value: serde_json
                 apply_endpoint_flag(&rm, &parameter, value.as_bool().unwrap_or(false));
             }
         }
-        // `language` is owned SOLELY by WinsttSettings.model.language now — the renderer
-        // persists it via `winstt_set_settings`, and TranscriptionManager::transcribe reads
-        // it from there. The old AppSettings `selected_language` write was a second source of
-        // truth that different transcribe() arms read inconsistently; it's been removed. Accept
-        // the live `set_parameter("language", …)` as a no-op so the renderer's fire-and-forget
-        // send never errors (the reference's was best-effort too).
-        "language" => {}
-        "translate_to_english" => {
-            apply_translate(&app, value.as_bool().unwrap_or(false));
-        }
-        "custom_words" => {
-            if let Some(arr) = value.as_array() {
-                let words: Vec<String> = arr
-                    .iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect();
-                apply_custom_words(&app, words);
-            }
-        }
-        "model_unload_timeout_seconds" => {
-            if let Some(seconds) = value.as_i64() {
-                apply_model_unload_timeout_seconds(&app, seconds);
-            }
-        }
         "is_recording" => {
             // Renderer-driven mirror only; the manager owns the authoritative flag.
         }
-        // Every other AllowedParameter (model/quant/prompt/vad knobs) is owned by
-        // its subsystem slice; accept silently so the renderer's send() is a no-fail
-        // fire-and-forget (the reference's set_parameter was also best-effort).
+        // Every other AllowedParameter (model/quant/prompt/vad knobs + the
+        // WinsttSettings-owned `language`/`translate_to_english`/`custom_words`/
+        // `model_unload_timeout_seconds`) is owned by its subsystem slice or persisted
+        // canonically via `winstt_set_settings`; accept silently so the renderer's
+        // send() is a no-fail fire-and-forget (the reference's set_parameter was also
+        // best-effort).
         _ => {}
-    }
-}
-
-/// Persist the translate-to-English flag.
-fn apply_translate(app: &AppHandle, translate: bool) {
-    let mut settings = crate::settings::get_settings(app);
-    settings.translate_to_english = translate;
-    crate::settings::write_settings(app, settings);
-}
-
-/// Persist the live custom-words dictionary (post-ASR fuzzy corrector / Whisper
-/// initial-prompt seed — TranscriptionManager::transcribe reads `custom_words`).
-fn apply_custom_words(app: &AppHandle, words: Vec<String>) {
-    let mut settings = crate::settings::get_settings(app);
-    settings.custom_words = words;
-    crate::settings::write_settings(app, settings);
-}
-
-fn core_timeout_from_seconds(seconds: i64) -> crate::settings::ModelUnloadTimeout {
-    match seconds {
-        s if s < 0 => crate::settings::ModelUnloadTimeout::Never,
-        0 => crate::settings::ModelUnloadTimeout::Immediately,
-        120 => crate::settings::ModelUnloadTimeout::Min2,
-        300 => crate::settings::ModelUnloadTimeout::Min5,
-        600 => crate::settings::ModelUnloadTimeout::Min10,
-        900 => crate::settings::ModelUnloadTimeout::Min15,
-        3600 => crate::settings::ModelUnloadTimeout::Hour1,
-        _ => crate::settings::ModelUnloadTimeout::Min15,
-    }
-}
-
-fn apply_model_unload_timeout_seconds(app: &AppHandle, seconds: i64) {
-    let timeout = core_timeout_from_seconds(seconds);
-    let mut settings = crate::settings::get_settings(app);
-    settings.model_unload_timeout = timeout;
-    crate::settings::write_settings(app, settings);
-
-    if timeout != crate::settings::ModelUnloadTimeout::Immediately {
-        crate::winstt::commands::settings::warm_stt_model_async(app);
     }
 }
 
@@ -459,25 +401,4 @@ pub fn winstt_emit_ready(app: AppHandle) {
     crate::splash::mark_renderer_boot_done(&app);
     SttEvents::connection_change(&app, true);
     SttEvents::server_status(&app, "running");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::settings::ModelUnloadTimeout;
-
-    #[test]
-    fn core_timeout_from_seconds_matches_renderer_sentinels() {
-        assert_eq!(core_timeout_from_seconds(-1), ModelUnloadTimeout::Never);
-        assert_eq!(
-            core_timeout_from_seconds(0),
-            ModelUnloadTimeout::Immediately
-        );
-        assert_eq!(core_timeout_from_seconds(120), ModelUnloadTimeout::Min2);
-        assert_eq!(core_timeout_from_seconds(300), ModelUnloadTimeout::Min5);
-        assert_eq!(core_timeout_from_seconds(600), ModelUnloadTimeout::Min10);
-        assert_eq!(core_timeout_from_seconds(900), ModelUnloadTimeout::Min15);
-        assert_eq!(core_timeout_from_seconds(3600), ModelUnloadTimeout::Hour1);
-        assert_eq!(core_timeout_from_seconds(123), ModelUnloadTimeout::Min15);
-    }
 }

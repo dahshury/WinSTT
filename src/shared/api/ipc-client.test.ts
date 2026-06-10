@@ -802,14 +802,14 @@ describe("invokeOrDefault wrappers", () => {
 		});
 	});
 
-	test("fetchOllamaModels returns scan result (migrated → scan_ollama_models)", async () => {
+	test("fetchOllamaModels returns scan result (migrated → ollama_refresh_models)", async () => {
 		const fixture = { models: [{ name: "m" }], reachable: true };
 		installMockApi();
-		// `commands.scanOllamaModels` is a Result command; the mock resolves the RAW
+		// `commands.ollamaRefreshModels` is a Result command; the mock resolves the RAW
 		// data (commands wraps it {status:"ok",data}, unwrapResult unwraps it).
 		setTauriInvoke(() => fixture);
 		expect(await ipc.fetchOllamaModels()).toBe(fixture);
-		expect(lastTauriCall().cmd).toBe("scan_ollama_models");
+		expect(lastTauriCall().cmd).toBe("ollama_refresh_models");
 	});
 
 	test("fetchOllamaModels falls back to disconnected scan when the command rejects", async () => {
@@ -1106,7 +1106,7 @@ describe("typed event subscriptions", () => {
 		// fetchModelCatalog is migrated → typed command (raw array, no Result wrap).
 		setTauriInvoke(() => [{ name: "tiny" }]);
 		expect(await ipc.fetchModelCatalog()).toEqual([{ name: "tiny" }]);
-		expect(lastTauriCall().cmd).toBe("list_models");
+		expect(lastTauriCall().cmd).toBe("stt_list_models");
 	});
 
 	test("loopback events extract their fields", () => {
@@ -1411,12 +1411,12 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 		expect(lastTauriCall().cmd).toBe("winstt_cancel_download");
 	});
 
-	test("fetchModelCatalog returns the list_models result when in a bridge context", async () => {
+	test("fetchModelCatalog returns the stt_list_models result when in a bridge context", async () => {
 		const models = [{ id: "tiny" }];
 		installMockApi();
 		setTauriInvoke(() => models);
 		expect(await ipc.fetchModelCatalog()).toEqual(models);
-		expect(lastTauriCall().cmd).toBe("list_models");
+		expect(lastTauriCall().cmd).toBe("stt_list_models");
 	});
 
 	test("fetchModelCatalog falls back to [] when outside a bridge context", async () => {
