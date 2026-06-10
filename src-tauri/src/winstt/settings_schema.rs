@@ -456,7 +456,8 @@ impl Default for ModelSettings {
             language_candidates: Vec::new(),
             device: DeviceType::default(),
             backend: TranscriberBackend::default(),
-            onnx_quantization: String::new(),
+            // "auto" = RAM/VRAM-aware recommended pick; "" would mean EXPLICIT fp32 (see backend.rs).
+            onnx_quantization: "auto".into(),
             initial_prompt: String::new(),
             initial_prompt_realtime: String::new(),
             translate_to_english: false,
@@ -1831,7 +1832,7 @@ mod tests {
         assert!(s.model.language_candidates.is_empty());
         assert_eq!(s.model.device, DeviceType::Auto);
         assert_eq!(s.model.backend, TranscriberBackend::FasterWhisper);
-        assert_eq!(s.model.onnx_quantization, "");
+        assert_eq!(s.model.onnx_quantization, "auto");
         assert!(!s.model.translate_to_english);
         assert_eq!(s.global.model_unload_timeout, ModelUnloadTimeout::Min15);
 

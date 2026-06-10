@@ -9,12 +9,12 @@ body:
     attributes:
       value: |
         Thanks for the bug report! Before filing:
-        1. Search [open](https://github.com/winstt/WinSTT/issues) and [closed](https://github.com/winstt/WinSTT/issues?q=is%3Aissue+is%3Aclosed) issues.
+        1. Search [open](https://github.com/dahshury/WinSTT/issues) and [closed](https://github.com/dahshury/WinSTT/issues?q=is%3Aissue+is%3Aclosed) issues.
         2. Try the latest release — your bug may already be fixed.
         3. Reproduce with `--debug` to surface verbose logs (see [Debug Mode](https://winstt.app/docs/debug-mode)).
         4. Generate a diagnostic bundle via **Settings → Advanced → Save Diagnostic Bundle…** and attach it below.
 
-        For feature requests use [Discussions → Ideas](https://github.com/winstt/WinSTT/discussions/categories/ideas).
+        For feature requests use [Discussions → Ideas](https://github.com/dahshury/WinSTT/discussions/categories/ideas).
 
   - type: textarea
     id: summary

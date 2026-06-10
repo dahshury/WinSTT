@@ -152,7 +152,7 @@
     "language": "en",
     "languageCandidates": [],
     "model": "tiny",
-    "onnxQuantization": "",
+    "onnxQuantization": "auto",
     "realtimeModel": "tiny",
     "translateToEnglish": false
   },

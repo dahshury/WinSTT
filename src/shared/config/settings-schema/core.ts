@@ -33,9 +33,9 @@ export const modelSettingsSchema = z.object({
 	// pass through verbatim.
 	//
 	// Default MUST mirror the canonical Rust default (`ModelSettings`'
-	// `onnx_quantization: String::new()`), enforced by the Rust↔zod parity gate
-	// (`defaults-parity.test.ts`). `""` = explicit fp32 on a fresh install.
-	onnxQuantization: z.string().default(""),
+	// `onnx_quantization: "auto"`), enforced by the Rust↔zod parity gate
+	// (`defaults-parity.test.ts`). Fresh installs get the RAM-aware pick.
+	onnxQuantization: z.string().default("auto"),
 	initialPrompt: z.string().default(""),
 	initialPromptRealtime: z.string().default(""),
 	// Whisper-native task=translate. When true and the active model is a

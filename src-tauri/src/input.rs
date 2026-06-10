@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_BACK, VK_LCONTROL, VK_LMENU, VK_LSHIFT,
-    VK_LWIN, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN,
+    VK_LWIN, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN,
 };
 
 /// Wrapper for Enigo to store in Tauri's managed state.
@@ -245,8 +245,52 @@ fn release_current_modifiers() -> Result<Vec<VIRTUAL_KEY>, String> {
 
 /// Inject Unicode text without pressing any accelerator keys. This is the Windows-safe path for
 /// streaming paste while the dictation hotkey modifiers are still physically held.
+///
+/// Newlines are injected as real Enter (VK_RETURN) keystrokes, NOT as Unicode line-feed
+/// characters. A bare U+000A delivered via KEYEVENTF_UNICODE arrives as a WM_CHAR line-feed,
+/// which most edit controls, browser inputs, and chat boxes silently drop — collapsing a
+/// multi-line result (numbered lists, bullet lists, paragraphs) onto a single row. Sending
+/// VK_RETURN makes the target app break the line exactly as if the user pressed Enter, so
+/// structure the LLM produced survives the Direct paste path. `\r\n` and lone `\r` are folded
+/// into a single Enter so CRLF text doesn't double-space.
 #[cfg(target_os = "windows")]
 fn paste_text_unicode(text: &str) -> Result<(), String> {
+    let mut chars = text.chars().peekable();
+    let mut segment = String::new();
+
+    let flush_segment = |segment: &mut String| -> Result<(), String> {
+        if segment.is_empty() {
+            return Ok(());
+        }
+        let result = paste_unicode_segment(segment);
+        segment.clear();
+        result
+    };
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\r' => {
+                flush_segment(&mut segment)?;
+                // Fold a following '\n' into the same line break (CRLF → one Enter).
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                send_vk_clicks(VK_RETURN, 1)?;
+            }
+            '\n' => {
+                flush_segment(&mut segment)?;
+                send_vk_clicks(VK_RETURN, 1)?;
+            }
+            _ => segment.push(ch),
+        }
+    }
+    flush_segment(&mut segment)
+}
+
+/// Inject a newline-free string as a sequence of KEYEVENTF_UNICODE packets (batched, with
+/// surrogate pairs kept together). Callers must split on newlines first — see `paste_text_unicode`.
+#[cfg(target_os = "windows")]
+fn paste_unicode_segment(text: &str) -> Result<(), String> {
     const TYPE_BATCH_UNITS: usize = 64;
 
     let units: Vec<u16> = text.encode_utf16().collect();
