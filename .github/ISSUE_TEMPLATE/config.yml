@@ -4,11 +4,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: 💡 Feature request or idea
-    url: https://github.com/dahshury/WinSTT/discussions/categories/ideas
+    url: https://github.com/winstt/WinSTT/discussions/categories/ideas
     about: Propose a new feature, discuss design tradeoffs, or sketch an API change. Features land much faster after a Discussion.
   - name: 🙋 Questions / how-do-I
-    url: https://github.com/dahshury/WinSTT/discussions/categories/q-a
+    url: https://github.com/winstt/WinSTT/discussions/categories/q-a
     about: Ask the community. Search existing Q&A first — most setup questions have answers.
   - name: 📣 Show & tell
-    url: https://github.com/dahshury/WinSTT/discussions/categories/show-and-tell
+    url: https://github.com/winstt/WinSTT/discussions/categories/show-and-tell
     about: Share your dictation setup, custom modifiers, snippets, or screen recordings.

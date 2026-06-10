@@ -158,7 +158,7 @@ fn version_label() -> String {
 pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&str>) {
     // AUDIT #19: WinSTT shows its OWN transparent HTML tray menu (lib.rs
     // `on_tray_icon_event` → toggle_tray_menu_at_physical; labels are translated in the
-    // renderer). Handy's native OS context menu is NOT attached — and previously this
+    // renderer). The native OS context menu is NOT attached — and previously this
     // function still BUILT every MenuItem/Submenu/CheckMenuItem (looping all downloaded
     // models) on every state transition only to drop it with `let _ = menu;`. That whole
     // construction block has been removed; only the icon-template + tooltip refresh

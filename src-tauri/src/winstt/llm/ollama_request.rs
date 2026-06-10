@@ -34,6 +34,22 @@ impl ThinkingEffort {
 // Ollama keep-alive + structured schema, mirroring buildOllamaChatBody.
 const DEFAULT_OLLAMA_KEEP_ALIVE: &str = "5m";
 
+/// Compact JSON-shape grounding appended to the user prompt whenever we send a
+/// `format` schema. Ollama's structured-output docs recommend "also pass the
+/// JSON schema as a string in the prompt to ground the model's response" — with
+/// it, thinking-capable models (gemma, qwen3, …) reliably emit the JSON
+/// envelope instead of free-form prose like `text: <answer>`. The explicit
+/// "raw JSON, no code fences" clause stops the model wrapping the object in a
+/// ```json block, whose opening fence can stream on its own and leak a bare
+/// ``` into the paste.
+const OLLAMA_STRUCTURED_OUTPUT_GROUNDING: &str = concat!(
+    "\n\nReturn your answer as a single raw JSON object — no markdown, no ``` code ",
+    "fences, no text before or after it — matching this exact shape, with ONLY the ",
+    "cleaned, transformed text in the \"text\" field:\n",
+    "{\"text\": \"<transformed text>\", \"learned_proper_nouns\": [], \"learned_snippets\": [], ",
+    "\"suggested_modifier_presets\": [], \"history_tag\": \"note\", \"privacy_markers\": []}"
+);
+
 /// Map the shared model lifetime setting onto Ollama's keep_alive field.
 /// Ollama accepts duration strings, seconds, and negative numeric sentinels.
 pub fn ollama_keep_alive_from_core_timeout(
@@ -51,13 +67,35 @@ pub fn ollama_keep_alive_from_core_timeout(
     }
 }
 
-/// Build the `think` field value: `false` when the model can't think or
-/// effort is Off, else the effort string. Mirrors thinkingFlagFor.
-pub fn thinking_flag_for(effort: ThinkingEffort, supports_thinking: bool) -> serde_json::Value {
+/// True iff this model takes thinking *effort levels* (`low`/`medium`/`high`)
+/// rather than a boolean. Per the Ollama docs only the GPT-OSS family does;
+/// for it `true`/`false` are ignored. Every other thinking model expects a
+/// boolean, and handing it an effort string makes it mishandle the request.
+fn model_uses_thinking_levels(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("gpt-oss")
+}
+
+/// Build the `think` field value per the Ollama API contract.
+///
+/// - `false` when the model can't think or effort is Off.
+/// - For GPT-OSS (the documented exception): the effort string `low`/`medium`/
+///   `high` — that family tunes trace length by level and ignores booleans.
+/// - For every other thinking model: a plain boolean `true`. The docs state
+///   "most models accept booleans (`true`/`false`)"; passing an effort *string*
+///   to such a model is improper and is mishandled — e.g. gemma abandons the
+///   grammar-constrained structured output entirely and emits raw `text: …`.
+pub fn thinking_flag_for(
+    effort: ThinkingEffort,
+    supports_thinking: bool,
+    model: &str,
+) -> serde_json::Value {
     if !supports_thinking || effort == ThinkingEffort::Off {
         return serde_json::Value::Bool(false);
     }
-    serde_json::Value::String(effort.as_str().to_string())
+    if model_uses_thinking_levels(model) {
+        return serde_json::Value::String(effort.as_str().to_string());
+    }
+    serde_json::Value::Bool(true)
 }
 
 /// The native structured-output JSON schema enforced via Ollama's `format`.
@@ -235,19 +273,21 @@ pub fn build_ollama_chat_body_with_keep_alive(
     effort: ThinkingEffort,
     keep_alive: serde_json::Value,
 ) -> serde_json::Value {
+    let user_content = format!("{user_prompt}{OLLAMA_STRUCTURED_OUTPUT_GROUNDING}");
     serde_json::json!({
         "model": model,
         "messages": [
             { "role": "system", "content": system_prompt },
-            { "role": "user", "content": user_prompt },
+            { "role": "user", "content": user_content },
         ],
         "stream": true,
-        "think": thinking_flag_for(effort, supports_thinking),
+        "think": thinking_flag_for(effort, supports_thinking, model),
         "format": ollama_structured_output_schema(),
         "keep_alive": keep_alive,
         "options": {
             "temperature": 0.3,
             "top_p": 0.9,
+            "num_ctx": 16384,
             "num_predict": std::cmp::max(text_len * 4, 8192),
         }
     })
@@ -405,17 +445,71 @@ mod tests {
     #[test]
     fn thinking_flag_off_when_unsupported() {
         assert_eq!(
-            thinking_flag_for(ThinkingEffort::High, false),
+            thinking_flag_for(ThinkingEffort::High, false, "qwen3"),
             serde_json::Value::Bool(false)
         );
         assert_eq!(
-            thinking_flag_for(ThinkingEffort::Off, true),
+            thinking_flag_for(ThinkingEffort::Off, true, "qwen3"),
             serde_json::Value::Bool(false)
         );
+    }
+
+    #[test]
+    fn thinking_flag_is_boolean_for_non_gpt_oss_models() {
+        // Per the Ollama docs, normal thinking models take a boolean — NOT an
+        // effort string. Sending `"medium"` to gemma/qwen3 makes them drop the
+        // structured-output grammar and paste raw `text: …`, the reported bug.
+        for model in [
+            "gemma4:e2b-it-q4_K_M",
+            "qwen3",
+            "deepseek-r1",
+            "lfm2.5-thinking",
+        ] {
+            assert_eq!(
+                thinking_flag_for(ThinkingEffort::Medium, true, model),
+                serde_json::Value::Bool(true),
+                "{model} should get a boolean think flag"
+            );
+            assert_eq!(
+                thinking_flag_for(ThinkingEffort::High, true, model),
+                serde_json::Value::Bool(true),
+            );
+        }
+    }
+
+    #[test]
+    fn thinking_flag_uses_effort_levels_only_for_gpt_oss() {
+        // GPT-OSS is the documented exception: it tunes the trace by level and
+        // ignores booleans.
         assert_eq!(
-            thinking_flag_for(ThinkingEffort::High, true),
+            thinking_flag_for(ThinkingEffort::High, true, "gpt-oss:20b"),
             serde_json::Value::String("high".into())
         );
+        assert_eq!(
+            thinking_flag_for(ThinkingEffort::Medium, true, "GPT-OSS:120b"),
+            serde_json::Value::String("medium".into())
+        );
+    }
+
+    #[test]
+    fn chat_body_grounds_schema_shape_in_user_prompt() {
+        // Ollama's structured-output docs: grounding the JSON shape in the prompt
+        // keeps thinking-capable models honoring `format` instead of leaking prose.
+        let body = build_ollama_chat_body(
+            "gemma4:e2b",
+            "sys",
+            "usr",
+            100,
+            true,
+            ThinkingEffort::Medium,
+        );
+        let user = body["messages"][1]["content"].as_str().unwrap();
+        assert!(user.starts_with("usr"));
+        assert!(user.contains("raw JSON object"));
+        assert!(user.contains("no ``` code"));
+        assert!(user.contains("\"text\""));
+        // gemma is not gpt-oss → boolean think
+        assert_eq!(body["think"], serde_json::Value::Bool(true));
     }
 
     #[test]
@@ -562,3 +656,4 @@ mod tests {
         assert_eq!(terms, vec!["WinSTT", "Ollama"]);
     }
 }
+

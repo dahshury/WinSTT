@@ -6,7 +6,7 @@
  * fail soft when offline. Keeping them remote keeps the installer small and
  * lets us refresh the demos without shipping an update.
  */
-export const DEMO_PREVIEW_BASE = "https://winstt.dahshury.com/demos";
+export const DEMO_PREVIEW_BASE = "https://winstt.app/demos";
 
 /** Resolve a demo name (e.g. "ptt") to its remote .webm URL. */
 export function demoPreviewUrl(name: string): string {

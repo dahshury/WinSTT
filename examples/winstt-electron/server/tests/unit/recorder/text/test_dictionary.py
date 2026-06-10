@@ -1,10 +1,10 @@
 """Unit tests for the deterministic custom-word fuzzy corrector.
 
 Mirrors the ``#[cfg(test)]`` block in
-``examples/Handy/src-tauri/src/audio_toolkit/text.rs`` so we can claim
+the reference text-matching tests so we can claim
 algorithmic parity with the reference implementation. The exact
 assertion shapes (``contains``, ``not contains``, full string equality)
-are kept where Handy used them — the matcher is greedy and the
+are kept where the reference used them — the matcher is greedy and the
 non-equality assertions tolerate minor remainder-word artefacts.
 """
 
@@ -26,7 +26,7 @@ from src.recorder.text.dictionary import (
 )
 
 
-class TestApplyCustomWordsHandyParity:
+class TestApplyCustomWordsReferenceParity:
     """Tests ported verbatim from text.rs::tests."""
 
     def test_exact_match(self) -> None:
@@ -78,7 +78,7 @@ class TestApplyCustomWordsHandyParity:
 
 
 class TestApplyCustomWordsEdgeCases:
-    """Cases the Handy test suite doesn't cover but are easy to regress on."""
+    """Cases the reference test suite doesn't cover but are easy to regress on."""
 
     def test_empty_input(self) -> None:
         assert apply_custom_words("", ["Hello"], 0.5) == ""
@@ -119,7 +119,7 @@ class TestApplyCustomWordsEdgeCases:
         assert result == "Robert"
 
     def test_length_diff_blocks_short_substring(self) -> None:
-        # Handy's comment: "prevents n-grams from matching significantly
+        # Reference comment: "prevents n-grams from matching significantly
         # shorter custom words, e.g. 'openaigpt' vs 'openai'". The 25%
         # rule is wide enough for similar lengths but rejects the absurd
         # length-mismatch case.
@@ -154,7 +154,7 @@ class TestApplyCustomWordsEdgeCases:
     def test_punctuation_only_word_absorbed_by_greedy_match(self) -> None:
         # A standalone punctuation token contributes nothing to the
         # n-gram body, so the greedy 2-gram cascade matches "hello ,"
-        # against "hello" and absorbs the comma. This mirrors Handy's
+        # against "hello" and absorbs the comma. This mirrors the reference
         # implementation — the n-gram pass is intentionally greedy.
         result = apply_custom_words("hello , world", ["Hello", "World"], 0.5)
         assert result == "Hello World"

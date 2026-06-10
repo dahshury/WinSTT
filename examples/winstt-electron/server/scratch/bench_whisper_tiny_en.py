@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-AUDIO_PATH = Path(r"E:\DL\Projects\WinSTT\examples\faster-whisper\tests\data\physicsworks.wav")
+AUDIO_PATH = Path(r"<repo>\examples\faster-whisper\tests\data\physicsworks.wav")
 PROVIDER = "CPUExecutionProvider"
 
 
@@ -222,7 +222,7 @@ def main() -> None:
             print(f"  text[:120]: {r['text'][:120]!r}", flush=True)
 
     # ---- sherpa-onnx ----
-    sherpa_dir = Path(r"C:\Users\MASTE\.cache\sherpa-onnx-whisper-tiny.en")
+    sherpa_dir = Path(r"%USERPROFILE%\.cache\sherpa-onnx-whisper-tiny.en")
     if sherpa_dir.exists():
         print("\n--- sherpa-onnx ---", flush=True)
         r = run_sherpa(audio, sr, sherpa_dir)
@@ -247,7 +247,7 @@ def main() -> None:
             flush=True,
         )
 
-    Path("E:/DL/Projects/WinSTT/server/scratch/bench_results.json").write_text(
+    Path("<repo>/server/scratch/bench_results.json").write_text(
         json.dumps(results, indent=2, default=str)
     )
 

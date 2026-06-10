@@ -14,7 +14,7 @@ pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
 
 pub fn get_default_settings() -> AppSettings {
     #[cfg(target_os = "windows")]
-    let default_shortcut = "ctrl+space";
+    let default_shortcut = crate::winstt::settings_schema::DEFAULT_PUSH_TO_TALK_KEY;
     #[cfg(target_os = "macos")]
     let default_shortcut = "option+space";
     #[cfg(target_os = "linux")]
@@ -77,9 +77,9 @@ pub fn get_default_settings() -> AppSettings {
     // settings tree (`tts.hotkey`, `general.repasteHotkey`) — like `transforms`
     // (`llm.transforms.hotkey`). These rows exist so `change_binding` / `reset_binding`
     // can resolve a default, but they are NEVER registered by the init loops (which
-    // would parse the raw WinSTT key names — `LMeta` is unknown to handy-keys). They
-    // are armed exclusively through `shortcut::reconcile_winstt_hotkeys`, which routes
-    // every accelerator through `winstt_accel_to_handy` and gates on the feature flag.
+    // would parse the raw WinSTT key names directly). They are armed exclusively through
+    // `shortcut::reconcile_winstt_hotkeys`, which routes every accelerator through
+    // `winstt_accel_to_tauri` and gates on the feature flag.
     bindings.insert(
         "read_aloud".to_string(),
         ShortcutBinding {

@@ -5,7 +5,7 @@ description: Verify the authenticity of a WinSTT installer offline with minisign
 
 Confirm that the installer you downloaded is byte-identical to what the WinSTT release workflow built — manually, offline, on any platform.
 
-Every WinSTT installer (both the CPU and DirectML portable `.exe` builds) ships with a [minisign](https://jedisct1.github.io/minisign/) signature sidecar — a small `.minisig` file uploaded next to the installer on the [GitHub Releases page](https://github.com/dahshury/WinSTT/releases).
+Every WinSTT installer (both the CPU and DirectML portable `.exe` builds) ships with a [minisign](https://jedisct1.github.io/minisign/) signature sidecar — a small `.minisig` file uploaded next to the installer on the [GitHub Releases page](https://github.com/winstt/WinSTT/releases).
 
 This is **in addition to** the standard Authenticode signature that the Windows installer flow and `electron-updater` already validate automatically. The minisign sidecar lets you verify the download **manually, offline, on any platform** — a second trust path beyond Windows' code-signing certificate store.
 
@@ -17,9 +17,9 @@ This is **in addition to** the standard Authenticode signature that the Windows 
 
 | File | Where to get it |
 |---|---|
-| The installer | [GitHub Releases](https://github.com/dahshury/WinSTT/releases) — e.g. `WinSTT-CPU-Portable-0.4.0.exe` |
+| The installer | [GitHub Releases](https://github.com/winstt/WinSTT/releases) — e.g. `WinSTT-CPU-Portable-0.4.0.exe` |
 | The `.minisig` sidecar | Same release page — e.g. `WinSTT-CPU-Portable-0.4.0.exe.minisig` |
-| The public key | [`docs/winstt.pub`](https://github.com/dahshury/WinSTT/blob/main/docs/winstt.pub) in the repo |
+| The public key | [`docs/winstt.pub`](https://github.com/winstt/WinSTT/blob/main/docs/winstt.pub) in the repo |
 | `minisign` CLI | See install commands below |
 
 ## Install minisign
@@ -72,7 +72,7 @@ This is **in addition to** the standard Authenticode signature that the Windows 
     Fetch `winstt.pub` directly from the repo:
 
     ```bash
-    curl -LO https://raw.githubusercontent.com/dahshury/WinSTT/main/docs/winstt.pub
+    curl -LO https://raw.githubusercontent.com/winstt/WinSTT/main/docs/winstt.pub
     ```
   </Step>
   <Step title="Run minisign">
@@ -119,7 +119,7 @@ It does **not** by itself prove the public key in the repo wasn't replaced — t
 
 ## Things that should fail
 
-If any of these happen, **do not run the installer** and please [open an issue](https://github.com/dahshury/WinSTT/issues):
+If any of these happen, **do not run the installer** and please [open an issue](https://github.com/winstt/WinSTT/issues):
 
 | Output | Meaning |
 |---|---|
@@ -137,7 +137,7 @@ If any of these happen, **do not run the installer** and please [open an issue](
 
 Minisign is therefore intentionally positioned as a **manual, offline verification layer for power users**, distributed via this docs site and the repo — not bundled into the app.
 
-For maintainer-side details on key generation and CI configuration, see [`docs/RELEASE_SIGNING.md`](https://github.com/dahshury/WinSTT/blob/main/docs/RELEASE_SIGNING.md).
+For maintainer-side details on key generation and CI configuration, see [`docs/RELEASE_SIGNING.md`](https://github.com/winstt/WinSTT/blob/main/docs/RELEASE_SIGNING.md).
 
 ## Related
 

@@ -109,7 +109,7 @@ pub struct PostProcessProvider {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
-// Inherited Handy AppSettings enum; the WinSTT `settings_schema::OverlayPosition`
+// Legacy AppSettings enum; the WinSTT `settings_schema::OverlayPosition`
 // (with the extra `auto` variant) is the renderer-canonical type, so this one's
 // TS export is suffixed to avoid the duplicate-identifier collision in bindings.ts.
 #[specta(rename = "OverlayPositionLegacy")]
@@ -164,16 +164,46 @@ pub enum AutoSubmitKey {
     CmdEnter,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyboardImplementation {
     Tauri,
-    HandyKeys,
 }
 
 impl Default for KeyboardImplementation {
     fn default() -> Self {
-        KeyboardImplementation::HandyKeys
+        KeyboardImplementation::Tauri
+    }
+}
+
+impl<'de> Deserialize<'de> for KeyboardImplementation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct KeyboardImplementationVisitor;
+
+        impl<'de> Visitor<'de> for KeyboardImplementationVisitor {
+            type Value = KeyboardImplementation;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a keyboard shortcut backend name")
+            }
+
+            fn visit_str<E: de::Error>(self, _value: &str) -> Result<KeyboardImplementation, E> {
+                Ok(KeyboardImplementation::Tauri)
+            }
+        }
+
+        deserializer.deserialize_any(KeyboardImplementationVisitor)
+    }
+}
+
+impl From<KeyboardImplementation> for &'static str {
+    fn from(value: KeyboardImplementation) -> Self {
+        match value {
+            KeyboardImplementation::Tauri => "tauri",
+        }
     }
 }
 
@@ -348,11 +378,11 @@ impl std::ops::DerefMut for SecretMap {
     }
 }
 
-/* still handy for composing the initial JSON in the store ------------- */
+/* still useful for composing the initial JSON in the store ------------ */
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 pub struct AppSettings {
     pub bindings: HashMap<String, ShortcutBinding>,
-    // NOTE: the Handy-era `push_to_talk` bool was removed — the recording mode
+    // NOTE: the legacy `push_to_talk` bool was removed — the recording mode
     // (ptt / toggle / listen / wakeword) is owned by `WinsttSettings.general.recording_mode`,
     // which the BACKEND reads in shortcut/handler.rs to decide dispatch. The field had no
     // live reader. `#[serde(default)]` on the remaining fields means an older

@@ -18,6 +18,7 @@ import {
 	type QuantDownloadSnapshot,
 	QuantShelf,
 	type QuantShelfEntry,
+	resolveQuantDownloadState,
 } from "../../core/model-card";
 import { cloningLabel, ttsLanguageMeta } from "../lib/tts-helpers";
 
@@ -105,17 +106,6 @@ function getTtsQuantOptions(model: TtsModelInfo): TtsQuantOption[] {
 		);
 }
 
-/** Human cache-status phrase for the badge tooltip. */
-function quantCacheStatus(cache: TtsQuantCache): string {
-	if (cache?.state === "cached") {
-		return "downloaded";
-	}
-	if (cache?.state === "partial") {
-		return `${Math.round((cache.progress ?? 0) * 100)}% downloaded`;
-	}
-	return "not downloaded";
-}
-
 interface PrecisionGroupProps {
 	currentQuantization: string;
 	getDownloadSnapshot?:
@@ -168,35 +158,32 @@ function buildTtsQuantEntries({
 			: opt.value;
 		const cache = resolveTtsQuantCache(state, effectiveValue);
 		const download = getDownloadSnapshot?.(model.id, effectiveValue);
-		const isCached = cache?.state === "cached";
-		const isPartial = cache?.state === "partial";
-		const sizeBytes =
-			(download && download.totalBytes > 0
-				? Math.max(download.totalBytes, download.downloadedBytes)
-				: null) ??
-			(cache && cache.totalBytes > 0
-				? Math.max(cache.totalBytes, cache.downloadedBytes)
-				: null) ??
-			model.sizeBytesByQuantization[effectiveValue] ??
-			model.sizeBytesByQuantization[opt.value] ??
-			null;
+		const downloadState = resolveQuantDownloadState({
+			cache,
+			canStart: !isAuto,
+			download,
+			fallbackSizeBytes: [
+				model.sizeBytesByQuantization[effectiveValue],
+				model.sizeBytesByQuantization[opt.value],
+			],
+			hasDownloadAction: onDownloadAction !== undefined,
+		});
 		return {
 			value: opt.value,
 			label: opt.label,
 			tooltip: opt.tooltip,
 			actionQuant: effectiveValue,
-			cacheState: cache?.state,
-			cacheProgress: cache?.state === "partial" ? (cache.progress ?? 0) : null,
-			cacheStatusLabel: quantCacheStatus(cache),
+			cacheState: downloadState.cacheState,
+			cacheProgress: downloadState.cacheProgress,
+			cacheStatusLabel: downloadState.cacheStatusLabel,
 			download,
-			downloadSizeBytes: sizeBytes,
+			downloadSizeBytes: downloadState.downloadSizeBytes,
 			isActive: isSelectedModel && opt.value === currentQuantization,
 			isRecommended: false,
-			canResumeDownload: isPartial && onDownloadAction !== undefined,
-			canStartDownload:
-				!(isAuto || download !== undefined || isCached || isPartial) &&
-				onDownloadAction !== undefined,
-			canDelete: !isAuto && onRequestDeleteQuant !== undefined && isCached,
+			canResumeDownload: downloadState.canResumeDownload,
+			canStartDownload: downloadState.canStartDownload,
+			canDelete:
+				!isAuto && onRequestDeleteQuant !== undefined && downloadState.isCached,
 		};
 	});
 }

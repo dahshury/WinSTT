@@ -9,7 +9,7 @@
 //
 // DUAL-MANAGER BOUNDARY: `winstt/managers/` = WinSTT feature subsystems (cloud STT,
 // TTS, diarization, wakeword, LLM, realtime, context, file-transcribe, downloads);
-// `crate::managers/` = the inherited Handy pipeline core (audio, model, transcription,
+// `crate::managers/` = the legacy pipeline core (audio, model, transcription,
 // history). The dependency edge is one-way — these feature managers reuse the core
 // (e.g. `loopback_manager` drives `crate::managers::transcription::TranscriptionManager`),
 // never the reverse.

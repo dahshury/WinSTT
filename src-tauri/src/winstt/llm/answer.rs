@@ -202,12 +202,33 @@ pub fn finalize_chat_answer(content: &str, fallback: &str) -> (String, Option<St
         }
         return (fallback.to_string(), None);
     }
+    // The Ollama chat path always requests `format: <schema>`, so a well-formed
+    // answer is a JSON envelope. When the content opens an object (`{…`) but no
+    // `text` could be extracted, it is a truncated or malformed structured
+    // response — never natural prose. Falling through to the `<think>`/harmony/
+    // boxed/raw passthrough below would paste the bare scaffolding (`{`, `{"text`,
+    // `{\n  "text"`). Fall back to the original text instead. (A model that
+    // ignored `format` and leaked real prose does not start with `{`, so it still
+    // flows through the leakage extractors.)
+    if strip_markdown_fences(content).starts_with('{') {
+        return (fallback.to_string(), None);
+    }
     let inline = split_inline_thinking(content);
     let mut reasoning = if inline.thinking.is_empty() {
         None
     } else {
         Some(inline.thinking.clone())
     };
+    // A model may emit its reasoning inline then the JSON envelope after it.
+    // Re-run structured extraction on the de-<think>ed remainder so a leaked
+    // `<think>…</think>{ "text": … }` still resolves to the clean field.
+    if let Some(structured) = extract_structured_final_text(&inline.answer) {
+        let t = structured.trim();
+        if !t.is_empty() {
+            return (t.to_string(), reasoning);
+        }
+        return (fallback.to_string(), reasoning);
+    }
     // Leakage extractors run on the post-<think> answer.
     for extractor in [extract_harmony_answer, extract_boxed_answer] {
         if let Some(leak) = extractor(&inline.answer) {
@@ -220,10 +241,73 @@ pub fn finalize_chat_answer(content: &str, fallback: &str) -> (String, Option<St
             return (leak.answer, reasoning);
         }
     }
+    // Defense in depth: a model that ignores `format` despite the prompt
+    // grounding can emit the answer as an unwrapped `text:` field (the JSON key
+    // as a bare label) instead of the full object. Recover the cleaned text from
+    // it. In the fully degenerate case the content is just a scaffolding token
+    // (`text`, `{`, a quoted field name) — never a real answer, so fall back.
+    if let Some(unwrapped) = salvage_unwrapped_text_field(&inline.answer) {
+        return (unwrapped, reasoning);
+    }
+    // A bare scaffolding token, or a reasoning leak with no recoverable envelope
+    // (a thinking-native model whose `<think>` block never closed into an answer)
+    // — never a real answer. Paste the original, not the junk. Only an UNCLOSED
+    // `<think>` is treated as a pure leak; a closed `<think>…</think>X` already
+    // had its X recovered above.
+    let unclosed_thinking_leak =
+        content.trim_start().starts_with("<think") && !content.contains("</think");
+    if is_bare_structured_scaffold(&inline.answer) || unclosed_thinking_leak {
+        return (fallback.to_string(), reasoning);
+    }
     if !inline.answer.is_empty() {
         return (inline.answer, reasoning);
     }
     (fallback.to_string(), reasoning)
+}
+
+/// Recover the cleaned text from an unwrapped `text:` field label. A model that
+/// dropped the `format` grammar may prefix the answer with the JSON key
+/// (`text: <answer>` or `"text": "<answer>"`) rather than emit the full object.
+/// Matches the lowercase field name exactly (so a normal sentence starting with
+/// a capitalized "Text" is untouched) and only when a colon follows. Returns the
+/// trimmed, unquoted remainder, or None when there is no label / nothing follows.
+fn salvage_unwrapped_text_field(answer: &str) -> Option<String> {
+    let trimmed = answer.trim_start();
+    let rest = trimmed
+        .strip_prefix("\"text\"")
+        .or_else(|| trimmed.strip_prefix("text"))?;
+    let rest = rest.trim_start().strip_prefix(':')?.trim();
+    let unquoted = rest
+        .strip_prefix('"')
+        .and_then(|r| r.strip_suffix('"'))
+        .unwrap_or(rest)
+        .trim();
+    if unquoted.is_empty() {
+        None
+    } else {
+        Some(unquoted.to_string())
+    }
+}
+
+/// True for a bare structured-output scaffolding token a model emits when it
+/// abandons `format` (just `text`, `{`, `}`, a quoted field name, or a lone
+/// markdown code fence) — never a real answer, so the caller falls back to the
+/// original transcription.
+fn is_bare_structured_scaffold(answer: &str) -> bool {
+    let t = answer.trim().trim_matches('"').trim();
+    matches!(
+        t,
+        "" | "{"
+            | "}"
+            | "```"
+            | "```json"
+            | "text"
+            | "learned_proper_nouns"
+            | "learned_snippets"
+            | "suggested_modifier_presets"
+            | "history_tag"
+            | "privacy_markers"
+    )
 }
 
 /// Compact provider/transport errors for logs. Keeps status and first-order
@@ -342,10 +426,90 @@ mod tests {
     }
 
     #[test]
+    fn finalize_falls_back_on_truncated_json_envelope() {
+        // A cancelled / truncated structured-output stream leaves a JSON
+        // fragment. None of these must ever be pasted verbatim — they fall back
+        // to the original transcription.
+        for fragment in ["{", "{\"", "{\"text", "{\"text\":", "{\n  \"text\""] {
+            let (answer, reasoning) = finalize_chat_answer(fragment, "original text");
+            assert_eq!(answer, "original text", "leaked fragment {fragment:?}");
+            assert!(reasoning.is_none());
+        }
+    }
+
+    #[test]
+    fn finalize_falls_back_on_fenced_truncated_envelope() {
+        let (answer, _) = finalize_chat_answer("```json\n{\"text\"", "original text");
+        assert_eq!(answer, "original text");
+    }
+
+    #[test]
     fn finalize_extracts_boxed_when_no_envelope() {
         let (answer, reasoning) = finalize_chat_answer("steps... \\boxed{final}", "fb");
         assert_eq!(answer, "final");
         assert!(reasoning.unwrap().contains("steps..."));
+    }
+
+    #[test]
+    fn finalize_salvages_unwrapped_text_label() {
+        // A thinking model that dropped the `format` grammar emits the key as a
+        // label. Recover the cleaned text rather than pasting the label.
+        let (answer, _) =
+            finalize_chat_answer("text: The meeting was moved to Friday at 3 PM.", "original");
+        assert_eq!(answer, "The meeting was moved to Friday at 3 PM.");
+
+        let (answer, _) = finalize_chat_answer("\"text\": \"cleaned output\"", "original");
+        assert_eq!(answer, "cleaned output");
+    }
+
+    #[test]
+    fn finalize_falls_back_on_bare_scaffold_token() {
+        // The exact reported symptom: a bare `text` / `{` must never be pasted.
+        for token in ["text", "  text  ", "\"text\"", "{", "history_tag"] {
+            let (answer, _) = finalize_chat_answer(token, "original transcription");
+            assert_eq!(answer, "original transcription", "token {token:?} leaked");
+        }
+    }
+
+    #[test]
+    fn finalize_does_not_strip_capitalized_text_sentence() {
+        // A normal dictation starting with "Text" (capital, no JSON colon) is a
+        // real answer — never mistaken for the lowercase `text:` field label.
+        let (answer, _) = finalize_chat_answer("Text editors are great.", "fb");
+        assert_eq!(answer, "Text editors are great.");
+    }
+
+    #[test]
+    fn finalize_extracts_envelope_after_inline_thinking() {
+        // A model that leaks its reasoning inline then emits the JSON envelope.
+        let (answer, reasoning) = finalize_chat_answer(
+            "<think>let me clean it</think>{\"text\":\"Cleaned result.\"}",
+            "original",
+        );
+        assert_eq!(answer, "Cleaned result.");
+        assert_eq!(reasoning.as_deref(), Some("let me clean it"));
+    }
+
+    #[test]
+    fn finalize_falls_back_on_bare_code_fence() {
+        // The exact new symptom: grounding made the model open a ```json block
+        // whose fence streamed alone. Never paste the bare fence.
+        for fence in ["```", "```json", "  ```  "] {
+            let (answer, _) = finalize_chat_answer(fence, "original transcription");
+            assert_eq!(answer, "original transcription", "fence {fence:?} leaked");
+        }
+    }
+
+    #[test]
+    fn finalize_falls_back_on_unclosed_thinking_leak() {
+        // An always-thinking model (think disabled) can leak an unterminated
+        // `<think>` ramble with no JSON envelope — paste the original, not the
+        // reasoning.
+        let (answer, _) = finalize_chat_answer(
+            "<think> Okay, let me tackle this. The user wants me to clean the text",
+            "the original words",
+        );
+        assert_eq!(answer, "the original words");
     }
 
     // ── ollama transport helpers ──

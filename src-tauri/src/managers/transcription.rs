@@ -1,5 +1,4 @@
 use crate::managers::audio::AudioRecordingManager;
-use crate::managers::model::ModelManager;
 use crate::settings::{get_settings, ModelUnloadTimeout};
 use crate::winstt::sync_ext::MutexExt;
 use anyhow::Result;
@@ -10,7 +9,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Manager};
-// The ONLY `crate::winstt::*` symbols this inherited Handy core names (audit #14): the engine
+// The ONLY `crate::winstt::*` symbols this legacy core names (audit #14): the engine
 // type (`Transcriber`) the `LoadedEngine::Winstt` arm boxes, and the backend trait surface the
 // core delegates every WinSTT-specific step to. All WinSTT logic lives behind `SttBackend`.
 use crate::winstt::model_swap::ModelSwapCoordinator;
@@ -165,8 +164,8 @@ pub struct ModelStateEvent {
 }
 
 enum LoadedEngine {
-    /// WinSTT unified ort-ONNX engine. This is the only local STT execution path; unknown legacy
-    /// Handy/transcribe-rs ids are rejected before load.
+    /// WinSTT unified ort-ONNX engine. This is the only local STT execution path; unknown
+    /// model ids are rejected before load.
     Winstt(Box<dyn WinsttTranscriber>),
 }
 
@@ -233,8 +232,8 @@ pub struct TranscriptionManager {
     /// The WinSTT-owned STT backend (audit #14). Every WinSTT-specific load/decode/cloud step
     /// (catalog resolve+build, the unified ort engine decode + post-processing, the cloud
     /// round-trip, language/dictionary/filler from the picker store) is delegated here so this
-    /// inherited Handy core stops reaching sideways into `crate::winstt::*` — restoring the
-    /// one-way dependency edge that keeps upstream Handy merges of this file tractable.
+    /// legacy core stops reaching sideways into `crate::winstt::*`, restoring the
+    /// one-way dependency edge between the core and WinSTT feature modules.
     backend: Arc<dyn SttBackend>,
     /// Freshest realtime full-buffer decode, for the final-paste reuse fast path. The realtime
     /// worker writes it each tick (`cache_realtime_reuse`); the final path consumes it once on PTT
@@ -244,7 +243,7 @@ pub struct TranscriptionManager {
 }
 
 impl TranscriptionManager {
-    pub fn new(app_handle: &AppHandle, _model_manager: Arc<ModelManager>) -> Result<Self> {
+    pub fn new(app_handle: &AppHandle) -> Result<Self> {
         let manager = Self {
             engine: Arc::new(Mutex::new(None)),
             app_handle: app_handle.clone(),

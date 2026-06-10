@@ -36,7 +36,19 @@ pub fn init_shortcuts(app: &AppHandle) {
             .cloned()
             .unwrap_or(default_binding);
 
-        if let Err(e) = register_shortcut(app, binding) {
+        let binding = if id == "transcribe" {
+            let ptt = crate::winstt::commands::settings::read_settings_raw(app)
+                .hotkey
+                .push_to_talk_key;
+            ShortcutBinding {
+                current_binding: crate::shortcut::binding_for_active_backend(&id, &ptt),
+                ..binding
+            }
+        } else {
+            binding
+        };
+
+        if let Err(e) = super::register_shortcut(app, binding) {
             error!("Failed to register shortcut {} during init: {}", id, e);
         }
     }
@@ -44,6 +56,8 @@ pub fn init_shortcuts(app: &AppHandle) {
 
 /// Validate a shortcut string for the Tauri global-shortcut implementation.
 /// Tauri requires at least one non-modifier key and doesn't support the fn key.
+/// Modifier-only PTT shortcuts are handled before this point by WinSTT's
+/// Windows modifier listener.
 pub fn validate_shortcut(raw: &str) -> Result<(), String> {
     if raw.trim().is_empty() {
         return Err("Shortcut cannot be empty".into());

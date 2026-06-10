@@ -39,14 +39,6 @@ const VOICE_GROUP_LABELS: Record<string, string> = {
 	de: "German",
 };
 
-function pct(value: number): string {
-	return `${Math.round(value * 100)}`;
-}
-
-function modelLabel(model: OpenRouterTtsModel): string {
-	return `${model.name} - Q${pct(model.quality_score)} / S${pct(model.speed_score)}`;
-}
-
 function titleCase(value: string): string {
 	return value
 		.replace(/[_-]+/g, " ")
@@ -118,6 +110,12 @@ function previewKey(modelId: string, voiceId: string): string {
 	return `openrouter:${modelId}:${voiceId}`;
 }
 
+/**
+ * OpenRouter cloud-TTS VOICE controls — voice selector (voices come from the
+ * selected speech model's `supported_voices`) + speed. The MODEL picker lives in
+ * the merged `UnifiedCloudTtsControls`; this renders only once an OpenRouter
+ * model is the active selection.
+ */
 export function OpenRouterTtsControls({
 	activeRequestId,
 	isLoading,
@@ -130,12 +128,6 @@ export function OpenRouterTtsControls({
 	const update = useSettingsStore((s) => s.updateTtsSettings);
 	const models = useOpenRouterTtsCatalogStore((s) => s.models);
 	const isScanning = useOpenRouterTtsCatalogStore((s) => s.isScanning);
-	const error = useOpenRouterTtsCatalogStore((s) => s.error);
-	const scanModels = useOpenRouterTtsCatalogStore((s) => s.scanModels);
-
-	useEffect(() => {
-		scanModels().catch(() => undefined);
-	}, [scanModels]);
 
 	const patchCloud = (next: Partial<typeof cloud>): void => {
 		update({ cloud: { ...cloud, ...next } });
@@ -149,53 +141,24 @@ export function OpenRouterTtsControls({
 		? cloud.openrouterVoice
 		: (selectedVoices[0] ?? "");
 
+	// Once the catalog lands, keep the persisted voice valid for the selected
+	// model (the model itself is chosen in the merged picker, which also seeds the
+	// first voice — this is the fallback for a stale persisted voice).
 	useEffect(() => {
-		if (isScanning || models.length === 0) {
+		if (isScanning || !selectedModel) {
 			return;
 		}
-		const nextModel =
-			models.find((model) => model.id === cloud.openrouterModel) ?? models[0];
-		if (!nextModel) {
-			return;
-		}
-		const voices = nextModel.supported_voices;
+		const voices = selectedModel.supported_voices;
 		const nextVoice = voices.includes(cloud.openrouterVoice)
 			? cloud.openrouterVoice
 			: (voices[0] ?? "");
-		const patch: Partial<typeof cloud> = {};
-		if (cloud.openrouterModel !== nextModel.id) {
-			patch.openrouterModel = nextModel.id;
+		if (nextVoice !== cloud.openrouterVoice) {
+			update({ cloud: { ...cloud, openrouterVoice: nextVoice } });
 		}
-		if (cloud.openrouterVoice !== nextVoice) {
-			patch.openrouterVoice = nextVoice;
-		}
-		if (Object.keys(patch).length > 0) {
-			update({ cloud: { ...cloud, ...patch } });
-		}
-	}, [cloud, isScanning, models, update]);
-
-	const modelGroups: SelectOptionGroup[] = [
-		{
-			value: "openrouter",
-			label: "OpenRouter",
-			badge: "OR",
-			options: models.map((model) => ({
-				id: model.id,
-				label: modelLabel(model),
-			})),
-		},
-	];
+	}, [cloud, isScanning, selectedModel, update]);
 
 	const voiceGroups = buildVoiceGroups(selectedVoices);
-	const hasModels = models.length > 0;
 	const hasVoices = selectedVoices.length > 0;
-
-	let modelPlaceholder = "Choose an OpenRouter speech model";
-	if (error) {
-		modelPlaceholder = "Could not load models";
-	} else if (isScanning) {
-		modelPlaceholder = "Loading models...";
-	}
 
 	let voicePlaceholder = "Choose a voice";
 	if (!selectedModel) {
@@ -203,14 +166,6 @@ export function OpenRouterTtsControls({
 	} else if (!hasVoices) {
 		voicePlaceholder = "No voices published for this model";
 	}
-
-	const handleModelChange = (modelId: string): void => {
-		const nextModel = models.find((model) => model.id === modelId);
-		patchCloud({
-			openrouterModel: modelId,
-			openrouterVoice: nextModel?.supported_voices[0] ?? "",
-		});
-	};
 
 	const handleVoiceChange = (voiceId: string): void => {
 		patchCloud({ openrouterVoice: voiceId });
@@ -222,22 +177,6 @@ export function OpenRouterTtsControls({
 
 	return (
 		<>
-			<SettingField
-				label={t("model")}
-				layout="row"
-				tooltip="OpenRouter speech model. Quality and speed scores are normalized to the same 0-100 scale as the local TTS catalog."
-			>
-				<ElevatedSurface className="w-72" inline>
-					<SearchableSelect
-						disabled={!hasModels}
-						groups={modelGroups}
-						onChange={handleModelChange}
-						placeholder={modelPlaceholder}
-						value={hasModels ? cloud.openrouterModel : ""}
-					/>
-				</ElevatedSurface>
-			</SettingField>
-
 			<SettingField
 				label={t("voice")}
 				layout="row"

@@ -13,7 +13,7 @@ export const MAX_CUSTOM_SOUNDS = 50;
 
 const ADDITIONAL_BUILTIN_SOUNDS = [
 	{
-		id: "__winstt_builtin_handy_marimba_start__",
+		id: "__winstt_builtin_marimba_start__",
 		name: "Marimba",
 		path: `${BUILTIN_SOUND_PREFIX}marimba_start.wav`,
 	},

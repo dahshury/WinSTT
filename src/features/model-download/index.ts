@@ -1,6 +1,8 @@
 export { useDownloadListener } from "./api/use-download-listener";
 export {
 	isQuantDownloading,
+	quantDownloadSeedFromCache,
+	type QuantDownloadSeed,
 	type QuantDownloadState,
 	type SttDownloadOwner,
 	useDownloadStore,

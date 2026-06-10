@@ -102,7 +102,7 @@ pub mod custom_models;
 /// History command surface: backs BOTH the dedicated history window (SQLite-store
 /// channels, NUMBER id — history_list/recent/delete_row/toggle/load_audio_by_row/
 /// add) AND the settings-panel karaoke table (legacy persisted store channels,
-/// STRING id — history_get_all/clear/delete/load_audio) with Handy's single
+/// STRING id — history_get_all/clear/delete/load_audio) with the single
 /// `managers::history` (one on-disk source of truth, reshaped per channel group).
 /// Plus `install_history_event_bridge` (collected `HistoryUpdatePayload` →
 /// WinSTT-shaped plain events history:added/deleted + history:row-*). The

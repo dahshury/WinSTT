@@ -26,7 +26,7 @@ function fullTree(): WindowContextSnapshot {
 		textAfter: "",
 		textBefore: "Dear Dr. Aljarbou,",
 		url: "",
-		windowTitle: "Inbox - you@example.com",
+		windowTitle: "Inbox - user@example.test",
 	};
 }
 

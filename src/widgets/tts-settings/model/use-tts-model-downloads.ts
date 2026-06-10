@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTtsModelStateStore } from "@/entities/tts-catalog";
+import { quantDownloadSeedFromCache } from "@/features/model-download/model/download-store";
 import {
 	onTtsModelDownloadCompleteCatalog,
 	onTtsModelDownloadProgressCatalog,
@@ -54,6 +55,9 @@ export function useTtsModelDownloads(): {
 	const [snaps, setSnaps] = useState<Record<string, TtsDownloadSnapshot>>({});
 	const snapsRef = useRef(snaps);
 	snapsRef.current = snaps;
+	const statesById = useTtsModelStateStore((s) => s.statesById);
+	const statesRef = useRef(statesById);
+	statesRef.current = statesById;
 	const refresh = useTtsModelStateStore((s) => s.refresh);
 
 	useEffect(() => {
@@ -113,14 +117,28 @@ export function useTtsModelDownloads(): {
 	const onDownloadAction = useCallback(
 		(action: DownloadAction, modelId: string, quant: string): void => {
 			const key = keyOf(modelId, quant);
+			const seed = quantDownloadSeedFromCache(
+				statesRef.current[modelId]?.cacheByQuantization?.[quant],
+			);
 			if (action === "start") {
 				ttsPredownloadModel(modelId, quant);
 				setSnaps((prev) => ({
 					...prev,
 					[key]: {
-						downloadedBytes: prev[key]?.downloadedBytes ?? 0,
-						totalBytes: prev[key]?.totalBytes ?? 0,
-						progress: prev[key]?.progress ?? null,
+						downloadedBytes: Math.max(
+							prev[key]?.downloadedBytes ?? 0,
+							seed?.downloadedBytes ?? 0,
+						),
+						totalBytes: Math.max(
+							prev[key]?.totalBytes ?? 0,
+							seed?.totalBytes ?? 0,
+							prev[key]?.downloadedBytes ?? 0,
+							seed?.downloadedBytes ?? 0,
+						),
+						progress:
+							seed?.progress == null
+								? (prev[key]?.progress ?? null)
+								: monotonicPercent(prev[key]?.progress, seed.progress),
 						paused: false,
 					},
 				}));
@@ -130,9 +148,9 @@ export function useTtsModelDownloads(): {
 					...prev,
 					[key]: {
 						...(prev[key] ?? {
-							downloadedBytes: 0,
-							totalBytes: 0,
-							progress: null,
+							downloadedBytes: seed?.downloadedBytes ?? 0,
+							totalBytes: seed?.totalBytes ?? 0,
+							progress: seed?.progress ?? null,
 						}),
 						paused: true,
 					},
@@ -142,11 +160,39 @@ export function useTtsModelDownloads(): {
 				setSnaps((prev) => {
 					const previous = prev[key];
 					if (!previous) {
-						return prev;
+						if (!seed) {
+							return prev;
+						}
+						return {
+							...prev,
+							[key]: {
+								downloadedBytes: seed.downloadedBytes,
+								totalBytes: seed.totalBytes,
+								progress: seed.progress,
+								paused: false,
+							},
+						};
 					}
 					return {
 						...prev,
-						[key]: { ...previous, paused: false },
+						[key]: {
+							...previous,
+							downloadedBytes: Math.max(
+								previous.downloadedBytes,
+								seed?.downloadedBytes ?? 0,
+							),
+							totalBytes: Math.max(
+								previous.totalBytes,
+								seed?.totalBytes ?? 0,
+								previous.downloadedBytes,
+								seed?.downloadedBytes ?? 0,
+							),
+							progress:
+								seed?.progress == null
+									? previous.progress
+									: monotonicPercent(previous.progress, seed.progress),
+							paused: false,
+						},
 					};
 				});
 			} else {

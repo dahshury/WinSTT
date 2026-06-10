@@ -184,7 +184,7 @@ impl LlmManager {
             .with_response_format(JsonSpec::new("TransformedText", schema))
             .with_capture_usage(true)
             .with_extra_headers([
-                ("HTTP-Referer", "https://github.com/dahshury/winstt"),
+                ("HTTP-Referer", "https://github.com/winstt/winstt"),
                 ("X-Title", "WinSTT"),
             ]);
         if extra.as_object().is_some_and(|m| !m.is_empty()) {
@@ -257,7 +257,7 @@ impl LlmManager {
             .client
             .get(openrouter_models_url(output_modality))
             .timeout(std::time::Duration::from_secs(15))
-            .header("HTTP-Referer", "https://github.com/dahshury/winstt")
+            .header("HTTP-Referer", "https://github.com/winstt/winstt")
             .header("X-Title", "WinSTT");
         if !api_key.is_empty() {
             rb = rb.bearer_auth(api_key);
@@ -331,9 +331,17 @@ impl LlmManager {
 
     /// The speech (TTS) subset of the catalog. Like `scan_openrouter_transcription`
     /// but keeps `output_modalities ∋ "speech"` rows — the dedicated
-    /// `/audio/speech` models the cloud TTS picker offers. REUSES `scan_openrouter`.
+    /// `/audio/speech` models the cloud TTS picker offers. The speech models are
+    /// NOT present in the default `/models` listing — they surface only under the
+    /// server-side `?output_modalities=speech` filter — so this MUST pass the
+    /// modality query (mirrors `scan_openrouter_transcription`). Filtering the
+    /// unfiltered full catalog client-side returns ZERO rows (the bug this fixes:
+    /// the picker stayed permanently disabled with no voices). The client-side
+    /// `retain` stays as defense-in-depth, identical to the transcription path.
     pub async fn scan_openrouter_speech(&self, api_key: &str) -> OpenRouterScan {
-        let mut scan = self.scan_openrouter(api_key).await;
+        let mut scan = self
+            .scan_openrouter_with_output_modality(api_key, Some("speech"))
+            .await;
         if scan.error.is_none() {
             scan.models.retain(model_outputs_speech);
         }
@@ -588,7 +596,7 @@ async fn fetch_model_endpoints(
     let mut rb = client
         .get(&url)
         .timeout(std::time::Duration::from_secs(10))
-        .header("HTTP-Referer", "https://github.com/dahshury/winstt")
+        .header("HTTP-Referer", "https://github.com/winstt/winstt")
         .header("X-Title", "WinSTT");
     if !api_key.is_empty() {
         rb = rb.bearer_auth(api_key);

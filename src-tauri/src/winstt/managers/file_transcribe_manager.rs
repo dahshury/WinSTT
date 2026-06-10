@@ -22,7 +22,7 @@
 //   • `file:queue-active`   → { active }                (cross-window, on transition)
 // Statuses: "queued" | "transcribing" | "complete" | "error" | "paused" | "canceled".
 //
-// Difference from the reference: Handy's `TranscriptionManager::transcribe(Vec<f32>)`
+// Difference from the reference: `TranscriptionManager::transcribe(Vec<f32>)`
 // is a ONE-SHOT call (no streaming server, so no `resume_from`/`partial_segments`
 // mid-file). Per-row resume therefore re-transcribes the file from the start
 // (functionally identical output; only wasted work, like a cold retry). The
@@ -492,7 +492,7 @@ impl FileTranscribeManager {
 
     fn process_file(self: &Arc<Self>, item: &QueueItem) {
         // Decode the file to 16 kHz mono f32, then transcribe the whole buffer in
-        // one shot (Handy's `TranscriptionManager::transcribe` is one-shot — there's
+        // one shot (`TranscriptionManager::transcribe` is one-shot — there's
         // no streaming server to feed a lazy VAD chunk iterator). The single 0.5
         // mid-file tick below stands in for the server's per-chunk progress loop.
         let audio = match decode_audio_to_pcm(&item.file_path) {

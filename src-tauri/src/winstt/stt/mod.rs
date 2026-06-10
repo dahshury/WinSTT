@@ -1,6 +1,6 @@
 // Unified ort-ONNX STT engine: the public `Transcriber` trait, the family/engine taxonomy, and
 // the per-family engines. A Rust re-port of onnx-asr onto raw `ort` 2.x. Reference: the onnx-asr
-// fork (E:/DL/Projects/onnx-asr/src/onnx_asr/) and the WinSTT server
+// fork (<onnx-asr>/src/onnx_asr/) and the WinSTT server
 // (server/src/recorder/infrastructure/{onnxasr_transcriber,device,bootstrap}.py).
 //
 // Load-bearing invariants:
@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 
 // ── engine submodules ──
-/// WinSTT-owned STT backend trait (audit #14): the boundary the inherited Handy pipeline core
+/// WinSTT-owned STT backend trait (audit #14): the boundary the legacy pipeline core
 /// (`crate::managers::transcription`) calls into for every WinSTT-specific load/decode/cloud step,
 /// so the core stops reaching sideways into `crate::winstt::*` (restores the one-way dep edge).
 pub mod backend;

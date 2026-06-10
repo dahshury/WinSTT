@@ -40,6 +40,21 @@ export const onModelDownloadComplete = (
 		cb(d.model, d.cancelled ?? false, d.quantization);
 	});
 
+/** Per-quant download PAUSED — broadcast to EVERY window so each one flips its
+ *  badge + selector trigger out of the "downloading" state, including the
+ *  windows that didn't issue the pause. A paused worker emits no further
+ *  progress, so without this signal a window that only watched the download
+ *  (e.g. the settings trigger while the pause happened in the detached picker)
+ *  would stay stuck on "Downloading X%". Resume is signalled by the inverse
+ *  ``stt:model-download-start`` re-emit. */
+export const onModelDownloadPaused = (
+	cb: (model: string, quantization?: string) => void,
+) =>
+	on(IPC.STT_MODEL_DOWNLOAD_PAUSED, (data) => {
+		const d = data as { model: string; quantization?: string };
+		cb(d.model, d.quantization);
+	});
+
 export const cancelDownload = () =>
 	invokeOrDefault<void>(IPC.STT_CANCEL_DOWNLOAD, undefined);
 

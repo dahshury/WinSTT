@@ -139,14 +139,16 @@ describe("preset-prompts", () => {
 		expect(r.toLowerCase()).toContain("never turn a question into a list item");
 	});
 
-	test("Polish base forbids unprompted list/structure and stray blank lines", () => {
-		// Regression: with no restructure modifier the model spontaneously
-		// turned a few sentences into a numbered list with blank lines.
+	test("Polish base handles generalized cleanup and forbids exact-output overfit", () => {
 		const base = getPresetPrompt("neutral");
-		expect(base).toContain("do not reorganize prose into lists");
-		expect(base).toContain("do not introduce blank lines");
-		// Spoken layout commands must still survive the prohibition.
+		expect(base).toContain("Core cleanup rules");
+		expect(base).toContain("Dictation normalization rules");
+		expect(base).toContain("UI, product, and technical wording");
+		expect(base).toContain("Run-on and punctuation recovery");
+		expect(base).toContain("Do not introduce lists");
 		expect(base).toContain("new paragraph");
+		expect(base).not.toMatch(/exact output/i);
+		expect(base).not.toMatch(/literal final/i);
 	});
 
 	test("a tone layers its own prompt on top of the Polish base", () => {

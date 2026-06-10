@@ -47,13 +47,13 @@ def _inject_cuda_dlls() -> None:
 
 
 _inject_cuda_dlls()
-sys.path.insert(0, r"E:\DL\Projects\WinSTT\server")
+sys.path.insert(0, r"<repo>\server")
 
 from src.recorder.infrastructure.onnxasr_transcriber import (  # noqa: E402  # import after CUDA DLL injection and sys.path setup
     OnnxAsrTranscriber,
 )
 
-AUDIO_PATH = Path(r"E:\DL\Projects\WinSTT\examples\faster-whisper\tests\data\physicsworks.wav")
+AUDIO_PATH = Path(r"<repo>\examples\faster-whisper\tests\data\physicsworks.wav")
 audio, sr = sf.read(str(AUDIO_PATH), dtype="float32")
 if audio.ndim > 1:
     audio = audio.mean(axis=1)
@@ -149,7 +149,7 @@ for model_id, repo in REPOS.items():
         r = bench_one(model_id, repo, q, baseline=baseline_text)
         results[model_id][q] = r
 
-Path("E:/DL/Projects/WinSTT/server/scratch/bench_quant_matrix.json").write_text(
+Path("<repo>/server/scratch/bench_quant_matrix.json").write_text(
     json.dumps(results, indent=2, default=str)
 )
 
@@ -176,4 +176,4 @@ for model_id, by_quant in results.items():
     recs[model_id] = good
     print(f"{model_id:36s} -> {good}")
 
-Path("E:/DL/Projects/WinSTT/server/scratch/quant_recommendations.json").write_text(json.dumps(recs, indent=2))
+Path("<repo>/server/scratch/quant_recommendations.json").write_text(json.dumps(recs, indent=2))

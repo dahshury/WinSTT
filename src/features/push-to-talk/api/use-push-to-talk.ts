@@ -82,7 +82,7 @@ export function usePushToTalk(): void {
 	// while the re-register is an awaited `invoke`, so under React StrictMode's mount→cleanup→
 	// mount double-invoke the unregister could land AFTER the final register and leave the hotkey
 	// DEAD — the "PTT does nothing out of the box, but starts working after a hot-reload" bug.
-	// The backend also arms the WinSTT key at init (shortcut/handy_keys.rs), so the hotkey is
+	// The backend also arms the WinSTT key at init, so the hotkey is
 	// live before this effect even runs; this effect just keeps it in sync on key changes.
 	useEffect(() => {
 		if (!pushToTalkKey) {

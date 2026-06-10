@@ -10,8 +10,9 @@ import {
 export interface TooltipProps {
 	/** The trigger element — must accept forwarded props via cloneElement */
 	children: ReactElement;
-	/** The tooltip text */
-	content: string;
+	/** The tooltip body — plain text or rich content (e.g. a description with
+	 *  an inline example block). */
+	content: ReactNode;
 	/**
 	 * Open delay in ms. When set, wraps the tooltip in a nested Tooltip.Provider
 	 * so this single tooltip uses a different delay than the app-wide default.

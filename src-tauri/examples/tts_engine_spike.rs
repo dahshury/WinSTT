@@ -7,7 +7,7 @@
 //   cargo run --release --example tts_engine_spike -- supertonic M3 en
 //   cargo run --release --example tts_engine_spike -- supertonic M3 fr "Bonjour, ceci est une courte démonstration."
 //
-// Model files live under  E:/DL/Projects/WinSTT/.tts-cache/<engine>/  (override WINSTT_TTS_CACHE).
+// Model files live under  <repo>/.tts-cache/<engine>/  (override WINSTT_TTS_CACHE).
 // espeak-ng is auto-pointed at the app-data runtime if it has been installed.
 
 use std::path::PathBuf;
@@ -29,7 +29,7 @@ const DEFAULT_SENTENCE: &str = "The quick brown fox jumps over the lazy dog.";
 fn cache_root() -> PathBuf {
     std::env::var("WINSTT_TTS_CACHE")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("E:/DL/Projects/WinSTT/.tts-cache"))
+        .unwrap_or_else(|_| PathBuf::from("<repo>/.tts-cache"))
 }
 
 fn ensure_espeak() {

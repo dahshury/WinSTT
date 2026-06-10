@@ -1,49 +1,49 @@
 audio,phrase,variant,threshold,boost,detected,hit_word,hit_time_s,build_ms,run_ms,rtf
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.160,2.000,false,,,488,115,0.01518
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.160,3.000,false,,,466,122,0.01603
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.220,2.000,false,,,467,107,0.01413
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.220,3.000,false,,,463,109,0.01430
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.280,2.000,false,,,466,115,0.01514
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.280,3.000,false,,,445,117,0.01540
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.340,2.000,false,,,450,143,0.01876
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.340,3.000,false,,,555,134,0.01769
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.160,2.000,false,,,645,113,0.01484
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.160,3.000,false,,,609,114,0.01501
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.220,2.000,false,,,610,96,0.01262
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.220,3.000,false,,,577,104,0.01369
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.280,2.000,false,,,575,111,0.01462
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.280,3.000,false,,,565,104,0.01371
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.340,2.000,false,,,556,110,0.01447
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.340,3.000,false,,,577,117,0.01540
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.160,2.000,true,lovely child,6.570,503,100,0.00566
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.160,3.000,true,lovely child,6.240,469,92,0.00521
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.220,2.000,true,lovely child,6.570,475,107,0.00605
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.220,3.000,false,,,460,274,0.01547
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.280,2.000,true,lovely child,6.570,473,98,0.00553
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.280,3.000,false,,,459,284,0.01606
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.340,2.000,true,lovely child,6.570,448,103,0.00583
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.340,3.000,false,,,473,274,0.01551
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.160,2.000,true,lovely child,6.570,600,97,0.00548
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.160,3.000,false,,,603,250,0.01412
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.220,2.000,true,lovely child,6.570,583,90,0.00509
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.220,3.000,false,,,594,230,0.01299
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.280,2.000,true,lovely child,6.570,567,82,0.00468
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.280,3.000,false,,,566,240,0.01357
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.340,2.000,true,lovely child,6.570,557,85,0.00484
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.340,3.000,false,,,550,234,0.01322
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.160,2.000,true,for ever,11.670,519,177,0.01000
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.160,3.000,true,for ever,11.670,471,186,0.01052
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.220,2.000,true,for ever,11.670,455,179,0.01012
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.220,3.000,true,for ever,11.670,488,206,0.01167
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.280,2.000,true,for ever,11.670,467,173,0.00981
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.280,3.000,true,for ever,11.670,472,188,0.01067
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.340,2.000,true,for ever,11.670,492,180,0.01019
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.340,3.000,false,,,483,260,0.01468
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.160,2.000,true,for ever,11.670,577,158,0.00897
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.160,3.000,true,for ever,11.670,556,160,0.00905
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.220,2.000,true,for ever,11.670,553,160,0.00906
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.220,3.000,true,for ever,11.670,586,152,0.00861
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.280,2.000,true,for ever,11.670,574,161,0.00911
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.280,3.000,true,for ever,11.670,545,168,0.00954
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.340,2.000,true,for ever,11.670,584,176,0.00997
-C:\Users\MASTE\AppData\Roaming\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.340,3.000,false,,,561,243,0.01375
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.160,2.000,false,,,488,115,0.01518
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.160,3.000,false,,,466,122,0.01603
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.220,2.000,false,,,467,107,0.01413
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.220,3.000,false,,,463,109,0.01430
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.280,2.000,false,,,466,115,0.01514
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.280,3.000,false,,,445,117,0.01540
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.340,2.000,false,,,450,143,0.01876
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Fp32,0.340,3.000,false,,,555,134,0.01769
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.160,2.000,false,,,645,113,0.01484
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.160,3.000,false,,,609,114,0.01501
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.220,2.000,false,,,610,96,0.01262
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.220,3.000,false,,,577,104,0.01369
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.280,2.000,false,,,575,111,0.01462
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.280,3.000,false,,,565,104,0.01371
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.340,2.000,false,,,556,110,0.01447
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\0.wav,light up,Int8,0.340,3.000,false,,,577,117,0.01540
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.160,2.000,true,lovely child,6.570,503,100,0.00566
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.160,3.000,true,lovely child,6.240,469,92,0.00521
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.220,2.000,true,lovely child,6.570,475,107,0.00605
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.220,3.000,false,,,460,274,0.01547
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.280,2.000,true,lovely child,6.570,473,98,0.00553
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.280,3.000,false,,,459,284,0.01606
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.340,2.000,true,lovely child,6.570,448,103,0.00583
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Fp32,0.340,3.000,false,,,473,274,0.01551
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.160,2.000,true,lovely child,6.570,600,97,0.00548
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.160,3.000,false,,,603,250,0.01412
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.220,2.000,true,lovely child,6.570,583,90,0.00509
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.220,3.000,false,,,594,230,0.01299
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.280,2.000,true,lovely child,6.570,567,82,0.00468
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.280,3.000,false,,,566,240,0.01357
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.340,2.000,true,lovely child,6.570,557,85,0.00484
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,lovely child,Int8,0.340,3.000,false,,,550,234,0.01322
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.160,2.000,true,for ever,11.670,519,177,0.01000
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.160,3.000,true,for ever,11.670,471,186,0.01052
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.220,2.000,true,for ever,11.670,455,179,0.01012
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.220,3.000,true,for ever,11.670,488,206,0.01167
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.280,2.000,true,for ever,11.670,467,173,0.00981
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.280,3.000,true,for ever,11.670,472,188,0.01067
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.340,2.000,true,for ever,11.670,492,180,0.01019
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Fp32,0.340,3.000,false,,,483,260,0.01468
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.160,2.000,true,for ever,11.670,577,158,0.00897
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.160,3.000,true,for ever,11.670,556,160,0.00905
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.220,2.000,true,for ever,11.670,553,160,0.00906
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.220,3.000,true,for ever,11.670,586,152,0.00861
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.280,2.000,true,for ever,11.670,574,161,0.00911
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.280,3.000,true,for ever,11.670,545,168,0.00954
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.340,2.000,true,for ever,11.670,584,176,0.00997
+%APPDATA%\com.winstt.winstt\wakeword\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01\test_wavs\1.wav,for ever,Int8,0.340,3.000,false,,,561,243,0.01375

@@ -21,7 +21,10 @@ import {
 	type DownloadPhase,
 	DownloadProgressBar,
 } from "@/shared/ui/download";
-import { useDownloadStore } from "../model/download-store";
+import {
+	quantDownloadSeedFromCache,
+	useDownloadStore,
+} from "../model/download-store";
 
 type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
 type SystemInfo = ReturnType<typeof useModelStateStore.getState>["systemInfo"];
@@ -241,16 +244,24 @@ function ActiveProgress({
 }
 
 function PausedProgress({
+	live,
 	targetCache,
 	t,
 }: {
+	live: LiveDownload;
 	targetCache: TargetCache;
 	t: DownloadT;
 }): ReactNode {
-	const pausedPercent =
-		targetCache && targetCache.total_bytes > 0
-			? Math.round((targetCache.progress ?? 0) * 100)
-			: null;
+	const cacheSeed = quantDownloadSeedFromCache(targetCache);
+	const pausedPercent = live.progress ?? cacheSeed?.progress ?? null;
+	const downloadedBytes =
+		live.downloadedBytes > 0
+			? live.downloadedBytes
+			: (cacheSeed?.downloadedBytes ?? targetCache?.downloaded_bytes ?? 0);
+	const totalBytes =
+		live.totalBytes > 0
+			? live.totalBytes
+			: (cacheSeed?.totalBytes ?? targetCache?.total_bytes ?? 0);
 	return (
 		<DownloadProgressBar
 			label={
@@ -260,8 +271,8 @@ function PausedProgress({
 			}
 			percent={pausedPercent}
 			statsLabel={formatStatsLine(
-				targetCache?.downloaded_bytes ?? 0,
-				targetCache?.total_bytes ?? 0,
+				downloadedBytes,
+				totalBytes,
 				0,
 			)}
 			variant="paused"
@@ -399,7 +410,12 @@ function DownloadConfirmationContent({
 	// the download.
 	const startDownload = (): void => {
 		if (pending) {
-			predownloadQuant(pending.modelId, targetQuant, pending.kind);
+			predownloadQuant(
+				pending.modelId,
+				targetQuant,
+				pending.kind,
+				quantDownloadSeedFromCache(targetCache),
+			);
 		}
 		onCancel();
 	};
@@ -411,9 +427,19 @@ function DownloadConfirmationContent({
 		// entry restarts the stream, which the downloader continues from the
 		// bytes already written.
 		if (quant?.paused) {
-			resumeQuantDownload(pending.modelId, targetQuant, pending.kind);
+			resumeQuantDownload(
+				pending.modelId,
+				targetQuant,
+				pending.kind,
+				quantDownloadSeedFromCache(targetCache),
+			);
 		} else {
-			predownloadQuant(pending.modelId, targetQuant, pending.kind);
+			predownloadQuant(
+				pending.modelId,
+				targetQuant,
+				pending.kind,
+				quantDownloadSeedFromCache(targetCache),
+			);
 		}
 		onCancel();
 	};
@@ -440,7 +466,7 @@ function DownloadConfirmationContent({
 				<div className="flex flex-col gap-3">
 					{phase === "active" && <ActiveProgress live={liveForBar} t={t} />}
 					{phase === "paused" && (
-						<PausedProgress t={t} targetCache={targetCache} />
+						<PausedProgress live={liveForBar} t={t} targetCache={targetCache} />
 					)}
 					{phase === "idle" && (
 						<IdleInfoCard

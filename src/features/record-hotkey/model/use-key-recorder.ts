@@ -36,6 +36,17 @@ const INITIAL_STATE: RecorderState = {
 	recording: false,
 };
 
+const MODIFIER_ORDER = new Map<string, number>([
+	["LCtrl", 0],
+	["RCtrl", 1],
+	["LAlt", 2],
+	["RAlt", 3],
+	["LShift", 4],
+	["RShift", 5],
+	["LMeta", 6],
+	["RMeta", 7],
+]);
+
 type ActionHandler<A extends RecorderAction> = (
 	state: RecorderState,
 	action: A,
@@ -64,11 +75,99 @@ function recorderReducer(
 	return handler(state, action);
 }
 
+function keyNameFromEvent(event: KeyboardEvent): string | null {
+	switch (event.code) {
+		case "ControlLeft":
+			return "LCtrl";
+		case "ControlRight":
+			return "RCtrl";
+		case "AltLeft":
+			return "LAlt";
+		case "AltRight":
+			return "RAlt";
+		case "ShiftLeft":
+			return "LShift";
+		case "ShiftRight":
+			return "RShift";
+		case "MetaLeft":
+			return "LMeta";
+		case "MetaRight":
+			return "RMeta";
+		case "Space":
+			return "Space";
+		case "Tab":
+			return "Tab";
+		case "Enter":
+		case "NumpadEnter":
+			return "Enter";
+		case "Escape":
+			return "Escape";
+		case "Backspace":
+			return "Backspace";
+		case "Delete":
+			return "Delete";
+		case "Insert":
+			return "Insert";
+		case "Home":
+			return "Home";
+		case "End":
+			return "End";
+		case "PageUp":
+			return "PageUp";
+		case "PageDown":
+			return "PageDown";
+		case "ArrowLeft":
+		case "ArrowRight":
+		case "ArrowUp":
+		case "ArrowDown":
+			return event.code;
+		default:
+			break;
+	}
+
+	if (/^Key[A-Z]$/.test(event.code)) {
+		return event.code.slice(3);
+	}
+	if (/^Digit[0-9]$/.test(event.code)) {
+		return event.code.slice(5);
+	}
+	if (/^F([1-9]|1[0-9]|2[0-4])$/.test(event.code)) {
+		return event.code;
+	}
+	if (/^Numpad[0-9]$/.test(event.code)) {
+		return event.code.replace("Numpad", "Num");
+	}
+	return null;
+}
+
+function sortKeys(keys: readonly string[]): string[] {
+	return Array.from(new Set(keys)).sort((a, b) => {
+		const aRank = MODIFIER_ORDER.get(a);
+		const bRank = MODIFIER_ORDER.get(b);
+		if (aRank !== undefined || bRank !== undefined) {
+			return (aRank ?? 100) - (bRank ?? 100);
+		}
+		return a.localeCompare(b);
+	});
+}
+
+function comboFromPeak(keys: readonly string[]): string | null {
+	if (
+		keys.length === 0 ||
+		(keys.length === 1 && MODIFIER_ORDER.has(keys[0] ?? ""))
+	) {
+		return null;
+	}
+	return keys.join("+");
+}
+
 export function useKeyRecorder({
 	onKeyRecorded,
 }: UseKeyRecorderOptions = {}): UseKeyRecorderReturn {
 	const [state, dispatch] = useReducer(recorderReducer, INITIAL_STATE);
 	const recordingRef = useRef(false);
+	const heldKeysRef = useRef<string[]>([]);
+	const peakKeysRef = useRef<string[]>([]);
 	// Separate from `recordingRef` so the Stop button can flip the UI out of
 	// "recording" immediately without losing the done-event reply that the main
 	// process emits after `hotkey:stop-recording`. Multiple HotkeyRecorder
@@ -78,27 +177,95 @@ export function useKeyRecorder({
 	const onKeyRecordedRef = useRef(onKeyRecorded);
 	onKeyRecordedRef.current = onKeyRecorded;
 
+	const finishRecording = useCallback(
+		(combo: string | null, sendStop: boolean) => {
+			pendingDoneRef.current = false;
+			recordingRef.current = false;
+			heldKeysRef.current = [];
+			peakKeysRef.current = [];
+			dispatch({ type: "done", combo });
+			if (combo) {
+				onKeyRecordedRef.current?.(combo);
+			}
+			if (sendStop) {
+				hotkeyStopRecording();
+			}
+		},
+		[],
+	);
+
 	const startRecording = useCallback(() => {
 		recordingRef.current = true;
 		pendingDoneRef.current = true;
+		heldKeysRef.current = [];
+		peakKeysRef.current = [];
 		dispatch({ type: "start" });
 		hotkeyStartRecording();
 	}, []);
 
 	const stopRecording = useCallback(() => {
 		if (recordingRef.current) {
-			recordingRef.current = false;
-			// pendingDoneRef stays true — main process will emit
-			// `hotkey:recording-done` in response to the stop IPC, and the
-			// done handler still needs to consume it on this instance.
+			const combo = comboFromPeak(peakKeysRef.current);
 			dispatch({ type: "stop" });
-			hotkeyStopRecording();
+			finishRecording(combo, true);
 		}
-	}, []);
+	}, [finishRecording]);
+
+	useEffect(() => {
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (!recordingRef.current) {
+				return;
+			}
+			const key = keyNameFromEvent(event);
+			if (!key) {
+				return;
+			}
+			event.preventDefault();
+			event.stopPropagation();
+
+			if (key === "Escape") {
+				finishRecording(null, true);
+				return;
+			}
+
+			heldKeysRef.current = sortKeys([...heldKeysRef.current, key]);
+			if (heldKeysRef.current.length > peakKeysRef.current.length) {
+				peakKeysRef.current = heldKeysRef.current;
+			}
+			dispatch({ type: "live", keys: heldKeysRef.current });
+		};
+
+		const handleKeyUp = (event: KeyboardEvent) => {
+			if (!recordingRef.current) {
+				return;
+			}
+			const key = keyNameFromEvent(event);
+			if (!key) {
+				return;
+			}
+			event.preventDefault();
+			event.stopPropagation();
+
+			heldKeysRef.current = heldKeysRef.current.filter((held) => held !== key);
+			dispatch({ type: "live", keys: heldKeysRef.current });
+		};
+
+		window.addEventListener("keydown", handleKeyDown, { capture: true });
+		window.addEventListener("keyup", handleKeyUp, { capture: true });
+		return () => {
+			window.removeEventListener("keydown", handleKeyDown, { capture: true });
+			window.removeEventListener("keyup", handleKeyUp, { capture: true });
+		};
+	}, [finishRecording]);
 
 	useEffect(() => {
 		const unsubUpdate = onHotkeyRecordingUpdate((keys) => {
 			if (recordingRef.current) {
+				const sorted = sortKeys(keys);
+				heldKeysRef.current = sorted;
+				if (sorted.length > peakKeysRef.current.length) {
+					peakKeysRef.current = sorted;
+				}
 				dispatch({ type: "live", keys });
 			}
 		});
@@ -113,6 +280,8 @@ export function useKeyRecorder({
 			}
 			pendingDoneRef.current = false;
 			recordingRef.current = false;
+			heldKeysRef.current = [];
+			peakKeysRef.current = [];
 			dispatch({ type: "done", combo });
 			if (combo) {
 				onKeyRecordedRef.current?.(combo);

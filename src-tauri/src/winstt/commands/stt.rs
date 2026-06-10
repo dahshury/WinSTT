@@ -3,7 +3,7 @@
 // STT catalog + picker commands. These wrap the pure `winstt::catalog` policy
 // tables (the 65-model catalog, quant/EP resolution, effective-quant badge) and
 // surface them to the detached model-picker window. The actual model
-// download/switch rides Handy's existing model/transcription managers (the engine
+// download/switch rides the existing model/transcription managers (the engine
 // swap is internal to TranscriptionManager — lib_wiring §7); these commands only
 // supply the catalog view + the effective-quantization bridge.
 

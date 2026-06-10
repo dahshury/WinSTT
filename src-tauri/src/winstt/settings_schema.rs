@@ -19,7 +19,7 @@
 //     `Default for WinsttSettings` returns the canonical defaults.
 //   * Secrets (`integrations.*.apiKey`, `llm.openrouterApiKey`) are plaintext
 //     in this struct but MUST be encrypted at rest by the persistence layer
-//     (Handy's `SecretMap` / Tauri `safeStorage` equivalent). See 02_settings.md.
+//     (`SecretMap` / Tauri `safeStorage` equivalent).
 //
 // HOT-SWAP classification: annotated per group below. `STARTUP_ONLY_KEYS`
 // intentionally stays empty in this Tauri port because runtime-owned settings
@@ -586,7 +586,7 @@ pub struct AudioSettings {
     /// Use ONNX Silero variant. STARTUP (CLI).
     #[serde(default)]
     pub silero_use_onnx: bool,
-    /// Silero-based deactivity (Handy parity; config-only, no live consumer). HOT-SWAP (persist-only).
+    /// Silero-based deactivity (config-only, no live consumer). HOT-SWAP (persist-only).
     #[serde(default = "bool_true")]
     pub silero_deactivity_detection: bool,
     /// WebRTC VAD aggressiveness. Range 0..3. HOT-SWAP (`set_mode`).
@@ -1046,6 +1046,9 @@ impl Default for GeneralSettings {
 // SECTION: hotkey  (hotkeySettingsSchema)
 // ===========================================================================
 
+pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "LCtrl+LMeta";
+const TEMPORARY_TAURI_PUSH_TO_TALK_KEY: &str = "LCtrl+LAlt+D";
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HotkeySettings {
@@ -1057,13 +1060,7 @@ pub struct HotkeySettings {
 
 impl HotkeySettings {
     fn default_push_to_talk_key() -> String {
-        // The default PTT combo (= the original WinSTT default). `LCtrl+LMeta`
-        // (Ctrl+Win) rides the Win key, so the low-level hook leaks a lone Win
-        // press that would pop the Start menu — the handy-keys pump disguises it
-        // (`suppress_start_menu_for_win_combo`, see shortcut/handy_keys.rs) the
-        // instant the combo fires, so press/release dispatch one-handed without
-        // stealing focus.
-        "LCtrl+LMeta".to_string()
+        DEFAULT_PUSH_TO_TALK_KEY.to_string()
     }
 }
 
@@ -1348,7 +1345,7 @@ pub struct TtsSettings {
     #[serde(default)]
     pub enabled: bool,
     /// Local TTS catalog id selecting WHICH engine/model synthesizes
-    /// (kokoro-82m / kitten-nano-0.1 / kitten-nano-0.2 / piper / supertonic-3).
+    /// (kokoro-82m / kitten-nano-0.2 / piper / supertonic-3).
     /// `voice` below is the voice WITHIN this model. Cloud source ignores this.
     #[serde(default = "TtsSettings::default_model")]
     pub model: String,
@@ -1357,7 +1354,7 @@ pub struct TtsSettings {
     pub voice: String,
     #[serde(default = "TtsSettings::default_lang")]
     pub lang: String,
-    /// 0.5..2.0 multiplier.
+    /// 0.4..2.0 multiplier (Supertonic slider reaches 0.4; other engines 0.5).
     #[serde(default = "TtsSettings::default_speed")]
     pub speed: f64,
     /// Read-selection-aloud hotkey. Must be non-empty (Zod `.min(1).catch`).
@@ -1588,6 +1585,7 @@ impl<'de> Deserialize<'de> for WinsttSettings {
     {
         let mut value = serde_json::Value::deserialize(deserializer)?;
         migrate_legacy_global_settings(&mut value);
+        migrate_push_to_talk_default(&mut value);
         let wire = WinsttSettingsWire::deserialize(value).map_err(serde::de::Error::custom)?;
         Ok(wire.into())
     }
@@ -1613,6 +1611,77 @@ fn migrate_legacy_global_settings(value: &mut serde_json::Value) {
     global_obj
         .entry("modelUnloadTimeout")
         .or_insert(legacy_timeout);
+}
+
+fn migrate_push_to_talk_default(value: &mut serde_json::Value) {
+    let Some(root) = value.as_object_mut() else {
+        return;
+    };
+    let hotkey = root
+        .entry("hotkey")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(hotkey_obj) = hotkey.as_object_mut() else {
+        return;
+    };
+    let default = HotkeySettings::default_push_to_talk_key();
+    let current = hotkey_obj
+        .get("pushToTalkKey")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    if current.trim().is_empty() || is_temporary_tauri_push_to_talk_default(current) {
+        hotkey_obj.insert("pushToTalkKey".to_string(), serde_json::json!(default));
+    }
+
+    migrate_core_transcribe_binding(root, &default);
+}
+
+fn migrate_core_transcribe_binding(
+    root: &mut serde_json::Map<String, serde_json::Value>,
+    default: &str,
+) {
+    let Some(transcribe) = root
+        .get_mut("core")
+        .and_then(|core| core.get_mut("bindings"))
+        .and_then(|bindings| bindings.get_mut("transcribe"))
+        .and_then(|binding| binding.as_object_mut())
+    else {
+        return;
+    };
+
+    for field in ["default_binding", "current_binding"] {
+        let current = transcribe
+            .get(field)
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if current.trim().is_empty() || is_temporary_tauri_push_to_talk_default(current) {
+            transcribe.insert(field.to_string(), serde_json::json!(default));
+        }
+    }
+}
+
+fn is_temporary_tauri_push_to_talk_default(accelerator: &str) -> bool {
+    normalized_accelerator(accelerator) == normalized_accelerator(TEMPORARY_TAURI_PUSH_TO_TALK_KEY)
+}
+
+fn normalized_accelerator(accelerator: &str) -> String {
+    let mut tokens = accelerator
+        .split('+')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(normalized_accelerator_token)
+        .collect::<Vec<_>>();
+    tokens.sort();
+    tokens.join("+")
+}
+
+fn normalized_accelerator_token(token: &str) -> String {
+    match token.to_ascii_lowercase().as_str() {
+        "lctrl" | "rctrl" | "ctrl_left" | "ctrl_right" | "control" => "ctrl".to_string(),
+        "lalt" | "ralt" | "alt_left" | "alt_right" | "altgr" | "opt" | "option" => {
+            "alt".to_string()
+        }
+        other => other.to_string(),
+    }
 }
 
 // ===========================================================================
@@ -1815,7 +1884,7 @@ mod tests {
         );
 
         // hotkey
-        assert_eq!(s.hotkey.push_to_talk_key, "LCtrl+LMeta");
+        assert_eq!(s.hotkey.push_to_talk_key, DEFAULT_PUSH_TO_TALK_KEY);
 
         // dictionary / snippets
         assert!(s.dictionary.is_empty());
@@ -1869,6 +1938,31 @@ mod tests {
             serde_json::json!("hour1")
         );
         assert!(serialized["model"].get("modelUnloadTimeout").is_none());
+    }
+
+    #[test]
+    fn temporary_tauri_push_to_talk_default_migrates_back_to_original() {
+        let mut value = serde_json::to_value(WinsttSettings::default()).unwrap();
+        value["hotkey"]["pushToTalkKey"] = serde_json::json!("LCtrl+LAlt+D");
+        value["core"]["bindings"]["transcribe"]["default_binding"] =
+            serde_json::json!("ctrl+alt+d");
+        value["core"]["bindings"]["transcribe"]["current_binding"] =
+            serde_json::json!("Ctrl+Alt+D");
+
+        let s: WinsttSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(s.hotkey.push_to_talk_key, DEFAULT_PUSH_TO_TALK_KEY);
+        let transcribe = s.core.bindings.get("transcribe").unwrap();
+        assert_eq!(transcribe.default_binding, DEFAULT_PUSH_TO_TALK_KEY);
+        assert_eq!(transcribe.current_binding, DEFAULT_PUSH_TO_TALK_KEY);
+    }
+
+    #[test]
+    fn modifier_only_push_to_talk_survives_deserialize() {
+        let s: WinsttSettings = serde_json::from_value(serde_json::json!({
+            "hotkey": { "pushToTalkKey": "LCtrl+LMeta" }
+        }))
+        .unwrap();
+        assert_eq!(s.hotkey.push_to_talk_key, DEFAULT_PUSH_TO_TALK_KEY);
     }
 
     #[test]

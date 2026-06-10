@@ -1,4 +1,4 @@
-$f = 'C:\Users\MASTE\AppData\Roaming\winstt\winstt-settings.json'
+$f = '%APPDATA%\winstt\winstt-settings.json'
 # Read raw, strip any UTF-8 BOM, parse.
 $raw = [System.IO.File]::ReadAllText($f)
 $raw = $raw -replace '^\xEF\xBB\xBF', ''  # printable BOM-strip (defensive)

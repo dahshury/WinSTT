@@ -11,6 +11,7 @@
 #     .\tools\windows\tauri-dev.ps1
 
 $ErrorActionPreference = 'Stop'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
 $vcvars = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat'
 if (-not (Test-Path $vcvars)) {
@@ -26,8 +27,8 @@ if (-not (Test-Path $vcvars)) {
 
 # Prepend the toolchain dirs (bun / cargo / LLVM / CMake / Ninja) — same as the old .bat.
 $prepend = @(
-    'C:\Users\MASTE\.bun\bin'
-    'C:\Users\MASTE\.cargo\bin'
+    (Join-Path $env:USERPROFILE '.bun\bin')
+    (Join-Path $env:USERPROFILE '.cargo\bin')
     'C:\Program Files\LLVM\bin'
     'C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin'
     'C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja'
@@ -35,7 +36,7 @@ $prepend = @(
 $env:PATH = "$prepend;$env:PATH"
 $env:LIBCLANG_PATH = 'C:\Program Files\LLVM\bin'
 
-Set-Location 'E:\DL\Projects\WinSTT'
+Set-Location $repoRoot
 
 # Kill any leftover dev app first. The app uses tauri-plugin-single-instance, so a relaunch
 # refocuses an existing winstt.exe instead of opening a fresh window — and that stale instance

@@ -1,5 +1,4 @@
 import { Button as BaseButton } from "@base-ui/react/button";
-import { SparklesIcon } from "@hugeicons/core-free-icons";
 import type { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
@@ -11,11 +10,9 @@ import {
 	SearchableSelect,
 	type SelectOptionGroup,
 } from "@/shared/ui/searchable-select";
-import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
 import { Toggle } from "@/shared/ui/toggle";
 import { Tooltip } from "@/shared/ui/tooltip";
-import { CLOUD_TTS_MODELS } from "../config/cloud-tts-models";
 import { TtsPreviewButton } from "./TtsPreviewButton";
 
 export interface CloudTtsControlsProps {
@@ -37,15 +34,6 @@ export interface CloudTtsControlsProps {
 	previewVoiceId: string | null;
 	t: ReturnType<typeof useTranslations>;
 }
-
-// Build the model picker options from the curated catalog. The provider's
-// display name leads; the latency/quality blurb rides along as a badge so the
-// closed trigger stays compact while the popup still reads the trade-off.
-const MODEL_OPTIONS: SelectOption[] = CLOUD_TTS_MODELS.map((m) => ({
-	id: m.id,
-	label: m.displayName,
-	icon: SparklesIcon,
-}));
 
 // Shared formatter for the 0..1 voice-setting sliders shown as percentages.
 const formatPercent = (v: number): string => `${Math.round(v * 100)}%`;
@@ -209,22 +197,6 @@ export function CloudTtsControls({
 							</>
 						)}
 						value={hasVoices ? cloud.voice : ""}
-					/>
-				</ElevatedSurface>
-			</SettingField>
-			<SettingField
-				isDefault={cloud.model === CLOUD_DEFAULTS.model}
-				label={t("cloudModel")}
-				layout="row"
-				onReset={() => patchCloud({ model: CLOUD_DEFAULTS.model })}
-				tooltip={t("cloudModelCaption")}
-			>
-				<ElevatedSurface className="w-52" inline>
-					<Select
-						aria-label={t("cloudModel")}
-						onChange={(id) => patchCloud({ model: id })}
-						options={MODEL_OPTIONS}
-						value={cloud.model}
 					/>
 				</ElevatedSurface>
 			</SettingField>

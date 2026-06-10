@@ -75,7 +75,7 @@ static MIGRATIONS: &[M] = &[
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 // Renderer-canonical paginated-history type is WinSTT `commands::history::PaginatedHistory`
-// (camelCase, HistoryRow[]); suffix this inherited Handy one's TS export to break the collision.
+// (camelCase, HistoryRow[]); suffix this legacy one's TS export to break the collision.
 #[specta(rename = "PaginatedHistoryLegacy")]
 pub struct PaginatedHistory {
     pub entries: Vec<HistoryEntry>,

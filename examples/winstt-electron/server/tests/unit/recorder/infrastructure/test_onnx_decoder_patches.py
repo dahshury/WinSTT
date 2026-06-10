@@ -193,7 +193,7 @@ def test_aed_trim_then_pad_short_clip_with_prefill() -> None:
     This is the exact pattern that reproduces the user's bug — 0.45 s
     of zero prefill + 0.5 s of speech becomes a degenerate ~1 s clip
     that confuses Canary. After trim+pad the clip is 0.5 s of speech
-    + ~0.75 s of trailing silence (matches Handy's
+    + ~0.75 s of trailing silence (matches the reference
     ``managers/audio.rs:472-480`` exactly), which Canary handles
     without looping.
     """
@@ -204,7 +204,7 @@ def test_aed_trim_then_pad_short_clip_with_prefill() -> None:
     trimmed = patches.maybe_trim_leading_silence_for_aed(audio)
     padded = patches.maybe_pad_for_aed(trimmed)
 
-    # Final shape is the AED pad target (Handy parity).
+    # Final shape is the AED pad target.
     assert padded.shape[0] == patches.AED_PAD_TO_SAMPLES
     # Trim leaves at most one window of leftover zeros at the front
     # (22 of the 23 prefill windows are full; the 23rd straddles the

@@ -676,7 +676,7 @@ pub(crate) fn set_main_modal(app: &AppHandle, modal_active: bool) {
 /// invisible to the Rust log, so a blank/non-rendering window leaves no trace. The
 /// renderer entries install `window.onerror` + an "mounted" beacon that call this,
 /// surfacing renderer crashes (the usual cause of a blank secondary window) in
-/// handy.log where we can see them. Diagnostic; harmless to keep.
+/// winstt.log where we can see them. Diagnostic; harmless to keep.
 #[tauri::command]
 #[specta::specta]
 pub fn winstt_diag(label: String, level: String, message: String) {

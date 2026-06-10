@@ -11,7 +11,7 @@ This module ships the wrapper but **does not** wire it into the
 onnx-asr hot path. Reason: onnx-asr fully owns session creation +
 inference orchestration internally; intercepting its ``session.run``
 calls requires patching the upstream library. Until that lands in our
-``onnx-asr`` fork (see :file:`docs/handy-comparison.html` Axis IV.4),
+``onnx-asr`` fork,
 the adapter is a documented foundation for future work — the
 ``OnnxAsrTranscriber`` continues to use ``session.run()`` indirectly
 via onnx-asr.

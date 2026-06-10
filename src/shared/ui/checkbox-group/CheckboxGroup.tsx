@@ -21,6 +21,7 @@ import { fontWeights } from "@/shared/lib/font-weight";
 import { springs } from "@/shared/lib/springs";
 import { surfaceBg, surfaceShadow, useSurface } from "@/shared/lib/surface";
 import { useProximityHover } from "@/shared/lib/use-proximity-hover";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 interface CheckboxGroupContextValue {
 	activeIndex: number | null;
@@ -359,6 +360,9 @@ export interface CheckboxItemProps {
 	leading?: ReactNode;
 	onToggle: () => void;
 	ref?: Ref<HTMLDivElement>;
+	/** Rich hover tooltip anchored on the row label (e.g. what a modifier
+	 *  does, with an example). */
+	tooltip?: ReactNode;
 	trailing?: ReactNode;
 }
 
@@ -371,6 +375,7 @@ export function CheckboxItem({
 	leading,
 	onToggle,
 	ref,
+	tooltip,
 	trailing,
 }: CheckboxItemProps) {
 	const internalRef = useRef<HTMLDivElement | null>(null);
@@ -512,30 +517,41 @@ export function CheckboxItem({
 				</span>
 			) : null}
 
-			<span className="grid min-w-0 flex-1 overflow-hidden text-body-sm">
-				<span
-					aria-hidden="true"
-					className="invisible col-start-1 row-start-1 truncate"
-					style={{ fontVariationSettings: fontWeights.semibold }}
-				>
-					{label}
-				</span>
-				<span
-					className={cn(
-						"col-start-1 row-start-1 truncate transition-[color,font-variation-settings] duration-100",
-						checked || isActive
-							? "text-foreground"
-							: "text-foreground-secondary",
-					)}
-					style={{
-						fontVariationSettings: checked
-							? fontWeights.semibold
-							: fontWeights.normal,
-					}}
-				>
-					{label}
-				</span>
-			</span>
+			{(() => {
+				const labelBlock = (
+					<span className="grid min-w-0 flex-1 overflow-hidden text-body-sm">
+						<span
+							aria-hidden="true"
+							className="invisible col-start-1 row-start-1 truncate"
+							style={{ fontVariationSettings: fontWeights.semibold }}
+						>
+							{label}
+						</span>
+						<span
+							className={cn(
+								"col-start-1 row-start-1 truncate transition-[color,font-variation-settings] duration-100",
+								checked || isActive
+									? "text-foreground"
+									: "text-foreground-secondary",
+							)}
+							style={{
+								fontVariationSettings: checked
+									? fontWeights.semibold
+									: fontWeights.normal,
+							}}
+						>
+							{label}
+						</span>
+					</span>
+				);
+				return tooltip ? (
+					<Tooltip content={tooltip} side="top">
+						{labelBlock}
+					</Tooltip>
+				) : (
+					labelBlock
+				);
+			})()}
 
 			{trailing ? (
 				// Stop click/keydown from bubbling to the row so the inner

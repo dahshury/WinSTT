@@ -27,7 +27,8 @@ const CACHE_BADGE_FORMATTERS: Record<
 	CacheBadgeFormatter
 > = {
 	cached: () => " ✓ Downloaded",
-	partial: (entry) => ` ⏬ ${Math.round(entry.cache.progress * 100)}%`,
+	partial: (entry) =>
+		` ⏬ ${Math.min(99, Math.max(0, Math.round(entry.cache.progress * 100)))}%`,
 	not_cached: () => " ⬇ Not downloaded",
 };
 

@@ -1,4 +1,4 @@
-// Source: E:/DL/Projects/onnx-asr/src/onnx_asr/diarization.py
+// Source: <onnx-asr>/src/onnx_asr/diarization.py
 //
 // ═════════════════════════════════════════════════════════════════════════════
 // 3. Offline AHC complete-linkage (the NON-session path). Pure arithmetic.

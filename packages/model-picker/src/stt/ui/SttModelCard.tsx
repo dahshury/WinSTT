@@ -24,12 +24,12 @@ import {
 	type QuantDownloadSnapshot,
 	QuantShelf,
 	type QuantShelfEntry,
+	resolveQuantDownloadState,
 } from "../../core/model-card";
 import { resolveQuantCache } from "../lib/cache-helpers";
 import { variantDisplayName } from "../lib/family-helpers";
 import { severityFor } from "../lib/hardware-fit";
 import { formatLanguages } from "../lib/language-names";
-import { quantCacheStatus } from "../lib/pill-helpers";
 import { getQuantizationOptions } from "../lib/quantization-helpers";
 import { variantMeta } from "../lib/variant-helpers";
 import {
@@ -258,37 +258,30 @@ function buildSttQuantEntries({
 		const backingModelId = backingModelIdForQuant(model, opt.value);
 		const cache = resolveQuantCache(state, opt.value);
 		const download = getDownloadSnapshot?.(backingModelId, opt.value);
-		const isCached = cache?.state === "cached";
-		const isPartial = cache?.state === "partial";
-		const sizeBytes =
-			(download && download.totalBytes > 0
-				? Math.max(download.totalBytes, download.downloadedBytes)
-				: null) ??
-			(cache && cache.total_bytes > 0
-				? Math.max(cache.total_bytes, cache.downloaded_bytes)
-				: null) ??
-			model.sizeBytesByQuantization[opt.value] ??
-			null;
+		const downloadState = resolveQuantDownloadState({
+			cache,
+			download,
+			fallbackSizeBytes: [model.sizeBytesByQuantization[opt.value]],
+			hasDownloadAction: onDownloadAction !== undefined,
+		});
 		return {
 			value: opt.value,
 			modelId: backingModelId,
 			label: opt.label,
 			tooltip: opt.tooltip,
 			actionQuant: opt.value,
-			cacheState: cache?.state,
-			cacheProgress: cache?.state === "partial" ? (cache.progress ?? 0) : null,
-			cacheStatusLabel: quantCacheStatus(cache),
+			cacheState: downloadState.cacheState,
+			cacheProgress: downloadState.cacheProgress,
+			cacheStatusLabel: downloadState.cacheStatusLabel,
 			download,
-			downloadSizeBytes: sizeBytes,
+			downloadSizeBytes: downloadState.downloadSizeBytes,
 			isActive: isSelectedModel && opt.value === activeQuant,
 			isRecommended: recommended !== null && opt.value === recommended,
-			canResumeDownload: isPartial && onDownloadAction !== undefined,
-			canStartDownload:
-				!(download !== undefined || isCached || isPartial) &&
-				onDownloadAction !== undefined,
+			canResumeDownload: downloadState.canResumeDownload,
+			canStartDownload: downloadState.canStartDownload,
 			canDelete:
 				onRequestDeleteQuant !== undefined &&
-				isCached &&
+				downloadState.isCached &&
 				(canDeleteQuant?.(backingModelId, opt.value) ?? true),
 		};
 	});

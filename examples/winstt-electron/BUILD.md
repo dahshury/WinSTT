@@ -2,7 +2,7 @@
 
 This guide covers how to set up a development environment for WinSTT and how to produce the two release installers (CPU + DirectML).
 
-For end-user installation, just download an installer from the [releases page](https://github.com/dahshury/WinSTT/releases) — this document is for **building from source**.
+For end-user installation, just download an installer from the [releases page](https://github.com/winstt/WinSTT/releases) — this document is for **building from source**.
 
 ## Prerequisites
 
@@ -242,7 +242,7 @@ You forgot `--extra cpu` or `--extra gpu`. They conflict, so pick one. Add `--ex
 
 ### `onnx-asr` git fetch fails
 
-`onnx-asr` is fetched directly from `github.com/dahshury/onnx-asr` (pinned commit in `server/pyproject.toml`). If `uv sync` errors on the git step, check your network / GitHub access and re-run. No local clone is needed.
+`onnx-asr` is fetched directly from `github.com/winstt/onnx-asr` (pinned commit in `server/pyproject.toml`). If `uv sync` errors on the git step, check your network / GitHub access and re-run. No local clone is needed.
 
 ### `bun install` errors on `uiohook-napi`
 

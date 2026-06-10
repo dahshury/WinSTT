@@ -592,8 +592,8 @@ Function .onInit
 
 
   ; --- PORTABLE MODE --- Auto-detect portable mode during updates.
-  ; Preserve portable installs that use either the current WinSTT marker,
-  ; Handy's legacy marker from the fork source, or the legacy empty marker.
+  ; Preserve portable installs that use either the current WinSTT marker
+  ; or the legacy empty marker.
   ; Require Data/ for the legacy empty-marker case so stale scoop side-effect
   ; files do not accidentally opt an updater run into portable mode.
   ${If} $PortableMode <> 1
@@ -603,8 +603,6 @@ Function .onInit
     FileRead $1 $2
     FileClose $1
     ${If} $2 == "WinSTT Portable Mode"
-      StrCpy $PortableMode 1
-    ${OrIf} $2 == "Handy Portable Mode"
       StrCpy $PortableMode 1
     ${OrIf} $2 == ""
     ${AndIf} ${FileExists} "$INSTDIR\Data"

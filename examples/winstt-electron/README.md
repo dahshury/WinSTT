@@ -10,18 +10,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/dahshury/WinSTT/releases"><img alt="Download" src="https://img.shields.io/badge/download-releases-0a7bf2?style=flat-square"></a>
+  <a href="https://github.com/winstt/WinSTT/releases"><img alt="Download" src="https://img.shields.io/badge/download-releases-0a7bf2?style=flat-square"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-blue?style=flat-square">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green?style=flat-square"></a>
   <img alt="Models" src="https://img.shields.io/badge/STT%20models-40%2B-blueviolet?style=flat-square">
-  <a href="https://winstt.dahshury.com/docs"><img alt="Docs" src="https://img.shields.io/badge/docs-winstt.dahshury.com-0a7bf2?style=flat-square"></a>
+  <a href="https://winstt.app/docs"><img alt="Docs" src="https://img.shields.io/badge/docs-winstt.app-0a7bf2?style=flat-square"></a>
 </p>
 
 <p align="center">
-  <a href="https://winstt.dahshury.com/docs/quick-start">Quick start</a> ·
-  <a href="https://winstt.dahshury.com/docs/install">Download</a> ·
-  <a href="https://winstt.dahshury.com/docs">Documentation</a> ·
-  <a href="https://github.com/dahshury/WinSTT/discussions">Discussions</a>
+  <a href="https://winstt.app/docs/quick-start">Quick start</a> ·
+  <a href="https://winstt.app/docs/install">Download</a> ·
+  <a href="https://winstt.app/docs">Documentation</a> ·
+  <a href="https://github.com/winstt/WinSTT/discussions">Discussions</a>
 </p>
 
 ---
@@ -73,7 +73,7 @@ The pipeline is entirely local: PortAudio → WebRTC + Silero VAD → ONNX Runti
 
 ## Download
 
-Each release publishes three portable installers on the [Releases](https://github.com/dahshury/WinSTT/releases) page. All three wrap the same Electron app and a bundled `stt-server.exe` — no Python or extra setup required.
+Each release publishes three portable installers on the [Releases](https://github.com/winstt/WinSTT/releases) page. All three wrap the same Electron app and a bundled `stt-server.exe` — no Python or extra setup required.
 
 | Installer | Size | Use when |
 |-----------|------|----------|
@@ -83,7 +83,7 @@ Each release publishes three portable installers on the [Releases](https://githu
 
 > No CUDA installer ships on Windows — DirectML is faster and ~10× lighter than CUDA on our workload (whisper-tiny-q4: DirectML p50 **85 ms** vs CUDA p50 **120 ms** on an RTX 3080 Ti). The `[gpu]` extra exists for the future Linux NVIDIA build only.
 
-New here? The two-minute [Quick Start](https://winstt.dahshury.com/docs/quick-start) walks you from download to your first dictation.
+New here? The two-minute [Quick Start](https://winstt.app/docs/quick-start) walks you from download to your first dictation.
 
 ---
 
@@ -158,7 +158,7 @@ WinSTT/
 ├── frontend/        Electron + Vite multi-page React 19 desktop app (FSD architecture)
 │   └── packages/    Internal packages (e.g. model-picker)
 ├── packaging/       electron-builder configs (cpu / directml / openvino) + PyInstaller staging
-├── docs/            Fumadocs documentation site (winstt.dahshury.com)
+├── docs/            Fumadocs documentation site (winstt.app)
 ├── spec/            OpenAPI 3.1 spec (shared type contract)
 ├── examples/        Reference repos used by the rewrite (read-only)
 └── setup-dev.bat    One-click dev environment setup
@@ -197,7 +197,7 @@ Tagging a release (`git tag v0.X.0 && git push --tags`) runs the three jobs as a
 - **Global hotkeys on locked-down corporate boxes** — group policies that block low-level keyboard hooks disable PTT. Use Toggle mode or run as Administrator.
 - **OneDrive-redirected `%APPDATA%`** — if AppData is redirected into a paused OneDrive, the model cache and `debug.log` can stall. Resume OneDrive or move WinSTT's user data to a local path.
 
-See [Troubleshooting](https://winstt.dahshury.com/docs/troubleshooting) and [Debug Mode](https://winstt.dahshury.com/docs/debug-mode) for diagnostics.
+See [Troubleshooting](https://winstt.app/docs/troubleshooting) and [Debug Mode](https://winstt.app/docs/debug-mode) for diagnostics.
 
 ## Roadmap
 
@@ -209,12 +209,12 @@ See [Troubleshooting](https://winstt.dahshury.com/docs/troubleshooting) and [Deb
 
 ## Verify release signatures
 
-Every installer ships a [minisign](https://jedisct1.github.io/minisign/) sidecar (`.minisig`). Walkthrough: [Verify Release Signatures](https://winstt.dahshury.com/docs/verify-releases). The public key is `docs/winstt.pub`.
+Every installer ships a [minisign](https://jedisct1.github.io/minisign/) sidecar (`.minisig`). Walkthrough: [Verify Release Signatures](https://winstt.app/docs/verify-releases). The public key is `docs/winstt.pub`.
 
 ## Related projects
 
-- **[onnx-asr](https://github.com/dahshury/onnx-asr)** — the ONNX inference library WinSTT ships (a WinSTT-side fork adding Moonshine/Cohere tokenizers, the Lite-Whisper FP16 patch, and the merged-decoder cache path).
-- **[winstt-assets](https://github.com/dahshury/winstt-assets)** — public asset host for the on-demand TTS pack.
+- **[onnx-asr](https://github.com/winstt/onnx-asr)** — the ONNX inference library WinSTT ships (a WinSTT-side fork adding Moonshine/Cohere tokenizers, the Lite-Whisper FP16 patch, and the merged-decoder cache path).
+- **[winstt-assets](https://github.com/winstt/winstt-assets)** — public asset host for the on-demand TTS pack.
 - **[examples/RealtimeSTT](examples/RealtimeSTT)** — the upstream Python monolith WinSTT's hexagonal refactor derives from.
 
 ## Contributing
@@ -227,4 +227,4 @@ MIT — see [LICENSE](LICENSE). Third-party model and library licenses are catal
 
 ## Acknowledgments
 
-WinSTT stands on a lot of open-source work: **OpenAI Whisper**, the **whisper.cpp / onnx-community** maintainers, **NVIDIA NeMo** (Parakeet/Canary), the **Lite-Whisper** authors, **Moonshine** (Useful Sensors), **Cohere**, **GigaAM**, **Vosk/Kaldi**, **T-One**, **Silero** (VAD), **Picovoice Porcupine** (wake words), **Kokoro-82M** (TTS), the **ONNX Runtime** + **DirectML** teams, **Electron**, **Vite**, **Bun**, **Fumadocs**, and the **Tauri / Handy** project — which inspired several sections of this README and the docs.
+WinSTT stands on a lot of open-source work: **OpenAI Whisper**, the **whisper.cpp / onnx-community** maintainers, **NVIDIA NeMo** (Parakeet/Canary), the **Lite-Whisper** authors, **Moonshine** (Useful Sensors), **Cohere**, **GigaAM**, **Vosk/Kaldi**, **T-One**, **Silero** (VAD), **Picovoice Porcupine** (wake words), **Kokoro-82M** (TTS), the **ONNX Runtime** + **DirectML** teams, **Electron**, **Vite**, **Bun**, and **Fumadocs**.

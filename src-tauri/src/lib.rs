@@ -30,7 +30,7 @@ mod windows_com;
 pub mod winstt;
 
 pub use cli::CliArgs;
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, test))]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 
 #[cfg(unix)]
@@ -65,6 +65,43 @@ use window_state::{
     restore_main_window_position, save_main_window_position, should_force_show_permissions_window,
 };
 
+#[cfg(any(debug_assertions, test))]
+fn export_typescript_bindings(
+    builder: &tauri_specta::Builder<tauri::Wry>,
+    path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    builder.export(
+        Typescript::default().bigint(BigIntExportBehavior::Number),
+        path,
+    )?;
+    trim_trailing_whitespace(path)?;
+    Ok(())
+}
+
+#[cfg(any(debug_assertions, test))]
+fn trim_trailing_whitespace(path: &str) -> std::io::Result<()> {
+    let text = std::fs::read_to_string(path)?;
+    let mut trimmed = String::with_capacity(text.len());
+
+    for segment in text.split_inclusive('\n') {
+        let (line, newline) = if let Some(line) = segment.strip_suffix("\r\n") {
+            (line, "\r\n")
+        } else if let Some(line) = segment.strip_suffix('\n') {
+            (line, "\n")
+        } else {
+            (segment, "")
+        };
+        trimmed.push_str(line.trim_end_matches([' ', '\t']));
+        trimmed.push_str(newline);
+    }
+
+    if trimmed != text {
+        std::fs::write(path, trimmed)?;
+    }
+
+    Ok(())
+}
+
 fn advance_startup_phase(startup: &mut StartupProfiler, app: &AppHandle, label: &str) {
     startup.mark(label);
     splash::emit_startup_progress(app, label);
@@ -98,7 +135,7 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
     advance_startup_phase(startup, app_handle, "lid monitor initialized");
 
     // Pre-warm the Silero VAD + audio recorder OFF the PTT press path. Neither
-    // WinSTT nor upstream Handy preloads this, so the COLD first push-to-talk
+    // WinSTT does not preload this, so the COLD first push-to-talk
     // otherwise pays the Silero ONNX load + recorder construction synchronously
     // inside `start_microphone_stream` (~50-200ms) before the recording chime
     // fires — the "warmup feels slow" the user reported. This only loads the
@@ -140,12 +177,6 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
 
     // Tray-menu placement state + the custom-HTML-tray + history live-event bridge.
     app_handle.manage(crate::winstt::commands::tray_menu::TrayMenuAnchor::default());
-    // Hotkey combo-recorder state. hotkey_start_recording/stop + the per-key
-    // translation all do `app.try_state::<CaptureBridge>()` — without managing it here
-    // that returns None, so the capture listener is never installed and pressing keys
-    // during a hotkey rebind records NOTHING. (This is why "changing a hotkey doesn't
-    // record the keys".) Must be managed before hotkey_start_recording runs.
-    app_handle.manage(crate::winstt::commands::hotkey::CaptureBridge::default());
     // Preview-before-pasting: holds the foreground (paste-target) HWND captured
     // when the editable preview pill opens, so `confirm_paste` can restore it
     // before pasting. Managed here so `capture_foreground` / `confirm_paste` /
@@ -211,9 +242,9 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
         )
         .tooltip(tray::tray_tooltip())
         .icon_as_template(true)
-        // WinSTT uses its OWN transparent HTML tray menu (views/tray-menu), NOT Handy's
-        // native OS context menu (the user's complaint: "tray menu matches Handy not my
-        // the reference menu"). No native menu is attached (see tray.rs::update_tray_menu).
+        // WinSTT uses its OWN transparent HTML tray menu (views/tray-menu), not the
+        // native OS context menu from the reference implementation. No native menu is
+        // attached (see tray.rs::update_tray_menu).
         //
         // Click routing mirrors the reference tray (electron/ipc/tray.ts):
         //   - LEFT click / DOUBLE click → show + raise the main window
@@ -285,7 +316,7 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
     }
     advance_startup_phase(startup, app_handle, "tray settings and autostart applied");
 
-    // AUDIT #9: Handy's separate `recording_overlay` window is no longer created — the
+    // AUDIT #9: the separate `recording_overlay` window is no longer created — the
     // WinSTT recording pill is the React `overlay` WebviewWindow, and every show path
     // already redirected to it (see overlay.rs). The old window could never appear yet
     // still received per-frame mic levels no renderer listened to.
@@ -451,11 +482,7 @@ pub fn run(cli_args: CliArgs) {
     let specta_builder = make_specta_builder();
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
-    specta_builder
-        .export(
-            Typescript::default().bigint(BigIntExportBehavior::Number),
-            "../src/bindings.ts",
-        )
+    export_typescript_bindings(&specta_builder, "../src/bindings.ts")
         .expect("Failed to export typescript bindings");
 
     let invoke_handler = specta_builder.invoke_handler();
@@ -610,19 +637,14 @@ pub fn run(cli_args: CliArgs) {
 
 #[cfg(test)]
 mod bindings_export_tests {
-    use super::make_specta_builder;
-    use specta_typescript::{BigIntExportBehavior, Typescript};
+    use super::{export_typescript_bindings, make_specta_builder};
 
     /// Regenerates `src/bindings.ts` from the live command/event registry.
     /// Run `cargo test` to refresh it; CI re-runs this then `git diff --exit-code
     /// src/bindings.ts` asserts the checked-in file is up to date.
     #[test]
     fn export_bindings() {
-        make_specta_builder()
-            .export(
-                Typescript::default().bigint(BigIntExportBehavior::Number),
-                "../src/bindings.ts",
-            )
+        export_typescript_bindings(&make_specta_builder(), "../src/bindings.ts")
             .expect("Failed to export typescript bindings");
     }
 }

@@ -37,6 +37,7 @@ import {
 	makerGroupCount,
 	matchesInstalledQuery,
 } from "../lib/maker-groups";
+import { dedupeInstalledOllamaModels } from "../lib/quant-shelf-helpers";
 import { OllamaSortMenu } from "./OllamaSortMenu";
 import { ListBody, matchingTypedModelTag } from "./OllamaModelRows";
 import { buildQuantShelfDeps } from "./OllamaQuantShelf";
@@ -204,6 +205,11 @@ export function OllamaModelSelector({
 	value,
 }: OllamaModelSelectorProps) {
 	const selected = models.find((m) => m.name === value);
+	// Ollama lists every tag pointing at a blob, so a model pulled under two names
+	// (e.g. `gemma4:e2b` ≡ `gemma4:e2b-it-q4_K_M`, identical digest) appears twice.
+	// Collapse same-artifact rows for the installed LIST + Combobox registry; the
+	// full `models` set still backs `selected`, install-checks, and swap lookups.
+	const dedupedModels = dedupeInstalledOllamaModels(models, value);
 	const [persistedUiState] = useState(() =>
 		readPersistedSelectorState(
 			uiStorageKey,
@@ -257,8 +263,10 @@ export function OllamaModelSelector({
 	);
 
 	const installedFiltered = query.trim()
-		? models.filter((m) => matchesInstalledQuery(m, query, descriptionsByBase))
-		: models;
+		? dedupedModels.filter((m) =>
+				matchesInstalledQuery(m, query, descriptionsByBase),
+			)
+		: dedupedModels;
 
 	// When a sort is active, the maker groups collapse into one globally-sorted
 	// flat column. Computed once here and threaded to both the rail (count) and
@@ -491,7 +499,7 @@ export function OllamaModelSelector({
 			inputValue={query}
 			isItemEqualToValue={(a, b) => a?.name === b?.name}
 			isLoading={isLoading}
-			items={models}
+			items={dedupedModels}
 			itemToStringLabel={(m) => m?.name ?? ""}
 			list={selectorListSlot(body)}
 			onInputValueChange={setQuery}

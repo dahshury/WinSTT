@@ -1005,7 +1005,7 @@ class TestRecordingPipeline:
         Default config (vad_prefill_ms=450, buffer_size=512, sample_rate=16000)
         gives chunk_ms=32 and ratio=450/32=14.0625 — strictly greater than its
         int(14), so the ceil-substitute bumps the count to 15. This is the
-        Handy-parity prefill_frames=15 invariant the docstring calls out.
+        reference-parity prefill_frames=15 invariant the docstring calls out.
         """
         cfg = RecorderConfig.from_kwargs()
         # Sanity: this is the fractional-ratio scenario, not an exact divisor.

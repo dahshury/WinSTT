@@ -20,6 +20,7 @@ export const IPC = {
 	STT_MODEL_DOWNLOAD_START: "stt:model-download-start",
 	STT_MODEL_DOWNLOAD_PROGRESS: "stt:model-download-progress",
 	STT_MODEL_DOWNLOAD_COMPLETE: "stt:model-download-complete",
+	STT_MODEL_DOWNLOAD_PAUSED: "stt:model-download-paused",
 	STT_AUDIO_LEVEL: "stt:audio-level",
 	STT_MODEL_CATALOG: "stt:model-catalog",
 	STT_GET_MODEL_CATALOG: "stt:get-model-catalog",
@@ -277,6 +278,10 @@ export const IPC = {
 	// active read's UPCOMING sentences (next-sentence, natural pitch) and persists
 	// to the active source's speed setting.
 	TTS_SET_SPEED: "tts:set-speed",
+	// Renderer -> backend requests used by Media Session handlers for OS media
+	// keys. Rust rebroadcasts the matching `tts:*playback` event below.
+	TTS_REQUEST_PLAYBACK_PAUSE: "tts:request-playback-pause",
+	TTS_REQUEST_PLAYBACK_RESUME: "tts:request-playback-resume",
 	TTS_INIT: "tts:init",
 	TTS_LIST_VOICES: "tts:list-voices",
 	// Cloud (ElevenLabs) voice catalog — GET /v2/voices. Mirrors
@@ -330,8 +335,13 @@ export const IPC = {
 	TTS_PLAYBACK_STARTED: "tts:playback-started",
 	TTS_PLAYBACK_ENDED: "tts:playback-ended",
 	// Main asks the overlay-owned Web Audio queue to pause playback without
-	// cancelling the active TTS request (used when dictation starts).
+	// cancelling the active TTS request (used when dictation starts and when
+	// renderer Media Session handlers report OS media-key pause to the backend).
 	TTS_PAUSE_PLAYBACK: "tts:pause-playback",
+	// Backend asks the overlay-owned Web Audio queue to resume playback without
+	// starting a new TTS request (used when OS media-key play/resume reaches the
+	// renderer's Media Session handler and is round-tripped through Rust).
+	TTS_RESUME_PLAYBACK: "tts:resume-playback",
 	// Main asks the overlay-owned Web Audio queue to discard playback entirely
 	// (used by Escape after any foreground dictation layer has been cancelled).
 	TTS_DISCARD_PLAYBACK: "tts:discard-playback",
@@ -488,6 +498,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_MODEL_DOWNLOAD_START]: ["on"],
 	[IPC.STT_MODEL_DOWNLOAD_PROGRESS]: ["on"],
 	[IPC.STT_MODEL_DOWNLOAD_COMPLETE]: ["on"],
+	[IPC.STT_MODEL_DOWNLOAD_PAUSED]: ["on"],
 	[IPC.STT_AUDIO_LEVEL]: ["on"],
 	[IPC.STT_MODEL_CATALOG]: ["on"],
 	[IPC.STT_RUNTIME_INFO]: ["on"],
@@ -670,6 +681,8 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_SPEAK]: ["invoke"],
 	[IPC.TTS_CANCEL]: ["send"],
 	[IPC.TTS_SET_SPEED]: ["send"],
+	[IPC.TTS_REQUEST_PLAYBACK_PAUSE]: ["send"],
+	[IPC.TTS_REQUEST_PLAYBACK_RESUME]: ["send"],
 	[IPC.TTS_INIT]: ["invoke"],
 	[IPC.TTS_LIST_VOICES]: ["invoke"],
 	[IPC.TTS_CLOUD_LIST_VOICES]: ["invoke"],
@@ -698,6 +711,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_PLAYBACK_STARTED]: ["on"],
 	[IPC.TTS_PLAYBACK_ENDED]: ["on"],
 	[IPC.TTS_PAUSE_PLAYBACK]: ["on"],
+	[IPC.TTS_RESUME_PLAYBACK]: ["on"],
 	[IPC.TTS_DISCARD_PLAYBACK]: ["on"],
 	[IPC.TTS_MODEL_DOWNLOAD_START]: ["on"],
 	[IPC.TTS_MODEL_DOWNLOAD_PROGRESS]: ["on"],

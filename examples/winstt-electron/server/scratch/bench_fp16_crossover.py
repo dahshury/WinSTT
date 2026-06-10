@@ -47,7 +47,7 @@ _inject_cuda_dlls()
 import onnx_asr  # noqa: E402  # import after CUDA DLL injection
 import onnxruntime as rt  # noqa: E402  # import after CUDA DLL injection
 
-AUDIO = Path(r"E:\DL\Projects\WinSTT\examples\faster-whisper\tests\data\physicsworks.wav")
+AUDIO = Path(r"<repo>\examples\faster-whisper\tests\data\physicsworks.wav")
 audio, sr = sf.read(str(AUDIO), dtype="float32")
 if audio.ndim > 1:
     audio = audio.mean(axis=1)
@@ -157,6 +157,6 @@ for r in results:
         f"{mem:>6}{'MB' if isinstance(mem, int) else ''}"
     )
 
-Path("E:/DL/Projects/WinSTT/server/scratch/bench_fp16_crossover.json").write_text(
+Path("<repo>/server/scratch/bench_fp16_crossover.json").write_text(
     json.dumps(results, indent=2, default=str)
 )

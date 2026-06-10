@@ -24,7 +24,7 @@ use specta::Type;
 use tauri::AppHandle;
 
 /// © string shown under the WinSTT product name.
-const COPYRIGHT: &str = "© 2024-2026 dahshury";
+const COPYRIGHT: &str = "© 2024-2026 WinSTT contributors";
 
 /// The bundled End-User License text (repo-root `LICENSE`). Embedded at compile
 /// time so no runtime file / resource registration is required.

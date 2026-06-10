@@ -69,11 +69,11 @@ fn build_log_plugin(console_filter: Filter) -> tauri::plugin::TauriPlugin<Wry> {
             Target::new(if let Some(data_dir) = crate::portable::data_dir() {
                 TargetKind::Folder {
                     path: data_dir.join("logs"),
-                    file_name: Some("handy".into()),
+                    file_name: Some("winstt".into()),
                 }
             } else {
                 TargetKind::LogDir {
-                    file_name: Some("handy".into()),
+                    file_name: Some("winstt".into()),
                 }
             })
             .filter(|metadata| {

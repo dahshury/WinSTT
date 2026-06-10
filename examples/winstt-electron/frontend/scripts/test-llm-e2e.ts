@@ -76,7 +76,7 @@ async function transform(text: string, preset: PresetKey, modelId: string, level
 	const openrouter = createOpenRouter({
 		apiKey,
 		headers: {
-			"HTTP-Referer": "https://github.com/dahshury/winstt",
+			"HTTP-Referer": "https://github.com/winstt/winstt",
 			"X-Title": "WinSTT (e2e test)",
 		},
 	});

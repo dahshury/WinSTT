@@ -17,7 +17,7 @@ if (!apiKey) {
 const openrouter = createOpenRouter({
 	apiKey,
 	headers: {
-		"HTTP-Referer": "https://github.com/dahshury/winstt",
+		"HTTP-Referer": "https://github.com/winstt/winstt",
 		"X-Title": "WinSTT (smoke test)",
 	},
 });

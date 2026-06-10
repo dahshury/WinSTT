@@ -25,7 +25,7 @@ use specta::Type;
 use tokio::sync::Semaphore;
 
 const OLLAMA_BASE: &str = "https://ollama.com";
-const USER_AGENT: &str = "WinSTT/1.0 (+https://github.com/dahshury/WinSTT)";
+const USER_AGENT: &str = "WinSTT/1.0 (+https://github.com/winstt/WinSTT)";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 // Full library catalog rarely changes — hold it for an hour. Per-tag pages keep the shorter TTL.

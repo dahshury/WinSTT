@@ -12,7 +12,7 @@ export type FallbackValue<T> = T | (() => T);
  * Critical flows where a backend ERROR must NOT be silently flattened into the
  * caller's fallback — a swallowed rejection there is indistinguishable from
  * "no value", which is exactly how the "download stuck at 0% / RAM unknown"
- * failures shipped unreported (see HANDY_VS_WINSTT_AUDIT.md #13).
+ * failures shipped unreported.
  *
  * Two tiers, because the right "surface it" action depends on the flow:
  *
@@ -426,6 +426,10 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.TTS_INSTALL_PAUSE]: () => commands.ttsInstallPause(),
 	[IPC.TTS_INSTALL_RESUME]: () => commands.ttsInstallResume(),
 	[IPC.TTS_INSTALL_CANCEL]: () => commands.ttsInstallCancel(),
+	[IPC.TTS_REQUEST_PLAYBACK_PAUSE]: (a) =>
+		commands.ttsPausePlayback((a.reason as string | null | undefined) ?? null),
+	[IPC.TTS_REQUEST_PLAYBACK_RESUME]: (a) =>
+		commands.ttsResumePlayback((a.reason as string | null | undefined) ?? null),
 	[IPC.TTS_REPORT_PLAYBACK_STARTED]: (a) =>
 		commands.ttsReportPlaybackStarted(a.requestId as string),
 	[IPC.TTS_REPORT_PLAYBACK_ENDED]: (a) =>

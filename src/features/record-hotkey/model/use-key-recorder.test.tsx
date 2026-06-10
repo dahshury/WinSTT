@@ -49,6 +49,16 @@ function fire(channel: string, ...args: unknown[]) {
 	}
 }
 
+function keyEvent(type: "keydown" | "keyup", code: string) {
+	window.dispatchEvent(
+		new KeyboardEvent(type, {
+			bubbles: true,
+			cancelable: true,
+			code,
+		}),
+	);
+}
+
 describe("useKeyRecorder", () => {
 	test("initial state: not recording, no key, no liveKeys", () => {
 		const { result } = renderHook(() => useKeyRecorder());
@@ -63,23 +73,21 @@ describe("useKeyRecorder", () => {
 		expect(listeners.has(IPC.HOTKEY_RECORDING_DONE)).toBe(true);
 	});
 
-	test("startRecording sets recording=true and invokes hotkeyStartRecording", async () => {
+	test("startRecording sets recording=true", async () => {
 		const { result } = renderHook(() => useKeyRecorder());
 		act(() => result.current.startRecording());
 		await waitFor(() => {
 			expect(result.current.recording).toBe(true);
 		});
-		expect(invokes).toContain(IPC.HOTKEY_START_RECORDING);
 	});
 
-	test("stopRecording sets recording=false and sends stop-recording", async () => {
+	test("stopRecording sets recording=false", async () => {
 		const { result } = renderHook(() => useKeyRecorder());
 		act(() => result.current.startRecording());
 		act(() => result.current.stopRecording());
 		await waitFor(() => {
 			expect(result.current.recording).toBe(false);
 		});
-		expect(sentChannels).toContain(IPC.HOTKEY_STOP_RECORDING);
 	});
 
 	test("liveKeys updates as recording-update events fire", async () => {
@@ -130,6 +138,41 @@ describe("useKeyRecorder", () => {
 		});
 		expect(recorded).toEqual(["LCtrl+T"]);
 		expect(result.current.recording).toBe(false);
+	});
+
+	test("stopRecording commits a two-modifier combo captured in the renderer", async () => {
+		const recorded: string[] = [];
+		const { result } = renderHook(() =>
+			useKeyRecorder({ onKeyRecorded: (k) => recorded.push(k) }),
+		);
+
+		act(() => result.current.startRecording());
+		act(() => keyEvent("keydown", "ControlLeft"));
+		act(() => keyEvent("keydown", "MetaLeft"));
+		act(() => result.current.stopRecording());
+
+		await waitFor(() => {
+			expect(result.current.key).toBe("LCtrl+LMeta");
+		});
+		expect(recorded).toEqual(["LCtrl+LMeta"]);
+		expect(result.current.recording).toBe(false);
+	});
+
+	test("stopRecording ignores a lone modifier key", async () => {
+		const recorded: string[] = [];
+		const { result } = renderHook(() =>
+			useKeyRecorder({ onKeyRecorded: (k) => recorded.push(k) }),
+		);
+
+		act(() => result.current.startRecording());
+		act(() => keyEvent("keydown", "ControlLeft"));
+		act(() => result.current.stopRecording());
+
+		await waitFor(() => {
+			expect(result.current.recording).toBe(false);
+		});
+		expect(result.current.key).toBeNull();
+		expect(recorded).toEqual([]);
 	});
 
 	test("recording-done only fires onKeyRecorded on the instance that started recording", async () => {

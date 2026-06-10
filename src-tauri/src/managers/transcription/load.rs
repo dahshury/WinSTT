@@ -89,8 +89,8 @@ impl TranscriptionManager {
 
     /// Reconcile the loaded engine to the user's selected model. Loads it if nothing is loaded
     /// OR swaps if a *different* model is loaded (the previous early-return-if-loaded blocked
-    /// model switching). WinSTT-catalog ids load through the unified ort engine
-    /// (`load_winstt_model`); unknown inherited Handy/transcribe-rs ids are rejected.
+    /// model switching). WinSTT-catalog ids load through the unified ort engine;
+    /// unknown ids are rejected.
     pub fn initiate_model_load(&self) {
         // Cheap pre-check WITHOUT claiming the loading flag: nothing to do if we're already on
         // the selected model. (try_start_loading below is the real, atomic gate.)
@@ -126,9 +126,8 @@ impl TranscriptionManager {
     /// currently-resident engine up front. Cloud ids have no local engine (mark current + free any
     /// local engine, since the switch to cloud can't fail). WinSTT-catalog ids go through
     /// `load_winstt_model`, which resolves the file set OFFLINE first and only unloads the old
-    /// engine once that succeeds (the Windows DLL race forbids two live ort sessions). transcribe-rs
-    /// ids go through `load_model`, which builds-then-installs (overwriting the old engine) — GGML,
-    /// no session race. On any error, the previously-loaded model is still resident, so we re-emit
+    /// engine once that succeeds (the Windows DLL race forbids two live ort sessions). On any
+    /// error, the previously-loaded model is still resident, so we re-emit
     /// `loading_completed` for it so the picker chip clears on a model the user can still dictate with.
     fn dispatch_load(&self, model_id: &str, quantization_override: Option<&str>) -> Result<()> {
         // Snapshot the still-resident model BEFORE attempting the swap, for the rollback re-emit.
@@ -192,7 +191,7 @@ impl TranscriptionManager {
     /// Synchronous load to a SPECIFIC `model_id` (the picker's choice, threaded through from
     /// `set_winstt_model` → `perform_model_swap`) that RETURNS the real load error so the swap
     /// orchestrator can emit `stt:model-swap-failed` (rollback + toast) instead of swallowing it.
-    /// Mirrors Handy's `switch_active_model(model_id)` + the body of `initiate_model_load`, but
+    /// Mirrors the legacy `switch_active_model(model_id)` + the body of `initiate_model_load`, but
     /// blocking and id-EXPLICIT — it must NOT re-read settings (the renderer's persist of
     /// `model.model` is debounced, so a re-read would load the stale/default "tiny" and "succeed").
     /// Runs on the swap orchestrator's own thread, so it never blocks the Tauri command thread.
@@ -285,9 +284,9 @@ impl TranscriptionManager {
     /// Eagerly compile the loaded engine's kernels with a dummy 1s-silence decode so the FIRST
     /// real PTT decode is WARM — no cold DirectML kernel JIT serialized on the release path (the
     /// dominant cause of the port feeling ~10x slower than the reference on the first dictation). Mirrors
-    /// the reference server's `RecorderService.warmup` (decodes `np.zeros(16000)` at boot). Only the
-    /// WinSTT ort/DirectML engine pays cold-JIT; the transcribe-rs (GGML) engines don't, so we warm
-    /// just that arm. Best-effort: a warmup failure must never break dictation.
+    /// the reference server's `RecorderService.warmup` (decodes `np.zeros(16000)` at boot). The
+    /// WinSTT ort/DirectML engine pays cold-JIT, so we warm it best-effort; a warmup failure must
+    /// never break dictation.
     pub fn warmup(&self) {
         // Wait out any in-flight LOAD (we must not warm a half-built engine), but do NOT hold
         // `is_loading` for the warm decode — that was the bug: a real dictation that raced in
@@ -405,7 +404,7 @@ impl TranscriptionManager {
             );
         };
 
-        // emit loading_started (parity with the Handy path's event surface) — BEFORE the resolve,
+        // emit loading_started (parity with the legacy path's event surface) — BEFORE the resolve,
         // matching the original ordering so the picker chip shows "Switching…" immediately.
         let _ = self.app_handle.emit(
             "model-state-changed",

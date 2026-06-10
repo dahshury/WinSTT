@@ -80,6 +80,12 @@ impl LlmCommandProcessingGuard {
     }
 }
 
+fn normalize_llm_text_output(text: &str) -> String {
+    text.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 impl Drop for LlmCommandProcessingGuard {
     fn drop(&mut self) {
         let _ = self.app.emit("llm:processing-end", ());
@@ -202,7 +208,8 @@ pub(crate) async fn process_dictation_text(
     // Deterministic replacement-pair safety net (guaranteed fire). The
     // substitution count feeds the History "AI Impact" dictionary-fixes stat.
     let pairs = replacement_pairs(&settings);
-    let (text, dictionary_fixes) = llm::apply_replacement_pairs_counted(&answer, &pairs);
+    let normalized_answer = normalize_llm_text_output(&answer);
+    let (text, dictionary_fixes) = llm::apply_replacement_pairs_counted(&normalized_answer, &pairs);
     Ok(DictationProcessResult {
         text,
         dictionary_fixes,

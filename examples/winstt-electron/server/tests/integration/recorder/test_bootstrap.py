@@ -287,7 +287,7 @@ class TestResolveQuantization:
         assert self._resolve("fp16", "cpu", 39_000_000, None) == "fp16"
 
     def test_sense_voice_auto_routes_to_int8_on_cpu(self) -> None:
-        """SenseVoice ships int8-only (matches Handy's bundled flavour). With
+        """SenseVoice ships int8-only. With
         ``auto`` quantization on CPU the resolver must pick ``int8`` from the
         :data:`_INT8_PREFERRED_FAMILIES` set — fp32 would be a memory pessimi-
         zation against the published export, and fp16 isn't available.

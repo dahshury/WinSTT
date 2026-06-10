@@ -14,7 +14,7 @@ export const useHotkeyStore = create<HotkeyState>()((set) => ({
 	isPressed: false,
 	isActive: false,
 	// Source of truth for the default PTT combo is the Zod schema — this avoids
-	// the rename drift the file used to have (was hardcoded "LCtrl+LMeta").
+	// default drift in this store.
 	accelerator: DEFAULT_SETTINGS.hotkey.pushToTalkKey,
 	setPressed: (pressed) => set({ isPressed: pressed }),
 	setActive: (active) => set({ isActive: active }),

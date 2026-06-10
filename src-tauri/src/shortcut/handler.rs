@@ -1,7 +1,7 @@
 //! Shared shortcut event handling logic
 //!
 //! This module contains the common logic for handling shortcut events,
-//! used by both the Tauri and handy-keys implementations.
+//! used by both shortcut implementations.
 
 use log::warn;
 use tauri::{AppHandle, Manager};
@@ -28,7 +28,7 @@ pub fn handle_shortcut_event(
     hotkey_string: &str,
     is_pressed: bool,
 ) {
-    // WinSTT port: the BACKEND is the single authority for hotkey dispatch (Handy-style).
+    // WinSTT port: the backend is the single authority for hotkey dispatch.
     // The transcribe binding's accelerator drives the recorder DIRECTLY on the hotkey thread —
     // both PTT and TOGGLE branch straight into the coordinator here, killing the WebView2
     // round-trip that was the "~2s from hotkey to listening" bug AND the double-dispatch that

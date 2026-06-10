@@ -2,7 +2,7 @@
 
 > **Status:** Decision proposal — 2026-05-11 (revised after follow-up review)
 > **Author:** Research synthesis (6 agent investigations — see Methodology at end)
-> **Scope:** Strategic direction for `dahshury/onnx-asr` to reach feature parity with the old WinSTT (RealtimeSTT-backed) stack while keeping the path to SaaS open.
+> **Scope:** Strategic direction for `winstt/onnx-asr` to reach feature parity with the old WinSTT (RealtimeSTT-backed) stack while keeping the path to SaaS open.
 
 ---
 
@@ -141,7 +141,7 @@ This is a separate axis from §2 (which is about *internal* architecture). §2.5
 
 ### Decision: keep as a library, vendored
 
-**Recommendation:** Keep `dahshury/onnx-asr` as a separate Python package, vendored in the monorepo at `examples/onnx-asr/` (or moved to `engine/` later — see below). Don't publish to PyPI yet. Use `uv`'s editable path dependency so engine changes are immediate.
+**Recommendation:** Keep `winstt/onnx-asr` as a separate Python package, vendored in the monorepo at `examples/onnx-asr/` (or moved to `engine/` later — see below). Don't publish to PyPI yet. Use `uv`'s editable path dependency so engine changes are immediate.
 
 **Concretely:**
 1. **Path stays `examples/onnx-asr/` for now.** It's a fork we're heavily modifying. The `examples/` location reflects that it's reference / vendored code, not first-party.
@@ -703,7 +703,7 @@ Sourced from `audio_recorder.py` line citations. Status column reflects what to 
 
 ## 9. Implementation Roadmap — Two Tracks
 
-The work splits cleanly along the library boundary (§2.5). **Track A** is everything that lives inside `dahshury/onnx-asr` (the engine fork). **Track B** is everything in `server/` (orchestration around the engine). The two tracks have an API contract — engine exposes capabilities, server composes them — and that contract is what §9.0 below pins down.
+The work splits cleanly along the library boundary (§2.5). **Track A** is everything that lives inside `winstt/onnx-asr` (the engine fork). **Track B** is everything in `server/` (orchestration around the engine). The two tracks have an API contract — engine exposes capabilities, server composes them — and that contract is what §9.0 below pins down.
 
 ### 9.0 The engine ↔ server contract
 
@@ -750,7 +750,7 @@ This is the surface the server uses. Both tracks must agree on it before A and B
 
 ### Track A — onnx-asr fork (engine)
 
-Work lives in `examples/onnx-asr/` on branch `feat/*` per topic; pushed to `dahshury/onnx-asr`. Each A-phase ends with a tagged version that the server pins.
+Work lives in `examples/onnx-asr/` on branch `feat/*` per topic; pushed to `winstt/onnx-asr`. Each A-phase ends with a tagged version that the server pins.
 
 #### A1 — Whisper decode config (4–5 weeks)
 A1.1 Refactor `models/whisper.py` → `models/whisper/` directory (base + decoders) — §5.
@@ -761,7 +761,7 @@ A1.5 `initial_prompt` token plumbing through encoder context.
 A1.6 Temperature fallback ladder.
 A1.7 Beam search in `WhisperHf._decoding` (log-sum batching, length_penalty, repetition_penalty).
 A1.8 Tests: one per Tier 1 param, plus integration tests with adversarial inputs (silence, music, repetition). 100% coverage.
-**Deliverable:** `dahshury/onnx-asr` tag `v0.x-decode-config`.
+**Deliverable:** `winstt/onnx-asr` tag `v0.x-decode-config`.
 
 #### A2 — Timestamps (1–2 weeks)
 A2.1 Enable `<|t|>` tokens in vocab (currently suppressed via `<|notimestamps|>` at `whisper.py:59`).
@@ -1394,11 +1394,11 @@ All evidence is file:line-cited within agent outputs (preserved in chat transcri
 
 ## 11. Implementation Progress (live)
 
-This section tracks every Track A item that has actually shipped to `dahshury/onnx-asr` — one branch per item, each with tests. Branches are listed in the order they were merged into the local `feat/demo-combined` integration branch.
+This section tracks every Track A item that has actually shipped to `winstt/onnx-asr` — one branch per item, each with tests. Branches are listed in the order they were merged into the local `feat/demo-combined` integration branch.
 
 ### Track A — onnx-asr fork
 
-| # | Plan item | Branch on `dahshury/onnx-asr` | Tests | Status |
+| # | Plan item | Branch on `winstt/onnx-asr` | Tests | Status |
 |---|---|---|---|---|
 | **#1** | Beam search for `WhisperHf._decoding` | `feat/whisper-beam-search` | 12 | ✅ pushed |
 | **#3** | Temperature fallback ladder + quality guards | `feat/whisper-temperature-fallback` | 18 | ✅ pushed (covers #6 guards) |

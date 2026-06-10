@@ -1,7 +1,7 @@
 param(
   [int]$Seconds = 180,
   [int]$Interval = 3,
-  [string]$LogPath = "E:\DL\Projects\WinSTT\frontend\.profile\cpu.log"
+  [string]$LogPath = "<repo>\frontend\.profile\cpu.log"
 )
 
 $dir = Split-Path -Parent $LogPath

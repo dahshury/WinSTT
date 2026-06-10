@@ -1,6 +1,6 @@
 """Unit coverage for the WAV writer that persists single-utterance PCM.
 
-The writer mirrors Handy's ``audio_toolkit::save_wav_file`` (16 kHz mono
+The writer mirrors ``audio_toolkit::save_wav_file`` (16 kHz mono
 16-bit PCM) so the renderer's ``<audio>`` element can play it back without a
 provider-specific decoder. These tests pin the format + the error-tolerant
 contract (writer never raises, returns "" on failure) the recorder service
@@ -36,7 +36,7 @@ def test_make_wav_filename_defaults_to_now(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_write_pcm_wav_writes_16k_mono_16bit(tmp_path: Path) -> None:
-    """The file format matches Handy's ``save_wav_file`` so the renderer
+    """The file format matches ``save_wav_file`` so the renderer
     can play it back without re-encoding."""
     samples = 1600  # 100 ms at 16 kHz
     out = write_pcm_wav(str(tmp_path), _silence_pcm(samples), timestamp=1234)

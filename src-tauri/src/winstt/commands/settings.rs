@@ -21,8 +21,8 @@
 // and WinSTT-tree hotkeys) are applied here. Renderer-owned side-effects still fan
 // out through the reused sync layer.
 //
-// Persistence rides Handy's existing tauri-plugin-store. WinSTT settings live under a
-// dedicated `winstt_settings` key in `winstt-settings.json` (separate from Handy's
+// Persistence rides the existing tauri-plugin-store. WinSTT settings live under a
+// dedicated `winstt_settings` key in `winstt-settings.json` (separate from the legacy
 // `settings`) so the two schemas don't collide.
 //
 // Runtime invariant: settings saves in this port must not emit manual restart events.

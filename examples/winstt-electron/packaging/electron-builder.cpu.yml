@@ -141,7 +141,7 @@ portable:
   # electron/lib/portable.ts.
 publish:
   - provider: github
-    # Repo is inferred from the workflow context (dahshury/WinSTT) — no
+    # Repo is inferred from the workflow context (winstt/WinSTT) — no
     # explicit owner/repo override needed. CPU and GPU flavors upload to
     # the same per-tag release; their distinct `artifactName` keeps the
     # `.exe` filenames from colliding.

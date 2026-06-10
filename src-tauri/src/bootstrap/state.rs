@@ -4,12 +4,10 @@ use tauri::{AppHandle, Manager};
 
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
-use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 
 pub(crate) struct CoreManagers {
     pub(crate) recording: Arc<AudioRecordingManager>,
-    pub(crate) model: Arc<ModelManager>,
     pub(crate) transcription: Arc<TranscriptionManager>,
     history: Arc<HistoryManager>,
 }
@@ -18,18 +16,14 @@ pub(crate) fn construct_core_managers(app_handle: &AppHandle) -> CoreManagers {
     let recording = Arc::new(
         AudioRecordingManager::new(app_handle).expect("Failed to initialize recording manager"),
     );
-    let model =
-        Arc::new(ModelManager::new(app_handle).expect("Failed to initialize model manager"));
     let transcription = Arc::new(
-        TranscriptionManager::new(app_handle, model.clone())
-            .expect("Failed to initialize transcription manager"),
+        TranscriptionManager::new(app_handle).expect("Failed to initialize transcription manager"),
     );
     let history =
         Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
 
     CoreManagers {
         recording,
-        model,
         transcription,
         history,
     }
@@ -37,7 +31,6 @@ pub(crate) fn construct_core_managers(app_handle: &AppHandle) -> CoreManagers {
 
 pub(crate) fn register_core_managers(app_handle: &AppHandle, managers: &CoreManagers) {
     app_handle.manage(managers.recording.clone());
-    app_handle.manage(managers.model.clone());
     app_handle.manage(managers.transcription.clone());
     app_handle.manage(managers.history.clone());
 }
@@ -67,10 +60,7 @@ pub(crate) fn register_winstt_managers(app_handle: &AppHandle, managers: &CoreMa
     app_handle.manage(Arc::new(crate::winstt::snippets::SnippetsManager::new(
         app_handle,
     )));
-    app_handle.manage(Arc::new(WordAligner::new(
-        app_handle,
-        managers.model.clone(),
-    )));
+    app_handle.manage(Arc::new(WordAligner::new(app_handle)));
     app_handle.manage(Arc::new(FileTranscribeManager::new(
         app_handle,
         managers.transcription.clone(),

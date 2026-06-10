@@ -16,7 +16,7 @@ pub trait ReasoningSink: Send {
 
 // ─────────────────────── OpenRouter extra-body ────────────────────────
 //
-// OpenRouter rides Handy's OpenAI-compat client (send_chat_completion_with_schema).
+// OpenRouter rides the OpenAI-compatible client (send_chat_completion_with_schema).
 // These are the two WinSTT-specific request extras (response-healing plugin +
 // provider pinning) that go in the request body. Mirrors
 // OPENROUTER_DICTATION_PROVIDER_OPTIONS + buildModelOptions in llm.ts.

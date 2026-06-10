@@ -1,7 +1,7 @@
 // WASAPI system-audio loopback capture for Listen mode.
 //
 // Source of truth: server/src/stt_server/loopback.py (LoopbackCapture + slow-tracking AGC).
-// Listen mode transcribes SYSTEM audio (a call, a YouTube lecture), not the mic. cpal (Handy's
+// Listen mode transcribes SYSTEM audio (a call, a YouTube lecture), not the mic. cpal (the
 // capture lib) cannot capture the render endpoint on Windows, so we open the default RENDER device
 // in WASAPI shared-mode loopback (render device + `Direction::Capture` in `initialize_client` — a
 // combination the `wasapi` crate explicitly supports), pull blocks on the WASAPI event handle,
@@ -180,7 +180,7 @@ pub enum LoopbackError {
 //    The captured 16 kHz mono f32 frames are pushed onto `sink` (the manager's
 //    `mpsc::Sender<Vec<f32>>`); the manager side VAD-gates + transcribes them.
 //    A standalone source (mirrors WinSTT's FileAudioSource) rather than editing
-//    Handy's recorder.rs.
+//    recorder path.
 // ═════════════════════════════════════════════════════════════════════════════
 
 pub struct LoopbackCapture {

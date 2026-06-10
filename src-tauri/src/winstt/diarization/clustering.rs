@@ -1,4 +1,4 @@
-// Source: E:/DL/Projects/onnx-asr/src/onnx_asr/diarization.py
+// Source: <onnx-asr>/src/onnx_asr/diarization.py
 //
 // ═════════════════════════════════════════════════════════════════════════════
 // 2. OnlineSpeakerClustering — PURE ARITHMETIC port of diart's clustering.

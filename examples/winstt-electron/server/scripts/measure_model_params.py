@@ -20,7 +20,7 @@ from typing import TypedDict
 
 import onnx
 
-CACHE_ROOT = Path("C:/Users/MASTE/.cache/huggingface/hub")
+CACHE_ROOT = Path("%USERPROFILE%/.cache/huggingface/hub")
 OUTPUT_PATH = Path(__file__).parent / "_model_param_counts.json"
 
 # onnx-asr resolver bare-name -> HF repo mapping (from examples/onnx-asr/.../resolver.py).

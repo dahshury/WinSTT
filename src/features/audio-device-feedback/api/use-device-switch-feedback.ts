@@ -92,7 +92,7 @@ export function useDeviceSwitchFeedback(): void {
 	// Bridge the renderer's `audio.inputDeviceIndex` selection to the BACKEND recorder's
 	// `selected_microphone`. These are SEPARATE settings stores: the device pickers write
 	// `inputDeviceIndex` (winstt-settings) but `get_effective_microphone_device` reads
-	// `selected_microphone` (the cpal device NAME, in the handy store). Without this bridge,
+	// `selected_microphone` (the cpal device NAME, in the legacy store). Without this bridge,
 	// picking a mic in the UI never reaches the recorder — the symptom that left a silent
 	// Bluetooth headset selected. The device list comes from `audioGetDevices()` (cpal), so
 	// `device.name` matches what the backend expects. `set_selected_microphone` also restarts

@@ -38,7 +38,7 @@ import onnxruntime as rt  # noqa: E402  # import after CUDA DLL injection
 print("providers:", rt.get_available_providers())
 PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
-AUDIO_PATH = Path(r"E:\DL\Projects\WinSTT\examples\faster-whisper\tests\data\physicsworks.wav")
+AUDIO_PATH = Path(r"<repo>\examples\faster-whisper\tests\data\physicsworks.wav")
 audio, sr = sf.read(str(AUDIO_PATH), dtype="float32")
 if audio.ndim > 1:
     audio = audio.mean(axis=1)
@@ -95,7 +95,7 @@ def bench_onnxasr(quant: str | None) -> None:
 def bench_sherpa_cuda() -> None:
     import sherpa_onnx
 
-    model_dir = Path(r"C:\Users\MASTE\.cache\sherpa-onnx-whisper-tiny.en")
+    model_dir = Path(r"%USERPROFILE%\.cache\sherpa-onnx-whisper-tiny.en")
     t0 = time.perf_counter()
     try:
         r = sherpa_onnx.OfflineRecognizer.from_whisper(

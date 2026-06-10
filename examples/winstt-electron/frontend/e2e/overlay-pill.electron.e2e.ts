@@ -98,9 +98,9 @@ test.describe("overlay pill — robust hide on rapid toggle", () => {
 		await app?.close();
 	});
 
-	test("overlay BrowserWindow is pinned topmost (Handy-parity Z-order)", async () => {
+	test("overlay BrowserWindow is pinned topmost (reference-parity Z-order)", async () => {
 		// Focus stealing is prevented by always calling `showInactive()` (NOT
-		// `show()`) — same approach Handy uses (examples/Handy builds the
+		// `show()`) — same approach as the reference implementation builds the
 		// overlay with `.focused(false).visible(false)`). We deliberately
 		// keep the window focusable: setting `focusable: false`
 		// (WS_EX_NOACTIVATE) on Windows swallowed mouse-click messages in

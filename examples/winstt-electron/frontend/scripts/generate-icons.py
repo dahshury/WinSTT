@@ -49,7 +49,7 @@ ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 # 16px@100%, 20px@125%, 24px@150%, 28px@175%, 32px@200%, 40px@250%, 48px@300%.
 # Emitting an exact PNG for every step (loaded as multi-scale nativeImage reps in
 # tray-state.ts) means Windows never has to upscale the 16px base → no blur, the
-# way Steam/Discord/Handy stay crisp. Suffix "" = the @1x base; the rest mirror
+# way desktop apps stay crisp. Suffix "" = the @1x base; the rest mirror
 # Electron's "@{scale}x" HiDPI filename convention.
 TRAY_IDLE_SCALES: list[tuple[str, int]] = [
     ("", 16),

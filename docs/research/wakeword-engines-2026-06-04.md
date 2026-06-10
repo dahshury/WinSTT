@@ -6,7 +6,7 @@ This note compares open-source/free wakeword and audio-front-end options for
 WinSTT's Rust/Tauri wakeword mode. It also records what was learned from
 cloning and inspecting KoljaB/RealtimeSTT under:
 
-`E:\DL\Projects\WinSTT\examples\RealtimeSTT`
+`<repo>\examples\RealtimeSTT`
 
 The constraint is important: options must be practical for an open-source,
 redistributable desktop app. Engines with vendor access keys, cloud training
@@ -311,10 +311,10 @@ Recommendation:
 Sources:
 
 - https://github.com/KoljaB/RealtimeSTT
-- `E:\DL\Projects\WinSTT\examples\RealtimeSTT\RealtimeSTT\core\wakeword.py`
-- `E:\DL\Projects\WinSTT\examples\RealtimeSTT\RealtimeSTT\core\voice_activity.py`
-- `E:\DL\Projects\WinSTT\examples\RealtimeSTT\RealtimeSTT\core\recording.py`
-- `E:\DL\Projects\WinSTT\examples\RealtimeSTT\RealtimeSTT\core\preroll.py`
+- `<repo>\examples\RealtimeSTT\RealtimeSTT\core\wakeword.py`
+- `<repo>\examples\RealtimeSTT\RealtimeSTT\core\voice_activity.py`
+- `<repo>\examples\RealtimeSTT\RealtimeSTT\core\recording.py`
+- `<repo>\examples\RealtimeSTT\RealtimeSTT\core\preroll.py`
 
 Useful patterns:
 

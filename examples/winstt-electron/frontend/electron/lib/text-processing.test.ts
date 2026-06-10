@@ -99,30 +99,30 @@ describe("applyPostProcessing — dictionary (fuzzy)", () => {
 
 describe("applyPostProcessing — snippets (fuzzy)", () => {
 	test("expands a multi-word trigger on exact match", () => {
-		setStoreValue("snippets", [{ trigger: "my email address", expansion: "khaled@example.com" }]);
+		setStoreValue("snippets", [{ trigger: "my email address", expansion: "user@example.test" }]);
 		expect(applyPostProcessing("forward to my email address")).toBe(
-			"forward to khaled@example.com"
+			"forward to user@example.test"
 		);
 	});
 
 	test("expands a fuzzy trigger when Whisper drops a letter", () => {
-		setStoreValue("snippets", [{ trigger: "my email address", expansion: "khaled@example.com" }]);
-		expect(applyPostProcessing("forward to my email adress")).toBe("forward to khaled@example.com");
+		setStoreValue("snippets", [{ trigger: "my email address", expansion: "user@example.test" }]);
+		expect(applyPostProcessing("forward to my email adress")).toBe("forward to user@example.test");
 	});
 
 	test("filters out snippets with empty triggers", () => {
 		setStoreValue("snippets", [
 			{ trigger: "", expansion: "X" },
-			{ trigger: "my email", expansion: "khaled@example.com" },
+			{ trigger: "my email", expansion: "user@example.test" },
 		]);
-		expect(applyPostProcessing("send my email")).toBe("send khaled@example.com");
+		expect(applyPostProcessing("send my email")).toBe("send user@example.test");
 	});
 
 	test("dictionary applies before snippets", () => {
 		setStoreValue("dictionary", [{ id: "1", term: "WinSTT" }]);
-		setStoreValue("snippets", [{ trigger: "my email", expansion: "khaled@example.com" }]);
+		setStoreValue("snippets", [{ trigger: "my email", expansion: "user@example.test" }]);
 		expect(applyPostProcessing("ship winstt to my email")).toBe(
-			"ship WinSTT to khaled@example.com"
+			"ship WinSTT to user@example.test"
 		);
 	});
 });
@@ -160,8 +160,8 @@ describe("rebuild watchers", () => {
 
 	test("snippet changes are picked up live", () => {
 		expect(applyPostProcessing("my email")).toBe("my email");
-		setStoreValue("snippets", [{ trigger: "my email", expansion: "khaled@example.com" }]);
-		expect(applyPostProcessing("my email")).toBe("khaled@example.com");
+		setStoreValue("snippets", [{ trigger: "my email", expansion: "user@example.test" }]);
+		expect(applyPostProcessing("my email")).toBe("user@example.test");
 	});
 
 	test("re-initializing replaces the active watcher set without leaks", () => {
@@ -195,10 +195,10 @@ describe("getPostProcessingVocab", () => {
 			{ id: "1", term: "Kubernetes" },
 			{ id: "2", term: "WinSTT" },
 		]);
-		setStoreValue("snippets", [{ trigger: "my email", expansion: "khaled@example.com" }]);
+		setStoreValue("snippets", [{ trigger: "my email", expansion: "user@example.test" }]);
 		const vocab = getPostProcessingVocab();
 		expect(vocab.dictionary).toEqual(["Kubernetes", "WinSTT"]);
-		expect(vocab.snippets).toEqual([{ trigger: "my email", expansion: "khaled@example.com" }]);
+		expect(vocab.snippets).toEqual([{ trigger: "my email", expansion: "user@example.test" }]);
 	});
 
 	test("empty caches yield empty vocab arrays", () => {

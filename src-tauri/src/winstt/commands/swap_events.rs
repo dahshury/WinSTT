@@ -5,7 +5,7 @@
 //   + server/src/recorder/domain/swap_errors.py (SwapErrorCategory) + control_handler emits.
 //
 // PLAIN-event emit façade for the model-swap lifecycle + the runtime-info push. These are emitted
-// from the engine-swap path INSIDE Handy's TranscriptionManager (lib_wiring §7 — a localized edit to
+// from the engine-swap path inside TranscriptionManager (lib_wiring §7 — a localized edit to
 // the manager's transcribe/initiate_model_load body, NOT a re-registration). Centralizing the
 // byte-identical shapes here means the §7 edit just calls `SwapEvents::started(app, kind, name)`
 // instead of hand-rolling `app.emit("stt:model-swap-started", …)` at the edit site.
@@ -124,7 +124,7 @@ impl SwapEvents {
 ///
 /// Sequence (mirrors the server's `request_model_swap`):
 ///   1. emit `model-swap-started` (confirms the swap, arms the chip),
-///   2. ask Handy's `TranscriptionManager` to (re)load the model on its worker,
+///   2. ask `TranscriptionManager` to (re)load the model on its worker,
 ///   3. on success → push fresh `runtime-info` (so the active-model chip reconciles) + emit
 ///      `model-swap-completed`; on failure → emit `model-swap-failed` with a classified category.
 ///

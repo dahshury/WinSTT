@@ -388,7 +388,7 @@ function HomePage() {
           </div>
 
           <a
-            href="https://github.com/dahshury/WinSTT/blob/main/LICENSE"
+            href="https://github.com/winstt/WinSTT/blob/main/LICENSE"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full mb-4 transition-all hover:brightness-110"
@@ -438,7 +438,7 @@ function HomePage() {
 
           <div className="flex gap-3 mt-8">
             <a
-              href="https://github.com/dahshury/WinSTT/releases"
+              href="https://github.com/winstt/WinSTT/releases"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-110"
@@ -493,7 +493,7 @@ function HomePage() {
               </svg>
             </Link>
             <a
-              href="https://github.com/dahshury/WinSTT"
+              href="https://github.com/winstt/WinSTT"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-125"

@@ -44,7 +44,7 @@ THEME_INK = {
 RECORDING_RED = (0xEF, 0x44, 0x44)
 ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 # Tauri tray uses the largest representation and downscales; 64px matches the
-# Handy tray PNGs the Rust code already loaded and stays crisp.
+# Tray PNGs the Rust code already loaded and stays crisp.
 TRAY_SIZE = 64
 
 

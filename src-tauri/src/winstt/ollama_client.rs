@@ -171,8 +171,10 @@ impl OllamaClient {
         let mut state = OllamaStreamState::default();
         let mut buf = String::new();
         let mut stream = resp.bytes_stream();
+        let mut cancelled = false;
         while let Some(chunk) = stream.next().await {
             if is_cancelled() {
+                cancelled = true;
                 break;
             }
             let bytes = chunk.map_err(|e| e.to_string())?;
@@ -186,6 +188,14 @@ impl OllamaClient {
                     }
                 }
             }
+        }
+        // A cancelled stream holds only a partial response — for a structured
+        // `format` request that is a JSON fragment like `{` or `{"text`. Returning
+        // it as success makes the caller paste that scaffolding (the dictation
+        // session is NOT cancelled here — only this request id is). Surface
+        // cancellation as an error so the caller fails soft to the original text.
+        if cancelled {
+            return Err("Ollama chat cancelled".to_string());
         }
         if let Some(c) = parse_chat_stream_line(&buf) {
             state.apply_chunk(&c);

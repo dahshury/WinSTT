@@ -25,10 +25,10 @@ impl TranscriptionManager {
         let request_id = next_transcription_request_id();
 
         #[cfg(debug_assertions)]
-        if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
+        if std::env::var("WINSTT_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
             error!("[stt][{request_id}] simulated transcription failure requested");
             return Err(anyhow::anyhow!(
-                "Simulated transcription failure (HANDY_FORCE_TRANSCRIPTION_FAILURE)"
+                "Simulated transcription failure (WINSTT_FORCE_TRANSCRIPTION_FAILURE)"
             ));
         }
 
@@ -133,8 +133,7 @@ impl TranscriptionManager {
         }
 
         // Engine inputs (language / translate / initial prompt) and post-processing are owned by
-        // the WinSTT backend. The core no longer has a second inherited Handy/transcribe-rs decode
-        // path with separate language rules.
+        // the WinSTT backend.
         let backend = self.backend.clone();
         let app_handle = self.app_handle.clone();
 

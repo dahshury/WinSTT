@@ -1,5 +1,5 @@
 // Source (decode correctness): onnx-asr fork src/onnx_asr/models/whisper/_hf.py + _base.py
-//   (E:/DL/Projects/onnx-asr/src/onnx_asr/models/whisper/).
+//   (<onnx-asr>/src/onnx_asr/models/whisper/).
 // Source (load fixes): server/src/recorder/infrastructure/onnxasr_transcriber.py
 //   (fp16 decoder repair §6.1, ORT_ENABLE_EXTENDED §6.2, .en prompt-slot §6.3, vocab.get §6.4).
 // Source (ort API, verified against the installed crate src):

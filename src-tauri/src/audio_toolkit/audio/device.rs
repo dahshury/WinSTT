@@ -7,14 +7,22 @@ pub struct CpalDeviceInfo {
     pub device: cpal::Device,
 }
 
+pub(crate) fn device_display_name(device: &cpal::Device) -> Result<String, cpal::DeviceNameError> {
+    device
+        .description()
+        .map(|description| description.name().to_string())
+}
+
 pub fn list_input_devices() -> Result<Vec<CpalDeviceInfo>, Box<dyn std::error::Error>> {
     let host = crate::audio_toolkit::get_cpal_host();
-    let default_name = host.default_input_device().and_then(|d| d.name().ok());
+    let default_name = host
+        .default_input_device()
+        .and_then(|d| device_display_name(&d).ok());
 
     let mut out = Vec::<CpalDeviceInfo>::new();
 
     for (index, device) in host.input_devices()?.enumerate() {
-        let name = device.name().unwrap_or_else(|_| "Unknown".into());
+        let name = device_display_name(&device).unwrap_or_else(|_| "Unknown".into());
 
         let is_default = Some(name.clone()) == default_name;
 
@@ -31,12 +39,14 @@ pub fn list_input_devices() -> Result<Vec<CpalDeviceInfo>, Box<dyn std::error::E
 
 pub fn list_output_devices() -> Result<Vec<CpalDeviceInfo>, Box<dyn std::error::Error>> {
     let host = crate::audio_toolkit::get_cpal_host();
-    let default_name = host.default_output_device().and_then(|d| d.name().ok());
+    let default_name = host
+        .default_output_device()
+        .and_then(|d| device_display_name(&d).ok());
 
     let mut out = Vec::<CpalDeviceInfo>::new();
 
     for (index, device) in host.output_devices()?.enumerate() {
-        let name = device.name().unwrap_or_else(|_| "Unknown".into());
+        let name = device_display_name(&device).unwrap_or_else(|_| "Unknown".into());
 
         let is_default = Some(name.clone()) == default_name;
 

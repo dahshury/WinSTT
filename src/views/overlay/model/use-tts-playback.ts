@@ -6,21 +6,115 @@ import {
 	onTtsDiscardPlayback,
 	onTtsFailed,
 	onTtsPausePlayback,
+	onTtsResumePlayback,
 	onTtsStarted,
 	type TtsChunkPayload,
 	type TtsCompletedPayload,
 	ttsCancel,
 	ttsReportPlaybackEnded,
 	ttsReportPlaybackStarted,
+	ttsRequestPlaybackPause,
+	ttsRequestPlaybackResume,
 } from "@/shared/api/ipc-client";
 import { TtsPlaybackQueue } from "../lib/playback-queue";
 import {
 	discardTts,
 	pauseTts,
 	registerTtsQueue,
+	resumeTts,
 	unregisterTtsQueue,
+	type TtsPlaybackStatus,
 	useTtsPlaybackStore,
 } from "./tts-playback-store";
+
+function getTtsMediaSession(): MediaSession | null {
+	if (typeof navigator === "undefined") {
+		return null;
+	}
+	return navigator.mediaSession ?? null;
+}
+
+function setMediaSessionAction(
+	session: MediaSession,
+	action: MediaSessionAction,
+	handler: MediaSessionActionHandler | null,
+): void {
+	try {
+		session.setActionHandler(action, handler);
+	} catch {
+		// Some Chromium/WebView builds expose Media Session but reject individual
+		// actions. Dropping that action is better than breaking TTS playback setup.
+	}
+}
+
+export function ttsMediaSessionPlaybackState(
+	status: TtsPlaybackStatus,
+): MediaSessionPlaybackState {
+	if (status === "paused") {
+		return "paused";
+	}
+	if (status === "loading" || status === "speaking") {
+		return "playing";
+	}
+	return "none";
+}
+
+function updateTtsMediaSession(
+	status: TtsPlaybackStatus,
+	requestId: string | null,
+): void {
+	const session = getTtsMediaSession();
+	if (session == null) {
+		return;
+	}
+	session.playbackState = ttsMediaSessionPlaybackState(status);
+	if (requestId == null) {
+		session.metadata = null;
+		return;
+	}
+	if (typeof MediaMetadata !== "undefined") {
+		session.metadata ??= new MediaMetadata({
+			title: "Read Aloud",
+			artist: "WinSTT",
+		});
+	}
+}
+
+export function installTtsMediaSessionHandlers(
+	session: MediaSession | null = getTtsMediaSession(),
+): () => void {
+	if (session == null) {
+		return () => {
+			/* Media Session unavailable. */
+		};
+	}
+	setMediaSessionAction(session, "pause", () => {
+		ttsRequestPlaybackPause("media-session");
+	});
+	setMediaSessionAction(session, "play", () => {
+		ttsRequestPlaybackResume("media-session");
+	});
+	return () => {
+		setMediaSessionAction(session, "pause", null);
+		setMediaSessionAction(session, "play", null);
+		session.playbackState = "none";
+		session.metadata = null;
+	};
+}
+
+export function handleTtsPausePlaybackControl(status: TtsPlaybackStatus): void {
+	if (status === "speaking" || status === "loading") {
+		pauseTts();
+	}
+}
+
+export function handleTtsResumePlaybackControl(
+	status: TtsPlaybackStatus,
+): void {
+	if (status === "paused") {
+		resumeTts();
+	}
+}
 
 /**
  * Subscribe to a server ``tts:chunk``: record the active id (so the
@@ -93,6 +187,8 @@ export function useTtsPlayback(): void {
 	const outputDeviceId = useSettingsStore(
 		(s) => s.settings.general.outputDeviceId,
 	);
+	const status = useTtsPlaybackStore((s) => s.status);
+	const requestId = useTtsPlaybackStore((s) => s.requestId);
 	// The id whose audio is currently scheduled — needed so `onEnd` (which
 	// carries no id) can tell main *which* request finished.
 	const activeIdRef = useRef<string | null>(null);
@@ -126,9 +222,10 @@ export function useTtsPlayback(): void {
 			handleTtsCompletedPayload(queue, payload),
 		);
 		const unPausePlayback = onTtsPausePlayback(() => {
-			if (store().status === "speaking") {
-				pauseTts();
-			}
+			handleTtsPausePlaybackControl(store().status);
+		});
+		const unResumePlayback = onTtsResumePlayback(() => {
+			handleTtsResumePlaybackControl(store().status);
 		});
 		const unDiscardPlayback = onTtsDiscardPlayback(() => {
 			discardTts();
@@ -144,6 +241,7 @@ export function useTtsPlayback(): void {
 			unChunk();
 			unCompleted();
 			unPausePlayback();
+			unResumePlayback();
 			unDiscardPlayback();
 			unFailed();
 			unStart();
@@ -158,6 +256,12 @@ export function useTtsPlayback(): void {
 	useEffect(() => {
 		queueRef.current?.setOutputDeviceId(outputDeviceId);
 	}, [outputDeviceId]);
+
+	useEffect(() => installTtsMediaSessionHandlers(), []);
+
+	useEffect(() => {
+		updateTtsMediaSession(status, requestId);
+	}, [status, requestId]);
 
 	useEffect(
 		() => () => {

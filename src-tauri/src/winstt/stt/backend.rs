@@ -1,11 +1,11 @@
 //! WinSTT-owned STT backend boundary (audit action #14).
 //!
-//! The inherited Handy pipeline core (`crate::managers::transcription`) used to reach SIDEWAYS
+//! The legacy pipeline core (`crate::managers::transcription`) used to reach SIDEWAYS
 //! into `crate::winstt::*` for every WinSTT-specific decision: catalog resolution, the unified
 //! ort-ONNX engine build, the cloud-STT round-trip, the picker's language/dictionary settings,
 //! and the winstt-arm decode + post-processing. That broke the one-way dependency edge
 //! the dual-manager boundary promises (`winstt/managers/mod.rs`: "these feature managers reuse the
-//! core, never the reverse") and made upstream Handy merges of `transcription.rs` intractable.
+//! core, never the reverse") and made `transcription.rs` harder to maintain.
 //!
 //! This trait re-homes all of that logic in the `winstt/` tree. The core keeps ONLY the
 //! generic engine-lifecycle machinery (the `LoadedEngine` enum, the engine `Mutex`,
@@ -29,13 +29,11 @@
 //! 2. **Panic safety**: `decode` / `decode_realtime` / `warmup` take `&mut dyn Transcriber` on an
 //!    engine the CORE already took out of the mutex inside `catch_unwind`. The backend MUST NOT
 //!    lock the engine mutex, take/store the engine, or add a `Sync` bound.
-//! 3. **No double post-processing**: `decode` does the winstt-arm dictionary post-processing from
-//!    `WinsttSettings`; the core therefore skips its generic transcribe-rs post-processing on the
-//!    winstt arm. The transcribe-rs arms keep core post-processing.
+//! 3. **Single post-processing pass**: `decode` does the WinSTT dictionary post-processing from
+//!    `WinsttSettings`, so the core must not run a second generic cleanup pass.
 //! 4. **Cloud nested-runtime branch** lives verbatim in `cloud_transcribe`.
 //! 5/6. The `warming` flag / `try_lock` preemption and realtime poison recovery stay in core;
-//!    only the decode/warmup BODIES move here. `peak_normalize` is applied ONLY to the winstt
-//!    arm input (here), never to the transcribe-rs arms (those stay in core, unconditioned).
+//!    only the decode/warmup bodies move here. `peak_normalize` is applied in this backend.
 
 use crate::audio_toolkit::apply_custom_words;
 use crate::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
@@ -57,7 +55,7 @@ pub enum BackendRoute {
     /// A WinSTT-catalog id — loads through the unified ort engine (`resolve_catalog` +
     /// `build_resolved`).
     Catalog,
-    /// Neither — a transcribe-rs (Handy `ModelManager`) id, handled entirely by the core.
+    /// Neither — an unsupported model id.
     Unsupported,
 }
 
@@ -114,7 +112,7 @@ pub trait SttBackend: Send + Sync {
 
     /// Decode ONE utterance on the winstt-arm engine + apply the WinSTT-arm post-processing
     /// (peak-normalize the input, then custom-words correction from `WinsttSettings`). Returns
-    /// the FINAL text — the core must NOT run its generic transcribe-rs post-processing on this
+    /// the FINAL text — the core must not run a second generic post-processing pass on this
     /// output. `engine` is borrowed `&mut` from inside the core's
     /// `catch_unwind`; this method must NOT lock the engine mutex.
     fn decode(
@@ -353,8 +351,7 @@ impl SttBackend for WinsttSttBackend {
             ..Default::default()
         };
 
-        // Peak-normalize is the WinSTT-arm-ONLY audio-conditioning chokepoint (the transcribe-rs
-        // arms in the core get RAW audio).
+        // Peak-normalize once at the WinSTT backend boundary.
         let conditioned = peak_normalize(audio);
         // Pause-heavy recordings waste decoder time on thinking silence. For local offline engines,
         // run a VAD compaction pass that keeps at most a short natural pause between speech runs.
@@ -400,8 +397,8 @@ impl SttBackend for WinsttSttBackend {
         };
 
         // WinSTT-arm post-processing: custom-words correction, sourced from the SAME `ws`
-        // snapshot. The core does NOT re-run its generic transcribe-rs post-processing on this
-        // output (avoids double-processing). Shared with the realtime-reuse fast path (see
+        // snapshot. The core does not re-run generic cleanup on this output (avoids
+        // double-processing). Shared with the realtime-reuse fast path (see
         // `winstt_postprocess`) so a reused live decode gets byte-identical cleanup.
         Ok(winstt_postprocess(&text, &ws))
     }

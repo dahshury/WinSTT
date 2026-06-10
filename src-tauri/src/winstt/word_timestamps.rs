@@ -1,4 +1,4 @@
-// Reference: E:/DL/Projects/onnx-asr/src/onnx_asr/word_timestamps.py
+// Reference: <onnx-asr>/src/onnx_asr/word_timestamps.py
 //         (itself a port of openai-whisper/whisper/timing.py, MIT)
 // External crates (declared in Cargo.toml, verified docs.rs 2026-05):
 //   ndarray 0.17.2  — Array2/Array3/ArrayView for the alignment matrix math

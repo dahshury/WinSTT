@@ -316,7 +316,7 @@ class TestAudioToTextRecorderFacade:
     def test_silero_sensitivity_getter(self) -> None:
         """Facade.silero_sensitivity reads from config.
 
-        Default is now 0.7 (Silero trip threshold 0.3) to match Handy;
+        Default is now 0.7 (Silero trip threshold 0.3);
         see :class:`VADConfig` docstring for the rationale.
         """
         facade = _make_facade_with_fakes()

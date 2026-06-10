@@ -1689,7 +1689,7 @@ wheels = [
 [[package]]
 name = "onnx-asr"
 version = "0.1.dev241+ga8218d143"
-source = { git = "https://github.com/dahshury/onnx-asr.git?rev=a8218d143e4afbeacf840b4e980dbe2551cd1042#a8218d143e4afbeacf840b4e980dbe2551cd1042" }
+source = { git = "https://github.com/winstt/onnx-asr.git?rev=a8218d143e4afbeacf840b4e980dbe2551cd1042#a8218d143e4afbeacf840b4e980dbe2551cd1042" }
 dependencies = [
     { name = "numpy" },
 ]
@@ -3501,7 +3501,7 @@ requires-dist = [
     { name = "nvidia-ml-py", specifier = ">=12.0" },
     { name = "nvidia-nvjitlink-cu12", marker = "extra == 'gpu'", specifier = ">=12.4" },
     { name = "onnx", specifier = ">=1.16" },
-    { name = "onnx-asr", extras = ["hub"], git = "https://github.com/dahshury/onnx-asr.git?rev=a8218d143e4afbeacf840b4e980dbe2551cd1042" },
+    { name = "onnx-asr", extras = ["hub"], git = "https://github.com/winstt/onnx-asr.git?rev=a8218d143e4afbeacf840b4e980dbe2551cd1042" },
     { name = "onnxruntime", marker = "extra == 'cpu'", specifier = ">=1.18.1" },
     { name = "onnxruntime-directml", marker = "extra == 'directml'", specifier = ">=1.18.1" },
     { name = "onnxruntime-gpu", marker = "extra == 'gpu'", specifier = ">=1.18.1" },

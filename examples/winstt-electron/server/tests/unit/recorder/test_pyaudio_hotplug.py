@@ -355,7 +355,7 @@ class TestMidRunUnplug:
 class TestAlwaysOnMicrophoneMode:
     """Boot-time policy from ``always_on_microphone``.
 
-    Default ``False`` mirrors Handy's ``OnDemand`` mode: the stream is
+    Default ``False`` mirrors on-demand mode: the stream is
     NOT allocated at setup; the first resume() opens one. ``True`` keeps
     the legacy behavior — open at setup, stop_stream()/resume() between.
     """
@@ -506,7 +506,7 @@ class TestAlwaysOnMicrophoneMode:
 class TestFormatNegotiation:
     """``_open_stream`` should prefer paFloat32 and fall back to paInt16.
 
-    Mirrors Handy's ``get_preferred_config`` (F32 > I16 > I32 priority).
+    Mirrors ``get_preferred_config`` (F32 > I16 > I32 priority).
     The benefit: on WASAPI shared mode the Audio Engine pumps f32
     internally, so asking for f32 hands us the engine buffer directly
     instead of forcing an in-engine i16 quantize step we don't control.
@@ -717,7 +717,7 @@ class TestSampleRatePrefersDeviceDefault:
     ``defaultSampleRate`` over the 16 kHz target so we don't force the
     WASAPI / driver resampler to do a sloppy in-driver resample. The
     in-process scipy.signal.resample_poly path is phase-linear and
-    high-quality, equivalent to Handy's rubato::FftFixedIn.
+    high-quality, equivalent to rubato::FftFixedIn.
     """
 
     class _MultiRatePyAudio(_FakePyAudio):
@@ -834,7 +834,7 @@ class TestStreamingResampler:
     """The live capture path resamples chunk-by-chunk. A *stateless*
     ``resample_poly`` per chunk filtered each buffer in isolation, drifting the
     sample count and adding a seam glitch at every chunk boundary — the cause of
-    history recordings sounding far worse than the same mic in Handy.
+    history recordings sounding far worse than live mic capture.
     ``_StreamingResampler`` carries the polyphase overlap across chunks so the
     streamed output is bit-identical to resampling the whole signal at once."""
 

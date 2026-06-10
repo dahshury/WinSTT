@@ -63,10 +63,9 @@ import {
 import { useTtsModelPickerStore } from "@/features/tts-model-picker";
 import { useTtsModelDownloads } from "../model/use-tts-model-downloads";
 import { useTtsVoiceCatalog } from "../model/use-tts-voice-catalog";
-import { CloudTtsControls } from "./CloudTtsControls";
-import { OpenRouterTtsControls } from "./OpenRouterTtsControls";
 import { TtsControls } from "./TtsControls";
 import { TtsInstallBanner } from "./TtsInstallBanner";
+import { UnifiedCloudTtsControls } from "./UnifiedCloudTtsControls";
 
 export function TtsModelSection() {
 	const t = useTranslations("tts");
@@ -108,35 +107,10 @@ export function TtsModelSection() {
 	const effectiveSource =
 		tts?.source === "cloud" && cloudAllowed ? "cloud" : "local";
 	const isCloud = effectiveSource === "cloud";
-	// Resolve the active cloud provider to one that's actually available so a
-	// persisted `openrouter` choice never strands the picker when only ElevenLabs
-	// is keyed (and vice-versa).
-	const persistedCloudProvider = tts?.cloud?.provider ?? "elevenlabs";
-	let cloudProvider: "elevenlabs" | "openrouter" = "elevenlabs";
-	if (persistedCloudProvider === "openrouter" && openrouterConfigured) {
-		cloudProvider = "openrouter";
-	} else if (elevenCloudAllowed) {
-		cloudProvider = "elevenlabs";
-	} else if (openrouterConfigured) {
-		cloudProvider = "openrouter";
-	}
-	// Only offer the provider sub-switch when BOTH cloud providers are available.
-	const showCloudProviderToggle = elevenCloudAllowed && openrouterConfigured;
-	const cloudProviderOpts: SwitcherOption<"elevenlabs" | "openrouter">[] = [
-		{ value: "elevenlabs", label: "ElevenLabs", disabled: !elevenCloudAllowed },
-		{
-			value: "openrouter",
-			label: "OpenRouter",
-			disabled: !openrouterConfigured,
-		},
-	];
-	const handleCloudProviderChange = (
-		next: "elevenlabs" | "openrouter",
-	): void => {
-		update({
-			cloud: { ...(tts?.cloud ?? DEFAULT_SETTINGS.tts.cloud), provider: next },
-		});
-	};
+	// The merged cloud picker (UnifiedCloudTtsControls) decides which provider's
+	// models + voice controls to show from `elevenCloudAllowed` /
+	// `openrouterConfigured` and the persisted `tts.cloud.provider`; picking a
+	// model from either group sets the provider. No separate provider sub-switch.
 
 	// Enable gate (state + handlers live in the model hook — see
 	// use-tts-install-gate). `handleLocalEnabledToggle` is the LOCAL path: it
@@ -512,46 +486,20 @@ export function TtsModelSection() {
 							</p>
 						) : null}
 						{isCloud ? (
-							<>
-								{showCloudProviderToggle ? (
-									<SettingField
-										label="Cloud provider"
-										layout="row"
-										tooltip="Which cloud TTS service to synthesize with: ElevenLabs or OpenRouter."
-									>
-										<ElevatedSurface className="w-52">
-											<Switcher
-												fullWidth
-												onChange={handleCloudProviderChange}
-												options={cloudProviderOpts}
-												value={cloudProvider}
-											/>
-										</ElevatedSurface>
-									</SettingField>
-								) : null}
-								{cloudProvider === "openrouter" ? (
-									<OpenRouterTtsControls
-										activeRequestId={playback.requestId}
-										isLoading={isLoading}
-										isSpeaking={isSpeaking}
-										previewVoice={previewOpenRouterVoice}
-										previewVoiceId={previewVoiceId}
-										t={t}
-									/>
-								) : (
-									<CloudTtsControls
-										activeRequestId={playback.requestId}
-										error={cloud.error}
-										groups={cloud.groups}
-										isLoading={isLoading}
-										isLoadingVoices={cloud.isLoading}
-										isSpeaking={isSpeaking}
-										previewVoice={previewCloudVoice}
-										previewVoiceId={previewVoiceId}
-										t={t}
-									/>
-								)}
-							</>
+							<UnifiedCloudTtsControls
+								activeRequestId={playback.requestId}
+								elevenAvailable={elevenCloudAllowed}
+								elevenError={cloud.error}
+								elevenGroups={cloud.groups}
+								elevenLoadingVoices={cloud.isLoading}
+								isLoading={isLoading}
+								isSpeaking={isSpeaking}
+								openrouterAvailable={openrouterConfigured}
+								previewElevenVoice={previewCloudVoice}
+								previewOpenRouterVoice={previewOpenRouterVoice}
+								previewVoiceId={previewVoiceId}
+								t={t}
+							/>
 						) : (
 							<>
 								<SettingField

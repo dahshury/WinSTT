@@ -409,7 +409,7 @@ def _is_whisper_family(model_name: str | None) -> bool:
     fp16 encoder exports. Parakeet, Moonshine, Canary, GigaAM, Cohere,
     and other non-Whisper fp16 models do NOT have this bug, so they
     keep the default ``ORT_ENABLE_ALL`` for full fusion savings (5-10 %
-    per inference on fp16 paths — see ``docs/handy-comparison.html``
+    per inference on fp16 paths.
     Axis IV.1).
     """
     if not model_name:

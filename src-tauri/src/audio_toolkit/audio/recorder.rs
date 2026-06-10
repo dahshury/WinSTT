@@ -221,12 +221,12 @@ impl AudioRecorder {
                 let config = AudioRecorder::get_preferred_config(&thread_device)
                     .map_err(|e| format!("Failed to fetch preferred config: {e}"))?;
 
-                let sample_rate = config.sample_rate().0;
+                let sample_rate = config.sample_rate();
                 let channels = config.channels() as usize;
 
                 log::info!(
                     "Using device: {:?}\nSample rate: {}\nChannels: {}\nFormat: {:?}",
-                    thread_device.name(),
+                    super::device_display_name(&thread_device).unwrap_or_else(|_| "Unknown".into()),
                     sample_rate,
                     channels,
                     config.sample_format()

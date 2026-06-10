@@ -1,7 +1,6 @@
 """Tests for the locale-aware filler-word + stutter-collapse post-processor.
 
-Mirrors the ``filter_*`` test cases in Handy's
-``examples/Handy/src-tauri/src/audio_toolkit/text.rs`` so a future drift
+Mirrors the reference ``filter_*`` test cases so a future drift
 between the two reference implementations is visible immediately.
 """
 
@@ -39,7 +38,7 @@ class TestCollapseStutters:
         assert collapse_stutters("hello world") == "hello world"
 
     def test_two_repetitions_preserved(self) -> None:
-        # Handy's threshold is 3+ — two-in-a-row is often legitimate ("no no").
+        # The threshold is 3+ — two-in-a-row is often legitimate ("no no").
         assert collapse_stutters("no no is fine") == "no no is fine"
 
     def test_three_repetitions_collapsed(self) -> None:

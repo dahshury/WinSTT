@@ -118,7 +118,7 @@ if %errorlevel% neq 0 (
 uv python pin 3.11 --directory "%~dp0server" >nul 2>&1
 
 :: ── Server deps ────────────────────────────────
-:: onnx-asr is resolved as a git URL from dahshury/onnx-asr (see
+:: onnx-asr is resolved as a git URL from winstt/onnx-asr (see
 :: server/pyproject.toml [tool.uv.sources]) — no separate clone step.
 echo  [4/5] Installing server dependencies (%FLAVOR%)...
 pushd "%~dp0server"

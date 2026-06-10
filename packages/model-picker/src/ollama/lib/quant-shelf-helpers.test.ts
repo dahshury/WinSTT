@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { OllamaLibraryTag } from "@/shared/api/models";
 import {
 	canonicalOllamaTag,
+	dedupeInstalledOllamaModels,
 	findInstalledOllamaTag,
 	isModelSizeInstalled,
 	isSameOllamaTag,
@@ -299,5 +300,41 @@ describe("quantBadgeCacheState", () => {
 		expect(quantBadgeCacheState({ installed: false, paused: false })).toBe(
 			"not_cached",
 		);
+	});
+});
+
+describe("dedupeInstalledOllamaModels", () => {
+	it("collapses same-digest alias tags into one row, preferring the bare tag", () => {
+		const models = [
+			{ name: "gemma4:e2b-it-q4_K_M" },
+			{ name: "gemma4:e2b" },
+			{ name: "lfm2.5-thinking:1.2b-q8_0" },
+		];
+		const out = dedupeInstalledOllamaModels(models);
+		expect(out.map((m) => m.name)).toEqual([
+			// shorter name wins for the collapsed pair; first-seen position kept
+			"gemma4:e2b",
+			"lfm2.5-thinking:1.2b-q8_0",
+		]);
+	});
+
+	it("keeps the currently-selected tag as the surviving representative", () => {
+		const models = [{ name: "gemma4:e2b-it-q4_K_M" }, { name: "gemma4:e2b" }];
+		const out = dedupeInstalledOllamaModels(models, "gemma4:e2b-it-q4_K_M");
+		expect(out.map((m) => m.name)).toEqual(["gemma4:e2b-it-q4_K_M"]);
+	});
+
+	it("leaves genuinely distinct models untouched", () => {
+		const models = [
+			{ name: "gemma4:e2b" },
+			{ name: "gemma4:e4b" },
+			{ name: "llama3.2:1b" },
+		];
+		const out = dedupeInstalledOllamaModels(models);
+		expect(out.map((m) => m.name)).toEqual([
+			"gemma4:e2b",
+			"gemma4:e4b",
+			"llama3.2:1b",
+		]);
 	});
 });

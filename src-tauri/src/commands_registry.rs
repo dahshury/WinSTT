@@ -57,8 +57,6 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         shortcut::get_keyboard_implementation,
         shortcut::change_whisper_gpu_device,
         shortcut::get_available_accelerators,
-        shortcut::handy_keys::start_handy_keys_recording,
-        shortcut::handy_keys::stop_handy_keys_recording,
         trigger_update_check,
         show_main_window_command,
         quit_app,
@@ -177,6 +175,8 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::loopback::loopback_list_devices,
         winstt::commands::context::list_context_apps,
         winstt::commands::tts::tts_set_speed,
+        winstt::commands::tts::tts_pause_playback,
+        winstt::commands::tts::tts_resume_playback,
         winstt::commands::tts::tts_report_playback_started,
         winstt::commands::tts::tts_report_playback_ended,
         winstt::commands::ollama_library::ollama_fetch_library,
@@ -430,7 +430,6 @@ mod command_registry_tests {
                     "accelerator_commands" | "post_process_commands" | "settings_commands" => {
                         Ok(format!("shortcut::{name}"))
                     }
-                    "handy_keys" => Ok(format!("shortcut::handy_keys::{name}")),
                     _ => Ok(format!("shortcut::{module}::{name}")),
                 }
             }

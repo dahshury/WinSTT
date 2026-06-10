@@ -189,6 +189,14 @@ function OllamaBody({
 			/>
 		);
 	}
+	// A selection wins over the loading state: opening the picker fires a
+	// background `/api/tags` re-scan that flips `isLoading` true, and blanking
+	// the already-known model's chip + name + badges on every open reads as the
+	// trigger "losing" its content. Keep showing the selection; the scan is
+	// silent. The loading placeholder only surfaces when nothing is picked yet.
+	if (props.selected) {
+		return <SelectedTriggerContent model={props.selected} />;
+	}
 	if (props.isLoading) {
 		return (
 			<div className="flex flex-1 items-center gap-2">
@@ -198,9 +206,6 @@ function OllamaBody({
 				</span>
 			</div>
 		);
-	}
-	if (props.selected) {
-		return <SelectedTriggerContent model={props.selected} />;
 	}
 	return (
 		<span className="font-medium text-body text-foreground-muted italic tracking-tight">
@@ -235,6 +240,12 @@ function OllamaTriggerButtonView({
 }) {
 	const { disabled, isLoading, isSwitching, activePull } = props;
 	const ariaLabel = buildSwitchingAriaLabel(props);
+	// `isLoading` is a SOFT background state (the open-triggered `/api/tags`
+	// re-scan), not a hard disable. Once a model is selected it must not dim or
+	// block the trigger — doing so flashed the picked model to 50% opacity on
+	// every open. It only stands in for "nothing to interact with yet" while
+	// there is no selection (the first scan, showing the "Scanning…" pill).
+	const loadingBlocksInteraction = isLoading && !props.selected;
 	return (
 		<Button
 			{...buttonProps}
@@ -243,7 +254,7 @@ function OllamaTriggerButtonView({
 			data-loading={isLoading || undefined}
 			data-slot="ollama-model-selector-trigger"
 			data-switching={isSwitching}
-			disabled={disabled || isLoading || isSwitching}
+			disabled={disabled || loadingBlocksInteraction || isSwitching}
 			type="button"
 		>
 			<span

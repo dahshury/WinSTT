@@ -3,11 +3,19 @@ import type { MutableRefObject } from "react";
 import type { TtsChunkPayload } from "@/shared/api/ipc-client";
 import type { TtsPlaybackQueue } from "../lib/playback-queue";
 import {
+	handleTtsPausePlaybackControl,
 	handleTtsChunkPayload,
 	handleTtsCompletedPayload,
+	handleTtsResumePlaybackControl,
+	installTtsMediaSessionHandlers,
 	stopTts,
+	ttsMediaSessionPlaybackState,
 } from "./use-tts-playback";
-import { useTtsPlaybackStore } from "./tts-playback-store";
+import {
+	registerTtsQueue,
+	unregisterTtsQueue,
+	useTtsPlaybackStore,
+} from "./tts-playback-store";
 
 // Lightweight queue stub — verifies that the module-level handlers
 // forward exactly the right payloads without coupling to the real
@@ -26,6 +34,8 @@ interface StubQueue {
 	readonly currentRequestId: string | null;
 	enqueue: (chunk: TtsChunkPayload) => void;
 	markComplete: (id: string) => void;
+	pause?: () => void;
+	resume?: () => void;
 	stop: () => void;
 }
 const asQueue = (q: StubQueue) => q as unknown as TtsPlaybackQueue;
@@ -175,6 +185,126 @@ describe("handleTtsCompletedPayload", () => {
 		});
 		expect(useTtsPlaybackStore.getState().status).toBe("idle");
 		expect(useTtsPlaybackStore.getState().requestId).toBeNull();
+	});
+});
+
+describe("TTS playback control events", () => {
+	const calls = { pause: 0, resume: 0, stop: 0 };
+	const queue = asQueue({
+		currentRequestId: null,
+		enqueue: () => undefined,
+		markComplete: () => undefined,
+		pause: () => {
+			calls.pause += 1;
+		},
+		resume: () => {
+			calls.resume += 1;
+		},
+		stop: () => {
+			calls.stop += 1;
+		},
+	});
+
+	beforeEach(() => {
+		calls.pause = 0;
+		calls.resume = 0;
+		calls.stop = 0;
+		useTtsPlaybackStore.setState({
+			status: "idle",
+			requestId: null,
+			error: null,
+		});
+		registerTtsQueue(queue);
+	});
+
+	afterEach(() => {
+		unregisterTtsQueue(queue);
+		useTtsPlaybackStore.setState({
+			status: "idle",
+			requestId: null,
+			error: null,
+		});
+	});
+
+	test("backend pause control pauses loading or speaking reads", () => {
+		useTtsPlaybackStore.getState().markStarted("r");
+		handleTtsPausePlaybackControl("loading");
+		expect(calls.pause).toBe(1);
+		expect(useTtsPlaybackStore.getState().status).toBe("paused");
+
+		useTtsPlaybackStore.setState({
+			status: "speaking",
+			requestId: "r",
+			error: null,
+		});
+		handleTtsPausePlaybackControl("speaking");
+		expect(calls.pause).toBe(2);
+		expect(useTtsPlaybackStore.getState().status).toBe("paused");
+	});
+
+	test("backend resume control only resumes a paused read", () => {
+		handleTtsResumePlaybackControl("idle");
+		expect(calls.resume).toBe(0);
+
+		useTtsPlaybackStore.setState({
+			status: "paused",
+			requestId: "r",
+			error: null,
+		});
+		handleTtsResumePlaybackControl("paused");
+		expect(calls.resume).toBe(1);
+		expect(useTtsPlaybackStore.getState().status).toBe("speaking");
+	});
+});
+
+describe("TTS Media Session bridge", () => {
+	test("maps TTS status to OS media playback state", () => {
+		expect(ttsMediaSessionPlaybackState("idle")).toBe("none");
+		expect(ttsMediaSessionPlaybackState("error")).toBe("none");
+		expect(ttsMediaSessionPlaybackState("loading")).toBe("playing");
+		expect(ttsMediaSessionPlaybackState("speaking")).toBe("playing");
+		expect(ttsMediaSessionPlaybackState("paused")).toBe("paused");
+	});
+
+	test("media pause/resume actions notify the backend commands", () => {
+		const { calls, restore } = installTauriInvokeRecorder();
+		const handlers = new Map<
+			MediaSessionAction,
+			MediaSessionActionHandler | null
+		>();
+		const session = {
+			metadata: null,
+			playbackState: "none",
+			setActionHandler: (
+				action: MediaSessionAction,
+				handler: MediaSessionActionHandler | null,
+			) => {
+				handlers.set(action, handler);
+			},
+		} as MediaSession;
+
+		try {
+			const cleanup = installTtsMediaSessionHandlers(session);
+			handlers.get("pause")?.({ action: "pause" });
+			handlers.get("play")?.({ action: "play" });
+			expect(calls).toEqual([
+				{
+					cmd: "tts_pause_playback",
+					args: { reason: "media-session" },
+				},
+				{
+					cmd: "tts_resume_playback",
+					args: { reason: "media-session" },
+				},
+			]);
+
+			cleanup();
+			expect(handlers.get("pause")).toBeNull();
+			expect(handlers.get("play")).toBeNull();
+			expect(session.playbackState).toBe("none");
+		} finally {
+			restore();
+		}
 	});
 });
 

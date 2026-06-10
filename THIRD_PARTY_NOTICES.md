@@ -393,7 +393,7 @@ shipped inside the installed application under
 `resources/licenses/<spdx-id>.txt`.
 
 If you have received WinSTT without those license files, contact
-dahshury@gmail.com and a copy will be provided at no cost.
+opensource@example.test and a copy will be provided at no cost.
 
 ---
 

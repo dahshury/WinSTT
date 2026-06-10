@@ -1,6 +1,4 @@
-// PORT - WU-0 (docs/archive/port/10_frontend_port_plan.md sections 2/3).
-//
-// THE single new renderer file the WinSTT-to-Tauri port introduced. It installs a
+// Renderer-to-Tauri bridge. It installs a
 // `window.nativeBridge` polyfill backed by `@tauri-apps/api` so the entire
 // ~401-file WinSTT renderer (and `ipc-client.ts` itself) runs VERBATIM. Every
 // `nativeBridge.{send,invoke,secureInvoke,on,getPathForFile}` call routes either
@@ -202,6 +200,10 @@ const ROUTE: Partial<Record<string, Route>> = {
 		kind: "event",
 		event: "stt:model-download-complete",
 	},
+	[IPC.STT_MODEL_DOWNLOAD_PAUSED]: {
+		kind: "event",
+		event: "stt:model-download-paused",
+	},
 	[IPC.STT_MODEL_CACHE_CHANGED]: {
 		kind: "event",
 		event: "stt:model-cache-changed",
@@ -313,6 +315,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.TTS_PLAYBACK_STARTED]: { kind: "event", event: "tts:playback-started" },
 	[IPC.TTS_PLAYBACK_ENDED]: { kind: "event", event: "tts:playback-ended" },
 	[IPC.TTS_PAUSE_PLAYBACK]: { kind: "event", event: "tts:pause-playback" },
+	[IPC.TTS_RESUME_PLAYBACK]: { kind: "event", event: "tts:resume-playback" },
 	[IPC.TTS_DISCARD_PLAYBACK]: {
 		kind: "event",
 		event: "tts:discard-playback",

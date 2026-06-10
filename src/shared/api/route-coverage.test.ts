@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
-// ── Route-coverage guard (HANDY_VS_WINSTT_AUDIT.md #8 interim) ──────────────────
+// ── Route-coverage guard ────────────────────────────────────────────────────────
 //
 // The renderer crosses the IPC boundary through an UNTYPED string-channel adapter
 // (`native-bridge-adapter.ts`): each route names a backend command as a bare

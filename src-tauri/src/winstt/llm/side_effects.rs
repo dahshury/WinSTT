@@ -762,7 +762,7 @@ mod tests {
             " WinSTT ".to_string(),
             "winstt".to_string(),
             "Base UI".to_string(),
-            "someone@example.com".to_string(),
+            "someone@example.test".to_string(),
         ]);
         assert_eq!(merged, vec!["WinSTT", "Base UI"]);
     }

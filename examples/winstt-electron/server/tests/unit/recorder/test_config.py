@@ -23,7 +23,7 @@ class TestRecorderConfig:
         config = RecorderConfig()
         assert config.audio.sample_rate == 16000
         assert config.audio.buffer_size == 512
-        # 0.7 → Silero trip threshold 0.3, matching Handy. The
+        # 0.7 -> Silero trip threshold 0.3. The
         # previous 0.4 default (trip > 0.6) silently rejected
         # quiet / distant speech.
         assert config.vad.silero_sensitivity == 0.7

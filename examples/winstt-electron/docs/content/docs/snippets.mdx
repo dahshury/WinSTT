@@ -4,7 +4,7 @@ description: Expand a short spoken trigger into a longer block of text — addre
 ---
 
 Snippets turn a short phrase you say into a longer block of text. Say "my email
-address" and WinSTT pastes `you@example.com`; say "sign off" and it drops in your
+address" and WinSTT pastes `user@example.test`; say "sign off" and it drops in your
 full signature. The expansion happens on the server, after transcription, before the
 text reaches your cursor.
 
@@ -74,7 +74,7 @@ per-row confirmation. With no snippets saved, the table shows *"No snippets yet"
 <ModelTable
   head={["Trigger", "Expansion"]}
   rows={[
-    ["my email address", "you@example.com"],
+    ["my email address", "user@example.test"],
     ["my address", "123 Main St, City, ST 12345"],
     ["sign off", "Best regards,\nJane Smith"],
     ["standup blurb", "Yesterday I … Today I … Blockers: none."],

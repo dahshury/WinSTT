@@ -15,7 +15,6 @@
 //      user sees (zero drift from a second transcription). Empty `known_text` → the aligner's own
 //      words are returned verbatim.
 
-use std::sync::Arc;
 use std::sync::Mutex;
 
 use tauri::AppHandle;
@@ -29,7 +28,6 @@ const DEFAULT_ALIGN_MODEL: &str = "onnx-community/whisper-tiny_timestamped";
 
 pub struct WordAligner {
     app: AppHandle,
-    model_manager: Arc<crate::managers::model::ModelManager>,
     /// Lazily-initialized cross-attention DTW engine. `None` until first use; `Some(None)` after a
     /// load FAILURE so we don't retry-storm on every play (documented degrade = no highlight). The
     /// inner `Option` distinguishes "never tried" from "tried and unavailable".
@@ -37,10 +35,9 @@ pub struct WordAligner {
 }
 
 impl WordAligner {
-    pub fn new(app: &AppHandle, model_manager: Arc<crate::managers::model::ModelManager>) -> Self {
+    pub fn new(app: &AppHandle) -> Self {
         Self {
             app: app.clone(),
-            model_manager,
             engine: Mutex::new(None),
         }
     }
@@ -127,10 +124,6 @@ impl WordAligner {
     /// dominates), and CPU sidesteps the DML cross-attention output path. Returns `None` on any
     /// failure (missing model, resolve error, build error) — the caller degrades to no highlight.
     fn try_load_engine(&self) -> Option<Box<dyn stt::Transcriber>> {
-        // Keep the model_manager handle referenced — the aligner shares the app's model namespace
-        // for future custom-aligner overrides, but the timestamped export is resolved by repo id.
-        let _ = &self.model_manager;
-
         let req = stt::resolver::ResolveRequest {
             model_id: DEFAULT_ALIGN_MODEL.to_string(),
             kind: stt::EngineKind::WhisperHf,

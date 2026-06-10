@@ -8,7 +8,7 @@
 // The renderer's `alignTranscriptionHistoryAudio(id)` passes the
 // STRING id from the legacy `TranscriptionHistoryEntry` (= the DB row's integer
 // id rendered as a string — see winstt/commands/history.rs `to_transcription_entry`).
-// We resolve that row via Handy's `HistoryManager`, read its WAV (16 kHz mono i16
+// We resolve that row via `HistoryManager`, read its WAV (16 kHz mono i16
 // → f32 normalised), and feed the aligner with the entry's raw transcript
 // text so playback follows the words the user actually spoke, not any LLM
 // rewrite rendered as the row's default text.

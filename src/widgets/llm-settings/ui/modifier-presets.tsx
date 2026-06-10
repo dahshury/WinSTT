@@ -64,6 +64,7 @@ import {
 	setTone,
 	toggleIndependent,
 } from "../lib/llm-settings-panel-test-helpers";
+import enMessages from "../../../messages/en.json";
 import {
 	type LlmConfiguration,
 	matchConfigurationId,
@@ -84,6 +85,123 @@ const INDEPENDENT_PRESET_ICONS: Readonly<
 	rewordForClarity: MagicWand01Icon,
 	translate: LanguageSkillIcon,
 };
+
+/** i18n keys for each built-in modifier's hover tooltip: a one-line
+ *  description plus a tiny before → after example. */
+const PRESET_TOOLTIP_KEYS = {
+	summarize: {
+		desc: "presetSummarizeDesc",
+		before: "presetSummarizeExampleBefore",
+		after: "presetSummarizeExampleAfter",
+	},
+	concise: {
+		desc: "presetConciseDesc",
+		before: "presetConciseExampleBefore",
+		after: "presetConciseExampleAfter",
+	},
+	reorder: {
+		desc: "presetReorderDesc",
+		before: "presetReorderExampleBefore",
+		after: "presetReorderExampleAfter",
+	},
+	restructure: {
+		desc: "presetRestructureDesc",
+		before: "presetRestructureExampleBefore",
+		after: "presetRestructureExampleAfter",
+	},
+	rewordForClarity: {
+		desc: "presetRewordForClarityDesc",
+		before: "presetRewordForClarityExampleBefore",
+		after: "presetRewordForClarityExampleAfter",
+	},
+	translate: {
+		desc: "presetTranslateDesc",
+		before: "presetTranslateExampleBefore",
+		after: "presetTranslateExampleAfter",
+	},
+} as const satisfies Readonly<
+	Record<IndependentKey, { after: string; before: string; desc: string }>
+>;
+
+type EnglishMessageMap = Record<string, string | undefined>;
+const EN_LLM_MESSAGES = ((enMessages as { llm?: EnglishMessageMap }).llm ??
+	{}) as EnglishMessageMap;
+const MISSING_KEY_PREFIX = "llm";
+
+function toMessageFallback(key: string): string | undefined {
+	const exact = EN_LLM_MESSAGES[key];
+	if (exact) {
+		return exact;
+	}
+	const target = key.toLowerCase();
+	for (const [rawKey, value] of Object.entries(EN_LLM_MESSAGES)) {
+		if (rawKey.toLowerCase() === target) {
+			return value;
+		}
+	}
+	return undefined;
+}
+
+function isMissingTranslationResult(value: string, key: string): boolean {
+	const candidate = `${MISSING_KEY_PREFIX}.${key}`;
+	return (
+		value === key ||
+		value === candidate ||
+		value.toLowerCase() === candidate.toLowerCase()
+	);
+}
+
+function tWithEnglishFallback(
+	t: TranslateFn,
+	key: string,
+) {
+	const translated = t(key);
+	if (isMissingTranslationResult(translated, key)) {
+		return toMessageFallback(key) ?? translated;
+	}
+	return translated;
+}
+
+/** Beautified tooltip body for a modifier row: the description up top, then a
+ *  framed example card showing the transformation (before → after). Rendered
+ *  inside the tooltip popup's SurfaceProvider, so the card sits one surface
+ *  step above the popup. */
+function ModifierTooltipBody({
+	after,
+	before,
+	desc,
+	exampleLabel,
+}: {
+	after?: string;
+	before?: string;
+	desc: string;
+	exampleLabel: string;
+}) {
+	const cardLevel = Math.min(useSurface() + 1, 8);
+	return (
+		<span className="flex w-60 flex-col gap-1.5">
+			<span className="text-foreground-secondary">{desc}</span>
+			{before && after ? (
+				<span
+					className={`flex flex-col gap-0.5 rounded-md px-2 py-1.5 ring-1 ring-divider-strong ring-inset ${surfaceClasses(cardLevel)}`}
+				>
+					<span className="text-[9.5px] text-foreground-muted uppercase tracking-[0.08em]">
+						{exampleLabel}
+					</span>
+					<span className="text-foreground-muted italic" dir="auto">
+						“{before}”
+					</span>
+					<span aria-hidden="true" className="text-accent leading-none">
+						↓
+					</span>
+					<span className="text-foreground" dir="auto">
+						“{after}”
+					</span>
+				</span>
+			) : null}
+		</span>
+	);
+}
 
 /** Combobox options for the translate row. The persisted value is the English
  *  name (also the option id), so an unknown/legacy `targetLang` still round-
@@ -222,6 +340,14 @@ function CustomModifierRow({
 				/>
 			}
 			onToggle={() => onToggle(modifier.id, !modifier.enabled)}
+			tooltip={
+				modifier.prompt ? (
+					<ModifierTooltipBody
+						desc={modifier.prompt}
+						exampleLabel={t("modifierExampleLabel")}
+					/>
+				) : undefined
+			}
 			trailing={
 				<div className="flex items-center gap-1">
 					{modifier.levelsEnabled ? (
@@ -558,6 +684,23 @@ function IndependentPresetList({
 								levelCache[key],
 								isTranslate ? langCache : undefined,
 							)
+						}
+						tooltip={
+							<ModifierTooltipBody
+								after={tWithEnglishFallback(
+									t,
+									PRESET_TOOLTIP_KEYS[key].after,
+								)}
+								before={tWithEnglishFallback(
+									t,
+									PRESET_TOOLTIP_KEYS[key].before,
+								)}
+								desc={tWithEnglishFallback(
+									t,
+									PRESET_TOOLTIP_KEYS[key].desc,
+								)}
+								exampleLabel={t("modifierExampleLabel")}
+							/>
 						}
 						trailing={trailing}
 					/>

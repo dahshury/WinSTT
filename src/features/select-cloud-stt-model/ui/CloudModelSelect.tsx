@@ -17,8 +17,8 @@ import type {
 	CloudSttProvider,
 	OpenRouterModel,
 	OpenRouterSttModel,
-	OpenRouterVariant,
 } from "@/shared/api/models";
+import { parseOpenrouterId } from "@/shared/lib/openrouter-picker-id";
 import { Button } from "@/shared/ui/button";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
@@ -54,15 +54,6 @@ const OPENROUTER_STT_FAVORITE_MODELS_STORAGE_KEY =
 	"winstt:openrouter-stt-favorite-models";
 const OPENROUTER_STT_FAVORITE_PROVIDERS_STORAGE_KEY =
 	"winstt:openrouter-stt-favorite-providers";
-const OPENROUTER_VARIANTS: readonly OpenRouterVariant[] = [
-	"exacto",
-	"extended",
-	"floor",
-	"free",
-	"nitro",
-	"online",
-	"thinking",
-];
 
 function stripOpenrouterSelectionPrefix(modelId: string): string {
 	return modelId.startsWith(OPENROUTER_SELECTION_PREFIX)
@@ -74,35 +65,6 @@ function prefixOpenrouterSelection(modelId: string): string {
 	return modelId
 		? `${OPENROUTER_SELECTION_PREFIX}${modelId}`
 		: defaultCloudModelId("openrouter");
-}
-
-function parseOpenrouterId(id: string): {
-	maker?: string;
-	modelName: string;
-	variant?: OpenRouterVariant;
-} {
-	let base = id;
-	let variant: OpenRouterVariant | undefined;
-	for (const candidate of OPENROUTER_VARIANTS) {
-		const suffix = `:${candidate}`;
-		if (base.endsWith(suffix)) {
-			base = base.slice(0, -suffix.length);
-			variant = candidate;
-			break;
-		}
-	}
-	const parts = base.split("/").filter(Boolean);
-	if (parts.length <= 1) {
-		return {
-			modelName: parts[0] ?? id,
-			...(variant ? { variant } : {}),
-		};
-	}
-	return {
-		maker: (parts[0] as string).replace(/^~+/, ""),
-		modelName: parts.slice(1).join("/"),
-		...(variant ? { variant } : {}),
-	};
 }
 
 function sttModelToOpenrouterPickerModel(

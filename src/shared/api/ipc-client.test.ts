@@ -289,6 +289,16 @@ describe("send wrappers (migrated to typed commands)", () => {
 		]);
 	});
 
+	test("TTS media playback pause/resume requests route through backend commands", () => {
+		installMockApi();
+		ipc.ttsRequestPlaybackPause();
+		ipc.ttsRequestPlaybackResume();
+		expect(tauriCalls).toEqual([
+			{ cmd: "tts_pause_playback", args: { reason: "media-session" } },
+			{ cmd: "tts_resume_playback", args: { reason: "media-session" } },
+		]);
+	});
+
 	test("sttSetParameter and sttCallMethod route to winstt_set_parameter / winstt_call_method", () => {
 		installMockApi();
 		ipc.sttSetParameter("model", "tiny");

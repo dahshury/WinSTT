@@ -6,8 +6,7 @@
 // RemoteTranscriber adapter sends the WAV bytes to the main process over WS;
 // in the Rust/Tauri port there is NO Python and NO WS â€” the
 // TranscriptionManager calls `CloudSttManager::transcribe` directly when the
-// active model is a cloud model (`openrouter:*` / `elevenlabs:*`), exactly the way
-// Handy's in-process flow calls `transcribe-rs`. So this module exposes the
+// active model is a cloud model (`openrouter:*` / `elevenlabs:*`). This module exposes the
 // pure classification + request-shape layer, and the upload itself lives in
 // `managers::CloudSttManager`.
 //
@@ -429,7 +428,7 @@ pub fn trigger_connectivity_watch(app: &AppHandle, provider: CloudSttProvider) {
 }
 
 /// The transcribe request. `audio_wav` is the raw WAV bytes (16k mono i16,
-/// the format WinSTT/Handy capture). `media_type` is the multipart content
+/// the format WinSTT captures). `media_type` is the multipart content
 /// type (e.g. "audio/wav").
 #[derive(Debug, Clone)]
 pub struct CloudTranscribeRequest {
@@ -561,7 +560,7 @@ pub fn default_cloud_model_id(provider: CloudSttProvider) -> String {
     }
 }
 
-/// Encode 16 kHz mono f32 samples (the WinSTT/Handy capture format) into an
+/// Encode 16 kHz mono f32 samples (the WinSTT capture format) into an
 /// in-memory WAV byte buffer for the multipart upload. Mirrors
 /// `audio_toolkit::save_wav_file` but writes to a `Vec<u8>` (Cursor) instead of
 /// a file so the bytes never hit disk. 16-bit PCM, 16 kHz, mono.

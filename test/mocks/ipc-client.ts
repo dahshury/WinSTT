@@ -674,6 +674,10 @@ export function ipcClientMock(): Record<string, unknown> {
 				source: "empty",
 			}),
 		ttsCancel: (requestId?: string) => send(IPC.TTS_CANCEL, { requestId }),
+		ttsRequestPlaybackPause: (reason = "media-session") =>
+			send(IPC.TTS_REQUEST_PLAYBACK_PAUSE, { reason }),
+		ttsRequestPlaybackResume: (reason = "media-session") =>
+			send(IPC.TTS_REQUEST_PLAYBACK_RESUME, { reason }),
 		ttsInstallPause: () => send(IPC.TTS_INSTALL_PAUSE, {}),
 		ttsInstallResume: () => send(IPC.TTS_INSTALL_RESUME, {}),
 		ttsInstallCancel: () => send(IPC.TTS_INSTALL_CANCEL, {}),
@@ -693,6 +697,8 @@ export function ipcClientMock(): Record<string, unknown> {
 			onCast(IPC.TTS_PLAYBACK_ENDED, cb),
 		onTtsPausePlayback: (cb: () => void) =>
 			onCast<Record<string, never>>(IPC.TTS_PAUSE_PLAYBACK, () => cb()),
+		onTtsResumePlayback: (cb: () => void) =>
+			onCast<Record<string, never>>(IPC.TTS_RESUME_PLAYBACK, () => cb()),
 		onTtsDiscardPlayback: (cb: () => void) =>
 			onCast<Record<string, never>>(IPC.TTS_DISCARD_PLAYBACK, () => cb()),
 		onTtsModelDownloadStart: (cb: () => void) =>

@@ -240,9 +240,8 @@ describe("generalSettingsSchema", () => {
 
 describe("hotkeySettingsSchema", () => {
 	test("default is LCtrl+LMeta", () => {
-		// `LCtrl+LMeta` (Ctrl+Win) is the original WinSTT PTT default. The Win key
-		// is disguised at the hook level so it doesn't pop the Start menu (see
-		// shortcut/handy_keys.rs); press/release dispatch normally.
+		// `LCtrl+LMeta` is the original WinSTT PTT default. Modifier-only PTT
+		// combos are handled by the Windows modifier listener, not Tauri.
 		expect(hotkeySettingsSchema.parse({}).pushToTalkKey).toBe("LCtrl+LMeta");
 	});
 

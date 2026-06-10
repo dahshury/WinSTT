@@ -5,9 +5,9 @@ and the transcription lands at your cursor in any app. It also includes
 real-time preview, file transcription, dictionary corrections, snippets,
 transcription history, optional LLM cleanup, and text-to-speech.
 
-**Docs:** [dahshury.github.io/WinSTT](https://dahshury.github.io/WinSTT/) ·
-**Latest Windows download:** [WinSTT.exe](https://github.com/dahshury/WinSTT/releases/latest/download/WinSTT.exe) ·
-[Releases](https://github.com/dahshury/WinSTT/releases)
+**Docs:** [winstt.github.io/WinSTT](https://winstt.github.io/WinSTT/) ·
+**Latest Windows download:** [WinSTT.exe](https://github.com/winstt/WinSTT/releases/latest/download/WinSTT.exe) ·
+[Releases](https://github.com/winstt/WinSTT/releases)
 
 This repository is the Rust + Tauri implementation. The original Electron +
 Python app remains under [`examples/winstt-electron/`](examples/winstt-electron/)
@@ -93,7 +93,7 @@ standalone executable.
 ## Documentation
 
 The public documentation site is
-[https://dahshury.github.io/WinSTT/](https://dahshury.github.io/WinSTT/). The
+[https://winstt.github.io/WinSTT/](https://winstt.github.io/WinSTT/). The
 TanStack Start + Fumadocs source lives in [`docs/`](docs/) and deploys to GitHub
 Pages through [`.github/workflows/pages.yml`](.github/workflows/pages.yml).
 

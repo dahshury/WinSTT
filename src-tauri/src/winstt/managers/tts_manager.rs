@@ -35,7 +35,7 @@ use crate::winstt::commands::settings::read_settings;
 use crate::winstt::managers::tts_download_manager::{TtsDownloadErr, TtsDownloadManager};
 use crate::winstt::model_swap::ModelSwapCoordinator;
 use crate::winstt::settings_schema::{
-    DeviceType, TtsCloudProvider, TtsSource as SettingsTtsSource,
+    DeviceType, TtsCloudProvider, TtsSource as SettingsTtsSource, WinsttSettings,
 };
 use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::tts::catalog::{self, TtsEngineId};
@@ -113,6 +113,29 @@ fn tts_idle_unload_duration(timeout: crate::settings::ModelUnloadTimeout) -> Opt
 
 fn tts_engine_key(source: TtsSource, fingerprint: &str) -> String {
     format!("tts:{source:?}:{fingerprint}")
+}
+
+/// Resolve which cloud-TTS provider to ACTUALLY use. The persisted
+/// `tts.cloud.provider` can outlive its key — the renderer defaults the field to
+/// `elevenlabs` before any key exists, and a key can later be removed — so
+/// trusting it verbatim strands read-aloud on an unreachable provider (the bug:
+/// `provider = elevenlabs` while only an OpenRouter key is set made every read
+/// fail "no ElevenLabs API key", and the hotkey path do nothing). Honour the
+/// persisted choice when its key is present; otherwise fall back to whichever
+/// provider IS keyed. Mirrors the renderer's `cloudProvider` resolution so the
+/// engine the backend builds matches the picker the user sees. Neither keyed →
+/// keep the persisted value so the engine surfaces the matching "add a key"
+/// error instead of silently picking one.
+fn effective_cloud_provider(s: &WinsttSettings) -> TtsCloudProvider {
+    let eleven_keyed = !s.integrations.elevenlabs.api_key.trim().is_empty();
+    let openrouter_keyed = !s.llm.openrouter_api_key.trim().is_empty();
+    match s.tts.cloud.provider {
+        TtsCloudProvider::Openrouter if openrouter_keyed => TtsCloudProvider::Openrouter,
+        TtsCloudProvider::Elevenlabs if eleven_keyed => TtsCloudProvider::Elevenlabs,
+        _ if openrouter_keyed => TtsCloudProvider::Openrouter,
+        _ if eleven_keyed => TtsCloudProvider::Elevenlabs,
+        other => other,
+    }
 }
 
 struct ActiveTtsUseGuard<'a> {
@@ -327,7 +350,7 @@ impl TtsManager {
                 TtsSource::Local,
                 format!("local|{}|{device_tag}", s.tts.model),
             ),
-            SettingsTtsSource::Cloud => match s.tts.cloud.provider {
+            SettingsTtsSource::Cloud => match effective_cloud_provider(&s) {
                 TtsCloudProvider::Elevenlabs => (
                     TtsSource::Cloud,
                     format!(
@@ -487,7 +510,7 @@ impl TtsManager {
             let engine: Arc<dyn TtsEngine> = match source {
                 TtsSource::Local => self.build_local_engine(),
                 TtsSource::Cloud => {
-                    let provider = read_settings(&self.app).tts.cloud.provider;
+                    let provider = effective_cloud_provider(&read_settings(&self.app));
                     match provider {
                         TtsCloudProvider::Elevenlabs => {
                             let (key, model, settings) = self.cloud_config();
@@ -920,7 +943,7 @@ impl TtsManager {
     }
 
     fn selected_cloud_provider(&self) -> CloudSttProvider {
-        match read_settings(&self.app).tts.cloud.provider {
+        match effective_cloud_provider(&read_settings(&self.app)) {
             TtsCloudProvider::Elevenlabs => CloudSttProvider::ElevenLabs,
             TtsCloudProvider::Openrouter => CloudSttProvider::OpenRouter,
         }
@@ -1033,7 +1056,7 @@ impl TtsManager {
             ),
             TtsSource::Cloud => (
                 if voice.is_empty() {
-                    match s.tts.cloud.provider {
+                    match effective_cloud_provider(&s) {
                         TtsCloudProvider::Elevenlabs => s.tts.cloud.voice.clone(),
                         TtsCloudProvider::Openrouter => s.tts.cloud.openrouter_voice.clone(),
                     }
@@ -1257,6 +1280,72 @@ mod tests {
         assert_eq!(
             tts_idle_unload_duration(ModelUnloadTimeout::Sec15),
             Some(Duration::from_secs(15))
+        );
+    }
+
+    fn settings_with_keys(
+        persisted: TtsCloudProvider,
+        eleven: &str,
+        openrouter: &str,
+    ) -> WinsttSettings {
+        let mut s = WinsttSettings::default();
+        s.tts.cloud.provider = persisted;
+        s.integrations.elevenlabs.api_key = eleven.to_string();
+        s.llm.openrouter_api_key = openrouter.to_string();
+        s
+    }
+
+    #[test]
+    fn effective_cloud_provider_honours_persisted_when_keyed() {
+        // Both keyed → keep the persisted choice (either direction).
+        assert_eq!(
+            effective_cloud_provider(&settings_with_keys(
+                TtsCloudProvider::Elevenlabs,
+                "el-key",
+                "or-key"
+            )),
+            TtsCloudProvider::Elevenlabs
+        );
+        assert_eq!(
+            effective_cloud_provider(&settings_with_keys(
+                TtsCloudProvider::Openrouter,
+                "el-key",
+                "or-key"
+            )),
+            TtsCloudProvider::Openrouter
+        );
+    }
+
+    #[test]
+    fn effective_cloud_provider_falls_back_to_the_keyed_one() {
+        // THE BUG: persisted elevenlabs (renderer default) but only OpenRouter
+        // keyed → must route to OpenRouter, not fail "no ElevenLabs key".
+        assert_eq!(
+            effective_cloud_provider(&settings_with_keys(
+                TtsCloudProvider::Elevenlabs,
+                "   ",
+                "or-key"
+            )),
+            TtsCloudProvider::Openrouter
+        );
+        // Symmetric: persisted openrouter, only ElevenLabs keyed → ElevenLabs.
+        assert_eq!(
+            effective_cloud_provider(&settings_with_keys(
+                TtsCloudProvider::Openrouter,
+                "el-key",
+                ""
+            )),
+            TtsCloudProvider::Elevenlabs
+        );
+    }
+
+    #[test]
+    fn effective_cloud_provider_keeps_persisted_when_neither_keyed() {
+        // Nothing keyed → keep persisted so the engine raises the matching
+        // "add a key" error rather than silently picking a provider.
+        assert_eq!(
+            effective_cloud_provider(&settings_with_keys(TtsCloudProvider::Elevenlabs, "", "")),
+            TtsCloudProvider::Elevenlabs
         );
     }
 }

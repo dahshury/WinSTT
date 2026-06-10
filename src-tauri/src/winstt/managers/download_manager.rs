@@ -212,6 +212,18 @@ impl DownloadManager {
         self.emit_cache_changed(model);
     }
 
+    /// `stt:model-download-paused` — broadcast so EVERY window flips the per-quant entry to paused,
+    /// not just the one that issued the pause. A paused worker emits no further progress, so without
+    /// this a pause from the detached picker window leaves the settings-window selector trigger
+    /// stuck on "Downloading X%" (its store never learns the download parked). Resume re-emits
+    /// `stt:model-download-start`, which the renderer treats as the inverse signal.
+    fn emit_paused(&self, model: &str, quantization: Option<&str>) {
+        let _ = self.app.emit(
+            "stt:model-download-paused",
+            json!({ "model": model, "quantization": quantization }),
+        );
+    }
+
     /// `stt:model-cache-changed` — drives `onModelCacheChanged` → model-state refetch. Also drops
     /// the cached scan memo (audit #7) so the very next `list_models_with_state` re-walks the cache
     /// and reflects the just-changed on-disk state instead of a stale snapshot.
@@ -376,13 +388,21 @@ impl DownloadManager {
     }
 
     pub fn pause_quant(&self, model: &str, quantization: &str) {
-        if let Some(h) = self
-            .inflight
-            .lock()
-            .expect("download registry poisoned")
-            .get(&key(model, quantization))
-        {
-            h.paused.store(true, Ordering::Release);
+        let parked = {
+            let map = self.inflight.lock().expect("download registry poisoned");
+            match map.get(&key(model, quantization)) {
+                Some(h) => {
+                    h.paused.store(true, Ordering::Release);
+                    true
+                }
+                None => false,
+            }
+        };
+        // Broadcast AFTER dropping the registry lock (the renderer fan-out must not race it). Only
+        // when a live handle was actually flagged — a pause for an unknown/finished key is a no-op
+        // and must not tell windows to paint a paused badge for a download that isn't there.
+        if parked {
+            self.emit_paused(model, Some(quantization));
         }
     }
 
@@ -570,8 +590,13 @@ impl DownloadManager {
                         .get(q)
                         .copied()
                         .unwrap_or((CacheState::NotCached, 0, 0));
-                if entry.0 != CacheState::Cached && inflight.contains_key(&key(&m.id, q)) {
-                    entry.0 = CacheState::Partial;
+                if entry.0 != CacheState::Cached {
+                    if let Some(handle) = inflight.get(&key(&m.id, q)) {
+                        let (downloaded, total) = handle.agg.totals();
+                        entry.1 = entry.1.max(downloaded);
+                        entry.2 = entry.2.max(total).max(entry.1);
+                        entry.0 = CacheState::Partial;
+                    }
                 }
                 by_quant.insert(q.clone(), entry);
             }

@@ -110,7 +110,7 @@ The release workflow (`.github/workflows/electron-release.yml`) fans the three j
 
 ## 8. Process expectations
 
-- **Feature requests go in [Discussions](https://github.com/dahshury/WinSTT/discussions), not Issues.** Issues are reserved for bugs and well-scoped tasks. New features land best when sketched in Discussions first, then PR'd with the discussion link in the body.
+- **Feature requests go in [Discussions](https://github.com/winstt/WinSTT/discussions), not Issues.** Issues are reserved for bugs and well-scoped tasks. New features land best when sketched in Discussions first, then PR'd with the discussion link in the body.
 - **One feature/fix per PR.** Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md) — every PR has a Human-Written Summary and a Community Feedback section.
 - **AI-assisted PRs are welcome** but must disclose AI usage in the PR description (tools, scope). See the AI Assistance Disclosure section in `CONTRIBUTING.md`.
 - **No commits without explicit ask.** If you're an AI assistant: do not run `git commit` unless the human asked for it. Show the diff, let the human decide.

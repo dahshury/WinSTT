@@ -160,7 +160,6 @@ Do not execute these as cleanup until a product or architecture decision exists:
 
 - Deleting locales from `messages/`.
 - Deleting or moving `examples/winstt-electron/`.
-- Removing `src-tauri/vendor/handy-keys/` while Cargo patching depends on it.
 - Replacing STT/TTS engine implementations with descriptor tables.
 - Dropping legacy settings migrations before a dated migration cutoff.
 - Moving generated/data files solely to improve LOC charts.

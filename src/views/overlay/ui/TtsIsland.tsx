@@ -7,6 +7,11 @@ import {
 	useVisualizerStore,
 } from "@/features/audio-visualizer";
 import { ttsSetSpeed } from "@/shared/api/ipc-client";
+import {
+	clampTtsSpeed,
+	nextTtsSpeedPreset,
+	ttsSpeedPresets,
+} from "@/shared/config/tts-speed";
 import { Spinner } from "@/shared/ui/spinner";
 import {
 	DynamicIsland,
@@ -121,37 +126,33 @@ function IslandControlButton({
 	);
 }
 
-// Read-aloud speed steps per source. Local Kokoro accepts 0.5–2.0; ElevenLabs
-// clamps `voice_settings.speed` to 0.7–1.2. Mirrors `electron/ipc/tts-reader.ts`
-// (separate runtimes can't share the const); the reference re-clamps defensively.
-const TTS_LOCAL_SPEEDS = [1, 1.25, 1.5, 2] as const;
-const TTS_CLOUD_SPEEDS = [0.9, 1, 1.1, 1.2] as const;
-
-function nextTtsSpeed(current: number, cloud: boolean): number {
-	const steps = cloud ? TTS_CLOUD_SPEEDS : TTS_LOCAL_SPEEDS;
-	const idx = steps.findIndex((s) => Math.abs(s - current) < 0.001);
-	if (idx !== -1) {
-		return steps[(idx + 1) % steps.length] ?? current;
-	}
-	return steps.find((s) => s > current) ?? steps[0] ?? current;
-}
-
 /**
- * Speed pill — shows the current read-aloud rate (e.g. `1.5Ã—`) and cycles to the
- * next step on tap. The new speed applies to the read's UPCOMING sentences
- * (natural pitch) and is persisted by the main process.
+ * Speed pill — shows the current read-aloud rate (e.g. `1.5×`) and cycles to the
+ * next preset on tap. The new speed applies to the read's UPCOMING sentences
+ * (natural pitch) and is persisted by the main process (`tts_set_speed`). The
+ * preset list is per-model (`ttsSpeedPresets`) so it never offers a speed the
+ * engine would clamp/truncate — e.g. Supertonic drops the 2× step.
  */
 function formatTtsSpeed(speed: number): string {
 	return `${speed}x`;
 }
 
-function SpeedButton({ speed, cloud }: { speed: number; cloud: boolean }) {
+function SpeedButton({
+	speed,
+	cloud,
+	model,
+}: {
+	speed: number;
+	cloud: boolean;
+	model: string | undefined;
+}) {
 	const label = formatTtsSpeed(speed);
+	const presets = ttsSpeedPresets(model, cloud);
 	return (
 		<BaseButton
 			aria-label={`Reading speed ${label}, tap to change`}
 			className={`pointer-events-auto flex h-[18px] shrink-0 items-center justify-center rounded-full px-1.5 font-medium text-[10px] text-white/75 tabular-nums transition-colors hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
-			onClick={() => ttsSetSpeed(nextTtsSpeed(speed, cloud))}
+			onClick={() => ttsSetSpeed(nextTtsSpeedPreset(speed, presets))}
 			title={`Reading speed ${label}`}
 			type="button"
 		>
@@ -174,9 +175,15 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 		setSize("compactMedium");
 	}
 	const cloud = useSettingsStore((s) => s.settings.tts?.source) === "cloud";
-	const speed = useSettingsStore((s) =>
+	const model = useSettingsStore((s) => s.settings.tts?.model);
+	const rawSpeed = useSettingsStore((s) =>
 		cloud ? (s.settings.tts?.cloud?.speed ?? 1) : (s.settings.tts?.speed ?? 1),
 	);
+	// Clamp the local display to the model's supported range so a stale persisted
+	// value above the new ceiling (e.g. an old 1.5 on Supertonic) shows the value
+	// the engine actually plays, not a phantom faster rate. Cloud has its own
+	// provider clamp and isn't model-scoped here.
+	const speed = cloud ? rawSpeed : clampTtsSpeed(model, rawSpeed);
 	const loading = status === "loading";
 	const paused = status === "paused";
 	return (
@@ -204,7 +211,7 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 					)}
 				</div>
 				<div className="pointer-events-auto flex items-center gap-2">
-					<SpeedButton cloud={cloud} speed={speed} />
+					<SpeedButton cloud={cloud} model={model} speed={speed} />
 					{loading ? null : (
 						<IslandControlButton
 							kind={paused ? "play" : "pause"}

@@ -146,28 +146,95 @@ describe("preset-prompts", () => {
 		// Regression: restructure numbered every sentence of a connected
 		// statement+question ("…Whisper models… Is that correct?") as 1-/2-/3-.
 		const r = getPresetPrompt("restructure");
-		expect(r.toLowerCase()).toContain("actively identify content");
+		expect(r.toLowerCase()).toContain("actively reshape content");
 		expect(r).toContain(
 			"Do NOT convert text to a list merely because it has several sentences",
 		);
 		expect(r.toLowerCase()).toContain(
 			"never turn a standalone question into a list item",
 		);
-		expect(r).toContain("numbered lines for real steps");
-		expect(r).toContain("bullet lines for parallel items");
+		expect(r).toContain("announces a count");
+		expect(r).toContain("numbered list");
+		expect(r).toContain("exactly as many items as the announced count");
+		expect(r).toContain("Never leave an announced enumeration inline");
+		expect(r).toContain("`* ` bullet lines (not `- `)");
+		expect(r).toContain("label-value mappings");
+		expect(r).toContain("blank line before and after every list");
+		// The general boundary rule that replaced the case-specific
+		// "then first problem" phrasing: a list ends where the enumeration ends.
+		expect(r).toContain("A list ends where the enumeration ends");
+		expect(r.toLowerCase()).toContain("never absorb the new topic");
 	});
 
-	test("Polish base handles cleanup and forbids unprompted list/structure", () => {
-		// Regression: with no restructure modifier the model spontaneously
-		// turned a few sentences into a numbered list with blank lines.
+	test("reorder moves requests only when they stand alone", () => {
+		const r = getPresetPrompt("reorder");
+		expect(r).toContain("only when it improves the sequence");
+		expect(r).toContain("does not depend on preceding context");
+		expect(r).toContain("any existing list structure");
+		expect(r).toContain("do not summarize or invent");
+	});
+
+	test("reword for clarity repairs slips conservatively and keeps voice", () => {
+		const r = getPresetPrompt("rewordForClarity");
+		expect(r).toContain("wrong-word slips");
+		expect(r).toContain('"adopt to the request" -> "adapt to the request"');
+		expect(r).toContain("when intent is unclear, keep the dictated wording");
+		expect(r.toLowerCase()).toContain("vague placeholders");
+		expect(r).toContain('do not change "we" to "you"');
+		expect(r).toContain("Preserve incomplete trailing fragments exactly");
+	});
+
+	test("Polish base handles generalized cleanup and forbids unprompted structure", () => {
 		const base = getPresetPrompt("neutral");
-		expect(base).toContain("do not reorganize prose into lists");
-		expect(base).toContain("do not introduce blank lines");
-		expect(base).toContain("Convert spoken numbers to written numeric forms");
-		expect(base).toContain("one point five gigabytes");
-		expect(base).toContain("Use one space between words");
+		expect(base).toContain("Core cleanup:");
+		expect(base).toContain("Spoken-form conversion:");
+		expect(base).toContain("Labels and quoting:");
+		expect(base).toContain("Mishearing repair:");
+		expect(base).toContain("Safety and scope:");
+		expect(base).toContain("Do not add lists");
+		expect(base).toContain("figures and symbols");
+		expect(base).toContain('"fifty percent" -> "50%"');
 		// Spoken layout commands must still survive the prohibition.
 		expect(base).toContain("new paragraph");
+		// Preservation outranks polish — the core small-model guardrail.
+		expect(base).toContain("Preservation outranks polish");
+	});
+
+	test("post-processing prompt stays generalized rather than exact-output overfit", () => {
+		const out = buildSystemPrompt([
+			{ key: "neutral" },
+			{ key: "reorder" },
+			{ key: "restructure" },
+			{ key: "rewordForClarity" },
+			{ key: "concise", level: "high" },
+		]);
+		expect(out).toContain("Core cleanup:");
+		expect(out).not.toMatch(/exact output/i);
+		expect(out).not.toMatch(/literal final/i);
+		// Phrases that previously leaked from individual regression cases.
+		// The composed prompt must stay free of app/case-specific rules.
+		for (const overfit of [
+			"then first problem",
+			"first case",
+			"turns into",
+			"for less",
+			"TokenLens",
+			"OpenRouter",
+			"Push to Talk",
+			"Taskbar",
+			"default template",
+			"table columns tab",
+			"working hours",
+			"day-specific",
+			"auto-clean",
+			"AI agent-initiated",
+			"drag drop",
+			"Here is how it works",
+			"set up the tool",
+			"Recording-mode color",
+		]) {
+			expect(out).not.toContain(overfit);
+		}
 	});
 
 	test("a tone layers its own prompt on top of the Polish base", () => {
@@ -231,9 +298,19 @@ describe("preset-prompts", () => {
 		expect(out).toContain(`- ${getPresetPrompt("formal")}`);
 		expect(out).toContain(`- ${getPresetPrompt("summarize", "light")}`);
 		expect(out).toContain(`- ${getPresetPrompt("reorder")}`);
-		expect(out).toContain("Move any direct request");
+		expect(out).toContain("Move a direct request");
 		// Explicit anti-numbered-list check: no "1." / "2." / "3." prefixes.
 		expect(out).not.toMatch(/^\s*1\./m);
+	});
+
+	test("concise and restructure preserve required layout when combined", () => {
+		const out = buildSystemPrompt([
+			{ key: "restructure" },
+			{ key: "concise", level: "high" },
+		]);
+		expect(out).toContain("Restructure controls layout");
+		expect(out).toContain("apply concision inside each item");
+		expect(out).toContain("collapsing structure into prose");
 	});
 
 	describe("mergePresetsWithCustomModifiers", () => {

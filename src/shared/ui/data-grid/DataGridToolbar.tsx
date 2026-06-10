@@ -1,5 +1,7 @@
 import { Search01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import {
 	InputGroup,
 	InputGroupAddon,
@@ -34,6 +36,12 @@ export function DataGridToolbar({
 	searchable?: boolean;
 }) {
 	const { labels, table } = useDataGrid();
+	// The joined add form is a ButtonGroup that lifts one surface step above the
+	// panel and paints that fill behind its hairline-ringed `rounded-md` frame.
+	// The minimal search shares that frame but was left transparent, so it read
+	// as a different control than the add field it sits above. Mirror the same
+	// lifted fill (computed identically to ButtonGroup) so the two match.
+	const joinedFill = surfaceBg(Math.min(useSurface() + 1, 8));
 	if (!(searchable || columnControls)) {
 		return null;
 	}
@@ -50,7 +58,11 @@ export function DataGridToolbar({
 	}
 
 	return (
-		<InputGroup appearance={appearance} className="h-9" size="sm">
+		<InputGroup
+			appearance={appearance}
+			className={cn("h-9", appearance === "minimal" && joinedFill)}
+			size="sm"
+		>
 			<InputGroupAddon align="inline-start">
 				<HugeiconsIcon aria-hidden="true" icon={Search01Icon} size={14} />
 			</InputGroupAddon>

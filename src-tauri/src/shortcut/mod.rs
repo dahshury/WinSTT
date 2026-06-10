@@ -1,17 +1,11 @@
 //! Keyboard shortcut management module
 //!
-//! This module provides a unified interface for keyboard shortcuts with
-//! multiple backend implementations:
-//!
-//! - `tauri`: Uses Tauri's built-in global-shortcut plugin
-//! - `handy_keys`: Uses the handy-keys library for more control
-//!
-//! The active implementation is determined by the `keyboard_implementation`
-//! setting and can be changed at runtime.
+//! This module provides the app's keyboard shortcut interface on top of
+//! Tauri's global-shortcut plugin.
 
 mod accelerator_commands;
 mod handler;
-pub mod handy_keys;
+mod modifier_combo;
 mod post_process_commands;
 mod settings_commands;
 mod tauri_impl;
@@ -26,36 +20,16 @@ use specta::Type;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::AppHandle;
 
-use crate::settings::{self, get_settings, KeyboardImplementation, ShortcutBinding};
+use crate::settings::{self, ShortcutBinding};
 
 static CANCEL_SHORTCUT_REGISTERED: AtomicBool = AtomicBool::new(false);
 
-// Note: Commands are accessed via shortcut::handy_keys:: in lib.rs
+// Note: commands are accessed through their shortcut implementation module.
 
-/// Initialize shortcuts using the configured implementation
+/// Initialize shortcuts.
 pub fn init_shortcuts(app: &AppHandle) {
-    let user_settings = settings::load_or_create_app_settings(app);
-
-    // Check which implementation to use
-    match user_settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => {
-            tauri_impl::init_shortcuts(app);
-        }
-        KeyboardImplementation::HandyKeys => {
-            if let Err(e) = handy_keys::init_shortcuts(app) {
-                error!("Failed to initialize handy-keys shortcuts: {}", e);
-                // Fall back to Tauri implementation and persist this fallback
-                warn!("Falling back to Tauri global shortcut implementation and saving fallback to settings");
-
-                // Update settings to persist the fallback so we don't retry HandyKeys on next launch
-                let mut settings = settings::get_settings(app);
-                settings.keyboard_implementation = KeyboardImplementation::Tauri;
-                settings::write_settings(app, settings);
-
-                tauri_impl::init_shortcuts(app);
-            }
-        }
-    }
+    let _ = settings::load_or_create_app_settings(app);
+    tauri_impl::init_shortcuts(app);
 }
 
 pub(crate) fn escape_cancel_binding() -> ShortcutBinding {
@@ -77,11 +51,7 @@ pub fn register_cancel_shortcut(app: &AppHandle) {
     if CANCEL_SHORTCUT_REGISTERED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let settings = get_settings(app);
-    match settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => tauri_impl::register_cancel_shortcut(app),
-        KeyboardImplementation::HandyKeys => handy_keys::register_cancel_shortcut(app),
-    }
+    tauri_impl::register_cancel_shortcut(app);
 }
 
 /// Unregister the Escape cancel shortcut (called when dictation fully finishes)
@@ -89,28 +59,39 @@ pub fn unregister_cancel_shortcut(app: &AppHandle) {
     if !CANCEL_SHORTCUT_REGISTERED.swap(false, Ordering::SeqCst) {
         return;
     }
-    let settings = get_settings(app);
-    match settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => tauri_impl::unregister_cancel_shortcut(app),
-        KeyboardImplementation::HandyKeys => handy_keys::unregister_cancel_shortcut(app),
-    }
+    tauri_impl::unregister_cancel_shortcut(app);
 }
 
-/// Register a shortcut using the appropriate implementation
+/// Register a shortcut.
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
-    let settings = get_settings(app);
-    match settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => tauri_impl::register_shortcut(app, binding),
-        KeyboardImplementation::HandyKeys => handy_keys::register_shortcut(app, binding),
+    if modifier_combo::register_if_modifier_only(app, &binding)? {
+        return Ok(());
+    }
+    tauri_impl::register_shortcut(app, binding)
+}
+
+/// Unregister a shortcut.
+pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    if modifier_combo::unregister_if_modifier_only(&binding)? {
+        return Ok(());
+    }
+    tauri_impl::unregister_shortcut(app, binding)
+}
+
+pub(crate) fn binding_for_active_backend(id: &str, raw: &str) -> String {
+    let raw = raw.trim();
+    if id == "transcribe" && modifier_combo::is_modifier_only_accelerator(raw) {
+        raw.to_string()
+    } else {
+        crate::winstt::commands::hotkey::winstt_accel_to_tauri(raw)
     }
 }
 
-/// Unregister a shortcut using the appropriate implementation
-pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
-    let settings = get_settings(app);
-    match settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => tauri_impl::unregister_shortcut(app, binding),
-        KeyboardImplementation::HandyKeys => handy_keys::unregister_shortcut(app, binding),
+pub(crate) fn validate_binding_for_active_backend(id: &str, binding: &str) -> Result<(), String> {
+    if id == "transcribe" && modifier_combo::is_modifier_only_accelerator(binding) {
+        Ok(())
+    } else {
+        tauri_impl::validate_shortcut(binding)
     }
 }
 
@@ -122,8 +103,8 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
 /// settings tree (`llm.transforms.hotkey`, `tts.hotkey`, `general.repasteHotkey`)
 /// rather than in `AppSettings.bindings`. These are armed exclusively through
 /// [`reconcile_winstt_hotkeys`] — the init / implementation-switch loops MUST skip
-/// them, because those loops would try to register the raw WinSTT key names (e.g.
-/// `LCtrl+LMeta`, which handy-keys' parser rejects) and gate on the wrong store.
+/// them, because those loops would try to register raw WinSTT key names (e.g.
+/// `LCtrl+LMeta`) directly against the backend parser and gate on the wrong store.
 pub(crate) fn is_winstt_tree_binding(id: &str) -> bool {
     matches!(id, "transforms" | "read_aloud" | "repaste")
 }
@@ -157,15 +138,16 @@ pub fn reconcile_winstt_hotkeys(app: &AppHandle) {
 fn reconcile_one(app: &AppHandle, id: &str, enabled: bool, accel: &str) {
     let accel = accel.trim();
     if enabled && !accel.is_empty() {
-        // `change_binding` translates (winstt→handy), validates, (re)registers, and
+        // `change_binding` translates to the backend parser vocabulary, validates,
+        // (re)registers, and
         // persists. It unregisters the previous accelerator first, so a rebind never
         // leaves the old combo hijacked.
         if let Err(e) = change_binding(app.clone(), id.to_string(), accel.to_string()) {
             warn!("reconcile_winstt_hotkeys: failed to arm '{}': {}", id, e);
         }
     } else {
-        // Disabled / empty: drop any live registration (idempotent — handy keys by
-        // binding id, so a never-registered binding is a silent no-op).
+        // Disabled / empty: drop any live registration (idempotent by binding id,
+        // so a never-registered binding is a silent no-op).
         let binding = settings::get_stored_binding(app, id);
         if let Err(e) = unregister_shortcut(app, binding) {
             // A not-currently-registered binding is the common case; log at debug.
@@ -198,12 +180,11 @@ pub fn change_binding(
     }
 
     let mut settings = settings::get_settings(&app);
-    // WinSTT fork: the renderer sends accelerators in WinSTT/the reference key names
-    // (`LCtrl+LMeta`, `LCtrl+Space`, …). Translate to the active backend's token
-    // vocabulary at this single chokepoint — covering PTT, TTS, transforms, repaste,
-    // and settings rebinds. Without this, side-aware WinSTT names are fed to parsers
-    // that do not understand them.
-    let binding = normalize_accel_for_implementation(&binding, settings.keyboard_implementation);
+    // The renderer sends accelerators in WinSTT/reference key names
+    // (`LCtrl+LMeta`, `LCtrl+Space`, ...). Translate to Tauri's token vocabulary
+    // at this single chokepoint, except modifier-only PTT combos that the
+    // WinSTT-owned Windows listener handles directly.
+    let binding = binding_for_active_backend(&id, &binding);
 
     // Get the binding to modify, or create it from defaults if it doesn't exist
     let binding_to_modify = match settings.bindings.get(&id) {
@@ -250,9 +231,8 @@ pub fn change_binding(
         error!("change_binding error: {}", error_msg);
     }
 
-    // Validate the new shortcut for the current keyboard implementation
-    if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
-    {
+    // Validate the new shortcut for the active backend.
+    if let Err(e) = validate_binding_for_active_backend(&id, &binding) {
         warn!("change_binding validation error: {}", e);
         return Err(e);
     }
@@ -321,42 +301,12 @@ pub fn resume_binding(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 // ============================================================================
-// Keyboard Implementation Switching
+// Keyboard Implementation
 // ============================================================================
 
 /// Get the current keyboard implementation
 #[tauri::command]
 #[specta::specta]
-pub fn get_keyboard_implementation(app: AppHandle) -> String {
-    let settings = settings::get_settings(&app);
-    match settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => "tauri".to_string(),
-        KeyboardImplementation::HandyKeys => "handy_keys".to_string(),
-    }
-}
-
-// ============================================================================
-// Validation Helpers
-// ============================================================================
-
-/// Validate a shortcut for a specific implementation
-fn validate_shortcut_for_implementation(
-    raw: &str,
-    implementation: KeyboardImplementation,
-) -> Result<(), String> {
-    match implementation {
-        KeyboardImplementation::Tauri => tauri_impl::validate_shortcut(raw),
-        KeyboardImplementation::HandyKeys => handy_keys::validate_shortcut(raw),
-    }
-}
-
-fn normalize_accel_for_implementation(raw: &str, implementation: KeyboardImplementation) -> String {
-    match implementation {
-        KeyboardImplementation::Tauri => {
-            crate::winstt::commands::hotkey::winstt_accel_to_tauri(raw)
-        }
-        KeyboardImplementation::HandyKeys => {
-            crate::winstt::commands::hotkey::winstt_accel_to_handy(raw)
-        }
-    }
+pub fn get_keyboard_implementation(_app: AppHandle) -> String {
+    "tauri".to_string()
 }

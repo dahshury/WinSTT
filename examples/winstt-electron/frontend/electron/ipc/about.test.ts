@@ -275,7 +275,7 @@ describe("about:get-app-info handler", () => {
 			version: "1.2.3",
 			electronVersion: "31.0.1",
 			nodeVersion: "20.11.0",
-			copyright: "© 2024-2026 dahshury",
+			copyright: "© 2024-2026 WinSTT contributors",
 		});
 		// app-info must NOT touch the filesystem.
 		expect(fsState.readFileCalls).toHaveLength(0);
@@ -315,6 +315,6 @@ describe("about:get-app-info handler", () => {
 		setVersions("1.0.0", "1.0.0");
 		setupAboutHandlers();
 		const result = (await handlers.get(APP_INFO_CHANNEL)?.(fakeEvent)) as { copyright: string };
-		expect(result.copyright).toBe("© 2024-2026 dahshury");
+		expect(result.copyright).toBe("© 2024-2026 WinSTT contributors");
 	});
 });

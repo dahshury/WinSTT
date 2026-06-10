@@ -171,9 +171,9 @@ Insight: README complexity scales with module focus. Main README = overview + qu
 
 ## References
 Files analyzed:
-- E:/DL/Projects/WinSTT/examples/TheWhisper/README.md
-- E:/DL/Projects/WinSTT/examples/TheWhisper/electron_app/README.md
-- E:/DL/Projects/WinSTT/examples/TheWhisper/benchmark/README.md
-- E:/DL/Projects/WinSTT/examples/TheWhisper/asr_postprocess/README.md
+- <repo>/examples/TheWhisper/README.md
+- <repo>/examples/TheWhisper/electron_app/README.md
+- <repo>/examples/TheWhisper/benchmark/README.md
+- <repo>/examples/TheWhisper/asr_postprocess/README.md
 
 Total: 4 READMEs, ~800 lines of documentation analyzed.

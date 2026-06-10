@@ -72,7 +72,7 @@ uv --version
 <Step>
 ### Install server dependencies
 
-The server depends on `onnx-asr` via a [WinSTT-side fork](https://github.com/dahshury/onnx-asr) pinned to a specific commit in `server/pyproject.toml` (`[tool.uv.sources]`). `uv sync` fetches it automatically — no separate clone step is needed.
+The server depends on `onnx-asr` via a [WinSTT-side fork](https://github.com/winstt/onnx-asr) pinned to a specific commit in `server/pyproject.toml` (`[tool.uv.sources]`). `uv sync` fetches it automatically — no separate clone step is needed.
 
 The transcription stack is **ONNX-only** (no PyTorch in core deps). You must
 pick exactly one ONNX runtime extra — `cpu`, `directml`, `openvino`, and `gpu`
@@ -244,7 +244,7 @@ bun run electron:build:directml                    # -> dist/
 </Tabs>
 
 Tagging a release runs the CPU and DirectML builds as a CI matrix and publishes both
-installers to the same GitHub Release ([github.com/dahshury/WinSTT](https://github.com/dahshury/WinSTT)):
+installers to the same GitHub Release ([github.com/winstt/WinSTT](https://github.com/winstt/WinSTT)):
 
 ```bash
 git tag v0.X.0
@@ -267,7 +267,7 @@ Make sure the STT server is running before launching the Electron app. The front
 </Accordion>
 
 <Accordion title="'onnx-asr' not found during uv sync">
-`onnx-asr` is fetched directly from `github.com/dahshury/onnx-asr` (pinned commit in `server/pyproject.toml`); no local checkout is needed. If `uv sync` fails on the git fetch, check your network / GitHub access and rerun.
+`onnx-asr` is fetched directly from `github.com/winstt/onnx-asr` (pinned commit in `server/pyproject.toml`); no local checkout is needed. If `uv sync` fails on the git fetch, check your network / GitHub access and rerun.
 </Accordion>
 
 <Accordion title="bun install fails on uiohook-napi">

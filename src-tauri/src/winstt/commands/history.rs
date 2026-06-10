@@ -16,17 +16,17 @@
 //      (STRING id, `text`, `wordCount`, `durationMs`, `audioFilePath?`,
 //      `originalText?`, `llmModel?`, epoch-MILLIS `timestamp`).
 //
-// Per the plan we back BOTH surfaces with Handy's single `managers::history::
+// Per the plan we back BOTH surfaces with the single `managers::history::
 // HistoryManager` (SQLite) and reshape its rows into each renderer shape, so
 // there is one source of truth on disk. Every payload here is camelCase (matches
 // the verbatim-ported renderer) and derives `specta::Type` for tauri-specta
 // bindings. NEW FILE — registration (collect_commands![] + the event bridge call)
 // is reported for lib.rs in the WU output, not edited here (HARD RULE).
 //
-// Event delivery: Handy's `HistoryManager` already emits the collected
-// `HistoryUpdatePayload` (tag="action") on save/delete/toggle from `actions.rs`
-// (Handy-owned, not editable). `install_history_event_bridge` re-emits each of
-// those as the WinSTT-shaped plain events the adapter listens for, so the reused
+// Event delivery: `HistoryManager` already emits the collected
+// `HistoryUpdatePayload` (tag="action") on save/delete/toggle from `actions.rs`.
+// `install_history_event_bridge` re-emits each update as the WinSTT-shaped plain
+// events the adapter listens for, so the reused
 // renderer's `onTranscriptionHistoryAdded` / `HISTORY_ROW_*` listeners fire
 // unchanged. The orchestrator calls it once in `initialize_core_logic`.
 
@@ -207,7 +207,7 @@ fn effective_text(entry: &DbHistoryEntry) -> &str {
     }
 }
 
-/// Map a Handy DB row → the legacy `TranscriptionHistoryEntry` shape (STRING id,
+/// Map a DB row -> the legacy `TranscriptionHistoryEntry` shape (STRING id,
 /// MILLIS timestamp). `audioFilePath` is set only when the WAV is on disk so the
 /// renderer renders the play button exactly when playback can succeed.
 fn to_transcription_entry(
@@ -260,7 +260,7 @@ fn to_transcription_entry(
         id: entry.id.to_string(),
         word_count: count_words(&text),
         text,
-        // Handy stores `Utc::now().timestamp()` (SECONDS); the legacy renderer
+        // History rows store `Utc::now().timestamp()` (SECONDS); the legacy renderer
         // shape is MILLIS (`new Date(ms)`), so scale up.
         timestamp: entry.timestamp.saturating_mul(1000),
         duration_ms: 0,
@@ -350,7 +350,7 @@ fn parse_llm_meta(raw: &str) -> LlmMeta {
     }
 }
 
-/// Map a Handy DB row → the entity `HistoryRow` shape (NUMBER id, SECONDS
+/// Map a DB row -> the entity `HistoryRow` shape (NUMBER id, SECONDS
 /// timestamp). 1:1 with `managers::history::HistoryEntry`, camelCase-renamed.
 fn to_history_row(entry: &DbHistoryEntry) -> HistoryRow {
     HistoryRow {
@@ -770,7 +770,7 @@ pub async fn transform_history_delete(
 
 // ── Event bridge: collected HistoryUpdatePayload → WinSTT plain events ───────────
 
-/// Re-emit Handy's collected `HistoryUpdatePayload` (fired by `actions.rs` /
+/// Re-emit the collected `HistoryUpdatePayload` (fired by `actions.rs` /
 /// `HistoryManager` on save / update / delete / toggle) as the WinSTT-shaped plain
 /// events the WU-0 adapter listens for:
 ///   - `Added`   → `history:added` (legacy `TranscriptionHistoryEntry`)

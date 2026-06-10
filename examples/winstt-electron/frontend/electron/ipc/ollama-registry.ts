@@ -24,7 +24,7 @@ import type {
 import { dbg } from "../lib/debug-log";
 
 const OLLAMA_BASE = "https://ollama.com";
-const USER_AGENT = "WinSTT/1.0 (+https://github.com/dahshury/WinSTT)";
+const USER_AGENT = "WinSTT/1.0 (+https://github.com/winstt/WinSTT)";
 const REQUEST_TIMEOUT_MS = 15_000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 // Full library catalog rarely changes — hold it for an hour so reopening the

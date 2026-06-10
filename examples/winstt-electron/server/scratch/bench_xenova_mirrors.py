@@ -9,14 +9,14 @@ from pathlib import Path
 
 import soundfile as sf
 
-sys.path.insert(0, r"E:\DL\Projects\WinSTT\server")
+sys.path.insert(0, r"<repo>\server")
 
 import contextlib
 
 from src.recorder.domain.model_registry import ModelCatalog
 from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
-AUDIO = Path(r"E:\DL\Projects\WinSTT\examples\faster-whisper\tests\data\physicsworks.wav")
+AUDIO = Path(r"<repo>\examples\faster-whisper\tests\data\physicsworks.wav")
 audio, sr = sf.read(str(AUDIO), dtype="float32")
 if audio.ndim > 1:
     audio = audio.mean(axis=1)

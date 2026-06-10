@@ -2,7 +2,7 @@ import appIconUrl from "@app-icon";
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 
 export const gitConfig = {
-  user: "dahshury",
+  user: "winstt",
   repo: "WinSTT",
   branch: "main",
 };

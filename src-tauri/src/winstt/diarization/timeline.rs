@@ -1,5 +1,5 @@
 // Source: server/src/recorder/domain/speaker_timeline.py (Listen mode)
-//         E:/DL/Projects/onnx-asr/src/onnx_asr/diarization.py
+//         <onnx-asr>/src/onnx_asr/diarization.py
 //
 // ═════════════════════════════════════════════════════════════════════════════
 // 5. SpeakerTimeline — session-global absolute-time speaker spans.

@@ -1,4 +1,4 @@
-"""Leading-silence carry-forward (Handy parity).
+"""Leading-silence carry-forward.
 
 Far-mic accuracy: when a user speaks 1-2 m away from the microphone, the
 opening consonants of the first word are typically attenuated 20-30 dB
@@ -7,8 +7,7 @@ that always include the silence→speech transition; truncating that
 boundary makes weak starting consonants disappear into the model's
 "start-of-clip" prior.
 
-Handy's reference implementation
-(``examples/Handy/src-tauri/src/audio_toolkit/vad/smoothed.rs``) keeps
+The reference VAD implementation keeps
 a 15-frame ``VecDeque`` of silent frames. On the first speech-classified
 frame after a silence run, the deque is PREPENDED to the recorded audio
 so the model sees the full transition.

@@ -18,7 +18,10 @@ export const ttsSettingsSchema = z.object({
 	model: z.string().default("kokoro-82m"),
 	voice: z.string().default("af_heart"),
 	lang: z.string().default("en-us"),
-	speed: z.number().min(0.5).max(2.0).default(1.0),
+	// Floor 0.4 matches Supertonic's widened slider (SUPERTONIC_SPEED_MIN); other
+	// engines' sliders still start at 0.5, but the stored value must accept 0.4 so
+	// a Supertonic selection persists without being rejected back to the default.
+	speed: z.number().min(0.4).max(2.0).default(1.0),
 	// Always non-empty: TTS the feature stays gated by `enabled`, but the
 	// hotkey itself must always carry a valid combo so the conflict checker
 	// can compare against it and the recorder UI never renders an empty chip.

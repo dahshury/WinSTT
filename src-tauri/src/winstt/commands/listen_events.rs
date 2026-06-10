@@ -11,7 +11,7 @@
 //      `shared/api/ipc-client.ts`. Emitting the exact JSON here keeps the reused
 //      renderer byte-identical to its the reference contract.
 //   2. The producers (the VAD calibrator, the input-device switch path, the
-//      diarization manager) live in pure-logic / Handy-owned modules; routing
+//      diarization manager) live in pure-logic modules; routing
 //      their results through these `AppHandle`-only helpers avoids leaking specta
 //      derives into those modules AND avoids the wrong-shape typed
 //      `events::VadSensitivityAdaptedPayload { deviceId, sensitivity }` /

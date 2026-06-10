@@ -35,7 +35,17 @@ const STYLE_TTL_DIM: usize = 256;
 const STYLE_DP_SEQ: usize = 8;
 const STYLE_DP_DIM: usize = 16;
 const NUM_INFERENCE_STEPS: usize = 8;
-const SPEED_MIN: f32 = 0.8;
+// Speed is a continuous duration scaler (`duration = raw / (speed + OFFSET)`).
+// Slowing works cleanly (the model stretches), so the floor is wide at 0.4. But
+// speeding UP is bounded: the diffusion vocoder can't articulate fast enough near
+// the top of the official range and the output TRUNCATES words instead of
+// speaking faster. With the +0.05 OFFSET, a UI speed of 1.5 actually runs at
+// 1.55 (past the official ≤1.5 ceiling), which is exactly where users hear the
+// trimming — so the speed-up is capped at 1.3 (the original shipped ceiling,
+// ~1.35 effective, well inside the official 0.9–1.5 recommended range). The
+// OFFSET keeps the neutral 1.0 on the model's natural rate (upstream default
+// 1.05). Mirrored by the frontend `ttsSpeedRange`.
+const SPEED_MIN: f32 = 0.4;
 const SPEED_MAX: f32 = 1.3;
 const SPEED_OFFSET: f32 = 0.05;
 

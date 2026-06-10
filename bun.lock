@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "handy-app",
+      "name": "winstt-app",
       "dependencies": {
         "@base-ui/react": "^1.4.1",
         "@hugeicons/core-free-icons": "^4.1.2",

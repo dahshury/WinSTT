@@ -485,7 +485,7 @@ pub fn sound_get_data(app: AppHandle, webview: tauri::WebviewWindow) -> Option<V
 /// suspended — a global PTT hotkey gives the page no user-activation gesture, so
 /// `resume()` can lag — and (b) gets throttled by WebView2 while the window sits
 /// hidden in the tray (the normal dictation state), so the FIRST chime after the
-/// app goes idle could arrive late or drop. Playing from Rust like Handy removes
+/// app goes idle could arrive late or drop. Playing from Rust removes
 /// both hazards and the IPC→webview hop.
 ///
 /// Parity with the renderer it replaces:
@@ -498,7 +498,7 @@ pub fn sound_get_data(app: AppHandle, webview: tauri::WebviewWindow) -> Option<V
 /// Output routing differs by necessity: the renderer routed via
 /// `general.outputDeviceId`, a Web-Audio `sinkId` the backend can't map to a
 /// cpal device. Native playback uses the cpal-name `selected_output_device` when
-/// set, else the system default — i.e. exactly Handy's behavior. TTS/history
+/// set, else the system default. TTS/history
 /// playback keep their Web-Audio sinkId routing (unchanged).
 ///
 /// Fire-and-forget on a worker thread: rodio's `sink.sleep_until_end()` blocks,

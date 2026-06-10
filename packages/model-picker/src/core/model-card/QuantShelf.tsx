@@ -47,6 +47,146 @@ export interface QuantDownloadSnapshot {
 
 export type QuantDownloadAction = "start" | "pause" | "resume" | "cancel";
 
+/** Backend cache snapshots are snake_case for STT and camelCase for TTS.
+ *  Normalize both shapes here so every picker derives badge status, progress,
+ *  and action availability from one implementation. */
+export interface QuantCacheSnapshot {
+	downloadedBytes?: number | null;
+	downloaded_bytes?: number | null;
+	progress?: number | null;
+	state?: QuantCacheState | string | null;
+	totalBytes?: number | null;
+	total_bytes?: number | null;
+}
+
+export interface ResolvedQuantDownloadState {
+	cacheProgress: number | null;
+	cacheState: QuantCacheState | undefined;
+	cacheStatusLabel: string;
+	canResumeDownload: boolean;
+	canStartDownload: boolean;
+	downloadSizeBytes: number | null;
+	isCached: boolean;
+	isPartial: boolean;
+}
+
+function clampPercent(value: number): number {
+	return Math.max(0, Math.min(100, value));
+}
+
+function cacheDownloadedBytes(cache: QuantCacheSnapshot | undefined): number {
+	return Math.max(0, cache?.downloadedBytes ?? cache?.downloaded_bytes ?? 0);
+}
+
+function cacheTotalBytes(cache: QuantCacheSnapshot | undefined): number {
+	return Math.max(0, cache?.totalBytes ?? cache?.total_bytes ?? 0);
+}
+
+function normalizedCacheState(
+	cache: QuantCacheSnapshot | undefined,
+): QuantCacheState | undefined {
+	if (
+		cache?.state === "cached" ||
+		cache?.state === "partial" ||
+		cache?.state === "not_cached"
+	) {
+		return cache.state;
+	}
+	return undefined;
+}
+
+function firstPositive(
+	values: readonly (number | null | undefined)[],
+): number | null {
+	for (const value of values) {
+		if (typeof value === "number" && value > 0) {
+			return value;
+		}
+	}
+	return null;
+}
+
+/** Integer display percent for a partial cache. A partial must never display
+ *  100%: only `state === "cached"` may claim completion. */
+export function quantPartialCachePercent(
+	cache: QuantCacheSnapshot | undefined,
+): number | null {
+	if (normalizedCacheState(cache) !== "partial") {
+		return null;
+	}
+	const total = cacheTotalBytes(cache);
+	const downloaded = cacheDownloadedBytes(cache);
+	const progress = cache?.progress;
+	const raw =
+		typeof progress === "number"
+			? Math.round(progress * 100)
+			: total > 0
+				? Math.round((downloaded / total) * 100)
+				: 0;
+	return Math.min(99, clampPercent(raw));
+}
+
+export function quantCacheStatusLabel(
+	cache: QuantCacheSnapshot | undefined,
+): string {
+	const state = normalizedCacheState(cache);
+	if (state === "cached") {
+		return "Downloaded";
+	}
+	if (state === "partial") {
+		return `${quantPartialCachePercent(cache) ?? 0}% downloaded`;
+	}
+	return "Not downloaded";
+}
+
+export function resolveQuantDownloadState({
+	cache,
+	canStart = true,
+	download,
+	fallbackSizeBytes = [],
+	hasDownloadAction,
+}: {
+	cache: QuantCacheSnapshot | undefined;
+	canStart?: boolean;
+	download: QuantDownloadSnapshot | undefined;
+	fallbackSizeBytes?: readonly (number | null | undefined)[];
+	hasDownloadAction: boolean;
+}): ResolvedQuantDownloadState {
+	const state = normalizedCacheState(cache);
+	const isCached = state === "cached";
+	const isPartial = state === "partial";
+	const cacheProgressValue = cache?.progress;
+	const fallbackSize = firstPositive(fallbackSizeBytes);
+	const liveSize =
+		download && download.totalBytes > 0
+			? Math.max(download.totalBytes, download.downloadedBytes)
+			: null;
+	const cacheSize =
+		cache && (cacheTotalBytes(cache) > 0 || cacheDownloadedBytes(cache) > 0)
+			? Math.max(cacheTotalBytes(cache), cacheDownloadedBytes(cache))
+			: null;
+	const cacheOrCatalogSize =
+		isPartial && fallbackSize !== null
+			? Math.max(fallbackSize, cacheSize ?? 0)
+			: cacheSize;
+	return {
+		cacheState: state,
+		cacheProgress:
+			isPartial && typeof cacheProgressValue === "number"
+				? Math.min(0.99, Math.max(0, cacheProgressValue))
+				: null,
+		cacheStatusLabel: quantCacheStatusLabel(cache),
+		downloadSizeBytes: liveSize ?? cacheOrCatalogSize ?? fallbackSize,
+		isCached,
+		isPartial,
+		canResumeDownload: isPartial && hasDownloadAction,
+		canStartDownload:
+			canStart &&
+			!(download !== undefined || isCached || isPartial) &&
+			hasDownloadAction,
+	};
+}
+
 /**
  * One precision badge, fully normalized by the picker adapter so the shelf
  * stays state-shape agnostic. `value` is the badge's own precision id (the
@@ -197,10 +337,10 @@ function resolveProgressFillPct(
 	download: QuantDownloadSnapshot | undefined,
 ): number | null {
 	if (download && typeof download.progress === "number") {
-		return Math.max(0, Math.min(100, download.progress));
+		return clampPercent(download.progress);
 	}
 	if (cacheState === "partial") {
-		return Math.max(0, Math.min(100, Math.round((cacheProgress ?? 0) * 100)));
+		return Math.min(99, clampPercent(Math.round((cacheProgress ?? 0) * 100)));
 	}
 	return null;
 }
@@ -250,18 +390,31 @@ function QuantBadgeLabel({
 	isDownloading,
 	label,
 	mono = false,
+	paused,
 	progress,
 }: {
 	canStartDownload: boolean;
 	isDownloading: boolean;
 	label: string;
 	mono?: boolean;
+	paused: boolean;
 	progress: number | null;
 }) {
 	if (isDownloading) {
 		return (
 			<span className="relative inline-flex items-center gap-1.5">
-				<PulseDot className="size-1.5" />
+				{paused ? (
+					// Paused: a STATIC dot — a live pulse would imply bytes are still
+					// flowing. The frozen amber fill + the trailing resume/cancel
+					// controls already read as "stopped, resumable".
+					<span
+						aria-hidden="true"
+						className="size-1.5 rounded-full bg-current opacity-60"
+						data-slot="paused-dot"
+					/>
+				) : (
+					<PulseDot className="size-1.5" />
+				)}
 				<span className="font-mono text-[9.5px] tabular-nums">
 					{progress === null ? "..." : `${progress}%`}
 				</span>
@@ -443,7 +596,10 @@ function QuantBadge({
 	} else if (canResumeDownload) {
 		badgeAriaLabel = `Resume ${label} weights download`;
 	} else if (isDownloading) {
-		badgeAriaLabel = `${label} downloading`;
+		badgeAriaLabel =
+			download?.paused === true
+				? `${label} download paused`
+				: `${label} downloading`;
 	}
 	if (isRecommended) {
 		badgeAriaLabel += " (recommended for your hardware)";
@@ -503,6 +659,7 @@ function QuantBadge({
 						isDownloading={isDownloading}
 						label={label}
 						mono={mono === true}
+						paused={download?.paused === true}
 						progress={progressFillPct}
 					/>
 				</BaseButton>

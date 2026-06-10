@@ -99,4 +99,4 @@ Status legend: **✅ verified** (harness-proven) · **🟢 web-ready** (generic 
 ```
 cd frontend && bun run context:harness gmail discord discord-server x x-reply facebook facebook-feed whatsapp
 ```
-Needs the debug Chrome up: `chrome.exe --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir=C:/Users/MASTE/chrome-debug-profile` and logged into the apps. Output → `out/<id>/{screenshot.png,rawSnapshot.json,promptFragment.txt,asrPromptTail.txt,prunedTree.txt}` + `summary.json` — **gitignored, regenerable, and contains private captures** (cleaned between runs).
+Needs the debug Chrome up: `chrome.exe --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir=%USERPROFILE%/chrome-debug-profile` and logged into the apps. Output → `out/<id>/{screenshot.png,rawSnapshot.json,promptFragment.txt,asrPromptTail.txt,prunedTree.txt}` + `summary.json` — **gitignored, regenerable, and contains private captures** (cleaned between runs).

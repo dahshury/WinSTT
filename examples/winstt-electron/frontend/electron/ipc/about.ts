@@ -11,7 +11,7 @@ interface AppInfo {
 	version: string;
 }
 
-const COPYRIGHT = "© 2024-2026 dahshury";
+const COPYRIGHT = "© 2024-2026 WinSTT contributors";
 
 function resolveBundledTextFile(filename: string): string {
 	if (app.isPackaged) {

@@ -58,8 +58,8 @@ pub(super) fn build_session(path: &Path, providers: &[Accelerator]) -> SttResult
     // ORT DML docs require DisableMemPattern + ORT_SEQUENTIAL). Parallel execution is already
     // OFF by default (the builder defaults to Sequential), so we only need to disable mem-pattern.
     // It's also the right call for our DYNAMIC-length audio inputs (shapes vary every call → the
-    // memory pattern can't be reused and just adds planning overhead). transcribe-rs sets the same
-    // for its DML sessions. CPU/CUDA keep the default (mem-pattern on) — validated separately.
+    // memory pattern can't be reused and just adds planning overhead). CPU/CUDA keep the default
+    // (mem-pattern on) — validated separately.
     if is_gpu {
         builder = builder
             .with_memory_pattern(false)

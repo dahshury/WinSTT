@@ -121,7 +121,7 @@ impl ShortcutAction for TranscribeAction {
             // on the silent lead-in. See winstt/commands/dictation.rs::SttEvents.
             crate::winstt::commands::dictation::SttEvents::recording_start(app);
             // Play the recording chime (the reference `playRecordingSound()` on hotkey-start).
-            // NATIVE rodio (like Handy) instead of the old `app.emit("sound:play")` →
+            // Native rodio instead of the old `app.emit("sound:play")` ->
             // renderer Web Audio path: the webview chime hung off the main window's
             // AudioContext, which starts suspended (a global hotkey gives the page no
             // user gesture) and is throttled by WebView2 while the window sits hidden in
@@ -238,7 +238,7 @@ impl ShortcutAction for TranscribeAction {
                 } else {
                     // Save WAV concurrently with transcription
                     let sample_count = samples.len();
-                    let file_name = format!("handy-{}.wav", chrono::Utc::now().timestamp());
+                    let file_name = format!("winstt-{}.wav", chrono::Utc::now().timestamp());
                     let wav_path = hm.recordings_dir().join(&file_name);
                     let wav_path_for_verify = wav_path.clone();
                     let samples_for_wav = samples.clone();

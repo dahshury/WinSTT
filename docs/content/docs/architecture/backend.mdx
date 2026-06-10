@@ -10,7 +10,7 @@ hotkey. Everything runs in one process — there is no server and no IPC to a mo
 
 ## Module Tree
 
-The app's own code lives under `src-tauri/src/winstt/`. Tauri/Handy-inherited plumbing
+The app's own code lives under `src-tauri/src/winstt/`. Shared Tauri plumbing
 (window setup, the recording coordinator, the audio recorder toolkit) sits one level up in
 `src-tauri/src/`.
 
@@ -21,9 +21,9 @@ src-tauri/src/
   cli.rs                  clap CliArgs (--start-hidden, --debug, …)
   actions.rs              Dictation coordinator — record → decode → paste
   transcription_coordinator.rs  Single thread serializing recording state
-  settings.rs             AppSettings (Handy-era store)
+  settings.rs             Legacy AppSettings store
   audio_toolkit/          Recorder (cpal), resampler (rubato), Silero VAD
-  managers/               audio · transcription · history · model (core)
+  managers/               audio · transcription · history (core)
   winstt/
     mod.rs                Module tiering + re-exports
     stt/
@@ -47,14 +47,15 @@ src-tauri/src/
 ## Manager Layer
 
 `lib.rs::initialize_core_logic()` constructs every manager once and registers it as Tauri
-managed state (`Arc<T>`), so commands receive them via `State<'_, Arc<T>>`. The core four are
-inherited from Handy; the rest are WinSTT features.
+managed state (`Arc<T>`), so commands receive them via `State<'_, Arc<T>>`. The core four
+handle recording, transcription, model metadata, and history; the rest are WinSTT feature
+managers.
 
 | Manager | Responsibility |
 |---------|----------------|
 | `AudioRecordingManager` | mic capture, resampling to 16 kHz, VAD, level/wakeword taps |
 | `TranscriptionManager` | loads the active engine, runs batch + realtime decodes |
-| `ModelManager` / `DownloadManager` | per-quant model download, activation, cache |
+| `DownloadManager` | per-quant model download, activation, cache |
 | `HistoryManager` | transcription history store + audio playback |
 | `LlmManager` | Ollama / OpenRouter post-processing + custom transforms |
 | `CloudSttManager` | OpenAI / ElevenLabs cloud STT round-trips |
@@ -82,10 +83,10 @@ hotkey / CLI / wake-word
 
 ### Two traits define the boundary
 
-`TranscriptionManager` is Handy-inherited and must not know about WinSTT's engine zoo, so the
+`TranscriptionManager` stays intentionally isolated from WinSTT's engine zoo, so the
 backend exposes exactly one seam — the **`SttBackend` trait** (`winstt/stt/backend.rs`). It
-routes a model id (`cloud:*` → cloud, in-catalog → local, else → the bundled `transcribe-rs`
-backend) and resolves/loads/decodes in two phases so a model swap stays failure-atomic
+routes a model id (`cloud:*` → cloud, in-catalog → local, else → unsupported)
+and resolves/loads/decodes in two phases so a model swap stays failure-atomic
 (`resolve_catalog` is offline-safe; `build_resolved` only unloads the old engine once the new
 one is built).
 
@@ -171,7 +172,6 @@ taking down the worker.
 | `cpal` / `rubato` / `rustfft` | audio capture / resampling / spectrum |
 | `vad-rs` (Silero) | voice-activity detection |
 | `sherpa-onnx` | wake-word KWS + diarization embedder |
-| `transcribe-rs` | bundled fallback STT backend (Handy-inherited) |
 | `tokenizers`, `ndarray`, `half` | tokenization + tensor math |
 | `windows` / `wasapi` | WASAPI loopback, audio ducking (COM) |
 | `ollama-rs`, `keyring`, `enigo` | local LLM, encrypted secrets, paste injection |

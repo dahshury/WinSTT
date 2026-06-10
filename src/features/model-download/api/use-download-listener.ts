@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import {
 	type DownloadProgressPayload,
 	onModelDownloadComplete,
+	onModelDownloadPaused,
 	onModelDownloadProgress,
 	onModelDownloadStart,
 } from "@/shared/api/ipc-client";
@@ -50,6 +51,8 @@ export function useDownloadListener(): void {
 	const setQuantDownloadComplete = useDownloadStore(
 		(s) => s.setQuantDownloadComplete,
 	);
+	const pauseQuantEntry = useDownloadStore((s) => s.pauseQuantEntry);
+	const resumeQuantEntry = useDownloadStore((s) => s.resumeQuantEntry);
 
 	// Latest buffered per-quant payload keyed by ``model@quant``, flushed on a
 	// trailing timer. Refs (not state) so buffering never schedules a render.
@@ -75,8 +78,11 @@ export function useDownloadListener(): void {
 		const offStart = onModelDownloadStart((model, quantization) => {
 			// Per-quant starts are represented by the badge's optimistic seed +
 			// the first progress frame; only whole-model downloads touch the
-			// singleton slot here.
+			// singleton slot here. A start re-emit is ALSO the resume signal
+			// (predownload_quant re-emits it), so clear any paused flag this
+			// window picked up from the pause broadcast — bytes are flowing again.
 			if (typeof quantization === "string") {
+				resumeQuantEntry(model, quantization);
 				return;
 			}
 			setDownloadStart(model);
@@ -97,6 +103,16 @@ export function useDownloadListener(): void {
 			setDownloadProgress(payload);
 		});
 
+		const offPaused = onModelDownloadPaused((model, quantization) => {
+			if (typeof quantization !== "string") {
+				return;
+			}
+			// Drop any buffered progress for this key so a trailing flush can't
+			// re-stamp the entry as un-paused after we've flipped it.
+			pending.delete(quantBufferKey(model, quantization));
+			pauseQuantEntry(model, quantization);
+		});
+
 		const offComplete = onModelDownloadComplete(
 			(model, cancelled, quantization) => {
 				if (typeof quantization === "string") {
@@ -114,6 +130,7 @@ export function useDownloadListener(): void {
 		return () => {
 			offStart();
 			offProgress();
+			offPaused();
 			offComplete();
 			if (flushTimerRef.current !== null) {
 				clearTimeout(flushTimerRef.current);
@@ -127,5 +144,7 @@ export function useDownloadListener(): void {
 		setDownloadComplete,
 		setQuantDownloadProgress,
 		setQuantDownloadComplete,
+		pauseQuantEntry,
+		resumeQuantEntry,
 	]);
 }

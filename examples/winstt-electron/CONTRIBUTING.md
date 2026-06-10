@@ -72,7 +72,7 @@ Each sub-project has its own deeper `CLAUDE.md` rulebook:
 
 Before opening an issue:
 
-1. Search [open](https://github.com/dahshury/WinSTT/issues) and [closed](https://github.com/dahshury/WinSTT/issues?q=is%3Aissue+is%3Aclosed) issues.
+1. Search [open](https://github.com/winstt/WinSTT/issues) and [closed](https://github.com/winstt/WinSTT/issues?q=is%3Aissue+is%3Aclosed) issues.
 2. Update to the latest release in case it's already fixed.
 3. Reproduce with `--debug` to surface verbose logs (see [Debug Mode](docs/content/docs/debug-mode.mdx)).
 4. Generate a diagnostic bundle: **Settings → Advanced → Save Diagnostic Bundle…** This writes a single zip containing `debug.log`, `stt-server.log`, GPU info, and the redacted settings file — please attach it to the issue.
@@ -90,7 +90,7 @@ A good bug report has:
 
 ## Suggesting Features
 
-Feature requests go in [Discussions](https://github.com/dahshury/WinSTT/discussions), not Issues. Issues are reserved for bugs and well-scoped tasks. When proposing a feature, describe:
+Feature requests go in [Discussions](https://github.com/winstt/WinSTT/discussions), not Issues. Issues are reserved for bugs and well-scoped tasks. When proposing a feature, describe:
 
 - the problem you're trying to solve,
 - the proposed user-facing behavior,
@@ -113,7 +113,7 @@ Features with a working sketch (even rough) are much more likely to land — ope
 # 1. Fork on GitHub, then:
 git clone git@github.com:YOUR_USERNAME/WinSTT.git
 cd WinSTT
-git remote add upstream git@github.com:dahshury/WinSTT.git
+git remote add upstream git@github.com:winstt/WinSTT.git
 
 # 2. Branch off main
 git checkout -b feat/your-feature
@@ -213,8 +213,8 @@ Never hardcode user-facing strings in JSX — the renderer uses `use-intl` and t
 
 ## Community
 
-- **Issues** — [github.com/dahshury/WinSTT/issues](https://github.com/dahshury/WinSTT/issues) (bugs only)
-- **Discussions** — [github.com/dahshury/WinSTT/discussions](https://github.com/dahshury/WinSTT/discussions) (features, questions, ideas)
+- **Issues** — [github.com/winstt/WinSTT/issues](https://github.com/winstt/WinSTT/issues) (bugs only)
+- **Discussions** — [github.com/winstt/WinSTT/discussions](https://github.com/winstt/WinSTT/discussions) (features, questions, ideas)
 
 Be kind, be patient, be specific. The maintainer set is small — clear repros and minimal repros land faster than long bug essays.
 

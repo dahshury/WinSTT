@@ -546,6 +546,14 @@ export const ttsSetSpeed = (speed: number): void => {
 	send(IPC.TTS_SET_SPEED, { speed });
 };
 
+export const ttsRequestPlaybackPause = (reason = "media-session"): void => {
+	send(IPC.TTS_REQUEST_PLAYBACK_PAUSE, { reason });
+};
+
+export const ttsRequestPlaybackResume = (reason = "media-session"): void => {
+	send(IPC.TTS_REQUEST_PLAYBACK_RESUME, { reason });
+};
+
 /**
  * Pause the on-demand TTS install (engine pack / voice model download).
  * Cooperative — the server's downloader exits cleanly at the next chunk
@@ -621,6 +629,9 @@ export const onTtsPlaybackEnded = (
 
 export const onTtsPausePlayback = (callback: () => void): (() => void) =>
 	onCast<Record<string, never>>(IPC.TTS_PAUSE_PLAYBACK, () => callback());
+
+export const onTtsResumePlayback = (callback: () => void): (() => void) =>
+	onCast<Record<string, never>>(IPC.TTS_RESUME_PLAYBACK, () => callback());
 
 export const onTtsDiscardPlayback = (callback: () => void): (() => void) =>
 	onCast<Record<string, never>>(IPC.TTS_DISCARD_PLAYBACK, () => callback());

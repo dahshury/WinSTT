@@ -1,5 +1,5 @@
 // Reference: spec/openapi.yaml `AudioDevice`,
-// server/src/stt_server/control_handler.py `list_input_devices`. Wraps Handy's
+// server/src/stt_server/control_handler.py `list_input_devices`. Wraps the local
 // `audio_toolkit::audio::device::list_input_devices` (cpal).
 //
 // `get_audio_devices` is the input-device enumeration the WinSTT renderer's
@@ -16,8 +16,8 @@
 // dedupes by name, resolves the selected row by numeric `index`); the optional
 // fields are spec-present for parity with PyAudio's enumeration but unused here.
 //
-// Handy already ships `get_available_microphones` (audio.rs), but it returns
-// Handy's `AudioDevice { index: String, name, is_default }` (string index, no
+// The legacy `get_available_microphones` command returns
+// `AudioDevice { index: String, name, is_default }` (string index, no
 // "System default" semantics matching WinSTT) — wrong shape for the reused
 // renderer. This command emits the WinSTT spec shape directly. The numeric
 // `index` is cpal's positional enumeration ordinal (string `"0"`,`"1"`,… →

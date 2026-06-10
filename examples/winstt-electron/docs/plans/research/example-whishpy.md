@@ -2,7 +2,7 @@
 
 **Project**: Whishpy - A free, open-source Whisper flow alternative for macOS  
 **Status**: Not actively maintained (note: this is transparency that users appreciate)  
-**Repository**: E:/DL/Projects/WinSTT/examples/whishpy
+**Repository**: <repo>/examples/whishpy
 
 ## 1. Information Architecture & Page List
 

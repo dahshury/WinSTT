@@ -4,7 +4,7 @@
 // computeOverlayPosition / isOverlaySuppressedBySettings / repositionIfVisible).
 //
 // The WinSTT recording pill is the `overlay` WebviewWindow (windows/overlay.html,
-// WINDOW_SPECS[overlay] in winstt/commands/windows.rs) — NOT Handy's
+// WINDOW_SPECS[overlay] in winstt/commands/windows.rs) — not the legacy
 // `recording_overlay` window. The OverlayPage renderer paints the dynamic-island
 // pill ENTIRELY from IPC events it already receives (stt:recording-start /
 // realtime-update / stt:audio-level / …) through its own Zustand stores. So the
@@ -360,11 +360,11 @@ fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>,
     // if we leave that flag on, clicks fall through before the DOM button can
     // receive them.
     let _ = window.set_ignore_cursor_events(ignore_cursor_events_for_show_reason(reason));
-    // On Windows, re-assert TOPMOST after showing (matches Handy's overlay path;
+    // On Windows, re-assert TOPMOST after showing (matches the legacy overlay path;
     // a fresh show can land below other always-on-top windows otherwise).
     #[cfg(target_os = "windows")]
     force_overlay_topmost(&window);
-    // Tell the renderer the overlay window is now on screen (parity with Handy's
+    // Tell the renderer the overlay window is now on screen (parity with the legacy
     // `show-overlay` event; the OverlayPage also self-clears on visibilitychange).
     let _ = window.emit("show-overlay", reason);
     if was_visible {

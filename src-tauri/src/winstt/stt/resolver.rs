@@ -1,5 +1,5 @@
 // Source: onnx-asr fork
-//   (E:/DL/Projects/onnx-asr/src/onnx_asr/resolver.py — model_repos, Resolver._download_model,
+//   (<onnx-asr>/src/onnx_asr/resolver.py — model_repos, Resolver._download_model,
 //    _resolve_model_files; model_base._get_model_files; models/*.py per-family globs)
 // + WinSTT server (server/src/recorder/infrastructure/onnxasr_transcriber.py — _refetch_hf_snapshot,
 //   _is_external_data_missing_error, _slug_model_id) and model_cache._file_quantization.

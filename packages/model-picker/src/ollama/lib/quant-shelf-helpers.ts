@@ -81,6 +81,58 @@ export function isSameOllamaTag(a: string | undefined, b: string): boolean {
 }
 
 /**
+ * Collapse installed models that are the SAME on-disk artifact reached through
+ * different tag names. Ollama's `/api/tags` lists every tag that points at a
+ * blob, so a model pulled under two names (e.g. `gemma4:e2b` and
+ * `gemma4:e2b-it-q4_K_M` — identical digest, see {@link OLLAMA_TAG_ALIAS_GROUPS})
+ * shows up as two rows that format to the same / near-same label. Group by
+ * identity key and keep ONE representative per group:
+ *   - the currently-selected tag wins (so the picker's `value` still resolves to
+ *     a rendered row);
+ *   - otherwise the shorter name wins — the bare default tag (`gemma4:e2b`)
+ *     reads cleaner than its `-it-q4_K_M` sibling.
+ * First-seen order is preserved.
+ */
+export function dedupeInstalledOllamaModels<T extends { name: string }>(
+	models: readonly T[],
+	selectedName?: string,
+): T[] {
+	const byIdentity = new Map<string, T>();
+	const order: string[] = [];
+	for (const model of models) {
+		const key = ollamaTagIdentityKey(model.name);
+		const existing = byIdentity.get(key);
+		if (!existing) {
+			byIdentity.set(key, model);
+			order.push(key);
+			continue;
+		}
+		byIdentity.set(key, preferInstalledOllamaTag(existing, model, selectedName));
+	}
+	return order.map((key) => byIdentity.get(key) as T);
+}
+
+function preferInstalledOllamaTag<T extends { name: string }>(
+	current: T,
+	candidate: T,
+	selectedName?: string,
+): T {
+	if (selectedName) {
+		if (current.name === selectedName) {
+			return current;
+		}
+		if (candidate.name === selectedName) {
+			return candidate;
+		}
+	}
+	// Shorter name = the barer default tag, which formats to the cleaner label.
+	if (candidate.name.length < current.name.length) {
+		return candidate;
+	}
+	return current;
+}
+
+/**
  * True when `tagName` is present in `installedNames`, treating a bare name and
  * its `:latest` tag as equal. Without this, a model pulled by a bare name (its
  * on-disk name becomes `<name>:latest`) leaves its "default" badge reading as

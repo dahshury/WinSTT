@@ -33,7 +33,7 @@ if (!container) {
  */
 // Fire the lifecycle beacon ONCE per window process — not on every re-render. The bootstrap
 // re-renders many times while the store hydrates (each data hook's state update), and emitting
-// the beacon in the render body flooded handy.log with identical "render reached" lines.
+// the beacon in the render body flooded winstt.log with identical "render reached" lines.
 let settingsBeaconSent = false;
 
 function SettingsBootstrap() {

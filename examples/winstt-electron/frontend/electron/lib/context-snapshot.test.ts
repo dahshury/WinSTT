@@ -409,7 +409,7 @@ describe("formatContextForPrompt — focused-field-first (drop tree when rich)",
 		makeSnapshot({
 			appExe: "chrome.exe",
 			url: "mail.google.com",
-			windowTitle: "Inbox (2,669) - me@gmail.com - Gmail - Google Chrome",
+			windowTitle: "Inbox (2,669) - user@example.test - Gmail - Google Chrome",
 			elementName: "Message Body",
 			focusedText: "",
 			textBefore:

@@ -175,9 +175,15 @@ fn preview_system_prompt(settings: &WinsttSettings, presets: &[LlmPresetEntry]) 
     prompt
 }
 
+fn normalize_llm_text_output(text: &str) -> String {
+    text.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 fn finalize_preview_answer(settings: &WinsttSettings, answer: &str) -> String {
     let pairs = llm_commands::replacement_pairs(settings);
-    llm::apply_replacement_pairs(answer, &pairs)
+    llm::apply_replacement_pairs(&normalize_llm_text_output(answer), &pairs)
 }
 
 fn provider_label(provider: LlmProvider) -> &'static str {
@@ -461,7 +467,7 @@ pub async fn run_transform_pipeline(app: &AppHandle) -> TransformApplyResult {
 
     let result = TransformApplyResult {
         before: selected,
-        after: transformed,
+        after: normalize_llm_text_output(&transformed),
         source: capture.source,
     };
     persist_transform_history(app, &settings, &result, processing_ms);

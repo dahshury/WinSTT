@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const f = "C:/Users/MASTE/AppData/Roaming/winstt/winstt-settings.json";
+const f = "%USERPROFILE%/AppData/Roaming/winstt/winstt-settings.json";
 const rawText = readFileSync(f, "utf-8").replace(/^﻿/, "");
 const raw = JSON.parse(rawText);
 

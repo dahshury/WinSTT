@@ -49,7 +49,7 @@ describe("builtInItems", () => {
 				path: "",
 			},
 			{
-				id: "__winstt_builtin_handy_marimba_start__",
+				id: "__winstt_builtin_marimba_start__",
 				isDefault: true,
 				name: "Marimba",
 				path: "builtin:marimba_start.wav",

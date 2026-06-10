@@ -2157,7 +2157,7 @@ function buildOpenRouterClient(apiKey: string) {
 	return createOpenRouter({
 		apiKey,
 		headers: {
-			"HTTP-Referer": "https://github.com/dahshury/winstt",
+			"HTTP-Referer": "https://github.com/winstt/winstt",
 			"X-Title": "WinSTT",
 		},
 	});
@@ -2654,7 +2654,7 @@ async function processWithOpenRouterCustom(
 	const openrouter = createOpenRouter({
 		apiKey,
 		headers: {
-			"HTTP-Referer": "https://github.com/dahshury/winstt",
+			"HTTP-Referer": "https://github.com/winstt/winstt",
 			"X-Title": "WinSTT",
 		},
 	});

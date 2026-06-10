@@ -1,15 +1,24 @@
 import type { useTranslations } from "use-intl";
 import { DEFAULT_SETTINGS } from "@/entities/setting";
 import type { TtsVoiceCatalog } from "@/shared/api/ipc-client";
+import {
+	SUPERTONIC_TTS_MODEL_ID,
+	ttsSpeedRange,
+} from "@/shared/config/tts-speed";
 import type { SelectOptionGroup } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
 import { regionBadge, stripRegionSuffix } from "./voice-demo-text";
 
-export const SUPERTONIC_MODEL_ID = "supertonic-3";
+export const SUPERTONIC_MODEL_ID = SUPERTONIC_TTS_MODEL_ID;
 export const SUPERTONIC_DEFAULT_VOICE = "M3";
 export const SUPERTONIC_DEFAULT_LANG = "en";
-export const SUPERTONIC_SPEED_MIN = 0.8;
-export const SUPERTONIC_SPEED_MAX = 1.3;
+// Slider bounds come from the shared per-model speed source (mirrored by the
+// `supertonic.rs` clamp). Supertonic caps the speed-UP at its officially
+// supported 1.5× — past that the diffusion vocoder truncates words instead of
+// speaking faster — while the slow end stays wide (0.4) since stretching is fine.
+const SUPERTONIC_SPEED_RANGE = ttsSpeedRange(SUPERTONIC_MODEL_ID);
+export const SUPERTONIC_SPEED_MIN = SUPERTONIC_SPEED_RANGE.min;
+export const SUPERTONIC_SPEED_MAX = SUPERTONIC_SPEED_RANGE.max;
 
 // Group the 54 voices by country (their language/locale) so the picker reads
 // like the STT model selector — one sticky header per country, voices nested

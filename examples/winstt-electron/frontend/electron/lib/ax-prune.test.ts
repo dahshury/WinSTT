@@ -25,7 +25,7 @@ describe("stripListScrollback", () => {
 		"GenAI Launchpad question",
 		"Inbox",
 		"×",
-		"Johny Turing johny@example.com",
+		"Example Person person@example.test",
 		"May 17, 2026, 6:29 PM (13 days ago)",
 		"to me",
 		"Show details",

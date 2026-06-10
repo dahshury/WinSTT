@@ -109,4 +109,4 @@ GitHub HTTPS endpoint already provide.
 
 Minisign is therefore positioned strictly as a **manual, offline
 verification layer for power users** — distributed via the repo's public
-docs at https://github.com/dahshury/WinSTT, not bundled into the app.
+docs at https://github.com/winstt/WinSTT, not bundled into the app.

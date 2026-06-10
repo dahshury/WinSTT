@@ -77,7 +77,15 @@ impl LlmManager {
             return;
         }
 
-        self.cancel_all();
+        // NOTE: do NOT cancel in-flight requests here. The only cancellable LLM
+        // work is user dictation/transform (warmup itself uses `/api/generate`
+        // and never registers a cancel id), and this pass fires on a 4-minute
+        // timer, on settings changes, and after a pull — none of which should
+        // abort a dictation the user just spoke. A cancelled chat returns a
+        // partial structured-output fragment that then gets pasted as garbage
+        // (`{` / `{"text`). Warmup only warms the active model and evicts STALE
+        // ones (never the active model), so it cannot conflict with a live
+        // dictation; let that dictation finish.
         let (reachable, ollama_installed) = self.ensure_ollama_reachable(&endpoint).await;
         if !reachable {
             self.publish_warmup_status(LlmWarmupStatus {

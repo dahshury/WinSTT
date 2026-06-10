@@ -1,4 +1,4 @@
-// Specta-typed events the WinSTT port emits. Each derives the same set as Handy's
+// Specta-typed events the WinSTT port emits. Each derives the same set as the
 // `HistoryUpdatePayload` (Clone + Serialize + Deserialize + specta::Type +
 // tauri_specta::Event) so it can be registered in `collect_events![]` and emitted
 // type-safely via the `Event` trait (`Payload { .. }.emit(&app)`).

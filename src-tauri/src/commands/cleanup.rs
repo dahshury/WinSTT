@@ -8,7 +8,6 @@ use specta::Type;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::command_auth;
-use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::winstt::commands::settings::{
     apply_settings_patch, read_settings, PartialWinsttSettings,
@@ -112,7 +111,6 @@ pub async fn remove_downloaded_models(
     app: AppHandle,
     webview: WebviewWindow,
     transcription: State<'_, Arc<TranscriptionManager>>,
-    model_manager: State<'_, Arc<ModelManager>>,
     downloads: State<'_, Arc<DownloadManager>>,
     tts_manager: State<'_, Arc<TtsManager>>,
     tts_downloads: State<'_, Arc<TtsDownloadManager>>,
@@ -151,7 +149,6 @@ pub async fn remove_downloaded_models(
     deleted_model_caches += delete_stt_model_caches(downloads.inner(), &mut errors).await;
     deleted_model_caches += delete_tts_model_caches(&app, tts_downloads.inner(), &mut errors);
     deleted_model_caches += delete_wakeword_model_caches(&app, &mut errors);
-    deleted_model_caches += delete_legacy_downloaded_models(model_manager.inner(), &mut errors);
 
     Ok(RemoveDownloadedModelsResult {
         deleted_model_caches,
@@ -314,36 +311,6 @@ fn delete_wakeword_model_caches(app: &AppHandle, errors: &mut Vec<String>) -> us
             0
         }
     }
-}
-
-fn delete_legacy_downloaded_models(
-    model_manager: &Arc<ModelManager>,
-    errors: &mut Vec<String>,
-) -> usize {
-    let mut deleted = 0;
-    for model in model_manager.get_available_models() {
-        if model.is_custom {
-            continue;
-        }
-        let has_cache = model.is_downloaded || model.partial_size > 0 || model.is_downloading;
-        if !has_cache {
-            continue;
-        }
-        if let Err(err) = model_manager.cancel_download(&model.id) {
-            errors.push(format!(
-                "{}: failed to cancel legacy download: {err}",
-                model.id
-            ));
-        }
-        match model_manager.delete_model(&model.id) {
-            Ok(()) => deleted += 1,
-            Err(err) if model.is_downloaded || model.partial_size > 0 => {
-                errors.push(format!("{}: {err}", model.id));
-            }
-            Err(_) => {}
-        }
-    }
-    deleted
 }
 
 fn hardcoded_tts_runtime_dirs() -> Vec<PathBuf> {

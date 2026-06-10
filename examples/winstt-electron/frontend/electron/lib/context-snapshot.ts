@@ -19,7 +19,7 @@ export interface WindowContextSnapshot {
 	 */
 	axHtml?: string;
 	/**
-	 * Current clipboard text, interleaved as supplementary context (Handy's
+	 * Current clipboard text, interleaved as supplementary context (the reference
 	 * "80% of the use case with 5% of the code"). Echo-guarded at capture time:
 	 * dropped when it equals our own last transcription, because WinSTT pastes
 	 * via a clipboard sandwich, so right after a dictation the clipboard holds

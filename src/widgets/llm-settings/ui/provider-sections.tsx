@@ -181,7 +181,6 @@ function OllamaSection(props: OllamaSectionProps) {
 		<>
 			<FormControl label={t("model")} tooltip={t("modelTooltip")}>
 				<OllamaModelSelector
-					disabled={ollamaScanning}
 					isLoading={ollamaScanning}
 					librarySearch={librarySearch}
 					models={ollamaModels}

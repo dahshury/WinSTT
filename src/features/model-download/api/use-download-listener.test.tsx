@@ -187,3 +187,52 @@ describe("useDownloadListener per-quant coalescing", () => {
 		expect(useDownloadStore.getState().progress).toBe(40);
 	});
 });
+
+describe("useDownloadListener per-quant pause/resume broadcast", () => {
+	test("a paused broadcast flips the live quant entry to paused", async () => {
+		renderHook(() => useDownloadListener());
+		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, {
+			model: "whisper-base",
+			quantization: "int8",
+			progress: 0.4,
+		});
+		await delay(150);
+		expect(
+			useDownloadStore.getState().quantDownloads["whisper-base@int8"]?.paused,
+		).toBe(false);
+		// The server's pause broadcast must reach EVERY window — this is the signal
+		// the settings-window trigger needs to leave "Downloading X%".
+		fire(IPC.STT_MODEL_DOWNLOAD_PAUSED, {
+			model: "whisper-base",
+			quantization: "int8",
+		});
+		expect(
+			useDownloadStore.getState().quantDownloads["whisper-base@int8"]?.paused,
+		).toBe(true);
+	});
+
+	test("a per-quant start re-emit clears the paused flag (resume)", async () => {
+		renderHook(() => useDownloadListener());
+		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, {
+			model: "whisper-base",
+			quantization: "int8",
+			progress: 0.4,
+		});
+		await delay(150);
+		fire(IPC.STT_MODEL_DOWNLOAD_PAUSED, {
+			model: "whisper-base",
+			quantization: "int8",
+		});
+		expect(
+			useDownloadStore.getState().quantDownloads["whisper-base@int8"]?.paused,
+		).toBe(true);
+		// Resume re-runs predownload_quant, which re-emits start for the quant.
+		fire(IPC.STT_MODEL_DOWNLOAD_START, {
+			model: "whisper-base",
+			quantization: "int8",
+		});
+		expect(
+			useDownloadStore.getState().quantDownloads["whisper-base@int8"]?.paused,
+		).toBe(false);
+	});
+});

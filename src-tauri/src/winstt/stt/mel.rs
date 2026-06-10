@@ -1,5 +1,5 @@
 // Source: onnx-asr fork preprocessors/whisper.py + preprocessors/fbanks.py
-//   (E:/DL/Projects/onnx-asr/preprocessors/) and
+//   (<onnx-asr>/preprocessors/) and
 //   src/onnx_asr/preprocessors/numpy_preprocessor.py::WhisperPreprocessorNumpy.
 //
 // Log-mel spectrogram feature extraction for Whisper / lite-whisper / distil-whisper.

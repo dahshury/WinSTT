@@ -322,43 +322,43 @@ mod tests {
 
     #[test]
     fn expands_multiword_trigger_on_exact_match() {
-        let s = vec![entry("my email address", "khaled@example.com")];
+        let s = vec![entry("my email address", "user@example.test")];
         assert_eq!(
             replace_with_snippets("forward to my email address", &s),
-            "forward to khaled@example.com"
+            "forward to user@example.test"
         );
     }
 
     #[test]
     fn expands_fuzzy_trigger_when_letter_dropped() {
-        let s = vec![entry("my email address", "khaled@example.com")];
+        let s = vec![entry("my email address", "user@example.test")];
         assert_eq!(
             replace_with_snippets("forward to my email adress", &s),
-            "forward to khaled@example.com"
+            "forward to user@example.test"
         );
     }
 
     #[test]
     fn empty_trigger_is_filtered_out() {
-        let s = vec![entry("", "X"), entry("my email", "khaled@example.com")];
+        let s = vec![entry("", "X"), entry("my email", "user@example.test")];
         assert_eq!(
             replace_with_snippets("send my email", &s),
-            "send khaled@example.com"
+            "send user@example.test"
         );
     }
 
     #[test]
     fn preserves_trailing_punctuation() {
-        let s = vec![entry("my email", "khaled@example.com")];
+        let s = vec![entry("my email", "user@example.test")];
         assert_eq!(
             replace_with_snippets("send my email.", &s),
-            "send khaled@example.com."
+            "send user@example.test."
         );
     }
 
     #[test]
     fn does_not_over_match_unrelated_text() {
-        let s = vec![entry("my email address", "khaled@example.com")];
+        let s = vec![entry("my email address", "user@example.test")];
         let input = "a totally different sentence";
         assert_eq!(replace_with_snippets(input, &s), input);
     }

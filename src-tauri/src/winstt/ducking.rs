@@ -3,12 +3,12 @@
 //
 // Graduated system-audio ducking while dictating. WinSTT-the reference does this
 // with a PowerShell COM host; the Rust/Tauri port does it in-process via the
-// `windows` crate's IAudioEndpointVolume — the SAME interface Handy already
+// `windows` crate's IAudioEndpointVolume — the same interface the existing audio path
 // uses for set_mute (managers/audio.rs), so no new Cargo features are needed
 // beyond what's already enabled (Win32_Media_Audio_Endpoints + Com +
 // StructuredStorage + Variant + Foundation).
 //
-// Difference from Handy's set_mute: Handy hard-MUTES via SetMute(true). WinSTT
+// Difference from hard mute: SetMute(true) is avoided. WinSTT
 // DUCKS — reads the current master scalar (0.0–1.0), drops it to
 // `previous × (100 - reductionPct) / 100`, and restores the saved value on
 // stop. reductionPct=100 ⇒ full mute (→0.0); smaller values merely attenuate.
@@ -24,7 +24,7 @@
 //   - restore target fallback (savedVolume ?? 0.5).
 //
 // The reduction/clamp/state math is PURE and fully tested. The COM read/set is
-// a real Windows impl modeled on Handy's set_mute (the only unverifiable bit is
+// a real Windows impl modeled on the existing mute path (the only unverifiable bit is
 // runtime COM behavior, which the compile loop confirms).
 
 // ───────────────────────── pure reduction math ────────────────────────
@@ -237,7 +237,7 @@ impl DuckState {
     }
 }
 
-// ── IAudioEndpointVolume COM impl (real — modeled on Handy set_mute) ───
+// ── IAudioEndpointVolume COM impl ──────────────────────────────────────
 //
 // Reads / sets the default render endpoint's master scalar. Returns None on
 // any COM failure (mirrors the unwrap_or_return! pattern in set_mute). The
@@ -247,8 +247,26 @@ impl DuckState {
 /// Mirrors readCurrentVolume / [Audio]::GetVolume().
 static DUCK_STATE: OnceLock<Mutex<DuckState>> = OnceLock::new();
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SessionVolumeSnapshot {
+    pid: u32,
+    volume: f32,
+}
+
+#[derive(Debug, Default)]
+struct ReadAloudSessionDuckState {
+    active: bool,
+    snapshots: Vec<SessionVolumeSnapshot>,
+}
+
+static READ_ALOUD_SESSION_DUCK_STATE: OnceLock<Mutex<ReadAloudSessionDuckState>> = OnceLock::new();
+
 fn state() -> &'static Mutex<DuckState> {
     DUCK_STATE.get_or_init(|| Mutex::new(DuckState::new()))
+}
+
+fn read_aloud_session_state() -> &'static Mutex<ReadAloudSessionDuckState> {
+    READ_ALOUD_SESSION_DUCK_STATE.get_or_init(|| Mutex::new(ReadAloudSessionDuckState::default()))
 }
 
 fn lock_state() -> std::sync::MutexGuard<'static, DuckState> {
@@ -256,6 +274,16 @@ fn lock_state() -> std::sync::MutexGuard<'static, DuckState> {
         Ok(guard) => guard,
         Err(poisoned) => {
             log::warn!("[ducking] state lock poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
+fn lock_read_aloud_session_state() -> std::sync::MutexGuard<'static, ReadAloudSessionDuckState> {
+    match read_aloud_session_state().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("[ducking] read-aloud session state lock poisoned; recovering");
             poisoned.into_inner()
         }
     }
@@ -300,7 +328,11 @@ pub fn arm_dictation_duck_from_settings(app: &tauri::AppHandle) -> bool {
 
 /// Apply `general.systemAudioReductionWhileDictating` for Read Aloud playback.
 pub fn duck_read_aloud_from_settings(app: &tauri::AppHandle) {
-    duck_from_settings_for(app, DuckReason::ReadAloud);
+    let pct = settings_duck_reduction_pct(app);
+    if pct == 0 {
+        return;
+    }
+    request_read_aloud_session_duck(pct);
 }
 
 fn duck_from_settings_for(app: &tauri::AppHandle, reason: DuckReason) {
@@ -348,13 +380,50 @@ pub fn request_restore() {
 }
 
 pub fn request_read_aloud_restore() {
-    request_restore_for(DuckReason::ReadAloud);
+    let snapshots = {
+        let mut guard = lock_read_aloud_session_state();
+        if !guard.active {
+            return;
+        }
+        guard.active = false;
+        std::mem::take(&mut guard.snapshots)
+    };
+    if !snapshots.is_empty() {
+        std::thread::spawn(move || perform_read_aloud_session_restore(snapshots));
+    }
 }
 
 fn request_restore_for(reason: DuckReason) {
     if lock_state().request_restore_for(reason) == DuckAction::Restore {
         spawn_restore_if_needed();
     }
+}
+
+fn request_read_aloud_session_duck(reduction_pct: u8) {
+    {
+        let mut guard = lock_read_aloud_session_state();
+        if guard.active {
+            return;
+        }
+        guard.active = true;
+        guard.snapshots.clear();
+    }
+
+    std::thread::spawn(move || {
+        let snapshots = perform_read_aloud_session_duck(reduction_pct).unwrap_or_default();
+        let restore_now = {
+            let mut guard = lock_read_aloud_session_state();
+            guard.snapshots = snapshots;
+            if guard.active {
+                Vec::new()
+            } else {
+                std::mem::take(&mut guard.snapshots)
+            }
+        };
+        if !restore_now.is_empty() {
+            perform_read_aloud_session_restore(restore_now);
+        }
+    });
 }
 
 #[cfg(windows)]
@@ -427,6 +496,131 @@ pub fn perform_restore(saved: Option<f32>) -> bool {
     set_master_volume(restore_target(saved))
 }
 
+#[cfg(windows)]
+struct AudioSessionVolume {
+    pid: u32,
+    volume: windows::Win32::Media::Audio::ISimpleAudioVolume,
+}
+
+#[cfg(windows)]
+fn protected_read_aloud_process_ids() -> std::collections::HashSet<u32> {
+    use sysinfo::System;
+
+    let current_pid = std::process::id();
+    let system = System::new_all();
+    let mut protected = std::collections::HashSet::from([current_pid]);
+
+    loop {
+        let before = protected.len();
+        for (pid, process) in system.processes() {
+            if protected.contains(&pid.as_u32()) {
+                continue;
+            }
+            if process
+                .parent()
+                .is_some_and(|parent| protected.contains(&parent.as_u32()))
+            {
+                protected.insert(pid.as_u32());
+            }
+        }
+        if protected.len() == before {
+            break;
+        }
+    }
+
+    protected
+}
+
+#[cfg(windows)]
+fn enumerate_audio_session_volumes() -> Option<Vec<AudioSessionVolume>> {
+    use windows::core::Interface;
+    use windows::Win32::Media::Audio::{
+        eMultimedia, eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
+        ISimpleAudioVolume, MMDeviceEnumerator,
+    };
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+
+    let _com = crate::windows_com::ComApartment::init_multithreaded();
+    unsafe {
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+        let device = enumerator
+            .GetDefaultAudioEndpoint(eRender, eMultimedia)
+            .ok()?;
+        let manager: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None).ok()?;
+        let sessions = manager.GetSessionEnumerator().ok()?;
+        let count = sessions.GetCount().ok()?;
+        let mut volumes = Vec::new();
+
+        for index in 0..count {
+            let Ok(session) = sessions.GetSession(index) else {
+                continue;
+            };
+            let Ok(control) = session.cast::<IAudioSessionControl2>() else {
+                continue;
+            };
+            let pid = control.GetProcessId().unwrap_or(0);
+            let Ok(volume) = session.cast::<ISimpleAudioVolume>() else {
+                continue;
+            };
+            volumes.push(AudioSessionVolume { pid, volume });
+        }
+
+        Some(volumes)
+    }
+}
+
+/// Duck audio sessions that do not belong to WinSTT or its WebView child
+/// processes. Read Aloud audio is played by the overlay WebView, so endpoint
+/// master-volume ducking would lower the TTS itself.
+#[cfg(windows)]
+fn perform_read_aloud_session_duck(reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>> {
+    let protected = protected_read_aloud_process_ids();
+    let sessions = enumerate_audio_session_volumes()?;
+    let mut snapshots = Vec::new();
+
+    for session in sessions {
+        if protected.contains(&session.pid) {
+            continue;
+        }
+        let Ok(current) = (unsafe { session.volume.GetMasterVolume() }) else {
+            continue;
+        };
+        let target = reduction_target(current, reduction_pct);
+        if unsafe {
+            session
+                .volume
+                .SetMasterVolume(target, std::ptr::null())
+                .is_ok()
+        } {
+            snapshots.push(SessionVolumeSnapshot {
+                pid: session.pid,
+                volume: current,
+            });
+        }
+    }
+
+    Some(snapshots)
+}
+
+#[cfg(windows)]
+fn perform_read_aloud_session_restore(snapshots: Vec<SessionVolumeSnapshot>) {
+    let Some(sessions) = enumerate_audio_session_volumes() else {
+        return;
+    };
+
+    for session in sessions {
+        let Some(snapshot) = snapshots.iter().find(|s| s.pid == session.pid) else {
+            continue;
+        };
+        let _ = unsafe {
+            session
+                .volume
+                .SetMasterVolume(snapshot.volume, std::ptr::null())
+        };
+    }
+}
+
 // Non-Windows stubs so the manager wiring compiles cross-platform. WinSTT is
 // Windows-first; ducking is a no-op elsewhere (mirrors muteSystemAudio's
 // `if (process.platform !== "win32") return false`).
@@ -449,6 +643,14 @@ pub fn perform_duck(_reduction_pct: u8) -> Option<f32> {
 pub fn perform_restore(_saved: Option<f32>) -> bool {
     false
 }
+
+#[cfg(not(windows))]
+fn perform_read_aloud_session_duck(_reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>> {
+    None
+}
+
+#[cfg(not(windows))]
+fn perform_read_aloud_session_restore(_snapshots: Vec<SessionVolumeSnapshot>) {}
 
 #[cfg(test)]
 mod tests {

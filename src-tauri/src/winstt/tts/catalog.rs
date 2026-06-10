@@ -124,29 +124,14 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         speed_score: 0.85,
         description: "Best everyday local voice set; natural read-aloud across many languages.",
     },
-    TtsModelEntry {
-        id: "kitten-nano-0.1",
-        engine: TtsEngineId::Kitten,
-        display_name: "Kitten TTS Nano",
-        maker: "KittenML",
-        hf_repo: "KittenML/kitten-tts-nano-0.1",
-        languages: &["en-us"],
-        num_voices: 8,
-        cloning: CloningKind::None,
-        sample_rate: 24_000,
-        param_count_m: 15,
-        quants: &[TtsQuant {
-            id: "fp32",
-            size_bytes: 23_858_139,
-        }],
-        quality_score: 0.42,
-        speed_score: 0.85,
-        description: "Smallest English voice model; best when disk space matters most.",
-    },
+    // NOTE: `kitten-nano-0.1` was retired — `kitten-nano-0.2` strictly supersedes
+    // it (identical size/voices/params/speed, cleaner sound) so listing both read
+    // as a duplicate "Kitten TTS Nano" pair. A persisted 0.1 selection is an
+    // unknown id and resolves through the engine's default fallback.
     TtsModelEntry {
         id: "kitten-nano-0.2",
         engine: TtsEngineId::Kitten,
-        display_name: "Kitten TTS Nano 0.2",
+        display_name: "Kitten TTS Nano",
         maker: "KittenML",
         hf_repo: "KittenML/kitten-tts-nano-0.2",
         languages: &["en-us"],
@@ -161,7 +146,7 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         }],
         quality_score: 0.46,
         speed_score: 0.85,
-        description: "Tiny English voices with cleaner sound than Kitten 0.1.",
+        description: "Smallest English voice model; best when disk space matters most.",
     },
     TtsModelEntry {
         id: "piper",
@@ -269,6 +254,19 @@ mod tests {
             assert!(!description.is_empty(), "{} has no description", m.id);
             assert!(description.len() <= 90, "{} description is too long", m.id);
         }
+    }
+
+    #[test]
+    fn kitten_nano_is_a_single_entry() {
+        // 0.2 superseded 0.1; the catalog must list exactly one Kitten Nano model
+        // (the retired 0.1 id is gone) so the picker shows no duplicate row.
+        let kitten: Vec<&str> = TTS_CATALOG
+            .iter()
+            .filter(|m| m.engine == TtsEngineId::Kitten)
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(kitten, vec!["kitten-nano-0.2"]);
+        assert!(find("kitten-nano-0.1").is_none());
     }
 
     #[test]

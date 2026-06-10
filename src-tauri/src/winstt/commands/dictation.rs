@@ -17,7 +17,7 @@
 // -change, server-status, session-aborted. They are emitted as PLAIN string events
 // (NOT specta-collected) in WinSTT's byte-identical IPC shape so the reused renderer's
 // `onRecordingStart`/`onFullSentence`/`onAudioLevel`/… listeners work unchanged
-// (lib_wiring.md §4b). The EMIT CALL SITES live inside Handy-owned files (the
+// (lib_wiring.md §4b). The emit call sites live inside core files (the
 // transcription coordinator / audio consumer / VAD loop); this module gives them a
 // single typed helper so those one-liner edits stay mechanical (see libWiring note).
 
@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 /// The transcribe binding id the dictation pipeline drives. The renderer owns the
 /// hotkey (PTT/toggle) and only sends `set_microphone(true/false)`; on the backend
-/// that flips the recorder through Handy's coordinator using this binding so the
+/// that flips the recorder through the coordinator using this binding so the
 /// existing TranscribeAction (model preload + overlay + paste pipeline) runs.
 const DICTATION_BINDING: &str = "transcribe";
 
@@ -179,7 +179,7 @@ fn apply_endpoint_flag(_rm: &AudioRecordingManager, _parameter: &str, _enabled: 
 /// `winstt_call_method` — dispatch the ~3 recorder methods the renderer invokes by
 /// name (ipc-client.ts `sttCallMethod`). WinSTT bundles `wakeup()` with
 /// `set_microphone(true)` server-side; here `set_microphone(true)` starts the
-/// dictation recording through Handy's coordinator (which runs the TranscribeAction
+/// dictation recording through the coordinator (which runs the TranscribeAction
 /// = model preload + overlay + paste pipeline) and `set_microphone(false)` stops it.
 #[tauri::command]
 #[specta::specta]
@@ -223,7 +223,7 @@ pub fn winstt_call_method(app: AppHandle, method: String, args: Option<Vec<serde
     }
 }
 
-/// Start (on=true) / stop (on=false) the dictation recording via Handy's
+/// Start (on=true) / stop (on=false) the dictation recording via the
 /// coordinator. `push_to_talk: true` makes the press start and the release stop
 /// (matching WinSTT's PTT, where the renderer sends mic on at press and mic off at
 /// release). Toggle mode in WinSTT also routes through this same set_microphone
@@ -266,7 +266,7 @@ fn request_diarization_toggle(app: &AppHandle, enabled: bool) {
 /// `set_winstt_model` — request a (main | realtime) model reload. The reused
 /// renderer's `sttReloadModel(kind, name, quantization?)` sends `{ kind, name, quantization }`. The actual engine
 /// swap is WU-4 (lib_wiring §7, internal to TranscriptionManager); for WU-3 this
-/// kicks Handy's `initiate_model_load` so the main-model reload path is live, and
+/// kicks `initiate_model_load` so the main-model reload path is live, and
 /// returns a structural ack. Realtime-kind reloads are owned by 04_*.
 #[tauri::command]
 #[specta::specta]
@@ -295,7 +295,7 @@ pub fn set_winstt_model(app: AppHandle, kind: String, name: String, quantization
 // (recording-start/stop, vad-start/stop, no-audio-detected, transcription-failed,
 // session-aborted) carry nothing. Event NAMES match the adapter ROUTE map.
 
-/// A thin façade so the Handy-owned emit sites (coordinator / audio consumer / VAD
+/// A thin facade so the core emit sites (coordinator / audio consumer / VAD
 /// loop) have ONE typed entrypoint instead of scattered raw `app.emit("stt:...")`.
 /// Every method swallows the emit error (a dropped lifecycle event must never crash
 /// the audio thread). Usage from a wiring site: `SttEvents::recording_start(app)`.

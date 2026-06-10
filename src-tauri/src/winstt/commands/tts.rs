@@ -148,24 +148,82 @@ pub fn tts_cancel(tts: State<'_, Arc<TtsManager>>, request_id: Option<String>) {
     }
 }
 
-/// `tts_set_speed` — set the live read-aloud speed from the pill's speed control.
+/// `tts_set_speed` — set the read-aloud speed from the pill's speed control.
 /// Applies to the active read's upcoming sentences (next-sentence, natural pitch)
-/// and to every subsequent read. The persisted `tts.speed` / `tts.cloud.speed`
-/// store write is the settings command's job. Mirrors `tts.ts` `handleSetSpeed`.
+/// AND persists `tts.speed` / `tts.cloud.speed` so it carries to every subsequent
+/// read. Persisting is load-bearing for the island pill: it shows (and cycles
+/// from) the speed read out of the settings store, so without the store write the
+/// label never advances and the button looks dead. The pill window has no
+/// settings write-back of its own, so the persist must happen here.
+///
+/// The tts section is replaced wholesale on save, so we copy the full persisted
+/// section and change only the one speed field for the active source.
 #[tauri::command]
 #[specta::specta]
-pub fn tts_set_speed(tts: State<'_, Arc<TtsManager>>, speed: f32) {
+pub fn tts_set_speed(app: AppHandle, tts: State<'_, Arc<TtsManager>>, speed: f32) {
+    use crate::winstt::commands::settings::{
+        apply_settings_patch, read_settings, PartialWinsttSettings,
+    };
+    use crate::winstt::settings_schema::TtsSource;
+
+    // Immediate live effect on the in-flight read (next sentence).
     tts.set_speed(speed);
+
+    // Persist + broadcast so the pill's displayed speed advances and the choice
+    // sticks. Patch only the active source's speed field; keep every other field.
+    let mut tts_section = read_settings(&app).tts;
+    if tts_section.source == TtsSource::Cloud {
+        tts_section.cloud.speed = speed as f64;
+    } else {
+        tts_section.speed = speed as f64;
+    }
+    let patch = PartialWinsttSettings {
+        tts: Some(tts_section),
+        ..Default::default()
+    };
+    if let Err(err) = apply_settings_patch(&app, patch) {
+        log::warn!("[tts] failed to persist read-aloud speed {speed}: {err}");
+    }
 }
 
 /// Ask the overlay-owned Web Audio queue to pause read-aloud playback before
 /// microphone capture starts. This is intentionally playback-only: synthesis and
 /// the request id remain alive so the TTS session can be resumed from the island.
 pub fn request_tts_playback_pause_for_dictation(app: &AppHandle) {
+    emit_tts_playback_pause(app, "dictation");
+}
+
+fn emit_tts_playback_pause(app: &AppHandle, reason: &str) {
     let _ = app.emit(
         "tts:pause-playback",
-        serde_json::json!({ "reason": "dictation" }),
+        serde_json::json!({ "reason": reason }),
     );
+}
+
+fn emit_tts_playback_resume(app: &AppHandle, reason: &str) {
+    let _ = app.emit(
+        "tts:resume-playback",
+        serde_json::json!({ "reason": reason }),
+    );
+}
+
+/// `tts_pause_playback` - request a playback-only pause from the backend. This is
+/// used by renderer Media Session handlers for OS media keys: the renderer reports
+/// the intent to Rust, and Rust rebroadcasts the authoritative playback-control
+/// event to the overlay-owned Web Audio queue.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_pause_playback(app: AppHandle, reason: Option<String>) {
+    emit_tts_playback_pause(&app, reason.as_deref().unwrap_or("media-session"));
+}
+
+/// `tts_resume_playback` - request a playback-only resume from the backend. This
+/// mirrors `tts_pause_playback`; synthesis stays alive and only the overlay-owned
+/// Web Audio queue changes state.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_resume_playback(app: AppHandle, reason: Option<String>) {
+    emit_tts_playback_resume(&app, reason.as_deref().unwrap_or("media-session"));
 }
 
 /// Cancel the active read-aloud layer in response to Escape. The Web Audio queue

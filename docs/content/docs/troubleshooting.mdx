@@ -157,7 +157,7 @@ setx HTTPS_PROXY "http://your.proxy:8080"
 Or skip the network entirely with [Manual Model Install](/docs/manual-model-install) — the URLs are public and resumable.
 
 <Callout type="warn" title="Don't set a token for the TTS pack">
-  The TTS pack is on the **public** [winstt-assets](https://github.com/dahshury/winstt-assets) repo. Setting a `GITHUB_TOKEN` that lacks read access to that repo causes a 403. Tokenless `urllib` works fine — let WinSTT use its built-in unauthenticated client.
+  The TTS pack is on the **public** [winstt-assets](https://github.com/winstt/winstt-assets) repo. Setting a `GITHUB_TOKEN` that lacks read access to that repo causes a 403. Tokenless `urllib` works fine — let WinSTT use its built-in unauthenticated client.
 </Callout>
 
 A custom model folder must contain a complete onnx-community / Optimum export: `encoder.onnx` (or `encoder_model.onnx`), `decoder_model.onnx` (or `decoder_model_merged.onnx`), a HuggingFace `tokenizer.json`, and a `config.json` with a non-empty `model_type`. Partial folders show greyed-out in the picker with a tooltip naming the missing file — see [Custom Models](/docs/models#custom-models).
@@ -216,7 +216,7 @@ For terminals, VMs, or RDP where the host clipboard isn't reachable, switch **Se
     So the app logs carry the verbose trace — see [Debug Mode](/docs/debug-mode).
   </Step>
   <Step title="File a bug with the bundle attached">
-    At [github.com/dahshury/WinSTT/issues](https://github.com/dahshury/WinSTT/issues). Feature ideas and questions live in [Discussions](https://github.com/dahshury/WinSTT/discussions).
+    At [github.com/winstt/WinSTT/issues](https://github.com/winstt/WinSTT/issues). Feature ideas and questions live in [Discussions](https://github.com/winstt/WinSTT/discussions).
   </Step>
 </StepFlow>
 

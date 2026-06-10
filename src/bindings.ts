@@ -141,28 +141,6 @@ async getAvailableAccelerators() : Promise<Result<AvailableAccelerators, string>
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * Start key recording mode
- */
-async startHandyKeysRecording(bindingId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("start_handy_keys_recording", { bindingId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Stop key recording mode
- */
-async stopHandyKeysRecording() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stop_handy_keys_recording") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async triggerUpdateCheck() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("trigger_update_check") };
@@ -964,7 +942,7 @@ async winsttExpandSnippets(text: string) : Promise<string> {
  * `set_winstt_model` — request a (main | realtime) model reload. The reused
  * renderer's `sttReloadModel(kind, name, quantization?)` sends `{ kind, name, quantization }`. The actual engine
  * swap is WU-4 (lib_wiring §7, internal to TranscriptionManager); for WU-3 this
- * kicks Handy's `initiate_model_load` so the main-model reload path is live, and
+ * kicks `initiate_model_load` so the main-model reload path is live, and
  * returns a structural ack. Realtime-kind reloads are owned by 04_*.
  */
 async setWinsttModel(kind: string, name: string, quantization: string | null) : Promise<void> {
@@ -974,7 +952,7 @@ async setWinsttModel(kind: string, name: string, quantization: string | null) : 
  * `winstt_call_method` — dispatch the ~3 recorder methods the renderer invokes by
  * name (ipc-client.ts `sttCallMethod`). WinSTT bundles `wakeup()` with
  * `set_microphone(true)` server-side; here `set_microphone(true)` starts the
- * dictation recording through Handy's coordinator (which runs the TranscribeAction
+ * dictation recording through the coordinator (which runs the TranscribeAction
  * = model preload + overlay + paste pipeline) and `set_microphone(false)` stops it.
  */
 async winsttCallMethod(method: string, args: JsonValue[] | null) : Promise<void> {
@@ -1158,43 +1136,31 @@ async gpuGetInfo() : Promise<GpuInfoEntry[]> {
     return await TAURI_INVOKE("gpu_get_info");
 },
 /**
- * `hotkey_register` — point the PTT/toggle binding at `accelerator` so its press/
- * release fires the WinSTT hotkey events. WinSTT sends the accelerator as a WinSTT
- * key string (e.g. `LCtrl+LMeta`). handy-keys' parser does NOT accept every WinSTT
- * name (above all `LMeta`/`RMeta` — see `winstt_accel_to_handy`), so the translation
- * to handy's token vocabulary happens inside `change_binding`, which then validates
- * + (un)registers it. An empty accelerator is treated as "unbound" (no-op success)
- * so the renderer's cold-boot register-then-rebind sequence can't error.
- * 
- * Returns whether the accelerator is now active (the renderer's `hotkeyRegister`
- * wrapper reads a `boolean`, defaulting to `false`).
+ * Register the PTT/toggle accelerator. The renderer sends WinSTT key names
+ * (`LCtrl+LMeta`, `LCtrl+Space`, etc.); `shortcut::change_binding` translates
+ * normal shortcuts to Tauri's vocabulary and routes modifier-only PTT combos to
+ * the WinSTT-owned Windows modifier listener.
  */
 async hotkeyRegister(accelerator: string) : Promise<boolean> {
     return await TAURI_INVOKE("hotkey_register", { accelerator });
 },
 /**
- * `hotkey_unregister` — drop the PTT/toggle binding's live registration. The
- * renderer calls this on accelerator change (before re-registering the new one)
- * and on unmount. Resolving the binding from settings and unregistering it is
- * idempotent; a missing binding is a silent success.
+ * Unregister the PTT/toggle accelerator. The binding is resolved from settings,
+ * so the accelerator payload is accepted for API compatibility but not needed.
  */
 async hotkeyUnregister(accelerator: string) : Promise<void> {
     await TAURI_INVOKE("hotkey_unregister", { accelerator });
 },
 /**
- * `hotkey_start_recording` — begin capturing the next key combo for a rebind. Wraps
- * Handy's key-recording listener AND installs the CaptureBridge translation so the
- * per-key `handy-keys-event` stream becomes WinSTT's `hotkey:recording-update`
- * {keys}. Returns whether capture started (`hotkeyStartRecording` reads a bool).
+ * Begin combo capture for the settings UI. Actual key capture happens in the
+ * renderer while the settings window has focus; the backend only suspends live
+ * shortcuts so the user's recording keystrokes do not trigger actions.
  */
 async hotkeyStartRecording() : Promise<boolean> {
     return await TAURI_INVOKE("hotkey_start_recording");
 },
 /**
- * `hotkey_stop_recording` — finish combo capture. Detaches the Handy listener AND
- * the translation bridge, re-arms the suspended PTT binding, then emits
- * `hotkey:recording-done` { combo } with the captured peak combo (or `null` if
- * nothing was captured / cancelled).
+ * Finish combo capture and re-arm suspended shortcuts.
  */
 async hotkeyStopRecording() : Promise<void> {
     await TAURI_INVOKE("hotkey_stop_recording");
@@ -1258,13 +1224,36 @@ async listContextApps() : Promise<ContextAppEntry[]> {
     return await TAURI_INVOKE("list_context_apps");
 },
 /**
- * `tts_set_speed` — set the live read-aloud speed from the pill's speed control.
+ * `tts_set_speed` — set the read-aloud speed from the pill's speed control.
  * Applies to the active read's upcoming sentences (next-sentence, natural pitch)
- * and to every subsequent read. The persisted `tts.speed` / `tts.cloud.speed`
- * store write is the settings command's job. Mirrors `tts.ts` `handleSetSpeed`.
+ * AND persists `tts.speed` / `tts.cloud.speed` so it carries to every subsequent
+ * read. Persisting is load-bearing for the island pill: it shows (and cycles
+ * from) the speed read out of the settings store, so without the store write the
+ * label never advances and the button looks dead. The pill window has no
+ * settings write-back of its own, so the persist must happen here.
+ * 
+ * The tts section is replaced wholesale on save, so we copy the full persisted
+ * section and change only the one speed field for the active source.
  */
 async ttsSetSpeed(speed: number) : Promise<void> {
     await TAURI_INVOKE("tts_set_speed", { speed });
+},
+/**
+ * `tts_pause_playback` - request a playback-only pause from the backend. This is
+ * used by renderer Media Session handlers for OS media keys: the renderer reports
+ * the intent to Rust, and Rust rebroadcasts the authoritative playback-control
+ * event to the overlay-owned Web Audio queue.
+ */
+async ttsPausePlayback(reason: string | null) : Promise<void> {
+    await TAURI_INVOKE("tts_pause_playback", { reason });
+},
+/**
+ * `tts_resume_playback` - request a playback-only resume from the backend. This
+ * mirrors `tts_pause_playback`; synthesis stays alive and only the overlay-owned
+ * Web Audio queue changes state.
+ */
+async ttsResumePlayback(reason: string | null) : Promise<void> {
+    await TAURI_INVOKE("tts_resume_playback", { reason });
 },
 /**
  * `tts_report_playback_started` — the window that owns the Web Audio queue (the
@@ -1727,7 +1716,7 @@ async contextPlaygroundCapture(deep: boolean) : Promise<ContextDebugReport> {
  * invisible to the Rust log, so a blank/non-rendering window leaves no trace. The
  * renderer entries install `window.onerror` + an "mounted" beacon that call this,
  * surfacing renderer crashes (the usual cause of a blank secondary window) in
- * handy.log where we can see them. Diagnostic; harmless to keep.
+ * winstt.log where we can see them. Diagnostic; harmless to keep.
  */
 async winsttDiag(label: string, level: string, message: string) : Promise<void> {
     await TAURI_INVOKE("winstt_diag", { label, level, message });
@@ -2038,7 +2027,7 @@ sileroSensitivity?: number;
  */
 sileroUseOnnx?: boolean; 
 /**
- * Silero-based deactivity (Handy parity; config-only, no live consumer). HOT-SWAP (persist-only).
+ * Silero-based deactivity (config-only, no live consumer). HOT-SWAP (persist-only).
  */
 sileroDeactivityDetection?: boolean; 
 /**
@@ -2489,7 +2478,7 @@ export type HotkeySettings = {
 pushToTalkKey?: string }
 export type IntegrationsSettings = { elevenlabs?: ProviderIntegrationStatus }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
-export type KeyboardImplementation = "tauri" | "handy_keys"
+export type KeyboardImplementation = "tauri"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 /**
  * One language `{ code, label }`.
@@ -2994,16 +2983,16 @@ export type TranscriberBackend = "faster_whisper" | "onnx_asr"
  * Legacy `TranscriptionHistoryEntry` (ipc-client.ts) — the karaoke `HistoryTable`
  * + the settings panel sync. STRING id, epoch-MILLIS timestamp.
  */
-export type TranscriptionHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; audioFilePath?: string | null; originalText?: string | null; llmModel?: string | null;
+export type TranscriptionHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; audioFilePath?: string | null; originalText?: string | null; llmModel?: string | null; 
 /**
  * Recorded post-processing error when an LLM was requested but failed soft.
  */
-llmError?: string | null;
+llmError?: string | null; 
 /**
  * LLM post-processing wall-time in ms (the footer's "processing time"),
  * when an LLM ran.
  */
-llmProcessingMs?: number | null;
+llmProcessingMs?: number | null; 
 /**
  * LLM generation speed (output tokens / processing second), when the
  * provider reported token usage and the pass took a measurable duration.
@@ -3117,7 +3106,7 @@ export type TtsModelsWithStateDto = { models: TtsModelInfoDto[]; states: TtsMode
 export type TtsSettings = { enabled?: boolean; 
 /**
  * Local TTS catalog id selecting WHICH engine/model synthesizes
- * (kokoro-82m / kitten-nano-0.1 / kitten-nano-0.2 / piper / supertonic-3).
+ * (kokoro-82m / kitten-nano-0.2 / piper / supertonic-3).
  * `voice` below is the voice WITHIN this model. Cloud source ignores this.
  */
 model?: string; 
@@ -3126,7 +3115,7 @@ model?: string;
  */
 voice?: string; lang?: string; 
 /**
- * 0.5..2.0 multiplier.
+ * 0.4..2.0 multiplier (Supertonic slider reaches 0.4; other engines 0.5).
  */
 speed?: number; 
 /**

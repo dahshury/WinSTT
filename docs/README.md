@@ -3,7 +3,7 @@
 This folder contains the TanStack Start + Fumadocs documentation site for
 WinSTT.
 
-Public site: [https://dahshury.github.io/WinSTT/](https://dahshury.github.io/WinSTT/).
+Public site: [https://winstt.github.io/WinSTT/](https://winstt.github.io/WinSTT/).
 
 ## Run Locally
 

@@ -1,4 +1,4 @@
-// Reference: E:/DL/Projects/onnx-asr/src/onnx_asr/diarization.py
+// Reference: <onnx-asr>/src/onnx_asr/diarization.py
 //
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. Data types — mirror onnx-asr `DiarSegment` / WinSTT `SpeakerSegment`.

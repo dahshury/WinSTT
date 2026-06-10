@@ -12,7 +12,7 @@ for feature parity; `main` still tracks that Electron app.
 ├── src/               renderer (FSD; ported 1:1 from the reference frontend)
 ├── src-tauri/         Rust backend (winstt::* modules, STT engines on `ort`)
 ├── public/ windows/ messages/ packages/ spec/ tools/
-├── docs/              project docs (docs/archive/port/ ← archived migration plan)
+├── docs/              project docs
 ├── index.html  package.json  vite.config.ts  tsconfig*.json
 ├── tools/windows/     Windows build helpers (.bat: vcvars + cargo/bun)
 ├── examples/
@@ -24,10 +24,10 @@ for feature parity; `main` still tracks that Electron app.
 The Tauri app needs the VS build env + bun/cargo on PATH. Use the helpers in
 `tools/windows/` (they set up vcvars and `cd` to the right place):
 
-- `tools\windows\tauri-dev.ps1`   — `bun run tauri dev` (long-running). **Prefer this:** Ctrl+C
+- `tools\windows\tauri-dev.ps1` — `bun run tauri dev` (long-running). **Prefer this:** Ctrl+C
   closes cleanly (no cmd "Terminate batch job (Y/N)?" prompt). `tauri-dev.bat` still works but,
   being a batch file, cmd shows that prompt on Ctrl+C.
-- `tools\windows\tauri-build.bat`  — `bun run tauri build --no-bundle`
+- `tools\windows\tauri-build.bat` — `bun run tauri build --no-bundle`
 - `tools\windows\cargo-env.bat check|build` — cargo in `src-tauri/`
 
 Note: `cargo build --release` leaves Tauri in **dev mode** (webview loads the dev URL);

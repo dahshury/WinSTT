@@ -1,15 +1,10 @@
 //! Main-pill geometry persistence and visibility: store consts, load/save/restore
 //! position, monitor-bounds check, show_main_window, permission-onboarding force-show.
 
-#[cfg(target_os = "windows")]
-use std::sync::Arc;
-
 use tauri::{AppHandle, Manager};
 
 #[cfg(target_os = "windows")]
 use crate::commands;
-#[cfg(target_os = "windows")]
-use crate::managers::model::ModelManager;
 use crate::{splash, winstt};
 
 /// Dedicated store for window geometry persisted across runs. Kept separate from
@@ -128,16 +123,6 @@ pub(crate) fn show_main_window(app: &AppHandle) {
 pub(crate) fn should_force_show_permissions_window(app: &AppHandle) -> bool {
     #[cfg(target_os = "windows")]
     {
-        let model_manager = app.state::<Arc<ModelManager>>();
-        let has_downloaded_models = model_manager
-            .get_available_models()
-            .iter()
-            .any(|model| model.is_downloaded);
-
-        if !has_downloaded_models {
-            return false;
-        }
-
         let status = commands::audio::get_windows_microphone_permission_status();
         if status.supported && status.overall_access == commands::audio::PermissionAccess::Denied {
             log::info!(

@@ -57,7 +57,7 @@ describe("getFamilyConfig", () => {
 		expect(cfg.logoSrc).toBeUndefined();
 	});
 
-	test("includes the SenseVoice family (the only Handy family WinSTT was missing)", () => {
+	test("includes the SenseVoice family", () => {
 		const cfg = getFamilyConfig("sense_voice");
 		expect(cfg.label).toBe("SenseVoice");
 		expect(cfg.icon).toBeDefined();

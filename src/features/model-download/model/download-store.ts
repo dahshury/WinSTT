@@ -37,6 +37,21 @@ export interface QuantDownloadState {
 	totalBytes: number;
 }
 
+export interface QuantDownloadSeed {
+	downloadedBytes: number;
+	progress: number | null;
+	totalBytes: number;
+}
+
+export interface QuantCacheSeedSource {
+	downloadedBytes?: number | null;
+	downloaded_bytes?: number | null;
+	progress?: number | null;
+	state?: string;
+	totalBytes?: number | null;
+	total_bytes?: number | null;
+}
+
 /** Composite key used in the ``quantDownloads`` map. Empty quant maps to
  *  ``modelId@`` — distinguishable from a non-existent entry by the empty
  *  trailing segment. */
@@ -68,8 +83,17 @@ interface DownloadState {
 	 *  preserved on disk; resume picks up via HTTP Range. */
 	pauseQuantDownload: (modelId: string, quantization: string) => void;
 	/** Mark a quant entry as paused locally (for instant UI feedback —
-	 *  the server confirms via the next download event). */
+	 *  the server confirms via the next download event). Also the handler for
+	 *  the server's ``stt:model-download-paused`` broadcast, so EVERY window
+	 *  (not just the one that clicked pause) leaves the downloading state. */
 	pauseQuantEntry: (modelId: string, quantization: string) => void;
+	/** Clear the paused flag on an existing quant entry WITHOUT touching the
+	 *  server — the inverse of {@link pauseQuantEntry}. Driven by the server's
+	 *  ``stt:model-download-start`` re-emit on resume so windows that only
+	 *  observed the download (and got the pause broadcast) re-enter the
+	 *  downloading state when bytes start flowing again. No-op when the entry
+	 *  is absent or already active. */
+	resumeQuantEntry: (modelId: string, quantization: string) => void;
 	/** Kick off a byte-level pause/resume capable download for one
 	 *  ``(modelId, quantization)`` tuple. Distinct from the legacy
 	 *  "switch model + restart server" flow — this fetches into the HF
@@ -79,6 +103,7 @@ interface DownloadState {
 		modelId: string,
 		quantization: string,
 		owner?: SttDownloadOwner,
+		seed?: QuantDownloadSeed,
 	) => void;
 	progress: number | null; // 0–100, null = indeterminate
 	/** Per-quant download snapshots, keyed by ``quantKey()``. Cards read
@@ -92,6 +117,7 @@ interface DownloadState {
 		modelId: string,
 		quantization: string,
 		owner?: SttDownloadOwner,
+		seed?: QuantDownloadSeed,
 	) => void;
 	setDownloadComplete: (cancelled?: boolean) => void;
 	setDownloadProgress: (payload: DownloadProgressPayload) => void;
@@ -129,6 +155,69 @@ function monotonicPercent(
 	next: number,
 ): number {
 	return previous == null ? next : Math.max(previous, next);
+}
+
+function seedProgress(
+	previous: number | null | undefined,
+	seed: QuantDownloadSeed | undefined,
+): number | null {
+	if (seed?.progress == null) {
+		return previous ?? null;
+	}
+	return monotonicPercent(previous, seed.progress);
+}
+
+function seedDownloadedBytes(
+	previous: number | undefined,
+	seed: QuantDownloadSeed | undefined,
+): number {
+	return Math.max(previous ?? 0, seed?.downloadedBytes ?? 0);
+}
+
+function seedTotalBytes(
+	previous: number | undefined,
+	seed: QuantDownloadSeed | undefined,
+	downloadedBytes: number,
+): number {
+	return Math.max(previous ?? 0, seed?.totalBytes ?? 0, downloadedBytes);
+}
+
+function cacheBytes(cache: QuantCacheSeedSource | null | undefined): {
+	downloaded: number;
+	total: number;
+} {
+	return {
+		downloaded: Math.max(
+			0,
+			cache?.downloadedBytes ?? cache?.downloaded_bytes ?? 0,
+		),
+		total: Math.max(0, cache?.totalBytes ?? cache?.total_bytes ?? 0),
+	};
+}
+
+/** Convert a persisted partial-cache snapshot into the live 0-100 snapshot
+ *  scale. A partial cache is capped at 99%; 100% is reserved for `cached`. */
+export function quantDownloadSeedFromCache(
+	cache: QuantCacheSeedSource | null | undefined,
+): QuantDownloadSeed | undefined {
+	if (cache?.state !== "partial") {
+		return undefined;
+	}
+	const { downloaded, total } = cacheBytes(cache);
+	const progressValue = cache?.progress;
+	const rawProgress =
+		typeof progressValue === "number"
+			? Math.round(progressValue * 100)
+			: total > 0
+				? Math.round((downloaded / total) * 100)
+				: null;
+	const progress =
+		rawProgress == null ? null : Math.min(99, Math.max(0, rawProgress));
+	return {
+		downloadedBytes: downloaded,
+		totalBytes: Math.max(total, downloaded),
+		progress,
+	};
 }
 
 export function normalizeProgressPayload(payload: DownloadProgressPayload) {
@@ -220,6 +309,7 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 		modelId: string,
 		quantization: string,
 		owner?: SttDownloadOwner,
+		seed?: QuantDownloadSeed,
 	) => {
 		// Seed the entry so the badge flips to "downloading" instantly
 		// rather than waiting for the first server progress event.
@@ -227,6 +317,10 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 			const key = quantKey(modelId, quantization);
 			const existing = s.quantDownloads[key];
 			const resolvedOwner = owner ?? existing?.owner;
+			const downloadedBytes = seedDownloadedBytes(
+				existing?.downloadedBytes,
+				seed,
+			);
 			return {
 				quantDownloads: {
 					...s.quantDownloads,
@@ -234,9 +328,9 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 						modelId,
 						quantization,
 						...ownerPatch(resolvedOwner),
-						progress: existing?.progress ?? null,
-						downloadedBytes: existing?.downloadedBytes ?? 0,
-						totalBytes: existing?.totalBytes ?? 0,
+						progress: seedProgress(existing?.progress, seed),
+						downloadedBytes,
+						totalBytes: seedTotalBytes(existing?.totalBytes, seed, downloadedBytes),
 						speedBps: existing?.speedBps ?? 0,
 						paused: false,
 					},
@@ -256,7 +350,7 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 		set((s) => {
 			const key = quantKey(modelId, quantization);
 			const entry = s.quantDownloads[key];
-			if (!entry) {
+			if (!entry || entry.paused) {
 				return s;
 			}
 			return {
@@ -267,18 +361,35 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 			};
 		});
 	},
+	resumeQuantEntry: (modelId: string, quantization: string) => {
+		set((s) => {
+			const key = quantKey(modelId, quantization);
+			const entry = s.quantDownloads[key];
+			if (!entry || !entry.paused) {
+				return s;
+			}
+			return {
+				quantDownloads: {
+					...s.quantDownloads,
+					[key]: { ...entry, paused: false },
+				},
+			};
+		});
+	},
 	resumeQuantDownload: (
 		modelId: string,
 		quantization: string,
 		owner?: SttDownloadOwner,
+		seed?: QuantDownloadSeed,
 	) => {
 		set((s) => {
 			const key = quantKey(modelId, quantization);
 			const entry = s.quantDownloads[key];
 			if (!entry) {
-				if (owner === undefined) {
+				if (owner === undefined && seed === undefined) {
 					return s;
 				}
+				const downloadedBytes = seedDownloadedBytes(undefined, seed);
 				return {
 					quantDownloads: {
 						...s.quantDownloads,
@@ -286,9 +397,9 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 							modelId,
 							quantization,
 							...ownerPatch(owner),
-							progress: null,
-							downloadedBytes: 0,
-							totalBytes: 0,
+							progress: seedProgress(undefined, seed),
+							downloadedBytes,
+							totalBytes: seedTotalBytes(undefined, seed, downloadedBytes),
 							speedBps: 0,
 							paused: false,
 						},
@@ -296,10 +407,18 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 				};
 			}
 			const resolvedOwner = owner ?? entry.owner;
+			const downloadedBytes = seedDownloadedBytes(entry.downloadedBytes, seed);
 			return {
 				quantDownloads: {
 					...s.quantDownloads,
-					[key]: { ...entry, ...ownerPatch(resolvedOwner), paused: false },
+					[key]: {
+						...entry,
+						...ownerPatch(resolvedOwner),
+						progress: seedProgress(entry.progress, seed),
+						downloadedBytes,
+						totalBytes: seedTotalBytes(entry.totalBytes, seed, downloadedBytes),
+						paused: false,
+					},
 				},
 			};
 		});

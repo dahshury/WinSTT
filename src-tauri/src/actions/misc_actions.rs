@@ -44,7 +44,7 @@ impl ShortcutAction for TransformAction {
 }
 
 // Re-paste Action (WinSTT general.repasteHotkey, default LCtrl+LShift+V): re-inject
-// the most recent dictation transcription without re-dictating. handy-keys registers
+// the most recent dictation transcription without re-dictating. The key hook registers
 // the combo with blocking, so the accelerator is consumed system-wide (the reference's
 // "exclusive" globalShortcut semantics) — pressing it ONLY re-pastes, it does not also
 // trigger the focused app's native binding for the same combo. Mirrors
@@ -61,11 +61,11 @@ impl ShortcutAction for RepasteAction {
         // This hotkey fires on key-DOWN while the user is STILL holding the combo
         // (LCtrl+LShift+V), and must paste the WHOLE block immediately — exactly like a
         // manual Ctrl+V — without waiting for release. A naive synthetic Ctrl+V can't do
-        // that here: handy-keys' blocking hook (which doesn't filter injected events) sees
+        // that here: the blocking hook (which doesn't filter injected events) sees
         // the synthetic `V` re-match the still-held Ctrl+Shift+V and SWALLOWS it, and the
         // held Shift would turn Ctrl+V into Ctrl+Shift+V. Fix (the standard clipboard-paste
         // dance, à la Espanso): inject key-UPs to release the held modifiers first — now
-        // the combo no longer matches (so handy lets the synthetic `V` through) and the
+        // the combo no longer matches (so the hook lets the synthetic `V` through) and the
         // paste reaches the app as a clean Ctrl+V. Then run the normal clipboard paste, so
         // the text drops in as ONE block via the user's configured paste method.
         // Run on a worker (off the hotkey/manager thread): Windows input synthesis +

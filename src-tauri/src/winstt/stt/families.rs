@@ -1,4 +1,4 @@
-// Source: onnx-asr fork (E:/DL/Projects/onnx-asr/src/onnx_asr/) — asr.py (_AsrWithCtcDecoding,
+// Source: onnx-asr fork (<onnx-asr>/src/onnx_asr/) — asr.py (_AsrWithCtcDecoding,
 //   _AsrWithTransducerDecoding, _AsrWithDecoding decode/text), models/{sense_voice,dolphin,
 //   gigaam,nemo,kaldi,cohere_asr}.py — and ort 2.0.0-rc.12 (Session, GraphOptimizationLevel,
 //   Tensor::from_array, DynValue::try_extract_array/try_extract_tensor, ort::inputs!).

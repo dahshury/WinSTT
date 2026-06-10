@@ -1,5 +1,8 @@
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { useModelStateStore } from "@/entities/model-catalog";
+import { resolveQuantCache } from "@picker/stt/lib/cache-helpers";
 import {
+	quantDownloadSeedFromCache,
 	type QuantDownloadState,
 	type SttDownloadOwner,
 	useDownloadStore,
@@ -65,6 +68,14 @@ export function useQuantActions(): QuantActions {
 	): QuantDownloadState | undefined =>
 		quantDownloads[`${modelId}@${quantization}`];
 
+	const seedFor = (modelId: string, quantization: OnnxQuantization) =>
+		quantDownloadSeedFromCache(
+			resolveQuantCache(
+				useModelStateStore.getState().statesById[modelId],
+				quantization,
+			),
+		);
+
 	const handleDownloadAction = (
 		action: "start" | "pause" | "resume" | "cancel",
 		modelId: string,
@@ -72,7 +83,7 @@ export function useQuantActions(): QuantActions {
 		owner?: SttDownloadOwner,
 	): void => {
 		if (action === "start") {
-			predownloadQuant(modelId, quantization, owner);
+			predownloadQuant(modelId, quantization, owner, seedFor(modelId, quantization));
 			return;
 		}
 		if (action === "pause") {
@@ -83,7 +94,12 @@ export function useQuantActions(): QuantActions {
 			return;
 		}
 		if (action === "resume") {
-			resumeQuantDownload(modelId, quantization, owner);
+			resumeQuantDownload(
+				modelId,
+				quantization,
+				owner,
+				seedFor(modelId, quantization),
+			);
 			return;
 		}
 		if (action === "cancel") {

@@ -531,7 +531,7 @@ class TestRecorderService:
         # "Charge B" should fuzz-match to "ChargeBee" via the n-gram pass.
         result = service._preprocess_output("we love Charge B")
         # Greedy 3-gram absorbs "love Charge B" — the assertion only
-        # checks the substitution landed (mirrors the Handy test style).
+        # checks the substitution landed.
         assert "ChargeBee" in result
         assert result.endswith(".")
 
@@ -625,7 +625,7 @@ class TestRecorderService:
     def test_set_microphone_off_defers_pause_when_tail_buffer_configured(self) -> None:
         """``extra_recording_buffer_ms`` keeps the mic capturing past PTT release.
 
-        Mirrors Handy's ``extra_recording_buffer_ms`` semantics: when the
+        Mirrors ``extra_recording_buffer_ms`` semantics: when the
         user releases PTT mid-syllable, the trailing audio is captured
         for the configured window before the pause + stop sequence runs.
         Until the window elapses the audio source must NOT be paused and
@@ -2681,7 +2681,7 @@ class TestRecorderService:
         service.shutdown()
         service.shutdown()
 
-    # ---- Idle-unload daemon (Handy ModelUnloadTimeout port) ----
+    # ---- Idle-unload daemon ----
 
     def test_unload_daemon_disabled_when_timeout_none(self) -> None:
         """``model_unload_timeout_seconds=None`` skips the daemon entirely.
@@ -2769,7 +2769,7 @@ class TestRecorderService:
         service.shutdown()
 
     def test_unload_daemon_skipped_when_timeout_zero(self) -> None:
-        """``model_unload_timeout_seconds=0`` is Handy's ``Immediately``
+        """``model_unload_timeout_seconds=0`` is the immediate-unload mode
         mode — the poller thread must NOT start (tear-down happens
         synchronously from ``_maybe_unload_immediately`` after every
         transcription, not on a 30 s tick)."""

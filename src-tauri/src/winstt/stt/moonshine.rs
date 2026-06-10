@@ -1,6 +1,6 @@
 // Moonshine ASR (Useful Sensors / onnx-community export).
 // Reference (decode correctness): onnx-asr fork src/onnx_asr/models/moonshine.py
-//   (E:/DL/Projects/onnx-asr/src/onnx_asr/models/moonshine.py) — the 3-graph structure,
+//   (<onnx-asr>/src/onnx_asr/models/moonshine.py) — the 3-graph structure,
 //   greedy KV decode loop, and the SentencePiece byte-fallback `_decode_text`.
 //
 // Near-clone of `whisper.rs` (same ort host-copy KV-cache decode, present.* → past.* carry,

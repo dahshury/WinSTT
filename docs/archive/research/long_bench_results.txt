@@ -1,6 +1,0 @@
-=== LONG 245s varied, CPU ===
-sensevoice   : OURS=warm 15.4998668s FORK=WARM_MEDIAN=13141.3ms
-parakeet-tdt : OURS=warm 14.7583932s FORK=WARM_MEDIAN=14353.5ms
-cohere       : OURS=warm 48.4737776s FORK=WARM_MEDIAN=42236.3ms
-lite-whisper : OURS=warm 4.646931s FORK=WARM_MEDIAN=4686.4ms
-DONE

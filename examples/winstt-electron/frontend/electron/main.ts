@@ -519,7 +519,7 @@ function resolveMinisignPubkeyPath(): string {
 function buildMinisignSidecarUrl(downloadedFile: string, version: string): string {
 	const tag = version.startsWith("v") ? version : `v${version}`;
 	const artifact = basename(downloadedFile);
-	return `https://github.com/dahshury/WinSTT/releases/download/${tag}/${artifact}.minisig`;
+	return `https://github.com/winstt/WinSTT/releases/download/${tag}/${artifact}.minisig`;
 }
 
 /**
@@ -1725,7 +1725,7 @@ function createOverlayWindow() {
 		// 720×240 region), which on a transparent overlay shows up as a faint
 		// thin rectangle framing the pill — visible the whole time the overlay
 		// is up, not just on entrance. The pill draws its own CSS shadow, so the
-		// native one is pure noise. Matches Handy's overlay (`.shadow(false)` in
+		// native one is pure noise. Matches the reference overlay (`.shadow(false)` in
 		// `src-tauri/src/overlay.rs`). `hasShadow` defaults to `true`.
 		hasShadow: false,
 		alwaysOnTop: true,

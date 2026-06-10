@@ -271,7 +271,7 @@ describe("usePushToTalk", () => {
 		const { rerender } = renderHook(() => usePushToTalk());
 		// On mount the hook mirrors the persisted `settings.hotkey.pushToTalkKey`
 		// (here the schema default) into the store accelerator. The default is
-		// "LCtrl+LMeta" (settings-schema.ts) — the original WinSTT PTT combo.
+		// "LCtrl+LMeta" (settings-schema.ts) — the default WinSTT PTT combo.
 		expect(useHotkeyStore.getState().accelerator).toBe("LCtrl+LMeta");
 
 		act(() => {
