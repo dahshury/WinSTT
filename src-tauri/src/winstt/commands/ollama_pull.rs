@@ -28,6 +28,7 @@ use specta::Type;
 use tauri::State;
 
 use crate::winstt::managers::LlmManager;
+use crate::winstt::sync_ext::MutexExt;
 
 use super::llm::authorize_ollama_model_management_label;
 
@@ -38,25 +39,18 @@ static LAST_WARMUP_STATUS: Lazy<Mutex<Option<LlmWarmupStatus>>> = Lazy::new(|| M
 
 /// Mark a model's in-flight pull as cancelled. Idempotent.
 pub fn mark_pull_cancelled(model: &str) {
-    if let Ok(mut set) = PULL_CANCELLED.lock() {
-        set.insert(model.to_string());
-    }
+    PULL_CANCELLED.lock_recover().insert(model.to_string());
 }
 
 /// True if the given model's pull has been cancelled. The streaming pull loop in `ollama_pull`
 /// checks this between NDJSON chunks.
 pub fn is_pull_cancelled(model: &str) -> bool {
-    PULL_CANCELLED
-        .lock()
-        .map(|set| set.contains(model))
-        .unwrap_or(false)
+    PULL_CANCELLED.lock_recover().contains(model)
 }
 
 /// Clear a model's cancel flag once the pull loop has torn down (or completed).
 pub fn clear_pull_cancel(model: &str) {
-    if let Ok(mut set) = PULL_CANCELLED.lock() {
-        set.remove(model);
-    }
+    PULL_CANCELLED.lock_recover().remove(model);
 }
 
 // ── Pull-progress event payload (plain `llm:pull-progress`, mirrors spec) ────────

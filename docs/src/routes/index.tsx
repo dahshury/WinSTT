@@ -393,7 +393,7 @@ function HomePage() {
           </div>
 
           <a
-            href="https://github.com/winstt/WinSTT/blob/main/LICENSE"
+            href={`${repositoryUrl}/blob/main/LICENSE`}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full mb-4 transition-all hover:brightness-110"

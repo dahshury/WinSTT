@@ -31,7 +31,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::winstt::cloud_stt::{
     classify_cloud_failure_message, emit_cloud_failure, CloudSttProvider,
 };
-use crate::winstt::commands::settings::read_settings;
+use crate::winstt::commands::settings::{read_settings, read_settings_raw};
 use crate::winstt::managers::tts_download_manager::{TtsDownloadErr, TtsDownloadManager};
 use crate::winstt::model_swap::ModelSwapCoordinator;
 use crate::winstt::settings_schema::{
@@ -155,9 +155,13 @@ impl Drop for ActiveTtsUseGuard<'_> {
         self.manager.active_reads.fetch_sub(1, Ordering::AcqRel);
         self.manager.mark_model_used();
         if matches!(self.source, TtsSource::Local)
-            && crate::settings::get_settings(&self.manager.app).model_unload_timeout
+            && read_settings_raw(&self.manager.app)
+                .core
+                .model_unload_timeout
                 == crate::settings::ModelUnloadTimeout::Immediately
         {
+            // RAW read (M7): only `model_unload_timeout` is needed here; avoid the
+            // secret decryption + reader-backfill write that `get_settings` performs.
             self.manager.unload_active_local_model("immediate timeout");
         }
     }
@@ -212,7 +216,12 @@ impl TtsManager {
         let manager = Arc::clone(self);
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_secs(5));
-            let timeout = crate::settings::get_settings(&manager.app).model_unload_timeout;
+            // RAW read (M7): this fires every 5s on a background thread and only needs
+            // `model_unload_timeout`. The secret-opening `get_settings` would decrypt
+            // every DPAPI envelope (reg.exe spawns) AND could trigger the reader-backfill
+            // settings WRITE here — exactly the H2 write path we must not enter from a
+            // hot background tick. The raw reader never opens secrets and never writes.
+            let timeout = read_settings_raw(&manager.app).core.model_unload_timeout;
             let Some(max_idle) = tts_idle_unload_duration(timeout) else {
                 continue;
             };

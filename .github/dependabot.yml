@@ -1,0 +1,42 @@
+# Dependency update automation. Minor/patch bumps are grouped into a single PR
+# per ecosystem to keep the queue quiet; majors stay individual so breaking
+# changes get reviewed on their own.
+version: 2
+updates:
+  # Renderer (root package.json + bun.lock). Bun lockfiles are read by
+  # Dependabot via the npm ecosystem.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Rust backend crate.
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # The workflows themselves — keeps the SHA pins fresh as upstream actions
+  # tag new releases.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      github-actions:
+        update-types:
+          - "minor"
+          - "patch"

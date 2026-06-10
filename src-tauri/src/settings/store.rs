@@ -199,25 +199,26 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
     // keys), so the returned `core` is plaintext — exactly what every legacy reader
     // expects from the old store.
     let mut settings = crate::winstt::commands::settings::read_settings(app).core;
+    // Backfill any bindings / providers added since the store was last written so the
+    // returned value is always complete. This is a READ-ONLY backfill: the merge is a
+    // sub-millisecond in-memory HashMap/Vec operation recomputed on each read.
+    //
+    // It used to ALSO persist the backfilled `core` here as a micro-optimization, but
+    // that turned a settings READER into a writer (M7) — fired from the TTS idle
+    // watcher and every other `get_settings` caller, including background threads. A
+    // read-derived whole-`core` write also risks a lost update against a concurrent
+    // legacy setter (H2). Dropping the persist removes both hazards; the only cost is
+    // recomputing this trivial merge per read, which the backfill already did anyway.
     let default_settings = get_default_settings();
-    let mut updated = false;
     for (key, binding) in default_settings.bindings {
         if let std::collections::hash_map::Entry::Vacant(entry) =
             settings.bindings.entry(key.clone())
         {
             debug!("Adding missing binding: {}", key);
             entry.insert(binding);
-            updated = true;
         }
     }
-    if ensure_post_process_defaults(&mut settings) {
-        updated = true;
-    }
-    if updated {
-        // Persist the backfilled bindings / providers back into the single store so
-        // the merge isn't recomputed on every read.
-        write_settings(app, settings.clone());
-    }
+    ensure_post_process_defaults(&mut settings);
     settings
 }
 

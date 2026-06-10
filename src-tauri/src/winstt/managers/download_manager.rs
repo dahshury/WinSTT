@@ -323,7 +323,7 @@ impl DownloadManager {
             for n in 0..MAX_CONCURRENT_DOWNLOADS {
                 let me = Arc::clone(self);
                 let rx = Arc::clone(&rx);
-                let _ = std::thread::Builder::new()
+                let spawned = std::thread::Builder::new()
                     .name(format!("stt-download-worker-{n}"))
                     .spawn(move || loop {
                         // Block until a job is available. Holding the lock only across `recv()`
@@ -348,6 +348,12 @@ impl DownloadManager {
                         } = job;
                         me.run_quant_download(model, quantization, handle);
                     });
+                if let Err(e) = spawned {
+                    // OS refused the thread (out of handles / memory). This worker won't drain jobs;
+                    // queued downloads it would have served stall until another worker frees up — or
+                    // forever if every worker failed. Loud log so the silent stall is diagnosable.
+                    log::error!("[stt-download] failed to spawn download worker {n}: {e}");
+                }
             }
             tx
         })

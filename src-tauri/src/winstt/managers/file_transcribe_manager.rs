@@ -283,7 +283,9 @@ impl FileTranscribeManager {
         };
         if let Some(text) = text {
             if !text.is_empty() {
-                let _ = self.write_clipboard(&text);
+                if let Err(e) = self.write_clipboard(&text) {
+                    log::warn!("[file-transcribe] copy to clipboard failed for {id}: {e}");
+                }
             }
         }
     }

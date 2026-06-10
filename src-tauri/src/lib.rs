@@ -309,10 +309,14 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
 
     if settings.general.auto_start {
         // Enable autostart if user has opted in
-        let _ = autostart_manager.enable();
+        if let Err(e) = autostart_manager.enable() {
+            log::error!("[autostart] failed to enable launch-at-login: {e}");
+        }
     } else {
         // Disable autostart if user has opted out
-        let _ = autostart_manager.disable();
+        if let Err(e) = autostart_manager.disable() {
+            log::error!("[autostart] failed to disable launch-at-login: {e}");
+        }
     }
     advance_startup_phase(startup, app_handle, "tray settings and autostart applied");
 

@@ -46,6 +46,13 @@ use crate::managers::history::{
 const EVT_TRANSFORM_HISTORY_ADDED: &str = "transform-history:added";
 const EVT_TRANSFORM_HISTORY_DELETED: &str = "transform-history:deleted";
 
+/// Hard cap on the unbounded `history_get_all` read. The legacy settings panel
+/// loads the full set into a renderer store (no pagination) to compute its
+/// AI-Impact / Voice-Profile stats, so we still return "all" — but bounded to
+/// the newest `HISTORY_GET_ALL_CAP` rows so a runaway history can't blow up
+/// memory or the IPC payload. The cap is logged when hit so it's diagnosable.
+const HISTORY_GET_ALL_CAP: i64 = 5000;
+
 // ── Renderer-facing payload shapes (camelCase, byte-identical to WinSTT) ────────
 
 /// Legacy `TranscriptionHistoryEntry` (ipc-client.ts) — the karaoke `HistoryTable`
@@ -421,6 +428,25 @@ fn open_db(app: &AppHandle) -> Result<Connection, String> {
     Connection::open(db_path(app)?).map_err(|e| e.to_string())
 }
 
+/// Run a read-only rusqlite closure on the blocking pool. rusqlite is
+/// synchronous, so opening the connection and running the query inside an
+/// `async fn` would stall the tokio worker; this hops to `spawn_blocking`
+/// (mirrors the `tts.rs` / `download.rs` pattern) and folds the join + DB
+/// errors into one `String`.
+async fn spawn_db<T, F>(app: &AppHandle, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> rusqlite::Result<T> + Send + 'static,
+{
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_db(&app)?;
+        work(&conn).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("history db task panicked: {e}"))?
+}
+
 fn map_db_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbHistoryEntry> {
     Ok(DbHistoryEntry {
         id: row.get("id")?,
@@ -451,23 +477,26 @@ pub async fn history_list(
     offset: i64,
     limit: i64,
 ) -> Result<PaginatedHistory, String> {
-    let conn = open_db(&app)?;
     let lim = limit.clamp(1, 100);
     let off = offset.max(0);
     let fetch = lim + 1;
-    let mut stmt = conn
-        .prepare(
+    // rusqlite is synchronous; run the open + query off the async pump so the
+    // tokio worker isn't blocked (matches `tts.rs` / `download.rs`).
+    let mut entries = spawn_db(&app, move |conn| {
+        let mut stmt = conn.prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
              post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
              dictionary_fixes, history_tag, privacy_markers_json, stt_model \
              FROM transcription_history ORDER BY id DESC LIMIT ?1 OFFSET ?2",
-        )
-        .map_err(|e| e.to_string())?;
-    let mut entries: Vec<DbHistoryEntry> = stmt
-        .query_map(rusqlite::params![fetch, off], map_db_row)
-        .map_err(|e| e.to_string())?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|e| e.to_string())?;
+        )?;
+        // Bind before the closure ends so the row-iterator's borrow of `stmt`
+        // is released before `stmt` is dropped.
+        let rows = stmt
+            .query_map(rusqlite::params![fetch, off], map_db_row)?
+            .collect::<rusqlite::Result<Vec<DbHistoryEntry>>>()?;
+        Ok(rows)
+    })
+    .await?;
     let has_more = entries.len() as i64 > lim;
     if has_more {
         entries.pop();
@@ -483,20 +512,19 @@ pub async fn history_list(
 #[specta::specta]
 pub async fn history_recent(app: AppHandle, value: Option<i64>) -> Result<Vec<HistoryRow>, String> {
     let n = value.unwrap_or(5).clamp(1, 100);
-    let conn = open_db(&app)?;
-    let mut stmt = conn
-        .prepare(
+    let rows = spawn_db(&app, move |conn| {
+        let mut stmt = conn.prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
              post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
              dictionary_fixes, history_tag, privacy_markers_json, stt_model \
              FROM transcription_history ORDER BY id DESC LIMIT ?1",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows: Vec<DbHistoryEntry> = stmt
-        .query_map(rusqlite::params![n], map_db_row)
-        .map_err(|e| e.to_string())?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|e| e.to_string())?;
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![n], map_db_row)?
+            .collect::<rusqlite::Result<Vec<DbHistoryEntry>>>()?;
+        Ok(rows)
+    })
+    .await?;
     Ok(rows.iter().map(to_history_row).collect())
 }
 
@@ -614,25 +642,41 @@ pub async fn history_get_all(
     app: AppHandle,
     history_manager: State<'_, Arc<HistoryManager>>,
 ) -> Result<Vec<TranscriptionHistoryEntry>, String> {
-    let conn = open_db(&app)?;
-    let mut stmt = conn
-        .prepare(
+    // Clone the `Arc` so the reshape (which does a per-row `path.exists()`
+    // filesystem stat for the audio button) can run inside the blocking task
+    // alongside the query, off the async pump.
+    let mgr = history_manager.inner().clone();
+    // Newest-first + bounded so a runaway history can't blow up the payload;
+    // re-sort oldest-first afterwards to match the legacy append order the
+    // renderer's `HistoryTable` expects.
+    let mut rows = spawn_db(&app, move |conn| {
+        let mut stmt = conn.prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
              post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
              dictionary_fixes, history_tag, privacy_markers_json, stt_model \
-             FROM transcription_history ORDER BY id ASC",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows: Vec<DbHistoryEntry> = stmt
-        .query_map([], map_db_row)
-        .map_err(|e| e.to_string())?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|e| e.to_string())?;
-    let mgr = history_manager.inner().as_ref();
-    Ok(rows
-        .iter()
-        .map(|e| to_transcription_entry(mgr, e))
-        .collect())
+             FROM transcription_history ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![HISTORY_GET_ALL_CAP], map_db_row)?
+            .collect::<rusqlite::Result<Vec<DbHistoryEntry>>>()?;
+        Ok(rows)
+    })
+    .await?;
+    if rows.len() as i64 >= HISTORY_GET_ALL_CAP {
+        log::warn!(
+            "[history] history_get_all hit the {HISTORY_GET_ALL_CAP}-row cap; \
+             older rows are omitted from the settings History view"
+        );
+    }
+    rows.reverse();
+    let entries = tauri::async_runtime::spawn_blocking(move || {
+        rows.iter()
+            .map(|e| to_transcription_entry(mgr.as_ref(), e))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| format!("history reshape task panicked: {e}"))?;
+    Ok(entries)
 }
 
 /// `history:clear` — delete every row (and its WAV) → `{ cleared: true }`.
@@ -644,18 +688,14 @@ pub async fn history_clear(
 ) -> Result<ClearResult, String> {
     // Collect ids first, then delete via the manager so each WAV is unlinked and
     // a `Deleted` event fires per row (the bridge fans them to the renderer).
-    let ids: Vec<i64> = {
-        let conn = open_db(&app)?;
-        let mut stmt = conn
-            .prepare("SELECT id FROM transcription_history ORDER BY id ASC")
-            .map_err(|e| e.to_string())?;
-        let collected = stmt
-            .query_map([], |row| row.get::<_, i64>(0))
-            .map_err(|e| e.to_string())?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(|e| e.to_string())?;
-        collected
-    };
+    let ids: Vec<i64> = spawn_db(&app, |conn| {
+        let mut stmt = conn.prepare("SELECT id FROM transcription_history ORDER BY id ASC")?;
+        let ids = stmt
+            .query_map([], |row| row.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(ids)
+    })
+    .await?;
     for id in ids {
         // Best-effort: a row vanishing under us (concurrent delete) is not fatal.
         let _ = history_manager.delete_entry(id).await;

@@ -1,6 +1,6 @@
 export const siteConfig = {
   name: "WinSTT",
-  owner: "winstt",
+  owner: "dahshury",
   repo: "WinSTT",
   description:
     "Documentation for WinSTT, a local-first Windows speech-to-text desktop app.",

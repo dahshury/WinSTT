@@ -55,7 +55,7 @@ use crate::winstt::settings_schema::{
 
 use self::persistence::{
     normalize_cross_field_settings, preserve_masked_secrets, read_settings_for_renderer,
-    sanitize_settings_for_renderer, try_read_settings, try_seal_secrets,
+    sanitize_settings_for_renderer, try_read_settings, try_seal_secrets, with_settings_write_lock,
     word_by_word_pasting_effective, write_settings_value,
 };
 use self::runtime::{
@@ -189,33 +189,45 @@ pub fn apply_settings_patch(
     app: &AppHandle,
     patch: PartialWinsttSettings,
 ) -> Result<SetSettingsResult, String> {
-    // `previous` here is the PLAINTEXT view (secrets opened). The renderer's patch is
-    // plaintext too, so the merge + diff operate entirely in plaintext — like
-    // the reference's `snapshotSettings`, which decrypts before diffing.
-    let previous = try_read_settings(app)?;
+    // The full read→merge→seal→write span runs UNDER the process-wide settings write
+    // lock so two concurrent section patches (e.g. the renderer's per-utterance
+    // `{audio}` save racing the LLM learning thread's `{dictation}` append) can't both
+    // read the same `previous`, each graft only their own section, and have the last
+    // writer silently drop the other's section (H2). Runtime side-effects and the
+    // renderer broadcast run AFTER the lock is released — they call back into
+    // `get_settings` / `read_settings`, so keeping them outside the guard avoids any
+    // nested settings-lock acquisition (the lock is non-reentrant).
+    let (previous, next, changed_startup) = with_settings_write_lock(|| {
+        // `previous` here is the PLAINTEXT view (secrets opened). The renderer's patch
+        // is plaintext too, so the merge + diff operate entirely in plaintext — like
+        // the reference's `snapshotSettings`, which decrypts before diffing.
+        let previous = try_read_settings(app)?;
 
-    // Merge the partial patch over the persisted full snapshot, section by section
-    // (matching `applySettings` / `mergeMainOwnedFields`). Each present section
-    // overwrites its counterpart wholesale; absent sections keep the persisted value;
-    // `general` preserves the main-owned `onboarded*` fields.
-    let mut next = merge_patch_over(&previous, patch);
-    preserve_masked_secrets(&previous, &mut next);
+        // Merge the partial patch over the persisted full snapshot, section by section
+        // (matching `applySettings` / `mergeMainOwnedFields`). Each present section
+        // overwrites its counterpart wholesale; absent sections keep the persisted
+        // value; `general` preserves the main-owned `onboarded*` fields.
+        let mut next = merge_patch_over(&previous, patch);
+        preserve_masked_secrets(&previous, &mut next);
 
-    // (a) cross-field validation (the Zod `.refine` equivalents).
-    validate_settings(&next)?;
+        // (a) cross-field validation (the Zod `.refine` equivalents).
+        validate_settings(&next)?;
 
-    // (b) restart-need result for wire compatibility. The Rust port hot-applies
-    //     model, wakeword, and realtime changes in-process.
-    let changed_startup = compute_restart_keys(&previous, &next);
+        // (b) restart-need result for wire compatibility. The Rust port hot-applies
+        //     model, wakeword, and realtime changes in-process.
+        let changed_startup = compute_restart_keys(&previous, &next);
+
+        // (c) seal the secret fields at rest, then persist. Clone so runtime
+        //     side-effects keep the plaintext `next`; only the on-disk copy is
+        //     sealed and the renderer broadcast is masked below.
+        let mut to_persist = next.clone();
+        try_seal_secrets(&mut to_persist)?;
+        debug_assert!(SECRET_KEYS.iter().all(|k| is_secret(k)));
+        write_settings_value(app, &to_persist)?;
+
+        Ok::<_, String>((previous, next, changed_startup))
+    })?;
     let needs_restart = !changed_startup.is_empty();
-
-    // (c) seal the secret fields at rest, then persist. Clone so runtime
-    //     side-effects keep the plaintext `next`; only the on-disk copy is
-    //     sealed and the renderer broadcast is masked below.
-    let mut to_persist = next.clone();
-    try_seal_secrets(&mut to_persist)?;
-    debug_assert!(SECRET_KEYS.iter().all(|k| is_secret(k)));
-    write_settings_value(app, &to_persist)?;
     if previous.general.recording_mode != next.general.recording_mode
         || previous.general.wake_word != next.general.wake_word
     {

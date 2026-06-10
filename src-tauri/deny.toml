@@ -1,0 +1,74 @@
+# cargo-deny configuration for the WinSTT crate.
+#
+# Run locally from this directory with:
+#   cargo deny check
+# CI runs it via EmbarkStudios/cargo-deny-action (see .github/workflows/rust-ci.yml).
+#
+# Schema docs: https://embarkstudios.github.io/cargo-deny/
+
+# Audit the whole dependency tree regardless of which EP features (cuda/etc.)
+# happen to be enabled, so a CVE in a feature-gated dep can't hide.
+[graph]
+all-features = true
+
+# ---------------------------------------------------------------------------
+# Advisories — RustSec database. CVEs in dependencies fail the build; the
+# unmaintained / yanked classes are warnings so they surface without blocking
+# an alpha release on transitive crates we don't directly control.
+# ---------------------------------------------------------------------------
+[advisories]
+version = 2
+yanked = "warn"
+# Crates flagged unmaintained upstream are noise for an alpha — surface them,
+# don't gate. Promote to "deny" once the tree is clean.
+unmaintained = "all"
+# CVEs without a severity-based exception below fail by default (advisories
+# version 2 denies vulnerabilities unless explicitly ignored).
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Licenses — allow the permissive / weak-copyleft set this repo already ships
+# (MIT + the crate's own MIT license). MPL-2.0 is file-level copyleft and
+# acceptable for a dynamically/statically linked binary; Unicode-3.0 covers
+# unicode-ident and friends.
+# ---------------------------------------------------------------------------
+[licenses]
+version = 2
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "CC0-1.0",
+  "0BSD",
+]
+# Crates that ship no machine-readable license still satisfy the check if their
+# license text scores at/above this confidence threshold.
+confidence-threshold = 0.8
+
+# ---------------------------------------------------------------------------
+# Bans — duplicate crate versions are a warning (bloat / drift signal), not a
+# hard failure: a ~940-crate tree always carries a few. No crates are banned
+# outright yet.
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+allow = []
+deny = []
+
+# ---------------------------------------------------------------------------
+# Sources — crates.io plus the two intentional git pins (tauri-nspanel branch
+# v2.1, cjpais/vad-rs). Keep unknown-git on allow so a legitimate new git pin
+# doesn't break CI; tighten to a per-org allowlist if the set stabilizes.
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "allow"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

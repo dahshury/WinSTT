@@ -11,7 +11,8 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 use crate::command_auth;
 use crate::winstt::commands::settings::read_settings;
 
-const GITHUB_RELEASES_API: &str = "https://api.github.com/repos/winstt/WinSTT/releases?per_page=30";
+const GITHUB_RELEASES_API: &str =
+    "https://api.github.com/repos/dahshury/WinSTT/releases?per_page=30";
 const LATEST_JSON_ASSET: &str = "latest.json";
 const STATUS_EVENT: &str = "updater:status";
 const MAX_STATUS_HISTORY: usize = 200;
