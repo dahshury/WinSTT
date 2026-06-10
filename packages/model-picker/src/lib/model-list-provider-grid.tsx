@@ -102,6 +102,7 @@ function ProviderStatsRow({
 	contextLength: number | null | undefined;
 	maxOut: number | null | undefined;
 }) {
+	const t = useTranslations("modelPicker");
 	if (!shouldShowStatsRow(contextLength, maxOut)) {
 		return null;
 	}
@@ -110,16 +111,16 @@ function ProviderStatsRow({
 			<div className="min-w-0">
 				<ProviderStatChip
 					icon={BookOpen02Icon}
-					tooltipBody="Maximum tokens this provider can read in a single request — prompt plus prior conversation."
-					tooltipTitle="Context window"
+					tooltipBody={t("contextWindowProviderTip")}
+					tooltipTitle={t("contextWindow")}
 					value={contextLength}
 				/>
 			</div>
 			<div className="min-w-0">
 				<ProviderStatChip
 					icon={MessageOutgoing02Icon}
-					tooltipBody="Maximum tokens this provider can generate in a single response."
-					tooltipTitle="Max output"
+					tooltipBody={t("maxOutputProviderTip")}
+					tooltipTitle={t("maxOutput")}
 					value={maxOut}
 				/>
 			</div>

@@ -1184,6 +1184,9 @@
   "modelPicker": {
     "contextWindow": "Context window",
     "contextWindowTip": "Maximum tokens this model can read in a single request: prompt plus prior conversation.",
+    "contextWindowProviderTip": "Maximum tokens this provider can read in a single request — prompt plus prior conversation.",
+    "maxOutput": "Max output",
+    "maxOutputProviderTip": "Maximum tokens this provider can generate in a single response.",
     "pricing": "Pricing",
     "pricingTip": "Approximate cost per 1M tokens (input/output). Expand to compare per-provider pricing.",
     "pricingProviderTip": "Approximate cost per 1M tokens for this provider (input/output).",

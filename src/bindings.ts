@@ -111,7 +111,7 @@ async changeWhisperGpuDevice(device: number) : Promise<Result<null, string>> {
 },
 /**
  * Return which accelerators and GPU devices are available for this build.
- * 
+ *
  * First-call cost is dominated by enumerating GPU devices through the
  * whisper.cpp Metal/Vulkan backend, which loads dynamic libraries and
  * probes hardware. Run it on the blocking pool so the webview thread
@@ -362,12 +362,12 @@ async winsttGetSettings() : Promise<WinsttSettings> {
 /**
  * `winstt_set_settings` merges a PARTIAL section patch, validates, seals
  * secrets, persists, applies runtime side-effects, and broadcasts.
- * 
+ *
  * The renderer sends **partial** top-level sections, not the whole tree
  * (`collectChangedSections`), so we accept a `PartialWinsttSettings` (every section
  * `Option`) and merge each present section over the persisted snapshot — exactly
  * the reference's per-section `applySettings`.
- * 
+ *
  * On any failure the renderer's fire-and-forget save can't observe the `Err`, so we
  * ALSO emit `settings:save-error { error }` (and still return `Err`).
  */
@@ -385,7 +385,7 @@ async winsttSetSettings(settings: PartialWinsttSettings) : Promise<Result<SetSet
  * Backed by the embedded `catalog_data.json` (see `catalog_data.rs`); the per-device quant set is
  * CUDA-filtered. The adapter routes `STT_GET_MODEL_CATALOG` here, and the renderer's
  * `fetchModelCatalog` → `rawModelInfoSchema.safeParse` consumes these rows verbatim.
- * 
+ *
  * NOTE: the WITH_STATE channel needs the `{models,states,system_info}` OBJECT shape instead — that
  * is `stt_list_models_with_state` (commands/runtime.rs). The adapter routes `STT_GET_MODEL_CATALOG`
  * here and `STT_LIST_MODELS_WITH_STATE` → `stt_list_models_with_state` (native-bridge-adapter.ts ROUTE).
@@ -529,7 +529,7 @@ async ttsDownloadEstimate() : Promise<Result<DownloadEstimatePayload, string>> {
 },
 /**
  * `tts_install_pause` — cooperatively pause the engine-pack download.
- * 
+ *
  * The local Kokoro install is just the two model FILES (no separate engine pack),
  * and the current downloader runs synchronously inside `warm_up`/first-synth, so
  * there is no long-lived resumable job to pause yet. We emit `tts:install-paused`
@@ -554,7 +554,7 @@ async ttsInstallResume() : Promise<Result<null, string>> {
 },
 /**
  * `tts_install_cancel` — cancel the install + clean up the partial download.
- * 
+ *
  * Emits `tts:model-download-complete { cancelled: true }` for UI parity. Partial-
  * file removal happens lazily on the next resume (HTTP Range re-validates).
  */
@@ -838,7 +838,7 @@ async wakewordCancelModelDownload() : Promise<WakeWordModelStatusPayload> {
  * `start_listen` — begin loopback capture on `device_index` (the positional
  * ordinal from `loopback_list_devices`) and arm diarization when the persisted
  * `general.speaker_diarization` setting is on.
- * 
+ *
  * Emits `stt:loopback-started { deviceName }` on success so the renderer's
  * `useListenMode` shows the active device name in the listen pill. The native
  * WASAPI loop is a compile-loop spike (see `LoopbackManager::start`); the
@@ -1034,7 +1034,7 @@ async downloadCancelQuant(modelId: string, quantization: string) : Promise<Resul
 /**
  * `delete_model_quantization` — drop just the weight files matching `quantization` from the HF
  * cache of `model_id` (other quants intact). Re-broadcasts `stt:model-cache-changed`.
- * 
+ *
  * `async` so the blocking HF-cache scan + unlink runs on the blocking pool instead of stalling
  * the main thread (async commands register identically to sync ones).
  */
@@ -1049,7 +1049,7 @@ async deleteModelQuantization(modelId: string, quantization: string) : Promise<R
 /**
  * `delete_model_cache` — wipe the entire HF snapshot directory for `model_id`.
  * Re-broadcasts cache-changed.
- * 
+ *
  * `async` so the blocking snapshot-dir scan + remove runs on the blocking pool instead of
  * stalling the main thread (async commands register identically to sync ones).
  */
@@ -1075,13 +1075,13 @@ async getRuntimeInfo() : Promise<RuntimeInfoPayload> {
  * `stt_list_models_with_state` — the `{ models, states, system_info }` payload `fetchModelsWithState`
  * consumes (model-state-store.ts). `states[*].cache_by_quantization` is keyed per precision and the
  * `effective_quantization` badge bridge tells the picker WHICH precision's cache state to trust.
- * 
+ *
  * Cache states are sourced from a REAL probe of the HuggingFace cache (the same cache the resolver
  * downloads into) overlaid with the DownloadManager's in-flight registry; system_info is the
  * live-resources snapshot reshaped to `SystemInfoEntry`. The effective-quant bridge keys the
  * overall badge off the precision the loader will ACTUALLY load, so "Downloaded" never lies into a
  * silent re-download.
- * 
+ *
  * Async (audit #7): this `await`s the HF cache scan via `DownloadManager::cache_snapshot_async`
  * rather than `block_on`-ing it on the command thread, so the whole-catalog cache walk (the Rust
  * re-incarnation of the documented Python `list_models_onnx_parse_loop_starvation` bug) no longer
@@ -1217,7 +1217,7 @@ async contextListApps() : Promise<ContextAppEntry[]> {
  * from) the speed read out of the settings store, so without the store write the
  * label never advances and the button looks dead. The pill window has no
  * settings write-back of its own, so the persist must happen here.
- * 
+ *
  * The tts section is replaced wholesale on save, so we copy the full persisted
  * section and change only the one speed field for the active source.
  */
@@ -1307,8 +1307,8 @@ async ollamaCancelPull(model: string) : Promise<Result<CancelPullResult, string>
 }
 },
 /**
- * `llm_warmup_status` → `LLM_GET_WARMUP_STATUS`. Last warmup snapshot, or `null` while the
- * warmup broadcaster is unwired (renderer hides the banner on `null`).
+ * `llm_warmup_status` → `LLM_GET_WARMUP_STATUS`. Last warmup snapshot, or `null` when no
+ * warmup pass has published one yet (renderer hides the banner on `null`).
  */
 async llmWarmupStatus() : Promise<Result<LlmWarmupStatus | null, string>> {
     try {
@@ -1603,7 +1603,7 @@ async soundLibraryRemove(path: string) : Promise<SoundLibraryRemoveResult> {
  * `apply_transform` — end-to-end Transforms pipeline (renderer `applyTransform()`
  * + the `transforms.hotkey` global-hotkey path). Delegates to
  * [`run_transform_pipeline`] so the command and the hotkey are byte-identical.
- * 
+ *
  * NEVER throws past this layer — the renderer's `invokeOrDefault` would mask it
  * and the toast would never fire.
  */
@@ -1723,7 +1723,7 @@ async settingsWindowReady() : Promise<Result<null, string>> {
 },
 /**
  * `open_window` — create-if-needed, then show + focus the labelled window.
- * 
+ *
  * For the anchored pickers the renderer passes the trigger's viewport rect
  * (`x`/`y`/`width`/`height`); we convert it to a screen anchor via the CALLING
  * window (`webview`) and place the popup. For the plain windows the rect is
@@ -1769,7 +1769,7 @@ async closeSelfWindow() : Promise<Result<null, string>> {
 },
 /**
  * `resize_window` — set the desired footprint of the labelled window.
- * 
+ *
  * For the pickers the renderer's ResizeObserver reports the real content size
  * after mount; we store it and, if the popup is currently up, re-place it so it
  * stays glued to the same trigger with the now-correct size (and the model
@@ -1917,23 +1917,11 @@ async winsttUpdaterInstall() : Promise<Result<UpdaterCommandResult, string>> {
 
 
 export const events = __makeEvents__<{
-fileTranscribeProgressPayload: FileTranscribeProgressPayload,
 historyUpdatePayload: HistoryUpdatePayload,
-realtimeStabilizedPayload: RealtimeStabilizedPayload,
-realtimeUpdatePayload: RealtimeUpdatePayload,
-speakerSegmentsPayload: SpeakerSegmentsPayload,
-ttsLifecyclePayload: TtsLifecyclePayload,
-wakeWordDetectedPayload: WakeWordDetectedPayload,
-wordAlignmentPayload: WordAlignmentPayload
+realtimeUpdatePayload: RealtimeUpdatePayload
 }>({
-fileTranscribeProgressPayload: "file-transcribe-progress-payload",
 historyUpdatePayload: "history-update-payload",
-realtimeStabilizedPayload: "realtime-stabilized-payload",
-realtimeUpdatePayload: "realtime-update-payload",
-speakerSegmentsPayload: "speaker-segments-payload",
-ttsLifecyclePayload: "tts-lifecycle-payload",
-wakeWordDetectedPayload: "wake-word-detected-payload",
-wordAlignmentPayload: "word-alignment-payload"
+realtimeUpdatePayload: "realtime-update-payload"
 })
 
 /** user-defined constants **/
@@ -1947,11 +1935,11 @@ wordAlignmentPayload: "word-alignment-payload"
  * product version and copyright; framework/runtime versions remain available
  * to native callers and generated bindings.
  */
-export type AboutAppInfo = { version: string; 
+export type AboutAppInfo = { version: string;
 /**
  * Desktop-framework version — the Tauri framework version.
  */
-frameworkVersion: string; 
+frameworkVersion: string;
 /**
  * Embedded-WebView version (WebView2 on Windows).
  */
@@ -1961,12 +1949,12 @@ export type AudioDevice = { index: string; name: string; is_default: boolean }
 /**
  * One audio input device in the WinSTT spec `AudioDevice` shape (camelCase).
  */
-export type AudioDevicePayload = { 
+export type AudioDevicePayload = {
 /**
  * cpal positional enumeration ordinal (the renderer persists this as
  * `audio.inputDeviceIndex`).
  */
-index: number; name: string; isDefault: boolean; 
+index: number; name: string; isDefault: boolean;
 /**
  * Spec-present for parity with PyAudio's enumeration; the renderer doesn't
  * read these, so a faithful constant keeps the shape stable without a
@@ -1982,67 +1970,67 @@ maxInputChannels: number; defaultSampleRate: number }
  * reliably refreshed by the native endpoint watcher) and the renderer joins it
  * to the browser's `deviceId` by name. See `use-output-devices.ts`.
  */
-export type AudioOutputDevicePayload = { 
+export type AudioOutputDevicePayload = {
 /**
  * cpal positional enumeration ordinal (diagnostic / stable ordering only;
  * the renderer routes by name→browser-deviceId, not by this index).
  */
 index: number; name: string; isDefault: boolean }
-export type AudioSettings = { 
+export type AudioSettings = {
 /**
  * Mic index; `null` = system default. HOT-SWAP.
  */
-inputDeviceIndex?: number | null; 
+inputDeviceIndex?: number | null;
 /**
  * Capture sample rate. STARTUP (CLI).
  */
-sampleRate?: number; 
+sampleRate?: number;
 /**
  * Audio chunk size. STARTUP (CLI).
  */
-bufferSize?: number; 
+bufferSize?: number;
 /**
  * Silero VAD sensitivity; trip threshold = `1 - value`. Range 0..1. HOT-SWAP.
  * INVARIANT: Silero VAD must load CPU-only (CUDA deadlock).
  */
-sileroSensitivity?: number; 
+sileroSensitivity?: number;
 /**
  * Use ONNX Silero variant. STARTUP (CLI).
  */
-sileroUseOnnx?: boolean; 
+sileroUseOnnx?: boolean;
 /**
  * Silero-based deactivity (config-only, no live consumer). HOT-SWAP (persist-only).
  */
-sileroDeactivityDetection?: boolean; 
+sileroDeactivityDetection?: boolean;
 /**
  * WebRTC VAD aggressiveness. Range 0..3. HOT-SWAP (`set_mode`).
  */
-webrtcSensitivity?: number; 
+webrtcSensitivity?: number;
 /**
  * Silence after speech before VAD stop (s). HOT-SWAP.
  */
-postSpeechSilenceDuration?: number; 
+postSpeechSilenceDuration?: number;
 /**
  * Min gap between consecutive recordings (s). HOT-SWAP.
  */
-minGapBetweenRecordings?: number; 
+minGapBetweenRecordings?: number;
 /**
  * Pre-roll buffer captured before trigger (s). STARTUP.
  */
-preRecordingBufferDuration?: number; 
+preRecordingBufferDuration?: number;
 /**
  * Per-device Silero VAD sensitivity, keyed by input-device name. Re-applied
  * to the live sensitivity on device switch. HOT-SWAP. Zod `.catch({})`.
  */
-sileroSensitivityByDeviceName?: Partial<{ [key in string]: number }>; 
+sileroSensitivityByDeviceName?: Partial<{ [key in string]: number }>;
 /**
  * Alt mic index when laptop lid closed; `null` = disabled. HOT-SWAP. Zod `.catch(null)`.
  */
-clamshellMicrophone?: number | null; 
+clamshellMicrophone?: number | null;
 /**
  * Mic-stream lifecycle policy. HOT-SWAP. Zod `.catch("immediate")`.
  */
-microphoneRelease?: MicrophoneRelease; 
+microphoneRelease?: MicrophoneRelease;
 /**
  * Tail-capture window (ms) after user stop. Range 0..2000. HOT-SWAP. Zod `.catch(0)`.
  */
@@ -2059,42 +2047,42 @@ export type CancelPullResult = { cancelled: boolean }
  * One rich catalog row as the picker consumes it. snake_case on the wire to match
  * `rawModelInfoSchema` (catalog-store.ts) exactly — the renderer does no remapping of the keys.
  */
-export type CatalogModelInfo = { id: string; display_name: string; 
+export type CatalogModelInfo = { id: string; display_name: string;
 /**
  * Always `"onnx_asr"` post-torch-drop (server `_backend_from_str` defaults to it).
  */
-backend: string; family: string; languages: string[]; supports_language_detection: boolean; size_label: string; 
+backend: string; family: string; languages: string[]; supports_language_detection: boolean; size_label: string;
 /**
  * Legacy alias for `preview_capable`. Kept for older renderer builds.
  */
-supports_realtime: boolean; 
+supports_realtime: boolean;
 /**
  * Whether this model can drive the live preview UI at all. This may be a
  * simulated rolling/window re-decode path rather than native streaming.
  */
-preview_capable: boolean; 
+preview_capable: boolean;
 /**
  * Whether the loaded engine consumes only new audio through a stateful/native
  * streaming decoder (`Transcriber::stream_accept`).
  */
-native_streaming: boolean; 
+native_streaming: boolean;
 /**
  * Whether realtime text can be promoted to final paste without a fresh
  * full-context final decode.
  */
-final_reuse_safe: boolean; onnx_model_name: string | null; description: string; 
+final_reuse_safe: boolean; onnx_model_name: string | null; description: string;
 /**
  * Quant suffixes (filtered to the CUDA-compatible set on CUDA EPs; full set otherwise).
  */
-available_quantizations: string[]; size_bytes_by_quantization: Partial<{ [key in string]: number }>; 
+available_quantizations: string[]; size_bytes_by_quantization: Partial<{ [key in string]: number }>;
 /**
  * Shipped catalog rows are always available; custom-scan failures would set false.
  */
-available: boolean; error_message: string; local_path: string | null; 
+available: boolean; error_message: string; local_path: string | null;
 /**
  * 0..1 normalized speed score (log-scaled RTFx). 0.5 = unknown → renderer hides the bar.
  */
-speed_score: number; 
+speed_score: number;
 /**
  * 0..1 normalized accuracy score (linear-ramped WER). 0.5 = unknown.
  */
@@ -2135,7 +2123,7 @@ export type ContextAppEntry = { id: string; label: string; exe: string; title: s
 export type ContextAppMode = "all-except-denied" | "selected-only"
 export type ContextDebugReport = { asrPromptTail: string; asrPromptTailRaw: string; capturedAt: number; contentless: boolean; contextAwarenessEnabled: boolean; deep: boolean; denied: boolean; deniedReason: string | null; durationMs: number; filteredSnapshot: ContextSnapshotView; hasCaret: boolean; isIde: boolean; isTerminal: boolean; metrics: ContextMetrics; modes?: ContextModeResult[] | null; ocrUsed: boolean; promptFragment: string; rawSnapshot: ContextSnapshotView }
 export type ContextMetrics = { axHtmlCap: number; axHtmlChars: number; denyListSize: number; focusedTextChars: number; promptFragmentChars: number; textAfterChars: number; textBeforeChars: number }
-export type ContextModeResult = { durationMs: number; 
+export type ContextModeResult = { durationMs: number;
 /**
  * "tree" | "split" | "default" | "selection"
  */
@@ -2146,7 +2134,7 @@ export type ContextSnapshotView = { appExe?: string | null; axHtml?: string | nu
  * definition even while `enabled` is false so the authored name/prompt survives
  * a toggle.
  */
-export type CustomModifier = { id: string; name?: string; prompt?: string; enabled?: boolean; 
+export type CustomModifier = { id: string; name?: string; prompt?: string; enabled?: boolean;
 /**
  * When true a Low/Medium/High switcher tunes the prompt's intensity hint.
  */
@@ -2179,7 +2167,7 @@ export type DiagSaveBundleResult = { ok: boolean; cancelled?: boolean | null; er
  * `dictionaryEntrySchema`. `replacement` absent → vocab-bias word; present →
  * deterministic whole-word replacement applied after LLM cleanup.
  */
-export type DictionaryEntry = { id: string; term: string; 
+export type DictionaryEntry = { id: string; term: string;
 /**
  * True when the entry was inserted by the LLM dictionary tool rather than
  * typed manually in Settings. Omitted for manual/legacy entries.
@@ -2208,10 +2196,6 @@ export type EffortLevel = "low" | "medium" | "high"
  */
 export type FileSaveLocation = "auto" | "ask"
 /**
- * Per-file/per-chunk file-transcription progress.
- */
-export type FileTranscribeProgressPayload = { id: string; path: string; status: string; progress: number; text: string | null; error: string | null }
-/**
  * `general.fileTranscriptionFormat`.
  */
 export type FileTranscriptionFormat = "txt" | "srt"
@@ -2221,192 +2205,192 @@ export type FileTranscriptionFormat = "txt" | "srt"
  * (`invokeOrDefault(..., null)`); the per-row badges render from the mirror regardless.
  */
 export type FitAssessmentEntry = { severity: string; target: string; required_bytes: number; available_bytes: number; reasons: string[] }
-export type GeneralSettings = { 
+export type GeneralSettings = {
 /**
  * Launch on OS login. HOT-SWAP (Tauri autostart).
  */
-autoStart?: boolean; 
+autoStart?: boolean;
 /**
  * Close → tray instead of quit. HOT-SWAP.
  */
-minimizeToTray?: boolean; 
+minimizeToTray?: boolean;
 /**
  * Start hidden in tray. HOT-SWAP.
  */
-startMinimized?: boolean; 
+startMinimized?: boolean;
 /**
  * Duck system playback to `(100-v)%` while dictating; 0=off, 100=mute.
  * Range 0..100, UI step 20. HOT-SWAP. Zod `.catch(0)`.
  */
-systemAudioReductionWhileDictating?: number; 
+systemAudioReductionWhileDictating?: number;
 /**
  * Play chime on record start/stop. HOT-SWAP.
  */
-recordingSound?: boolean; 
+recordingSound?: boolean;
 /**
  * Active chime clip; `""` = original built-in default, `builtin:<file>` =
  * allow-listed bundled alternate, else absolute library path. HOT-SWAP.
  */
-recordingSoundPath?: string; 
+recordingSoundPath?: string;
 /**
  * User-uploaded chime clips (copied into `userData/sounds/`). HOT-SWAP. Zod `.catch([])`.
  */
-recordingSoundLibrary?: SoundLibraryEntry[]; 
+recordingSoundLibrary?: SoundLibraryEntry[];
 /**
  * Output format for file transcription. HOT-SWAP.
  */
-fileTranscriptionFormat?: FileTranscriptionFormat; 
+fileTranscriptionFormat?: FileTranscriptionFormat;
 /**
  * `auto` = beside source, `ask` = save dialog. HOT-SWAP.
  */
-fileTranscriptionSaveLocation?: FileSaveLocation; 
+fileTranscriptionSaveLocation?: FileSaveLocation;
 /**
  * How a recording session starts. HOT-SWAP, including wakeword arm/disarm.
  */
-recordingMode?: RecordingMode; 
+recordingMode?: RecordingMode;
 /**
  * In toggle mode: continuous press-to-press, disable VAD/silence stop. HOT-SWAP.
  */
-manualToggleStop?: boolean; 
+manualToggleStop?: boolean;
 /**
  * Re-paste last transcription — exclusive global shortcut (uiohook accel
  * format; converted to a Tauri accelerator at registration). HOT-SWAP.
  * Must be non-empty (Zod `.min(1).catch`).
  */
-repasteHotkey?: string; 
+repasteHotkey?: string;
 /**
  * Loopback device index for `listen` mode; `null` = default. HOT-SWAP.
  */
-loopbackDeviceIndex?: number | null; 
+loopbackDeviceIndex?: number | null;
 /**
  * Wake phrase in `wakeword` mode. Presets and custom phrases both run
  * through the local sherpa KWS detector. HOT-SWAP via wakeword runtime refresh.
  */
-wakeWord?: string; 
+wakeWord?: string;
 /**
  * User-saved custom wake phrases for the renderer combobox. Runtime listens
  * only to `wake_word`; this list is persisted UI catalog state.
  */
-customWakeWords?: string[]; 
+customWakeWords?: string[];
 /**
  * Wake-word detector sensitivity. Range 0..1. HOT-SWAP via runtime refresh.
  */
-wakeWordSensitivity?: number; 
+wakeWordSensitivity?: number;
 /**
  * Seconds the gate stays armed after detection. Range 1..30. HOT-SWAP via runtime refresh.
  */
-wakeWordTimeout?: number; 
+wakeWordTimeout?: number;
 /**
  * Show floating recording pill. HOT-SWAP (affects effective-realtime, which the
  * realtime worker re-reads live — no restart).
  */
-showRecordingOverlay?: boolean; 
+showRecordingOverlay?: boolean;
 /**
  * Overlay visual layout. HOT-SWAP. Zod `.catch`.
  */
-overlayMode?: OverlayMode; 
+overlayMode?: OverlayMode;
 /**
  * Whether/where the pill appears. HOT-SWAP. Zod `.catch`.
  */
-overlayPosition?: OverlayPosition; 
+overlayPosition?: OverlayPosition;
 /**
  * Overlay visualizer height preset. HOT-SWAP. Zod `.catch`.
  */
-visualizerSize?: VisualizerSize; 
+visualizerSize?: VisualizerSize;
 /**
  * Where live preview renders; also gates effective-realtime. HOT-SWAP (worker
  * re-reads it live — no restart, even when disabled). Zod `.catch`.
  */
-liveTranscriptionDisplay?: LiveTranscriptionDisplay; 
+liveTranscriptionDisplay?: LiveTranscriptionDisplay;
 /**
  * Visualizer style. HOT-SWAP.
  */
-visualizerType?: VisualizerType; 
+visualizerType?: VisualizerType;
 /**
  * Bars in the visualizer. Range 3..21. HOT-SWAP. Zod `.catch(9)`.
  */
-visualizerBarCount?: number; visualizerRadialDotCount?: number; visualizerRadialRadius?: number; visualizerGridRows?: number; visualizerGridColumns?: number; visualizerGridSpeed?: number; visualizerWaveLineWidth?: number; visualizerWaveSmoothing?: number; visualizerWaveColorShift?: number; visualizerAuraShape?: VisualizerAuraShape; visualizerAuraBlur?: number; visualizerAuraBloom?: number; visualizerAuraColorShift?: number; 
+visualizerBarCount?: number; visualizerRadialDotCount?: number; visualizerRadialRadius?: number; visualizerGridRows?: number; visualizerGridColumns?: number; visualizerGridSpeed?: number; visualizerWaveLineWidth?: number; visualizerWaveSmoothing?: number; visualizerWaveColorShift?: number; visualizerAuraShape?: VisualizerAuraShape; visualizerAuraBlur?: number; visualizerAuraBloom?: number; visualizerAuraColorShift?: number;
 /**
  * Read focused-window text (UIA/AX) → feed LLM cleanup. HOT-SWAP.
  */
-contextAwareness?: boolean; 
+contextAwareness?: boolean;
 /**
  * Context capture app scope. HOT-SWAP. Zod `.catch("all-except-denied")`.
  */
-contextAppMode?: ContextAppMode; 
+contextAppMode?: ContextAppMode;
 /**
  * Allow-list for selected-only context capture (exe basenames / URL hosts).
  * HOT-SWAP. Empty means no app text is captured in selected-only mode.
  */
-contextAllowList?: string[]; 
+contextAllowList?: string[];
 /**
  * Deny-list for context capture (exe basenames / URL host suffixes). HOT-SWAP.
  * Seeded with common password managers. Zod `.catch(<same seed>)`.
  */
-contextDenyList?: string[]; 
+contextDenyList?: string[];
 /**
  * Per-utterance speaker diarization (~32 MB models, first-run download).
  * HOT-SWAP (runtime toggle via diarization-toggle method).
  */
-speakerDiarization?: boolean; 
+speakerDiarization?: boolean;
 /**
  * Sentry crash-reporting opt-out. Persisted live; never prompts for restart.
  */
-sendCrashReports?: boolean; 
+sendCrashReports?: boolean;
 /**
  * Opt-in pre-release auto-updates. HOT-SWAP.
  */
-receivePrereleaseUpdates?: boolean; 
+receivePrereleaseUpdates?: boolean;
 /**
  * First-run wizard gate (MAIN-owned). Zod `.catch(false)`.
  */
-onboarded?: boolean; 
+onboarded?: boolean;
 /**
  * Epoch-ms when wizard finished/skipped (MAIN-owned). Zod `.catch(null)`.
  */
-onboardedAt?: number | null; 
+onboardedAt?: number | null;
 /**
  * Which STT track the wizard picked (MAIN-owned). Zod `.catch("")`.
  */
-onboardedTrack?: OnboardedTrack; 
+onboardedTrack?: OnboardedTrack;
 /**
  * Output device for TTS + chimes (`MediaDeviceInfo.deviceId`; `""`=default).
  * HOT-SWAP. Zod `.catch("")`.
  */
-outputDeviceId?: string; 
+outputDeviceId?: string;
 /**
  * Auto-press a submit key after each paste. HOT-SWAP. Zod `.catch(false)`.
  */
-autoSubmit?: boolean; 
+autoSubmit?: boolean;
 /**
  * Which key combo to inject on auto-submit. HOT-SWAP. Zod `.catch("enter")`.
  */
-autoSubmitKey?: AutoSubmitKey; 
+autoSubmitKey?: AutoSubmitKey;
 /**
  * Gate auto-paste behind an editable preview pill the user confirms before
  * pasting. HOT-SWAP. Only effective when the recording pill is shown (the
  * preview IS the pill). Zod `.catch(false)`.
  */
-previewBeforePasting?: boolean; 
+previewBeforePasting?: boolean;
 /**
  * Stream generated realtime text directly into the focused app while recording.
  * HOT-SWAP. Effective only for native-streaming main models. Mutually exclusive
  * with preview-before-pasting. Zod `.catch(false)`.
  */
-wordByWordPasting?: boolean; 
+wordByWordPasting?: boolean;
 /**
  * Cap on persisted history entries. Range 10..10000. HOT-SWAP. Zod `.catch(1000)`.
  */
-historyMaxEntries?: number; 
+historyMaxEntries?: number;
 /**
  * Auto-delete saved WAV recordings policy. HOT-SWAP. Zod `.catch("cap")`.
  */
-recordingRetention?: RecordingRetention; 
+recordingRetention?: RecordingRetention;
 /**
  * Server fuzzy-corrector max score (lower=stricter). Range 0..1. HOT-SWAP. Zod `.catch(0.18)`.
  */
 wordCorrectionThreshold?: number }
-export type GlobalSettings = { 
+export type GlobalSettings = {
 /**
  * Idle-unload policy shared by local STT, realtime preview, local TTS, and
  * Ollama keep-alive. HOT-SWAP. Zod `.catch("min15")`.
@@ -2418,29 +2402,29 @@ export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number 
  * quality settings GPU chip. SPIKE: enumerate adapters via DXGI; empty list = "no GPU detected".
  */
 export type GpuInfoEntry = { name: string; total_vram_bytes: number }
-export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean; 
+export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean;
 /**
  * JSON telemetry of the LLM pass (`{model, processingMs, tokens}`), or
  * `None` when no LLM ran. Carried verbatim; parsed by the renderer-facing
  * mapping in `winstt::commands::history`.
  */
-llm_meta: string | null; 
+llm_meta: string | null;
 /**
  * Number of dictionary replacement-pair substitutions applied to this
  * transcription. `None` for legacy rows (column added later); `Some(0)`
  * when the pass ran but nothing matched. Summed into the History
  * "AI Impact" → dictionary-fixes stat.
  */
-dictionary_fixes: number | null; 
+dictionary_fixes: number | null;
 /**
  * Fixed classification tag for the transcription, when an LLM classified it.
  */
-history_tag: string | null; 
+history_tag: string | null;
 /**
  * JSON array of fixed privacy marker categories. Raw sensitive values are
  * never stored here.
  */
-privacy_markers_json: string | null; 
+privacy_markers_json: string | null;
 /**
  * Identifier of the STT ("main") model that produced this transcription —
  * a catalog key (e.g. `tiny`) or a `provider:model` cloud-STT id. `None`
@@ -2453,7 +2437,7 @@ stt_model: string | null }
  */
 export type HistoryRow = { id: number; fileName: string; timestamp: number; saved: boolean; title: string; transcriptionText: string; postProcessedText: string | null; postProcessPrompt: string | null; postProcessRequested: boolean; historyTag?: string | null; privacyMarkers?: string[] | null }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
-export type HotkeySettings = { 
+export type HotkeySettings = {
 /**
  * Primary PTT/toggle hotkey (uiohook accelerator). HOT-SWAP (passive).
  * Must be non-empty (Zod `.min(1).catch`).
@@ -2485,21 +2469,21 @@ export type LiveResources = { cpu_count_logical: number; cpu_count_physical: num
  * disabling live transcription entirely) takes effect with no restart.
  */
 export type LiveTranscriptionDisplay = "none" | "in-app" | "in-pill" | "both"
-export type LlmDictation = 
+export type LlmDictation =
 /**
  * Flattened so the shared fields sit at `llm.dictation.<field>` (matches
  * Zod's `...llmFeatureBaseShape` spread). Inner-field defaults handle a
  * partial JSON; see the note on `LlmFeatureBase`.
  */
-({ provider?: LlmProvider; 
+({ provider?: LlmProvider;
 /**
  * Ollama model name.
  */
-model?: string; 
+model?: string;
 /**
  * `modelId` or `modelId@providerSlug`; `""` = Auto.
  */
-openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: ThinkingEffort; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { enabled?: boolean; 
+openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: ThinkingEffort; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { enabled?: boolean;
 /**
  * Optional Ollama tool-calling dictionary suggestions. Backend execution
  * still requires the selected model to advertise the `tools` capability.
@@ -2515,32 +2499,32 @@ export type LlmPreviewConfig = { provider?: string; model?: string; openrouterMo
  * LLM provider for a per-feature config (`llm.dictation` / `llm.transforms`).
  */
 export type LlmProvider = "ollama" | "openrouter" | "apple-intelligence"
-export type LlmSettings = { 
+export type LlmSettings = {
 /**
  * Shared Ollama endpoint URL.
  */
-endpoint?: string; 
+endpoint?: string;
 /**
  * SECRET — OpenRouter API key. Encrypt at rest (see 02_settings.md).
  */
-openrouterApiKey?: string; dictation?: LlmDictation; transforms?: LlmTransforms; 
+openrouterApiKey?: string; dictation?: LlmDictation; transforms?: LlmTransforms;
 /**
  * Client request timeout (ms). Range 1000..30000. Persisted but NOT applied at network layer.
  */
 timeout?: number }
-export type LlmTransforms = ({ provider?: LlmProvider; 
+export type LlmTransforms = ({ provider?: LlmProvider;
 /**
  * Ollama model name.
  */
-model?: string; 
+model?: string;
 /**
  * `modelId` or `modelId@providerSlug`; `""` = Auto.
  */
-openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: ThinkingEffort; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { enabled?: boolean; presets?: PresetEntry[]; customModifiers?: CustomModifier[]; 
+openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: ThinkingEffort; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { enabled?: boolean; presets?: PresetEntry[]; customModifiers?: CustomModifier[];
 /**
  * Always non-empty (Zod `.min(1).catch`). The transform's invoke hotkey.
  */
-hotkey?: string; 
+hotkey?: string;
 /**
  * User-configurable text transforms (built-ins carry `builtin: true`).
  */
@@ -2555,18 +2539,18 @@ export type LocalVoicePayload = { id: string; label: string; language: string; g
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 /**
  * One loopback-capable output device, in the renderer's expected shape.
- * 
+ *
  * `index` is the positional ordinal in the WASAPI render-device enumeration
  * (NOT a PyAudio host-API index — there's no PyAudio here). `start_listen`
  * resolves it back to the endpoint id by re-enumerating in the same order.
  */
-export type LoopbackDevicePayload = { index: number; name: string; 
+export type LoopbackDevicePayload = { index: number; name: string;
 /**
  * WASAPI render endpoints are mixed at 48 kHz on Windows; the renderer only
  * displays this and never gates on it, so a fixed default is faithful to the
  * shared-mode mix the loopback capture actually sees.
  */
-defaultSampleRate: number; 
+defaultSampleRate: number;
 /**
  * Loopback capture mirrors the render mix as 2-channel; the renderer only
  * uses this for display.
@@ -2581,61 +2565,61 @@ export type MicrophoneRelease = "always" | "immediate" | "sec_30" | "min_1" | "m
 /**
  * Per-precision cache snapshot, mirroring the renderer's `ModelCacheInfo`.
  */
-export type ModelCacheInfo = { 
+export type ModelCacheInfo = {
 /**
  * "cached" | "partial" | "not_cached".
  */
-state: string; downloaded_bytes: number; total_bytes: number; 
+state: string; downloaded_bytes: number; total_bytes: number;
 /**
  * 0.0..1.0 (1.0 when cached).
  */
 progress: number }
-export type ModelSettings = { 
+export type ModelSettings = {
 /**
  * Catalog id (`tiny`…`large-v3-turbo`, onnx families) OR `<provider>:<id>`
  * for cloud (`openai:whisper-1`, `elevenlabs:...`) OR a custom-folder id.
  * HOT-SWAP (in-place engine swap).
  */
-model?: string; 
+model?: string;
 /**
  * Realtime/live-preview model (must support realtime). HOT-SWAP.
  */
-realtimeModel?: string; 
+realtimeModel?: string;
 /**
  * Forced decode language (`""` = auto-detect). HOT-SWAP.
  */
-language?: string; 
+language?: string;
 /**
  * Full auto language detection. When false, `language_candidates` can constrain detection.
  */
-autoDetectLanguage?: boolean; 
+autoDetectLanguage?: boolean;
 /**
  * Candidate decode languages used when `auto_detect_language` is false.
  */
-languageCandidates?: string[]; 
+languageCandidates?: string[];
 /**
  * CPU vs auto-GPU. HOT-SWAP through targeted model reload.
  */
-device?: DeviceType; 
+device?: DeviceType;
 /**
  * Transcriber engine (auto-derived from model id on load). HOT-SWAP.
  */
-backend?: TranscriberBackend; 
+backend?: TranscriberBackend;
 /**
  * ONNX file quant suffix (`""`, `int8`, `fp16`, `uint8`, `q4`, `q4f16`,
  * `bnb4`). Free-string (not an enum) — the catalog gates valid values per
  * model and the server resolves `""`/`auto`. HOT-SWAP.
  */
-onnxQuantization?: string; 
+onnxQuantization?: string;
 /**
  * Whisper decoder-bias prompt (main). HOT-SWAP (read per-utterance).
  * INVARIANT: Canary/Cohere ignore this slot (untrained) — do not bias them.
  */
-initialPrompt?: string; 
+initialPrompt?: string;
 /**
  * Decoder-bias prompt for the realtime worker (build-time). HOT-SWAP.
  */
-initialPromptRealtime?: string; 
+initialPromptRealtime?: string;
 /**
  * Whisper task=translate (multilingual Whisper only). HOT-SWAP. Zod `.catch(false)`.
  */
@@ -2643,7 +2627,7 @@ translateToEnglish?: boolean }
 /**
  * Per-model cache + fitness state — mirrors the renderer's `ModelStateEntry` (model-state-store.ts).
  */
-export type ModelStateEntry = { id: string; cache: ModelCacheInfo; cache_by_quantization: Partial<{ [key in string]: ModelCacheInfo }>; available_quantizations: string[]; 
+export type ModelStateEntry = { id: string; cache: ModelCacheInfo; cache_by_quantization: Partial<{ [key in string]: ModelCacheInfo }>; available_quantizations: string[];
 /**
  * The precision the loader will ACTUALLY load under the current device — the badge bridge
  * (memory project_effective_quantization_bridge). The picker keys "downloaded?" off this.
@@ -2761,14 +2745,14 @@ export type OverlayPositionLegacy = "none" | "top" | "bottom"
 export type PaginatedHistory = { entries: HistoryRow[]; hasMore: boolean }
 /**
  * The partial section patch the renderer posts to `winstt_set_settings`.
- * 
+ *
  * The renderer (`collectChangedSections` in `features/update-settings`) diffs
  * against its last-saved baseline and sends only the changed top-level sections
  * (e.g. VAD calibration and device-switch-feedback post just `{ audio }` after
  * every utterance). Every field is `Option` so an absent section deserializes
  * to `None` (= "leave the persisted value untouched") rather than resetting to a
  * default — the clobber the old full-`WinsttSettings` parameter caused.
- * 
+ *
  * Sections are always posted whole (the renderer copies the entire section
  * value), so an `Option<Section>` round-trips losslessly.
  */
@@ -2780,7 +2764,7 @@ export type PostProcessProvider = { id: string; label: string; base_url: string;
  * `presetEntrySchema`. `level` valid only for summarize/concise; `targetLang`
  * valid only for translate (cross-field constraints enforced at the app layer).
  */
-export type PresetEntry = { key: PresetKey; level?: PresetLevel | null; 
+export type PresetEntry = { key: PresetKey; level?: PresetLevel | null;
 /**
  * English name of the target language; only meaningful for `Translate`.
  */
@@ -2801,61 +2785,57 @@ export type PresetLevel = "light" | "medium" | "high"
  * MUST be encrypted at rest (`enc:v1:<base64>`); the persistence layer
  * transparently encrypts on save / decrypts on read.
  */
-export type ProviderIntegrationStatus = { 
+export type ProviderIntegrationStatus = {
 /**
  * SECRET — encrypt at rest.
  */
-apiKey?: string; 
+apiKey?: string;
 /**
  * Result of the last probe; `null` = never probed.
  */
-verified?: boolean | null; 
+verified?: boolean | null;
 /**
  * Epoch-ms of last successful probe.
  */
 lastVerifiedAt?: number | null }
-export type QualitySettings = { 
+export type QualitySettings = {
 /**
  * Use main model (vs separate realtime model) for live preview. HOT-SWAP / parity-only.
  */
-useMainModelForRealtime?: boolean; 
+useMainModelForRealtime?: boolean;
 /**
  * Pause between realtime passes (s). HOT-SWAP.
  */
-realtimeProcessingPause?: number; 
+realtimeProcessingPause?: number;
 /**
  * Delay before spinning up the realtime worker (s). HOT-SWAP.
  */
-initRealtimeAfterSeconds?: number; 
+initRealtimeAfterSeconds?: number;
 /**
  * Early-finalize-on-silence threshold (s). HOT-SWAP / config-only in this port.
  */
-earlyTranscriptionOnSilence?: number; 
+earlyTranscriptionOnSilence?: number;
 /**
  * DistilBERT sentence-completion classifier for endpointing. HOT-SWAP.
  */
-smartEndpoint?: boolean; 
+smartEndpoint?: boolean;
 /**
  * Pause multiplier `(model+whisper)*speed`; higher = more patient.
  * Range 0.5..3.0. HOT-SWAP.
  */
-smartEndpointSpeed?: number; 
+smartEndpointSpeed?: number;
 /**
  * Silence after `.!?` before stop (silence-timing fallback). Range 0.1..5.0. HOT-SWAP.
  */
-endOfSentenceDetectionPause?: number; 
+endOfSentenceDetectionPause?: number;
 /**
  * Silence after `...` before stop. Range 0.1..10.0. HOT-SWAP.
  */
-midSentenceDetectionPause?: number; 
+midSentenceDetectionPause?: number;
 /**
  * Silence after no-terminator speech before stop. Range 0.1..5.0. HOT-SWAP.
  */
 unknownSentenceDetectionPause?: number }
-/**
- * Realtime preview after stabilization (committed-watermark accumulator).
- */
-export type RealtimeStabilizedPayload = { text: string; isFinal: boolean }
 /**
  * Raw realtime preview (pre-stabilization) — drives the noise-break heuristic.
  */
@@ -2876,19 +2856,19 @@ export type RemoveDownloadedModelsResult = { deletedModelCaches: number; disable
  * Active-runtime snapshot — byte-identical to the renderer's `RuntimeInfoPayload` (ipc-client.ts):
  * drives the GPU/CPU chip + the `useSyncActiveModel` reconciliation.
  */
-export type RuntimeInfoPayload = { 
+export type RuntimeInfoPayload = {
 /**
  * "cpu" | "directml" | "cuda" | "auto" (the resolved EP label).
  */
-device: string; is_gpu: boolean; 
+device: string; is_gpu: boolean;
 /**
  * The currently-loaded MAIN model id (`None` until a model loads).
  */
-model: string | null; 
+model: string | null;
 /**
  * Active ORT execution providers (e.g. ["DmlExecutionProvider","CPUExecutionProvider"]).
  */
-providers: string[]; 
+providers: string[];
 /**
  * The currently-loaded REALTIME model id (`None` when realtime isn't loaded).
  */
@@ -2912,7 +2892,7 @@ export type SoundLibraryAddResult = { ok: boolean; cancelled?: boolean | null; e
 /**
  * `soundLibraryEntrySchema` — one user-uploaded recording-chime clip.
  */
-export type SoundLibraryEntry = { id: string; name: string; 
+export type SoundLibraryEntry = { id: string; name: string;
 /**
  * Absolute path on disk under `userData/sounds/`.
  */
@@ -2932,11 +2912,6 @@ export type SoundTheme = "marimba" | "pop" | "custom"
  * `ipc-client.ts` (`{ requestId }`).
  */
 export type SpeakResult = { requestId: string }
-/**
- * Diarized speaker segments for a listen-mode window.
- */
-export type SpeakerSegment = { speaker: number; start: number; end: number; text: string }
-export type SpeakerSegmentsPayload = { segments: SpeakerSegment[] }
 /**
  * System snapshot for fitness heuristics — mirrors the renderer's `SystemInfoEntry`.
  */
@@ -2966,27 +2941,27 @@ export type TranscriberBackend = "faster_whisper" | "onnx_asr"
  * Legacy `TranscriptionHistoryEntry` (ipc-client.ts) — the karaoke `HistoryTable`
  * + the settings panel sync. STRING id, epoch-MILLIS timestamp.
  */
-export type TranscriptionHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; audioFilePath?: string | null; originalText?: string | null; llmModel?: string | null; 
+export type TranscriptionHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; audioFilePath?: string | null; originalText?: string | null; llmModel?: string | null;
 /**
  * Recorded post-processing error when an LLM was requested but failed soft.
  */
-llmError?: string | null; 
+llmError?: string | null;
 /**
  * LLM post-processing wall-time in ms (the footer's "processing time"),
  * when an LLM ran.
  */
-llmProcessingMs?: number | null; 
+llmProcessingMs?: number | null;
 /**
  * LLM generation speed (output tokens / processing second), when the
  * provider reported token usage and the pass took a measurable duration.
  */
-llmTokensPerSecond?: number | null; 
+llmTokensPerSecond?: number | null;
 /**
  * Count of dictionary replacement-pair substitutions applied to this
  * transcription. Omitted on legacy rows (column added later); summed into
  * the History "AI Impact" → dictionary-fixes stat.
  */
-dictionaryFixes?: number | null; historyTag?: string | null; privacyMarkers?: string[] | null; 
+dictionaryFixes?: number | null; historyTag?: string | null; privacyMarkers?: string[] | null;
 /**
  * Human-friendly name of the STT ("main") model that produced this
  * transcription (e.g. `Whisper Tiny`), resolved from the stored model id.
@@ -3020,36 +2995,36 @@ export type TransformSource = "uia" | "clipboard" | "empty"
  * Per-quant cache state, camelCase (matches the renderer's `TtsModelCacheInfo`).
  */
 export type TtsCacheInfoDto = { state: string; downloadedBytes: number; totalBytes: number; progress: number }
-export type TtsCloud = { 
+export type TtsCloud = {
 /**
  * Active cloud TTS provider (ElevenLabs or OpenRouter).
  */
-provider?: TtsCloudProvider; 
+provider?: TtsCloudProvider;
 /**
  * ElevenLabs account voice_id.
  */
-voice?: string; model?: string; 
+voice?: string; model?: string;
 /**
  * OpenRouter speech model id (e.g. `microsoft/mai-voice-2`), active when
  * `provider == openrouter`. Dynamic — the picker scans `output_modalities=speech`.
  */
-openrouterModel?: string; 
+openrouterModel?: string;
 /**
  * OpenRouter voice id from the selected model's supported_voices catalog.
  */
-openrouterVoice?: string; 
+openrouterVoice?: string;
 /**
  * 0..1.
  */
-stability?: number; 
+stability?: number;
 /**
  * 0..1.
  */
-similarity?: number; 
+similarity?: number;
 /**
  * 0..1.
  */
-style?: number; 
+style?: number;
 /**
  * 0.7..1.2.
  */
@@ -3065,18 +3040,6 @@ export type TtsCloudProvider = "elevenlabs" | "openrouter"
  */
 export type TtsInitResult = { ready: boolean }
 /**
- * TTS lifecycle event (started / completed / failed / download-progress).
- */
-export type TtsLifecyclePayload = { requestId: string; 
-/**
- * "started" | "completed" | "failed" | "download-progress"
- */
-phase: string; message: string | null; 
-/**
- * 0.0..1.0 for download-progress.
- */
-progress: number | null }
-/**
  * One TTS catalog row, snake_case (the renderer's rawTtsModelSchema maps it to
  * the camelCase `TtsModelInfo`).
  */
@@ -3086,25 +3049,25 @@ export type TtsModelInfoDto = { id: string; engine: string; display_name: string
  */
 export type TtsModelStateDto = { id: string; cacheByQuantization: Partial<{ [key in string]: TtsCacheInfoDto }>; effectiveQuantization: string; estimatedBytes: number }
 export type TtsModelsWithStateDto = { models: TtsModelInfoDto[]; states: TtsModelStateDto[] }
-export type TtsSettings = { enabled?: boolean; 
+export type TtsSettings = { enabled?: boolean;
 /**
  * Local TTS catalog id selecting WHICH engine/model synthesizes
  * (kokoro-82m / kitten-nano-0.2 / piper / supertonic-3).
  * `voice` below is the voice WITHIN this model. Cloud source ignores this.
  */
-model?: string; 
+model?: string;
 /**
  * Voice catalog id WITHIN the selected model.
  */
-voice?: string; lang?: string; 
+voice?: string; lang?: string;
 /**
  * 0.4..2.0 multiplier (Supertonic slider reaches 0.4; other engines 0.5).
  */
-speed?: number; 
+speed?: number;
 /**
  * Read-selection-aloud hotkey. Must be non-empty (Zod `.min(1).catch`).
  */
-hotkey?: string; 
+hotkey?: string;
 /**
  * Local Kokoro vs cloud ElevenLabs.
  */
@@ -3146,10 +3109,6 @@ export type VisualizerType = "bar" | "grid" | "radial" | "wave" | "aura"
  * `{ voices, languages }` — the `TtsVoiceCatalog` wire shape (`listTtsVoices`).
  */
 export type VoiceCatalogPayload = { voices: LocalVoicePayload[]; languages: LanguagePayload[] }
-/**
- * Wake-word detected (INACTIVE → LISTENING transition cue).
- */
-export type WakeWordDetectedPayload = { word: string; wordIndex: number }
 export type WakeWordDownloadPhase = "idle" | "downloading" | "paused" | "complete" | "failed"
 export type WakeWordModelStatusPayload = { available: boolean; artifactLabel: string; downloadedBytes: number | null; downloadSizeLabel: string; downloading: boolean; engine: string; engineLabel: string; etaSeconds: number | null; error: string | null; phase: WakeWordDownloadPhase; progress: number | null; qualityLabel: string; speedBps: number | null; totalBytes: number | null }
 /**
@@ -3162,15 +3121,15 @@ export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_ac
  * The complete WinSTT settings tree, nested by the settings sections, ported
  * 1:1 from `appSettingsSchema` (Zod). Serializes to the exact camelCase JSON
  * the reused React renderer expects.
- * 
+ *
  * Persisted via the Tauri store (one JSON value). Secrets are encrypted at
  * rest by the persistence layer — they are plaintext on this struct.
  */
-export type WinsttSettings = { global?: GlobalSettings; model?: ModelSettings; quality?: QualitySettings; audio?: AudioSettings; general?: GeneralSettings; hotkey?: HotkeySettings; 
+export type WinsttSettings = { global?: GlobalSettings; model?: ModelSettings; quality?: QualitySettings; audio?: AudioSettings; general?: GeneralSettings; hotkey?: HotkeySettings;
 /**
  * `[]` default; Zod `.catch([])` (pre-v10 entries fail the parser → wiped).
  */
-dictionary?: DictionaryEntry[]; snippets?: SnippetEntry[]; llm?: LlmSettings; tts?: TtsSettings; integrations?: IntegrationsSettings; 
+dictionary?: DictionaryEntry[]; snippets?: SnippetEntry[]; llm?: LlmSettings; tts?: TtsSettings; integrations?: IntegrationsSettings;
 /**
  * SINGLE-STORE MIGRATION: the formerly-separate `settings_store.json`
  * (`AppSettings`) is now embedded here so `winstt-settings.json` is the ONE
@@ -3185,15 +3144,10 @@ dictionary?: DictionaryEntry[]; snippets?: SnippetEntry[]; llm?: LlmSettings; tt
  * view from this field. Seeded once from the old store (see `seed_defaults`).
  */
 core?: AppSettings }
-export type WordAlignmentPayload = { entryId: string; words: WordTiming[] }
 /**
  * One word with start/end seconds (the renderer's highlight sweep input).
  */
 export type WordResultPayload = { text: string; start: number; end: number }
-/**
- * One word with start/end seconds — the `align_words` result for history playback.
- */
-export type WordTiming = { text: string; start: number; end: number }
 
 /** tauri-specta globals **/
 
