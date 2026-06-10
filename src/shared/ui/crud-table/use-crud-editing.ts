@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { ZodType } from "zod";
-import type { CrudField } from "./CrudTable";
+import type { CrudField } from "./types";
 
 interface UseCrudEditingArgs<TEntry, TAdd> {
 	fields: CrudField[];

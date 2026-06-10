@@ -20,14 +20,15 @@
 //     totalBytes, unavailable? })
 //   - cancel / cancel_all / handleSetSpeed â†’ cancel / cancel_all / set_speed
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter, Manager};
+use tokio_util::sync::CancellationToken;
 
+use crate::winstt::cancel_registry::CancelRegistry;
 use crate::winstt::cloud_stt::{
     classify_cloud_failure_message, emit_cloud_failure, CloudSttProvider,
 };
@@ -78,9 +79,9 @@ struct ActiveEngine {
 pub struct TtsManager {
     app: AppHandle,
     active: Mutex<ActiveEngine>,
-    /// request_id â†’ shared cancel flag. The flag is the SAME `Arc<AtomicBool>` the
-    /// active read's sink polls between chunks, so a `cancel` flips it mid-read.
-    cancelled: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// In-flight read cancellation. Each read holds the SAME `CancellationToken`
+    /// its sink polls between chunks, so a `cancel` fires it mid-read.
+    cancelled: CancelRegistry,
     seq: AtomicU64,
     /// Serializes synthesis (Kokoro sessions are not re-entrant).
     synth_lock: Mutex<()>,
@@ -180,7 +181,7 @@ impl TtsManager {
                 fingerprint: String::new(),
                 engine,
             }),
-            cancelled: Mutex::new(HashMap::new()),
+            cancelled: CancelRegistry::new(),
             seq: AtomicU64::new(1),
             synth_lock: Mutex::new(()),
             current_speed: AtomicU32::new(1.0_f32.to_bits()),
@@ -885,25 +886,18 @@ impl TtsManager {
 
     // â”€â”€ cancellation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    fn cancel_flag(&self, request_id: &str) -> Arc<AtomicBool> {
-        let mut m = self.cancelled.lock_recover();
-        m.entry(request_id.to_string())
-            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
-            .clone()
+    fn cancel_flag(&self, request_id: &str) -> CancellationToken {
+        self.cancelled.cancel_token(request_id)
     }
 
-    /// Cancel one in-flight read. Flips the shared cooperative flag the active
+    /// Cancel one in-flight read. Fires the shared `CancellationToken` the active
     /// read's sink polls AND optimistically emits a cancelled `tts:completed` so
-    /// the renderer's Web Audio queue stops IMMEDIATELY (the cooperative flag is a
+    /// the renderer's Web Audio queue stops IMMEDIATELY (the cooperative token is a
     /// no-op when generation already finished and the audio is only buffered
     /// client-side, but the buffered audio must still stop). Mirrors `tts.ts`
     /// `cancel(requestId)`.
     pub fn cancel(&self, request_id: &str) {
-        if let Ok(m) = self.cancelled.lock() {
-            if let Some(flag) = m.get(request_id) {
-                flag.store(true, Ordering::Release);
-            }
-        }
+        self.cancelled.cancel(request_id);
         self.emit_event(
             "tts:completed",
             serde_json::json!({ "requestId": request_id, "cancelled": true, "elapsedMs": null }),
@@ -915,14 +909,10 @@ impl TtsManager {
     /// id) so a queue that never saw a `tts:started` still stops. Mirrors `tts.ts`
     /// `cancel()` (no id).
     pub fn cancel_all(&self) {
-        let ids: Vec<String> = if let Ok(m) = self.cancelled.lock() {
-            for flag in m.values() {
-                flag.store(true, Ordering::Release);
-            }
-            m.keys().cloned().collect()
-        } else {
-            Vec::new()
-        };
+        // Snapshot the in-flight ids BEFORE cancelling so each gets its terminal
+        // `tts:completed`.
+        let ids = self.cancelled.active_ids();
+        self.cancelled.cancel_all();
         for id in ids {
             self.emit_event(
                 "tts:completed",
@@ -938,9 +928,7 @@ impl TtsManager {
     }
 
     fn drop_request(&self, request_id: &str) {
-        if let Ok(mut m) = self.cancelled.lock() {
-            m.remove(request_id);
-        }
+        self.cancelled.clear(request_id);
     }
 
     pub fn fail_request(&self, request_id: &str, reason: &str) {
@@ -1117,7 +1105,7 @@ impl TtsManager {
         let sentences = split_sentences(text, DEFAULT_MAX_SENTENCE_LEN);
         let mut result: TtsResult<()> = Ok(());
         for sentence in sentences {
-            if cancel.load(Ordering::Acquire) {
+            if cancel.is_cancelled() {
                 result = Err(TtsError::Cancelled);
                 break;
             }
@@ -1186,7 +1174,7 @@ impl TtsManager {
             self.openrouter_preview_bytes(model, voice, speed)
         };
 
-        let was_cancelled = cancel.load(Ordering::Acquire);
+        let was_cancelled = cancel.is_cancelled();
         self.drop_request(request_id);
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match result {
@@ -1238,7 +1226,7 @@ impl TtsManager {
             CloudVoiceSettings::default(),
         );
         let result = engine.fetch_preview(preview_url);
-        let was_cancelled = cancel.load(Ordering::Acquire);
+        let was_cancelled = cancel.is_cancelled();
         self.drop_request(request_id);
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match result {

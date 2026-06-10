@@ -228,10 +228,7 @@ impl TranscriptionManager {
 
                     // Clear the model ID so it will be reloaded on next attempt
                     {
-                        let mut current_model = self
-                            .current_model_id
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
+                        let mut current_model = self.lock_current_model();
                         *current_model = None;
                     }
                     self.clear_warmed_model();

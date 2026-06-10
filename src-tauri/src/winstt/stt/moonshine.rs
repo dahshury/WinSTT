@@ -136,21 +136,19 @@ impl MoonshineEngine {
             .collect();
         past_present_names.sort_by_key(|n| kv_sort_key(n));
 
-        if std::env::var("WINSTT_STT_DEBUG").is_ok() {
-            eprintln!(
-                "[moonshine] past_kv={} present0={} present_past={} bos={} eos={} \
-				 enc_mask={:?} dec_enc_mask={:?} past_enc_mask={:?} past_enc_hidden={:?}",
-                past_input_names.len(),
-                present_output_names.len(),
-                past_present_names.len(),
-                tokenizer.bos_id,
-                tokenizer.eos_id,
-                encoder_mask_name,
-                decoder_enc_mask_name,
-                past_enc_mask_name,
-                past_enc_hidden_name,
-            );
-        }
+        log::debug!(
+            "[moonshine] past_kv={} present0={} present_past={} bos={} eos={} \
+			 enc_mask={:?} dec_enc_mask={:?} past_enc_mask={:?} past_enc_hidden={:?}",
+            past_input_names.len(),
+            present_output_names.len(),
+            past_present_names.len(),
+            tokenizer.bos_id,
+            tokenizer.eos_id,
+            encoder_mask_name,
+            decoder_enc_mask_name,
+            past_enc_mask_name,
+            past_enc_hidden_name,
+        );
 
         // CPU-forced (see above) → report CPU as the active provider, not the requested device.
         let providers = [Accelerator::Cpu].iter().map(provider_label).collect();

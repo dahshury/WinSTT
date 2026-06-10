@@ -15,30 +15,28 @@
 // *Tag / *TagsResult) exactly so the reused renderer's `OllamaLibraryStore` parses them unchanged.
 
 use std::collections::HashSet;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tokio::sync::Semaphore;
+use tauri::State;
+
+use crate::winstt::managers::OllamaManager;
 
 const OLLAMA_BASE: &str = "https://ollama.com";
 const USER_AGENT: &str = "WinSTT/1.0 (+https://github.com/dahshury/WinSTT)";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-const CACHE_TTL: Duration = Duration::from_secs(5 * 60);
-// Full library catalog rarely changes — hold it for an hour. Per-tag pages keep the shorter TTL.
-const CATALOG_TTL: Duration = Duration::from_secs(60 * 60);
 const PAGE_SIZE: usize = 20;
 
 // ── Burst control ────────────────────────────────────────────────────────────────
 // ollama.com sits behind Cloudflare, which resets excess concurrent connections
 // from one client and stalls the queued ones past the timeout. Browsing the library
 // fires many tag scrapes at once (one renderer `invoke` per row), so a single
-// request always succeeds while the burst fails. Cap concurrency and retry the
-// transient drops with backoff — mirrors `electron/ipc/ollama-registry.ts`.
-const MAX_CONCURRENT_FETCHES: usize = 3;
+// request always succeeds while the burst fails. The fetch gate (in `OllamaManager`)
+// caps concurrency; here we retry the transient drops with backoff — mirrors
+// `electron/ipc/ollama-registry.ts`.
 const MAX_FETCH_RETRIES: u32 = 2;
 const RETRY_BACKOFF_MS: u64 = 400;
 
@@ -105,97 +103,11 @@ pub struct OllamaLibraryTagsResult {
 }
 
 // ── In-process caches (short-TTL like the reference handler) ─────────────────────
-
-struct CacheEntry<T> {
-    value: T,
-    expires_at: Instant,
-}
-
-static SEARCH_CACHE: Lazy<
-    Mutex<std::collections::HashMap<String, CacheEntry<OllamaLibrarySearchResult>>>,
-> = Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
-static TAGS_CACHE: Lazy<
-    Mutex<std::collections::HashMap<String, CacheEntry<OllamaLibraryTagsResult>>>,
-> = Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
-static CATALOG_CACHE: Lazy<Mutex<Option<CacheEntry<OllamaLibraryCatalogResult>>>> =
-    Lazy::new(|| Mutex::new(None));
-
-fn cache_get_search(key: &str) -> Option<OllamaLibrarySearchResult> {
-    let mut map = SEARCH_CACHE.lock().ok()?;
-    match map.get(key) {
-        Some(e) if e.expires_at > Instant::now() => Some(e.value.clone()),
-        Some(_) => {
-            map.remove(key);
-            None
-        }
-        None => None,
-    }
-}
-
-fn cache_set_search(key: String, value: OllamaLibrarySearchResult) {
-    if let Ok(mut map) = SEARCH_CACHE.lock() {
-        map.insert(
-            key,
-            CacheEntry {
-                value,
-                expires_at: Instant::now() + CACHE_TTL,
-            },
-        );
-    }
-}
-
-fn cache_get_tags(key: &str) -> Option<OllamaLibraryTagsResult> {
-    let mut map = TAGS_CACHE.lock().ok()?;
-    match map.get(key) {
-        Some(e) if e.expires_at > Instant::now() => Some(e.value.clone()),
-        Some(_) => {
-            map.remove(key);
-            None
-        }
-        None => None,
-    }
-}
-
-fn cache_set_tags(key: String, value: OllamaLibraryTagsResult) {
-    if let Ok(mut map) = TAGS_CACHE.lock() {
-        map.insert(
-            key,
-            CacheEntry {
-                value,
-                expires_at: Instant::now() + CACHE_TTL,
-            },
-        );
-    }
-}
-
-fn cache_get_catalog() -> Option<OllamaLibraryCatalogResult> {
-    let guard = CATALOG_CACHE.lock().ok()?;
-    match guard.as_ref() {
-        Some(e) if e.expires_at > Instant::now() => Some(e.value.clone()),
-        _ => None,
-    }
-}
-
-fn cache_set_catalog(value: OllamaLibraryCatalogResult) {
-    if let Ok(mut guard) = CATALOG_CACHE.lock() {
-        *guard = Some(CacheEntry {
-            value,
-            expires_at: Instant::now() + CATALOG_TTL,
-        });
-    }
-}
+//
+// The cache maps + TTLs, the shared `reqwest::Client`, and the burst-control
+// `Semaphore` now live on `OllamaManager` (managed state); `fetch_html` borrows them.
 
 // ── HTTP fetcher ────────────────────────────────────────────────────────────────
-
-// One shared client (connection pooling + consistent TLS) and one shared slot
-// pool across catalog/search/tags scrapes.
-static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
-    reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .expect("failed to build reqwest client")
-});
-static FETCH_GATE: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(MAX_CONCURRENT_FETCHES));
 
 /// Retry only the burst-induced transients — connection resets and timeouts.
 /// HTTP-status errors are deterministic, so re-hitting them just wastes time.
@@ -203,11 +115,16 @@ fn is_retryable_fetch_error(err: &reqwest::Error) -> bool {
     err.is_connect() || err.is_timeout() || err.is_request()
 }
 
-async fn fetch_html(url: &str) -> Result<String, String> {
-    let _permit = FETCH_GATE.acquire().await.map_err(|e| e.to_string())?;
+async fn fetch_html(mgr: &OllamaManager, url: &str) -> Result<String, String> {
+    let _permit = mgr
+        .fetch_gate()
+        .acquire()
+        .await
+        .map_err(|e| e.to_string())?;
     let mut attempt: u32 = 0;
     loop {
-        let send_result = HTTP_CLIENT
+        let send_result = mgr
+            .http()
             .get(url)
             .header(reqwest::header::USER_AGENT, USER_AGENT)
             .header(reqwest::header::ACCEPT, "text/html")
@@ -475,8 +392,13 @@ fn search_url(query: &str, page: i32) -> String {
     )
 }
 
-async fn scrape_search(query: &str, page: i32, cache_key: &str) -> OllamaLibrarySearchResult {
-    match fetch_html(&search_url(query, page)).await {
+async fn scrape_search(
+    mgr: &OllamaManager,
+    query: &str,
+    page: i32,
+    cache_key: &str,
+) -> OllamaLibrarySearchResult {
+    match fetch_html(mgr, &search_url(query, page)).await {
         Ok(html) => {
             let all_hits = parse_search_page(&html);
             let start = (page.max(0) as usize) * PAGE_SIZE;
@@ -494,7 +416,7 @@ async fn scrape_search(query: &str, page: i32, cache_key: &str) -> OllamaLibrary
                 query: query.to_string(),
                 error: None,
             };
-            cache_set_search(cache_key.to_string(), result.clone());
+            mgr.cache_set_search(cache_key.to_string(), result.clone());
             result
         }
         Err(err) => OllamaLibrarySearchResult {
@@ -507,7 +429,11 @@ async fn scrape_search(query: &str, page: i32, cache_key: &str) -> OllamaLibrary
     }
 }
 
-async fn search_ollama_library(query: &str, page: i32) -> OllamaLibrarySearchResult {
+async fn search_ollama_library(
+    mgr: &OllamaManager,
+    query: &str,
+    page: i32,
+) -> OllamaLibrarySearchResult {
     let trimmed = query.trim();
     if trimmed.is_empty() {
         return OllamaLibrarySearchResult {
@@ -519,23 +445,23 @@ async fn search_ollama_library(query: &str, page: i32) -> OllamaLibrarySearchRes
         };
     }
     let cache_key = format!("{}::{page}", trimmed.to_lowercase());
-    if let Some(cached) = cache_get_search(&cache_key) {
+    if let Some(cached) = mgr.cache_get_search(&cache_key) {
         return cached;
     }
-    scrape_search(trimmed, page, &cache_key).await
+    scrape_search(mgr, trimmed, page, &cache_key).await
 }
 
-async fn fetch_ollama_library_catalog() -> OllamaLibraryCatalogResult {
-    if let Some(cached) = cache_get_catalog() {
+async fn fetch_ollama_library_catalog(mgr: &OllamaManager) -> OllamaLibraryCatalogResult {
+    if let Some(cached) = mgr.cache_get_catalog() {
         return cached;
     }
-    match fetch_html(&format!("{OLLAMA_BASE}/library")).await {
+    match fetch_html(mgr, &format!("{OLLAMA_BASE}/library")).await {
         Ok(html) => {
             let result = OllamaLibraryCatalogResult {
                 hits: parse_search_page(&html),
                 error: None,
             };
-            cache_set_catalog(result.clone());
+            mgr.cache_set_catalog(result.clone());
             result
         }
         Err(err) => OllamaLibraryCatalogResult {
@@ -545,7 +471,7 @@ async fn fetch_ollama_library_catalog() -> OllamaLibraryCatalogResult {
     }
 }
 
-async fn fetch_ollama_library_tags(model: &str) -> OllamaLibraryTagsResult {
+async fn fetch_ollama_library_tags(mgr: &OllamaManager, model: &str) -> OllamaLibraryTagsResult {
     let trimmed = model.trim();
     if trimmed.is_empty() {
         return OllamaLibraryTagsResult {
@@ -555,13 +481,13 @@ async fn fetch_ollama_library_tags(model: &str) -> OllamaLibraryTagsResult {
         };
     }
     let cache_key = trimmed.to_lowercase();
-    if let Some(cached) = cache_get_tags(&cache_key) {
+    if let Some(cached) = mgr.cache_get_tags(&cache_key) {
         return cached;
     }
-    match fetch_html(&format!(
-        "{OLLAMA_BASE}/library/{}/tags",
-        encode_component(trimmed)
-    ))
+    match fetch_html(
+        mgr,
+        &format!("{OLLAMA_BASE}/library/{}/tags", encode_component(trimmed)),
+    )
     .await
     {
         Ok(html) => {
@@ -570,7 +496,7 @@ async fn fetch_ollama_library_tags(model: &str) -> OllamaLibraryTagsResult {
                 tags: parse_tags_page(&html),
                 error: None,
             };
-            cache_set_tags(cache_key, result.clone());
+            mgr.cache_set_tags(cache_key, result.clone());
             result
         }
         Err(err) => OllamaLibraryTagsResult {
@@ -586,15 +512,20 @@ async fn fetch_ollama_library_tags(model: &str) -> OllamaLibraryTagsResult {
 /// `ollama_fetch_library` → `LLM_FETCH_OLLAMA_LIBRARY`. Full library catalog in one shot.
 #[tauri::command]
 #[specta::specta]
-pub async fn ollama_fetch_library() -> Result<OllamaLibraryCatalogResult, String> {
-    Ok(fetch_ollama_library_catalog().await)
+pub async fn ollama_fetch_library(
+    ollama_manager: State<'_, Arc<OllamaManager>>,
+) -> Result<OllamaLibraryCatalogResult, String> {
+    Ok(fetch_ollama_library_catalog(&ollama_manager).await)
 }
 
 /// `ollama_fetch_tags` → `LLM_FETCH_OLLAMA_TAGS`. Pullable tags for one library model.
 #[tauri::command]
 #[specta::specta]
-pub async fn ollama_fetch_tags(model: String) -> Result<OllamaLibraryTagsResult, String> {
-    Ok(fetch_ollama_library_tags(&model).await)
+pub async fn ollama_fetch_tags(
+    ollama_manager: State<'_, Arc<OllamaManager>>,
+    model: String,
+) -> Result<OllamaLibraryTagsResult, String> {
+    Ok(fetch_ollama_library_tags(&ollama_manager, &model).await)
 }
 
 /// `ollama_search_library` → `LLM_SEARCH_OLLAMA_LIBRARY`. Paginated search (parity; v1 renderer
@@ -602,10 +533,11 @@ pub async fn ollama_fetch_tags(model: String) -> Result<OllamaLibraryTagsResult,
 #[tauri::command]
 #[specta::specta]
 pub async fn ollama_search_library(
+    ollama_manager: State<'_, Arc<OllamaManager>>,
     query: String,
     page: Option<i32>,
 ) -> Result<OllamaLibrarySearchResult, String> {
-    Ok(search_ollama_library(&query, page.unwrap_or(0)).await)
+    Ok(search_ollama_library(&ollama_manager, &query, page.unwrap_or(0)).await)
 }
 
 #[cfg(test)]

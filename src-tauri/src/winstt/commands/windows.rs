@@ -48,6 +48,8 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
 
+use crate::winstt::sync_ext::MutexExt;
+
 mod placement;
 mod settings_modal;
 
@@ -432,7 +434,7 @@ fn model_picker_size_for_kind(kind: &str) -> (f64, f64) {
 }
 
 fn with_picker_state<R>(label: &'static str, f: impl FnOnce(&mut PickerState) -> R) -> R {
-    let mut guard = PICKER_STATE.lock().expect("picker-state mutex poisoned");
+    let mut guard = PICKER_STATE.lock_recover();
     let map = guard.get_or_insert_with(HashMap::new);
     let (w, h) = picker_default_size(label);
     let entry = map.entry(label).or_insert(PickerState {

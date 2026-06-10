@@ -395,7 +395,7 @@ impl DownloadManager {
 
     pub fn pause_quant(&self, model: &str, quantization: &str) {
         let parked = {
-            let map = self.inflight.lock().expect("download registry poisoned");
+            let map = self.inflight.lock_recover();
             match map.get(&key(model, quantization)) {
                 Some(h) => {
                     h.paused.store(true, Ordering::Release);

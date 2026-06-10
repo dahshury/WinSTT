@@ -96,6 +96,17 @@ impl CancelRegistry {
         }
     }
 
+    /// Snapshot of the request ids currently tracked as in-flight. Used by
+    /// callers (e.g. TTS) that must fan out a per-id side effect alongside
+    /// `cancel_all` (one `tts:completed` per in-flight read). A poisoned lock
+    /// yields an empty list.
+    pub fn active_ids(&self) -> Vec<String> {
+        self.state
+            .lock()
+            .map(|state| state.active.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// Cancel every currently active request (poll marks + tokens). Finished
     /// requests are reclaimed by `clear`, so cancelled ids do not accumulate.
     pub fn cancel_all(&self) {
@@ -180,6 +191,18 @@ mod tests {
         let token = reg.cancel_token("a");
         reg.cancel_all();
         assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn active_ids_lists_tracked_then_drops_on_clear() {
+        let reg = CancelRegistry::new();
+        reg.track("a");
+        reg.track("b");
+        let mut ids = reg.active_ids();
+        ids.sort();
+        assert_eq!(ids, vec!["a".to_string(), "b".to_string()]);
+        reg.clear("a");
+        assert_eq!(reg.active_ids(), vec!["b".to_string()]);
     }
 
     #[test]

@@ -4,10 +4,11 @@
 // `kitten_model_filename` catalog helper. Self-contained — referenced only where
 // `read_aloud` constructs the sink.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 
 use crate::winstt::tts::{ChunkSink, Format, SynthesisChunk};
 
@@ -57,7 +58,7 @@ pub(super) fn chunk_payload(request_id: &str, chunk: &SynthesisChunk) -> serde_j
 pub(super) struct EmitChunkSink {
     pub(super) app: AppHandle,
     pub(super) request_id: String,
-    pub(super) cancelled: Arc<AtomicBool>,
+    pub(super) cancelled: CancellationToken,
     /// The previously-pushed chunk, held back until the next one arrives so we can
     /// stamp `is_final` on the true last chunk.
     pub(super) last_chunk: Mutex<Option<SynthesisChunk>>,
@@ -86,7 +87,7 @@ impl EmitChunkSink {
 
 impl ChunkSink for EmitChunkSink {
     fn push(&self, mut chunk: SynthesisChunk) -> bool {
-        if self.cancelled.load(Ordering::Acquire) {
+        if self.cancelled.is_cancelled() {
             return false;
         }
         // Skip empty (silent) chunks so the renderer never schedules a zero-length
@@ -111,6 +112,6 @@ impl ChunkSink for EmitChunkSink {
     }
 
     fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.cancelled.is_cancelled()
     }
 }

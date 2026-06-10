@@ -608,24 +608,17 @@ impl TtsDownloadManager {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum TtsDownloadErr {
+    #[error("cancelled")]
     Cancelled,
+    #[error("paused")]
     Paused,
+    #[error("network: {0}")]
     Network(String),
+    #[error("{0}")]
     Other(String),
 }
-impl std::fmt::Display for TtsDownloadErr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TtsDownloadErr::Cancelled => write!(f, "cancelled"),
-            TtsDownloadErr::Paused => write!(f, "paused"),
-            TtsDownloadErr::Network(m) => write!(f, "network: {m}"),
-            TtsDownloadErr::Other(m) => write!(f, "{m}"),
-        }
-    }
-}
-impl std::error::Error for TtsDownloadErr {}
 
 #[cfg(test)]
 mod tests {

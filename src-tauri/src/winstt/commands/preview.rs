@@ -18,6 +18,8 @@ use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager};
 
+use crate::winstt::sync_ext::MutexExt;
+
 /// Backend-owned preview paste session. The renderer may confirm edited text,
 /// but the paste sink only runs while this captured pending session exists.
 #[derive(Default)]
@@ -39,20 +41,17 @@ struct PendingPreview {
 
 impl PreviewState {
     fn set(&self, preview: PendingPreview) {
-        *self.pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(preview);
+        *self.pending.lock_recover() = Some(preview);
     }
 
     fn take(&self) -> Option<PendingPreview> {
-        self.pending
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
+        self.pending.lock_recover().take()
     }
 
     /// Drop any captured target without consuming it for a paste (cancel path /
     /// a superseding recording).
     pub fn clear(&self) {
-        *self.pending.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.pending.lock_recover() = None;
     }
 }
 
@@ -102,8 +101,7 @@ pub fn capture_foreground(app: &AppHandle, text: &str) {
 pub(crate) fn pending_preview_text_for_test(state: &PreviewState) -> Option<String> {
     state
         .pending
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .lock_recover()
         .as_ref()
         .map(|preview| preview.text.clone())
 }

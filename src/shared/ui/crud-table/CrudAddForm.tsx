@@ -11,7 +11,7 @@ import {
 	InputGroupButton,
 	InputGroupInput,
 } from "@/shared/ui/input-group";
-import type { CrudField, CrudTableLabels } from "./CrudTable";
+import type { CrudField, CrudTableLabels } from "./types";
 
 interface CrudAddFormProps {
 	addFormLayout: "separate" | "joined";

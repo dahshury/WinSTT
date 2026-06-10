@@ -5,7 +5,7 @@ import {
 	InputGroupAddon,
 	InputGroupInput,
 } from "@/shared/ui/input-group";
-import type { CrudColumn, CrudField } from "./CrudTable";
+import type { CrudColumn, CrudField } from "./types";
 
 interface CrudEditableCellProps<TEntry> {
 	col: CrudColumn<TEntry>;

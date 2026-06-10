@@ -1,6 +1,6 @@
 import { type FormEvent, useId, useState } from "react";
 import type { ZodType } from "zod";
-import type { CrudField } from "./CrudTable";
+import type { CrudField } from "./types";
 
 interface UseCrudFormArgs<TAdd> {
 	fields: CrudField[];

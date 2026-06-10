@@ -107,6 +107,77 @@ pub struct WhisperEngine {
     ready: bool,
 }
 
+/// Loop-carried state for one `decode_inner` run (mirrors onnx-asr's per-`recognize` state).
+/// Built once by `prepare_decode_state` and threaded `&mut` through `decode_step` so the hot
+/// loop body allocates nothing across the step boundary. `decode_inner` owns it on the stack.
+struct DecodeState {
+    /// Full token sequence: prompt + generated (incl. trailing eos). Grown one token per step.
+    tokens: Vec<i64>,
+    /// Number of decoder-prompt tokens at the head of `tokens` (the generated region starts here).
+    prompt_len: usize,
+    /// Device `MemoryInfo` for the resident encoder output + carried KV (CPU when no GPU EP).
+    dev_mem: MemoryInfo,
+    /// Host `MemoryInfo` for the logits (argmax) and, when collecting, the cross-attention.
+    cpu_mem: MemoryInfo,
+    /// `present.*` output names, parallel to `past_kv_names` (canonical layer order).
+    present_names: Vec<String>,
+    /// Carried KV cache as DEVICE-resident OrtValues; `None` = the (0,H,0,D) empty step-0 cache.
+    past: Vec<Option<DynValue>>,
+    /// Whether to collect cross-attention this run (`*_timestamped` export + caller requested).
+    want_attn: bool,
+    /// Per-layer running cross-attention buffers: each entry is (heads, dec_step_len, frames) FLAT
+    /// data, one per decode step. Concatenated along the decoder-token axis at the end.
+    per_layer_steps: Vec<Vec<Vec<f32>>>,
+    /// Cross-attention head/frame counts, resolved at the FIRST step from the actual output shapes.
+    ca_heads: usize,
+    ca_frames: usize,
+    /// Step-0 peek for the garbage detector: (argmax token, top logit, runner-up logit).
+    step0: Option<(i64, f32, f32)>,
+}
+
+impl DecodeState {
+    /// Stack the collected per-layer per-step attention into one dense
+    /// (num_layers, num_heads, num_dec_tokens, num_enc_frames) buffer in CrossAttentions's
+    /// canonical layout. The per-step `dec_step_len` segments concatenate along the token axis
+    /// in generation order (step 0's prompt rows first, then one row per subsequent step) — the
+    /// same order the decoder tokens themselves were produced, so token row i lines up with
+    /// `tokens[i]`. Mirrors `np.concatenate(steps, axis=2)` then `np.stack(layers, axis=1)`.
+    fn stack_cross_attentions(&self) -> Option<CrossAttentions> {
+        if !(self.want_attn
+            && self.ca_heads > 0
+            && self.ca_frames > 0
+            && !self.per_layer_steps[0].is_empty())
+        {
+            return None;
+        }
+        let n_layers = self.per_layer_steps.len();
+        let (ca_heads, ca_frames) = (self.ca_heads, self.ca_frames);
+        // Total decoder tokens = sum of each step's dec_step_len for layer 0.
+        let total_tokens: usize = self.per_layer_steps[0]
+            .iter()
+            .map(|step| step.len() / (ca_heads * ca_frames).max(1))
+            .sum();
+        let mut ca = CrossAttentions::new(n_layers, ca_heads, total_tokens, ca_frames);
+        for (li, steps) in self.per_layer_steps.iter().enumerate() {
+            let mut tok_base = 0usize; // running decoder-token offset across steps
+            for step in steps {
+                // step is (heads, dec_step_len, frames) row-major.
+                let step_tokens = step.len() / (ca_heads * ca_frames).max(1);
+                for h in 0..ca_heads {
+                    for t in 0..step_tokens {
+                        for fr in 0..ca_frames {
+                            let src = (h * step_tokens + t) * ca_frames + fr;
+                            ca.set(li, h, tok_base + t, fr, step[src]);
+                        }
+                    }
+                }
+                tok_base += step_tokens;
+            }
+        }
+        Some(ca)
+    }
+}
+
 impl WhisperEngine {
     /// Build both sessions from a resolved file set. Applies the fp16 decoder repair and
     /// the `ORT_ENABLE_EXTENDED` downgrade when `cfg.whisper_fp16_workaround` is set.
@@ -390,6 +461,10 @@ impl WhisperEngine {
     /// Shared greedy KV-cache decode body. When `collect_cross_attn` is set the loop reads the
     /// sorted `cross_attentions.{i}` outputs each step and concatenates them along the decoder-
     /// token axis, returning the stacked `(num_layers, num_heads, num_dec_tokens, num_enc_frames)`.
+    ///
+    /// Orchestrates named helpers: `prepare_decode_state` (one-time KV/memory/cross-attn buffers) →
+    /// per-step `decode_step` (the hot loop body: bind, run, sync, select token, carry KV, collect
+    /// attn) → `check_degenerate_decode` (always-on garbage guard) → `stack_cross_attentions`.
     fn decode_inner(
         &mut self,
         encoder_out: &DynValue,
@@ -399,8 +474,31 @@ impl WhisperEngine {
         first_step_allowed: Option<&[i64]>,
     ) -> SttResult<(Vec<i64>, Option<CrossAttentions>)> {
         let eos = self.tokenizer.eos_token_id;
-        let mut tokens = prompt;
+        let mut state = self.prepare_decode_state(prompt, collect_cross_attn)?;
+        let total_steps = max_length.saturating_sub(state.tokens.len());
 
+        for step_index in 0..total_steps {
+            let next = self.decode_step(encoder_out, &mut state, step_index, first_step_allowed)?;
+            state.tokens.push(next);
+            if next == eos {
+                break;
+            }
+        }
+
+        self.check_degenerate_decode(&state, max_length)?;
+        let attn = state.stack_cross_attentions();
+        Ok((state.tokens, attn))
+    }
+
+    /// One-time decode setup (mirrors onnx-asr `_create_state`): allocate the device/host
+    /// `MemoryInfo`, derive the `present.*` output names, the empty KV cache, and the cross-
+    /// attention collection buffers. Returns the loop-carried `DecodeState`; nothing here is
+    /// per-step (no allocations on the hot path).
+    fn prepare_decode_state(
+        &self,
+        prompt: Vec<i64>,
+        collect_cross_attn: bool,
+    ) -> SttResult<DecodeState> {
         // Device memory for the KV-cache + encoder output (resident); logits/cross-attn come back
         // to host. `device_mem` is CPU when no GPU EP, so this path is correct + ~free on CPU too.
         let dev_mem = self.device_mem()?;
@@ -424,7 +522,7 @@ impl WhisperEngine {
         // (encoder) KV is computed once at step 0 and reused, so its `present.*` returns empty on
         // cached steps → we keep the prior value ("keep prev when present is 0-length", `_hf.py`).
         // (`DynValue` isn't `Clone`, so build the all-`None` vec without the `vec![None; n]` repeat.)
-        let mut past: Vec<Option<DynValue>> = (0..self.past_kv_names.len()).map(|_| None).collect();
+        let past: Vec<Option<DynValue>> = (0..self.past_kv_names.len()).map(|_| None).collect();
 
         let want_attn =
             collect_cross_attn && self.has_cross_attention && !self.cross_attn_names.is_empty();
@@ -432,365 +530,356 @@ impl WhisperEngine {
         // per decode step. Concatenated along the decoder-token (step) axis at the end, exactly like
         // `_hf.py` `np.concatenate(layer_steps, axis=2)` then `np.stack(..., axis=1)`.
         let n_layers = self.cross_attn_names.len();
-        let mut per_layer_steps: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_layers];
-        // Resolved at the FIRST step from the actual output shapes (steps are uniform per layer).
-        let mut ca_heads = 0usize;
-        let mut ca_frames = 0usize;
+        let per_layer_steps: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_layers];
 
-        let total_steps = max_length.saturating_sub(tokens.len());
-        let prompt_len = tokens.len();
+        let prompt_len = prompt.len();
+        Ok(DecodeState {
+            tokens: prompt,
+            prompt_len,
+            dev_mem,
+            cpu_mem,
+            present_names,
+            past,
+            want_attn,
+            per_layer_steps,
+            // Resolved at the FIRST step from the actual output shapes (steps are uniform per layer).
+            ca_heads: 0,
+            ca_frames: 0,
+            // ALWAYS-ON garbage guard (silent in normal use): a Whisper decode that runs to the
+            // token cap WITHOUT an EOS and is dominated by a single repeated token is the "..."-wall
+            // garbage we saw when lite-whisper's low-rank encoder corrupts on DirectML after model
+            // swaps. We capture the step-0 logit margin (a tiny margin ⇒ the encoder gave the
+            // decoder no real signal) and, ONLY when the decode actually degenerates, emit one rich
+            // WARN with every metric. Normal decodes EOS early and never reach the detector; the
+            // only standing cost is a one-time step-0 peek.
+            step0: None, // (argmax token, top logit, runner-up logit)
+        })
+    }
 
-        // ALWAYS-ON garbage guard (silent in normal use): a Whisper decode that runs to the token cap
-        // WITHOUT an EOS and is dominated by a single repeated token is the "..."-wall garbage we saw
-        // when lite-whisper's low-rank encoder corrupts on DirectML after model swaps. We capture the
-        // step-0 logit margin (a tiny margin ⇒ the encoder gave the decoder no real signal) and, ONLY
-        // when the decode actually degenerates, emit one rich WARN with every metric. Normal decodes
-        // EOS early and never reach the detector; the only standing cost is a one-time step-0 peek.
-        let mut step0: Option<(i64, f32, f32)> = None; // (argmax token, top logit, runner-up logit)
+    /// One greedy KV-cache step (mirrors onnx-asr `_decode`): build `input_ids` + empty-KV host
+    /// tensors, bind the device-resident encoder output / carried KV in a fresh binding, run +
+    /// sync, argmax the last-position logits (with first-step allow-list / no_repeat_ngram), carry
+    /// `present.*` → `past.*`, and collect this step's cross-attention. Returns the next token.
+    /// Hot path: `state` is borrowed mutably so nothing is cloned across the step boundary.
+    fn decode_step(
+        &mut self,
+        encoder_out: &DynValue,
+        state: &mut DecodeState,
+        step_index: usize,
+        first_step_allowed: Option<&[i64]>,
+    ) -> SttResult<i64> {
+        let eos = self.tokenizer.eos_token_id;
+        let use_cache = state.past.iter().any(|p| p.is_some());
 
-        for step_index in 0..total_steps {
-            let use_cache = past.iter().any(|p| p.is_some());
-
-            // input_ids: full prompt on step 0, else only the last token.
-            let (id_data, id_len): (Vec<i64>, usize) = if use_cache {
-                (vec![*tokens.last().unwrap()], 1)
-            } else {
-                (tokens.clone(), tokens.len())
-            };
-            let input_ids = Tensor::from_array(([1usize, id_len], id_data.into_boxed_slice()))
-                .map_err(|e| SttError::Inference(format!("decoder input_ids: {e}")))?;
-            // Whisper merged decoders declare use_cache_branch as a bool tensor.
-            let cache_flag = if self.has_use_cache_branch {
-                Some(
-                    Tensor::from_array(([1usize], vec![use_cache].into_boxed_slice()))
-                        .map_err(|e| SttError::Inference(format!("use_cache_branch: {e}")))?,
-                )
-            } else {
-                None
-            };
-            // Empty (0,H,0,D) host tensors for any `None` past entry (step 0). The allocator-backed
-            // ctor accepts 0-element tensors (`from_array`'s raw-data path rejects 0-sized dims).
-            // Held in this Vec so they outlive the binding through `run_binding`.
-            let mut empties: Vec<Tensor<f32>> = Vec::new();
-            for (i, p) in past.iter().enumerate() {
-                if p.is_none() {
-                    let (h, d) = self.kv_dims[i];
-                    let shape = [0usize, h.max(0) as usize, 0usize, d.max(0) as usize];
-                    let t = Tensor::<f32>::new(&Allocator::default(), shape)
-                        .map_err(|e| SttError::Inference(format!("empty past kv: {e}")))?;
-                    empties.push(t);
-                }
-            }
-
-            // Fresh binding per step (mirrors onnx-asr's per-`_decode` `io_binding()`): bind the
-            // changing inputs + the device-resident encoder output / KV; bind logits to host and
-            // present.* to the device so the cache never round-trips through the CPU.
-            let mut binding = self
-                .decoder
-                .as_mut()
-                .ok_or_else(|| SttError::Inference("whisper decoder session is shut down".into()))?
-                .create_binding()
-                .map_err(|e| SttError::Inference(format!("decoder binding: {e}")))?;
-            binding
-                .bind_input("input_ids", &input_ids)
-                .map_err(|e| SttError::Inference(format!("bind input_ids: {e}")))?;
-            binding
-                .bind_input("encoder_hidden_states", encoder_out)
-                .map_err(|e| SttError::Inference(format!("bind encoder_hidden_states: {e}")))?;
-            if let Some(flag) = &cache_flag {
-                binding
-                    .bind_input("use_cache_branch", flag)
-                    .map_err(|e| SttError::Inference(format!("bind use_cache_branch: {e}")))?;
-            }
-            // past_key_values.* : device value carried from prev step, else the empty host tensor.
-            let mut empty_iter = empties.iter();
-            for (i, name) in self.past_kv_names.iter().enumerate() {
-                match &past[i] {
-                    Some(v) => binding
-                        .bind_input(name.as_str(), v)
-                        .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?,
-                    None => {
-                        let t = empty_iter
-                            .next()
-                            .expect("one empty tensor per None past entry");
-                        binding
-                            .bind_input(name.as_str(), t)
-                            .map_err(|e| SttError::Inference(format!("bind empty {name}: {e}")))?;
-                    }
-                }
-            }
-            // outputs: logits → host (argmax); present.* → device (carried); cross_attn → host.
-            binding
-                .bind_output_to_device("logits", &cpu_mem)
-                .map_err(|e| SttError::Inference(format!("bind logits: {e}")))?;
-            for pname in &present_names {
-                binding
-                    .bind_output_to_device(pname.as_str(), &dev_mem)
-                    .map_err(|e| SttError::Inference(format!("bind {pname}: {e}")))?;
-            }
-            // cross_attentions.* exist only on `*_timestamped` exports. ORT's RunWithBinding requires
-            // EVERY graph output bound, so bind them whenever the export declares them — to host
-            // (cpu_mem) when we'll collect them for word timestamps, else to device (computed by the
-            // graph anyway, never copied back) just to satisfy the all-outputs-bound contract.
-            let ca_mem = if want_attn { &cpu_mem } else { &dev_mem };
-            for name in &self.cross_attn_names {
-                binding
-                    .bind_output_to_device(name.as_str(), ca_mem)
-                    .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
-            }
-
-            let mut outputs = self
-                .decoder
-                .as_mut()
-                .ok_or_else(|| SttError::Inference("whisper decoder session is shut down".into()))?
-                .run_binding(&binding)
-                .map_err(|e| SttError::Inference(format!("decoder run_binding: {e}")))?;
-            // DML/CUDA run_binding is async w.r.t. the device stream. The Python reference implicitly
-            // syncs every step (`.numpy()` on logits); we must too, or the host logits read + the
-            // carried device `present.*` race the still-running kernels → stale data (first call slow
-            // enough to mask it, warm calls corrupt). One sync per step matches onnx-asr.
-            binding
-                .synchronize_outputs()
-                .map_err(|e| SttError::Inference(format!("decoder synchronize: {e}")))?;
-
-            // logits: (1, seq, vocab) → argmax of the LAST position (host). Scoped so the borrow of
-            // `outputs` ends before the present→past `remove`s take it mutably.
-            let mut next: i64 = {
-                let logits = outputs
-                    .get("logits")
-                    .ok_or_else(|| SttError::Inference("decoder produced no logits".into()))?;
-                let (lshape, ldata) = logits
-                    .try_extract_tensor::<f32>()
-                    .map_err(|e| SttError::Inference(format!("logits extract: {e}")))?;
-                let vocab = *lshape.last().unwrap_or(&0) as usize;
-                let seq = if lshape.len() >= 2 {
-                    lshape[lshape.len() - 2] as usize
-                } else {
-                    1
-                };
-                if vocab == 0 {
-                    return Err(SttError::Inference(
-                        "decoder logits had 0-width vocab".into(),
-                    ));
-                }
-                let last_off = seq.saturating_sub(1) * vocab;
-                // Clamp to the actual data length: the slice bounds come from the logits
-                // *shape* metadata, so a shape/data-mismatched downloaded ONNX decoder
-                // would otherwise panic the decode thread (mirrors moonshine.rs).
-                let end = (last_off + vocab).min(ldata.len());
-                if end <= last_off {
-                    return Err(SttError::Inference(
-                        "decoder logits buffer shorter than declared shape".into(),
-                    ));
-                }
-                let logits = &ldata[last_off..end];
-                let selected = if step_index == 0 {
-                    first_step_allowed
-                        .filter(|allowed| !allowed.is_empty())
-                        .map(|allowed| {
-                            select_whisper_token_from_allowed(
-                                logits,
-                                allowed,
-                                self.tokenizer.eos_token_id,
-                                self.tokenizer.nospeech_token_id,
-                                true,
-                            )
-                        })
-                        .unwrap_or_else(|| {
-                            select_whisper_token(
-                                logits,
-                                &self.suppress_token_mask,
-                                self.tokenizer.eos_token_id,
-                                self.tokenizer.nospeech_token_id,
-                                true,
-                                &[],
-                            )
-                        })
-                } else {
-                    // no_repeat_ngram over the GENERATED region only (prompt excluded): bans the
-                    // continuations that would close a verbatim repetition loop, which is what the
-                    // greedy decoder falls into on lite-whisper's low-rank encoders. No-op on any
-                    // decode that isn't actually repeating an n-gram, and EOS is never in the set.
-                    let banned = no_repeat_ngram_banned(
-                        &tokens[prompt_len.min(tokens.len())..],
-                        NO_REPEAT_NGRAM_SIZE,
-                    );
-                    select_whisper_token(
-                        logits,
-                        &self.suppress_token_mask,
-                        self.tokenizer.eos_token_id,
-                        self.tokenizer.nospeech_token_id,
-                        false,
-                        &banned,
-                    )
-                };
-                if step0.is_none() {
-                    step0 = Some((selected.token, selected.top_logit, selected.runner_up_logit));
-                }
-                selected.token
-            };
-            // EOS-sticky: once a row hit eos, freeze it.
-            if *tokens.last().unwrap() == eos {
-                next = eos;
-            }
-
-            // Collect this step's cross-attention (host) BEFORE the present→past `remove`s.
-            // Each `cross_attentions.{i}` output is (batch=1, num_heads, dec_step_len, enc_frames)
-            // where dec_step_len == id_len (the number of decoder tokens fed THIS step — the full
-            // prompt on step 0, then 1 thereafter). We store the FLAT (heads*dec_step_len*frames)
-            // data per layer per step; the dec_step_len axis is what we concat over.
-            if want_attn {
-                for (li, name) in self.cross_attn_names.iter().enumerate() {
-                    let v = outputs.get(name.as_str()).ok_or_else(|| {
-                        SttError::Inference(format!("decoder produced no {name}"))
-                    })?;
-                    let (shape, data) = v
-                        .try_extract_tensor::<f32>()
-                        .map_err(|e| SttError::Inference(format!("{name} extract: {e}")))?;
-                    // shape = [batch, heads, dec_step_len, frames]; batch is always 1.
-                    let h = shape.get(1).copied().unwrap_or(0).max(0) as usize;
-                    let f = shape.get(3).copied().unwrap_or(0).max(0) as usize;
-                    if li == 0 && per_layer_steps[0].is_empty() {
-                        ca_heads = h;
-                        ca_frames = f;
-                    }
-                    per_layer_steps[li].push(data.to_vec());
-                }
-            }
-
-            // Carry present.* → past.* as DEVICE values (keep prev when present is 0-length, i.e.
-            // the reused cross-attn/encoder KV). Extracted values are session-owned and survive the
-            // binding drop, so they rebind next step with no host round-trip.
-            for (i, pname) in present_names.iter().enumerate() {
-                if let Some(v) = outputs.remove(pname.as_str()) {
-                    if first_dim(&v) != 0 {
-                        past[i] = Some(v);
-                    }
-                    // else: present empty → keep the existing past[i] (reused encoder KV).
-                }
-            }
-            drop(outputs);
-            drop(binding);
-
-            tokens.push(next);
-            if next == eos {
-                break;
-            }
-        }
-
-        // ── GARBAGE DETECTOR (always on; emits ONLY on a degenerate decode) ──
-        // Fires when the decode ran to the token cap with no EOS AND the generated tokens are ≥50%
-        // one repeated token. That excludes the 2-step language-detect decode (too few tokens) and a
-        // legitimately long transcription (varied tokens → low dominant fraction). The single WARN
-        // carries everything needed to root-cause it in a later session — copy/paste it.
-        let generated = &tokens[prompt_len.min(tokens.len())..];
-        if tokens.last() != Some(&eos) && generated.len() >= 32 {
-            let mut counts: std::collections::HashMap<i64, usize> =
-                std::collections::HashMap::new();
-            for &t in generated {
-                *counts.entry(t).or_default() += 1;
-            }
-            let (dom_tok, dom_n) = counts
-                .iter()
-                .max_by_key(|(_, n)| **n)
-                .map(|(t, n)| (*t, *n))
-                .unwrap_or((-1, 0));
-            let dom_frac = dom_n as f32 / generated.len().max(1) as f32;
-            if dom_frac >= 0.5 {
-                let (s0t, s0top, s0run) = step0.unwrap_or((-1, f32::NAN, f32::NAN));
-                let dom_text = self.tokenizer.decode_text(&[dom_tok]);
-                log::warn!(
-                    "[whisper-garbage] DEGENERATE DECODE — model='{}' ep={:?} thread={:?} | {} generated \
-                     tokens, {:.0}% are token {} ({:?}), NO EOS (hit {}-token cap) | step0: token={} \
-                     top_logit={:.2} margin={:.2} (tiny margin ⇒ garbage encoder output; large ⇒ \
-                     decoder/KV-cache fault) | LIKELY CAUSE: unreleased/overlapped DirectML ORT \
-                     session state across model swaps (lite-whisper low-rank encoder is the fragile \
-                     case). Copy this line for the next debugging session.",
-                    self.model_name,
-                    self.providers,
-                    std::thread::current().id(),
-                    generated.len(),
-                    dom_frac * 100.0,
-                    dom_tok,
-                    dom_text,
-                    max_length,
-                    s0t,
-                    s0top,
-                    s0top - s0run,
-                );
-                let dml_active = self.providers.iter().any(|p| p == DML_PROVIDER_LABEL);
-                let mut dml_count = 0usize;
-                if dml_active {
-                    dml_count = mark_directml_degenerate_model(&self.model_name);
-                    let action = if dml_count >= DML_DEGENERATE_BLOCK_THRESHOLD {
-                        "CPU fallback will be used on the next reload"
-                    } else {
-                        "DirectML will be recycled once on the next reload"
-                    };
-                    log::warn!(
-                        "[whisper-garbage] DirectML degenerate count for model '{}' is {}; {}",
-                        self.model_name,
-                        dml_count,
-                        action
-                    );
-                }
-                return Err(SttError::DegenerateDecode(format!(
-                    "[whisper-garbage] model='{}' ep={:?} hit {}-token cap with {:.0}% token {} ({:?}); step0_token={} top_logit={:.2} margin={:.2}{}",
-                    self.model_name,
-                    self.providers,
-                    max_length,
-                    dom_frac * 100.0,
-                    dom_tok,
-                    dom_text,
-                    s0t,
-                    s0top,
-                    s0top - s0run,
-                    if dml_active && dml_count >= DML_DEGENERATE_BLOCK_THRESHOLD {
-                        "; repeated DirectML degenerate decode, CPU fallback will be used"
-                    } else if dml_active {
-                        "; DirectML session will be recycled once before CPU fallback"
-                    } else {
-                        ""
-                    },
-                )));
-            }
-        }
-
-        // Stack the collected per-layer per-step attention into one dense
-        // (num_layers, num_heads, num_dec_tokens, num_enc_frames) buffer in CrossAttentions's
-        // canonical layout. The per-step `dec_step_len` segments concatenate along the token axis
-        // in generation order (step 0's prompt rows first, then one row per subsequent step) — the
-        // same order the decoder tokens themselves were produced, so token row i lines up with
-        // `tokens[i]`. Mirrors `np.concatenate(steps, axis=2)` then `np.stack(layers, axis=1)`.
-        let attn = if want_attn && ca_heads > 0 && ca_frames > 0 && !per_layer_steps[0].is_empty() {
-            // Total decoder tokens = sum of each step's dec_step_len for layer 0.
-            let total_tokens: usize = per_layer_steps[0]
-                .iter()
-                .map(|step| step.len() / (ca_heads * ca_frames).max(1))
-                .sum();
-            let mut ca = CrossAttentions::new(n_layers, ca_heads, total_tokens, ca_frames);
-            for (li, steps) in per_layer_steps.iter().enumerate() {
-                let mut tok_base = 0usize; // running decoder-token offset across steps
-                for step in steps {
-                    // step is (heads, dec_step_len, frames) row-major.
-                    let step_tokens = step.len() / (ca_heads * ca_frames).max(1);
-                    for h in 0..ca_heads {
-                        for t in 0..step_tokens {
-                            for fr in 0..ca_frames {
-                                let src = (h * step_tokens + t) * ca_frames + fr;
-                                ca.set(li, h, tok_base + t, fr, step[src]);
-                            }
-                        }
-                    }
-                    tok_base += step_tokens;
-                }
-            }
-            Some(ca)
+        // input_ids: full prompt on step 0, else only the last token.
+        let (id_data, id_len): (Vec<i64>, usize) = if use_cache {
+            (vec![*state.tokens.last().unwrap()], 1)
+        } else {
+            (state.tokens.clone(), state.tokens.len())
+        };
+        let input_ids = Tensor::from_array(([1usize, id_len], id_data.into_boxed_slice()))
+            .map_err(|e| SttError::Inference(format!("decoder input_ids: {e}")))?;
+        // Whisper merged decoders declare use_cache_branch as a bool tensor.
+        let cache_flag = if self.has_use_cache_branch {
+            Some(
+                Tensor::from_array(([1usize], vec![use_cache].into_boxed_slice()))
+                    .map_err(|e| SttError::Inference(format!("use_cache_branch: {e}")))?,
+            )
         } else {
             None
         };
+        // Empty (0,H,0,D) host tensors for any `None` past entry (step 0). The allocator-backed
+        // ctor accepts 0-element tensors (`from_array`'s raw-data path rejects 0-sized dims).
+        // Held in this Vec so they outlive the binding through `run_binding`.
+        let mut empties: Vec<Tensor<f32>> = Vec::new();
+        for (i, p) in state.past.iter().enumerate() {
+            if p.is_none() {
+                let (h, d) = self.kv_dims[i];
+                let shape = [0usize, h.max(0) as usize, 0usize, d.max(0) as usize];
+                let t = Tensor::<f32>::new(&Allocator::default(), shape)
+                    .map_err(|e| SttError::Inference(format!("empty past kv: {e}")))?;
+                empties.push(t);
+            }
+        }
 
-        Ok((tokens, attn))
+        // Fresh binding per step (mirrors onnx-asr's per-`_decode` `io_binding()`): bind the
+        // changing inputs + the device-resident encoder output / KV; bind logits to host and
+        // present.* to the device so the cache never round-trips through the CPU.
+        let mut binding = self
+            .decoder
+            .as_mut()
+            .ok_or_else(|| SttError::Inference("whisper decoder session is shut down".into()))?
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("decoder binding: {e}")))?;
+        binding
+            .bind_input("input_ids", &input_ids)
+            .map_err(|e| SttError::Inference(format!("bind input_ids: {e}")))?;
+        binding
+            .bind_input("encoder_hidden_states", encoder_out)
+            .map_err(|e| SttError::Inference(format!("bind encoder_hidden_states: {e}")))?;
+        if let Some(flag) = &cache_flag {
+            binding
+                .bind_input("use_cache_branch", flag)
+                .map_err(|e| SttError::Inference(format!("bind use_cache_branch: {e}")))?;
+        }
+        // past_key_values.* : device value carried from prev step, else the empty host tensor.
+        let mut empty_iter = empties.iter();
+        for (i, name) in self.past_kv_names.iter().enumerate() {
+            match &state.past[i] {
+                Some(v) => binding
+                    .bind_input(name.as_str(), v)
+                    .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?,
+                None => {
+                    let t = empty_iter
+                        .next()
+                        .expect("one empty tensor per None past entry");
+                    binding
+                        .bind_input(name.as_str(), t)
+                        .map_err(|e| SttError::Inference(format!("bind empty {name}: {e}")))?;
+                }
+            }
+        }
+        // outputs: logits → host (argmax); present.* → device (carried); cross_attn → host.
+        binding
+            .bind_output_to_device("logits", &state.cpu_mem)
+            .map_err(|e| SttError::Inference(format!("bind logits: {e}")))?;
+        for pname in &state.present_names {
+            binding
+                .bind_output_to_device(pname.as_str(), &state.dev_mem)
+                .map_err(|e| SttError::Inference(format!("bind {pname}: {e}")))?;
+        }
+        // cross_attentions.* exist only on `*_timestamped` exports. ORT's RunWithBinding requires
+        // EVERY graph output bound, so bind them whenever the export declares them — to host
+        // (cpu_mem) when we'll collect them for word timestamps, else to device (computed by the
+        // graph anyway, never copied back) just to satisfy the all-outputs-bound contract.
+        let ca_mem = if state.want_attn {
+            &state.cpu_mem
+        } else {
+            &state.dev_mem
+        };
+        for name in &self.cross_attn_names {
+            binding
+                .bind_output_to_device(name.as_str(), ca_mem)
+                .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+        }
+
+        let mut outputs = self
+            .decoder
+            .as_mut()
+            .ok_or_else(|| SttError::Inference("whisper decoder session is shut down".into()))?
+            .run_binding(&binding)
+            .map_err(|e| SttError::Inference(format!("decoder run_binding: {e}")))?;
+        // DML/CUDA run_binding is async w.r.t. the device stream. The Python reference implicitly
+        // syncs every step (`.numpy()` on logits); we must too, or the host logits read + the
+        // carried device `present.*` race the still-running kernels → stale data (first call slow
+        // enough to mask it, warm calls corrupt). One sync per step matches onnx-asr.
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("decoder synchronize: {e}")))?;
+
+        // logits: (1, seq, vocab) → argmax of the LAST position (host). Scoped so the borrow of
+        // `outputs` ends before the present→past `remove`s take it mutably.
+        let mut next: i64 = {
+            let logits = outputs
+                .get("logits")
+                .ok_or_else(|| SttError::Inference("decoder produced no logits".into()))?;
+            let (lshape, ldata) = logits
+                .try_extract_tensor::<f32>()
+                .map_err(|e| SttError::Inference(format!("logits extract: {e}")))?;
+            let vocab = *lshape.last().unwrap_or(&0) as usize;
+            let seq = if lshape.len() >= 2 {
+                lshape[lshape.len() - 2] as usize
+            } else {
+                1
+            };
+            if vocab == 0 {
+                return Err(SttError::Inference(
+                    "decoder logits had 0-width vocab".into(),
+                ));
+            }
+            let last_off = seq.saturating_sub(1) * vocab;
+            // Clamp to the actual data length: the slice bounds come from the logits
+            // *shape* metadata, so a shape/data-mismatched downloaded ONNX decoder
+            // would otherwise panic the decode thread (mirrors moonshine.rs).
+            let end = (last_off + vocab).min(ldata.len());
+            if end <= last_off {
+                return Err(SttError::Inference(
+                    "decoder logits buffer shorter than declared shape".into(),
+                ));
+            }
+            let logits = &ldata[last_off..end];
+            let selected = if step_index == 0 {
+                first_step_allowed
+                    .filter(|allowed| !allowed.is_empty())
+                    .map(|allowed| {
+                        select_whisper_token_from_allowed(
+                            logits,
+                            allowed,
+                            self.tokenizer.eos_token_id,
+                            self.tokenizer.nospeech_token_id,
+                            true,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        select_whisper_token(
+                            logits,
+                            &self.suppress_token_mask,
+                            self.tokenizer.eos_token_id,
+                            self.tokenizer.nospeech_token_id,
+                            true,
+                            &[],
+                        )
+                    })
+            } else {
+                // no_repeat_ngram over the GENERATED region only (prompt excluded): bans the
+                // continuations that would close a verbatim repetition loop, which is what the
+                // greedy decoder falls into on lite-whisper's low-rank encoders. No-op on any
+                // decode that isn't actually repeating an n-gram, and EOS is never in the set.
+                let banned = no_repeat_ngram_banned(
+                    &state.tokens[state.prompt_len.min(state.tokens.len())..],
+                    NO_REPEAT_NGRAM_SIZE,
+                );
+                select_whisper_token(
+                    logits,
+                    &self.suppress_token_mask,
+                    self.tokenizer.eos_token_id,
+                    self.tokenizer.nospeech_token_id,
+                    false,
+                    &banned,
+                )
+            };
+            if state.step0.is_none() {
+                state.step0 = Some((selected.token, selected.top_logit, selected.runner_up_logit));
+            }
+            selected.token
+        };
+        // EOS-sticky: once a row hit eos, freeze it.
+        if *state.tokens.last().unwrap() == eos {
+            next = eos;
+        }
+
+        // Collect this step's cross-attention (host) BEFORE the present→past `remove`s.
+        // Each `cross_attentions.{i}` output is (batch=1, num_heads, dec_step_len, enc_frames)
+        // where dec_step_len == id_len (the number of decoder tokens fed THIS step — the full
+        // prompt on step 0, then 1 thereafter). We store the FLAT (heads*dec_step_len*frames)
+        // data per layer per step; the dec_step_len axis is what we concat over.
+        if state.want_attn {
+            for (li, name) in self.cross_attn_names.iter().enumerate() {
+                let v = outputs
+                    .get(name.as_str())
+                    .ok_or_else(|| SttError::Inference(format!("decoder produced no {name}")))?;
+                let (shape, data) = v
+                    .try_extract_tensor::<f32>()
+                    .map_err(|e| SttError::Inference(format!("{name} extract: {e}")))?;
+                // shape = [batch, heads, dec_step_len, frames]; batch is always 1.
+                let h = shape.get(1).copied().unwrap_or(0).max(0) as usize;
+                let f = shape.get(3).copied().unwrap_or(0).max(0) as usize;
+                if li == 0 && state.per_layer_steps[0].is_empty() {
+                    state.ca_heads = h;
+                    state.ca_frames = f;
+                }
+                state.per_layer_steps[li].push(data.to_vec());
+            }
+        }
+
+        // Carry present.* → past.* as DEVICE values (keep prev when present is 0-length, i.e.
+        // the reused cross-attn/encoder KV). Extracted values are session-owned and survive the
+        // binding drop, so they rebind next step with no host round-trip.
+        for (i, pname) in state.present_names.iter().enumerate() {
+            if let Some(v) = outputs.remove(pname.as_str()) {
+                if first_dim(&v) != 0 {
+                    state.past[i] = Some(v);
+                }
+                // else: present empty → keep the existing past[i] (reused encoder KV).
+            }
+        }
+        drop(outputs);
+        drop(binding);
+
+        Ok(next)
+    }
+
+    /// ── GARBAGE DETECTOR (always on; emits ONLY on a degenerate decode) ──
+    /// Fires when the decode ran to the token cap with no EOS AND the generated tokens are ≥50% one
+    /// repeated token. That excludes the 2-step language-detect decode (too few tokens) and a
+    /// legitimately long transcription (varied tokens → low dominant fraction). The single WARN
+    /// carries everything needed to root-cause it in a later session — copy/paste it. Returns
+    /// `Err(DegenerateDecode)` (and marks the DirectML strike counter) on a degenerate decode.
+    fn check_degenerate_decode(&self, state: &DecodeState, max_length: usize) -> SttResult<()> {
+        let eos = self.tokenizer.eos_token_id;
+        let generated = &state.tokens[state.prompt_len.min(state.tokens.len())..];
+        if state.tokens.last() == Some(&eos) || generated.len() < 32 {
+            return Ok(());
+        }
+        let mut counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        for &t in generated {
+            *counts.entry(t).or_default() += 1;
+        }
+        let (dom_tok, dom_n) = counts
+            .iter()
+            .max_by_key(|(_, n)| **n)
+            .map(|(t, n)| (*t, *n))
+            .unwrap_or((-1, 0));
+        let dom_frac = dom_n as f32 / generated.len().max(1) as f32;
+        if dom_frac < 0.5 {
+            return Ok(());
+        }
+        let (s0t, s0top, s0run) = state.step0.unwrap_or((-1, f32::NAN, f32::NAN));
+        let dom_text = self.tokenizer.decode_text(&[dom_tok]);
+        log::warn!(
+            "[whisper-garbage] DEGENERATE DECODE — model='{}' ep={:?} thread={:?} | {} generated \
+             tokens, {:.0}% are token {} ({:?}), NO EOS (hit {}-token cap) | step0: token={} \
+             top_logit={:.2} margin={:.2} (tiny margin ⇒ garbage encoder output; large ⇒ \
+             decoder/KV-cache fault) | LIKELY CAUSE: unreleased/overlapped DirectML ORT \
+             session state across model swaps (lite-whisper low-rank encoder is the fragile \
+             case). Copy this line for the next debugging session.",
+            self.model_name,
+            self.providers,
+            std::thread::current().id(),
+            generated.len(),
+            dom_frac * 100.0,
+            dom_tok,
+            dom_text,
+            max_length,
+            s0t,
+            s0top,
+            s0top - s0run,
+        );
+        let dml_active = self.providers.iter().any(|p| p == DML_PROVIDER_LABEL);
+        let mut dml_count = 0usize;
+        if dml_active {
+            dml_count = mark_directml_degenerate_model(&self.model_name);
+            let action = if dml_count >= DML_DEGENERATE_BLOCK_THRESHOLD {
+                "CPU fallback will be used on the next reload"
+            } else {
+                "DirectML will be recycled once on the next reload"
+            };
+            log::warn!(
+                "[whisper-garbage] DirectML degenerate count for model '{}' is {}; {}",
+                self.model_name,
+                dml_count,
+                action
+            );
+        }
+        Err(SttError::DegenerateDecode(format!(
+            "[whisper-garbage] model='{}' ep={:?} hit {}-token cap with {:.0}% token {} ({:?}); step0_token={} top_logit={:.2} margin={:.2}{}",
+            self.model_name,
+            self.providers,
+            max_length,
+            dom_frac * 100.0,
+            dom_tok,
+            dom_text,
+            s0t,
+            s0top,
+            s0top - s0run,
+            if dml_active && dml_count >= DML_DEGENERATE_BLOCK_THRESHOLD {
+                "; repeated DirectML degenerate decode, CPU fallback will be used"
+            } else if dml_active {
+                "; DirectML session will be recycled once before CPU fallback"
+            } else {
+                ""
+            },
+        )))
     }
 
     /// Run cross-attention DTW on `cross_attentions` to recover per-word start/end seconds.

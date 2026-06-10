@@ -8,7 +8,7 @@
 # WebView2. LLVM's `lld-link` is a drop-in for MSVC `link.exe` and links a binary
 # this size several times faster. It is already installed at
 # `C:\Program Files\LLVM\bin` (used for bindgen via LIBCLANG_PATH) and is put on
-# PATH by the `rust-migration\*.bat` helpers, so no new tooling is required.
+# PATH by the `tools\windows\*` dev helpers, so no new tooling is required.
 #
 # Only the final binary is relinked when this is enabled — dependency rlibs keep
 # their fingerprints — so turning this on does NOT force a full recompile.

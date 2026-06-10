@@ -1,56 +1,50 @@
 // Reference: frontend/electron/ipc/llm.ts.
 //
-// Two commands that don't belong in the (already-landed) `commands/llm.rs` and that the
-// existing `LlmManager` has no field for, so they live here behind a small module-local registry —
-// keeps the HARD RULE intact (NEW file under winstt/commands/, no edits to llm.rs / llm_manager.rs):
+// The pull-cancel + warmup-status commands. The mutable state they read/write (the
+// pull-cancel set and the last warmup snapshot) lives on `OllamaManager` (managed
+// state); commands take `State<'_, Arc<OllamaManager>>`. The few context-free callers
+// in `llm.rs::ollama_pull` and `llm_manager::warmup` reach the same manager through
+// the thin free functions below, which delegate to the process-global handle:
 //
-//   - ollama_cancel_pull   → LLM_CANCEL_PULL_MODEL  → returns { cancelled: bool }
-//   - llm_get_warmup_status → LLM_GET_WARMUP_STATUS → returns LlmWarmupStatus | null
+//   - ollama_cancel_pull    → LLM_CANCEL_PULL_MODEL  → returns { cancelled: bool }
+//   - llm_get_warmup_status → LLM_GET_WARMUP_STATUS  → returns LlmWarmupStatus | null
+//   - llm_retry_warmup      → re-runs a warmup pass, then returns the snapshot
 //
-// CANCEL CONTRACT: `ollama_pull` (in llm.rs; now wired against `LlmManager::ollama_pull_stream`'s
+// CANCEL CONTRACT: `ollama_pull` (in llm.rs, wired against `LlmManager::ollama_pull_stream`'s
 // streaming `POST /api/pull` drain) calls `is_pull_cancelled(&model)` between NDJSON chunks and aborts
 // the stream when it returns true, then `clear_pull_cancel(&model)`. The pull-progress event it emits is
 // the plain `llm:pull-progress` channel carrying an `OllamaPullProgress` payload (shape below mirrors
 // spec/openapi.yaml so the reused renderer's `onOllamaPullProgress` listener parses it unchanged).
 //
-// WARMUP CONTRACT: the warmup broadcaster is WIP in WinSTT too (the renderer treats `null` as "no
-// warmup info yet, hide the banner" — see frontend models.ts). We return `None` until the warmup
-// loop in `LlmManager` is wired; the typed payload below lets that loop emit `llm:warmup-status`
-// (plain event) and have this command return the last snapshot once a snapshot store is added.
+// WARMUP CONTRACT: `llm_manager::warmup` publishes a snapshot via `set_warmup_status` / clears it via
+// `clear_warmup_status` (and emits `llm:warmup-status`). `llm_get_warmup_status` returns the last
+// snapshot, or `null` before any pass has run (the renderer treats `null` as "no info, hide the banner").
 
-use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::Mutex;
 
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::State;
 
-use crate::winstt::managers::LlmManager;
-use crate::winstt::sync_ext::MutexExt;
+use crate::winstt::managers::ollama_manager::global as ollama_manager;
+use crate::winstt::managers::{LlmManager, OllamaManager};
 
 use super::llm::authorize_ollama_model_management_label;
 
-// ── Pull-cancel registry (module-local; consulted by the streaming pull drain) ──
-
-static PULL_CANCELLED: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-static LAST_WARMUP_STATUS: Lazy<Mutex<Option<LlmWarmupStatus>>> = Lazy::new(|| Mutex::new(None));
-
-/// Mark a model's in-flight pull as cancelled. Idempotent.
-pub fn mark_pull_cancelled(model: &str) {
-    PULL_CANCELLED.lock_recover().insert(model.to_string());
-}
+// ── Pull-cancel registry (state lives on `OllamaManager`; the streaming pull drain
+// polls it). The free functions below delegate to the process-global manager so the
+// context-free callers in `llm.rs::ollama_pull` and `llm_manager::warmup` keep their
+// signatures. The B4 `lock_recover` poison policy is preserved inside the manager.
 
 /// True if the given model's pull has been cancelled. The streaming pull loop in `ollama_pull`
 /// checks this between NDJSON chunks.
 pub fn is_pull_cancelled(model: &str) -> bool {
-    PULL_CANCELLED.lock_recover().contains(model)
+    ollama_manager().is_pull_cancelled(model)
 }
 
 /// Clear a model's cancel flag once the pull loop has torn down (or completed).
 pub fn clear_pull_cancel(model: &str) {
-    PULL_CANCELLED.lock_recover().remove(model);
+    ollama_manager().clear_pull_cancel(model);
 }
 
 // ── Pull-progress event payload (plain `llm:pull-progress`, mirrors spec) ────────
@@ -127,16 +121,15 @@ pub struct CancelPullResult {
     pub cancelled: bool,
 }
 
+/// Publish the latest warmup snapshot. Delegates to the process-global manager so
+/// `llm_manager::warmup` keeps its context-free signature.
 pub fn set_warmup_status(status: LlmWarmupStatus) {
-    if let Ok(mut last) = LAST_WARMUP_STATUS.lock() {
-        *last = Some(status);
-    }
+    ollama_manager().set_warmup_status(status);
 }
 
+/// Clear the warmup snapshot (renderer treats `null` as "no info, hide the banner").
 pub fn clear_warmup_status() {
-    if let Ok(mut last) = LAST_WARMUP_STATUS.lock() {
-        *last = None;
-    }
+    ollama_manager().clear_warmup_status();
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────────
@@ -146,22 +139,23 @@ pub fn clear_warmup_status() {
 #[tauri::command]
 #[specta::specta]
 pub fn ollama_cancel_pull(
+    ollama_manager: State<'_, Arc<OllamaManager>>,
     webview: tauri::WebviewWindow,
     model: String,
 ) -> Result<CancelPullResult, String> {
     authorize_ollama_model_management_label(webview.label(), "cancel Ollama model pull")?;
-    mark_pull_cancelled(&model);
+    ollama_manager.mark_pull_cancelled(&model);
     Ok(CancelPullResult { cancelled: true })
 }
 
-/// `llm_get_warmup_status` → `LLM_GET_WARMUP_STATUS`. Last warmup snapshot, or `null` while the
-/// warmup broadcaster is unwired (renderer hides the banner on `null`).
+/// `llm_get_warmup_status` → `LLM_GET_WARMUP_STATUS`. Last warmup snapshot, or `null` when no
+/// warmup pass has published one yet (renderer hides the banner on `null`).
 #[tauri::command]
 #[specta::specta]
-pub fn llm_get_warmup_status() -> Result<Option<LlmWarmupStatus>, String> {
-    // No snapshot store yet — the warmup loop in LlmManager (07_*) will populate one and emit
-    // `llm:warmup-status`. Until then, mirror WinSTT's WIP behavior: no info → null → banner hidden.
-    Ok(LAST_WARMUP_STATUS.lock().ok().and_then(|last| last.clone()))
+pub fn llm_get_warmup_status(
+    ollama_manager: State<'_, Arc<OllamaManager>>,
+) -> Result<Option<LlmWarmupStatus>, String> {
+    Ok(ollama_manager.warmup_status())
 }
 
 /// `llm_retry_warmup` → user-triggered retry for the inline warmup banner.
@@ -171,9 +165,10 @@ pub fn llm_get_warmup_status() -> Result<Option<LlmWarmupStatus>, String> {
 #[specta::specta]
 pub async fn llm_retry_warmup(
     llm_manager: State<'_, Arc<LlmManager>>,
+    ollama_manager: State<'_, Arc<OllamaManager>>,
 ) -> Result<Option<LlmWarmupStatus>, String> {
     llm_manager.warm_enabled_models().await;
-    llm_get_warmup_status()
+    Ok(ollama_manager.warmup_status())
 }
 
 #[cfg(test)]
@@ -182,12 +177,14 @@ mod tests {
 
     #[test]
     fn cancel_registry_round_trips() {
+        // Exercise the manager directly so the test does not share the process-global.
+        let mgr = OllamaManager::new();
         let model = "llama3.2:1b";
-        assert!(!is_pull_cancelled(model));
-        mark_pull_cancelled(model);
-        assert!(is_pull_cancelled(model));
-        clear_pull_cancel(model);
-        assert!(!is_pull_cancelled(model));
+        assert!(!mgr.is_pull_cancelled(model));
+        mgr.mark_pull_cancelled(model);
+        assert!(mgr.is_pull_cancelled(model));
+        mgr.clear_pull_cancel(model);
+        assert!(!mgr.is_pull_cancelled(model));
     }
 
     #[test]
@@ -204,7 +201,8 @@ mod tests {
 
     #[test]
     fn warmup_status_can_be_cleared_to_null() {
-        set_warmup_status(LlmWarmupStatus {
+        let mgr = OllamaManager::new();
+        mgr.set_warmup_status(LlmWarmupStatus {
             endpoint: "http://localhost:11434".into(),
             in_progress: false,
             models: Vec::new(),
@@ -212,10 +210,10 @@ mod tests {
             reachable: false,
             timestamp: 1.0,
         });
-        assert!(llm_get_warmup_status().unwrap().is_some());
+        assert!(mgr.warmup_status().is_some());
 
-        clear_warmup_status();
+        mgr.clear_warmup_status();
 
-        assert!(llm_get_warmup_status().unwrap().is_none());
+        assert!(mgr.warmup_status().is_none());
     }
 }

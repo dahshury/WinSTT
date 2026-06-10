@@ -14,6 +14,7 @@ import {
 	updaterGetStatusHistory,
 	updaterQuitAndInstall,
 } from "@/shared/api/ipc-client";
+import { formatBytes } from "@/shared/lib/format-bytes";
 import { Button } from "@/shared/ui/button";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
@@ -42,20 +43,9 @@ function formatStatus(entry: UpdaterStatusEntry | null, t: AboutT): string {
 	}
 }
 
-/** Compact "12.3 MB" style — same scale set as DownloadActions etc. */
-function formatBytes(value: number): string {
-	if (!Number.isFinite(value) || value <= 0) {
-		return "0 B";
-	}
-	const units = ["B", "KB", "MB", "GB"];
-	let scaled = value;
-	let unit = 0;
-	while (scaled >= 1024 && unit < units.length - 1) {
-		scaled /= 1024;
-		unit += 1;
-	}
-	const precision = scaled >= 100 || unit === 0 ? 0 : 1;
-	return `${scaled.toFixed(precision)} ${units[unit]}`;
+/** Compact "12.3 MB" style for the updater's download stats — full B→GB ladder. */
+function fmt(value: number): string {
+	return formatBytes(value, { minUnit: "B" }) ?? "0 B";
 }
 
 function formatDownloadStats(entry: UpdaterStatusEntry): string | undefined {
@@ -69,11 +59,11 @@ function formatDownloadStats(entry: UpdaterStatusEntry): string | undefined {
 	) {
 		return;
 	}
-	const tally = `${formatBytes(transferred)} / ${formatBytes(total)}`;
+	const tally = `${fmt(transferred)} / ${fmt(total)}`;
 	if (typeof bps !== "number" || bps <= 0) {
 		return tally;
 	}
-	return `${tally} · ${formatBytes(bps)}/s`;
+	return `${tally} · ${fmt(bps)}/s`;
 }
 
 interface UpdatesHeaderActionProps {

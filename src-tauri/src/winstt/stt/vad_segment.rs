@@ -285,8 +285,8 @@ pub fn vad_segment_decode(
 ) -> super::SttResult<String> {
     let max_chunk = (max_chunk_s * SR as f32) as usize;
 
-    // 1. Per-frame speech mask (30 ms / 480-sample Silero frames).
-    let debug_segments = std::env::var("WINSTT_SEGMENT_DEBUG").is_ok();
+    // 1. Per-frame speech mask (30 ms / 480-sample Silero frames). Per-chunk
+    // tracing goes to `log::debug!` (`[vad-segment] …`) — gate it via the log level.
     let mask = speech_mask(vad, audio);
     let raw_original = find_segments(&mask, VAD_FRAME_SAMPLES, audio.len());
 
@@ -297,13 +297,11 @@ pub fn vad_segment_decode(
     }
 
     let compacted = compact_silences(audio, &raw_original, MAX_RETAINED_SILENCE);
-    if debug_segments {
-        eprintln!(
-            "[vad-segment] compacted {:.2}s -> {:.2}s (max_silence=200ms)",
-            audio.len() as f32 / SR as f32,
-            compacted.len() as f32 / SR as f32
-        );
-    }
+    log::debug!(
+        "[vad-segment] compacted {:.2}s -> {:.2}s (max_silence=200ms)",
+        audio.len() as f32 / SR as f32,
+        compacted.len() as f32 / SR as f32
+    );
     if compacted.len() <= max_chunk {
         return engine.transcribe(&compacted, opts).map(|t| t.text);
     }
@@ -332,14 +330,12 @@ pub fn vad_segment_decode(
     );
     let merged_len = merged.len();
     let merged = coalesce_short_chunks(merged, max_chunk, MIN_DECODE_CHUNK);
-    if debug_segments {
-        eprintln!(
-            "[vad-segment] raw={} merged={} coalesced={}",
-            raw.len(),
-            merged_len,
-            merged.len()
-        );
-    }
+    log::debug!(
+        "[vad-segment] raw={} merged={} coalesced={}",
+        raw.len(),
+        merged_len,
+        merged.len()
+    );
 
     if merged.is_empty() {
         return engine.transcribe(&compacted, opts).map(|t| t.text);
@@ -352,29 +348,25 @@ pub fn vad_segment_decode(
     for (idx, (s, e)) in merged.into_iter().enumerate() {
         let (s, e) = if e.saturating_sub(s) < MIN_DECODE_CHUNK {
             let expanded = expand_short_chunk(s, e, compacted.len(), MIN_DECODE_CHUNK);
-            if debug_segments {
-                eprintln!(
-                    "[vad-segment] chunk {} expanded: {:.2}s..{:.2}s -> {:.2}s..{:.2}s",
-                    idx + 1,
-                    s as f32 / SR as f32,
-                    e as f32 / SR as f32,
-                    expanded.0 as f32 / SR as f32,
-                    expanded.1 as f32 / SR as f32
-                );
-            }
+            log::debug!(
+                "[vad-segment] chunk {} expanded: {:.2}s..{:.2}s -> {:.2}s..{:.2}s",
+                idx + 1,
+                s as f32 / SR as f32,
+                e as f32 / SR as f32,
+                expanded.0 as f32 / SR as f32,
+                expanded.1 as f32 / SR as f32
+            );
             expanded
         } else {
             (s, e)
         };
-        if debug_segments {
-            eprintln!(
-                "[vad-segment] chunk {}: {:.2}s..{:.2}s ({:.2}s)",
-                idx + 1,
-                s as f32 / SR as f32,
-                e as f32 / SR as f32,
-                (e - s) as f32 / SR as f32
-            );
-        }
+        log::debug!(
+            "[vad-segment] chunk {}: {:.2}s..{:.2}s ({:.2}s)",
+            idx + 1,
+            s as f32 / SR as f32,
+            e as f32 / SR as f32,
+            (e - s) as f32 / SR as f32
+        );
         let mut o = opts.clone();
         if track_prev && !prev.trim().is_empty() {
             o.initial_prompt_text = Some(tail_chars(&prev, 200));
@@ -382,22 +374,18 @@ pub fn vad_segment_decode(
         let txt = engine
             .transcribe(&compacted[s..e], &o)
             .map_err(|err| {
-                if debug_segments {
-                    eprintln!(
-                        "[vad-segment] chunk {} failed at {:.2}s..{:.2}s: {err}",
-                        idx + 1,
-                        s as f32 / SR as f32,
-                        e as f32 / SR as f32
-                    );
-                }
+                log::warn!(
+                    "[vad-segment] chunk {} failed at {:.2}s..{:.2}s: {err}",
+                    idx + 1,
+                    s as f32 / SR as f32,
+                    e as f32 / SR as f32
+                );
                 err
             })?
             .text
             .trim()
             .to_string();
-        if debug_segments {
-            eprintln!("[vad-segment] chunk {} text_len={}", idx + 1, txt.len());
-        }
+        log::debug!("[vad-segment] chunk {} text_len={}", idx + 1, txt.len());
         if !txt.is_empty() {
             if track_prev {
                 prev = txt.clone();

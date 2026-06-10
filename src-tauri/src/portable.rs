@@ -10,7 +10,9 @@ use tauri::Manager;
 static PORTABLE_DATA_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 /// Detect portable mode by looking for a `portable` marker file next to the exe.
-/// Must be called once at startup before Tauri initializes.
+/// Must be called once at startup before Tauri initializes — so the diagnostics
+/// below use `eprintln!` (the tauri log plugin is attached later and would drop a
+/// `log::` call made this early).
 pub fn init() {
     PORTABLE_DATA_DIR.get_or_init(|| {
         let exe_path = std::env::current_exe().ok()?;

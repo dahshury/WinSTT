@@ -37,13 +37,17 @@ pub(crate) fn register_core_managers(app_handle: &AppHandle, managers: &CoreMana
 
 pub(crate) fn register_winstt_managers(app_handle: &AppHandle, managers: &CoreManagers) {
     use crate::winstt::managers::{
-        CloudSttManager, ContextManager, DiarizationManager, DownloadManager,
+        ollama_manager, CloudSttManager, ContextManager, DiarizationManager, DownloadManager,
         FileTranscribeManager, LlmManager, LoopbackManager, RealtimeManager, TtsManager,
         WakeWordManager, WordAligner,
     };
 
     let llm_manager = Arc::new(LlmManager::new(app_handle));
     app_handle.manage(llm_manager.clone());
+    // Resolve the SAME `Arc<OllamaManager>` the context-free pull-cancel / warmup-status
+    // free functions reach via the process-global handle, so managed state and the global
+    // are one instance (must register before `start_warmup_loop`, which publishes status).
+    app_handle.manage(ollama_manager::global());
     app_handle.manage(Arc::new(CloudSttManager::new(app_handle)));
     app_handle.manage(Arc::new(ContextManager::new(app_handle)));
 

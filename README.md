@@ -63,7 +63,7 @@ does not jump between short and tall media.
 - Four recording modes: push-to-talk, toggle, listen, and wake word.
 - On-device STT through ONNX Runtime via `ort`, with CPU, DirectML, and
   OpenVINO builds.
-- 40+ model catalog covering Whisper, NeMo, Moonshine, GigaAM, Vosk, and more.
+- 70+ model catalog covering Whisper, NeMo, Moonshine, GigaAM, Kaldi, and more.
 - Real-time preview with a fast model while the main model produces the final
   text.
 - Optional LLM cleanup through local Ollama or opt-in cloud providers.

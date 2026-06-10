@@ -137,9 +137,7 @@ impl WordAligner {
         let resolved = match tauri::async_runtime::block_on(stt::resolver::resolve(&req)) {
             Ok(r) => r,
             Err(e) => {
-                if std::env::var("WINSTT_STT_DEBUG").is_ok() {
-                    eprintln!("[word-aligner] resolve {DEFAULT_ALIGN_MODEL} failed: {e}");
-                }
+                log::debug!("[word-aligner] resolve {DEFAULT_ALIGN_MODEL} failed: {e}");
                 return None;
             }
         };
@@ -162,18 +160,14 @@ impl WordAligner {
                 if engine.supports_word_timestamps() {
                     Some(engine)
                 } else {
-                    if std::env::var("WINSTT_STT_DEBUG").is_ok() {
-                        eprintln!(
-                            "[word-aligner] {DEFAULT_ALIGN_MODEL} loaded but exposes no cross_attentions.* — word timestamps unavailable"
-                        );
-                    }
+                    log::debug!(
+                        "[word-aligner] {DEFAULT_ALIGN_MODEL} loaded but exposes no cross_attentions.* — word timestamps unavailable"
+                    );
                     None
                 }
             }
             Err(e) => {
-                if std::env::var("WINSTT_STT_DEBUG").is_ok() {
-                    eprintln!("[word-aligner] build {DEFAULT_ALIGN_MODEL} failed: {e}");
-                }
+                log::debug!("[word-aligner] build {DEFAULT_ALIGN_MODEL} failed: {e}");
                 None
             }
         }
