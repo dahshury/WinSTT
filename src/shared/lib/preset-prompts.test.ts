@@ -159,7 +159,7 @@ describe("preset-prompts", () => {
 		expect(r).toContain("Never leave an announced enumeration inline");
 		expect(r).toContain("`* ` bullet lines (not `- `)");
 		expect(r).toContain("label-value mappings");
-		expect(r).toContain("blank line before and after every list");
+		expect(r).toContain("blank line before and after the list");
 		// The general boundary rule that replaced the case-specific
 		// "then first problem" phrasing: a list ends where the enumeration ends.
 		expect(r).toContain("A list ends where the enumeration ends");
@@ -196,8 +196,9 @@ describe("preset-prompts", () => {
 		expect(base).toContain('"fifty percent" -> "50%"');
 		// Spoken layout commands must still survive the prohibition.
 		expect(base).toContain("new paragraph");
-		// Preservation outranks polish — the core small-model guardrail.
-		expect(base).toContain("Preservation outranks polish");
+		// Preservation never means leaving errors unfixed — the core
+		// small-model guardrail against both content loss and no-op output.
+		expect(base).toContain("Preservation means never dropping content");
 	});
 
 	test("post-processing prompt stays generalized rather than exact-output overfit", () => {

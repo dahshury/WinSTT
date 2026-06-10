@@ -96,8 +96,8 @@ const SCHEMA_CLAMP =
 const POLISH_PROMPT = `Clean up dictated speech into correct written text. Always apply this base cleanup before any tone or modifier.
 
 Core cleanup:
-- Fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries. Split run-on speech into natural sentences, and keep each dictated question a question.
-- Remove filler words, false starts, and accidental repetitions. When the speaker restarts a thought and repeats it more completely, keep only the complete version. When the speaker corrects themselves, keep only the corrected version.
+- Fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries. Split run-on speech into natural sentences, keep each dictated question a question, and end every complete sentence with terminal punctuation.
+- Remove filler words, false starts, and accidental repetitions. When the speaker restarts a thought and repeats it more completely, keep only the complete version. When the speaker corrects themselves, keep only the corrected version. A false start is an abandoned beginning the speaker immediately replaces; an incomplete sentence that names or describes the subject being discussed is not a false start — keep it.
 - Preserve the speaker's content: every idea and detail, the original order, point of view, natural contractions, hedging, uncertainty, and tone. Keep sentences that set context, define what is being discussed, or frame intent (openings such as "Okay", "Please", "I want", "From my understanding"). Preservation means never dropping content — it never means leaving errors unfixed: always still repair punctuation, casing, grammar, and spoken forms.
 - Do not summarize, paraphrase, or upgrade wording just because it sounds awkward. Change words only to fix errors, never to restyle.
 - Keep prose as prose. Do not add lists, headings, or paragraph breaks unless the speaker dictated them or an active modifier asks for them.
@@ -108,7 +108,7 @@ Spoken-form conversion:
 - Write acronyms in uppercase and recognizable product, feature, or technical names in their conventional casing. Join compound technical terms that speech splits apart (for example "back end" -> "backend", "end to end" -> "end-to-end") when the compound is clearly intended.
 
 Labels and quoting:
-- When the speech refers to literal on-screen text — a button, label, menu item, value, mode, or error message, often introduced by words like "named", "called", "labeled", or "says" — put that text in quotes. Use the casing it would have on screen: visible labels in label casing, machine-style values in their own casing.
+- When the speech refers to literal on-screen text — a button, label, menu item, value, mode, or error message, often introduced by words like "named", "called", "labeled", or "says" — put that text in quotes. Use the casing it would have on screen: capitalize visible labels and button names (a button dictated as "save" is written "Save"); keep machine-style values in their own lowercase or technical casing.
 
 Mishearing repair:
 - Fix an obviously mis-transcribed word (a homophone or near-miss) only when the surrounding context makes the intended word unmistakable; otherwise keep what was dictated.
@@ -242,7 +242,7 @@ const RAW_PROMPT_RESOLVERS: Record<PresetKey, (level?: PresetLevel) => string> =
 		reorder: () =>
 			'Reorder for logical flow only when it improves the sequence. Move a direct request, action item, blocker, decision, or conclusion to the front only when it stands alone and does not depend on preceding context; keep it after any context, examples, or problem description that explain what it is about. Then arrange context, causes, details, and chronological steps in a natural order. Keep all content, wording, and any existing list structure; do not summarize or invent. Example: "The rollback is ready. Users are locked out. Please approve it." -> "Please approve it. The rollback is ready. Users are locked out." If the order is already logical, keep it unchanged.',
 		restructure: () =>
-			'Actively reshape content that is clearer as structure; keep everything else prose. When the speaker announces a count of ways, options, cases, sources, or steps and then enumerates them (with markers such as either/or, first/second/third, or one/two/three), you must convert the enumeration into a numbered list: keep the announcing sentence as a lead-in ending with a colon, start each numbered item on its own new line, create exactly as many items as the announced count, and drop the spoken ordinal words from the items. Never leave an announced enumeration inline. Also use numbered lists for dictated step-by-step instructions or ordered actions. Use `* ` bullet lines (not `- `) for parallel uncounted items: options, examples, rules, conditions, concerns, inventories, and label-value mappings spoken as "X for A, Y for B, Z for C". When one sentence introduces several parallel items or actions (for example after "especially", "including", "such as", or a multi-action request like "You should A, B, and C"), keep the lead-in ending with a colon and put each item in its own bullet. Put a blank line before and after every list. A list ends where the enumeration ends: when the speech moves on to a problem report, observation, question, or new topic, close the list and continue in prose — never absorb the new topic into the last item — and keep trailing remarks that apply to the whole list as prose after the list. Example: "There are two options. Either send the draft now, or wait for review." -> "There are two options:\n\n1. Send the draft now.\n2. Wait for review." Example: "We tested three cases. First case is the login flow, second is the password reset and third the session timeout." -> "We tested three cases:\n\n1. The login flow\n2. The password reset\n3. The session timeout" Example: "You should check the logs, restart the service, and confirm the alert clears." -> "You should:\n\n* check the logs\n* restart the service\n* confirm the alert clears" Keep connected narrative, reasoning, and single questions as prose. Do NOT convert text to a list merely because it has several sentences, and never turn a standalone question into a list item. Preserve every detail and the speaker\'s wording; reorganize without summarizing or inventing content.',
+			'Actively reshape content that is clearer as structure; keep everything else prose. When the speaker announces a count of ways, options, cases, sources, or steps and then enumerates them (with markers such as either/or, first/second/third, or one/two/three), you must convert the enumeration into a numbered list: keep the announcing sentence as a lead-in ending with a colon, start each numbered item on its own new line, create exactly as many items as the announced count, and drop the spoken ordinal words from the items. Never leave an announced enumeration inline. Also use numbered lists for dictated step-by-step instructions or ordered actions. Use `* ` bullet lines (not `- `) for parallel uncounted items, whether they are short phrases or full clauses. Bullet triggers include: a lead-in such as "especially", "including", "such as", or "here is how it works" followed by parallel items; a request that chains several actions with commas, "and", or a repeated verb; a dense run of short parallel noun phrases (an inventory); a sequence of parallel rules or conditions about the same subject; and label-value mappings spoken as "X for A, Y for B, Z for C". Keep the lead-in as prose ending with a colon and put each item in its own bullet. Formatting for every list: each numbered item and each bullet starts on its own line, and there is a blank line before and after the list. A list ends where the enumeration ends: when the speech moves on to a problem report, observation, question, or new topic, close the list and continue in prose — never absorb the new topic into the last item — and keep trailing remarks that apply to the whole list as prose after the list. Example: "There are two options. Either send the draft now, or wait for review." -> "There are two options:\n\n1. Send the draft now.\n2. Wait for review." Example: "We tested three cases. First case is the login flow, second is the password reset and third the session timeout." -> "We tested three cases:\n\n1. The login flow\n2. The password reset\n3. The session timeout" Example: "You should check the logs, restart the service, and confirm the alert clears." -> "You should:\n\n* check the logs\n* restart the service\n* confirm the alert clears" Keep connected narrative, reasoning, and single questions as prose. Do NOT convert text to a list merely because it has several sentences, and never turn a standalone question into a list item. Preserve every detail and the speaker\'s wording; reorganize without summarizing or inventing content.',
 		rewordForClarity: () =>
 			'Rewrite unclear, awkward, or tangled phrasing into clear, natural language while keeping the speaker\'s voice. Simplify complicated constructions and split overlong sentences. Correct wrong-word slips and agreement errors only when the intended meaning is obvious from context (for example, "adopt to the request" -> "adapt to the request"); when intent is unclear, keep the dictated wording. Replace vague placeholders such as "thing" or "stuff" with a clearer neutral word (issue, item, step, area) when the referent is evident; keep them only when quoted or clearly deliberate. Preserve meaning, facts, tone, point of view, pronouns, natural contractions, and established domain phrasing even when it sounds odd — do not change "we" to "you", do not formalize, and do not add new information. Preserve incomplete trailing fragments exactly.',
 		// Default-language fallback for direct `getPresetPrompt("translate")`
@@ -310,7 +310,7 @@ export function buildSystemPrompt(presets: readonly PresetEntry[]): string {
 	return [
 		body,
 		"",
-		"Output only the transformed text in the `text` field. No commentary, no reasoning, no preambles. Apply every active operation above visibly; returning the input unchanged is wrong unless it is empty or pure noise. Never drop content: keep context sentences, questions, hypotheses, trailing fragments, and speaker intent framing. If the result needs line breaks or lists, keep them inside the JSON `text` value as real newline characters (`\n`); never flatten required structure into spaces, and keep a blank line before and after every list. Remove trailing spaces before line breaks. When active operations conflict, keep required structure and shorten or clarify inside each item instead of flattening it.",
+		"Output only the transformed text in the `text` field. No commentary, no reasoning, no preambles. Apply every active operation above visibly; returning the input unchanged is wrong unless it is empty or pure noise. Never drop content: every sentence, listed item, and action from the input must appear in the output, including context sentences, questions, hypotheses, trailing fragments, and speaker intent framing. If the result needs line breaks or lists, keep them inside the JSON `text` value as real newline characters (`\n`); never flatten required structure into spaces, and keep a blank line before and after every list. Remove trailing spaces before line breaks. When active operations conflict, keep required structure and shorten or clarify inside each item instead of flattening it.",
 	].join("\n");
 }
 
@@ -363,7 +363,9 @@ function composePresetBody(presets: readonly PresetEntry[]): string {
 	// `buildSystemPrompt`: a numbered list invites chain-of-thought
 	// narration from instruction-tuned reasoning models.
 	const bullets = extras.map((p) => `- ${resolveEntryPrompt(p)}`).join("\n");
-	const hasConcise = extras.some((p) => !isCustomEntry(p) && p.key === "concise");
+	const hasConcise = extras.some(
+		(p) => !isCustomEntry(p) && p.key === "concise",
+	);
 	const hasRestructure = extras.some(
 		(p) => !isCustomEntry(p) && p.key === "restructure",
 	);
@@ -373,13 +375,3 @@ function composePresetBody(presets: readonly PresetEntry[]): string {
 			: "";
 	return `${base}\n\nThen apply ALL of the following active operations on top simultaneously, preserving the cleanup above. They are mandatory, not suggestions: when an operation calls for lists, structure, or visible rewording, it overrides the keep-prose-as-prose default above:\n${bullets}${layoutGuard}`;
 }
-
-
-
-
-
-
-
-
-
-

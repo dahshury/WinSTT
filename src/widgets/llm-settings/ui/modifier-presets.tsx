@@ -64,7 +64,6 @@ import {
 	setTone,
 	toggleIndependent,
 } from "../lib/llm-settings-panel-test-helpers";
-import enMessages from "../../../messages/en.json";
 import {
 	type LlmConfiguration,
 	matchConfigurationId,
@@ -122,45 +121,6 @@ const PRESET_TOOLTIP_KEYS = {
 } as const satisfies Readonly<
 	Record<IndependentKey, { after: string; before: string; desc: string }>
 >;
-
-type EnglishMessageMap = Record<string, string | undefined>;
-const EN_LLM_MESSAGES = ((enMessages as { llm?: EnglishMessageMap }).llm ??
-	{}) as EnglishMessageMap;
-const MISSING_KEY_PREFIX = "llm";
-
-function toMessageFallback(key: string): string | undefined {
-	const exact = EN_LLM_MESSAGES[key];
-	if (exact) {
-		return exact;
-	}
-	const target = key.toLowerCase();
-	for (const [rawKey, value] of Object.entries(EN_LLM_MESSAGES)) {
-		if (rawKey.toLowerCase() === target) {
-			return value;
-		}
-	}
-	return undefined;
-}
-
-function isMissingTranslationResult(value: string, key: string): boolean {
-	const candidate = `${MISSING_KEY_PREFIX}.${key}`;
-	return (
-		value === key ||
-		value === candidate ||
-		value.toLowerCase() === candidate.toLowerCase()
-	);
-}
-
-function tWithEnglishFallback(
-	t: TranslateFn,
-	key: string,
-) {
-	const translated = t(key);
-	if (isMissingTranslationResult(translated, key)) {
-		return toMessageFallback(key) ?? translated;
-	}
-	return translated;
-}
 
 /** Beautified tooltip body for a modifier row: the description up top, then a
  *  framed example card showing the transformation (before → after). Rendered
@@ -687,18 +647,9 @@ function IndependentPresetList({
 						}
 						tooltip={
 							<ModifierTooltipBody
-								after={tWithEnglishFallback(
-									t,
-									PRESET_TOOLTIP_KEYS[key].after,
-								)}
-								before={tWithEnglishFallback(
-									t,
-									PRESET_TOOLTIP_KEYS[key].before,
-								)}
-								desc={tWithEnglishFallback(
-									t,
-									PRESET_TOOLTIP_KEYS[key].desc,
-								)}
+								after={t(PRESET_TOOLTIP_KEYS[key].after)}
+								before={t(PRESET_TOOLTIP_KEYS[key].before)}
+								desc={t(PRESET_TOOLTIP_KEYS[key].desc)}
 								exampleLabel={t("modifierExampleLabel")}
 							/>
 						}

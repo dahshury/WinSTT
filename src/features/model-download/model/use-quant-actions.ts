@@ -83,7 +83,12 @@ export function useQuantActions(): QuantActions {
 		owner?: SttDownloadOwner,
 	): void => {
 		if (action === "start") {
-			predownloadQuant(modelId, quantization, owner, seedFor(modelId, quantization));
+			predownloadQuant(
+				modelId,
+				quantization,
+				owner,
+				seedFor(modelId, quantization),
+			);
 			return;
 		}
 		if (action === "pause") {

@@ -1,63 +1,42 @@
 # Post-processing prompt optimization handoff
 
-## Current objective
+## Current state (2026-06-10)
 
-Tune WinSTT LLM post-processing so dictated developer/task text is cleaned into concise written form with reliable punctuation, numbers/math, UI label quoting, and structure. The user wants all tone and modifier prompts to remain ultra-general. Do not add case-specific exact-output rules.
+The prompts, tones, and modifiers were rewritten from scratch to be fully general. Every case-specific rule that earlier iterations had copied from individual regression dictations ("then first problem", `select auto`, "TokenLens", "table columns tab", "for less", product-name lists, compound-word lists, contrast-sentence phrases, …) was deleted and replaced by the general principle it instantiated, plus at most one short synthetic example. The composed system prompt shrank from ~13k to ~8k chars. Tests now guard *against* overfit (a denylist of previously-leaked case phrases) instead of asserting it.
 
-## Important user preference
+## Architecture findings that drove the design (verified by A/B spikes on gemma4:e2b)
 
-The regression cases are semantic review targets, not exact string comparisons. Model output can vary across models. Judge whether the output achieves the intended transformation vibe: cleaned dictation, correct punctuation, useful lists where warranted, preserved speaker intent, and no over-summarization.
+1. **Preservation wording must mean "don't delete", never "don't edit".** Phrasing like "preserve wording and order" makes the small model return input nearly verbatim (no punctuation fixes at all). Current phrasing: preservation never means leaving errors unfixed.
+2. **The base keeps prose as prose; all list-making lives in `restructure`.** The compose layer explicitly states active operations are mandatory and override the keep-prose-as-prose default — without that sentence the small model never restructures.
+3. **Position beats wording.** The same bullet-conversion example that is ignored in the system prompt is reliably applied when placed as a compact demo near the end of the USER prompt. The runtime user prompt (`active_modifier_user_prompt` in prompts.rs) therefore appends three synthetic pattern demos when Restructure is active: action chain → bullets, label-value mapping → bullets, spoken ordinal steps drifting into a problem report → numbered list + prose. Named-section composition (tested) was WORSE than the dash-bullet composition; do not switch.
+4. **A completeness clause in the final check ("no sentence, item, or action from the input is missing") fixed dropped list items.**
+
+## gemma4:e2b behavior after the rewrite (semantic parity or better vs the old overfit prompts)
+
+Works reliably: announced-count enumerations → numbered lists; ordinal test steps on own lines with the trailing problem report split out as prose; "You should A, B, C" action chains → bullets (all items kept); label/value/error quoting; trailing-fragment preservation; unchanged output for already-clean input; numbers/percent/math conversion.
+
+Known model-ceiling misses (also failed with the old overfit prompts): inline label-value mappings ("blue for X, yellow for Y") and dense unpunctuated inventories usually stay as (clean) prose instead of bullets; quoted visible labels sometimes keep lowercase ("drag" not "Drag"); the "two ways. Either…or…" case is flaky run-to-run; occasional wrong-word repairs are skipped (adopt→adapt). These degrade gracefully to clean prose — do NOT chase them with case-specific rules.
 
 ## Main files
 
-- `src/shared/lib/preset-prompts.ts`: primary frontend prompt definitions and `buildSystemPrompt`.
-- `examples/winstt-electron/frontend/src/shared/lib/preset-prompts.ts`: Electron reference copy of the prompt definitions.
-- `src-tauri/src/winstt/llm/prompts.rs`: Rust runtime prompt definitions and runtime user prompts.
-- `src-tauri/src/winstt/llm/ollama_request.rs`: Ollama request options. `num_ctx` was raised to 16384 earlier.
-- `src-tauri/src/winstt/commands/llm.rs`: runtime command path. It currently only trims trailing spaces from LLM output before replacement pairs.
-- `src-tauri/src/winstt/commands/transforms.rs`: transform command path. It currently only trims trailing spaces from LLM output before replacement pairs/output.
-- `tools/llm-postprocess-regression.ts`: local Gemma/Ollama semantic review harness with all examples from the conversation.
-- `src/shared/lib/preset-prompts.test.ts`: prompt shape/generalization tests for the Tauri app.
-- `examples/winstt-electron/frontend/src/shared/lib/preset-prompts.test.ts`: reference prompt tests.
+- `src/shared/lib/preset-prompts.ts` + `src/shared/lib/preset-prompts.test.ts`: Tauri prompt definitions/compose + generalization-guard tests.
+- `src-tauri/src/winstt/llm/prompts.rs`: Rust runtime mirror (system prompts AND the runtime user prompts, including the pattern demos and the restructure-gated final check).
+- `examples/winstt-electron/frontend/src/shared/lib/preset-prompts.ts` (+ test): Electron reference copy, synced.
+- `tools/llm-postprocess-regression.ts`: semantic-review harness; its user prompt mirrors `active_modifier_user_prompt` — keep them in sync.
 
-## What was done before this handoff
+## How to iterate
 
-- Added universal base cleanup guidance for numbers, percentages, and math expressions.
-- Strengthened `restructure` for counted alternatives, scenario lists, inventories, action chains, mappings, and rule chains.
-- Strengthened `rewordForClarity` for obvious ASR/wrong-word corrections such as `adopt to` -> `adapt to`, quote handling, compounds, and preserving incomplete trailing fragments.
-- Changed high `concise` to preserve structure and wording rather than summarizing or flattening lists.
-- Added a semantic-review mode to `tools/llm-postprocess-regression.ts` via `--review`.
-- Synced prompt changes across Tauri frontend, Electron reference frontend, and Rust prompt source.
-- Kept tests that guard against exact-output overfit.
-
-## What was tried and reversed
-
-A deterministic normalizer was briefly added for mechanical output fixes, then reversed at the user request. If deterministic cleanup is revisited, keep it genuinely universal and remove corresponding instructions from the prompt at the same time. The reversed idea included common numeric replacements, label quoting, and punctuation tweaks. It should not be reintroduced as a broad case-specific map.
-
-## Current model behavior notes
-
-Using `OLLAMA_MODEL=gemma4:e2b` with `tools/llm-postprocess-regression.ts --review`, some cases still miss target transformations:
-
-- Counted alternatives: sometimes makes a list but item boundaries are imperfect.
-- Problem-report split: `Third ... then first problem ...` often stays inside item 3.
-- UI labels: `says drag` or `called auto` may be quoted but lowercased or left bare.
-- Feature-definition preservation: sentences before `I want` can still be dropped.
-- Mapping bullets: color/status mappings often remain inline.
-- Some punctuation repairs are inconsistent: semicolon vs period, embedded wh-question splits, and contrast sentence cleanup.
-
-## Recommended next path
-
-1. Keep prompt rules general. Do not mention specific app examples like recording colors, fallback model, or exact phrases as special cases.
-2. Consider deterministic post-LLM cleanup only for rules that can be implemented safely without semantic judgment. Good candidates are trailing whitespace cleanup, explicit `says/called/named/labeled` label quoting, simple spoken math/percentage conversion with exact phrase matches, and final punctuation for simple imperatives.
-3. Keep semantic structure in the model prompt unless a transformation can be proven pattern-safe.
-4. Use `bun tools/llm-postprocess-regression.ts --review --ids=<case ids>` for fast semantic samples before full review.
-5. Run prompt tests after prompt edits:
-   - `bun test ./src/shared/lib/preset-prompts.test.ts`
-   - `bun test ./examples/winstt-electron/frontend/src/shared/lib/preset-prompts.test.ts`
+- `bun tools/llm-postprocess-regression.ts --review` (full) or `--review --ids=a,b,c` (subset); judge semantically, not by string equality.
+- `bun test ./src/shared/lib/preset-prompts.test.ts` and the Electron twin after prompt edits; `bun run typecheck`.
+- Rust: `cmd //c "tools\windows\cargo-env.bat check --no-default-features"`.
+- When a regression case fails: generalize the failure into a principle or a synthetic demo; never quote the case's own words in a prompt. If a rule helps only one case, it does not belong.
 
 ## Constraints to preserve
 
-- Do not use git stash.
-- Do not commit or push unless the user asks.
-- Keep prompts ultra-general and avoid exact-output overfit.
-- The user's examples are regression guides, not strings to match exactly.
+- No git stash. Do not commit or push unless asked.
+- Prompts stay ultra-general; the regression cases are semantic vibes, not exact strings.
+- Small-model first: fewer, more salient rules beat many micro-rules; demos go in the user prompt, not the system prompt.
+
+## Unrelated repo note (2026-06-10)
+
+`src-tauri/src/winstt/commands/runtime.rs` was found committed as all NUL bytes (corrupted in commit f3d6cd91) and was restored from bdb0390a. The WIP between those commits is lost; `quant_download_size_bytes` in catalog_data.rs is now dead code (clippy -D warnings will flag it). A follow-up task chip was filed.

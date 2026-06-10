@@ -656,4 +656,3 @@ mod tests {
         assert_eq!(terms, vec!["WinSTT", "Ollama"]);
     }
 }
-

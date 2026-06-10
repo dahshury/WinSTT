@@ -82,11 +82,7 @@ export const hotkeySettingsSchema = z.object({
 	// `.min(1)` would throw and `decodeSettingsPayload` would wipe the whole
 	// `hotkey` section. Catch rehydrates to the documented default so the
 	// PTT binding is always present and never empty.
-	pushToTalkKey: z
-		.string()
-		.min(1)
-		.default("LCtrl+LMeta")
-		.catch("LCtrl+LMeta"),
+	pushToTalkKey: z.string().min(1).default("LCtrl+LMeta").catch("LCtrl+LMeta"),
 });
 
 // Dictionary entries are dual-purpose, matching Wispr Flow's two-mode model:

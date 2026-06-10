@@ -164,13 +164,17 @@ async function runCase(testCase: RegressionCase, system: string) {
 	const model = process.env.OLLAMA_MODEL ?? "gemma4:e2b";
 	const numCtx = Number(process.env.OLLAMA_NUM_CTX ?? 16384);
 	// Mirrors the runtime user prompt composed by `active_modifier_user_prompt`
-	// in src-tauri/src/winstt/llm/prompts.rs for [restructure, rewordForClarity].
-	// Keep the two in sync; rules here must stay general (no case-specific
-	// phrases lifted from the regression inputs).
+	// in src-tauri/src/winstt/llm/prompts.rs for [restructure, rewordForClarity],
+	// including the synthetic restructure pattern demos (small local models
+	// apply formatting patterns far more reliably from compact demos near the
+	// end of the USER prompt than from rules in the system prompt). Keep the
+	// two in sync; everything here must stay general — no case-specific
+	// phrases lifted from the regression inputs.
 	const userPrompt = [
 		"First apply base cleanup: fix punctuation, capitalization, grammar, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken numbers, dates, times, currency, percentages, units, and equations to figures and symbols (for example, \"one\" -> \"1\", \"twenty five dollars\" -> \"$25\", \"one percent\" -> \"1%\", \"one plus one equals two\" -> \"1 + 1 = 2\"); remove fillers, repeats, and false starts; preserve the speaker's meaning and every idea.",
 		"Active operations to apply exactly: actively structure announced counts, ordered steps, parallel items, inventories, and label-value mappings into numbered or `* ` bullet lists with the lead-in kept as prose, ending each list where the speech moves to a new topic, and keeping everything else prose; visibly rewrite unclear or awkward phrasing into clearer natural language, fixing obvious wrong-word slips and vague placeholders while preserving meaning, point of view, and trailing fragments.",
-		"Apply the active operations visibly unless the input is empty or pure noise. Before returning, do a final check: announced counts and ordered steps are formatted as numbered lists with each item on its own line; parallel items and label-value mappings are `* ` bullets; every list has a blank line before and after it; literal labels and values are quoted; intent framing and trailing fragments are preserved; run-on sentences are split.",
+		'Patterns to apply wherever the text matches them: "You should update the docs, fix the tests and ping the team." -> "You should:\n\n* update the docs\n* fix the tests\n* ping the team" "The status should be red for errors, yellow for warnings and green for success." -> "The status should be:\n\n* red for errors\n* yellow for warnings\n* green for success" "One. Open the settings. Second, change the language. Third, restart the app, then the first issue is that the language resets." -> "1. Open the settings.\n2. Change the language.\n3. Restart the app.\n\nThe first issue is that the language resets."',
+		"Apply the active operations visibly unless the input is empty or pure noise. Before returning, do a final check: no sentence, item, or action from the input is missing; announced counts and ordered steps are formatted as numbered lists with each item on its own line; parallel items and label-value mappings are `* ` bullets; every list has a blank line before and after it; literal labels and values are quoted; intent framing and trailing fragments are preserved; run-on sentences are split.",
 		"Transform the following text according to the style guide above and these active operations. Return ONLY the transformed text with no commentary, explanations, labels, or JSON formatting.",
 		"",
 		`Text to transform:\n${testCase.before}`,

@@ -107,7 +107,10 @@ export function dedupeInstalledOllamaModels<T extends { name: string }>(
 			order.push(key);
 			continue;
 		}
-		byIdentity.set(key, preferInstalledOllamaTag(existing, model, selectedName));
+		byIdentity.set(
+			key,
+			preferInstalledOllamaTag(existing, model, selectedName),
+		);
 	}
 	return order.map((key) => byIdentity.get(key) as T);
 }

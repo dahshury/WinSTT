@@ -30,7 +30,10 @@ export function ttsSpeedRange(model: string | undefined): TtsSpeedRange {
 /** Clamp a speed into a local model's supported range (so a stale persisted value
  *  above the new ceiling displays/cycles as the clamped value, matching the
  *  engine which clamps too). */
-export function clampTtsSpeed(model: string | undefined, speed: number): number {
+export function clampTtsSpeed(
+	model: string | undefined,
+	speed: number,
+): number {
 	const { min, max } = ttsSpeedRange(model);
 	return Math.min(max, Math.max(min, speed));
 }

@@ -108,7 +108,7 @@ function firstPositive(
 
 /** Integer display percent for a partial cache. A partial must never display
  *  100%: only `state === "cached"` may claim completion. */
-export function quantPartialCachePercent(
+function quantPartialCachePercent(
 	cache: QuantCacheSnapshot | undefined,
 ): number | null {
 	if (normalizedCacheState(cache) !== "partial") {
@@ -126,9 +126,7 @@ export function quantPartialCachePercent(
 	return Math.min(99, clampPercent(raw));
 }
 
-export function quantCacheStatusLabel(
-	cache: QuantCacheSnapshot | undefined,
-): string {
+function quantCacheStatusLabel(cache: QuantCacheSnapshot | undefined): string {
 	const state = normalizedCacheState(cache);
 	if (state === "cached") {
 		return "Downloaded";

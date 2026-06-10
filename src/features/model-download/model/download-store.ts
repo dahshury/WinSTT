@@ -330,7 +330,11 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 						...ownerPatch(resolvedOwner),
 						progress: seedProgress(existing?.progress, seed),
 						downloadedBytes,
-						totalBytes: seedTotalBytes(existing?.totalBytes, seed, downloadedBytes),
+						totalBytes: seedTotalBytes(
+							existing?.totalBytes,
+							seed,
+							downloadedBytes,
+						),
 						speedBps: existing?.speedBps ?? 0,
 						paused: false,
 					},

@@ -291,18 +291,28 @@ export function ipcClientMock(): Record<string, unknown> {
 		onAudioLevel: (cb: (l: number) => void) =>
 			onTyped(IPC.STT_AUDIO_LEVEL, (d: { level: number }) => d.level, cb),
 		// Model download
-		onModelDownloadStart: (cb: (m: string) => void) =>
-			onTyped(
-				IPC.STT_MODEL_DOWNLOAD_START,
-				(d: { model: string }) => d.model,
-				cb,
-			),
+		onModelDownloadStart: (cb: (m: string, quantization?: string) => void) =>
+			on(IPC.STT_MODEL_DOWNLOAD_START, (data) => {
+				const d = data as { model: string; quantization?: string };
+				cb(d.model, d.quantization);
+			}),
 		onModelDownloadProgress: (cb: (p: unknown) => void) =>
 			onCast(IPC.STT_MODEL_DOWNLOAD_PROGRESS, cb),
-		onModelDownloadComplete: (cb: (m: string, cancelled: boolean) => void) =>
+		onModelDownloadComplete: (
+			cb: (m: string, cancelled: boolean, quantization?: string) => void,
+		) =>
 			on(IPC.STT_MODEL_DOWNLOAD_COMPLETE, (data) => {
-				const d = data as { model: string; cancelled?: boolean };
-				cb(d.model, d.cancelled ?? false);
+				const d = data as {
+					model: string;
+					cancelled?: boolean;
+					quantization?: string;
+				};
+				cb(d.model, d.cancelled ?? false, d.quantization);
+			}),
+		onModelDownloadPaused: (cb: (m: string, quantization?: string) => void) =>
+			on(IPC.STT_MODEL_DOWNLOAD_PAUSED, (data) => {
+				const d = data as { model: string; quantization?: string };
+				cb(d.model, d.quantization);
 			}),
 		cancelDownload: () =>
 			invokeOrDefault<void>(IPC.STT_CANCEL_DOWNLOAD, undefined),

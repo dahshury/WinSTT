@@ -12,8 +12,6 @@ export {
 	type QuantCacheState,
 	type QuantDownloadAction,
 	type QuantDownloadSnapshot,
-	quantCacheStatusLabel,
-	quantPartialCachePercent,
 	QuantShelf,
 	type QuantShelfEntry,
 	type QuantShelfProps,

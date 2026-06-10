@@ -57,7 +57,7 @@ export function useTtsModelDownloads(): {
 	snapsRef.current = snaps;
 	const statesById = useTtsModelStateStore((s) => s.statesById);
 	const statesRef = useRef(statesById);
-	statesRef.current = statesById;
+	statesRef.current = statesById ?? {};
 	const refresh = useTtsModelStateStore((s) => s.refresh);
 
 	useEffect(() => {

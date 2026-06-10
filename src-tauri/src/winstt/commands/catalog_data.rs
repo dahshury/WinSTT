@@ -580,16 +580,6 @@ pub fn estimated_bytes_for(model_id: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Exact HF download size for one published quantization, from the embedded
-/// editorial catalog. Used to give partial on-disk cache scans a real denominator
-/// instead of `downloaded == total`, which made partials round to 100%.
-pub(crate) fn quant_download_size_bytes(model_id: &str, quantization: &str) -> Option<u64> {
-    raw_catalog()
-        .iter()
-        .find(|e| e.id == model_id)
-        .and_then(|e| e.size_bytes_by_quantization.get(quantization).copied())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

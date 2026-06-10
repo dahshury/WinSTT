@@ -7,7 +7,7 @@ import type { OpenRouterVariant } from "@/shared/api/models";
  * into the `{ maker, modelName, variant }` parts the shared OpenRouter picker
  * renders (maker badge, author rail grouping, variant accent).
  */
-export const OPENROUTER_VARIANTS: readonly OpenRouterVariant[] = [
+const OPENROUTER_VARIANTS: readonly OpenRouterVariant[] = [
 	"exacto",
 	"extended",
 	"floor",

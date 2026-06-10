@@ -270,11 +270,7 @@ function PausedProgress({
 					: t("progressPausedAt", { percent: pausedPercent })
 			}
 			percent={pausedPercent}
-			statsLabel={formatStatsLine(
-				downloadedBytes,
-				totalBytes,
-				0,
-			)}
+			statsLabel={formatStatsLine(downloadedBytes, totalBytes, 0)}
 			variant="paused"
 		/>
 	);

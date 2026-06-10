@@ -134,18 +134,19 @@ describe("preset-prompts", () => {
 		// Regression: restructure numbered every sentence of a connected
 		// statement+question ("…Whisper models… Is that correct?") as 1-/2-/3-.
 		const r = getPresetPrompt("restructure");
-		expect(r.toLowerCase()).toContain("default to keeping the speaker");
+		expect(r.toLowerCase()).toContain("actively reshape content");
 		expect(r).toContain("Do NOT convert text to a list merely because it has several sentences");
-		expect(r.toLowerCase()).toContain("never turn a question into a list item");
+		expect(r.toLowerCase()).toContain("never turn a standalone question into a list item");
+		expect(r).toContain("A list ends where the enumeration ends");
 	});
 
 	test("Polish base handles generalized cleanup and forbids exact-output overfit", () => {
 		const base = getPresetPrompt("neutral");
-		expect(base).toContain("Core cleanup rules");
-		expect(base).toContain("Dictation normalization rules");
-		expect(base).toContain("UI, product, and technical wording");
-		expect(base).toContain("Run-on and punctuation recovery");
-		expect(base).toContain("Do not introduce lists");
+		expect(base).toContain("Core cleanup:");
+		expect(base).toContain("Spoken-form conversion:");
+		expect(base).toContain("Labels and quoting:");
+		expect(base).toContain("Mishearing repair:");
+		expect(base).toContain("Do not add lists");
 		expect(base).toContain("new paragraph");
 		expect(base).not.toMatch(/exact output/i);
 		expect(base).not.toMatch(/literal final/i);
