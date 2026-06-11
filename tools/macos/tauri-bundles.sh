@@ -11,12 +11,12 @@ arch="$2"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 output_dir="$repo_root/dist/macos/$arch"
-bundle_dir="$repo_root/src-tauri/target/$target/release/bundle/macos"
+bundle_dir="$repo_root/src-tauri/target/$target/release/bundle"
 
 cd "$repo_root"
 
-rm -rf "$bundle_dir"
-bun run tauri build --target "$target" --bundles dmg
+rm -rf "$bundle_dir/macos" "$bundle_dir/dmg"
+bun run tauri build --target "$target" --bundles app,dmg
 
 rm -rf "$output_dir"
 mkdir -p "$output_dir"
