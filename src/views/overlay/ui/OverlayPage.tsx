@@ -117,8 +117,7 @@ export function OverlayPage() {
 	const transcribingStartedAt = useTranscriptionStore(
 		(s) => s.transcribingStartedAt,
 	);
-	const showTranscribing =
-		isTranscribing && (willRunDictationLlm || isCloudSttModel);
+	const showTranscribing = isTranscribing;
 	const displayedTranscribingPhase =
 		showTranscribing && isCloudSttModel ? processingPhase : null;
 	const isThinking = useLlmProcessingStore((s) => s.isThinking);
@@ -164,10 +163,10 @@ export function OverlayPage() {
 	const text = ephemeral?.text ?? realtime.trim();
 	const hasText = text.length > 0;
 	const showText = (showLiveTranscription || hasEphemeral) && hasText;
-	// Reveal the pill once the user actually speaks (real VAD `isSpeaking`) or words
-	// are transcribed (`hasText`), or the LLM is thinking — NOT on the bare
-	// recording-start. See `computePillReveal` for the rationale (the pill used to pop
-	// instantly when PTT was held through a silent lead-in; now it lands on speech onset).
+	// Reveal the pill only once VAD says the user actually spoke. Realtime text,
+	// transcribing state, and ephemeral status can keep an already-revealed pill
+	// useful through the rest of the session, but they must not create one from
+	// silence.
 	const sessionShouldShow =
 		computePillReveal({
 			isRecordingActive,
@@ -176,8 +175,7 @@ export function OverlayPage() {
 			isThinking: showThinking,
 			isTranscribing: showTranscribing,
 		}) ||
-		isPreviewActive ||
-		hasEphemeral;
+		isPreviewActive;
 	// Sticky once-on: hold the pill mounted for the rest of the active session
 	// even if `currentRealtime` momentarily empties between realtime chunks.
 	// Without this, the AnimatePresence around chip + bubble unmounts on every

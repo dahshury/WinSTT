@@ -8,7 +8,6 @@ import {
 import type { WakewordModelStatusPayload } from "@/shared/api/ipc-client";
 import { CreatableCombobox } from "@/shared/ui/creatable-combobox";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
-import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
 import { Switcher } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
@@ -40,38 +39,6 @@ import {
 	roundSilenceStopSeconds,
 } from "./recording-settings-types";
 import { WakewordDownloadProgress } from "./WakewordDownload";
-
-interface LoopbackControlProps {
-	currentLoopbackId: string;
-	handleLoopbackChange: (value: string) => void;
-	loopbackOpts: SelectOption[];
-	t: GeneralT;
-}
-
-function LoopbackControl({
-	t,
-	currentLoopbackId,
-	loopbackOpts,
-	handleLoopbackChange,
-}: LoopbackControlProps): ReactNode {
-	return (
-		<SettingField
-			isDefault={currentLoopbackId === "default"}
-			label={t("loopbackDevice")}
-			layout="row"
-			onReset={() => handleLoopbackChange("default")}
-			tooltip={t("loopbackDeviceTooltip")}
-		>
-			<ElevatedSurface className="w-52" inline>
-				<Select
-					onChange={handleLoopbackChange}
-					options={loopbackOpts}
-					value={currentLoopbackId}
-				/>
-			</ElevatedSurface>
-		</SettingField>
-	);
-}
 
 interface ManualToggleStopControlProps {
 	enabled: boolean;
@@ -334,10 +301,8 @@ function WakeWordTimeoutControl({
 
 interface RecordingModeSectionProps {
 	audio: AudioSettings | undefined;
-	currentLoopbackId: string;
 	general: GeneralSettings | undefined;
-	handleLoopbackChange: (value: string) => void;
-	loopbackOpts: SelectOption[];
+	prepareListenMode: () => boolean;
 	recordingMode: "ptt" | "toggle" | "listen" | "wakeword";
 	requestWakewordDownload: () => void;
 	ta: AudioT;
@@ -361,9 +326,7 @@ export function RecordingModeSection({
 	recordingMode,
 	update,
 	updateAudio,
-	loopbackOpts,
-	currentLoopbackId,
-	handleLoopbackChange,
+	prepareListenMode,
 	requestWakewordDownload,
 	wakewordEnablePending,
 	wakewordStatus,
@@ -388,6 +351,9 @@ export function RecordingModeSection({
 			!wakewordStatus.downloading
 		) {
 			requestWakewordDownload();
+			return;
+		}
+		if (value === "listen" && !prepareListenMode()) {
 			return;
 		}
 		update(recordingModePatch(value, general?.wakeWord));
@@ -438,14 +404,6 @@ export function RecordingModeSection({
 							/>
 						) : null}
 					</>
-				) : null}
-				{recordingMode === "listen" ? (
-					<LoopbackControl
-						currentLoopbackId={currentLoopbackId}
-						handleLoopbackChange={handleLoopbackChange}
-						loopbackOpts={loopbackOpts}
-						t={t}
-					/>
 				) : null}
 				{recordingMode === "wakeword" ? (
 					<>

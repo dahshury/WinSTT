@@ -1,7 +1,7 @@
 # WinSTT — Rust + Tauri (repo root)
 
-This repository root is the **Rust + Tauri port of WinSTT** (a Windows speech-to-text
-app). The original **Electron + Python** implementation now lives under
+This repository root is the **Rust + Tauri port of WinSTT** (a local-first
+speech-to-text desktop app). The original **Electron + Python** implementation now lives under
 [`examples/winstt-electron/`](examples/winstt-electron/) as the reference/source-of-truth
 for feature parity; `main` still tracks that Electron app.
 

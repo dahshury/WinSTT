@@ -306,14 +306,18 @@ export function TableCell({ className, ref, ...props }: TableCellProps) {
 
 export interface TableEmptyProps {
 	children: ReactNode;
+	className?: string;
 	colSpan: number;
 }
 
-export function TableEmpty({ children, colSpan }: TableEmptyProps) {
+export function TableEmpty({ children, className, colSpan }: TableEmptyProps) {
 	return (
 		<tr>
 			<td
-				className="px-3 py-6 text-center text-body-sm text-foreground-muted"
+				className={cn(
+					"px-3 py-6 text-center text-body-sm text-foreground-muted",
+					className,
+				)}
 				colSpan={colSpan}
 			>
 				{children}

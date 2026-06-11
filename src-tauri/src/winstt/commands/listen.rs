@@ -7,7 +7,7 @@
 // off. The diarized subtitles + speaker segments are emitted as events.
 //
 // IPC mapping (app/src/shared/api/native-bridge-adapter.ts):
-//   IPC.LOOPBACK_START (`loopback:start`, payload `{ deviceIndex }`) → start_listen
+//   IPC.LOOPBACK_START (`loopback:start`, payload `{ deviceIndex, modelId }`) → start_listen
 //   IPC.LOOPBACK_STOP  (`loopback:stop`)                             → stop_listen
 //
 // The renderer never passes a `diarize` flag (the reference server reads the
@@ -25,9 +25,15 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
 
-use crate::winstt::commands::loopback::resolve_loopback_device_name;
+use crate::winstt::catalog;
+use crate::winstt::commands::dictation::SttEvents;
+use crate::winstt::commands::events::names;
+use crate::winstt::commands::loopback::resolve_loopback_device;
+use crate::winstt::commands::runtime::{probe_cache_states, system_info_snapshot};
 use crate::winstt::commands::settings::read_settings;
-use crate::winstt::managers::{DiarizationManager, LoopbackManager};
+use crate::winstt::commands::stt::picker_accelerator;
+use crate::winstt::managers::{DiarizationManager, DownloadManager, LoopbackManager};
+use crate::winstt::stt::cache_probe::engine_kind_for;
 
 /// `start_listen` — begin loopback capture on `device_index` (the positional
 /// ordinal from `loopback_list_devices`) and arm diarization when the persisted
@@ -39,29 +45,81 @@ use crate::winstt::managers::{DiarizationManager, LoopbackManager};
 /// command owns the device-name resolution + the started event.
 #[tauri::command]
 #[specta::specta]
-pub fn start_listen(
+pub async fn start_listen(
     app: AppHandle,
     loopback: State<'_, Arc<LoopbackManager>>,
     diarization: State<'_, Arc<DiarizationManager>>,
+    downloads: State<'_, Arc<DownloadManager>>,
     device_index: i32,
+    model_id: String,
 ) -> Result<(), String> {
+    let model_id =
+        ensure_cached_native_streaming_model(&app, downloads.inner().as_ref(), model_id.trim())
+            .await?;
+
     // Diarization follows the persisted setting (renderer doesn't pass a flag —
     // it mirrors the reference server which reads `speakerDiarization` itself).
     let diarize = read_settings(&app).general.speaker_diarization;
     diarization.set_enabled(diarize);
     diarization.reset();
 
-    // Resolve the device name BEFORE starting so a stale index degrades to a
-    // blank label (the renderer tolerates `""`) instead of failing the start.
-    let device_name = resolve_loopback_device_name(device_index).unwrap_or_default();
+    let selected_device = resolve_loopback_device(device_index)
+        .ok_or_else(|| format!("loopback device index {device_index} is no longer available"))?;
 
-    loopback.start()?;
+    let started_device = loopback.start(Some(selected_device.id), model_id)?;
+    let device_name = if started_device.name.trim().is_empty() {
+        selected_device.name
+    } else {
+        started_device.name
+    };
 
+    SttEvents::recording_start(&app);
     let _ = app.emit(
-        "stt:loopback-started",
+        names::LOOPBACK_STARTED,
         serde_json::json!({ "deviceName": device_name }),
     );
     Ok(())
+}
+
+async fn ensure_cached_native_streaming_model(
+    app: &AppHandle,
+    downloads: &DownloadManager,
+    model_id: &str,
+) -> Result<String, String> {
+    if model_id.is_empty() {
+        return Err("Listen mode requires a downloaded realtime STT model.".to_string());
+    }
+
+    let canonical = catalog::canonical_model_id(model_id);
+    let entry = catalog::find(canonical)
+        .ok_or_else(|| format!("'{model_id}' is not a local WinSTT model"))?;
+    let kind = engine_kind_for(entry.id, entry.family.as_str(), entry.onnx_model_name);
+    if !kind.supports_native_streaming() {
+        return Err(format!(
+            "'{}' is not a native-streaming realtime model",
+            entry.display_name
+        ));
+    }
+
+    let cache_by_model = probe_cache_states(downloads).await;
+    let state = super::catalog_data::models_with_state(
+        picker_accelerator(app),
+        system_info_snapshot(),
+        &cache_by_model,
+    )
+    .states
+    .into_iter()
+    .find(|s| s.id == canonical)
+    .ok_or_else(|| format!("No cache state was available for '{canonical}'"))?;
+
+    if state.cache.state != "cached" {
+        return Err(format!(
+            "Listen mode requires '{}' to be downloaded before it can start",
+            entry.display_name
+        ));
+    }
+
+    Ok(canonical.to_string())
 }
 
 /// `stop_listen` — stop loopback capture + diarization. Emits
@@ -76,7 +134,12 @@ pub fn stop_listen(
     loopback: State<'_, Arc<LoopbackManager>>,
     diarization: State<'_, Arc<DiarizationManager>>,
 ) {
+    let was_capturing = loopback.is_capturing();
     loopback.stop();
     diarization.set_enabled(false);
-    let _ = app.emit("stt:loopback-stopped", serde_json::Value::Null);
+    if was_capturing {
+        SttEvents::vad_stop(&app);
+        SttEvents::recording_stop(&app);
+    }
+    let _ = app.emit(names::LOOPBACK_STOPPED, serde_json::Value::Null);
 }

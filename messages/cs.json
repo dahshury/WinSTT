@@ -509,12 +509,12 @@
     "advancedTitle": "Rozšířené",
     "microphoneRelease": "Uvolnění mikrofonu",
     "microphoneReleaseCaption": "Kdy zavřít OS audio stream po nahrávání",
-    "microphoneReleaseTooltip": "Vybírá, kdy se uvolní OS stream mikrofonu — kompromis mezi viditelností indikátoru použití mikrofonu a latencí odezvy PTT. „Vždy” udržuje stream otevřený po celou dobu běhu WinSTT pro PTT s mikrosekundovou odezvou (indikátor zůstává rozsvícený). „Vypnuto” (výchozí) zavírá okamžitě při každém uvolnění klávesy, takže indikátor se rozhodně vyčistí. Časové možnosti zastaví engine při uvolnění klávesy, ale odkládají skutečné zavření, takže rychlé stisky v okně přeskočí náklady na opětovné otevření ~10–50 ms.",
-    "microphoneReleaseAlways": "Vždy (nikdy neuvolněno)",
-    "microphoneReleaseImmediate": "Vypnuto (uvolnit při uvolnění klávesy)",
-    "microphoneReleaseSec30": "Po 30 sekundách",
-    "microphoneReleaseMin1": "Po 1 minutě",
-    "microphoneReleaseMin5": "Po 5 minutách"
+    "microphoneReleaseTooltip": "Vybírá, kdy se uvolní OS stream mikrofonu — kompromis mezi viditelností indikátoru použití mikrofonu a latencí odezvy PTT. „Nikdy” udržuje stream otevřený po celou dobu běhu WinSTT pro PTT s mikrosekundovou odezvou (indikátor zůstává rozsvícený). „Okamžitě” (výchozí) zavírá při každém uvolnění klávesy, takže indikátor se rozhodně vyčistí. Časové možnosti zastaví engine při uvolnění klávesy, ale odkládají skutečné zavření, takže rychlé stisky v okně přeskočí náklady na opětovné otevření ~10–50 ms.",
+    "microphoneReleaseAlways": "Nikdy",
+    "microphoneReleaseImmediate": "Okamžitě (uvolnit při uvolnění klávesy)",
+    "microphoneReleaseSec30": "30 sekund",
+    "microphoneReleaseMin1": "1 minuta",
+    "microphoneReleaseMin5": "5 minut"
   },
   "quality": {
     "enableRealtime": "Povolit v reálném čase",

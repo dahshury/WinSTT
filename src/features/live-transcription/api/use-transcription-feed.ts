@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
+import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import {
 	onFullSentence,
@@ -11,7 +12,33 @@ import {
 	onSttSessionAborted,
 	onTranscriptionStart,
 	onTranscriptionFailed,
+	onVadStart,
 } from "@/shared/api/ipc-client";
+
+const COMPLETED_SESSION_CLEAR_MS = 1200;
+let completedSessionClearTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearCompletedSessionTimer(): void {
+	if (completedSessionClearTimer !== null) {
+		clearTimeout(completedSessionClearTimer);
+		completedSessionClearTimer = null;
+	}
+}
+
+function scheduleCompletedSessionClear(sessionId: number): void {
+	clearCompletedSessionTimer();
+	completedSessionClearTimer = setTimeout(() => {
+		const state = useTranscriptionStore.getState();
+		if (
+			state.recordingSessionId === sessionId &&
+			!state.isRecordingActive &&
+			!state.isTranscribing
+		) {
+			state.clearItems();
+		}
+		completedSessionClearTimer = null;
+	}, COMPLETED_SESSION_CLEAR_MS);
+}
 
 function shouldIgnoreEmptyRealtimeDrop(text: string): boolean {
 	const state = useTranscriptionStore.getState();
@@ -26,6 +53,12 @@ function shouldIgnoreEmptyRealtimeDrop(text: string): boolean {
 
 export function useTranscriptionFeed(): void {
 	const t = useTranslations("transcription");
+	const voiceActivitySeenRef = useRef(false);
+	const recordingMode = useSettingsStore(
+		(s) => s.settings.general?.recordingMode ?? "ptt",
+	);
+	const recordingModeRef = useRef(recordingMode);
+	recordingModeRef.current = recordingMode;
 	const addFinalSentence = useTranscriptionStore((s) => s.addFinalSentence);
 	const attachSpeakerSegments = useTranscriptionStore(
 		(s) => s.attachSpeakerSegments,
@@ -45,14 +78,22 @@ export function useTranscriptionFeed(): void {
 		// freshly shown overlay window paints empty for one frame (before this
 		// event lands) rather than flashing the previous session's text.
 		const unsubStart = onRecordingStart(() => {
+			voiceActivitySeenRef.current = false;
+			clearCompletedSessionTimer();
 			beginRecordingSession();
 		});
 
 		// `recording_stop` arrives on PTT release / VAD endpoint. Mark the final
 		// decode as pending immediately so cloud STT can swap the pill to
-		// "Uploading" while the backend finishes packaging the utterance.
+		// "Uploading" while the backend finishes packaging the utterance, but only
+		// once this session has seen VAD-confirmed speech. A silent press still emits
+		// recording_stop before the backend can classify samples, and should wait
+		// for no_audio_detected instead of flashing processing UI.
 		const unsubStop = onRecordingStop(() => {
-			if (useTranscriptionStore.getState().isRecordingActive) {
+			if (
+				useTranscriptionStore.getState().isRecordingActive &&
+				voiceActivitySeenRef.current
+			) {
 				setTranscribing(true, "uploading");
 			}
 		});
@@ -64,19 +105,35 @@ export function useTranscriptionFeed(): void {
 			setRealtimeText(text);
 		});
 
+		const unsubVadStart = onVadStart(() => {
+			voiceActivitySeenRef.current = true;
+		});
+
 		const unsubTranscriptionStart = onTranscriptionStart(() => {
-			setTranscribing(true, "transcribing");
+			if (voiceActivitySeenRef.current) {
+				setTranscribing(true, "transcribing");
+			}
 		});
 
 		const unsubFinal = onFullSentence((text) => {
-			setRecordingActive(false);
+			voiceActivitySeenRef.current = false;
+			const isListenMode = recordingModeRef.current === "listen";
+			const sessionId = useTranscriptionStore.getState().recordingSessionId;
+			if (!isListenMode) {
+				setRecordingActive(false);
+			}
 			setTranscribing(false);
 			addFinalSentence(text);
+			if (sessionId > 0 && !isListenMode) {
+				scheduleCompletedSessionClear(sessionId);
+			}
 		});
 
 		const unsubNoAudio = onNoAudioDetected(() => {
+			voiceActivitySeenRef.current = false;
+			clearCompletedSessionTimer();
 			setRealtimeText("");
-			showEphemeral(t("noAudioDetected"));
+			clearEphemeral();
 			setRecordingActive(false);
 			setTranscribing(false);
 		});
@@ -84,6 +141,8 @@ export function useTranscriptionFeed(): void {
 		// Genuine backend transcriber error — report it honestly in the same
 		// ephemeral pill slot instead of the misleading "(no audio detected)".
 		const unsubTranscriptionFailed = onTranscriptionFailed((payload = {}) => {
+			voiceActivitySeenRef.current = false;
+			clearCompletedSessionTimer();
 			const message = payload.message?.trim() || t("transcriptionFailed");
 			setRealtimeText("");
 			showEphemeral(message);
@@ -101,6 +160,8 @@ export function useTranscriptionFeed(): void {
 		// as a terminal event so the renderer state matches the server's
 		// post-abort INACTIVE state.
 		const unsubAborted = onSttSessionAborted(() => {
+			voiceActivitySeenRef.current = false;
+			clearCompletedSessionTimer();
 			setRecordingActive(false);
 			setTranscribing(false);
 			setRealtimeText("");
@@ -117,6 +178,7 @@ export function useTranscriptionFeed(): void {
 			unsubStart();
 			unsubStop();
 			unsubRealtime();
+			unsubVadStart();
 			unsubTranscriptionStart();
 			unsubFinal();
 			unsubNoAudio();

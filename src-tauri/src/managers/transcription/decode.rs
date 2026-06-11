@@ -22,6 +22,16 @@ impl TranscriptionManager {
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+        let desired = self.desired_model_id();
+        self.transcribe_with_selected_model(&desired, audio)
+    }
+
+    pub fn transcribe_with_model(&self, model_id: &str, audio: Vec<f32>) -> Result<String> {
+        let desired = crate::winstt::catalog::canonical_model_id(model_id).to_string();
+        self.transcribe_with_selected_model(&desired, audio)
+    }
+
+    fn transcribe_with_selected_model(&self, desired: &str, audio: Vec<f32>) -> Result<String> {
         let request_id = next_transcription_request_id();
 
         #[cfg(debug_assertions)]
@@ -72,10 +82,6 @@ impl TranscriptionManager {
             return Ok(String::new());
         }
 
-        // The user's selected model comes from the WinSTT picker. `desired_model_id` reads the
-        // picker store through the backend (audit #14).
-        let desired = self.desired_model_id();
-
         // ── Cloud STT route ──────────────────────────────────────────────
         // When the selected model carries a cloud prefix (openai:/elevenlabs:), there is NO
         // local engine — ship the captured audio to the provider. The WinSTT-specific round-trip
@@ -83,10 +89,10 @@ impl TranscriptionManager {
         // dictionary/filler post-processing) is owned by the backend (audit #14). The core only
         // decides to take the cloud path here — BEFORE the engine lock, since cloud ids have no
         // LoadedEngine — and unloads any resident local engine after.
-        if self.backend.route_of(&desired) == BackendRoute::Cloud {
+        if self.backend.route_of(desired) == BackendRoute::Cloud {
             let filtered = match self
                 .backend
-                .cloud_transcribe(&self.app_handle, &desired, &audio)
+                .cloud_transcribe(&self.app_handle, desired, &audio)
             {
                 Ok(text) => text,
                 Err(e) => {
@@ -99,6 +105,9 @@ impl TranscriptionManager {
             self.maybe_unload_immediately("cloud transcription");
             return Ok(filtered);
         }
+
+        self.load_model_blocking(desired)
+            .map_err(|e| anyhow::anyhow!("failed to load model '{desired}': {e}"))?;
 
         let local_audio = local_final_decode_audio_with_silence(&audio);
         debug!(
@@ -254,7 +263,7 @@ impl TranscriptionManager {
         let et = std::time::Instant::now();
         let final_result = result;
         let output_chars = final_result.chars().count();
-        self.mark_model_warmed_if_current(&desired);
+        self.mark_model_warmed_if_current(desired);
 
         info!(
             "[stt][{request_id}] transcription completed in {}ms model='{}' output_chars={} output_empty={}",

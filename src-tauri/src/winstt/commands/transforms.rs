@@ -29,7 +29,7 @@
 // streaming path (LlmManager::ollama_transform), OpenRouter via the OpenAI-
 // compatible structured-output path with fallback model
 // (LlmManager::openrouter_chat), Apple Intelligence soft-fails to the original
-// text (its CLI is macOS-only and this is a Windows app).
+// text until the native provider is wired into the unified LLM manager.
 //
 // SELECTION CAPTURE (mirrors selection-capture.ts captureSelection): UIA
 // TextPattern selection first (side-effect-free, via the context sidecar

@@ -57,21 +57,17 @@ export function computeIslandSize(args: {
  *
  * The pill must NOT appear on the bare recording-start — pressing PTT and
  * holding through the silent lead-in before actually speaking used to pop the
- * pill instantly ("it shows before I've said anything"). It reveals once the
- * user ACTUALLY SPEAKS: either the recorder's real smoothed-Silero VAD reports
- * speech onset (`isSpeaking`, ~one onset window after you start talking — the
- * snappy signal) or the realtime model has streamed transcribed text into the
- * pill (`hasText`, a slightly slower fallback that also covers VAD-quiet
- * speech). Both are gated on `isRecordingActive` so stale state from a prior
- * session can't flash the pill before the next recording arms. `isSpeaking` is
- * REAL now — the backend surfaces actual VAD boundaries (managers::audio
- * with_speech_callback); it used to be faked to the whole recording window,
- * which is why this gate previously couldn't rely on it.
+ * pill instantly ("it shows before I've said anything"). It reveals only when
+ * the recorder's real smoothed-Silero VAD reports speech onset (`isSpeaking`).
+ * Realtime text is deliberately not a first-reveal fallback: the overlay should
+ * not display unless VAD detects voice. The VAD signal is gated on
+ * `isRecordingActive` so stale state from a prior session can't flash the pill
+ * before the next recording arms.
  *
- * `isThinking` keeps the pill alive across the recording → LLM-thinking
- * transition (when `isRecordingActive` has already flipped off). The caller
- * latches this sticky for the rest of the session (see `useStickyPillReveal`) so brief
- * inter-word VAD gaps / realtime-text drops don't make the pill flicker.
+ * The caller latches this sticky for the rest of the session (see
+ * `useStickyPillReveal`) so brief inter-word VAD gaps / realtime-text drops
+ * don't make the pill flicker, and so final decode / LLM thinking can reuse an
+ * already-revealed pill without creating one from silence.
  *
  * Exported for unit testing without mounting the motion-heavy pill tree.
  */
@@ -82,11 +78,7 @@ export function computePillReveal(args: {
 	isThinking: boolean;
 	isTranscribing?: boolean;
 }): boolean {
-	return (
-		(args.isRecordingActive && (args.isSpeaking || args.hasText)) ||
-		args.isThinking ||
-		(args.isRecordingActive && (args.isTranscribing ?? false))
-	);
+	return args.isRecordingActive && args.isSpeaking;
 }
 
 export function computeStickyPillReveal(args: {

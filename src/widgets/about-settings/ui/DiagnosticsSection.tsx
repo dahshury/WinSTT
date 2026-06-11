@@ -3,15 +3,12 @@ import {
 	FileZipIcon,
 	Folder01Icon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import type { IconSvgElement } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { SettingSection } from "@/entities/setting";
 import { diagOpenLogsFolder, diagSaveBundle } from "@/shared/api/ipc-client";
-import { Button } from "@/shared/ui/button";
+import { AboutActionButton } from "./AboutActionButton";
 import type { AboutT } from "./types";
-
-const ACTION_BUTTON_BASE =
-	"flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-foreground/15 bg-foreground/5 px-3 font-medium text-body text-foreground transition-colors duration-150 hover:bg-foreground/10";
 
 interface DiagnosticsActionRowProps {
 	buttonLabel: string;
@@ -38,10 +35,9 @@ function DiagnosticsActionRow({
 					{summary}
 				</span>
 			</div>
-			<Button className={ACTION_BUTTON_BASE} onClick={onClick}>
-				<HugeiconsIcon aria-hidden="true" icon={icon} size={12} />
-				<span>{buttonLabel}</span>
-			</Button>
+			<AboutActionButton icon={icon} onClick={onClick}>
+				{buttonLabel}
+			</AboutActionButton>
 		</div>
 	);
 }

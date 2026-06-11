@@ -509,12 +509,12 @@
     "advancedTitle": "詳細設定",
     "microphoneRelease": "マイクの解放",
     "microphoneReleaseCaption": "録音後に OS オーディオストリームを閉じるタイミング",
-    "microphoneReleaseTooltip": "OS マイクストリームを解放するタイミングを選択します。マイク使用中インジケーターの表示と PTT 応答遅延のトレードオフです。「常に」は WinSTT の動作中ずっとストリームを開いたままにし、PTT が非常に高速です（インジケーターは常に点灯）。「オフ」（デフォルト）はキーアップごとに即座に閉じ、インジケーターが確実にクリアされます。時間オプションはキーアップでエンジンを停止しますが、実際の閉鎖を遅らせることで、ウィンドウ内の連続押下時に約10〜50 ms の再起動コストをスキップします。",
-    "microphoneReleaseAlways": "常に（解放しない）",
-    "microphoneReleaseImmediate": "オフ（キーアップで解放）",
-    "microphoneReleaseSec30": "30秒後",
-    "microphoneReleaseMin1": "1分後",
-    "microphoneReleaseMin5": "5分後"
+    "microphoneReleaseTooltip": "OS マイクストリームを解放するタイミングを選択します。マイク使用中インジケーターの表示と PTT 応答遅延のトレードオフです。「しない」は WinSTT の動作中ずっとストリームを開いたままにし、PTT が非常に高速です（インジケーターは常に点灯）。「即時」（デフォルト）はキーアップごとに閉じ、インジケーターが確実にクリアされます。時間オプションはキーアップでエンジンを停止しますが、実際の閉鎖を遅らせることで、ウィンドウ内の連続押下時に約10〜50 ms の再起動コストをスキップします。",
+    "microphoneReleaseAlways": "しない",
+    "microphoneReleaseImmediate": "即時（キーアップで解放）",
+    "microphoneReleaseSec30": "30秒",
+    "microphoneReleaseMin1": "1分",
+    "microphoneReleaseMin5": "5分"
   },
   "quality": {
     "enableRealtime": "リアルタイムを有効化",

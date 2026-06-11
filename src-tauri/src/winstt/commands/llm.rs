@@ -7,7 +7,7 @@
 // path (LlmManager::ollama_dictation/transform), OpenRouter via the OpenAI-
 // compatible /api/v1/chat/completions structured-output path
 // (LlmManager::openrouter_chat, with fallback model). Apple Intelligence
-// soft-fails to the original text (macOS-only CLI; this is a Windows app).
+// currently soft-fails to the original text in this command path.
 //
 // ollama_refresh_models → OllamaScanResult (/api/tags + /api/show enrich).
 // openrouter_refresh_models → OpenRouterScanResult (/api/v1/models with stored key).
@@ -81,7 +81,11 @@ impl LlmCommandProcessingGuard {
 }
 
 fn normalize_llm_text_output(text: &str) -> String {
-    text.lines()
+    // Explode any inline enumeration the model emitted onto one line (layout
+    // only — see `winstt::llm::explode_inline_lists`), then strip trailing
+    // whitespace from each line.
+    llm::explode_inline_lists(text)
+        .lines()
         .map(str::trim_end)
         .collect::<Vec<_>>()
         .join("\n")
@@ -141,8 +145,8 @@ pub(crate) async fn process_dictation_text(
 
     // Provider routing (mirrors runProcessText): OpenRouter via the OpenAI-
     // compatible chat endpoint, otherwise the all-Rust Ollama streaming path.
-    // Apple Intelligence soft-fails to the original text — its CLI is macOS-only
-    // and this is a Windows app (mirrors runAppleIntelligencePath's fail-soft).
+    // Apple Intelligence soft-fails to the original text in this command path
+    // until the native provider is wired into the unified LLM manager.
     let mut side_effects = DictationSideEffects::default();
     let mut failsoft_error: Option<String> = None;
     let answer = match settings.llm.dictation.base.provider {
@@ -290,7 +294,9 @@ pub async fn process_transform(
                 text.clone()
             }),
     };
-    Ok(answer)
+    // Same layout normalization as the dictation path: explode inline
+    // enumerations to real newlines + trim trailing whitespace.
+    Ok(normalize_llm_text_output(&answer))
 }
 
 /// Try the primary OpenRouter selection; on failure (and when a fallback is

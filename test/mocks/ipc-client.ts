@@ -357,8 +357,8 @@ export function ipcClientMock(): Record<string, unknown> {
 		// Loopback
 		loopbackListDevices: () =>
 			invokeOrDefault<unknown[]>(IPC.LOOPBACK_LIST_DEVICES, []),
-		loopbackStart: (deviceIndex: number) =>
-			send(IPC.LOOPBACK_START, { deviceIndex }),
+		loopbackStart: (deviceIndex: number, modelId: string) =>
+			send(IPC.LOOPBACK_START, { deviceIndex, modelId }),
 		loopbackStop: () => send(IPC.LOOPBACK_STOP),
 		onLoopbackStarted: (cb: (n: string) => void) =>
 			onTyped(

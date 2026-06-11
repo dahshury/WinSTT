@@ -361,15 +361,17 @@ export const onModelCacheChanged = (cb: (modelId: string) => void) =>
 export const loopbackListDevices = () =>
 	invokeOrDefault<
 		Array<{
+			id?: string;
 			index: number;
 			name: string;
 			defaultSampleRate: number;
 			maxOutputChannels: number;
+			isDefault?: boolean;
 		}>
 	>(IPC.LOOPBACK_LIST_DEVICES, []);
 
-export const loopbackStart = (deviceIndex: number) =>
-	send(IPC.LOOPBACK_START, { deviceIndex });
+export const loopbackStart = (deviceIndex: number, modelId: string) =>
+	send(IPC.LOOPBACK_START, { deviceIndex, modelId });
 
 export const loopbackStop = () => send(IPC.LOOPBACK_STOP);
 

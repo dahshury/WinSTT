@@ -509,12 +509,12 @@
     "advancedTitle": "高级",
     "microphoneRelease": "释放麦克风",
     "microphoneReleaseCaption": "录音结束后关闭 OS 音频流的时机",
-    "microphoneReleaseTooltip": "选择 OS 麦克风流的释放时机——需在麦克风占用指示灯可见性与 PTT 响应延迟之间取得平衡。「始终」在 WinSTT 运行期间保持流持续打开，PTT 响应极快（指示灯常亮）。「关闭」（默认）在每次松键后立即关闭流，指示灯明确熄灭。持续时间选项在松键时停止引擎，但延迟实际关闭，使得在窗口内连续按键时可跳过约 10–50 毫秒的重新打开开销。",
-    "microphoneReleaseAlways": "始终（永不释放）",
-    "microphoneReleaseImmediate": "关闭（松键时释放）",
-    "microphoneReleaseSec30": "30 秒后",
-    "microphoneReleaseMin1": "1 分钟后",
-    "microphoneReleaseMin5": "5 分钟后"
+    "microphoneReleaseTooltip": "选择 OS 麦克风流的释放时机——需在麦克风占用指示灯可见性与 PTT 响应延迟之间取得平衡。「永不」在 WinSTT 运行期间保持流持续打开，PTT 响应极快（指示灯常亮）。「立即」（默认）在每次松键时关闭流，指示灯明确熄灭。持续时间选项在松键时停止引擎，但延迟实际关闭，使得在窗口内连续按键时可跳过约 10–50 毫秒的重新打开开销。",
+    "microphoneReleaseAlways": "永不",
+    "microphoneReleaseImmediate": "立即（松键时释放）",
+    "microphoneReleaseSec30": "30 秒",
+    "microphoneReleaseMin1": "1 分钟",
+    "microphoneReleaseMin5": "5 分钟"
   },
   "quality": {
     "enableRealtime": "启用实时转录",

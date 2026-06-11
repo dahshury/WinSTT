@@ -14,14 +14,14 @@
 // the project memory warns about for `start_loopback`. `stop()` flips an atomic + joins (bounded
 // by the 200 ms WASAPI event-wait timeout).
 //
-// PORTABILITY: WASAPI is Windows-only. The capture thread + COM init are gated `#[cfg(windows)]`.
+// PORTABILITY: the WASAPI capture thread + COM init are gated `#[cfg(windows)]`.
 // The SlowTrackingAgc, the multichannel→mono fold, and the channel plumbing are platform-agnostic
 // and unit-tested everywhere.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
-use std::thread::JoinHandle;
+
+#[cfg(windows)]
+use cpal::traits::{DeviceTrait, StreamTrait};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. Slow-tracking AGC — verbatim port of loopback.py constants (int16 domain).
@@ -168,8 +168,8 @@ pub struct DeviceInfo {
 pub enum LoopbackError {
     #[error("loopback is only supported on Windows")]
     Unsupported,
-    #[error("WASAPI error: {0}")]
-    Wasapi(String),
+    #[error("loopback backend error: {0}")]
+    Backend(String),
     #[error("capture already active")]
     AlreadyActive,
 }
@@ -183,18 +183,10 @@ pub enum LoopbackError {
 //    recorder path.
 // ═════════════════════════════════════════════════════════════════════════════
 
+#[derive(Default)]
 pub struct LoopbackCapture {
-    stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
-}
-
-impl Default for LoopbackCapture {
-    fn default() -> Self {
-        LoopbackCapture {
-            stop: Arc::new(AtomicBool::new(false)),
-            thread: None,
-        }
-    }
+    #[cfg(windows)]
+    stream: Option<cpal::Stream>,
 }
 
 impl LoopbackCapture {
@@ -203,16 +195,20 @@ impl LoopbackCapture {
     }
 
     pub fn is_active(&self) -> bool {
-        self.thread
-            .as_ref()
-            .map(|t| !t.is_finished())
-            .unwrap_or(false)
+        #[cfg(windows)]
+        {
+            self.stream.is_some()
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
     }
 
-    /// Open the default render endpoint in WASAPI loopback, spawn the capture
-    /// thread that AGCs each block, resamples to 16 kHz mono, and pushes f32
-    /// frames onto `sink`. Returns the resolved [`DeviceInfo`] synchronously so
-    /// the caller surfaces device-open errors before the thread spins.
+    /// Open the selected render endpoint in CPAL/WASAPI loopback, AGC each
+    /// block, resample to 16 kHz mono, and push f32 frames onto `sink`. Returns
+    /// the resolved [`DeviceInfo`] synchronously so the caller surfaces
+    /// device-open errors before capture is marked active.
     ///
     /// `device_id == None` uses the default render device. Serialize start/stop
     /// in the manager (concurrent WASAPI start/stop crash the audio backend).
@@ -225,31 +221,30 @@ impl LoopbackCapture {
         if self.is_active() {
             return Err(LoopbackError::AlreadyActive);
         }
-        self.stop.store(false, Ordering::SeqCst);
-        let stop = self.stop.clone();
 
-        // Resolve device info synchronously so the caller gets it (and errors)
-        // before the thread spins; the thread re-opens its own client.
-        let info = windows_impl::resolve_render_device(device_id.as_deref())
-            .map_err(|e| LoopbackError::Wasapi(e.to_string()))?;
-        let thread_info = info.clone();
-        let device_id_for_thread = device_id.clone();
-
-        let handle = std::thread::Builder::new()
-            .name("loopback-capture".into())
-            .spawn(move || {
-                if let Err(e) = windows_impl::capture_loop(
-                    device_id_for_thread.as_deref(),
-                    thread_info,
-                    sink,
-                    stop,
-                ) {
-                    log::error!("[loopback] capture loop ended with error: {e}");
-                }
-            })
-            .map_err(|e| LoopbackError::Wasapi(format!("spawn capture thread: {e}")))?;
-
-        self.thread = Some(handle);
+        let selected = cpal_loopback::resolve_output_device(device_id.as_deref())?;
+        let config = selected
+            .device
+            .default_output_config()
+            .map_err(|e| LoopbackError::Backend(format!("default output config: {e}")))?;
+        let info = DeviceInfo {
+            id: selected.id,
+            name: selected.name,
+            sample_rate: config.sample_rate(),
+            channels: config.channels(),
+        };
+        let stream = cpal_loopback::build_loopback_stream(&selected.device, &config, sink)?;
+        stream
+            .play()
+            .map_err(|e| LoopbackError::Backend(format!("start CPAL loopback stream: {e}")))?;
+        log::info!(
+            "[loopback] CPAL loopback stream started device='{}' rate={} channels={} format={:?}",
+            info.name,
+            info.sample_rate,
+            info.channels,
+            config.sample_format()
+        );
+        self.stream = Some(stream);
         Ok(info)
     }
 
@@ -262,21 +257,19 @@ impl LoopbackCapture {
         Err(LoopbackError::Unsupported)
     }
 
-    /// Signal the capture thread to stop and join it (best-effort, bounded).
-    /// The thread polls `stop` between WASAPI event waits and exits promptly.
+    /// Stop capture by dropping the CPAL stream. CPAL owns the backend callback
+    /// thread and tears it down when the stream is dropped.
     pub fn stop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(handle) = self.thread.take() {
-            // The WASAPI event wait has a 200ms timeout, so the thread checks
-            // `stop` at least 5×/s — join is bounded without a hard kill.
-            let _ = handle.join();
+        #[cfg(windows)]
+        {
+            let _ = self.stream.take();
         }
     }
 
     /// Enumerate loopback-capable (render) devices.
     #[cfg(windows)]
     pub fn list_devices() -> Result<Vec<LoopbackDeviceInfo>, LoopbackError> {
-        windows_impl::list_render_devices().map_err(|e| LoopbackError::Wasapi(e.to_string()))
+        cpal_loopback::list_output_devices()
     }
 
     #[cfg(not(windows))]
@@ -296,6 +289,211 @@ impl Drop for LoopbackCapture {
 // ═════════════════════════════════════════════════════════════════════════════
 
 #[cfg(windows)]
+mod cpal_loopback {
+    use super::*;
+    use std::time::Duration;
+
+    use cpal::traits::{DeviceTrait, HostTrait};
+    use cpal::{FromSample, Sample, SizedSample};
+
+    use crate::audio_toolkit::audio::FrameResampler;
+    use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
+
+    /// Resampler frame size (matches the recorder's 30 ms emit cadence so the
+    /// downstream Silero VAD receives whole 30 ms / 480-sample frames).
+    const RESAMPLER_FRAME_MS: u64 = 30;
+
+    pub struct SelectedOutputDevice {
+        pub id: String,
+        pub name: String,
+        pub device: cpal::Device,
+    }
+
+    struct EnumeratedOutputDevice {
+        id: String,
+        name: String,
+        is_default: bool,
+        device: cpal::Device,
+    }
+
+    fn backend_error(label: &str, err: impl std::fmt::Display) -> LoopbackError {
+        LoopbackError::Backend(format!("{label}: {err}"))
+    }
+
+    fn enumerate_output_devices() -> Result<Vec<EnumeratedOutputDevice>, LoopbackError> {
+        let host = crate::audio_toolkit::get_cpal_host();
+        let default_name = host
+            .default_output_device()
+            .and_then(|d| crate::audio_toolkit::audio::device_display_name(&d).ok());
+        let devices = host
+            .output_devices()
+            .map_err(|e| backend_error("enumerate output devices", e))?;
+
+        Ok(devices
+            .enumerate()
+            .map(|(index, device)| {
+                let name = crate::audio_toolkit::audio::device_display_name(&device)
+                    .unwrap_or_else(|_| "System Audio".to_string());
+                let is_default = Some(name.clone()) == default_name;
+                EnumeratedOutputDevice {
+                    id: index.to_string(),
+                    name,
+                    is_default,
+                    device,
+                }
+            })
+            .collect())
+    }
+
+    pub fn list_output_devices() -> Result<Vec<LoopbackDeviceInfo>, LoopbackError> {
+        Ok(enumerate_output_devices()?
+            .into_iter()
+            .map(|device| LoopbackDeviceInfo {
+                id: device.id,
+                name: device.name,
+                is_default: device.is_default,
+            })
+            .collect())
+    }
+
+    pub fn resolve_output_device(
+        device_id: Option<&str>,
+    ) -> Result<SelectedOutputDevice, LoopbackError> {
+        let mut devices = enumerate_output_devices()?;
+        if let Some(target) = device_id {
+            if let Some(index) = devices
+                .iter()
+                .position(|device| device.id == target || device.name == target)
+            {
+                let selected = devices.remove(index);
+                return Ok(SelectedOutputDevice {
+                    id: selected.id,
+                    name: selected.name,
+                    device: selected.device,
+                });
+            }
+            log::warn!("[loopback] output device id/name '{target}' not found; using default");
+        }
+
+        let selected = devices
+            .iter()
+            .position(|device| device.is_default)
+            .or(if devices.is_empty() { None } else { Some(0) })
+            .map(|index| devices.remove(index))
+            .ok_or_else(|| LoopbackError::Backend("no output devices available".to_string()))?;
+        Ok(SelectedOutputDevice {
+            id: selected.id,
+            name: selected.name,
+            device: selected.device,
+        })
+    }
+
+    pub fn build_loopback_stream(
+        device: &cpal::Device,
+        config: &cpal::SupportedStreamConfig,
+        sink: Sender<Vec<f32>>,
+    ) -> Result<cpal::Stream, LoopbackError> {
+        match config.sample_format() {
+            cpal::SampleFormat::U8 => build_loopback_stream_for_format::<u8>(device, config, sink),
+            cpal::SampleFormat::I8 => build_loopback_stream_for_format::<i8>(device, config, sink),
+            cpal::SampleFormat::I16 => {
+                build_loopback_stream_for_format::<i16>(device, config, sink)
+            }
+            cpal::SampleFormat::I32 => {
+                build_loopback_stream_for_format::<i32>(device, config, sink)
+            }
+            cpal::SampleFormat::F32 => {
+                build_loopback_stream_for_format::<f32>(device, config, sink)
+            }
+            other => Err(LoopbackError::Backend(format!(
+                "unsupported loopback sample format {other:?}"
+            ))),
+        }
+    }
+
+    fn build_loopback_stream_for_format<T>(
+        device: &cpal::Device,
+        config: &cpal::SupportedStreamConfig,
+        sink: Sender<Vec<f32>>,
+    ) -> Result<cpal::Stream, LoopbackError>
+    where
+        T: Sample + SizedSample + Send + 'static,
+        f32: FromSample<T>,
+    {
+        let channels = config.channels() as usize;
+        let device_rate = config.sample_rate() as usize;
+        let mut agc = SlowTrackingAgc::new();
+        let mut resampler = FrameResampler::new(
+            device_rate,
+            WHISPER_SAMPLE_RATE as usize,
+            Duration::from_millis(RESAMPLER_FRAME_MS),
+        );
+        let mut send_closed = false;
+
+        let stream_cb = move |data: &[T], _: &cpal::InputCallbackInfo| {
+            if send_closed {
+                return;
+            }
+
+            let mut mono = samples_to_mono_i16(data, channels);
+            agc.process(&mut mono);
+            let device_f32 = i16_to_f32(&mono);
+            resampler.push(&device_f32, |frame: &[f32]| {
+                if send_closed {
+                    return;
+                }
+                if sink.send(frame.to_vec()).is_err() {
+                    send_closed = true;
+                }
+            });
+        };
+
+        device
+            .build_input_stream(
+                &config.clone().into(),
+                stream_cb,
+                |err| log::error!("[loopback] CPAL stream error: {err}"),
+                None,
+            )
+            .map_err(|e| backend_error("build CPAL loopback stream", e))
+    }
+
+    fn samples_to_mono_i16<T>(data: &[T], channels: usize) -> Vec<i16>
+    where
+        T: Sample,
+        f32: FromSample<T>,
+    {
+        let channels = channels.max(1);
+        if channels == 1 {
+            return data.iter().map(|&sample| sample_to_i16(sample)).collect();
+        }
+
+        data.chunks_exact(channels)
+            .map(|frame| {
+                let mono = frame
+                    .iter()
+                    .map(|&sample| sample.to_sample::<f32>())
+                    .sum::<f32>()
+                    / channels as f32;
+                f32_to_i16(mono)
+            })
+            .collect()
+    }
+
+    fn sample_to_i16<T>(sample: T) -> i16
+    where
+        T: Sample,
+        f32: FromSample<T>,
+    {
+        f32_to_i16(sample.to_sample::<f32>())
+    }
+
+    fn f32_to_i16(sample: f32) -> i16 {
+        (sample * 32768.0).clamp(-32768.0, 32767.0) as i16
+    }
+}
+
+#[cfg(any())]
 mod windows_impl {
     use super::*;
     use std::collections::VecDeque;

@@ -32,6 +32,7 @@ interface TranscriptionState {
 	beginRecordingSession: () => void;
 	clearAll: () => void;
 	clearEphemeral: () => void;
+	clearItems: () => void;
 	currentRealtime: string;
 	ephemeral: EphemeralMessage | null;
 	isRecordingActive: boolean;
@@ -84,6 +85,7 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 	beginRecordingSession: () => {
 		clearEphemeralTimer();
 		set((state) => ({
+			items: [],
 			currentRealtime: "",
 			ephemeral: null,
 			isRecordingActive: true,
@@ -160,6 +162,7 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 		clearEphemeralTimer();
 		set({ ephemeral: null });
 	},
+	clearItems: () => set({ items: [] }),
 	clearAll: () => {
 		clearEphemeralTimer();
 		set({

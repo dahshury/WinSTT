@@ -1,7 +1,7 @@
 use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
-use crate::managers::transcription::TranscriptionManager;
+use crate::managers::transcription::{is_silent_recording, TranscriptionManager};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
 use crate::utils::{self, show_recording_overlay};
@@ -219,11 +219,14 @@ impl ShortcutAction for TranscribeAction {
                     return;
                 }
 
-                if samples.is_empty() {
-                    debug!("Recording produced no audio samples; skipping persistence");
+                if is_silent_recording(&samples) {
+                    debug!(
+                        "Recording produced no decodable audio ({} samples); skipping persistence",
+                        samples.len()
+                    );
                     // WinSTT terminal: nothing usable was captured. The renderer's
-                    // useTranscriptionFeed (onNoAudioDetected) shows the ephemeral
-                    // "(no audio detected)" pill and resets isRecordingActive.
+                    // useTranscriptionFeed (onNoAudioDetected) clears live overlay
+                    // state and resets isRecordingActive without showing a status pill.
                     crate::winstt::commands::dictation::SttEvents::no_audio_detected(&ah);
                     utils::hide_recording_overlay(&ah);
                     change_tray_icon(&ah, TrayIconState::Idle);

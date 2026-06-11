@@ -509,12 +509,12 @@
     "advancedTitle": "Avançado",
     "microphoneRelease": "Liberar microfone",
     "microphoneReleaseCaption": "Quando fechar o fluxo de áudio do SO após uma gravação",
-    "microphoneReleaseTooltip": "Escolhe quando o fluxo do microfone do SO é libertado — a troca é entre visibilidade do indicador de microfone em uso versus latência de resposta do PTT. 'Sempre' mantém o fluxo aberto enquanto o WinSTT estiver em execução para PTT ultra-rápido (o indicador fica aceso). 'Desligado' (padrão) fecha imediatamente em cada solta de tecla para que o indicador limpe decisivamente. As opções de duração param o motor na solta da tecla mas adiam o fecho real para que presses consecutivos dentro da janela evitem o custo de reabertura de ~10-50 ms.",
-    "microphoneReleaseAlways": "Sempre (nunca libertado)",
-    "microphoneReleaseImmediate": "Desligado (libertar na solta da tecla)",
-    "microphoneReleaseSec30": "Após 30 segundos",
-    "microphoneReleaseMin1": "Após 1 minuto",
-    "microphoneReleaseMin5": "Após 5 minutos"
+    "microphoneReleaseTooltip": "Escolhe quando o fluxo do microfone do SO é libertado — a troca é entre visibilidade do indicador de microfone em uso versus latência de resposta do PTT. 'Nunca' mantém o fluxo aberto enquanto o WinSTT estiver em execução para PTT ultra-rápido (o indicador fica aceso). 'Imediato' (padrão) fecha em cada solta de tecla para que o indicador limpe decisivamente. As opções de duração param o motor na solta da tecla mas adiam o fecho real para que presses consecutivos dentro da janela evitem o custo de reabertura de ~10-50 ms.",
+    "microphoneReleaseAlways": "Nunca",
+    "microphoneReleaseImmediate": "Imediato (libertar na solta da tecla)",
+    "microphoneReleaseSec30": "30 segundos",
+    "microphoneReleaseMin1": "1 minuto",
+    "microphoneReleaseMin5": "5 minutos"
   },
   "quality": {
     "enableRealtime": "Ativar tempo real",

@@ -509,12 +509,12 @@
     "advancedTitle": "Erweitert",
     "microphoneRelease": "Mikrofon freigeben",
     "microphoneReleaseCaption": "Wann der OS-Audiostream nach einer Aufnahme geschlossen wird",
-    "microphoneReleaseTooltip": "Legt fest, wann der OS-Mikrofon-Stream freigegeben wird — der Kompromiss liegt zwischen der Sichtbarkeit des Mikrofon-in-Verwendung-Indikators und der PTT-Reaktionslatenz. „Immer“ hält den Stream offen, solange WinSTT läuft, für mikrosekundenscnelle PTT (Indikator bleibt an). „Aus“ (Standard) schließt sofort bei jedem Loslassen der Taste, sodass der Indikator entschieden erlischt. Die Zeitoptionen stoppen die Engine beim Loslassen, verschieben aber das eigentliche Schließen, damit aufeinanderfolgende Drücke innerhalb des Fensters die ~10–50 ms Wiederöffnungskosten überspringen.",
-    "microphoneReleaseAlways": "Immer (wird nie freigegeben)",
-    "microphoneReleaseImmediate": "Aus (beim Loslassen freigeben)",
-    "microphoneReleaseSec30": "Nach 30 Sekunden",
-    "microphoneReleaseMin1": "Nach 1 Minute",
-    "microphoneReleaseMin5": "Nach 5 Minuten"
+    "microphoneReleaseTooltip": "Legt fest, wann der OS-Mikrofon-Stream freigegeben wird — der Kompromiss liegt zwischen der Sichtbarkeit des Mikrofon-in-Verwendung-Indikators und der PTT-Reaktionslatenz. „Nie“ hält den Stream offen, solange WinSTT läuft, für mikrosekundenschnelle PTT (Indikator bleibt an). „Sofort“ (Standard) schließt bei jedem Loslassen der Taste, sodass der Indikator entschieden erlischt. Die Zeitoptionen stoppen die Engine beim Loslassen, verschieben aber das eigentliche Schließen, damit aufeinanderfolgende Drücke innerhalb des Fensters die ~10–50 ms Wiederöffnungskosten überspringen.",
+    "microphoneReleaseAlways": "Nie",
+    "microphoneReleaseImmediate": "Sofort (beim Loslassen freigeben)",
+    "microphoneReleaseSec30": "30 Sekunden",
+    "microphoneReleaseMin1": "1 Minute",
+    "microphoneReleaseMin5": "5 Minuten"
   },
   "quality": {
     "enableRealtime": "Echtzeit aktivieren",

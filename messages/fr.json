@@ -509,12 +509,12 @@
     "advancedTitle": "Avancé",
     "microphoneRelease": "Libération du microphone",
     "microphoneReleaseCaption": "Quand fermer le flux audio du système après un enregistrement",
-    "microphoneReleaseTooltip": "Détermine quand le flux microphone du système est libéré — le compromis est entre la visibilité du témoin d'utilisation du micro et la latence de réponse PTT. « Toujours » maintient le flux ouvert pendant toute l'exécution de WinSTT pour une latence PTT infime (le témoin reste allumé). « Désactivé » (par défaut) ferme immédiatement à chaque relâchement de touche pour que le témoin s'éteigne nettement. Les options à durée arrêtent le moteur au relâchement de touche mais diffèrent la fermeture effective, de sorte que les pressions successives dans la fenêtre évitent le coût de réouverture (~10–50 ms).",
-    "microphoneReleaseAlways": "Toujours (jamais libéré)",
-    "microphoneReleaseImmediate": "Désactivé (libérer au relâchement)",
-    "microphoneReleaseSec30": "Après 30 secondes",
-    "microphoneReleaseMin1": "Après 1 minute",
-    "microphoneReleaseMin5": "Après 5 minutes"
+    "microphoneReleaseTooltip": "Détermine quand le flux microphone du système est libéré — le compromis est entre la visibilité du témoin d'utilisation du micro et la latence de réponse PTT. « Jamais » maintient le flux ouvert pendant toute l'exécution de WinSTT pour une latence PTT infime (le témoin reste allumé). « Immédiat » (par défaut) ferme à chaque relâchement de touche pour que le témoin s'éteigne nettement. Les options à durée arrêtent le moteur au relâchement de touche mais diffèrent la fermeture effective, de sorte que les pressions successives dans la fenêtre évitent le coût de réouverture (~10–50 ms).",
+    "microphoneReleaseAlways": "Jamais",
+    "microphoneReleaseImmediate": "Immédiat (libérer au relâchement)",
+    "microphoneReleaseSec30": "30 secondes",
+    "microphoneReleaseMin1": "1 minute",
+    "microphoneReleaseMin5": "5 minutes"
   },
   "quality": {
     "enableRealtime": "Activer le temps réel",

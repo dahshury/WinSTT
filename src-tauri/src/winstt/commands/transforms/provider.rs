@@ -19,8 +19,7 @@ use super::convert::openrouter_options;
 /// on a hard provider failure (the caller surfaces it via `transforms:failed`).
 ///
 /// Routing mirrors `runProcessText` in llm.ts exactly:
-///   - Apple Intelligence → soft-fail to the original text (CLI is macOS-only;
-///     this is a Windows app). NEVER errors.
+///   - Apple Intelligence → soft-fail to the original text in this command path.
 ///   - OpenRouter → OpenAI-compatible structured-output chat with fallback model.
 ///   - Ollama → the all-Rust streaming `/api/chat` path.
 pub(super) async fn run_transform_provider(
@@ -33,9 +32,8 @@ pub(super) async fn run_transform_provider(
     model: &str,
 ) -> Result<String, String> {
     match settings.llm.transforms.base.provider {
-        // Apple Intelligence is a soft-fail provider on Windows — paste the
-        // original text rather than blocking the pipeline (mirrors
-        // runAppleIntelligencePath's catch → return text).
+        // Apple Intelligence soft-fails here until the native provider is wired
+        // into the unified transform pipeline.
         LlmProvider::AppleIntelligence => Ok(text.to_string()),
         LlmProvider::Openrouter => {
             let api_key = settings.llm.openrouter_api_key.clone();

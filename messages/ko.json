@@ -509,12 +509,12 @@
     "advancedTitle": "고급",
     "microphoneRelease": "마이크 해제",
     "microphoneReleaseCaption": "녹음 후 OS 오디오 스트림을 닫는 시점",
-    "microphoneReleaseTooltip": "OS 마이크 스트림이 해제되는 시점을 선택합니다. 마이크 사용 표시기 가시성 대 PTT 응답 지연 사이의 트레이드오프입니다. '항상'은 WinSTT가 실행되는 동안 스트림을 열어두어 마이크초 빠른 PTT를 제공합니다(표시기가 켜진 상태 유지). '끄기'(기본값)는 키를 놓을 때마다 즉시 닫아 표시기가 명확하게 꺼집니다. 기간 옵션은 키를 놓으면 엔진을 중지하지만 실제 닫기를 지연시켜 연속 누름 시 약 10-50ms의 재열기 비용을 절약합니다.",
-    "microphoneReleaseAlways": "항상 (해제 안 함)",
-    "microphoneReleaseImmediate": "끄기 (키 해제 시 해제)",
-    "microphoneReleaseSec30": "30초 후",
-    "microphoneReleaseMin1": "1분 후",
-    "microphoneReleaseMin5": "5분 후"
+    "microphoneReleaseTooltip": "OS 마이크 스트림이 해제되는 시점을 선택합니다. 마이크 사용 표시기 가시성 대 PTT 응답 지연 사이의 트레이드오프입니다. '안 함'은 WinSTT가 실행되는 동안 스트림을 열어두어 마이크초 빠른 PTT를 제공합니다(표시기가 켜진 상태 유지). '즉시'(기본값)는 키를 놓을 때마다 닫아 표시기가 명확하게 꺼집니다. 기간 옵션은 키를 놓으면 엔진을 중지하지만 실제 닫기를 지연시켜 연속 누름 시 약 10-50ms의 재열기 비용을 절약합니다.",
+    "microphoneReleaseAlways": "안 함",
+    "microphoneReleaseImmediate": "즉시 (키를 놓을 때 해제)",
+    "microphoneReleaseSec30": "30초",
+    "microphoneReleaseMin1": "1분",
+    "microphoneReleaseMin5": "5분"
   },
   "quality": {
     "enableRealtime": "실시간 활성화",

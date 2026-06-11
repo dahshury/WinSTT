@@ -36,19 +36,20 @@ use crate::managers::transcription::TranscriptionManager;
 
 use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
 use crate::audio_toolkit::vad::{
-    SileroVad, SmoothedVad, VoiceActivityDetector, VAD_FRAME_SAMPLES, VAD_SPEECH_THRESHOLD,
+    SileroVad, SmoothedVad, VadFrame, VoiceActivityDetector, VAD_FRAME_SAMPLES,
+    VAD_SPEECH_THRESHOLD,
 };
 use crate::winstt::commands::dictation::SttEvents;
 use crate::winstt::commands::listen_events::{emit_speaker_segments, EmitSpeakerSegment};
 use crate::winstt::commands::settings::read_settings_raw;
-use crate::winstt::loopback::LoopbackCapture;
+use crate::winstt::loopback::{DeviceInfo, LoopbackCapture};
 use crate::winstt::managers::DiarizationManager;
 use crate::winstt::stt::backend::fixed_realtime_language_from_model;
 use crate::winstt::sync_ext::MutexExt;
 
 /// Silence (seconds) after speech that closes the current loopback tail. Rolling
 /// commits are the primary finalization path for continuous listen-mode audio.
-const POST_SPEECH_SILENCE_DURATION: f64 = 4.0;
+const POST_SPEECH_SILENCE_DURATION: f64 = 2.0;
 
 /// Maximum speech window sent to one final transcription job. This keeps long movies / lectures
 /// from becoming one unbounded decode while still giving the model sentence-level context.
@@ -91,6 +92,8 @@ pub struct LoopbackManager {
     /// The native WASAPI capture (render endpoint, shared-mode loopback). Owned
     /// behind a mutex so start/stop are serialized.
     capture: Mutex<LoopbackCapture>,
+    /// Resolved device for the current loopback session.
+    active_device: Mutex<Option<DeviceInfo>>,
     /// Handle to the consumer/transcription thread; joined on stop.
     consumer: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// Signals the consumer thread to stop (it also exits when the capture
@@ -105,6 +108,7 @@ impl LoopbackManager {
             transcription,
             capturing: AtomicBool::new(false),
             capture: Mutex::new(LoopbackCapture::new()),
+            active_device: Mutex::new(None),
             consumer: Mutex::new(None),
             stop_flag: Arc::new(AtomicBool::new(false)),
         }
@@ -132,9 +136,12 @@ impl LoopbackManager {
     /// Begin loopback capture: open the WASAPI render endpoint, then spawn the
     /// consumer thread that VAD-gates + transcribes the system-audio stream.
     /// Idempotent (a second call while active is a no-op). Non-blocking.
-    pub fn start(&self) -> Result<(), String> {
+    pub fn start(&self, device_id: Option<String>, model_id: String) -> Result<DeviceInfo, String> {
         if self.is_capturing() {
-            return Ok(());
+            if let Some(info) = self.active_device.lock_recover().clone() {
+                return Ok(info);
+            }
+            return Err("loopback capture is already active".to_string());
         }
 
         // Build the VAD up front so a missing model fails the start cleanly
@@ -154,22 +161,21 @@ impl LoopbackManager {
 
         self.stop_flag.store(false, Ordering::Release);
 
-        // Kick off the ASR model load in the background (same as mic dictation's
-        // TranscribeAction::start). By the time the first ~2 s-silence endpoint
-        // fires the model is ready; if it's still loading, `transcribe()` blocks
-        // on the loading condvar rather than erroring.
-        self.transcription.initiate_model_load();
+        // Listen mode must run on an explicit native-streaming model. Load it
+        // before opening capture so a missing/corrupt cache fails cleanly.
+        self.transcription.load_model_blocking(&model_id)?;
 
         // 16 kHz mono f32 frames flow from the capture thread into the consumer.
         let (tx, rx) = mpsc::channel::<Vec<f32>>();
 
         // Open WASAPI loopback (resolves device + surfaces open errors here).
-        {
+        let started_device = {
             let mut capture = self.capture.lock_recover();
             capture
-                .start(None, tx)
-                .map_err(|e| format!("failed to start loopback capture: {e}"))?;
-        }
+                .start(device_id, tx)
+                .map_err(|e| format!("failed to start loopback capture: {e}"))?
+        };
+        *self.active_device.lock_recover() = Some(started_device.clone());
 
         // Spawn the consumer/transcription loop.
         let app = self.app.clone();
@@ -178,17 +184,18 @@ impl LoopbackManager {
         let handle = std::thread::Builder::new()
             .name("loopback-consumer".into())
             .spawn(move || {
-                consumer_loop(app, transcription, rx, stop_flag, vad);
+                consumer_loop(app, transcription, rx, stop_flag, vad, model_id);
             })
             .map_err(|e| {
                 // Roll back the capture if the consumer thread couldn't spawn.
                 self.capture.lock_recover().stop();
+                *self.active_device.lock_recover() = None;
                 format!("failed to spawn loopback consumer: {e}")
             })?;
 
         *self.consumer.lock_recover() = Some(handle);
         self.capturing.store(true, Ordering::Release);
-        Ok(())
+        Ok(started_device)
     }
 
     /// Stop loopback capture + the consumer thread. Idempotent.
@@ -199,6 +206,7 @@ impl LoopbackManager {
         // Stop the WASAPI capture first; this closes the channel so the consumer
         // loop's recv() returns and the thread winds down.
         self.capture.lock_recover().stop();
+        *self.active_device.lock_recover() = None;
 
         if let Some(handle) = self.consumer.lock_recover().take() {
             let _ = handle.join();
@@ -225,6 +233,7 @@ fn consumer_loop(
     rx: Receiver<Vec<f32>>,
     stop_flag: Arc<AtomicBool>,
     mut vad: Box<dyn VoiceActivityDetector>,
+    model_id: String,
 ) {
     // How many consecutive silence frames close an utterance.
     let silence_frames_to_end = ((POST_SPEECH_SILENCE_DURATION * 1000.0) / 30.0).round() as usize;
@@ -234,10 +243,12 @@ fn consumer_loop(
     let (commit_tx, commit_rx) = mpsc::sync_channel::<Vec<f32>>(LISTEN_COMMIT_QUEUE_CAPACITY);
     let worker_app = app.clone();
     let worker_transcription = transcription.clone();
+    let worker_model_id = model_id.clone();
     let worker = match std::thread::Builder::new()
         .name("loopback-transcriber".into())
-        .spawn(move || transcription_worker_loop(worker_app, worker_transcription, commit_rx))
-    {
+        .spawn(move || {
+            transcription_worker_loop(worker_app, worker_transcription, commit_rx, worker_model_id);
+        }) {
         Ok(handle) => handle,
         Err(e) => {
             log::error!("[loopback] failed to spawn transcription worker: {e}");
@@ -279,14 +290,15 @@ fn consumer_loop(
         // Process whole 30 ms frames.
         while frame_acc.len() >= VAD_FRAME_SAMPLES {
             let frame: Vec<f32> = frame_acc.drain(0..VAD_FRAME_SAMPLES).collect();
-            let is_voice = vad.is_voice(&frame).unwrap_or(false);
+            let vad_frame = vad.push_frame(&frame).unwrap_or(VadFrame::Noise);
 
-            if is_voice {
+            if let VadFrame::Speech(vad_audio) = vad_frame {
                 if !in_speech {
                     in_speech = true;
+                    SttEvents::vad_start(&app);
                 }
                 silence_frames = 0;
-                speech.extend_from_slice(&frame);
+                speech.extend_from_slice(vad_audio);
             } else if in_speech {
                 // Trailing silence is kept in the buffer (it gives the model a
                 // clean tail) until the endpoint fires.
@@ -296,6 +308,7 @@ fn consumer_loop(
                     && queue_commit(&commit_tx, &mut speech, None)
                 {
                     clear_realtime_preview(&app);
+                    SttEvents::vad_stop(&app);
                     in_speech = false;
                     silence_frames = 0;
                 }
@@ -315,6 +328,9 @@ fn consumer_loop(
 
     // Session ending: flush whatever speech remains so the last sentence isn't
     // lost when the user stops Listen mode mid-utterance.
+    if in_speech {
+        SttEvents::vad_stop(&app);
+    }
     send_blocking_commit(&commit_tx, &mut speech);
     drop(commit_tx);
     let _ = worker.join();
@@ -426,22 +442,28 @@ fn transcription_worker_loop(
     app: AppHandle,
     transcription: Arc<TranscriptionManager>,
     rx: Receiver<Vec<f32>>,
+    model_id: String,
 ) {
     while let Ok(audio) = rx.recv() {
-        transcribe_and_emit(&app, &transcription, audio);
+        transcribe_and_emit(&app, &transcription, &model_id, audio);
     }
 }
 
 /// Transcribe a completed speech buffer and route the result the same way mic dictation does:
 /// emit `stt:full-sentence`, run diarization, paste. No-op for sub-threshold buffers.
-fn transcribe_and_emit(app: &AppHandle, transcription: &TranscriptionManager, audio: Vec<f32>) {
+fn transcribe_and_emit(
+    app: &AppHandle,
+    transcription: &TranscriptionManager,
+    model_id: &str,
+    audio: Vec<f32>,
+) {
     if audio.len() < MIN_SPEECH_SAMPLES {
         return;
     }
 
     SttEvents::transcription_start(app, None);
     let start = std::time::Instant::now();
-    let text = match transcription.transcribe(audio) {
+    let text = match transcription.transcribe_with_model(model_id, audio) {
         Ok(t) => t,
         Err(e) => {
             log::error!("[loopback] transcription failed: {e}");
@@ -504,10 +526,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn silence_frames_threshold_matches_four_seconds() {
-        // 4.0 s / 30 ms = ~133 frames.
+    fn silence_frames_threshold_matches_two_seconds() {
+        // 2.0 s / 30 ms = ~67 frames.
         let frames = ((POST_SPEECH_SILENCE_DURATION * 1000.0) / 30.0).round() as usize;
-        assert_eq!(frames, 133);
+        assert_eq!(frames, 67);
     }
 
     #[test]

@@ -142,9 +142,63 @@ const CASES: readonly RegressionCase[] = [
 	},
 ];
 
+// TS mirror of the Rust runtime normalizer `explode_inline_lists`
+// (src-tauri/src/winstt/llm/normalize.rs). Applied here so --review shows what
+// the app actually pastes after layout normalization. Keep the two in sync.
+function explodeInlineLists(text: string): string {
+	return text.split("\n").map(explodeLine).join("\n");
+}
+
+function explodeLine(line: string): string {
+	return explodeNumbered(line) ?? explodeBulleted(line) ?? line;
+}
+
+function explodeNumbered(line: string): string | null {
+	const markers: Array<{ start: number; contentStart: number; num: number }> = [];
+	const re = /(\d{1,3})[.)]\s+/g;
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(line)) !== null) {
+		markers.push({ start: m.index, contentStart: m.index + m[0].length, num: Number(m[1]) });
+	}
+	const run: typeof markers = [];
+	for (const mk of markers) {
+		if (mk.num === run.length + 1) run.push(mk);
+		else if (mk.num === 1) run.splice(0, run.length, mk);
+	}
+	if (run.length < 2) return null;
+	const leadIn = line.slice(0, run[0]!.start).replace(/\s+$/, "");
+	const parts: string[] = [];
+	if (leadIn) parts.push(leadIn + (leadIn.endsWith(":") ? "\n" : ""));
+	run.forEach((mk, idx) => {
+		const end = idx + 1 < run.length ? run[idx + 1]!.start : line.length;
+		parts.push(`${mk.num}. ${line.slice(mk.contentStart, end).trim()}`);
+	});
+	return parts.join("\n");
+}
+
+function explodeBulleted(line: string): string | null {
+	const starts: number[] = [];
+	for (let i = 0; i + 1 < line.length; i++) {
+		const isMarker = (line[i] === "*" || line[i] === "-") && line[i + 1] === " ";
+		const atBoundary = i === 0 || line[i - 1] === " ";
+		if (isMarker && atBoundary) {
+			starts.push(i);
+			i += 1;
+		}
+	}
+	if (starts.length < 2) return null;
+	const leadIn = line.slice(0, starts[0]).replace(/\s+$/, "");
+	const parts: string[] = [];
+	if (leadIn) parts.push(leadIn + (leadIn.endsWith(":") ? "\n" : ""));
+	starts.forEach((start, idx) => {
+		const end = idx + 1 < starts.length ? starts[idx + 1]! : line.length;
+		parts.push(`* ${line.slice(start + 2, end).trim()}`);
+	});
+	return parts.join("\n");
+}
+
 function normalize(text: string): string {
-	return text
-		.replace(/\r\n/g, "\n")
+	return explodeInlineLists(text.replace(/\r\n/g, "\n"))
 		.split("\n")
 		.map((line) => line.trimEnd())
 		.join("\n")
@@ -159,26 +213,36 @@ function selectedCases(): readonly RegressionCase[] {
 	return CASES.filter((testCase) => ids.has(testCase.id));
 }
 
-async function runCase(testCase: RegressionCase, system: string) {
-	const endpoint = process.env.OLLAMA_ENDPOINT ?? "http://127.0.0.1:11434";
-	const model = process.env.OLLAMA_MODEL ?? "gemma4:e2b";
-	const numCtx = Number(process.env.OLLAMA_NUM_CTX ?? 16384);
-	// Mirrors the runtime user prompt composed by `active_modifier_user_prompt`
-	// in src-tauri/src/winstt/llm/prompts.rs for [restructure, rewordForClarity],
-	// including the synthetic restructure pattern demos (small local models
-	// apply formatting patterns far more reliably from compact demos near the
-	// end of the USER prompt than from rules in the system prompt). Keep the
-	// two in sync; everything here must stay general — no case-specific
-	// phrases lifted from the regression inputs.
-	const userPrompt = [
+// Mirrors the runtime user prompt composed by `active_modifier_user_prompt`
+// in src-tauri/src/winstt/llm/prompts.rs for [restructure, rewordForClarity],
+// including the synthetic restructure pattern demos (small models apply
+// formatting patterns far more reliably from compact demos near the end of the
+// USER prompt than from rules in the system prompt). Keep the two in sync;
+// everything here must stay general — no case-specific phrases lifted from the
+// regression inputs.
+function buildUserPrompt(before: string): string {
+	return [
 		"First apply base cleanup: fix punctuation, capitalization, grammar, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken numbers, dates, times, currency, percentages, units, and equations to figures and symbols (for example, \"one\" -> \"1\", \"twenty five dollars\" -> \"$25\", \"one percent\" -> \"1%\", \"one plus one equals two\" -> \"1 + 1 = 2\"); remove fillers, repeats, and false starts; preserve the speaker's meaning and every idea.",
 		"Active operations to apply exactly: actively structure announced counts, ordered steps, parallel items, inventories, and label-value mappings into numbered or `* ` bullet lists with the lead-in kept as prose, ending each list where the speech moves to a new topic, and keeping everything else prose; visibly rewrite unclear or awkward phrasing into clearer natural language, fixing obvious wrong-word slips and vague placeholders while preserving meaning, point of view, and trailing fragments.",
-		'Patterns to apply wherever the text matches them: "You should update the docs, fix the tests and ping the team." -> "You should:\n\n* update the docs\n* fix the tests\n* ping the team" "The status should be red for errors, yellow for warnings and green for success." -> "The status should be:\n\n* red for errors\n* yellow for warnings\n* green for success" "One. Open the settings. Second, change the language. Third, restart the app, then the first issue is that the language resets." -> "1. Open the settings.\n2. Change the language.\n3. Restart the app.\n\nThe first issue is that the language resets."',
+		'Format every list with REAL line breaks (newline characters in the `text` value): each numbered item or bullet on its own line, and a blank line before the first item and after the last item. Never put list items on one line separated by spaces. Patterns to apply wherever the text matches them: "You should update the docs, fix the tests and ping the team." -> "You should:\n\n* update the docs\n* fix the tests\n* ping the team" "The status should be red for errors, yellow for warnings and green for success." -> "The status should be:\n\n* red for errors\n* yellow for warnings\n* green for success" "One. Open the settings. Second, change the language. Third, restart the app, then the first issue is that the language resets." -> "1. Open the settings.\n2. Change the language.\n3. Restart the app.\n\nThe first issue is that the language resets."',
 		"Apply the active operations visibly unless the input is empty or pure noise. Before returning, do a final check: no sentence, item, or action from the input is missing; announced counts and ordered steps are formatted as numbered lists with each item on its own line; parallel items and label-value mappings are `* ` bullets; every list has a blank line before and after it; literal labels and values are quoted; intent framing and trailing fragments are preserved; run-on sentences are split.",
 		"Transform the following text according to the style guide above and these active operations. Return ONLY the transformed text with no commentary, explanations, labels, or JSON formatting.",
 		"",
-		`Text to transform:\n${testCase.before}`,
+		`Text to transform:\n${before}`,
 	].join("\n");
+}
+
+const TEXT_SCHEMA = {
+	type: "object",
+	properties: { text: { type: "string" } },
+	required: ["text"],
+	additionalProperties: false,
+} as const;
+
+async function callOllama(system: string, userPrompt: string, id: string): Promise<string> {
+	const endpoint = process.env.OLLAMA_ENDPOINT ?? "http://127.0.0.1:11434";
+	const model = process.env.OLLAMA_MODEL ?? "gemma4:e2b";
+	const numCtx = Number(process.env.OLLAMA_NUM_CTX ?? 16384);
 	const response = await fetch(`${endpoint}/api/chat`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
@@ -190,31 +254,108 @@ async function runCase(testCase: RegressionCase, system: string) {
 			],
 			stream: false,
 			think: false,
-			format: {
-				type: "object",
-				properties: { text: { type: "string" } },
-				required: ["text"],
-				additionalProperties: false,
-			},
+			format: TEXT_SCHEMA,
 			options: { temperature: 0, num_ctx: numCtx, num_predict: 8192 },
 		}),
 	});
 	if (!response.ok) {
-		throw new Error(`${testCase.id}: Ollama HTTP ${response.status} ${await response.text()}`);
+		throw new Error(`${id}: Ollama HTTP ${response.status} ${await response.text()}`);
 	}
 	const data = await response.json();
 	const raw = data.message?.content ?? "";
-	const parsed = JSON.parse(raw) as { text: string };
-	const actual = normalize(parsed.text);
+	return (JSON.parse(raw) as { text: string }).text;
+}
+
+async function callOpenRouter(system: string, userPrompt: string, id: string): Promise<string> {
+	const apiKey = process.env.OPENROUTER_API_KEY;
+	if (!apiKey) throw new Error("OPENROUTER_API_KEY is required for the openrouter provider");
+	const model = process.env.OPENROUTER_MODEL ?? "google/gemini-3.1-flash-lite";
+	const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+			authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			messages: [
+				{ role: "system", content: system },
+				{ role: "user", content: userPrompt },
+			],
+			temperature: 0,
+			response_format: {
+				type: "json_schema",
+				json_schema: { name: "cleaned_text", strict: true, schema: TEXT_SCHEMA },
+			},
+		}),
+	});
+	if (!response.ok) {
+		throw new Error(`${id}: OpenRouter HTTP ${response.status} ${await response.text()}`);
+	}
+	const data = await response.json();
+	const raw = data.choices?.[0]?.message?.content ?? "";
+	if (typeof raw !== "string" || raw.trim() === "") {
+		throw new Error(`${id}: OpenRouter empty content: ${JSON.stringify(data).slice(0, 400)}`);
+	}
+	return extractText(raw);
+}
+
+/** Pull the transformed text out of a model response. Structured-output models
+ *  return `{"text": "..."}`, but gemini-flash-lite occasionally wraps that in a
+ *  ```json fence or returns the cleaned text directly — tolerate all three so a
+ *  single stray response doesn't abort the whole run. */
+function extractText(raw: string): string {
+	const unfenced = raw
+		.trim()
+		.replace(/^```(?:json)?\s*/i, "")
+		.replace(/\s*```$/i, "")
+		.trim();
+	try {
+		const parsed = JSON.parse(unfenced) as { text?: unknown };
+		if (parsed && typeof parsed.text === "string") return parsed.text;
+	} catch {
+		// Not JSON — fall through and treat the (unfenced) content as the text.
+	}
+	return unfenced;
+}
+
+const PROVIDER =
+	process.env.PROVIDER ?? (process.env.OPENROUTER_API_KEY ? "openrouter" : "ollama");
+
+async function runCase(testCase: RegressionCase, system: string) {
+	const userPrompt = buildUserPrompt(testCase.before);
+	const text =
+		PROVIDER === "openrouter"
+			? await callOpenRouter(system, userPrompt, testCase.id)
+			: await callOllama(system, userPrompt, testCase.id);
+	const actual = normalize(text);
 	const expected = normalize(testCase.after);
 	return { actual, expected, pass: actual === expected };
+}
+
+if (process.argv.includes("--selftest")) {
+	const samples = [
+		"There are local operations which are done inside the frontend: 1. Sending a message. 2. Modifying reservations. 3. Canceling reservations. 4. Making new reservations. For all of these, there should not be a notification.",
+		"You should: * update the docs * fix the tests * ping the team",
+		"This is plain prose with no list at all.",
+	];
+	for (const s of samples) {
+		console.log("IN :", JSON.stringify(s));
+		console.log("OUT:", JSON.stringify(normalize(s)));
+		console.log("---");
+	}
+	process.exit(0);
 }
 
 const system = buildSystemPrompt(PRESETS);
 const cases = selectedCases();
 const failures: Array<{ id: string; actual: string; expected: string }> = [];
+const MODEL_LABEL =
+	PROVIDER === "openrouter"
+		? (process.env.OPENROUTER_MODEL ?? "google/gemini-3.1-flash-lite")
+		: (process.env.OLLAMA_MODEL ?? "gemma4:e2b");
 console.log(
-	`Running ${cases.length} post-processing regression case(s). Prompt chars=${system.length}. Mode=${
+	`Running ${cases.length} post-processing regression case(s). Provider=${PROVIDER} (${MODEL_LABEL}). Prompt chars=${system.length}. Mode=${
 		REVIEW_MODE ? "semantic-review" : "exact"
 	}.`,
 );

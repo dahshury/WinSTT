@@ -2,23 +2,34 @@ import { Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { RowSelectionState } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
-import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import {
 	DataGrid,
 	DataGridContainer,
+	type DataGridTableLayout,
 	DataGridPagination,
 	DataGridTable,
 	DataGridToolbar,
 } from "@/shared/ui/data-grid";
-import { cn } from "@/shared/lib/cn";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { CrudAddForm } from "./CrudAddForm";
 import { type CrudTableProps, DEFAULT_PAGE_SIZE } from "./types";
 import { useCrudEditing } from "./use-crud-editing";
 import { useCrudForm } from "./use-crud-form";
 import { useCrudGrid } from "./use-crud-grid";
 import { useCrudGridLabels } from "./use-crud-grid-labels";
+
+const CRUD_GRID_TABLE_LAYOUT = {
+	cellBorder: false,
+	dense: true,
+	headerBackground: true,
+	headerBorder: false,
+	presentation: "layered",
+	rowBorder: false,
+	striped: false,
+	width: "auto",
+} satisfies DataGridTableLayout;
 
 export type {
 	CrudColumn,
@@ -62,7 +73,6 @@ export function CrudTable<TEntry, TAdd>({
 	sortable = false,
 	updateSchema,
 }: CrudTableProps<TEntry, TAdd>) {
-	const level = Math.min(useSurface() + 1, 8);
 	const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
 	const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
@@ -150,99 +160,82 @@ export function CrudTable<TEntry, TAdd>({
 	) : null;
 
 	return (
-		<SurfaceProvider value={level}>
-			<div
-				className={cn(
-					"flex flex-col gap-3 rounded-lg border border-border p-3",
-					surfaceBg(level),
-				)}
-			>
-				{/* Search + column-visibility chrome rides ABOVE the add row so the add
+		<ElevatedSurface className="flex flex-col gap-2.5 p-2">
+			{/* Search + column-visibility chrome rides ABOVE the add row so the add
 			    field flows straight into the table with nothing wedged between
 			    them. The search mirrors this table's add-entry field (elevated for
 			    the separate layout, minimal for joined) and carries the
 			    column-visibility trigger in its trailing slot, so the two read as
 			    one grouped control. */}
-				{showToolbar ? (
-					<DataGrid
-						labels={dataGridLabels}
-						resizable={resizable}
-						table={table}
-						tableLayout={{
-							cellBorder: true,
-							dense: true,
-							striped: true,
-							width: "auto",
-						}}
-					>
-						<DataGridToolbar
-							appearance={addFormLayout === "joined" ? "minimal" : "elevated"}
-							columnControls={columnControls}
-							searchable={searchable}
-						/>
-					</DataGrid>
-				) : null}
-				<div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-					<div className="min-w-0 flex-1">
-						<CrudAddForm
-							addFieldErrorId={form.addFieldErrorId}
-							addFormLayout={addFormLayout}
-							errors={form.errors}
-							fields={fields}
-							handleSubmit={form.handleSubmit}
-							hasAddErrors={form.hasAddErrors}
-							isAddDisabled={form.isAddDisabled}
-							labels={labels}
-							setField={form.setField}
-							values={form.values}
-						/>
-					</div>
-					<Button
-						aria-label={deleteSelectedLabel}
-						className="h-9 shrink-0 gap-1.5 rounded-md bg-error-dim/40 px-2.5 font-medium text-error text-xs ring-1 ring-error/25 transition-colors duration-150 hover:bg-error-dim/70 hover:ring-error/40 disabled:opacity-50"
-						disabled={selectedCount === 0}
-						onClick={handleRemoveSelected}
-					>
-						<HugeiconsIcon aria-hidden="true" icon={Delete02Icon} size={14} />
-						<span>{deleteSelectedLabel}</span>
-					</Button>
-				</div>
+			{showToolbar ? (
 				<DataGrid
 					labels={dataGridLabels}
 					resizable={resizable}
 					table={table}
-					tableLayout={{
-						cellBorder: true,
-						dense: true,
-						striped: true,
-						width: "auto",
-					}}
+					tableLayout={CRUD_GRID_TABLE_LAYOUT}
 				>
-					<DataGridContainer>
-						<DataGridTable />
-					</DataGridContainer>
-					{showPagination ? (
-						<DataGridPagination
-							actions={deleteAllControl}
-							showPageSize={false}
-						/>
-					) : deleteAllControl ? (
-						<div className="flex justify-end pt-1">{deleteAllControl}</div>
-					) : null}
-				</DataGrid>
-				{onClearAll && (
-					<ConfirmDialog
-						description={labels.clearDescription}
-						onConfirm={onClearAll}
-						onOpenChange={setClearConfirmOpen}
-						open={clearConfirmOpen}
-						title={labels.clearTitle}
-						{...(labels.clearConfirm
-							? { confirmLabel: labels.clearConfirm }
-							: {})}
+					<DataGridToolbar
+						appearance={addFormLayout === "joined" ? "minimal" : "elevated"}
+						columnControls={columnControls}
+						searchable={searchable}
 					/>
-				)}
+				</DataGrid>
+			) : null}
+			<div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+				<div className="min-w-0 flex-1">
+					<CrudAddForm
+						addFieldErrorId={form.addFieldErrorId}
+						addFormLayout={addFormLayout}
+						errors={form.errors}
+						fields={fields}
+						handleSubmit={form.handleSubmit}
+						hasAddErrors={form.hasAddErrors}
+						isAddDisabled={form.isAddDisabled}
+						labels={labels}
+						setField={form.setField}
+						values={form.values}
+					/>
+				</div>
+				<Button
+					aria-label={deleteSelectedLabel}
+					className="h-9 shrink-0 gap-1.5 rounded-md bg-error-dim/40 px-2.5 font-medium text-error text-xs ring-1 ring-error/25 transition-colors duration-150 hover:bg-error-dim/70 hover:ring-error/40 disabled:opacity-50"
+					disabled={selectedCount === 0}
+					onClick={handleRemoveSelected}
+				>
+					<HugeiconsIcon aria-hidden="true" icon={Delete02Icon} size={14} />
+					<span>{deleteSelectedLabel}</span>
+				</Button>
 			</div>
-		</SurfaceProvider>
+			<DataGrid
+				labels={dataGridLabels}
+				resizable={resizable}
+				table={table}
+				tableLayout={CRUD_GRID_TABLE_LAYOUT}
+			>
+				<DataGridContainer
+					border={false}
+					className="rounded-lg bg-surface-3/70 p-1 shadow-surface-1 ring-1 ring-divider/70"
+				>
+					<DataGridTable />
+				</DataGridContainer>
+				{showPagination ? (
+					<DataGridPagination actions={deleteAllControl} showPageSize={false} />
+				) : deleteAllControl ? (
+					<div className="flex justify-end pt-1">{deleteAllControl}</div>
+				) : null}
+			</DataGrid>
+			{onClearAll && (
+				<ConfirmDialog
+					description={labels.clearDescription}
+					onConfirm={onClearAll}
+					onOpenChange={setClearConfirmOpen}
+					open={clearConfirmOpen}
+					title={labels.clearTitle}
+					{...(labels.clearConfirm
+						? { confirmLabel: labels.clearConfirm }
+						: {})}
+				/>
+			)}
+		</ElevatedSurface>
 	);
 }

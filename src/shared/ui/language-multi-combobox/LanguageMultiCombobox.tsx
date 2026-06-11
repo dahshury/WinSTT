@@ -12,7 +12,10 @@ import {
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import type { SelectOption } from "@/shared/ui/select";
+import { Tooltip } from "@/shared/ui/tooltip";
 import "@/shared/ui/searchable-select/searchable-select.css";
+
+const COLLAPSED_SELECTION_THRESHOLD = 3;
 
 export interface LanguageMultiComboboxProps {
 	ariaLabel: string;
@@ -21,7 +24,7 @@ export interface LanguageMultiComboboxProps {
 	onChange: (value: string[]) => void;
 	options: readonly SelectOption[];
 	placeholder: string;
-	/** Heading shown above the selected-language chips inside the open popup. */
+	/** Heading shown above the selected-language summary inside the open popup. */
 	selectedHeading: string;
 	selectedCountLabel: (count: number) => string;
 	/** aria-label for a chip's remove button, e.g. "Remove English". */
@@ -64,6 +67,22 @@ function SelectedChip({
 	);
 }
 
+function SelectedCountChip({
+	label,
+	tooltip,
+}: {
+	label: string;
+	tooltip: string;
+}) {
+	return (
+		<Tooltip content={tooltip} side="bottom">
+			<span className="inline-flex h-6 min-w-9 items-center justify-center rounded-md border border-border bg-surface-1 px-2 font-mono font-semibold text-body-sm text-foreground">
+				{label}
+			</span>
+		</Tooltip>
+	);
+}
+
 function optionMatches(option: SelectOption, query: string): boolean {
 	const q = query.trim().toLowerCase();
 	return (
@@ -74,21 +93,14 @@ function optionMatches(option: SelectOption, query: string): boolean {
 }
 
 function summarizeSelection(
-	options: readonly SelectOption[],
-	value: readonly string[],
+	labels: readonly string[],
 	selectedCountLabel: (count: number) => string,
 	placeholder: string,
 ): string {
-	if (value.length === 0) {
-		return placeholder;
-	}
-	const labels = value
-		.map((id) => options.find((option) => option.id === id)?.label)
-		.filter((label): label is string => Boolean(label));
 	if (labels.length === 0) {
 		return placeholder;
 	}
-	if (labels.length <= 2) {
+	if (labels.length < COLLAPSED_SELECTION_THRESHOLD) {
 		return labels.join(", ");
 	}
 	return selectedCountLabel(labels.length);
@@ -117,6 +129,7 @@ export function LanguageMultiCombobox({
 	const selectedOptions = value
 		.map((id) => options.find((option) => option.id === id))
 		.filter((option): option is SelectOption => Boolean(option));
+	const selectedLabels = selectedOptions.map((option) => option.label);
 	const checkedIndices = new Set<number>();
 	visibleOptions.forEach((option, index) => {
 		if (selected.has(option.id)) {
@@ -130,11 +143,17 @@ export function LanguageMultiCombobox({
 	const popupShadow = Math.max(popupLevel, 6);
 	const popupBg = surfaceBg(popupLevel);
 	const closedDisplay = summarizeSelection(
-		options,
-		value,
+		selectedLabels,
 		selectedCountLabel,
 		placeholder,
 	);
+	const closedTooltip =
+		!open && selectedLabels.length >= COLLAPSED_SELECTION_THRESHOLD
+			? selectedLabels.join("\n")
+			: undefined;
+	const selectedTooltip = selectedLabels.join("\n");
+	const selectedSummaryCollapsed =
+		selectedLabels.length >= COLLAPSED_SELECTION_THRESHOLD;
 
 	const toggleOption = (id: string): void => {
 		const next = selected.has(id)
@@ -142,6 +161,33 @@ export function LanguageMultiCombobox({
 			: [...value, id];
 		onChange(next);
 	};
+
+	const closedTrigger = (
+		<div className="relative isolate flex w-full items-center">
+			<Combobox.Input
+				aria-label={ariaLabel}
+				className={cn(
+					`flex h-8 w-full items-center rounded-lg ${surfaceClasses(inputLevel)} pr-7 pl-2.5 font-inherit text-body text-foreground leading-normal outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1`,
+					disabled && "cursor-not-allowed opacity-40",
+				)}
+				onClick={() => {
+					if (!disabled) {
+						setOpen(true);
+					}
+				}}
+				placeholder={placeholder}
+			/>
+			<Combobox.Trigger
+				aria-label="Open popup"
+				className={cn(
+					"absolute top-1/2 right-1.5 flex size-5 shrink-0 -translate-y-1/2 items-center justify-center rounded-xs border-none bg-transparent p-0 text-foreground-dim",
+					disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer",
+				)}
+			>
+				<HugeiconsIcon icon={ArrowDown01Icon} size={14} />
+			</Combobox.Trigger>
+		</div>
+	);
 
 	return (
 		<Combobox.Root
@@ -159,30 +205,13 @@ export function LanguageMultiCombobox({
 			open={open}
 			value={null}
 		>
-			<div className="relative isolate flex w-full items-center">
-				<Combobox.Input
-					aria-label={ariaLabel}
-					className={cn(
-						`flex h-8 w-full items-center rounded-lg ${surfaceClasses(inputLevel)} pr-7 pl-2.5 font-inherit text-body text-foreground leading-normal outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1`,
-						disabled && "cursor-not-allowed opacity-40",
-					)}
-					onClick={() => {
-						if (!disabled) {
-							setOpen(true);
-						}
-					}}
-					placeholder={placeholder}
-				/>
-				<Combobox.Trigger
-					aria-label="Open popup"
-					className={cn(
-						"absolute top-1/2 right-1.5 flex size-5 shrink-0 -translate-y-1/2 items-center justify-center rounded-xs border-none bg-transparent p-0 text-foreground-dim",
-						disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer",
-					)}
-				>
-					<HugeiconsIcon icon={ArrowDown01Icon} size={14} />
-				</Combobox.Trigger>
-			</div>
+			{closedTooltip ? (
+				<Tooltip content={closedTooltip} side="top">
+					{closedTrigger}
+				</Tooltip>
+			) : (
+				closedTrigger
+			)}
 
 			<Combobox.Portal>
 				<SurfaceProvider value={popupLevel}>
@@ -211,14 +240,21 @@ export function LanguageMultiCombobox({
 											{selectedHeading}
 										</div>
 										<div className="flex max-h-[4.5rem] flex-wrap gap-1 overflow-y-auto">
-											{selectedOptions.map((option) => (
-												<SelectedChip
-													key={option.id}
-													label={option.label}
-													onRemove={() => toggleOption(option.id)}
-													removeLabel={removeLabel}
+											{selectedSummaryCollapsed ? (
+												<SelectedCountChip
+													label={selectedCountLabel(selectedLabels.length)}
+													tooltip={selectedTooltip}
 												/>
-											))}
+											) : (
+												selectedOptions.map((option) => (
+													<SelectedChip
+														key={option.id}
+														label={option.label}
+														onRemove={() => toggleOption(option.id)}
+														removeLabel={removeLabel}
+													/>
+												))
+											)}
 										</div>
 									</div>
 								) : null}

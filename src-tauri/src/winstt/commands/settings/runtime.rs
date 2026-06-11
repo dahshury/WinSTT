@@ -268,7 +268,9 @@ fn llm_warm_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> 
     if previous_models.is_empty() && next_models.is_empty() {
         return false;
     }
-    previous.llm.endpoint != next.llm.endpoint || previous_models != next_models
+    previous.llm.endpoint != next.llm.endpoint
+        || previous.global.model_unload_timeout != next.global.model_unload_timeout
+        || previous_models != next_models
 }
 
 pub(crate) fn warm_llm_models_async(app: &AppHandle) {
@@ -440,8 +442,28 @@ mod tests {
     }
 
     #[test]
+    fn llm_warmup_only_targets_enabled_ollama_provider_models() {
+        use crate::winstt::settings_schema::{LlmProvider, ModelUnloadTimeout};
+
+        let mut settings = WinsttSettings::default();
+        assert!(enabled_ollama_models(&settings).is_empty());
+
+        settings.llm.dictation.enabled = true;
+        settings.llm.dictation.base.provider = LlmProvider::Openrouter;
+        settings.llm.dictation.base.model = "openai/gpt-4.1-mini".into();
+        assert!(enabled_ollama_models(&settings).is_empty());
+
+        settings.llm.dictation.base.provider = LlmProvider::Ollama;
+        settings.llm.dictation.base.model = "gemma3:4b".into();
+        assert!(!enabled_ollama_models(&settings).is_empty());
+
+        settings.global.model_unload_timeout = ModelUnloadTimeout::Immediately;
+        assert!(enabled_ollama_models(&settings).is_empty());
+    }
+
+    #[test]
     fn llm_warmup_reacts_only_to_ollama_warm_inputs() {
-        use crate::winstt::settings_schema::LlmProvider;
+        use crate::winstt::settings_schema::{LlmProvider, ModelUnloadTimeout};
 
         let mut prev = WinsttSettings::default();
         prev.llm.endpoint = "http://localhost:11434".into();
@@ -464,5 +486,9 @@ mod tests {
         let mut provider_swap = prev.clone();
         provider_swap.llm.dictation.base.provider = LlmProvider::Openrouter;
         assert!(llm_warm_inputs_changed(&prev, &provider_swap));
+
+        let mut unload_timeout_change = prev.clone();
+        unload_timeout_change.global.model_unload_timeout = ModelUnloadTimeout::Hour1;
+        assert!(llm_warm_inputs_changed(&prev, &unload_timeout_change));
     }
 }

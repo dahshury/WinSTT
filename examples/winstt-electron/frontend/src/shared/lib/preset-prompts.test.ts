@@ -136,7 +136,8 @@ describe("preset-prompts", () => {
 		const r = getPresetPrompt("restructure");
 		expect(r.toLowerCase()).toContain("actively reshape content");
 		expect(r).toContain("Do NOT convert text to a list merely because it has several sentences");
-		expect(r.toLowerCase()).toContain("never turn a standalone question into a list item");
+		expect(r.toLowerCase()).toContain("never turn a question into a list item");
+		expect(r).toContain("even several questions in a row");
 		expect(r).toContain("A list ends where the enumeration ends");
 	});
 

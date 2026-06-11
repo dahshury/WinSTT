@@ -83,9 +83,9 @@ const PREVIEW_OVERLAY_HEIGHT: f64 = 660.0;
 const FLOATING_BOTTOM_GAP: f64 = 60.0;
 
 /// Renderer-measured rectangle, in overlay-window CSS/logical pixels, that
-/// should remain native-hit-testable. Windows applies this as the overlay HWND's
-/// region, so transparent pixels outside the actual pill surfaces do not block
-/// the app underneath while the overlay is interactive.
+/// should remain native-hit-testable. Native overlay implementations use this
+/// as the interactive region so transparent pixels outside the actual pill
+/// surfaces do not block the app underneath while the overlay is interactive.
 #[derive(Clone, Debug, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct OverlayHitRect {

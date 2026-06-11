@@ -844,9 +844,9 @@ async wakewordCancelModelDownload() : Promise<WakeWordModelStatusPayload> {
  * WASAPI loop is a compile-loop spike (see `LoopbackManager::start`); the
  * command owns the device-name resolution + the started event.
  */
-async startListen(deviceIndex: number) : Promise<Result<null, string>> {
+async startListen(deviceIndex: number, modelId: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_listen", { deviceIndex }) };
+    return { status: "ok", data: await TAURI_INVOKE("start_listen", { deviceIndex, modelId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2544,7 +2544,7 @@ export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
  * (NOT a PyAudio host-API index — there's no PyAudio here). `start_listen`
  * resolves it back to the endpoint id by re-enumerating in the same order.
  */
-export type LoopbackDevicePayload = { index: number; name: string;
+export type LoopbackDevicePayload = { id: string; index: number; name: string;
 /**
  * WASAPI render endpoints are mixed at 48 kHz on Windows; the renderer only
  * displays this and never gates on it, so a fixed default is faithful to the
@@ -2725,9 +2725,9 @@ export type OpenRouterTtsScanResultPayload = { models: OpenRouterTtsModelPayload
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 /**
  * Renderer-measured rectangle, in overlay-window CSS/logical pixels, that
- * should remain native-hit-testable. Windows applies this as the overlay HWND's
- * region, so transparent pixels outside the actual pill surfaces do not block
- * the app underneath while the overlay is interactive.
+ * should remain native-hit-testable. Native overlay implementations use this
+ * as the interactive region so transparent pixels outside the actual pill
+ * surfaces do not block the app underneath while the overlay is interactive.
  */
 export type OverlayHitRect = { x: number; y: number; width: number; height: number }
 /**

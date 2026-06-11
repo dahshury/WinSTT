@@ -65,7 +65,8 @@ pub(crate) fn play_audio_file(
         DeviceSinkBuilder::from_default_device()?
     };
 
-    let device_sink = stream_builder.open_stream()?;
+    let mut device_sink = stream_builder.open_stream()?;
+    device_sink.log_on_drop(false);
     let mixer = device_sink.mixer();
 
     let file = File::open(path)?;

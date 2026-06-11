@@ -117,6 +117,17 @@ describe("useTranscriptionStore", () => {
 		expect(useTranscriptionStore.getState().ephemeral).toBeNull();
 	});
 
+	test("clearItems removes finalized live-caption rows only", () => {
+		useTranscriptionStore.getState().addFinalSentence("a");
+		useTranscriptionStore.getState().setRealtimeText("live");
+		useTranscriptionStore.getState().showEphemeral("status");
+		useTranscriptionStore.getState().clearItems();
+		const state = useTranscriptionStore.getState();
+		expect(state.items).toEqual([]);
+		expect(state.currentRealtime).toBe("live");
+		expect(state.ephemeral?.text).toBe("status");
+	});
+
 	test("clearAll resets items, realtime, and ephemeral", () => {
 		useTranscriptionStore.getState().addFinalSentence("a");
 		useTranscriptionStore.getState().setRealtimeText("b");
@@ -141,6 +152,14 @@ describe("useTranscriptionStore", () => {
 
 	test("beginRecordingSession clears stale live state and increments session id", () => {
 		useTranscriptionStore.setState({
+			items: [
+				{
+					id: "old-final",
+					type: "final",
+					text: "old final",
+					timestamp: 1,
+				},
+			],
 			currentRealtime: "old text",
 			ephemeral: { text: "old message", timestamp: 1 },
 			isRecordingActive: false,
@@ -151,6 +170,7 @@ describe("useTranscriptionStore", () => {
 		});
 		useTranscriptionStore.getState().beginRecordingSession();
 		const state = useTranscriptionStore.getState();
+		expect(state.items).toEqual([]);
 		expect(state.currentRealtime).toBe("");
 		expect(state.ephemeral).toBeNull();
 		expect(state.isRecordingActive).toBe(true);

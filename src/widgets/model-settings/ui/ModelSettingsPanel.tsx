@@ -397,32 +397,30 @@ export function ModelSettingsPanel() {
 					update={update}
 				/>
 			)}
-			{realtimeEnabled && !selectedIsCloud && (
-				<RealtimeModelSection
-					catalogLoaded={catalogLoaded}
-					catalogModels={catalogModels}
-					currentQuantization={currentQuantization}
-					downloadProgress={realtimeDownloadProgress}
-					getFitAssessment={getFitAssessment}
-					handleRealtimeModelChange={handleRealtimePick}
-					isSwapping={realtimeSwapping}
-					mainModelCanNativeStream={mainModelCanNativeStream}
-					mainModelId={selectedModel}
-					mainModelInfo={selectedInfo}
-					updateIntervalApplies={updateIntervalApplies}
-					canDeleteQuant={canDeleteQuant}
-					onDeleteQuant={handleGuardedDeleteQuant}
-					onDownloadAction={handleRealtimeDownloadAction}
-					onDownloadSnapshot={handleDownloadSnapshot}
-					quality={quality}
-					sourceLanguageSelection={settings}
-					settings={settings}
-					statesById={statesById}
-					systemInfo={systemInfo}
-					t={t}
-					updateQuality={updateQuality}
-				/>
-			)}
+			<RealtimeModelSection
+				catalogLoaded={catalogLoaded}
+				catalogModels={catalogModels}
+				currentQuantization={currentQuantization}
+				downloadProgress={realtimeDownloadProgress}
+				getFitAssessment={getFitAssessment}
+				handleRealtimeModelChange={handleRealtimePick}
+				isSwapping={realtimeSwapping}
+				mainModelCanNativeStream={mainModelCanNativeStream}
+				mainModelId={selectedModel}
+				mainModelInfo={selectedInfo}
+				updateIntervalApplies={updateIntervalApplies}
+				canDeleteQuant={canDeleteQuant}
+				onDeleteQuant={handleGuardedDeleteQuant}
+				onDownloadAction={handleRealtimeDownloadAction}
+				onDownloadSnapshot={handleDownloadSnapshot}
+				quality={quality}
+				sourceLanguageSelection={settings}
+				settings={settings}
+				statesById={statesById}
+				systemInfo={systemInfo}
+				t={t}
+				updateQuality={updateQuality}
+			/>
 			{/* Speaker diarization - gated to Listen mode (plain cross-tab read of
 			    `general.recordingMode`), matching the original General-tab gate.
 			    Persists to `general.speakerDiarization`; the runtime toggle wiring

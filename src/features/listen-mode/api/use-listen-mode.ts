@@ -1,7 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
-import { useConnectionStore } from "@/entities/connection";
+import { useOutputDevices, type OutputDevice } from "@/entities/audio-device";
+import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
+import { useTranscriptionStore } from "@/entities/transcription";
+import type { RecordingMode } from "@/shared/config/recording-mode-color";
 import {
 	loopbackListDevices,
 	loopbackStart,
@@ -9,16 +12,46 @@ import {
 	onLoopbackStarted,
 	onLoopbackStopped,
 } from "@/shared/api/ipc-client";
+import { resolveListenStreamingModelId } from "../lib/listen-mode-model-gate";
 import { useListenStore } from "../model/listen-store";
 
 const loopbackDeviceSchema = z.object({
+	id: z.string().optional(),
 	index: z.number().int(),
 	name: z.string(),
 	defaultSampleRate: z.number(),
 	maxOutputChannels: z.number(),
+	isDefault: z.boolean().optional(),
 });
 
-type LoopbackDevice = z.infer<typeof loopbackDeviceSchema>;
+type ParsedLoopbackDevice = z.infer<typeof loopbackDeviceSchema>;
+
+interface LoopbackDevice {
+	defaultSampleRate: number;
+	id?: string;
+	index: number;
+	isDefault?: boolean;
+	maxOutputChannels: number;
+	name: string;
+}
+
+function normalizeParsedLoopbackDevice(
+	parsed: ParsedLoopbackDevice,
+): LoopbackDevice {
+	const device: LoopbackDevice = {
+		index: parsed.index,
+		name: parsed.name,
+		defaultSampleRate: parsed.defaultSampleRate,
+		maxOutputChannels: parsed.maxOutputChannels,
+	};
+	if (parsed.id !== undefined) {
+		device.id = parsed.id;
+	}
+	if (parsed.isDefault !== undefined) {
+		device.isDefault = parsed.isDefault;
+	}
+	return device;
+}
 
 /**
  * Validates a raw device list via Zod and returns only the valid entries.
@@ -29,7 +62,7 @@ export function validateDevices(raw: unknown[]): LoopbackDevice[] {
 	for (const d of raw) {
 		const parsed = loopbackDeviceSchema.safeParse(d);
 		if (parsed.success) {
-			valid.push(parsed.data);
+			valid.push(normalizeParsedLoopbackDevice(parsed.data));
 		}
 	}
 	return valid;
@@ -38,40 +71,60 @@ export function validateDevices(raw: unknown[]): LoopbackDevice[] {
 function shouldStartLoopback(
 	recordingMode: string,
 	loopbackDeviceIndex: number | null,
-	connectionStatus: string,
+	listenModelId: string | null,
 ): loopbackDeviceIndex is number {
 	return (
 		recordingMode === "listen" &&
 		loopbackDeviceIndex != null &&
-		connectionStatus === "connected"
+		listenModelId != null
 	);
 }
 
-function shouldStopLoopback(
-	recordingMode: string,
-	wasListen: boolean,
-	connectionStatus: string,
-): boolean {
-	return (
-		wasListen && recordingMode !== "listen" && connectionStatus === "connected"
-	);
+function shouldStopLoopback(recordingMode: string, wasListen: boolean): boolean {
+	return wasListen && recordingMode !== "listen";
 }
 
 /**
- * Applies loopback start/stop side effects when recording mode or connection
- * status changes. Extracted for testability.
+ * Applies loopback start/stop side effects when recording mode, selected output
+ * device, or listen model changes. Extracted for testability.
  */
 export function applyLoopbackTransition(
 	recordingMode: string,
 	wasListen: boolean,
 	loopbackDeviceIndex: number | null,
-	connectionStatus: string,
+	listenModelId: string | null,
+	previousLoopbackDeviceIndex: number | null = null,
+	previousListenModelId: string | null = null,
 ): void {
 	if (
-		shouldStartLoopback(recordingMode, loopbackDeviceIndex, connectionStatus)
+		shouldStartLoopback(
+			recordingMode,
+			loopbackDeviceIndex,
+			listenModelId,
+		)
 	) {
-		loopbackStart(loopbackDeviceIndex);
-	} else if (shouldStopLoopback(recordingMode, wasListen, connectionStatus)) {
+		const modelId = listenModelId;
+		if (modelId === null) {
+			return;
+		}
+		const shouldRestart =
+			wasListen &&
+			(previousLoopbackDeviceIndex !== loopbackDeviceIndex ||
+				previousListenModelId !== modelId);
+		if (!wasListen || shouldRestart) {
+			if (shouldRestart) {
+				loopbackStop();
+			}
+			loopbackStart(loopbackDeviceIndex, modelId);
+		}
+	} else if (shouldStopLoopback(recordingMode, wasListen)) {
+		loopbackStop();
+	} else if (
+		recordingMode === "listen" &&
+		wasListen &&
+		previousLoopbackDeviceIndex != null &&
+		previousListenModelId != null
+	) {
 		loopbackStop();
 	}
 }
@@ -90,35 +143,174 @@ export function handleLoopbackListError(
 	console.error("[useListenMode] Failed to fetch loopback devices:", err);
 }
 
+function normalizeDeviceName(name: string): string {
+	return name.trim().toLowerCase();
+}
+
+function defaultLoopbackIndex(
+	devices: readonly LoopbackDevice[],
+): number | null {
+	return (
+		devices.find((device) => device.isDefault)?.index ??
+		devices[0]?.index ??
+		null
+	);
+}
+
+function findSelectedOutputDevice(
+	outputDevices: readonly OutputDevice[],
+	outputDeviceId: string,
+): OutputDevice | null {
+	if (!outputDeviceId) {
+		return outputDevices.find((device) => device.isDefault) ?? null;
+	}
+	return (
+		outputDevices.find((device) => device.deviceId === outputDeviceId) ??
+		outputDevices.find((device) => device.label === outputDeviceId) ??
+		null
+	);
+}
+
+export function resolveOutputLoopbackDeviceIndex(
+	loopbackDevices: readonly LoopbackDevice[],
+	outputDevices: readonly OutputDevice[],
+	outputDeviceId: string,
+): number | null {
+	if (loopbackDevices.length === 0) {
+		return null;
+	}
+	if (!outputDeviceId) {
+		return defaultLoopbackIndex(loopbackDevices);
+	}
+	const outputDevice = findSelectedOutputDevice(outputDevices, outputDeviceId);
+	const targetName = outputDevice?.label ?? outputDeviceId;
+	const normalizedTarget = normalizeDeviceName(targetName);
+	const exact = loopbackDevices.find(
+		(device) => normalizeDeviceName(device.name) === normalizedTarget,
+	);
+	if (exact) {
+		return exact.index;
+	}
+	const fuzzy = loopbackDevices.find((device) => {
+		const normalized = normalizeDeviceName(device.name);
+		return (
+			normalized.includes(normalizedTarget) ||
+			normalizedTarget.includes(normalized)
+		);
+	});
+	return fuzzy?.index ?? defaultLoopbackIndex(loopbackDevices);
+}
+
 export function useListenMode(): void {
 	const recordingMode = useSettingsStore(
 		(s) => s.settings.general?.recordingMode ?? "ptt",
 	);
-	const loopbackDeviceIndex = useSettingsStore(
-		(s) => s.settings.general?.loopbackDeviceIndex ?? null,
+	const outputDeviceId = useSettingsStore(
+		(s) => s.settings.general?.outputDeviceId ?? "",
 	);
-	const connectionStatus = useConnectionStore((s) => s.connectionStatus);
+	const modelSettings = useSettingsStore((s) => s.settings.model);
+	const qualitySettings = useSettingsStore((s) => s.settings.quality);
+	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
+	const catalogModels = useCatalogStore((s) => s.models);
+	const catalogLoaded = useCatalogStore((s) => s.isLoaded);
+	const statesById = useModelStateStore((s) => s.statesById);
+	const modelStatesLoaded = useModelStateStore((s) => s.isLoaded);
+	const refreshModelState = useModelStateStore((s) => s.refresh);
+	const { devices: outputDevices } = useOutputDevices();
 	const setListening = useListenStore((s) => s.setListening);
 	const setDevices = useListenStore((s) => s.setDevices);
+	const clearTranscription = useTranscriptionStore((s) => s.clearAll);
+	const [loopbackDevices, setLoopbackDevices] = useState<LoopbackDevice[]>([]);
+	const listenModelId = useMemo(
+		() =>
+			resolveListenStreamingModelId(
+				modelSettings,
+				qualitySettings,
+				catalogModels,
+				statesById,
+			),
+		[modelSettings, qualitySettings, catalogModels, statesById],
+	);
+	const loopbackDeviceIndex = useMemo(
+		() =>
+			resolveOutputLoopbackDeviceIndex(
+				loopbackDevices,
+				outputDevices,
+				outputDeviceId,
+			),
+		[loopbackDevices, outputDevices, outputDeviceId],
+	);
+	const currentModeRef = useRef(recordingMode);
 	const prevModeRef = useRef(recordingMode);
+	const prevLoopbackDeviceIndexRef = useRef<number | null>(loopbackDeviceIndex);
+	const prevListenModelIdRef = useRef<string | null>(listenModelId);
+	const lastNonListenModeRef = useRef<RecordingMode>("ptt");
+	const transcriptModeRef = useRef<string | null>(null);
+
+	currentModeRef.current = recordingMode;
+
+	// Listen mode owns a continuous subtitle feed. Clear it at mode boundaries
+	// so captions from a previous PTT/toggle dictation cannot become the first
+	// lines in listen mode, and listen-mode scrollback does not leak back out.
+	useLayoutEffect(() => {
+		const previousMode = transcriptModeRef.current;
+		const enteringListen =
+			recordingMode === "listen" && previousMode !== "listen";
+		const leavingListen =
+			previousMode === "listen" && recordingMode !== "listen";
+		if (enteringListen || leavingListen) {
+			clearTranscription();
+		}
+		transcriptModeRef.current = recordingMode;
+	}, [recordingMode, clearTranscription]);
+
+	useEffect(() => {
+		if (recordingMode === "listen") {
+			void refreshModelState();
+		}
+	}, [recordingMode, refreshModelState]);
+
+	useLayoutEffect(() => {
+		if (recordingMode !== "listen") {
+			lastNonListenModeRef.current = recordingMode;
+			return;
+		}
+		if (!catalogLoaded || !modelStatesLoaded || listenModelId !== null) {
+			return;
+		}
+		updateGeneral({ recordingMode: lastNonListenModeRef.current });
+	}, [
+		catalogLoaded,
+		listenModelId,
+		modelStatesLoaded,
+		recordingMode,
+		updateGeneral,
+	]);
 
 	// Subscribe to loopback events from main process
 	useEffect(() => {
 		const unsubStarted = onLoopbackStarted((deviceName) => {
+			if (currentModeRef.current === "listen") {
+				clearTranscription();
+			}
 			setListening(true, deviceName);
 		});
 		const unsubStopped = onLoopbackStopped(() => {
+			if (currentModeRef.current === "listen") {
+				clearTranscription();
+			}
 			setListening(false);
 		});
 		return () => {
 			unsubStarted();
 			unsubStopped();
 		};
-	}, [setListening]);
+	}, [clearTranscription, setListening]);
 
-	// Fetch loopback devices when connected and in listen mode
+	// Fetch loopback devices when in listen mode. Tauri owns backend readiness;
+	// the legacy connection flag is only a display concern in this port.
 	useEffect(() => {
-		if (connectionStatus !== "connected" || recordingMode !== "listen") {
+		if (recordingMode !== "listen") {
 			return;
 		}
 
@@ -130,7 +322,9 @@ export function useListenMode(): void {
 					return;
 				}
 				if (Array.isArray(devices)) {
-					setDevices(validateDevices(devices));
+					const valid = validateDevices(devices);
+					setLoopbackDevices(valid);
+					setDevices(valid);
 				} else {
 					console.warn("[useListenMode] Invalid devices response:", devices);
 				}
@@ -140,19 +334,25 @@ export function useListenMode(): void {
 		return () => {
 			isCancelled = true;
 		};
-	}, [connectionStatus, recordingMode, setDevices]);
+	}, [recordingMode, setDevices]);
 
 	// Start/stop loopback when mode or device changes
 	useEffect(() => {
 		const wasListen = prevModeRef.current === "listen";
-		prevModeRef.current = recordingMode;
+		const previousLoopbackDeviceIndex = prevLoopbackDeviceIndexRef.current;
+		const previousListenModelId = prevListenModelIdRef.current;
 		applyLoopbackTransition(
 			recordingMode,
 			wasListen,
 			loopbackDeviceIndex,
-			connectionStatus,
+			listenModelId,
+			previousLoopbackDeviceIndex,
+			previousListenModelId,
 		);
-	}, [recordingMode, loopbackDeviceIndex, connectionStatus]);
+		prevModeRef.current = recordingMode;
+		prevLoopbackDeviceIndexRef.current = loopbackDeviceIndex;
+		prevListenModelIdRef.current = listenModelId;
+	}, [recordingMode, loopbackDeviceIndex, listenModelId]);
 
 	// Stop loopback on unmount if active
 	useEffect(

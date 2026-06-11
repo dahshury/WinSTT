@@ -1,83 +1,83 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "WinSTT",
-  "version": "0.1.2-alpha.0",
-  "identifier": "com.winstt.winstt",
-  "build": {
-    "beforeDevCommand": {
-      "script": "node tools/tauri-vite-dev.ts",
-      "cwd": ".."
-    },
-    "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "bun run build",
-    "frontendDist": "../dist"
-  },
-  "app": {
-    "macOSPrivateApi": true,
-    "windows": [],
-    "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; media-src 'self' asset: http://asset.localhost blob:; connect-src 'self' ipc: http://ipc.localhost https://api.elevenlabs.io https://openrouter.ai https://ollama.com http://localhost:11434; object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
-      "assetProtocol": {
-        "enable": true,
-        "scope": {
-          "allow": ["$RESOURCE/**"],
-          "requireLiteralLeadingDot": false
-        }
-      }
-    }
-  },
-  "bundle": {
-    "active": true,
-    "createUpdaterArtifacts": true,
-    "targets": ["nsis", "appimage", "deb", "rpm"],
-    "resources": [
-      "../LICENSE",
-      "../THIRD_PARTY_NOTICES.md",
-      "resources/*.png",
-      "resources/*.wav",
-      "resources/models/**/*"
-    ],
-    "license": "MIT",
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ],
-    "macOS": {
-      "files": {},
-      "hardenedRuntime": true,
-      "minimumSystemVersion": "10.15",
-      "signingIdentity": "-",
-      "entitlements": "Entitlements.plist"
-    },
-    "linux": {
-      "deb": {
-        "depends": ["libgtk-layer-shell0"]
-      },
-      "rpm": {
-        "compression": {
-          "type": "none"
-        }
-      },
-      "appimage": {
-        "bundleMediaFramework": true,
-        "files": {}
-      }
-    },
-    "windows": {
-      "nsis": {
-        "template": "nsis/installer.nsi"
-      }
-    }
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI2NUJGRjA1NDg4OEY4MUQKUldRZCtJaElCZjlidHFxWm9MeDdoNDdqN2Z4Q2huUTRYTU5YQlJwdVNJRnlOSzZXa3YxSEsyMG4K",
-      "endpoints": [
-        "https://github.com/dahshury/WinSTT/releases/latest/download/latest.json"
-      ]
-    }
-  }
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "WinSTT",
+	"version": "0.1.3-alpha.0",
+	"identifier": "com.winstt.winstt",
+	"build": {
+		"beforeDevCommand": {
+			"script": "node tools/tauri-vite-dev.ts",
+			"cwd": ".."
+		},
+		"devUrl": "http://127.0.0.1:1420",
+		"beforeBuildCommand": "bun run build",
+		"frontendDist": "../dist"
+	},
+	"app": {
+		"macOSPrivateApi": true,
+		"windows": [],
+		"security": {
+			"csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; media-src 'self' asset: http://asset.localhost blob:; connect-src 'self' ipc: http://ipc.localhost https://api.elevenlabs.io https://openrouter.ai https://ollama.com http://localhost:11434; object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
+			"assetProtocol": {
+				"enable": true,
+				"scope": {
+					"allow": ["$RESOURCE/**"],
+					"requireLiteralLeadingDot": false
+				}
+			}
+		}
+	},
+	"bundle": {
+		"active": true,
+		"createUpdaterArtifacts": true,
+		"targets": ["nsis", "appimage", "deb", "rpm"],
+		"resources": [
+			"../LICENSE",
+			"../THIRD_PARTY_NOTICES.md",
+			"resources/*.png",
+			"resources/*.wav",
+			"resources/models/**/*"
+		],
+		"license": "MIT",
+		"icon": [
+			"icons/32x32.png",
+			"icons/128x128.png",
+			"icons/128x128@2x.png",
+			"icons/icon.icns",
+			"icons/icon.ico"
+		],
+		"macOS": {
+			"files": {},
+			"hardenedRuntime": true,
+			"minimumSystemVersion": "10.15",
+			"signingIdentity": "-",
+			"entitlements": "Entitlements.plist"
+		},
+		"linux": {
+			"deb": {
+				"depends": ["libgtk-layer-shell0"]
+			},
+			"rpm": {
+				"compression": {
+					"type": "none"
+				}
+			},
+			"appimage": {
+				"bundleMediaFramework": true,
+				"files": {}
+			}
+		},
+		"windows": {
+			"nsis": {
+				"template": "nsis/installer.nsi"
+			}
+		}
+	},
+	"plugins": {
+		"updater": {
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI2NUJGRjA1NDg4OEY4MUQKUldRZCtJaElCZjlidHFxWm9MeDdoNDdqN2Z4Q2huUTRYTU5YQlJwdVNJRnlOSzZXa3YxSEsyMG4K",
+			"endpoints": [
+				"https://github.com/dahshury/WinSTT/releases/latest/download/latest.json"
+			]
+		}
+	}
 }

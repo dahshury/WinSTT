@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { renderHook } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
+import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import { IPC } from "@/shared/api/ipc-channels";
 import { useTranscriptionFeed } from "./use-transcription-feed";
 
 const originalApi = window.nativeBridge;
+const initialSettings = useSettingsStore.getState().settings;
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
 beforeEach(() => {
 	listeners.clear();
+	useSettingsStore.setState({ settings: initialSettings });
 	useTranscriptionStore.setState({
 		items: [],
 		currentRealtime: "",
@@ -38,11 +41,44 @@ beforeEach(() => {
 
 afterEach(() => {
 	window.nativeBridge = originalApi;
+	useSettingsStore.setState({ settings: initialSettings });
 });
 
 function fire(channel: string, ...args: unknown[]) {
 	for (const cb of listeners.get(channel) ?? []) {
 		cb(...args);
+	}
+}
+
+function setRecordingMode(
+	recordingMode: "ptt" | "toggle" | "listen" | "wakeword",
+) {
+	useSettingsStore.setState({
+		settings: {
+			...initialSettings,
+			general: {
+				...initialSettings.general,
+				recordingMode,
+			},
+		},
+	});
+}
+
+function withImmediateTimeout(run: () => void) {
+	const originalSetTimeout = globalThis.setTimeout;
+	const originalClearTimeout = globalThis.clearTimeout;
+	globalThis.setTimeout = ((handler: TimerHandler, _timeout?: number) => {
+		if (typeof handler === "function") {
+			handler();
+		}
+		return 0 as ReturnType<typeof setTimeout>;
+	}) as typeof setTimeout;
+	globalThis.clearTimeout = (() => undefined) as typeof clearTimeout;
+	try {
+		run();
+	} finally {
+		globalThis.setTimeout = originalSetTimeout;
+		globalThis.clearTimeout = originalClearTimeout;
 	}
 }
 
@@ -56,6 +92,7 @@ describe("useTranscriptionFeed", () => {
 		expect(listeners.has(IPC.STT_NO_AUDIO_DETECTED)).toBe(true);
 		expect(listeners.has(IPC.STT_RECORDING_STOP)).toBe(true);
 		expect(listeners.has(IPC.STT_TRANSCRIPTION_START)).toBe(true);
+		expect(listeners.has(IPC.STT_VAD_START)).toBe(true);
 	});
 
 	test("realtime text updates currentRealtime in the store", () => {
@@ -90,12 +127,46 @@ describe("useTranscriptionFeed", () => {
 		expect(useTranscriptionStore.getState().items[0]?.text).toBe("Hello.");
 	});
 
-	test("no-audio shows an ephemeral message", () => {
+	test("completed non-listen sessions clear their finalized caption rows", () => {
+		setRecordingMode("ptt");
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_RECORDING_START);
+
+		withImmediateTimeout(() => {
+			fire(IPC.STT_FULL_SENTENCE, { text: "done." });
+		});
+
+		expect(useTranscriptionStore.getState().items).toEqual([]);
+	});
+
+	test("listen mode keeps finalized rows for active scrollback", () => {
+		setRecordingMode("listen");
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_RECORDING_START);
+
+		withImmediateTimeout(() => {
+			fire(IPC.STT_FULL_SENTENCE, { text: "listen row." });
+		});
+
+		expect(useTranscriptionStore.getState().items.map((i) => i.text)).toEqual([
+			"listen row.",
+		]);
+		expect(useTranscriptionStore.getState().isRecordingActive).toBe(true);
+	});
+
+	test("no-audio clears state without showing an ephemeral message", () => {
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
 		});
 		fire(IPC.STT_NO_AUDIO_DETECTED);
-		expect(useTranscriptionStore.getState().ephemeral).not.toBeNull();
+		const state = useTranscriptionStore.getState();
+		expect(state.ephemeral).toBeNull();
+		expect(state.isRecordingActive).toBe(false);
+		expect(state.isTranscribing).toBe(false);
 	});
 
 	test("transcription_failed shows an honest ephemeral message (not 'no audio')", () => {
@@ -131,6 +202,14 @@ describe("useTranscriptionFeed", () => {
 		// them before the pill could possibly paint them — same race the bug
 		// report describes ("flashes previous transcription on next PTT press").
 		useTranscriptionStore.setState({
+			items: [
+				{
+					id: "old-final",
+					type: "final",
+					text: "old final",
+					timestamp: 1,
+				},
+			],
 			currentRealtime: "leftover from last press",
 			ephemeral: { text: "no audio detected", timestamp: 0 },
 			isRecordingActive: false,
@@ -144,6 +223,7 @@ describe("useTranscriptionFeed", () => {
 		});
 		fire(IPC.STT_RECORDING_START);
 		const state = useTranscriptionStore.getState();
+		expect(state.items).toEqual([]);
 		expect(state.currentRealtime).toBe("");
 		expect(state.ephemeral).toBeNull();
 		expect(state.isRecordingActive).toBe(true);
@@ -153,10 +233,11 @@ describe("useTranscriptionFeed", () => {
 		expect(state.transcribingStartedAt).toBeNull();
 	});
 
-	test("transcription_start marks final decode as transcribing", () => {
+	test("transcription_start marks final decode as transcribing after VAD speech", () => {
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
 		});
+		fire(IPC.STT_VAD_START);
 		fire(IPC.STT_TRANSCRIPTION_START, { audioBase64: undefined });
 		const state = useTranscriptionStore.getState();
 		expect(state.isTranscribing).toBe(true);
@@ -164,7 +245,37 @@ describe("useTranscriptionFeed", () => {
 		expect(typeof state.transcribingStartedAt).toBe("number");
 	});
 
-	test("recording_stop marks final cloud handoff as uploading immediately", () => {
+	test("transcription_start is ignored before VAD speech", () => {
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_TRANSCRIPTION_START, { audioBase64: undefined });
+		const state = useTranscriptionStore.getState();
+		expect(state.isTranscribing).toBe(false);
+		expect(state.processingPhase).toBeNull();
+		expect(state.transcribingStartedAt).toBeNull();
+	});
+
+	test("recording_stop marks final cloud handoff as uploading after audio activity", () => {
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			isTranscribing: false,
+			processingPhase: null,
+			transcribingStartedAt: null,
+		});
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_VAD_START);
+		fire(IPC.STT_RECORDING_STOP);
+		const state = useTranscriptionStore.getState();
+		expect(state.isRecordingActive).toBe(true);
+		expect(state.isTranscribing).toBe(true);
+		expect(state.processingPhase).toBe("uploading");
+		expect(typeof state.transcribingStartedAt).toBe("number");
+	});
+
+	test("recording_stop does not mark silent sessions as transcribing", () => {
 		useTranscriptionStore.setState({
 			isRecordingActive: true,
 			isTranscribing: false,
@@ -177,9 +288,9 @@ describe("useTranscriptionFeed", () => {
 		fire(IPC.STT_RECORDING_STOP);
 		const state = useTranscriptionStore.getState();
 		expect(state.isRecordingActive).toBe(true);
-		expect(state.isTranscribing).toBe(true);
-		expect(state.processingPhase).toBe("uploading");
-		expect(typeof state.transcribingStartedAt).toBe("number");
+		expect(state.isTranscribing).toBe(false);
+		expect(state.processingPhase).toBeNull();
+		expect(state.transcribingStartedAt).toBeNull();
 	});
 
 	test("recording_stop is ignored when no recording session is active", () => {
@@ -234,6 +345,8 @@ describe("useTranscriptionFeed", () => {
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
 		});
+		fire(IPC.STT_VAD_START);
+		fire(IPC.STT_REALTIME_TEXT, { text: "live preview" });
 		fire(IPC.STT_RECORDING_STOP);
 		const state = useTranscriptionStore.getState();
 		expect(state.isRecordingActive).toBe(true);

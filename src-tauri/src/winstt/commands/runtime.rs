@@ -184,7 +184,7 @@ pub async fn stt_list_models_with_state(
 /// Build the `ProbeModel` list from the catalog const table, `await` the DownloadManager's HF cache
 /// probe (TTL-memoized), and reshape `(CacheState, downloaded, total)` → the renderer's
 /// `ModelCacheInfo`.
-async fn probe_cache_states(
+pub(crate) async fn probe_cache_states(
     downloads: &DownloadManager,
 ) -> BTreeMap<String, BTreeMap<String, ModelCacheInfo>> {
     let probe_models: Vec<ProbeModel> = catalog::STT_CATALOG
@@ -247,7 +247,7 @@ fn cache_info_from(state: CacheState, downloaded: u64, total: u64) -> ModelCache
 
 /// Live system snapshot for the fitness fields. SPIKE: `sysinfo` for RAM + DXGI for VRAM. Zeros are
 /// a valid "unknown" answer (the fit heuristics skip warnings when RAM/VRAM read 0).
-fn system_info_snapshot() -> SystemInfoEntry {
+pub(crate) fn system_info_snapshot() -> SystemInfoEntry {
     // Real total RAM via sysinfo (fixes the model-download dialog's "RAM: unknown") + real DXGI
     // GPU enumeration for `gpus` (powers the settings device picker + VRAM fitness). A zero/empty
     // result is a valid "unknown" the fit heuristics skip; a non-empty list makes the picker offer

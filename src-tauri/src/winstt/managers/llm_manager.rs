@@ -39,7 +39,11 @@ mod warmup;
 
 pub use openrouter::{OpenRouterEndpointInfo, OpenRouterModelInfo, OpenRouterScan};
 
-const OLLAMA_WARMUP_INTERVAL: Duration = Duration::from_secs(4 * 60);
+// Warmup-loop tick. Each tick retries the boot warm until Ollama is reachable,
+// and — ONLY under the "never unload" policy — re-warms so the model survives
+// an Ollama restart/eviction. Finite policies are deliberately left to count
+// down from the last real use (a periodic re-warm would reset them forever).
+const OLLAMA_WARMUP_INTERVAL: Duration = Duration::from_secs(60);
 const OLLAMA_WARMUP_TIMEOUT: Duration = Duration::from_secs(120);
 const OLLAMA_EVICT_TIMEOUT: Duration = Duration::from_secs(5);
 const OLLAMA_BOOT_WAIT: Duration = Duration::from_secs(10);

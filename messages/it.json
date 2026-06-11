@@ -509,12 +509,12 @@
     "advancedTitle": "Avanzate",
     "microphoneRelease": "Rilascio microfono",
     "microphoneReleaseCaption": "Quando chiudere lo stream audio del sistema operativo dopo una registrazione",
-    "microphoneReleaseTooltip": "Determina quando viene rilasciato lo stream del microfono del sistema operativo — il compromesso è tra la visibilità dell'indicatore microfono in uso e la latenza di risposta PTT. 'Sempre' mantiene lo stream aperto per tutto il tempo in cui WinSTT è in esecuzione per una risposta PTT ultrarapida (l'indicatore rimane acceso). 'Off' (predefinito) chiude immediatamente ad ogni rilascio del tasto in modo che l'indicatore si spenga definitivamente. Le opzioni a durata fermano il motore al rilascio del tasto ma rimandano la chiusura effettiva in modo che le pressioni ravvicinate entro la finestra evitino il costo di riapertura di ~10-50 ms.",
-    "microphoneReleaseAlways": "Sempre (mai rilasciato)",
-    "microphoneReleaseImmediate": "Off (rilascia al rilascio del tasto)",
-    "microphoneReleaseSec30": "Dopo 30 secondi",
-    "microphoneReleaseMin1": "Dopo 1 minuto",
-    "microphoneReleaseMin5": "Dopo 5 minuti"
+    "microphoneReleaseTooltip": "Determina quando viene rilasciato lo stream del microfono del sistema operativo — il compromesso è tra la visibilità dell'indicatore microfono in uso e la latenza di risposta PTT. 'Mai' mantiene lo stream aperto per tutto il tempo in cui WinSTT è in esecuzione per una risposta PTT ultrarapida (l'indicatore rimane acceso). 'Immediato' (predefinito) chiude ad ogni rilascio del tasto in modo che l'indicatore si spenga definitivamente. Le opzioni a durata fermano il motore al rilascio del tasto ma rimandano la chiusura effettiva in modo che le pressioni ravvicinate entro la finestra evitino il costo di riapertura di ~10-50 ms.",
+    "microphoneReleaseAlways": "Mai",
+    "microphoneReleaseImmediate": "Immediato (rilascia al rilascio del tasto)",
+    "microphoneReleaseSec30": "30 secondi",
+    "microphoneReleaseMin1": "1 minuto",
+    "microphoneReleaseMin5": "5 minuti"
   },
   "quality": {
     "enableRealtime": "Abilita tempo reale",

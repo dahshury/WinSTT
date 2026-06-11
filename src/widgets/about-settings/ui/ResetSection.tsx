@@ -3,7 +3,7 @@ import {
 	Delete02Icon,
 	PackageRemoveIcon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import type { IconSvgElement } from "@hugeicons/react";
 import { type ReactNode, useState } from "react";
 import { useTranslations } from "use-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
@@ -11,24 +11,12 @@ import {
 	removeApplicationData,
 	removeDownloadedModels,
 } from "@/shared/api/ipc-client";
-import { cn } from "@/shared/lib/cn";
-import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { Toggle } from "@/shared/ui/toggle";
+import { AboutActionButton } from "./AboutActionButton";
 
-// The panel's button vocabulary, reused verbatim so every action in Settings
-// reads alike. `NEUTRAL` is the same surface-lifted style as the "Check now" /
-// "Restart to install" updater buttons above; `DANGER` is the dim-error
-// treatment the Dictionary / Snippets "Delete all" button uses — reserved for
-// the single irreversible action. No saturated warning-yellow or solid-red
-// fills, which appear nowhere else in the app.
-const ACTION_BUTTON_BASE =
-	"flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-3 font-medium text-body transition-colors duration-150";
-const ACTION_BUTTON_NEUTRAL =
-	"border border-foreground/15 bg-foreground/5 text-foreground hover:bg-foreground/10";
-const ACTION_BUTTON_DANGER =
-	"bg-error-dim/40 text-error ring-1 ring-error/25 hover:bg-error-dim/70 hover:ring-error/40";
-
+// Reset actions share the fixed-width About action button; the destructive row
+// keeps its error tone without leaving the standard elevated control surface.
 interface ResetActionRowProps {
 	buttonLabel: string;
 	/** Render the trailing button with the dim-error destructive treatment. */
@@ -60,16 +48,13 @@ function ResetActionRow({
 					{summary}
 				</span>
 			</div>
-			<Button
-				className={cn(
-					ACTION_BUTTON_BASE,
-					destructive ? ACTION_BUTTON_DANGER : ACTION_BUTTON_NEUTRAL,
-				)}
+			<AboutActionButton
+				icon={icon}
 				onClick={onClick}
+				variant={destructive ? "danger" : "neutral"}
 			>
-				<HugeiconsIcon aria-hidden="true" icon={icon} size={12} />
-				<span>{buttonLabel}</span>
-			</Button>
+				{buttonLabel}
+			</AboutActionButton>
 		</div>
 	);
 }

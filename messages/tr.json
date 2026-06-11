@@ -509,12 +509,12 @@
     "advancedTitle": "Gelişmiş",
     "microphoneRelease": "Mikrofonu Serbest Bırak",
     "microphoneReleaseCaption": "Kayıt sonrasında işletim sistemi ses akışının ne zaman kapatılacağı",
-    "microphoneReleaseTooltip": "İşletim sistemi mikrofon akışının ne zaman serbest bırakılacağını seçer — değiş tokuş, mikrofon kullanım göstergesi görünürlüğü ile PTT yanıt gecikmesi arasındadır. 'Her zaman', WinSTT çalışırken akışı sürekli açık tutar ve PTT'yi mikrosaniye hızında yapar (gösterge sürekli yanar). 'Kapalı' (varsayılan) her tuş bırakmada hemen kapatır, böylece gösterge kararlı biçimde söner. Süre seçenekleri tuş bırakmada motoru durdurur ancak pencere içindeki arka arkaya baskılarda ~10-50 ms yeniden açma maliyetini atlayabilmek için asıl kapatmayı erteler.",
-    "microphoneReleaseAlways": "Her zaman (hiç serbest bırakılmaz)",
-    "microphoneReleaseImmediate": "Kapalı (tuş bırakmada serbest bırak)",
-    "microphoneReleaseSec30": "30 saniye sonra",
-    "microphoneReleaseMin1": "1 dakika sonra",
-    "microphoneReleaseMin5": "5 dakika sonra"
+    "microphoneReleaseTooltip": "İşletim sistemi mikrofon akışının ne zaman serbest bırakılacağını seçer — değiş tokuş, mikrofon kullanım göstergesi görünürlüğü ile PTT yanıt gecikmesi arasındadır. 'Asla', WinSTT çalışırken akışı sürekli açık tutar ve PTT'yi mikrosaniye hızında yapar (gösterge sürekli yanar). 'Anında' (varsayılan) her tuş bırakmada kapatır, böylece gösterge kararlı biçimde söner. Süre seçenekleri tuş bırakmada motoru durdurur ancak pencere içindeki arka arkaya baskılarda ~10-50 ms yeniden açma maliyetini atlayabilmek için asıl kapatmayı erteler.",
+    "microphoneReleaseAlways": "Asla",
+    "microphoneReleaseImmediate": "Anında (tuş bırakmada serbest bırak)",
+    "microphoneReleaseSec30": "30 saniye",
+    "microphoneReleaseMin1": "1 dakika",
+    "microphoneReleaseMin5": "5 dakika"
   },
   "quality": {
     "enableRealtime": "Gerçek Zamanlıyı Etkinleştir",

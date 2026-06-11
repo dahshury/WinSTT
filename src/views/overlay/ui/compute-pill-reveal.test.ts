@@ -5,11 +5,10 @@ import { computePillReveal, computeStickyPillReveal } from "./OverlayPage";
 // (floating-bottom chip/bubble OR dynamic island) becomes visible during a
 // dictation session. The contract: it must NOT reveal on the bare
 // recording-start (PTT held through a silent lead-in), only once the user
-// actually SPEAKS — the recorder's real smoothed-Silero VAD reports speech
-// onset (`isSpeaking`, the snappy signal) or words get transcribed (`hasText`,
-// a slower fallback) — or the post-recording LLM thinking indicator is up. The
-// caller latches the result sticky for the rest of the session, so this only
-// governs the FIRST reveal.
+// actually SPEAKS: the recorder's real smoothed-Silero VAD must report speech
+// onset (`isSpeaking`). Realtime text, final decode, and LLM thinking may keep
+// an already-revealed sticky session alive, but they must not create the first
+// pill on their own.
 
 const BASE = {
 	isRecordingActive: false,
@@ -29,24 +28,24 @@ describe("computePillReveal", () => {
 		).toBe(true);
 	});
 
-	test("recording + transcribed words → revealed (fallback when VAD is quiet)", () => {
+	test("recording + transcribed words without VAD stays hidden", () => {
 		expect(
 			computePillReveal({ ...BASE, isRecordingActive: true, hasText: true }),
-		).toBe(true);
+		).toBe(false);
 	});
 
-	test("LLM thinking (recording already ended) → revealed", () => {
-		expect(computePillReveal({ ...BASE, isThinking: true })).toBe(true);
+	test("LLM thinking without a sticky VAD reveal stays hidden", () => {
+		expect(computePillReveal({ ...BASE, isThinking: true })).toBe(false);
 	});
 
-	test("final STT decode after recording stop reveals the pill", () => {
+	test("final STT decode without a sticky VAD reveal stays hidden", () => {
 		expect(
 			computePillReveal({
 				...BASE,
 				isRecordingActive: true,
 				isTranscribing: true,
 			}),
-		).toBe(true);
+		).toBe(false);
 	});
 
 	test("idle (nothing happening) → hidden", () => {

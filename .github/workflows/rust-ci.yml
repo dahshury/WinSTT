@@ -17,6 +17,7 @@ on:
       - "src-tauri/**"
       - "tools/windows/**"
       - "tools/linux/**"
+      - "tools/macos/**"
       - "tools/tauri-ci-artifacts.conf.json"
       - ".github/workflows/rust-ci.yml"
   pull_request:
@@ -24,6 +25,7 @@ on:
       - "src-tauri/**"
       - "tools/windows/**"
       - "tools/linux/**"
+      - "tools/macos/**"
       - "tools/tauri-ci-artifacts.conf.json"
       - ".github/workflows/rust-ci.yml"
 

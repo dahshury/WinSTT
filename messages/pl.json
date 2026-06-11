@@ -509,12 +509,12 @@
     "advancedTitle": "Zaawansowane",
     "microphoneRelease": "Zwalnianie mikrofonu",
     "microphoneReleaseCaption": "Kiedy zamykać strumień audio systemu po nagraniu",
-    "microphoneReleaseTooltip": "Określa, kiedy strumień mikrofonu systemu jest zwalniany — kompromis między widocznością wskaźnika użycia a opóźnieniem odpowiedzi PTT. \"Zawsze\" utrzymuje strumień otwarty przez cały czas działania WinSTT dla PTT z opóźnieniem w mikrosekundach (wskaźnik pozostaje podświetlony). \"Wyłączone\" (domyślne) zamyka natychmiast po każdym zwolnieniu klawisza, wyraźnie czyszcząc wskaźnik. Opcje czasu zatrzymują silnik po zwolnieniu klawisza, ale odkładają faktyczne zamknięcie, więc kolejne naciśnięcia w tym oknie pomijają koszt ponownego otwarcia (~10–50 ms).",
-    "microphoneReleaseAlways": "Zawsze (nigdy nie zwolniony)",
-    "microphoneReleaseImmediate": "Wyłączone (zwolnij przy zwolnieniu klawisza)",
-    "microphoneReleaseSec30": "Po 30 sekundach",
-    "microphoneReleaseMin1": "Po 1 minucie",
-    "microphoneReleaseMin5": "Po 5 minutach"
+    "microphoneReleaseTooltip": "Określa, kiedy strumień mikrofonu systemu jest zwalniany — kompromis między widocznością wskaźnika użycia a opóźnieniem odpowiedzi PTT. \"Nigdy\" utrzymuje strumień otwarty przez cały czas działania WinSTT dla PTT z opóźnieniem w mikrosekundach (wskaźnik pozostaje podświetlony). \"Natychmiast\" (domyślne) zamyka po każdym zwolnieniu klawisza, wyraźnie czyszcząc wskaźnik. Opcje czasu zatrzymują silnik po zwolnieniu klawisza, ale odkładają faktyczne zamknięcie, więc kolejne naciśnięcia w tym oknie pomijają koszt ponownego otwarcia (~10–50 ms).",
+    "microphoneReleaseAlways": "Nigdy",
+    "microphoneReleaseImmediate": "Natychmiast (przy zwolnieniu klawisza)",
+    "microphoneReleaseSec30": "30 sekund",
+    "microphoneReleaseMin1": "1 minuta",
+    "microphoneReleaseMin5": "5 minut"
   },
   "quality": {
     "enableRealtime": "Włącz realtime",

@@ -28,6 +28,7 @@ export function DataGridColumnHeader({
 	const dense = tableLayout.dense ?? true;
 	const cellBorder = tableLayout.cellBorder ?? true;
 	const headerBorder = tableLayout.headerBorder ?? true;
+	const layered = tableLayout.presentation === "layered";
 	const ariaSort =
 		sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : "none";
 	const content = header.isPlaceholder
@@ -38,9 +39,10 @@ export function DataGridColumnHeader({
 		<TableHead
 			aria-sort={canSort ? ariaSort : undefined}
 			className={cn(
-				dense && "px-2 py-1.5",
-				headerBorder && "border-border/80 border-b",
-				cellBorder && "border-border/70 border-r last:border-r-0",
+				dense && (layered ? "px-3 py-2" : "px-2 py-1.5"),
+				headerBorder && !layered && "border-border/80 border-b",
+				cellBorder && !layered && "border-border/70 border-r last:border-r-0",
+				layered && "text-foreground-secondary",
 				resizable && "relative",
 				column.columnDef.meta?.headClassName,
 			)}
@@ -49,7 +51,10 @@ export function DataGridColumnHeader({
 			{canSort && !header.isPlaceholder ? (
 				<button
 					aria-label={labels.formatSortBy(title)}
-					className="-mx-1 group/sort flex w-full items-center gap-1 rounded px-1 text-left outline-none transition-colors duration-100 hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent"
+					className={cn(
+						"-mx-1 group/sort flex w-full items-center gap-1 rounded px-1 text-left outline-none transition-colors duration-100 hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent",
+						layered && "rounded-md hover:bg-foreground/[0.04]",
+					)}
 					onClick={column.getToggleSortingHandler()}
 					type="button"
 				>

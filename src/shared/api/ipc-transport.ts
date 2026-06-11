@@ -509,7 +509,8 @@ const COMMAND_INVOKERS: Partial<
 
 	// ── Loopback / listen ──
 	[IPC.LOOPBACK_LIST_DEVICES]: () => commands.loopbackListDevices(),
-	[IPC.LOOPBACK_START]: (a) => commands.startListen(a.deviceIndex as number),
+	[IPC.LOOPBACK_START]: (a) =>
+		commands.startListen(a.deviceIndex as number, a.modelId as string),
 	[IPC.LOOPBACK_STOP]: () => commands.stopListen(),
 
 	// ── Sound library ──
@@ -556,6 +557,7 @@ const COMMAND_INVOKERS: Partial<
  * `CRITICAL_SEND_CHANNELS`.
  */
 const CRITICAL_SEND_CHANNELS: ReadonlySet<string> = new Set<string>([
+	IPC.LOOPBACK_START,
 	IPC.STT_RELOAD_MODEL,
 	IPC.SETTINGS_SAVE,
 ]);

@@ -151,8 +151,10 @@ describe("preset-prompts", () => {
 			"Do NOT convert text to a list merely because it has several sentences",
 		);
 		expect(r.toLowerCase()).toContain(
-			"never turn a standalone question into a list item",
+			"never turn a question into a list item",
 		);
+		// Questions stay prose even when several occur in a row.
+		expect(r).toContain("even several questions in a row");
 		expect(r).toContain("announces a count");
 		expect(r).toContain("numbered list");
 		expect(r).toContain("exactly as many items as the announced count");

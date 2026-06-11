@@ -150,7 +150,7 @@ pub fn send_select_all(enigo: &mut Enigo) -> Result<(), String> {
 /// Used by paste paths that run while the user may still be holding the app hotkey. Clearing
 /// the logical modifier state prevents Ctrl/Win/Shift/Alt from changing the injected text or
 /// paste shortcut delivered to the target app.
-/// Injecting a key-up for a key that isn't down is harmless. Windows only (no-op elsewhere).
+/// Injecting a key-up for a key that isn't down is harmless; non-Windows builds no-op.
 #[cfg(target_os = "windows")]
 pub fn release_held_modifiers() {
     let _ = release_current_modifiers();
@@ -243,6 +243,49 @@ fn release_current_modifiers() -> Result<Vec<VIRTUAL_KEY>, String> {
     Ok(released)
 }
 
+/// One unit of paste work: a run of newline-free text, or a hard line break.
+/// Splitting the LLM output into these lets the Windows path inject real Enter
+/// keystrokes for line breaks while typing the text runs via KEYEVENTF_UNICODE.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasteOp {
+    Text(String),
+    LineBreak,
+}
+
+/// Split text into a sequence of text runs and line breaks. `\r\n` and a lone
+/// `\r` each collapse to a single `LineBreak` so CRLF input doesn't double-space.
+/// Pure and platform-independent so it can be unit-tested without input synthesis.
+pub fn split_paste_ops(text: &str) -> Vec<PasteOp> {
+    let mut ops = Vec::new();
+    let mut chars = text.chars().peekable();
+    let mut run = String::new();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\r' => {
+                if !run.is_empty() {
+                    ops.push(PasteOp::Text(std::mem::take(&mut run)));
+                }
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                ops.push(PasteOp::LineBreak);
+            }
+            '\n' => {
+                if !run.is_empty() {
+                    ops.push(PasteOp::Text(std::mem::take(&mut run)));
+                }
+                ops.push(PasteOp::LineBreak);
+            }
+            _ => run.push(ch),
+        }
+    }
+    if !run.is_empty() {
+        ops.push(PasteOp::Text(run));
+    }
+    ops
+}
+
 /// Inject Unicode text without pressing any accelerator keys. This is the Windows-safe path for
 /// streaming paste while the dictation hotkey modifiers are still physically held.
 ///
@@ -251,40 +294,16 @@ fn release_current_modifiers() -> Result<Vec<VIRTUAL_KEY>, String> {
 /// which most edit controls, browser inputs, and chat boxes silently drop — collapsing a
 /// multi-line result (numbered lists, bullet lists, paragraphs) onto a single row. Sending
 /// VK_RETURN makes the target app break the line exactly as if the user pressed Enter, so
-/// structure the LLM produced survives the Direct paste path. `\r\n` and lone `\r` are folded
-/// into a single Enter so CRLF text doesn't double-space.
+/// structure the LLM produced survives the Direct paste path.
 #[cfg(target_os = "windows")]
 fn paste_text_unicode(text: &str) -> Result<(), String> {
-    let mut chars = text.chars().peekable();
-    let mut segment = String::new();
-
-    let flush_segment = |segment: &mut String| -> Result<(), String> {
-        if segment.is_empty() {
-            return Ok(());
-        }
-        let result = paste_unicode_segment(segment);
-        segment.clear();
-        result
-    };
-
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\r' => {
-                flush_segment(&mut segment)?;
-                // Fold a following '\n' into the same line break (CRLF → one Enter).
-                if chars.peek() == Some(&'\n') {
-                    chars.next();
-                }
-                send_vk_clicks(VK_RETURN, 1)?;
-            }
-            '\n' => {
-                flush_segment(&mut segment)?;
-                send_vk_clicks(VK_RETURN, 1)?;
-            }
-            _ => segment.push(ch),
+    for op in split_paste_ops(text) {
+        match op {
+            PasteOp::Text(run) => paste_unicode_segment(&run)?,
+            PasteOp::LineBreak => send_vk_clicks(VK_RETURN, 1)?,
         }
     }
-    flush_segment(&mut segment)
+    Ok(())
 }
 
 /// Inject a newline-free string as a sequence of KEYEVENTF_UNICODE packets (batched, with
@@ -409,4 +428,87 @@ pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
     enigo
         .text(text)
         .map_err(|e| format!("Failed to send text directly: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{split_paste_ops, PasteOp};
+
+    fn text(s: &str) -> PasteOp {
+        PasteOp::Text(s.to_string())
+    }
+
+    #[test]
+    fn no_newlines_is_a_single_text_run() {
+        assert_eq!(split_paste_ops("hello world"), vec![text("hello world")]);
+    }
+
+    #[test]
+    fn empty_input_yields_no_ops() {
+        assert!(split_paste_ops("").is_empty());
+    }
+
+    #[test]
+    fn lf_becomes_a_line_break_between_runs() {
+        assert_eq!(
+            split_paste_ops("a\nb"),
+            vec![text("a"), PasteOp::LineBreak, text("b")]
+        );
+    }
+
+    #[test]
+    fn crlf_collapses_to_one_line_break() {
+        assert_eq!(
+            split_paste_ops("a\r\nb"),
+            vec![text("a"), PasteOp::LineBreak, text("b")]
+        );
+    }
+
+    #[test]
+    fn lone_cr_is_one_line_break() {
+        assert_eq!(
+            split_paste_ops("a\rb"),
+            vec![text("a"), PasteOp::LineBreak, text("b")]
+        );
+    }
+
+    #[test]
+    fn blank_line_yields_two_consecutive_breaks() {
+        // A numbered list lead-in + blank line + first item: the blank line
+        // must survive as two line breaks so the list renders with spacing.
+        assert_eq!(
+            split_paste_ops("Steps:\n\n1. Do it"),
+            vec![
+                text("Steps:"),
+                PasteOp::LineBreak,
+                PasteOp::LineBreak,
+                text("1. Do it"),
+            ]
+        );
+    }
+
+    #[test]
+    fn trailing_and_leading_breaks_are_preserved() {
+        assert_eq!(
+            split_paste_ops("\nmid\n"),
+            vec![PasteOp::LineBreak, text("mid"), PasteOp::LineBreak]
+        );
+    }
+
+    #[test]
+    fn multiline_list_splits_each_item() {
+        let ops = split_paste_ops("Do:\n* a\n* b\n* c");
+        assert_eq!(
+            ops,
+            vec![
+                text("Do:"),
+                PasteOp::LineBreak,
+                text("* a"),
+                PasteOp::LineBreak,
+                text("* b"),
+                PasteOp::LineBreak,
+                text("* c"),
+            ]
+        );
+    }
 }

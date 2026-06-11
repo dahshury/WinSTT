@@ -6,7 +6,7 @@ use futures_util::StreamExt;
 
 use crate::winstt::llm::{
     build_loopback_ollama_api_url, parse_chat_stream_line, validate_loopback_ollama_endpoint,
-    OllamaStreamState,
+    OllamaStreamState, OLLAMA_NUM_CTX,
 };
 
 /// Direct Ollama HTTP client for WinSTT's app-specific API contract.
@@ -56,6 +56,11 @@ impl OllamaClient {
                 "prompt": "",
                 "stream": false,
                 "keep_alive": keep_alive,
+                // Load with the SAME context the chat path requests. Ollama
+                // reloads a model whenever `num_ctx` differs from the loaded
+                // instance, so a default-ctx warmup would leave every real
+                // dictation paying the full model reload it was meant to avoid.
+                "options": { "num_ctx": OLLAMA_NUM_CTX },
             }))
             .timeout(timeout)
             .send()

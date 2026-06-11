@@ -3,7 +3,7 @@ export const siteConfig = {
   owner: "dahshury",
   repo: "WinSTT",
   description:
-    "Documentation for WinSTT, a local-first Windows speech-to-text desktop app.",
+    "Documentation for WinSTT, a local-first speech-to-text desktop app.",
 };
 
 export const repositorySlug = `${siteConfig.owner}/${siteConfig.repo}`;

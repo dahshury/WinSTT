@@ -56,16 +56,40 @@ impl LlmManager {
 
         let mgr = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
+            // Boot pass: pre-load enabled models so the FIRST dictation is
+            // warm. Retried each tick until it completes against a reachable
+            // Ollama (the server may still be starting alongside the app).
+            let mut booted = mgr.warm_enabled_models().await;
             loop {
-                mgr.warm_enabled_models().await;
                 tokio::time::sleep(OLLAMA_WARMUP_INTERVAL).await;
+                // After boot, re-warm on a timer ONLY under the "never unload"
+                // policy (self-heal: Ollama restarted or evicted the model out
+                // from under us). Every chat/warmup request already carries the
+                // keep_alive mapped from the shared unload timeout, so a finite
+                // policy (2m/15m/…) counts down from the LAST REAL USE on its
+                // own — a periodic re-warm would reset that countdown forever
+                // and the model would never unload, violating the setting.
+                if !booted || mgr.keep_alive_refresh_enabled() {
+                    booted = mgr.warm_enabled_models().await || booted;
+                }
             }
         });
     }
 
-    pub async fn warm_enabled_models(&self) {
+    /// True iff the shared model-lifetime policy is "never unload" — the only
+    /// policy under which the periodic keep-alive refresh should run.
+    fn keep_alive_refresh_enabled(&self) -> bool {
+        read_settings(&self.app).global.model_unload_timeout
+            == crate::winstt::settings_schema::ModelUnloadTimeout::Never
+    }
+
+    /// Run one warmup pass over the enabled Ollama models. Returns `true` when
+    /// the pass ran to completion against a reachable endpoint (or had nothing
+    /// to do), `false` when it should be retried (another pass was in flight,
+    /// or Ollama was unreachable).
+    pub async fn warm_enabled_models(&self) -> bool {
         let Some(_pass) = self.lifecycle.try_claim(LLM_WARMUP_PASS_KEY) else {
-            return;
+            return false;
         };
 
         let settings = read_settings(&self.app);
@@ -74,12 +98,12 @@ impl LlmManager {
         if models.is_empty() {
             self.evict_stale_warmed_models(&endpoint, &[]).await;
             self.clear_warmup_status();
-            return;
+            return true;
         }
 
         // NOTE: do NOT cancel in-flight requests here. The only cancellable LLM
         // work is user dictation/transform (warmup itself uses `/api/generate`
-        // and never registers a cancel id), and this pass fires on a 4-minute
+        // and never registers a cancel id), and this pass fires on a periodic
         // timer, on settings changes, and after a pull — none of which should
         // abort a dictation the user just spoke. A cancelled chat returns a
         // partial structured-output fragment that then gets pasted as garbage
@@ -103,7 +127,7 @@ impl LlmManager {
                 reachable: false,
                 timestamp: warmup_timestamp(),
             });
-            return;
+            return false;
         }
 
         self.publish_warmup_status(LlmWarmupStatus {
@@ -141,6 +165,7 @@ impl LlmManager {
             reachable: true,
             timestamp: warmup_timestamp(),
         });
+        true
     }
 
     async fn ensure_ollama_reachable(&self, endpoint: &str) -> (bool, bool) {

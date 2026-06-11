@@ -509,12 +509,12 @@
     "advancedTitle": "Advanced",
     "microphoneRelease": "Release Microphone",
     "microphoneReleaseCaption": "When to close the OS audio stream after a recording",
-    "microphoneReleaseTooltip": "Picks when the OS microphone stream is released — the trade-off is mic-in-use indicator visibility versus PTT response latency. 'Always' keeps the stream open the whole time WinSTT is running for microseconds-fast PTT (indicator stays lit). 'Off' (default) closes immediately on every key-up so the indicator clears decisively. The duration options stop the engine on key-up but defer the actual close so back-to-back presses inside the window skip the ~10-50 ms reopen cost.",
-    "microphoneReleaseAlways": "Always (never released)",
-    "microphoneReleaseImmediate": "Off (release on key-up)",
-    "microphoneReleaseSec30": "After 30 seconds",
-    "microphoneReleaseMin1": "After 1 minute",
-    "microphoneReleaseMin5": "After 5 minutes"
+    "microphoneReleaseTooltip": "Picks when the OS microphone stream is released — the trade-off is mic-in-use indicator visibility versus PTT response latency. 'Never' keeps the stream open the whole time WinSTT is running for microseconds-fast PTT (indicator stays lit). 'Immediate' (default) closes on every key up so the indicator clears decisively. The duration options stop the engine on key up but defer the actual close so back-to-back presses inside the window skip the ~10-50 ms reopen cost.",
+    "microphoneReleaseAlways": "Never",
+    "microphoneReleaseImmediate": "Immediate (release on key up)",
+    "microphoneReleaseSec30": "30 seconds",
+    "microphoneReleaseMin1": "1 minute",
+    "microphoneReleaseMin5": "5 minutes"
   },
   "quality": {
     "enableRealtime": "Enable Realtime",

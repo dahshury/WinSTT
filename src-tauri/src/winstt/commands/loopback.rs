@@ -7,13 +7,13 @@
 // The renderer (`features/listen-mode/api/use-loopback-devices.ts` +
 // `use-listen-mode.ts`) validates each row against the Zod shape:
 //
-//     { index: int, name: string, defaultSampleRate: number,
+//     { id: string, index: int, name: string, defaultSampleRate: number,
 //       maxOutputChannels: number, isDefault?: bool }
 //
 // so this command emits EXACTLY that shape (byte-identical to the reference
 // server's `list_loopback_devices` response `value`). The numeric `index` is the
 // positional ordinal of the device in the enumeration — the same integer the
-// renderer hands back to `loopback:start` (→ `start_listen { deviceIndex }`),
+// renderer hands back to `loopback:start` (→ `start_listen { deviceIndex, modelId }`),
 // which `listen::start_listen` maps back to a WASAPI endpoint id via the same
 // enumeration order.
 
@@ -30,6 +30,7 @@ use crate::winstt::loopback::LoopbackCapture;
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LoopbackDevicePayload {
+    pub id: String,
     pub index: i32,
     pub name: String,
     /// WASAPI render endpoints are mixed at 48 kHz on Windows; the renderer only
@@ -55,6 +56,7 @@ pub fn enumerate_loopback_devices() -> Vec<LoopbackDevicePayload> {
     raw.into_iter()
         .enumerate()
         .map(|(i, d)| LoopbackDevicePayload {
+            id: d.id,
             index: i as i32,
             name: d.name,
             default_sample_rate: WASAPI_SHARED_MIX_RATE_HZ,
@@ -70,10 +72,13 @@ pub fn enumerate_loopback_devices() -> Vec<LoopbackDevicePayload> {
 /// listen-mode entry). Used by `start_listen` to label the `loopback_started`
 /// event's `deviceName`.
 pub fn resolve_loopback_device_name(device_index: i32) -> Option<String> {
+    resolve_loopback_device(device_index).map(|d| d.name)
+}
+
+pub fn resolve_loopback_device(device_index: i32) -> Option<LoopbackDevicePayload> {
     enumerate_loopback_devices()
         .into_iter()
         .find(|d| d.index == device_index)
-        .map(|d| d.name)
 }
 
 /// `loopback_list_devices` — enumerate WASAPI loopback-capable output devices for
@@ -95,6 +100,7 @@ mod tests {
     fn device_payload_is_camel_case() {
         // The renderer's Zod schema keys are camelCase — confirm serde renames.
         let p = LoopbackDevicePayload {
+            id: "{0.0.0.00000000}.{endpoint}".into(),
             index: 0,
             name: "Speakers".into(),
             default_sample_rate: 48_000.0,
@@ -105,6 +111,10 @@ mod tests {
         assert!(v.get("defaultSampleRate").is_some());
         assert!(v.get("maxOutputChannels").is_some());
         assert!(v.get("isDefault").is_some());
+        assert_eq!(
+            v.get("id").and_then(|x| x.as_str()),
+            Some("{0.0.0.00000000}.{endpoint}")
+        );
         assert_eq!(v.get("index").and_then(|x| x.as_i64()), Some(0));
     }
 

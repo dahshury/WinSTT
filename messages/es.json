@@ -509,12 +509,12 @@
     "advancedTitle": "Avanzado",
     "microphoneRelease": "Liberar micrófono",
     "microphoneReleaseCaption": "Cuándo cerrar el flujo de audio del sistema operativo tras una grabación",
-    "microphoneReleaseTooltip": "Define cuándo se libera el flujo del micrófono del sistema operativo: el equilibrio entre la visibilidad del indicador de uso del micrófono y la latencia de respuesta PTT. 'Siempre' mantiene el flujo abierto mientras WinSTT está en ejecución para una PTT de microsegundos (el indicador permanece encendido). 'Desactivado' (predeterminado) cierra inmediatamente en cada tecla-arriba para que el indicador se apague con claridad. Las opciones de duración detienen el motor al soltar la tecla, pero difieren el cierre real para que las pulsaciones seguidas dentro del intervalo se salten el coste de reapertura de ~10-50 ms.",
-    "microphoneReleaseAlways": "Siempre (nunca se libera)",
-    "microphoneReleaseImmediate": "Desactivado (liberar al soltar tecla)",
-    "microphoneReleaseSec30": "Después de 30 segundos",
-    "microphoneReleaseMin1": "Después de 1 minuto",
-    "microphoneReleaseMin5": "Después de 5 minutos"
+    "microphoneReleaseTooltip": "Define cuándo se libera el flujo del micrófono del sistema operativo: el equilibrio entre la visibilidad del indicador de uso del micrófono y la latencia de respuesta PTT. 'Nunca' mantiene el flujo abierto mientras WinSTT está en ejecución para una PTT de microsegundos (el indicador permanece encendido). 'Inmediato' (predeterminado) cierra al soltar la tecla para que el indicador se apague con claridad. Las opciones de duración detienen el motor al soltar la tecla, pero difieren el cierre real para que las pulsaciones seguidas dentro del intervalo se salten el coste de reapertura de ~10-50 ms.",
+    "microphoneReleaseAlways": "Nunca",
+    "microphoneReleaseImmediate": "Inmediato (liberar al soltar tecla)",
+    "microphoneReleaseSec30": "30 segundos",
+    "microphoneReleaseMin1": "1 minuto",
+    "microphoneReleaseMin5": "5 minutos"
   },
   "quality": {
     "enableRealtime": "Activar tiempo real",

@@ -312,7 +312,7 @@ describe("OverlayPage", () => {
 		expect(container.querySelector(".rounded-2xl")).toBeNull();
 	});
 
-	test("shows the pill once realtime text arrives", () => {
+	test("does not show the pill for realtime text before VAD speech", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
@@ -330,7 +330,7 @@ describe("OverlayPage", () => {
 		});
 		const { container } = renderOverlay();
 		const pill = container.querySelector(".rounded-2xl");
-		expect(pill).not.toBeNull();
+		expect(pill).toBeNull();
 		useSettingsStore.setState({ settings: initialSettings });
 		useTranscriptionStore.setState({
 			currentRealtime: "",
@@ -366,19 +366,32 @@ describe("OverlayPage", () => {
 			processingPhase: "uploading",
 			transcribingStartedAt: 100,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		expect(container.textContent).toContain("Transcribing");
 		expect(container.textContent).not.toContain("Uploading");
 		expect(container.querySelector(".rounded-2xl")).not.toBeNull();
 	});
 
-	test("does not show a transcribing indicator for normal final decode without LLM cleanup", () => {
+	test("shows a transcribing indicator for normal final decode without LLM cleanup", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
 				general: {
 					...initialSettings.general,
 					liveTranscriptionDisplay: "both",
+					overlayMode: "floating-bottom",
+				},
+				llm: {
+					...initialSettings.llm,
+					dictation: {
+						...initialSettings.llm.dictation,
+						enabled: false,
+					},
+				},
+				model: {
+					...initialSettings.model,
+					model: "tiny",
 				},
 			},
 		});
@@ -389,13 +402,51 @@ describe("OverlayPage", () => {
 			isTranscribing: true,
 			transcribingStartedAt: 100,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
-		expect(container.textContent).not.toContain("Transcribing");
+		expect(container.textContent).toContain("Transcribing");
 		expect(
 			container.querySelector(
 				'[data-overlay-floating-surface="true"][data-processing="true"]',
 			),
-		).toBeNull();
+		).not.toBeNull();
+	});
+
+	test("keeps the dynamic island on transcribing during local final decode without LLM cleanup", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: {
+					...initialSettings.general,
+					liveTranscriptionDisplay: "both",
+					overlayMode: "dynamic-island",
+				},
+				llm: {
+					...initialSettings.llm,
+					dictation: {
+						...initialSettings.llm.dictation,
+						enabled: false,
+					},
+				},
+				model: {
+					...initialSettings.model,
+					model: "tiny",
+				},
+			},
+		});
+		useTranscriptionStore.setState({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: true,
+			isTranscribing: true,
+			transcribingStartedAt: 100,
+		});
+		useVisualizerStore.setState({ isSpeaking: true });
+		const { container } = renderOverlay();
+		const output = container.querySelector(
+			'[data-overlay-processing-content="true"] output',
+		);
+		expect(output?.getAttribute("data-thinking-word")).toBe("Transcribing");
 	});
 
 	test("shows an uploading indicator for cloud STT before transcription starts", () => {
@@ -428,6 +479,7 @@ describe("OverlayPage", () => {
 			processingPhase: "uploading",
 			transcribingStartedAt: 100,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		const surface = container.querySelector(
 			'[data-overlay-floating-surface="true"][data-processing="true"]',
@@ -473,6 +525,7 @@ describe("OverlayPage", () => {
 			processingPhase: "transcribing",
 			transcribingStartedAt: 100,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		const output = container.querySelector(
 			'[data-overlay-floating-surface="true"][data-processing="true"] output',
@@ -516,6 +569,7 @@ describe("OverlayPage", () => {
 			processingPhase: "transcribing",
 			transcribingStartedAt: 100,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		const output = container.querySelector(
 			'[data-overlay-processing-content="true"] output',
@@ -550,6 +604,7 @@ describe("OverlayPage", () => {
 			isTranscribing: true,
 			transcribingStartedAt: 100,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		const surface = container.querySelector(
 			'[data-overlay-floating-surface="true"][data-processing="true"]',
@@ -587,6 +642,7 @@ describe("OverlayPage", () => {
 			isTranscribing: true,
 			transcribingStartedAt: 100,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		const processing = container.querySelector(
 			'[data-overlay-processing-content="true"]',
@@ -747,6 +803,7 @@ describe("OverlayPage", () => {
 			isTranscribing: true,
 			transcribingStartedAt: 100,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		const surface = container.querySelector(
 			'[data-overlay-floating-surface="true"][data-processing="true"]',
@@ -800,6 +857,7 @@ describe("OverlayPage", () => {
 			isTranscribing: true,
 			transcribingStartedAt: 100,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		const island = container.querySelector("#winstt-overlay-island");
 		const processing = container.querySelector(
@@ -853,6 +911,10 @@ describe("OverlayPage", () => {
 			thinkingStartedAt: 100,
 			thinkingText: "",
 		});
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		const surface = container.querySelector(
 			'[data-overlay-floating-surface="true"][data-processing="true"]',
@@ -900,6 +962,10 @@ describe("OverlayPage", () => {
 			thinkingStartedAt: 100,
 			thinkingText: "",
 		});
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		const island = container.querySelector("#winstt-overlay-island");
 		const panel = island?.parentElement;
@@ -952,6 +1018,10 @@ describe("OverlayPage", () => {
 				thinkingStartedAt: 100,
 				thinkingText: "",
 			});
+			useTranscriptionStore.setState({
+				isRecordingActive: true,
+			});
+			useVisualizerStore.setState({ isSpeaking: true });
 			const { container } = renderOverlay();
 			expect(container.textContent).toContain("Thinking");
 			expect(intervalDelays).toContain(4000);
@@ -1000,6 +1070,7 @@ describe("OverlayPage", () => {
 			ephemeral: null,
 			isRecordingActive: true,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		// The bubble (.rounded-2xl) wraps a <p> for transcription text via
 		// ScrollingText. Querying ".rounded-2xl p" matches that text node
@@ -1042,6 +1113,7 @@ describe("OverlayPage", () => {
 			ephemeral: null,
 			isRecordingActive: true,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		expect(container.querySelector(".rounded-2xl p")?.textContent).toContain(
 			"streamed separately",
@@ -1151,7 +1223,7 @@ describe("OverlayPage", () => {
 		});
 	});
 
-	test("shows ephemeral text when realtime is empty", () => {
+	test("does not show ephemeral text before VAD reveals the pill", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
@@ -1181,7 +1253,7 @@ describe("OverlayPage", () => {
 		// itself is hidden — both the presence-test and absence-test paths
 		// the old `.line-clamp-5` selector covered.
 		const textDiv = container.querySelector(".rounded-2xl p");
-		expect(textDiv?.textContent).toContain("ephemeral preview");
+		expect(textDiv).toBeNull();
 		useSettingsStore.setState({ settings: initialSettings });
 		useTranscriptionStore.setState({
 			currentRealtime: "",
@@ -1209,6 +1281,7 @@ describe("OverlayPage", () => {
 			ephemeral: null,
 			isRecordingActive: true,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { container } = renderOverlay();
 		const zoomDiv = container.querySelector("[style*='zoom']");
 		expect(zoomDiv).not.toBeNull();
@@ -1321,6 +1394,7 @@ describe("OverlayPage", () => {
 			ephemeral: null,
 			isRecordingActive: true,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 		const { getByRole } = renderOverlay();
 		expect(
 			getByRole("button", { name: /cancel transcription/i }),
@@ -1348,6 +1422,7 @@ describe("OverlayPage", () => {
 			ephemeral: null,
 			isRecordingActive: true,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 
 		const { container, getByRole } = renderOverlay();
 
@@ -1380,6 +1455,7 @@ describe("OverlayPage", () => {
 			ephemeral: null,
 			isRecordingActive: true,
 		});
+		useVisualizerStore.setState({ isSpeaking: true });
 
 		const { container, getByRole } = renderOverlay();
 

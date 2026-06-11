@@ -57,24 +57,86 @@ function New-UpdaterManifest {
         [System.IO.FileInfo] $WindowsAsset,
         [System.IO.FileInfo] $WindowsSignature,
         [System.IO.FileInfo] $LinuxAppImage,
-        [System.IO.FileInfo] $LinuxSignature
+        [System.IO.FileInfo] $LinuxSignature,
+        [System.IO.FileInfo] $MacAarch64Asset,
+        [System.IO.FileInfo] $MacAarch64Signature,
+        [System.IO.FileInfo] $MacX64Asset,
+        [System.IO.FileInfo] $MacX64Signature
     )
+
+    $Platforms = [ordered] @{
+        "windows-x86_64" = [ordered] @{
+            signature = Read-UpdaterSignature $WindowsSignature.FullName
+            url = Get-GitHubReleaseAssetUrl $Repository $Tag $WindowsAsset.Name
+        }
+        "linux-x86_64" = [ordered] @{
+            signature = Read-UpdaterSignature $LinuxSignature.FullName
+            url = Get-GitHubReleaseAssetUrl $Repository $Tag $LinuxAppImage.Name
+        }
+    }
+
+    if ($null -ne $MacAarch64Asset -and $null -ne $MacAarch64Signature) {
+        $Platforms["darwin-aarch64"] = [ordered] @{
+            signature = Read-UpdaterSignature $MacAarch64Signature.FullName
+            url = Get-GitHubReleaseAssetUrl $Repository $Tag $MacAarch64Asset.Name
+        }
+    }
+
+    if ($null -ne $MacX64Asset -and $null -ne $MacX64Signature) {
+        $Platforms["darwin-x86_64"] = [ordered] @{
+            signature = Read-UpdaterSignature $MacX64Signature.FullName
+            url = Get-GitHubReleaseAssetUrl $Repository $Tag $MacX64Asset.Name
+        }
+    }
 
     [ordered] @{
         version = $Version
         notes = $Notes
         pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-        platforms = [ordered] @{
-            "windows-x86_64" = [ordered] @{
-                signature = Read-UpdaterSignature $WindowsSignature.FullName
-                url = Get-GitHubReleaseAssetUrl $Repository $Tag $WindowsAsset.Name
-            }
-            "linux-x86_64" = [ordered] @{
-                signature = Read-UpdaterSignature $LinuxSignature.FullName
-                url = Get-GitHubReleaseAssetUrl $Repository $Tag $LinuxAppImage.Name
-            }
+        platforms = $Platforms
+    }
+}
+
+function Test-NameMatchesAny {
+    param(
+        [string] $Name,
+        [string[]] $Patterns
+    )
+
+    foreach ($Pattern in $Patterns) {
+        if ($Name -match $Pattern) {
+            return $true
         }
     }
+    $false
+}
+
+function Select-MacUpdaterBundle {
+    param(
+        [System.IO.FileInfo[]] $MacAssets,
+        [string[]] $ArchPatterns,
+        [string] $ArchLabel
+    )
+
+    $Asset = $MacAssets |
+        Where-Object { $_.Name.EndsWith(".app.tar.gz") -and (Test-NameMatchesAny $_.Name $ArchPatterns) } |
+        Sort-Object FullName |
+        Select-Object -First 1
+
+    if ($null -eq $Asset) {
+        throw "Missing macOS $ArchLabel updater asset (*.app.tar.gz) under: $AssetsRoot"
+    }
+    $Asset
+}
+
+function Get-UpdaterSignatureForBundle {
+    param([System.IO.FileInfo] $Bundle)
+
+    $SignaturePath = "$($Bundle.FullName).sig"
+    if (Test-Path -LiteralPath $SignaturePath) {
+        return Get-Item -LiteralPath $SignaturePath
+    }
+    $null
 }
 
 function Get-ReleaseAssetByName {
@@ -162,7 +224,35 @@ if (Test-Path -LiteralPath $LinuxSignaturePath) {
     Write-Warning "Missing Linux AppImage updater signature: $LinuxSignaturePath; latest.json will not be generated."
 }
 
-if ($null -ne $WindowsSignature -and $null -ne $LinuxSignature) {
+$MacAssets = @(
+    Get-ChildItem -LiteralPath $AssetsRoot -Recurse -File |
+        Where-Object { $_.Name.EndsWith(".dmg") -or $_.Name.EndsWith(".app.tar.gz") -or $_.Name.EndsWith(".app.tar.gz.sig") } |
+        Sort-Object FullName
+)
+
+if ($MacAssets.Count -eq 0) {
+    throw "Missing macOS release assets under: $AssetsRoot"
+}
+$Assets += $MacAssets
+
+$MacAarch64Bundle = Select-MacUpdaterBundle -MacAssets $MacAssets -ArchPatterns @("aarch64", "arm64") -ArchLabel "Apple Silicon"
+$MacX64Bundle = Select-MacUpdaterBundle -MacAssets $MacAssets -ArchPatterns @("x86_64", "x64", "amd64", "intel") -ArchLabel "Intel"
+$MacAarch64Signature = Get-UpdaterSignatureForBundle $MacAarch64Bundle
+$MacX64Signature = Get-UpdaterSignatureForBundle $MacX64Bundle
+
+if ($null -eq $MacAarch64Signature) {
+    Write-Warning "Missing macOS Apple Silicon updater signature: $($MacAarch64Bundle.FullName).sig; latest.json will not include macOS."
+}
+if ($null -eq $MacX64Signature) {
+    Write-Warning "Missing macOS Intel updater signature: $($MacX64Bundle.FullName).sig; latest.json will not include macOS."
+}
+
+if (
+    $null -ne $WindowsSignature -and
+    $null -ne $LinuxSignature -and
+    $null -ne $MacAarch64Signature -and
+    $null -ne $MacX64Signature
+) {
     $LatestJson = Join-Path $AssetsRoot "latest.json"
     $Manifest = New-UpdaterManifest `
         -Repository $Repository `
@@ -172,7 +262,11 @@ if ($null -ne $WindowsSignature -and $null -ne $LinuxSignature) {
         -WindowsAsset $WindowsInstaller `
         -WindowsSignature $WindowsSignature `
         -LinuxAppImage $LinuxAppImage `
-        -LinuxSignature $LinuxSignature
+        -LinuxSignature $LinuxSignature `
+        -MacAarch64Asset $MacAarch64Bundle `
+        -MacAarch64Signature $MacAarch64Signature `
+        -MacX64Asset $MacX64Bundle `
+        -MacX64Signature $MacX64Signature
     $Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LatestJson -Encoding utf8
     $Assets += Get-Item -LiteralPath $LatestJson
 }

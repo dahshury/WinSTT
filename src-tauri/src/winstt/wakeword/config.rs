@@ -11,8 +11,8 @@ use super::tokenize::THRESHOLD_MIN;
 ///
 /// INVARIANT: the KWS session is tiny and runs continuously, so keep it on CPU
 /// regardless of the STT accelerator. This also avoids sherpa-onnx's DirectML
-/// provider probe during startup, which logs a misleading "DirectML is for
-/// Windows only" fallback from the native library on some Windows builds.
+/// provider probe during startup, which logs a misleading DirectML fallback
+/// from the native library on some Windows builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WakeWordProvider {
     #[default]

@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
-import { useSettingsStore } from "@/entities/setting";
-import { useLoopbackDevices } from "@/features/listen-mode";
+import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
+import { useSettingsStore, useSettingsTabStore } from "@/entities/setting";
+import {
+	hasCachedNativeStreamingModel,
+	resolveListenStreamingModelId,
+} from "@/features/listen-mode";
 import {
 	wakewordCancelModelDownload,
 	wakewordPauseModelDownload,
@@ -9,6 +13,7 @@ import {
 	wakewordStartModelDownload,
 } from "@/shared/api/ipc-client";
 import { isRealtimeEnabled } from "@/shared/lib/realtime-enabled";
+import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { recordingModePatch } from "../lib/recording-settings-helpers";
 import {
 	InputDeviceSection,
@@ -34,7 +39,9 @@ export function RecordingSettingsPanel() {
 	const updateAudio = useSettingsStore((s) => s.updateAudioSettings);
 	const q = useSettingsStore((s) => s.settings.quality);
 	const update = useSettingsStore((s) => s.updateQualitySettings);
+	const model = useSettingsStore((s) => s.settings.model);
 	const updateLlmDictation = useSettingsStore((s) => s.updateLlmDictation);
+	const setActiveSettingsTab = useSettingsTabStore((s) => s.setActiveTab);
 	const recordingMode = general?.recordingMode ?? "ptt";
 	const rawWakewordStatus = useWakewordModelStatus();
 	const wakewordStatus = wakewordStatusWithRuntimeFallback(
@@ -43,8 +50,22 @@ export function RecordingSettingsPanel() {
 	);
 	const [wakewordDialogOpen, setWakewordDialogOpen] = useState(false);
 	const [wakewordEnablePending, setWakewordEnablePending] = useState(false);
+	const [listenModelDialogOpen, setListenModelDialogOpen] = useState(false);
 	const llmDictationEnabled = useSettingsStore(
 		(s) => s.settings.llm?.dictation?.enabled ?? false,
+	);
+	const catalogModels = useCatalogStore((s) => s.models);
+	const statesById = useModelStateStore((s) => s.statesById);
+	const refreshModelState = useModelStateStore((s) => s.refresh);
+	const listenModelId = resolveListenStreamingModelId(
+		model,
+		q,
+		catalogModels,
+		statesById,
+	);
+	const cachedStreamingModelAvailable = hasCachedNativeStreamingModel(
+		catalogModels,
+		statesById,
 	);
 
 	const t = useTranslations("general");
@@ -53,11 +74,9 @@ export function RecordingSettingsPanel() {
 	const tq = useTranslations("quality");
 	const ts = useTranslations("settings");
 
-	const {
-		options: loopbackOpts,
-		currentId: currentLoopbackId,
-		handleChange: handleLoopbackChange,
-	} = useLoopbackDevices();
+	useEffect(() => {
+		void refreshModelState();
+	}, [refreshModelState]);
 
 	// Smart Endpoint and LLM dictation cleanup make conflicting decisions about
 	// when to finalise speech — enabling either auto-disables the other. The LLM
@@ -68,6 +87,14 @@ export function RecordingSettingsPanel() {
 		if (next && llmDictationEnabled) {
 			updateLlmDictation({ enabled: false });
 		}
+	};
+
+	const prepareListenMode = (): boolean => {
+		if (listenModelId !== null) {
+			return true;
+		}
+		setListenModelDialogOpen(true);
+		return false;
 	};
 
 	// Smart Endpoint only makes sense in modes where silence ends the utterance.
@@ -125,10 +152,8 @@ export function RecordingSettingsPanel() {
 		<div className="flex flex-col gap-2">
 			<RecordingModeSection
 				audio={audio}
-				currentLoopbackId={currentLoopbackId}
 				general={general}
-				handleLoopbackChange={handleLoopbackChange}
-				loopbackOpts={loopbackOpts}
+				prepareListenMode={prepareListenMode}
 				recordingMode={recordingMode}
 				requestWakewordDownload={() => setWakewordDialogOpen(true)}
 				ta={ta}
@@ -147,6 +172,19 @@ export function RecordingSettingsPanel() {
 				onStart={startWakewordDownload}
 				open={wakewordDialogOpen}
 				status={wakewordStatus}
+			/>
+			<ConfirmDialog
+				cancelLabel="Keep current mode"
+				confirmLabel="Open Model tab"
+				description={
+					cachedStreamingModelAvailable
+						? "Choose a downloaded realtime STT model before enabling Listen mode. The recording mode was left unchanged."
+						: "Download a realtime STT model before enabling Listen mode. The recording mode was left unchanged."
+				}
+				onConfirm={() => setActiveSettingsTab("model")}
+				onOpenChange={setListenModelDialogOpen}
+				open={listenModelDialogOpen}
+				title="Listen mode needs a realtime model"
 			/>
 
 			{/* ── Input Device (hidden in Listen mode — loopback device is used instead) */}

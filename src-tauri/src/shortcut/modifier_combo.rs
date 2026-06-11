@@ -336,7 +336,7 @@ mod platform {
     ) -> Result<bool, String> {
         if binding.id == "transcribe" && is_modifier_only_accelerator(&binding.current_binding) {
             return Err(
-                "modifier-only PTT shortcuts are currently supported on Windows only".into(),
+                "modifier-only PTT shortcuts are unavailable on this platform; choose a full hotkey with a non-modifier key".into(),
             );
         }
         Ok(false)

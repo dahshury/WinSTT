@@ -14,6 +14,9 @@ import {
 	useInputDevices,
 	useMicrophoneLevels,
 } from "@/entities/audio-device";
+import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
+import { useSettingsTabStore } from "@/entities/setting";
+import { resolveListenStreamingModelId } from "@/features/listen-mode";
 import {
 	copyLastTranscript,
 	fileQueuePickAndEnqueue,
@@ -120,6 +123,11 @@ export function TrayMenu() {
 	const t = useTranslations("tray");
 	const tAudio = useTranslations("audio");
 	const { devices, defaultDevice } = useInputDevices();
+	const refreshModelState = useModelStateStore((s) => s.refresh);
+
+	useEffect(() => {
+		void refreshModelState();
+	}, [refreshModelState]);
 
 	useEffect(() => {
 		settingsLoad().then((settings) => {
@@ -190,8 +198,27 @@ export function TrayMenu() {
 	};
 
 	const handleModeChange = async (mode: RecordingMode) => {
-		dispatch({ type: "set-recording-mode", value: mode });
 		const settings = await settingsLoad();
+		if (mode === "listen") {
+			await refreshModelState();
+			const listenModelId = resolveListenStreamingModelId(
+				settings.model,
+				settings.quality,
+				useCatalogStore.getState().models,
+				useModelStateStore.getState().statesById,
+			);
+			if (listenModelId === null) {
+				dispatch({
+					type: "set-recording-mode",
+					value: settings.general.recordingMode,
+				});
+				useSettingsTabStore.getState().setActiveTab("model");
+				trayWindowOpenSettings();
+				closeTrayMenu();
+				return;
+			}
+		}
+		dispatch({ type: "set-recording-mode", value: mode });
 		await settingsSave({
 			...settings,
 			general: { ...settings.general, recordingMode: mode },

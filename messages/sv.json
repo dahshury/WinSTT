@@ -509,12 +509,12 @@
     "advancedTitle": "Avancerat",
     "microphoneRelease": "Frigör mikrofon",
     "microphoneReleaseCaption": "När OS-ljudströmmen stängs efter en inspelning",
-    "microphoneReleaseTooltip": "Väljer när OS-mikrofonströmmen frigörs — avvägningen är synligheten av mikrofon-i-bruk-indikatorn kontra PTT-svarslatens. 'Alltid' håller strömmen öppen hela tiden WinSTT körs för mikrosekundssnabb PTT (indikatorn förblir tänd). 'Av' (standard) stänger omedelbart vid varje tangentupp-tryck så att indikatorn rensas tydligt. Varaktighetsalternativen stoppar motorn vid tangentupp men skjuter upp det faktiska stängandet så att snabba tryckar inom fönstret skippar ~10–50 ms återöppningskostnad.",
-    "microphoneReleaseAlways": "Alltid (frigörs aldrig)",
-    "microphoneReleaseImmediate": "Av (frigör vid tangentupp)",
-    "microphoneReleaseSec30": "Efter 30 sekunder",
-    "microphoneReleaseMin1": "Efter 1 minut",
-    "microphoneReleaseMin5": "Efter 5 minuter"
+    "microphoneReleaseTooltip": "Väljer när OS-mikrofonströmmen frigörs — avvägningen är synligheten av mikrofon-i-bruk-indikatorn kontra PTT-svarslatens. 'Aldrig' håller strömmen öppen hela tiden WinSTT körs för mikrosekundssnabb PTT (indikatorn förblir tänd). 'Omedelbart' (standard) stänger vid varje tangentupp-tryck så att indikatorn rensas tydligt. Varaktighetsalternativen stoppar motorn vid tangentupp men skjuter upp det faktiska stängandet så att snabba tryckar inom fönstret skippar ~10–50 ms återöppningskostnad.",
+    "microphoneReleaseAlways": "Aldrig",
+    "microphoneReleaseImmediate": "Omedelbart (frigör vid tangentupp)",
+    "microphoneReleaseSec30": "30 sekunder",
+    "microphoneReleaseMin1": "1 minut",
+    "microphoneReleaseMin5": "5 minuter"
   },
   "quality": {
     "enableRealtime": "Aktivera realtid",

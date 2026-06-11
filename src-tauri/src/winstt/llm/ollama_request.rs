@@ -34,6 +34,13 @@ impl ThinkingEffort {
 // Ollama keep-alive + structured schema, mirroring buildOllamaChatBody.
 const DEFAULT_OLLAMA_KEEP_ALIVE: &str = "5m";
 
+/// Context window requested on EVERY Ollama call WinSTT makes — chat AND
+/// warmup. Ollama reloads a model whenever a request's `num_ctx` differs from
+/// the loaded instance's, so a warmup that omits `options` loads the model at
+/// the server default (4096) and the first real dictation at 16384 then pays
+/// a full multi-second model reload despite being "warm".
+pub const OLLAMA_NUM_CTX: u32 = 16384;
+
 /// Compact JSON-shape grounding appended to the user prompt whenever we send a
 /// `format` schema. Ollama's structured-output docs recommend "also pass the
 /// JSON schema as a string in the prompt to ground the model's response" — with
@@ -287,7 +294,7 @@ pub fn build_ollama_chat_body_with_keep_alive(
         "options": {
             "temperature": 0.3,
             "top_p": 0.9,
-            "num_ctx": 16384,
+            "num_ctx": OLLAMA_NUM_CTX,
             "num_predict": std::cmp::max(text_len * 4, 8192),
         }
     })
@@ -532,6 +539,10 @@ mod tests {
             "ai_prompt"
         );
         assert_eq!(body["keep_alive"], "5m");
+        // Chat must request the shared context size — the warmup path loads the
+        // model with the same value, and any mismatch makes Ollama fully reload
+        // the model on the first real dictation.
+        assert_eq!(body["options"]["num_ctx"], OLLAMA_NUM_CTX);
         // floor is max(100*4, 8192) = 8192
         assert_eq!(body["options"]["num_predict"], 8192);
         let body2 =

@@ -16,6 +16,7 @@ const DEFAULT_TABLE_LAYOUT = {
 	dense: true,
 	headerBackground: true,
 	headerBorder: true,
+	presentation: "standard",
 	rowBorder: true,
 	striped: true,
 	width: "auto",
@@ -37,30 +38,49 @@ export function DataGridTable({
 	const visibleColumnCount = table.getVisibleLeafColumns().length;
 	const trulyEmpty = table.getPreFilteredRowModel().rows.length === 0;
 	const layout = { ...DEFAULT_TABLE_LAYOUT, ...tableLayout };
+	const layered = layout.presentation === "layered";
 	const width = resizable ? "fixed" : layout.width;
-	const denseCellClassName = layout.dense ? "px-2 py-1.5" : undefined;
-	const cellBorderClassName = layout.cellBorder
-		? "border-r border-border/70 last:border-r-0"
+	const denseCellClassName = layout.dense
+		? layered
+			? "px-3 py-2"
+			: "px-2 py-1.5"
 		: undefined;
-	const rowBorderClassName = layout.rowBorder ? undefined : "border-b-0";
-	const tableClassName = resizable
-		? "min-w-full table-fixed"
-		: width === "auto"
-			? "w-auto min-w-full table-auto"
-			: "w-full table-fixed";
+	const cellBorderClassName =
+		layout.cellBorder && !layered
+			? "border-r border-border/70 last:border-r-0"
+			: undefined;
+	const rowBorderClassName =
+		layout.rowBorder && !layered ? undefined : "border-b-0";
+	const tableClassName = cn(
+		resizable
+			? "min-w-full table-fixed"
+			: width === "auto"
+				? "w-auto min-w-full table-auto"
+				: "w-full table-fixed",
+		layered && "border-separate border-spacing-y-1",
+	);
 
 	return (
 		<Table
 			className={tableClassName}
-			style={resizable ? { width: table.getTotalSize() } : undefined}
+			{...(layered ? { containerClassName: "bg-transparent" } : {})}
+			{...(resizable ? { style: { width: table.getTotalSize() } } : {})}
 		>
 			{renderHeader ? (
 				<TableHeader>
 					{table.getHeaderGroups().map((headerGroup) => (
 						<TableRow
 							className={cn(
-								layout.headerBackground && "bg-surface-4/70",
-								!(layout.headerBorder || layout.rowBorder) && "border-b-0",
+								layered
+									? [
+											"border-b-0",
+											"[&>th]:bg-surface-6/75",
+											"[&>th:first-child]:rounded-l-lg [&>th:last-child]:rounded-r-lg",
+										]
+									: layout.headerBackground && "bg-surface-4/70",
+								!(layout.headerBorder || layout.rowBorder) &&
+									!layered &&
+									"border-b-0",
 							)}
 							key={headerGroup.id}
 						>
@@ -73,7 +93,10 @@ export function DataGridTable({
 			) : null}
 			<TableBody>
 				{rows.length === 0 ? (
-					<TableEmpty colSpan={visibleColumnCount}>
+					<TableEmpty
+						colSpan={visibleColumnCount}
+						{...(layered ? { className: "rounded-lg bg-surface-4/55" } : {})}
+					>
 						{trulyEmpty ? labels.emptyState : labels.noResults}
 					</TableEmpty>
 				) : (
@@ -81,8 +104,20 @@ export function DataGridTable({
 						<TableRow
 							className={cn(
 								rowBorderClassName,
-								layout.striped && index % 2 === 1 && "bg-foreground/[0.025]",
-								row.getIsSelected() && "bg-accent/10",
+								layered
+									? [
+											"[&>td]:bg-surface-4/55",
+											"[&>td:first-child]:rounded-l-lg [&>td:last-child]:rounded-r-lg",
+											"hover:[&>td]:bg-surface-5/65",
+											row.getIsSelected() &&
+												"[&>td]:bg-surface-6/80 [&>td]:text-foreground",
+										]
+									: [
+											layout.striped &&
+												index % 2 === 1 &&
+												"bg-foreground/[0.025]",
+											row.getIsSelected() && "bg-accent/10",
+										],
 							)}
 							data-selected={row.getIsSelected() ? "true" : undefined}
 							index={index}

@@ -395,9 +395,7 @@ export function MainModelSection({
 										removeLabel={(language) =>
 											t("languageRemove", { language })
 										}
-										selectedCountLabel={(count) =>
-											t("languageSelectedCount", { count })
-										}
+										selectedCountLabel={(count) => `${count}+`}
 										selectedHeading={t("languageSelectedHeading")}
 										value={languageComboboxValue}
 									/>

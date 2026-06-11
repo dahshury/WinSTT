@@ -1,5 +1,4 @@
 import { CloudDownloadIcon, RefreshIcon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useState } from "react";
 import {
 	DEFAULT_SETTINGS,
@@ -15,10 +14,10 @@ import {
 	updaterQuitAndInstall,
 } from "@/shared/api/ipc-client";
 import { formatBytes } from "@/shared/lib/format-bytes";
-import { Button } from "@/shared/ui/button";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Toggle } from "@/shared/ui/toggle";
+import { AboutActionButton } from "./AboutActionButton";
 import type { AboutT } from "./types";
 
 function formatStatus(entry: UpdaterStatusEntry | null, t: AboutT): string {
@@ -85,15 +84,16 @@ function UpdatesHeaderAction({
 }: UpdatesHeaderActionProps) {
 	if (isDownloaded) {
 		// Once downloaded, the only meaningful action is "restart now". The
-		// emphasized accent color signals it's the recommended next step.
+		// accent text signals it's the recommended next step without leaving the
+		// standard settings action-button surface.
 		return (
-			<Button
-				className="flex h-8 items-center gap-2 rounded-md bg-accent px-3 font-medium text-accent-contrast text-body transition-colors duration-150 hover:bg-accent/90"
+			<AboutActionButton
+				icon={RefreshIcon}
 				onClick={onRestart}
+				variant="accent"
 			>
-				<HugeiconsIcon icon={RefreshIcon} size={12} />
 				{t("updatesRestartToInstall")}
-			</Button>
+			</AboutActionButton>
 		);
 	}
 	const disabled = checking || isDownloading;
@@ -107,18 +107,14 @@ function UpdatesHeaderAction({
 		return t("updatesCheckNow");
 	})();
 	return (
-		<Button
-			className="flex h-8 items-center gap-2 rounded-md border border-foreground/15 bg-foreground/5 px-3 font-medium text-body text-foreground transition-colors duration-150 hover:bg-foreground/10 disabled:cursor-not-allowed disabled:opacity-50"
+		<AboutActionButton
 			disabled={disabled}
+			icon={RefreshIcon}
+			iconClassName={disabled ? "animate-spin" : undefined}
 			onClick={onCheck}
 		>
-			<HugeiconsIcon
-				className={disabled ? "animate-spin" : undefined}
-				icon={RefreshIcon}
-				size={12}
-			/>
 			{label}
-		</Button>
+		</AboutActionButton>
 	);
 }
 

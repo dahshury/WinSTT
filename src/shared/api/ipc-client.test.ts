@@ -281,10 +281,13 @@ describe("send wrappers (migrated to typed commands)", () => {
 
 	test("loopbackStart and loopbackStop route to start_listen / stop_listen", () => {
 		installMockApi();
-		ipc.loopbackStart(3);
+		ipc.loopbackStart(3, "streaming-nemo-ctc-en-1040ms");
 		ipc.loopbackStop();
 		expect(tauriCalls).toEqual([
-			{ cmd: "start_listen", args: { deviceIndex: 3 } },
+			{
+				cmd: "start_listen",
+				args: { deviceIndex: 3, modelId: "streaming-nemo-ctc-en-1040ms" },
+			},
 			{ cmd: "stop_listen", args: undefined },
 		]);
 	});
@@ -1392,10 +1395,10 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 
 	test("loopbackStart forwards device index to start_listen", () => {
 		installMockApi();
-		ipc.loopbackStart(7);
+		ipc.loopbackStart(7, "streaming-nemo-rnnt-en-1040ms");
 		expect(lastTauriCall()).toEqual({
 			cmd: "start_listen",
-			args: { deviceIndex: 7 },
+			args: { deviceIndex: 7, modelId: "streaming-nemo-rnnt-en-1040ms" },
 		});
 	});
 

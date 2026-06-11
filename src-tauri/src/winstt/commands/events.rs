@@ -38,6 +38,10 @@ pub mod names {
     pub const PASTE_ERROR: &str = "output:paste-error";
     /// A recording could not start / aborted with an error.
     pub const RECORDING_ERROR: &str = "recording:error";
+    /// WASAPI loopback capture started for Listen mode.
+    pub const LOOPBACK_STARTED: &str = "stt:loopback-started";
+    /// WASAPI loopback capture stopped for Listen mode.
+    pub const LOOPBACK_STOPPED: &str = "stt:loopback-stopped";
     /// The shared overlay window was shown.
     pub const OVERLAY_SHOW: &str = "overlay:show";
     /// The shared overlay window was hidden.

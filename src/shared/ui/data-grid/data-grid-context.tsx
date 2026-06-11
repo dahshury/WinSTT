@@ -54,6 +54,8 @@ export interface DataGridTableLayout {
 	headerBackground?: boolean;
 	/** Divider below the header. */
 	headerBorder?: boolean;
+	/** Visual treatment for the table frame and row material. */
+	presentation?: "standard" | "layered";
 	/** CSS table layout algorithm. Resizable grids always force fixed layout. */
 	width?: "auto" | "fixed";
 }

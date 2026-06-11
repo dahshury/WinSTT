@@ -509,12 +509,12 @@
     "advancedTitle": "Nâng cao",
     "microphoneRelease": "Giải phóng microphone",
     "microphoneReleaseCaption": "Khi nào đóng luồng âm thanh OS sau khi ghi",
-    "microphoneReleaseTooltip": "Chọn khi nào luồng microphone OS được giải phóng — sự đánh đổi là hiển thị chỉ báo mic đang dùng so với độ trễ phản hồi PTT. 'Luôn luôn' giữ luồng mở trong khi WinSTT chạy để PTT cực nhanh (chỉ báo luôn sáng). 'Tắt' (mặc định) đóng ngay khi nhả phím để chỉ báo tắt dứt khoát. Các tùy chọn thời lượng dừng công cụ khi nhả phím nhưng trì hoãn lần đóng thực để các lần nhấn liên tiếp trong cửa sổ bỏ qua chi phí mở lại ~10-50 ms.",
-    "microphoneReleaseAlways": "Luôn luôn (không bao giờ giải phóng)",
-    "microphoneReleaseImmediate": "Tắt (giải phóng khi nhả phím)",
-    "microphoneReleaseSec30": "Sau 30 giây",
-    "microphoneReleaseMin1": "Sau 1 phút",
-    "microphoneReleaseMin5": "Sau 5 phút"
+    "microphoneReleaseTooltip": "Chọn khi nào luồng microphone OS được giải phóng — sự đánh đổi là hiển thị chỉ báo mic đang dùng so với độ trễ phản hồi PTT. 'Không bao giờ' giữ luồng mở trong khi WinSTT chạy để PTT cực nhanh (chỉ báo luôn sáng). 'Ngay lập tức' (mặc định) đóng khi nhả phím để chỉ báo tắt dứt khoát. Các tùy chọn thời lượng dừng công cụ khi nhả phím nhưng trì hoãn lần đóng thực để các lần nhấn liên tiếp trong cửa sổ bỏ qua chi phí mở lại ~10-50 ms.",
+    "microphoneReleaseAlways": "Không bao giờ",
+    "microphoneReleaseImmediate": "Ngay lập tức (giải phóng khi nhả phím)",
+    "microphoneReleaseSec30": "30 giây",
+    "microphoneReleaseMin1": "1 phút",
+    "microphoneReleaseMin5": "5 phút"
   },
   "quality": {
     "enableRealtime": "Bật thời gian thực",

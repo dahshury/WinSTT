@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 
 mod answer;
 mod file_tagging;
+mod normalize;
 mod ollama_request;
 mod prompts;
 mod side_effects;
@@ -22,6 +23,7 @@ mod transport;
 
 pub use answer::*;
 pub use file_tagging::*;
+pub use normalize::*;
 pub use ollama_request::*;
 pub use prompts::*;
 pub use side_effects::*;
