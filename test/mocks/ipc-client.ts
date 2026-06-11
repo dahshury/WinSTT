@@ -148,6 +148,14 @@ function onCast<T>(channel: string, cb: (value: T) => void): () => void {
 export function ipcClientMock(): Record<string, unknown> {
 	return {
 		// Low-level wrappers (re-exported by the real module)
+		noop,
+		send,
+		invoke,
+		on,
+		onTyped,
+		onCast,
+		hasNativeBridge: hasBridge,
+		hasSettingsBackend: hasBridge,
 		ipcSend: send,
 		ipcInvoke: invoke,
 		ipcOn: on,
@@ -187,11 +195,33 @@ export function ipcClientMock(): Record<string, unknown> {
 			),
 		onAudioDeviceChangeDetected: (cb: () => void) =>
 			on(IPC.AUDIO_DEVICECHANGE_DETECTED, cb),
+		audioGetOutputDevices: () =>
+			invokeOrDefault<unknown[]>(IPC.AUDIO_GET_OUTPUT_DEVICES, []),
+		audioRefreshOutputDevices: () =>
+			invokeOrDefault<unknown[]>(IPC.AUDIO_REFRESH_OUTPUT_DEVICES, []),
+		onAudioOutputDevicesChanged: (cb: (devices: unknown[]) => void) =>
+			onTyped(
+				IPC.AUDIO_OUTPUT_DEVICES_CHANGED,
+				(d: { devices: unknown[] }) => d.devices,
+				cb,
+			),
 		audioSetSelectedMicrophone: (deviceName: string) =>
 			invoke<void>(IPC.AUDIO_SET_SELECTED_MICROPHONE, { deviceName }),
+		startMicrophoneLevelMonitor: (targets: unknown[]) =>
+			invokeOrDefault<void>(
+				IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR,
+				undefined,
+				{ targets },
+			),
+		stopMicrophoneLevelMonitor: () =>
+			invokeOrDefault<void>(IPC.AUDIO_STOP_MICROPHONE_LEVEL_MONITOR, undefined),
+		onMicrophoneLevels: (cb: (payload: unknown) => void) =>
+			onCast(IPC.AUDIO_MICROPHONE_LEVELS, cb),
 		gpuGetInfo: () => invokeOrDefault<unknown>(IPC.GPU_GET_INFO, null),
 		getSystemLocale: () =>
 			invokeOrDefault<string>(IPC.APP_GET_SYSTEM_LOCALE, ""),
+		listContextApps: () =>
+			invokeOrDefault<unknown[]>(IPC.CONTEXT_LIST_APPS, []),
 
 		// Settings
 		settingsSave: (settings: unknown) => send(IPC.SETTINGS_SAVE, { settings }),
@@ -201,6 +231,10 @@ export function ipcClientMock(): Record<string, unknown> {
 		// `settings.general` undefined and crashed any component that read
 		// `settings.general.*` when this leaked into a later suite.
 		settingsLoad: async () =>
+			decodeSettingsPayload(
+				await invokeOrDefault<unknown>(IPC.SETTINGS_LOAD, {}),
+			),
+		settingsLoadStrict: async () =>
 			decodeSettingsPayload(
 				await invokeOrDefault<unknown>(IPC.SETTINGS_LOAD, {}),
 			),
@@ -216,6 +250,18 @@ export function ipcClientMock(): Record<string, unknown> {
 				},
 				{ deleteOllamaModels },
 			),
+		removeDownloadedModels: (deleteOllamaModels: boolean) =>
+			invokeOrDefault<unknown>(
+				IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS,
+				{
+					deletedModelCaches: 0,
+					deletedOllamaModels: [],
+					disabledFeatures: [],
+					errors: [],
+					ollamaErrors: [],
+				},
+				{ deleteOllamaModels },
+			),
 
 		// Connection / server
 		sttIsConnected: () => invokeOrDefault<boolean>(IPC.STT_IS_CONNECTED, false),
@@ -227,6 +273,15 @@ export function ipcClientMock(): Record<string, unknown> {
 		windowOpenSettings: () => send(IPC.WINDOW_OPEN_SETTINGS),
 		settingsWindowReady: () => send(IPC.SETTINGS_WINDOW_READY),
 		windowCloseSelf: () => send(IPC.WINDOW_CLOSE_SELF),
+		notifyRendererReady: () => Promise.resolve(undefined),
+		trayWindowOpenSettings: () => Promise.resolve(undefined),
+		windowOpenContextPlayground: () => Promise.resolve(undefined),
+		windowShowMain: () => Promise.resolve(undefined),
+		windowCloseNamed: () => Promise.resolve(undefined),
+		windowResizeNamed: () => Promise.resolve(undefined),
+		windowQuitApp: () => Promise.resolve(undefined),
+		contextPlaygroundSetLive: () => Promise.resolve(undefined),
+		contextPlaygroundArmDeep: () => Promise.resolve(undefined),
 
 		// STT event subscriptions
 		onRealtimeText: (
@@ -478,6 +533,18 @@ export function ipcClientMock(): Record<string, unknown> {
 				reachable: false,
 				error: "IPC unavailable",
 			}),
+		fetchOpenRouterSttModels: () =>
+			invokeOrDefault<unknown>(IPC.STT_SCAN_OPENROUTER_MODELS, {
+				models: [],
+				reachable: false,
+				error: "IPC unavailable",
+			}),
+		fetchOpenRouterTtsModels: () =>
+			invokeOrDefault<unknown>(IPC.TTS_SCAN_OPENROUTER_MODELS, {
+				models: [],
+				reachable: false,
+				error: "IPC unavailable",
+			}),
 		processWithLlm: (text: string) =>
 			invokeOrDefault<string>(IPC.LLM_PROCESS_TEXT, text, { text }),
 		applyTransform: (transformId: string) =>
@@ -491,10 +558,21 @@ export function ipcClientMock(): Record<string, unknown> {
 				text,
 				systemPrompt,
 			}),
+		onPreviewReady: (cb: (payload: unknown) => void) =>
+			onCast(IPC.STT_PREVIEW_READY, cb),
+		confirmPaste: (text: string) =>
+			invokeOrDefault<void>(IPC.PREVIEW_CONFIRM_PASTE, undefined, {
+				text,
+			}),
+		cancelPreview: () => invokeOrDefault<void>(IPC.PREVIEW_CANCEL, undefined),
 		onTransformApplied: (cb: (p: unknown) => void) =>
 			onCast(IPC.TRANSFORMS_APPLIED, cb),
 		onTransformFailed: (cb: (p: unknown) => void) =>
 			onCast(IPC.TRANSFORMS_FAILED, cb),
+		onTransformProcessingStart: (cb: () => void) =>
+			on(IPC.TRANSFORMS_PROCESSING_START, cb),
+		onTransformProcessingEnd: (cb: () => void) =>
+			on(IPC.TRANSFORMS_PROCESSING_END, cb),
 		onLlmCatalog: (cb: (m: unknown[]) => void) => {
 			if (!hasBridge()) {
 				return noop;
@@ -841,6 +919,8 @@ export function ipcClientMock(): Record<string, unknown> {
 		// ── File-transcription queue ──
 		fileQueueEnqueue: (files: unknown[]) =>
 			invokeOrDefault<null>(IPC.FILE_QUEUE_ENQUEUE, null, { files }),
+		fileQueuePickAndEnqueue: () =>
+			invokeOrDefault<null>(IPC.FILE_QUEUE_PICK_AND_ENQUEUE, null),
 		fileQueueCancel: (id: string) =>
 			invokeOrDefault<null>(IPC.FILE_QUEUE_CANCEL, null, { id }),
 		fileQueueRetry: (id: string) =>
@@ -903,6 +983,12 @@ export function ipcClientMock(): Record<string, unknown> {
 		ttsCloudPreview: (payload: { previewUrl: string }) =>
 			invokeOrDefault<unknown>(
 				IPC.TTS_CLOUD_PREVIEW,
+				{ requestId: "" },
+				payload,
+			),
+		ttsOpenRouterPreview: (payload: { previewUrl?: string }) =>
+			invokeOrDefault<unknown>(
+				IPC.TTS_OPENROUTER_PREVIEW,
 				{ requestId: "" },
 				payload,
 			),

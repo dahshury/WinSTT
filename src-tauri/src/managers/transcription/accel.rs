@@ -51,19 +51,16 @@ fn available_whisper_options() -> Vec<String> {
 }
 
 fn available_ort_options() -> Vec<String> {
-    let mut out = vec![
+    vec![
         ort_accelerator_label(OrtAcceleratorSetting::Auto),
         ort_accelerator_label(OrtAcceleratorSetting::Cpu),
-    ];
-
-    #[cfg(feature = "cuda")]
-    out.push(ort_accelerator_label(OrtAcceleratorSetting::Cuda));
-    #[cfg(windows)]
-    out.push(ort_accelerator_label(OrtAcceleratorSetting::DirectMl));
-    #[cfg(feature = "rocm")]
-    out.push(ort_accelerator_label(OrtAcceleratorSetting::Rocm));
-
-    out
+        #[cfg(feature = "cuda")]
+        ort_accelerator_label(OrtAcceleratorSetting::Cuda),
+        #[cfg(windows)]
+        ort_accelerator_label(OrtAcceleratorSetting::DirectMl),
+        #[cfg(feature = "rocm")]
+        ort_accelerator_label(OrtAcceleratorSetting::Rocm),
+    ]
 }
 
 fn whisper_accelerator_label(value: WhisperAcceleratorSetting) -> String {

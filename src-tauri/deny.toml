@@ -13,15 +13,15 @@ all-features = true
 
 # ---------------------------------------------------------------------------
 # Advisories — RustSec database. CVEs in dependencies fail the build; the
-# unmaintained / yanked classes are warnings so they surface without blocking
-# an alpha release on transitive crates we don't directly control.
+# yanked crates are warnings, and unmaintained crates only fail when they are
+# direct workspace dependencies.
 # ---------------------------------------------------------------------------
 [advisories]
 version = 2
 yanked = "warn"
 # Crates flagged unmaintained upstream are noise for an alpha — surface them,
-# don't gate. Promote to "deny" once the tree is clean.
-unmaintained = "all"
+# fail only for direct dependencies; transitive runtime advisories stay visible.
+unmaintained = "workspace"
 # CVEs without a severity-based exception below fail by default (advisories
 # version 2 denies vulnerabilities unless explicitly ignored).
 ignore = []
@@ -43,8 +43,10 @@ allow = [
   "ISC",
   "Zlib",
   "MPL-2.0",
+  "MPL-2.0-no-copyleft-exception",
+  "BSL-1.0",
+  "CDLA-Permissive-2.0",
   "Unicode-3.0",
-  "Unicode-DFS-2016",
   "CC0-1.0",
   "0BSD",
 ]

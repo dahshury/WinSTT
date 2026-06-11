@@ -247,6 +247,7 @@ fn release_current_modifiers() -> Result<Vec<VIRTUAL_KEY>, String> {
 /// Splitting the LLM output into these lets the Windows path inject real Enter
 /// keystrokes for line breaks while typing the text runs via KEYEVENTF_UNICODE.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(any(target_os = "windows", test))]
 pub enum PasteOp {
     Text(String),
     LineBreak,
@@ -255,6 +256,7 @@ pub enum PasteOp {
 /// Split text into a sequence of text runs and line breaks. `\r\n` and a lone
 /// `\r` each collapse to a single `LineBreak` so CRLF input doesn't double-space.
 /// Pure and platform-independent so it can be unit-tested without input synthesis.
+#[cfg(any(target_os = "windows", test))]
 pub fn split_paste_ops(text: &str) -> Vec<PasteOp> {
     let mut ops = Vec::new();
     let mut chars = text.chars().peekable();
