@@ -139,7 +139,7 @@ ferrous-opencc = "0.2.3"
 # path the reference app's `phonemizer`/`espeakng_loader` takes via ctypes — so
 # there is NO per-sentence subprocess spawn (the CLI shell-out was slower on
 # short sentences). Already in the dep graph (transitive); pinned direct.
-libloading = "0.8"
+libloading = "0.9"
 clap = { version = "4", features = ["derive"] }
 specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
 specta-typescript = "0.0.9"
