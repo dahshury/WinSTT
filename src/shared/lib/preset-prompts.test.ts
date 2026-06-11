@@ -150,9 +150,7 @@ describe("preset-prompts", () => {
 		expect(r).toContain(
 			"Do NOT convert text to a list merely because it has several sentences",
 		);
-		expect(r.toLowerCase()).toContain(
-			"never turn a question into a list item",
-		);
+		expect(r.toLowerCase()).toContain("never turn a question into a list item");
 		// Questions stay prose even when several occur in a row.
 		expect(r).toContain("even several questions in a row");
 		expect(r).toContain("announces a count");

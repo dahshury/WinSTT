@@ -80,7 +80,10 @@ function shouldStartLoopback(
 	);
 }
 
-function shouldStopLoopback(recordingMode: string, wasListen: boolean): boolean {
+function shouldStopLoopback(
+	recordingMode: string,
+	wasListen: boolean,
+): boolean {
 	return wasListen && recordingMode !== "listen";
 }
 
@@ -96,13 +99,7 @@ export function applyLoopbackTransition(
 	previousLoopbackDeviceIndex: number | null = null,
 	previousListenModelId: string | null = null,
 ): void {
-	if (
-		shouldStartLoopback(
-			recordingMode,
-			loopbackDeviceIndex,
-			listenModelId,
-		)
-	) {
+	if (shouldStartLoopback(recordingMode, loopbackDeviceIndex, listenModelId)) {
 		const modelId = listenModelId;
 		if (modelId === null) {
 			return;

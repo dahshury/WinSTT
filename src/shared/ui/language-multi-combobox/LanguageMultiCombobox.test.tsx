@@ -1,6 +1,12 @@
 import { Tooltip } from "@base-ui/react/tooltip";
 import { describe, expect, mock, test } from "bun:test";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { LanguageMultiCombobox } from "./LanguageMultiCombobox";
 
 const options = [
@@ -98,9 +104,7 @@ describe("LanguageMultiCombobox", () => {
 		await openPopup();
 
 		expect(screen.getByText("3+")).toBeTruthy();
-		expect(
-			screen.queryByRole("button", { name: "Remove English" }),
-		).toBeNull();
+		expect(screen.queryByRole("button", { name: "Remove English" })).toBeNull();
 		expect(screen.queryByRole("button", { name: "Remove French" })).toBeNull();
 		expect(screen.queryByRole("button", { name: "Remove German" })).toBeNull();
 

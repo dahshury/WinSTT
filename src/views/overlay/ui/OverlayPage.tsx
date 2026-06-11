@@ -174,8 +174,7 @@ export function OverlayPage() {
 			hasText,
 			isThinking: showThinking,
 			isTranscribing: showTranscribing,
-		}) ||
-		isPreviewActive;
+		}) || isPreviewActive;
 	// Sticky once-on: hold the pill mounted for the rest of the active session
 	// even if `currentRealtime` momentarily empties between realtime chunks.
 	// Without this, the AnimatePresence around chip + bubble unmounts on every
