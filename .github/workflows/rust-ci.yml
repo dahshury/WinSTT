@@ -60,7 +60,7 @@ jobs:
         with:
           workspaces: "src-tauri -> target"
 
-      - name: Reset stale sherpa prebuilt cache
+      - name: Reset stale native build cache
         shell: pwsh
         run: |
           $paths = @(
@@ -68,7 +68,11 @@ jobs:
             "src-tauri\target\debug\build\sherpa-onnx-*",
             "src-tauri\target\debug\.fingerprint\sherpa-onnx-*",
             "src-tauri\target\release\build\sherpa-onnx-*",
-            "src-tauri\target\release\.fingerprint\sherpa-onnx-*"
+            "src-tauri\target\release\.fingerprint\sherpa-onnx-*",
+            "src-tauri\target\debug\build\ort-sys-*",
+            "src-tauri\target\debug\.fingerprint\ort-sys-*",
+            "src-tauri\target\release\build\ort-sys-*",
+            "src-tauri\target\release\.fingerprint\ort-sys-*"
           )
           foreach ($path in $paths) {
             Remove-Item -Recurse -Force $path -ErrorAction SilentlyContinue
@@ -129,7 +133,7 @@ jobs:
         with:
           workspaces: "src-tauri -> target"
 
-      - name: Reset stale sherpa prebuilt cache
+      - name: Reset stale native build cache
         shell: pwsh
         run: |
           $paths = @(
@@ -137,7 +141,11 @@ jobs:
             "src-tauri\target\debug\build\sherpa-onnx-*",
             "src-tauri\target\debug\.fingerprint\sherpa-onnx-*",
             "src-tauri\target\release\build\sherpa-onnx-*",
-            "src-tauri\target\release\.fingerprint\sherpa-onnx-*"
+            "src-tauri\target\release\.fingerprint\sherpa-onnx-*",
+            "src-tauri\target\debug\build\ort-sys-*",
+            "src-tauri\target\debug\.fingerprint\ort-sys-*",
+            "src-tauri\target\release\build\ort-sys-*",
+            "src-tauri\target\release\.fingerprint\ort-sys-*"
           )
           foreach ($path in $paths) {
             Remove-Item -Recurse -Force $path -ErrorAction SilentlyContinue
@@ -218,6 +226,19 @@ jobs:
           workspaces: "src-tauri -> target"
           key: ci-linux-artifacts
 
+      - name: Reset stale native build cache
+        run: |
+          rm -rf \
+            src-tauri/target/sherpa-onnx-prebuilt \
+            src-tauri/target/debug/build/sherpa-onnx-* \
+            src-tauri/target/debug/.fingerprint/sherpa-onnx-* \
+            src-tauri/target/release/build/sherpa-onnx-* \
+            src-tauri/target/release/.fingerprint/sherpa-onnx-* \
+            src-tauri/target/debug/build/ort-sys-* \
+            src-tauri/target/debug/.fingerprint/ort-sys-* \
+            src-tauri/target/release/build/ort-sys-* \
+            src-tauri/target/release/.fingerprint/ort-sys-*
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -276,6 +297,19 @@ jobs:
         uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: "src-tauri -> target"
+
+      - name: Reset stale native build cache
+        run: |
+          rm -rf \
+            src-tauri/target/sherpa-onnx-prebuilt \
+            src-tauri/target/debug/build/sherpa-onnx-* \
+            src-tauri/target/debug/.fingerprint/sherpa-onnx-* \
+            src-tauri/target/release/build/sherpa-onnx-* \
+            src-tauri/target/release/.fingerprint/sherpa-onnx-* \
+            src-tauri/target/debug/build/ort-sys-* \
+            src-tauri/target/debug/.fingerprint/ort-sys-* \
+            src-tauri/target/release/build/ort-sys-* \
+            src-tauri/target/release/.fingerprint/ort-sys-*
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
