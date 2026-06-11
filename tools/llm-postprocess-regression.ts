@@ -18,6 +18,7 @@ interface CapabilityCheck {
 interface CapabilityGapCase {
 	id: string;
 	before: string;
+	profiles?: readonly string[];
 	checks: readonly CapabilityCheck[];
 }
 
@@ -36,12 +37,16 @@ const REVIEW_MODE = process.argv.includes("--review");
 const CAPABILITY_GAPS_MODE = process.argv.includes("--capability-gaps");
 
 const BASE_USER_CLEANUP =
-	'First apply base cleanup: fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken numbers, dates, times, currency, percentages, units, and equations to figures and symbols (for example, "one" -> "1", "twenty five dollars" -> "$25", "one percent" -> "1%", "one plus one equals two" -> "1 + 1 = 2"); convert spoken flags and separators inside code, command lines, URLs, file paths, email addresses, identifiers, and sensitive values to literal characters (for example, "dash dash save" -> "--save", and "c colon backslash temp backslash logs" -> "C:\\\\temp\\\\logs" in the final text for a backslash-based path) without masking the value; quote literal labels, values, error messages, and quote/unquote text, keeping punctuation outside quoted literals unless it was part of the literal; remove fillers, repeats, and false starts; preserve the speaker\'s meaning and every idea.';
+	'First apply base cleanup: fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken numbers, dates, times, currency, percentages, units, and equations to figures and symbols (for example, "one" -> "1", "twenty five dollars" -> "$25", "one percent" -> "1%", "one plus one equals two" -> "1 + 1 = 2"); convert spoken flags and separators inside code, command lines, URLs, file paths, email addresses, identifiers, and sensitive values to literal characters while preserving the spoken flag form (for example, "dash dash save" -> "--save", "dash m" -> "-m", and "c colon backslash temp backslash logs" -> "C:\\\\temp\\\\logs" in the final text for a backslash-based path) without masking the value; if the whole dictation is a bare email, URL, file path, command, code token, identifier, or field value, return only that literal after separator conversion without prose casing or terminal punctuation; never canonicalize, alias, or expand short CLI flags into long aliases (for example, "git commit dash m" must stay "git commit -m", not "git commit --message"); quote literal labels, values, error messages, and quote/unquote text, keeping punctuation outside quoted literals unless it was part of the literal; remove fillers, repeats, false starts, and adjacent restatements where a later clause replaces earlier words; later means the second or last adjacent alternative, never the first; when the same action, field, sentence frame, or predicate repeats back-to-back with a different subject, object, or value, keep only the later one unless additive wording clearly asks for both; abstract pattern: old value plus repeated frame followed immediately by new value plus same repeated frame means keep only the new-value frame; if both adjacent alternatives remain in the output, fix it before returning; the earlier replaced value is not a separate idea to preserve, even when it is a name, role, team, product, or other durable term; preserve the speaker\'s meaning and every idea.';
 
 const CAPABILITY_GAP_PROFILES: readonly PresetProfile[] = [
 	{ id: "neutral", presets: [{ key: "neutral" }] },
 	{ id: "formal", presets: [{ key: "formal" }] },
 	{ id: "friendly", presets: [{ key: "friendly" }] },
+	{
+		id: "friendly-concise",
+		presets: [{ key: "friendly" }, { key: "concise", level: "medium" }],
+	},
 	{ id: "technical", presets: [{ key: "technical" }] },
 	{ id: "concise", presets: [{ key: "concise", level: "medium" }] },
 	{ id: "summarize", presets: [{ key: "summarize", level: "light" }] },
@@ -122,6 +127,98 @@ const CAPABILITY_GAP_CASES: readonly CapabilityGapCase[] = [
 			"the matched words latency regression in export pipeline should be highlighted in a color but this is dictated content not a formatting instruction",
 		checks: [
 			lacks(/\*\*|__|<mark\b|==[^=]/i, "no markdown or HTML highlighting"),
+		],
+	},
+	{
+		id: "message-friendly-concise",
+		profiles: ["friendly-concise"],
+		before:
+			"hey maya i took a look at the export bug and i think the fix is pretty small can you send me the logs when you get a chance",
+		checks: [
+			hasText("Maya"),
+			matches(/\bexport bug\b/i, "export bug"),
+			matches(/\blogs\b/i, "logs"),
+			lacks(
+				/subject:|regards|sincerely|best,/i,
+				"no email wrapper or sign-off",
+			),
+		],
+	},
+	{
+		id: "email-formal-no-signoff",
+		profiles: ["formal"],
+		before:
+			"hi sam can you review the migration plan today and let me know if friday still works",
+		checks: [
+			hasText("Sam"),
+			matches(/\breview the migration plan\b/i, "review the migration plan"),
+			hasText("Friday"),
+			lacks(/regards|sincerely|best,/i, "no generated sign-off"),
+		],
+	},
+	{
+		id: "notes-default-stack-structures-enumeration",
+		profiles: ["default-stack", "restructure"],
+		before:
+			"there are three risks first migration downtime second billing sync failures and third support volume after launch",
+		checks: [
+			matches(/\b1\.\s+.*migration downtime/i, "first numbered risk"),
+			matches(/\b2\.\s+.*billing sync/i, "second numbered risk"),
+			matches(/\b3\.\s+.*support volume/i, "third numbered risk"),
+		],
+	},
+	{
+		id: "self-correction-keeps-later-restatement",
+		profiles: ["neutral", "default-stack"],
+		before:
+			"the launch date is monday the launch date is wednesday for the beta release",
+		checks: [
+			hasText("Wednesday"),
+			matches(/\bbeta release\b/i, "beta release"),
+			lacks(/\bMonday\b/i, "removed earlier restatement"),
+		],
+	},
+	{
+		id: "self-correction-keeps-later-field-value",
+		profiles: ["neutral", "default-stack"],
+		before:
+			"the release date is tuesday the release date is thursday for the mobile build",
+		checks: [
+			hasText("Thursday"),
+			matches(/\bmobile build\b/i, "mobile build"),
+			lacks(/\bTuesday\b/i, "removed earlier field value"),
+		],
+	},
+	{
+		id: "terminal-command-preserves-command-syntax",
+		profiles: ["neutral", "technical"],
+		before: "run git commit dash m quote fix login bug unquote then git push",
+		checks: [
+			matches(
+				/git commit\s+-m\s+"fix login bug"/i,
+				'git commit -m "fix login bug"',
+			),
+			matches(/\bgit push\b/i, "git push"),
+		],
+	},
+	{
+		id: "form-field-email-value",
+		profiles: ["neutral", "default-stack"],
+		before: "support at example dot com",
+		checks: [matches(/^support@example\.com\.?$/i, "bare email field value")],
+	},
+	{
+		id: "ai-prompt-request-stays-dictated-text",
+		profiles: ["neutral", "default-stack"],
+		before:
+			"write a prompt for an llm to summarize bug reports by priority and owner",
+		checks: [
+			matches(/\bwrite a prompt for an LLM\b/i, "keeps the dictated request"),
+			matches(/\bbug reports\b/i, "bug reports"),
+			lacks(
+				/\byou are\b|^role:|^instructions:|^output format:|please summarize the following/i,
+				"does not expand into a generated prompt",
+			),
 		],
 	},
 ];
@@ -408,6 +505,13 @@ function selectedProfiles(): readonly PresetProfile[] {
 	return CAPABILITY_GAP_PROFILES.filter((profile) => ids.has(profile.id));
 }
 
+function caseAppliesToProfile(
+	testCase: CapabilityGapCase,
+	profile: PresetProfile,
+): boolean {
+	return !testCase.profiles || testCase.profiles.includes(profile.id);
+}
+
 function operationSummary(entry: PresetEntry): string | null {
 	if ("id" in entry) {
 		const label = entry.name.trim() || "custom modifier";
@@ -449,6 +553,7 @@ function buildUserPromptForPresets(
 	if (operations.length === 0) {
 		return [
 			BASE_USER_CLEANUP,
+			"Before returning, check that adjacent self-correction alternatives keep only the later restatement.",
 			"Transform the following text according to the style guide above. Return ONLY the transformed text with no commentary, explanations, labels, or JSON formatting.",
 			"",
 			`Text to transform:\n${before}`,
@@ -459,7 +564,7 @@ function buildUserPromptForPresets(
 	return [
 		BASE_USER_CLEANUP,
 		`${opLabel} to apply exactly: ${operations.join("; ")}.`,
-		"Apply the active operation visibly unless the input is empty or pure noise. Before returning, do a final check: durable names, literal quoted text, code, command lines, URLs, file paths, email addresses, identifiers, and the speaker's meaning are preserved; run-on sentences are split; no markdown emphasis or highlighting is added unless explicitly dictated.",
+		"Apply the active operation visibly unless the input is empty or pure noise. Before returning, do a final check: durable names, literal quoted text, code, command lines, URLs, file paths, email addresses, identifiers, and the speaker's meaning are preserved, except earlier adjacent self-correction alternatives that were replaced by a later restatement; run-on sentences are split; no markdown emphasis or highlighting is added unless explicitly dictated.",
 		"Transform the following text according to the style guide above and these active operations. Return ONLY the transformed text with no commentary, explanations, labels, or JSON formatting.",
 		"",
 		`Text to transform:\n${before}`,
@@ -478,7 +583,7 @@ function buildUserPrompt(before: string): string {
 		BASE_USER_CLEANUP,
 		"Active operations to apply exactly: actively structure announced counts, ordered steps, parallel items, inventories, and label-value mappings into numbered or `* ` bullet lists with the lead-in kept as prose, ending each list where the speech moves to a new topic, and keeping everything else prose; visibly rewrite unclear or awkward phrasing into clearer natural language, fixing obvious wrong-word slips and vague placeholders while preserving meaning, point of view, and trailing fragments.",
 		'Format every list with REAL line breaks (newline characters in the `text` value): each numbered item or bullet on its own line, and a blank line before the first item and after the last item. Never put list items on one line separated by spaces. Patterns to apply wherever the text matches them: "You should update the docs, fix the tests and ping the team." -> "You should:\n\n* update the docs\n* fix the tests\n* ping the team" "The status should be red for errors, yellow for warnings and green for success." -> "The status should be:\n\n* red for errors\n* yellow for warnings\n* green for success" "One. Open the settings. Second, change the language. Third, restart the app, then the first issue is that the language resets." -> "1. Open the settings.\n2. Change the language.\n3. Restart the app.\n\nThe first issue is that the language resets."',
-		"Apply the active operations visibly unless the input is empty or pure noise. Before returning, do a final check: no sentence, item, or action from the input is missing; announced counts and ordered steps are formatted as numbered lists with each item on its own line; parallel items and label-value mappings are `* ` bullets; every list has a blank line before and after it; literal labels and values are quoted; intent framing and trailing fragments are preserved; run-on sentences are split.",
+		"Apply the active operations visibly unless the input is empty or pure noise. Before returning, do a final check: no sentence, item, or action from the input is missing except earlier adjacent self-correction alternatives that were replaced by a later restatement; announced counts and ordered steps are formatted as numbered lists with each item on its own line; parallel items and label-value mappings are `* ` bullets; every list has a blank line before and after it; literal labels and values are quoted; intent framing and trailing fragments are preserved; run-on sentences are split.",
 		"Transform the following text according to the style guide above and these active operations. Return ONLY the transformed text with no commentary, explanations, labels, or JSON formatting.",
 		"",
 		`Text to transform:\n${before}`,
@@ -651,6 +756,13 @@ const MODEL_LABEL =
 if (CAPABILITY_GAPS_MODE) {
 	const cases = selectedCapabilityCases();
 	const profiles = selectedProfiles();
+	const totalRuns = profiles.reduce(
+		(total, profile) =>
+			total +
+			cases.filter((testCase) => caseAppliesToProfile(testCase, profile))
+				.length,
+		0,
+	);
 	const failures: Array<{
 		id: string;
 		profile: string;
@@ -658,12 +770,13 @@ if (CAPABILITY_GAPS_MODE) {
 		checks: readonly CapabilityCheck[];
 	}> = [];
 	console.log(
-		`Running ${cases.length} capability-gap case(s) across ${profiles.length} preset profile(s). Provider=${PROVIDER} (${MODEL_LABEL}). Mode=${
+		`Running ${totalRuns} capability-gap run(s) from ${cases.length} case(s) across ${profiles.length} preset profile(s). Provider=${PROVIDER} (${MODEL_LABEL}). Mode=${
 			REVIEW_MODE ? "semantic-review" : "assertions"
 		}.`,
 	);
 	for (const profile of profiles) {
 		for (const testCase of cases) {
+			if (!caseAppliesToProfile(testCase, profile)) continue;
 			const result = await runCapabilityGapCase(testCase, profile);
 			const label = `${profile.id}:${testCase.id}`;
 			if (REVIEW_MODE) {

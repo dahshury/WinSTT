@@ -220,7 +220,6 @@ export function TrayMenu() {
 		}
 		dispatch({ type: "set-recording-mode", value: mode });
 		await settingsSave({
-			...settings,
 			general: { ...settings.general, recordingMode: mode },
 		});
 	};
@@ -236,7 +235,6 @@ export function TrayMenu() {
 		const next = id === "default" ? null : Number.parseInt(id, 10);
 		const settings = await settingsLoad();
 		await settingsSave({
-			...settings,
 			audio: { ...settings.audio, inputDeviceIndex: next },
 		});
 		setDevicePickerOpen(false);

@@ -208,13 +208,6 @@ pub(crate) fn ensure_hf_cache_env() {
         let hf_home = std::path::Path::new(&profile)
             .join(".cache")
             .join("huggingface");
-        // Pre-logger diagnostic: this runs before the tauri log plugin is attached
-        // (lib.rs installs it after `ensure_hf_cache_env`), so `log::` would be
-        // dropped — `eprintln!` keeps the startup hint visible on stderr.
-        eprintln!(
-            "[hf-cache] HOME unset; pointing HF_HOME at {}",
-            hf_home.display()
-        );
         std::env::set_var("HF_HOME", hf_home);
     }
 }

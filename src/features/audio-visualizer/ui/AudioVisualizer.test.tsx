@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { useSettingsStore } from "@/entities/setting";
+import { RECORDING_MODE_COLOR_HEX } from "@/shared/config/recording-mode-color";
 import { AudioVisualizer } from "./AudioVisualizer";
 
 const initialSettings = useSettingsStore.getState().settings;
@@ -11,6 +12,7 @@ beforeEach(() => {
 			...initialSettings,
 			general: {
 				...initialSettings.general,
+				recordingMode: "ptt",
 				visualizerType: "bar",
 				visualizerBarCount: 9,
 			},
@@ -51,5 +53,31 @@ describe("AudioVisualizer", () => {
 	test("default size 'lg' renders the bar variant", () => {
 		const { container } = render(<AudioVisualizer />);
 		expect(container.firstElementChild).not.toBeNull();
+	});
+
+	test("updates the accent color when recording mode changes", () => {
+		const { container } = render(<AudioVisualizer />);
+		const visualizer = container.firstElementChild as HTMLElement;
+
+		expect(visualizer.getAttribute("style")).toContain(
+			RECORDING_MODE_COLOR_HEX.ptt,
+		);
+
+		act(() => {
+			useSettingsStore.setState({
+				settings: {
+					...initialSettings,
+					general: {
+						...initialSettings.general,
+						recordingMode: "listen",
+						visualizerType: "bar",
+					},
+				},
+			});
+		});
+
+		expect(visualizer.getAttribute("style")).toContain(
+			RECORDING_MODE_COLOR_HEX.listen,
+		);
 	});
 });

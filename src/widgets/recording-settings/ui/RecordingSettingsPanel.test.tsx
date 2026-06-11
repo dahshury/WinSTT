@@ -20,6 +20,12 @@ let wakewordDownloadCalls = {
 	resume: 0,
 	start: 0,
 };
+const settingsSaveCalls: Array<{
+	general?: {
+		recordingMode?: string;
+		recordingSound?: boolean;
+	};
+}> = [];
 let wakewordStatusListener:
 	| ((payload: WakewordModelStatusPayload) => void)
 	| null = null;
@@ -42,6 +48,10 @@ mock.module("@/shared/api/ipc-client", () => ({
 	wakewordCancelModelDownload: () => {
 		wakewordDownloadCalls.cancel += 1;
 		return Promise.resolve(wakewordStatus);
+	},
+	settingsSave: (settings: (typeof settingsSaveCalls)[number]) => {
+		settingsSaveCalls.push(settings);
+		return Promise.resolve();
 	},
 	onWakewordModelStatus: (
 		cb: (payload: WakewordModelStatusPayload) => void,
@@ -105,6 +115,19 @@ function seedWakewordMode(
 	});
 }
 
+function seedListenMode(recordingSound: boolean): void {
+	useSettingsStore.setState({
+		settings: {
+			...DEFAULT_SETTINGS,
+			general: {
+				...DEFAULT_SETTINGS.general,
+				recordingMode: "listen",
+				recordingSound,
+			},
+		},
+	});
+}
+
 function setWakewordStatus(next: WakewordModelStatusPayload): void {
 	wakewordStatus = next;
 	wakewordStatusListener?.(next);
@@ -129,6 +152,7 @@ function wakeWordComboboxTrigger(): HTMLElement {
 beforeEach(() => {
 	setWakewordStatus({ available: false, downloading: false });
 	wakewordDownloadCalls = { cancel: 0, pause: 0, resume: 0, start: 0 };
+	settingsSaveCalls.length = 0;
 	useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
 });
 
@@ -173,6 +197,20 @@ describe("RecordingSettingsPanel", () => {
 		expect(
 			useSettingsStore.getState().settings.audio.postSpeechSilenceDuration,
 		).toBe(1.5);
+	});
+
+	test("persists recording mode immediately when leaving Listen mode", async () => {
+		seedListenMode(true);
+		renderPanel();
+		await flushWakewordStatus();
+
+		fireEvent.click(screen.getByRole("button", { name: "Push to Talk" }));
+
+		expect(useSettingsStore.getState().settings.general.recordingMode).toBe(
+			"ptt",
+		);
+		expect(settingsSaveCalls.at(-1)?.general?.recordingMode).toBe("ptt");
+		expect(settingsSaveCalls.at(-1)?.general?.recordingSound).toBe(true);
 	});
 
 	test("downloads wake-word files before enabling Wake Word mode", async () => {

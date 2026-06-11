@@ -38,6 +38,7 @@
 use crate::audio_toolkit::apply_custom_words;
 use crate::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
 use crate::winstt::audio_conditioning::peak_normalize;
+use crate::winstt::stt::formatting::apply_deterministic_formatting;
 use crate::winstt::stt::vad_segment::{
     compact_for_transcription, vad_segment_decode, VAD_COMPACT_MIN_S,
 };
@@ -491,19 +492,8 @@ impl SttBackend for WinsttSttBackend {
             anyhow::anyhow!("Cloud STT failed ({}): {}", e.code.as_str(), e.message)
         })?;
 
-        // Cloud is never Whisper → apply the WinSTT dictionary correction.
-        let dict: Vec<String> = ws
-            .dictionary
-            .iter()
-            .map(|d| d.term.clone())
-            .filter(|t| !t.trim().is_empty())
-            .collect();
-        let corrected = if dict.is_empty() {
-            text
-        } else {
-            apply_custom_words(&text, &dict, ws.general.word_correction_threshold)
-        };
-        Ok(corrected)
+        // Apply the same post-processing path used by local final decodes.
+        Ok(winstt_postprocess(&text, &ws))
     }
 }
 
@@ -641,11 +631,12 @@ pub(crate) fn winstt_postprocess(
         .map(|d| d.term.clone())
         .filter(|t| !t.trim().is_empty())
         .collect();
-    if custom_words.is_empty() {
+    let corrected = if custom_words.is_empty() {
         text.to_string()
     } else {
         apply_custom_words(text, &custom_words, ws.general.word_correction_threshold)
-    }
+    };
+    apply_deterministic_formatting(&corrected, ws)
 }
 
 #[cfg(test)]

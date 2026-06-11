@@ -58,6 +58,11 @@ export const qualitySettingsSchema = z.object({
 	realtimeProcessingPause: z.number().default(0.02),
 	initRealtimeAfterSeconds: z.number().default(0.2),
 	earlyTranscriptionOnSilence: z.number().default(0.2),
+	formatBasicPunctuationCasing: z.boolean().default(false).catch(false),
+	formatSpokenPunctuationCommands: z.boolean().default(false).catch(false),
+	formatSpokenSymbolCommands: z.boolean().default(false).catch(false),
+	formatQuoteCommands: z.boolean().default(false).catch(false),
+	formatFillerRepeatCleanup: z.boolean().default(false).catch(false),
 	// ON by default: the DistilBERT sentence-completion classifier extends
 	// the silence pause when the utterance is semantically incomplete, which
 	// is the purpose-built defence against finalizing mid-thought. With it

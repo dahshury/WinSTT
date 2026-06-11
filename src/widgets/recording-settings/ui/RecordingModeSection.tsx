@@ -5,7 +5,10 @@ import {
 	SettingField,
 	SettingSection,
 } from "@/entities/setting";
-import type { WakewordModelStatusPayload } from "@/shared/api/ipc-client";
+import {
+	settingsSave,
+	type WakewordModelStatusPayload,
+} from "@/shared/api/ipc-client";
 import { CreatableCombobox } from "@/shared/ui/creatable-combobox";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Slider } from "@/shared/ui/slider";
@@ -356,7 +359,21 @@ export function RecordingModeSection({
 		if (value === "listen" && !prepareListenMode()) {
 			return;
 		}
-		update(recordingModePatch(value, general?.wakeWord));
+		const patch = recordingModePatch(value, general?.wakeWord);
+		update(patch);
+		if (general) {
+			void settingsSave({ general: { ...general, ...patch } });
+		}
+	};
+	const handleRecordingModeReset = () => {
+		const patch = recordingModePatch(
+			DEFAULT_SETTINGS.general.recordingMode,
+			general?.wakeWord,
+		);
+		update(patch);
+		if (general) {
+			void settingsSave({ general: { ...general, ...patch } });
+		}
 	};
 	return (
 		<SettingSection icon={RecordIcon} title={t("recording")}>
@@ -364,14 +381,7 @@ export function RecordingModeSection({
 				<SettingField
 					isDefault={recordingMode === DEFAULT_SETTINGS.general.recordingMode}
 					label={t("recordingMode")}
-					onReset={() =>
-						update(
-							recordingModePatch(
-								DEFAULT_SETTINGS.general.recordingMode,
-								general?.wakeWord,
-							),
-						)
-					}
+					onReset={handleRecordingModeReset}
 					tooltip={t("recordingModeTooltip")}
 				>
 					{/* Hero control — sets the design template for every other

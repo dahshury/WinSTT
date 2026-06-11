@@ -147,6 +147,15 @@ describe("qualitySettingsSchema", () => {
 		const out = qualitySettingsSchema.parse({});
 		expect(out.useMainModelForRealtime).toBe(false);
 	});
+
+	test("deterministic formatting toggles default off", () => {
+		const out = qualitySettingsSchema.parse({});
+		expect(out.formatBasicPunctuationCasing).toBe(false);
+		expect(out.formatSpokenPunctuationCommands).toBe(false);
+		expect(out.formatSpokenSymbolCommands).toBe(false);
+		expect(out.formatQuoteCommands).toBe(false);
+		expect(out.formatFillerRepeatCleanup).toBe(false);
+	});
 });
 
 describe("generalSettingsSchema", () => {

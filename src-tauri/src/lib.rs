@@ -3,6 +3,7 @@ mod actions;
 mod apple_intelligence;
 mod audio_feedback;
 pub mod audio_toolkit;
+mod autostart;
 mod bootstrap;
 pub mod cli;
 mod clipboard;
@@ -44,7 +45,6 @@ pub use transcription_coordinator::TranscriptionCoordinator;
 
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Listener, Manager};
-use tauri_plugin_autostart::ManagerExt;
 
 use crate::settings::get_settings;
 
@@ -309,21 +309,8 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
         },
     );
 
-    // Get the autostart manager and configure based on user setting
-    let autostart_manager = app_handle.autolaunch();
     let settings = winstt::commands::settings::read_settings_raw(app_handle);
-
-    if settings.general.auto_start {
-        // Enable autostart if user has opted in
-        if let Err(e) = autostart_manager.enable() {
-            log::error!("[autostart] failed to enable launch-at-login: {e}");
-        }
-    } else {
-        // Disable autostart if user has opted out
-        if let Err(e) = autostart_manager.disable() {
-            log::error!("[autostart] failed to disable launch-at-login: {e}");
-        }
-    }
+    autostart::sync_launch_at_login(app_handle, settings.general.auto_start, "[autostart]");
     advance_startup_phase(startup, app_handle, "tray settings and autostart applied");
 
     // AUDIT #9: the separate `recording_overlay` window is no longer created — the

@@ -2816,6 +2816,26 @@ initRealtimeAfterSeconds?: number;
  */
 earlyTranscriptionOnSilence?: number;
 /**
+ * Rule-based sentence casing/final-period cleanup for raw recognizer output.
+ */
+formatBasicPunctuationCasing?: boolean;
+/**
+ * Convert explicit spoken punctuation commands ("comma", "new line", ...).
+ */
+formatSpokenPunctuationCommands?: boolean;
+/**
+ * Convert explicit technical symbol commands in obvious flags/URLs/paths.
+ */
+formatSpokenSymbolCommands?: boolean;
+/**
+ * Convert paired quote/unquote commands to literal quotes.
+ */
+formatQuoteCommands?: boolean;
+/**
+ * Remove exact fillers and adjacent duplicate words.
+ */
+formatFillerRepeatCleanup?: boolean;
+/**
  * DistilBERT sentence-completion classifier for endpointing. HOT-SWAP.
  */
 smartEndpoint?: boolean;

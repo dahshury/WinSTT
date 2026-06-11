@@ -10,6 +10,7 @@ export {
 	type ModelAssistanceKind,
 	type ModelAssistanceReason,
 } from "./lib/model-assistance";
+export { modelHasNativeBasicFormatting } from "./lib/model-formatting";
 export {
 	isSelectableRealtimeModel,
 	isVisibleSttModel,

@@ -504,6 +504,21 @@ pub struct QualitySettings {
     /// Early-finalize-on-silence threshold (s). HOT-SWAP / config-only in this port.
     #[serde(default = "QualitySettings::default_early_transcription_on_silence")]
     pub early_transcription_on_silence: f64,
+    /// Rule-based sentence casing/final-period cleanup for raw recognizer output.
+    #[serde(default)]
+    pub format_basic_punctuation_casing: bool,
+    /// Convert explicit spoken punctuation commands ("comma", "new line", ...).
+    #[serde(default)]
+    pub format_spoken_punctuation_commands: bool,
+    /// Convert explicit technical symbol commands in obvious flags/URLs/paths.
+    #[serde(default)]
+    pub format_spoken_symbol_commands: bool,
+    /// Convert paired quote/unquote commands to literal quotes.
+    #[serde(default)]
+    pub format_quote_commands: bool,
+    /// Remove exact fillers and adjacent duplicate words.
+    #[serde(default)]
+    pub format_filler_repeat_cleanup: bool,
     /// DistilBERT sentence-completion classifier for endpointing. HOT-SWAP.
     #[serde(default = "bool_true")]
     pub smart_endpoint: bool,
@@ -553,6 +568,11 @@ impl Default for QualitySettings {
             realtime_processing_pause: Self::default_realtime_processing_pause(),
             init_realtime_after_seconds: Self::default_init_realtime_after_seconds(),
             early_transcription_on_silence: Self::default_early_transcription_on_silence(),
+            format_basic_punctuation_casing: false,
+            format_spoken_punctuation_commands: false,
+            format_spoken_symbol_commands: false,
+            format_quote_commands: false,
+            format_filler_repeat_cleanup: false,
             smart_endpoint: true,
             smart_endpoint_speed: Self::default_smart_endpoint_speed(),
             end_of_sentence_detection_pause: Self::default_end_of_sentence_detection_pause(),
@@ -1841,6 +1861,11 @@ mod tests {
         assert_eq!(s.quality.realtime_processing_pause, 0.02);
         assert_eq!(s.quality.init_realtime_after_seconds, 0.2);
         assert_eq!(s.quality.early_transcription_on_silence, 0.2);
+        assert!(!s.quality.format_basic_punctuation_casing);
+        assert!(!s.quality.format_spoken_punctuation_commands);
+        assert!(!s.quality.format_spoken_symbol_commands);
+        assert!(!s.quality.format_quote_commands);
+        assert!(!s.quality.format_filler_repeat_cleanup);
         assert!(s.quality.smart_endpoint);
         assert_eq!(s.quality.smart_endpoint_speed, 2.0);
         assert_eq!(s.quality.end_of_sentence_detection_pause, 0.45);

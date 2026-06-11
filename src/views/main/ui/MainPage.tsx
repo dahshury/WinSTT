@@ -3,6 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
+import { settingsSave } from "@/shared/api/ipc-client";
 import { useTouchActivation } from "@/shared/lib/use-touch-activation";
 import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -10,14 +11,17 @@ import { AudioDisplay } from "@/widgets/audio-display";
 import { StatusBar } from "@/widgets/status-bar";
 
 export function MainPage() {
-	const isListenMode =
-		useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
+	const general = useSettingsStore((s) => s.settings.general);
+	const isListenMode = general?.recordingMode === "listen";
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
 	const t = useTranslations("mainPage");
 	const th = useTranslations("hotkey");
 	const switchToPtt = useCallback(() => {
 		updateGeneral({ recordingMode: "ptt" });
-	}, [updateGeneral]);
+		if (general) {
+			void settingsSave({ general: { ...general, recordingMode: "ptt" } });
+		}
+	}, [general, updateGeneral]);
 	const pttActivation = useTouchActivation(switchToPtt);
 
 	return (

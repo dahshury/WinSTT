@@ -89,7 +89,6 @@ export function DevicePickerWindow() {
 		const next = id === "default" ? null : Number.parseInt(id, 10);
 		const settings = await settingsLoad();
 		await settingsSave({
-			...settings,
 			audio: { ...settings.audio, inputDeviceIndex: next },
 		});
 		close();

@@ -67,6 +67,7 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
     if modifier_combo::register_if_modifier_only(app, &binding)? {
         return Ok(());
     }
+    let binding = binding_for_tauri_backend(binding);
     tauri_impl::register_shortcut(app, binding)
 }
 
@@ -75,7 +76,13 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
     if modifier_combo::unregister_if_modifier_only(&binding)? {
         return Ok(());
     }
+    let binding = binding_for_tauri_backend(binding);
     tauri_impl::unregister_shortcut(app, binding)
+}
+
+fn binding_for_tauri_backend(mut binding: ShortcutBinding) -> ShortcutBinding {
+    binding.current_binding = binding_for_active_backend(&binding.id, &binding.current_binding);
+    binding
 }
 
 pub(crate) fn binding_for_active_backend(id: &str, raw: &str) -> String {
@@ -309,4 +316,34 @@ pub fn resume_binding(app: AppHandle, id: String) -> Result<(), String> {
 #[specta::specta]
 pub fn get_keyboard_implementation(_app: AppHandle) -> String {
     "tauri".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{binding_for_tauri_backend, ShortcutBinding};
+
+    fn binding(id: &str, current_binding: &str) -> ShortcutBinding {
+        ShortcutBinding {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: String::new(),
+            default_binding: current_binding.to_string(),
+            current_binding: current_binding.to_string(),
+        }
+    }
+
+    #[test]
+    fn tauri_backend_binding_normalizes_winstt_specific_modifiers() {
+        let normalized = binding_for_tauri_backend(binding("transforms", "LCtrl+LShift+T"));
+        assert_eq!(normalized.current_binding, "Ctrl+Shift+T");
+
+        let normalized = binding_for_tauri_backend(binding("repaste", "ctrl_left+shift_left+v"));
+        assert_eq!(normalized.current_binding, "Ctrl+Shift+V");
+    }
+
+    #[test]
+    fn tauri_backend_binding_preserves_modifier_only_ptt() {
+        let normalized = binding_for_tauri_backend(binding("transcribe", "LCtrl+LMeta"));
+        assert_eq!(normalized.current_binding, "LCtrl+LMeta");
+    }
 }

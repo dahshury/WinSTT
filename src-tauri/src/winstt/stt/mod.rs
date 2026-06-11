@@ -23,6 +23,8 @@ pub mod backend;
 pub mod cache_probe;
 /// Non-Whisper families: CTC (SenseVoice/GigaAM/Dolphin/Kaldi), RNNT/TDT (Parakeet/zipformer), AED (Canary/Cohere).
 pub mod families;
+/// Rule-based post-STT formatting that is deterministic and model-capability gated.
+mod formatting;
 /// In-file fp16 decoder protobuf repair (prost) + external-data refetch detection.
 pub mod fp16_patch;
 /// Embedded GigaAM v3 analysis window [320] + 64-mel filterbank [161,64] (from onnx_asr fbanks.npz).

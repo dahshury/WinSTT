@@ -614,9 +614,17 @@ async function callPlugin(
 		case "autostart:set": {
 			const as = await import("@tauri-apps/plugin-autostart");
 			const enabled = (args as { enabled?: boolean })?.enabled ?? false;
-			if (enabled) {
+			let current = false;
+			try {
+				current = await as.isEnabled();
+			} catch {
+				if (!enabled) {
+					return;
+				}
+			}
+			if (enabled && !current) {
 				await as.enable();
-			} else {
+			} else if (!enabled && current) {
 				await as.disable();
 			}
 			return;

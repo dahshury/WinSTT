@@ -1,8 +1,13 @@
-import { EyeIcon, SparklesIcon } from "@hugeicons/core-free-icons";
+import {
+	EyeIcon,
+	SparklesIcon,
+	TextFontIcon,
+} from "@hugeicons/core-free-icons";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	getModelAssistance,
+	modelHasNativeBasicFormatting,
 	type ModelAssistance,
 	useCatalogStore,
 } from "@/entities/model-catalog";
@@ -25,6 +30,10 @@ type GeneralSettings = NonNullable<
 	ReturnType<typeof useSettingsStore.getState>["settings"]["general"]
 >;
 type UpdateGeneralFn = (patch: Partial<GeneralSettings>) => void;
+type QualitySettings = NonNullable<
+	ReturnType<typeof useSettingsStore.getState>["settings"]["quality"]
+>;
+type UpdateQualityFn = (patch: Partial<QualitySettings>) => void;
 
 type GeneralT = ReturnType<typeof useTranslations<"general">>;
 type LlmT = ReturnType<typeof useTranslations<"llm">>;
@@ -234,14 +243,155 @@ function ModelAssistanceSection({
 	);
 }
 
+function DeterministicFormattingSection({
+	activeModelName,
+	nativeBasicFormatting,
+	quality,
+	updateQuality,
+}: {
+	activeModelName: string;
+	nativeBasicFormatting: boolean;
+	quality: QualitySettings;
+	updateQuality: UpdateQualityFn;
+}) {
+	const basicEnabled =
+		quality.formatBasicPunctuationCasing && !nativeBasicFormatting;
+	const basicDisabledReason = nativeBasicFormatting
+		? `${activeModelName} already adds punctuation and casing`
+		: undefined;
+
+	return (
+		<SettingSection
+			divided
+			icon={TextFontIcon}
+			title="Deterministic formatting"
+			tooltip="Local rule-based cleanup that runs after speech recognition and before any LLM cleanup."
+		>
+			<SettingField
+				caption={
+					nativeBasicFormatting
+						? `${activeModelName} provides this natively, so WinSTT skips the deterministic pass.`
+						: "Capitalizes sentence starts and can add a final period for raw recognizer output."
+				}
+				defaultValue={DEFAULT_SETTINGS.quality.formatBasicPunctuationCasing}
+				disabled={nativeBasicFormatting}
+				label="Basic punctuation and casing"
+				labelAddon={
+					<Toggle
+						checked={basicEnabled}
+						disabled={nativeBasicFormatting}
+						onCheckedChange={(v) =>
+							updateQuality({ formatBasicPunctuationCasing: v })
+						}
+					/>
+				}
+				onReset={() =>
+					updateQuality({
+						formatBasicPunctuationCasing:
+							DEFAULT_SETTINGS.quality.formatBasicPunctuationCasing,
+					})
+				}
+				tooltip="Only for raw STT output that lacks written-text punctuation/capitalization. Disabled automatically for models that already emit formatted prose."
+				value={quality.formatBasicPunctuationCasing}
+				{...(basicDisabledReason
+					? { disabledReason: basicDisabledReason }
+					: {})}
+			/>
+			<SettingField
+				caption='Turns spoken punctuation commands such as "comma", "new line", and "question mark" into symbols.'
+				defaultValue={DEFAULT_SETTINGS.quality.formatSpokenPunctuationCommands}
+				label="Spoken punctuation commands"
+				labelAddon={
+					<Toggle
+						checked={quality.formatSpokenPunctuationCommands}
+						onCheckedChange={(v) =>
+							updateQuality({ formatSpokenPunctuationCommands: v })
+						}
+					/>
+				}
+				onReset={() =>
+					updateQuality({
+						formatSpokenPunctuationCommands:
+							DEFAULT_SETTINGS.quality.formatSpokenPunctuationCommands,
+					})
+				}
+				tooltip="Handles explicit dictation commands. This is separate from a model's normal punctuation restoration."
+				value={quality.formatSpokenPunctuationCommands}
+			/>
+			<SettingField
+				caption='Formats obvious technical dictation such as "dash dash save", "example dot com", and "slash usr slash local".'
+				defaultValue={DEFAULT_SETTINGS.quality.formatSpokenSymbolCommands}
+				label="Technical symbol commands"
+				labelAddon={
+					<Toggle
+						checked={quality.formatSpokenSymbolCommands}
+						onCheckedChange={(v) =>
+							updateQuality({ formatSpokenSymbolCommands: v })
+						}
+					/>
+				}
+				onReset={() =>
+					updateQuality({
+						formatSpokenSymbolCommands:
+							DEFAULT_SETTINGS.quality.formatSpokenSymbolCommands,
+					})
+				}
+				tooltip="Applies narrow rules for command-line flags, email/domain separators, URLs, and path separators."
+				value={quality.formatSpokenSymbolCommands}
+			/>
+			<SettingField
+				caption='Turns paired commands such as "quote Save changes unquote" into quoted text.'
+				defaultValue={DEFAULT_SETTINGS.quality.formatQuoteCommands}
+				label="Quote commands"
+				labelAddon={
+					<Toggle
+						checked={quality.formatQuoteCommands}
+						onCheckedChange={(v) => updateQuality({ formatQuoteCommands: v })}
+					/>
+				}
+				onReset={() =>
+					updateQuality({
+						formatQuoteCommands: DEFAULT_SETTINGS.quality.formatQuoteCommands,
+					})
+				}
+				tooltip='Requires an explicit close command such as "unquote" or "close quote" to avoid rewriting ordinary uses of the word quote.'
+				value={quality.formatQuoteCommands}
+			/>
+			<SettingField
+				caption='Removes exact fillers such as "um" and collapses adjacent duplicate words such as "the the".'
+				defaultValue={DEFAULT_SETTINGS.quality.formatFillerRepeatCleanup}
+				label="Fillers and repeated words"
+				labelAddon={
+					<Toggle
+						checked={quality.formatFillerRepeatCleanup}
+						onCheckedChange={(v) =>
+							updateQuality({ formatFillerRepeatCleanup: v })
+						}
+					/>
+				}
+				onReset={() =>
+					updateQuality({
+						formatFillerRepeatCleanup:
+							DEFAULT_SETTINGS.quality.formatFillerRepeatCleanup,
+					})
+				}
+				tooltip="A conservative local cleanup for verbatim recognizers. Leave it off if you often dictate transcripts where fillers are meaningful."
+				value={quality.formatFillerRepeatCleanup}
+			/>
+		</SettingSection>
+	);
+}
+
 /**
  * Extra controls that are NOT the LLM provider config. Renders after
- * `LlmSettingsPanel` on the Processing tab: model-specific assistance and
- * Context awareness (+ deny-list).
+ * `LlmSettingsPanel` on the Processing tab: model-specific assistance,
+ * deterministic formatting, and Context awareness (+ deny-list).
  */
 export function ProcessingExtrasPanel() {
 	const general = useSettingsStore((s) => s.settings.general);
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
+	const quality = useSettingsStore((s) => s.settings.quality);
+	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
 	const llmDictationEnabled = useSettingsStore(
 		(s) => s.settings.llm?.dictation?.enabled ?? false,
 	);
@@ -260,8 +410,10 @@ export function ProcessingExtrasPanel() {
 	);
 	const activeSttModel = useCatalogStore((s) => s.getModel(activeSttModelId));
 	const activeSttFamily = activeSttModel?.family;
+	const activeModelName = activeSttModel?.displayName ?? activeSttModelId;
 	const modelAssistance = getModelAssistance(activeSttModel);
 	const modelAssistanceUseful = modelAssistance.length > 0;
+	const nativeBasicFormatting = modelHasNativeBasicFormatting(activeSttModel);
 	const contextAwarenessUseful =
 		activeSttFamily === "whisper" || llmDictationEnabled;
 	const tg = useTranslations("general");
@@ -269,20 +421,22 @@ export function ProcessingExtrasPanel() {
 
 	const contextAwarenessEnabled = general?.contextAwareness ?? false;
 
-	if (!(contextAwarenessUseful || modelAssistanceUseful)) {
-		return null;
-	}
-
 	return (
 		<div className="flex flex-col gap-2">
 			{modelAssistanceUseful ? (
 				<ModelAssistanceSection
 					assistance={modelAssistance}
 					cleanupEnabled={llmDictationEnabled}
-					modelName={activeSttModel?.displayName ?? activeSttModelId}
+					modelName={activeModelName}
 					t={tl}
 				/>
 			) : null}
+			<DeterministicFormattingSection
+				activeModelName={activeModelName || "The selected model"}
+				nativeBasicFormatting={nativeBasicFormatting}
+				quality={quality}
+				updateQuality={updateQuality}
+			/>
 			{/* ── Context Awareness ────────────────────────────
 				 Shown only when at least one consumer can actually act on
 				 the captured snapshot:

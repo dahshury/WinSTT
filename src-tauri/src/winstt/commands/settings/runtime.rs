@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
-use tauri_plugin_autostart::ManagerExt;
 
 use crate::winstt::settings_schema::{
     LlmProvider, ModelUnloadTimeout as WinsttModelUnloadTimeout, TtsSource, WinsttSettings,
@@ -220,15 +219,7 @@ pub(super) fn apply_autostart_setting(
     if previous.general.auto_start == next.general.auto_start {
         return;
     }
-    let autostart = app.autolaunch();
-    let result = if next.general.auto_start {
-        autostart.enable()
-    } else {
-        autostart.disable()
-    };
-    if let Err(err) = result {
-        log::warn!("[settings] failed to apply autostart setting: {err}");
-    }
+    crate::autostart::sync_launch_at_login(app, next.general.auto_start, "[settings]");
 }
 
 pub(crate) fn enabled_ollama_models(settings: &WinsttSettings) -> Vec<String> {
