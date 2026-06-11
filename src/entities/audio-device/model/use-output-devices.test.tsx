@@ -402,13 +402,26 @@ describe("useOutputDevices", () => {
 			const { listeners } = installFakeBackendBridge(state);
 
 			const { result } = renderTrackedHook();
-			// Backend membership (1 device), with the deviceId joined from the browser.
-			await waitFor(() => expect(result.current.devices.length).toBe(1));
-			expect(result.current.devices[0]).toMatchObject({
-				deviceId: "spk-1",
-				label: "Speakers A",
-				isDefault: true,
+			await waitFor(() =>
+				expect(
+					listeners.get(IPC.AUDIO_OUTPUT_DEVICES_CHANGED)?.length ?? 0,
+				).toBe(1),
+			);
+			act(() => {
+				fireNativeBridgeEvent(listeners, IPC.AUDIO_OUTPUT_DEVICES_CHANGED, {
+					devices: state.devices,
+				});
 			});
+			// Backend membership (1 device), with the deviceId joined from the browser.
+			await waitFor(() =>
+				expect(result.current.devices).toEqual([
+					expect.objectContaining({
+						deviceId: "spk-1",
+						label: "Speakers A",
+						isDefault: true,
+					}),
+				]),
+			);
 
 			// Hot-plug a headset. The native watcher pushes the new list even though
 			// navigator.mediaDevices.enumerateDevices() (enumResult) is unchanged.
