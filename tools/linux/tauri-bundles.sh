@@ -12,6 +12,19 @@ cd "$repo_root"
 export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
 export LD_LIBRARY_PATH="$repo_root/src-tauri/target/release:${LD_LIBRARY_PATH:-}"
 
+native_cache_patterns=(
+  "$repo_root/src-tauri/target/sherpa-onnx-prebuilt"
+  "$repo_root/src-tauri/target/debug/build/sherpa-onnx-"*
+  "$repo_root/src-tauri/target/debug/.fingerprint/sherpa-onnx-"*
+  "$repo_root/src-tauri/target/release/build/sherpa-onnx-"*
+  "$repo_root/src-tauri/target/release/.fingerprint/sherpa-onnx-"*
+  "$repo_root/src-tauri/target/debug/build/ort-sys-"*
+  "$repo_root/src-tauri/target/debug/.fingerprint/ort-sys-"*
+  "$repo_root/src-tauri/target/release/build/ort-sys-"*
+  "$repo_root/src-tauri/target/release/.fingerprint/ort-sys-"*
+)
+rm -rf "${native_cache_patterns[@]}"
+
 build_args=(--bundles appimage,deb,rpm)
 if [ "$config" != "none" ]; then
   build_args+=(--config "$config")

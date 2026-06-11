@@ -115,7 +115,8 @@ function Select-MacUpdaterBundle {
     param(
         [System.IO.FileInfo[]] $MacAssets,
         [string[]] $ArchPatterns,
-        [string] $ArchLabel
+        [string] $ArchLabel,
+        [switch] $Optional
     )
 
     $Asset = $MacAssets |
@@ -124,6 +125,10 @@ function Select-MacUpdaterBundle {
         Select-Object -First 1
 
     if ($null -eq $Asset) {
+        if ($Optional) {
+            Write-Warning "Missing optional macOS $ArchLabel updater asset (*.app.tar.gz) under: $AssetsRoot"
+            return $null
+        }
         throw "Missing macOS $ArchLabel updater asset (*.app.tar.gz) under: $AssetsRoot"
     }
     $Asset
@@ -236,22 +241,21 @@ if ($MacAssets.Count -eq 0) {
 $Assets += $MacAssets
 
 $MacAarch64Bundle = Select-MacUpdaterBundle -MacAssets $MacAssets -ArchPatterns @("aarch64", "arm64") -ArchLabel "Apple Silicon"
-$MacX64Bundle = Select-MacUpdaterBundle -MacAssets $MacAssets -ArchPatterns @("x86_64", "x64", "amd64", "intel") -ArchLabel "Intel"
+$MacX64Bundle = Select-MacUpdaterBundle -MacAssets $MacAssets -ArchPatterns @("x86_64", "x64", "amd64", "intel") -ArchLabel "Intel" -Optional
 $MacAarch64Signature = Get-UpdaterSignatureForBundle $MacAarch64Bundle
-$MacX64Signature = Get-UpdaterSignatureForBundle $MacX64Bundle
+$MacX64Signature = if ($null -ne $MacX64Bundle) { Get-UpdaterSignatureForBundle $MacX64Bundle } else { $null }
 
 if ($null -eq $MacAarch64Signature) {
     Write-Warning "Missing macOS Apple Silicon updater signature: $($MacAarch64Bundle.FullName).sig; latest.json will not include macOS."
 }
-if ($null -eq $MacX64Signature) {
+if ($null -ne $MacX64Bundle -and $null -eq $MacX64Signature) {
     Write-Warning "Missing macOS Intel updater signature: $($MacX64Bundle.FullName).sig; latest.json will not include macOS."
 }
 
 if (
     $null -ne $WindowsSignature -and
     $null -ne $LinuxSignature -and
-    $null -ne $MacAarch64Signature -and
-    $null -ne $MacX64Signature
+    $null -ne $MacAarch64Signature
 ) {
     $LatestJson = Join-Path $AssetsRoot "latest.json"
     $Manifest = New-UpdaterManifest `

@@ -188,6 +188,7 @@ jobs:
 
       - name: Build Linux artifacts
         env:
+          TAURI_BUNDLE_CONFIG: none
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
@@ -222,9 +223,6 @@ jobs:
           - arch: aarch64
             runner: macos-15
             target: aarch64-apple-darwin
-          - arch: x86_64
-            runner: macos-15-intel
-            target: x86_64-apple-darwin
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
