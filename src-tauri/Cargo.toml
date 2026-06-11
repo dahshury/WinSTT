@@ -75,7 +75,7 @@ serde_json = "1"
 semver = "1"
 cpal = "0.17.1"
 anyhow = "1.0.95"
-rubato = "0.16.2"
+rubato = "3.0.0"
 # Real RAM detection for the model-download fitness heuristics (the "RAM: unknown"
 # fix). Already in the dep graph transitively; pinned to the same version.
 sysinfo = { version = "0.38", default-features = false, features = ["system"] }
