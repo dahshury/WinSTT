@@ -113,7 +113,7 @@ pub(crate) fn apply_deterministic_formatting(text: &str, ws: &WinsttSettings) ->
         out = apply_quote_commands(&out);
     }
     if ws.quality.format_filler_repeat_cleanup {
-        out = collapse_repeated_words(&FILLER_RE.replace_all(&out, "").to_string());
+        out = collapse_repeated_words(FILLER_RE.replace_all(&out, "").as_ref());
     }
     if ws.quality.format_spoken_punctuation_commands {
         out = apply_spoken_punctuation_commands(&out);
