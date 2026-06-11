@@ -1,14 +1,49 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { ipcClientMock } from "@test/mocks/ipc-client";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { IPC } from "@/shared/api/ipc-channels";
-import {
+
+const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+const unsubscribed: string[] = [];
+
+function onTestChannel(
+	channel: string,
+	cb: (...args: unknown[]) => void,
+): () => void {
+	const list = listeners.get(channel) ?? [];
+	list.push(cb);
+	listeners.set(channel, list);
+	return () => {
+		unsubscribed.push(channel);
+		listeners.set(
+			channel,
+			(listeners.get(channel) ?? []).filter((x) => x !== cb),
+		);
+	};
+}
+
+mock.module("@/shared/api/ipc-client", () => ({
+	...ipcClientMock(),
+	onTtsModelDownloadStart: (cb: () => void) =>
+		onTestChannel(IPC.TTS_MODEL_DOWNLOAD_START, () => cb()),
+	onTtsModelDownloadProgress: (cb: (payload: unknown) => void) =>
+		onTestChannel(IPC.TTS_MODEL_DOWNLOAD_PROGRESS, cb),
+	onTtsModelDownloadComplete: (cb: (payload: unknown) => void) =>
+		onTestChannel(IPC.TTS_MODEL_DOWNLOAD_COMPLETE, cb),
+	onTtsInstallPaused: (cb: () => void) =>
+		onTestChannel(IPC.TTS_INSTALL_PAUSED, () => cb()),
+	onTtsInstallResumed: (cb: () => void) =>
+		onTestChannel(IPC.TTS_INSTALL_RESUMED, () => cb()),
+}));
+
+const {
 	buildPhaseLabel,
 	buildProgressLabel,
 	composeBarLabel,
 	firstString,
 	useTtsDownloadProgress,
-} from "./use-tts-download-progress";
+} = await import("./use-tts-download-progress");
 
 // Minimal translator stub: every helper consumes a `next-intl` translator,
 // but the helpers only call it with stable keys. A keyed lookup table is
@@ -146,35 +181,18 @@ describe("composeBarLabel", () => {
 });
 
 // ── Hook integration ────────────────────────────────────────────────────
-// The hook subscribes to five IPC channels through the REAL ipc-client, which
-// reads `window.nativeBridge.on` at call time. We swap in a listener registry
-// so each `on*` subscription lands in `listeners` and we can drive the real
-// `applyProgressEvent` + functional state updaters by firing payloads.
+// The hook subscribes to five IPC channels through a local ipc-client mock.
+// This avoids inheriting process-global partial mocks from sibling test files
+// and keeps every `on*` subscription in this file's listener registry.
 const originalApi = window.nativeBridge;
-const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
-const unsubscribed: string[] = [];
 
 beforeEach(() => {
 	listeners.clear();
 	unsubscribed.length = 0;
-	window.nativeBridge = {
-		...originalApi,
-		on: (channel: string, cb: (...args: unknown[]) => void) => {
-			const list = listeners.get(channel) ?? [];
-			list.push(cb);
-			listeners.set(channel, list);
-			return () => {
-				unsubscribed.push(channel);
-				listeners.set(
-					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb),
-				);
-			};
-		},
-	};
 });
 
 afterEach(() => {
+	cleanup();
 	window.nativeBridge = originalApi;
 });
 
