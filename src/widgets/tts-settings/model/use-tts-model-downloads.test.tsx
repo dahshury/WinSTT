@@ -25,10 +25,30 @@ const pauseSpy = mock(() => Promise.resolve());
 const resumeSpy = mock(() => Promise.resolve());
 const cancelSpy = mock(() => Promise.resolve());
 
+type MockTtsModelState = {
+	isLoaded: boolean;
+	refresh: () => Promise<void>;
+	statesById: Record<string, unknown>;
+};
+
+const mockTtsModelState: MockTtsModelState = {
+	isLoaded: true,
+	refresh: refreshSpy,
+	statesById: {},
+};
+
+function useTtsModelStateStore<T>(
+	selector: (state: MockTtsModelState) => T,
+): T {
+	return selector(mockTtsModelState);
+}
+
+useTtsModelStateStore.setState = (patch: Partial<MockTtsModelState>): void => {
+	Object.assign(mockTtsModelState, patch, { refresh: refreshSpy });
+};
+
 mock.module("@/entities/tts-catalog", () => ({
-	useTtsModelStateStore: <T,>(
-		selector: (state: { refresh: () => Promise<void> }) => T,
-	): T => selector({ refresh: refreshSpy }),
+	useTtsModelStateStore,
 }));
 
 mock.module("@/shared/api/ipc-client", () => ({
@@ -71,6 +91,7 @@ beforeEach(() => {
 	pauseSpy.mockClear();
 	resumeSpy.mockClear();
 	cancelSpy.mockClear();
+	useTtsModelStateStore.setState({ isLoaded: true, statesById: {} });
 });
 
 afterEach(() => {
