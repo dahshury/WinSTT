@@ -90,7 +90,7 @@
 		"knip": "^5.64.4",
 		"prettier": "^3.6.2",
 		"rollup-plugin-visualizer": "^6.0.4",
-		"typescript": "~5.9.0",
+		"typescript": "~6.0.3",
 		"vite": "^8.0.0"
 	},
 	"overrides": {
