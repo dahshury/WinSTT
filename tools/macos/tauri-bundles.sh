@@ -12,11 +12,34 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 output_dir="$repo_root/dist/macos/$arch"
 bundle_dir="$repo_root/src-tauri/target/$target/release/bundle"
+config="${TAURI_BUNDLE_CONFIG:-$repo_root/tools/tauri-ci-artifacts.conf.json}"
 
 cd "$repo_root"
 
+native_cache_patterns=(
+  "$repo_root/src-tauri/target/sherpa-onnx-prebuilt"
+  "$repo_root/src-tauri/target/debug/build/sherpa-onnx-"*
+  "$repo_root/src-tauri/target/debug/.fingerprint/sherpa-onnx-"*
+  "$repo_root/src-tauri/target/release/build/sherpa-onnx-"*
+  "$repo_root/src-tauri/target/release/.fingerprint/sherpa-onnx-"*
+  "$repo_root/src-tauri/target/$target/release/build/sherpa-onnx-"*
+  "$repo_root/src-tauri/target/$target/release/.fingerprint/sherpa-onnx-"*
+  "$repo_root/src-tauri/target/debug/build/ort-sys-"*
+  "$repo_root/src-tauri/target/debug/.fingerprint/ort-sys-"*
+  "$repo_root/src-tauri/target/release/build/ort-sys-"*
+  "$repo_root/src-tauri/target/release/.fingerprint/ort-sys-"*
+  "$repo_root/src-tauri/target/$target/release/build/ort-sys-"*
+  "$repo_root/src-tauri/target/$target/release/.fingerprint/ort-sys-"*
+)
+rm -rf "${native_cache_patterns[@]}"
+
+build_args=(--target "$target" --bundles app,dmg)
+if [ "$config" != "none" ]; then
+  build_args+=(--config "$config")
+fi
+
 rm -rf "$bundle_dir/macos" "$bundle_dir/dmg"
-bun run tauri build --target "$target" --bundles app,dmg
+bun run tauri build "${build_args[@]}"
 
 rm -rf "$output_dir"
 mkdir -p "$output_dir"

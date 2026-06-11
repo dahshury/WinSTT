@@ -134,6 +134,24 @@ function Select-MacUpdaterBundle {
     $Asset
 }
 
+function Select-MacInstaller {
+    param(
+        [System.IO.FileInfo[]] $MacAssets,
+        [string[]] $ArchPatterns,
+        [string] $ArchLabel
+    )
+
+    $Asset = $MacAssets |
+        Where-Object { $_.Name.EndsWith(".dmg") -and (Test-NameMatchesAny $_.Name $ArchPatterns) } |
+        Sort-Object FullName |
+        Select-Object -First 1
+
+    if ($null -eq $Asset) {
+        throw "Missing macOS $ArchLabel installer asset (*.dmg) under: $AssetsRoot"
+    }
+    $Asset
+}
+
 function Get-UpdaterSignatureForBundle {
     param([System.IO.FileInfo] $Bundle)
 
@@ -240,12 +258,15 @@ if ($MacAssets.Count -eq 0) {
 }
 $Assets += $MacAssets
 
-$MacAarch64Bundle = Select-MacUpdaterBundle -MacAssets $MacAssets -ArchPatterns @("aarch64", "arm64") -ArchLabel "Apple Silicon"
+$MacAarch64Installer = Select-MacInstaller -MacAssets $MacAssets -ArchPatterns @("aarch64", "arm64") -ArchLabel "Apple Silicon"
+$MacAarch64Bundle = Select-MacUpdaterBundle -MacAssets $MacAssets -ArchPatterns @("aarch64", "arm64") -ArchLabel "Apple Silicon" -Optional
 $MacX64Bundle = Select-MacUpdaterBundle -MacAssets $MacAssets -ArchPatterns @("x86_64", "x64", "amd64", "intel") -ArchLabel "Intel" -Optional
-$MacAarch64Signature = Get-UpdaterSignatureForBundle $MacAarch64Bundle
+$MacAarch64Signature = if ($null -ne $MacAarch64Bundle) { Get-UpdaterSignatureForBundle $MacAarch64Bundle } else { $null }
 $MacX64Signature = if ($null -ne $MacX64Bundle) { Get-UpdaterSignatureForBundle $MacX64Bundle } else { $null }
 
-if ($null -eq $MacAarch64Signature) {
+if ($null -eq $MacAarch64Bundle) {
+    Write-Warning "Missing macOS Apple Silicon updater asset (*.app.tar.gz) for $($MacAarch64Installer.Name); latest.json will not include macOS."
+} elseif ($null -eq $MacAarch64Signature) {
     Write-Warning "Missing macOS Apple Silicon updater signature: $($MacAarch64Bundle.FullName).sig; latest.json will not include macOS."
 }
 if ($null -ne $MacX64Bundle -and $null -eq $MacX64Signature) {
@@ -255,6 +276,7 @@ if ($null -ne $MacX64Bundle -and $null -eq $MacX64Signature) {
 if (
     $null -ne $WindowsSignature -and
     $null -ne $LinuxSignature -and
+    $null -ne $MacAarch64Bundle -and
     $null -ne $MacAarch64Signature
 ) {
     $LatestJson = Join-Path $AssetsRoot "latest.json"

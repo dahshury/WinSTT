@@ -75,7 +75,7 @@ jobs:
           workspaces: "src-tauri -> target"
           key: release-windows-x64
 
-      - name: Reset stale sherpa prebuilt cache
+      - name: Reset stale native build cache
         shell: pwsh
         run: |
           $paths = @(
@@ -83,7 +83,11 @@ jobs:
             "src-tauri\target\debug\build\sherpa-onnx-*",
             "src-tauri\target\debug\.fingerprint\sherpa-onnx-*",
             "src-tauri\target\release\build\sherpa-onnx-*",
-            "src-tauri\target\release\.fingerprint\sherpa-onnx-*"
+            "src-tauri\target\release\.fingerprint\sherpa-onnx-*",
+            "src-tauri\target\debug\build\ort-sys-*",
+            "src-tauri\target\debug\.fingerprint\ort-sys-*",
+            "src-tauri\target\release\build\ort-sys-*",
+            "src-tauri\target\release\.fingerprint\ort-sys-*"
           )
           foreach ($path in $paths) {
             Remove-Item -Recurse -Force $path -ErrorAction SilentlyContinue
@@ -187,21 +191,7 @@ jobs:
           }
 
       - name: Build Linux artifacts
-        env:
-          TAURI_BUNDLE_CONFIG: none
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            TAURI_SIGNING_PRIVATE_KEY="${TAURI_SIGNING_PRIVATE_KEY#$'\xef\xbb\xbf'}"
-            export TAURI_SIGNING_PRIVATE_KEY
-          fi
-          if [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then
-            TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD#$'\xef\xbb\xbf'}"
-            TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | tr -d '\r\n')"
-            export TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-          fi
-          bash tools/linux/tauri-bundles.sh
+        run: bash tools/linux/tauri-bundles.sh
 
       - name: Upload Linux artifacts to workflow run
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -251,20 +241,7 @@ jobs:
           }
 
       - name: Build macOS artifacts
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            TAURI_SIGNING_PRIVATE_KEY="${TAURI_SIGNING_PRIVATE_KEY#$'\xef\xbb\xbf'}"
-            export TAURI_SIGNING_PRIVATE_KEY
-          fi
-          if [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then
-            TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD#$'\xef\xbb\xbf'}"
-            TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | tr -d '\r\n')"
-            export TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-          fi
-          bash tools/macos/tauri-bundles.sh "${{ matrix.target }}" "${{ matrix.arch }}"
+        run: bash tools/macos/tauri-bundles.sh "${{ matrix.target }}" "${{ matrix.arch }}"
 
       - name: Upload macOS artifacts to workflow run
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
