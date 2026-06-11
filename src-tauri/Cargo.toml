@@ -108,7 +108,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 tar = "0.4.44"
 flate2 = "1.0"
 bzip2 = "0.4.4"
-sha2 = "0.10"
+sha2 = "0.11"
 # WinSTT unified ONNX STT engine.
 ort = { version = "=2.0.0-rc.12", features = ["ndarray", "half"] }
 ndarray = "0.17.2"
