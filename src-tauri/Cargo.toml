@@ -133,7 +133,7 @@ sherpa-onnx = { version = "1.13.2", default-features = false, features = ["share
 # TTS: kokoroxide DROPPED (pins yanked ort ^1.16, conflicts with our ort 2.0.0-rc.12).
 # Instead we run the Kokoro-82M ONNX on OUR ort 2.0.0-rc.12 + an espeak-ng phonemizer
 # (same runtime as STT; WinSTT is open-source so espeak-ng GPL-v3 is fine).
-ferrous-opencc = "0.2.3"
+ferrous-opencc = "0.4.0"
 # TTS G2P: in-process espeak-ng phonemizer. We dlopen the espeak-ng shared lib
 # (espeak-ng.dll on Windows) and call espeak_TextToPhonemes directly — the SAME
 # path the reference app's `phonemizer`/`espeakng_loader` takes via ctypes — so
