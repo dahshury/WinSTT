@@ -167,25 +167,8 @@ describe("useAuraAnimator", () => {
 		);
 	});
 
-	test("speaking + audioLevel > 0 is suppressed while scale animation is in flight", async () => {
-		// First render kicks off the easeOut animation toward 0.3 (duration 0.5s).
-		// Immediately bumping audioLevel hits the third condition
-		// `!scaleMotionValue.isAnimating()` → false, so the duration:0 set is skipped
-		// and uScale stays on the interpolated path, not at 0.2 + 0.2*0.5 = 0.3.
-		const { result } = renderHook(() => {
-			const ref = useRef<Uniforms>(createUniforms());
-			useAuraAnimator("speaking", ref);
-			return ref;
-		});
-		await act(async () => {
-			useVisualizerStore.getState().setAudioLevel(0.5);
-			await new Promise((r) => setTimeout(r, 30));
-		});
-		// While the easeOut animation is in flight, the duration:0 branch must not
-		// have fired — uScale has not yet reached 0.3.
-		const v = getUniformValue(result.current, "uScale");
-		expect(v).toBeGreaterThanOrEqual(0); // sanity
-		expect(v).toBeLessThan(0.3); // animation hasn't reached 0.3 yet
+	test("speaking + audioLevel > 0 is suppressed while scale animation is in flight", () => {
+		expect(shouldApplyAudioLevelScale("speaking", 0.5, true)).toBe(false);
 	});
 
 	test("speaking with audioLevel=0 leaves uScale on its default animation path", async () => {

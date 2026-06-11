@@ -31,6 +31,9 @@ const {
 	__test_shouldResetSavedIndex,
 	__test_shouldResetSavedOutputDevice,
 } = await import("./use-device-switch-feedback");
+const { _resetInputDevicesCacheForTests } = await import(
+	"@/entities/audio-device/model/use-input-devices"
+);
 const { _resetOutputDevicesCacheForTests } = await import(
 	"@/entities/audio-device/model/use-output-devices"
 );
@@ -123,6 +126,7 @@ beforeEach(() => {
 	onDeviceSwitchFailedCb = null;
 	installNativeBridgeStub();
 	installMediaDevicesStub();
+	_resetInputDevicesCacheForTests();
 	_resetOutputDevicesCacheForTests();
 	useSettingsStore.setState({
 		settings: {
@@ -139,6 +143,7 @@ afterEach(() => {
 		act(() => handle.unmount());
 	}
 	window.nativeBridge = originalNativeBridge;
+	_resetInputDevicesCacheForTests();
 	_resetOutputDevicesCacheForTests();
 	if (originalMediaDevicesDescriptor) {
 		Object.defineProperty(
