@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
@@ -47,6 +47,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	cleanup();
 	window.nativeBridge = originalApi;
 	commands.loopbackListDevices = originalLoopbackListDevices;
 	useSettingsStore.setState({ settings: initialSettings });
