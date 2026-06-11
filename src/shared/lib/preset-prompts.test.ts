@@ -192,8 +192,22 @@ describe("preset-prompts", () => {
 		expect(base).toContain("Mishearing repair:");
 		expect(base).toContain("Safety and scope:");
 		expect(base).toContain("Do not add lists");
+		expect(base).toContain("markdown emphasis");
+		expect(base).toContain("highlights");
 		expect(base).toContain("figures and symbols");
 		expect(base).toContain('"fifty percent" -> "50%"');
+		expect(base).toContain("people, organization, product, app");
+		expect(base).toContain("Preserve uncommon names");
+		expect(base).toContain('"dash dash save" -> "--save"');
+		expect(base).toContain('direct "quote ... unquote" text');
+		expect(base).toContain("Keep quote marks around literal labels");
+		expect(base).toContain("command lines");
+		expect(base).toContain("sensitive values semantically unchanged");
+		expect(base).toContain("dot, slash, backslash, dash, dash dash, colon, at");
+		expect(base).toContain("never paraphrase, mask, invent");
+		expect(base).toContain(
+			'"c colon backslash temp backslash logs" -> "C:\\temp\\logs"',
+		);
 		// Spoken layout commands must still survive the prohibition.
 		expect(base).toContain("new paragraph");
 		// Preservation never means leaving errors unfixed — the core
@@ -263,6 +277,8 @@ describe("preset-prompts", () => {
 		expect(out).toContain("Spanish");
 		// Generalization clause: English examples are illustrative only.
 		expect(out.toLowerCase()).toContain("language-general");
+		expect(out).toContain("quoted UI labels");
+		expect(out).toContain('"button says"');
 		// Must not leak the original / transliteration.
 		expect(out).toContain("Output ONLY the Spanish text");
 	});
