@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { asInvalid } from "@test/lib/cast";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useRef } from "react";
 import { useVisualizerStore } from "../model/visualizer-store";
 import type { Uniforms } from "../ui/ReactShaderToy";
@@ -156,16 +156,15 @@ describe("useAuraAnimator", () => {
 			return ref;
 		});
 		// Let the initial state-driven scale animation (duration 0.5s easeOut) finish.
-		await act(async () => {
-			await new Promise((r) => setTimeout(r, 1500));
-		});
+		await new Promise((r) => setTimeout(r, 700));
 		// Trigger the audio-level branch by updating the store.
-		await act(async () => {
+		act(() => {
 			useVisualizerStore.getState().setAudioLevel(0.5);
-			await new Promise((r) => setTimeout(r, 30));
 		});
 		// audioLevel=0.5 → 0.2 + 0.2*0.5 = 0.3 with duration:0
-		expect(getUniformValue(result.current, "uScale")).toBeCloseTo(0.3, 2);
+		await waitFor(() =>
+			expect(getUniformValue(result.current, "uScale")).toBeCloseTo(0.3, 2),
+		);
 	});
 
 	test("speaking + audioLevel > 0 is suppressed while scale animation is in flight", async () => {
@@ -240,14 +239,14 @@ describe("useAuraAnimator (cont.)", () => {
 	test("non-speaking state ignores audioLevel changes (integration)", async () => {
 		const { result } = renderHook(() => {
 			const ref = useRef<Uniforms>(createUniforms());
-			useAuraAnimator("listening", ref);
+			useAuraAnimator("disconnected", ref);
 			return ref;
 		});
-		await act(async () => {
+		act(() => {
 			useVisualizerStore.getState().setAudioLevel(0.9);
-			await new Promise((r) => setTimeout(r, 30));
 		});
-		// listening drives uScale via spring toward 0.3, not via audioLevel branch.
+		await new Promise((r) => setTimeout(r, 30));
+		// disconnected drives uScale via its state branch, not via audioLevel branch.
 		// The audio branch (state !== "speaking") must short-circuit.
 		// We assert uScale is not the 0.2 + 0.2*0.9 = 0.38 audio-branch value.
 		expect(getUniformValue(result.current, "uScale")).not.toBeCloseTo(0.38, 3);

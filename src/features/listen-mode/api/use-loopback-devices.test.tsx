@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { commands } from "@/bindings";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import {
@@ -10,9 +11,15 @@ import {
 } from "./use-loopback-devices";
 
 const originalApi = window.nativeBridge;
+const originalLoopbackListDevices = commands.loopbackListDevices;
 const initialSettings = useSettingsStore.getState().settings;
 
-function makeApi(devices: unknown[]) {
+type LoopbackDevicesResult = Awaited<
+	ReturnType<typeof commands.loopbackListDevices>
+>;
+
+function makeApi(devices: unknown) {
+	commands.loopbackListDevices = async () => devices as LoopbackDevicesResult;
 	return {
 		...originalApi,
 		invoke: async (channel: string) => {
@@ -41,6 +48,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	window.nativeBridge = originalApi;
+	commands.loopbackListDevices = originalLoopbackListDevices;
 	useSettingsStore.setState({ settings: initialSettings });
 });
 
@@ -407,17 +415,7 @@ describe("useLoopbackDevices", () => {
 			warned = true;
 		};
 		try {
-			window.nativeBridge = {
-				...originalApi,
-				invoke: async (channel: string) => {
-					if (channel === IPC.LOOPBACK_LIST_DEVICES) {
-						return "not-an-array" as unknown;
-					}
-					return;
-				},
-				on: () => () => undefined,
-				send: () => undefined,
-			};
+			window.nativeBridge = makeApi("not-an-array");
 			const { result } = renderHook(() => useLoopbackDevices());
 			// Give the microtask queue a chance to flush so the .then fires.
 			await new Promise((r) => setTimeout(r, 10));
