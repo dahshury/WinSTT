@@ -246,7 +246,7 @@ fn overlay_opacity_byte(opacity: f64) -> u8 {
 
 #[cfg(target_os = "windows")]
 fn set_overlay_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Result<(), String> {
-    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::Foundation::{COLORREF, HWND};
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE, LWA_ALPHA,
         WS_EX_LAYERED,
@@ -254,6 +254,7 @@ fn set_overlay_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Re
 
     let alpha = overlay_opacity_byte(opacity);
     let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    let hwnd = HWND(hwnd.0);
     unsafe {
         let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         let layered_style = ex_style | WS_EX_LAYERED.0 as isize;
@@ -415,12 +416,14 @@ fn ignore_cursor_events_for_show_reason(reason: &str) -> bool {
 /// Force the overlay topmost via Win32 (more reliable than always_on_top alone).
 #[cfg(target_os = "windows")]
 fn force_overlay_topmost(window: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
         SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
     };
     let w = window.clone();
     let _ = window.run_on_main_thread(move || {
         if let Ok(hwnd) = w.hwnd() {
+            let hwnd = HWND(hwnd.0);
             unsafe {
                 let _ = SetWindowPos(
                     hwnd,
@@ -461,11 +464,13 @@ fn apply_overlay_hit_regions(
     window: &tauri::WebviewWindow,
     rects: &[OverlayHitRect],
 ) -> Result<(), String> {
+    use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Gdi::{
         CombineRgn, CreateRectRgn, DeleteObject, SetWindowRgn, RGN_OR,
     };
 
     let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    let hwnd = HWND(hwnd.0);
     let scale = window.scale_factor().unwrap_or(1.0);
 
     // Empty region = visible overlay can never capture a stale transparent box.
