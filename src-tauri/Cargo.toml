@@ -159,7 +159,7 @@ tauri-plugin-updater = "2.10.0"
 ort = { version = "=2.0.0-rc.12", features = ["directml"] }
 wasapi = "0.23.0"  # WASAPI loopback capture for listen mode
 windows-core = "0.62.2"
-windows = { version = "0.61.3", features = [
+windows = { version = "0.62.2", features = [
   "Win32_Media_Audio_Endpoints",
   "Win32_Media_Audio",
   "Win32_System_Com_StructuredStorage",

@@ -147,7 +147,7 @@ fn windows_has_lid() -> Result<bool, String> {
     if unsafe { GetPwrCapabilities(&mut caps) } {
         Ok(caps.LidPresent)
     } else {
-        Err(windows::core::Error::from_win32().to_string())
+        Err(windows::core::Error::from_thread().to_string())
     }
 }
 
@@ -255,7 +255,7 @@ fn run_windows_lid_message_loop() {
         if RegisterClassW(&window_class) == 0 {
             log::warn!(
                 "[clamshell] RegisterClassW failed: {}",
-                windows::core::Error::from_win32()
+                windows::core::Error::from_thread()
             );
             return;
         }

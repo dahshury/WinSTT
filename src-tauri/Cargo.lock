@@ -9461,7 +9461,7 @@ dependencies = [
  "unicode-normalization",
  "vad-rs",
  "wasapi",
- "windows 0.61.3",
+ "windows 0.62.2",
  "windows-core 0.62.2",
  "winreg 0.55.0",
  "zip 8.6.0",
