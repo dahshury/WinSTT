@@ -15,6 +15,7 @@
     "jsx": "react-jsx",
     "esModuleInterop": true,
     "verbatimModuleSyntax": true,
+    "ignoreDeprecations": "6.0",
     "forceConsistentCasingInFileNames": true,
 
     /* Path Aliases — renderer (@/*, @picker) + Tauri bindings (@/bindings) */

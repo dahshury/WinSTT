@@ -1,3 +1,7 @@
+type ErrorConstructorWithStackTrace = ErrorConstructor & {
+	captureStackTrace?: (targetObject: object, constructorOpt?: object) => void;
+};
+
 /**
  * Base application error class with metadata support.
  * All custom errors should extend this class.
@@ -14,7 +18,10 @@ export class ApplicationError extends Error {
 
 		// Maintains proper stack trace for where error was thrown.
 		// V8 (the reference main + renderer) and JSC (Bun) both define this.
-		Error.captureStackTrace(this, this.constructor);
+		(Error as ErrorConstructorWithStackTrace).captureStackTrace?.(
+			this,
+			this.constructor,
+		);
 	}
 
 	toJSON(): Record<string, unknown> {
