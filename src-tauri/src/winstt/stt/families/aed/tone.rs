@@ -23,14 +23,15 @@ use ort::value::Tensor;
 
 use super::*;
 
-/// 16 kHz → 8 kHz one-shot resample via rubato `FftFixedIn` (the same resampler `FrameResampler`
+/// 16 kHz → 8 kHz one-shot resample via rubato `Fft` (the same resampler `FrameResampler`
 /// uses; the task allows reusing it). onnx-asr resamples with an ONNX polyphase graph, but a quality
 /// 2:1 FFT downsample is numerically close enough for CTC phoneme decoding (validated by the spike).
 /// Processes in fixed chunks, zero-padding the final partial chunk (matches `FrameResampler::finish`).
 fn resample_16k_to_8k(audio: &[f32]) -> Vec<f32> {
-    use rubato::{FftFixedIn, Resampler as _};
+    use rubato::audioadapter_buffers::direct::InterleavedSlice;
+    use rubato::{Fft, FixedSync, Resampler as _};
     const CHUNK_IN: usize = 1024;
-    let mut resampler = match FftFixedIn::<f32>::new(16_000, 8_000, CHUNK_IN, 1, 1) {
+    let mut resampler = match Fft::<f32>::new(16_000, 8_000, CHUNK_IN, 1, 1, FixedSync::Input) {
         Ok(r) => r,
         // If the resampler can't be built, fall back to naive 2:1 decimation (still 8 kHz).
         Err(_) => return audio.iter().step_by(2).copied().collect(),
@@ -43,8 +44,10 @@ fn resample_16k_to_8k(audio: &[f32]) -> Vec<f32> {
         if buf.len() < CHUNK_IN {
             buf.resize(CHUNK_IN, 0.0);
         }
-        if let Ok(o) = resampler.process(&[&buf[..]], None) {
-            out.extend_from_slice(&o[0]);
+        if let Ok(input) = InterleavedSlice::new(&buf, 1, buf.len()) {
+            if let Ok(o) = resampler.process(&input, 0, None) {
+                out.extend_from_slice(&o.take_data());
+            }
         }
         idx = end;
     }
