@@ -1,4 +1,3 @@
-export { useModelAssistanceStore } from "./model/model-assistance-store";
 export {
 	useModelAssistanceAutoEnable,
 	type DictationCleanupAutoAction,
