@@ -412,8 +412,15 @@ export function ipcClientMock(): Record<string, unknown> {
 		// Loopback
 		loopbackListDevices: () =>
 			invokeOrDefault<unknown[]>(IPC.LOOPBACK_LIST_DEVICES, []),
-		loopbackStart: (deviceIndex: number, modelId: string) =>
-			send(IPC.LOOPBACK_START, { deviceIndex, modelId }),
+		// The REAL `loopbackStart` returns `invokeOrDefault(...)` — a Promise —
+		// and callers do `loopbackStart(...).catch(...)`. Mirror the send-style
+		// routing (so `start_listen` is still observed on the send seam) AND the
+		// Promise return, or this fake leaks an `undefined`-returning stub that
+		// makes `loopbackStart(...).catch` throw in every later test file.
+		loopbackStart: (deviceIndex: number, modelId: string) => {
+			send(IPC.LOOPBACK_START, { deviceIndex, modelId });
+			return Promise.resolve();
+		},
 		loopbackStop: () => send(IPC.LOOPBACK_STOP),
 		onLoopbackStarted: (cb: (n: string) => void) =>
 			onTyped(
