@@ -209,7 +209,7 @@ fn parse_exported_settings(bytes: &[u8]) -> Result<WinsttSettings, String> {
 
 fn patch_from_settings(settings: &WinsttSettings) -> PartialWinsttSettings {
     PartialWinsttSettings {
-        global: Some(settings.global.clone()),
+        global: Some(settings.global),
         model: Some(settings.model.clone()),
         quality: Some(settings.quality.clone()),
         audio: Some(settings.audio.clone()),

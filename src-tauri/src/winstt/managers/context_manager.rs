@@ -139,6 +139,10 @@ fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
 /// Spawn the sidecar with the mode flag, bounded by READ_TIMEOUT_MS + the byte
 /// cap. Returns the stdout text, or None on any failure (the inner watchdog
 /// kills a wedged UIA walk). Non-Windows always yields None (no UIA).
+// The UIA sidecar is Windows-only; on other platforms this helper has no caller
+// (context capture yields None there), so suppress the dead-code lint rather
+// than cfg-gating it away.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn sidecar_args(mode: ContextMode, hwnd: Option<u64>) -> Vec<String> {
     let mut args = Vec::new();
     if let Some(flag) = mode.flag() {

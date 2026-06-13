@@ -56,7 +56,7 @@ impl NativeNemoCtcStreamingEngine {
     pub fn load(cfg: &EngineConfig) -> SttResult<Self> {
         let session = build_session(file(&cfg.resolved, "model")?, &cfg.providers)?;
         let metadata = read_custom_metadata(&session)?;
-        let feature_dim = feat_dim_of(&session, "audio_signal").min(128).max(1);
+        let feature_dim = feat_dim_of(&session, "audio_signal").clamp(1, 128);
         let window_size = meta_usize(&metadata, "window_size")?;
         let chunk_shift = meta_usize(&metadata, "chunk_shift")?;
         let vocab_size = meta_usize(&metadata, "vocab_size").unwrap_or(0) + 1;

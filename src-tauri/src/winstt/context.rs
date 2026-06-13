@@ -875,7 +875,7 @@ fn json_parse_ax_html(ax: &str) -> JsonAxTree {
 }
 
 fn json_role_is(role: &str, roles: &[&str]) -> bool {
-    roles.iter().any(|r| *r == role)
+    roles.contains(&role)
 }
 
 fn json_drop_subtree_role(role: &str) -> bool {

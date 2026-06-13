@@ -186,22 +186,12 @@ pub enum LoopbackError {
 //    recorder path.
 // ═════════════════════════════════════════════════════════════════════════════
 
+#[derive(Default)]
 pub struct LoopbackCapture {
     #[cfg(windows)]
     stop: Arc<AtomicBool>,
     #[cfg(windows)]
     worker: Option<JoinHandle<()>>,
-}
-
-impl Default for LoopbackCapture {
-    fn default() -> Self {
-        Self {
-            #[cfg(windows)]
-            stop: Arc::new(AtomicBool::new(false)),
-            #[cfg(windows)]
-            worker: None,
-        }
-    }
 }
 
 impl LoopbackCapture {

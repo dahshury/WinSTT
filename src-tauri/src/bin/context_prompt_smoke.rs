@@ -757,6 +757,7 @@ fn login_or_skeleton_noise_present(value: &str) -> bool {
         || (lower.contains("loading") && lower.contains("please wait"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_quality(
     label: &str,
     element: &str,
@@ -858,6 +859,7 @@ fn looks_like_composer_field(element: &str) -> bool {
     .is_match(element)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn quality_warnings(
     prompt_json_valid: bool,
     prompt_empty: bool,
