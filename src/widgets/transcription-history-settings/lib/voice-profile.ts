@@ -13,9 +13,10 @@ export function tokenizeWords(text: string): string[] {
 }
 
 /**
- * Common English function words excluded from the "catchphrase" so it surfaces
- * a distinctive word ("should") rather than the unavoidable top filler ("the").
- * The plain "most used word" tile keeps these in.
+ * Common English function words ("the", "and", "you", …) excluded from every
+ * word tile. Without this filter the "most used" and "most corrected" tiles
+ * just surface the unavoidable top filler ("the"), which tells the user
+ * nothing — so all three word tiles skip these and report a distinctive word.
  */
 const STOPWORDS = new Set([
 	"a",
@@ -104,24 +105,26 @@ export interface VoiceProfileStats {
 }
 
 /**
- * Highest-count entry of a frequency map. Ties resolve to the first word that
- * reached the count (Map iteration is insertion order) — deterministic for a
- * given input. `skip` drops words from consideration (used for stopwords).
+ * The `limit` highest-count entries of a frequency map, descending. `skip`
+ * drops words from consideration (stopwords). Ties resolve to the word that
+ * reached the count first: `Array.prototype.sort` is stable and the map
+ * iterates in insertion order, so the result is deterministic for a given
+ * input. Returns fewer than `limit` entries when there aren't enough words.
  */
-function topWord(
+function topWords(
 	counts: Map<string, number>,
+	limit: number,
 	skip?: ReadonlySet<string>,
-): WordCount | null {
-	let best: WordCount | null = null;
+): WordCount[] {
+	const candidates: WordCount[] = [];
 	for (const [word, count] of counts) {
 		if (skip?.has(word)) {
 			continue;
 		}
-		if (best === null || count > best.count) {
-			best = { count, word };
-		}
+		candidates.push({ count, word });
 	}
-	return best;
+	candidates.sort((a, b) => b.count - a.count);
+	return candidates.slice(0, limit);
 }
 
 function bump(counts: Map<string, number>, key: string): void {
@@ -130,10 +133,13 @@ function bump(counts: Map<string, number>, key: string): void {
 
 /**
  * One-pass voice profile over the (already date-filtered) history:
- *   - mostUsedWord / catchphrase — word frequencies across the final text.
- *   - mostCorrectedWord — words the AI rewrote, tallied from the raw→final diff
- *     (the `before` side of every replace/delete hunk). Only AI-touched entries
- *     run the diff, so this stays cheap.
+ *   - mostUsedWord / catchphrase — the top two distinctive words across the
+ *     final text (stopwords filtered, so "the" never wins). The catchphrase is
+ *     the runner-up, keeping the two tiles from showing the same word.
+ *   - mostCorrectedWord — the word the AI rewrote most, tallied from the
+ *     raw→final diff (the `before` side of every replace/delete hunk), again
+ *     skipping stopwords. Only AI-touched entries run the diff, so this stays
+ *     cheap.
  *   - peakTime — the busiest (weekday, hour) bucket by local time.
  * Every field is `null` when there's no signal, so the UI can show a dash.
  */
@@ -184,10 +190,19 @@ export function computeVoiceProfile(
 		}
 	}
 
+	// Top two distinctive words: [0] is "most used", [1] is the "catchphrase"
+	// runner-up — so the two tiles never collapse onto the same word.
+	const [mostUsedWord = null, catchphrase = null] = topWords(
+		wordCounts,
+		2,
+		STOPWORDS,
+	);
+	const [mostCorrectedWord = null] = topWords(correctedCounts, 1, STOPWORDS);
+
 	return {
-		catchphrase: topWord(wordCounts, STOPWORDS),
-		mostCorrectedWord: topWord(correctedCounts),
-		mostUsedWord: topWord(wordCounts),
+		catchphrase,
+		mostCorrectedWord,
+		mostUsedWord,
 		peakTime,
 	};
 }

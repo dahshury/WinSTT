@@ -1,4 +1,10 @@
-import { TextIcon } from "@hugeicons/core-free-icons";
+import {
+	BookOpenTextIcon,
+	PencilEdit01Icon,
+	SparklesIcon,
+	TextIcon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
 import {
 	addDictionaryEntrySchema,
@@ -67,15 +73,30 @@ export function DictionaryTable({
 					accessor: (e) =>
 						e.autoAdded === true ? t("sourceAuto") : t("sourceManual"),
 					header: t("source"),
-					render: (e) => (
-						<Badge variant={e.autoAdded === true ? "default" : "outline"}>
-							{e.autoAdded === true ? t("sourceAuto") : t("sourceManual")}
-						</Badge>
-					),
+					render: (e) =>
+						e.autoAdded === true ? (
+							<Badge
+								className="border-accent/30 bg-accent/12 text-accent"
+								variant="outline"
+							>
+								<HugeiconsIcon aria-hidden="true" icon={SparklesIcon} size={11} />
+								{t("sourceAuto")}
+							</Badge>
+						) : (
+							<Badge variant="outline">
+								<HugeiconsIcon
+									aria-hidden="true"
+									icon={PencilEdit01Icon}
+									size={11}
+								/>
+								{t("sourceManual")}
+							</Badge>
+						),
 					width: "w-28",
 				},
 			]}
 			deleteLabelFor={(e) => e.term}
+			emptyIcon={BookOpenTextIcon}
 			entries={entries}
 			fields={[
 				{

@@ -1,4 +1,10 @@
-import { FlashIcon, Note01Icon } from "@hugeicons/core-free-icons";
+import {
+	ArrowRight01Icon,
+	FlashIcon,
+	Note01Icon,
+	StickyNote01Icon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
 import type { SnippetEntry } from "@/bindings";
 import { addSnippetEntrySchema } from "@/shared/config/settings-schema";
@@ -29,20 +35,34 @@ export function SnippetsTable({
 			columnControls
 			columns={[
 				{
-					cellClassName: "text-purple",
 					editFieldName: "trigger",
 					header: t("trigger"),
-					render: (e) => e.trigger,
+					render: (e) => (
+						<code className="inline-block rounded bg-surface-5/70 px-1.5 py-0.5 font-mono text-2xs text-teal ring-1 ring-divider/70">
+							{e.trigger}
+						</code>
+					),
 					width: "w-1/3",
 				},
 				{
-					cellClassName: "text-foreground",
+					cellClassName: "text-foreground-secondary",
 					editFieldName: "expansion",
 					header: t("expansion"),
-					render: (e) => e.expansion,
+					render: (e) => (
+						<span className="inline-flex min-w-0 items-center gap-1.5">
+							<HugeiconsIcon
+								aria-hidden="true"
+								className="shrink-0 text-foreground-dim"
+								icon={ArrowRight01Icon}
+								size={12}
+							/>
+							<span className="min-w-0 break-words">{e.expansion}</span>
+						</span>
+					),
 				},
 			]}
 			deleteLabelFor={(e) => e.trigger}
+			emptyIcon={StickyNote01Icon}
 			entries={entries}
 			fields={[
 				{

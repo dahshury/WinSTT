@@ -1,4 +1,8 @@
-import { Delete02Icon } from "@hugeicons/core-free-icons";
+import {
+	CheckmarkBadge01Icon,
+	Delete02Icon,
+	LeftToRightListBulletIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { RowSelectionState } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
@@ -55,6 +59,7 @@ export function CrudTable<TEntry, TAdd>({
 	columns,
 	columnControls = false,
 	deleteLabelFor,
+	emptyIcon,
 	entries,
 	fields,
 	getId,
@@ -146,12 +151,13 @@ export function CrudTable<TEntry, TAdd>({
 
 	const dataGridLabels = useCrudGridLabels(labels.emptyState);
 
+	const isEmpty = entries.length === 0;
 	const showToolbar = searchable || columnControls;
-	const showPagination = paginated && entries.length > 0;
+	const showPagination = paginated && !isEmpty;
 	const deleteAllControl = onClearAll ? (
 		<Button
 			className="h-7 gap-1.5 rounded-md bg-error-dim/40 px-2.5 font-medium text-error text-xs ring-1 ring-error/25 transition-colors duration-150 hover:bg-error-dim/70 hover:ring-error/40 disabled:opacity-50"
-			disabled={entries.length === 0}
+			disabled={isEmpty}
 			onClick={() => setClearConfirmOpen(true)}
 		>
 			<HugeiconsIcon aria-hidden="true" icon={Delete02Icon} size={14} />
@@ -160,7 +166,7 @@ export function CrudTable<TEntry, TAdd>({
 	) : null;
 
 	return (
-		<ElevatedSurface className="flex flex-col gap-2.5 p-2">
+		<ElevatedSurface className="flex flex-col gap-2.5 p-2.5">
 			{/* Search + column-visibility chrome rides ABOVE the add row so the add
 			    field flows straight into the table with nothing wedged between
 			    them. The search mirrors this table's add-entry field (elevated for
@@ -181,49 +187,82 @@ export function CrudTable<TEntry, TAdd>({
 					/>
 				</DataGrid>
 			) : null}
-			<div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-				<div className="min-w-0 flex-1">
-					<CrudAddForm
-						addFieldErrorId={form.addFieldErrorId}
-						addFormLayout={addFormLayout}
-						errors={form.errors}
-						fields={fields}
-						handleSubmit={form.handleSubmit}
-						hasAddErrors={form.hasAddErrors}
-						isAddDisabled={form.isAddDisabled}
-						labels={labels}
-						setField={form.setField}
-						values={form.values}
-					/>
+			{/* The add-entry field is the card's primary affordance, so it spans the
+			    full width on its own row. The destructive selected-row action no
+			    longer rides alongside it — it surfaces contextually below. */}
+			<CrudAddForm
+				addFieldErrorId={form.addFieldErrorId}
+				addFormLayout={addFormLayout}
+				errors={form.errors}
+				fields={fields}
+				handleSubmit={form.handleSubmit}
+				hasAddErrors={form.hasAddErrors}
+				isAddDisabled={form.isAddDisabled}
+				labels={labels}
+				setField={form.setField}
+				values={form.values}
+			/>
+			{/* Contextual selection bar: it animates in only once rows are picked,
+			    so the resting card stays clean and the destructive action appears
+			    exactly when it becomes actionable (count on the left, delete on the
+			    right). */}
+			{selectedCount > 0 ? (
+				<div className="flex animate-fade-in items-center justify-between gap-3 rounded-lg bg-accent/10 px-3 py-1.5 ring-1 ring-accent/25">
+					<span className="flex items-center gap-1.5 text-foreground text-xs-tight">
+						<HugeiconsIcon
+							aria-hidden="true"
+							className="text-accent"
+							icon={CheckmarkBadge01Icon}
+							size={15}
+						/>
+						<span className="font-semibold tabular-nums">{selectedCount}</span>
+					</span>
+					<Button
+						aria-label={deleteSelectedLabel}
+						className="h-7 shrink-0 gap-1.5 rounded-md bg-error-dim/50 px-2.5 font-medium text-error text-xs ring-1 ring-error/30 transition-colors duration-150 hover:bg-error-dim/80 hover:ring-error/50"
+						onClick={handleRemoveSelected}
+					>
+						<HugeiconsIcon aria-hidden="true" icon={Delete02Icon} size={14} />
+						<span>{deleteSelectedLabel}</span>
+					</Button>
 				</div>
-				<Button
-					aria-label={deleteSelectedLabel}
-					className="h-9 shrink-0 gap-1.5 rounded-md bg-error-dim/40 px-2.5 font-medium text-error text-xs ring-1 ring-error/25 transition-colors duration-150 hover:bg-error-dim/70 hover:ring-error/40 disabled:opacity-50"
-					disabled={selectedCount === 0}
-					onClick={handleRemoveSelected}
+			) : null}
+			{isEmpty ? (
+				<div className="flex animate-fade-in flex-col items-center justify-center gap-3 rounded-lg bg-surface-3/40 px-6 py-10 text-center shadow-surface-1 ring-1 ring-divider/60">
+					<div className="flex size-11 items-center justify-center rounded-full bg-surface-5/70 text-foreground-muted shadow-surface-2 ring-1 ring-divider">
+						<HugeiconsIcon
+							aria-hidden="true"
+							icon={emptyIcon ?? LeftToRightListBulletIcon}
+							size={20}
+						/>
+					</div>
+					<p className="max-w-[36ch] text-balance text-body-sm text-foreground-secondary">
+						{labels.emptyState}
+					</p>
+				</div>
+			) : (
+				<DataGrid
+					labels={dataGridLabels}
+					resizable={resizable}
+					table={table}
+					tableLayout={CRUD_GRID_TABLE_LAYOUT}
 				>
-					<HugeiconsIcon aria-hidden="true" icon={Delete02Icon} size={14} />
-					<span>{deleteSelectedLabel}</span>
-				</Button>
-			</div>
-			<DataGrid
-				labels={dataGridLabels}
-				resizable={resizable}
-				table={table}
-				tableLayout={CRUD_GRID_TABLE_LAYOUT}
-			>
-				<DataGridContainer
-					border={false}
-					className="rounded-lg bg-surface-3/70 p-1 shadow-surface-1 ring-1 ring-divider/70"
-				>
-					<DataGridTable />
-				</DataGridContainer>
-				{showPagination ? (
-					<DataGridPagination actions={deleteAllControl} showPageSize={false} />
-				) : deleteAllControl ? (
-					<div className="flex justify-end pt-1">{deleteAllControl}</div>
-				) : null}
-			</DataGrid>
+					{/* Inner core of the nested card: its own fill + hairline ring,
+					    a slightly tighter radius than the outer shell so the two
+					    read as concentric machined surfaces. */}
+					<DataGridContainer
+						border={false}
+						className="rounded-lg bg-surface-3/55 p-1 shadow-surface-1 ring-1 ring-divider/60"
+					>
+						<DataGridTable />
+					</DataGridContainer>
+					{showPagination ? (
+						<DataGridPagination actions={deleteAllControl} showPageSize={false} />
+					) : deleteAllControl ? (
+						<div className="flex justify-end pt-1">{deleteAllControl}</div>
+					) : null}
+				</DataGrid>
+			)}
 			{onClearAll && (
 				<ConfirmDialog
 					description={labels.clearDescription}

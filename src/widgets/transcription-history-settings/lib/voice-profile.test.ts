@@ -46,18 +46,26 @@ describe("computeVoiceProfile", () => {
 		});
 	});
 
-	test("most used word keeps stopwords; catchphrase skips them", () => {
+	test("most used word and catchphrase both skip stopwords (the top two distinctive words)", () => {
 		const entries = [
 			makeEntry({ text: "the the the code should ship" }),
 			makeEntry({ text: "the code should should work" }),
 		];
 		const profile = computeVoiceProfile(entries);
-		// "the" appears 4×, "should" 3× — most-used is "the", catchphrase is "should".
-		expect(profile.mostUsedWord).toEqual({ count: 4, word: "the" });
-		expect(profile.catchphrase).toEqual({ count: 3, word: "should" });
+		// "the" appears 4× but is a stopword, so it's dropped. "should" 3×,
+		// "code" 2× — most-used is "should", the catchphrase runner-up is "code".
+		expect(profile.mostUsedWord).toEqual({ count: 3, word: "should" });
+		expect(profile.catchphrase).toEqual({ count: 2, word: "code" });
 	});
 
-	test("most corrected word counts the raw side of AI rewrites", () => {
+	test("catchphrase is null when only one distinctive word exists", () => {
+		const entries = [makeEntry({ text: "the and you should should" })];
+		const profile = computeVoiceProfile(entries);
+		expect(profile.mostUsedWord).toEqual({ count: 2, word: "should" });
+		expect(profile.catchphrase).toBeNull();
+	});
+
+	test("most corrected word skips stopwords and counts the raw side of AI rewrites", () => {
 		const entries = [
 			makeEntry({ originalText: "open cursor now", text: "open Cursor now" }),
 			makeEntry({

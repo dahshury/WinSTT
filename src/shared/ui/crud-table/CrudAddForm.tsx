@@ -78,7 +78,10 @@ export function CrudAddForm({
 				<InputGroupAddon align="inline-end">
 					<InputGroupButton
 						aria-label={labels.add}
-						className={cn(joined && "rounded-none shadow-none ring-0")}
+						className={cn(
+							joined &&
+								"rounded-none text-accent shadow-none ring-0 hover:bg-accent hover:text-white disabled:text-foreground-dim disabled:hover:bg-transparent",
+						)}
 						disabled={isAddDisabled}
 						tone={joined ? "ghost" : "surface"}
 						type="submit"
@@ -121,8 +124,8 @@ export function CrudAddForm({
 					<ButtonGroup
 						aria-label={labels.add}
 						className={cn(
-							"w-full",
-							hasAddErrors && "ring-error/45",
+							"w-full transition-[box-shadow] duration-150",
+							hasAddErrors ? "ring-error/45" : "focus-within:ring-accent/45",
 							"[&_[data-crud-add-input-group='true']]:h-9",
 						)}
 						connected

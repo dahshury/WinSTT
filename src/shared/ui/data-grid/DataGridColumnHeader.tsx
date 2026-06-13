@@ -42,7 +42,8 @@ export function DataGridColumnHeader({
 				dense && (layered ? "px-3 py-2" : "px-2 py-1.5"),
 				headerBorder && !layered && "border-border/80 border-b",
 				cellBorder && !layered && "border-border/70 border-r last:border-r-0",
-				layered && "text-foreground-secondary",
+				layered &&
+					"font-medium text-2xs text-foreground-muted uppercase tracking-[0.08em]",
 				resizable && "relative",
 				column.columnDef.meta?.headClassName,
 			)}

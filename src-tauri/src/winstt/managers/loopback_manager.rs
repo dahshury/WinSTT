@@ -792,13 +792,18 @@ mod tests {
 
     #[test]
     fn listen_feed_samples_follow_canonical_model_latency() {
+        // Each concrete latency row feeds at ITS OWN chunk latency (clamped to
+        // the [MIN, MAX] feed window). Latency is the speed-vs-accuracy control
+        // and must NOT collapse to a single canonical window — see the design
+        // note on `catalog::canonical_model_id`. An already-int8 id is canonical
+        // (idempotent), so the parsed `<n>ms` token is the feed window.
         assert_eq!(
             listen_native_stream_feed_samples(Some("streaming-nemotron-en-80ms-int8")),
-            samples_for_millis(1120)
+            samples_for_millis(80)
         );
         assert_eq!(
             listen_native_stream_feed_samples(Some("streaming-parakeet-unified-en-560ms-int8")),
-            samples_for_millis(1120)
+            samples_for_millis(560)
         );
         assert_eq!(
             listen_native_stream_feed_samples(Some("zipformer-en")),

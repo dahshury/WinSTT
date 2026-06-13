@@ -65,6 +65,8 @@ export interface CrudTableProps<TEntry, TAdd> {
 	columnControls?: boolean;
 	/** Value shown in each row's delete aria-label: `${delete} "${value}"`. */
 	deleteLabelFor: (entry: TEntry) => string;
+	/** Icon shown in the composed empty state when the list has no entries. */
+	emptyIcon?: IconSvgElement;
 	entries: TEntry[];
 	fields: CrudField[];
 	getId: (entry: TEntry) => string;

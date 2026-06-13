@@ -74,8 +74,8 @@ export function DataGridTable({
 								layered
 									? [
 											"border-b-0",
-											"[&>th]:bg-surface-6/75",
-											"[&>th:first-child]:rounded-l-lg [&>th:last-child]:rounded-r-lg",
+											"[&>th]:bg-surface-5/45",
+											"[&>th:first-child]:rounded-l-md [&>th:last-child]:rounded-r-md",
 										]
 									: layout.headerBackground && "bg-surface-4/70",
 								!(layout.headerBorder || layout.rowBorder) &&
@@ -106,11 +106,14 @@ export function DataGridTable({
 								rowBorderClassName,
 								layered
 									? [
-											"[&>td]:bg-surface-4/55",
-											"[&>td:first-child]:rounded-l-lg [&>td:last-child]:rounded-r-lg",
-											"hover:[&>td]:bg-surface-5/65",
-											row.getIsSelected() &&
-												"[&>td]:bg-surface-6/80 [&>td]:text-foreground",
+											"[&>td]:bg-surface-4/45 [&>td]:transition-[background-color,box-shadow] [&>td]:duration-150",
+											"[&>td:first-child]:rounded-l-md [&>td:last-child]:rounded-r-md",
+											row.getIsSelected()
+												? [
+														"[&>td]:bg-accent/15 [&>td]:text-foreground",
+														"[&>td:first-child]:shadow-[inset_3px_0_0_0_var(--color-accent)]",
+													]
+												: "hover:[&>td]:bg-surface-5/70",
 										]
 									: [
 											layout.striped &&

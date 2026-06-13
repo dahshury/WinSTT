@@ -24,7 +24,7 @@ export function RowSelectionCheckbox({
 		<input
 			aria-label={label}
 			checked={checked}
-			className="size-3.5 cursor-pointer rounded border border-border bg-transparent accent-accent outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-default disabled:opacity-40"
+			className="size-4 cursor-pointer rounded-[4px] border border-border bg-surface-2/60 accent-accent outline-none transition-colors duration-150 hover:border-border-hover focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-default disabled:opacity-40"
 			disabled={disabled}
 			onChange={onChange}
 			ref={(node) => {
