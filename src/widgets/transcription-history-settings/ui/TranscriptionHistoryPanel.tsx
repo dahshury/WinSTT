@@ -1,5 +1,6 @@
 import {
 	AiEditingIcon,
+	AiMicIcon,
 	Analytics01Icon,
 	CalendarAnalysisIcon,
 	CalendarClockIcon,
@@ -9,7 +10,7 @@ import {
 	Delete02Icon,
 	InfinityIcon,
 	ListViewIcon,
-	SparklesIcon,
+	Tag01Icon,
 	VoiceIdIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -33,13 +34,21 @@ import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { useTranscriptionHistorySync } from "../api/use-history-sync";
+import { computeStreak } from "../lib/streak";
+import { computeUsage } from "../lib/usage-breakdown";
 import { computeVoiceProfile } from "../lib/voice-profile";
-import { aggregate, filterEntriesByDateRange } from "../lib/word-stats";
+import {
+	aggregate,
+	buildHeatmap,
+	filterEntriesByDateRange,
+} from "../lib/word-stats";
 import { useTranscriptionHistoryStore } from "../model/history-store";
 import { ActivityHeatmap } from "./ActivityHeatmap";
-import { HistoryImpact } from "./HistoryImpact";
-import { HistorySummary } from "./HistorySummary";
+import { ContributionGraph } from "./ContributionGraph";
+import { HistoryHero } from "./HistoryHero";
 import { HistoryTable } from "./HistoryTable";
+import { StreakBanner } from "./StreakBanner";
+import { UsageBars } from "./UsageBreakdown";
 import { VoiceProfile } from "./VoiceProfile";
 
 type RetentionValue = "never" | "cap" | "days3" | "weeks2" | "months3";
@@ -90,6 +99,24 @@ export function TranscriptionHistoryPanel() {
 		() => computeVoiceProfile(filteredEntries),
 		[filteredEntries],
 	);
+	const usageOtherLabel = t("usageOther");
+	const usage = useMemo(
+		() => computeUsage(filteredEntries, usageOtherLabel),
+		[filteredEntries, usageOtherLabel],
+	);
+	// Streak and the year-long contribution graph are all-time habit views, so
+	// they read the full history rather than the selected date range.
+	const streak = useMemo(() => computeStreak(entries), [entries]);
+	// Recent 30-day word trend for the hero sparkline — a stable "recent
+	// activity" signal independent of the selected range, so filtering to a past
+	// window doesn't blank it out.
+	const dailyWords = useMemo(
+		() =>
+			buildHeatmap(entries)
+				.slice(-30)
+				.map((b) => b.wordCount),
+		[entries],
+	);
 
 	const handleClear = () => {
 		clearTranscriptionHistory().then(() => clearLocal());
@@ -107,29 +134,41 @@ export function TranscriptionHistoryPanel() {
 		<div className="flex flex-col gap-2">
 			<SettingSection icon={Analytics01Icon} title={t("summaryTitle")}>
 				<div className="py-2">
-					<HistorySummary stats={stats} />
+					<HistoryHero dailyWords={dailyWords} stats={stats} />
 				</div>
 			</SettingSection>
 
-			<SettingSection icon={SparklesIcon} title={t("impactTitle")}>
-				<div className="py-2">
-					<HistoryImpact stats={stats} />
+			{usage.models.length > 0 ? (
+				<SettingSection icon={AiMicIcon} title={t("usageModelsTitle")}>
+					<div className="py-2">
+						<UsageBars buckets={usage.models} />
+					</div>
+				</SettingSection>
+			) : null}
+
+			{usage.categories.length > 0 ? (
+				<SettingSection icon={Tag01Icon} title={t("usageCategoriesTitle")}>
+					<div className="py-2">
+						<UsageBars buckets={usage.categories} />
+					</div>
+				</SettingSection>
+			) : null}
+
+			<SettingSection icon={CalendarAnalysisIcon} title={t("heatmapTitle")}>
+				<div className="flex flex-col gap-4 py-2">
+					<StreakBanner streak={streak} />
+					<ContributionGraph entries={entries} />
+					<ActivityHeatmap
+						entries={entries}
+						onRangeChange={setSelectedRange}
+						selectedRange={selectedRange}
+					/>
 				</div>
 			</SettingSection>
 
 			<SettingSection icon={VoiceIdIcon} title={t("profileTitle")}>
 				<div className="py-2">
 					<VoiceProfile stats={voiceProfile} />
-				</div>
-			</SettingSection>
-
-			<SettingSection icon={CalendarAnalysisIcon} title={t("heatmapTitle")}>
-				<div className="py-2">
-					<ActivityHeatmap
-						entries={entries}
-						onRangeChange={setSelectedRange}
-						selectedRange={selectedRange}
-					/>
 				</div>
 			</SettingSection>
 

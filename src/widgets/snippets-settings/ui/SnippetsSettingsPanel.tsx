@@ -2,6 +2,7 @@ import { StickyNote01Icon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { generateId } from "@/shared/lib/generate-id";
+import { Badge } from "@/shared/ui/badge";
 import { SnippetsTable } from "./SnippetsTable";
 
 export function SnippetsSettingsPanel() {
@@ -12,6 +13,17 @@ export function SnippetsSettingsPanel() {
 	return (
 		<SettingSection
 			description={t("description")}
+			headerAction={
+				snippets.length > 0 ? (
+					<Badge
+						aria-hidden="true"
+						className="tabular-nums"
+						variant="secondary"
+					>
+						{snippets.length}
+					</Badge>
+				) : undefined
+			}
 			icon={StickyNote01Icon}
 			title={t("title")}
 		>

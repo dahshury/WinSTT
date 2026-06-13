@@ -8,6 +8,7 @@ import {
 } from "@/entities/setting";
 import type { DictionaryEntry } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";
+import { Badge } from "@/shared/ui/badge";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { dictionaryContainsTerm } from "../lib/dictionary-terms";
@@ -69,6 +70,17 @@ export function DictionarySettingsPanel() {
 	return (
 		<SettingSection
 			description={t("description")}
+			headerAction={
+				dictionary.length > 0 ? (
+					<Badge
+						aria-hidden="true"
+						className="tabular-nums"
+						variant="secondary"
+					>
+						{dictionary.length}
+					</Badge>
+				) : undefined
+			}
 			icon={BookOpenTextIcon}
 			title={t("title")}
 		>

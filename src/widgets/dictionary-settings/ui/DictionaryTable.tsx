@@ -79,7 +79,11 @@ export function DictionaryTable({
 								className="border-accent/30 bg-accent/12 text-accent"
 								variant="outline"
 							>
-								<HugeiconsIcon aria-hidden="true" icon={SparklesIcon} size={11} />
+								<HugeiconsIcon
+									aria-hidden="true"
+									icon={SparklesIcon}
+									size={11}
+								/>
 								{t("sourceAuto")}
 							</Badge>
 						) : (

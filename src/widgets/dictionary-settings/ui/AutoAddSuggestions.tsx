@@ -1,10 +1,12 @@
-import { Cancel01Icon, Tick01Icon } from "@hugeicons/core-free-icons";
+import {
+	Cancel01Icon,
+	SparklesIcon,
+	Tick01Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import { onLlmLearnedProperNouns } from "@/shared/api/ipc-client";
-import { cn } from "@/shared/lib/cn";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import { normalizeDictionaryTerm } from "../lib/dictionary-terms";
@@ -42,9 +44,6 @@ export function AutoAddSuggestions({
 }: AutoAddSuggestionsProps) {
 	const t = useTranslations("dictionary");
 	const [pending, setPending] = useState<readonly string[]>([]);
-	const surface = useSurface();
-	const level = Math.min(surface + 1, 8);
-	const pillLevel = Math.min(surface + 2, 8);
 
 	useEffect(() => {
 		const off = onLlmLearnedProperNouns(({ nouns }) => {
@@ -88,39 +87,34 @@ export function AutoAddSuggestions({
 	}
 
 	return (
-		<div
-			className={cn(
-				"flex flex-col gap-2 rounded border border-border p-3",
-				surfaceBg(level),
-			)}
-		>
+		<div className="flex animate-fade-in flex-col gap-2.5 rounded-lg bg-accent-glow p-3 shadow-surface-2 ring-1 ring-accent/20">
 			<div className="flex items-center gap-2">
-				<span aria-hidden="true">✨</span>
+				<span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent ring-1 ring-accent/25">
+					<HugeiconsIcon aria-hidden="true" icon={SparklesIcon} size={13} />
+				</span>
 				<p className="font-medium text-body-sm text-foreground">
 					{t("autoAddTitle")}
 				</p>
 				<InfoTooltip content={t("autoAddCaption")} />
 			</div>
-			<div className="flex flex-wrap gap-2">
-				{pending.map((term) => (
+			<div className="flex flex-wrap gap-1.5">
+				{pending.map((term, index) => (
 					<div
-						className={cn(
-							"flex items-center gap-1 rounded-full border border-border px-2 py-1",
-							surfaceBg(pillLevel),
-						)}
+						className="flex animate-fade-in items-center gap-0.5 rounded-full bg-surface-5/70 py-0.5 pr-1 pl-2.5 shadow-surface-1 ring-1 ring-divider/70"
 						key={term}
+						style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
 					>
 						<span className="text-body-sm text-foreground">{term}</span>
 						<Button
 							aria-label={`${t("autoAddAccept")} "${term}"`}
-							className="rounded-full bg-transparent p-1 text-success transition-colors duration-150 hover:bg-success-dim"
+							className="rounded-full p-1 text-success transition-colors duration-150 hover:bg-success-dim"
 							onClick={() => handleAccept(term)}
 						>
 							<HugeiconsIcon icon={Tick01Icon} size={12} />
 						</Button>
 						<Button
 							aria-label={`${t("autoAddDecline")} "${term}"`}
-							className="rounded-full bg-transparent p-1 text-foreground-muted transition-colors duration-150 hover:bg-surface-secondary"
+							className="rounded-full p-1 text-foreground-muted transition-colors duration-150 hover:bg-surface-6/80 hover:text-foreground"
 							onClick={() => handleDecline(term)}
 						>
 							<HugeiconsIcon icon={Cancel01Icon} size={12} />

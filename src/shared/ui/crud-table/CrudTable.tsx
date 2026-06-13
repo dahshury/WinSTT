@@ -257,7 +257,10 @@ export function CrudTable<TEntry, TAdd>({
 						<DataGridTable />
 					</DataGridContainer>
 					{showPagination ? (
-						<DataGridPagination actions={deleteAllControl} showPageSize={false} />
+						<DataGridPagination
+							actions={deleteAllControl}
+							showPageSize={false}
+						/>
 					) : deleteAllControl ? (
 						<div className="flex justify-end pt-1">{deleteAllControl}</div>
 					) : null}
