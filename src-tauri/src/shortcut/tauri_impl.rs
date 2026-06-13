@@ -3,7 +3,7 @@
 //! This module provides shortcut functionality using Tauri's built-in
 //! global-shortcut plugin.
 
-use log::{error, warn};
+use log::{debug, error, warn};
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
@@ -158,6 +158,14 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
             return Err(error_msg);
         }
     };
+
+    if !app.global_shortcut().is_registered(shortcut) {
+        debug!(
+            "unregister_tauri_shortcut no-op for unregistered shortcut '{}'",
+            binding.current_binding
+        );
+        return Ok(());
+    }
 
     app.global_shortcut().unregister(shortcut).map_err(|e| {
         let error_msg = format!(

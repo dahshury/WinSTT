@@ -100,10 +100,7 @@ pub fn onboarding_finish(app: AppHandle, args: OnboardingFinishArgs) -> Result<(
     if let Some(window) = app.get_webview_window("onboarding") {
         let _ = window.hide();
     }
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.show();
-        let _ = main.set_focus();
-    }
+    crate::window_state::show_main_window(&app);
     Ok(())
 }
 

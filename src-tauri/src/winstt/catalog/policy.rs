@@ -127,31 +127,15 @@ pub const GPU_COMPATIBLE_QUANTIZATIONS: &[&str] = &["", "fp16", "fp16w"];
 
 pub fn canonical_model_id(id: &str) -> &str {
     match id {
-        "streaming-nemo-ctc-en" | "streaming-nemo-ctc-en-480ms" => "streaming-nemo-ctc-en-1040ms",
-        "streaming-nemo-ctc-en-80ms-int8" | "streaming-nemo-ctc-en-480ms-int8" => {
-            "streaming-nemo-ctc-en-1040ms-int8"
-        }
-        "streaming-nemo-rnnt-en" | "streaming-nemo-rnnt-en-80ms" => "streaming-nemo-rnnt-en-1040ms",
-        "streaming-nemo-rnnt-en-80ms-int8" | "streaming-nemo-rnnt-en-480ms-int8" => {
-            "streaming-nemo-rnnt-en-1040ms-int8"
-        }
-        "streaming-parakeet-unified-en-240ms" | "streaming-parakeet-unified-en-560ms" => {
-            "streaming-parakeet-unified-en-1120ms"
-        }
-        "streaming-parakeet-unified-en-240ms-int8" | "streaming-parakeet-unified-en-560ms-int8" => {
-            "streaming-parakeet-unified-en-1120ms-int8"
-        }
         // The April 2026 sherpa-onnx Nemotron bundles documented upstream are int8. The
         // non-int8 HF repos currently contain only tiny placeholder/incomplete graphs despite
-        // the old catalog advertising them as fp32, so old selections are routed to the real
-        // highest-latency int8 bundle.
-        "streaming-nemotron-en-80ms"
-        | "streaming-nemotron-en-160ms"
-        | "streaming-nemotron-en-560ms"
-        | "streaming-nemotron-en-1120ms" => "streaming-nemotron-en-1120ms-int8",
-        "streaming-nemotron-en-80ms-int8"
-        | "streaming-nemotron-en-160ms-int8"
-        | "streaming-nemotron-en-560ms-int8" => "streaming-nemotron-en-1120ms-int8",
+        // the old catalog advertising them as fp32, so old non-int8 selections are routed to the
+        // matching real int8 latency bundle. Concrete latency rows must NOT collapse to 1120ms:
+        // listen mode exposes latency as the speed-vs-accuracy control.
+        "streaming-nemotron-en-80ms" => "streaming-nemotron-en-80ms-int8",
+        "streaming-nemotron-en-160ms" => "streaming-nemotron-en-160ms-int8",
+        "streaming-nemotron-en-560ms" => "streaming-nemotron-en-560ms-int8",
+        "streaming-nemotron-en-1120ms" => "streaming-nemotron-en-1120ms-int8",
         _ => id,
     }
 }

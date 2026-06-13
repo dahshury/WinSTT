@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import {
 	modelNeedsDictationCleanup,
 	useCatalogStore,
 } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
+import { useModelAssistanceStore } from "./model-assistance-store";
 
 export type DictationCleanupAutoAction = "enable" | "none" | "openOllamaPicker";
 
@@ -62,16 +63,21 @@ export function useModelAssistanceAutoEnable({
 	const updateQualitySettings = useSettingsStore(
 		(s) => s.updateQualitySettings,
 	);
-	const processedModelRef = useRef<string | null>(null);
 
 	useEffect(() => {
 		if (!enabled || !selectedModelId || !selectedModel) {
 			return;
 		}
-		if (processedModelRef.current === selectedModelId) {
+		// PERSISTED guard (not a per-mount ref): once we've auto-evaluated a
+		// model we never auto-toggle dictation for it again, so reopening
+		// Settings or restarting the app can't silently re-enable cleanup that
+		// the user turned off. Reading/writing imperatively keeps the effect's
+		// deps identical to the value-driven inputs below.
+		const assistance = useModelAssistanceStore.getState();
+		if (assistance.hasAutoApplied(selectedModelId)) {
 			return;
 		}
-		processedModelRef.current = selectedModelId;
+		assistance.markAutoApplied(selectedModelId);
 
 		const action = resolveDictationCleanupAutoAction({
 			needsCleanup: modelNeedsDictationCleanup(selectedModel),

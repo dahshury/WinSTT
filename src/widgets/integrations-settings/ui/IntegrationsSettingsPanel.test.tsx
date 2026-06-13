@@ -5,6 +5,7 @@ import { useSettingsStore } from "@/entities/setting";
 import { IntegrationsSettingsPanel } from "./IntegrationsSettingsPanel";
 
 const initial = useSettingsStore.getState().settings;
+const SECRET_PRESENT_SENTINEL = "__WINSTT_SECRET_PRESENT__";
 
 beforeEach(() => {
 	useSettingsStore.setState({ settings: { ...initial } });
@@ -41,28 +42,34 @@ describe("IntegrationsSettingsPanel", () => {
 		).toBeGreaterThan(0);
 	});
 
-	test("renders the Ollama endpoint and OpenRouter API key inputs", () => {
+	test("renders the Ollama endpoint and locks a saved OpenRouter API key", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initial,
 				llm: {
 					...initial.llm,
 					endpoint: "http://localhost:11434",
-					openrouterApiKey: "sk-or-test",
+					openrouterApiKey: SECRET_PRESENT_SENTINEL,
 				},
 			},
 		});
-		const { container } = render(
+		const { container, getAllByRole } = render(
 			<IntlProvider>
 				<IntegrationsSettingsPanel />
 			</IntlProvider>,
 		);
 		const inputs = container.querySelectorAll("input");
-		// One TextField + one PasswordField rendered.
 		expect(inputs.length).toBeGreaterThanOrEqual(2);
 		const values = Array.from(inputs).map((i) => i.value);
 		expect(values).toContain("http://localhost:11434");
-		expect(values).toContain("sk-or-test");
+		expect(values).not.toContain(SECRET_PRESENT_SENTINEL);
+		const openrouterInput = container.querySelector(
+			'input[aria-label="OpenRouter API Key"]',
+		) as HTMLInputElement | null;
+		expect(openrouterInput?.disabled).toBe(true);
+		expect(openrouterInput?.value).toBe("********");
+		expect(getAllByRole("button", { name: "Remove key" }).length).toBe(1);
+		expect(getAllByRole("button", { name: "Get a key" }).length).toBe(1);
 	});
 
 	test("typing in the endpoint field writes to settings.llm.endpoint", () => {
@@ -108,5 +115,59 @@ describe("IntegrationsSettingsPanel", () => {
 				"sk-or-new-key",
 			);
 		}
+	});
+
+	test("OpenRouter key input locks after active editing ends", () => {
+		const { container } = render(
+			<IntlProvider>
+				<IntegrationsSettingsPanel />
+			</IntlProvider>,
+		);
+		const keyInput = container.querySelector(
+			'input[placeholder^="sk-or-"]',
+		) as HTMLInputElement | null;
+		expect(keyInput).not.toBeNull();
+		if (keyInput) {
+			fireEvent.change(keyInput, { target: { value: "sk-or-new-key" } });
+			expect(keyInput.disabled).toBe(false);
+			expect(keyInput.value).toBe("sk-or-new-key");
+
+			fireEvent.blur(keyInput);
+			const lockedInput = container.querySelector(
+				'input[aria-label="OpenRouter API Key"]',
+			) as HTMLInputElement | null;
+			expect(lockedInput?.disabled).toBe(true);
+			expect(lockedInput?.value).toBe("********");
+		}
+	});
+
+	test("locks a saved ElevenLabs API key", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initial,
+				integrations: {
+					...initial.integrations,
+					elevenlabs: {
+						...initial.integrations.elevenlabs,
+						apiKey: SECRET_PRESENT_SENTINEL,
+					},
+				},
+			},
+		});
+		const { container, getAllByRole } = render(
+			<IntlProvider>
+				<IntegrationsSettingsPanel />
+			</IntlProvider>,
+		);
+		const elevenlabsInput = container.querySelector(
+			'input[aria-label="ElevenLabs API Key"]',
+		) as HTMLInputElement | null;
+		expect(elevenlabsInput?.disabled).toBe(true);
+		expect(elevenlabsInput?.value).toBe("********");
+		expect(
+			Array.from(container.querySelectorAll("input")).map((i) => i.value),
+		).not.toContain(SECRET_PRESENT_SENTINEL);
+		expect(getAllByRole("button", { name: "Remove key" }).length).toBe(1);
+		expect(getAllByRole("button", { name: "Get a key" }).length).toBe(1);
 	});
 });

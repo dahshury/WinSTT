@@ -1,5 +1,8 @@
+import { useSettingsStore } from "@/entities/setting";
 import { useVisualizerStore } from "../model/visualizer-store";
 import type { AgentState } from "./audio-visualizer";
+
+type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword";
 
 /** audioLevel above this counts as "speaking" even without a VAD signal (PTT mode). */
 const SPEAKING_LEVEL_THRESHOLD = 0.02;
@@ -21,9 +24,13 @@ export function isActivelySpeaking(
  * while recording, "speaking" while the audio is still fading out after
  * recording stops, or "disconnected" when fully silent.
  */
-function quietState(isRecording: boolean, audioLevel: number): AgentState {
+function quietState(
+	isRecording: boolean,
+	audioLevel: number,
+	recordingMode: RecordingMode,
+): AgentState {
 	if (isRecording) {
-		return "listening";
+		return recordingMode === "listen" ? "disconnected" : "listening";
 	}
 	// Fading out after recording stops
 	return audioLevel > AUDIBLE_LEVEL_THRESHOLD ? "speaking" : "disconnected";
@@ -41,11 +48,12 @@ export function deriveActiveState(
 	isRecording: boolean,
 	isSpeaking: boolean,
 	audioLevel: number,
+	recordingMode: RecordingMode = "ptt",
 ): AgentState {
 	if (isActivelySpeaking(isRecording, isSpeaking, audioLevel)) {
 		return "speaking";
 	}
-	return quietState(isRecording, audioLevel);
+	return quietState(isRecording, audioLevel, recordingMode);
 }
 
 /**
@@ -55,9 +63,12 @@ export function useAgentState(): AgentState {
 	const isRecording = useVisualizerStore((s) => s.isRecording);
 	const isSpeaking = useVisualizerStore((s) => s.isSpeaking);
 	const audioLevel = useVisualizerStore((s) => s.audioLevel);
+	const recordingMode = useSettingsStore(
+		(s) => s.settings.general?.recordingMode ?? "ptt",
+	);
 
 	if (!isRecording && audioLevel < AUDIBLE_LEVEL_THRESHOLD) {
 		return "disconnected";
 	}
-	return deriveActiveState(isRecording, isSpeaking, audioLevel);
+	return deriveActiveState(isRecording, isSpeaking, audioLevel, recordingMode);
 }

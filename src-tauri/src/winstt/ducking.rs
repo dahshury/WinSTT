@@ -621,9 +621,9 @@ fn perform_read_aloud_session_restore(snapshots: Vec<SessionVolumeSnapshot>) {
     }
 }
 
-// Non-Windows stubs so the manager wiring compiles cross-platform. WinSTT is
-// Windows-first; ducking is a no-op elsewhere (mirrors muteSystemAudio's
-// `if (process.platform !== "win32") return false`).
+// Non-Windows stubs so the manager wiring compiles cross-platform. System-audio
+// ducking is currently implemented only through the Windows endpoint-volume APIs,
+// so it is a no-op elsewhere.
 #[cfg(not(windows))]
 pub fn read_master_volume() -> Option<f32> {
     None

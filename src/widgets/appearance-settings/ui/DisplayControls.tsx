@@ -28,6 +28,9 @@ import {
 	type UpdateFn,
 } from "./appearance-settings-types";
 
+export const LISTEN_MODE_DISPLAY_TOOLTIP =
+	"Listen mode always transcribes speaker audio inside the main app window; the floating overlay and outer pill are disabled.";
+
 interface LanguageControlProps {
 	locale: Locale;
 	setLocale: (locale: Locale) => void;
@@ -71,10 +74,13 @@ export function OverlayControl({
 	general,
 	update,
 }: OverlayControlProps): ReactNode {
-	const idx = overlaySliderToIndex(general);
+	const idx = isListenMode ? 0 : overlaySliderToIndex(general);
 	return (
 		<SettingField
 			disabled={isListenMode}
+			disabledTooltip={
+				isListenMode ? LISTEN_MODE_DISPLAY_TOOLTIP : undefined
+			}
 			hideReset={isListenMode}
 			isDefault={idx === overlaySliderToIndex(DEFAULT_SETTINGS.general)}
 			label={t("showRecordingOverlay")}
@@ -107,6 +113,7 @@ export function OverlayControl({
 }
 
 interface OverlayModeControlProps {
+	disabledTooltip?: string | undefined;
 	general: GeneralSettings | undefined;
 	subDisabled: boolean;
 	t: GeneralT;
@@ -116,6 +123,7 @@ interface OverlayModeControlProps {
 export function OverlayModeControl({
 	t,
 	subDisabled,
+	disabledTooltip,
 	general,
 	update,
 }: OverlayModeControlProps): ReactNode {
@@ -128,6 +136,8 @@ export function OverlayModeControl({
 	};
 	return (
 		<SettingField
+			disabled={subDisabled}
+			disabledTooltip={disabledTooltip}
 			hideReset={subDisabled}
 			isDefault={value === DEFAULT_SETTINGS.general.overlayMode}
 			label={t("overlayMode")}
@@ -152,6 +162,7 @@ export function OverlayModeControl({
 
 interface LiveTranscriptionDisplayControlProps {
 	general: GeneralSettings | undefined;
+	isListenMode: boolean;
 	realtimeLanguageUnavailable: boolean;
 	suppressWordByWordPillPreview: boolean;
 	t: GeneralT;
@@ -161,20 +172,24 @@ interface LiveTranscriptionDisplayControlProps {
 export function LiveTranscriptionDisplayControl({
 	t,
 	general,
+	isListenMode,
 	realtimeLanguageUnavailable,
 	suppressWordByWordPillPreview,
 	update,
 }: LiveTranscriptionDisplayControlProps): ReactNode {
 	const overlayDisabled = liveOverlayDisabled(general);
 	const pillDisabled =
+		isListenMode ||
 		realtimeLanguageUnavailable ||
 		overlayDisabled ||
 		suppressWordByWordPillPreview;
 	const stored: LiveTranscriptionDisplayValue =
 		general?.liveTranscriptionDisplay ?? "both";
-	const value = realtimeLanguageUnavailable
-		? "none"
-		: effectiveLiveDisplay(stored, overlayDisabled);
+	const value = isListenMode
+		? "in-app"
+		: realtimeLanguageUnavailable
+			? "none"
+			: effectiveLiveDisplay(stored, overlayDisabled);
 	const { inApp, inOverlay: storedInOverlay } = liveDisplayToFlags(value);
 	const inOverlay = suppressWordByWordPillPreview ? false : storedInOverlay;
 	const checkedIndices = new Set<number>();
@@ -185,7 +200,7 @@ export function LiveTranscriptionDisplayControl({
 		checkedIndices.add(1);
 	}
 	const setInApp = (next: boolean): void => {
-		if (realtimeLanguageUnavailable) {
+		if (isListenMode || realtimeLanguageUnavailable) {
 			return;
 		}
 		update({ liveTranscriptionDisplay: flagsToLiveDisplay(next, inOverlay) });
@@ -198,9 +213,19 @@ export function LiveTranscriptionDisplayControl({
 	};
 	return (
 		<SettingField
-			disabled={realtimeLanguageUnavailable}
-			hideReset={realtimeLanguageUnavailable}
-			isDefault={stored === DEFAULT_SETTINGS.general.liveTranscriptionDisplay}
+			disabled={isListenMode || realtimeLanguageUnavailable}
+			disabledTooltip={
+				isListenMode
+					? LISTEN_MODE_DISPLAY_TOOLTIP
+					: realtimeLanguageUnavailable
+						? "The selected realtime model cannot stream the current source language."
+						: undefined
+			}
+			hideReset={isListenMode || realtimeLanguageUnavailable}
+			isDefault={
+				isListenMode ||
+				stored === DEFAULT_SETTINGS.general.liveTranscriptionDisplay
+			}
 			label={t("liveTranscriptionDisplay")}
 			onReset={() =>
 				update({
@@ -214,7 +239,7 @@ export function LiveTranscriptionDisplayControl({
 				<CheckboxGroup checkedIndices={checkedIndices} className="w-full">
 					<CheckboxItem
 						checked={inApp}
-						disabled={realtimeLanguageUnavailable}
+						disabled={isListenMode || realtimeLanguageUnavailable}
 						index={0}
 						label={t("liveTranscriptionDisplayInApp")}
 						onToggle={() => setInApp(!inApp)}

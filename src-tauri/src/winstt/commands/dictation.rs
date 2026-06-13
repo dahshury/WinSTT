@@ -295,6 +295,12 @@ impl SttEvents {
     /// pill. Carries both the RAW transcript (`original`, the re-process source)
     /// and the auto-processed `text` (what the pill shows). NOT terminal — the
     /// pill stays up via `isPreviewActive` until `confirm_paste`/`cancel_preview`.
+    /// Same renderer event as `full_sentence`, but without dictation terminal side effects.
+    /// Listen mode keeps capturing after each transcript row.
+    pub fn listen_sentence(app: &AppHandle, text: &str) {
+        let _ = app.emit("stt:full-sentence", serde_json::json!({ "text": text }));
+    }
+
     pub fn preview_ready(app: &AppHandle, original: &str, text: &str) {
         let _ = app.emit(
             "stt:preview-ready",

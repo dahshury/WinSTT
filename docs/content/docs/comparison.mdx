@@ -5,7 +5,7 @@ description: How WinSTT stacks up against cloud dictation apps and other local s
 
 Most speech-to-text apps fall into two camps: **cloud dictation services** that stream your
 audio to a server for a monthly fee, and **local tools** that run on your machine. WinSTT is
-firmly in the second camp — and aims to be the most capable option there on Windows.
+firmly in the second camp — and aims to be one of the most capable local-first desktop options.
 
 ## WinSTT vs. cloud dictation
 
@@ -36,13 +36,13 @@ tier, and similar) are convenient but send your voice off-device and bill monthl
 ## WinSTT vs. other local tools
 
 Open-source local STT tools share WinSTT's privacy stance; they differ in scope. Some focus
-on the smallest possible cross-platform dictation loop; WinSTT trades cross-platform breadth
-(Windows-first today) for a deeper Windows feature set.
+on the smallest possible dictation loop; WinSTT focuses on a broader local voice toolkit
+across desktop platforms.
 
 <ModelTable
   head={["Capability", "WinSTT", "Minimal local tools"]}
   rows={[
-    ["Platforms", "Windows (Linux/macOS on the roadmap)", "Windows / macOS / Linux"]
+    ["Platforms", "Windows / macOS Apple Silicon / Linux", "Windows / macOS / Linux"]
     ,["STT models", "40+ across 8 families", "Whisper + Parakeet"]
     ,["Recording modes", "Push-to-talk, toggle, listen, wake word", "Push-to-talk, toggle"]
     ,["Listen mode (system audio)", "Yes — loopback capture + diarization", "No"]
@@ -52,7 +52,7 @@ on the smallest possible cross-platform dictation loop; WinSTT trades cross-plat
     ,["Transcription history", "Yes — dashboard + heatmap + playback", "Basic"]
     ,["Dictionary & snippets", "Yes", "Dictionary"]
   ]}
-  caption="Feature sets as of 2026 — local tools move fast. If you want the smallest cross-platform loop, a minimal local tool may fit; if you want the most features on Windows, that's WinSTT."
+  caption="Feature sets as of 2026 — local tools move fast. If you want the smallest dictation loop, a minimal local tool may fit; if you want a broader local voice toolkit, that's WinSTT."
 />
 
 ## Why local-first

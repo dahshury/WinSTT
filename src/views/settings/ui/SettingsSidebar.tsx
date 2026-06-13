@@ -21,6 +21,7 @@ import { cn } from "@/shared/lib/cn";
 import { ClearableTextField } from "@/shared/ui/text-field";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { matchesSearchQuery } from "../lib/settings-search";
+import { SettingsSidebarHeaderActions } from "./SettingsSidebarHeaderActions";
 
 function RailSeparator() {
 	return (
@@ -264,7 +265,7 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 			    h-12 band gives the column a compact title region. Draggable for window move;
 			    opening search tweens a field over the wordmark. */}
 			{collapsed ? (
-				<div className="relative flex h-12 shrink-0 items-center justify-center px-2">
+				<div className="relative flex shrink-0 items-center justify-center px-2 pt-4 pb-2">
 					{/* Dedicated window-move handle. It must be its OWN element, never a
 					    wrapper around the buttons: an interactive control can't live inside
 					    an `-webkit-app-region: drag` region because on touch devices the OS
@@ -278,7 +279,10 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 						className="titlebar-drag absolute inset-x-0 top-0 h-3.5"
 						data-slot="settings-sidebar-top-drag"
 					/>
-					{toggleButton}
+					<SettingsSidebarHeaderActions
+						collapsed={collapsed}
+						toggleButton={toggleButton}
+					/>
 				</div>
 			) : (
 				// The header itself is NOT a drag region — only the wordmark below is
@@ -351,7 +355,10 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 							/>
 						</div>
 					</div>
-					{toggleButton}
+					<SettingsSidebarHeaderActions
+						collapsed={collapsed}
+						toggleButton={toggleButton}
+					/>
 				</div>
 			)}
 
@@ -397,7 +404,7 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 								const tab = (
 									<Tabs.Tab
 										className={cn(
-											"group/seg relative flex cursor-pointer items-center rounded-md border-0 bg-transparent py-0 outline-none transition-[background-color,color,transform] duration-150 ease-out hover:bg-foreground/[0.04] active:translate-y-px focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 data-[active]:bg-foreground/[0.08] data-[active]:hover:bg-foreground/[0.09]",
+											"group/seg relative flex cursor-pointer items-center rounded-md border-0 bg-transparent py-0 outline-none transition-[background-color,color,transform] duration-150 ease-out hover:bg-foreground/[0.04] active:translate-y-px data-[active]:bg-foreground/[0.08] data-[active]:hover:bg-foreground/[0.09]",
 											collapsed
 												? "w-9 justify-center"
 												: "w-full gap-2.5 ps-2.5 pe-2.5",

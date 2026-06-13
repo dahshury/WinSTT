@@ -1,12 +1,17 @@
 "use client";
 
+import { Button as BaseButton } from "@base-ui/react/button";
 import {
 	AlertCircleIcon,
+	Clock01Icon,
+	CloudDownloadIcon,
 	GlobeIcon,
 	HardDriveDownloadIcon,
 	LiveStreaming02Icon,
 	NeuralNetworkIcon,
+	SparklesIcon,
 } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type {
 	FitAssessmentEntry,
@@ -16,7 +21,10 @@ import type {
 	SystemInfoEntry,
 } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
+import { ButtonGroup } from "@/shared/ui/button-group";
+import { Tooltip } from "@/shared/ui/tooltip";
 import {
 	type MetaEntry,
 	ModelCard,
@@ -33,8 +41,11 @@ import { formatLanguages } from "../lib/language-names";
 import { getQuantizationOptions } from "../lib/quantization-helpers";
 import { variantMeta } from "../lib/variant-helpers";
 import {
+	activeLatencyModel,
 	backingModelIdForQuant,
 	isSelectedSttModel,
+	latencyVariantsForModel,
+	nativeStreamingLatencyMs,
 	type PrecisionRoutedSttModel,
 } from "../lib/streaming-precision-merge";
 
@@ -106,22 +117,6 @@ function fitTooltip(
 	return severity === "warning"
 		? `May leave little ${target} free`
 		: `May exceed available ${target}`;
-}
-
-const STREAMING_LATENCY_SOURCE_RE = /(?:^|[-_])(\d+)ms(?:[-_]|$)/i;
-
-function nativeStreamingLatencyMs(model: ModelInfo): number | null {
-	for (const source of [model.id, model.onnxModelName ?? ""]) {
-		const match = source.match(STREAMING_LATENCY_SOURCE_RE);
-		const rawMs = match?.[1];
-		if (rawMs !== undefined) {
-			const ms = Number.parseInt(rawMs, 10);
-			if (Number.isFinite(ms) && ms > 0) {
-				return ms;
-			}
-		}
-	}
-	return null;
 }
 
 function formatNativeStreamingLatency(ms: number): string {
@@ -349,6 +344,223 @@ function PrecisionGroup(props: PrecisionGroupProps) {
 	);
 }
 
+function quantForLatencyVariant(
+	model: PrecisionRoutedSttModel,
+	state: ModelStateEntry | undefined,
+	currentQuantization: OnnxQuantization,
+): OnnxQuantization {
+	if (
+		(currentQuantization as string) !== "auto" &&
+		model.availableQuantizations.includes(currentQuantization)
+	) {
+		return currentQuantization;
+	}
+	const recommended = state?.effective_quantization;
+	if (
+		typeof recommended === "string" &&
+		model.availableQuantizations.includes(recommended)
+	) {
+		return recommended as OnnxQuantization;
+	}
+	return (model.availableQuantizations[0] ?? "") as OnnxQuantization;
+}
+
+function latencyToneClass(
+	active: boolean,
+	cacheState: string | undefined,
+): string {
+	if (active) {
+		return "bg-accent/20 text-accent ring-accent/50";
+	}
+	if (cacheState === "cached") {
+		return "bg-emerald-500/[0.08] text-emerald-300/80 ring-border hover:bg-emerald-500/[0.14]";
+	}
+	if (cacheState === "partial") {
+		return "bg-amber-500/[0.08] text-amber-300/80 ring-border hover:bg-amber-500/[0.14]";
+	}
+	return "bg-foreground/[0.04] text-foreground-muted ring-border hover:bg-foreground/[0.08]";
+}
+
+function latencyCacheLabel(
+	cache: ModelStateEntry["cache"] | undefined,
+	download: QuantDownloadSnapshot | undefined,
+): string {
+	if (download) {
+		return download.progress === null ? "Downloading" : `${download.progress}%`;
+	}
+	if (cache?.state === "cached") {
+		return "Downloaded";
+	}
+	if (cache?.state === "partial") {
+		return `${Math.round(cache.progress * 100)}% downloaded`;
+	}
+	return "Not downloaded";
+}
+
+function latencyTooltip({
+	cacheLabel,
+	isRecommended,
+	latencyLabel,
+}: {
+	cacheLabel: string;
+	isRecommended: boolean;
+	latencyLabel: string;
+}): string {
+	const detail =
+		"Lower latency appears sooner but has less right-context. Higher latency waits longer and is usually more accurate/stable.";
+	return [
+		`${latencyLabel}${isRecommended ? " (accuracy-first)" : ""}`,
+		`Status: ${cacheLabel}`,
+		detail,
+	].join("\n");
+}
+
+interface LatencyShelfProps {
+	currentQuantization: OnnxQuantization;
+	getDownloadSnapshot: SttModelCardProps["getDownloadSnapshot"];
+	model: PrecisionRoutedSttModel;
+	onDownloadAction: SttModelCardProps["onDownloadAction"];
+	onSelect: (modelId: string, quantization: OnnxQuantization) => void;
+	selectedId: string | undefined;
+	statesById: Record<string, ModelStateEntry>;
+}
+
+function LatencyShelf({
+	currentQuantization,
+	getDownloadSnapshot,
+	model,
+	onDownloadAction,
+	onSelect,
+	selectedId,
+	statesById,
+}: LatencyShelfProps) {
+	const variants = latencyVariantsForModel(model);
+	if (variants.length <= 1) {
+		return null;
+	}
+	const maxLatencyMs = Math.max(...variants.map((v) => v.latencyMs));
+	return (
+		<div className="flex flex-wrap items-center gap-2">
+			<Tooltip
+				content="Streaming latency. Pick lower latency for faster on-screen text, or higher latency for more right-context and steadier accuracy."
+				side="top"
+			>
+				<span className="inline-flex shrink-0 items-center font-medium text-[10px] text-foreground-muted uppercase tracking-wide">
+					<HugeiconsIcon className="size-3" icon={Clock01Icon} />
+				</span>
+			</Tooltip>
+			{variants.map((variant) => {
+				const variantState = statesById[variant.model.id];
+				const quantization = quantForLatencyVariant(
+					variant.model,
+					variantState,
+					currentQuantization,
+				);
+				const backingModelId = backingModelIdForQuant(
+					variant.model,
+					quantization,
+				);
+				const cache = resolveQuantCache(variantState, quantization);
+				const download = getDownloadSnapshot?.(backingModelId, quantization);
+				const isDownloading = download !== undefined;
+				const isActive = isSelectedSttModel(variant.model, selectedId);
+				const isRecommended = variant.latencyMs === maxLatencyMs;
+				const latencyLabel = formatNativeStreamingLatency(variant.latencyMs);
+				const cacheLabel = latencyCacheLabel(cache, download);
+				const canStartDownload =
+					onDownloadAction !== undefined &&
+					!isDownloading &&
+					cache?.state !== "cached" &&
+					cache?.state !== "partial";
+				const canResumeDownload =
+					onDownloadAction !== undefined &&
+					!isDownloading &&
+					cache?.state === "partial";
+				return (
+					<ButtonGroup
+						aria-label={`Streaming latency ${latencyLabel} for ${model.displayName}`}
+						className={cn(
+							"rounded-md ring-1 ring-inset",
+							isRecommended ? "ring-accent/60" : "ring-border",
+						)}
+						key={`${variant.latencyMs}:${variant.model.id}`}
+					>
+						<Tooltip
+							content={latencyTooltip({
+								cacheLabel,
+								isRecommended,
+								latencyLabel,
+							})}
+							side="top"
+						>
+							<BaseButton
+								aria-disabled={isDownloading}
+								aria-label={`Use ${latencyLabel} streaming latency`}
+								className={cn(
+									"group/badge inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-[5px] px-2 font-medium text-[10.5px] leading-none ring-1 ring-inset transition-colors",
+									isDownloading && "cursor-default",
+									latencyToneClass(isActive, cache?.state),
+								)}
+								onClick={(e) => {
+									e.preventDefault();
+									e.stopPropagation();
+									if (isDownloading) {
+										return;
+									}
+									if (canStartDownload) {
+										onDownloadAction?.("start", backingModelId, quantization);
+										return;
+									}
+									if (canResumeDownload) {
+										onDownloadAction?.("resume", backingModelId, quantization);
+										return;
+									}
+									onSelect(backingModelId, quantization);
+								}}
+								onMouseDown={(e) => e.stopPropagation()}
+								onPointerDown={(e) => e.stopPropagation()}
+								type="button"
+							>
+								{isRecommended ? (
+									<HugeiconsIcon
+										aria-hidden="true"
+										className="size-3 shrink-0 text-accent"
+										icon={SparklesIcon}
+									/>
+								) : null}
+								{canStartDownload ? (
+									<span className="relative inline-flex items-center justify-center">
+										<span className="transition-opacity duration-150 group-hover/badge:opacity-0 motion-reduce:transition-none">
+											{latencyLabel}
+										</span>
+										<HugeiconsIcon
+											aria-hidden="true"
+											className="absolute inset-0 m-auto size-3 opacity-0 transition-opacity duration-150 group-hover/badge:opacity-100 motion-reduce:transition-none"
+											icon={CloudDownloadIcon}
+										/>
+									</span>
+								) : isDownloading ? (
+									<span className="font-mono text-[9.5px] tabular-nums">
+										{download.progress === null
+											? "..."
+											: `${download.progress}%`}
+									</span>
+								) : cache?.state === "partial" ? (
+									<span className="font-mono text-[9.5px] tabular-nums">
+										{Math.round(cache.progress * 100)}%
+									</span>
+								) : (
+									<span>{latencyLabel}</span>
+								)}
+							</BaseButton>
+						</Tooltip>
+					</ButtonGroup>
+				);
+			})}
+		</div>
+	);
+}
+
 export interface SttModelCardProps {
 	/**
 	 * Optional content rendered in the card's header right column, after
@@ -422,6 +634,7 @@ export interface SttModelCardProps {
 	 *  (keeps the card read-only for consumers that don't wire favorites). */
 	onToggleFavorite?: ((modelId: string) => void) | undefined;
 	selectedId: string | undefined;
+	statesById?: Record<string, ModelStateEntry>;
 	/**
 	 * Sibling variants in the same bundle. Passed so {@link variantDisplayName}
 	 * can keep the size token when two siblings would otherwise collide to the
@@ -435,6 +648,7 @@ export interface SttModelCardProps {
 export function SttModelCard({
 	model,
 	state,
+	statesById,
 	systemInfo,
 	fitAssessment,
 	selectedId,
@@ -452,18 +666,22 @@ export function SttModelCard({
 	siblings,
 }: SttModelCardProps) {
 	const isSelected = isSelectedSttModel(model, selectedId);
+	const activeModel = activeLatencyModel(model, selectedId);
+	const stateLookup: Record<string, ModelStateEntry> =
+		statesById ?? (state ? { [model.id]: state } : {});
+	const activeState = stateLookup[activeModel.id] ?? state;
 	const isUnavailable = model.available === false;
 	const downloadSizeBytes = resolveSttDownloadSizeBytes({
 		currentQuantization,
 		getDownloadSnapshot,
-		model,
-		state,
+		model: activeModel,
+		state: activeState,
 	});
 	const bytes = formatBytes(downloadSizeBytes ?? 0);
 	const metaEntries = buildMetaEntries(
-		model,
+		activeModel,
 		bytes,
-		state,
+		activeState,
 		systemInfo,
 		fitAssessment,
 	);
@@ -503,17 +721,28 @@ export function SttModelCard({
 			}}
 			selected={isSelected}
 			shelf={
-				<PrecisionGroup
-					currentQuantization={currentQuantization}
-					getDownloadSnapshot={getDownloadSnapshot}
-					isSelectedModel={isSelected}
-					model={model}
-					onDownloadAction={onDownloadAction}
-					onRequestDeleteQuant={onRequestDeleteQuant}
-					canDeleteQuant={canDeleteQuant}
-					onSelect={onSelect}
-					state={state}
-				/>
+				<div className="flex flex-col gap-2">
+					<LatencyShelf
+						currentQuantization={currentQuantization}
+						getDownloadSnapshot={getDownloadSnapshot}
+						model={model}
+						onDownloadAction={onDownloadAction}
+						onSelect={onSelect}
+						selectedId={selectedId}
+						statesById={stateLookup}
+					/>
+					<PrecisionGroup
+						currentQuantization={currentQuantization}
+						getDownloadSnapshot={getDownloadSnapshot}
+						isSelectedModel={isSelected}
+						model={activeModel}
+						onDownloadAction={onDownloadAction}
+						onRequestDeleteQuant={onRequestDeleteQuant}
+						canDeleteQuant={canDeleteQuant}
+						onSelect={onSelect}
+						state={activeState}
+					/>
+				</div>
 			}
 			title={title}
 			unavailable={isUnavailable}

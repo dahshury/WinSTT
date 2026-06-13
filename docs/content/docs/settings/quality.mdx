@@ -100,10 +100,10 @@ When LLM cleanup is on, WinSTT can read the focused window's text right before e
 <Screenshot src="sec-quality-context" alt="The Context awareness section with a single Context awareness toggle, switched on." chrome="card" caption="Feeds focused-window text into the LLM cleanup prompt. Off by default — opt in per the in-app dialog." />
 
 <SettingRow label="Context awareness" settingKey="general.contextAwareness" default="false">
-  Reads focused-window text via Windows accessibility APIs immediately before each
-  dictation and includes it in the LLM cleanup prompt. It does nothing on its own — it
-  needs [LLM cleanup](/docs/settings/llm) enabled. Full detail, including the deny-list and
-  privacy notes, lives under [Dictation → Context-awareness](/docs/dictation#context-awareness-caret-split).
+  Reads focused-window text through the platform's accessibility APIs immediately before
+  each dictation and includes it in the LLM cleanup prompt. It does nothing on its own —
+  it needs [LLM cleanup](/docs/settings/llm) enabled. Full detail, including the deny-list
+  and privacy notes, lives under [Dictation → Context-awareness](/docs/dictation#context-awareness-caret-split).
 </SettingRow>
 
 ## Paste behavior

@@ -1,8 +1,9 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { asInvalid } from "@test/lib/cast";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { useTranslations } from "use-intl";
 import { IntlProvider } from "@/app/providers/IntlProvider";
+import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import * as helpers from "../lib/llm-settings-panel-test-helpers";
 import type { FeatureToggleDeps } from "../lib/llm-settings-panel-test-helpers";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
@@ -13,6 +14,14 @@ type TranslateFn = ReturnType<typeof useTranslations>;
 // type to feed partial fixtures via a Partial<> cast at the boundary.
 type LlmSettings = NonNullable<Parameters<typeof helpers.readLlmSnapshot>[0]>;
 
+beforeEach(() => {
+	useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+});
+
+afterEach(() => {
+	useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+});
+
 describe("LlmSettingsPanel", () => {
 	test("renders without crashing", () => {
 		const { container } = render(
@@ -21,6 +30,55 @@ describe("LlmSettingsPanel", () => {
 			</IntlProvider>,
 		);
 		expect(container.firstElementChild).not.toBeNull();
+	});
+
+	test("forces LLM features off in listen mode without overwriting saved settings", () => {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				general: {
+					...DEFAULT_SETTINGS.general,
+					recordingMode: "listen",
+				},
+				llm: {
+					...DEFAULT_SETTINGS.llm,
+					openrouterApiKey: "sk-test",
+					dictation: {
+						...DEFAULT_SETTINGS.llm.dictation,
+						enabled: true,
+						openrouterModel: "openai/gpt-4o-mini",
+						provider: "openrouter",
+					},
+					transforms: {
+						...DEFAULT_SETTINGS.llm.transforms,
+						enabled: true,
+						openrouterModel: "openai/gpt-4o-mini",
+						provider: "openrouter",
+					},
+				},
+			} as typeof DEFAULT_SETTINGS,
+		});
+		const { unmount } = render(
+			<IntlProvider>
+				<LlmSettingsPanel />
+			</IntlProvider>,
+		);
+
+		const dictationToggle = screen.getByRole("switch", {
+			name: "Toggle Dictation post-processing",
+		});
+		const transformToggle = screen.getByRole("switch", {
+			name: "Toggle Text transformation",
+		});
+		expect(dictationToggle.getAttribute("aria-checked")).toBe("false");
+		expect(transformToggle.getAttribute("aria-checked")).toBe("false");
+		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
+			true,
+		);
+		expect(useSettingsStore.getState().settings.llm.transforms.enabled).toBe(
+			true,
+		);
+		unmount();
 	});
 });
 

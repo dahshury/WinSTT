@@ -12,6 +12,7 @@ import type {
 	OllamaModel,
 	RecommendedOllamaModel,
 } from "@/shared/api/models";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import {
 	formatOllamaDisplayName,
 	getOllamaFamily,
@@ -164,7 +165,7 @@ export function computeRecommendedVisible(
 	);
 }
 
-/** Substring match against the model's full search corpus. We index the
+/** Fuzzy match against the model's full search corpus. We index the
  *  beautified display name, the publisher label, and the publisher slug too
  *  so users typing "google" surface their installed Gemma models, "meta"
  *  surfaces Llama, "alibaba" or "qwen" surface Qwen, and so on — the same
@@ -174,51 +175,45 @@ export function matchesInstalledQuery(
 	query: string,
 	descriptionsByBase: ReadonlyMap<string, string> = EMPTY_DESCRIPTION_BY_BASE,
 ): boolean {
-	const q = query.trim().toLowerCase();
-	if (!q) {
-		return true;
-	}
 	const family = getOllamaFamily(m);
 	const publisher = getOllamaPublisher(family);
-	const corpus = [
-		m.name,
-		formatOllamaDisplayName(m.name),
-		family,
-		publisher.label,
-		publisher.slug,
-		installedDescriptionForModel(m, descriptionsByBase) ?? "",
-		m.details?.parameterSize ?? "",
-		m.details?.quantizationLevel ?? "",
-		m.details?.format ?? "",
-		m.details?.family ?? "",
-		...(m.details?.families ?? []),
-		...(m.capabilities ?? []),
-		String(m.contextLength ?? ""),
-	]
-		.join(" ")
-		.toLowerCase();
-	return corpus.includes(q);
+	return matchesFuzzySearch(
+		[
+			m.name,
+			formatOllamaDisplayName(m.name),
+			family,
+			publisher.label,
+			publisher.slug,
+			installedDescriptionForModel(m, descriptionsByBase) ?? "",
+			m.details?.parameterSize ?? "",
+			m.details?.quantizationLevel ?? "",
+			m.details?.format ?? "",
+			m.details?.family ?? "",
+			...(m.details?.families ?? []),
+			...(m.capabilities ?? []),
+			String(m.contextLength ?? ""),
+		],
+		query,
+	);
 }
 
 function matchesRecommendedQuery(
 	m: RecommendedOllamaModel,
 	query: string,
 ): boolean {
-	const q = query.trim().toLowerCase();
-	if (!q) {
-		return true;
-	}
 	const family = (m.family ?? familySlugFromName(m.name)).toLowerCase();
 	const publisher = getOllamaPublisher(family);
-	const fields = [
-		m.name,
-		m.displayName,
-		m.description,
-		family,
-		publisher.label,
-		publisher.slug,
-		formatOllamaDisplayName(m.name),
-		...(m.tags ?? []),
-	];
-	return fields.some((field) => field.toLowerCase().includes(q));
+	return matchesFuzzySearch(
+		[
+			m.name,
+			m.displayName,
+			m.description,
+			family,
+			publisher.label,
+			publisher.slug,
+			formatOllamaDisplayName(m.name),
+			...(m.tags ?? []),
+		],
+		query,
+	);
 }

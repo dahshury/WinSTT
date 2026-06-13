@@ -338,7 +338,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         param_count: 978_000_000,
         supports_realtime: true,
     },
-    // ── Native streaming (sherpa-onnx OnlineRecognizer; cache-aware chunked, CPU). The id contains
+    // ── Native streaming (sherpa-format exports on WinSTT ORT; cache-aware chunked). The id contains
     //    "streaming" so `engine_kind_for` routes to the *Streaming EngineKind. ──
     ModelEntry {
         id: "streaming-zipformer-en",

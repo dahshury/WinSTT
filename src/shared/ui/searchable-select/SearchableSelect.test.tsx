@@ -193,4 +193,25 @@ describe("SearchableSelect", () => {
 		expect(screen.queryByText("Heart")).toBeNull();
 		expect(screen.queryByText("English (US)")).toBeNull();
 	});
+
+	test("search fuzzy-matches grouped option labels", () => {
+		render(
+			<SearchableSelect
+				groups={[
+					{
+						value: "models",
+						label: "Models",
+						options: [{ id: "parakeet-v3", label: "Parakeet version 3" }],
+					},
+				]}
+				onChange={() => undefined}
+				value="parakeet-v3"
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Open popup" }));
+		fireEvent.change(screen.getByRole("combobox"), {
+			target: { value: "Parkeet v3" },
+		});
+		expect(screen.getByText("Parakeet version 3")).toBeDefined();
+	});
 });

@@ -48,6 +48,8 @@ interface MainModelSectionProps {
 	catalogLoaded: boolean;
 	catalogModels: CatalogModels;
 	currentQuantization: OnnxQuantization;
+	disabled?: boolean;
+	disabledTooltip?: string | undefined;
 	/** Snapshot of the in-flight download (model id + percent). Drives the
 	 *  picker's "Downloading X · 23%" trigger AND distinguishes "we're
 	 *  fetching bytes" from "the server is loading weights" so the picker
@@ -105,6 +107,8 @@ interface SourceAreaProps {
 	catalogLoaded: boolean;
 	catalogModels: CatalogModels;
 	currentQuantization: OnnxQuantization;
+	disabled?: boolean;
+	disabledTooltip?: string | undefined;
 	downloadProgress: { modelId: string; percent: number | null } | null;
 	getFitAssessment: GetFitAssessment;
 	handleModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
@@ -143,6 +147,8 @@ function SourceArea({
 	catalogLoaded,
 	catalogModels,
 	currentQuantization,
+	disabled = false,
+	disabledTooltip,
 	downloadProgress,
 	getFitAssessment,
 	handleModelChange,
@@ -169,6 +175,28 @@ function SourceArea({
 		pickLocalDefault: () => resolveLocalDefault(catalogModels, statesById),
 		selectedModel,
 	});
+	const sourceOptions = disabled
+		? sourceOpts.map((option) => ({
+				...option,
+				disabled: true,
+				...(disabledTooltip ? { tooltip: disabledTooltip } : {}),
+			}))
+		: sourceOpts;
+	const handleSourceChange = (next: typeof source): void => {
+		if (disabled) {
+			return;
+		}
+		onSourceChange(next);
+	};
+	const handleSelectedModelChange = (
+		modelId: string,
+		quantization?: OnnxQuantization,
+	): void => {
+		if (disabled) {
+			return;
+		}
+		handleModelChange(modelId, quantization);
+	};
 	// Open the detached picker window (full work area, can extend beyond the
 	// 700×560 settings window) instead of an in-window popup — mirrors the
 	// main-window footer chip. It anchors above this trigger's rect.
@@ -183,6 +211,8 @@ function SourceArea({
 		<>
 			<div className="col-span-2">
 				<FormControl
+					disabled={disabled}
+					controlTooltip={disabledTooltip}
 					label={tIntegrations("sourceLabel")}
 					layout="row"
 					tooltip={tIntegrations("sourceTooltip")}
@@ -190,29 +220,37 @@ function SourceArea({
 					<ElevatedSurface className="w-52">
 						<Switcher
 							fullWidth
-							onChange={onSourceChange}
-							options={sourceOpts}
+							onChange={handleSourceChange}
+							options={sourceOptions}
 							value={source}
 						/>
 					</ElevatedSurface>
 				</FormControl>
 			</div>
 			<div className="col-span-2">
-				<FormControl label={t("model")} tooltip={t("modelTooltip")}>
+				<FormControl
+					disabled={disabled}
+					controlTooltip={disabledTooltip}
+					label={t("model")}
+					tooltip={t("modelTooltip")}
+				>
 					{source === "cloud" ? (
 						<CloudModelSelect
-							onSelect={(id) => handleModelChange(id)}
+							disabled={disabled}
+							disabledTooltip={disabledTooltip}
+							onSelect={(id) => handleSelectedModelChange(id)}
 							selectedId={isCloud ? selectedModel : ""}
 						/>
 					) : (
 						<SttModelSelector
 							currentQuantization={currentQuantization}
+							disabled={disabled}
 							downloadProgress={downloadProgress}
 							isLoading={!catalogLoaded || isSwapping}
 							getFitAssessment={getFitAssessment}
 							kind="main"
 							models={catalogModels}
-							onChange={handleModelChange}
+							onChange={handleSelectedModelChange}
 							canDeleteQuant={canDeleteQuant}
 							onDeleteQuant={onDeleteQuant}
 							onDownloadAction={onDownloadAction}
@@ -239,6 +277,8 @@ export function MainModelSection({
 	statesById,
 	systemInfo,
 	currentQuantization,
+	disabled = false,
+	disabledTooltip,
 	downloadProgress,
 	getFitAssessment,
 	isSwapping,
@@ -298,6 +338,8 @@ export function MainModelSection({
 					catalogLoaded={catalogLoaded}
 					catalogModels={catalogModels}
 					currentQuantization={currentQuantization}
+					disabled={disabled}
+					disabledTooltip={disabledTooltip}
 					downloadProgress={downloadProgress}
 					getFitAssessment={getFitAssessment}
 					handleModelChange={handleModelChange}
@@ -318,6 +360,9 @@ export function MainModelSection({
 				/>
 				{sections.language && (
 					<SettingField
+						disabled={disabled}
+						disabledTooltip={disabledTooltip}
+						hideReset={disabled}
 						isDefault={
 							!effectiveLanguageAutoDetect &&
 							(settings?.language ?? "en") ===
@@ -331,8 +376,12 @@ export function MainModelSection({
 							languageAutoDetectSupported ? (
 								<Toggle
 									checked={effectiveLanguageAutoDetect}
+									disabled={disabled}
 									label={t("autoDetectLanguage")}
 									onCheckedChange={(enabled) => {
+										if (disabled) {
+											return;
+										}
 										if (enabled) {
 											update({
 												autoDetectLanguage: true,
@@ -377,8 +426,12 @@ export function MainModelSection({
 								{languageCandidateSelectionSupported ? (
 									<LanguageMultiCombobox
 										ariaLabel={t("language")}
+										disabled={disabled}
 										emptyLabel={t("languageNoResults")}
 										onChange={(value) => {
+											if (disabled) {
+												return;
+											}
 											const next = normalizeLanguageCandidates(
 												value,
 												langOpts,
@@ -401,7 +454,11 @@ export function MainModelSection({
 									/>
 								) : (
 									<SearchableSelect
+										disabled={disabled}
 										onChange={(value) => {
+											if (disabled) {
+												return;
+											}
 											update({
 												autoDetectLanguage: false,
 												language: value,
@@ -430,6 +487,9 @@ export function MainModelSection({
 				    is one of the two supported. */}
 				{translateSupported && (
 					<SettingField
+						disabled={disabled}
+						disabledTooltip={disabledTooltip}
+						hideReset={disabled}
 						isDefault={
 							(settings?.translateToEnglish ?? false) ===
 							DEFAULT_SETTINGS.model.translateToEnglish
@@ -438,7 +498,12 @@ export function MainModelSection({
 						labelAddon={
 							<Toggle
 								checked={settings?.translateToEnglish ?? false}
-								onCheckedChange={(v) => update({ translateToEnglish: v })}
+								disabled={disabled}
+								onCheckedChange={(v) => {
+									if (!disabled) {
+										update({ translateToEnglish: v });
+									}
+								}}
 							/>
 						}
 						onReset={() =>

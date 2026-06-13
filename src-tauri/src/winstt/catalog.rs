@@ -85,61 +85,55 @@ mod tests {
     }
 
     #[test]
-    fn streaming_export_aliases_canonicalize_to_high_latency_rows() {
+    fn streaming_latency_rows_remain_distinct() {
         for (alias, canonical) in [
-            ("streaming-nemo-ctc-en", "streaming-nemo-ctc-en-1040ms"),
-            (
-                "streaming-nemo-ctc-en-480ms",
-                "streaming-nemo-ctc-en-1040ms",
-            ),
+            ("streaming-nemo-ctc-en", "streaming-nemo-ctc-en"),
+            ("streaming-nemo-ctc-en-480ms", "streaming-nemo-ctc-en-480ms"),
             (
                 "streaming-nemo-ctc-en-80ms-int8",
-                "streaming-nemo-ctc-en-1040ms-int8",
+                "streaming-nemo-ctc-en-80ms-int8",
             ),
             (
                 "streaming-nemo-ctc-en-480ms-int8",
-                "streaming-nemo-ctc-en-1040ms-int8",
+                "streaming-nemo-ctc-en-480ms-int8",
             ),
-            ("streaming-nemo-rnnt-en", "streaming-nemo-rnnt-en-1040ms"),
-            (
-                "streaming-nemo-rnnt-en-80ms",
-                "streaming-nemo-rnnt-en-1040ms",
-            ),
+            ("streaming-nemo-rnnt-en", "streaming-nemo-rnnt-en"),
+            ("streaming-nemo-rnnt-en-80ms", "streaming-nemo-rnnt-en-80ms"),
             (
                 "streaming-nemo-rnnt-en-80ms-int8",
-                "streaming-nemo-rnnt-en-1040ms-int8",
+                "streaming-nemo-rnnt-en-80ms-int8",
             ),
             (
                 "streaming-nemo-rnnt-en-480ms-int8",
-                "streaming-nemo-rnnt-en-1040ms-int8",
+                "streaming-nemo-rnnt-en-480ms-int8",
             ),
             (
                 "streaming-parakeet-unified-en-240ms",
-                "streaming-parakeet-unified-en-1120ms",
+                "streaming-parakeet-unified-en-240ms",
             ),
             (
                 "streaming-parakeet-unified-en-560ms",
-                "streaming-parakeet-unified-en-1120ms",
+                "streaming-parakeet-unified-en-560ms",
             ),
             (
                 "streaming-parakeet-unified-en-240ms-int8",
-                "streaming-parakeet-unified-en-1120ms-int8",
+                "streaming-parakeet-unified-en-240ms-int8",
             ),
             (
                 "streaming-parakeet-unified-en-560ms-int8",
-                "streaming-parakeet-unified-en-1120ms-int8",
+                "streaming-parakeet-unified-en-560ms-int8",
             ),
             (
                 "streaming-nemotron-en-80ms",
-                "streaming-nemotron-en-1120ms-int8",
+                "streaming-nemotron-en-80ms-int8",
             ),
             (
                 "streaming-nemotron-en-160ms",
-                "streaming-nemotron-en-1120ms-int8",
+                "streaming-nemotron-en-160ms-int8",
             ),
             (
                 "streaming-nemotron-en-560ms",
-                "streaming-nemotron-en-1120ms-int8",
+                "streaming-nemotron-en-560ms-int8",
             ),
             (
                 "streaming-nemotron-en-1120ms",
@@ -147,15 +141,15 @@ mod tests {
             ),
             (
                 "streaming-nemotron-en-80ms-int8",
-                "streaming-nemotron-en-1120ms-int8",
+                "streaming-nemotron-en-80ms-int8",
             ),
             (
                 "streaming-nemotron-en-160ms-int8",
-                "streaming-nemotron-en-1120ms-int8",
+                "streaming-nemotron-en-160ms-int8",
             ),
             (
                 "streaming-nemotron-en-560ms-int8",
-                "streaming-nemotron-en-1120ms-int8",
+                "streaming-nemotron-en-560ms-int8",
             ),
         ] {
             assert_eq!(canonical_model_id(alias), canonical);

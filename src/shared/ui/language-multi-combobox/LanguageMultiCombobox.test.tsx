@@ -147,6 +147,20 @@ describe("LanguageMultiCombobox", () => {
 		expect(onChange).toHaveBeenCalledWith(["en", "fr"]);
 	});
 
+	test("fuzzy-matches language names", async () => {
+		renderCombobox(["en"]);
+
+		await openPopup();
+		await act(async () => {
+			fireEvent.change(screen.getByRole("combobox", { name: "Language" }), {
+				target: { value: "greman" },
+			});
+		});
+
+		expect(screen.getByRole("checkbox", { name: "German" })).toBeDefined();
+		expect(screen.queryByRole("checkbox", { name: "French" })).toBeNull();
+	});
+
 	test("collapses four selected languages to a compact closed value", () => {
 		renderCombobox(["en", "fr", "de", "es"]);
 

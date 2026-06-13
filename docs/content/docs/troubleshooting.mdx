@@ -58,7 +58,7 @@ The first transcription after a fresh launch or a model swap pays the model-load
     Launch with `--debug` and read the first second of the app log for a line like `Accelerator: directml` or `Accelerator: cpu`.
   </Step>
   <Step title="If it says cpu but you want GPU">
-    A DirectML build that reports `cpu` means your GPU isn't D3D12-capable — see <a href="#gpu-fallback">GPU fallback</a>. If you have the CPU build, install the DirectML installer (`WinSTT-Portable-<version>.exe`).
+    On Windows, a DirectML build that reports `cpu` means your GPU isn't D3D12-capable — see <a href="#gpu-fallback">GPU fallback</a>. On other platforms, the current public alpha may be CPU-only unless you are running a custom accelerator build.
   </Step>
   <Step title="Shrink the live-preview model">
     Pick a smaller realtime model in [Settings → Model](/docs/settings/model). `whisper-tiny.en` runs roughly 4× faster than `whisper-base.en` and is fine for the preview; the main model still produces the accurate final text.
@@ -80,12 +80,12 @@ WinSTT's accelerator auto-degrades to CPU whenever the requested GPU path isn't 
   head={["You see", "Why", "What to do"]}
   rows={[
     ["DirectML build logs Accelerator: cpu", "GPU isn't DirectX 12-capable", "Update the GPU driver; otherwise accept CPU speeds or use a smaller model"],
-    ["NVIDIA GPU, still on CPU", "The Windows build uses DirectML by default, not CUDA", "Use the DirectML build or a development CUDA build"],
+    ["NVIDIA GPU on Windows, still on CPU", "The Windows build uses DirectML by default, not CUDA", "Use the DirectML path or a custom CUDA build"],
     ["GPU works then drops to CPU mid-session", "ORT session-create failure on a quant (e.g. Canary + int8 on DML)", "Switch quantization or device in Settings → Model"],
   ]}
 />
 
-The released Windows installers ship **no CUDA** — DirectML is faster and much lighter on this workload. CUDA is a development-only path for custom builds.
+The released Windows packages ship **no CUDA** — DirectML is faster and much lighter on this workload. CUDA is a development-only path for custom builds.
 
 ## Mic stuck or missing
 
@@ -126,8 +126,8 @@ A renderer stuck on "Reconnecting…" means the backend engine failed — usuall
 
 Saved recordings play back from the [Transcription History](/docs/transcription-history) dashboard. Silence on playback is almost always an output-routing issue, not a corrupt file.
 
-- **Check the OS mixer.** Make sure WinSTT isn't muted for output in the Windows volume mixer — app-level mutes survive restarts.
-- **Pick the right playback device.** If your default output changed (a headset disconnected, a monitor's speakers took over), Windows may be routing playback somewhere you can't hear.
+- **Check the OS mixer.** Make sure WinSTT isn't muted for output — app-level mutes can survive restarts.
+- **Pick the right playback device.** If your default output changed (a headset disconnected, a monitor's speakers took over), the OS may be routing playback somewhere you can't hear.
 - **Confirm the recording was actually saved.** Recordings only have audio when `recordingRetention` isn't set so the file was never written — check that the row has a play button rather than a transcript-only entry.
 
 <Callout type="info" title="Retention “Never” means keep forever">
@@ -216,7 +216,7 @@ For terminals, VMs, or RDP where the host clipboard isn't reachable, switch **Se
     So the app logs carry the verbose trace — see [Debug Mode](/docs/debug-mode).
   </Step>
   <Step title="File a bug with the bundle attached">
-    At [github.com/winstt/WinSTT/issues](https://github.com/winstt/WinSTT/issues). Feature ideas and questions live in [Discussions](https://github.com/winstt/WinSTT/discussions).
+    At [github.com/dahshury/WinSTT/issues](https://github.com/dahshury/WinSTT/issues). Feature ideas and questions live in [Discussions](https://github.com/dahshury/WinSTT/discussions).
   </Step>
 </StepFlow>
 

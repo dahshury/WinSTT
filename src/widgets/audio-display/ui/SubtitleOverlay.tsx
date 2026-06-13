@@ -12,6 +12,7 @@ import {
 import { ScrollArea } from "@/shared/ui/scroll-area";
 
 const VISIBLE_COUNT = 3;
+const LISTEN_VISIBLE_COUNT = 160;
 const FADE_OPACITIES = [1, 0.4, 0.15];
 
 /** Normal PTT/toggle captions should clear quickly once the final line lands. */
@@ -79,7 +80,8 @@ export function SubtitleOverlay() {
 	const liveDisplay = useSettingsStore(
 		(s) => s.settings.general?.liveTranscriptionDisplay ?? "both",
 	);
-	const showInApp = liveDisplay === "in-app" || liveDisplay === "both";
+	const showInApp =
+		isListenMode || liveDisplay === "in-app" || liveDisplay === "both";
 	const liveText = showInApp ? currentRealtime : "";
 	const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -165,16 +167,15 @@ export function SubtitleOverlay() {
 	const showEphemeral = ephemeral !== null && ephemeralOpacity > 0;
 
 	if (isListenMode) {
-		const hasContent = items.length > 0 || liveText || showEphemeral;
+		const listenItems = items.slice(-LISTEN_VISIBLE_COUNT);
+		const hasContent = listenItems.length > 0 || liveText || showEphemeral;
 		if (!hasContent) {
 			return null;
 		}
 
-		// Rolling, speaker-colored transcript feed (movie-subtitle style):
-		// every finalized utterance is kept and scrolls up under the top
-		// fade as new ones arrive. No time-fade here (unlike PTT/Toggle) —
-		// for a 2h movie the user wants scroll-back history, not lines that
-		// vanish after a few seconds.
+		// Listen mode keeps a bounded rolling caption feed. Old rows are trimmed
+		// from the rendered set only after they have scrolled out of view, so the
+		// visible text keeps flowing naturally instead of collapsing or re-centering.
 		return (
 			<ScrollArea
 				className="titlebar-no-drag absolute inset-0"
@@ -196,7 +197,7 @@ export function SubtitleOverlay() {
 				    at the top and made it unreachable, so older lines never
 				    scrolled away and `scrollTop = scrollHeight` was a no-op. */}
 				<div className="flex min-h-full flex-col justify-end gap-2 px-6 pt-14 pb-4">
-					{items.map((item) => {
+					{listenItems.map((item) => {
 						const spk = dominantSpeaker(item.speakerSegments);
 						const color = spk >= 0 ? colorForSpeaker(spk) : undefined;
 						return (

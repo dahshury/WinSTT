@@ -1,3 +1,5 @@
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+
 export const ALL_PROVIDERS_VALUE = "__all__";
 
 export function filterEndpointProviders(
@@ -7,7 +9,7 @@ export function filterEndpointProviders(
 	if (!queryLower) {
 		return providers;
 	}
-	return providers.filter(([p]) => p.toLowerCase().includes(queryLower));
+	return providers.filter(([p]) => matchesFuzzySearch(p, queryLower));
 }
 
 export function resolveSelection(value: string | null): string | null | "noop" {

@@ -371,7 +371,10 @@ export const loopbackListDevices = () =>
 	>(IPC.LOOPBACK_LIST_DEVICES, []);
 
 export const loopbackStart = (deviceIndex: number, modelId: string) =>
-	send(IPC.LOOPBACK_START, { deviceIndex, modelId });
+	invokeOrDefault<void>(IPC.LOOPBACK_START, undefined, {
+		deviceIndex,
+		modelId,
+	});
 
 export const loopbackStop = () => send(IPC.LOOPBACK_STOP);
 

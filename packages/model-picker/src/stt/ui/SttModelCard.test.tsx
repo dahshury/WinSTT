@@ -4,6 +4,7 @@ import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry } from "@/shared/api/ipc-client";
+import type { PrecisionRoutedSttModel } from "../lib/streaming-precision-merge";
 import { type QuantDownloadSnapshot, SttModelCard } from "./SttModelCard";
 
 const NOT_CACHED = {
@@ -532,6 +533,83 @@ describe("SttModelCard precision-badge download affordance", () => {
 		expect(onDownloadAction).toHaveBeenCalledWith(
 			"pause",
 			"custom-my-whisper",
+			"int8",
+		);
+	});
+});
+
+describe("SttModelCard streaming latency shelf", () => {
+	test("renders latency variants and selects the matching backing model", () => {
+		const onSelect = mock(() => undefined);
+		const CACHED = {
+			state: "cached",
+			progress: 1,
+			downloaded_bytes: 10,
+			total_bytes: 10,
+		} as const;
+		const low = makeModel({
+			id: "streaming-nemotron-en-80ms-int8",
+			displayName: "Nemotron Streaming",
+			nativeStreaming: true,
+			availableQuantizations: ["int8"],
+			sizeBytesByQuantization: { int8: 10 },
+		}) as PrecisionRoutedSttModel;
+		const high = makeModel({
+			id: "streaming-nemotron-en-1120ms-int8",
+			displayName: "Nemotron Streaming",
+			nativeStreaming: true,
+			availableQuantizations: ["int8"],
+			sizeBytesByQuantization: { int8: 10 },
+		}) as PrecisionRoutedSttModel;
+		const model: PrecisionRoutedSttModel = {
+			...high,
+			latencyVariants: [
+				{ latencyMs: 80, model: low },
+				{ latencyMs: 1120, model: high },
+			],
+		};
+		const statesById = {
+			[low.id]: makeState({
+				id: low.id,
+				cache: CACHED,
+				cache_by_quantization: { int8: CACHED },
+				effective_quantization: "int8",
+			}),
+			[high.id]: makeState({
+				id: high.id,
+				cache: CACHED,
+				cache_by_quantization: { int8: CACHED },
+				effective_quantization: "int8",
+			}),
+		};
+
+		render(
+			<TooltipProvider.Provider>
+				<Combobox.Root items={[model]}>
+					<Combobox.List>
+						{() => (
+							<SttModelCard
+								currentQuantization="int8"
+								key={model.id}
+								model={model}
+								onSelect={onSelect}
+								selectedId={high.id}
+								state={statesById[high.id]}
+								statesById={statesById}
+								systemInfo={null}
+							/>
+						)}
+					</Combobox.List>
+				</Combobox.Root>
+			</TooltipProvider.Provider>,
+		);
+
+		expect(screen.getByLabelText("Use 80 ms streaming latency")).toBeDefined();
+		expect(screen.getByLabelText("Use 1.12 s streaming latency")).toBeDefined();
+
+		fireEvent.click(screen.getByLabelText("Use 80 ms streaming latency"));
+		expect(onSelect).toHaveBeenCalledWith(
+			"streaming-nemotron-en-80ms-int8",
 			"int8",
 		);
 	});

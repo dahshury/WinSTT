@@ -169,6 +169,8 @@ function useOllamaSwapTracker(opts: {
 interface FeatureBlockComponentProps extends FeatureBlockProps {
 	checkOllamaReachable: () => Promise<boolean>;
 	children: ReactNode;
+	forceDisabled?: boolean;
+	forceDisabledTooltip?: string | undefined;
 	// Accept the richer ProviderOption shape (label, value, optional disabled
 	// + disabledTooltip) so Apple Intelligence can render greyed-out on Intel
 	// Macs. The Switcher ignores unknown fields, so older callers passing the
@@ -205,8 +207,10 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 		t,
 		tc,
 		children,
+		forceDisabled = false,
+		forceDisabledTooltip,
 	} = props;
-	const handleToggle = useFeatureToggleHandler(
+	const handleToggleBase = useFeatureToggleHandler(
 		{
 			endpoint,
 			feature,
@@ -228,15 +232,22 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 		},
 		checkOllamaReachable,
 	);
+	const handleToggle = async (next: boolean): Promise<void> => {
+		if (forceDisabled) {
+			return;
+		}
+		await handleToggleBase(next);
+	};
 	const fallbackExclusion = computeModelExclusionConfig(
 		featureSnapshot.openrouterModel,
 	);
 	const updateAny = update as (p: Partial<LlmFeatureDraft>) => void;
 	const isDictation = feature === "dictation";
+	const effectiveEnabled = forceDisabled ? false : featureSnapshot.enabled;
 	const { swap: ollamaSwap, beginSwap: beginOllamaSwap } = useOllamaSwapTracker(
 		{
 			currentModel: featureSnapshot.model,
-			enabled: featureSnapshot.enabled,
+			enabled: effectiveEnabled,
 			provider: featureSnapshot.provider,
 			warmupStatus,
 		},
@@ -249,17 +260,25 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 			icon={isDictation ? PencilIcon : MagicWand01Icon}
 			onToggle={handleToggle}
 			title={isDictation ? t("subDictationTitle") : t("subTransformTitle")}
-			toggled={featureSnapshot.enabled}
+			toggled={effectiveEnabled}
+			toggleDisabled={forceDisabled}
+			toggleDisabledTooltip={forceDisabledTooltip}
 		>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<FormControl
+					disabled={forceDisabled}
 					label={t("provider")}
 					layout="row"
 					tooltip={t("providerTooltip")}
+					controlTooltip={forceDisabledTooltip}
 				>
 					<ElevatedSurface>
 						<Switcher
-							onChange={(v) => updateAny({ provider: v as LlmProvider })}
+							onChange={(v) => {
+								if (!forceDisabled) {
+									updateAny({ provider: v as LlmProvider });
+								}
+							}}
 							options={providerOpts}
 							value={featureSnapshot.provider}
 						/>
@@ -290,7 +309,7 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 						updateAny={updateAny}
 					/>
 				) : null}
-				{featureSnapshot.enabled ? (
+				{effectiveEnabled ? (
 					<WarmupStatusBanner
 						feature={feature}
 						model={featureSnapshot.model}

@@ -57,6 +57,19 @@ impl ContextManager {
     ) -> String {
         capture_prompt_fragment(self, mode, app_mode, deny_list, allow_list)
     }
+
+    /// Read a specific top-level window by HWND. This is for debug/harness flows
+    /// that need to capture an occluded browser window without stealing OS focus.
+    /// Normal dictation still uses `ContextReader::read` against the foreground.
+    pub fn read_hwnd(&self, mode: ContextMode, hwnd: u64) -> WindowContextSnapshot {
+        let Some(bin) = self.sidecar_path.as_ref() else {
+            return empty_context();
+        };
+        match run_sidecar(bin, mode, Some(hwnd)) {
+            Some(raw) => parse_snapshot(&raw),
+            None => empty_context(),
+        }
+    }
 }
 
 impl ContextReader for ContextManager {
@@ -64,7 +77,7 @@ impl ContextReader for ContextManager {
         let Some(bin) = self.sidecar_path.as_ref() else {
             return empty_context();
         };
-        match run_sidecar(bin, mode) {
+        match run_sidecar(bin, mode, None) {
             Some(raw) => parse_snapshot(&raw),
             None => empty_context(),
         }
@@ -126,8 +139,20 @@ fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
 /// Spawn the sidecar with the mode flag, bounded by READ_TIMEOUT_MS + the byte
 /// cap. Returns the stdout text, or None on any failure (the inner watchdog
 /// kills a wedged UIA walk). Non-Windows always yields None (no UIA).
+fn sidecar_args(mode: ContextMode, hwnd: Option<u64>) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(flag) = mode.flag() {
+        args.push(flag.to_string());
+    }
+    if let Some(hwnd) = hwnd.filter(|hwnd| *hwnd > 0) {
+        args.push("--hwnd".to_string());
+        args.push(hwnd.to_string());
+    }
+    args
+}
+
 #[cfg(windows)]
-fn run_sidecar(bin: &std::path::Path, mode: ContextMode) -> Option<String> {
+fn run_sidecar(bin: &std::path::Path, mode: ContextMode, hwnd: Option<u64>) -> Option<String> {
     use std::io::Read;
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
@@ -138,8 +163,8 @@ fn run_sidecar(bin: &std::path::Path, mode: ContextMode) -> Option<String> {
     use std::os::windows::process::CommandExt;
 
     let mut cmd = Command::new(bin);
-    if let Some(flag) = mode.flag() {
-        cmd.arg(flag);
+    for arg in sidecar_args(mode, hwnd) {
+        cmd.arg(arg);
     }
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -177,11 +202,46 @@ fn run_sidecar(bin: &std::path::Path, mode: ContextMode) -> Option<String> {
             None
         }
     };
-    let _ = child.wait();
-    out
+    let status = child.wait().ok();
+    if status.map(|s| s.success()).unwrap_or(false) {
+        out
+    } else {
+        None
+    }
 }
 
 #[cfg(not(windows))]
-fn run_sidecar(_bin: &std::path::Path, _mode: ContextMode) -> Option<String> {
+fn run_sidecar(_bin: &std::path::Path, _mode: ContextMode, _hwnd: Option<u64>) -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sidecar_args_keep_foreground_default() {
+        assert_eq!(
+            sidecar_args(ContextMode::Focused, None),
+            Vec::<String>::new()
+        );
+        assert_eq!(sidecar_args(ContextMode::Tree, None), vec!["--tree"]);
+    }
+
+    #[test]
+    fn sidecar_args_append_hwnd_scope_after_mode() {
+        assert_eq!(
+            sidecar_args(ContextMode::Tree, Some(264342)),
+            vec!["--tree", "--hwnd", "264342"]
+        );
+        assert_eq!(
+            sidecar_args(ContextMode::Focused, Some(264342)),
+            vec!["--hwnd", "264342"]
+        );
+    }
+
+    #[test]
+    fn sidecar_args_ignore_zero_hwnd() {
+        assert_eq!(sidecar_args(ContextMode::Split, Some(0)), vec!["--split"]);
+    }
 }

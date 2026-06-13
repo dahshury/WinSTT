@@ -340,7 +340,7 @@ pub fn create_splash_window(app: &AppHandle) {
     SPLASH_CLOSING.store(false, Ordering::SeqCst);
 
     let app_for_page_load = app.clone();
-    let mut builder =
+    let mut builder = crate::startup::configure_webview_window_builder(
         WebviewWindowBuilder::new(app, SPLASH_LABEL, WebviewUrl::App("splash.html".into()))
             .title("WinSTT")
             .inner_size(300.0, 320.0)
@@ -365,7 +365,8 @@ pub fn create_splash_window(app: &AppHandle) {
                     replay_startup_progress(&app_for_page_load);
                 }
             })
-            .visible(false);
+            .visible(false),
+    );
 
     // CRITICAL: share the ONE WebView2 user-data folder every other window uses
     // (portable mode). A second webview requesting a DIFFERENT folder silently

@@ -200,10 +200,9 @@ spelled correctly. These controls live next to the LLM config and **disappear en
 when the dictation LLM is not configured** — the capture pipeline never runs in that case.
 
 <SettingRow label="Context Awareness" settingKey="general.contextAwareness" default="false">
-  Off by default. When on, the backend reads the focused window's text via Windows
-  UI Automation immediately before each dictation and feeds it to the cleanup step.
-  Enabling it requires an explicit opt-in dialog because it reads content from any focused
-  app.
+  Off by default. When on, the backend reads the focused window's text immediately
+  before each dictation and feeds it to the cleanup step. This is platform-gated and
+  requires an explicit opt-in dialog because it reads content from any focused app.
 </SettingRow>
 
 <SettingRow label="Deny-List" settingKey="general.contextDenyList">
@@ -300,8 +299,9 @@ These settings are shared by both features — one Ollama instance, one OpenRout
 </SettingRow>
 
 <SettingRow label="OpenRouter API Key" settingKey="llm.openrouterApiKey" default='""'>
-  Shared across both features. Stored encrypted at rest (Windows DPAPI) and never sent to
-  the renderer. Set and verify it in [Integrations](/docs/settings/integrations).
+  Shared across both features. Stored through the backend secret-storage layer when
+  available and never sent to the renderer. Set and verify it in
+  [Integrations](/docs/settings/integrations).
 </SettingRow>
 
 <SettingRow label="Timeout" settingKey="llm.timeout" default="5000">

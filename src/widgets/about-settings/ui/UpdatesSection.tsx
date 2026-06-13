@@ -1,5 +1,6 @@
-import { CloudDownloadIcon, RefreshIcon } from "@hugeicons/core-free-icons";
-import { useEffect, useState } from "react";
+import { AppWindowIcon, RefreshIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	DEFAULT_SETTINGS,
 	SettingField,
@@ -7,18 +8,24 @@ import {
 	useSettingsStore,
 } from "@/entities/setting";
 import {
+	type AboutAppInfo,
 	onUpdaterStatus,
 	type UpdaterStatusEntry,
 	updaterCheckNow,
 	updaterGetStatusHistory,
 	updaterQuitAndInstall,
 } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
+import { Button } from "@/shared/ui/button";
+import { ButtonGroup } from "@/shared/ui/button-group";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Toggle } from "@/shared/ui/toggle";
-import { AboutActionButton } from "./AboutActionButton";
 import type { AboutT } from "./types";
+
+// Brand / product name - a proper noun that is identical in every locale.
+const APP_NAME = "WinSTT";
 
 function formatStatus(entry: UpdaterStatusEntry | null, t: AboutT): string {
 	if (!entry) {
@@ -65,60 +72,108 @@ function formatDownloadStats(entry: UpdaterStatusEntry): string | undefined {
 	return `${tally} · ${fmt(bps)}/s`;
 }
 
-interface UpdatesHeaderActionProps {
+interface UpdatesStatusActionGroupProps {
 	checking: boolean;
 	isDownloaded: boolean;
 	isDownloading: boolean;
 	onCheck: () => void;
 	onRestart: () => void;
+	status: UpdaterStatusEntry["status"] | null;
+	statusLabel: string;
 	t: AboutT;
+	version: string;
 }
 
-function UpdatesHeaderAction({
+function VersionSegment({ t, version }: { t: AboutT; version: string }) {
+	return (
+		<div className="flex h-8 min-w-36 shrink-0 items-center gap-2 px-3 text-body">
+			<span className="text-foreground-muted">{t("appVersion")}</span>
+			<span className="min-w-0 truncate font-mono text-foreground tabular-nums">
+				{version || "-"}
+			</span>
+		</div>
+	);
+}
+
+function UpdatesStatusActionGroup({
 	checking,
 	isDownloaded,
 	isDownloading,
 	onCheck,
 	onRestart,
+	status,
+	statusLabel,
 	t,
-}: UpdatesHeaderActionProps) {
+	version,
+}: UpdatesStatusActionGroupProps) {
 	if (isDownloaded) {
 		// Once downloaded, the only meaningful action is "restart now". The
-		// accent text signals it's the recommended next step without leaving the
-		// standard settings action-button surface.
+		// accent text signals it's the recommended next step while staying inside
+		// the joined status/action control.
 		return (
-			<AboutActionButton
-				icon={RefreshIcon}
-				onClick={onRestart}
-				variant="accent"
-			>
-				{t("updatesRestartToInstall")}
-			</AboutActionButton>
+			<ButtonGroup aria-label={t("updatesTitle")} className="w-full" connected>
+				<VersionSegment t={t} version={version} />
+				<Button
+					aria-live="polite"
+					className="h-8 min-w-0 flex-1 gap-2 px-3 font-medium text-accent text-body leading-normal transition-colors hover:bg-foreground/10"
+					onClick={onRestart}
+				>
+					<HugeiconsIcon aria-hidden="true" icon={RefreshIcon} size={14} />
+					<span className="min-w-0 truncate">
+						{t("updatesRestartToInstall")}
+					</span>
+				</Button>
+			</ButtonGroup>
 		);
 	}
 	const disabled = checking || isDownloading;
-	const label = (() => {
+	const actionLabel = (() => {
 		if (isDownloading) {
 			return t("updatesDownloading");
 		}
 		if (checking) {
 			return t("updatesChecking");
 		}
+		if (status && status !== "idle") {
+			return statusLabel;
+		}
 		return t("updatesCheckNow");
 	})();
 	return (
-		<AboutActionButton
-			disabled={disabled}
-			icon={RefreshIcon}
-			iconClassName={disabled ? "animate-spin" : undefined}
-			onClick={onCheck}
-		>
-			{label}
-		</AboutActionButton>
+		<ButtonGroup aria-label={t("updatesTitle")} className="w-full" connected>
+			<VersionSegment t={t} version={version} />
+			<Button
+				aria-live="polite"
+				className="h-8 min-w-0 flex-1 gap-2 px-3 text-body text-foreground leading-normal transition-colors hover:bg-foreground/10 disabled:hover:bg-transparent"
+				disabled={disabled}
+				onClick={onCheck}
+			>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className={cn(
+						"shrink-0 text-foreground-muted",
+						disabled && "animate-spin",
+					)}
+					icon={RefreshIcon}
+					size={14}
+				/>
+				<span className="min-w-0 truncate">{actionLabel}</span>
+			</Button>
+		</ButtonGroup>
 	);
 }
 
-export function UpdatesSection({ t }: { t: AboutT }) {
+function shouldAutoCheck(latestStatus: UpdaterStatusEntry | null): boolean {
+	return latestStatus === null || latestStatus.status === "idle";
+}
+
+function latestHistoryStatus(
+	history: UpdaterStatusEntry[],
+): UpdaterStatusEntry | null {
+	return history.at(-1) ?? null;
+}
+
+export function UpdatesSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 	const receivePrereleaseUpdates = useSettingsStore(
 		(s) => s.settings.general?.receivePrereleaseUpdates ?? false,
 	);
@@ -126,17 +181,49 @@ export function UpdatesSection({ t }: { t: AboutT }) {
 	const [latestStatus, setLatestStatus] = useState<UpdaterStatusEntry | null>(
 		null,
 	);
+	const [historyLoaded, setHistoryLoaded] = useState(false);
 	const [checking, setChecking] = useState(false);
+	const autoCheckRequestedRef = useRef(false);
+
+	const handleCheck = useCallback(async () => {
+		setChecking(true);
+		try {
+			const result = await updaterCheckNow({
+				includePrereleaseUpdates: receivePrereleaseUpdates,
+			});
+			// If the main process can't trigger a check (dev mode / disabled),
+			// flip the button back to idle immediately. No status event will
+			// arrive to do it for us.
+			if (!result.triggered) {
+				setChecking(false);
+			}
+		} catch {
+			setChecking(false);
+		}
+	}, [receivePrereleaseUpdates]);
 
 	useEffect(() => {
 		let cancelled = false;
-		updaterGetStatusHistory().then((history) => {
-			if (cancelled) {
-				return;
-			}
-			// History is append-only; the freshest entry is at the end.
-			setLatestStatus(history.at(-1) ?? null);
-		});
+		updaterGetStatusHistory()
+			.then((history) => {
+				if (cancelled) {
+					return;
+				}
+				// History is append-only; the freshest entry is at the end.
+				setLatestStatus(latestHistoryStatus(history));
+			})
+			.catch(() => {
+				if (cancelled) {
+					return;
+				}
+				setLatestStatus(null);
+			})
+			.finally(() => {
+				if (cancelled) {
+					return;
+				}
+				setHistoryLoaded(true);
+			});
 		const off = onUpdaterStatus((entry) => {
 			setLatestStatus(entry);
 			if (entry.status !== "checking") {
@@ -149,18 +236,18 @@ export function UpdatesSection({ t }: { t: AboutT }) {
 		};
 	}, []);
 
-	const handleCheck = async () => {
-		setChecking(true);
-		const result = await updaterCheckNow({
-			includePrereleaseUpdates: receivePrereleaseUpdates,
-		});
-		// If the main process can't trigger a check (dev mode / disabled),
-		// flip the button back to idle immediately — no status event will
-		// arrive to do it for us.
-		if (!result.triggered) {
-			setChecking(false);
+	useEffect(() => {
+		if (
+			!historyLoaded ||
+			checking ||
+			autoCheckRequestedRef.current ||
+			!shouldAutoCheck(latestStatus)
+		) {
+			return;
 		}
-	};
+		autoCheckRequestedRef.current = true;
+		void handleCheck();
+	}, [checking, handleCheck, historyLoaded, latestStatus]);
 
 	const handleRestart = () => {
 		// Fire-and-forget — main will quit the app a tick later. The Promise
@@ -183,20 +270,26 @@ export function UpdatesSection({ t }: { t: AboutT }) {
 	return (
 		<SettingSection
 			description={t("updatesDescription")}
-			headerAction={
-				<UpdatesHeaderAction
+			icon={AppWindowIcon}
+			title={APP_NAME}
+		>
+			<div className="flex flex-col gap-3">
+				{info.copyright ? (
+					<span className="text-body text-foreground-muted">
+						{info.copyright}
+					</span>
+				) : null}
+				<UpdatesStatusActionGroup
 					checking={checking}
 					isDownloaded={isDownloaded}
 					isDownloading={isDownloading}
 					onCheck={handleCheck}
 					onRestart={handleRestart}
+					status={latestStatus?.status ?? null}
+					statusLabel={formatStatus(latestStatus, t)}
 					t={t}
+					version={info.version}
 				/>
-			}
-			icon={CloudDownloadIcon}
-			title={t("updatesTitle")}
-		>
-			<div className="flex flex-col gap-3">
 				<SettingField
 					isDefault={
 						receivePrereleaseUpdates ===
@@ -237,13 +330,7 @@ export function UpdatesSection({ t }: { t: AboutT }) {
 							variant="active"
 						/>
 					</ElevatedSurface>
-				) : (
-					<ElevatedSurface className="px-3 py-2">
-						<span className="text-body text-foreground-muted">
-							{formatStatus(latestStatus, t)}
-						</span>
-					</ElevatedSurface>
-				)}
+				) : null}
 			</div>
 		</SettingSection>
 	);

@@ -110,6 +110,66 @@ describe("ModelSettingsPanel", () => {
 		expect(screen.queryByText("Model Unload Timeout")).toBeNull();
 	});
 
+	test("forces unload timeout display to Never in listen mode without saving over previous value", () => {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				global: { modelUnloadTimeout: "min10" },
+				general: {
+					...DEFAULT_SETTINGS.general,
+					recordingMode: "listen",
+				},
+				model: {
+					...DEFAULT_SETTINGS.model,
+					model: "tiny",
+					realtimeModel: "streaming-en",
+				},
+			} as typeof DEFAULT_SETTINGS,
+		});
+		rendered = render(
+			<IntlProvider>
+				<ModelSettingsPanel />
+			</IntlProvider>,
+		);
+		const input = screen.getByRole("combobox", {
+			name: "Model Unload Timeout",
+		}) as HTMLInputElement;
+		expect(input.value).toBe("Never");
+		expect(input.disabled).toBe(true);
+		expect(
+			useSettingsStore.getState().settings.global.modelUnloadTimeout,
+		).toBe("min10");
+	});
+
+	test("keeps the main model picker visible but disabled in listen mode", () => {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				general: {
+					...DEFAULT_SETTINGS.general,
+					recordingMode: "listen",
+				},
+				model: {
+					...DEFAULT_SETTINGS.model,
+					model: "tiny",
+					realtimeModel: "streaming-en",
+				},
+			} as typeof DEFAULT_SETTINGS,
+		});
+		rendered = render(
+			<IntlProvider>
+				<ModelSettingsPanel />
+			</IntlProvider>,
+		);
+
+		expect(screen.getByText("Main Model")).toBeTruthy();
+		const mainModelButton = screen.getByRole("button", {
+			name: /tiny/i,
+		}) as HTMLButtonElement;
+		expect(mainModelButton.disabled).toBe(true);
+		expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
+	});
+
 	test("hides update interval for a native-streaming realtime model in dictation modes", () => {
 		useSettingsStore.setState({
 			settings: {

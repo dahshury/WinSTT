@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
+import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 
 beforeEach(() => {
+	useSettingsStore.setState({ settings: structuredClone(DEFAULT_SETTINGS) });
 	useTranscriptionStore.setState({
 		items: [],
 		currentRealtime: "",
@@ -12,6 +14,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	useSettingsStore.setState({ settings: structuredClone(DEFAULT_SETTINGS) });
 	useTranscriptionStore.setState({
 		items: [],
 		currentRealtime: "",
@@ -66,5 +69,55 @@ describe("SubtitleOverlay", () => {
 		const { container } = render(<SubtitleOverlay />);
 		expect(container.textContent).toContain("live words");
 		expect(container.querySelector(".t-text-swap")).toBeNull();
+	});
+
+	test("forces in-app live text in listen mode even when saved preference is pill-only", () => {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				general: {
+					...DEFAULT_SETTINGS.general,
+					recordingMode: "listen",
+					liveTranscriptionDisplay: "in-pill",
+				},
+			},
+		});
+		useTranscriptionStore.setState({
+			items: [],
+			currentRealtime: "listen mode words",
+			ephemeral: null,
+		});
+		const { container } = render(<SubtitleOverlay />);
+		expect(container.textContent).toContain("listen mode words");
+	});
+
+	test("listen mode renders a capped rolling transcript window", () => {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				general: {
+					...DEFAULT_SETTINGS.general,
+					recordingMode: "listen",
+				},
+			},
+		});
+		useTranscriptionStore.setState({
+			items: Array.from({ length: 165 }, (_, i) => ({
+				id: String(i),
+				type: "final" as const,
+				text: `listen row ${i}`,
+				timestamp: i,
+			})),
+			currentRealtime: "",
+			ephemeral: null,
+		});
+		const { container } = render(<SubtitleOverlay />);
+		const lines = Array.from(
+			container.querySelectorAll<HTMLElement>("[data-subtitle-line]"),
+		).map((line) => line.textContent);
+		expect(lines).toHaveLength(160);
+		expect(lines[0]).toBe("listen row 5");
+		expect(lines.at(-1)).toBe("listen row 164");
+		expect(lines).not.toContain("listen row 0");
 	});
 });

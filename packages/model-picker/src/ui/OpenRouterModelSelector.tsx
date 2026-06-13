@@ -12,6 +12,7 @@ import {
 import { useFavoriteSet } from "../core/use-favorite-set";
 import { ModelPicker } from "../core/ModelPicker";
 import { isReasoningModel } from "../lib/model-selector-display-utils";
+import { filterModels } from "../lib/model-selector-logic";
 import { formatMaker } from "../lib/model-selector-utils";
 import type { ModelVariant } from "../lib/model-variant-utils";
 import { useModelPickerCloseGuard } from "../lib/model-picker-close-guard";
@@ -101,6 +102,18 @@ function isPersistedOpenRouterSelectorState(
 		isOpenRouterVariant(candidate.selectedVariant) &&
 		isOpenRouterSortValue(candidate.sortKey)
 	);
+}
+
+function countModelsByMaker(
+	models: readonly OpenRouterModel[],
+): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const model of models) {
+		if (model.maker) {
+			counts.set(model.maker, (counts.get(model.maker) ?? 0) + 1);
+		}
+	}
+	return counts;
 }
 
 function useModelSelectorState({ storageKey }: { storageKey: string }) {
@@ -265,15 +278,14 @@ export function OpenRouterModelSelector({
 		favoriteProvidersStorageKey,
 	});
 
-	const providerModelCounts = new Map<string, number>();
-	for (const model of filteredModels) {
-		if (model.maker) {
-			providerModelCounts.set(
-				model.maker,
-				(providerModelCounts.get(model.maker) ?? 0) + 1,
-			);
-		}
-	}
+	const railCountModels = filterModels(filteredModels, {
+		searchQuery,
+		selectedEndpointProvider,
+		selectedParameters,
+		selectedVariant,
+		selectedMakers: [],
+	});
+	const providerModelCounts = countModelsByMaker(railCountModels);
 
 	const { modelId: parsedModelId, providerSlug: parsedProviderSlug } =
 		parseModelSelection(value);
@@ -441,7 +453,7 @@ export function OpenRouterModelSelector({
 		};
 	});
 	const railItems: GroupRailItem[] = [
-		buildAllAuthorsRailItem(filteredModels.length),
+		buildAllAuthorsRailItem(railCountModels.length),
 		...makerRailItems,
 	];
 

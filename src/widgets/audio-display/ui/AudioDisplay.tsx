@@ -1,6 +1,5 @@
 import { type DragEvent, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
-import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import { AudioVisualizer } from "@/features/audio-visualizer";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
@@ -42,9 +41,11 @@ function DropZoneOverlay({
 	);
 }
 
-export function AudioDisplay() {
-	const isListenMode =
-		useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
+interface AudioDisplayProps {
+	listenSurfaceActive?: boolean;
+}
+
+export function AudioDisplay({ listenSurfaceActive = false }: AudioDisplayProps) {
 	const t = useTranslations("audioDisplay");
 
 	// Dim the visualizer whenever dictation text is being shown in the main
@@ -105,7 +106,7 @@ export function AudioDisplay() {
 	return (
 		<Elevated
 			aria-label={t("ariaLabel")}
-			className={getContainerClassName(isListenMode)}
+			className={getContainerClassName(listenSurfaceActive)}
 			offset={2}
 			onDragEnter={handleDragEnter}
 			onDragLeave={handleDragLeave}

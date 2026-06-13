@@ -4,7 +4,7 @@ description: Recording mode, audio feedback, display language, the visualizer an
 ---
 
 The **General** tab is where you choose how recording is triggered, how WinSTT looks while
-you dictate, and how it starts with Windows. It is the busiest settings tab — and several
+you dictate, and how it starts at sign-in. It is the busiest settings tab — and several
 controls appear or hide depending on the recording mode you pick.
 
 ## Recording
@@ -171,7 +171,7 @@ How WinSTT behaves at sign-in and when you close the window.
 <Screenshot src="sec-general-startup" alt="The Startup section: Start on Login, Start Minimized, Minimize to Tray, and Send Crash Reports toggles." chrome="card" caption="The Startup section — sign-in launch, tray behavior, and crash reporting." />
 
 <SettingRow label="Start on Login" settingKey="general.autoStart" default="false">
-  Launch WinSTT automatically when you sign in to Windows.
+  Launch WinSTT automatically when you sign in.
 </SettingRow>
 
 <SettingRow label="Start Minimized" settingKey="general.startMinimized" default="false">
@@ -220,10 +220,10 @@ A few highlights, with their gotchas:
 </SettingRow>
 
 <SettingRow label="Context Awareness" settingKey="general.contextAwareness" default="false">
-  Reads text from the focused window via Windows UI Automation just before each dictation and
-  feeds it to the LLM cleanup step so names and jargon are spelled correctly. Opt-in: it shows
-  a confirmation dialog before activating, and is only offered when it actually helps (a
-  Whisper model or LLM cleanup is active).
+  Reads text from the focused window just before each dictation and feeds it to the LLM
+  cleanup step so names and jargon are spelled correctly. This is platform-gated and
+  opt-in: it shows a confirmation dialog before activating, and is only offered when it
+  actually helps (a Whisper model or LLM cleanup is active).
 </SettingRow>
 
 <SettingRow label="Context Deny-List" settingKey="general.contextDenyList" default="6 entries">

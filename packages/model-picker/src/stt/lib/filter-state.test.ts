@@ -186,6 +186,23 @@ describe("filterSttModels", () => {
 		);
 	});
 
+	test("search query fuzzy-matches typo'd compact version input", () => {
+		const models = [
+			model({
+				id: "parakeet-version-3",
+				displayName: "Parakeet version 3",
+				family: "nemo",
+			}),
+			model({ id: "whisper", displayName: "Whisper" }),
+		];
+
+		expect(
+			filterSttModels(models, ctx({ searchQuery: "Parkeet v3" })).map(
+				(m) => m.id,
+			),
+		).toEqual(["parakeet-version-3"]);
+	});
+
 	test("cachedOnly keeps only cached models", () => {
 		const models = [model({ id: "a" }), model({ id: "b" })];
 		const out = filterSttModels(

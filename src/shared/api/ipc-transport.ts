@@ -33,6 +33,7 @@ export type FallbackValue<T> = T | (() => T);
  * as critical. Channels in neither set stay fully tolerant (silent fallback).
  */
 const CRITICAL_REJECT_CHANNELS: ReadonlySet<string> = new Set<string>([
+	IPC.LOOPBACK_START,
 	IPC.STT_PREDOWNLOAD_QUANT,
 	IPC.STT_DOWNLOAD_PAUSE,
 	IPC.STT_DOWNLOAD_RESUME,

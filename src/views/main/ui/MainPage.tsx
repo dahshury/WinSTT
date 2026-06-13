@@ -3,7 +3,11 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
+import { useTranscriptionStore } from "@/entities/transcription";
+import { useVisualizerStore } from "@/features/audio-visualizer";
+import { shouldUseListenSurface } from "@/features/listen-mode";
 import { settingsSave } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
 import { useTouchActivation } from "@/shared/lib/use-touch-activation";
 import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -13,6 +17,17 @@ import { StatusBar } from "@/widgets/status-bar";
 export function MainPage() {
 	const general = useSettingsStore((s) => s.settings.general);
 	const isListenMode = general?.recordingMode === "listen";
+	const audioLevel = useVisualizerStore((s) => s.audioLevel);
+	const isSpeaking = useVisualizerStore((s) => s.isSpeaking);
+	const liveText = useTranscriptionStore((s) => s.currentRealtime);
+	const hasEphemeral = useTranscriptionStore((s) => s.ephemeral !== null);
+	const listenSurfaceActive = shouldUseListenSurface({
+		audioLevel,
+		hasEphemeral,
+		isListenMode,
+		isSpeaking,
+		liveText,
+	});
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
 	const t = useTranslations("mainPage");
 	const th = useTranslations("hotkey");
@@ -25,14 +40,14 @@ export function MainPage() {
 	const pttActivation = useTouchActivation(switchToPtt);
 
 	return (
-		<div className="flex h-full flex-col">
+		<div className="relative flex h-full flex-col">
 			<div
-				className={`flex flex-1 flex-col overflow-hidden ${isListenMode ? "" : "p-1.5"}`}
+				className={`flex flex-1 flex-col overflow-hidden ${listenSurfaceActive ? "" : "p-1.5"}`}
 			>
-				<AudioDisplay />
+				<AudioDisplay listenSurfaceActive={listenSurfaceActive} />
 			</div>
 
-			{isListenMode && (
+			{listenSurfaceActive && (
 				<>
 					{/* Drag strip — dedicated titlebar-drag region above canvas */}
 					<div className="titlebar-drag absolute top-0 right-0 left-0 z-titlebar flex h-5 items-center justify-center">
@@ -43,26 +58,39 @@ export function MainPage() {
 						</div>
 					</div>
 
-					<Tooltip content={th("switchToPtt")}>
-						<Button
-							aria-label={th("switchToPtt")}
-							className="titlebar-no-drag absolute top-1 right-1 z-titlebar-float gap-1.5 rounded-md px-2 py-1 opacity-[0.15] transition-opacity duration-200 hover:bg-white/10 hover:opacity-100"
-							{...pttActivation}
-						>
-							<HugeiconsIcon
-								className="text-white/60"
-								icon={Mic01Icon}
-								size={14}
-							/>
-							<span className="font-medium text-white/60 text-xs-tight">
-								{t("pttButton")}
-							</span>
-						</Button>
-					</Tooltip>
 				</>
 			)}
 
-			{!isListenMode && <StatusBar />}
+			{isListenMode && (
+				<Tooltip content={th("switchToPtt")}>
+					<Button
+						aria-label={th("switchToPtt")}
+						className={cn(
+							"titlebar-no-drag absolute right-1 z-titlebar-float gap-1.5 rounded-md px-2 py-1 transition-opacity duration-200",
+							listenSurfaceActive
+								? "top-1 opacity-[0.15] hover:bg-white/10 hover:opacity-100"
+								: "bottom-7 border border-border bg-surface-3 text-foreground-secondary shadow-sm opacity-70 hover:bg-surface-4 hover:opacity-100",
+						)}
+						{...pttActivation}
+					>
+						<HugeiconsIcon
+							className={listenSurfaceActive ? "text-white/60" : undefined}
+							icon={Mic01Icon}
+							size={14}
+						/>
+						<span
+							className={cn(
+								"font-medium text-xs-tight",
+								listenSurfaceActive && "text-white/60",
+							)}
+						>
+							{t("pttButton")}
+						</span>
+					</Button>
+				</Tooltip>
+			)}
+
+			{!listenSurfaceActive && <StatusBar />}
 		</div>
 	);
 }

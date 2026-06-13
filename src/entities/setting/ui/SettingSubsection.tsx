@@ -3,6 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { InfoTooltip } from "@/shared/ui/info-tooltip";
+import { Tooltip } from "@/shared/ui/tooltip";
 import { Toggle } from "@/shared/ui/toggle";
 
 export interface SettingSubsectionProps {
@@ -16,6 +17,7 @@ export interface SettingSubsectionProps {
 	onToggle?: (checked: boolean) => void;
 	title: string;
 	toggleDisabled?: boolean;
+	toggleDisabledTooltip?: ReactNode;
 	/** When provided, renders a toggle switch on the trailing edge of the title row. */
 	toggled?: boolean;
 }
@@ -37,9 +39,18 @@ export function SettingSubsection({
 	toggled,
 	onToggle,
 	toggleDisabled,
+	toggleDisabledTooltip,
 }: SettingSubsectionProps) {
 	const hasToggle = onToggle !== undefined;
 	const isDisabled = hasToggle && !toggled;
+	const toggle = hasToggle ? (
+		<Toggle
+			aria-label={`Toggle ${title}`}
+			checked={toggled ?? false}
+			disabled={toggleDisabled}
+			onCheckedChange={onToggle}
+		/>
+	) : null;
 
 	return (
 		<div className="mt-7 border-divider border-t pt-6 first:mt-0 first:border-t-0 first:pt-0">
@@ -59,13 +70,12 @@ export function SettingSubsection({
 				{headerAction || hasToggle ? (
 					<div className="ml-auto flex items-center gap-1.5">
 						{headerAction}
-						{hasToggle && (
-							<Toggle
-								aria-label={`Toggle ${title}`}
-								checked={toggled ?? false}
-								disabled={toggleDisabled}
-								onCheckedChange={onToggle}
-							/>
+						{toggleDisabled && toggleDisabledTooltip && toggle ? (
+							<Tooltip content={toggleDisabledTooltip}>
+								<span className="inline-flex">{toggle}</span>
+							</Tooltip>
+						) : (
+							toggle
 						)}
 					</div>
 				) : null}

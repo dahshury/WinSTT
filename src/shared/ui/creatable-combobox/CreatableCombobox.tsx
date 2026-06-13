@@ -11,6 +11,7 @@ import {
 	surfaceClasses,
 	useSurface,
 } from "@/shared/lib/surface";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { IconButton } from "@/shared/ui/icon-button";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 
@@ -87,7 +88,9 @@ export function CreatableCombobox({
 	const selected = items.find((i) => i.id === value) ?? null;
 	const trimmed = query.trim();
 	const needle = trimmed.toLowerCase();
-	const filtered = items.filter((i) => i.label.toLowerCase().includes(needle));
+	const filtered = items.filter((i) =>
+		matchesFuzzySearch([i.label, i.id, i.meta ?? ""], needle),
+	);
 	const exactExists = items.some(
 		(i) => i.label.trim().toLowerCase() === needle,
 	);

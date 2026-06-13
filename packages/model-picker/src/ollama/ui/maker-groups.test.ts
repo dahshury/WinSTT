@@ -138,6 +138,23 @@ describe("computeRecommendedVisible", () => {
 			),
 		).toEqual(["gemma4:e2b"]);
 	});
+
+	it("fuzzy-matches typo'd version queries", () => {
+		const parakeet = recommended("parakeet-v3:latest", "parakeet");
+		const visible = computeRecommendedVisible(
+			[
+				{
+					...parakeet,
+					displayName: "Parakeet version 3",
+					description: "NVIDIA Parakeet version 3 speech model",
+				},
+			],
+			new Set(),
+			"Parkeet v3",
+		);
+
+		expect(visible.map((m) => m.name)).toEqual(["parakeet-v3:latest"]);
+	});
 });
 
 describe("isCatalogBackedModel", () => {

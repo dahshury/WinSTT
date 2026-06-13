@@ -44,6 +44,25 @@ describe("OllamaModelSelector detached-open mode", () => {
 		expect(onChange).not.toHaveBeenCalled();
 	});
 
+	test("uses the shared glass trigger border treatment", () => {
+		render(
+			<OllamaModelSelector
+				models={[model()]}
+				onChange={() => undefined}
+				value="llama3:8b"
+			/>,
+		);
+
+		const trigger = document.querySelector(
+			'[data-slot="ollama-model-selector-trigger"]',
+		);
+		expect(trigger).not.toBeNull();
+		const className = trigger?.getAttribute("class") ?? "";
+		expect(className).toContain("bg-gradient-to-b");
+		expect(className).toContain("ring-white/[0.07]");
+		expect(className).not.toContain("border-border");
+	});
+
 	test("inline detached mode restores persisted search query for its scoped key", () => {
 		const uiStorageKey = "winstt:test:ollama-inline-ui";
 		window.localStorage.setItem(

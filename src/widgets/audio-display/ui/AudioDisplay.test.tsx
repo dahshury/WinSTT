@@ -157,13 +157,13 @@ describe("AudioDisplay helpers — enqueueDroppedFiles", () => {
 });
 
 describe("AudioDisplay helpers — getContainerClassName", () => {
-	test("omits border classes in listen mode", () => {
+	test("omits rounded classes when the listen surface is active", () => {
 		const cls = helpers.getContainerClassName(true);
 		expect(cls).not.toContain("rounded-lg");
 		expect(cls).not.toContain("border ");
 	});
 
-	test("includes rounded corners outside listen mode", () => {
+	test("includes rounded corners when the normal main surface is active", () => {
 		const cls = helpers.getContainerClassName(false);
 		expect(cls).toContain("rounded-lg");
 	});

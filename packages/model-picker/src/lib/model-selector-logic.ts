@@ -1,6 +1,7 @@
 import type Fuse from "fuse.js";
 import type { IFuseOptions } from "fuse.js";
 import type { OpenRouterModel } from "@/shared/api/models";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import type { ModelVariant } from "./model-variant-utils";
 import { hasAnyVariant, hasVariant } from "./model-variant-utils";
 import type { FilterableParameter } from "./openrouter-provider-utils";
@@ -189,6 +190,37 @@ function combineWithFuzzy(
 	return appendUniqueFuzzy(prioritized, fuse.search(query));
 }
 
+function modelSearchCorpus(model: OpenRouterModel): string[] {
+	return [
+		model.name ?? "",
+		model.id,
+		model.model_name ?? "",
+		model.maker ?? "",
+		model.provider ?? "",
+		model.description ?? "",
+		model.variant ?? "",
+	];
+}
+
+function appendSynchronousFuzzyMatches(
+	models: OpenRouterModel[],
+	prioritized: OpenRouterModel[],
+	query: string,
+): OpenRouterModel[] {
+	const includedIds = new Set(prioritized.map((m) => m.id));
+	const combined = [...prioritized];
+	for (const model of models) {
+		if (includedIds.has(model.id)) {
+			continue;
+		}
+		if (matchesFuzzySearch(modelSearchCorpus(model), query)) {
+			combined.push(model);
+			includedIds.add(model.id);
+		}
+	}
+	return combined;
+}
+
 function searchModels(
 	models: OpenRouterModel[],
 	query: string,
@@ -198,7 +230,7 @@ function searchModels(
 	}
 	const normalizedQuery = query.trim().toLowerCase();
 	const prioritized = collectExactMatches(models, normalizedQuery);
-	return combineWithFuzzy(models, prioritized, query);
+	return appendSynchronousFuzzyMatches(models, prioritized, query);
 }
 
 function matchesVariantFilter(

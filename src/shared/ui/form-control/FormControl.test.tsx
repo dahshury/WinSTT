@@ -73,6 +73,19 @@ describe("FormControl", () => {
 		expect(input.parentElement?.className).toContain("pointer-events-none");
 	});
 
+	test("anchors controlTooltip outside disabled children so it can receive hover", () => {
+		render(
+			<FormControl controlTooltip="Turn on X" disabled label="X">
+				<input data-testid="i" type="text" />
+			</FormControl>,
+		);
+		const input = screen.getByTestId("i");
+		expect(input.parentElement?.className).toContain("pointer-events-none");
+		expect(input.parentElement?.parentElement?.className).toContain(
+			"cursor-not-allowed",
+		);
+	});
+
 	test("toggle-only control (labelAddon, no children) floats the toggle right of a centered header", () => {
 		const { container } = render(
 			<FormControl

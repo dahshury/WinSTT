@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import {
 	DEFAULT_SETTINGS,
@@ -35,7 +35,11 @@ describe("SettingsPage", () => {
 		renderSettingsPage();
 
 		expect(screen.getByRole("tab", { name: /recording/i })).toBeDefined();
-		expect(screen.getByRole("status").textContent).toContain("Loading");
+		expect(
+			screen
+				.getAllByRole("status")
+				.some((status) => status.textContent?.includes("Loading")),
+		).toBe(true);
 		expect(screen.queryByText("Recording Mode")).toBeNull();
 	});
 
@@ -46,6 +50,23 @@ describe("SettingsPage", () => {
 		renderSettingsPage();
 
 		expect(screen.getByText("Recording Mode")).toBeDefined();
+	});
+
+	test("renders settings transfer controls in the sidebar header", () => {
+		renderSettingsPage();
+
+		expect(screen.getByTestId("settings-export-button")).toBeDefined();
+		expect(screen.getByTestId("settings-import-button")).toBeDefined();
+		expect(screen.queryByTestId("settings-update-button")).toBeNull();
+	});
+
+	test("requires confirmation before importing settings", () => {
+		renderSettingsPage();
+
+		fireEvent.click(screen.getByTestId("settings-import-button"));
+
+		expect(screen.getByText("Restore settings?")).toBeDefined();
+		expect(screen.getByText("Restore")).toBeDefined();
 	});
 
 	test("surfaces backend hydration errors instead of mounting default-backed panels", () => {

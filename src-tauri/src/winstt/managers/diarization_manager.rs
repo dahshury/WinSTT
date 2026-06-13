@@ -1,9 +1,9 @@
 // Reference: onnx-asr/src/onnx_asr/diarization.py, server diarization_stream.py + domain/speaker_timeline.py.
 //
 // DiarizationManager owns the per-utterance `SessionDiarizer` and the continuous
-// `SpeakerTimeline` used by listen mode. The sherpa-onnx speaker-embedding session
-// + pyannote-segmentation graph are the heavy ML internals (gated behind the KWS
-// spike); this manager is the lifecycle + state + event-emit shell.
+// `SpeakerTimeline` used by listen mode. The ORT speaker-embedding session and
+// pyannote-segmentation graph are the heavy ML internals; this manager is the
+// lifecycle + state + event-emit shell.
 //
 // Emits the specta-typed `SpeakerSegmentsPayload` (diarized segments). The
 // renderer event-name contract is unchanged from WinSTT's the reference IPC.
@@ -44,10 +44,10 @@ impl DiarizationManager {
     /// state. The embedding session is lazily created on first enable.
     pub fn set_enabled(&self, enabled: bool) -> bool {
         self.enabled.store(enabled, Ordering::Release);
-        // SPIKE: lazily create / release the sherpa-onnx embedding session +
-        // pyannote-seg graph here (05_*.md). Until the ort IoBinding wiring for
-        // the embedder lands, the session is unset and `assign_speakers` returns
-        // a single speaker — listen mode still produces (un-diarized) subtitles.
+        // SPIKE: lazily create / release the ORT embedding session and
+        // pyannote-seg graph here. Until the segmentation path is wired,
+        // `assign_speakers` returns a single speaker and listen mode still
+        // produces un-diarized subtitles.
         enabled
     }
 

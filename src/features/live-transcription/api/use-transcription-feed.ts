@@ -40,7 +40,10 @@ function scheduleCompletedSessionClear(sessionId: number): void {
 	}, COMPLETED_SESSION_CLEAR_MS);
 }
 
-function shouldIgnoreEmptyRealtimeDrop(text: string): boolean {
+function shouldIgnoreEmptyRealtimeDrop(text: string, recordingMode: string): boolean {
+	if (recordingMode === "listen") {
+		return false;
+	}
 	const state = useTranscriptionStore.getState();
 	// Cold realtime can briefly publish text -> empty -> text before two
 	// windows agree. Keep the visible words until a real lifecycle reset lands.
@@ -73,13 +76,17 @@ export function useTranscriptionFeed(): void {
 	const clearEphemeral = useTranscriptionStore((s) => s.clearEphemeral);
 
 	useEffect(() => {
-		// On every new recording cycle, wipe the realtime/ephemeral state AND
-		// arm `isRecordingActive`. The overlay pill is gated on that flag so a
-		// freshly shown overlay window paints empty for one frame (before this
-		// event lands) rather than flashing the previous session's text.
+		// On every non-listen recording cycle, wipe the realtime/ephemeral state
+		// and arm `isRecordingActive`. Listen mode is continuous, so
+		// recording_start only means "loopback capture is armed"; deleting visible
+		// captions there makes long-form subtitles jump.
 		const unsubStart = onRecordingStart(() => {
 			voiceActivitySeenRef.current = false;
 			clearCompletedSessionTimer();
+			if (recordingModeRef.current === "listen") {
+				setRecordingActive(true);
+				return;
+			}
 			beginRecordingSession();
 		});
 
@@ -99,14 +106,25 @@ export function useTranscriptionFeed(): void {
 		});
 
 		const unsubRealtime = onRealtimeText(({ text }) => {
-			if (shouldIgnoreEmptyRealtimeDrop(text)) {
+			const isListenMode = recordingModeRef.current === "listen";
+			if (isListenMode && text.trim().length === 0) {
+				setRealtimeText("");
 				return;
+			}
+			if (shouldIgnoreEmptyRealtimeDrop(text, recordingModeRef.current)) {
+				return;
+			}
+			if (isListenMode) {
+				clearEphemeral();
 			}
 			setRealtimeText(text);
 		});
 
 		const unsubVadStart = onVadStart(() => {
 			voiceActivitySeenRef.current = true;
+			if (recordingModeRef.current === "listen") {
+				clearEphemeral();
+			}
 		});
 
 		const unsubTranscriptionStart = onTranscriptionStart(() => {

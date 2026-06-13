@@ -1087,6 +1087,32 @@ describe("OverlayPage", () => {
 		});
 	});
 
+	test("does not show the outer STT pill in listen mode", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: {
+					...initialSettings.general,
+					recordingMode: "listen",
+					liveTranscriptionDisplay: "both",
+					overlayMode: "floating-bottom",
+				},
+			},
+		});
+		useTranscriptionStore.setState({
+			currentRealtime: "listen words stay in app",
+			ephemeral: null,
+			isRecordingActive: true,
+		});
+		useVisualizerStore.setState({ isSpeaking: true });
+		const { container } = renderOverlay();
+		expect(
+			container.querySelector('[data-overlay-floating-surface="true"]'),
+		).toBeNull();
+		expect(container.querySelector("#winstt-overlay-island")).toBeNull();
+		expect(container.textContent).not.toContain("listen words stay in app");
+	});
+
 	test("shows pill text during word-by-word paste when using a separate realtime model", () => {
 		useSettingsStore.setState({
 			settings: {

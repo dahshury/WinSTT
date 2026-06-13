@@ -3,7 +3,7 @@ title: Quick Start
 description: Download, launch, and dictate your first sentence in under two minutes — no Python, no accounts, no setup.
 ---
 
-import { latestWindowsDownloadUrl } from "@/lib/site";
+import { latestReleaseUrl } from "@/lib/site";
 
 Go from a fresh download to text at your cursor in five steps — the onboarding wizard
 picks a model and tests your mic for you, then you hold a hotkey and speak.
@@ -17,7 +17,7 @@ the only thing you need is a microphone. Audio is transcribed in memory by on-de
 models and never leaves your machine.
 
 <Callout type="success" title="Nothing to install but the app">
-  The portable installer ships the Rust speech engine and a vendored `tiny` model — there's
+  The app package ships the Rust speech engine and a vendored `tiny` model — there's
   no Python, no separate service, no model download required to get your first transcription, and no
   account to create. You can be fully offline.
 </Callout>
@@ -25,13 +25,12 @@ models and never leaves your machine.
 ## Five steps to your first transcription
 
 <StepFlow>
-  <Step title="Download the installer">
-    Download the latest default Windows build directly:
-    <a href={latestWindowsDownloadUrl}>WinSTT.exe</a>.
-    It is the DirectML build that runs on any modern AMD, Intel, or NVIDIA GPU and falls
-    back to CPU automatically. Not sure which one? See [Which installer?](/docs/install)
-    for the CPU and OpenVINO variants and their system requirements. The installer is
-    portable — run it, no admin rights needed.
+  <Step title="Download the app">
+    Download the latest alpha package from the
+    <a href={latestReleaseUrl}>GitHub Release</a>. Current releases include a macOS
+    Apple Silicon DMG, Linux AppImage/deb/rpm packages, and Windows portable builds.
+    Not sure which one? See [Install](/docs/install) for platform notes and system
+    requirements.
   </Step>
 
   <Step title="Launch — onboarding picks local vs cloud and tests your mic">
@@ -87,8 +86,8 @@ models and never leaves your machine.
 ## Related
 
 <Cards>
-  <Card title="Which installer?" href="/docs/install">
-    DirectML, CPU, or OpenVINO — pick the build that matches your hardware.
+  <Card title="Install" href="/docs/install">
+    Pick the macOS, Linux, or Windows package that matches your machine.
   </Card>
   <Card title="Recording modes" href="/docs/recording-modes">
     Push-to-talk, toggle, listen, and wake-word — and when to use each.

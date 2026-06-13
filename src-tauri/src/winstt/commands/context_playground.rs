@@ -394,6 +394,40 @@ fn capture_mode(context: &ContextManager, mode: ContextMode, label: &str) -> Con
     }
 }
 
+/// Capture one mode against a specific top-level HWND. Used by non-interrupting
+/// harness runs where the target browser window is occluded or not foreground.
+fn capture_mode_hwnd(
+    context: &ContextManager,
+    mode: ContextMode,
+    label: &str,
+    hwnd: u64,
+) -> ContextModeResult {
+    let start = std::time::Instant::now();
+    let snapshot = context.read_hwnd(mode, hwnd);
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let ok = !snapshot.focused_text.trim().is_empty()
+        || snapshot
+            .text_before
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+        || snapshot
+            .ax_html
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+    ContextModeResult {
+        duration_ms,
+        mode: label.to_string(),
+        ok,
+        snapshot: to_view(&snapshot),
+    }
+}
+
+fn parse_hwnd_arg(hwnd: &str) -> Option<u64> {
+    hwnd.trim().parse::<u64>().ok().filter(|value| *value > 0)
+}
+
 /// Run a live (tree-only) or deep (all-four-modes) capture and push the report.
 fn run_capture(app: &AppHandle, context: &ContextManager, deep: bool) {
     CAPTURING.store(true, Ordering::SeqCst);
@@ -593,12 +627,66 @@ pub fn context_playground_capture(
     )
 }
 
+/// One-shot capture against a specific top-level HWND. This lets the context
+/// harness target a Chrome window without bringing it to the OS foreground.
+#[tauri::command]
+#[specta::specta]
+pub fn context_playground_capture_hwnd(
+    app: AppHandle,
+    context: State<'_, Arc<ContextManager>>,
+    hwnd: String,
+    deep: bool,
+) -> ContextDebugReport {
+    if !CONTEXT_PLAYGROUND_BUILD_ENABLED {
+        let _ = (app, context, hwnd, deep);
+        warn_disabled("context_playground_capture_hwnd");
+        return disabled_report();
+    }
+    let Some(hwnd) = parse_hwnd_arg(&hwnd) else {
+        let _ = (app, context, deep);
+        return disabled_report();
+    };
+    let settings = read_settings(&app);
+    let deny_list = settings.general.context_deny_list.clone();
+    let context_awareness_enabled = settings.general.context_awareness;
+    let reader: &ContextManager = context.inner().as_ref();
+    let start = std::time::Instant::now();
+    let raw = reader.read_hwnd(ContextMode::Tree, hwnd);
+    let modes = if deep {
+        Some(vec![
+            capture_mode_hwnd(reader, ContextMode::Tree, "tree", hwnd),
+            capture_mode_hwnd(reader, ContextMode::Split, "split", hwnd),
+            capture_mode_hwnd(reader, ContextMode::Focused, "default", hwnd),
+            capture_mode_hwnd(reader, ContextMode::Selection, "selection", hwnd),
+        ])
+    } else {
+        None
+    };
+    let duration_ms = start.elapsed().as_millis() as u64;
+    build_report(
+        &raw,
+        deep,
+        context_awareness_enabled,
+        &deny_list,
+        duration_ms,
+        modes,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn snap() -> WindowContextSnapshot {
         WindowContextSnapshot::default()
+    }
+
+    #[test]
+    fn parse_hwnd_arg_accepts_decimal_strings_only() {
+        assert_eq!(parse_hwnd_arg("264342"), Some(264342));
+        assert_eq!(parse_hwnd_arg(" 264342 "), Some(264342));
+        assert_eq!(parse_hwnd_arg("0"), None);
+        assert_eq!(parse_hwnd_arg("not-a-hwnd"), None);
     }
 
     #[test]

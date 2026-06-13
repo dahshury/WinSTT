@@ -281,22 +281,21 @@ export function SettingsPage() {
 					value={activeTab}
 				>
 					<SettingsSidebar links={links} />
-					{/* Content card — a rounded, shadowed panel inset vertically so the
-						    surface-1 substrate shows above and below it. Horizontally it runs
-						    flush from the sidebar to the window edge so both side gutters match.
+					{/* Content card — a rounded, shadowed panel inset on top/end/bottom
+						    so the surface-1 substrate frames it without wasting vertical space.
 						    The sidebar reads as built into the window while each tab's content
 						    floats a layer above.
 						    Lifts to surface-3 (a clear ~8% step above the surface-1 sidebar) so
 						    the colour difference is obvious; nested SettingSection controls lift
 						    from there as usual. */}
-					<div className="relative min-w-0 flex-1 py-2.5">
+					<div className="relative min-w-0 flex-1 py-1.5 pe-1.5">
 						{/* Drag strip — the thin surface-1 margin above the content card. The
 							    window is frameless, so this gives the right (content) side a grab
 							    handle that lines up with the sidebar's own top drag strip, making
 							    the whole top edge draggable. */}
 						<div
 							aria-hidden="true"
-							className="titlebar-drag absolute inset-x-0 top-0 z-titlebar h-2.5"
+							className="titlebar-drag absolute inset-x-0 top-0 z-titlebar h-1.5"
 						/>
 						<Elevated
 							className="relative flex h-full flex-col overflow-hidden rounded-xl ring-1 ring-divider-strong"

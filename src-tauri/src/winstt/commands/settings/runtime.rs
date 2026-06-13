@@ -6,7 +6,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::winstt::settings_schema::{
-    LlmProvider, ModelUnloadTimeout as WinsttModelUnloadTimeout, TtsSource, WinsttSettings,
+    LlmProvider, ModelUnloadTimeout as WinsttModelUnloadTimeout, RecordingMode, TtsSource,
+    WinsttSettings,
 };
 
 pub(crate) fn core_timeout_from_winstt(
@@ -27,23 +28,27 @@ pub(crate) fn should_keep_stt_model_warm(timeout: WinsttModelUnloadTimeout) -> b
     timeout != WinsttModelUnloadTimeout::Immediately
 }
 
+fn should_keep_stt_model_warm_for_settings(settings: &WinsttSettings) -> bool {
+    settings.general.recording_mode == RecordingMode::Listen
+        || should_keep_stt_model_warm(settings.global.model_unload_timeout)
+}
+
 pub(super) fn apply_model_runtime_settings(
     app: &AppHandle,
     previous: &WinsttSettings,
     next: &WinsttSettings,
 ) {
     sync_core_model_unload_timeout(app, next.global.model_unload_timeout);
+    let keep_stt_warm = should_keep_stt_model_warm_for_settings(next);
 
     if same_model_load_inputs_changed(previous, next) {
-        reload_stt_model_async(
-            app,
-            &next.model.model,
-            should_keep_stt_model_warm(next.global.model_unload_timeout),
-        );
-    } else if model_warm_inputs_changed(previous, next)
-        && should_keep_stt_model_warm(next.global.model_unload_timeout)
-    {
-        warm_stt_model_async(app);
+        reload_stt_model_async(app, &next.model.model, keep_stt_warm);
+    } else if model_warm_inputs_changed(previous, next) {
+        if keep_stt_warm {
+            warm_stt_model_async(app);
+        } else {
+            unload_loaded_stt_model_async(app);
+        }
     }
 }
 
@@ -59,6 +64,8 @@ fn sync_core_model_unload_timeout(app: &AppHandle, timeout: WinsttModelUnloadTim
 
 fn model_warm_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
     previous.global.model_unload_timeout != next.global.model_unload_timeout
+        || should_keep_stt_model_warm_for_settings(previous)
+            != should_keep_stt_model_warm_for_settings(next)
 }
 
 fn same_model_load_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
@@ -307,6 +314,35 @@ mod tests {
         let mut b = a.clone();
         b.global.model_unload_timeout = ModelUnloadTimeout::Immediately;
         assert!(model_warm_inputs_changed(&a, &b));
+    }
+
+    #[test]
+    fn listen_mode_keeps_stt_warm_even_when_saved_timeout_is_immediate() {
+        use crate::winstt::settings_schema::{ModelUnloadTimeout, RecordingMode};
+
+        let mut settings = WinsttSettings::default();
+        settings.global.model_unload_timeout = ModelUnloadTimeout::Immediately;
+        settings.general.recording_mode = RecordingMode::Listen;
+
+        assert!(should_keep_stt_model_warm_for_settings(&settings));
+
+        settings.general.recording_mode = RecordingMode::Ptt;
+        assert!(!should_keep_stt_model_warm_for_settings(&settings));
+    }
+
+    #[test]
+    fn listen_mode_transition_changes_warm_policy_when_saved_timeout_is_immediate() {
+        use crate::winstt::settings_schema::{ModelUnloadTimeout, RecordingMode};
+
+        let mut listen = WinsttSettings::default();
+        listen.global.model_unload_timeout = ModelUnloadTimeout::Immediately;
+        listen.general.recording_mode = RecordingMode::Listen;
+
+        let mut ptt = listen.clone();
+        ptt.general.recording_mode = RecordingMode::Ptt;
+
+        assert!(model_warm_inputs_changed(&ptt, &listen));
+        assert!(model_warm_inputs_changed(&listen, &ptt));
     }
 
     #[test]

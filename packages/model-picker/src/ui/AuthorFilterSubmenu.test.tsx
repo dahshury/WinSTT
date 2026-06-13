@@ -131,6 +131,12 @@ describe("AuthorFilterSubmenu helpers", () => {
 			).toEqual(["OpenAI"]);
 		});
 
+		test("fuzzy-matches provider typos", () => {
+			expect(
+				helpers.filterByQuery(["OpenAI", "Anthropic", "Google"], "Anthropc"),
+			).toEqual(["Anthropic"]);
+		});
+
 		test("returns empty array when nothing matches", () => {
 			expect(helpers.filterByQuery(["openai", "anthropic"], "xyz")).toEqual([]);
 		});

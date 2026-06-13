@@ -68,11 +68,12 @@ export function RecordingSoundSection({
 						recordingSoundPath: DEFAULT_SETTINGS.general.recordingSoundPath,
 					})
 				}
-				tooltip={
+				disabledTooltip={
 					enabled
-						? t("soundLibraryTooltip")
-						: `${t("soundLibraryTooltip")} ${tSettings("disabledReason", { name: t("recordingSound") })}`
+						? undefined
+						: tSettings("disabledReason", { name: t("recordingSound") })
 				}
+				tooltip={t("soundLibraryTooltip")}
 				value={general?.recordingSoundPath ?? ""}
 			>
 				<div

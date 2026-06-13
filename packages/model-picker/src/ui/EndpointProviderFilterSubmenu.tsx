@@ -63,6 +63,7 @@ export function EndpointProviderFilterSubmenu({
 			</DropdownMenuSubTrigger>
 			<DropdownMenuSubContent className="w-64 p-0">
 				<Combobox.Root
+					filter={null}
 					inline
 					items={items}
 					limit={PROVIDER_RENDER_LIMIT}

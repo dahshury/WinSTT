@@ -56,6 +56,7 @@ Core cleanup:
 Spoken-form conversion:
 - Convert spoken punctuation and layout commands (period, comma, question mark, new line, new paragraph) into the actual punctuation or layout.
 - Write literal values as figures and symbols, not words: quantities, dates, times, money, percentages, units, versions, and equations. Examples: "fifty percent" -> "50%", "two hundred dollars" -> "$200", "one point five gigabytes" -> "1.5 GB", "one plus one equals two" -> "1 + 1 = 2". Keep number words inside idioms, names, and titles.
+- Preserve compact product, model, API, release, and software version labels. A single version letter followed by a number stays joined to the number, and "version" before a model/release number may be normalized to v plus the number when it is clearly part of a name. Never expand compact version labels into words.
 - Write acronyms in uppercase and recognizable people, organization, product, app, feature, project, file, place, or technical names in their conventional casing. Preserve uncommon names instead of replacing them with common words. Join compound technical terms that speech splits apart (for example "back end" -> "backend", "end to end" -> "end-to-end") when the compound is clearly intended.
 - In code and command lines, convert spoken flags directly and preserve the spoken flag form exactly: "dash dash save" -> "--save", "dash dash fix" -> "--fix", "dash o" -> "-o", "dash m" -> "-m". Never canonicalize, alias, or expand CLI flags: "git commit dash m" must stay "git commit -m", not "git commit --message", even though both can be valid. Do not write "dash-dash-save", "dash dash save", "--o", "--m", or expand short flags into long aliases unless the long flag was spoken.
 
@@ -106,7 +107,7 @@ fn raw_builtin_prompt(key: PresetKey, level: Option<PresetLevel>) -> String {
         PresetKey::Neutral => POLISH_PROMPT.to_string(),
         PresetKey::Formal => "Rewrite in a polished, formal, professional tone. Use complete sentences and precise business wording. Remove contractions, slang, and casual phrasing. Preserve meaning, facts, order, and structure unless another modifier changes them.".to_string(),
         PresetKey::Friendly => "Rewrite in a warm, friendly, conversational tone. Use natural contractions, approachable phrasing, and polite wording such as \"please\" when natural. Preserve meaning, facts, and structure unless another modifier changes them.".to_string(),
-        PresetKey::Technical => "Rewrite with precise technical terminology and rigorous structure. Replace vague wording with exact wording only when the intended meaning is clear. Preserve facts, meaning, and scope.".to_string(),
+        PresetKey::Technical => "Rewrite with precise technical terminology and rigorous structure. Replace vague wording with exact wording only when the intended meaning is clear. Preserve facts, meaning, scope, product/model names, compact version labels, code identifiers, and literal values.".to_string(),
         PresetKey::Concise => leveled_concise(lvl).to_string(),
         PresetKey::Summarize => leveled_summarize(lvl).to_string(),
         PresetKey::Reorder => "Reorder for logical flow only when it improves the sequence. Move a direct request, action item, blocker, decision, or conclusion to the front only when it stands alone and does not depend on preceding context; keep it after any context, examples, or problem description that explain what it is about. Then arrange context, causes, details, and chronological steps in a natural order. Keep all content, wording, and any existing list structure; do not summarize or invent. Example: \"The rollback is ready. Users are locked out. Please approve it.\" -> \"Please approve it. The rollback is ready. Users are locked out.\" If the order is already logical, keep it unchanged.".to_string(),
@@ -401,6 +402,11 @@ fn with_compose_rules(system_prompt: &str) -> String {
     format!("{preamble}{system_prompt}")
 }
 fn with_context_prefix(system_prompt: &str, context: &str) -> String {
+    with_context_prefix_json(system_prompt, context)
+}
+
+#[allow(dead_code)]
+fn with_context_prefix_legacy(system_prompt: &str, context: &str) -> String {
     if context.is_empty() {
         return system_prompt.to_string();
     }
@@ -448,6 +454,58 @@ fn with_context_prefix(system_prompt: &str, context: &str) -> String {
     .join("\n");
     format!("{preamble}\n{context}\n</context>\n\n{system_prompt}")
 }
+
+fn with_context_prefix_json(system_prompt: &str, context: &str) -> String {
+    if context.is_empty() {
+        return system_prompt.to_string();
+    }
+    let preamble = [
+        "The CONTEXT block below is a JSON object describing what's currently on",
+        "the user's screen. Keys may include app, window, url, field, beforeCaret,",
+        "afterCaret, selection, fieldText, screen, screenOcr, clipboard, note, and",
+        "ide. Empty fields are omitted.",
+        "",
+        "Use it for:",
+        "  (a) Spelling proper nouns, names, and technical terms that appear",
+        "      in the dictation. If the dictation phonetically matches a name",
+        "      that appears in the context, prefer the context's spelling.",
+        "  (b) Composing or replying when the dictation explicitly asks for it",
+        "      (per the COMPOSE rule above: \"reply to this\", \"respond yes\",",
+        "      \"summarise this\", \"translate ...\"). Use the JSON fields as",
+        "      reference data; do not echo the raw JSON.",
+        "  (c) Code identifier recognition. When the CONTEXT contains code, either",
+        "      because \"ide\": true is present or because screen/fieldText shows",
+        "      code-shaped tokens such as camelCase, PascalCase, snake_case, file",
+        "      paths, or CLI flags, preserve phonetically matched identifiers",
+        "      verbatim and wrap them in backticks.",
+        "",
+        "The context may be a multi-speaker thread: a line or segment prefixed",
+        "with a name (for example \"Alice:\", \"@handle\", or \"by Bob:\") denotes",
+        "that speaker, and \"You:\" is the user. When composing a reply, attribute",
+        "prior turns to the right speaker and write as the user.",
+        "",
+        "When the JSON has a \"beforeCaret\" field, the dictation is being inserted",
+        "at that caret. Decide from how beforeCaret ends:",
+        "- If it ends mid-sentence (no terminal . ! ? : and not on a blank/new",
+        "  line), the dictation continues it: do not capitalize the first word",
+        "  unless it is \"I\" or a proper noun, and add only the minimal joining",
+        "  space or punctuation needed to read on naturally.",
+        "- If it ends a sentence, ends with a newline, or there is no beforeCaret,",
+        "  start the dictation normally with a capital letter.",
+        "When the JSON has an \"afterCaret\" field, do not repeat words it already",
+        "contains. Never reproduce the surrounding text.",
+        "",
+        "Do not reproduce, summarise, or echo the context unless a COMPOSE",
+        "instruction asked for it. Treat it as reference, not as content to include.",
+        "Output only the cleaned dictation, adjusted at its boundaries so it",
+        "stitches into place.",
+        "",
+        "<context>",
+    ]
+    .join("\n");
+    format!("{preamble}\n{context}\n</context>\n\n{system_prompt}")
+}
+
 pub fn build_dictation_system_prompt(
     presets: &[PresetEntry],
     context: &str,
@@ -506,7 +564,7 @@ fn is_word_byte(b: u8) -> bool {
 fn next_char_len(s: &str) -> usize {
     s.chars().next().map(|c| c.len_utf8()).unwrap_or(1)
 }
-const BASE_USER_CLEANUP: &str = r#"First apply base cleanup: fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken numbers, dates, times, currency, percentages, units, and equations to figures and symbols (for example, "one" -> "1", "twenty five dollars" -> "$25", "five p m" -> "5 PM", "one percent" -> "1%", "one plus one equals two" -> "1 + 1 = 2"); convert spoken flags and separators inside code, command lines, URLs, file paths, email addresses, identifiers, and sensitive values to literal characters while preserving the spoken flag form (for example, "dash dash save" -> "--save", "dash m" -> "-m", and "c colon backslash temp backslash logs" -> "C:\\temp\\logs" in the final text for a backslash-based path) without masking the value; if the whole dictation is a bare email, URL, file path, command, code token, identifier, or field value, return only that literal after separator conversion without prose casing or terminal punctuation; never canonicalize, alias, or expand short CLI flags into long aliases (for example, "git commit dash m" must stay "git commit -m", not "git commit --message"); quote literal labels, values, error messages, and quote/unquote text, keeping punctuation outside quoted literals unless it was part of the literal; remove fillers, repeats, false starts, and adjacent restatements where a later clause replaces earlier words; later means the second or last adjacent alternative, never the first; when the same action, field, sentence frame, or predicate repeats back-to-back with a different subject, object, or value, keep only the later one unless additive wording clearly asks for both; abstract pattern: old value plus repeated frame followed immediately by new value plus same repeated frame means keep only the new-value frame; if both adjacent alternatives remain in the output, fix it before returning; the earlier replaced value is not a separate idea to preserve, even when it is a name, role, team, product, or other durable term; preserve the speaker's meaning and every idea."#;
+const BASE_USER_CLEANUP: &str = r#"First apply base cleanup: fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken numbers, dates, times, currency, percentages, units, versions, and equations to figures and symbols (for example, "one" -> "1", "twenty five dollars" -> "$25", "five p m" -> "5 PM", "one percent" -> "1%", "one plus one equals two" -> "1 + 1 = 2"); preserve compact product/model/API/release version labels, keeping v plus a number joined and normalizing model/release "version N" to vN when clearly part of a name; convert spoken flags and separators inside code, command lines, URLs, file paths, email addresses, identifiers, and sensitive values to literal characters while preserving the spoken flag form (for example, "dash dash save" -> "--save", "dash m" -> "-m", and "c colon backslash temp backslash logs" -> "C:\\temp\\logs" in the final text for a backslash-based path) without masking the value; if the whole dictation is a bare email, URL, file path, command, code token, identifier, or field value, return only that literal after separator conversion without prose casing or terminal punctuation; never canonicalize, alias, or expand short CLI flags into long aliases (for example, "git commit dash m" must stay "git commit -m", not "git commit --message"); quote literal labels, values, error messages, and quote/unquote text, keeping punctuation outside quoted literals unless it was part of the literal; remove fillers, repeats, false starts, and adjacent restatements where a later clause replaces earlier words; later means the second or last adjacent alternative, never the first; when the same action, field, sentence frame, or predicate repeats back-to-back with a different subject, object, or value, keep only the later one unless additive wording clearly asks for both; abstract pattern: old value plus repeated frame followed immediately by new value plus same repeated frame means keep only the new-value frame; if both adjacent alternatives remain in the output, fix it before returning; the earlier replaced value is not a separate idea to preserve, even when it is a name, role, team, product, or other durable term; preserve the speaker's meaning and every idea."#;
 pub fn dictation_user_prompt(text: &str) -> String {
     format!(
         "{BASE_USER_CLEANUP} Before returning, check that adjacent self-correction alternatives keep only the later restatement. Transform the following text according to the style guide above. Return ONLY the transformed text with no additional commentary, explanations, or JSON formatting. Just the plain transformed text.\n\nText to transform:\n{text}"
@@ -529,7 +587,9 @@ fn operation_summary(entry: &PresetEntry) -> Option<String> {
         PresetEntry::Builtin {
             key: PresetKey::Technical,
             ..
-        } => Some("rewrite with precise technical terminology and rigorous structure".to_string()),
+        } => Some(
+            "rewrite with precise technical terminology and rigorous structure while preserving product/model names, compact version labels, code identifiers, and literal values".to_string(),
+        ),
         PresetEntry::Builtin {
             key: PresetKey::Concise,
             level,
@@ -617,7 +677,7 @@ fn single_builtin_user_prompt(entry: &PresetEntry, text: &str) -> Option<String>
             key: PresetKey::Technical,
             ..
         } => Some(format!(
-            "{BASE_USER_CLEANUP} Then rewrite the following text with precise technical terminology and a rigorous structure. Replace vague wording only when the intended meaning is clear. Preserve the meaning. Do not return it unchanged when more exact technical wording can be applied. Return ONLY the rewritten text with no commentary, explanations, labels, or JSON formatting.\n\nText:\n{text}"
+            "{BASE_USER_CLEANUP} Then rewrite the following text with precise technical terminology and a rigorous structure. Replace vague wording only when the intended meaning is clear. Preserve the meaning, product/model names, compact version labels, code identifiers, and literal values. Do not return it unchanged when more exact technical wording can be applied. Return ONLY the rewritten text with no commentary, explanations, labels, or JSON formatting.\n\nText:\n{text}"
         )),
         PresetEntry::Builtin {
             key: PresetKey::Concise,

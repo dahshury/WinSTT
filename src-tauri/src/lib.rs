@@ -58,8 +58,8 @@ pub(crate) use window_state::show_main_window;
 // Boot-time helpers used only inside this crate root (run / initialize_core_logic
 // / the window-event handlers).
 use startup::{
-    build_console_filter, ensure_hf_cache_env, request_app_exit, wait_for_renderer_dev_server,
-    StartupProfiler,
+    build_console_filter, configure_webview_window_builder, ensure_hf_cache_env, request_app_exit,
+    wait_for_renderer_dev_server, StartupProfiler,
 };
 use window_state::{
     restore_main_window_position, save_main_window_position, should_force_show_permissions_window,
@@ -105,6 +105,38 @@ fn trim_trailing_whitespace(path: &str) -> std::io::Result<()> {
 fn advance_startup_phase(startup: &mut StartupProfiler, app: &AppHandle, label: &str) {
     startup.mark(label);
     splash::emit_startup_progress(app, label);
+}
+
+fn env_flag_truthy(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(value) => !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "" | "0" | "false" | "no" | "off"
+        ),
+        Err(_) => false,
+    }
+}
+
+fn is_force_onboarding_env_flag_set() -> bool {
+    env_flag_truthy("WINSTT_FORCE_ONBOARDING")
+}
+
+fn open_startup_onboarding_window(
+    app: &AppHandle,
+    main_window: &tauri::WebviewWindow,
+) -> Result<(), String> {
+    winstt::commands::windows::open_window(
+        app.clone(),
+        main_window.clone(),
+        "onboarding".to_string(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) {
@@ -353,7 +385,7 @@ fn continue_startup_after_splash_paint(app_handle: AppHandle, cli_args: CliArgs)
 
     // Create main window programmatically so we can set data_directory
     // for portable mode (redirects WebView2 cache to portable Data dir).
-    let mut win_builder =
+    let mut win_builder = configure_webview_window_builder(
         tauri::WebviewWindowBuilder::new(&app_handle, "main", tauri::WebviewUrl::App("/".into()))
             .title("WinSTT")
             .inner_size(420.0, 150.0)
@@ -370,7 +402,8 @@ fn continue_startup_after_splash_paint(app_handle: AppHandle, cli_args: CliArgs)
                     }
                 }
             })
-            .visible(false);
+            .visible(false),
+    );
 
     if let Some(data_dir) = portable::data_dir() {
         win_builder = win_builder.data_directory(data_dir.join("webview"));
@@ -448,15 +481,37 @@ fn continue_startup_after_splash_paint(app_handle: AppHandle, cli_args: CliArgs)
     advance_startup_phase(&mut startup, &app_handle, "tray CLI visibility applied");
 
     let visibility_settings = winstt::commands::settings::read_settings_raw(&app_handle);
+    let force_onboarding = is_force_onboarding_env_flag_set();
+    let should_show_onboarding = force_onboarding || !visibility_settings.general.onboarded;
+    if force_onboarding {
+        log::info!("WINSTT_FORCE_ONBOARDING set; forcing onboarding regardless of stored flag");
+    }
     let should_hide = visibility_settings.general.start_minimized || cli_args.start_hidden;
     let should_force_show = should_force_show_permissions_window(&app_handle);
     let tray_available = settings.show_tray_icon && !cli_args.no_tray;
-    let will_show = should_force_show || !should_hide || !tray_available;
+    let will_show_main =
+        !should_show_onboarding && (should_force_show || !should_hide || !tray_available);
     advance_startup_phase(&mut startup, &app_handle, "startup visibility decided");
 
-    if splash::is_active(&app_handle) {
-        splash::spawn_ready_watcher(&app_handle, will_show);
-    } else if will_show {
+    if should_show_onboarding {
+        match open_startup_onboarding_window(&app_handle, &main_window) {
+            Ok(()) => {
+                splash::emit_startup_complete(&app_handle, "onboarding window shown");
+                splash::close_splash_window(&app_handle);
+            }
+            Err(e) => {
+                log::error!("Failed to open onboarding window at startup: {e}");
+                let fallback_will_show = should_force_show || !should_hide || !tray_available;
+                if splash::is_active(&app_handle) {
+                    splash::spawn_ready_watcher(&app_handle, fallback_will_show);
+                } else if fallback_will_show {
+                    show_main_window(&app_handle);
+                }
+            }
+        }
+    } else if splash::is_active(&app_handle) {
+        splash::spawn_ready_watcher(&app_handle, will_show_main);
+    } else if will_show_main {
         show_main_window(&app_handle);
     }
     advance_startup_phase(&mut startup, &app_handle, "startup handoff scheduled");

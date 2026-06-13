@@ -11,6 +11,13 @@ Everything you need to clone, install, and run WinSTT locally. WinSTT is a singl
 [Tauri 2](https://tauri.app) app — a Rust backend plus a Vite/React renderer — so there is
 **one process to build and run**, no Python server and no second terminal.
 
+<Callout title="Platform note" type="info">
+  WinSTT targets macOS, Linux, and Windows. This page focuses on the Windows helper-script
+  path because those scripts set up MSVC, `vcvars`, and native dependency paths for local
+  development. Linux and macOS use the same `bun`/`cargo`/`tauri` commands with their
+  platform Tauri dependencies; the CI workflows are the source of truth for those packages.
+</Callout>
+
 ## Prerequisites
 
 | Tool | Purpose | Install |
@@ -70,7 +77,7 @@ described below, which set up the MSVC environment and `PATH` automatically.
 ### Clone and install frontend deps
 
 ```bash
-git clone https://github.com/winstt/WinSTT
+git clone https://github.com/dahshury/WinSTT
 cd WinSTT
 bun install
 ```

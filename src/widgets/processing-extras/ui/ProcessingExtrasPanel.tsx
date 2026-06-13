@@ -19,6 +19,7 @@ import {
 } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
 import { Badge } from "@/shared/ui/badge";
+import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { OptInDialog } from "@/shared/ui/opt-in-dialog";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
@@ -38,6 +39,77 @@ type UpdateQualityFn = (patch: Partial<QualitySettings>) => void;
 type GeneralT = ReturnType<typeof useTranslations<"general">>;
 type LlmT = ReturnType<typeof useTranslations<"llm">>;
 type ContextAppMode = NonNullable<GeneralSettings["contextAppMode"]>;
+type FormattingOptionKey =
+	| "formatBasicPunctuationCasing"
+	| "formatSpokenPunctuationCommands"
+	| "formatSpokenSymbolCommands"
+	| "formatQuoteCommands"
+	| "formatFillerRepeatCleanup";
+
+interface FormattingOption {
+	key: FormattingOptionKey;
+	label: string;
+	linkedKeys?: readonly FormattingOptionKey[];
+	tooltip: string;
+}
+
+const FORMATTING_OPTIONS = [
+	{
+		key: "formatBasicPunctuationCasing",
+		label: "Basic punctuation and casing",
+		tooltip:
+			"Only for raw STT output that lacks written-text punctuation/capitalization.",
+	},
+	{
+		key: "formatSpokenPunctuationCommands",
+		linkedKeys: ["formatSpokenSymbolCommands"],
+		label: "Spoken punctuation and code commands",
+		tooltip:
+			'Turns spoken punctuation, layout, and code commands such as "comma", "new line", "dash dash save", and "example dot com" into symbols.',
+	},
+	{
+		key: "formatQuoteCommands",
+		label: "Quote commands",
+		tooltip:
+			'Turns paired commands such as "quote Save changes unquote" into quoted text.',
+	},
+	{
+		key: "formatFillerRepeatCleanup",
+		label: "Fillers and repeated words",
+		tooltip:
+			'Removes exact fillers such as "um" and collapses adjacent duplicate words such as "the the".',
+	},
+] as const satisfies readonly FormattingOption[];
+const LISTEN_MODE_PROCESSING_DISABLED_TOOLTIP =
+	"Listen mode does not run post-processing; it only transcribes speaker audio inside the main app window.";
+
+function formattingOptionKeys(
+	option: FormattingOption,
+): readonly FormattingOptionKey[] {
+	return option.linkedKeys ? [option.key, ...option.linkedKeys] : [option.key];
+}
+
+function formattingDefaultsPatch(): Partial<QualitySettings> {
+	return {
+		formatBasicPunctuationCasing:
+			DEFAULT_SETTINGS.quality.formatBasicPunctuationCasing,
+		formatSpokenPunctuationCommands:
+			DEFAULT_SETTINGS.quality.formatSpokenPunctuationCommands,
+		formatSpokenSymbolCommands:
+			DEFAULT_SETTINGS.quality.formatSpokenSymbolCommands,
+		formatQuoteCommands: DEFAULT_SETTINGS.quality.formatQuoteCommands,
+		formatFillerRepeatCleanup:
+			DEFAULT_SETTINGS.quality.formatFillerRepeatCleanup,
+	};
+}
+
+function formattingAtDefault(quality: QualitySettings): boolean {
+	return FORMATTING_OPTIONS.every((option) =>
+		formattingOptionKeys(option).every(
+			(key) => quality[key] === DEFAULT_SETTINGS.quality[key],
+		),
+	);
+}
 
 const CONTEXT_APP_MODE_OPTIONS: readonly SwitcherOption<ContextAppMode>[] = [
 	{
@@ -51,6 +123,8 @@ const CONTEXT_APP_MODE_OPTIONS: readonly SwitcherOption<ContextAppMode>[] = [
 ];
 
 interface ContextAwarenessSectionProps {
+	disabled?: boolean;
+	disabledTooltip?: string | undefined;
 	enabled: boolean;
 	onCancel: () => void;
 	onConfirm: () => void;
@@ -58,6 +132,8 @@ interface ContextAwarenessSectionProps {
 }
 
 function ContextAwarenessSection({
+	disabled = false,
+	disabledTooltip,
 	enabled,
 	onCancel,
 	onConfirm,
@@ -81,12 +157,15 @@ function ContextAwarenessSection({
 	// the toggle reads off until an app is chosen, then lights up on its own.
 	const selectedOnlyWithoutApps =
 		contextAppMode === "selected-only" && !hasAllowedApps;
-	const effectiveEnabled = enabled && !selectedOnlyWithoutApps;
+	const effectiveEnabled = !disabled && enabled && !selectedOnlyWithoutApps;
 	// Toggle ON ⇒ ask for consent the first time (the dialog's confirm path is
 	// what flips the stored value); once consented, the only thing left to do in
 	// selected-only mode is pick apps, so surface the picker instead of leaving a
 	// dead toggle. Toggle OFF ⇒ persist immediately (no consent needed).
 	const handleToggle = (next: boolean): void => {
+		if (disabled) {
+			return;
+		}
 		if (next) {
 			if (!enabled) {
 				setDialogOpen(true);
@@ -100,12 +179,18 @@ function ContextAwarenessSection({
 	// After consent, if we're in selected-only mode with no apps yet, open the
 	// picker so the freshly-on toggle doesn't sit visibly off with nothing to do.
 	const handleConfirm = (): void => {
+		if (disabled) {
+			return;
+		}
 		onConfirm();
 		if (selectedOnlyWithoutApps) {
 			requestAppsOpen();
 		}
 	};
 	const handleScopeChange = (next: ContextAppMode): void => {
+		if (disabled) {
+			return;
+		}
 		updateGeneral({ contextAppMode: next });
 		if (next === "selected-only") {
 			requestAppsOpen();
@@ -115,19 +200,28 @@ function ContextAwarenessSection({
 		<SettingSection icon={EyeIcon} title={tg("contextAwarenessSection")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<SettingField
+					disabled={disabled}
+					disabledTooltip={
+						disabled
+							? disabledTooltip
+							: effectiveEnabled
+								? undefined
+								: ts("disabledReason", { name: tg("contextAwareness") })
+					}
+					hideReset={disabled}
 					isDefault={
 						effectiveEnabled === DEFAULT_SETTINGS.general.contextAwareness
 					}
 					label={tg("contextAwareness")}
 					labelAddon={
-						<Toggle checked={effectiveEnabled} onCheckedChange={handleToggle} />
+						<Toggle
+							checked={effectiveEnabled}
+							disabled={disabled}
+							onCheckedChange={handleToggle}
+						/>
 					}
 					onReset={onCancel}
-					tooltip={
-						effectiveEnabled
-							? tg("contextAwarenessTooltip")
-							: `${tg("contextAwarenessTooltip")} ${ts("disabledReason", { name: tg("contextAwareness") })}`
-					}
+					tooltip={tg("contextAwarenessTooltip")}
 				/>
 				{/* The deny-list (apps/sites to skip) configures the same capture
 				    pipeline this toggle gates, so it lives directly beneath it —
@@ -135,10 +229,13 @@ function ContextAwarenessSection({
 				<div
 					className={cn(
 						"transition-opacity duration-200 ease-out",
-						!enabled && "pointer-events-none opacity-40",
+						(disabled || !enabled) && "pointer-events-none opacity-40",
 					)}
 				>
 					<SettingField
+						disabled={disabled}
+						disabledTooltip={disabledTooltip}
+						hideReset={disabled}
 						isDefault={
 							contextAppMode === DEFAULT_SETTINGS.general.contextAppMode
 						}
@@ -203,11 +300,15 @@ function modelAssistanceCaption(
 function ModelAssistanceSection({
 	assistance,
 	cleanupEnabled,
+	disabled = false,
+	disabledTooltip,
 	modelName,
 	t,
 }: {
 	assistance: readonly ModelAssistance[];
 	cleanupEnabled: boolean;
+	disabled?: boolean;
+	disabledTooltip?: string | undefined;
 	modelName: string;
 	t: LlmT;
 }) {
@@ -217,7 +318,8 @@ function ModelAssistanceSection({
 	if (!cleanupItem) {
 		return null;
 	}
-	const setupSuffix = cleanupEnabled
+	const effectiveCleanupEnabled = disabled ? false : cleanupEnabled;
+	const setupSuffix = effectiveCleanupEnabled
 		? ""
 		: ` ${t("modelAssistanceCleanupNeedsModel")}`;
 	return (
@@ -229,10 +331,12 @@ function ModelAssistanceSection({
 		>
 			<SettingField
 				caption={`${modelAssistanceCaption(t, cleanupItem, modelName)}${setupSuffix}`}
+				disabled={disabled}
+				disabledTooltip={disabledTooltip}
 				label={t("modelAssistanceCleanup")}
 				labelAddon={
-					<Badge variant={cleanupEnabled ? "secondary" : "outline"}>
-						{cleanupEnabled
+					<Badge variant={effectiveCleanupEnabled ? "secondary" : "outline"}>
+						{effectiveCleanupEnabled
 							? t("modelAssistanceAutoBadge")
 							: t("modelAssistanceSetupBadge")}
 					</Badge>
@@ -245,139 +349,103 @@ function ModelAssistanceSection({
 
 function DeterministicFormattingSection({
 	activeModelName,
+	disabled = false,
+	disabledTooltip,
 	nativeBasicFormatting,
 	quality,
 	updateQuality,
 }: {
 	activeModelName: string;
+	disabled?: boolean;
+	disabledTooltip?: string | undefined;
 	nativeBasicFormatting: boolean;
 	quality: QualitySettings;
 	updateQuality: UpdateQualityFn;
 }) {
 	const basicEnabled =
-		quality.formatBasicPunctuationCasing && !nativeBasicFormatting;
+		!disabled && quality.formatBasicPunctuationCasing && !nativeBasicFormatting;
 	const basicDisabledReason = nativeBasicFormatting
 		? `${activeModelName} already adds punctuation and casing`
 		: undefined;
+	const checkedIndices = new Set<number>();
+	FORMATTING_OPTIONS.forEach((option, index) => {
+		const checked =
+			option.key === "formatBasicPunctuationCasing"
+				? basicEnabled
+				: !disabled &&
+					formattingOptionKeys(option).every((key) => quality[key]);
+		if (checked) {
+			checkedIndices.add(index);
+		}
+	});
+
+	const setOption = (option: FormattingOption, next: boolean): void => {
+		if (disabled) {
+			return;
+		}
+		const patch: Partial<QualitySettings> = {};
+		for (const key of formattingOptionKeys(option)) {
+			patch[key] = next;
+		}
+		updateQuality(patch);
+	};
 
 	return (
 		<SettingSection
 			divided
 			icon={TextFontIcon}
-			title="Deterministic formatting"
+			title="Formatting"
 			tooltip="Local rule-based cleanup that runs after speech recognition and before any LLM cleanup."
 		>
 			<SettingField
 				caption={
-					nativeBasicFormatting
-						? `${activeModelName} provides this natively, so WinSTT skips the deterministic pass.`
-						: "Capitalizes sentence starts and can add a final period for raw recognizer output."
+					disabled
+						? LISTEN_MODE_PROCESSING_DISABLED_TOOLTIP
+						: nativeBasicFormatting
+							? `${activeModelName} provides this natively, so WinSTT skips the deterministic pass.`
+							: "Choose which deterministic formatting rules run after speech recognition."
 				}
-				defaultValue={DEFAULT_SETTINGS.quality.formatBasicPunctuationCasing}
-				disabled={nativeBasicFormatting}
-				label="Basic punctuation and casing"
-				labelAddon={
-					<Toggle
-						checked={basicEnabled}
-						disabled={nativeBasicFormatting}
-						onCheckedChange={(v) =>
-							updateQuality({ formatBasicPunctuationCasing: v })
-						}
-					/>
-				}
-				onReset={() =>
-					updateQuality({
-						formatBasicPunctuationCasing:
-							DEFAULT_SETTINGS.quality.formatBasicPunctuationCasing,
-					})
-				}
-				tooltip="Only for raw STT output that lacks written-text punctuation/capitalization. Disabled automatically for models that already emit formatted prose."
-				value={quality.formatBasicPunctuationCasing}
-				{...(basicDisabledReason
-					? { disabledReason: basicDisabledReason }
-					: {})}
-			/>
-			<SettingField
-				caption='Turns spoken punctuation commands such as "comma", "new line", and "question mark" into symbols.'
-				defaultValue={DEFAULT_SETTINGS.quality.formatSpokenPunctuationCommands}
-				label="Spoken punctuation commands"
-				labelAddon={
-					<Toggle
-						checked={quality.formatSpokenPunctuationCommands}
-						onCheckedChange={(v) =>
-							updateQuality({ formatSpokenPunctuationCommands: v })
-						}
-					/>
-				}
-				onReset={() =>
-					updateQuality({
-						formatSpokenPunctuationCommands:
-							DEFAULT_SETTINGS.quality.formatSpokenPunctuationCommands,
-					})
-				}
-				tooltip="Handles explicit dictation commands. This is separate from a model's normal punctuation restoration."
-				value={quality.formatSpokenPunctuationCommands}
-			/>
-			<SettingField
-				caption='Formats obvious technical dictation such as "dash dash save", "example dot com", and "slash usr slash local".'
-				defaultValue={DEFAULT_SETTINGS.quality.formatSpokenSymbolCommands}
-				label="Technical symbol commands"
-				labelAddon={
-					<Toggle
-						checked={quality.formatSpokenSymbolCommands}
-						onCheckedChange={(v) =>
-							updateQuality({ formatSpokenSymbolCommands: v })
-						}
-					/>
-				}
-				onReset={() =>
-					updateQuality({
-						formatSpokenSymbolCommands:
-							DEFAULT_SETTINGS.quality.formatSpokenSymbolCommands,
-					})
-				}
-				tooltip="Applies narrow rules for command-line flags, email/domain separators, URLs, and path separators."
-				value={quality.formatSpokenSymbolCommands}
-			/>
-			<SettingField
-				caption='Turns paired commands such as "quote Save changes unquote" into quoted text.'
-				defaultValue={DEFAULT_SETTINGS.quality.formatQuoteCommands}
-				label="Quote commands"
-				labelAddon={
-					<Toggle
-						checked={quality.formatQuoteCommands}
-						onCheckedChange={(v) => updateQuality({ formatQuoteCommands: v })}
-					/>
-				}
-				onReset={() =>
-					updateQuality({
-						formatQuoteCommands: DEFAULT_SETTINGS.quality.formatQuoteCommands,
-					})
-				}
-				tooltip='Requires an explicit close command such as "unquote" or "close quote" to avoid rewriting ordinary uses of the word quote.'
-				value={quality.formatQuoteCommands}
-			/>
-			<SettingField
-				caption='Removes exact fillers such as "um" and collapses adjacent duplicate words such as "the the".'
-				defaultValue={DEFAULT_SETTINGS.quality.formatFillerRepeatCleanup}
-				label="Fillers and repeated words"
-				labelAddon={
-					<Toggle
-						checked={quality.formatFillerRepeatCleanup}
-						onCheckedChange={(v) =>
-							updateQuality({ formatFillerRepeatCleanup: v })
-						}
-					/>
-				}
-				onReset={() =>
-					updateQuality({
-						formatFillerRepeatCleanup:
-							DEFAULT_SETTINGS.quality.formatFillerRepeatCleanup,
-					})
-				}
-				tooltip="A conservative local cleanup for verbatim recognizers. Leave it off if you often dictate transcripts where fillers are meaningful."
-				value={quality.formatFillerRepeatCleanup}
-			/>
+				disabled={disabled}
+				disabledTooltip={disabledTooltip}
+				hideReset={disabled}
+				isDefault={formattingAtDefault(quality)}
+				label="Rules"
+				onReset={() => updateQuality(formattingDefaultsPatch())}
+				tooltip="Local formatting rules that run before any LLM cleanup."
+			>
+				<ElevatedSurface>
+					<CheckboxGroup checkedIndices={checkedIndices} className="w-full">
+						{FORMATTING_OPTIONS.map((option, index) => {
+							const checked =
+								option.key === "formatBasicPunctuationCasing"
+									? basicEnabled
+									: !disabled &&
+										formattingOptionKeys(option).every((key) => quality[key]);
+							const optionDisabled =
+								disabled ||
+								(option.key === "formatBasicPunctuationCasing" &&
+									nativeBasicFormatting);
+							const tooltip =
+								optionDisabled && disabledTooltip
+									? disabledTooltip
+									: optionDisabled && basicDisabledReason
+										? `${basicDisabledReason}, so WinSTT skips this deterministic pass.`
+										: option.tooltip;
+							return (
+								<CheckboxItem
+									checked={checked}
+									disabled={optionDisabled}
+									index={index}
+									key={option.key}
+									label={option.label}
+									onToggle={() => setOption(option, !checked)}
+									tooltip={tooltip}
+								/>
+							);
+						})}
+					</CheckboxGroup>
+				</ElevatedSurface>
+			</SettingField>
 		</SettingSection>
 	);
 }
@@ -419,6 +487,10 @@ export function ProcessingExtrasPanel() {
 	const tg = useTranslations("general");
 	const tl = useTranslations("llm");
 
+	const isListenMode = (general?.recordingMode ?? "ptt") === "listen";
+	const listenModeDisabledTooltip = isListenMode
+		? LISTEN_MODE_PROCESSING_DISABLED_TOOLTIP
+		: undefined;
 	const contextAwarenessEnabled = general?.contextAwareness ?? false;
 
 	return (
@@ -427,12 +499,16 @@ export function ProcessingExtrasPanel() {
 				<ModelAssistanceSection
 					assistance={modelAssistance}
 					cleanupEnabled={llmDictationEnabled}
+					disabled={isListenMode}
+					disabledTooltip={listenModeDisabledTooltip}
 					modelName={activeModelName}
 					t={tl}
 				/>
 			) : null}
 			<DeterministicFormattingSection
 				activeModelName={activeModelName || "The selected model"}
+				disabled={isListenMode}
+				disabledTooltip={listenModeDisabledTooltip}
 				nativeBasicFormatting={nativeBasicFormatting}
 				quality={quality}
 				updateQuality={updateQuality}
@@ -451,6 +527,8 @@ export function ProcessingExtrasPanel() {
 				 hide it instead of advertising a dead setting. */}
 			{contextAwarenessUseful ? (
 				<ContextAwarenessSection
+					disabled={isListenMode}
+					disabledTooltip={listenModeDisabledTooltip}
 					enabled={contextAwarenessEnabled}
 					onCancel={() => updateGeneral({ contextAwareness: false })}
 					onConfirm={() => updateGeneral({ contextAwareness: true })}

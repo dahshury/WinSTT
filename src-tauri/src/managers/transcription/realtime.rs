@@ -9,9 +9,9 @@ use super::{
     TranscriptionManager, NATIVE_STREAM_FINAL_SILENCE_PAD_MS, NATIVE_STREAM_SAMPLE_RATE,
     SILENCE_AC_FLOOR,
 };
-use crate::winstt::stt::SttResult;
+use crate::winstt::stt::{NativeStreamUpdate, SttResult};
 use crate::winstt::sync_ext::MutexExt;
-use log::{info, warn};
+use log::{debug, info, warn};
 
 impl TranscriptionManager {
     /// Realtime live-preview decode: ONE raw pass for the live transcription overlay.
@@ -134,6 +134,18 @@ impl TranscriptionManager {
         }
     }
 
+    fn run_native_stream_accept(
+        engine: &mut Option<LoadedEngine>,
+        new_samples: &[f32],
+    ) -> Option<SttResult<NativeStreamUpdate>> {
+        match engine {
+            Some(LoadedEngine::Winstt(e)) if e.supports_native_streaming() => {
+                Some(e.stream_accept(new_samples))
+            }
+            _ => None,
+        }
+    }
+
     /// Feed any final tail samples the realtime tick did not see, then flush the loaded
     /// native-streaming engine's right context and return its final stream text.
     /// This is deliberately blocking and is called from the transcription blocking pool: after
@@ -182,6 +194,13 @@ impl TranscriptionManager {
         }
     }
 
+    /// Listen-mode segment finalization. Unlike mic final reuse, this does not promote text to
+    /// paste/post-processing; it only drains the native stream tail so loopback captions do not
+    /// lose the last sub-chunk before VAD closes the utterance.
+    pub fn stream_finalize_realtime_blocking(&self, tail: &[f32]) -> Option<String> {
+        self.finalize_native_stream_text(tail)
+    }
+
     /// Peek whether the loaded engine does NATIVE streaming (carries cross-chunk cache state so the
     /// realtime worker can feed only new samples per tick). `Some(true/false)` when an engine is
     /// loaded; `None` when none is loaded yet OR the lock is contended (caller keeps probing / uses
@@ -220,13 +239,9 @@ impl TranscriptionManager {
                 p.into_inner()
             }
         };
-        let decoded =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match &mut *guard {
-                Some(LoadedEngine::Winstt(e)) if e.supports_native_streaming() => {
-                    Some(e.stream_accept(new_samples))
-                }
-                _ => None,
-            }));
+        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Self::run_native_stream_accept(&mut guard, new_samples)
+        }));
         let (outcome, did_decode, cache_text) = match decoded {
             Ok(Some(Ok(update))) => {
                 let text = update.text;
@@ -250,8 +265,71 @@ impl TranscriptionManager {
             }
         };
         if let Some(raw_text) = cache_text {
-            info!(
+            debug!(
                 "[realtime-final] cached native stream generation={} covered_samples={} chars={}",
+                generation,
+                covered,
+                raw_text.chars().count()
+            );
+            *self.realtime_reuse.lock_recover() = Some(RealtimeReuse {
+                generation,
+                covered,
+                raw_text,
+            });
+        }
+        drop(guard);
+        if did_decode {
+            if let Some(model_id) = self.get_current_model() {
+                self.mark_model_warmed_if_current(&model_id);
+            }
+        }
+        outcome
+    }
+
+    /// Listen-mode native-stream feed. This is blocking by design: loopback capture runs on its own
+    /// producer thread, so the listen consumer must preserve ordering and retry semantics instead of
+    /// dropping into a `try_lock` spin when the shared engine is briefly busy.
+    pub fn stream_accept_realtime_blocking(
+        &self,
+        generation: u64,
+        covered: usize,
+        new_samples: &[f32],
+    ) -> RealtimeStreamOutcome {
+        if new_samples.is_empty() {
+            return RealtimeStreamOutcome::Text(RealtimeStreamText::interim(String::new()));
+        }
+        let mut guard = self.engine.lock().unwrap_or_else(|p| {
+            warn!("Engine mutex poisoned by a previous panic, recovering (listen stream_accept)");
+            p.into_inner()
+        });
+        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Self::run_native_stream_accept(&mut guard, new_samples)
+        }));
+        let (outcome, did_decode, cache_text) = match decoded {
+            Ok(Some(Ok(update))) => {
+                let text = update.text;
+                (
+                    RealtimeStreamOutcome::Text(RealtimeStreamText {
+                        text: text.clone(),
+                        is_final: update.is_final,
+                    }),
+                    true,
+                    Some(text),
+                )
+            }
+            Ok(Some(Err(err))) => {
+                warn!("Native listen stream decode failed; retrying same samples: {err}");
+                (RealtimeStreamOutcome::Skipped, false, None)
+            }
+            Ok(None) => (RealtimeStreamOutcome::NotStreaming, false, None),
+            Err(_) => {
+                warn!("Native listen stream decode panicked; retrying same samples");
+                (RealtimeStreamOutcome::Skipped, false, None)
+            }
+        };
+        if let Some(raw_text) = cache_text {
+            debug!(
+                "[realtime-final] cached native listen stream generation={} covered_samples={} chars={}",
                 generation,
                 covered,
                 raw_text.chars().count()

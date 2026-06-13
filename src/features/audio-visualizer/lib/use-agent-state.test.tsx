@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { renderHook } from "@testing-library/react";
+import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { useVisualizerStore } from "../model/visualizer-store";
 import {
 	deriveActiveState,
@@ -8,6 +9,7 @@ import {
 } from "./use-agent-state";
 
 beforeEach(() => {
+	useSettingsStore.setState({ settings: structuredClone(DEFAULT_SETTINGS) });
 	useVisualizerStore.setState({
 		isRecording: false,
 		isSpeaking: false,
@@ -17,6 +19,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	useSettingsStore.setState({ settings: structuredClone(DEFAULT_SETTINGS) });
 	useVisualizerStore.setState({
 		isRecording: false,
 		isSpeaking: false,
@@ -57,6 +60,25 @@ describe("useAgentState", () => {
 		expect(result.current).toBe("listening");
 	});
 
+	test("returns 'disconnected' in listen mode when recording but quiet", () => {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				general: {
+					...DEFAULT_SETTINGS.general,
+					recordingMode: "listen",
+				},
+			},
+		});
+		useVisualizerStore.setState({
+			isRecording: true,
+			isSpeaking: false,
+			audioLevel: 0.005,
+		});
+		const { result } = renderHook(() => useAgentState());
+		expect(result.current).toBe("disconnected");
+	});
+
 	test("returns 'speaking' when not recording but tail-end audio is still audible", () => {
 		useVisualizerStore.setState({ isRecording: false, audioLevel: 0.05 });
 		const { result } = renderHook(() => useAgentState());
@@ -89,6 +111,12 @@ describe("deriveActiveState", () => {
 
 	test("returns 'listening' when recording but not speaking", () => {
 		expect(deriveActiveState(true, false, 0.005)).toBe("listening");
+	});
+
+	test("returns 'disconnected' when listen mode is recording but not speaking", () => {
+		expect(deriveActiveState(true, false, 0.005, "listen")).toBe(
+			"disconnected",
+		);
 	});
 
 	test("returns 'speaking' when not recording but audio still active (fade-out)", () => {

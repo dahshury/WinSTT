@@ -7,6 +7,7 @@ import { useLocaleStore } from "@/shared/i18n";
 import { shouldSuppressPillPreviewForWordByWordPaste } from "@/shared/lib/realtime-enabled";
 import { computeDisplayFlags } from "../lib/appearance-settings-helpers";
 import {
+	LISTEN_MODE_DISPLAY_TOOLTIP,
 	LanguageControl,
 	LiveTranscriptionDisplayControl,
 	OverlayControl,
@@ -74,6 +75,9 @@ export function AppearanceSettingsPanel() {
 					update={update}
 				/>
 				<OverlayModeControl
+					disabledTooltip={
+						isListenMode ? LISTEN_MODE_DISPLAY_TOOLTIP : undefined
+					}
 					general={general}
 					subDisabled={flags.subDisabled}
 					t={t}
@@ -81,6 +85,7 @@ export function AppearanceSettingsPanel() {
 				/>
 				<LiveTranscriptionDisplayControl
 					general={general}
+					isListenMode={isListenMode}
 					realtimeLanguageUnavailable={realtimeLanguageUnavailable}
 					suppressWordByWordPillPreview={suppressWordByWordPillPreview}
 					t={t}

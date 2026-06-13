@@ -66,6 +66,10 @@ target-moon/
 target-spike/
 target-verify*/
 
+# Local research / capture scratch (context probes, nemotron-eval, capture
+# dumps). Re-generatable spike output, ~tens of MB; never commit.
+artifacts/
+
 # Python tooling cache (ruff) — stray ephemeral cache, never commit
 .ruff_cache/
 

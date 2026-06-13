@@ -1,3 +1,5 @@
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+
 export function filterByQuery(
 	allProviders: string[],
 	queryLower: string,
@@ -5,7 +7,7 @@ export function filterByQuery(
 	if (!queryLower) {
 		return allProviders;
 	}
-	return allProviders.filter((p) => p.toLowerCase().includes(queryLower));
+	return allProviders.filter((p) => matchesFuzzySearch(p, queryLower));
 }
 
 export function getFavoriteTooltipText(isFavorite: boolean): string {

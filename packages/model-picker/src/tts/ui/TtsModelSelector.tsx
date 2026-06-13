@@ -11,6 +11,7 @@ import {
 	useState,
 } from "react";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { Button } from "@/shared/ui/button";
 import {
 	ALL_AUTHORS_RAIL_ID,
@@ -339,8 +340,7 @@ export function TtsModelSelector({
 
 	// Text search delegated to Base UI's filtering pipeline (groups + keyboard).
 	const filter = (model: TtsModelInfo, query: string) => {
-		const q = query.trim().toLowerCase();
-		return q.length === 0 || buildTtsSearchCorpus(model).includes(q);
+		return matchesFuzzySearch(buildTtsSearchCorpus(model), query);
 	};
 
 	return (

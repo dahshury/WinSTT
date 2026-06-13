@@ -1,120 +1,99 @@
 ---
 title: Install
-description: Pick the right portable installer — DirectML, CPU, or OpenVINO — and check the system requirements. No Python, no setup, no accounts.
+description: Download the right WinSTT package for macOS, Linux, or Windows. No Python, no account, no separate speech server.
 ---
 
-import { latestReleaseUrl, latestWindowsDownloadUrl } from "@/lib/site";
+import {
+  latestLinuxAppImageUrl,
+  latestLinuxDebUrl,
+  latestLinuxRpmUrl,
+  latestMacosAppleSiliconDmgUrl,
+  latestReleaseUrl,
+  latestWindowsInstallerUrl,
+  latestWindowsPortableZipUrl,
+} from "@/lib/site";
 
-WinSTT ships as a self-contained portable `.exe`: download one file, run it, and dictate. There is no installer wizard, no Python, no model download required to start.
+WinSTT ships as a self-contained desktop app. Download the package for your
+platform, launch it, finish onboarding, and dictate. There is no Python setup,
+no separate model server, and no account required for local transcription.
 
-<Screenshot src="onboarding" alt="The first-run onboarding wizard that appears after install: choose local Whisper or a cloud provider, then test your microphone." label="WinSTT — first run" caption="On first launch, a quick setup wizard gets you transcribing — pick local or cloud and you're done." />
+<Screenshot src="onboarding" alt="The first-run onboarding wizard: choose local Whisper or a cloud provider, then test your microphone." label="WinSTT - first run" caption="On first launch, a quick setup wizard gets you transcribing - pick local or cloud and test your mic." />
 
-<Callout type="success" title="One-click latest Windows download">
-  Download the current default Windows build directly:
-  <a href={latestWindowsDownloadUrl}>WinSTT.exe</a>.
-  This link follows the current alpha release published with these docs.
+<Callout type="success" title="Current alpha downloads">
+  All platform packages are published on the
+  <a href={latestReleaseUrl}>current GitHub Release</a>.
+
+  - macOS Apple Silicon: <a href={latestMacosAppleSiliconDmgUrl}>DMG</a>
+  - Linux x64: <a href={latestLinuxAppImageUrl}>AppImage</a>,{" "}
+    <a href={latestLinuxDebUrl}>deb</a>, or <a href={latestLinuxRpmUrl}>rpm</a>
+  - Windows x64: <a href={latestWindowsInstallerUrl}>WinSTT.exe</a> or{" "}
+    <a href={latestWindowsPortableZipUrl}>portable zip</a>
 </Callout>
 
-## Which installer?
-
-Every release publishes three portable builds on the [GitHub Releases](https://github.com/winstt/WinSTT/releases) page. All three wrap the **same** Tauri app and Rust speech engine — only the bundled ONNX Runtime (ORT) execution provider differs. Pick by your hardware:
+## Which package?
 
 <ModelTable
-  head={["Installer", "Size", "ORT wheel", "When to use"]}
-  numeric={[1]}
+  head={["Platform", "Artifact", "Use when"]}
   rows={[
-    ["WinSTT-Portable-<ver>.exe", "~200 MB", "onnxruntime-directml", "Default GPU build. Any D3D12-capable GPU — AMD, Intel, or NVIDIA via DirectX 12. The unmarked default download."],
-    ["WinSTT-CPU-Portable-<ver>.exe", "~150 MB", "onnxruntime", "No GPU, a headless box, or you just want the smallest download. CPU-only."],
-    ["WinSTT-OpenVINO-Portable-<ver>.exe", "~250 MB", "onnxruntime-openvino", "Intel ARC dGPU, or recent Iris Xe / Arc iGPU. ~10-30% faster than DirectML on Intel silicon (Intel-published benchmarks)."],
+    ["macOS Apple Silicon", "WinSTT_<version>_aarch64.dmg", "You have an M-series Mac. Intel macOS builds are not published in this alpha because the current native dependency stack does not provide the needed x86_64-apple-darwin prebuilts."],
+    ["Linux x64", ".AppImage / .deb / .rpm", "Use AppImage for a portable package, deb for Debian/Ubuntu-style systems, or rpm for Fedora/RHEL-style systems."],
+    ["Windows x64", "WinSTT.exe / WinSTT-portable.zip", "Use the executable for the normal Windows alpha, or the zip when you want to keep the app folder self-contained."],
   ]}
-  caption="The <ver> in each filename is the release tag (e.g. WinSTT-Portable-0.X.0.exe)."
+  caption="The app and model catalog are the same across platforms; packaging and available native accelerators differ by OS."
 />
 
-<Callout type="info" title="Not sure? Take DirectML.">
-  The default **WinSTT-Portable** (DirectML) build runs on every modern Windows GPU and
-  automatically falls back to CPU when no compatible GPU is present — so it's safe to
-  install anywhere. Only choose CPU if you specifically want the smallest download, or
-  OpenVINO if you're on Intel ARC / Iris Xe graphics.
-</Callout>
-
-No CUDA installer is shipped on Windows. On our workload DirectML is faster and ~10× lighter than CUDA — on an RTX 3080 Ti, DirectML runs whisper-tiny-q4 at **85 ms p50** versus CUDA's **120 ms p50**, while the installer is ~200 MB instead of ~2 GB. The CUDA path is reserved for a future Linux NVIDIA build.
-
-## Auto-fallback to CPU
-
-The GPU builds degrade gracefully. At startup the Rust backend probes the active execution provider, and if the requested GPU path isn't viable — no D3D12 GPU for DirectML, no Intel accelerator for OpenVINO — it silently falls back to CPU. You get a working app either way, so installing the DirectML build on a GPU-less machine is harmless.
-
-<Callout type="info" title="Force CPU manually">
-  You can pin CPU regardless of the installed build from the **Model** tab's Device
-  control (set it to **CPU**), which is useful on machines where the GPU driver is flaky.
-</Callout>
-
 ## System requirements
-
-All three builds share the same baseline; the GPU builds add an optional accelerator.
 
 <ModelTable
   head={["Requirement", "Minimum", "Notes"]}
   rows={[
-    ["OS", "Windows 10 1903+ or Windows 11", "64-bit. Older Windows 10 builds are unsupported."],
-    ["CPU", "64-bit x86 with AVX2", "Any modern Intel / AMD from ~2015 onward. AVX2 is required by ONNX Runtime."],
-    ["RAM", "4 GB", "For tiny / base Whisper. 8 GB+ for Whisper-Turbo or Parakeet."],
-    ["Disk", "~1 GB + ~500 MB per model", "Install footprint plus each downloaded model's weights."],
-    ["GPU (DirectML)", "Optional — any D3D12 GPU", "AMD / Intel / NVIDIA via DirectX 12. Falls back to CPU if absent."],
-    ["GPU (OpenVINO)", "Optional — Intel ARC / Iris Xe / Arc", "Tune the target with the OPENVINO_DEVICE env var (AUTO / GPU / GPU.0 / CPU; default AUTO)."],
+    ["macOS", "Apple Silicon Mac", "Current alpha publishes arm64 DMG only."],
+    ["Linux", "x86_64 desktop distro", "Use the AppImage, deb, or rpm package that best matches your system."],
+    ["Windows", "Windows 10 1903+ or Windows 11, x64", "The Windows build can use DirectML on D3D12-capable GPUs and falls back to CPU."],
+    ["CPU/RAM", "Modern 64-bit CPU, 4 GB RAM", "Tiny/base models are light; larger Whisper or NeMo models benefit from 8 GB+."],
+    ["Disk", "~1 GB + model cache", "The app includes a starter model; additional model downloads are cached locally."],
+    ["Microphone", "Any input device PortAudio can open", "Listen mode needs a loopback/monitor device for system audio."],
   ]}
 />
 
-<SettingRow label="Microphone" settingKey="">
-  Any input device PortAudio can open. For **Listen** mode you also need a loopback /
-  monitor device (e.g. VB-Audio Virtual Cable) so the app can capture system audio.
-</SettingRow>
-
-<Callout type="success" title="No Python, no accounts, no telemetry">
-  End users never install Python, uv, or any model files. STT and TTS run inside the
-  bundled Rust/Tauri executable. Models download on demand from the UI. Transcription
-  runs entirely on your machine; there are no usage analytics. (Anonymized crash reports via
-  Sentry are opt-out.)
-</Callout>
-
-## Install steps
+## Run it
 
 <StepFlow>
-  <Step title="Download the installer">
-    Grab the latest default Windows build:
-    <a href={latestWindowsDownloadUrl}>WinSTT.exe</a>.
-    For alternate builds and signatures, use the
-    <a href={latestReleaseUrl}>current alpha GitHub Release</a>.
+  <Step title="Download the package">
+    Use the direct links above, or open the
+    <a href={latestReleaseUrl}>current alpha GitHub Release</a> and pick the asset
+    for your platform.
   </Step>
-  <Step title="Verify the signature (recommended)">
-    Each `.exe` ships a [minisign](/docs/verify-releases) `.minisig` sidecar so you can
-    confirm the download offline, on top of the Authenticode signature Windows already
-    checks. See [Verify Release Signatures](/docs/verify-releases).
+  <Step title="Launch the app">
+    On macOS, open the DMG and launch WinSTT. On Linux, run the AppImage or install
+    the deb/rpm with your package manager. On Windows, run `WinSTT.exe` or unpack
+    `WinSTT-portable.zip` and launch the executable inside.
   </Step>
-  <Step title="Run it">
-    Double-click the `.exe`. It's portable — no install wizard, no admin rights needed for a
-    normal launch. WinSTT starts in the system tray.
+  <Step title="Handle first-run OS prompts">
+    Alpha packages may trigger platform trust prompts until signing and notarization
+    are fully wired for every OS. Only continue after you have confirmed the asset
+    came from the WinSTT GitHub Release.
   </Step>
-  <Step title="Onboard & pick a model">
-    On first launch you'll choose a microphone, a hotkey, and a model. The default model
-    downloads in the background; you can switch models any time from the **Model** tab
-    without a restart.
+  <Step title="Onboard and pick a model">
+    The first-run wizard asks for a microphone, a hotkey, and a local-vs-cloud
+    preference. The starter model is bundled, and additional models download from
+    the UI without restarting the app.
   </Step>
 </StepFlow>
 
-<Callout type="warn" title="SmartScreen on first run">
-  Windows SmartScreen may warn on a freshly released, low-reputation binary. Click
-  **More info → Run anyway** after you've verified the signature. The installers are
-  Authenticode-signed, and reputation builds up as more people download each release.
-</Callout>
+## Verification
 
-## Related
+The current alpha release publishes downloadable packages but not updater
+metadata or detached signature sidecars. For a byte-level check, compare the file's
+SHA-256 digest with the digest shown in the GitHub release asset metadata, or use the
+workflow run attached to the release as the build provenance.
 
 <Cards>
-  <Card title="Verify release signatures" href="/docs/verify-releases">
-    Confirm your download with the minisign sidecar and the bundled public key.
+  <Card title="Verify downloads" href="/docs/verify-releases">
+    Compare release asset digests and understand the current alpha signing status.
   </Card>
-  <Card title="Recording modes" href="/docs/recording-modes">
-    Push-to-talk, toggle, listen, and wake-word — and when to use each.
+  <Card title="Quick start" href="/docs/quick-start">
+    Finish onboarding and dictate your first sentence.
   </Card>
   <Card title="Choose a model" href="/docs/models">
     Browse 40+ STT models and pick the right accuracy/speed trade-off.

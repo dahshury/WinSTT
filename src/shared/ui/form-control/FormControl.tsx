@@ -2,6 +2,7 @@ import { Field } from "@base-ui/react/field";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { InfoTooltip } from "@/shared/ui/info-tooltip";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 type FormControlLayout = "stacked" | "row";
 
@@ -12,6 +13,8 @@ export interface FormControlProps {
 	className?: string | undefined;
 	/** Visually dim the label, caption, and children */
 	disabled?: boolean | undefined;
+	/** Tooltip anchored on the setting control itself, used for disabled reasons. */
+	controlTooltip?: ReactNode | undefined;
 	error?: string | undefined;
 	label?: string | undefined;
 	/** Element rendered inline next to the label (e.g. a toggle) */
@@ -84,10 +87,40 @@ function ErrorMessage({ error }: { error?: string | undefined }) {
 	);
 }
 
+function TooltipTarget({
+	block,
+	children,
+	disabled,
+	tooltip,
+}: {
+	block: boolean;
+	children: ReactNode;
+	disabled?: boolean | undefined;
+	tooltip?: ReactNode | undefined;
+}) {
+	const content = disabled ? (
+		<div className="pointer-events-none">{children}</div>
+	) : (
+		children
+	);
+	const target = (
+		<div
+			className={cn(
+				block ? "block w-full" : "inline-flex items-center",
+				disabled && "cursor-not-allowed",
+			)}
+		>
+			{content}
+		</div>
+	);
+	return tooltip ? <Tooltip content={tooltip}>{target}</Tooltip> : target;
+}
+
 export function FormControl({
 	label,
 	caption,
 	className,
+	controlTooltip,
 	error,
 	tooltip,
 	disabled,
@@ -98,9 +131,14 @@ export function FormControl({
 }: FormControlProps) {
 	const hasChildren = children !== undefined;
 	const controlBox = hasChildren ? (
-		<div className={disabled ? "pointer-events-none" : undefined}>
+		<TooltipTarget block disabled={disabled} tooltip={controlTooltip}>
 			{children}
-		</div>
+		</TooltipTarget>
+	) : null;
+	const addonBox = labelAddon ? (
+		<TooltipTarget block={false} disabled={disabled} tooltip={controlTooltip}>
+			{labelAddon}
+		</TooltipTarget>
 	) : null;
 
 	// "row" — a compact control (small switcher / number stepper) sits on the
@@ -123,8 +161,8 @@ export function FormControl({
 					<Caption caption={caption} />
 					<ErrorMessage error={error} />
 				</div>
-				{labelAddon ? (
-					<div className="flex shrink-0 items-center">{labelAddon}</div>
+				{addonBox ? (
+					<div className="flex shrink-0 items-center">{addonBox}</div>
 				) : null}
 				{controlBox ? <div className="shrink-0">{controlBox}</div> : null}
 			</Field.Root>
@@ -159,8 +197,8 @@ export function FormControl({
 					/>
 					<Caption caption={caption} />
 				</div>
-				{labelAddon ? (
-					<div className="flex shrink-0 items-center">{labelAddon}</div>
+				{addonBox ? (
+					<div className="flex shrink-0 items-center">{addonBox}</div>
 				) : null}
 			</div>
 			{controlBox ? <div className="mt-1">{controlBox}</div> : null}

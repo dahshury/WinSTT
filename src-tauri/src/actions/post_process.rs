@@ -306,10 +306,22 @@ fn has_winstt_dictation_model(settings: &WinsttSettings) -> bool {
     }
 }
 
+fn dictation_post_processing_enabled(settings: &WinsttSettings) -> bool {
+    settings.llm.dictation.enabled && settings.general.recording_mode != RecordingMode::Listen
+}
+
 fn should_run_winstt_dictation_llm(settings: &WinsttSettings) -> bool {
-    settings.llm.dictation.enabled
-        && settings.general.recording_mode != RecordingMode::Listen
-        && has_winstt_dictation_model(settings)
+    dictation_post_processing_enabled(settings) && has_winstt_dictation_model(settings)
+}
+
+fn should_run_legacy_post_process(
+    post_process: bool,
+    settings: &AppSettings,
+    winstt_settings: &WinsttSettings,
+) -> bool {
+    post_process
+        && settings.post_process_enabled
+        && dictation_post_processing_enabled(winstt_settings)
 }
 
 pub(super) fn should_run_winstt_dictation_llm_from_app(app: &AppHandle) -> bool {
@@ -478,8 +490,11 @@ pub(crate) async fn process_transcription_output(
 
     let settings = get_settings(app);
     let winstt_settings = crate::winstt::commands::settings::read_settings(app);
+    let dictation_post_processing = dictation_post_processing_enabled(&winstt_settings);
     let winstt_dictation_llm = should_run_winstt_dictation_llm(&winstt_settings);
-    let post_process_requested = post_process || winstt_dictation_llm;
+    let legacy_post_process =
+        should_run_legacy_post_process(post_process, &settings, &winstt_settings);
+    let post_process_requested = legacy_post_process || winstt_dictation_llm;
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
@@ -488,15 +503,17 @@ pub(crate) async fn process_transcription_output(
     let mut history_tag: Option<String> = None;
     let mut privacy_markers: Vec<String> = Vec::new();
 
-    // Source the language from the picker settings. In candidate mode, only a single selected
-    // Chinese script variant is strong enough to run OpenCC; multi-candidate auto must not.
-    if let Some(converted_text) = match chinese_variant_language(&winstt_settings.model) {
-        Some(selected_language) => {
-            maybe_convert_chinese_variant(selected_language, transcription).await
+    if dictation_post_processing {
+        // Source the language from the picker settings. In candidate mode, only a single selected
+        // Chinese script variant is strong enough to run OpenCC; multi-candidate auto must not.
+        if let Some(converted_text) = match chinese_variant_language(&winstt_settings.model) {
+            Some(selected_language) => {
+                maybe_convert_chinese_variant(selected_language, transcription).await
+            }
+            None => None,
+        } {
+            final_text = converted_text;
         }
-        None => None,
-    } {
-        final_text = converted_text;
     }
 
     if winstt_dictation_llm {
@@ -524,7 +541,7 @@ pub(crate) async fn process_transcription_output(
             }))
             .ok();
         }
-    } else if post_process {
+    } else if legacy_post_process {
         if let Some((processed_text, meta)) =
             post_process_transcription(app, &settings, &final_text).await
         {
@@ -551,18 +568,20 @@ pub(crate) async fn process_transcription_output(
         }
     }
 
-    if post_processed_text.is_none() && final_text != transcription {
-        post_processed_text = Some(final_text.clone());
-    }
-
-    // WinSTT snippet expansion: deterministic fuzzy trigger→expansion on the finalized
-    // text — the LAST step before paste (mirrors applyPostProcessing's replaceWithSnippets,
-    // after dictionary correction). Uses the warm in-memory cache; no-op when no snippets.
-    if let Some(snippets) = app.try_state::<Arc<crate::winstt::snippets::SnippetsManager>>() {
-        let expanded = snippets.expand_cached(&final_text);
-        if expanded != final_text {
-            final_text = expanded;
+    if dictation_post_processing {
+        if post_processed_text.is_none() && final_text != transcription {
             post_processed_text = Some(final_text.clone());
+        }
+
+        // WinSTT snippet expansion: deterministic fuzzy trigger→expansion on the finalized
+        // text — the LAST step before paste (mirrors applyPostProcessing's replaceWithSnippets,
+        // after dictionary correction). Uses the warm in-memory cache; no-op when no snippets.
+        if let Some(snippets) = app.try_state::<Arc<crate::winstt::snippets::SnippetsManager>>() {
+            let expanded = snippets.expand_cached(&final_text);
+            if expanded != final_text {
+                final_text = expanded;
+                post_processed_text = Some(final_text.clone());
+            }
         }
     }
 
@@ -575,5 +594,56 @@ pub(crate) async fn process_transcription_output(
         dictionary_fixes,
         history_tag,
         privacy_markers,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings_with_dictation_model(enabled: bool) -> WinsttSettings {
+        let mut settings = WinsttSettings::default();
+        settings.llm.dictation.enabled = enabled;
+        settings.llm.dictation.base.model = "qwen2.5:7b".into();
+        settings
+    }
+
+    #[test]
+    fn dictation_post_processing_toggle_is_the_master_gate() {
+        let mut settings = settings_with_dictation_model(false);
+        assert!(!dictation_post_processing_enabled(&settings));
+        assert!(!should_run_winstt_dictation_llm(&settings));
+
+        settings.llm.dictation.enabled = true;
+        assert!(dictation_post_processing_enabled(&settings));
+        assert!(should_run_winstt_dictation_llm(&settings));
+
+        settings.general.recording_mode = RecordingMode::Listen;
+        assert!(!dictation_post_processing_enabled(&settings));
+        assert!(!should_run_winstt_dictation_llm(&settings));
+    }
+
+    #[test]
+    fn missing_model_keeps_llm_off_even_when_toggle_is_on() {
+        let mut settings = WinsttSettings::default();
+        settings.llm.dictation.enabled = true;
+
+        assert!(dictation_post_processing_enabled(&settings));
+        assert!(!should_run_winstt_dictation_llm(&settings));
+    }
+
+    #[test]
+    fn legacy_post_process_cannot_bypass_dictation_toggle() {
+        let mut core = crate::settings::get_default_settings();
+        core.post_process_enabled = true;
+        let mut winstt = settings_with_dictation_model(false);
+
+        assert!(!should_run_legacy_post_process(true, &core, &winstt));
+
+        winstt.llm.dictation.enabled = true;
+        assert!(should_run_legacy_post_process(true, &core, &winstt));
+
+        core.post_process_enabled = false;
+        assert!(!should_run_legacy_post_process(true, &core, &winstt));
     }
 }

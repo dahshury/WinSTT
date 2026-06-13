@@ -119,8 +119,9 @@ fetch (`hf-hub`) that verifies sharded `.onnx_data` completeness and caches per-
 
 ### Device policy (`ort`)
 
-WinSTT ships **one binary with both CPU and DirectML** execution providers and picks per
-`EngineKind` rather than blanket-excluding families:
+WinSTT's Windows build ships both CPU and DirectML execution providers and picks per
+`EngineKind` rather than blanket-excluding families. Other platform builds use the
+providers bundled for that target and keep CPU as the fallback:
 
 <Callout type="info" title="Per-engine, not per-family">
   Some encoders crash on DirectML's reshape (Canary/Cohere/Kaldi/SenseVoice/Dolphin → forced
@@ -167,7 +168,7 @@ taking down the worker.
 | Crate | Role |
 |-------|------|
 | `tauri` 2.10 + `tauri-specta` | app framework + typed command/event bindings |
-| `ort` 2.0 (rc) | ONNX Runtime — DirectML on Windows, CoreML on macOS |
+| `ort` 2.0 (rc) | ONNX Runtime — CPU fallback plus platform/build-specific EPs |
 | `hf-hub` | HuggingFace model resolver + download |
 | `cpal` / `rubato` / `rustfft` | audio capture / resampling / spectrum |
 | `vad-rs` (Silero) | voice-activity detection |

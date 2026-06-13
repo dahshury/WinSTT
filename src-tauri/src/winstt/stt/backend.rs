@@ -292,8 +292,13 @@ impl SttBackend for WinsttSttBackend {
             local_dir: None,
             local_files_only: true,
         };
-        let resolved = tauri::async_runtime::block_on(resolver::resolve(&req))
-            .map_err(|e| anyhow::anyhow!("resolve {}: {}", model_id, e))?;
+        let resolve_result = if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| tauri::async_runtime::block_on(resolver::resolve(&req)))
+        } else {
+            tauri::async_runtime::block_on(resolver::resolve(&req))
+        };
+        let resolved =
+            resolve_result.map_err(|e| anyhow::anyhow!("resolve {}: {}", model_id, e))?;
 
         let whisper_fp16_workaround =
             matches!(entry.family, crate::winstt::catalog::Family::Whisper)
@@ -625,6 +630,10 @@ pub(crate) fn winstt_postprocess(
     text: &str,
     ws: &crate::winstt::settings_schema::WinsttSettings,
 ) -> String {
+    if !dictation_post_processing_enabled(ws) {
+        return text.to_string();
+    }
+
     let custom_words: Vec<String> = ws
         .dictionary
         .iter()
@@ -639,9 +648,15 @@ pub(crate) fn winstt_postprocess(
     apply_deterministic_formatting(&corrected, ws)
 }
 
+fn dictation_post_processing_enabled(ws: &crate::winstt::settings_schema::WinsttSettings) -> bool {
+    ws.llm.dictation.enabled
+        && ws.general.recording_mode != crate::winstt::settings_schema::RecordingMode::Listen
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::winstt::settings_schema::{DictionaryEntry, RecordingMode, WinsttSettings};
 
     #[test]
     fn winstt_language_normalizes_to_engine_wire_form() {
@@ -717,5 +732,46 @@ mod tests {
         model.language.clear();
         assert_eq!(model_language_options(&model), (None, Vec::new()));
         assert_eq!(fixed_realtime_language_from_model(&model), None);
+    }
+
+    fn postprocess_settings(enabled: bool) -> WinsttSettings {
+        let mut ws = WinsttSettings::default();
+        ws.llm.dictation.enabled = enabled;
+        ws.dictionary.push(DictionaryEntry {
+            id: "hello".to_string(),
+            term: "Hello".to_string(),
+            auto_added: None,
+            replacement: None,
+        });
+        ws.quality.format_spoken_punctuation_commands = true;
+        ws
+    }
+
+    #[test]
+    fn winstt_postprocess_respects_dictation_toggle_as_master_gate() {
+        let ws = postprocess_settings(false);
+
+        assert_eq!(
+            winstt_postprocess("hello comma world", &ws),
+            "hello comma world"
+        );
+    }
+
+    #[test]
+    fn winstt_postprocess_runs_when_dictation_toggle_is_enabled() {
+        let ws = postprocess_settings(true);
+
+        assert_eq!(winstt_postprocess("hello comma world", &ws), "Hello, world");
+    }
+
+    #[test]
+    fn winstt_postprocess_skips_listen_mode_even_when_enabled() {
+        let mut ws = postprocess_settings(true);
+        ws.general.recording_mode = RecordingMode::Listen;
+
+        assert_eq!(
+            winstt_postprocess("hello comma world", &ws),
+            "hello comma world"
+        );
     }
 }

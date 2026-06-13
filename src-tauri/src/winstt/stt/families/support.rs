@@ -328,6 +328,34 @@ pub(super) fn static_input_dim(session: &Session, name: &str, axis: usize) -> Op
         .map(|d| d as usize)
 }
 
+/// Read an input tensor shape, replacing dynamic/unknown dimensions with `dynamic_fallback`.
+pub(super) fn input_shape_or(
+    session: &Session,
+    name: &str,
+    dynamic_fallback: usize,
+) -> Option<Vec<usize>> {
+    session
+        .inputs()
+        .iter()
+        .find(|i| i.name() == name)
+        .and_then(|i| i.dtype().tensor_shape())
+        .map(|shape| {
+            shape
+                .iter()
+                .map(|&d| if d > 0 { d as usize } else { dynamic_fallback })
+                .collect()
+        })
+}
+
+pub(super) fn input_is_i64(session: &Session, name: &str) -> bool {
+    session
+        .inputs()
+        .iter()
+        .find(|i| i.name() == name)
+        .and_then(|i| i.dtype().tensor_type())
+        .is_some_and(|ty| matches!(ty, ort::value::TensorElementType::Int64))
+}
+
 /// Input/output node names. Uses the `inputs()`/`outputs()` methods + `.name` field.
 pub(super) fn node_input_names(session: &Session) -> Vec<String> {
     session

@@ -1,5 +1,7 @@
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+import { buildModelSearchCorpus } from "./family-metadata";
 
 export interface SttFilterState {
 	cachedOnly: boolean;
@@ -61,12 +63,7 @@ export function collectFilterableLanguages(
 }
 
 function modelMatchesSearch(m: ModelInfo, query: string): boolean {
-	if (!query) {
-		return true;
-	}
-	const haystack =
-		`${m.displayName} ${m.id} ${m.family} ${m.sizeLabel}`.toLowerCase();
-	return haystack.includes(query);
+	return matchesFuzzySearch(buildModelSearchCorpus(m), query);
 }
 
 function hasGpu(sys: SystemInfoEntry | null): boolean {

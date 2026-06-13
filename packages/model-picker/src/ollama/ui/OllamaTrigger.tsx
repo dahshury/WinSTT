@@ -44,14 +44,12 @@ function SelectedTriggerContent({ model }: { model: OllamaModel }) {
 	);
 }
 
-// Flat muted surface — calmed off the old "glass" (white inset highlight +
-// white ring + bright hover ring). The trigger now reads as a flat surface step
-// (surface-3 over the popup) with a neutral hairline border + soft depth shadow,
-// matching the fluidfunctionalism grayscale base. The single accent moments are
-// restrained and state-only: the open-state accent ring + the accent hairline
-// (rendered in the JSX) + the accent pull-progress strip.
+// Match the STT/OpenRouter selector shell: theme-token vertical gradient,
+// inset hairline ring, tinted depth shadow, and a restrained accent ring only
+// while open or switching. Keeping the material identical prevents the
+// Processing tab picker from blending into the settings background.
 const OLLAMA_TRIGGER_GLASS_CLASSES =
-	"group relative flex h-auto min-h-[3.25rem] w-full items-center justify-between gap-2 overflow-hidden rounded-lg border border-border bg-surface-3 px-3 py-2 text-left shadow-surface-2 transition-[transform,border-color,background-color,box-shadow] duration-150 ease-out hover:border-border-hover hover:bg-surface-4 hover:shadow-surface-3 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:border-accent/55 data-[state=open]:bg-accent/[0.06] data-[state=open]:ring-1 data-[state=open]:ring-accent/25";
+	"group relative flex h-auto min-h-[3.25rem] w-full items-center justify-between gap-2 overflow-hidden rounded-lg bg-gradient-to-b from-[var(--color-surface-3)]/85 to-[var(--color-surface-2)]/95 px-3 py-2 text-left shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06),0_2px_6px_-3px_rgba(2,3,8,0.55)] ring-1 ring-white/[0.07] ring-inset transition-[transform,background-color,box-shadow] duration-150 ease-out hover:from-[var(--color-surface-4)]/85 hover:to-[var(--color-surface-3)]/95 hover:ring-white/[0.13] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:from-[oklch(62%_0.19_260/0.10)] data-[state=open]:to-[var(--color-surface-2)]/95 data-[state=open]:ring-accent/40";
 
 /** Pick the most-progressed active pull as the one to surface on the trigger.
  *  When multiple pulls run concurrently this keeps the visible bar moving

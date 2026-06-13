@@ -14,6 +14,7 @@ import {
 } from "@tanstack/react-table";
 import { type Dispatch, type SetStateAction, useState } from "react";
 import { cn } from "@/shared/lib/cn";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { CrudEditableCell } from "./CrudRow";
 import { RowSelectionCheckbox } from "./RowSelectionCheckbox";
 import type { CrudColumn, CrudField } from "./types";
@@ -79,7 +80,7 @@ export function useCrudGrid<TEntry, TAdd>({
 		}
 		const raw = row.getValue(columnId);
 		const haystack = typeof raw === "string" ? raw : String(raw ?? "");
-		return haystack.toLowerCase().includes(String(filterValue).toLowerCase());
+		return matchesFuzzySearch(haystack, String(filterValue));
 	};
 
 	const columnDefs: ColumnDef<TEntry>[] = [

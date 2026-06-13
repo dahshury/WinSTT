@@ -79,7 +79,8 @@ app refuses the clipboard.
   </Step>
   <Step title="Per-character injection (fallback)">
     If an app blocks programmatic paste, WinSTT types the text
-    character-by-character via Windows Unicode key events (`KEYEVENTF_UNICODE`).
+    character-by-character through the platform's synthetic text-input path.
+    On Windows, that path uses Unicode key events (`KEYEVENTF_UNICODE`).
     Slower, but it works in fields that reject <Combo keys="Ctrl+V" />.
   </Step>
 </StepFlow>
@@ -151,8 +152,8 @@ On the dictation path it also reads the text immediately **before and after** yo
   settingKey="general.contextAwareness"
   default="false"
 >
-  Reads focused-window text via Windows accessibility APIs immediately before
-  each dictation and includes it in the LLM cleanup prompt. Off by default — the
+  Reads focused-window text through the platform's accessibility APIs immediately
+  before each dictation and includes it in the LLM cleanup prompt. Off by default — the
   in-app dialog requires explicit opt-in, since it can read emails, chats,
   editors, and browsers.
 </SettingRow>

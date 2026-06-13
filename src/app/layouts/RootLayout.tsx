@@ -2,6 +2,9 @@ import { Tooltip } from "@base-ui/react/tooltip";
 import { domAnimation, LazyMotion, m, MotionConfig } from "motion/react";
 import type { ReactNode } from "react";
 import { useSettingsStore } from "@/entities/setting";
+import { useTranscriptionStore } from "@/entities/transcription";
+import { useVisualizerStore } from "@/features/audio-visualizer";
+import { shouldUseListenSurface } from "@/features/listen-mode";
 import { CloudKeyRevertNotice } from "@/features/revert-cloud-on-key-removal";
 import { CloudSttErrorToasts } from "@/features/show-cloud-stt-errors";
 import { SwapFailureToast } from "@/features/swap-notifications";
@@ -14,6 +17,17 @@ import { TitleBar } from "./TitleBar";
 export function RootLayout({ children }: { children: ReactNode }) {
 	const isListenMode =
 		useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
+	const audioLevel = useVisualizerStore((s) => s.audioLevel);
+	const isSpeaking = useVisualizerStore((s) => s.isSpeaking);
+	const liveText = useTranscriptionStore((s) => s.currentRealtime);
+	const hasEphemeral = useTranscriptionStore((s) => s.ephemeral !== null);
+	const listenSurfaceActive = shouldUseListenSurface({
+		audioLevel,
+		hasEphemeral,
+		isListenMode,
+		isSpeaking,
+		liveText,
+	});
 
 	return (
 		<IntlProvider>
@@ -31,7 +45,7 @@ export function RootLayout({ children }: { children: ReactNode }) {
 									initial={{ opacity: 0, y: 6, filter: "blur(2px)" }}
 									transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
 								>
-									{!isListenMode && <TitleBar />}
+									{!listenSurfaceActive && <TitleBar />}
 									<main className="flex-1 overflow-hidden">{children}</main>
 									<TransformToast />
 									<SwapFailureToast />

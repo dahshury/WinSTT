@@ -535,15 +535,16 @@ fn load_unicode_indexer(path: &Path) -> SupertonicResult<Vec<i64>> {
 }
 
 fn build_session(path: &Path) -> SupertonicResult<ort::session::Session> {
-    use ort::execution_providers::{CPUExecutionProvider, ExecutionProviderDispatch};
-    let dispatch: Vec<ExecutionProviderDispatch> = vec![CPUExecutionProvider::default().build()];
-    let mut builder = ort::session::Session::builder()
-        .map_err(|e| SupertonicError::Session(format!("session builder: {e}")))?
-        .with_execution_providers(dispatch)
-        .map_err(|e| SupertonicError::Session(format!("register EPs: {e}")))?;
-    builder
-        .commit_from_file(path)
-        .map_err(|e| SupertonicError::Session(format!("commit_from_file {}: {e}", path.display())))
+    let (session, _) = super::provider::build_session(
+        path,
+        super::types::TtsDevice::Cpu,
+        super::provider::TtsOrtProviderPolicy::CpuOnly {
+            reason: "Supertonic DirectML policy is not validated yet",
+        },
+        "Supertonic",
+    )
+    .map_err(SupertonicError::Session)?;
+    Ok(session)
 }
 
 fn output_names(s: &ort::session::Session) -> Vec<String> {

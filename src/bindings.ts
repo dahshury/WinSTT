@@ -380,6 +380,33 @@ async winsttSetSettings(settings: PartialWinsttSettings) : Promise<Result<SetSet
 }
 },
 /**
+ * `settings_export_full` — save a JSON backup of the complete settings tree.
+ * API keys and legacy post-process secrets are represented only by the standard
+ * secret-present sentinel, never by plaintext values.
+ */
+async settingsExportFull() : Promise<Result<SettingsExportResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_export_full") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `settings_import_full` — pick a JSON settings backup, reconcile unavailable
+ * model/provider preferences for this machine, then persist through the normal
+ * settings path so runtime side effects and settings:changed broadcasts match
+ * an ordinary Settings save.
+ */
+async settingsImportFull() : Promise<Result<SettingsImportResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_import_full") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * `stt_list_models` — the full 65-model RICH catalog (editorial fields the picker renders:
  * backend / languages / description / size_label / per-quant byte sizes / accuracy+speed scores).
  * Backed by the embedded `catalog_data.json` (see `catalog_data.rs`); the per-device quant set is
@@ -1209,6 +1236,9 @@ async loopbackListDevices() : Promise<LoopbackDevicePayload[]> {
 async contextListApps() : Promise<ContextAppEntry[]> {
     return await TAURI_INVOKE("context_list_apps");
 },
+async contextListWindows() : Promise<ContextWindowEntry[]> {
+    return await TAURI_INVOKE("context_list_windows");
+},
 /**
  * `tts_set_speed` — set the read-aloud speed from the pill's speed control.
  * Applies to the active read's upcoming sentences (next-sentence, natural pitch)
@@ -1697,6 +1727,13 @@ async contextPlaygroundCapture(deep: boolean) : Promise<ContextDebugReport> {
     return await TAURI_INVOKE("context_playground_capture", { deep });
 },
 /**
+ * One-shot capture against a specific top-level HWND. This lets the context
+ * harness target a Chrome window without bringing it to the OS foreground.
+ */
+async contextPlaygroundCaptureHwnd(hwnd: string, deep: boolean) : Promise<ContextDebugReport> {
+    return await TAURI_INVOKE("context_playground_capture_hwnd", { hwnd, deep });
+},
+/**
  * `winstt_diag` — webview → backend log bridge. The secondary windows (settings /
  * model-picker / …) are separate webviews whose console + uncaught errors are
  * invisible to the Rust log, so a blank/non-rendering window leaves no trace. The
@@ -2129,6 +2166,11 @@ export type ContextModeResult = { durationMs: number;
  */
 mode: string; ok: boolean; snapshot: ContextSnapshotView }
 export type ContextSnapshotView = { appExe?: string | null; axHtml?: string | null; elementName: string; focusedText: string; ocrText?: string | null; textAfter?: string | null; textBefore?: string | null; url?: string | null; windowTitle: string }
+/**
+ * One visible top-level window that can be targeted by HWND-scoped context
+ * capture in debug/harness workflows.
+ */
+export type ContextWindowEntry = { hwnd: string; processId: number; label: string; exe: string; title: string }
 /**
  * `customModifierSchema` — user-authored cleanup modifier. Persists the full
  * definition even while `enabled` is false so the authored name/prompt survives
@@ -2900,6 +2942,9 @@ export type SecretMap = Partial<{ [key in string]: string }>
  * compatibility; the Rust port applies these changes in-process.
  */
 export type SetSettingsResult = { needsRestart: boolean; changedStartupKeys: string[] }
+export type SettingsExportResult = { ok: boolean; cancelled?: boolean | null; error?: string | null; path?: string | null }
+export type SettingsImportResult = { ok: boolean; cancelled?: boolean | null; error?: string | null; path?: string | null; restored: SettingsRestoreItem[]; adjusted: SettingsRestoreItem[] }
+export type SettingsRestoreItem = { area: string; status: string; message: string }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 /**
  * `snippetEntrySchema` — text-expansion pair.

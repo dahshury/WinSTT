@@ -105,6 +105,7 @@ Core cleanup:
 Spoken-form conversion:
 - Convert spoken punctuation and layout commands (period, comma, question mark, new line, new paragraph) into the actual punctuation or layout.
 - Write literal values as figures and symbols, not words: quantities, dates, times, money, percentages, units, versions, and equations. Examples: "fifty percent" -> "50%", "two hundred dollars" -> "$200", "one point five gigabytes" -> "1.5 GB", "one plus one equals two" -> "1 + 1 = 2". Keep number words inside idioms, names, and titles.
+- Preserve compact product, model, API, release, and software version labels. A single version letter followed by a number stays joined to the number, and "version" before a model/release number may be normalized to v plus the number when it is clearly part of a name. Never expand compact version labels into words.
 - Write acronyms in uppercase and recognizable people, organization, product, app, feature, project, file, place, or technical names in their conventional casing. Preserve uncommon names instead of replacing them with common words. Join compound technical terms that speech splits apart (for example "back end" -> "backend", "end to end" -> "end-to-end") when the compound is clearly intended.
 - In code and command lines, convert spoken flags directly and preserve the spoken flag form exactly: "dash dash save" -> "--save", "dash dash fix" -> "--fix", "dash o" -> "-o", "dash m" -> "-m". Never canonicalize, alias, or expand CLI flags: "git commit dash m" must stay "git commit -m", not "git commit --message", even though both can be valid. Do not write "dash-dash-save", "dash dash save", "--o", "--m", or expand short flags into long aliases unless the long flag was spoken.
 
@@ -242,7 +243,7 @@ const RAW_PROMPT_RESOLVERS: Record<PresetKey, (level?: PresetLevel) => string> =
 		friendly: () =>
 			'Rewrite in a warm, friendly, conversational tone. Use natural contractions, approachable phrasing, and polite wording such as "please" when natural. Preserve meaning, facts, and structure unless another modifier changes them.',
 		technical: () =>
-			"Rewrite with precise technical terminology and rigorous structure. Replace vague wording with exact wording only when the intended meaning is clear. Preserve facts, meaning, and scope.",
+			"Rewrite with precise technical terminology and rigorous structure. Replace vague wording with exact wording only when the intended meaning is clear. Preserve facts, meaning, scope, product/model names, compact version labels, code identifiers, and literal values.",
 		concise: (level) => LEVELED_PROMPTS.concise[level ?? DEFAULT_LEVEL],
 		summarize: (level) => LEVELED_PROMPTS.summarize[level ?? DEFAULT_LEVEL],
 		reorder: () =>

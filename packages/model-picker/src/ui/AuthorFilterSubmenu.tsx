@@ -63,6 +63,7 @@ export function AuthorFilterSubmenu({
 			</DropdownMenuSubTrigger>
 			<DropdownMenuSubContent className="w-64 p-0">
 				<Combobox.Root
+					filter={null}
 					inline
 					items={filtered}
 					limit={AUTHOR_RENDER_LIMIT}

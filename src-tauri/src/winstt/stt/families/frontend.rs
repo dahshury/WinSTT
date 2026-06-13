@@ -581,6 +581,14 @@ pub fn build_nemo_mel_filterbank(n_mels: usize) -> Array2<f32> {
 /// NeMo featurizer → `(T, 128)` per-feature-normalized log-mel (T = `samples.len()/hop`, the
 /// model's `features_lens`). The engine transposes to `(1, 128, T)` for `audio_signal`.
 pub fn nemo_features(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32> {
+    nemo_features_with_normalization(samples, fbanks, "per_feature")
+}
+
+pub fn nemo_features_with_normalization(
+    samples: &[f32],
+    fbanks: &Array2<f32>,
+    normalize_type: &str,
+) -> Array2<f32> {
     use std::f32::consts::PI;
     let n_mels = fbanks.ncols(); // 80 or 128 — whatever the model declared
     let n = samples.len();
@@ -632,26 +640,30 @@ pub fn nemo_features(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32> {
         });
     let mut log_mel = Array2::from_shape_vec((num_frames, n_mels), out_flat)
         .expect("nemo_features log-mel shape (num_frames, n_mels) matches out_flat len");
-    // 5. per-feature (per mel bin) normalization over time: (x-mean)/(sqrt(unbiased var)+1e-5).
-    for m in 0..n_mels {
-        let mut mean = 0f32;
-        for t in 0..num_frames {
-            mean += log_mel[[t, m]];
-        }
-        mean /= num_frames as f32;
-        let mut var = 0f32;
-        for t in 0..num_frames {
-            let d = log_mel[[t, m]] - mean;
-            var += d * d;
-        }
-        let denom = if num_frames > 1 {
-            (num_frames - 1) as f32
-        } else {
-            1.0
-        };
-        let std = (var / denom).sqrt() + 1e-5;
-        for t in 0..num_frames {
-            log_mel[[t, m]] = (log_mel[[t, m]] - mean) / std;
+    // 5. Optional per-feature (per mel bin) normalization over time:
+    //    (x-mean)/(sqrt(unbiased var)+1e-5). Offline NeMo exports use this path; sherpa streaming
+    //    Nemotron/FastConformer exports leave normalize_type empty and expect raw log-mel frames.
+    if normalize_type == "per_feature" {
+        for m in 0..n_mels {
+            let mut mean = 0f32;
+            for t in 0..num_frames {
+                mean += log_mel[[t, m]];
+            }
+            mean /= num_frames as f32;
+            let mut var = 0f32;
+            for t in 0..num_frames {
+                let d = log_mel[[t, m]] - mean;
+                var += d * d;
+            }
+            let denom = if num_frames > 1 {
+                (num_frames - 1) as f32
+            } else {
+                1.0
+            };
+            let std = (var / denom).sqrt() + 1e-5;
+            for t in 0..num_frames {
+                log_mel[[t, m]] = (log_mel[[t, m]] - mean) / std;
+            }
         }
     }
     log_mel

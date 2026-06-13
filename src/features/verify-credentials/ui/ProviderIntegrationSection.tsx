@@ -24,7 +24,7 @@ import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Spinner } from "@/shared/ui/spinner";
-import { PasswordField } from "@/shared/ui/text-field";
+import { PasswordField, StoredSecretField } from "@/shared/ui/text-field";
 
 interface ProviderIntegrationSectionProps {
 	keyCaption: string;
@@ -80,11 +80,12 @@ export function ProviderIntegrationSection({
 	const chipLevel = Math.min(useSurface() + 1, 8);
 
 	const [dialogOpen, setDialogOpen] = useState(false);
-	// The persisted key is the single source of truth — every keystroke
-	// writes through to the zustand store via `updateIntegrations`, so
-	// reading `persistedApiKey` directly during render is equivalent to a
-	// mirrored local state but without the setState-in-effect waterfall.
-	const localKey = persistedApiKey;
+	// Every keystroke still writes through to Zustand, but the input keeps a
+	// focused draft so a backend sentinel broadcast cannot replace text while the
+	// user is still typing. Once editing ends, a non-empty key is locked until it
+	// is explicitly removed.
+	const [draftApiKey, setDraftApiKey] = useState("");
+	const [editingApiKey, setEditingApiKey] = useState(false);
 	const debounceRef = useRef<number | null>(null);
 	const reqIdRef = useRef(0);
 
@@ -165,6 +166,8 @@ export function ProviderIntegrationSection({
 		// Persist on every keystroke. The verify probe scheduled below only
 		// drives the status pill (and verified/lastVerifiedAt metadata) — it
 		// never gates persistence, so a quick tab switch can't lose the key.
+		setDraftApiKey(value);
+		setEditingApiKey(true);
 		updateIntegrations({
 			[provider]: { apiKey: value, verified: null, lastVerifiedAt: null },
 		});
@@ -190,6 +193,8 @@ export function ProviderIntegrationSection({
 			setDialogOpen(true);
 			return;
 		}
+		setDraftApiKey("");
+		setEditingApiKey(false);
 		updateIntegrations({
 			[provider]: { apiKey: "", verified: null, lastVerifiedAt: null },
 		});
@@ -197,14 +202,23 @@ export function ProviderIntegrationSection({
 	};
 
 	const confirmRemoveApiKey = () => {
+		setDraftApiKey("");
+		setEditingApiKey(false);
 		updateIntegrations({
 			[provider]: { apiKey: "", verified: null, lastVerifiedAt: null },
 		});
 		useCredentialStatusStore.getState().setStatus(provider, { status: "idle" });
 	};
 
-	const hasLocalKey = localKey.trim().length > 0;
-	const pill = renderStatusPill({ apiKey: localKey, chipLevel, status, t });
+	const hasLocalKey = persistedApiKey.trim().length > 0;
+	const keyLocked = hasLocalKey && !editingApiKey;
+	const editableApiKey = editingApiKey ? draftApiKey : persistedApiKey;
+	const pill = renderStatusPill({
+		apiKey: persistedApiKey,
+		chipLevel,
+		status,
+		t,
+	});
 	const apiKeyUrl = getApiKeyUrl(provider);
 
 	return (
@@ -214,43 +228,45 @@ export function ProviderIntegrationSection({
 				labelTrailing={
 					<div className="flex items-center gap-2">
 						{pill}
-						{!hasLocalKey && (
-							<BaseButton
-								className="text-foreground-muted text-xs underline-offset-2 hover:text-foreground-secondary hover:underline"
-								onClick={() => window.open(apiKeyUrl, "_blank")}
-								type="button"
-							>
-								{t("getApiKey")}
-							</BaseButton>
-						)}
+						<BaseButton
+							className="text-foreground-muted text-xs underline-offset-2 hover:text-foreground-secondary hover:underline"
+							onClick={
+								hasLocalKey
+									? requestRemoveApiKey
+									: () => window.open(apiKeyUrl, "_blank")
+							}
+							type="button"
+						>
+							{hasLocalKey ? t("removeKey") : t("getApiKey")}
+						</BaseButton>
 					</div>
 				}
 				tooltip={keyCaption}
 			>
 				<div className="flex flex-col gap-2">
 					<ElevatedSurface inline>
-						<PasswordField
-							hideLabel={tc("hidePassword")}
-							onChange={(e) => handleApiKeyType(e.target.value)}
-							placeholder={placeholder}
-							revealLabel={tc("showPassword")}
-							value={localKey}
-						/>
+						{keyLocked ? (
+							<StoredSecretField aria-label={keyLabel} placeholder={placeholder} />
+						) : (
+							<PasswordField
+								hideLabel={tc("hidePassword")}
+								onBlur={(event) => {
+									const next = event.relatedTarget;
+									if (
+										next &&
+										event.currentTarget.parentElement?.contains(next as Node)
+									) {
+										return;
+									}
+									setEditingApiKey(false);
+								}}
+								onChange={(e) => handleApiKeyType(e.target.value)}
+								placeholder={placeholder}
+								revealLabel={tc("showPassword")}
+								value={editableApiKey}
+							/>
+						)}
 					</ElevatedSurface>
-					{hasLocalKey && (
-						<div className="flex items-center justify-end gap-2">
-							<BaseButton
-								className={cn(
-									"rounded border border-border px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated",
-									surfaceBg(chipLevel),
-								)}
-								onClick={requestRemoveApiKey}
-								type="button"
-							>
-								{t("removeKey")}
-							</BaseButton>
-						</div>
-					)}
 				</div>
 			</FormControl>
 			<ConfirmDialog

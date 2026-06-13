@@ -104,6 +104,30 @@ describe("ModelPicker popup animation", () => {
 		expect(screen.getByTestId("heavy-list")).toBeDefined();
 	});
 
+	test("focuses the search input when opened from the trigger", () => {
+		const { rerender } = renderPicker(false);
+		const trigger = screen.getByRole("button", { name: "Open" });
+		trigger.focus();
+
+		rerender(
+			<ModelPicker
+				items={["tiny"]}
+				list={<div data-testid="heavy-list">Heavy list</div>}
+				open
+				searchPlaceholder="Search models"
+				trigger={<button type="button">Open</button>}
+				value="tiny"
+			/>,
+		);
+
+		const search = screen.getByPlaceholderText("Search models");
+
+		expect(document.activeElement).toBe(search);
+		expect(search.parentElement?.className).not.toContain(
+			"focus-within:ring-accent",
+		);
+	});
+
 	test("keeps warmed popup content mounted across close and reopen", () => {
 		const { rerender } = renderPicker(true);
 

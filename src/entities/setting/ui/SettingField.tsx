@@ -19,12 +19,12 @@ export interface SettingFieldProps {
 	/** Dim + make the control non-interactive (e.g. gated by a parent toggle). */
 	disabled?: boolean;
 	/**
-	 * Name of the setting this one depends on. When `disabled` and a `tooltip`
-	 * are both present, the localized "(disabled because …)" suffix
-	 * (`settings.disabledReason`) is appended to the tooltip so the control
-	 * stays discoverable while explaining why it is inert.
+	 * Name of the setting this one depends on. When `disabled`, the localized
+	 * `settings.disabledReason` message is shown on the setting control itself.
 	 */
 	disabledReason?: string;
+	/** Exact disabled explanation shown on the setting control itself. */
+	disabledTooltip?: string | undefined;
 	/**
 	 * Explicit "currently at the schema default" flag. Use for derived
 	 * comparisons that `value`/`defaultValue` can't express. Takes precedence
@@ -56,7 +56,7 @@ export interface SettingFieldProps {
  *
  * 1. the per-setting "reset to default" button — wired from `value`/
  *    `defaultValue` (or an explicit `isDefault`) + `onReset`; and
- * 2. the "(disabled because X)" tooltip suffix — appended automatically when
+ * 2. the disabled-reason tooltip, shown on the setting control itself when
  *    `disabled` + `disabledReason` are set.
  *
  * Everything else (label, caption, tooltip, layout, a `labelAddon` toggle)
@@ -69,6 +69,7 @@ export function SettingField({
 	defaultValue,
 	disabled,
 	disabledReason,
+	disabledTooltip,
 	isDefault,
 	label,
 	labelAddon,
@@ -85,15 +86,17 @@ export function SettingField({
 		(defaultValue !== undefined ? Object.is(value, defaultValue) : true);
 	const showReset = onReset !== undefined && !hideReset;
 
-	const effectiveTooltip =
-		tooltip && disabled && disabledReason
-			? `${tooltip} ${ts("disabledReason", { name: disabledReason })}`
-			: tooltip;
+	const controlTooltip =
+		disabledTooltip ??
+		(disabled && disabledReason
+			? ts("disabledReason", { name: disabledReason })
+			: undefined);
 
 	return (
 		<FormControl
 			caption={caption}
 			className={className}
+			controlTooltip={controlTooltip}
 			disabled={disabled}
 			label={label}
 			labelAddon={labelAddon}
@@ -103,7 +106,7 @@ export function SettingField({
 				) : undefined
 			}
 			layout={layout}
-			tooltip={effectiveTooltip}
+			tooltip={tooltip}
 		>
 			{children}
 		</FormControl>

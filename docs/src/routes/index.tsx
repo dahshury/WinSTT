@@ -5,7 +5,7 @@ import { AppMock } from "@/components/app-mock";
 import { MediaGrid, Screenshot } from "@/components/docs-ui";
 import { baseOptions } from "@/lib/layout.shared";
 import {
-  latestWindowsDownloadUrl,
+  latestDownloadReleaseUrl,
   repositoryUrl,
   withBasePath,
 } from "@/lib/site";
@@ -107,9 +107,9 @@ const features = [
         <path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3" />
       </svg>
     ),
-    title: "CPU, DirectML, or OpenVINO",
+    title: "Platform-Native Packages",
     description:
-      "Three portable installers. Each bundles its matching ONNX Runtime and falls back to CPU automatically when no accelerator is present.",
+      "Download a macOS Apple Silicon DMG, Linux AppImage/deb/rpm packages, or Windows portable builds from the same release.",
     href: "/docs/install",
   },
   {
@@ -373,15 +373,7 @@ function HomePage() {
           />
 
           <div className="relative mb-10">
-            <div
-              className="relative z-10 p-4 rounded-[28px]"
-              style={{
-                background: "oklch(62% 0.19 260 /0.06)",
-                border: "1px solid oklch(62% 0.19 260 /0.2)",
-                boxShadow:
-                  "inset 0 1px 0 0 oklch(100% 0 0 / 0.06), 0 20px 60px -20px oklch(0% 0 0 / 0.6)",
-              }}
-            >
+            <div className="relative z-10">
               <img
                 src={appIconUrl}
                 width={168}
@@ -416,10 +408,11 @@ function HomePage() {
             className="text-lg max-w-xl text-center leading-relaxed"
             style={{ color: "oklch(94% 0.015 265 /0.55)" }}
           >
-            A complete local voice toolkit for Windows. Speech-to-text,
-            text-to-speech, wake-word detection, and LLM-powered text processing
-            — powered by Whisper, NeMo, and 40+ AI models, completely offline
-            and entirely on your hardware. Free forever, source on GitHub.
+            A complete local voice toolkit for macOS, Linux, and Windows.
+            Speech-to-text, text-to-speech, wake-word detection, and LLM-powered
+            text processing — powered by Whisper, NeMo, and 40+ AI models,
+            completely offline and entirely on your hardware. Free forever,
+            source on GitHub.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-2 mt-6">
@@ -443,7 +436,7 @@ function HomePage() {
 
           <div className="flex flex-wrap justify-center gap-3 mt-8">
             <a
-              href={latestWindowsDownloadUrl}
+              href={latestDownloadReleaseUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-110"
@@ -469,7 +462,7 @@ function HomePage() {
                 <polyline points="7 10 12 15 17 10" />
                 <line x1="12" x2="12" y1="15" y2="3" />
               </svg>
-              Download for Windows
+              Download latest
             </a>
             <Link
               to="/docs/$"
@@ -545,14 +538,14 @@ function HomePage() {
               className="text-2xl font-bold tracking-tight mb-2"
               style={{ color: "oklch(94% 0.015 265 /0.9)" }}
             >
-              Designed down to the last detail
+              Choose the right model quickly
             </h2>
             <p
               className="text-sm"
               style={{ color: "oklch(94% 0.015 265 /0.35)" }}
             >
-              Every feature has a polished, native-feeling interface — here are
-              a few
+              Compare accuracy, speed, size, languages, and quantization before
+              you switch.
             </p>
           </div>
           <MediaGrid cols={3}>
@@ -679,8 +672,7 @@ function HomePage() {
               className="text-sm"
               style={{ color: "oklch(94% 0.015 265 /0.35)" }}
             >
-              A complete speech-to-text toolkit, running locally on your Windows
-              machine
+              A complete speech-to-text toolkit, running locally on your desktop
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

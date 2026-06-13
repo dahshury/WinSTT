@@ -9,6 +9,7 @@ import {
 	surfaceClasses,
 	useSurface,
 } from "@/shared/lib/surface";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import type { SelectOption } from "@/shared/ui/select";
@@ -84,11 +85,9 @@ function SelectedCountChip({
 }
 
 function optionMatches(option: SelectOption, query: string): boolean {
-	const q = query.trim().toLowerCase();
-	return (
-		q.length === 0 ||
-		option.label.toLowerCase().includes(q) ||
-		option.id.toLowerCase().includes(q)
+	return matchesFuzzySearch(
+		[option.label, option.id, option.badge ?? ""],
+		query,
 	);
 }
 

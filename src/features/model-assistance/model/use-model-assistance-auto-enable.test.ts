@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { type ModelInfo, useCatalogStore } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
+import { useModelAssistanceStore } from "./model-assistance-store";
 import {
 	type DictationCleanupAutoInputs,
 	resolveDictationCleanupAutoAction,
@@ -80,6 +81,9 @@ function seedSettings({
 }
 
 beforeEach(() => {
+	// The auto-applied marker persists across mounts (that's the whole point),
+	// so it must be cleared between tests for isolation.
+	useModelAssistanceStore.getState().reset();
 	useCatalogStore.setState({
 		isLoaded: true,
 		models: [assistanceModel()],
@@ -89,6 +93,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
+	useModelAssistanceStore.getState().reset();
 	useCatalogStore.setState({ isLoaded: false, models: [] });
 	useSettingsStore.setState({ isLoaded: true, settings: DEFAULT_SETTINGS });
 });
@@ -188,5 +193,65 @@ describe("useModelAssistanceAutoEnable", () => {
 		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
 			false,
 		);
+	});
+
+	test("does not re-enable after a manual disable when the view re-mounts (app restart)", async () => {
+		const first = renderHook(() => useModelAssistanceAutoEnable({ enabled: true }));
+
+		await waitFor(() => {
+			expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
+				true,
+			);
+		});
+
+		act(() => {
+			useSettingsStore.getState().updateLlmDictation({ enabled: false });
+		});
+		first.unmount();
+
+		// Re-mount with the SAME selected model — simulating reopening Settings
+		// or restarting the app. The old in-memory guard reset here and silently
+		// re-enabled cleanup; the persisted marker must keep it off.
+		renderHook(() => useModelAssistanceAutoEnable({ enabled: true }));
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		});
+
+		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
+			false,
+		);
+	});
+
+	test("auto-enables again when the user switches to a different cleanup model", async () => {
+		const first = renderHook(() =>
+			useModelAssistanceAutoEnable({ enabled: true }),
+		);
+		await waitFor(() => {
+			expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
+				true,
+			);
+		});
+		act(() => {
+			useSettingsStore.getState().updateLlmDictation({ enabled: false });
+		});
+		first.unmount();
+
+		// A genuinely new model the user just picked is still worth nudging for.
+		// (`ctc` in the id flags it as needing dictation cleanup.)
+		useCatalogStore.setState({
+			isLoaded: true,
+			models: [
+				assistanceModel("crisper-whisper"),
+				assistanceModel("parakeet-ctc-other"),
+			],
+		});
+		seedSettings({ selectedModel: "parakeet-ctc-other" });
+
+		renderHook(() => useModelAssistanceAutoEnable({ enabled: true }));
+		await waitFor(() => {
+			expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
+				true,
+			);
+		});
 	});
 });

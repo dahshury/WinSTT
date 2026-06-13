@@ -1,4 +1,11 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { describe, expect, test } from "bun:test";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { IPC } from "@/shared/api/ipc-channels";
@@ -13,6 +20,149 @@ interface TauriInternals {
 }
 
 describe("AboutSettingsPanel", () => {
+	test("auto-checks updates once when the About tab has no updater history", async () => {
+		const nativeInvokeCalls: Array<{ args: unknown[]; channel: string }> = [];
+		const secureInvokeCalls: Array<{ channel: string; payload: unknown }> = [];
+		const tauriWindow = window as Window & {
+			__TAURI_INTERNALS__: TauriInternals;
+		};
+		const previousNativeBridge = window.nativeBridge;
+		const previousTauriInvoke = tauriWindow.__TAURI_INTERNALS__.invoke;
+
+		window.nativeBridge = {
+			...previousNativeBridge,
+			invoke: async (channel: string, ...args: unknown[]) => {
+				nativeInvokeCalls.push({ channel, args });
+				if (channel === IPC.UPDATER_CHECK_NOW) {
+					return { triggered: false };
+				}
+				return;
+			},
+			secureInvoke: async (channel: string, payload?: unknown) => {
+				secureInvokeCalls.push({ channel, payload });
+				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
+					return [];
+				}
+				return;
+			},
+		};
+		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
+			if (cmd === "about_get_app_info") {
+				return { version: "1.2.3", copyright: "Copyright WinSTT" };
+			}
+			return;
+		};
+
+		try {
+			render(
+				<IntlProvider>
+					<AboutSettingsPanel />
+				</IntlProvider>,
+			);
+
+			const updateToolbar = await screen.findByRole("toolbar", {
+				name: "Updates",
+			});
+			expect(updateToolbar.textContent).toContain("Version");
+			expect(updateToolbar.textContent).toContain("1.2.3");
+			expect(
+				within(updateToolbar).getByRole("button", { name: "Check now" }),
+			).toBeDefined();
+			expect(within(updateToolbar).getAllByRole("button")).toHaveLength(1);
+
+			await waitFor(() => {
+				expect(
+					secureInvokeCalls.filter(
+						(call) => call.channel === IPC.UPDATER_GET_STATUS_HISTORY,
+					),
+				).toHaveLength(1);
+				expect(
+					nativeInvokeCalls.filter(
+						(call) => call.channel === IPC.UPDATER_CHECK_NOW,
+					),
+				).toHaveLength(1);
+			});
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+			expect(
+				nativeInvokeCalls.filter(
+					(call) => call.channel === IPC.UPDATER_CHECK_NOW,
+				),
+			).toHaveLength(1);
+
+			const startupHeading = screen.getByText("Startup");
+			const diagnosticsHeading = screen.getByText("Diagnostics");
+			expect(
+				Boolean(
+					startupHeading.compareDocumentPosition(diagnosticsHeading) &
+						Node.DOCUMENT_POSITION_FOLLOWING,
+				),
+			).toBe(true);
+		} finally {
+			window.nativeBridge = previousNativeBridge;
+			tauriWindow.__TAURI_INTERNALS__.invoke = previousTauriInvoke;
+		}
+	});
+
+	test("renders the latest-version status as the single update button", async () => {
+		const nativeInvokeCalls: Array<{ args: unknown[]; channel: string }> = [];
+		const tauriWindow = window as Window & {
+			__TAURI_INTERNALS__: TauriInternals;
+		};
+		const previousNativeBridge = window.nativeBridge;
+		const previousTauriInvoke = tauriWindow.__TAURI_INTERNALS__.invoke;
+
+		window.nativeBridge = {
+			...previousNativeBridge,
+			invoke: async (channel: string, ...args: unknown[]) => {
+				nativeInvokeCalls.push({ channel, args });
+				return;
+			},
+			secureInvoke: async (channel: string) => {
+				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
+					return [{ status: "not-available", timestamp: 1 }];
+				}
+				return;
+			},
+		};
+		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
+			if (cmd === "about_get_app_info") {
+				return { version: "1.2.3", copyright: "Copyright WinSTT" };
+			}
+			return;
+		};
+
+		try {
+			render(
+				<IntlProvider>
+					<AboutSettingsPanel />
+				</IntlProvider>,
+			);
+
+			const updateToolbar = await screen.findByRole("toolbar", {
+				name: "Updates",
+			});
+			await waitFor(() => {
+				expect(
+					within(updateToolbar).getByRole("button", {
+						name: "You're on the latest version.",
+					}),
+				).toBeDefined();
+			});
+			expect(within(updateToolbar).getAllByRole("button")).toHaveLength(1);
+			expect(
+				nativeInvokeCalls.filter(
+					(call) => call.channel === IPC.UPDATER_CHECK_NOW,
+				),
+			).toHaveLength(0);
+		} finally {
+			window.nativeBridge = previousNativeBridge;
+			tauriWindow.__TAURI_INTERNALS__.invoke = previousTauriInvoke;
+		}
+	});
+
 	test("runs the open-logs action from the About tab", async () => {
 		const nativeInvokeCalls: Array<{ args: unknown[]; channel: string }> = [];
 		const tauriWindow = window as Window & {

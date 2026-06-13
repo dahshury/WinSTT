@@ -66,6 +66,14 @@ describe("SettingsSidebar", () => {
 		expect(general.className).not.toContain("shadow");
 	});
 
+	test("keeps tab rows free of the accent focus ring", () => {
+		renderSidebar();
+		const general = screen.getByRole("tab", { name: /general/i });
+
+		expect(general.className).not.toContain("focus-visible:ring-accent");
+		expect(general.className).not.toContain("focus-visible:ring-2");
+	});
+
 	test("does not render a reset control (reset lives in General settings now)", () => {
 		renderSidebar();
 		expect(screen.queryByRole("button", { name: /Reset/i })).toBeNull();
@@ -160,17 +168,24 @@ describe("SettingsSidebar", () => {
 		renderSidebar();
 		// Expanded: tab labels visible.
 		expect(screen.getByText("General")).toBeDefined();
+		expect(screen.getByTestId("settings-export-button")).toBeDefined();
+		expect(screen.getByTestId("settings-import-button")).toBeDefined();
 
 		fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
 
-		// Collapsed: tab labels removed (icon-only), tabs remain.
+		// Collapsed: tab labels removed (icon-only), tabs remain, and transfer
+		// controls stay hidden until the full sidebar header returns.
 		expect(screen.queryByText("General")).toBeNull();
 		expect(screen.getAllByRole("tab")).toHaveLength(links.length);
 		expect(screen.queryByRole("button", { name: /search/i })).toBeNull();
+		expect(screen.queryByTestId("settings-export-button")).toBeNull();
+		expect(screen.queryByTestId("settings-import-button")).toBeNull();
 
 		// The toggle flips to an expand affordance and restores the rail.
 		fireEvent.click(screen.getByRole("button", { name: /expand sidebar/i }));
 		expect(screen.getByText("General")).toBeDefined();
+		expect(screen.getByTestId("settings-export-button")).toBeDefined();
+		expect(screen.getByTestId("settings-import-button")).toBeDefined();
 	});
 
 	test("does not render the RAM or VRAM footer meter", () => {

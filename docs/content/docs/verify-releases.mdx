@@ -1,157 +1,88 @@
 ---
-title: Verify Release Signatures
-description: Verify the authenticity of a WinSTT installer offline with minisign — a second trust path beyond Windows code signing.
+title: Verify Release Downloads
+description: Check that a WinSTT macOS, Linux, or Windows release asset matches what the GitHub release workflow uploaded.
 ---
 
-Confirm that the installer you downloaded is byte-identical to what the WinSTT release workflow built — manually, offline, on any platform.
+Confirm that the package you downloaded matches the artifact published by the
+WinSTT release workflow. Current alpha releases publish downloadable packages for
+macOS Apple Silicon, Linux x64, and Windows x64.
 
-Every WinSTT installer (both the CPU and DirectML portable `.exe` builds) ships with a [minisign](https://jedisct1.github.io/minisign/) signature sidecar — a small `.minisig` file uploaded next to the installer on the [GitHub Releases page](https://github.com/winstt/WinSTT/releases).
-
-This is **in addition to** the standard Authenticode signature that the Windows installer flow and `electron-updater` already validate automatically. The minisign sidecar lets you verify the download **manually, offline, on any platform** — a second trust path beyond Windows' code-signing certificate store.
-
-<Callout type="info" title="You do not have to verify">
-  Verifying releases is optional. Regular installs and auto-updates already validate the Authenticode signature on Windows. This page is for power users who want belt-and-braces verification.
+<Callout type="warn" title="Alpha signing status">
+  The current alpha packages are downloadable release artifacts, but updater metadata,
+  detached signature sidecars, notarization, and platform code-signing are not fully wired
+  for every OS yet. Treat the GitHub Release and its workflow run as the source of truth.
 </Callout>
 
-## What you need
+## What to verify
 
-| File | Where to get it |
+| Platform | Current artifact pattern |
 |---|---|
-| The installer | [GitHub Releases](https://github.com/winstt/WinSTT/releases) — e.g. `WinSTT-CPU-Portable-0.4.0.exe` |
-| The `.minisig` sidecar | Same release page — e.g. `WinSTT-CPU-Portable-0.4.0.exe.minisig` |
-| The public key | [`docs/winstt.pub`](https://github.com/winstt/WinSTT/blob/main/docs/winstt.pub) in the repo |
-| `minisign` CLI | See install commands below |
+| macOS Apple Silicon | `WinSTT_<version>_aarch64.dmg` |
+| Linux x64 | `WinSTT_<version>_amd64.AppImage`, `WinSTT_<version>_amd64.deb`, `WinSTT-<version>-1.x86_64.rpm` |
+| Windows x64 | `WinSTT.exe`, `WinSTT-portable.zip` |
 
-## Install minisign
+Download only from the [GitHub Releases page](https://github.com/dahshury/WinSTT/releases).
+
+## Check SHA-256
 
 <Tabs items={["Windows", "macOS", "Linux"]}>
   <Tab value="Windows">
-    Using [Scoop](https://scoop.sh/):
-
     ```powershell
-    scoop install minisign
-    ```
-
-    Or using [Chocolatey](https://chocolatey.org/):
-
-    ```powershell
-    choco install minisign
+    Get-FileHash .\WinSTT.exe -Algorithm SHA256
     ```
   </Tab>
   <Tab value="macOS">
     ```bash
-    brew install minisign
+    shasum -a 256 WinSTT_0.1.3-alpha.1_aarch64.dmg
     ```
   </Tab>
   <Tab value="Linux">
     ```bash
-    # Debian/Ubuntu
-    sudo apt install minisign
-
-    # Fedora
-    sudo dnf install minisign
-
-    # Arch
-    sudo pacman -S minisign
+    sha256sum WinSTT_0.1.3-alpha.1_amd64.AppImage
     ```
   </Tab>
 </Tabs>
 
-## Verify a release
+Compare the digest with the `sha256:` digest shown for that asset in GitHub's
+release metadata. With the GitHub CLI:
 
-<StepFlow>
-  <Step title="Download the three files into the same folder">
-    Put the installer, its `.minisig`, and `winstt.pub` side-by-side:
+```bash
+gh release view v0.1.3-alpha.1 \
+  --repo dahshury/WinSTT \
+  --json assets \
+  --jq '.assets[] | {name, digest}'
+```
 
-    ```text
-    WinSTT-CPU-Portable-0.4.0.exe
-    WinSTT-CPU-Portable-0.4.0.exe.minisig
-    winstt.pub
-    ```
+## Verify provenance
 
-    Fetch `winstt.pub` directly from the repo:
+Each alpha release is produced by the repository release workflow. From the release page,
+open the linked workflow run and confirm that the platform build jobs and the final
+upload job succeeded. The expected jobs are:
 
-    ```bash
-    curl -LO https://raw.githubusercontent.com/winstt/WinSTT/main/docs/winstt.pub
-    ```
-  </Step>
-  <Step title="Run minisign">
-    Set `ARTIFACT` to the installer filename you downloaded, then verify:
+- `Build macOS bundle artifacts (aarch64)`
+- `Build Linux bundle artifacts`
+- `Build Windows portable artifacts`
+- `Upload assets to GitHub release`
 
-    ```bash
-    ARTIFACT="WinSTT-CPU-Portable-0.4.0.exe"
+## If verification fails
 
-    minisign -Vm "$ARTIFACT" \
-      -p winstt.pub \
-      -x "$ARTIFACT.minisig"
-    ```
-
-    On Windows PowerShell:
-
-    ```powershell
-    $ARTIFACT = "WinSTT-CPU-Portable-0.4.0.exe"
-
-    minisign -Vm $ARTIFACT `
-      -p winstt.pub `
-      -x "$ARTIFACT.minisig"
-    ```
-  </Step>
-  <Step title="Confirm the success message">
-    On success, minisign prints:
-
-    ```text
-    Signature and comment signature verified
-    Trusted comment: WinSTT release v0.4.0 — WinSTT-CPU-Portable-0.4.0.exe
-    ```
-
-    If the trusted comment matches the file you downloaded and the version you expected, the artifact is authentic and untampered.
-  </Step>
-</StepFlow>
-
-## What "verified" means
-
-A successful verification proves two things:
-
-- The `.exe` you have is **byte-identical** to what the WinSTT release workflow signed.
-- The signature was produced by the **holder of the private key** matching `docs/winstt.pub` in this repo.
-
-It does **not** by itself prove the public key in the repo wasn't replaced — that's the same trust assumption you make any time you download `winstt.pub` from GitHub. For paranoid verification, pin the pubkey against a known-good commit, or cross-check against an out-of-band copy you saved on a previous release.
-
-## Things that should fail
-
-If any of these happen, **do not run the installer** and please [open an issue](https://github.com/winstt/WinSTT/issues):
-
-| Output | Meaning |
-|---|---|
-| `Signature verification failed` | The installer was modified after signing, the `.minisig` was tampered with, or you have the wrong pubkey. |
-| `Couldn't open the public key` | `winstt.pub` is missing or malformed. Re-download from the repo. |
-| `Trusted comment` doesn't match the filename | A signature was reused from a different artifact. |
-
-<Callout type="warn" title="Do not use GPG">
-  The `.minisig` files are **not** OpenPGP signatures and `gpg --verify` will not work on them. Use the `minisign` CLI specifically.
-</Callout>
-
-## Why not auto-verify in the updater?
-
-`electron-updater` already verifies the Authenticode signature of every update payload on Windows before it executes, so minisign would be a redundant chain in the automated path. Wiring it into the updater would mean shipping `winstt.pub` inside the installed app and trusting the locally-cached copy on every update — which adds attack surface (the cached pubkey becomes a target) without strengthening the chain meaningfully beyond what Authenticode and the HTTPS endpoint already give us.
-
-Minisign is therefore intentionally positioned as a **manual, offline verification layer for power users**, distributed via this docs site and the repo — not bundled into the app.
-
-For maintainer-side details on key generation and CI configuration, see [`docs/RELEASE_SIGNING.md`](https://github.com/winstt/WinSTT/blob/main/docs/RELEASE_SIGNING.md).
+Do not run the package. Re-download it from the GitHub Release, then compare the digest
+again. If it still differs, open an issue with the asset name, size, SHA-256 value, and
+the release URL.
 
 ## Related
 
 <Cards>
-  <Card title="Which installer?" href="/docs/install">
-    DirectML, CPU, or OpenVINO — and the system requirements for each.
+  <Card title="Install" href="/docs/install">
+    Pick the macOS, Linux, or Windows package for your machine.
   </Card>
   <Card title="Quick start" href="/docs/quick-start">
     Download, launch, and dictate your first sentence in under two minutes.
   </Card>
   <Card title="Troubleshooting" href="/docs/troubleshooting">
-    SmartScreen warnings, blocked downloads, and other install snags.
+    First-run warnings, blocked downloads, and other install snags.
   </Card>
   <Card title="FAQ" href="/docs/faq">
-    Privacy, offline behavior, and what data (if any) ever leaves your machine.
+    Privacy, offline behavior, and what data ever leaves your machine.
   </Card>
 </Cards>

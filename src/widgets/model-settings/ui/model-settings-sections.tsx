@@ -36,20 +36,26 @@ import type {
 } from "../lib/types";
 
 export function ModelLifetimeSection({
+	forceNever,
 	global,
 	t,
 	update,
 }: {
+	forceNever?: boolean;
 	global: GlobalSettings | undefined;
 	t: TFn;
 	update: UpdateGlobalFn;
 }): ReactNode {
-	const value =
+	const isForcedNever = forceNever === true;
+	const savedValue =
 		global?.modelUnloadTimeout ?? DEFAULT_SETTINGS.global.modelUnloadTimeout;
+	const value = isForcedNever ? "never" : savedValue;
 	return (
 		<SettingSection icon={Timer01Icon} title={t("modelUnloadTimeout")}>
 			<SettingField
-				isDefault={value === DEFAULT_SETTINGS.global.modelUnloadTimeout}
+				disabled={isForcedNever}
+				hideReset={isForcedNever}
+				isDefault={savedValue === DEFAULT_SETTINGS.global.modelUnloadTimeout}
 				label={t("modelUnloadTimeout")}
 				layout="row"
 				onReset={() =>
@@ -61,9 +67,12 @@ export function ModelLifetimeSection({
 			>
 				<ElevatedSurface className="w-52" inline>
 					<SearchableSelect
-						onChange={(v) =>
-							update({ modelUnloadTimeout: v as ModelUnloadTimeoutValue })
-						}
+						onChange={(v) => {
+							if (!isForcedNever) {
+								update({ modelUnloadTimeout: v as ModelUnloadTimeoutValue });
+							}
+						}}
+						disabled={isForcedNever}
 						options={[
 							{
 								id: "immediately",

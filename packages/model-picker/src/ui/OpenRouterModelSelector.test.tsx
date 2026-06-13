@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
-import { fireEvent, render, screen, waitFor } from "../test/render-with-intl";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "../test/render-with-intl";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import * as helpers from "../lib/openrouter-model-selector-test-helpers";
 import { OpenRouterModelSelector } from "./OpenRouterModelSelector";
@@ -102,6 +108,62 @@ describe("OpenRouterModelSelector", () => {
 		) as HTMLInputElement;
 		expect(search.value).toBe("claude");
 		expect(screen.queryByLabelText("Active filters")).not.toBeNull();
+	});
+
+	test("author rail badges follow active non-author filters", () => {
+		const uiStorageKey = "winstt:test:openrouter-rail-counts-ui";
+		window.localStorage.setItem(
+			uiStorageKey,
+			JSON.stringify({
+				searchQuery: "",
+				selectedEndpointProvider: null,
+				selectedMakers: [],
+				selectedParameters: ["tools"],
+				selectedVariant: null,
+				sortKey: null,
+			}),
+		);
+
+		render(
+			<TooltipProvider.Provider>
+				<OpenRouterModelSelector
+					inline
+					models={[
+						makeModel({
+							id: "openai/gpt-4o",
+							maker: "openai",
+							name: "GPT-4o",
+							supported_parameters: ["tools"],
+						}),
+						makeModel({
+							id: "openai/gpt-4o-mini",
+							maker: "openai",
+							name: "GPT-4o Mini",
+							supported_parameters: [],
+						}),
+						makeModel({
+							id: "anthropic/claude-3-5-sonnet",
+							maker: "anthropic",
+							name: "Claude 3.5 Sonnet",
+							supported_parameters: ["tools"],
+						}),
+					]}
+					onChange={() => undefined}
+					uiStorageKey={uiStorageKey}
+					value="openai/gpt-4o"
+				/>
+			</TooltipProvider.Provider>,
+		);
+
+		const allAuthors = screen.getByRole("tab", { name: "All authors" });
+		const openai = screen.getByRole("tab", { name: "OpenAI" });
+		const anthropic = screen.getByRole("tab", { name: "Anthropic" });
+
+		expect(within(allAuthors).getByText("2")).not.toBeNull();
+		expect(within(openai).getByText("1")).not.toBeNull();
+		expect(within(anthropic).getByText("1")).not.toBeNull();
+		expect(within(allAuthors).queryByText("3")).toBeNull();
+		expect(within(openai).queryByText("2")).toBeNull();
 	});
 
 	test("inline detached mode requests selected model focus on open", async () => {

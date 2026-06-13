@@ -282,7 +282,7 @@ fn build_bundle(app: &AppHandle) -> DiagSaveBundleResult {
     let mut builder = app
         .dialog()
         .file()
-        .set_title("Save diagnostic bundle")
+        .set_title("Save Diagnostic Bundle")
         .add_filter("Zip", &["zip"])
         .set_file_name(default_name);
     if let Ok(desktop) = app.path().desktop_dir() {

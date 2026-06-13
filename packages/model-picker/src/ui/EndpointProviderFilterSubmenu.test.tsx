@@ -38,6 +38,12 @@ describe("EndpointProviderFilterSubmenu helpers", () => {
 			]);
 		});
 
+		test("fuzzy-matches provider typos", () => {
+			expect(helpers.filterEndpointProviders(providers, "togther")).toEqual([
+				["Together", 3],
+			]);
+		});
+
 		test("returns empty array when nothing matches", () => {
 			expect(helpers.filterEndpointProviders(providers, "zzz")).toEqual([]);
 		});

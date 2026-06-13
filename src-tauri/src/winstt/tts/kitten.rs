@@ -27,6 +27,8 @@ use std::sync::{Mutex, OnceLock};
 use regex::Regex;
 
 use super::phonemize::{default_phonemizer, Phonemizer};
+use super::provider::TtsOrtProviderPolicy;
+use super::types::TtsDevice;
 
 /// KittenTTS emits 24 kHz mono float PCM.
 pub const KITTEN_SAMPLE_RATE: u32 = 24_000;
@@ -42,6 +44,14 @@ pub enum KittenDevice {
     Auto,
     DirectMl,
     Cpu,
+}
+
+fn kitten_device_to_tts(device: KittenDevice) -> TtsDevice {
+    match device {
+        KittenDevice::Auto => TtsDevice::Auto,
+        KittenDevice::DirectMl => TtsDevice::DirectMl,
+        KittenDevice::Cpu => TtsDevice::Cpu,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -388,19 +398,16 @@ impl KittenEngine {
     /// CPU-only session (StyleTTS2 graphs share Kokoro's DML ConvTranspose risk;
     /// 15M params is CPU-fast). Full intra-op pool (no `with_intra_threads(1)`).
     fn build_session(&self) -> KittenResult<(ort::session::Session, Vec<String>)> {
-        use ort::execution_providers::{CPUExecutionProvider, ExecutionProviderDispatch};
         let model_path = self.config.model_path();
-        let dispatch: Vec<ExecutionProviderDispatch> =
-            vec![CPUExecutionProvider::default().build()];
-        let active = vec!["CPUExecutionProvider".to_string()];
-        let mut builder = ort::session::Session::builder()
-            .map_err(|e| KittenError::Session(format!("session builder: {e}")))?
-            .with_execution_providers(dispatch)
-            .map_err(|e| KittenError::Session(format!("register EPs: {e}")))?;
-        let session = builder
-            .commit_from_file(&model_path)
-            .map_err(|e| KittenError::Session(format!("commit_from_file: {e}")))?;
-        Ok((session, active))
+        super::provider::build_session(
+            &model_path,
+            kitten_device_to_tts(self.config.device),
+            TtsOrtProviderPolicy::CpuOnly {
+                reason: "StyleTTS2 ConvTranspose path not DirectML-validated",
+            },
+            "Kitten",
+        )
+        .map_err(KittenError::Session)
     }
 
     fn run_inference(

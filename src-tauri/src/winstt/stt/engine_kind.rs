@@ -53,12 +53,11 @@ pub enum EngineKind {
     /// vocab option) share the archetype but differ in front-end detail.
     DolphinCtc,
     SenseVoiceCtc,
-    /// sherpa-onnx `OnlineRecognizer` streaming NeMo FastConformer **CTC** (single `model.onnx`).
-    /// Cache-aware chunked streaming handled inside the sherpa runtime.
+    /// Native ORT streaming NeMo FastConformer **CTC** (single `model.onnx`).
     NemoCtcStreaming,
-    /// sherpa-onnx `OnlineRecognizer` streaming NeMo FastConformer **RNN-T** (encoder/decoder/joiner).
+    /// Native ORT streaming NeMo FastConformer **RNN-T** (encoder/decoder/joiner).
     NemoRnntStreaming,
-    /// sherpa-onnx `OnlineRecognizer` streaming **Zipformer2 transducer** (encoder/decoder/joiner).
+    /// Native ORT streaming **Zipformer2 transducer** (encoder/decoder/joiner).
     KaldiTransducerStreaming,
 }
 
@@ -97,8 +96,9 @@ impl EngineKind {
     ///   * `NemoAed` (Canary): conformer-encoder `Reshape` kernel crash (MLOperatorAuthorImpl).
     ///   * `CohereAsr`: `MultiHeadAttention` kernel crash.
     ///   * `KaldiTransducer` (zipformer/vosk), `SenseVoiceCtc`, `DolphinCtc`: silent hang/crash.
-    ///   * Sherpa streaming Conformer/Zipformer graphs: CPU-pinned because DirectML is unstable
-    ///     for the stateful streaming sessions.
+    ///   * Streaming Zipformer2 remains CPU-pinned like the offline Zipformer graph until DirectML
+    ///     stability is proven for that cache-heavy graph. Streaming NeMo CTC/RNN-T use WinSTT's
+    ///     native `ort` implementation and follow their own per-quant policy.
     ///
     /// The NeMo CTC/TDT (parakeet) + GigaAM CTC + T-One CTC graphs RUN CORRECTLY and **2–3×
     /// FASTER on DirectML than CPU** (parakeet-ctc 73 vs 223ms, parakeet-tdt 144 vs 270ms,
@@ -113,8 +113,6 @@ impl EngineKind {
                 | EngineKind::KaldiTransducer
                 | EngineKind::SenseVoiceCtc
                 | EngineKind::DolphinCtc
-                | EngineKind::NemoCtcStreaming
-                | EngineKind::NemoRnntStreaming
                 | EngineKind::KaldiTransducerStreaming
         )
     }
@@ -128,16 +126,20 @@ impl EngineKind {
     /// fp16, no QDQ demotion) WINS on DML (parakeet-rnnt fp32: DML 120 vs CPU 322; gigaam-rnnt fp32:
     /// DML 126 vs CPU 211). So: quantized RNN-T → CPU, float RNN-T → DML. The CTC/TDT single-pass
     /// engines win on DML at EVERY quant (gigaam-ctc fp32 32ms / int8 51ms both « CPU), so excluded.
+    /// Streaming NeMo RNN-T int8 follows the same policy (Nemotron 1120ms int8 release harness:
+    /// CPU 3.7s vs DML 4.0s for 30s audio).
     pub fn dml_slower_than_cpu(self, quant: Quantization) -> bool {
-        matches!(self, EngineKind::NemoRnnt | EngineKind::GigaamRnnt)
-            && matches!(
-                quant,
-                Quantization::Int8
-                    | Quantization::Q4
-                    | Quantization::Q4f16
-                    | Quantization::Bnb4
-                    | Quantization::Uint8
-            )
+        matches!(
+            self,
+            EngineKind::NemoRnnt | EngineKind::GigaamRnnt | EngineKind::NemoRnntStreaming
+        ) && matches!(
+            quant,
+            Quantization::Int8
+                | Quantization::Q4
+                | Quantization::Q4f16
+                | Quantization::Bnb4
+                | Quantization::Uint8
+        )
     }
 
     /// True iff this kind has a cache-aware/stateful streaming ONNX graph we drive chunk-by-chunk

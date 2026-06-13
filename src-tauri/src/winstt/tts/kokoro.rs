@@ -19,6 +19,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use super::phonemize::{default_phonemizer, Phonemizer, MAX_PHONEME_LENGTH};
+use super::provider::TtsOrtProviderPolicy;
+use super::types::TtsDevice;
 
 /// Kokoro v1.0 emits 24 kHz mono float PCM.
 pub const KOKORO_SAMPLE_RATE: u32 = 24_000;
@@ -44,6 +46,14 @@ pub enum KokoroDevice {
     Auto,
     DirectMl,
     Cpu,
+}
+
+fn kokoro_device_to_tts(device: KokoroDevice) -> TtsDevice {
+    match device {
+        KokoroDevice::Auto => TtsDevice::Auto,
+        KokoroDevice::DirectMl => TtsDevice::DirectMl,
+        KokoroDevice::Cpu => TtsDevice::Cpu,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -382,32 +392,16 @@ impl KokoroEngine {
     /// on CPU is fast — and faster than DML's per-op launch overhead would be at this
     /// size — once we let ORT use its full intra-op thread pool (below).
     fn build_session(&self) -> KokoroResult<(ort::session::Session, Vec<String>)> {
-        use ort::execution_providers::{CPUExecutionProvider, ExecutionProviderDispatch};
         let model_path = self.config.model_path();
-
-        if !matches!(self.config.device, KokoroDevice::Cpu) {
-            log::debug!(
-                "[tts] Kokoro requested device={:?} → running CPU-only (DML ConvTranspose unsupported)",
-                self.config.device
-            );
-        }
-        let dispatch: Vec<ExecutionProviderDispatch> =
-            vec![CPUExecutionProvider::default().build()];
-        let active = vec!["CPUExecutionProvider".to_string()];
-
-        // NO `with_intra_threads(1)` — that pinned inference to ONE thread and made
-        // this path ~2.6× slower than the reference's multi-threaded kokoro_onnx CPU path
-        // (1323ms vs ~500ms warm on the same model+phonemes). Omitting it lets ORT use
-        // its default intra-op pool (all physical cores), matching onnxruntime's
-        // defaults that the reference path relies on.
-        let mut builder = ort::session::Session::builder()
-            .map_err(|e| KokoroError::Session(format!("session builder: {e}")))?
-            .with_execution_providers(dispatch)
-            .map_err(|e| KokoroError::Session(format!("register EPs: {e}")))?;
-        let session = builder
-            .commit_from_file(&model_path)
-            .map_err(|e| KokoroError::Session(format!("commit_from_file: {e}")))?;
-        Ok((session, active))
+        super::provider::build_session(
+            &model_path,
+            kokoro_device_to_tts(self.config.device),
+            TtsOrtProviderPolicy::CpuOnly {
+                reason: "DML ConvTranspose unsupported",
+            },
+            "Kokoro",
+        )
+        .map_err(KokoroError::Session)
     }
 
     /// Run one forward pass: input_ids + style + speed → audio f32.

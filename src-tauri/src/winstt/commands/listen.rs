@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::winstt::catalog;
 use crate::winstt::commands::dictation::SttEvents;
@@ -66,19 +66,40 @@ pub async fn start_listen(
     let selected_device = resolve_loopback_device(device_index)
         .ok_or_else(|| format!("loopback device index {device_index} is no longer available"))?;
 
-    let started_device = loopback.start(Some(selected_device.id), model_id)?;
+    let loopback_manager = loopback.inner().clone();
+    let selected_device_id = selected_device.id.clone();
+    let model_id_for_start = model_id;
+    let started_device = tauri::async_runtime::spawn_blocking(move || {
+        loopback_manager.start(Some(selected_device_id), model_id_for_start)
+    })
+    .await
+    .map_err(|e| format!("failed to start listen mode worker: {e}"))??;
     let device_name = if started_device.name.trim().is_empty() {
         selected_device.name
     } else {
         started_device.name
     };
 
+    set_main_window_listen_mode(&app, true);
     SttEvents::recording_start(&app);
     let _ = app.emit(
         names::LOOPBACK_STARTED,
         serde_json::json!({ "deviceName": device_name }),
     );
     Ok(())
+}
+
+fn set_main_window_listen_mode(app: &AppHandle, enabled: bool) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if let Err(err) = window.set_always_on_top(enabled) {
+        log::warn!("[listen] failed to set main window always-on-top={enabled}: {err}");
+    }
+    if enabled {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 async fn ensure_cached_native_streaming_model(
@@ -137,6 +158,7 @@ pub fn stop_listen(
     let was_capturing = loopback.is_capturing();
     loopback.stop();
     diarization.set_enabled(false);
+    set_main_window_listen_mode(&app, false);
     if was_capturing {
         SttEvents::vad_stop(&app);
         SttEvents::recording_stop(&app);

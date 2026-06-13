@@ -14,6 +14,7 @@
 /// internal consumer (LLM / cloud-STT / verify) and the renderer see plaintext.
 pub mod secret_storage;
 pub mod settings;
+pub mod settings_transfer;
 pub mod stt;
 
 // ── slice: model catalog + picker + download ──

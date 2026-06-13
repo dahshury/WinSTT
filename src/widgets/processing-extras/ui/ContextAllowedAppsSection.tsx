@@ -13,6 +13,7 @@ import {
 	surfaceClasses,
 	useSurface,
 } from "@/shared/lib/surface";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import "@/shared/ui/searchable-select/searchable-select.css";
 
@@ -86,12 +87,9 @@ function buildOptions(
 }
 
 function optionMatches(option: ContextAppOption, query: string): boolean {
-	const q = query.trim().toLowerCase();
-	return (
-		q.length === 0 ||
-		option.label.toLowerCase().includes(q) ||
-		option.exe.toLowerCase().includes(q) ||
-		(option.title?.toLowerCase().includes(q) ?? false)
+	return matchesFuzzySearch(
+		[option.label, option.exe, option.title ?? ""],
+		query,
 	);
 }
 

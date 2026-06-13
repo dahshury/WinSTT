@@ -1,8 +1,9 @@
 import { BrainCircuitIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
-import { SettingSection } from "@/entities/setting";
+import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { Button } from "@/shared/ui/button";
+import { Tooltip } from "@/shared/ui/tooltip";
 import {
 	type LlmSettingsPanelModel,
 	useLlmSettingsPanel,
@@ -20,6 +21,11 @@ export type { LlmSettingsPanelModel };
 export function LlmSettingsPanel() {
 	const model = useLlmSettingsPanel();
 	const [playgroundOpen, setPlaygroundOpen] = useState(false);
+	const isListenMode = useSettingsStore(
+		(s) => (s.settings.general?.recordingMode ?? "ptt") === "listen",
+	);
+	const listenModeLlmTooltip =
+		"Listen mode does not run LLM post-processing or transforms; it only transcribes speaker audio inside the app window.";
 	const {
 		t,
 		tc,
@@ -49,13 +55,27 @@ export function LlmSettingsPanel() {
 		<>
 			<SettingSection
 				headerAction={
-					<Button
-						className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 font-medium text-foreground-secondary text-sm transition-colors hover:border-accent hover:text-accent"
-						onClick={() => setPlaygroundOpen(true)}
-					>
-						<HugeiconsIcon icon={PlayIcon} size={14} />
-						{t("playgroundTitle")}
-					</Button>
+					isListenMode ? (
+						<Tooltip content={listenModeLlmTooltip}>
+							<span className="inline-flex">
+								<Button
+									className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 font-medium text-foreground-secondary text-sm transition-colors hover:border-accent hover:text-accent"
+									disabled
+								>
+									<HugeiconsIcon icon={PlayIcon} size={14} />
+									{t("playgroundTitle")}
+								</Button>
+							</span>
+						</Tooltip>
+					) : (
+						<Button
+							className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 font-medium text-foreground-secondary text-sm transition-colors hover:border-accent hover:text-accent"
+							onClick={() => setPlaygroundOpen(true)}
+						>
+							<HugeiconsIcon icon={PlayIcon} size={14} />
+							{t("playgroundTitle")}
+						</Button>
+					)
 				}
 				icon={BrainCircuitIcon}
 				title={t("title")}
@@ -70,6 +90,8 @@ export function LlmSettingsPanel() {
 					endpoint={endpoint}
 					feature="dictation"
 					featureSnapshot={dictation}
+					forceDisabled={isListenMode}
+					forceDisabledTooltip={listenModeLlmTooltip}
 					librarySearch={librarySearchProps}
 					ollamaCatalog={ollamaCatalogState}
 					ollamaPullBundle={ollamaPullBundle}
@@ -108,6 +130,8 @@ export function LlmSettingsPanel() {
 					endpoint={endpoint}
 					feature="transforms"
 					featureSnapshot={transforms}
+					forceDisabled={isListenMode}
+					forceDisabledTooltip={listenModeLlmTooltip}
 					librarySearch={librarySearchProps}
 					ollamaCatalog={ollamaCatalogState}
 					ollamaPullBundle={ollamaPullBundle}

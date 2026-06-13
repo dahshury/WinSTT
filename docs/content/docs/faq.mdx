@@ -5,7 +5,7 @@ description: Direct answers about WinSTT — privacy, offline use, languages, co
 
 Short, self-contained answers to the questions people ask most before and after installing WinSTT.
 
-<Screenshot src="main" alt="The WinSTT main window: a 9-band audio visualizer with the active hotkey, microphone, and model shown in the footer." label="WinSTT — main window" caption="Everything below describes this app's default behavior on Windows." />
+<Screenshot src="main" alt="The WinSTT main window: a 9-band audio visualizer with the active hotkey, microphone, and model shown in the footer." label="WinSTT — main window" caption="Everything below describes this app's default desktop behavior unless a platform note says otherwise." />
 
 ## Privacy & offline
 
@@ -50,22 +50,21 @@ Six: English, Spanish, French, Chinese, Hindi, and Arabic. The interface languag
 
 ### Do I need a GPU?
 
-No. WinSTT runs on CPU alone — the CPU installer needs only a 64-bit AVX2 CPU (any Intel/AMD from ~2015 on). A GPU is optional and only speeds things up: the DirectML build uses any D3D12-capable GPU (AMD/Intel/NVIDIA) and auto-falls-back to CPU when none is present, so it's safe to install everywhere.
+No. WinSTT runs on CPU alone. A GPU is optional and only speeds things up where a platform accelerator is available. On Windows, the DirectML path uses any D3D12-capable GPU (AMD/Intel/NVIDIA) and auto-falls back to CPU when none is present.
 
-### Which installer should I download?
+### Which package should I download?
 
 <ModelTable
-  head={["Installer", "Size", "Use when"]}
-  numeric={[1]}
+  head={["Platform", "Package", "Use when"]}
   rows={[
-    ["DirectML (default)", "~200 MB", "Any D3D12-capable GPU — AMD, Intel, or NVIDIA. Falls back to CPU."],
-    ["CPU", "~150 MB", "No GPU, headless boxes, or smallest download."],
-    ["OpenVINO", "~250 MB", "Intel ARC dGPU or recent Iris Xe / Arc iGPU."],
+    ["macOS Apple Silicon", "DMG", "You have an M-series Mac."],
+    ["Linux x64", "AppImage / deb / rpm", "Pick the package format your distro expects."],
+    ["Windows x64", "WinSTT.exe / portable zip", "Use the exe for the normal alpha, or the zip for a self-contained app folder."],
   ]}
-  caption="All three wrap the same Tauri app; only the bundled ONNX Runtime provider differs. No Python or extra setup required."
+  caption="All packages wrap the same Tauri app and local speech engine. No Python or extra setup required."
 />
 
-DirectML is the right default for almost everyone — it's vendor-agnostic and works whether or not you have a GPU. There is no CUDA installer on Windows: on our benchmark DirectML beat CUDA on both median (85 ms vs 120 ms) and tail latency while being 10x smaller.
+On Windows, DirectML is the right default for almost everyone: it is vendor-agnostic and works whether or not you have a GPU. There is no CUDA Windows installer; CUDA remains a custom/development build path.
 
 ### How many models are there, and can I switch without restarting?
 
@@ -84,15 +83,15 @@ Yes. Export your fine-tune to ONNX (Optimum / onnx-community layout) and drop it
 
 ### Where does WinSTT store my data?
 
-Settings, the model cache, history database, saved recordings, and the rolling `debug.log` live under your Windows user-data folder (`%APPDATA%/WinSTT`). The portable installer keeps the app itself self-contained — there's no system-wide install footprint.
+Settings, the model cache, history database, saved recordings, and the rolling `debug.log` live under the OS-standard WinSTT app-data folder. Use **Open App Data Folder** from the app instead of guessing paths. Windows portable mode keeps data in a local `Data/` folder next to the executable.
 
 ### How do I uninstall WinSTT?
 
-Quit the app, then delete the portable executable. To remove everything including downloaded models, history, and settings, also delete the `%APPDATA%/WinSTT` user-data folder. Since the build is portable, there's no registry cleanup or uninstaller to run.
+Quit the app, then remove the package using the normal flow for your platform: delete the portable app folder, remove the Linux package, or delete the macOS app bundle. To remove everything including downloaded models, history, and settings, also delete the WinSTT app-data folder opened by **Open App Data Folder**.
 
 <Callout type="warn" title="Deleting user data is permanent">
-  Removing `%APPDATA%/WinSTT` erases your transcription history, saved recordings, and
-  downloaded models — there's no undo. Back it up first if you want to keep any of it.
+  Removing the WinSTT app-data folder erases your transcription history, saved recordings,
+  and downloaded models — there's no undo. Back it up first if you want to keep any of it.
 </Callout>
 
 ## Related
@@ -101,8 +100,8 @@ Quit the app, then delete the portable executable. To remove everything includin
   <Card title="Choose a model" href="/docs/settings/model">
     Pick the engine, quantization, and device for your hardware.
   </Card>
-  <Card title="Which installer?" href="/docs/install">
-    DirectML, CPU, or OpenVINO — and the requirements for each.
+  <Card title="Install" href="/docs/install">
+    Pick the macOS, Linux, or Windows package for your machine.
   </Card>
   <Card title="Integrations" href="/docs/settings/integrations">
     Add an API key to opt into cloud STT or cloud LLM cleanup.

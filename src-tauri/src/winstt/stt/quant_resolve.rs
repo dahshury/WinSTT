@@ -420,16 +420,40 @@ mod tests {
         assert_eq!(
             override_dml_to_cpu_for_kind(
                 vec![Accelerator::DirectMl, Accelerator::Cpu],
-                EngineKind::NemoCtcStreaming,
+                EngineKind::KaldiTransducerStreaming,
                 Quantization::Default
             ),
             vec![Accelerator::Cpu]
+        );
+        assert_eq!(
+            override_dml_to_cpu_for_kind(
+                vec![Accelerator::DirectMl, Accelerator::Cpu],
+                EngineKind::NemoRnntStreaming,
+                Quantization::Int8
+            ),
+            vec![Accelerator::Cpu]
+        );
+        assert_eq!(
+            override_dml_to_cpu_for_kind(
+                vec![Accelerator::DirectMl, Accelerator::Cpu],
+                EngineKind::NemoRnntStreaming,
+                Quantization::Default
+            ),
+            vec![Accelerator::DirectMl, Accelerator::Cpu]
         );
         // Engine kinds measured as DML-safe keep DML.
         assert_eq!(
             override_dml_to_cpu_for_kind(
                 vec![Accelerator::DirectMl, Accelerator::Cpu],
                 EngineKind::NemoCtc,
+                Quantization::Default
+            ),
+            vec![Accelerator::DirectMl, Accelerator::Cpu]
+        );
+        assert_eq!(
+            override_dml_to_cpu_for_kind(
+                vec![Accelerator::DirectMl, Accelerator::Cpu],
+                EngineKind::NemoCtcStreaming,
                 Quantization::Default
             ),
             vec![Accelerator::DirectMl, Accelerator::Cpu]

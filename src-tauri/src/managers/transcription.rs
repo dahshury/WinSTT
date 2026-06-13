@@ -1,5 +1,6 @@
 use crate::managers::audio::AudioRecordingManager;
 use crate::settings::{get_settings, ModelUnloadTimeout};
+use crate::winstt::settings_schema::RecordingMode;
 use crate::winstt::sync_ext::MutexExt;
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -205,6 +206,13 @@ impl Drop for WarmingGuard<'_> {
 
 const WHISPER_GARBAGE_MARKER: &str = "[whisper-garbage]";
 
+fn listen_mode_forces_model_resident(app: &AppHandle) -> bool {
+    crate::winstt::commands::settings::read_settings_raw(app)
+        .general
+        .recording_mode
+        == RecordingMode::Listen
+}
+
 fn is_degenerate_decode_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string();
     msg.contains(WHISPER_GARBAGE_MARKER) || msg.contains("degenerate Whisper decode")
@@ -276,6 +284,10 @@ impl TranscriptionManager {
 
                     let settings = get_settings(&app_handle_cloned);
                     let timeout = settings.model_unload_timeout;
+                    if listen_mode_forces_model_resident(&app_handle_cloned) {
+                        manager_cloned.touch_activity();
+                        continue;
+                    }
 
                     // Skip Immediately — that variant is handled by
                     // maybe_unload_immediately() after each transcription.
@@ -414,6 +426,10 @@ impl TranscriptionManager {
     /// Reset the idle timer to now.
     fn touch_activity(&self) {
         self.last_activity.store(Self::now_ms(), Ordering::Relaxed);
+    }
+
+    pub(crate) fn listen_mode_forces_model_resident(&self) -> bool {
+        listen_mode_forces_model_resident(&self.app_handle)
     }
 }
 

@@ -29,6 +29,7 @@ mod cloud;
 mod download;
 mod local;
 mod openrouter;
+mod provider;
 mod service;
 mod splitter;
 #[cfg(test)]

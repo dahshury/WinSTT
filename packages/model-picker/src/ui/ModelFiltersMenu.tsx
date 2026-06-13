@@ -21,6 +21,7 @@ import { useTranslations } from "use-intl";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import {
 	SurfaceProvider,
 	surfaceBg,
@@ -103,10 +104,7 @@ function filterTextOptions(
 		return options;
 	}
 	return options.filter((value) => {
-		const label = format(value).toLowerCase();
-		return (
-			label.includes(normalized) || value.toLowerCase().includes(normalized)
-		);
+		return matchesFuzzySearch([format(value), value], normalized);
 	});
 }
 
@@ -119,9 +117,9 @@ function filterEndpointProviderEntries(
 		return providers;
 	}
 	return providers.filter(([provider]) => {
-		const label = formatProviderName(provider).toLowerCase();
-		return (
-			label.includes(normalized) || provider.toLowerCase().includes(normalized)
+		return matchesFuzzySearch(
+			[formatProviderName(provider), provider],
+			normalized,
 		);
 	});
 }

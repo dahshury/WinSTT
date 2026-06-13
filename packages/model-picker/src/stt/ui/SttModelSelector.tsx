@@ -9,6 +9,7 @@ import type {
 	SystemInfoEntry,
 } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import {
 	ALL_AUTHORS_RAIL_ID,
 	buildAllAuthorsRailItem,
@@ -48,6 +49,8 @@ import {
 } from "../lib/sort-state";
 import {
 	findDisplayModelByBackingId,
+	mergeStreamingLatencyModels,
+	mergeStreamingLatencyStates,
 	mergeStreamingPrecisionModels,
 	mergeStreamingPrecisionStates,
 } from "../lib/streaming-precision-merge";
@@ -220,11 +223,7 @@ function applyPrefilter(
 
 /** Text search delegated to Base UI's filtering pipeline (groups + keyboard). */
 function matchesQuery(model: ModelInfo, query: string): boolean {
-	const q = query.trim().toLowerCase();
-	if (q.length === 0) {
-		return true;
-	}
-	return buildModelSearchCorpus(model).includes(q);
+	return matchesFuzzySearch(buildModelSearchCorpus(model), query);
 }
 
 function buildRailItems(
@@ -327,10 +326,15 @@ export function SttModelSelector({
 		useFavoriteSet("winstt:stt-favorite-authors");
 
 	const prefilteredModels = applyPrefilter(models, prefilter);
-	const baseModels = mergeStreamingPrecisionModels(prefilteredModels);
-	const routedStatesById = mergeStreamingPrecisionStates(
-		baseModels,
+	const precisionModels = mergeStreamingPrecisionModels(prefilteredModels);
+	const baseModels = mergeStreamingLatencyModels(precisionModels);
+	const precisionStatesById = mergeStreamingPrecisionStates(
+		precisionModels,
 		statesById,
+	);
+	const routedStatesById = mergeStreamingLatencyStates(
+		baseModels,
+		precisionStatesById,
 	);
 	const selectedCacheKey = `${kind}:${value}`;
 	const resolvedSelectedModel = findDisplayModelByBackingId(baseModels, value);

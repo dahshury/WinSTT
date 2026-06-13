@@ -125,10 +125,10 @@ text transforms. It is **not** a cloud STT provider — it never transcribes aud
 
 Every key — OpenAI, ElevenLabs, and OpenRouter — is encrypted before it touches disk.
 
-<Callout type="success" title="DPAPI-backed encryption">
-  Keys are sealed by the Rust backend using the Windows user profile secret store. The
-  encrypted blob lives in the app's settings store; the plaintext never leaves the backend
-  and is never persisted in the clear.
+<Callout type="success" title="OS-protected encryption">
+  Keys are sealed by the Rust backend before they touch disk. In the current alpha,
+  encrypted secret persistence is implemented with Windows DPAPI; other platforms fail
+  closed rather than saving plaintext until their native secret stores are wired.
 </Callout>
 
 ## Related

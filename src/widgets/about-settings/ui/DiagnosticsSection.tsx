@@ -66,7 +66,7 @@ export function DiagnosticsSection({ t }: { t: AboutT }): ReactNode {
 				title={t("openLogsFolder")}
 			/>
 			<DiagnosticsActionRow
-				buttonLabel={t("saveDiagnosticBundle")}
+				buttonLabel={t("saveDiagnosticBundleButton")}
 				icon={FileZipIcon}
 				onClick={handleSaveDiagnosticBundle}
 				summary={t("saveDiagnosticBundleSummary")}

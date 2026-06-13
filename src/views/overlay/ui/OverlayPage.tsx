@@ -74,6 +74,9 @@ export function OverlayPage() {
 	const liveDisplay = useSettingsStore(
 		(s) => s.settings.general?.liveTranscriptionDisplay ?? "both",
 	);
+	const isListenMode = useSettingsStore(
+		(s) => s.settings.general?.recordingMode === "listen",
+	);
 	const wordByWordPasting = useSettingsStore(
 		(s) => s.settings.general?.wordByWordPasting ?? false,
 	);
@@ -105,6 +108,7 @@ export function OverlayPage() {
 			wordByWordPasting,
 		});
 	const showLiveTranscription =
+		!isListenMode &&
 		!suppressWordByWordPillPreview &&
 		(liveDisplay === "in-pill" || liveDisplay === "both");
 
@@ -117,7 +121,7 @@ export function OverlayPage() {
 	const transcribingStartedAt = useTranscriptionStore(
 		(s) => s.transcribingStartedAt,
 	);
-	const showTranscribing = isTranscribing;
+	const showTranscribing = !isListenMode && isTranscribing;
 	const displayedTranscribingPhase =
 		showTranscribing && isCloudSttModel ? processingPhase : null;
 	const isThinking = useLlmProcessingStore((s) => s.isThinking);
@@ -137,11 +141,12 @@ export function OverlayPage() {
 	const isPreviewActive = useTranscriptPreviewStore((s) => s.isActive);
 	const hasEphemeral = ephemeral !== null;
 	const sttSessionActive =
-		isRecordingActive ||
-		showThinking ||
-		isTranscribing ||
-		isPreviewActive ||
-		hasEphemeral;
+		!isListenMode &&
+		(isRecordingActive ||
+			showThinking ||
+			isTranscribing ||
+			isPreviewActive ||
+			hasEphemeral);
 	useTtsIslandBridge(sttSessionActive);
 	const ttsSessionActive =
 		ttsRequestId !== null &&
@@ -168,13 +173,15 @@ export function OverlayPage() {
 	// useful through the rest of the session, but they must not create one from
 	// silence.
 	const sessionShouldShow =
-		computePillReveal({
+		!isListenMode &&
+		(computePillReveal({
 			isRecordingActive,
 			isSpeaking,
 			hasText,
 			isThinking: showThinking,
 			isTranscribing: showTranscribing,
-		}) || isPreviewActive;
+		}) ||
+			isPreviewActive);
 	// Sticky once-on: hold the pill mounted for the rest of the active session
 	// even if `currentRealtime` momentarily empties between realtime chunks.
 	// Without this, the AnimatePresence around chip + bubble unmounts on every
@@ -185,11 +192,12 @@ export function OverlayPage() {
 	// reuse a visible latch from the previous session and flash before this
 	// session has speech/text.
 	const sessionActive =
-		isRecordingActive ||
-		showThinking ||
-		showTranscribing ||
-		isPreviewActive ||
-		hasEphemeral;
+		!isListenMode &&
+		(isRecordingActive ||
+			showThinking ||
+			showTranscribing ||
+			isPreviewActive ||
+			hasEphemeral);
 	const stickyShow = useStickyPillReveal({
 		recordingSessionId,
 		sessionActive,
@@ -215,8 +223,10 @@ export function OverlayPage() {
 	// Active speech/transform pill (dynamic-island or floating-bottom). The
 	// forced TTS read-aloud pill is a separate, always-mounted animated layer
 	// (`TtsIslandLayer`) so it can slide in AND out from the top instead of popping.
-	let activePill: ReactNode;
-	if (isTransforming && effectiveOverlayMode === "dynamic-island") {
+	let activePill: ReactNode = null;
+	if (isListenMode) {
+		activePill = null;
+	} else if (isTransforming && effectiveOverlayMode === "dynamic-island") {
 		activePill = (
 			<DynamicTransformIslandLayer
 				show={isTransforming}

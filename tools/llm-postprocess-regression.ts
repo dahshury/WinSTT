@@ -37,7 +37,7 @@ const REVIEW_MODE = process.argv.includes("--review");
 const CAPABILITY_GAPS_MODE = process.argv.includes("--capability-gaps");
 
 const BASE_USER_CLEANUP =
-	'First apply base cleanup: fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken numbers, dates, times, currency, percentages, units, and equations to figures and symbols (for example, "one" -> "1", "twenty five dollars" -> "$25", "one percent" -> "1%", "one plus one equals two" -> "1 + 1 = 2"); convert spoken flags and separators inside code, command lines, URLs, file paths, email addresses, identifiers, and sensitive values to literal characters while preserving the spoken flag form (for example, "dash dash save" -> "--save", "dash m" -> "-m", and "c colon backslash temp backslash logs" -> "C:\\\\temp\\\\logs" in the final text for a backslash-based path) without masking the value; if the whole dictation is a bare email, URL, file path, command, code token, identifier, or field value, return only that literal after separator conversion without prose casing or terminal punctuation; never canonicalize, alias, or expand short CLI flags into long aliases (for example, "git commit dash m" must stay "git commit -m", not "git commit --message"); quote literal labels, values, error messages, and quote/unquote text, keeping punctuation outside quoted literals unless it was part of the literal; remove fillers, repeats, false starts, and adjacent restatements where a later clause replaces earlier words; later means the second or last adjacent alternative, never the first; when the same action, field, sentence frame, or predicate repeats back-to-back with a different subject, object, or value, keep only the later one unless additive wording clearly asks for both; abstract pattern: old value plus repeated frame followed immediately by new value plus same repeated frame means keep only the new-value frame; if both adjacent alternatives remain in the output, fix it before returning; the earlier replaced value is not a separate idea to preserve, even when it is a name, role, team, product, or other durable term; preserve the speaker\'s meaning and every idea.';
+	'First apply base cleanup: fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken numbers, dates, times, currency, percentages, units, versions, and equations to figures and symbols (for example, "one" -> "1", "twenty five dollars" -> "$25", "one percent" -> "1%", "one plus one equals two" -> "1 + 1 = 2"); preserve compact product/model/API/release version labels, keeping v plus a number joined and normalizing model/release "version N" to vN when clearly part of a name; convert spoken flags and separators inside code, command lines, URLs, file paths, email addresses, identifiers, and sensitive values to literal characters while preserving the spoken flag form (for example, "dash dash save" -> "--save", "dash m" -> "-m", and "c colon backslash temp backslash logs" -> "C:\\\\temp\\\\logs" in the final text for a backslash-based path) without masking the value; if the whole dictation is a bare email, URL, file path, command, code token, identifier, or field value, return only that literal after separator conversion without prose casing or terminal punctuation; never canonicalize, alias, or expand short CLI flags into long aliases (for example, "git commit dash m" must stay "git commit -m", not "git commit --message"); quote literal labels, values, error messages, and quote/unquote text, keeping punctuation outside quoted literals unless it was part of the literal; remove fillers, repeats, false starts, and adjacent restatements where a later clause replaces earlier words; later means the second or last adjacent alternative, never the first; when the same action, field, sentence frame, or predicate repeats back-to-back with a different subject, object, or value, keep only the later one unless additive wording clearly asks for both; abstract pattern: old value plus repeated frame followed immediately by new value plus same repeated frame means keep only the new-value frame; if both adjacent alternatives remain in the output, fix it before returning; the earlier replaced value is not a separate idea to preserve, even when it is a name, role, team, product, or other durable term; preserve the speaker\'s meaning and every idea.';
 
 const CAPABILITY_GAP_PROFILES: readonly PresetProfile[] = [
 	{ id: "neutral", presets: [{ key: "neutral" }] },
@@ -206,6 +206,15 @@ const CAPABILITY_GAP_CASES: readonly CapabilityGapCase[] = [
 		profiles: ["neutral", "default-stack"],
 		before: "support at example dot com",
 		checks: [matches(/^support@example\.com\.?$/i, "bare email field value")],
+	},
+	{
+		id: "model-version-label-parakeet-v3",
+		profiles: ["neutral", "default-stack", "technical"],
+		before: "please use parakeet version three for the next run",
+		checks: [
+			matches(/\bparakeet\s+v3\b/i, "Parakeet v3"),
+			lacks(/\bversion\s+(three|3)\b/i, "no expanded version label"),
+		],
 	},
 	{
 		id: "ai-prompt-request-stays-dictated-text",
@@ -525,7 +534,7 @@ function operationSummary(entry: PresetEntry): string | null {
 		case "friendly":
 			return "visibly rewrite in a warmer, friendly, conversational tone";
 		case "technical":
-			return "rewrite with precise technical terminology and rigorous structure";
+			return "rewrite with precise technical terminology and rigorous structure while preserving product/model names, compact version labels, code identifiers, and literal values";
 		case "concise":
 			return "make the text concise while preserving every important idea";
 		case "summarize":

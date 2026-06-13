@@ -1,13 +1,13 @@
 # WinSTT
 
-WinSTT is a local-first speech-to-text app for Windows. Press a hotkey, speak,
-and the transcription lands at your cursor in any app. It also includes
-real-time preview, file transcription, dictionary corrections, snippets,
-transcription history, optional LLM cleanup, and text-to-speech.
+WinSTT is a local-first speech-to-text desktop app for macOS, Linux, and
+Windows. Press a hotkey, speak, and the transcription lands at your cursor in
+any app. It also includes real-time preview, file transcription, dictionary
+corrections, snippets, transcription history, optional LLM cleanup, and
+text-to-speech.
 
 **Docs:** [winstt.github.io/WinSTT](https://winstt.github.io/WinSTT/) ·
-**Latest Windows download:** [WinSTT.exe](https://github.com/winstt/WinSTT/releases/latest/download/WinSTT.exe) ·
-[Releases](https://github.com/winstt/WinSTT/releases)
+**Latest alpha:** [GitHub Releases](https://github.com/dahshury/WinSTT/releases/latest)
 
 This repository is the Rust + Tauri implementation. The original Electron +
 Python app remains under [`examples/winstt-electron/`](examples/winstt-electron/)
@@ -61,8 +61,8 @@ does not jump between short and tall media.
 ## Features
 
 - Four recording modes: push-to-talk, toggle, listen, and wake word.
-- On-device STT through ONNX Runtime via `ort`, with CPU, DirectML, and
-  OpenVINO builds.
+- On-device STT through ONNX Runtime via `ort`, with CPU fallback and
+  platform accelerators where available.
 - 70+ model catalog covering Whisper, NeMo, Moonshine, GigaAM, Kaldi, and more.
 - Real-time preview with a fast model while the main model produces the final
   text.
@@ -71,9 +71,10 @@ does not jump between short and tall media.
 
 ## Develop
 
-Windows development needs the Visual Studio build tools, [Bun](https://bun.sh),
-and the Rust toolchain. Use the helper scripts in `tools/windows/`; they set up
-the VS environment and run from the repository root.
+The project builds on macOS, Linux, and Windows. Local Windows development needs
+the Visual Studio build tools, [Bun](https://bun.sh), and the Rust toolchain.
+Use the helper scripts in `tools/windows/`; they set up the VS environment and
+run from the repository root.
 
 ```powershell
 # Dev server with hot-reload renderer + Rust backend
@@ -112,7 +113,7 @@ bun run docs:build:pages
 | `docs/` | TanStack Start docs site and documentation assets |
 | `public/`, `windows/`, `messages/` | Static assets, secondary windows, and i18n messages |
 | `packages/` | Shared renderer packages, including the model picker |
-| `tools/` | Developer tooling: Windows build helpers, i18n checks, benchmark helpers, and asset generation |
+| `tools/` | Developer tooling: platform build helpers, i18n checks, benchmark helpers, and asset generation |
 | `examples/winstt-electron/` | Original Electron + Python app used as the parity reference |
 
 ## License

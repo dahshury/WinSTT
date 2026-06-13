@@ -11,9 +11,8 @@
 //
 //   * the capture lifecycle (start/stop, idempotent, serialized — concurrent WASAPI start/stop
 //     crash the backend),
-//   * a consumer thread that VAD-gates the f32 stream (Silero), keeps audio bounded with rolling
-//     commits plus a sustained-silence tail flush, and sends final chunks to the shared
-//     `TranscriptionManager` worker.
+//   * a consumer thread that feeds continuous loopback audio to the selected native-streaming
+//     `TranscriptionManager` model while using VAD only for UI activity state.
 //
 // Why the manager owns the consumer (not the recorder): cpal's `AudioRecorder` is mic-only and
 // hotkey-driven; loopback is a second, continuous producer with its own VAD endpoint loop. Per
@@ -26,45 +25,41 @@
 // `start_loopback`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 
-use crate::managers::transcription::TranscriptionManager;
+use crate::managers::transcription::{RealtimeStreamOutcome, TranscriptionManager};
 
 use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
 use crate::audio_toolkit::vad::{
     SileroVad, SmoothedVad, VadFrame, VoiceActivityDetector, VAD_FRAME_SAMPLES,
-    VAD_SPEECH_THRESHOLD,
 };
 use crate::winstt::commands::dictation::SttEvents;
-use crate::winstt::commands::listen_events::{emit_speaker_segments, EmitSpeakerSegment};
 use crate::winstt::commands::settings::read_settings_raw;
 use crate::winstt::loopback::{DeviceInfo, LoopbackCapture};
-use crate::winstt::managers::DiarizationManager;
-use crate::winstt::stt::backend::fixed_realtime_language_from_model;
 use crate::winstt::sync_ext::MutexExt;
 
-/// Silence (seconds) after speech that closes the current loopback tail. Rolling
-/// commits are the primary finalization path for continuous listen-mode audio.
+/// Silence (seconds) after speech that clears the current loopback live caption.
 const POST_SPEECH_SILENCE_DURATION: f64 = 2.0;
 
-/// Maximum speech window sent to one final transcription job. This keeps long movies / lectures
-/// from becoming one unbounded decode while still giving the model sentence-level context.
-const LISTEN_STREAM_COMMIT_SECONDS: f64 = 20.0;
+/// Hard cap for the in-memory consumer buffer when transcription falls behind. This buffer holds
+/// only samples not yet discarded from the continuous stream; keeping several minutes here prevents
+/// short CPU/GPU stalls from turning into dropped captions during long media playback.
+const LISTEN_MAX_BUFFER_SECONDS: f64 = 300.0;
 
-/// Hard cap for the in-memory consumer buffer when transcription falls behind.
-const LISTEN_MAX_BUFFER_SECONDS: f64 = 60.0;
+/// Timeout used to notice render devices that stop delivering zero-filled frames during silence.
+const LOOPBACK_RECV_TIMEOUT: Duration = Duration::from_millis(200);
 
-/// Bounded final-transcription backlog. If this fills, capture stays responsive and we log/drop
-/// excess buffered audio instead of hanging the app.
-const LISTEN_COMMIT_QUEUE_CAPACITY: usize = 2;
+/// Loopback needs much more permissive VAD than close-talk mic dictation: system audio is often
+/// normalized, compressed, mixed with music/effects, or quieter than microphone speech. This
+/// mirrors the RealtimeSTT stereo-mix example's `silero_sensitivity=0.05`.
+const LOOPBACK_VAD_SPEECH_THRESHOLD: f32 = 0.05;
 
-// VAD sensitivity (`VAD_SPEECH_THRESHOLD`) and the 30 ms frame size
-// (`VAD_FRAME_SAMPLES`) are shared with the mic path from `audio_toolkit::vad` so
-// the two pipelines can't drift apart.
+// The 30 ms frame size (`VAD_FRAME_SAMPLES`) stays shared with the mic path from
+// `audio_toolkit::vad` so the two pipelines keep the same timing unit.
 
 /// SmoothedVad onset/hangover/prefill frame counts — same tuning the mic recorder
 /// applies (`create_audio_recorder` in managers/audio.rs wraps SileroVad in
@@ -78,6 +73,70 @@ const VAD_ONSET_FRAMES: usize = 2;
 /// blips (a single click / notification chime) that would otherwise spawn an
 /// empty-text transcription. ~150 ms at 16 kHz.
 const MIN_SPEECH_SAMPLES: usize = (WHISPER_SAMPLE_RATE as usize) * 150 / 1000;
+
+/// Lowest feed cadence for native streaming models without an explicit latency token.
+const LISTEN_NATIVE_STREAM_DEFAULT_FEED_MS: usize = 160;
+const LISTEN_NATIVE_STREAM_MIN_FEED_MS: usize = 80;
+const LISTEN_NATIVE_STREAM_MAX_FEED_MS: usize = 1120;
+
+/// Soft roll target for listen-mode UI commits. The model stream stays continuous; these thresholds
+/// only decide when accumulated text is emitted as a caption row.
+const LISTEN_STREAM_ROLL_SECONDS: f64 = 12.0;
+const LISTEN_STREAM_ROLL_HARD_SECONDS: f64 = 20.0;
+const LISTEN_STREAM_ROLL_CHARS: usize = 360;
+const LISTEN_STREAM_ROLL_HARD_CHARS: usize = 720;
+
+struct LoopbackRealtimeState {
+    generation: u64,
+    fed_len: usize,
+    committed_fed_len: usize,
+    committed_text: String,
+    last_raw_text: String,
+    last_emit_text: String,
+    last_preview: Instant,
+}
+
+impl LoopbackRealtimeState {
+    fn new() -> Self {
+        Self {
+            generation: 1,
+            fed_len: 0,
+            committed_fed_len: 0,
+            committed_text: String::new(),
+            last_raw_text: String::new(),
+            last_emit_text: String::new(),
+            last_preview: Instant::now(),
+        }
+    }
+
+    fn reset_stream(&mut self, transcription: &TranscriptionManager) {
+        self.generation = self.generation.wrapping_add(1).max(1);
+        self.fed_len = 0;
+        self.committed_fed_len = 0;
+        self.committed_text.clear();
+        self.last_raw_text.clear();
+        self.last_emit_text.clear();
+        self.last_preview = Instant::now();
+        transcription.stream_reset_realtime();
+    }
+
+    fn forget_buffered_prefix(&mut self, samples: usize) {
+        self.fed_len = self.fed_len.saturating_sub(samples);
+        self.committed_fed_len = self.committed_fed_len.saturating_sub(samples);
+        self.last_emit_text.clear();
+        self.last_preview = Instant::now();
+    }
+
+    fn uncommitted_text(&self, raw_text: &str) -> String {
+        uncommitted_realtime_text(&self.committed_text, raw_text)
+    }
+
+    fn mark_committed(&mut self, raw_text: &str, total_len: usize) {
+        self.committed_text = raw_text.trim().to_string();
+        self.committed_fed_len = total_len;
+        self.last_emit_text.clear();
+    }
+}
 
 pub struct LoopbackManager {
     app: AppHandle,
@@ -150,7 +209,7 @@ impl LoopbackManager {
         // endpointing matches dictation (onset debounce + hangover tail), not a raw
         // per-frame decision.
         let vad_path = self.vad_path()?;
-        let silero = SileroVad::new(&vad_path, VAD_SPEECH_THRESHOLD)
+        let silero = SileroVad::new(&vad_path, LOOPBACK_VAD_SPEECH_THRESHOLD)
             .map_err(|e| format!("failed to create Silero VAD: {e}"))?;
         let vad: Box<dyn VoiceActivityDetector> = Box::new(SmoothedVad::new(
             Box::new(silero),
@@ -184,7 +243,7 @@ impl LoopbackManager {
         let handle = std::thread::Builder::new()
             .name("loopback-consumer".into())
             .spawn(move || {
-                consumer_loop(app, transcription, rx, stop_flag, vad, model_id);
+                consumer_loop(app, transcription, rx, stop_flag, vad);
             })
             .map_err(|e| {
                 // Roll back the capture if the consumer thread couldn't spawn.
@@ -224,37 +283,20 @@ impl Drop for LoopbackManager {
     }
 }
 
-/// The Listen-mode consumer: VAD-gate the 16 kHz mono f32 stream, keep capture responsive, and
-/// queue bounded chunks for final transcription. Silence only flushes the current tail; continuous
-/// speech is finalized by rolling commits.
+/// The Listen-mode consumer: feed the 16 kHz mono f32 stream continuously into the native
+/// streaming model, keep capture responsive, and use VAD only to drive the visual active/idle
+/// state. Listen mode never runs the mic dictation finalizer: no paste, no final post-processing
+/// pass.
 fn consumer_loop(
     app: AppHandle,
     transcription: Arc<TranscriptionManager>,
     rx: Receiver<Vec<f32>>,
     stop_flag: Arc<AtomicBool>,
     mut vad: Box<dyn VoiceActivityDetector>,
-    model_id: String,
 ) {
     // How many consecutive silence frames close an utterance.
     let silence_frames_to_end = ((POST_SPEECH_SILENCE_DURATION * 1000.0) / 30.0).round() as usize;
-    let commit_samples = samples_for_seconds(LISTEN_STREAM_COMMIT_SECONDS);
     let max_buffer_samples = samples_for_seconds(LISTEN_MAX_BUFFER_SECONDS);
-
-    let (commit_tx, commit_rx) = mpsc::sync_channel::<Vec<f32>>(LISTEN_COMMIT_QUEUE_CAPACITY);
-    let worker_app = app.clone();
-    let worker_transcription = transcription.clone();
-    let worker_model_id = model_id.clone();
-    let worker = match std::thread::Builder::new()
-        .name("loopback-transcriber".into())
-        .spawn(move || {
-            transcription_worker_loop(worker_app, worker_transcription, commit_rx, worker_model_id);
-        }) {
-        Ok(handle) => handle,
-        Err(e) => {
-            log::error!("[loopback] failed to spawn transcription worker: {e}");
-            return;
-        }
-    };
 
     let mut speech: Vec<f32> = Vec::new();
     // Re-frame buffer: the capture emits 30 ms frames, but guard against a
@@ -262,7 +304,8 @@ fn consumer_loop(
     let mut frame_acc: Vec<f32> = Vec::new();
     let mut in_speech = false;
     let mut silence_frames = 0usize;
-    let mut last_preview = Instant::now();
+    let mut realtime = LoopbackRealtimeState::new();
+    transcription.stream_reset_realtime();
 
     loop {
         if stop_flag.load(Ordering::Acquire) {
@@ -271,9 +314,39 @@ fn consumer_loop(
 
         // Block for the next capture chunk; a short timeout lets us re-check the
         // stop flag during silent stretches without busy-spinning.
-        let chunk = match rx.recv_timeout(Duration::from_millis(200)) {
+        let chunk = match rx.recv_timeout(LOOPBACK_RECV_TIMEOUT) {
             Ok(c) => c,
-            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Timeout) => {
+                SttEvents::audio_level(&app, 0.0);
+                if in_speech {
+                    silence_frames = silence_frames
+                        .saturating_add(silence_frames_for_duration(LOOPBACK_RECV_TIMEOUT));
+                    if silence_frames >= silence_frames_to_end {
+                        finish_realtime_segment(
+                            &app,
+                            &transcription,
+                            &mut speech,
+                            &mut realtime,
+                            &mut in_speech,
+                            &mut silence_frames,
+                        );
+                    }
+                } else if speech.len() >= MIN_SPEECH_SAMPLES
+                    && !realtime.last_raw_text.trim().is_empty()
+                {
+                    finish_realtime_segment(
+                        &app,
+                        &transcription,
+                        &mut speech,
+                        &mut realtime,
+                        &mut in_speech,
+                        &mut silence_frames,
+                    );
+                } else if !realtime.last_emit_text.is_empty() {
+                    commit_last_realtime_text(&app, &mut realtime, speech.len());
+                }
+                continue;
+            }
             Err(RecvTimeoutError::Disconnected) => break,
         };
 
@@ -290,101 +363,124 @@ fn consumer_loop(
         // Process whole 30 ms frames.
         while frame_acc.len() >= VAD_FRAME_SAMPLES {
             let frame: Vec<f32> = frame_acc.drain(0..VAD_FRAME_SAMPLES).collect();
+            speech.extend_from_slice(&frame);
             let vad_frame = vad.push_frame(&frame).unwrap_or(VadFrame::Noise);
 
-            if let VadFrame::Speech(vad_audio) = vad_frame {
+            if let VadFrame::Speech(_) = vad_frame {
                 if !in_speech {
                     in_speech = true;
                     SttEvents::vad_start(&app);
                 }
                 silence_frames = 0;
-                speech.extend_from_slice(vad_audio);
             } else if in_speech {
-                // Trailing silence is kept in the buffer (it gives the model a
-                // clean tail) until the endpoint fires.
-                speech.extend_from_slice(&frame);
                 silence_frames += 1;
-                if silence_frames >= silence_frames_to_end
-                    && queue_commit(&commit_tx, &mut speech, None)
-                {
-                    clear_realtime_preview(&app);
-                    SttEvents::vad_stop(&app);
-                    in_speech = false;
-                    silence_frames = 0;
+                if silence_frames >= silence_frames_to_end {
+                    finish_realtime_segment(
+                        &app,
+                        &transcription,
+                        &mut speech,
+                        &mut realtime,
+                        &mut in_speech,
+                        &mut silence_frames,
+                    );
                 }
             }
-            if speech.len() >= commit_samples
-                && queue_commit(&commit_tx, &mut speech, Some(commit_samples))
-            {
-                clear_realtime_preview(&app);
-                last_preview = Instant::now();
+            let dropped = enforce_buffer_cap(&mut speech, max_buffer_samples);
+            if dropped > 0 {
+                realtime.forget_buffered_prefix(dropped);
             }
-            enforce_buffer_cap(&mut speech, max_buffer_samples);
-            // else: not in speech and no voice → drop (idle system audio).
+            // VAD no longer gates model input; it only controls active/idle UI state.
         }
 
-        publish_realtime_preview_if_due(&app, &transcription, &speech, &mut last_preview);
+        publish_native_realtime_preview_if_due(&app, &transcription, &mut speech, &mut realtime);
     }
 
-    // Session ending: flush whatever speech remains so the last sentence isn't
-    // lost when the user stops Listen mode mid-utterance.
-    if in_speech {
-        SttEvents::vad_stop(&app);
+    if in_speech || speech.len() >= MIN_SPEECH_SAMPLES {
+        finish_realtime_segment(
+            &app,
+            &transcription,
+            &mut speech,
+            &mut realtime,
+            &mut in_speech,
+            &mut silence_frames,
+        );
+    } else {
+        clear_realtime_preview(&app);
     }
-    send_blocking_commit(&commit_tx, &mut speech);
-    drop(commit_tx);
-    let _ = worker.join();
 }
 
 fn samples_for_seconds(seconds: f64) -> usize {
     ((seconds * WHISPER_SAMPLE_RATE as f64).round() as usize).max(1)
 }
 
-fn take_commit(speech: &mut Vec<f32>, max_take: Option<usize>) -> Option<Vec<f32>> {
-    if speech.len() < MIN_SPEECH_SAMPLES {
-        if max_take.is_none() {
-            speech.clear();
-        }
-        return None;
-    }
-
-    let take = max_take.unwrap_or(speech.len()).min(speech.len());
-    if take < MIN_SPEECH_SAMPLES {
-        return None;
-    }
-    Some(speech.drain(..take).collect())
+fn samples_for_millis(ms: usize) -> usize {
+    ((ms * WHISPER_SAMPLE_RATE as usize) / 1000).max(1)
 }
 
-fn queue_commit(tx: &SyncSender<Vec<f32>>, speech: &mut Vec<f32>, max_take: Option<usize>) -> bool {
-    let Some(audio) = take_commit(speech, max_take) else {
+fn silence_frames_for_duration(duration: Duration) -> usize {
+    ((duration.as_secs_f64() * 1000.0) / 30.0).ceil() as usize
+}
+
+fn streaming_latency_ms_from_id(model_id: &str) -> Option<usize> {
+    model_id
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter_map(|token| token.strip_suffix("ms"))
+        .filter_map(|value| value.parse::<usize>().ok())
+        .next()
+}
+
+fn listen_native_stream_feed_samples(model_id: Option<&str>) -> usize {
+    let latency_ms = model_id
+        .map(crate::winstt::catalog::canonical_model_id)
+        .and_then(streaming_latency_ms_from_id)
+        .unwrap_or(LISTEN_NATIVE_STREAM_DEFAULT_FEED_MS)
+        .clamp(
+            LISTEN_NATIVE_STREAM_MIN_FEED_MS,
+            LISTEN_NATIVE_STREAM_MAX_FEED_MS,
+        );
+    samples_for_millis(latency_ms)
+}
+
+fn native_realtime_ready_to_publish(
+    speech_len: usize,
+    fed_len: usize,
+    last_preview_elapsed: Duration,
+    interval: Duration,
+    feed_samples: usize,
+    force: bool,
+) -> bool {
+    if speech_len < MIN_SPEECH_SAMPLES || speech_len <= fed_len {
+        return false;
+    }
+    if force {
         return true;
-    };
-
-    match tx.try_send(audio) {
-        Ok(()) => true,
-        Err(TrySendError::Full(audio)) => {
-            let mut restored = audio;
-            restored.extend_from_slice(speech);
-            *speech = restored;
-            false
-        }
-        Err(TrySendError::Disconnected(_)) => {
-            speech.clear();
-            false
-        }
     }
+    speech_len - fed_len >= feed_samples && last_preview_elapsed >= interval
 }
 
-fn send_blocking_commit(tx: &SyncSender<Vec<f32>>, speech: &mut Vec<f32>) {
-    let Some(audio) = take_commit(speech, None) else {
-        return;
-    };
-    let _ = tx.send(audio);
+fn finish_realtime_segment(
+    app: &AppHandle,
+    transcription: &TranscriptionManager,
+    speech: &mut Vec<f32>,
+    realtime: &mut LoopbackRealtimeState,
+    in_speech: &mut bool,
+    silence_frames: &mut usize,
+) {
+    let committed = finalize_realtime_segment(app, transcription, speech, realtime);
+    if !committed {
+        clear_realtime_preview(app);
+    }
+    realtime.reset_stream(transcription);
+    if *in_speech {
+        SttEvents::vad_stop(app);
+    }
+    *in_speech = false;
+    *silence_frames = 0;
 }
 
-fn enforce_buffer_cap(speech: &mut Vec<f32>, max_samples: usize) {
+fn enforce_buffer_cap(speech: &mut Vec<f32>, max_samples: usize) -> usize {
     if speech.len() <= max_samples {
-        return;
+        return 0;
     }
     let drop = speech.len() - max_samples;
     speech.drain(..drop);
@@ -392,11 +488,50 @@ fn enforce_buffer_cap(speech: &mut Vec<f32>, max_samples: usize) {
         "[loopback] transcription is falling behind; dropped {:.1}s of buffered audio",
         drop as f64 / WHISPER_SAMPLE_RATE as f64
     );
+    drop
 }
 
 fn clear_realtime_preview(app: &AppHandle) {
     SttEvents::realtime_stabilized(app, "");
     SttEvents::realtime_text(app, "");
+}
+
+fn collapse_whitespace(input: &str) -> String {
+    input.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn uncommitted_realtime_text(committed: &str, raw_text: &str) -> String {
+    let raw = raw_text.trim();
+    let committed = committed.trim();
+    if raw.is_empty() || raw == committed {
+        return String::new();
+    }
+    if committed.is_empty() {
+        return raw.to_string();
+    }
+    if let Some(rest) = raw.strip_prefix(committed) {
+        return rest.trim_start().to_string();
+    }
+
+    let raw_normalized = collapse_whitespace(raw);
+    let committed_normalized = collapse_whitespace(committed);
+    if raw_normalized == committed_normalized {
+        return String::new();
+    }
+    if let Some(rest) = raw_normalized.strip_prefix(&committed_normalized) {
+        return rest.trim_start().to_string();
+    }
+
+    let raw_words: Vec<&str> = raw_normalized.split_whitespace().collect();
+    let committed_words: Vec<&str> = committed_normalized.split_whitespace().collect();
+    let max_overlap = raw_words.len().min(committed_words.len());
+    for overlap in (1..=max_overlap).rev() {
+        if committed_words[committed_words.len() - overlap..] == raw_words[..overlap] {
+            return raw_words[overlap..].join(" ");
+        }
+    }
+
+    raw_normalized
 }
 
 fn listen_realtime_interval(app: &AppHandle) -> Duration {
@@ -410,115 +545,151 @@ fn listen_realtime_interval_seconds(configured: f64) -> f64 {
     configured.max(0.01)
 }
 
-fn loopback_language(app: &AppHandle) -> Option<String> {
-    let settings = read_settings_raw(app);
-    fixed_realtime_language_from_model(&settings.model)
+fn ends_on_realtime_boundary(text: &str) -> bool {
+    text.trim_end()
+        .chars()
+        .last()
+        .is_some_and(|c| matches!(c, '.' | '!' | '?' | ',' | ';' | ':' | ')' | ']' | '}'))
 }
 
-fn publish_realtime_preview_if_due(
+fn should_roll_realtime_segment(text: &str, samples: usize) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let chars = trimmed.chars().count();
+    if chars >= LISTEN_STREAM_ROLL_HARD_CHARS
+        || samples >= samples_for_seconds(LISTEN_STREAM_ROLL_HARD_SECONDS)
+    {
+        return true;
+    }
+
+    (chars >= LISTEN_STREAM_ROLL_CHARS
+        || samples >= samples_for_seconds(LISTEN_STREAM_ROLL_SECONDS))
+        && ends_on_realtime_boundary(trimmed)
+}
+
+fn commit_realtime_segment(
     app: &AppHandle,
-    transcription: &TranscriptionManager,
-    speech: &[f32],
-    last_preview: &mut Instant,
+    realtime: &mut LoopbackRealtimeState,
+    text: &str,
+    total_len: usize,
 ) {
-    if speech.len() < MIN_SPEECH_SAMPLES || last_preview.elapsed() < listen_realtime_interval(app) {
+    let delta = realtime.uncommitted_text(text);
+    let trimmed = delta.trim();
+    if !trimmed.is_empty() {
+        SttEvents::listen_sentence(app, trimmed);
+    }
+    realtime.mark_committed(text, total_len);
+    clear_realtime_preview(app);
+}
+
+fn commit_last_realtime_text(
+    app: &AppHandle,
+    realtime: &mut LoopbackRealtimeState,
+    total_len: usize,
+) {
+    if realtime.last_raw_text.trim().is_empty() && realtime.last_emit_text.trim().is_empty() {
         return;
     }
-    *last_preview = Instant::now();
+    let raw = if realtime.last_raw_text.trim().is_empty() {
+        realtime.last_emit_text.clone()
+    } else {
+        realtime.last_raw_text.clone()
+    };
+    commit_realtime_segment(app, realtime, &raw, total_len);
+}
 
-    let language = loopback_language(app);
-    let Some(text) = transcription.transcribe_realtime(speech, language.as_deref()) else {
-        return;
+fn finalize_realtime_segment(
+    app: &AppHandle,
+    transcription: &TranscriptionManager,
+    speech: &mut Vec<f32>,
+    realtime: &mut LoopbackRealtimeState,
+) -> bool {
+    if speech.len() < MIN_SPEECH_SAMPLES {
+        speech.clear();
+        return false;
+    }
+
+    let total_len = speech.len();
+    let tail_start = realtime.fed_len.min(total_len);
+    let tail = &speech[tail_start..];
+    let final_text = transcription
+        .stream_finalize_realtime_blocking(tail)
+        .or_else(|| {
+            let last = realtime.last_raw_text.trim();
+            (!last.is_empty()).then(|| last.to_string())
+        });
+    speech.clear();
+
+    let Some(text) = final_text else {
+        return false;
     };
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        return;
+        return false;
     }
-    SttEvents::realtime_stabilized(app, trimmed);
-    SttEvents::realtime_text(app, trimmed);
+    let delta = realtime.uncommitted_text(trimmed);
+    let committed = !delta.trim().is_empty();
+    if committed {
+        SttEvents::realtime_stabilized_with_final(app, delta.trim(), true);
+        SttEvents::realtime_text_with_final(app, delta.trim(), true);
+        SttEvents::listen_sentence(app, delta.trim());
+    }
+    realtime.mark_committed(trimmed, 0);
+    committed
 }
 
-fn transcription_worker_loop(
-    app: AppHandle,
-    transcription: Arc<TranscriptionManager>,
-    rx: Receiver<Vec<f32>>,
-    model_id: String,
-) {
-    while let Ok(audio) = rx.recv() {
-        transcribe_and_emit(&app, &transcription, &model_id, audio);
-    }
-}
-
-/// Transcribe a completed speech buffer and route the result the same way mic dictation does:
-/// emit `stt:full-sentence`, run diarization, paste. No-op for sub-threshold buffers.
-fn transcribe_and_emit(
+fn publish_native_realtime_preview_if_due(
     app: &AppHandle,
     transcription: &TranscriptionManager,
-    model_id: &str,
-    audio: Vec<f32>,
+    speech: &mut Vec<f32>,
+    realtime: &mut LoopbackRealtimeState,
 ) {
-    if audio.len() < MIN_SPEECH_SAMPLES {
+    let feed_samples =
+        listen_native_stream_feed_samples(transcription.get_current_model().as_deref());
+    if !native_realtime_ready_to_publish(
+        speech.len(),
+        realtime.fed_len,
+        realtime.last_preview.elapsed(),
+        listen_realtime_interval(app),
+        feed_samples,
+        false,
+    ) {
         return;
     }
+    let total_len = speech.len();
+    let new_tail = &speech[realtime.fed_len..];
+    realtime.last_preview = Instant::now();
 
-    SttEvents::transcription_start(app, None);
-    let start = std::time::Instant::now();
-    let text = match transcription.transcribe_with_model(model_id, audio) {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("[loopback] transcription failed: {e}");
-            let message = e.to_string();
-            SttEvents::transcription_failed(app, Some(&message));
-            return;
-        }
-    };
-    let trimmed = text.trim().to_string();
-    log::debug!(
-        "[loopback] utterance transcribed in {:?}: '{}'",
-        start.elapsed(),
-        trimmed
-    );
-
-    if trimmed.is_empty() {
-        SttEvents::no_audio_detected(app);
-        return;
-    }
-
-    // Emit the sentence BEFORE diarization so the renderer's relay attaches
-    // speaker colours to the right transcript item (listen_events.rs ordering
-    // contract: fullSentence first, then speaker_segments).
-    SttEvents::full_sentence(app, &trimmed);
-
-    // Diarization (if the user enabled it). The DiarizationManager degrades to a
-    // single speaker until the embedder is wired, so this is always safe.
-    if let Some(diar) = app.try_state::<Arc<DiarizationManager>>() {
-        if diar.is_enabled() {
-            let segments = diar.assign_speakers(0.0, 0.0, &trimmed);
-            let emit_segs: Vec<EmitSpeakerSegment> = segments
-                .into_iter()
-                .map(|s| EmitSpeakerSegment {
-                    speaker: s.speaker,
-                    start: s.start,
-                    end: s.end,
-                    text: s.text,
-                })
-                .collect();
-            if !emit_segs.is_empty() {
-                emit_speaker_segments(app, emit_segs);
+    match transcription.stream_accept_realtime_blocking(realtime.generation, total_len, new_tail) {
+        RealtimeStreamOutcome::Text(update) => {
+            realtime.fed_len = total_len;
+            let text = update.text.trim().to_string();
+            realtime.last_raw_text = text.clone();
+            let visible_text = realtime.uncommitted_text(&text);
+            if update.is_final || visible_text != realtime.last_emit_text {
+                realtime.last_emit_text = visible_text.clone();
+                SttEvents::realtime_stabilized_with_final(app, &visible_text, update.is_final);
+                SttEvents::realtime_text_with_final(app, &visible_text, update.is_final);
+            }
+            let samples_since_commit = total_len.saturating_sub(realtime.committed_fed_len);
+            let should_roll = should_roll_realtime_segment(&visible_text, samples_since_commit);
+            let reset_after_roll = should_roll && ends_on_realtime_boundary(&visible_text);
+            if update.is_final || should_roll {
+                commit_realtime_segment(app, realtime, &text, total_len);
+                if reset_after_roll {
+                    speech.clear();
+                    realtime.reset_stream(transcription);
+                }
             }
         }
-    }
-
-    // Paste into the focused field (same path as mic dictation). Must run on the
-    // main thread (UI input synthesis).
-    let app_for_paste = app.clone();
-    let to_paste = trimmed;
-    let _ = app.run_on_main_thread(move || {
-        if let Err(e) = crate::utils::paste(to_paste, app_for_paste.clone()) {
-            log::error!("[loopback] failed to paste transcription: {e}");
-            crate::winstt::commands::events::emit_paste_error(&app_for_paste);
+        RealtimeStreamOutcome::Skipped => {}
+        RealtimeStreamOutcome::NotStreaming => {
+            log::warn!("[loopback] selected realtime model does not expose native streaming");
         }
-    });
+    }
 }
 
 #[cfg(test)]
@@ -543,13 +714,58 @@ mod tests {
     }
 
     #[test]
-    fn listen_commit_window_is_twenty_seconds() {
-        assert_eq!(samples_for_seconds(LISTEN_STREAM_COMMIT_SECONDS), 320_000);
+    fn listen_timeout_counts_as_silence_frames() {
+        assert_eq!(silence_frames_for_duration(LOOPBACK_RECV_TIMEOUT), 7);
     }
 
     #[test]
-    fn listen_buffer_cap_is_sixty_seconds() {
-        assert_eq!(samples_for_seconds(LISTEN_MAX_BUFFER_SECONDS), 960_000);
+    fn listen_buffer_cap_keeps_five_minutes() {
+        assert_eq!(samples_for_seconds(LISTEN_MAX_BUFFER_SECONDS), 4_800_000);
+    }
+
+    #[test]
+    fn uncommitted_realtime_text_returns_suffix_for_cumulative_stream() {
+        assert_eq!(
+            uncommitted_realtime_text("hello there", "hello there general kenobi"),
+            "general kenobi"
+        );
+    }
+
+    #[test]
+    fn uncommitted_realtime_text_handles_whitespace_and_word_overlap() {
+        assert_eq!(
+            uncommitted_realtime_text("the quick brown fox", "brown fox jumps over the lazy dog"),
+            "jumps over the lazy dog"
+        );
+        assert_eq!(
+            uncommitted_realtime_text("the quick brown fox", "the   quick brown fox"),
+            ""
+        );
+    }
+
+    #[test]
+    fn listen_stream_soft_roll_waits_for_text_boundary() {
+        assert!(!should_roll_realtime_segment(
+            "this segment is still mid phrase",
+            samples_for_seconds(LISTEN_STREAM_ROLL_SECONDS)
+        ));
+        assert!(should_roll_realtime_segment(
+            "this segment reached a sentence boundary.",
+            samples_for_seconds(LISTEN_STREAM_ROLL_SECONDS)
+        ));
+    }
+
+    #[test]
+    fn listen_stream_hard_roll_does_not_wait_forever() {
+        assert!(should_roll_realtime_segment(
+            "still no punctuation but this has gone on long enough",
+            samples_for_seconds(LISTEN_STREAM_ROLL_HARD_SECONDS)
+        ));
+    }
+
+    #[test]
+    fn loopback_vad_uses_stereo_mix_sensitivity() {
+        assert_eq!(LOOPBACK_VAD_SPEECH_THRESHOLD, 0.05);
     }
 
     #[test]
@@ -557,5 +773,67 @@ mod tests {
         assert_eq!(listen_realtime_interval_seconds(0.02), 0.02);
         assert_eq!(listen_realtime_interval_seconds(0.5), 0.5);
         assert_eq!(listen_realtime_interval_seconds(0.0), 0.01);
+    }
+
+    #[test]
+    fn streaming_latency_parses_from_catalog_and_repo_ids() {
+        assert_eq!(
+            streaming_latency_ms_from_id("streaming-nemotron-en-560ms-int8"),
+            Some(560)
+        );
+        assert_eq!(
+            streaming_latency_ms_from_id(
+                "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25"
+            ),
+            Some(1120)
+        );
+        assert_eq!(streaming_latency_ms_from_id("zipformer-en"), None);
+    }
+
+    #[test]
+    fn listen_feed_samples_follow_canonical_model_latency() {
+        assert_eq!(
+            listen_native_stream_feed_samples(Some("streaming-nemotron-en-80ms-int8")),
+            samples_for_millis(1120)
+        );
+        assert_eq!(
+            listen_native_stream_feed_samples(Some("streaming-parakeet-unified-en-560ms-int8")),
+            samples_for_millis(1120)
+        );
+        assert_eq!(
+            listen_native_stream_feed_samples(Some("zipformer-en")),
+            samples_for_millis(LISTEN_NATIVE_STREAM_DEFAULT_FEED_MS)
+        );
+    }
+
+    #[test]
+    fn native_realtime_waits_for_model_sized_feed() {
+        let interval = Duration::from_millis(10);
+        let elapsed = Duration::from_millis(50);
+        let feed = samples_for_millis(1120);
+        assert!(!native_realtime_ready_to_publish(
+            MIN_SPEECH_SAMPLES + samples_for_millis(30),
+            MIN_SPEECH_SAMPLES,
+            elapsed,
+            interval,
+            feed,
+            false
+        ));
+        assert!(native_realtime_ready_to_publish(
+            MIN_SPEECH_SAMPLES + feed,
+            MIN_SPEECH_SAMPLES,
+            elapsed,
+            interval,
+            feed,
+            false
+        ));
+        assert!(native_realtime_ready_to_publish(
+            MIN_SPEECH_SAMPLES + samples_for_millis(30),
+            MIN_SPEECH_SAMPLES,
+            elapsed,
+            interval,
+            feed,
+            true
+        ));
     }
 }

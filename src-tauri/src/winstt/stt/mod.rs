@@ -35,8 +35,6 @@ pub mod mel;
 pub mod moonshine;
 /// HF snapshot resolver + download + sharded-data completeness + per-quant cache.
 pub mod resolver;
-/// Native streaming engines via sherpa-onnx's `OnlineRecognizer` (Zipformer/NeMo cache-aware).
-pub mod streaming;
 /// Unlimited-length FINAL decode via Silero-VAD segmentation (beats Whisper's 30 s window etc.).
 pub mod vad_segment;
 /// Whisper / lite-whisper / distil-whisper ONNX engine (encoder + merged-decoder KV-cache).

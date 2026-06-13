@@ -1,6 +1,6 @@
 [package]
 name = "winstt"
-version = "0.1.3-alpha.0"
+version = "0.1.3-alpha.1"
 description = "WinSTT — local-first speech-to-text"
 authors = ["WinSTT contributors"]
 edition = "2021"
@@ -129,7 +129,7 @@ half = "2"                       # f16 tensor element type (matches ort's half)
 # sherpa-onnx ships only /MT (static-CRT) Windows libs; the `static` default clashes with Rust's /MD
 # CRT (LNK2038/LNK2005). Use `shared` → link sherpa-onnx as a DLL so its /MT CRT stays isolated.
 # Ship sherpa-onnx.dll alongside the exe (it lands in target/<profile>/ via the build).
-sherpa-onnx = { version = "1.13.2", default-features = false, features = ["shared"] }  # KWS wake word + diarization embedder
+sherpa-onnx = { version = "1.13.2", default-features = false, features = ["shared"] }  # KWS wake word
 # TTS: kokoroxide DROPPED (pins yanked ort ^1.16, conflicts with our ort 2.0.0-rc.12).
 # Instead we run the Kokoro-82M ONNX on OUR ort 2.0.0-rc.12 + an espeak-ng phonemizer
 # (same runtime as STT; WinSTT is open-source so espeak-ng GPL-v3 is fine).

@@ -1,4 +1,5 @@
 import type { OllamaModel, RecommendedOllamaModel } from "@/shared/api/models";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 
 const VALID_MODEL_NAME_RE = /^[a-zA-Z0-9._:/-]+$/;
 
@@ -7,11 +8,10 @@ export function normalizeQuery(query: string): string {
 }
 
 export function matchesQuery(haystack: string, needle: string): boolean {
-	// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — without the early-return, the function falls through to `haystack.toLowerCase().includes("")` which is also `true` for any haystack.
 	if (!needle) {
 		return true;
 	}
-	return haystack.toLowerCase().includes(needle);
+	return matchesFuzzySearch(haystack, needle);
 }
 
 export function filterInstalledModels(
@@ -19,7 +19,6 @@ export function filterInstalledModels(
 	rawQuery: string,
 ): OllamaModel[] {
 	const q = normalizeQuery(rawQuery);
-	// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — without the early-return, the code falls through to `models.filter((m) => matchesQuery(m.name, ""))`; matchesQuery("", "") is true for every row, so the filter still yields every model in a fresh array.
 	if (!q) {
 		return [...models];
 	}
@@ -43,11 +42,10 @@ export function matchesRecommended(
 	if (installedNames.has(model.name)) {
 		return false;
 	}
-	// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — without the early-return, the code falls through to `.some((field) => matchesQuery(field, ""))`; matchesQuery returns true for the empty needle so .some() is also true given any non-empty fields list.
 	if (!q) {
 		return true;
 	}
-	return getSearchableFields(model).some((field) => matchesQuery(field, q));
+	return matchesFuzzySearch(getSearchableFields(model), q);
 }
 
 export function filterRecommendedModels(

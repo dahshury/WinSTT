@@ -185,6 +185,62 @@ function buildOllamaQuantEntries({
 	});
 }
 
+function isDefaultLikeQuantLabel(label: string): boolean {
+	const normalized = label.trim().toLowerCase();
+	return normalized === "default" || normalized === "latest";
+}
+
+function quantEntryPreferenceScore(entry: QuantShelfEntry): number {
+	let score = 0;
+	if (!isDefaultLikeQuantLabel(entry.label)) {
+		score += 4;
+	}
+	if (entry.cacheState === "cached") {
+		score += 3;
+	}
+	if (entry.download !== undefined || entry.canResumeDownload === true) {
+		score += 2;
+	}
+	if (
+		entry.downloadSizeBytes !== null &&
+		entry.downloadSizeBytes !== undefined
+	) {
+		score += 1;
+	}
+	return score;
+}
+
+function preferOllamaQuantEntry(
+	current: QuantShelfEntry,
+	candidate: QuantShelfEntry,
+): QuantShelfEntry {
+	return quantEntryPreferenceScore(candidate) >
+		quantEntryPreferenceScore(current)
+		? candidate
+		: current;
+}
+
+function dedupeOllamaQuantEntries(
+	entries: readonly QuantShelfEntry[],
+): QuantShelfEntry[] {
+	const result: QuantShelfEntry[] = [];
+	const indexByKey = new Map<string, number>();
+	for (const entry of entries) {
+		const key = entry.value || "default";
+		const index = indexByKey.get(key);
+		if (index === undefined) {
+			indexByKey.set(key, result.length);
+			result.push(entry);
+			continue;
+		}
+		const current = result[index];
+		if (current) {
+			result[index] = preferOllamaQuantEntry(current, entry);
+		}
+	}
+	return result;
+}
+
 function handleOllamaQuantAction({
 	action,
 	name,
@@ -269,6 +325,16 @@ export function OllamaQuantShelf({
 	const shelfModelDisplayName = formatOllamaDisplayName(
 		libraryBaseSlug(visibleTags[0]?.name ?? selectedName ?? "ollama"),
 	);
+	const entries = dedupeOllamaQuantEntries(
+		buildOllamaQuantEntries({
+			getFit,
+			installedNames,
+			pausedPulls,
+			pulls,
+			selectedName,
+			tags: visibleTags,
+		}),
+	);
 	return (
 		<div className="flex flex-wrap items-center gap-2">
 			<ContentTooltip
@@ -280,14 +346,7 @@ export function OllamaQuantShelf({
 				</span>
 			</ContentTooltip>
 			<QuantShelf
-				entries={buildOllamaQuantEntries({
-					getFit,
-					installedNames,
-					pausedPulls,
-					pulls,
-					selectedName,
-					tags: visibleTags,
-				})}
+				entries={entries}
 				modelDisplayName={shelfModelDisplayName}
 				modelId={selectedName ?? "ollama"}
 				onDownloadAction={(action, _modelId, name) =>

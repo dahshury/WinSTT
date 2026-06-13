@@ -14,13 +14,36 @@ const env = (
     env?: { VITE_DOCS_URL?: string; VITE_WINSTT_VERSION?: string };
   }
 ).env;
-export const docsUrl =
-  env?.VITE_DOCS_URL ?? "http://localhost:3001";
+export const docsUrl = env?.VITE_DOCS_URL ?? "http://localhost:3001";
 export const currentAppVersion = env?.VITE_WINSTT_VERSION ?? "0.0.0-alpha.0";
 export const currentReleaseTag = `v${currentAppVersion}`;
 const encodedCurrentReleaseTag = encodeURIComponent(currentReleaseTag);
-export const latestWindowsDownloadUrl = `${repositoryUrl}/releases/download/${encodedCurrentReleaseTag}/WinSTT.exe`;
 export const latestReleaseUrl = `${repositoryUrl}/releases/tag/${encodedCurrentReleaseTag}`;
+const latestStableReleaseUrl = `${repositoryUrl}/releases/latest`;
+export const latestDownloadReleaseUrl = currentAppVersion.includes("-")
+  ? latestReleaseUrl
+  : latestStableReleaseUrl;
+
+function releaseAssetUrl(assetName: string): string {
+  return `${repositoryUrl}/releases/download/${encodedCurrentReleaseTag}/${encodeURIComponent(assetName)}`;
+}
+
+export const latestWindowsInstallerUrl = releaseAssetUrl("WinSTT.exe");
+export const latestWindowsPortableZipUrl = releaseAssetUrl(
+  "WinSTT-portable.zip",
+);
+export const latestMacosAppleSiliconDmgUrl = releaseAssetUrl(
+  `WinSTT_${currentAppVersion}_aarch64.dmg`,
+);
+export const latestLinuxAppImageUrl = releaseAssetUrl(
+  `WinSTT_${currentAppVersion}_amd64.AppImage`,
+);
+export const latestLinuxDebUrl = releaseAssetUrl(
+  `WinSTT_${currentAppVersion}_amd64.deb`,
+);
+export const latestLinuxRpmUrl = releaseAssetUrl(
+  `WinSTT-${currentAppVersion}-1.x86_64.rpm`,
+);
 
 const externalUrlPattern = /^[a-z][a-z\d+\-.]*:/i;
 

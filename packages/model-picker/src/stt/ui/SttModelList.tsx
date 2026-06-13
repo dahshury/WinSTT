@@ -182,6 +182,7 @@ function FavoritesGroup({
 					selectedId={selectedId}
 					siblings={items}
 					state={statesById[model.id]}
+					statesById={statesById}
 					systemInfo={systemInfo}
 				/>
 			))}
@@ -258,6 +259,7 @@ function SortedGroup({
 					selectedId={selectedId}
 					siblings={items}
 					state={statesById[model.id]}
+					statesById={statesById}
 					systemInfo={systemInfo}
 				/>
 			))}

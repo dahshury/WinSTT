@@ -26,6 +26,8 @@ import type { SelectOption, SelectOptionGroup } from "@/shared/ui/select";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 
 interface CloudModelSelectProps {
+	disabled?: boolean;
+	disabledTooltip?: string | undefined;
 	/**
 	 * Open the combobox on mount. The detached picker window sets this so the
 	 * cloud model list is visible immediately (the window exists only to show
@@ -115,6 +117,8 @@ function modelIdForProvider(
  * so the user has a single discoverable affordance to land in Integrations.
  */
 export function CloudModelSelect({
+	disabled = false,
+	disabledTooltip,
 	selectedId,
 	onSelect,
 	defaultOpen = false,
@@ -135,10 +139,10 @@ export function CloudModelSelect({
 	// Kick the live transcription-model scan when the OpenRouter key is present.
 	// The store caches on first load and dedupes concurrent calls.
 	useEffect(() => {
-		if (openrouterConfigured) {
+		if (!disabled && openrouterConfigured) {
 			scanOpenrouterModels().catch(() => undefined);
 		}
-	}, [openrouterConfigured, scanOpenrouterModels]);
+	}, [disabled, openrouterConfigured, scanOpenrouterModels]);
 
 	const isProviderConfigured = (provider: CloudSttProvider): boolean =>
 		provider === "openrouter"
@@ -192,20 +196,22 @@ export function CloudModelSelect({
 			: firstProvider;
 	const hasValidSelection = options.some((o) => o.id === selectedId);
 	useEffect(() => {
-		if (activeProvider && !hasValidSelection) {
+		if (!disabled && activeProvider && !hasValidSelection) {
 			const fallback = modelIdForProvider(activeProvider, firstOpenrouterId);
 			if (fallback) {
 				onSelect(fallback);
 			}
 		}
-	}, [activeProvider, firstOpenrouterId, hasValidSelection, onSelect]);
+	}, [activeProvider, disabled, firstOpenrouterId, hasValidSelection, onSelect]);
 
 	if (availableProviders.length === 0) {
 		return (
 			<div className="flex flex-col gap-2">
 				<Button
 					className="self-start text-warning text-xs underline-offset-2 hover:underline"
+					disabled={disabled}
 					onClick={windowOpenSettings}
+					title={disabled ? disabledTooltip : undefined}
 					type="button"
 				>
 					{t("configureKey")} →
@@ -218,8 +224,13 @@ export function CloudModelSelect({
 		availableProviders.map((provider) => ({
 			value: provider,
 			label: providerDisplayName(provider),
+			...(disabled ? { disabled: true } : {}),
+			...(disabled && disabledTooltip ? { tooltip: disabledTooltip } : {}),
 		}));
 	const handleProviderChange = (provider: CloudSttProvider): void => {
+		if (disabled) {
+			return;
+		}
 		const fallback = modelIdForProvider(provider, firstOpenrouterId, true);
 		if (fallback) {
 			onSelect(fallback);
@@ -249,6 +260,7 @@ export function CloudModelSelect({
 			) : null}
 			{renderOpenrouterPicker ? (
 				<OpenRouterModelSelector
+					disabled={disabled}
 					favoriteModelsStorageKey={OPENROUTER_STT_FAVORITE_MODELS_STORAGE_KEY}
 					favoriteProvidersStorageKey={
 						OPENROUTER_STT_FAVORITE_PROVIDERS_STORAGE_KEY
@@ -256,9 +268,15 @@ export function CloudModelSelect({
 					inline={defaultOpen}
 					isLoading={openrouterScanning}
 					models={openrouterPickerModels}
-					onChange={(modelId) => onSelect(prefixOpenrouterSelection(modelId))}
+					onChange={(modelId) => {
+						if (!disabled) {
+							onSelect(prefixOpenrouterSelection(modelId));
+						}
+					}}
 					onOpen={() => {
-						scanOpenrouterModels().catch(() => undefined);
+						if (!disabled) {
+							scanOpenrouterModels().catch(() => undefined);
+						}
 					}}
 					placeholder={t("cloudModels")}
 					popupWidthClass="w-[max(580px,var(--anchor-width))]"
@@ -269,8 +287,13 @@ export function CloudModelSelect({
 				<ElevatedSurface inline>
 					<SearchableSelect
 						defaultOpen={defaultOpen}
+						disabled={disabled}
 						groups={groups.filter((g) => g.value === activeProvider)}
-						onChange={onSelect}
+						onChange={(value) => {
+							if (!disabled) {
+								onSelect(value);
+							}
+						}}
 						placeholder={t("cloudModels")}
 						value={selectedId}
 					/>

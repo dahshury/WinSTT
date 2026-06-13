@@ -1,22 +1,26 @@
 // Reference: <onnx-asr>/src/onnx_asr/diarization.py
-//         sherpa-onnx 1.13.2 SpeakerEmbeddingExtractor (verified docs.rs 2026-05):
-//           SpeakerEmbeddingExtractorConfig { model: Option<String>, num_threads: i32,
-//                                             debug: bool, provider: Option<String> }
-//           SpeakerEmbeddingExtractor::create(&cfg) -> Option<Self>
-//           .create_stream() -> Option<OnlineStream> ; .compute(&stream) -> Option<Vec<f32>>
-//           .dim() -> i32 ; .is_ready(&stream) -> bool
-//           OnlineStream::accept_waveform(sample_rate: i32, &[f32]) ; .input_finished()
+//         WeSpeaker ResNet34 embedding model on WinSTT's shared `ort` runtime.
 //
 // ═════════════════════════════════════════════════════════════════════════════
-// 7. Diarizer config + the segmentation/embedding ORCHESTRATION (FFI).
-//    Embedding is real sherpa-onnx wiring; segmentation output shape is `// SPIKE:`.
-// 8. Real sherpa-onnx embedder (FFI). Gated behind `feature = "sherpa"`.
+// 7. Diarizer config + the segmentation/embedding orchestration.
+//    Embedding is direct ORT WeSpeaker wiring; segmentation stays behind a trait.
 // ═════════════════════════════════════════════════════════════════════════════
+
+use std::collections::BTreeMap;
+
+use ndarray::Array2;
+use ort::session::builder::GraphOptimizationLevel;
+use ort::session::Session;
+use ort::value::Tensor;
 
 use super::ahc::{active_intervals, ahc_complete_linkage, cosine_distance_matrix};
 use super::clustering::OnlineSpeakerClustering;
 use super::timeline::merge_adjacent_segments;
 use super::types::{EmbeddedSegment, SpeakerSegment};
+use crate::winstt::stt::families::frontend;
+use crate::winstt::stt::{
+    execution_providers, num_cpus_best_effort, pick_intra_op_threads, provider_label, Accelerator,
+};
 
 /// Hysteresis + duration thresholds for the segmentation→interval stage.
 /// Mirrors `Diarizer.__init__` defaults.
@@ -61,8 +65,8 @@ pub trait Segmenter: Send {
     fn speaker_probs(&mut self, waveform: &[f32], sample_rate: u32) -> Option<SegmentationOutput>;
 }
 
-/// Speaker-embedding extractor (wespeaker ResNet34 → 256-d). FFI behind a trait
-/// so clustering is testable; the real impl is `SherpaEmbedder` below.
+/// Speaker-embedding extractor (WeSpeaker ResNet34 -> 256-d). Kept behind a trait
+/// so clustering is testable; the real impl is `OrtEmbedder` below.
 pub trait Embedder: Send {
     /// Compute one embedding for a 16 kHz mono crop. `None` on failure.
     fn embed(&mut self, crop: &[f32], sample_rate: u32) -> Option<Vec<f32>>;
@@ -237,51 +241,285 @@ impl Default for EmbedderConfig {
     }
 }
 
-/// Real wespeaker speaker-embedding extractor on sherpa-onnx 1.13.2.
-///
-/// COMPILE NOTE: like `wakeword.rs`, sherpa-onnx is declared UNCONDITIONALLY in
-/// Cargo.toml (no `sherpa` cargo feature, and we may not edit Cargo.toml), so the
-/// FFI compiles unconditionally. The pure clustering/timeline logic above never
-/// touches the FFI and keeps its own tests.
-pub struct SherpaEmbedder {
-    extractor: sherpa_onnx::SpeakerEmbeddingExtractor,
+/// Real WeSpeaker speaker-embedding extractor on the app's shared ORT runtime.
+pub struct OrtEmbedder {
+    session: Session,
+    input_name: String,
+    output_dim: usize,
+    sample_rate: u32,
+    normalize_samples: bool,
+    feature_normalize_type: String,
+    fbanks: Array2<f32>,
+    active_providers: Vec<String>,
 }
 
-impl SherpaEmbedder {
+impl OrtEmbedder {
     pub fn new(cfg: &EmbedderConfig) -> anyhow::Result<Self> {
-        let model = cfg
-            .model
-            .to_str()
-            .ok_or_else(|| {
-                anyhow::anyhow!("embedding model path not UTF-8: {}", cfg.model.display())
-            })?
-            .to_string();
-        let sherpa_cfg = sherpa_onnx::SpeakerEmbeddingExtractorConfig {
-            model: Some(model),
-            num_threads: cfg.num_threads.max(1),
-            debug: cfg.debug,
-            provider: Some(cfg.provider.clone()),
-        };
-        let extractor = sherpa_onnx::SpeakerEmbeddingExtractor::create(&sherpa_cfg)
-            .ok_or_else(|| anyhow::anyhow!("failed to create sherpa SpeakerEmbeddingExtractor"))?;
-        Ok(SherpaEmbedder { extractor })
+        if cfg.model.as_os_str().is_empty() {
+            anyhow::bail!("embedding model path is empty");
+        }
+
+        let providers = providers_from_embedder_cfg(&cfg.provider);
+        let is_gpu = providers
+            .first()
+            .is_some_and(|provider| !matches!(provider, Accelerator::Cpu));
+        let mut builder = Session::builder()
+            .map_err(|e| anyhow::anyhow!("Session::builder: {e}"))?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .map_err(|e| anyhow::anyhow!("embedding opt level: {e}"))?;
+        if is_gpu {
+            builder = builder
+                .with_intra_threads(pick_intra_op_threads(true, num_cpus_best_effort()))
+                .map_err(|e| anyhow::anyhow!("embedding intra threads: {e}"))?
+                .with_memory_pattern(false)
+                .map_err(|e| anyhow::anyhow!("embedding disable mem pattern: {e}"))?;
+        } else if cfg.num_threads > 0 {
+            builder = builder
+                .with_intra_threads(cfg.num_threads as usize)
+                .map_err(|e| anyhow::anyhow!("embedding intra threads: {e}"))?;
+        }
+        builder = builder
+            .with_execution_providers(execution_providers(&providers))
+            .map_err(|e| anyhow::anyhow!("embedding register EPs: {e}"))?;
+
+        let session = builder.commit_from_file(&cfg.model).map_err(|e| {
+            anyhow::anyhow!("embedding commit_from_file {}: {e}", cfg.model.display())
+        })?;
+        let input = session
+            .inputs()
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("embedding model has no inputs"))?;
+        let input_name = input.name().to_string();
+        let feature_dim = input
+            .dtype()
+            .tensor_shape()
+            .and_then(|shape| shape.get(2).copied())
+            .filter(|&dim| dim > 0)
+            .map(|dim| dim as usize)
+            .unwrap_or(frontend::KALDI_N_MELS);
+        if feature_dim != frontend::KALDI_N_MELS {
+            anyhow::bail!(
+                "embedding model expects {feature_dim} features, WinSTT diarization supplies {}",
+                frontend::KALDI_N_MELS
+            );
+        }
+
+        let metadata = session_metadata(&session);
+        let output_dim = metadata
+            .get("output_dim")
+            .and_then(|value| value.parse::<usize>().ok())
+            .or_else(|| {
+                session
+                    .outputs()
+                    .first()
+                    .and_then(|output| output.dtype().tensor_shape())
+                    .and_then(|shape| shape.get(1).copied())
+                    .filter(|&dim| dim > 0)
+                    .map(|dim| dim as usize)
+            })
+            .unwrap_or(256);
+        let sample_rate = metadata
+            .get("sample_rate")
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(DIARIZER_SAMPLE_RATE);
+        let normalize_samples = metadata
+            .get("normalize_samples")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "True" | "TRUE"))
+            .unwrap_or(true);
+        let feature_normalize_type = metadata
+            .get("feature_normalize_type")
+            .cloned()
+            .unwrap_or_default();
+        let active_providers = providers.iter().map(provider_label).collect();
+
+        Ok(Self {
+            session,
+            input_name,
+            output_dim,
+            sample_rate,
+            normalize_samples,
+            feature_normalize_type,
+            fbanks: frontend::build_kaldi_mel_filterbank(),
+            active_providers,
+        })
     }
 
     pub fn dim(&self) -> i32 {
-        self.extractor.dim()
+        self.output_dim as i32
+    }
+
+    pub fn active_providers(&self) -> &[String] {
+        &self.active_providers
     }
 }
 
-impl Embedder for SherpaEmbedder {
+impl Embedder for OrtEmbedder {
     fn embed(&mut self, crop: &[f32], sample_rate: u32) -> Option<Vec<f32>> {
-        // sherpa flow: create_stream → accept_waveform → input_finished → compute.
-        let stream = self.extractor.create_stream()?;
-        stream.accept_waveform(sample_rate as i32, crop);
-        stream.input_finished();
-        if !self.extractor.is_ready(&stream) {
-            // Fail-soft: too-short crop → no embedding (mirrors _safe_diarize).
+        if crop.is_empty() || sample_rate != self.sample_rate {
             return None;
         }
-        self.extractor.compute(&stream)
+
+        let scaled;
+        let samples = if self.normalize_samples {
+            crop
+        } else {
+            scaled = crop
+                .iter()
+                .map(|sample| sample * 32768.0)
+                .collect::<Vec<_>>();
+            &scaled
+        };
+
+        let mut features = frontend::compute_kaldi_fbank(samples, &self.fbanks);
+        if features.nrows() == 0 {
+            return None;
+        }
+        if self.feature_normalize_type == "global-mean" {
+            subtract_global_mean(&mut features);
+        }
+
+        let frames = features.nrows();
+        let feat_dim = features.ncols();
+        let input = features
+            .into_shape_with_order((1, frames, feat_dim))
+            .ok()
+            .and_then(|array| Tensor::from_array(array).ok())?;
+        let outputs = self
+            .session
+            .run(ort::inputs![self.input_name.as_str() => input])
+            .ok()?;
+        let (_shape, data) = outputs[0].try_extract_tensor::<f32>().ok()?;
+        if data.is_empty() {
+            return None;
+        }
+
+        Some(data.iter().copied().take(self.output_dim).collect())
+    }
+}
+
+fn providers_from_embedder_cfg(provider: &str) -> Vec<Accelerator> {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "cuda" => vec![Accelerator::Cuda, Accelerator::Cpu],
+        "directml" | "dml" => vec![Accelerator::DirectMl, Accelerator::Cpu],
+        _ => vec![Accelerator::Cpu],
+    }
+}
+
+fn session_metadata(session: &Session) -> BTreeMap<String, String> {
+    let Ok(metadata) = session.metadata() else {
+        return BTreeMap::new();
+    };
+    let mut out = BTreeMap::new();
+    if let Ok(keys) = metadata.custom_keys() {
+        for key in keys {
+            if let Some(value) = metadata.custom(&key) {
+                out.insert(key, value);
+            }
+        }
+    }
+    out
+}
+
+fn subtract_global_mean(features: &mut Array2<f32>) {
+    let rows = features.nrows();
+    if rows == 0 {
+        return;
+    }
+    for col in 0..features.ncols() {
+        let mean = (0..rows).map(|row| features[[row, col]]).sum::<f32>() / rows as f32;
+        for row in 0..rows {
+            features[[row, col]] -= mean;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn provider_config_maps_to_accelerators() {
+        assert_eq!(
+            providers_from_embedder_cfg("directml"),
+            vec![Accelerator::DirectMl, Accelerator::Cpu]
+        );
+        assert_eq!(
+            providers_from_embedder_cfg("cuda"),
+            vec![Accelerator::Cuda, Accelerator::Cpu]
+        );
+        assert_eq!(providers_from_embedder_cfg("cpu"), vec![Accelerator::Cpu]);
+    }
+
+    #[test]
+    fn global_mean_normalization_zeroes_column_means() {
+        let mut features = Array2::from_shape_vec((3, 2), vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0])
+            .expect("test feature matrix shape is valid");
+        subtract_global_mean(&mut features);
+        for col in 0..features.ncols() {
+            let mean = (0..features.nrows())
+                .map(|row| features[[row, col]])
+                .sum::<f32>()
+                / features.nrows() as f32;
+            assert!(
+                mean.abs() < 1e-6,
+                "expected near-zero mean for column {col}, got {mean}"
+            );
+        }
+    }
+
+    #[test]
+    fn cached_wespeaker_embedder_smoke_if_available() -> anyhow::Result<()> {
+        let Some(model) = find_cached_wespeaker_model() else {
+            eprintln!("skipping WeSpeaker smoke test: no cached ONNX model found");
+            return Ok(());
+        };
+        let cfg = EmbedderConfig {
+            model,
+            num_threads: 1,
+            provider: "cpu".to_string(),
+            debug: false,
+        };
+        let mut embedder = OrtEmbedder::new(&cfg)?;
+        let samples = (0..DIARIZER_SAMPLE_RATE)
+            .map(|i| {
+                let t = i as f32 / DIARIZER_SAMPLE_RATE as f32;
+                (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.05
+            })
+            .collect::<Vec<_>>();
+        let embedding = embedder
+            .embed(&samples, DIARIZER_SAMPLE_RATE)
+            .ok_or_else(|| anyhow::anyhow!("cached WeSpeaker model returned no embedding"))?;
+        assert_eq!(embedding.len(), embedder.dim() as usize);
+        assert!(embedding.iter().all(|value| value.is_finite()));
+        Ok(())
+    }
+
+    fn find_cached_wespeaker_model() -> Option<PathBuf> {
+        let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+        let root = PathBuf::from(home)
+            .join(".cache")
+            .join("huggingface")
+            .join("hub");
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                let path_str = path.to_string_lossy().to_ascii_lowercase();
+                if path_str.contains("wespeaker") && path_str.ends_with(".onnx") {
+                    return Some(path);
+                }
+            }
+        }
+        None
     }
 }

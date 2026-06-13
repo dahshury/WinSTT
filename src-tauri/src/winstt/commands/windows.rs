@@ -460,19 +460,21 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
         return Err("main window must already exist".into());
     }
 
-    let mut builder = WebviewWindowBuilder::new(app, spec.label, WebviewUrl::App(spec.url.into()))
-        .title(spec.title)
-        .inner_size(spec.width, spec.height)
-        .min_inner_size(spec.min_width, spec.min_height)
-        .resizable(spec.resizable)
-        .maximizable(false)
-        .decorations(spec.decorations)
-        .transparent(spec.transparent)
-        .always_on_top(spec.always_on_top)
-        .skip_taskbar(spec.skip_taskbar)
-        .shadow(spec.shadow)
-        .focused(false)
-        .visible(false);
+    let mut builder = crate::startup::configure_webview_window_builder(
+        WebviewWindowBuilder::new(app, spec.label, WebviewUrl::App(spec.url.into()))
+            .title(spec.title)
+            .inner_size(spec.width, spec.height)
+            .min_inner_size(spec.min_width, spec.min_height)
+            .resizable(spec.resizable)
+            .maximizable(false)
+            .decorations(spec.decorations)
+            .transparent(spec.transparent)
+            .always_on_top(spec.always_on_top)
+            .skip_taskbar(spec.skip_taskbar)
+            .shadow(spec.shadow)
+            .focused(false)
+            .visible(false),
+    );
 
     if let Some((r, g, b, a)) = spec.background {
         builder = builder.background_color(tauri::webview::Color(r, g, b, a));

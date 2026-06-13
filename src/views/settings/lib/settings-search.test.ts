@@ -24,9 +24,13 @@ describe("matchesSearchQuery", () => {
 		expect(matchesSearchQuery(general, "disp")).toBe(true);
 	});
 
-	test("fuzzy-matches a typo'd token with Fuse", () => {
+	test("fuzzy-matches a typo'd token", () => {
 		expect(matchesSearchQuery(general, "dispaly")).toBe(true);
 		expect(matchesSearchQuery(general, "languege")).toBe(true);
+	});
+
+	test("matches compact version aliases with typo tolerance", () => {
+		expect(matchesSearchQuery("Parakeet version 3", "Parkeet v3")).toBe(true);
 	});
 
 	test("matches a multi-word substring phrase", () => {

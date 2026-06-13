@@ -24,6 +24,7 @@ import {
 	surfaceHoverBg,
 	useSurface,
 } from "@/shared/lib/surface";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { IconButton } from "@/shared/ui/icon-button";
 import "./editable-list-combobox.css";
 
@@ -116,7 +117,7 @@ export function EditableListCombobox({
 
 	const needle = query.trim().toLowerCase();
 	const visibleEntries = needle
-		? value.filter((entry) => entry.toLowerCase().includes(needle))
+		? value.filter((entry) => matchesFuzzySearch(entry, needle))
 		: [...value];
 	const candidate = normalize(query);
 	const canCreate = candidate.length > 0 && !value.includes(candidate);

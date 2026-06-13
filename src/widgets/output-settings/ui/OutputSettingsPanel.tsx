@@ -40,6 +40,8 @@ import { Tooltip } from "@/shared/ui/tooltip";
 import { Toggle } from "@/shared/ui/toggle";
 
 const REDUCTION_STEPS = [0, 20, 40, 60, 80, 100] as const;
+const LISTEN_MODE_OUTPUT_DISABLED_TOOLTIP =
+	"Listen mode only transcribes speaker audio inside the main app window; it never pastes, submits, previews, or mutes app audio.";
 
 function reductionToIndex(pct: number): number {
 	const idx = REDUCTION_STEPS.indexOf(pct as (typeof REDUCTION_STEPS)[number]);
@@ -76,12 +78,14 @@ interface PasteBehaviorSectionProps {
 	autoSubmit: boolean;
 	autoSubmitKey: "enter" | "ctrl_enter";
 	autoSubmitKeyOptions: SwitcherOption<"enter" | "ctrl_enter">[];
+	disabled?: boolean;
+	disabledTooltip?: string | undefined;
 	previewBeforePasting: boolean;
 	previewBeforePastingDisabled: boolean;
-	previewBeforePastingDisabledReason: string;
+	previewBeforePastingDisabledTooltip: string | undefined;
 	wordByWordPasting: boolean;
 	wordByWordPastingDisabled: boolean;
-	wordByWordPastingDisabledReason: string;
+	wordByWordPastingDisabledTooltip: string | undefined;
 	onChangeAutoSubmit: (next: boolean) => void;
 	onChangeAutoSubmitKey: (next: "enter" | "ctrl_enter") => void;
 	onChangePreviewBeforePasting: (next: boolean) => void;
@@ -93,18 +97,35 @@ function PasteBehaviorSection({
 	autoSubmit,
 	autoSubmitKey,
 	autoSubmitKeyOptions,
+	disabled = false,
+	disabledTooltip,
 	previewBeforePasting,
 	previewBeforePastingDisabled,
-	previewBeforePastingDisabledReason,
+	previewBeforePastingDisabledTooltip,
 	wordByWordPasting,
 	wordByWordPastingDisabled,
-	wordByWordPastingDisabledReason,
+	wordByWordPastingDisabledTooltip,
 	onChangeAutoSubmit,
 	onChangeAutoSubmitKey,
 	onChangePreviewBeforePasting,
 	onChangeWordByWordPasting,
 	tg,
 }: PasteBehaviorSectionProps): ReactNode {
+	const effectiveAutoSubmit = disabled ? false : autoSubmit;
+	const effectivePreviewBeforePasting = disabled
+		? false
+		: previewBeforePasting;
+	const effectiveWordByWordPasting = disabled ? false : wordByWordPasting;
+	const autoSubmitKeyDisabled = disabled || !effectiveAutoSubmit;
+	const previewDisabled = disabled || previewBeforePastingDisabled;
+	const wordByWordDisabled = disabled || wordByWordPastingDisabled;
+	const listenAwareAutoSubmitKeyOptions = disabled
+		? autoSubmitKeyOptions.map((option) => ({
+				...option,
+				disabled: true,
+				...(disabledTooltip ? { tooltip: disabledTooltip } : {}),
+			}))
+		: autoSubmitKeyOptions;
 	return (
 		<SettingSection
 			divided
@@ -113,18 +134,30 @@ function PasteBehaviorSection({
 		>
 			<SettingField
 				defaultValue={DEFAULT_SETTINGS.general.autoSubmit}
+				disabled={disabled}
+				disabledTooltip={disabledTooltip}
+				hideReset={disabled}
 				label={tg("autoSubmit")}
 				labelAddon={
-					<Toggle checked={autoSubmit} onCheckedChange={onChangeAutoSubmit} />
+					<Toggle
+						checked={effectiveAutoSubmit}
+						disabled={disabled}
+						onCheckedChange={(next) => {
+							if (!disabled) {
+								onChangeAutoSubmit(next);
+							}
+						}}
+					/>
 				}
 				onReset={() => onChangeAutoSubmit(DEFAULT_SETTINGS.general.autoSubmit)}
 				tooltip={tg("autoSubmitTooltip")}
-				value={autoSubmit}
+				value={effectiveAutoSubmit}
 			/>
 			<SettingField
 				defaultValue={DEFAULT_SETTINGS.general.autoSubmitKey}
-				disabled={!autoSubmit}
-				disabledReason={tg("autoSubmit")}
+				disabled={autoSubmitKeyDisabled}
+				disabledTooltip={disabled ? disabledTooltip : undefined}
+				hideReset={disabled}
 				label={tg("autoSubmitKey")}
 				layout="row"
 				onReset={() =>
@@ -132,26 +165,38 @@ function PasteBehaviorSection({
 				}
 				tooltip={tg("autoSubmitKeyTooltip")}
 				value={autoSubmitKey}
+				{...(disabled ? {} : { disabledReason: tg("autoSubmit") })}
 			>
 				<ElevatedSurface className="w-72 max-w-full">
 					<Switcher
 						fullWidth
-						onChange={onChangeAutoSubmitKey}
-						options={autoSubmitKeyOptions}
+						onChange={(next) => {
+							if (!disabled) {
+								onChangeAutoSubmitKey(next);
+							}
+						}}
+						options={listenAwareAutoSubmitKeyOptions}
 						value={autoSubmitKey}
 					/>
 				</ElevatedSurface>
 			</SettingField>
 			<SettingField
 				defaultValue={DEFAULT_SETTINGS.general.previewBeforePasting}
-				disabled={previewBeforePastingDisabled}
-				disabledReason={previewBeforePastingDisabledReason}
+				disabled={previewDisabled}
+				disabledTooltip={
+					disabled ? disabledTooltip : previewBeforePastingDisabledTooltip
+				}
+				hideReset={disabled}
 				label={tg("previewBeforePasting")}
 				labelAddon={
 					<Toggle
-						checked={previewBeforePasting}
-						disabled={previewBeforePastingDisabled}
-						onCheckedChange={onChangePreviewBeforePasting}
+						checked={effectivePreviewBeforePasting}
+						disabled={previewDisabled}
+						onCheckedChange={(next) => {
+							if (!disabled) {
+								onChangePreviewBeforePasting(next);
+							}
+						}}
 					/>
 				}
 				onReset={() =>
@@ -160,45 +205,59 @@ function PasteBehaviorSection({
 					)
 				}
 				tooltip={tg("previewBeforePastingTooltip")}
-				value={previewBeforePasting}
+				value={effectivePreviewBeforePasting}
 			/>
 			<SettingField
 				defaultValue={DEFAULT_SETTINGS.general.wordByWordPasting}
-				disabled={wordByWordPastingDisabled}
-				disabledReason={wordByWordPastingDisabledReason}
+				disabled={wordByWordDisabled}
+				disabledTooltip={
+					disabled ? disabledTooltip : wordByWordPastingDisabledTooltip
+				}
+				hideReset={disabled}
 				label={tg("wordByWordPasting")}
 				labelAddon={
 					<Toggle
-						checked={wordByWordPasting}
-						disabled={wordByWordPastingDisabled}
-						onCheckedChange={onChangeWordByWordPasting}
+						checked={effectiveWordByWordPasting}
+						disabled={wordByWordDisabled}
+						onCheckedChange={(next) => {
+							if (!disabled) {
+								onChangeWordByWordPasting(next);
+							}
+						}}
 					/>
 				}
 				onReset={() =>
 					onChangeWordByWordPasting(DEFAULT_SETTINGS.general.wordByWordPasting)
 				}
 				tooltip={tg("wordByWordPastingTooltip")}
-				value={wordByWordPasting}
+				value={effectiveWordByWordPasting}
 			/>
 		</SettingSection>
 	);
 }
 
 interface MuteSystemAudioControlProps {
+	disabled?: boolean;
+	disabledTooltip?: string | undefined;
 	general: GeneralSettings | undefined;
 	t: GeneralT;
 	update: UpdateGeneralFn;
 }
 
 function MuteSystemAudioControl({
+	disabled = false,
+	disabledTooltip,
 	general,
 	t,
 	update,
 }: MuteSystemAudioControlProps): ReactNode {
-	const level = muteLevel(general);
+	const level = disabled ? 0 : muteLevel(general);
 	return (
 		<SettingField
 			defaultValue={DEFAULT_SETTINGS.general.systemAudioReductionWhileDictating}
+			disabled={disabled}
+			disabledTooltip={disabledTooltip}
+			hideReset={disabled}
 			label={t("muteSystemAudio")}
 			onReset={() =>
 				update({
@@ -215,10 +274,15 @@ function MuteSystemAudioControl({
 					formatValue={(v) => reductionStepLabel(indexToReduction(v), t)}
 					max={REDUCTION_STEPS.length - 1}
 					min={0}
-					onChange={(v) =>
-						update({ systemAudioReductionWhileDictating: indexToReduction(v) })
-					}
+					onChange={(v) => {
+						if (!disabled) {
+							update({
+								systemAudioReductionWhileDictating: indexToReduction(v),
+							});
+						}
+					}}
 					step={1}
+					disabled={disabled}
 					value={reductionToIndex(level)}
 				/>
 			</ElevatedSurface>
@@ -274,10 +338,13 @@ export function OutputSettingsPanel(): ReactNode {
 	const updateLlmDictation = useSettingsStore((s) => s.updateLlmDictation);
 	const tg = useTranslations("general");
 	const tm = useTranslations("model");
+	const ts = useTranslations("settings");
 	const tc = useTranslations("common");
 	const getModel = useCatalogStore((s) => s.getModel);
 	const [confirmWordByWordOpen, setConfirmWordByWordOpen] = useState(false);
 
+	const recordingMode = general?.recordingMode ?? "ptt";
+	const isListenMode = recordingMode === "listen";
 	const autoSubmit = general?.autoSubmit ?? false;
 	const autoSubmitKey = general?.autoSubmitKey ?? "enter";
 	const llmDictationEnabled = useSettingsStore(
@@ -300,18 +367,24 @@ export function OutputSettingsPanel(): ReactNode {
 		mainModelCanNativeStream &&
 		!modelSupportsSelectedSourceLanguages(selectedInfo, model, selectedInfo);
 	const previewBeforePastingDisabled = pillOff || wordByWordPasting;
-	const previewBeforePastingDisabledReason = wordByWordPasting
-		? tg("wordByWordPasting")
-		: tg("showRecordingOverlay");
 	const wordByWordPastingDisabled =
 		!mainModelCanNativeStream ||
 		realtimeSourceLanguageIncompatible ||
 		previewBeforePasting;
-	const wordByWordPastingDisabledReason = previewBeforePasting
-		? tg("previewBeforePasting")
-		: realtimeSourceLanguageIncompatible
-			? tm("language")
-			: tg("wordByWordPastingRequirement");
+	const previewBeforePastingDisabledTooltip = previewBeforePastingDisabled
+		? wordByWordPasting
+			? ts("disabledTurnOffReason", { name: tg("wordByWordPasting") })
+			: ts("disabledReason", { name: tg("showRecordingOverlay") })
+		: undefined;
+	const wordByWordPastingDisabledTooltip = wordByWordPastingDisabled
+		? previewBeforePasting
+			? ts("disabledTurnOffReason", { name: tg("previewBeforePasting") })
+			: realtimeSourceLanguageIncompatible
+				? ts("disabledIncompatibleReason", { name: tm("language") })
+				: ts("disabledChooseReason", {
+						name: tg("wordByWordPastingRequirement"),
+					})
+		: undefined;
 	const autoSubmitKeyOptions: SwitcherOption<"enter" | "ctrl_enter">[] = [
 		{
 			value: "enter",
@@ -355,6 +428,10 @@ export function OutputSettingsPanel(): ReactNode {
 					autoSubmit={autoSubmit}
 					autoSubmitKey={autoSubmitKey}
 					autoSubmitKeyOptions={autoSubmitKeyOptions}
+					disabled={isListenMode}
+					disabledTooltip={
+						isListenMode ? LISTEN_MODE_OUTPUT_DISABLED_TOOLTIP : undefined
+					}
 					onChangeAutoSubmit={(v) => updateGeneral({ autoSubmit: v })}
 					onChangeAutoSubmitKey={(v) => updateGeneral({ autoSubmitKey: v })}
 					onChangePreviewBeforePasting={(v) =>
@@ -366,14 +443,14 @@ export function OutputSettingsPanel(): ReactNode {
 					}
 					onChangeWordByWordPasting={handleWordByWordPastingChange}
 					previewBeforePastingDisabled={previewBeforePastingDisabled}
-					previewBeforePastingDisabledReason={
-						previewBeforePastingDisabledReason
+					previewBeforePastingDisabledTooltip={
+						previewBeforePastingDisabledTooltip
 					}
 					previewBeforePasting={previewBeforePasting}
 					tg={tg}
 					wordByWordPasting={wordByWordPasting}
 					wordByWordPastingDisabled={wordByWordPastingDisabled}
-					wordByWordPastingDisabledReason={wordByWordPastingDisabledReason}
+					wordByWordPastingDisabledTooltip={wordByWordPastingDisabledTooltip}
 				/>
 
 				<SettingSection
@@ -440,7 +517,7 @@ export function PlaybackSettingsPanel(): ReactNode {
 	const { devices: outputDevices, defaultDevice: defaultOutputDevice } =
 		useOutputDevices();
 	const soundPreview = useSoundPreview();
-	const showOutputDevice = recordingSoundEnabled || ttsEnabled;
+	const showOutputDevice = isListenMode || recordingSoundEnabled || ttsEnabled;
 	const outputPreviewPlayLabel = tg("soundLibraryPlay");
 	const outputPreviewStopLabel = tg("soundLibraryStop");
 	const outputDeviceOptions: SelectOption[] = (() => {
@@ -526,19 +603,21 @@ export function PlaybackSettingsPanel(): ReactNode {
 				</SettingField>
 			</SettingSection>
 
-			{isListenMode ? null : (
-				<SettingSection
-					divided
-					icon={VolumeMinusIcon}
-					title={tg("muteSystemAudio")}
-				>
-					<MuteSystemAudioControl
-						general={general}
-						t={tg}
-						update={updateGeneral}
-					/>
-				</SettingSection>
-			)}
+			<SettingSection
+				divided
+				icon={VolumeMinusIcon}
+				title={tg("muteSystemAudio")}
+			>
+				<MuteSystemAudioControl
+					disabled={isListenMode}
+					disabledTooltip={
+						isListenMode ? LISTEN_MODE_OUTPUT_DISABLED_TOOLTIP : undefined
+					}
+					general={general}
+					t={tg}
+					update={updateGeneral}
+				/>
+			</SettingSection>
 		</div>
 	);
 }

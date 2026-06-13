@@ -32,6 +32,18 @@ pub struct ContextAppEntry {
     pub icon: Option<String>,
 }
 
+/// One visible top-level window that can be targeted by HWND-scoped context
+/// capture in debug/harness workflows.
+#[derive(Clone, Debug, Serialize, Deserialize, Type, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextWindowEntry {
+    pub hwnd: String,
+    pub process_id: u32,
+    pub label: String,
+    pub exe: String,
+    pub title: String,
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn context_list_apps() -> Vec<ContextAppEntry> {
@@ -40,8 +52,21 @@ pub async fn context_list_apps() -> Vec<ContextAppEntry> {
         .unwrap_or_default()
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn context_list_windows() -> Vec<ContextWindowEntry> {
+    tauri::async_runtime::spawn_blocking(list_context_windows_blocking)
+        .await
+        .unwrap_or_default()
+}
+
 #[cfg(not(target_os = "windows"))]
 fn list_context_apps_blocking() -> Vec<ContextAppEntry> {
+    Vec::new()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn list_context_windows_blocking() -> Vec<ContextWindowEntry> {
     Vec::new()
 }
 
@@ -93,7 +118,47 @@ fn list_context_apps_blocking() -> Vec<ContextAppEntry> {
 }
 
 #[cfg(target_os = "windows")]
+fn list_context_windows_blocking() -> Vec<ContextWindowEntry> {
+    let mut raw = Vec::<RawContextWindow>::new();
+    // SAFETY: `raw` lives for the duration of EnumWindows; the callback casts
+    // the LPARAM back to this vector and pushes plain owned values only.
+    let _ = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::EnumWindows(
+            Some(enum_context_window),
+            windows::Win32::Foundation::LPARAM(&mut raw as *mut _ as isize),
+        )
+    };
+
+    let mut windows = raw
+        .into_iter()
+        .filter_map(|window| {
+            let path = process_image_path(window.process_id)?;
+            let exe = path.file_name()?.to_str()?.to_lowercase();
+            if exe.is_empty() {
+                return None;
+            }
+            Some(ContextWindowEntry {
+                hwnd: window.hwnd.to_string(),
+                process_id: window.process_id,
+                label: app_label_from_path(&path),
+                exe,
+                title: window.title,
+            })
+        })
+        .collect::<Vec<_>>();
+    windows.sort_by(|a, b| {
+        a.title
+            .to_lowercase()
+            .cmp(&b.title.to_lowercase())
+            .then_with(|| a.exe.cmp(&b.exe))
+            .then_with(|| a.hwnd.cmp(&b.hwnd))
+    });
+    windows
+}
+
+#[cfg(target_os = "windows")]
 struct RawContextWindow {
+    hwnd: u64,
     process_id: u32,
     title: String,
 }
@@ -137,7 +202,11 @@ unsafe extern "system" fn enum_context_window(
     }
 
     let windows = unsafe { &mut *(lparam.0 as *mut Vec<RawContextWindow>) };
-    windows.push(RawContextWindow { process_id, title });
+    windows.push(RawContextWindow {
+        hwnd: hwnd.0 as usize as u64,
+        process_id,
+        title,
+    });
     TRUE
 }
 

@@ -12,6 +12,7 @@ import {
 	useState,
 } from "react";
 import { cn } from "@/shared/lib/cn";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 
 /**
@@ -159,9 +160,9 @@ const SEARCH_INPUT_CLASSES = cn(
 const SEARCH_SHELL_CLASSES = cn(
 	"relative flex min-h-12 w-full items-center border-divider border-b bg-[var(--color-surface-1)]/72 px-2",
 	"shadow-[inset_0_1px_0_0_rgba(255,255,255,0.035)]",
-	"ring-0 ring-accent/0 transition-[background-color,box-shadow,--tw-ring-color] duration-150 ease-out",
+	"transition-[background-color,box-shadow] duration-150 ease-out",
 	"hover:bg-[var(--color-surface-1)]/86",
-	"focus-within:bg-[var(--color-surface-2)]/72 focus-within:shadow-[inset_0_-1px_0_0_rgba(255,255,255,0.055)] focus-within:ring-2 focus-within:ring-accent/30",
+	"focus-within:bg-[var(--color-surface-2)]/72 focus-within:shadow-[inset_0_-1px_0_0_rgba(255,255,255,0.055)]",
 );
 const SEARCH_ICON_BUTTON_CLASSES = cn(
 	"inline-flex size-7 shrink-0 items-center justify-center rounded-md",
@@ -255,6 +256,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 	const [popupSide, setPopupSide] = useState<"top" | "bottom">("bottom");
 	const triggerWrapperRef = useRef<HTMLDivElement>(null);
 	const popupNodeRef = useRef<HTMLElement | null>(null);
+	const searchInputRef = useRef<HTMLInputElement>(null);
 	const wasEffectivelyOpenRef = useRef(false);
 	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -267,6 +269,10 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 		: internalOpen;
 	const effectiveOpen = inline ? true : controlledOrInternalOpen;
 	const effectiveSearch = isSearchControlled ? inputValue : internalSearch;
+	const effectiveFilter =
+		filter ??
+		((item: TItem, query: string) =>
+			matchesFuzzySearch(itemToStringLabel?.(item) ?? String(item), query));
 	const popupOrigin = popupSide === "top" ? "bottom-left" : "top-left";
 	const closingFromOpen =
 		!inline && !effectiveOpen && wasEffectivelyOpenRef.current;
@@ -303,6 +309,23 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 	}, [clearPopupCloseTimer]);
 
 	useEffect(() => clearPopupCloseTimer, [clearPopupCloseTimer]);
+
+	const focusSearchInput = useCallback(() => {
+		searchInputRef.current?.focus({ preventScroll: true });
+	}, []);
+
+	useLayoutEffect(() => {
+		if (!effectiveOpen) {
+			return;
+		}
+		// Opening from a trigger leaves focus on the button; move it into the
+		// search field so immediate typing filters the model list.
+		focusSearchInput();
+		const frame = requestAnimationFrame(focusSearchInput);
+		return () => {
+			cancelAnimationFrame(frame);
+		};
+	}, [effectiveOpen, focusSearchInput]);
 
 	useEffect(() => {
 		if (inline) {
@@ -467,6 +490,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 						)}
 						dir="ltr"
 						placeholder={searchPlaceholder}
+						ref={searchInputRef}
 					/>
 					{isLoading ? (
 						<PulseDot
@@ -530,7 +554,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 	return (
 		<div className="flex flex-col gap-2" data-slot="model-picker">
 			<Combobox.Root
-				filter={filter as never}
+				filter={effectiveFilter as never}
 				inputValue={effectiveSearch}
 				isItemEqualToValue={isItemEqualToValue as never}
 				items={items as never}

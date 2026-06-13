@@ -78,6 +78,10 @@ describe("matchesQuery", () => {
 	test("haystack comparison is case-insensitive", () => {
 		expect(matchesQuery("LLAMA", "llama")).toBe(true);
 	});
+
+	test("fuzzy-matches typo'd compact version input", () => {
+		expect(matchesQuery("Parakeet version 3", "parkeet v3")).toBe(true);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -251,6 +255,21 @@ describe("filterRecommendedModels", () => {
 		const result = filterRecommendedModels(models, new Set(), "  LLAMA  ");
 		expect(result).toHaveLength(1);
 		expect(result[0]!.name).toBe("llama3.2:1b");
+	});
+
+	test("fuzzy-matches typo'd version queries", () => {
+		const result = filterRecommendedModels(
+			[
+				makeRecommended({
+					name: "parakeet-v3:latest",
+					displayName: "Parakeet version 3",
+					description: "Speech model",
+				}),
+			],
+			new Set(),
+			"Parkeet v3",
+		);
+		expect(result[0]!.name).toBe("parakeet-v3:latest");
 	});
 });
 

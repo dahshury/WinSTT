@@ -578,7 +578,7 @@ describe("useListenMode", () => {
 		expect(state.ephemeral).toBeNull();
 	});
 
-	test("loopback lifecycle clears transcription only while still in listen mode", async () => {
+	test("loopback lifecycle preserves listen captions while mode boundaries clear them", async () => {
 		window.nativeBridge = makeApi();
 		setRecordingMode("listen");
 		renderHook(() => useListenMode());
@@ -588,18 +588,13 @@ describe("useListenMode", () => {
 		act(() => {
 			fire(IPC.STT_LOOPBACK_STOPPED);
 		});
-		expect(useTranscriptionStore.getState().items).toEqual([]);
+		expect(useTranscriptionStore.getState().items.map((i) => i.text)).toEqual([
+			"listen transcript",
+		]);
 
 		act(() => setRecordingMode("ptt"));
 		await flushAsyncHookEffects();
-		seedTranscription("new ptt transcript");
-		act(() => {
-			fire(IPC.STT_LOOPBACK_STOPPED);
-		});
-
-		expect(useTranscriptionStore.getState().items.map((i) => i.text)).toEqual([
-			"new ptt transcript",
-		]);
+		expect(useTranscriptionStore.getState().items).toEqual([]);
 	});
 
 	test("starts loopback with the default output device and streaming model", async () => {

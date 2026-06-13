@@ -1,12 +1,6 @@
 // Reference: <onnx-asr>/src/onnx_asr/diarization.py
 //         server/src/recorder/application/diarization_stream.py + domain/speaker_timeline.py
-//         sherpa-onnx 1.13.2 SpeakerEmbeddingExtractor (verified docs.rs 2026-05):
-//           SpeakerEmbeddingExtractorConfig { model: Option<String>, num_threads: i32,
-//                                             debug: bool, provider: Option<String> }
-//           SpeakerEmbeddingExtractor::create(&cfg) -> Option<Self>
-//           .create_stream() -> Option<OnlineStream> ; .compute(&stream) -> Option<Vec<f32>>
-//           .dim() -> i32 ; .is_ready(&stream) -> bool
-//           OnlineStream::accept_waveform(sample_rate: i32, &[f32]) ; .input_finished()
+//         WeSpeaker ResNet34 embedding model on WinSTT's shared `ort` runtime.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // WHY A PORT (not "use sherpa-onnx OfflineSpeakerDiarization directly")
@@ -16,19 +10,17 @@
 // it on the next utterance and "speaker 0" may be a different person. WinSTT's
 // Listen mode + per-utterance diarization need IDs that PERSIST across calls
 // (project_listen_diarization_architecture). So we REUSE the heavy ML from
-// sherpa-onnx (the wespeaker ResNet34 SpeakerEmbeddingExtractor + the pyannote
-// segmentation session) and PORT — to pure Rust arithmetic — the session-stable
+// WeSpeaker embeddings plus the pyannote segmentation session) and PORT — to
+// pure Rust arithmetic — the session-stable
 // clustering, the activity-interval hysteresis, the SpeakerTimeline, and the
 // word→speaker assignment. None of those touch torch/onnx; they are deterministic
 // and fully unit-tested here.
 //
-// COMPILE NOTE: sherpa-onnx is declared UNCONDITIONALLY in Cargo.toml (no `sherpa`
-// cargo feature; we may not edit Cargo.toml), so `SherpaEmbedder` compiles
-// unconditionally — same convention as the updated wakeword.rs. The deterministic
-// arithmetic (clustering / timeline / word-assignment / AHC) never touches the
-// FFI and runs its own tests. The SEGMENTATION session (pyannote-3.0 powerset)
-// is left behind the `Segmenter` trait and marked `// SPIKE:` where its exact
-// sherpa-onnx output shape must be confirmed in the compile loop.
+// ENGINE NOTE: embedding is direct ORT (`OrtEmbedder`); sherpa-onnx remains for
+// wakeword only. The deterministic arithmetic (clustering / timeline /
+// word-assignment / AHC) never touches model runtime state and runs its own tests.
+// The SEGMENTATION session (pyannote-3.0 powerset) stays behind the `Segmenter`
+// trait until the exact output shape is wired.
 //
 // MODULE LAYOUT (split out of the original single-file module; behaviour-identical):
 //   types     — shared data types (SpeakerSegment/EmbeddedSegment/TimedWord/
@@ -36,7 +28,7 @@
 //   clustering — OnlineSpeakerClustering incremental session-stable state machine.
 //   ahc       — offline complete-linkage AHC + active_intervals hysteresis.
 //   timeline  — SpeakerTimeline + word→speaker assignment helpers.
-//   pipeline  — Diarizer/SessionDiarizer orchestration + sherpa-onnx FFI embedder.
+//   pipeline  — Diarizer/SessionDiarizer orchestration + ORT WeSpeaker embedder.
 
 mod ahc;
 mod clustering;

@@ -118,6 +118,101 @@ describe("useTranscriptionFeed", () => {
 		);
 	});
 
+	test("listen mode accepts empty realtime updates without wiping scrollback", () => {
+		setRecordingMode("listen");
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			items: [
+				{ id: "old", type: "final", text: "old listen row", timestamp: 1 },
+			],
+			currentRealtime: "speaker caption",
+		});
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_REALTIME_TEXT, { text: "" });
+		expect(useTranscriptionStore.getState().currentRealtime).toBe("");
+		expect(useTranscriptionStore.getState().items.map((i) => i.text)).toEqual([
+			"old listen row",
+		]);
+	});
+
+	test("listen mode keeps finalized rows when new realtime text appears", () => {
+		setRecordingMode("listen");
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			items: [
+				{ id: "old", type: "final", text: "old listen row", timestamp: 1 },
+			],
+			currentRealtime: "",
+		});
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_REALTIME_TEXT, { text: "new caption" });
+		expect(useTranscriptionStore.getState().currentRealtime).toBe(
+			"new caption",
+		);
+		expect(useTranscriptionStore.getState().items.map((i) => i.text)).toEqual([
+			"old listen row",
+		]);
+	});
+
+	test("listen mode recording_start arms capture without wiping visible captions", () => {
+		setRecordingMode("listen");
+		useTranscriptionStore.setState({
+			isRecordingActive: false,
+			isTranscribing: true,
+			items: [
+				{
+					id: "old",
+					type: "final",
+					text: "still visible listen row",
+					timestamp: 1,
+				},
+			],
+			currentRealtime: "live listen words",
+			ephemeral: { text: "status", timestamp: 1 },
+		});
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_RECORDING_START);
+		const state = useTranscriptionStore.getState();
+		expect(state.isRecordingActive).toBe(true);
+		expect(state.isTranscribing).toBe(true);
+		expect(state.items.map((i) => i.text)).toEqual([
+			"still visible listen row",
+		]);
+		expect(state.currentRealtime).toBe("live listen words");
+		expect(state.ephemeral?.text).toBe("status");
+	});
+
+	test("listen mode vad_start does not wipe the in-flight caption", () => {
+		setRecordingMode("listen");
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			items: [
+				{
+					id: "old",
+					type: "final",
+					text: "visible finalized row",
+					timestamp: 1,
+				},
+			],
+			currentRealtime: "words still forming",
+			ephemeral: { text: "status", timestamp: 1 },
+		});
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_VAD_START);
+		const state = useTranscriptionStore.getState();
+		expect(state.items.map((i) => i.text)).toEqual(["visible finalized row"]);
+		expect(state.currentRealtime).toBe("words still forming");
+		expect(state.ephemeral).toBeNull();
+	});
+
 	test("full sentence appends to items", () => {
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
@@ -141,7 +236,7 @@ describe("useTranscriptionFeed", () => {
 		expect(useTranscriptionStore.getState().items).toEqual([]);
 	});
 
-	test("listen mode keeps finalized rows for active scrollback", () => {
+	test("listen mode keeps finalized rows for active rolling captions", () => {
 		setRecordingMode("listen");
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,

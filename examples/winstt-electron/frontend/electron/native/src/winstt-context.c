@@ -1139,6 +1139,11 @@ int main(int argc, char* argv[]) {
 
     CoUninitialize();
 
+    /* The watchdog protects COM/UIA calls above. Stop it before JSON escaping
+       and stdout writes, otherwise a large-but-successful capture can be killed
+       mid-printf and emit unterminated JSON. */
+    if (wd) { TerminateThread(wd, 0); CloseHandle(wd); wd = NULL; }
+
     /* Defensive truncation: even if the BSTR was big, never write more than
        the cap (escape stage allocates 8x of this). */
     if ((int)strlen(focused_text) > MAX_CONTEXT_CHARS * 4) {

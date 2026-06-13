@@ -314,7 +314,7 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
             g("model", format!("model{s}.onnx")),
             g("vocab", "tokens.txt".into()),
         ],
-        // sherpa-onnx streaming packs (driven by SherpaStreamingEngine):
+        // sherpa-format streaming packs (driven by WinSTT native ORT streaming engines):
         EngineKind::NemoCtcStreaming => vec![
             // streaming NeMo FastConformer CTC: flat `model{?q}.onnx` + `tokens.txt`.
             g("model", format!("model{s}.onnx")),

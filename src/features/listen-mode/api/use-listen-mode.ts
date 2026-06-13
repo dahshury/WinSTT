@@ -112,7 +112,9 @@ export function applyLoopbackTransition(
 			if (shouldRestart) {
 				loopbackStop();
 			}
-			loopbackStart(loopbackDeviceIndex, modelId);
+			void loopbackStart(loopbackDeviceIndex, modelId).catch((err: unknown) => {
+				console.error("[useListenMode] Failed to start loopback:", err);
+			});
 		}
 	} else if (shouldStopLoopback(recordingMode, wasListen)) {
 		loopbackStop();
@@ -237,14 +239,11 @@ export function useListenMode(): void {
 			),
 		[loopbackDevices, outputDevices, outputDeviceId],
 	);
-	const currentModeRef = useRef(recordingMode);
-	const prevModeRef = useRef(recordingMode);
+	const prevModeRef = useRef<RecordingMode | null>(null);
 	const prevLoopbackDeviceIndexRef = useRef<number | null>(loopbackDeviceIndex);
 	const prevListenModelIdRef = useRef<string | null>(listenModelId);
 	const lastNonListenModeRef = useRef<RecordingMode>("ptt");
 	const transcriptModeRef = useRef<string | null>(null);
-
-	currentModeRef.current = recordingMode;
 
 	// Listen mode owns a continuous subtitle feed. Clear it at mode boundaries
 	// so captions from a previous PTT/toggle dictation cannot become the first
@@ -287,22 +286,16 @@ export function useListenMode(): void {
 	// Subscribe to loopback events from main process
 	useEffect(() => {
 		const unsubStarted = onLoopbackStarted((deviceName) => {
-			if (currentModeRef.current === "listen") {
-				clearTranscription();
-			}
 			setListening(true, deviceName);
 		});
 		const unsubStopped = onLoopbackStopped(() => {
-			if (currentModeRef.current === "listen") {
-				clearTranscription();
-			}
 			setListening(false);
 		});
 		return () => {
 			unsubStarted();
 			unsubStopped();
 		};
-	}, [clearTranscription, setListening]);
+	}, [setListening]);
 
 	// Fetch loopback devices when in listen mode. Tauri owns backend readiness;
 	// the legacy connection flag is only a display concern in this port.

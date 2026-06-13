@@ -9,6 +9,7 @@ import {
 	surfaceClasses,
 	useSurface,
 } from "@/shared/lib/surface";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 import type { SelectOption, SelectOptionGroup } from "@/shared/ui/select";
 import "./searchable-select.css";
@@ -58,6 +59,10 @@ export interface SearchableSelectProps {
 
 function getItemLabel(item: SelectOption | null): string {
 	return item ? item.label : "";
+}
+
+function optionMatchesQuery(item: SelectOption, query: string): boolean {
+	return matchesFuzzySearch([item.label, item.id, item.badge ?? ""], query);
 }
 
 function Badge({ text }: { text: string }) {
@@ -285,6 +290,7 @@ export function SearchableSelect({
 			defaultOpen={defaultOpen}
 			defaultValue={selected}
 			disabled={disabled}
+			filter={optionMatchesQuery}
 			isItemEqualToValue={(a: SelectOption | null, b: SelectOption | null) =>
 				a?.id === b?.id
 			}

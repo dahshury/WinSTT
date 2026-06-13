@@ -232,15 +232,16 @@ impl ChatterboxEngine {
 }
 
 fn build_session(path: &Path) -> ChatterboxResult<Session> {
-    use ort::execution_providers::{CPUExecutionProvider, ExecutionProviderDispatch};
-    let dispatch: Vec<ExecutionProviderDispatch> = vec![CPUExecutionProvider::default().build()];
-    let mut builder = Session::builder()
-        .map_err(|e| ChatterboxError::Session(format!("builder: {e}")))?
-        .with_execution_providers(dispatch)
-        .map_err(|e| ChatterboxError::Session(format!("EPs: {e}")))?;
-    builder
-        .commit_from_file(path)
-        .map_err(|e| ChatterboxError::Session(format!("commit {}: {e}", path.display())))
+    let (session, _) = super::provider::build_session(
+        path,
+        super::types::TtsDevice::Cpu,
+        super::provider::TtsOrtProviderPolicy::CpuOnly {
+            reason: "Chatterbox DirectML policy is not validated yet",
+        },
+        "Chatterbox",
+    )
+    .map_err(ChatterboxError::Session)?;
+    Ok(session)
 }
 
 fn in_names(s: &Session) -> Vec<String> {

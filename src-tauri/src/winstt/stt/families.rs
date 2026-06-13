@@ -27,19 +27,18 @@
 //     surface allocation/parse failures as `SttError` where feasible but ORT panics are acceptable.
 //
 // This file is the MODULE ROOT for the `families/` directory module. The engine implementations and
-// shared support layer live in the submodules declared below; the dispatch (`build_family_engine`),
-// the `pub(crate) file` re-export (used by `streaming.rs`), and the pure-logic tests stay here.
+// shared support layer live in the submodules declared below; the dispatch (`build_family_engine`)
+// and the pure-logic tests stay here.
 
 mod aed;
 mod ctc;
-mod frontend;
+pub(crate) mod frontend;
+mod native_streaming;
+mod nemo_streaming;
 mod support;
 mod transducer;
 
 use super::{EngineConfig, EngineKind, SttError, SttResult, Transcriber};
-
-// Keep `families::file` reachable for `streaming.rs` (`use super::families::file;`).
-pub(crate) use support::file;
 
 // ───────────────────────────────────────────────────────────────────────────
 // 9. Dispatch
@@ -78,16 +77,29 @@ pub fn build_family_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>>
         EngineKind::GraniteSpeechNar => Box::new(aed::GraniteNarEngine::load(&cfg)?),
         EngineKind::NemoAed => Box::new(aed::CanaryEngine::load(&cfg)?),
         EngineKind::ToneCtc => Box::new(aed::ToneEngine::load(&cfg)?),
-        // Native streaming via sherpa-onnx OnlineRecognizer (cache-aware, sherpa's own runtime).
-        EngineKind::NemoCtcStreaming => Box::new(super::streaming::SherpaStreamingEngine::load(
-            &cfg,
-            super::streaming::SherpaStreamFamily::NemoCtc,
-        )?),
-        EngineKind::NemoRnntStreaming | EngineKind::KaldiTransducerStreaming => {
-            Box::new(super::streaming::SherpaStreamingEngine::load(
+        EngineKind::NemoCtcStreaming
+            if native_streaming::NativeNemoCtcStreamingEngine::supports(&cfg) =>
+        {
+            Box::new(native_streaming::NativeNemoCtcStreamingEngine::load(&cfg)?)
+        }
+        EngineKind::NemoRnntStreaming
+            if nemo_streaming::NativeNemoStreamingEngine::supports(&cfg) =>
+        {
+            Box::new(nemo_streaming::NativeNemoStreamingEngine::load(&cfg)?)
+        }
+        EngineKind::KaldiTransducerStreaming
+            if native_streaming::NativeZipformerStreamingEngine::supports(&cfg) =>
+        {
+            Box::new(native_streaming::NativeZipformerStreamingEngine::load(
                 &cfg,
-                super::streaming::SherpaStreamFamily::Transducer,
             )?)
+        }
+        EngineKind::NemoCtcStreaming
+        | EngineKind::NemoRnntStreaming
+        | EngineKind::KaldiTransducerStreaming => {
+            return Err(SttError::Resolve(
+                "resolved streaming model is missing the expected native ORT graph files".into(),
+            ));
         }
         EngineKind::WhisperHf | EngineKind::WhisperOrt | EngineKind::Moonshine => {
             return Err(SttError::Unsupported(

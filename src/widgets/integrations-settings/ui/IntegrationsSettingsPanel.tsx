@@ -19,7 +19,11 @@ import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Spinner } from "@/shared/ui/spinner";
-import { PasswordField, TextField } from "@/shared/ui/text-field";
+import {
+	PasswordField,
+	StoredSecretField,
+	TextField,
+} from "@/shared/ui/text-field";
 
 const OPENROUTER_KEYS_URL = "https://openrouter.ai/keys";
 
@@ -101,16 +105,16 @@ export function IntegrationsSettingsPanel() {
 	// the 300ms debounced `settingsSave` had a chance to write — wiping a freshly-
 	// typed key out from under the input.
 
-	// Persistence happens on every keystroke (see `handleOpenrouterChange`), so
-	// `persistedOpenrouterKey` from the store IS the input's source of truth —
-	// no local state mirror needed. The verify probe runs in the background
-	// purely to drive the status pill and never blocks or reverts persistence;
-	// an auth-rejected key stays in the field with an "invalid" pill so the
-	// user can fix it without re-typing.
+	// Persistence still happens on every keystroke, but the input keeps a focused
+	// draft so a backend sentinel broadcast cannot replace the text while the user
+	// is still typing. Once editing ends, any non-empty stored value is presented
+	// as a locked saved key until the user removes it.
 	const [openrouterStatus, setOpenrouterStatus] = useState<{
 		lastError?: string;
 		status: OpenRouterStatus;
 	}>({ status: "idle" });
+	const [openrouterDraft, setOpenrouterDraft] = useState("");
+	const [openrouterEditing, setOpenrouterEditing] = useState(false);
 	const openrouterDebounceRef = useRef<number | null>(null);
 	const openrouterReqIdRef = useRef(0);
 	const [openrouterDialogOpen, setOpenrouterDialogOpen] = useState(false);
@@ -157,6 +161,8 @@ export function IntegrationsSettingsPanel() {
 		// mid-typing (Base UI's Tabs.Panel unmounts inactive panels) leaves
 		// the key safely in the store regardless of whether the verify ever
 		// completes.
+		setOpenrouterDraft(value);
+		setOpenrouterEditing(true);
 		updateLlmSettings({ openrouterApiKey: value });
 		if (openrouterDebounceRef.current !== null) {
 			window.clearTimeout(openrouterDebounceRef.current);
@@ -176,6 +182,8 @@ export function IntegrationsSettingsPanel() {
 			openrouterDebounceRef.current = null;
 		}
 		openrouterReqIdRef.current++;
+		setOpenrouterDraft("");
+		setOpenrouterEditing(false);
 		updateLlmSettings({ openrouterApiKey: "" });
 		setOpenrouterStatus({ status: "idle" });
 	};
@@ -193,6 +201,10 @@ export function IntegrationsSettingsPanel() {
 	};
 
 	const hasOpenrouterKey = persistedOpenrouterKey.trim().length > 0;
+	const openrouterLocked = hasOpenrouterKey && !openrouterEditing;
+	const openrouterEditableValue = openrouterEditing
+		? openrouterDraft
+		: persistedOpenrouterKey;
 
 	const openrouterPill = renderOpenrouterPill({
 		apiKey: persistedOpenrouterKey,
@@ -246,10 +258,14 @@ export function IntegrationsSettingsPanel() {
 									{openrouterPill}
 									<BaseButton
 										className="text-foreground-muted text-xs underline-offset-2 hover:text-foreground-secondary hover:underline"
-										onClick={() => window.open(OPENROUTER_KEYS_URL, "_blank")}
+										onClick={
+											hasOpenrouterKey
+												? requestRemoveOpenrouter
+												: () => window.open(OPENROUTER_KEYS_URL, "_blank")
+										}
 										type="button"
 									>
-										{t("getApiKey")}
+										{hasOpenrouterKey ? t("removeKey") : t("getApiKey")}
 									</BaseButton>
 								</div>
 							}
@@ -257,28 +273,31 @@ export function IntegrationsSettingsPanel() {
 						>
 							<div className="flex flex-col gap-2">
 								<ElevatedSurface inline>
-									<PasswordField
-										hideLabel={tc("hidePassword")}
-										onChange={(e) => handleOpenrouterChange(e.target.value)}
-										placeholder={tLlm("openrouterApiKeyPlaceholder")}
-										revealLabel={tc("showPassword")}
-										value={persistedOpenrouterKey}
-									/>
+									{openrouterLocked ? (
+										<StoredSecretField
+											aria-label={tLlm("openrouterApiKey")}
+											placeholder={tLlm("openrouterApiKeyPlaceholder")}
+										/>
+									) : (
+										<PasswordField
+											hideLabel={tc("hidePassword")}
+											onBlur={(event) => {
+												const next = event.relatedTarget;
+												if (
+													next &&
+													event.currentTarget.parentElement?.contains(next as Node)
+												) {
+													return;
+												}
+												setOpenrouterEditing(false);
+											}}
+											onChange={(e) => handleOpenrouterChange(e.target.value)}
+											placeholder={tLlm("openrouterApiKeyPlaceholder")}
+											revealLabel={tc("showPassword")}
+											value={openrouterEditableValue}
+										/>
+									)}
 								</ElevatedSurface>
-								{hasOpenrouterKey && (
-									<div className="flex items-center justify-end gap-2">
-										<BaseButton
-											className={cn(
-												"rounded border border-border px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated",
-												surfaceBg(chipLevel),
-											)}
-											onClick={requestRemoveOpenrouter}
-											type="button"
-										>
-											{t("removeKey")}
-										</BaseButton>
-									</div>
-								)}
 							</div>
 						</FormControl>
 					</div>

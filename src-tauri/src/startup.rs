@@ -13,6 +13,10 @@ use tauri::AppHandle;
 #[cfg(windows)]
 use crate::signal_handle;
 
+#[cfg(windows)]
+const WEBVIEW2_BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-logging --log-level=3";
+
 // Global atomic to store the file log level filter
 // We use u8 to store the log::LevelFilter as a number
 pub static FILE_LOG_LEVEL: AtomicU8 = AtomicU8::new(log::LevelFilter::Debug as u8);
@@ -66,6 +70,32 @@ pub(crate) fn log_startup_duration(label: &str, started: Instant) {
     if startup_profile_enabled() {
         log::info!("[startup] {label}: {} ms", started.elapsed().as_millis());
     }
+}
+
+#[cfg(windows)]
+pub(crate) fn configure_webview_window_builder<'a, R, M>(
+    builder: tauri::WebviewWindowBuilder<'a, R, M>,
+) -> tauri::WebviewWindowBuilder<'a, R, M>
+where
+    R: tauri::Runtime,
+    M: tauri::Manager<R>,
+{
+    // Tauri's `additional_browser_args` replaces Wry's defaults, so keep those
+    // defaults and add Chromium quiet-logging flags. This suppresses WebView2's
+    // benign shutdown stderr line:
+    // `Failed to unregister class Chrome_WidgetWin_0. Error = 1412`.
+    builder.additional_browser_args(WEBVIEW2_BROWSER_ARGS)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn configure_webview_window_builder<'a, R, M>(
+    builder: tauri::WebviewWindowBuilder<'a, R, M>,
+) -> tauri::WebviewWindowBuilder<'a, R, M>
+where
+    R: tauri::Runtime,
+    M: tauri::Manager<R>,
+{
+    builder
 }
 
 pub(crate) struct StartupProfiler {

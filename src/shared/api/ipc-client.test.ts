@@ -279,9 +279,9 @@ describe("send wrappers (migrated to typed commands)", () => {
 		}
 	});
 
-	test("loopbackStart and loopbackStop route to start_listen / stop_listen", () => {
+	test("loopbackStart and loopbackStop route to start_listen / stop_listen", async () => {
 		installMockApi();
-		ipc.loopbackStart(3, "streaming-nemo-ctc-en-1040ms");
+		await ipc.loopbackStart(3, "streaming-nemo-ctc-en-1040ms");
 		ipc.loopbackStop();
 		expect(tauriCalls).toEqual([
 			{
@@ -1393,9 +1393,9 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 		// windowOpenSettings is a typed open_window command — covered separately.
 	});
 
-	test("loopbackStart forwards device index to start_listen", () => {
+	test("loopbackStart forwards device index to start_listen", async () => {
 		installMockApi();
-		ipc.loopbackStart(7, "streaming-nemo-rnnt-en-1040ms");
+		await ipc.loopbackStart(7, "streaming-nemo-rnnt-en-1040ms");
 		expect(lastTauriCall()).toEqual({
 			cmd: "start_listen",
 			args: { deviceIndex: 7, modelId: "streaming-nemo-rnnt-en-1040ms" },

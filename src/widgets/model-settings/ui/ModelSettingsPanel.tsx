@@ -80,6 +80,8 @@ export function ModelSettingsPanel() {
 		(s) => s.settings.general?.recordingMode ?? "ptt",
 	);
 	const isListenMode = recordingMode === "listen";
+	const listenModeMainModelTooltip =
+		"Listen mode uses the streaming realtime model below; the main dictation model is preserved for other recording modes.";
 	const showRecordingOverlay = useSettingsStore(
 		(s) => s.settings.general?.showRecordingOverlay ?? true,
 	);
@@ -367,36 +369,36 @@ export function ModelSettingsPanel() {
 
 	return (
 		<div className="flex flex-col gap-2">
-			{isListenMode ? null : (
-				<MainModelSection
-					catalogLoaded={catalogLoaded}
-					catalogModels={catalogModels}
-					currentQuantization={currentQuantization}
-					downloadProgress={mainDownloadProgress}
-					getFitAssessment={getFitAssessment}
-					handleModelChange={controller.handleModelChange}
-					isSwapping={mainSwapping}
-					languageAutoDetect={languageAutoDetect}
-					languageAutoDetectSupported={languageAutoDetectSupported}
-					languageCandidates={languageCandidates}
-					languageControlMode={languageControlMode}
-					langOpts={langOpts}
-					canDeleteQuant={canDeleteQuant}
-					onDeleteQuant={handleGuardedDeleteQuant}
-					onDownloadAction={handleMainDownloadAction}
-					onDownloadSnapshot={handleDownloadSnapshot}
-					sections={{
-						language: showLanguage,
-					}}
-					selectedModel={selectedModel}
-					settings={settings}
-					statesById={statesById}
-					systemInfo={systemInfo}
-					t={t}
-					translateSupported={translateSupported}
-					update={update}
-				/>
-			)}
+			<MainModelSection
+				catalogLoaded={catalogLoaded}
+				catalogModels={catalogModels}
+				currentQuantization={currentQuantization}
+				disabled={isListenMode}
+				disabledTooltip={isListenMode ? listenModeMainModelTooltip : undefined}
+				downloadProgress={mainDownloadProgress}
+				getFitAssessment={getFitAssessment}
+				handleModelChange={controller.handleModelChange}
+				isSwapping={mainSwapping}
+				languageAutoDetect={languageAutoDetect}
+				languageAutoDetectSupported={languageAutoDetectSupported}
+				languageCandidates={languageCandidates}
+				languageControlMode={languageControlMode}
+				langOpts={langOpts}
+				canDeleteQuant={canDeleteQuant}
+				onDeleteQuant={handleGuardedDeleteQuant}
+				onDownloadAction={handleMainDownloadAction}
+				onDownloadSnapshot={handleDownloadSnapshot}
+				sections={{
+					language: showLanguage,
+				}}
+				selectedModel={selectedModel}
+				settings={settings}
+				statesById={statesById}
+				systemInfo={systemInfo}
+				t={t}
+				translateSupported={translateSupported}
+				update={update}
+			/>
 			<RealtimeModelSection
 				catalogLoaded={catalogLoaded}
 				catalogModels={catalogModels}
@@ -442,7 +444,12 @@ export function ModelSettingsPanel() {
 				/>
 			)}
 			{showLifetime && (
-				<ModelLifetimeSection global={global} t={t} update={updateGlobal} />
+				<ModelLifetimeSection
+					forceNever={isListenMode}
+					global={global}
+					t={t}
+					update={updateGlobal}
+				/>
 			)}
 			<SwapDialogs
 				controller={controller}

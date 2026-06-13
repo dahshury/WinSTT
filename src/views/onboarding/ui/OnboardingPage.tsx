@@ -1,11 +1,11 @@
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
+import { commands } from "@/bindings";
 import { useSettingsStore } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import { useDownloadListener } from "@/features/model-download";
 import { useSyncSettings } from "@/features/update-settings";
-import { windowCloseSelf } from "@/shared/api/ipc-client";
 import { Elevated, SurfaceProvider } from "@/shared/lib/surface";
 import { useTouchActivation } from "@/shared/lib/use-touch-activation";
 import { Button } from "@/shared/ui/button";
@@ -44,7 +44,9 @@ export function OnboardingPage() {
 	const closePicker = useLlmModelPickerStore((s) => s.close);
 	const commitInstalled = useLlmModelPickerStore((s) => s.commitInstalled);
 	const llmDictation = useSettingsStore((s) => s.settings.llm.dictation);
-	const closeActivation = useTouchActivation(windowCloseSelf);
+	const closeActivation = useTouchActivation(() => {
+		void commands.onboardingFinish({ completed: false, track: "" });
+	});
 
 	return (
 		<SurfaceProvider value={1}>

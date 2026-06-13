@@ -224,16 +224,17 @@ impl PiperEngine {
     /// CPU session (start conservative like Kokoro; VITS has no fp16 ConvTranspose
     /// but DML benefit at this size is unproven — benchmark before enabling).
     fn build_session(&self) -> PiperResult<ort::session::Session> {
-        use ort::execution_providers::{CPUExecutionProvider, ExecutionProviderDispatch};
-        let dispatch: Vec<ExecutionProviderDispatch> =
-            vec![CPUExecutionProvider::default().build()];
-        let mut builder = ort::session::Session::builder()
-            .map_err(|e| PiperError::Session(format!("session builder: {e}")))?
-            .with_execution_providers(dispatch)
-            .map_err(|e| PiperError::Session(format!("register EPs: {e}")))?;
-        builder
-            .commit_from_file(self.config.model_path())
-            .map_err(|e| PiperError::Session(format!("commit_from_file: {e}")))
+        let model_path = self.config.model_path();
+        let (session, _) = super::provider::build_session(
+            &model_path,
+            super::types::TtsDevice::Cpu,
+            super::provider::TtsOrtProviderPolicy::CpuOnly {
+                reason: "Piper DirectML policy is not validated yet",
+            },
+            "Piper",
+        )
+        .map_err(PiperError::Session)?;
+        Ok(session)
     }
 
     fn run_inference(

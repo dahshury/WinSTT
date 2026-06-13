@@ -1,92 +1,13 @@
 import { useTranslations } from "use-intl";
-import Fuse, { type IFuseOptions } from "fuse.js";
-
-/**
- * Acceptance bar for a Fuse.js typo-tolerant token match in settings search.
- * Lower is stricter; this accepts common transpositions
- * ("dispaly" -> "display") without matching unrelated long tokens in the
- * sidebar's small keyword corpus.
- */
-const SETTINGS_SEARCH_FUSE_THRESHOLD = 0.3;
-
-// Fuzzy scoring only kicks in for query tokens this long. Short tokens (<= 3
-// chars, e.g. acronyms like "vad" / "tts") are matched by exact/prefix only so
-// a short, non-substring query like "ai" does not light up unrelated tabs.
-const MIN_FUZZY_LEN = 4;
-
-// Words are letters/digits — punctuation and brackets (e.g. "OpenRouter
-// (Cloud)") are dropped so they don't fuse into adjacent tokens.
-const TOKEN_RE = /[\p{L}\p{N}]+/gu;
-
-const SETTINGS_SEARCH_FUSE_OPTIONS: IFuseOptions<string> = {
-	threshold: SETTINGS_SEARCH_FUSE_THRESHOLD,
-	ignoreLocation: true,
-	minMatchCharLength: MIN_FUZZY_LEN,
-	shouldSort: false,
-};
-
-function tokenize(text: string): string[] {
-	return text.toLowerCase().match(TOKEN_RE) ?? [];
-}
-
-// True iff query token `qt` is satisfied by some haystack token: an exact
-// prefix (covers "lang" -> "language", "disp" -> "display") or, for long
-// enough tokens, a Fuse.js near-match (covers typos like "dispaly" -> "display").
-function tokenHasPrefixMatch(
-	qt: string,
-	hayTokens: readonly string[],
-): boolean {
-	return hayTokens.some((ht) => ht.startsWith(qt));
-}
-
-function fuzzyTokenMatches(
-	qt: string,
-	getTokenFuse: () => Fuse<string>,
-): boolean {
-	if (qt.length < MIN_FUZZY_LEN) {
-		return false;
-	}
-	return getTokenFuse().search(qt, { limit: 1 }).length > 0;
-}
-
-function someTokenMatches(
-	qt: string,
-	hayTokens: readonly string[],
-	getTokenFuse: () => Fuse<string>,
-): boolean {
-	return (
-		tokenHasPrefixMatch(qt, hayTokens) || fuzzyTokenMatches(qt, getTokenFuse)
-	);
-}
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 
 /**
  * Fuzzy settings-search predicate. A tab matches when its searchable text
- * (label + tooltip + section/setting keywords) contains the raw query as a
- * substring (handles partial phrases) OR every query token has a haystack token
- * it matches by prefix or Fuse.js. Empty query matches everything.
+ * (label + tooltip + section/setting keywords) matches by substring, prefix,
+ * compact aliases, or bounded typo tolerance. Empty query matches everything.
  */
 export function matchesSearchQuery(haystack: string, query: string): boolean {
-	const q = query.trim().toLowerCase();
-	if (q.length === 0) {
-		return true;
-	}
-	const hay = haystack.toLowerCase();
-	if (hay.includes(q)) {
-		return true;
-	}
-	const queryTokens = tokenize(q);
-	if (queryTokens.length === 0) {
-		return false;
-	}
-	const hayTokens = tokenize(hay);
-	let tokenFuse: Fuse<string> | null = null;
-	const getTokenFuse = (): Fuse<string> => {
-		tokenFuse ??= new Fuse(hayTokens, SETTINGS_SEARCH_FUSE_OPTIONS);
-		return tokenFuse;
-	};
-	return queryTokens.every((qt) =>
-		someTokenMatches(qt, hayTokens, getTokenFuse),
-	);
+	return matchesFuzzySearch(haystack, query);
 }
 
 /**
@@ -154,7 +75,7 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			tLlm("modelAssistanceCleanup"),
 			tLlm("subTransformTitle"),
 			tg("contextAwarenessSection"),
-			"llm cleanup grammar tone transform modifiers context assistance model selected apps allow list deny list",
+			"llm cleanup grammar tone transform modifiers formatting punctuation code commands symbols context assistance model selected apps allow list deny list",
 		].join(" "),
 		vocabulary: [
 			tDict("title"),

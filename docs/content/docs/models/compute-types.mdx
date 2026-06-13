@@ -1,43 +1,49 @@
 ---
 title: Compute & Quantization
-description: How WinSTT picks an execution provider — CPU, DirectML, or OpenVINO — and what the fp16 / int8 / q4 quantization labels mean for size, speed, and accuracy.
+description: How WinSTT picks an ONNX Runtime execution provider and what the fp16 / int8 / q4 quantization labels mean for size, speed, and accuracy.
 ---
 
-Two knobs decide how fast a model runs: the **execution provider** (which hardware ONNX Runtime targets) and the **quantization** (how compressed the model's weights are). The provider is fixed by the installer you chose; the quantization is per-model in the picker.
+Two knobs decide how fast a model runs: the **execution provider** (which hardware ONNX Runtime targets) and the **quantization** (how compressed the model's weights are). The provider is fixed by the platform/build; the quantization is per-model in the picker.
 
 ## Execution providers
 
-WinSTT runs every model on [ONNX Runtime](https://onnxruntime.ai). Which hardware backend — "execution provider" (EP) — it uses is baked into the installer, not a runtime setting. Each release publishes three portable builds that wrap the same app and the same speech engine; only the bundled ORT wheel differs.
+WinSTT runs every model on [ONNX Runtime](https://onnxruntime.ai). Which hardware backend — "execution provider" (EP) — it uses depends on the platform and build features. Every official package has a CPU fallback; Windows builds also include DirectML. Other EPs such as CoreML, CUDA, ROCm, and OpenVINO are custom/development build features until release packaging for those targets is finalized.
 
 <ModelTable
   head={["Provider", "Hardware", "When to use"]}
   rows={[
-    ["CPU", "Any 64-bit x86 with AVX2", "No GPU, a headless box, or you want the smallest (~150 MB) download. The universal fallback."],
-    ["DirectML", "Any DirectX 12 GPU — AMD, Intel, or NVIDIA", "The default GPU build (~200 MB). Vendor-agnostic; uses the system D3D12 stack so there are no driver DLLs to install."],
-    ["OpenVINO", "Intel ARC dGPU, Iris Xe / Arc iGPU", "Intel silicon (~250 MB). Targets the Intel-tuned path; ~10-30% faster than DirectML on Intel GPUs (Intel-published benchmarks)."],
+    ["CPU", "All supported desktop platforms", "Universal fallback and the default path when no validated accelerator is bundled."],
+    ["DirectML", "Windows with any DirectX 12 GPU — AMD, Intel, or NVIDIA", "Vendor-agnostic Windows GPU path; falls back to CPU when the GPU path is not viable."],
+    ["CoreML", "macOS builds with the CoreML feature", "Apple GPU/Neural Engine path for custom or future signed macOS builds."],
+    ["CUDA / ROCm / OpenVINO", "Custom builds for matching hardware", "Development or native-runner paths; not separate public alpha packages today."],
   ]}
-  caption="One installer = one provider. To switch providers, install a different build — see Install."
+  caption="Provider availability is platform/build specific. The app falls back to CPU when a requested provider is unavailable."
 />
 
-The provider is chosen **at install time**. On Windows, the **Model** tab's Device control only offers **Auto** and **CPU**: `Auto` uses the installed GPU provider when one is viable, and `CPU` forces the CPU path regardless. There is no in-app GPU-vendor switch — the bundled wheel already decides that.
+The **Model** tab's Device control offers **Auto** and **CPU** for official packages:
+`Auto` uses the best bundled provider for the platform when one is viable, and `CPU`
+forces the CPU path regardless.
 
 <Callout type="info" title="Why no CUDA build on Windows?">
   On our workload DirectML is both faster and ~10× lighter than CUDA. On an RTX 3080 Ti
   running whisper-tiny-q4, DirectML measures **p50 = 85 ms** (p95 = 89 ms, stdev = 3 ms)
   versus CUDA's **p50 = 120 ms** (p95 = 151 ms, stdev = 37 ms) — DirectML wins on both the
-  median and consistency, while the installer is ~200 MB instead of ~2 GB. The CUDA path is
-  kept only for a future Linux NVIDIA build, where DirectML doesn't exist.
+  median and consistency, while the package is far smaller. CUDA remains a
+  custom/development path for Linux NVIDIA machines.
 </Callout>
 
 ### Auto-fallback to CPU
 
-The GPU builds degrade gracefully. At startup the server probes the active provider, and if the requested GPU path isn't viable — no DirectX 12 GPU for the DirectML build, no Intel accelerator for the OpenVINO build — it silently falls back to CPU. The CUDA path adds a second check: even when the provider registers, WinSTT verifies the full DLL chain actually loads before using it, and drops to CPU otherwise. You get a working app either way, so installing the DirectML build on a GPU-less machine is harmless.
+GPU-capable builds degrade gracefully. At startup the backend probes the active provider,
+and if the requested GPU path isn't viable — no DirectX 12 GPU for DirectML, missing
+driver/runtime libraries for a custom EP, or an unsupported graph — it silently falls back
+to CPU. You get a working app either way.
 
-The per-OS auto priority is **OpenVINO → DirectML → CUDA → CPU** on Windows; entries whose provider isn't bundled are simply skipped, so a DirectML-only install just falls through to DirectML.
+The per-OS auto priority skips providers that were not bundled for that build.
 
 <Callout type="info" title="Force CPU manually">
   Set the **Model** tab's Device control to **CPU** to pin the CPU path regardless of the
-  installed build — useful when a GPU driver is flaky. OpenVINO's target can be steered with
+  active build — useful when a GPU driver is flaky. OpenVINO's target can be steered with
   the `OPENVINO_DEVICE` env var (`AUTO` / `GPU` / `GPU.0` / `CPU`; default `AUTO`).
 </Callout>
 
@@ -110,8 +116,8 @@ These seven values match the labels in the **Model** picker exactly. Availabilit
   <Card title="Browse the catalog" href="/docs/models">
     All 40+ models across families, with accuracy, speed, and language coverage.
   </Card>
-  <Card title="Which installer?" href="/docs/install">
-    DirectML, CPU, or OpenVINO — and the system requirements for each.
+  <Card title="Install" href="/docs/install">
+    Pick the macOS, Linux, or Windows package for your machine.
   </Card>
   <Card title="Whisper models" href="/docs/models/whisper">
     The Whisper family and the quantizations each variant publishes.
