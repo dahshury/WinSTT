@@ -415,10 +415,9 @@ export function mergeStreamingLatencyStates(
 		const defaultState = statesById[defaultModel.id];
 		const bestState = variants
 			.map((variant) => statesById[variant.model.id])
-			.reduce<ModelStateEntry | undefined>(
-				(best, state) => (stateRank(state) > stateRank(best) ? state : best),
-				defaultState,
-			);
+			.reduce<
+				ModelStateEntry | undefined
+			>((best, state) => (stateRank(state) > stateRank(best) ? state : best), defaultState);
 		if (!defaultState && !bestState) {
 			continue;
 		}

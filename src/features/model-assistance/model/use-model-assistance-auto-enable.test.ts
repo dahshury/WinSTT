@@ -196,7 +196,9 @@ describe("useModelAssistanceAutoEnable", () => {
 	});
 
 	test("does not re-enable after a manual disable when the view re-mounts (app restart)", async () => {
-		const first = renderHook(() => useModelAssistanceAutoEnable({ enabled: true }));
+		const first = renderHook(() =>
+			useModelAssistanceAutoEnable({ enabled: true }),
+		);
 
 		await waitFor(() => {
 			expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(

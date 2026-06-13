@@ -65,10 +65,12 @@ function state(id: string, cacheState: ModelStateEntry["cache"]["state"]) {
 
 describe("streaming latency model merge", () => {
 	test("keeps native streaming latency parsed from ids", () => {
-		expect(nativeStreamingLatencyMs(model("streaming-nemotron-en-80ms-int8")))
-			.toBe(80);
-		expect(nativeStreamingLatencyMs(model("streaming-nemotron-en-1120ms-int8")))
-			.toBe(1120);
+		expect(
+			nativeStreamingLatencyMs(model("streaming-nemotron-en-80ms-int8")),
+		).toBe(80);
+		expect(
+			nativeStreamingLatencyMs(model("streaming-nemotron-en-1120ms-int8")),
+		).toBe(1120);
 	});
 
 	test("groups latency variants behind one display card", () => {
@@ -82,8 +84,11 @@ describe("streaming latency model merge", () => {
 
 		expect(merged).toHaveLength(1);
 		expect(merged[0]?.id).toBe("streaming-nemotron-en-1120ms-int8");
-		expect(latencyVariantsForModel(merged[0] ?? model("missing")).map((v) => v.latencyMs))
-			.toEqual([80, 160, 560, 1120]);
+		expect(
+			latencyVariantsForModel(merged[0] ?? model("missing")).map(
+				(v) => v.latencyMs,
+			),
+		).toEqual([80, 160, 560, 1120]);
 	});
 
 	test("routes selected low-latency backing ids to the grouped card", () => {
@@ -98,16 +103,19 @@ describe("streaming latency model merge", () => {
 		}
 
 		expect(
-			findDisplayModelByBackingId(
-				[grouped],
-				"streaming-nemotron-en-80ms-int8",
-			)?.id,
+			findDisplayModelByBackingId([grouped], "streaming-nemotron-en-80ms-int8")
+				?.id,
 		).toBe("streaming-nemotron-en-1120ms-int8");
 		expect(
 			activeLatencyModel(grouped, "streaming-nemotron-en-80ms-int8").id,
 		).toBe("streaming-nemotron-en-80ms-int8");
-		expect(backingModelIdForQuant(grouped, "int8", "streaming-nemotron-en-80ms-int8"))
-			.toBe("streaming-nemotron-en-80ms-int8");
+		expect(
+			backingModelIdForQuant(
+				grouped,
+				"int8",
+				"streaming-nemotron-en-80ms-int8",
+			),
+		).toBe("streaming-nemotron-en-80ms-int8");
 	});
 
 	test("merged latency cache is cached when any latency variant is cached", () => {
@@ -128,8 +136,8 @@ describe("streaming latency model merge", () => {
 		});
 		const latencyStates = mergeStreamingLatencyStates(merged, precisionStates);
 
-		expect(latencyStates["streaming-nemotron-en-1120ms-int8"]?.cache.state).toBe(
-			"cached",
-		);
+		expect(
+			latencyStates["streaming-nemotron-en-1120ms-int8"]?.cache.state,
+		).toBe("cached");
 	});
 });

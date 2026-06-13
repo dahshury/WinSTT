@@ -40,7 +40,10 @@ function scheduleCompletedSessionClear(sessionId: number): void {
 	}, COMPLETED_SESSION_CLEAR_MS);
 }
 
-function shouldIgnoreEmptyRealtimeDrop(text: string, recordingMode: string): boolean {
+function shouldIgnoreEmptyRealtimeDrop(
+	text: string,
+	recordingMode: string,
+): boolean {
 	if (recordingMode === "listen") {
 		return false;
 	}

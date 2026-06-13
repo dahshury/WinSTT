@@ -45,7 +45,9 @@ interface AudioDisplayProps {
 	listenSurfaceActive?: boolean;
 }
 
-export function AudioDisplay({ listenSurfaceActive = false }: AudioDisplayProps) {
+export function AudioDisplay({
+	listenSurfaceActive = false,
+}: AudioDisplayProps) {
 	const t = useTranslations("audioDisplay");
 
 	// Dim the visualizer whenever dictation text is being shown in the main

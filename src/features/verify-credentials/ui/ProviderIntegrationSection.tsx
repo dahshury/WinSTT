@@ -246,7 +246,10 @@ export function ProviderIntegrationSection({
 				<div className="flex flex-col gap-2">
 					<ElevatedSurface inline>
 						{keyLocked ? (
-							<StoredSecretField aria-label={keyLabel} placeholder={placeholder} />
+							<StoredSecretField
+								aria-label={keyLabel}
+								placeholder={placeholder}
+							/>
 						) : (
 							<PasswordField
 								hideLabel={tc("hidePassword")}

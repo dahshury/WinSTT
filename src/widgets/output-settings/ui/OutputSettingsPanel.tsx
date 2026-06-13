@@ -112,9 +112,7 @@ function PasteBehaviorSection({
 	tg,
 }: PasteBehaviorSectionProps): ReactNode {
 	const effectiveAutoSubmit = disabled ? false : autoSubmit;
-	const effectivePreviewBeforePasting = disabled
-		? false
-		: previewBeforePasting;
+	const effectivePreviewBeforePasting = disabled ? false : previewBeforePasting;
 	const effectiveWordByWordPasting = disabled ? false : wordByWordPasting;
 	const autoSubmitKeyDisabled = disabled || !effectiveAutoSubmit;
 	const previewDisabled = disabled || previewBeforePastingDisabled;

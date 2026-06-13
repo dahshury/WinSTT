@@ -136,9 +136,9 @@ describe("ModelSettingsPanel", () => {
 		}) as HTMLInputElement;
 		expect(input.value).toBe("Never");
 		expect(input.disabled).toBe(true);
-		expect(
-			useSettingsStore.getState().settings.global.modelUnloadTimeout,
-		).toBe("min10");
+		expect(useSettingsStore.getState().settings.global.modelUnloadTimeout).toBe(
+			"min10",
+		);
 	});
 
 	test("keeps the main model picker visible but disabled in listen mode", () => {

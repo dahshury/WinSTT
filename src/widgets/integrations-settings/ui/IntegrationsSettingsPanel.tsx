@@ -285,7 +285,9 @@ export function IntegrationsSettingsPanel() {
 												const next = event.relatedTarget;
 												if (
 													next &&
-													event.currentTarget.parentElement?.contains(next as Node)
+													event.currentTarget.parentElement?.contains(
+														next as Node,
+													)
 												) {
 													return;
 												}

@@ -57,7 +57,6 @@ export function MainPage() {
 							<div className="size-[3px] rounded-full bg-white/[0.08]" />
 						</div>
 					</div>
-
 				</>
 			)}
 

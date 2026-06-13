@@ -202,7 +202,13 @@ export function CloudModelSelect({
 				onSelect(fallback);
 			}
 		}
-	}, [activeProvider, disabled, firstOpenrouterId, hasValidSelection, onSelect]);
+	}, [
+		activeProvider,
+		disabled,
+		firstOpenrouterId,
+		hasValidSelection,
+		onSelect,
+	]);
 
 	if (availableProviders.length === 0) {
 		return (

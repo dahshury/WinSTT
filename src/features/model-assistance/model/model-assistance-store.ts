@@ -26,17 +26,13 @@ export const useModelAssistanceStore = create<ModelAssistanceState>()(
 	persist(
 		(set, get) => ({
 			autoAppliedModelIds: [],
-			hasAutoApplied: (modelId) =>
-				get().autoAppliedModelIds.includes(modelId),
+			hasAutoApplied: (modelId) => get().autoAppliedModelIds.includes(modelId),
 			markAutoApplied: (modelId) =>
 				set((state) =>
 					state.autoAppliedModelIds.includes(modelId)
 						? state
 						: {
-								autoAppliedModelIds: [
-									...state.autoAppliedModelIds,
-									modelId,
-								],
+								autoAppliedModelIds: [...state.autoAppliedModelIds, modelId],
 							},
 				),
 			reset: () => set({ autoAppliedModelIds: [] }),

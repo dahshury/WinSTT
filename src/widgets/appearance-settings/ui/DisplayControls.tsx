@@ -78,9 +78,7 @@ export function OverlayControl({
 	return (
 		<SettingField
 			disabled={isListenMode}
-			disabledTooltip={
-				isListenMode ? LISTEN_MODE_DISPLAY_TOOLTIP : undefined
-			}
+			disabledTooltip={isListenMode ? LISTEN_MODE_DISPLAY_TOOLTIP : undefined}
 			hideReset={isListenMode}
 			isDefault={idx === overlaySliderToIndex(DEFAULT_SETTINGS.general)}
 			label={t("showRecordingOverlay")}
