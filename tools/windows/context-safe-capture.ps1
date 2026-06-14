@@ -35,7 +35,7 @@ if ([string]::IsNullOrWhiteSpace($OutDir)) {
 }
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 
-$sidecar = Join-Path $repoRoot "examples\winstt-electron\frontend\electron\native\bin\winstt-context.exe"
+$sidecar = Join-Path $repoRoot "src-tauri\binaries\winstt-context.exe"
 $cargoEnv = Join-Path $repoRoot "tools\windows\cargo-env.bat"
 $smokeExe = Join-Path $repoRoot "src-tauri\target\debug\context_prompt_smoke.exe"
 

@@ -246,7 +246,7 @@ export function OverlayPage() {
 	} else if (effectiveOverlayMode === "dynamic-island") {
 		// Top-flush layout: container anchors content to the *top* of the
 		// renderer window (which is itself docked at `y = 0` of the primary
-		// display via electron/ipc/overlay.ts), so the island sits against
+		// display), so the island sits against
 		// the physical top bezel with no gap.
 		//
 		// Scaling is per-element inside the island (visualizer zoom + text

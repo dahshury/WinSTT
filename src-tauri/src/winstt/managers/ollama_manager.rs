@@ -41,7 +41,7 @@ const CATALOG_TTL: Duration = Duration::from_secs(60 * 60);
 // from one client and stalls the queued ones past the timeout. Browsing the library
 // fires many tag scrapes at once (one renderer `invoke` per row), so a single
 // request always succeeds while the burst fails. Cap concurrency so a single request
-// always succeeds — mirrors `electron/ipc/ollama-registry.ts`.
+// always succeeds.
 const MAX_CONCURRENT_FETCHES: usize = 3;
 
 struct CacheEntry<T> {

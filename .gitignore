@@ -50,14 +50,9 @@ output/
 # Nix build output
 result
 
-# WinSTT reference clone (not part of the fork)
-examples/WinSTT/
+# Local reference clones / scratch — never committed.
+examples/
 .i18n-work/
-
-# Reference example clones (embedded repos, not part of the fork) — keep only
-# the reference app, which IS part of this repo.
-examples/*
-!examples/winstt-electron/
 
 # Custom cargo target dirs (spike / moon / verify builds). `/target/` is already
 # ignored above; these are alternate build outputs that must never be committed.
@@ -96,3 +91,7 @@ spike_out.log
 /extension_track_lines.csv
 /large_files.txt
 /transport_command_call_counts.csv
+
+# Python bytecode caches (e.g. tools/bench spike harnesses)
+__pycache__/
+*.pyc

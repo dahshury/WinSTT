@@ -1,5 +1,5 @@
-// Reference: frontend/electron/ipc/llm.ts,
-// frontend/src/shared/lib/preset-prompts.ts, and frontend/src/shared/lib/ollama-endpoint.ts.
+// Reference: frontend/src/shared/lib/preset-prompts.ts and
+// frontend/src/shared/lib/ollama-endpoint.ts.
 //
 // Pure LLM post-processing for WinSTT. This module owns prompt composition,
 // Ollama request-body construction, stream-state parsing/finalization,

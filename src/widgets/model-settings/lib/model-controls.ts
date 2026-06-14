@@ -1,5 +1,5 @@
 import { AiSettingIcon, CpuIcon } from "@hugeicons/core-free-icons";
-import { resolveEffectiveQuant } from "@picker";
+import { resolveEffectiveQuant } from "@/widgets/model-picker";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import type { SwitcherOption } from "@/shared/ui/switcher";

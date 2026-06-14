@@ -607,6 +607,15 @@
     "conflictOtherTts": "Synthèse vocale"
   },
   "dictionary": {
+    "encoderTitle": "On-device dictionary model",
+    "encoderDescription": "Without LLM cleanup, the dictionary uses a small on-device model to correct your terms in context. Download it once (~310 MB) to turn this on.",
+    "encoderDownload": "Download model (~310 MB)",
+    "encoderDownloading": "Downloading…",
+    "encoderPaused": "Paused",
+    "encoderPause": "Pause",
+    "encoderResume": "Resume",
+    "encoderReady": "On-device model ready — the dictionary works without LLM cleanup.",
+    "requiresCleanup": "Dictionary and snippets are applied by the LLM during cleanup. Turn on dictation cleanup in Processing to use them.",
     "title": "Dictionnaire",
     "description": "Enseigne à Whisper vos noms, votre jargon et vos termes techniques. Quand un mot transcrit ressemble phonétiquement à une entrée, il est corrigé automatiquement vers l'orthographe canonique.",
     "term": "Terme",

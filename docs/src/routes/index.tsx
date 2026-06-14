@@ -1,8 +1,16 @@
 import appIconUrl from "@app-icon";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { HomeLayout } from "fumadocs-ui/layouts/home";
-import { AppMock } from "@/components/app-mock";
-import { MediaGrid, Screenshot } from "@/components/docs-ui";
+import { MediaGrid } from "@/components/docs-ui";
+import {
+  ShowcaseCard,
+  ShowcaseDictation,
+  ShowcaseHistory,
+  ShowcaseLLM,
+  ShowcaseModelPicker,
+  ShowcaseRecordingModes,
+  ShowcaseTTS,
+} from "@/components/feature-showcases";
 import { baseOptions } from "@/lib/layout.shared";
 import {
   latestDownloadReleaseUrl,
@@ -84,7 +92,7 @@ const features = [
     title: "Four Recording Modes",
     description:
       "Push-to-talk, toggle, passive listen mode (loopback capture), and wake-word activation.",
-    href: "/docs/recording-modes",
+    href: "/docs/dictation",
   },
   {
     icon: (
@@ -204,7 +212,7 @@ const features = [
     title: "LLM Text Enhancement",
     description:
       "Clean up dictation or run custom hotkey-triggered transforms — local Ollama or, opt-in, OpenRouter.",
-    href: "/docs/settings/llm",
+    href: "/docs/settings/quality#llm-cleanup",
   },
   {
     icon: (
@@ -405,7 +413,7 @@ function HomePage() {
 
           <h1 className="text-5xl font-bold tracking-tight mb-4">WinSTT</h1>
           <p
-            className="text-lg max-w-xl text-center leading-relaxed"
+            className="text-lg max-w-xl text-justify hyphens-auto leading-relaxed"
             style={{ color: "oklch(94% 0.015 265 /0.55)" }}
           >
             A complete local voice toolkit for macOS, Linux, and Windows.
@@ -415,17 +423,26 @@ function HomePage() {
             source on GitHub.
           </p>
 
-          <div className="flex flex-wrap items-center justify-center gap-2 mt-6">
-            {privacyBadges.map((badge) => (
+          <div
+            className="inline-flex flex-col items-stretch overflow-hidden rounded-2xl sm:flex-row sm:rounded-full mt-6"
+            style={{
+              background: "oklch(68% 0.17 150 / 0.08)",
+              border: "1px solid oklch(68% 0.17 150 / 0.18)",
+            }}
+            role="group"
+            aria-label="Privacy guarantees"
+          >
+            {privacyBadges.map((badge, i) => (
               <div
                 key={badge.label}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+                className={`flex items-center justify-center gap-1.5 px-4 py-1.5${
+                  i > 0 ? " border-t sm:border-t-0 sm:border-l" : ""
+                }`}
                 style={{
-                  background: "oklch(68% 0.17 150 / 0.08)",
-                  border: "1px solid oklch(68% 0.17 150 / 0.18)",
                   color: "oklch(82% 0.12 150 / 0.9)",
                   fontSize: "12px",
                   fontWeight: 500,
+                  borderColor: "oklch(68% 0.17 150 / 0.18)",
                 }}
               >
                 {badge.icon}
@@ -434,17 +451,28 @@ function HomePage() {
             ))}
           </div>
 
-          <div className="flex flex-wrap justify-center gap-3 mt-8">
+          <div
+            className="inline-flex flex-col items-stretch overflow-hidden rounded-lg sm:flex-row mt-8"
+            style={{
+              // 1px gap + tinted container background renders the segment
+              // dividers — direction-agnostic, so it works for both the
+              // stacked (mobile) and row (desktop) layouts.
+              gap: "1px",
+              background: "oklch(94% 0.015 265 /0.12)",
+              border: "1px solid oklch(94% 0.015 265 /0.12)",
+              boxShadow: "0 0 28px oklch(62% 0.19 260 / 0.2)",
+            }}
+            role="group"
+            aria-label="Get WinSTT"
+          >
             <a
               href={latestDownloadReleaseUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-110"
+              className="inline-flex items-center justify-center gap-2 px-6 py-2.5 font-medium text-sm transition-all hover:brightness-110"
               style={{
                 background: "var(--brand-accent)",
                 color: "var(--fg-strong)",
-                boxShadow:
-                  "inset 0 1px 0 0 oklch(100% 0 0 / 0.12), 0 0 24px oklch(62% 0.19 260 / 0.25)",
               }}
             >
               <svg
@@ -467,10 +495,9 @@ function HomePage() {
             <Link
               to="/docs/$"
               params={{ _splat: "" }}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-125"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 font-medium text-sm transition-all hover:brightness-150"
               style={{
-                background: "oklch(94% 0.015 265 /0.05)",
-                border: "1px solid oklch(94% 0.015 265 /0.1)",
+                background: "var(--surface-1)",
                 color: "oklch(94% 0.015 265 /0.7)",
               }}
             >
@@ -494,10 +521,9 @@ function HomePage() {
               href={repositoryUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-125"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 font-medium text-sm transition-all hover:brightness-150"
               style={{
-                background: "oklch(94% 0.015 265 /0.05)",
-                border: "1px solid oklch(94% 0.015 265 /0.1)",
+                background: "var(--surface-1)",
                 color: "oklch(94% 0.015 265 /0.7)",
               }}
             >
@@ -516,14 +542,29 @@ function HomePage() {
             }}
           />
 
-          <AppMock />
+          <img
+            src={withBasePath("/screenshots/main.png")}
+            alt="The WinSTT main window — the title bar shows the active hotkey, a 9-band audio visualizer fills the center, and the footer shows GPU, input device, and model."
+            width={840}
+            height={300}
+            decoding="async"
+            className="relative mx-auto block select-none overflow-hidden rounded-lg"
+            style={{
+              width: "min(100%, 460px)",
+              aspectRatio: "14 / 5",
+              objectFit: "cover",
+              border: "1px solid var(--border)",
+              boxShadow:
+                "0 0 0 1px hsla(0,0%,0%,0.6), 0 25px 70px -12px hsla(0,0%,0%,0.7), 0 0 60px oklch(62% 0.19 260 / 0.05)",
+            }}
+          />
 
           <p
             className="mt-4 text-center"
             style={{
               fontSize: "12px",
               color: "oklch(94% 0.015 265 /0.25)",
-              fontFamily: '"Geist Mono", monospace',
+              fontFamily: "var(--font-mono)",
               letterSpacing: "0.3px",
             }}
           >
@@ -538,71 +579,59 @@ function HomePage() {
               className="text-2xl font-bold tracking-tight mb-2"
               style={{ color: "oklch(94% 0.015 265 /0.9)" }}
             >
-              Choose the right model quickly
+              See it in action
             </h2>
             <p
               className="text-sm"
               style={{ color: "oklch(94% 0.015 265 /0.35)" }}
             >
-              Compare accuracy, speed, size, languages, and quantization before
-              you switch.
+              A focused look at the features you reach for every day — each one
+              running locally on your machine.
             </p>
           </div>
           <MediaGrid cols={3}>
-            <Screenshot
-              src="feat-model"
-              alt="The model picker open, showing STT models grouped by maker with accuracy and speed bars, sizes, and quantization badges."
+            <ShowcaseCard
+              label="Live dictation"
+              url="winstt.app/dictation"
+              caption="Words land as you speak — a fast model previews live while the accurate model finalizes."
+            >
+              <ShowcaseDictation />
+            </ShowcaseCard>
+            <ShowcaseCard
               label="Model picker"
-              caption="Browse 40+ STT models — accuracy and speed at a glance."
-              aspect="3 / 2"
-              focus="top"
-              variant="thumb"
-            />
-            <Screenshot
-              src="feat-stt"
-              alt="The Model settings tab with the Source toggle between Local and Cloud, plus model, language, and device options."
-              label="Speech-to-text"
-              caption="Transcribe on-device, or switch to OpenAI or ElevenLabs in the cloud."
-              aspect="3 / 2"
-              focus="top"
-              variant="thumb"
-            />
-            <Screenshot
-              src="feat-tts"
-              alt="The Text-to-Speech settings with a Local/Cloud source toggle, voice selector, and playback speed."
-              label="Text-to-speech"
-              caption="Read text aloud with local Kokoro or cloud ElevenLabs voices."
-              aspect="3 / 2"
-              focus="center"
-              variant="thumb"
-            />
-            <Screenshot
-              src="feat-llm"
-              alt="The LLM post-processing settings with a local-Ollama / cloud-OpenRouter provider toggle, model, tone, and modifiers."
-              label="LLM post-processing"
-              caption="Clean up and reshape dictation — local Ollama or cloud OpenRouter."
-              aspect="3 / 2"
-              focus="top"
-              variant="thumb"
-            />
-            <Screenshot
-              src="feat-recording"
-              alt="The Recording settings showing the mode selector: Push to Talk, Toggle, Listen, and Wake Word."
+              url="winstt.app/models"
+              caption="Browse 40+ speech models — maker, size, and quantization at a glance."
+            >
+              <ShowcaseModelPicker />
+            </ShowcaseCard>
+            <ShowcaseCard
+              label="AI clean-up"
+              url="winstt.app/enhance"
+              caption="Strip filler and fix punctuation with a local LLM — and see exactly what changed."
+            >
+              <ShowcaseLLM />
+            </ShowcaseCard>
+            <ShowcaseCard
               label="Recording modes"
-              caption="Push-to-talk, toggle, listen, or wake word."
-              aspect="3 / 2"
-              focus="top"
-              variant="thumb"
-            />
-            <Screenshot
-              src="feat-history"
-              alt="The transcription history dashboard with stat tiles and a daily-activity heatmap."
+              url="winstt.app/modes"
+              caption="Push-to-talk, toggle, passive listen, or wake-word activation."
+            >
+              <ShowcaseRecordingModes />
+            </ShowcaseCard>
+            <ShowcaseCard
+              label="Text-to-speech"
+              url="winstt.app/speech"
+              caption="Read any text aloud with Kokoro — 54 voices across 9 languages."
+            >
+              <ShowcaseTTS />
+            </ShowcaseCard>
+            <ShowcaseCard
               label="History"
-              caption="Stats, an activity heatmap, and karaoke playback."
-              aspect="3 / 2"
-              focus="top"
-              variant="thumb"
-            />
+              url="winstt.app/history"
+              caption="Words-per-minute, AI-fix impact, streaks, and a year-long activity graph."
+            >
+              <ShowcaseHistory />
+            </ShowcaseCard>
           </MediaGrid>
         </section>
 

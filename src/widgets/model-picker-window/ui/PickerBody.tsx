@@ -4,7 +4,7 @@ import {
 	type OllamaModelSelectorProps,
 	OpenRouterModelSelector,
 	SttModelSelector,
-} from "@picker";
+} from "@/widgets/model-picker";
 import { type KeyboardEvent, type ReactNode, useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { providerOf } from "@/entities/cloud-stt-provider";

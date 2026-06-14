@@ -76,7 +76,7 @@ const nextToastId = (() => {
 
 /**
  * Mounted once at the root layout. Subscribes to the five cloud-STT error
- * channels broadcast by `electron/ipc/stt-cloud.ts` and surfaces each as
+ * channels and surfaces each as
  * a transient toast. Auto-dismisses after 8s; auth + key-missing toasts
  * carry an "Open Integrations" action.
  *

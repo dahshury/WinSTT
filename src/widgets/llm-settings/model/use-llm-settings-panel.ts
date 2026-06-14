@@ -143,7 +143,7 @@ export function useLlmSettingsPanel() {
 			fetchTags: s.fetchTags,
 		})),
 	);
-	const librarySearchProps: import("@picker").OllamaModelSelectorProps["librarySearch"] =
+	const librarySearchProps: import("@/widgets/model-picker").OllamaModelSelectorProps["librarySearch"] =
 		{
 			catalog: libraryState.catalog,
 			error: libraryState.error,

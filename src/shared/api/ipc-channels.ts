@@ -70,7 +70,7 @@ export const IPC = {
 	STT_SESSION_ABORTED: "stt:session-aborted",
 	// Toggle whether the current overlay window accepts mouse events. The Tauri
 	// overlay normally owns this from the native show/hide lifecycle; this route
-	// remains for bridge parity with the Electron reference and narrow future
+	// remains for bridge parity and narrow future
 	// renderer-controlled cases.
 	OVERLAY_SET_IGNORE_MOUSE: "overlay:set-ignore-mouse",
 
@@ -399,7 +399,7 @@ export const IPC = {
 	UPDATER_STATUS: "updater:status",
 	// Manual "check for updates" trigger (renderer → main). Fire-and-success;
 	// the real outcome arrives asynchronously over UPDATER_STATUS like the
-	// periodic check. See setupUpdaterStatusHandlers in electron/main.ts.
+	// periodic check. See setupUpdaterStatusHandlers.
 	UPDATER_CHECK_NOW: "updater:check-now",
 	// Restart the app to apply a downloaded update (renderer → main). Calls
 	// the updater's `quitAndInstall`. The renderer wires this to the

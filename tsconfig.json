@@ -17,13 +17,11 @@
     "verbatimModuleSyntax": true,
     "forceConsistentCasingInFileNames": true,
 
-    /* Path Aliases — renderer (@/*, @picker) + Tauri bindings (@/bindings) */
+    /* Path Aliases — renderer (@/*) + Tauri bindings (@/bindings) */
     "baseUrl": ".",
     "paths": {
       "@/bindings": ["./src/bindings.ts"],
       "@/*": ["./src/*"],
-      "@picker": ["./packages/model-picker/src/index.ts"],
-      "@picker/*": ["./packages/model-picker/src/*"],
       "@test/*": ["./test/*"]
     },
 
@@ -36,7 +34,7 @@
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": true
   },
-  "include": ["src", "packages", "spec"],
+  "include": ["src", "spec"],
   "exclude": [
     "**/*.test.ts",
     "**/*.test.tsx",

@@ -8,8 +8,7 @@
 // to `collect_commands![]` in lib.rs.
 
 /// Secret-at-rest seal/open (`enc:v1:` envelope) for the three secret settings
-/// (`llm.openrouterApiKey` + the two `integrations.*.apiKey`). The Rust analogue
-/// of the reference's `safeStorage` wrapper (frontend/electron/lib/secret-storage.ts):
+/// (`llm.openrouterApiKey` + the two `integrations.*.apiKey`):
 /// `winstt_set_settings` seals on write, `read_settings` opens on read so every
 /// internal consumer (LLM / cloud-STT / verify) and the renderer see plaintext.
 pub mod secret_storage;
@@ -26,6 +25,8 @@ pub mod catalog_data;
 /// download_cancel_quant / delete_model_quantization / delete_model_cache / cancel_download) → the
 /// DownloadManager (managers::download_manager). Registered in lib.rs collect_commands![].
 pub mod download;
+/// Encoder dictionary model download (start/pause/resume/cancel/status) for the non-LLM fallback.
+pub mod encoder_dict;
 /// Runtime + fitness commands (get_runtime_info / stt_list_models_with_state / assess_dictation_fit /
 /// assess_ollama_fit / gpu_get_info). Registered in lib.rs collect_commands![].
 pub mod runtime;
@@ -50,8 +51,7 @@ pub mod hotkey;
 pub mod llm;
 /// Recording-overlay visibility: show/hide/reposition the WinSTT `overlay` window
 /// (windows/overlay.html — the renderer dynamic-island pill) in lock-step with the
-/// recording lifecycle. Ports frontend/electron/ipc/overlay.ts (showOverlay /
-/// hideOverlay / computeOverlayPosition / suppression gates). No commands — called
+/// recording lifecycle. No commands — called
 /// from the recording pipeline (TranscribeAction + cancel) and settings live-change.
 pub mod overlay;
 /// Preview-before-pasting: confirm_paste / cancel_preview commands + the

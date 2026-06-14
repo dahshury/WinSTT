@@ -3,13 +3,22 @@ title: Dev Environment Setup
 description: Set up a local development environment for WinSTT (Rust + Tauri) from scratch
 ---
 
-import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
-import { Step, Steps } from 'fumadocs-ui/components/steps';
-import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
-
 Everything you need to clone, install, and run WinSTT locally. WinSTT is a single
 [Tauri 2](https://tauri.app) app — a Rust backend plus a Vite/React renderer — so there is
 **one process to build and run**, no Python server and no second terminal.
+
+<StatGrid>
+  <Stat value="1" label="process to build and run" />
+  <Stat value="1420" label="renderer dev-server port" />
+  <Stat value="0" label="Python or model servers" />
+  <Stat value="3" label="platforms: Windows, macOS, Linux" />
+</StatGrid>
+
+<Callout title="No Python, no model server" type="info">
+  There is no `stt-server`, no `uv`, and no Python. STT and TTS run in-process in Rust on ONNX
+  Runtime. Models are downloaded from HuggingFace on first use — there is no model-install step
+  in dev setup.
+</Callout>
 
 <Callout title="Platform note" type="info">
   WinSTT targets macOS, Linux, and Windows. This page focuses on the Windows helper-script
@@ -20,70 +29,104 @@ Everything you need to clone, install, and run WinSTT locally. WinSTT is a singl
 
 ## Prerequisites
 
-| Tool | Purpose | Install |
-|------|---------|---------|
-| [Git](https://git-scm.com/) | Version control | [Download](https://git-scm.com/download/win) |
-| [Rust](https://rustup.rs/) (stable, MSVC) | Backend toolchain (`cargo`) | `rustup` → default `stable-x86_64-pc-windows-msvc` |
-| [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) | MSVC linker + Windows SDK (the **Desktop C++** workload) | required for any Rust-on-Windows build |
-| [LLVM / Clang](https://releases.llvm.org/) | `libclang` for `bindgen` (native `-sys` crates) | set `LIBCLANG_PATH` to its `bin/` |
-| [CMake](https://cmake.org/) + [Ninja](https://ninja-build.org/) | build the native `sherpa-onnx` deps (wake word / diarization) | on `PATH` |
-| [Bun](https://bun.sh/) | JS runtime + package manager + renderer dev server | [Download](https://bun.sh/) |
-| WebView2 Runtime | the webview Tauri renders into | preinstalled on Windows 11; install the Evergreen runtime on Windows 10 |
+Install these before you clone. Each one feeds a specific part of the build — the Rust
+backend, the native `-sys` crates, or the renderer.
 
-**Optional:**
+<ModelTable
+  head={["Tool", "Purpose", "Install"]}
+  rows={[
+    [
+      <a href="https://git-scm.com/">Git</a>,
+      "Version control",
+      <a href="https://git-scm.com/download/win">Download</a>,
+    ],
+    [
+      <><a href="https://rustup.rs/">Rust</a> (stable, MSVC)</>,
+      <>Backend toolchain (<code>cargo</code>)</>,
+      <><code>rustup</code> → default <code>stable-x86_64-pc-windows-msvc</code></>,
+    ],
+    [
+      <a href="https://visualstudio.microsoft.com/downloads/">Visual Studio Build Tools</a>,
+      <>MSVC linker + Windows SDK (the <strong>Desktop C++</strong> workload)</>,
+      "Required for any Rust-on-Windows build",
+    ],
+    [
+      <a href="https://releases.llvm.org/">LLVM / Clang</a>,
+      <><code>libclang</code> for <code>bindgen</code> (native <code>-sys</code> crates)</>,
+      <>Set <code>LIBCLANG_PATH</code> to its <code>bin/</code></>,
+    ],
+    [
+      <><a href="https://cmake.org/">CMake</a> + <a href="https://ninja-build.org/">Ninja</a></>,
+      <>Build the native <code>sherpa-onnx</code> deps (wake word / diarization)</>,
+      <>On <code>PATH</code></>,
+    ],
+    [
+      <a href="https://bun.sh/">Bun</a>,
+      "JS runtime + package manager + renderer dev server",
+      <a href="https://bun.sh/">Download</a>,
+    ],
+    [
+      "WebView2 Runtime",
+      "The webview Tauri renders into",
+      "Preinstalled on Windows 11; install the Evergreen runtime on Windows 10",
+    ],
+  ]}
+  caption="Required toolchain for a local WinSTT build"
+/>
 
-| Tool | Purpose |
-|------|---------|
-| NVIDIA GPU + CUDA | build with `--features cuda` for the CUDA execution provider (DirectML works out of the box, no CUDA needed) |
-| [Ollama](https://ollama.com) | local LLM cleanup / custom transforms |
-| [OpenRouter](https://openrouter.ai) API key | cloud LLM alternative to Ollama |
+Optional extras, only if you want GPU acceleration or local/cloud LLM cleanup:
 
-<Callout title="No Python, no model server" type="info">
-  Unlike the original Electron build, there is no `stt-server`, no `uv`, and no Python. STT and
-  TTS run in-process in Rust on ONNX Runtime. Models are downloaded from HuggingFace on first
-  use — there is no model-install step in dev setup.
-</Callout>
+<ModelTable
+  head={["Tool", "Purpose"]}
+  rows={[
+    [
+      "NVIDIA GPU + CUDA",
+      <>Build with <code>--features cuda</code> for the CUDA execution provider (DirectML works out of the box, no CUDA needed)</>,
+    ],
+    [
+      <a href="https://ollama.com">Ollama</a>,
+      "Local LLM cleanup / custom transforms",
+    ],
+    [
+      <><a href="https://openrouter.ai">OpenRouter</a> API key</>,
+      "Cloud LLM alternative to Ollama",
+    ],
+  ]}
+  caption="Optional — GPU and LLM cleanup"
+/>
 
 ## Setup
 
-<Steps>
+<StepFlow>
+  <Step title="Install the Rust toolchain">
+    From [rustup.rs](https://rustup.rs) — installs `cargo` plus the MSVC stable toolchain.
 
-<Step>
-### Install the Rust toolchain
+    ```powershell
+    rustup default stable
+    rustc --version
+    ```
+  </Step>
+  <Step title="Install the native build tools">
+    WinSTT links MSVC and builds a few native C/C++ dependencies, so you need the C++
+    toolchain, LLVM (for `bindgen`), and CMake + Ninja (for `sherpa-onnx`):
 
-```powershell
-# from https://rustup.rs — installs cargo + the MSVC stable toolchain
-rustup default stable
-rustc --version
-```
-</Step>
+    - **Visual Studio Build Tools** → select the **Desktop development with C++** workload.
+    - **LLVM** → install and note the `bin/` path (e.g. `C:\Program Files\LLVM\bin`).
+    - **CMake** and **Ninja** → on `PATH`.
 
-<Step>
-### Install the native build tools
-
-WinSTT links MSVC and builds a few native C/C++ dependencies, so you need the C++ toolchain,
-LLVM (for `bindgen`), and CMake + Ninja (for `sherpa-onnx`):
-
-- **Visual Studio Build Tools** → select the **Desktop development with C++** workload.
-- **LLVM** → install and note the `bin/` path (e.g. `C:\Program Files\LLVM\bin`).
-- **CMake** and **Ninja** → on `PATH`.
-
-These must be visible to `cargo`. The simplest way is to build from a **Developer Command
-Prompt** (which runs `vcvars64.bat` for you), or use the repo's `tools/windows/*.bat` helpers
-described below, which set up the MSVC environment and `PATH` automatically.
-</Step>
-
-<Step>
-### Clone and install frontend deps
-
-```bash
-git clone https://github.com/dahshury/WinSTT
-cd WinSTT
-bun install
-```
-</Step>
-
-</Steps>
+    These must be visible to `cargo`. The simplest way is to build from a **Developer
+    Command Prompt** (which runs `vcvars64.bat` for you), or use the repo's
+    `tools/windows/*.bat` helpers described below, which set up the MSVC environment and
+    `PATH` automatically.
+  </Step>
+  <Step title="Clone and install frontend deps">
+    ```bash
+    git clone https://github.com/dahshury/WinSTT
+    cd WinSTT
+    bun install
+    ```
+  </Step>
+</StepFlow>
 
 ## Running the App
 
@@ -127,56 +170,83 @@ bun run tauri build --no-bundle   # exe only, no installer
 
 ### Backend (`src-tauri/`)
 
-| Command | Description |
-|---------|-------------|
-| `tools\windows\cargo-env.bat check` | `cargo check --all-targets` in the MSVC env |
-| `tools\windows\cargo-env.bat build` | `cargo build` |
-| `bun run format:backend` | `cargo fmt` |
-| `cargo clippy --all-targets -- -D warnings` | Lint (the CI gate; run inside the MSVC env) |
+<ModelTable
+  head={["Command", "Description"]}
+  rows={[
+    [<code>tools\windows\cargo-env.bat check</code>, <><code>cargo check --all-targets</code> in the MSVC env</>],
+    [<code>tools\windows\cargo-env.bat build</code>, <code>cargo build</code>],
+    [<code>bun run format:backend</code>, <code>cargo fmt</code>],
+    [<code>cargo clippy --all-targets -- -D warnings</code>, "Lint (the CI gate; run inside the MSVC env)"],
+  ]}
+  caption="Backend commands"
+/>
 
 ### Frontend (repo root)
 
-| Command | Description |
-|---------|-------------|
-| `bun run dev` | Vite renderer only (no Tauri shell) |
-| `bun run tauri dev` | Full app (backend + renderer) |
-| `bun run build` | `tsc` + `vite build` (renderer bundle) |
-| `bun run lint` | ESLint over `src` and `packages/model-picker/src` |
-| `bun run typecheck` | TypeScript no-emit check for `src`, `packages`, and generated spec types |
-| `bun run test` | Run the renderer/package test suite in directory chunks |
-| `bun run test:src:<area>` / `bun run test:packages` | Run a predictable test chunk when isolating slow or flaky cleanup failures |
-| `bun run check:i18n` | Verify 20-locale message parity vs `en.json` |
-| `bun run check:deadcode` | Full Knip check |
-| `bun run check:deadcode:files` / `:deps` / `:exports` | Isolate Knip cleanup failures by issue type |
-| `bun run check:cleanup` | Local cleanup gate: lint + typecheck + full Knip |
-| `bun run docs:dev` | This documentation site (port 3001) |
+<ModelTable
+  head={["Command", "Description"]}
+  rows={[
+    [<code>bun run dev</code>, "Vite renderer only (no Tauri shell)"],
+    [<code>bun run tauri dev</code>, "Full app (backend + renderer)"],
+    [<code>bun run build</code>, <><code>tsc</code> + <code>vite build</code> (renderer bundle)</>],
+    [<code>bun run lint</code>, <>ESLint over <code>src</code></>],
+    [<code>bun run typecheck</code>, <>TypeScript no-emit check for <code>src</code> and generated spec types</>],
+    [<code>bun run test</code>, "Run the renderer test suite in directory chunks"],
+    [<code>bun run test:src:&lt;area&gt;</code>, "Run a predictable test chunk when isolating slow or flaky cleanup failures"],
+    [<code>bun run check:i18n</code>, <>Verify 20-locale message parity vs <code>en.json</code></>],
+    [<code>bun run check:deadcode</code>, "Full Knip check"],
+    [<><code>bun run check:deadcode:files</code> / <code>:deps</code> / <code>:exports</code></>, "Isolate Knip cleanup failures by issue type"],
+    [<code>bun run check:cleanup</code>, "Local cleanup gate: lint + typecheck + full Knip"],
+    [<code>bun run docs:dev</code>, "This documentation site (port 3001)"],
+  ]}
+  caption="Frontend commands"
+/>
 
 ## Troubleshooting
 
-<Accordions>
-<Accordion title="link.exe / cl.exe not found, or 'MSVC not installed'">
-Cargo can't see the MSVC toolchain. Install the **Desktop development with C++** workload in
-Visual Studio Build Tools, then build from a **Developer Command Prompt** or via
-`tools\windows\cargo-env.bat` / `tauri-dev.bat` (they call `vcvars64.bat` first).
-</Accordion>
+Common setup failures and the fix for each — most trace back to a missing native tool that
+`cargo` can't see.
 
-<Accordion title="'Unable to find libclang' during build">
-A native `-sys` crate uses `bindgen`, which needs `libclang`. Install LLVM and set
-`LIBCLANG_PATH` to its `bin/` directory (the `tools/windows` bats set this for you).
-</Accordion>
+<ModelTable
+  head={["Symptom", "Fix"]}
+  rows={[
+    [
+      <><code>link.exe</code> / <code>cl.exe</code> not found, or "MSVC not installed"</>,
+      <>Cargo can't see the MSVC toolchain. Install the <strong>Desktop development with C++</strong> workload in Visual Studio Build Tools, then build from a <strong>Developer Command Prompt</strong> or via <code>tools\windows\cargo-env.bat</code> / <code>tauri-dev.bat</code> (they call <code>vcvars64.bat</code> first).</>,
+    ],
+    [
+      <>"Unable to find libclang" during build</>,
+      <>A native <code>-sys</code> crate uses <code>bindgen</code>, which needs <code>libclang</code>. Install LLVM and set <code>LIBCLANG_PATH</code> to its <code>bin/</code> directory (the <code>tools/windows</code> bats set this for you).</>,
+    ],
+    [
+      <>CMake or Ninja errors building <code>sherpa-onnx</code></>,
+      <>The wake-word / diarization deps build native code. Install CMake <strong>and</strong> Ninja and ensure both are on <code>PATH</code> (the <code>tools/windows</code> bats add the Visual Studio-bundled copies).</>,
+    ],
+    [
+      "The app window is blank / won't open",
+      <>On Windows 10 the WebView2 runtime may be missing — install the Evergreen WebView2 runtime. Also confirm the Vite dev server came up on port 1420 (it's fixed in <code>tauri.conf.json</code>).</>,
+    ],
+    [
+      <><code>cargo build --release</code> produces an app that loads a dev URL</>,
+      <>That's expected — <code>cargo build</code> alone doesn't embed the frontend. Use <code>bun run tauri build</code> (optionally <code>--no-bundle</code>) to get a standalone executable.</>,
+    ],
+  ]}
+  caption="Setup troubleshooting"
+/>
 
-<Accordion title="CMake or Ninja errors building sherpa-onnx">
-The wake-word / diarization deps build native code. Install CMake **and** Ninja and ensure both
-are on `PATH` (the `tools/windows` bats add the Visual Studio-bundled copies).
-</Accordion>
+## Related
 
-<Accordion title="The app window is blank / won't open">
-On Windows 10 the WebView2 runtime may be missing — install the Evergreen WebView2 runtime.
-Also confirm the Vite dev server came up on port 1420 (it's fixed in `tauri.conf.json`).
-</Accordion>
-
-<Accordion title="cargo build --release produces an app that loads a dev URL">
-That's expected — `cargo build` alone doesn't embed the frontend. Use `bun run tauri build`
-(optionally `--no-bundle`) to get a standalone executable.
-</Accordion>
-</Accordions>
+<Cards>
+  <Card title="Backend architecture" href="/docs/architecture/backend">
+    How the Rust + Tauri backend is structured — STT, TTS, and the command layer.
+  </Card>
+  <Card title="Frontend architecture" href="/docs/architecture/frontend">
+    The Vite/React renderer, stores, and how it talks to the backend.
+  </Card>
+  <Card title="Install WinSTT" href="/docs/install">
+    Just want to run the released app? Grab the installer instead of building.
+  </Card>
+  <Card title="CLI reference" href="/docs/cli">
+    Command-line flags and headless options for the built executable.
+  </Card>
+</Cards>

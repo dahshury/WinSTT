@@ -1,37 +1,45 @@
-// Source: frontend/electron/ipc/audio-mute.ts
-// + app/src-tauri/src/managers/audio.rs (set_mute COM pattern)
+// Source: app/src-tauri/src/managers/audio.rs (the COM session enumeration
+// pattern, plus reduction math + two-layer duck/restore latch).
 //
-// Graduated system-audio ducking while dictating. WinSTT-the reference does this
-// with a PowerShell COM host; the Rust/Tauri port does it in-process via the
-// `windows` crate's IAudioEndpointVolume — the same interface the existing audio path
-// uses for set_mute (managers/audio.rs), so no new Cargo features are needed
-// beyond what's already enabled (Win32_Media_Audio_Endpoints + Com +
-// StructuredStorage + Variant + Foundation).
+// Graduated system-audio ducking while dictating (and during Read Aloud). The
+// goal — verbatim from the request that drove this design — is:
 //
-// Difference from hard mute: SetMute(true) is avoided. WinSTT
-// DUCKS — reads the current master scalar (0.0–1.0), drops it to
-// `previous × (100 - reductionPct) / 100`, and restores the saved value on
-// stop. reductionPct=100 ⇒ full mute (→0.0); smaller values merely attenuate.
-// Reasons (verbatim from audio-mute.ts): the mute toggle shows the Windows OSD
-// pill (distracting on every PTT), and a crash mid-dictation would leave the
-// user muted; a duck degrades gracefully (audio still plays, faintly).
+//   "All audio should be ducked to the specified setting FIRST, before playing
+//    the recording sound. The recording sound itself should stay high and must
+//    NOT be ducked."
 //
-// Ported faithfully:
+// That requirement rules out master-endpoint-volume ducking
+// (`IAudioEndpointVolume::SetMasterVolumeLevelScalar`), because the master
+// scalar attenuates EVERYTHING on the endpoint — including WinSTT's own
+// recording chime, which plays in-process through rodio. The old code worked
+// around this by playing the chime first and ducking afterwards, which is
+// exactly the lag the user noticed.
+//
+// Instead we duck PER SESSION (`ISimpleAudioVolume` on every audio session of
+// the default render endpoint) and PROTECT WinSTT's own process tree (the main
+// process + its WebView2 children + the in-process rodio chime). Background
+// apps (music, video, browser tabs) drop to the configured level; WinSTT's own
+// chime and Read Aloud TTS stay at full volume. With the chime protected we can
+// now duck FIRST and then play the chime.
+//
+// Ported faithfully from audio-mute.ts:
 //   - reductionTarget(volume, pct) math + clamp [0,1].
 //   - parseVolume scalar parsing tolerance.
-//   - two-layer state (desired intent vs ducked effect) so an unmute that
-//     races an in-flight duck still restores. [desiredMuted / isDucked / savedVolume]
-//   - restore target fallback (savedVolume ?? 0.5).
+//   - the two-layer intent-vs-effect latch (here: `active_reasons` intent vs
+//     `ducked`+`snapshots` effect) so an unmute that races an in-flight duck
+//     still restores. Generalized to a reason bitmask so Dictation and Read
+//     Aloud reference-count one shared session-duck (first reason captures the
+//     snapshots; the last reason to release restores them).
 //
-// The reduction/clamp/state math is PURE and fully tested. The COM read/set is
-// a real Windows impl modeled on the existing mute path (the only unverifiable bit is
-// runtime COM behavior, which the compile loop confirms).
+// The reduction/clamp/state math is PURE and fully tested. The COM read/set is a
+// real Windows impl modeled on the existing session-volume path (the only
+// unverifiable bit is runtime COM behavior, which the compile loop confirms).
+
+use std::sync::{Mutex, OnceLock};
 
 // ───────────────────────── pure reduction math ────────────────────────
 
 /// Clamp a scalar to [0, 1]. NaN → 0. Mirrors clampScalar.
-use std::sync::{Mutex, OnceLock};
-
 pub fn clamp_scalar(value: f32) -> f32 {
     if value.is_nan() {
         return 0.0;
@@ -58,36 +66,13 @@ pub fn parse_volume(value: &str) -> Option<f32> {
     Some(clamp_scalar(n))
 }
 
-/// Default restore target when no saved volume exists. Mirrors
-/// computeRestoreTarget (savedVolume ?? 0.5).
-pub const RESTORE_FALLBACK: f32 = 0.5;
-
-pub fn restore_target(saved_volume: Option<f32>) -> f32 {
-    saved_volume.unwrap_or(RESTORE_FALLBACK)
-}
-
-// ───────────────────── two-layer duck/restore state ───────────────────
+// ───────────────────── reason-counted session-duck state ───────────────────
 //
-// Mirrors the desiredMuted / isDucked / savedVolume latches in audio-mute.ts,
-// extended with active reasons so dictation and Read Aloud can overlap safely.
-// `active_reasons` = features currently asking for ducking (intent).
-// `ducked` = whether we actually issued the duck and captured the previous
-// volume (effect). They diverge while a COM call is "in flight" — the manager
-// serializes the actual COM work on a worker, but the intent gate here ensures
-// an unmute that races a pending duck always schedules a restore.
-
-/// One step the manager should perform to reach the requested state. The state
-/// machine returns these; the manager executes them (COM read/set) on its
-/// serialized worker, then reports the outcome back.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DuckAction {
-    /// Read current volume, save it, set it to the reduction target.
-    Duck { reduction_pct: u8 },
-    /// Restore the saved volume (or the fallback).
-    Restore,
-    /// Nothing to do (idempotent request).
-    NoOp,
-}
+// `active_reasons` = features currently asking for background audio to stay
+// ducked (intent). `ducked` + `snapshots` = we actually enumerated the sessions,
+// captured their previous volumes, and lowered them (effect). They diverge while
+// a COM call is "in flight"; the latch ensures a restore that races a pending
+// duck still tears it down.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DuckReason {
@@ -104,149 +89,18 @@ impl DuckReason {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct DuckState {
-    /// Intent: features currently asking for system audio to stay ducked.
-    active_reasons: u8,
-    /// Effect: we have issued the duck and captured the previous volume.
-    ducked: bool,
-    /// A duck intent has been armed, but the volume change is intentionally
-    /// delayed until a prerequisite sound finishes.
-    delayed_duck_pending: bool,
-    /// The pct captured for the active/pending duck.
-    pending_reduction_pct: u8,
-    /// The playback volume captured before the active duck.
-    saved_volume: Option<f32>,
+/// Whether the caller should perform the COM duck for this request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionDuckAction {
+    /// Transitioned from idle — capture snapshots and lower the sessions.
+    Duck,
+    /// Another reason already ducked (or this one already had); piggyback.
+    NoOp,
 }
 
-impl DuckState {
-    pub fn new() -> Self {
-        Self {
-            active_reasons: 0,
-            ducked: false,
-            delayed_duck_pending: false,
-            pending_reduction_pct: 100,
-            saved_volume: None,
-        }
-    }
-
-    /// Request a duck at `reduction_pct` (default 100 = full mute). Returns the
-    /// action to perform. A second duck while already intending to duck is a
-    /// no-op (first level wins until the matching unmute). Mirrors
-    /// muteSystemAudio's `if (desiredMuted) return false`.
-    pub fn request_duck(&mut self, reduction_pct: u8) -> DuckAction {
-        self.request_duck_for(DuckReason::Dictation, reduction_pct)
-    }
-
-    pub fn request_duck_for(&mut self, reason: DuckReason, reduction_pct: u8) -> DuckAction {
-        let bit = reason.bit();
-        if self.active_reasons & bit != 0 {
-            return DuckAction::NoOp;
-        }
-        let was_idle = self.active_reasons == 0;
-        self.active_reasons |= bit;
-        if !was_idle {
-            return DuckAction::NoOp;
-        }
-        self.pending_reduction_pct = reduction_pct.min(100);
-        DuckAction::Duck {
-            reduction_pct: self.pending_reduction_pct,
-        }
-    }
-
-    pub fn request_delayed_duck_for(&mut self, reason: DuckReason, reduction_pct: u8) -> bool {
-        let bit = reason.bit();
-        if self.active_reasons & bit != 0 {
-            return false;
-        }
-        let was_idle = self.active_reasons == 0;
-        self.active_reasons |= bit;
-        if !was_idle {
-            return false;
-        }
-        self.pending_reduction_pct = reduction_pct.min(100);
-        self.delayed_duck_pending = true;
-        true
-    }
-
-    pub fn complete_delayed_duck_for(&mut self, reason: DuckReason) -> DuckAction {
-        if self.active_reasons & reason.bit() == 0 || !self.delayed_duck_pending {
-            return DuckAction::NoOp;
-        }
-        self.delayed_duck_pending = false;
-        DuckAction::Duck {
-            reduction_pct: self.pending_reduction_pct,
-        }
-    }
-
-    /// Request a restore. No-op if we never intended to duck. Mirrors
-    /// unmuteSystemAudio's `if (!desiredMuted) return`.
-    pub fn request_restore(&mut self) -> DuckAction {
-        self.request_restore_for(DuckReason::Dictation)
-    }
-
-    pub fn request_restore_for(&mut self, reason: DuckReason) -> DuckAction {
-        let bit = reason.bit();
-        if self.active_reasons & bit == 0 {
-            return DuckAction::NoOp;
-        }
-        self.active_reasons &= !bit;
-        if self.active_reasons != 0 {
-            return DuckAction::NoOp;
-        }
-        self.delayed_duck_pending = false;
-        DuckAction::Restore
-    }
-
-    /// Report that the duck COM work completed (the previous volume was
-    /// captured). Mirrors applyDuck flipping isDucked=true on success.
-    /// `saved` is None when the read/set failed — in which case the effect
-    /// stays un-ducked so a later restore is correctly skipped (mirrors the
-    /// guard in applyRestore: `if (!isDucked) return`).
-    pub fn on_duck_complete(&mut self, saved: Option<f32>) {
-        self.delayed_duck_pending = false;
-        self.ducked = saved.is_some();
-        self.saved_volume = saved;
-    }
-
-    /// Report that the restore COM work completed. Mirrors applyRestore
-    /// clearing isDucked + savedVolume even when SetVolume failed (so we don't
-    /// loop forever).
-    pub fn on_restore_complete(&mut self) {
-        self.delayed_duck_pending = false;
-        self.ducked = false;
-        self.saved_volume = None;
-    }
-
-    /// Whether a restore should actually touch the volume (we previously
-    /// captured a duck). Mirrors applyRestore's `if (!isDucked) return`.
-    pub fn should_restore(&self) -> bool {
-        self.ducked
-    }
-
-    pub fn desired_muted(&self) -> bool {
-        self.active_reasons != 0
-    }
-
-    pub fn pending_reduction_pct(&self) -> u8 {
-        self.pending_reduction_pct
-    }
-
-    pub fn saved_volume(&self) -> Option<f32> {
-        self.saved_volume
-    }
-}
-
-// ── IAudioEndpointVolume COM impl ──────────────────────────────────────
-//
-// Reads / sets the default render endpoint's master scalar. Returns None on
-// any COM failure (mirrors the unwrap_or_return! pattern in set_mute). The
-// caller (manager worker) feeds these into the DuckState callbacks above.
-
-/// Read the default playback device's master volume scalar (0.0–1.0).
-/// Mirrors readCurrentVolume / [Audio]::GetVolume().
-static DUCK_STATE: OnceLock<Mutex<DuckState>> = OnceLock::new();
-
+/// One session's pre-duck volume, keyed by owning process id, so a restore can
+/// match it back up after re-enumerating (session COM objects are not stable
+/// across enumerations).
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct SessionVolumeSnapshot {
     pid: u32,
@@ -254,55 +108,92 @@ struct SessionVolumeSnapshot {
 }
 
 #[derive(Debug, Default)]
-struct ReadAloudSessionDuckState {
-    active: bool,
+struct SessionDuckState {
+    /// Intent: features currently asking background audio to stay ducked.
+    active_reasons: u8,
+    /// Effect: we issued the duck and captured the previous session volumes.
+    ducked: bool,
+    /// The captured pre-duck volumes (one per ducked session).
     snapshots: Vec<SessionVolumeSnapshot>,
 }
 
-static READ_ALOUD_SESSION_DUCK_STATE: OnceLock<Mutex<ReadAloudSessionDuckState>> = OnceLock::new();
+impl SessionDuckState {
+    /// Request a duck for `reason`. Returns `Duck` ONLY when transitioning from
+    /// idle — the first reason captures the snapshots and lowers the sessions;
+    /// later reasons piggyback on that duck (first level wins until everyone
+    /// releases). Mirrors muteSystemAudio's `if (desiredMuted) return false`.
+    fn request_duck(&mut self, reason: DuckReason) -> SessionDuckAction {
+        let bit = reason.bit();
+        if self.active_reasons & bit != 0 {
+            return SessionDuckAction::NoOp;
+        }
+        let was_idle = self.active_reasons == 0;
+        self.active_reasons |= bit;
+        if was_idle {
+            self.ducked = false;
+            self.snapshots.clear();
+            SessionDuckAction::Duck
+        } else {
+            SessionDuckAction::NoOp
+        }
+    }
 
-fn state() -> &'static Mutex<DuckState> {
-    DUCK_STATE.get_or_init(|| Mutex::new(DuckState::new()))
+    /// Record the snapshots the COM duck captured. Returns snapshots to restore
+    /// IMMEDIATELY when every reason was released while the duck was in flight
+    /// (the unmute-racing-pending-duck case); empty otherwise. Mirrors applyDuck
+    /// flipping isDucked=true, plus the audio-mute.ts race latch.
+    fn on_duck_complete(&mut self, snapshots: Vec<SessionVolumeSnapshot>) -> Vec<SessionVolumeSnapshot> {
+        self.snapshots = snapshots;
+        self.ducked = true;
+        if self.active_reasons == 0 {
+            self.ducked = false;
+            std::mem::take(&mut self.snapshots)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Request a restore for `reason`. Returns the snapshots to restore when the
+    /// LAST reason releases AND the duck COM had completed; empty otherwise (a
+    /// still-active reason keeps the duck, or a duck still in flight whose worker
+    /// will restore once it sees `active_reasons == 0`). Mirrors
+    /// unmuteSystemAudio's `if (!desiredMuted) return` + applyRestore's
+    /// `if (!isDucked) return`.
+    fn request_restore(&mut self, reason: DuckReason) -> Vec<SessionVolumeSnapshot> {
+        let bit = reason.bit();
+        if self.active_reasons & bit == 0 {
+            return Vec::new();
+        }
+        self.active_reasons &= !bit;
+        if self.active_reasons != 0 {
+            return Vec::new();
+        }
+        if self.ducked {
+            self.ducked = false;
+            std::mem::take(&mut self.snapshots)
+        } else {
+            Vec::new()
+        }
+    }
 }
 
-fn read_aloud_session_state() -> &'static Mutex<ReadAloudSessionDuckState> {
-    READ_ALOUD_SESSION_DUCK_STATE.get_or_init(|| Mutex::new(ReadAloudSessionDuckState::default()))
+static SESSION_DUCK_STATE: OnceLock<Mutex<SessionDuckState>> = OnceLock::new();
+
+fn session_state() -> &'static Mutex<SessionDuckState> {
+    SESSION_DUCK_STATE.get_or_init(|| Mutex::new(SessionDuckState::default()))
 }
 
-fn lock_state() -> std::sync::MutexGuard<'static, DuckState> {
-    match state().lock() {
+fn lock_session_state() -> std::sync::MutexGuard<'static, SessionDuckState> {
+    match session_state().lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
-            log::warn!("[ducking] state lock poisoned; recovering");
+            log::warn!("[ducking] session state lock poisoned; recovering");
             poisoned.into_inner()
         }
     }
 }
 
-fn lock_read_aloud_session_state() -> std::sync::MutexGuard<'static, ReadAloudSessionDuckState> {
-    match read_aloud_session_state().lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            log::warn!("[ducking] read-aloud session state lock poisoned; recovering");
-            poisoned.into_inner()
-        }
-    }
-}
-
-fn spawn_restore_if_needed() {
-    std::thread::spawn(|| {
-        let saved = {
-            let guard = lock_state();
-            if !guard.should_restore() {
-                return;
-            }
-            guard.saved_volume()
-        };
-
-        let _ = perform_restore(saved);
-        lock_state().on_restore_complete();
-    });
-}
+// ───────────────────────── public duck/restore API ─────────────────────────
 
 fn settings_duck_reduction_pct(app: &tauri::AppHandle) -> u8 {
     crate::winstt::commands::settings::read_settings_raw(app)
@@ -311,19 +202,16 @@ fn settings_duck_reduction_pct(app: &tauri::AppHandle) -> u8 {
         .clamp(0, 100) as u8
 }
 
-/// Apply `general.systemAudioReductionWhileDictating` for a recording start.
-pub fn duck_from_settings(app: &tauri::AppHandle) {
-    duck_from_settings_for(app, DuckReason::Dictation);
-}
-
-/// Arm dictation ducking without applying it yet. The recording-sound path uses
-/// this to play the chime at normal volume, then complete the duck afterward.
-pub fn arm_dictation_duck_from_settings(app: &tauri::AppHandle) -> bool {
+/// Apply `general.systemAudioReductionWhileDictating`, BLOCKING until the
+/// background sessions are actually lowered. The recording-chime path calls this
+/// FIRST so background audio is ducked before the chime plays — the chime is in
+/// WinSTT's own (protected) process, so it stays at full volume.
+pub fn duck_from_settings_blocking(app: &tauri::AppHandle) {
     let pct = settings_duck_reduction_pct(app);
     if pct == 0 {
-        return false;
+        return;
     }
-    lock_state().request_delayed_duck_for(DuckReason::Dictation, pct)
+    duck_sessions_blocking(DuckReason::Dictation, pct);
 }
 
 /// Apply `general.systemAudioReductionWhileDictating` for Read Aloud playback.
@@ -332,169 +220,57 @@ pub fn duck_read_aloud_from_settings(app: &tauri::AppHandle) {
     if pct == 0 {
         return;
     }
-    request_read_aloud_session_duck(pct);
+    request_session_duck_async(DuckReason::ReadAloud, pct);
 }
 
-fn duck_from_settings_for(app: &tauri::AppHandle, reason: DuckReason) {
-    let pct = settings_duck_reduction_pct(app);
-    if pct == 0 {
+/// Restore the background sessions ducked for dictation (PTT release / terminal
+/// event). No-op unless dictation was the last reason holding the duck.
+pub fn request_restore() {
+    request_session_restore(DuckReason::Dictation);
+}
+
+/// Restore the background sessions ducked for Read Aloud (playback ended /
+/// cancelled). No-op unless Read Aloud was the last reason holding the duck.
+pub fn request_read_aloud_restore() {
+    request_session_restore(DuckReason::ReadAloud);
+}
+
+fn duck_sessions_blocking(reason: DuckReason, reduction_pct: u8) {
+    if lock_session_state().request_duck(reason) != SessionDuckAction::Duck {
         return;
     }
-    request_duck_for(reason, pct);
-}
-
-pub fn request_duck(reduction_pct: u8) {
-    request_duck_for(DuckReason::Dictation, reduction_pct);
-}
-
-fn request_duck_for(reason: DuckReason, reduction_pct: u8) {
-    let action = lock_state().request_duck_for(reason, reduction_pct);
-    if let DuckAction::Duck { reduction_pct } = action {
-        spawn_duck(reduction_pct);
+    let snapshots = perform_session_duck(reduction_pct).unwrap_or_default();
+    let restore_now = lock_session_state().on_duck_complete(snapshots);
+    if !restore_now.is_empty() {
+        perform_session_restore(restore_now);
     }
 }
 
-pub fn complete_armed_dictation_duck() {
-    let action = lock_state().complete_delayed_duck_for(DuckReason::Dictation);
-    if let DuckAction::Duck { reduction_pct } = action {
-        spawn_duck(reduction_pct);
+fn request_session_duck_async(reason: DuckReason, reduction_pct: u8) {
+    if lock_session_state().request_duck(reason) != SessionDuckAction::Duck {
+        return;
     }
-}
-
-fn spawn_duck(reduction_pct: u8) {
     std::thread::spawn(move || {
-        let saved = perform_duck(reduction_pct);
-        let should_restore = {
-            let mut guard = lock_state();
-            guard.on_duck_complete(saved);
-            !guard.desired_muted() && guard.should_restore()
-        };
-        if should_restore {
-            spawn_restore_if_needed();
-        }
-    });
-}
-
-pub fn request_restore() {
-    request_restore_for(DuckReason::Dictation);
-}
-
-pub fn request_read_aloud_restore() {
-    let snapshots = {
-        let mut guard = lock_read_aloud_session_state();
-        if !guard.active {
-            return;
-        }
-        guard.active = false;
-        std::mem::take(&mut guard.snapshots)
-    };
-    if !snapshots.is_empty() {
-        std::thread::spawn(move || perform_read_aloud_session_restore(snapshots));
-    }
-}
-
-fn request_restore_for(reason: DuckReason) {
-    if lock_state().request_restore_for(reason) == DuckAction::Restore {
-        spawn_restore_if_needed();
-    }
-}
-
-fn request_read_aloud_session_duck(reduction_pct: u8) {
-    {
-        let mut guard = lock_read_aloud_session_state();
-        if guard.active {
-            return;
-        }
-        guard.active = true;
-        guard.snapshots.clear();
-    }
-
-    std::thread::spawn(move || {
-        let snapshots = perform_read_aloud_session_duck(reduction_pct).unwrap_or_default();
-        let restore_now = {
-            let mut guard = lock_read_aloud_session_state();
-            guard.snapshots = snapshots;
-            if guard.active {
-                Vec::new()
-            } else {
-                std::mem::take(&mut guard.snapshots)
-            }
-        };
+        let snapshots = perform_session_duck(reduction_pct).unwrap_or_default();
+        let restore_now = lock_session_state().on_duck_complete(snapshots);
         if !restore_now.is_empty() {
-            perform_read_aloud_session_restore(restore_now);
+            perform_session_restore(restore_now);
         }
     });
 }
 
-#[cfg(windows)]
-pub fn read_master_volume() -> Option<f32> {
-    use windows::Win32::Media::Audio::{
-        eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
-        MMDeviceEnumerator,
-    };
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
-    let _com = crate::windows_com::ComApartment::init_multithreaded();
-    unsafe {
-        let enumerator: IMMDeviceEnumerator =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-        let device = enumerator
-            .GetDefaultAudioEndpoint(eRender, eMultimedia)
-            .ok()?;
-        let volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None).ok()?;
-        let scalar = volume.GetMasterVolumeLevelScalar().ok()?;
-        Some(clamp_scalar(scalar))
+fn request_session_restore(reason: DuckReason) {
+    let snapshots = lock_session_state().request_restore(reason);
+    if !snapshots.is_empty() {
+        std::thread::spawn(move || perform_session_restore(snapshots));
     }
 }
 
-/// Set the default playback device's master volume scalar (0.0–1.0). Returns
-/// false on any COM failure. Mirrors [Audio]::SetVolume(target).
-#[cfg(windows)]
-pub fn set_master_volume(scalar: f32) -> bool {
-    use windows::Win32::Media::Audio::{
-        eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
-        MMDeviceEnumerator,
-    };
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
-    let target = clamp_scalar(scalar);
-    let _com = crate::windows_com::ComApartment::init_multithreaded();
-    unsafe {
-        let Ok(enumerator) =
-            CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
-        else {
-            return false;
-        };
-        let Ok(device) = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia) else {
-            return false;
-        };
-        let Ok(volume) = device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None) else {
-            return false;
-        };
-        // pguideventcontext = null (no event-context GUID).
-        volume
-            .SetMasterVolumeLevelScalar(target, std::ptr::null())
-            .is_ok()
-    }
-}
-
-/// Perform a duck: read → save → set to the reduction target. Returns the
-/// saved (previous) volume on success, None on failure. Mirrors performDuck.
-/// The manager hands the result to `DuckState::on_duck_complete`.
-#[cfg(windows)]
-pub fn perform_duck(reduction_pct: u8) -> Option<f32> {
-    let current = read_master_volume()?;
-    let target = reduction_target(current, reduction_pct);
-    if set_master_volume(target) {
-        Some(current)
-    } else {
-        None
-    }
-}
-
-/// Perform a restore to `saved` (or the fallback). Mirrors applyRestore.
-#[cfg(windows)]
-pub fn perform_restore(saved: Option<f32>) -> bool {
-    set_master_volume(restore_target(saved))
-}
+// ── ISimpleAudioVolume per-session COM impl ─────────────────────────────────
+//
+// Enumerates the default render endpoint's audio sessions and lowers each one
+// that does NOT belong to WinSTT or its child processes. Returns None on any COM
+// failure (the caller treats that as "nothing ducked").
 
 #[cfg(windows)]
 struct AudioSessionVolume {
@@ -502,8 +278,12 @@ struct AudioSessionVolume {
     volume: windows::Win32::Media::Audio::ISimpleAudioVolume,
 }
 
+/// The set of process ids to leave alone: WinSTT itself plus every descendant
+/// process (WebView2 children, etc.). The in-process rodio recording chime and
+/// the overlay-WebView Read Aloud audio both live inside this tree, so neither
+/// is ducked.
 #[cfg(windows)]
-fn protected_read_aloud_process_ids() -> std::collections::HashSet<u32> {
+fn protected_winstt_process_ids() -> std::collections::HashSet<u32> {
     use sysinfo::System;
 
     let current_pid = std::process::id();
@@ -570,12 +350,11 @@ fn enumerate_audio_session_volumes() -> Option<Vec<AudioSessionVolume>> {
     }
 }
 
-/// Duck audio sessions that do not belong to WinSTT or its WebView child
-/// processes. Read Aloud audio is played by the overlay WebView, so endpoint
-/// master-volume ducking would lower the TTS itself.
+/// Duck every audio session that does NOT belong to WinSTT's process tree, and
+/// return the captured pre-duck volumes so a later restore can put them back.
 #[cfg(windows)]
-fn perform_read_aloud_session_duck(reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>> {
-    let protected = protected_read_aloud_process_ids();
+fn perform_session_duck(reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>> {
+    let protected = protected_winstt_process_ids();
     let sessions = enumerate_audio_session_volumes()?;
     let mut snapshots = Vec::new();
 
@@ -604,7 +383,7 @@ fn perform_read_aloud_session_duck(reduction_pct: u8) -> Option<Vec<SessionVolum
 }
 
 #[cfg(windows)]
-fn perform_read_aloud_session_restore(snapshots: Vec<SessionVolumeSnapshot>) {
+fn perform_session_restore(snapshots: Vec<SessionVolumeSnapshot>) {
     let Some(sessions) = enumerate_audio_session_volumes() else {
         return;
     };
@@ -622,39 +401,23 @@ fn perform_read_aloud_session_restore(snapshots: Vec<SessionVolumeSnapshot>) {
 }
 
 // Non-Windows stubs so the manager wiring compiles cross-platform. System-audio
-// ducking is currently implemented only through the Windows endpoint-volume APIs,
+// ducking is currently implemented only through the Windows session-volume APIs,
 // so it is a no-op elsewhere.
 #[cfg(not(windows))]
-pub fn read_master_volume() -> Option<f32> {
+fn perform_session_duck(_reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>> {
     None
 }
 
 #[cfg(not(windows))]
-pub fn set_master_volume(_scalar: f32) -> bool {
-    false
-}
-
-#[cfg(not(windows))]
-pub fn perform_duck(_reduction_pct: u8) -> Option<f32> {
-    None
-}
-
-#[cfg(not(windows))]
-pub fn perform_restore(_saved: Option<f32>) -> bool {
-    false
-}
-
-#[cfg(not(windows))]
-fn perform_read_aloud_session_duck(_reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>> {
-    None
-}
-
-#[cfg(not(windows))]
-fn perform_read_aloud_session_restore(_snapshots: Vec<SessionVolumeSnapshot>) {}
+fn perform_session_restore(_snapshots: Vec<SessionVolumeSnapshot>) {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn snap(pid: u32, volume: f32) -> SessionVolumeSnapshot {
+        SessionVolumeSnapshot { pid, volume }
+    }
 
     // ── reduction math ──
 
@@ -700,114 +463,79 @@ mod tests {
         assert_eq!(parse_volume("1.2"), Some(1.0));
     }
 
-    #[test]
-    fn restore_target_uses_fallback_when_unsaved() {
-        assert_eq!(restore_target(None), 0.5);
-        assert_eq!(restore_target(Some(0.3)), 0.3);
-    }
-
-    // ── two-layer state machine ──
+    // ── reason-counted session-duck state machine ──
 
     #[test]
     fn duck_then_restore_full_cycle() {
-        let mut s = DuckState::new();
-        assert_eq!(s.request_duck(100), DuckAction::Duck { reduction_pct: 100 });
-        s.on_duck_complete(Some(0.8)); // captured previous volume
-        assert!(s.should_restore());
+        let mut s = SessionDuckState::default();
+        assert_eq!(s.request_duck(DuckReason::Dictation), SessionDuckAction::Duck);
+        // COM captured two background sessions; nobody released, so nothing to
+        // restore yet.
+        assert!(s
+            .on_duck_complete(vec![snap(10, 0.8), snap(20, 0.5)])
+            .is_empty());
 
-        assert_eq!(s.request_restore(), DuckAction::Restore);
-        s.on_restore_complete();
-        assert!(!s.should_restore());
-        assert!(!s.desired_muted());
+        // releasing the only reason returns the captured snapshots to restore.
+        let restore = s.request_restore(DuckReason::Dictation);
+        assert_eq!(restore, vec![snap(10, 0.8), snap(20, 0.5)]);
+        // a second restore is a no-op (nothing left ducked).
+        assert!(s.request_restore(DuckReason::Dictation).is_empty());
     }
 
     #[test]
-    fn second_duck_is_noop_first_level_wins() {
-        let mut s = DuckState::new();
-        assert_eq!(s.request_duck(80), DuckAction::Duck { reduction_pct: 80 });
-        // a second duck (even at a different pct) is ignored until unmute
-        assert_eq!(s.request_duck(100), DuckAction::NoOp);
-        assert_eq!(s.pending_reduction_pct(), 80);
+    fn second_reason_piggybacks_first_duck() {
+        let mut s = SessionDuckState::default();
+        assert_eq!(s.request_duck(DuckReason::Dictation), SessionDuckAction::Duck);
+        // a second reason while already ducked does NOT re-enumerate.
+        assert_eq!(s.request_duck(DuckReason::ReadAloud), SessionDuckAction::NoOp);
+        // duplicate request for an already-active reason is also a no-op.
+        assert_eq!(s.request_duck(DuckReason::Dictation), SessionDuckAction::NoOp);
     }
 
     #[test]
-    fn read_aloud_and_dictation_overlap_restore_after_both_finish() {
-        let mut s = DuckState::new();
-        assert_eq!(s.request_duck(60), DuckAction::Duck { reduction_pct: 60 });
-        assert_eq!(
-            s.request_duck_for(DuckReason::ReadAloud, 100),
-            DuckAction::NoOp
-        );
-        s.on_duck_complete(Some(0.8));
+    fn restore_waits_for_all_reasons() {
+        let mut s = SessionDuckState::default();
+        s.request_duck(DuckReason::Dictation);
+        s.request_duck(DuckReason::ReadAloud);
+        s.on_duck_complete(vec![snap(7, 0.9)]);
 
-        assert_eq!(
-            s.request_restore_for(DuckReason::ReadAloud),
-            DuckAction::NoOp
-        );
-        assert!(s.should_restore());
-        assert!(s.desired_muted());
-
-        assert_eq!(s.request_restore(), DuckAction::Restore);
-        assert!(s.should_restore());
-        assert!(!s.desired_muted());
+        // dictation releasing first keeps the duck (Read Aloud still wants it).
+        assert!(s.request_restore(DuckReason::Dictation).is_empty());
+        // Read Aloud releasing last restores.
+        assert_eq!(s.request_restore(DuckReason::ReadAloud), vec![snap(7, 0.9)]);
     }
 
     #[test]
-    fn delayed_duck_completes_only_when_still_desired() {
-        let mut s = DuckState::new();
-        assert!(s.request_delayed_duck_for(DuckReason::Dictation, 60));
-        assert_eq!(
-            s.complete_delayed_duck_for(DuckReason::Dictation),
-            DuckAction::Duck { reduction_pct: 60 }
-        );
-        s.on_duck_complete(Some(0.7));
-        assert!(s.should_restore());
-    }
-
-    #[test]
-    fn delayed_duck_cancelled_before_completion_is_noop() {
-        let mut s = DuckState::new();
-        assert!(s.request_delayed_duck_for(DuckReason::Dictation, 60));
-        assert_eq!(s.request_restore(), DuckAction::Restore);
-        assert_eq!(
-            s.complete_delayed_duck_for(DuckReason::Dictation),
-            DuckAction::NoOp
-        );
-        assert!(!s.should_restore());
-        assert!(!s.desired_muted());
+    fn restore_racing_pending_duck_restores_when_com_completes() {
+        // Models a super-fast PTT tap: the restore arrives before the duck COM
+        // reported its captured snapshots.
+        let mut s = SessionDuckState::default();
+        assert_eq!(s.request_duck(DuckReason::Dictation), SessionDuckAction::Duck);
+        // unmute arrives before on_duck_complete → nothing to restore yet (the
+        // duck worker still owns the snapshots).
+        assert!(s.request_restore(DuckReason::Dictation).is_empty());
+        // duck completes afterwards; since no reason is active, the worker is
+        // told to restore immediately.
+        let restore = s.on_duck_complete(vec![snap(3, 0.4)]);
+        assert_eq!(restore, vec![snap(3, 0.4)]);
+        assert!(!s.ducked);
     }
 
     #[test]
     fn restore_without_duck_is_noop() {
-        let mut s = DuckState::new();
-        assert_eq!(s.request_restore(), DuckAction::NoOp);
+        let mut s = SessionDuckState::default();
+        assert!(s.request_restore(DuckReason::Dictation).is_empty());
     }
 
     #[test]
-    fn failed_duck_skips_restore_effect() {
-        let mut s = DuckState::new();
-        s.request_duck(100);
-        s.on_duck_complete(None); // COM duck failed — no previous captured
-                                  // intent restore still flips desired, but effect says don't touch volume
-        assert!(!s.should_restore());
-        assert_eq!(s.request_restore(), DuckAction::Restore);
-        assert!(!s.should_restore());
-    }
-
-    #[test]
-    fn unmute_racing_pending_duck_still_schedules_restore() {
-        // Models the audio-mute.ts race: user releases PTT (request_restore)
-        // before the in-flight duck reported completion. The intent latch
-        // (desired_muted) ensures the restore is still scheduled; when the duck
-        // later completes the manager re-evaluates.
-        let mut s = DuckState::new();
-        s.request_duck(100); // desired=true
-                             // unmute arrives before on_duck_complete
-        assert_eq!(s.request_restore(), DuckAction::Restore); // desired=false
-                                                              // duck completes afterwards, captured volume
-        s.on_duck_complete(Some(0.8));
-        // effect is ducked; the manager, seeing desired=false, must restore.
-        assert!(s.should_restore());
-        assert!(!s.desired_muted());
+    fn empty_snapshot_capture_still_clears_state() {
+        // COM duck found no background sessions (or failed): no snapshots, and a
+        // later restore is a clean no-op rather than a leak.
+        let mut s = SessionDuckState::default();
+        s.request_duck(DuckReason::Dictation);
+        assert!(s.on_duck_complete(Vec::new()).is_empty());
+        assert!(s.ducked);
+        assert!(s.request_restore(DuckReason::Dictation).is_empty());
+        assert!(!s.ducked);
     }
 }

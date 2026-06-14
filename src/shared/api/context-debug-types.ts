@@ -1,21 +1,20 @@
 /**
  * Type contract for the context-awareness playground (debug tooling).
  *
- * Defined in `shared/` so BOTH the reference main analysis layer
- * (`electron/lib/context-debug.ts`, which assembles the report) and the
- * renderer view (`views/context-playground`, which renders it) speak the same
- * shape without the renderer importing backend-only types.
+ * Defined in `shared/` so BOTH the main analysis layer (which assembles the
+ * report) and the renderer view (`views/context-playground`, which renders it)
+ * speak the same shape without the renderer importing backend-only types.
  *
- * Plain data only — no behaviour. Mirrors the production capture pipeline in
- * `electron/lib/context-reader.ts` + `lib/context-snapshot.ts` so the user can
- * see precisely what dictation's context-awareness would feed the model.
+ * Plain data only — no behaviour. Mirrors the production capture pipeline so
+ * the user can see precisely what dictation's context-awareness would feed
+ * the model.
  */
 
 /** The four `winstt-context.exe` extraction modes the helper supports. */
 type ContextCaptureMode = "tree" | "split" | "default" | "selection";
 
 /**
- * Renderer-safe mirror of `WindowContextSnapshot` (electron/lib/context-snapshot).
+ * Renderer-safe mirror of `WindowContextSnapshot`.
  * Structurally identical; declared here so the renderer needn't reach into
  * reference main code for the type.
  */

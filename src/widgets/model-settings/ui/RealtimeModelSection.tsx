@@ -1,5 +1,5 @@
 import { Activity03Icon } from "@hugeicons/core-free-icons";
-import { SttModelSelector } from "@picker";
+import { SttModelSelector } from "@/widgets/model-picker";
 import type { ReactNode } from "react";
 import {
 	isSelectableRealtimeModel,

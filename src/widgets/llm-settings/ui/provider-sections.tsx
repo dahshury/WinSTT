@@ -3,7 +3,7 @@ import {
 	OllamaModelSelector,
 	OpenRouterModelSelector,
 	ReasoningEffortDropdown,
-} from "@picker";
+} from "@/widgets/model-picker";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcSend } from "@/shared/api/ipc-client";
@@ -136,7 +136,7 @@ interface OllamaSectionProps {
 	dense?: boolean | undefined;
 	enabled: boolean;
 	feature?: LlmFeature | undefined;
-	librarySearch: import("@picker").OllamaModelSelectorProps["librarySearch"];
+	librarySearch: import("@/widgets/model-picker").OllamaModelSelectorProps["librarySearch"];
 	model: string;
 	ollamaError: string | null;
 	ollamaModels: readonly OllamaModel[];
@@ -385,7 +385,7 @@ interface ProviderSectionArgs {
 	fallbackExclusion: ReturnType<typeof computeModelExclusionConfig>;
 	featureSnapshot: LlmFeatureDraft;
 	feature?: LlmFeature | undefined;
-	librarySearch: import("@picker").OllamaModelSelectorProps["librarySearch"];
+	librarySearch: import("@/widgets/model-picker").OllamaModelSelectorProps["librarySearch"];
 	ollamaCatalog: OllamaCatalogState;
 	ollamaPullBundle: OllamaPullBundle;
 	ollamaReachable: boolean | null;

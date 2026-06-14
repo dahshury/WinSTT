@@ -1,4 +1,4 @@
-import { TtsModelSelector } from "@picker/tts";
+import { TtsModelSelector } from "@/widgets/model-picker/tts";
 import { useEffect } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {

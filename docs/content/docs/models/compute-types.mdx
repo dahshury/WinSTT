@@ -5,6 +5,20 @@ description: How WinSTT picks an ONNX Runtime execution provider and what the fp
 
 Two knobs decide how fast a model runs: the **execution provider** (which hardware ONNX Runtime targets) and the **quantization** (how compressed the model's weights are). The provider is fixed by the platform/build; the quantization is per-model in the picker.
 
+<StatGrid>
+  <Stat value="2" label="EPs in official builds (CPU + DirectML)" />
+  <Stat value="7" label="quantization labels in the picker" />
+  <Stat value="~13%" label="q4 size vs fp32 default" />
+</StatGrid>
+
+<Screenshot
+  src="device-picker"
+  alt="The Model tab's Device control showing Auto and CPU options for selecting the ONNX Runtime execution provider."
+  chrome="card"
+  label="Model tab — Device control"
+  caption="Auto picks the best bundled provider for your platform; CPU pins the CPU path."
+/>
+
 ## Execution providers
 
 WinSTT runs every model on [ONNX Runtime](https://onnxruntime.ai). Which hardware backend — "execution provider" (EP) — it uses depends on the platform and build features. Every official package has a CPU fallback; Windows builds also include DirectML. Other EPs such as CoreML, CUDA, ROCm, and OpenVINO are custom/development build features until release packaging for those targets is finalized.
@@ -35,11 +49,14 @@ forces the CPU path regardless.
 ### Auto-fallback to CPU
 
 GPU-capable builds degrade gracefully. At startup the backend probes the active provider,
-and if the requested GPU path isn't viable — no DirectX 12 GPU for DirectML, missing
-driver/runtime libraries for a custom EP, or an unsupported graph — it silently falls back
-to CPU. You get a working app either way.
+and if the requested GPU path isn't viable it silently falls back to CPU. You get a working
+app either way. The per-OS auto priority skips providers that were not bundled for that build.
 
-The per-OS auto priority skips providers that were not bundled for that build.
+<Callout type="info" title="When the GPU path is skipped">
+  The backend falls back to CPU when there's no DirectX 12 GPU for DirectML, a custom EP is
+  missing its driver/runtime libraries, or the model graph is unsupported on the requested
+  provider.
+</Callout>
 
 <Callout type="info" title="Force CPU manually">
   Set the **Model** tab's Device control to **CPU** to pin the CPU path regardless of the

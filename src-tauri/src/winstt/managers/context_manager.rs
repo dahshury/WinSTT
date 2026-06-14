@@ -1,4 +1,3 @@
-// Reference: frontend/electron/lib/context-reader.ts.
 // Wraps winstt::context (pure deny-list + formatter + parser).
 //
 // ContextManager resolves the `winstt-context.exe` sidecar path and implements
@@ -108,23 +107,13 @@ fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
             }
         }
     }
-    // 3. Dev fallbacks. Prefer `src-tauri/binaries/` when present, otherwise
-    //    reuse the reference Electron sidecar from this monorepo.
+    // 3. Dev fallback: prefer `src-tauri/binaries/` when present.
     #[cfg(windows)]
     {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let candidates = [
             PathBuf::from("binaries").join(name),
             manifest_dir.join("binaries").join(name),
-            manifest_dir
-                .join("..")
-                .join("examples")
-                .join("winstt-electron")
-                .join("frontend")
-                .join("electron")
-                .join("native")
-                .join("bin")
-                .join(name),
         ];
 
         for candidate in candidates {

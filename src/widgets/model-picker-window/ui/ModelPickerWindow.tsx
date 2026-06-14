@@ -295,7 +295,7 @@ export function ModelPickerWindow() {
 
 	// A precision-badge "download this variant" click opens the confirmation
 	// dialog (size + hardware-fit + Download/Cancel) instead of silently starting
-	// a background fetch — Electron parity. Pause / resume / cancel on an already
+	// a background fetch. Pause / resume / cancel on an already
 	// in-flight download still dispatch straight through to the server.
 	const handleDownloadActionGated: QuantActions["handleDownloadAction"] = (
 		action,

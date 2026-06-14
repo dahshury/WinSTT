@@ -1,8 +1,5 @@
 // Overlay visibility commands.
 //
-// Reference: frontend/electron/ipc/overlay.ts (showOverlay / hideOverlay /
-// computeOverlayPosition / isOverlaySuppressedBySettings / repositionIfVisible).
-//
 // The WinSTT recording pill is the `overlay` WebviewWindow (windows/overlay.html,
 // WINDOW_SPECS[overlay] in winstt/commands/windows.rs) — not the legacy
 // `recording_overlay` window. The OverlayPage renderer paints the dynamic-island

@@ -19,7 +19,7 @@ export const generalSettingsSchema = z.object({
 	// 0 = off (volume untouched), 100 = full mute; intermediate values duck
 	// to (100 - value)% of the previous level. The UI constrains this to
 	// multiples of 20; `.catch(0)` covers older builds that persisted the
-	// legacy boolean (migrated in electron/lib/store.ts).
+	// legacy boolean.
 	systemAudioReductionWhileDictating: z
 		.number()
 		.int()

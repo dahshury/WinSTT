@@ -1,5 +1,4 @@
-// Reference (authoritative): frontend/electron/lib/sound-library.ts. Verbatim port of
-// the custom recording-sound file-library manager.
+// The custom recording-sound file-library manager.
 //
 // The renderer's `features/recording-sound` slice persists user-supplied recording
 // sounds (.wav / .mp3) under `<appData>/sounds/`. It drives these via the
@@ -402,7 +401,6 @@ pub fn sound_library_read_file(
 }
 
 // ── recording-sound "get-data" (SOUND_GET_DATA) ────────────────────────────────
-// Verbatim port of `frontend/electron/lib/sound.ts::getSoundData` / `getSoundPath`.
 //
 // The renderer (`features/recording-sound/use-sound-preview.ts` +
 // `use-recording-sound.ts`) calls `invoke("sound:get-data")` on mount to fetch the
@@ -537,26 +535,33 @@ fn recording_generation_is_active(app: &AppHandle, recording_generation: u64) ->
         .is_some_and(|audio| audio.is_active_recording_generation(recording_generation))
 }
 
-/// Play the recording chime at normal system volume, then apply the configured
-/// system-audio duck only if this same recording is still actively capturing.
-pub fn play_recording_chime_then_duck(app: &AppHandle, recording_generation: u64) {
-    let Some(path) = active_recording_sound_path(app) else {
-        crate::winstt::ducking::duck_from_settings(app);
-        return;
-    };
-    let duck_armed = crate::winstt::ducking::arm_dictation_duck_from_settings(app);
+/// Duck background system audio for dictation, THEN play the recording chime at
+/// full volume.
+///
+/// The duck lowers OTHER processes' audio sessions while protecting WinSTT's own
+/// process tree, and the chime plays in-process through rodio — so background
+/// audio (music, video, browser) drops to the configured level FIRST and the
+/// chime itself is never attenuated. This is the order the recording-sound
+/// feature needs: everything else quiets, the chime stays loud.
+///
+/// The duck is gated on this recording still actively capturing: on a super-fast
+/// tap the stop event's `request_restore` may already have fired, so ducking here
+/// would otherwise leave background audio stuck low.
+pub fn duck_then_play_recording_chime(app: &AppHandle, recording_generation: u64) {
+    let path = active_recording_sound_path(app);
     let selected_device = crate::settings::get_settings(app).selected_output_device;
     let app_handle = app.clone();
     std::thread::spawn(move || {
+        // 1. Duck background audio first (only while this recording is live).
+        if recording_generation_is_active(&app_handle, recording_generation) {
+            crate::winstt::ducking::duck_from_settings_blocking(&app_handle);
+        }
+        // 2. Then play the chime at full volume (protected from the duck above).
+        let Some(path) = path else {
+            return;
+        };
         if let Err(e) = crate::audio_feedback::play_audio_file(&path, selected_device, 1.0) {
             log::error!("Failed to play recording chime '{}': {e}", path.display());
-        }
-        if duck_armed {
-            if recording_generation_is_active(&app_handle, recording_generation) {
-                crate::winstt::ducking::complete_armed_dictation_duck();
-            } else {
-                crate::winstt::ducking::request_restore();
-            }
         }
     });
 }

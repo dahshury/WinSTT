@@ -64,6 +64,8 @@ function SettingsPanelContent({ tab }: { tab: string }): ReactNode {
 				</>
 			);
 		case "vocabulary":
+			// Works with OR without LLM cleanup: the LLM owns the dictionary when cleanup is on,
+			// otherwise the on-device masked-LM encoder fallback handles it (backend).
 			return (
 				<>
 					<DictionarySettingsPanel />

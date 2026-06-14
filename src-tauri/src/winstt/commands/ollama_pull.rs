@@ -1,5 +1,3 @@
-// Reference: frontend/electron/ipc/llm.ts.
-//
 // The pull-cancel + warmup-status commands. The mutable state they read/write (the
 // pull-cancel set and the last warmup snapshot) lives on `OllamaManager` (managed
 // state); commands take `State<'_, Arc<OllamaManager>>`. The few context-free callers

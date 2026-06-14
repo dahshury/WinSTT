@@ -91,8 +91,7 @@ fn monitor_rect_for_point(app: &AppHandle, point: (f64, f64)) -> (f64, f64, f64,
 }
 
 /// Clamp the desired top-left so the whole `menu_size` stays inside `work_area`,
-/// leaving `TASKBAR_MARGIN` at the bottom. Byte-for-byte port of the reference
-/// `clampToWorkArea` (frontend/electron/ipc/tray-menu-window.ts).
+/// leaving `TASKBAR_MARGIN` at the bottom.
 fn clamp_to_work_area(
     desired: (f64, f64),
     menu_size: (f64, f64),

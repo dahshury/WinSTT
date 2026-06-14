@@ -8,44 +8,54 @@ The WinSTT frontend is a Vite multi-page React 19 renderer running inside Tauri'
 renderer holds no model or socket code — it reaches the Rust backend through Tauri
 [commands](/docs/architecture/ipc) and [events](/docs/architecture/events).
 
-<Callout type="info" title="Ported 1:1 from the Electron renderer">
-  This is the same React app that shipped on Electron, reused verbatim. It was written against
-  Electron's `window.nativeBridge`; a single adapter re-implements that bridge on top of Tauri,
-  so the ~400 renderer call sites did not change.
+<StatGrid>
+  <Stat value="8" label="Tauri windows" />
+  <Stat value="6" label="Feature-Sliced layers" />
+  <Stat value="~67" label="typed IPC channels" />
+  <Stat value="20" label="interface locales" />
+</StatGrid>
+
+<Callout type="info" title="A single native-bridge contract">
+  The renderer reaches Rust through one `window.nativeBridge` contract. A single adapter
+  implements that bridge on top of Tauri, so every renderer call site goes through the same
+  uniform entry point.
 </Callout>
 
 ## Process Architecture
 
-### Rust backend (was: Electron main + Python server)
+### Rust backend
 
-All the work the Electron main process and Python server used to do now lives in Rust
-(`src-tauri/`): audio capture, VAD, STT/TTS inference, the LLM and cloud integrations, global
-hotkey, system tray, window management, and settings/history persistence. See the
-[backend architecture](/docs/architecture/backend).
+All of the application's work lives in Rust (`src-tauri/`): audio capture, VAD, STT/TTS
+inference, the LLM and cloud integrations, global hotkey, system tray, window management, and
+settings/history persistence. See the [backend architecture](/docs/architecture/backend).
 
-### The native-bridge adapter (was: preload)
+### The native-bridge adapter
 
-`src/shared/api/native-bridge-adapter.ts` is the one new file the port added. It installs a
-`window.nativeBridge` polyfill — a ROUTE table mapping each legacy IPC channel to a Tauri
-`command`, `event`, `window` op, `plugin`, or `noop`. `app/providers/IpcProvider` calls
-`install()` once before React mounts. The typed `COMMAND_INVOKERS` map in `ipc-client.ts`
-shadows ~67 of those channels through the generated `bindings.ts` for compile-time safety.
+`src/shared/api/native-bridge-adapter.ts` installs a `window.nativeBridge` polyfill — a ROUTE
+table mapping each IPC channel to a Tauri `command`, `event`, `window` op, `plugin`, or `noop`.
+`app/providers/IpcProvider` calls `install()` once before React mounts. The typed
+`COMMAND_INVOKERS` map in `ipc-client.ts` shadows ~67 of those channels through the generated
+`bindings.ts` for compile-time safety.
 
 ### Renderer (multi-window Vite)
 
 Each Tauri window loads its own HTML entry — `index.html` for the main pill, `windows/<page>.html`
 for the rest — and mounts one React tree from `src/entries/<page>.tsx`:
 
-| Window | HTML entry | React entry |
-|--------|-----------|-------------|
-| Main pill | `index.html` | `entries/main.tsx` |
-| Settings | `windows/settings.html` | `entries/settings.tsx` |
-| Model picker | `windows/model-picker.html` | `entries/model-picker.tsx` |
-| Device picker | `windows/device-picker.html` | `entries/device-picker.tsx` |
-| History | `windows/history.html` | `entries/history.tsx` |
-| Overlay | `windows/overlay.html` | `entries/overlay.tsx` |
-| Tray menu | `windows/tray-menu.html` | `entries/tray-menu.tsx` |
-| Onboarding | `windows/onboarding.html` | `entries/onboarding.tsx` |
+<ModelTable
+  head={["Window", "HTML entry", "React entry"]}
+  rows={[
+    ["Main pill", <code>index.html</code>, <code>entries/main.tsx</code>],
+    ["Settings", <code>windows/settings.html</code>, <code>entries/settings.tsx</code>],
+    ["Model picker", <code>windows/model-picker.html</code>, <code>entries/model-picker.tsx</code>],
+    ["Device picker", <code>windows/device-picker.html</code>, <code>entries/device-picker.tsx</code>],
+    ["History", <code>windows/history.html</code>, <code>entries/history.tsx</code>],
+    ["Overlay", <code>windows/overlay.html</code>, <code>entries/overlay.tsx</code>],
+    ["Tray menu", <code>windows/tray-menu.html</code>, <code>entries/tray-menu.tsx</code>],
+    ["Onboarding", <code>windows/onboarding.html</code>, <code>entries/onboarding.tsx</code>],
+  ]}
+  caption="One HTML entry and one React tree per Tauri window — there is no shared router."
+/>
 
 ## Feature-Sliced Design Layers
 
@@ -63,23 +73,32 @@ src/
 
 ### Import Contract
 
-Each layer may only import from layers below it. Never sideways.
+<Callout type="info" title="One direction only">
+  Each layer may import only from the layers below it — never sideways, never upward. `shared`
+  sits at the bottom and depends on nothing; `app` sits at the top and may reach any layer.
+</Callout>
 
-| Layer | May Import From |
-|-------|----------------|
-| app | all layers |
-| views | widgets, features, entities, shared |
-| widgets | features, entities, shared |
-| features | entities, shared |
-| entities | shared |
-| shared | nothing |
+<ModelTable
+  head={["Layer", "May import from"]}
+  rows={[
+    [<code>app</code>, "all layers"],
+    [<code>views</code>, "widgets, features, entities, shared"],
+    [<code>widgets</code>, "features, entities, shared"],
+    [<code>features</code>, "entities, shared"],
+    [<code>entities</code>, "shared"],
+    [<code>shared</code>, "nothing"],
+  ]}
+/>
 
 ## State Management
 
-| Tool | Purpose |
-|------|---------|
-| Zustand | Renderer client state (settings, model catalog, transcription) |
-| Tauri commands + events | Source-of-truth data layer (no HTTP, no TanStack Query, no Redux) |
+<ModelTable
+  head={["Tool", "Purpose"]}
+  rows={[
+    ["Zustand", "Renderer client state (settings, model catalog, transcription)"],
+    ["Tauri commands + events", "Source-of-truth data layer (no HTTP, no TanStack Query, no Redux)"],
+  ]}
+/>
 
 Settings are hydrated from `winstt_get_settings`; the `update-settings` feature listens for
 the `settings:changed` event and fans out hot-swap commands (model reload, VAD slider,
@@ -87,23 +106,42 @@ autostart) so most changes apply without a restart.
 
 ## Technology Stack
 
-| Concern | Choice |
-|---------|--------|
-| Shell | Tauri 2 (WebView2 on Windows) |
-| Package manager | Bun |
-| Build tool | Vite 8 (renderer) + Cargo/Tauri (backend) |
-| Language | React 19 + TypeScript (React Compiler in prod) |
-| Linter / type check | ESLint (`typescript-eslint`) + `tsc` |
-| Test runner | `bun test` |
-| UI components | `@base-ui/react` (Base UI by MUI) |
-| Styling | Tailwind CSS v4 + clsx + tailwind-merge + class-variance-authority |
-| Icons | `@hugeicons/react` + `@hugeicons/core-free-icons` |
-| Animation | `motion` (Framer Motion v12) |
-| Forms | native `<form>` + `useState` + Zod `safeParse` (no form library) |
-| i18n | `use-intl` (20 locales) |
+<ModelTable
+  head={["Concern", "Choice"]}
+  rows={[
+    ["Shell", "Tauri 2 (WebView2 on Windows)"],
+    ["Package manager", "Bun"],
+    ["Build tool", "Vite 8 (renderer) + Cargo/Tauri (backend)"],
+    ["Language", "React 19 + TypeScript (React Compiler in prod)"],
+    ["Linter / type check", <span>ESLint (<code>typescript-eslint</code>) + <code>tsc</code></span>],
+    ["Test runner", <code>bun test</code>],
+    ["UI components", <span><code>@base-ui/react</code> (Base UI by MUI)</span>],
+    ["Styling", "Tailwind CSS v4 + clsx + tailwind-merge + class-variance-authority"],
+    ["Icons", <span><code>@hugeicons/react</code> + <code>@hugeicons/core-free-icons</code></span>],
+    ["Animation", <span><code>motion</code> (Framer Motion v12)</span>],
+    ["Forms", <span>native <code>&lt;form&gt;</code> + <code>useState</code> + Zod <code>safeParse</code> (no form library)</span>],
+    ["i18n", <span><code>use-intl</code> (20 locales)</span>],
+  ]}
+/>
 
-<Callout type="info" title="LLM moved to the backend">
-  On Electron the renderer bundled the Vercel AI SDK to talk to Ollama/OpenRouter. In the Rust
-  port that work happens in the backend (`LlmManager`, `ollama-rs` + `reqwest`), so the renderer
-  no longer ships an AI SDK — it just invokes `process_text` / `process_transform`.
+<Callout type="info" title="LLM runs in the backend">
+  Talking to Ollama/OpenRouter happens in the backend (`LlmManager`, `ollama-rs` + `reqwest`),
+  so the renderer ships no AI SDK — it just invokes `process_text` / `process_transform`.
 </Callout>
+
+## Related
+
+<Cards>
+  <Card title="Backend architecture" href="/docs/architecture/backend">
+    Where audio capture, VAD, STT/TTS inference, and the LLM integrations actually run.
+  </Card>
+  <Card title="IPC commands" href="/docs/architecture/ipc">
+    The typed `command` invokers the renderer uses to reach Rust — no HTTP, no sockets.
+  </Card>
+  <Card title="Events" href="/docs/architecture/events">
+    The backend-to-renderer event stream that drives live previews and hot-swaps.
+  </Card>
+  <Card title="Dev setup" href="/docs/dev-setup">
+    Clone, install with Bun, and run the multi-window renderer against the Rust backend.
+  </Card>
+</Cards>

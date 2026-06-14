@@ -8,25 +8,47 @@ a **Rust backend** and a **WebView2-rendered React frontend**, compiled into one
 executable. There is no separate server and no network hop — speech recognition and
 text-to-speech run **in-process in Rust** on [ONNX Runtime](https://onnxruntime.ai) (`ort`).
 
-**Backend** — Rust (`src-tauri/`). Owns audio capture, voice-activity detection, STT/TTS
-model loading and inference, the LLM/cloud integrations, settings, history, and the global
-hotkey. Organized under the `winstt::*` module tree.
+<StatGrid>
+  <Stat value="1" label="Native process" />
+  <Stat value="2" label="Layers — Rust + React" />
+  <Stat value="0" label="Network hops" />
+  <Stat value="0" label="Open sockets" />
+</StatGrid>
 
-**Frontend** — Vite multi-page React 19, Feature-Sliced Design (`src/`). The same renderer
-that shipped on Electron, ported 1:1. It renders the recording pill, settings, model picker,
-history, and overlays across several Tauri windows.
+<Video src="architecture-flow" chrome="card" alt="An architecture flow animation showing the React renderer, Tauri commands and events, Rust managers, ONNX Runtime, and the local settings store." label="One native process" caption="React calls typed Tauri commands; Rust runs audio, STT, TTS, settings, and events." />
 
-The renderer holds no model code and opens no sockets. It calls into Rust through **Tauri
-commands** (typed request/response) and receives **events** (push notifications) — all
+## The two layers
+
+<BentoGrid cols={2}>
+  <BentoCell icon="cpu" title="Backend — Rust" href="/docs/architecture/backend">
+    `src-tauri/`. Owns audio capture, voice-activity detection, STT/TTS model loading and
+    inference, the LLM/cloud integrations, settings, history, and the global hotkey.
+    Organized under the `winstt::*` module tree.
+  </BentoCell>
+  <BentoCell icon="waveform" title="Frontend — React 19" href="/docs/architecture/frontend">
+    Vite multi-page React 19, Feature-Sliced Design (`src/`). It renders the recording pill,
+    settings, model picker, history, and overlays across several Tauri windows.
+  </BentoCell>
+</BentoGrid>
+
+The renderer holds no model code and opens no sockets. It reaches Rust two ways, both
 type-checked end-to-end by [`tauri-specta`](https://github.com/specta-rs/tauri-specta).
 
-<Video src="architecture-flow" chrome="card" alt="An architecture flow animation showing the React renderer, Tauri commands and events, Rust managers, ONNX Runtime, and the local settings store." caption="One native process: React calls typed Tauri commands; Rust runs audio, STT, TTS, settings, and events." />
+<StepFlow>
+  <Step title="Tauri commands — typed request/response">
+    The React renderer calls into Rust through `#[tauri::command]` functions: a typed
+    request goes out, a typed response comes back.
+  </Step>
+  <Step title="Events — push notifications">
+    Rust pushes updates the other direction as events, so the UI reflects recording
+    lifecycle, download progress, and other state without polling.
+  </Step>
+</StepFlow>
 
-<Callout type="info" title="What changed from the Electron build">
-  The original WinSTT was two processes — a Python STT server and an Electron client talking
-  over dual WebSockets. The Rust+Tauri port collapses both into one binary: the Python server
-  became in-process Rust on `ort`, and the WebSocket relay became Tauri commands + events. The
-  React renderer is unchanged; a thin native-bridge adapter maps its old IPC calls onto Tauri.
+<Callout type="info" title="One binary, no sockets">
+  WinSTT is a single binary: STT and TTS run in-process in Rust on `ort`, and the renderer
+  reaches the backend through Tauri commands + events rather than any network relay. A thin
+  native-bridge adapter maps the renderer's IPC calls onto Tauri.
 </Callout>
 
 ## Deep Dives
@@ -37,7 +59,7 @@ type-checked end-to-end by [`tauri-specta`](https://github.com/specta-rs/tauri-s
     families, `ort` device policy), audio + VAD, TTS, and the threading model.
   </Card>
   <Card title="Frontend Architecture" href="/docs/architecture/frontend">
-    The Tauri WebView renderer, the native-bridge adapter that replaced the Electron preload,
+    The Tauri WebView renderer, the native-bridge adapter that maps IPC calls onto Tauri,
     Feature-Sliced Design layers, the multi-window setup, and state management.
   </Card>
   <Card title="IPC: Commands" href="/docs/architecture/ipc">

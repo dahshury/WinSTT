@@ -9,10 +9,6 @@ text-to-speech.
 **Docs:** [winstt.github.io/WinSTT](https://winstt.github.io/WinSTT/) ·
 **Latest alpha:** [GitHub Releases](https://github.com/dahshury/WinSTT/releases/latest)
 
-This repository is the Rust + Tauri implementation. The original Electron +
-Python app remains under [`examples/winstt-electron/`](examples/winstt-electron/)
-as the feature-parity reference.
-
 <p align="center">
   <img src="docs/public/screenshots/main.png" alt="WinSTT main window with a live audio visualizer, hotkey, microphone, and model footer." width="840">
 </p>
@@ -108,13 +104,12 @@ bun run docs:build:pages
 
 | Path | Purpose |
 | --- | --- |
-| `src/` | Tauri renderer, ported from the reference frontend using Feature-Sliced Design |
+| `src/` | Tauri renderer (React, Feature-Sliced Design) |
 | `src-tauri/` | Rust backend: `winstt::*` modules, STT engines, audio, settings, IPC |
 | `docs/` | TanStack Start docs site and documentation assets |
 | `public/`, `windows/`, `messages/` | Static assets, secondary windows, and i18n messages |
 | `packages/` | Shared renderer packages, including the model picker |
 | `tools/` | Developer tooling: platform build helpers, i18n checks, benchmark helpers, and asset generation |
-| `examples/winstt-electron/` | Original Electron + Python app used as the parity reference |
 
 ## License
 

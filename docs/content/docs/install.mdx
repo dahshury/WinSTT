@@ -12,12 +12,46 @@ import {
   latestWindowsInstallerUrl,
   latestWindowsPortableZipUrl,
 } from "@/lib/site";
+import {
+  DesktopShowcaseCard,
+  ShowcaseInstaller,
+  ShowcasePortable,
+} from "@/components/install-showcases";
 
-WinSTT ships as a self-contained desktop app. Download the package for your
-platform, launch it, finish onboarding, and dictate. There is no Python setup,
-no separate model server, and no account required for local transcription.
+WinSTT is a self-contained desktop app. Download it, open it, and start
+talking. There is no Python to set up, no separate speech server to run, and no
+account needed for transcription on your own machine.
 
-<Screenshot src="onboarding" alt="The first-run onboarding wizard: choose local Whisper or a cloud provider, then test your microphone." label="WinSTT - first run" caption="On first launch, a quick setup wizard gets you transcribing - pick local or cloud and test your mic." />
+## Two ways to get it on Windows
+
+Pick whichever feels easier - they are the same app, just delivered differently.
+The **portable** version is a folder you unzip and run, with nothing added to
+your system. The **installer** sets WinSTT up like any normal program, complete
+with a Start-menu shortcut. You can switch between them anytime.
+
+<MediaGrid cols={2}>
+  <DesktopShowcaseCard
+    label="Portable"
+    tag="Nothing to install"
+    caption="Download the zip, right-click it and choose Extract All, then open the WinSTT app inside the folder. No installation - move the folder anywhere, even a USB stick, and delete it to remove the app."
+  >
+    <ShowcasePortable />
+  </DesktopShowcaseCard>
+  <DesktopShowcaseCard
+    label="Installer"
+    tag="Sets itself up"
+    tagTone="teal"
+    caption="Download the WinSTT installer and run it. It sets everything up for you and adds a Start-menu shortcut, so WinSTT is always a click away - just like the apps you already use."
+  >
+    <ShowcaseInstaller />
+  </DesktopShowcaseCard>
+</MediaGrid>
+
+<Callout type="info" title="Not sure which to choose?">
+  Go with the **installer** if you just want WinSTT on your PC the usual way.
+  Pick the **portable** version if you'd rather not install anything - for
+  example on a work computer, or to carry it on a USB stick.
+</Callout>
 
 <Callout type="success" title="Current alpha downloads">
   All platform packages are published on the
@@ -29,6 +63,13 @@ no separate model server, and no account required for local transcription.
   - Windows x64: <a href={latestWindowsInstallerUrl}>WinSTT.exe</a> or{" "}
     <a href={latestWindowsPortableZipUrl}>portable zip</a>
 </Callout>
+
+<StatGrid>
+  <Stat value="3" label="platforms (macOS, Linux, Windows)" />
+  <Stat value="~1 GB" label="disk + model cache" />
+  <Stat value="4 GB" label="minimum RAM" />
+  <Stat value="0" label="Python or accounts required" />
+</StatGrid>
 
 ## Which package?
 
@@ -70,9 +111,8 @@ no separate model server, and no account required for local transcription.
     `WinSTT-portable.zip` and launch the executable inside.
   </Step>
   <Step title="Handle first-run OS prompts">
-    Alpha packages may trigger platform trust prompts until signing and notarization
-    are fully wired for every OS. Only continue after you have confirmed the asset
-    came from the WinSTT GitHub Release.
+    Alpha packages may trigger platform trust prompts until signing and
+    notarization are fully wired for every OS (see the note below).
   </Step>
   <Step title="Onboard and pick a model">
     The first-run wizard asks for a microphone, a hotkey, and a local-vs-cloud
@@ -80,6 +120,12 @@ no separate model server, and no account required for local transcription.
     the UI without restarting the app.
   </Step>
 </StepFlow>
+
+<Callout type="warn" title="Confirm the source before you continue">
+  Alpha packages may trigger platform trust prompts until signing and notarization
+  are fully wired for every OS. Only continue past an OS warning after you have
+  confirmed the asset came from the WinSTT GitHub Release.
+</Callout>
 
 ## Verification
 

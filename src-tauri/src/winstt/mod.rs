@@ -1,7 +1,6 @@
 // WinSTT module tree for the Rust/Tauri app.
 //
-// The original Electron/Python implementation under `examples/winstt-electron/`
-// remains the feature-parity reference. Modules here are the active Rust paths.
+// Modules here are the active Rust paths.
 // They stay grouped by dependency tier so build failures point at the owning
 // layer.
 
@@ -45,6 +44,9 @@ pub mod context;
 pub mod downloads;
 /// System-audio ducking via IAudioEndpointVolume::SetMasterVolumeLevelScalar (graduated 0-100%).
 pub mod ducking;
+/// Masked-LM (mmBERT) dictionary corrector — the NON-LLM dictation fallback (context-aware vocab
+/// snapping when LLM cleanup is off). Model downloads on demand.
+pub mod encoder_dict;
 /// All-Rust LLM post-processing: prompt composition + Ollama NDJSON streaming + CoT salvage.
 pub mod llm;
 /// Direct Ollama HTTP client used by the LLM manager.

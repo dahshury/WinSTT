@@ -5,7 +5,7 @@ import {
 	ArrowDown01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-// Deep-import the lightweight STT label helpers (not the `@picker` barrel) so
+// Deep-import the lightweight STT label helpers (not the `@/widgets/model-picker` barrel) so
 // the heavy SttModelSelector / Ollama / OpenRouter / TTS picker UI trees are
 // not dragged into the `main` window's chunk — StatusBar only needs these two
 // helpers, and the barrel re-export would otherwise pull the whole
@@ -13,8 +13,8 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import {
 	getFamilyConfig,
 	variantDisplayName,
-} from "@picker/stt/lib/family-helpers";
-import { formatModelName } from "@picker/lib/model-selector-utils";
+} from "@/widgets/model-picker/stt/lib/family-helpers";
+import { formatModelName } from "@/widgets/model-picker/lib/model-selector-utils";
 import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
 import {

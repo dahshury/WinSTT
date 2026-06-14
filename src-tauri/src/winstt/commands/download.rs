@@ -2,7 +2,6 @@
 //   frontend/src/shared/api/ipc-client.ts (predownloadModelQuant / pauseModelDownload /
 //     resumeModelDownload / cancelModelDownloadQuant / deleteModelQuantization /
 //     deleteModelCache / cancelDownload — the exact arg shapes)
-//   + frontend/electron/ipc/stt-models.ts (the channel handlers these mapped to).
 //
 // The per-quant download command surface. Each command pulls the `DownloadManager` from Tauri
 // state and forwards the call. The manager owns the keyed in-flight registry + the four

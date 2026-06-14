@@ -35,7 +35,6 @@
 //! 5/6. The `warming` flag / `try_lock` preemption and realtime poison recovery stay in core;
 //!    only the decode/warmup bodies move here. `peak_normalize` is applied in this backend.
 
-use crate::audio_toolkit::apply_custom_words;
 use crate::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
 use crate::winstt::audio_conditioning::peak_normalize;
 use crate::winstt::stt::formatting::apply_deterministic_formatting;
@@ -340,6 +339,9 @@ impl SttBackend for WinsttSttBackend {
         let ws = crate::winstt::commands::settings::read_settings(app);
 
         // WinSTT engine inputs (language / translate / initial-prompt) come from the picker store.
+        // The initial prompt is the user's free-text decoder-bias field only — the dictionary is
+        // NOT fed to the recognizer. Dictionary/vocabulary corrections are an LLM-only feature
+        // (applied via the structured dictation prompt during cleanup).
         let initial_prompt_text = {
             let p = ws.model.initial_prompt.trim();
             if p.is_empty() {
@@ -621,7 +623,7 @@ fn build_segmentation_vad(app: &AppHandle) -> Result<SileroVad> {
     SileroVad::new(&path, VAD_SPEECH_THRESHOLD)
 }
 
-/// Apply the WinSTT-arm text post-processing — custom-words fuzzy correction — to an
+/// Apply the WinSTT-arm text post-processing — deterministic formatting — to an
 /// ALREADY-decoded transcript. Factored out of `decode` so the
 /// realtime-reuse fast path (the final paste reusing the realtime worker's last full-buffer
 /// decode) applies byte-identical cleanup. `ws` is passed in so callers that already hold a
@@ -630,22 +632,14 @@ pub(crate) fn winstt_postprocess(
     text: &str,
     ws: &crate::winstt::settings_schema::WinsttSettings,
 ) -> String {
+    // Dictionary/vocabulary corrections are an LLM-ONLY feature now — applied via the structured
+    // dictation prompt during cleanup (actions/post_process.rs), never by a deterministic pass.
+    // This function only applies deterministic FORMATTING (spoken-punctuation commands,
+    // capitalization), gated behind the post-processing toggle. Listen mode stays raw.
     if !dictation_post_processing_enabled(ws) {
         return text.to_string();
     }
-
-    let custom_words: Vec<String> = ws
-        .dictionary
-        .iter()
-        .map(|d| d.term.clone())
-        .filter(|t| !t.trim().is_empty())
-        .collect();
-    let corrected = if custom_words.is_empty() {
-        text.to_string()
-    } else {
-        apply_custom_words(text, &custom_words, ws.general.word_correction_threshold)
-    };
-    apply_deterministic_formatting(&corrected, ws)
+    apply_deterministic_formatting(text, ws)
 }
 
 fn dictation_post_processing_enabled(ws: &crate::winstt::settings_schema::WinsttSettings) -> bool {
@@ -748,7 +742,9 @@ mod tests {
     }
 
     #[test]
-    fn winstt_postprocess_respects_dictation_toggle_as_master_gate() {
+    fn winstt_postprocess_is_raw_passthrough_when_cleanup_off() {
+        // Cleanup OFF: no deterministic formatting and (now) no dictionary either — the dictionary
+        // is an LLM-only feature, so with post-processing off the transcript is returned verbatim.
         let ws = postprocess_settings(false);
 
         assert_eq!(
@@ -758,7 +754,9 @@ mod tests {
     }
 
     #[test]
-    fn winstt_postprocess_runs_when_dictation_toggle_is_enabled() {
+    fn winstt_postprocess_formats_when_dictation_toggle_is_enabled() {
+        // Cleanup ON: deterministic formatting runs (spoken "comma" -> "," + sentence-cap). No
+        // dictionary correction happens here anymore — that's the LLM's job.
         let ws = postprocess_settings(true);
 
         assert_eq!(winstt_postprocess("hello comma world", &ws), "Hello, world");

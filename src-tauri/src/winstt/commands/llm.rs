@@ -1,5 +1,4 @@
-// LLM commands. Source: frontend/electron/ipc/{llm,ollama,credentials}.ts.
-// Wraps managers::LlmManager + winstt::llm.
+// LLM commands. Wraps managers::LlmManager + winstt::llm.
 //
 // process_text (dictation cleanup) + process_transform (transform-on-selection)
 // compose the system prompt via winstt::llm (preset + context + vocab layering)
@@ -209,14 +208,14 @@ pub(crate) async fn process_dictation_text(
         },
     };
 
-    // Deterministic replacement-pair safety net (guaranteed fire). The
-    // substitution count feeds the History "AI Impact" dictionary-fixes stat.
-    let pairs = replacement_pairs(&settings);
-    let normalized_answer = normalize_llm_text_output(&answer);
-    let (text, dictionary_fixes) = llm::apply_replacement_pairs_counted(&normalized_answer, &pairs);
+    // The LLM is the SOLE authority for dictionary corrections — both vocabulary words and
+    // replacement pairs are fed to it as structured prompt blocks (`build_dictation_system_prompt`).
+    // There is no deterministic post-pass, so `dictionary_fixes` is not counted here (the History
+    // "AI Impact" diff still reflects what the model changed).
+    let text = normalize_llm_text_output(&answer);
     Ok(DictationProcessResult {
         text,
-        dictionary_fixes,
+        dictionary_fixes: 0,
         side_effects,
         failsoft_error,
     })
@@ -884,7 +883,21 @@ pub async fn verify_credential(
 // ── settings → vocab / replacement-pairs ──────────────────────────────────
 
 pub(crate) fn build_vocab(settings: &WinsttSettings) -> Vocab {
-    let dictionary: Vec<String> = settings.dictionary.iter().map(|d| d.term.clone()).collect();
+    // Vocabulary words = entries WITHOUT a replacement (canonical spellings). Replacement-pair
+    // entries are surfaced only in the <replacement-pairs> block, so their misheard `term` is not
+    // also listed as a "preferred term".
+    let dictionary: Vec<String> = settings
+        .dictionary
+        .iter()
+        .filter(|d| {
+            d.replacement
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+        })
+        .map(|d| d.term.clone())
+        .collect();
     let snippets: Vec<(String, String)> = settings
         .snippets
         .iter()

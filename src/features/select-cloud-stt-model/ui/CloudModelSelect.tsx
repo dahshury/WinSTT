@@ -1,6 +1,6 @@
 "use client";
 
-import { OpenRouterModelSelector } from "@picker";
+import { OpenRouterModelSelector } from "@/widgets/model-picker";
 import { useEffect } from "react";
 import { useTranslations } from "use-intl";
 import {

@@ -607,6 +607,15 @@
     "conflictOtherTts": "텍스트 음성 변환"
   },
   "dictionary": {
+    "encoderTitle": "On-device dictionary model",
+    "encoderDescription": "Without LLM cleanup, the dictionary uses a small on-device model to correct your terms in context. Download it once (~310 MB) to turn this on.",
+    "encoderDownload": "Download model (~310 MB)",
+    "encoderDownloading": "Downloading…",
+    "encoderPaused": "Paused",
+    "encoderPause": "Pause",
+    "encoderResume": "Resume",
+    "encoderReady": "On-device model ready — the dictionary works without LLM cleanup.",
+    "requiresCleanup": "Dictionary and snippets are applied by the LLM during cleanup. Turn on dictation cleanup in Processing to use them.",
     "title": "사전",
     "description": "Whisper에 이름, 전문 용어, 도메인 용어를 가르칩니다. 전사된 단어가 이 항목 중 하나와 음성적으로 유사하면 자동으로 표준 맞춤법으로 교정됩니다.",
     "term": "용어",

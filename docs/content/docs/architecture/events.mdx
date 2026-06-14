@@ -5,74 +5,108 @@ description: Everything the Rust backend pushes to the renderer
 
 Where [commands](/docs/architecture/ipc) are the renderer calling Rust, **events** are Rust
 pushing to the renderer. The backend emits them with Tauri's `Emitter`; windows subscribe with
-`listen`. They come in two flavors.
+`listen`.
 
-**Typed payloads** are declared in `src-tauri/src/winstt/commands/events.rs`, registered in
-`collect_events![...]`, and mounted via `mount_events(app)`. They derive `specta::Type` +
-`tauri_specta::Event`, so their shapes appear in `bindings.ts` and are type-checked on both
-sides.
-
-**Plain string events** are high-frequency or legacy channels emitted as `app.emit(name, payload)`
-to match the listener names the reused Electron renderer already expects (e.g. `stt:audio-level`
-fires per audio frame).
+<StatGrid>
+  <Stat value="2" label="Event flavors" />
+  <Stat value="7" label="Typed payloads" />
+  <Stat value="0" label="Network hops" />
+  <Stat value="0" label="Open sockets" />
+</StatGrid>
 
 <Callout type="info" title="No EventBus, no WebSocket relay">
-  The Electron build published domain events on a Python `EventBus` and relayed them over a
-  WebSocket. Here, managers emit Tauri events directly to all windows — same event names on the
-  renderer side, so the UI's listeners were reused unchanged.
+  Managers emit Tauri events directly to all windows — there is no event bus and no network
+  relay. The UI subscribes to these event names with Tauri's `listen`.
 </Callout>
 
-## Typed payloads (`events.rs`)
+## Two flavors
 
-| Event payload | Fields | Meaning |
-|---------------|--------|---------|
-| `RealtimeUpdatePayload` | `text` | Raw live-preview text (pre-stabilization) |
-| `RealtimeStabilizedPayload` | `text` | Live preview past the committed watermark |
-| `WakeWordDetectedPayload` | `word`, `word_index` | A configured wake word matched |
-| `SpeakerSegmentsPayload` | segments | Diarized speaker segments (listen mode) |
-| `WordAlignmentPayload` | word timings | Per-word timestamps for history playback |
-| `TtsLifecyclePayload` | `request_id`, `phase`, `progress?` | TTS started / completed / failed / download-progress |
-| `FileTranscribeProgressPayload` | `id`, `path`, `status`, `progress`, `text?` | Batch file-transcribe progress |
+<BentoGrid cols={2}>
+  <BentoCell span={1} icon="pipeline" title="Typed payloads">
+    Declared in `src-tauri/src/winstt/commands/events.rs`, registered in `collect_events![...]`,
+    and mounted via `mount_events(app)`. They derive `specta::Type` + `tauri_specta::Event`, so
+    their shapes appear in `bindings.ts` and are type-checked on both sides.
+  </BentoCell>
+  <BentoCell span={1} icon="waveform" title="Plain string events">
+    High-frequency or legacy channels emitted as `app.emit(name, payload)`, matching the
+    listener names the renderer subscribes to — e.g. `stt:audio-level` fires per audio frame.
+  </BentoCell>
+</BentoGrid>
+
+## Typed payloads
+
+Declared in `events.rs` and type-checked end to end through `bindings.ts`.
+
+<ModelTable
+  head={["Event payload", "Fields", "Meaning"]}
+  rows={[
+    [<code>RealtimeUpdatePayload</code>, <code>text</code>, "Raw live-preview text (pre-stabilization)"],
+    [<code>RealtimeStabilizedPayload</code>, <code>text</code>, "Live preview past the committed watermark"],
+    [<code>WakeWordDetectedPayload</code>, <><code>word</code>, <code>word_index</code></>, "A configured wake word matched"],
+    [<code>SpeakerSegmentsPayload</code>, "segments", "Diarized speaker segments (listen mode)"],
+    [<code>WordAlignmentPayload</code>, "word timings", "Per-word timestamps for history playback"],
+    [<code>TtsLifecyclePayload</code>, <><code>request_id</code>, <code>phase</code>, <code>progress?</code></>, "TTS started / completed / failed / download-progress"],
+    [<code>FileTranscribeProgressPayload</code>, <><code>id</code>, <code>path</code>, <code>status</code>, <code>progress</code>, <code>text?</code></>, "Batch file-transcribe progress"],
+  ]}
+  caption="Typed events from src-tauri/src/winstt/commands/events.rs"
+/>
 
 ## Plain string events
 
+High-frequency and legacy channels, grouped by concern.
+
 ### Recording lifecycle
 
-| Event | Meaning |
-|-------|---------|
-| `stt:recording-start` / `stt:recording-stop` | Capture began / ended |
-| `stt:transcription-start` | Full decode started |
-| `stt:full-sentence` | Final transcription result |
-| `stt:no-audio-detected` | Recording held no speech |
+<ModelTable
+  head={["Event", "Meaning"]}
+  rows={[
+    [<><code>stt:recording-start</code> / <code>stt:recording-stop</code></>, "Capture began / ended"],
+    [<code>stt:transcription-start</code>, "Full decode started"],
+    [<code>stt:full-sentence</code>, "Final transcription result"],
+    [<code>stt:no-audio-detected</code>, "Recording held no speech"],
+  ]}
+/>
 
 ### Voice activity & audio
 
-| Event | Meaning |
-|-------|---------|
-| `stt:vad-start` / `stt:vad-stop` | Speech onset / offset (smoothed) |
-| `stt:audio-level` | Per-frame mic level + spectrum (visualizer) |
+<ModelTable
+  head={["Event", "Meaning"]}
+  rows={[
+    [<><code>stt:vad-start</code> / <code>stt:vad-stop</code></>, "Speech onset / offset (smoothed)"],
+    [<code>stt:audio-level</code>, "Per-frame mic level + spectrum (visualizer)"],
+  ]}
+/>
 
 ### Wake word & realtime
 
-| Event | Meaning |
-|-------|---------|
-| `wake_word_detected` | Wake word hit → starts dictation |
-| `realtime-update` | Live preview text tick |
+<ModelTable
+  head={["Event", "Meaning"]}
+  rows={[
+    [<code>wake_word_detected</code>, "Wake word hit → starts dictation"],
+    [<code>realtime-update</code>, "Live preview text tick"],
+  ]}
+/>
 
 ### Models & swaps
 
-| Event | Meaning |
-|-------|---------|
-| `stt:model-download-progress` | Per-file download percentage |
-| `stt:model-swap-started` / `-completed` / `-failed` | Active-model swap lifecycle |
-| `stt:restart-required` | A startup-only setting changed (in-process engine can't hot-apply it) |
+<ModelTable
+  head={["Event", "Meaning"]}
+  rows={[
+    [<code>stt:model-download-progress</code>, "Per-file download percentage"],
+    [<><code>stt:model-swap-started</code> / <code>-completed</code> / <code>-failed</code></>, "Active-model swap lifecycle"],
+    [<code>stt:restart-required</code>, "A startup-only setting changed (in-process engine can't hot-apply it)"],
+  ]}
+/>
 
 ### Settings
 
-| Event | Meaning |
-|-------|---------|
-| `settings:changed` | Full post-save snapshot, broadcast to every window |
-| `settings:save-error` | Validation or persistence failure |
+<ModelTable
+  head={["Event", "Meaning"]}
+  rows={[
+    [<code>settings:changed</code>, "Full post-save snapshot, broadcast to every window"],
+    [<code>settings:save-error</code>, "Validation or persistence failure"],
+  ]}
+/>
 
 ## Related
 

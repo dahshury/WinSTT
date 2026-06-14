@@ -92,7 +92,7 @@ export class ErrorBoundary extends Component<
 			errorInfo.componentStack ?? "No component stack available";
 
 		// Log to console with full context. The main-process console-message
-		// hook in electron/main.ts forwards these to debug.log; when Sentry is
+		// hook forwards these to debug.log; when Sentry is
 		// enabled in main, the captured uncaught exception path picks them up
 		// from there. No renderer-side Sentry SDK by design (see SENTRY.md).
 		console.error("[ErrorBoundary] Caught error:", formatErrorForLog(error));

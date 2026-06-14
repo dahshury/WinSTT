@@ -1,6 +1,6 @@
 import { Cancel01Icon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { computeModelExclusionConfig } from "@picker";
+import { computeModelExclusionConfig } from "@/widgets/model-picker";
 import { useEffect, useRef, useState } from "react";
 import { type LlmPreviewConfig, runLlmPreview } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";

@@ -19,7 +19,7 @@ interface DownloadGating {
 /**
  * Gates a precision-badge "download this variant" click so it opens the
  * confirmation dialog (size + hardware-fit + Download/Cancel) for the right
- * slot instead of silently starting a background fetch — Electron parity. Pause
+ * slot instead of silently starting a background fetch. Pause
  * / resume / cancel of an in-flight download still dispatch straight to the
  * server. Extracted verbatim from the panel.
  */

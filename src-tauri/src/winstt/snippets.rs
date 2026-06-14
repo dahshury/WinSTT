@@ -1,9 +1,7 @@
 // Deterministic snippet / text-expansion engine.
 //
 // Source of truth (behavioral): frontend/src/shared/lib/fuzzy-match.ts
-// (`replaceWithSnippets` / `findSnippetMatches` + `doubleMetaphone`) and
-// frontend/electron/lib/text-processing.ts (`rebuildSnippets` /
-// `applyPostProcessing`), wired into the recorder via electron/ipc/relay.ts.
+// (`replaceWithSnippets` / `findSnippetMatches` + `doubleMetaphone`).
 //
 // WinSTT's snippet expansion is a FUZZY trigger → expansion substitution that
 // runs as the LAST step of the post-processing pass on the finalized

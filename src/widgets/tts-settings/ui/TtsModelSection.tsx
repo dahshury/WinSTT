@@ -55,7 +55,7 @@ import {
 	useTtsInstallGate,
 } from "../model/use-tts-install-gate";
 import { useTtsPlayback } from "../model/use-tts-playback";
-import { TtsModelSelector } from "@picker/tts";
+import { TtsModelSelector } from "@/widgets/model-picker/tts";
 import {
 	useTtsCatalogStore,
 	useTtsModelStateStore,

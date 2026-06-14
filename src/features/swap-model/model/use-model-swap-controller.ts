@@ -305,7 +305,7 @@ export function useModelSwapController(
 	// dialog for ``(modelId, quantization)`` without touching the loaded model.
 	// The dialog already surfaces the download size + hardware-fit warning and
 	// runs a background predownload on confirm — so a badge click no longer
-	// silently kicks off a multi-GB fetch (Electron parity). ``previousModelId``
+	// silently kicks off a multi-GB fetch. ``previousModelId``
 	// is the currently-loaded model for the slot; it is only consulted by the
 	// swap-rollback path, which this predownload-only flow never reaches.
 	const promptDownload = useCallback(

@@ -8,6 +8,19 @@ runs voice-activity detection, loads and runs STT/TTS models on [ONNX Runtime](h
 (`ort`), drives the LLM and cloud integrations, and owns settings, history, and the global
 hotkey. Everything runs in one process — there is no server and no IPC to a model host.
 
+<StatGrid>
+  <Stat value="1" label="OS process — no model host" />
+  <Stat value="~40" label="STT models, 8 families" />
+  <Stat value="12" label="managed-state managers" />
+  <Stat value="~90" label="#[tauri::command] fns" />
+</StatGrid>
+
+<Callout type="info" title="One binary, no network hop">
+  Audio capture, VAD, model decode, the LLM pass, paste injection, history, and the global
+  hotkey all live in the same Rust process. The renderer reaches them only through Tauri
+  commands and events — there is no separate model server to start, supervise, or secure.
+</Callout>
+
 ## Module Tree
 
 The app's own code lives under `src-tauri/src/winstt/`. Shared Tauri plumbing
@@ -21,7 +34,7 @@ src-tauri/src/
   cli.rs                  clap CliArgs (--start-hidden, --debug, …)
   actions.rs              Dictation coordinator — record → decode → paste
   transcription_coordinator.rs  Single thread serializing recording state
-  settings.rs             Legacy AppSettings store
+  settings.rs             Former AppSettings store, now folded into WinsttSettings.core
   audio_toolkit/          Recorder (cpal), resampler (rubato), Silero VAD
   managers/               audio · transcription · history (core)
   winstt/
@@ -51,19 +64,29 @@ managed state (`Arc<T>`), so commands receive them via `State<'_, Arc<T>>`. The 
 handle recording, transcription, model metadata, and history; the rest are WinSTT feature
 managers.
 
-| Manager | Responsibility |
-|---------|----------------|
-| `AudioRecordingManager` | mic capture, resampling to 16 kHz, VAD, level/wakeword taps |
-| `TranscriptionManager` | loads the active engine, runs batch + realtime decodes |
-| `DownloadManager` | per-quant model download, activation, cache |
-| `HistoryManager` | transcription history store + audio playback |
-| `LlmManager` | Ollama / OpenRouter post-processing + custom transforms |
-| `CloudSttManager` | OpenAI / ElevenLabs cloud STT round-trips |
-| `TtsManager` | Kokoro (local) + ElevenLabs (cloud) synthesis |
-| `WakeWordManager` / `DiarizationManager` | sherpa-onnx KWS + speaker embedding |
-| `LoopbackManager` | WASAPI system-audio capture (listen mode) |
-| `RealtimeManager` | daemon that decodes a growing window for the live preview |
-| `FileTranscribeManager` | batch file-transcribe queue |
+<ModelTable
+  head={["Manager", "Responsibility"]}
+  rows={[
+    ["AudioRecordingManager", "mic capture, resampling to 16 kHz, VAD, level/wakeword taps"],
+    ["TranscriptionManager", "loads the active engine, runs batch + realtime decodes"],
+    ["DownloadManager", "per-quant model download, activation, cache"],
+    ["HistoryManager", "transcription history store + audio playback"],
+    ["LlmManager", "Ollama / OpenRouter post-processing + custom transforms"],
+    ["CloudSttManager", "ElevenLabs / OpenRouter cloud STT round-trips"],
+    ["TtsManager", "Kokoro (local) + ElevenLabs (cloud) synthesis"],
+    ["WakeWordManager / DiarizationManager", "sherpa-onnx KWS + speaker embedding"],
+    ["LoopbackManager", "WASAPI system-audio capture (listen mode)"],
+    ["RealtimeManager", "daemon that decodes a growing window for the live preview"],
+    ["FileTranscribeManager", "batch file-transcribe queue"],
+  ]}
+  caption="Each manager is built once and shared as Arc<T> managed state."
+/>
+
+<Callout type="info" title="The core four">
+  `AudioRecordingManager`, `TranscriptionManager`, `DownloadManager`, and `HistoryManager`
+  cover recording, transcription, model metadata, and history. Everything below them in the
+  table is a WinSTT feature manager layered on top.
+</Callout>
 
 ## The STT Pipeline
 
@@ -86,9 +109,13 @@ hotkey / CLI / wake-word
 `TranscriptionManager` stays intentionally isolated from WinSTT's engine zoo, so the
 backend exposes exactly one seam — the **`SttBackend` trait** (`winstt/stt/backend.rs`). It
 routes a model id (`cloud:*` → cloud, in-catalog → local, else → unsupported)
-and resolves/loads/decodes in two phases so a model swap stays failure-atomic
-(`resolve_catalog` is offline-safe; `build_resolved` only unloads the old engine once the new
-one is built).
+and resolves/loads/decodes in two phases so a model swap stays failure-atomic.
+
+<Callout type="info" title="Failure-atomic model swaps">
+  `resolve_catalog` is offline-safe — it resolves the new engine's metadata without touching
+  the loaded model. `build_resolved` only unloads the old engine once the new one is built, so
+  a failed swap leaves the previous model intact rather than dropping you to no model at all.
+</Callout>
 
 Each engine family implements the **`Transcriber` trait** (`winstt/stt/mod.rs`):
 
@@ -106,12 +133,16 @@ pub trait Transcriber: Send {
 
 The catalog spans ~40 models across eight families, each an `EngineKind`:
 
-| Class | Engines |
-|-------|---------|
-| Whisper | `WhisperHf` (encoder + merged decoder, device-resident KV-cache via IoBinding), `Moonshine` |
-| CTC | `NemoCtc`, `GigaamCtc`, `ToneCtc`, `DolphinCtc`, `SenseVoiceCtc` |
-| Transducer | `NemoRnnt`, `NemoTdt`, `KaldiTransducer` (Zipformer), `GigaamRnnt` |
-| AED | `NemoAed` (Canary), `CohereAsr` |
+<ModelTable
+  head={["Class", "Engines"]}
+  rows={[
+    ["Whisper", "WhisperHf (encoder + merged decoder, device-resident KV-cache via IoBinding), Moonshine"],
+    ["CTC", "NemoCtc, GigaamCtc, ToneCtc, DolphinCtc, SenseVoiceCtc"],
+    ["Transducer", "NemoRnnt, NemoTdt, KaldiTransducer (Zipformer), GigaamRnnt"],
+    ["AED", "NemoAed (Canary), CohereAsr"],
+  ]}
+  caption="EngineKind families behind the SttBackend seam."
+/>
 
 Models resolve through the **`onnx-asr` resolver** (`resolver.rs`): a HuggingFace snapshot
 fetch (`hf-hub`) that verifies sharded `.onnx_data` completeness and caches per-quantization
@@ -152,30 +183,40 @@ exploratory spike engines, not shipped.)
 
 ## Threading Model
 
-| Context | Where work runs |
-|---------|-----------------|
-| `#[tauri::command]` | Tauri async runtime (tokio) |
-| ONNX decode, file I/O | `spawn_blocking` (dedicated blocking pool — never the executor) |
-| Recording state | the single `TranscriptionCoordinator` thread |
-| Live preview | the `RealtimeManager` daemon |
-| Model warmup / GPU probe | one-shot threads spawned at startup |
+<ModelTable
+  head={["Context", "Where work runs"]}
+  rows={[
+    ["#[tauri::command]", "Tauri async runtime (tokio)"],
+    ["ONNX decode, file I/O", "spawn_blocking (dedicated blocking pool — never the executor)"],
+    ["Recording state", "the single TranscriptionCoordinator thread"],
+    ["Live preview", "the RealtimeManager daemon"],
+    ["Model warmup / GPU probe", "one-shot threads spawned at startup"],
+  ]}
+  caption="Where each kind of backend work runs."
+/>
 
-ONNX decode is wrapped in `catch_unwind` so a model panic surfaces as an error instead of
-taking down the worker.
+<Callout type="info" title="A model panic doesn't take down the worker">
+  ONNX decode is wrapped in `catch_unwind`, so a panic inside a model surfaces as an error
+  to the caller instead of crashing the blocking pool.
+</Callout>
 
 ## Key Dependencies
 
-| Crate | Role |
-|-------|------|
-| `tauri` 2.10 + `tauri-specta` | app framework + typed command/event bindings |
-| `ort` 2.0 (rc) | ONNX Runtime — CPU fallback plus platform/build-specific EPs |
-| `hf-hub` | HuggingFace model resolver + download |
-| `cpal` / `rubato` / `rustfft` | audio capture / resampling / spectrum |
-| `vad-rs` (Silero) | voice-activity detection |
-| `sherpa-onnx` | wake-word KWS + diarization embedder |
-| `tokenizers`, `ndarray`, `half` | tokenization + tensor math |
-| `windows` / `wasapi` | WASAPI loopback, audio ducking (COM) |
-| `ollama-rs`, `keyring`, `enigo` | local LLM, encrypted secrets, paste injection |
+<ModelTable
+  head={["Crate", "Role"]}
+  rows={[
+    ["tauri 2.10 + tauri-specta", "app framework + typed command/event bindings"],
+    ["ort 2.0 (rc)", "ONNX Runtime — CPU fallback plus platform/build-specific EPs"],
+    ["hf-hub", "HuggingFace model resolver + download"],
+    ["cpal / rubato / rustfft", "audio capture / resampling / spectrum"],
+    ["vad-rs (Silero)", "voice-activity detection"],
+    ["sherpa-onnx", "wake-word KWS + diarization embedder"],
+    ["tokenizers, ndarray, half", "tokenization + tensor math"],
+    ["windows / wasapi", "WASAPI loopback, audio ducking (COM)"],
+    ["ollama-rs, keyring, enigo", "local LLM, encrypted secrets, paste injection"],
+  ]}
+  caption="Core crates the backend is built on."
+/>
 
 ## Related
 
@@ -185,5 +226,11 @@ taking down the worker.
   </Card>
   <Card title="Events" href="/docs/architecture/events">
     What the backend pushes back to the UI.
+  </Card>
+  <Card title="Architecture overview" href="/docs/architecture">
+    How the backend, frontend, and IPC layers fit together.
+  </Card>
+  <Card title="Frontend" href="/docs/architecture/frontend">
+    The renderer that drives these managers and shows their events.
   </Card>
 </Cards>

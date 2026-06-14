@@ -568,6 +568,52 @@ pub(crate) async fn process_transcription_output(
         }
     }
 
+    // Non-LLM dictionary fallback: when the LLM is NOT doing dictionary correction (cleanup off or
+    // no model), the dictionary still works — deterministic replacement pairs + the masked-LM
+    // encoder for vocabulary words (context-aware: "veet"->"Vite", "video" stays "video"). The
+    // encoder model downloads on demand and this whole block is fail-soft (returns text unchanged
+    // until ready). Listen mode stays raw. When the LLM path ran, it owns the dictionary instead.
+    if !winstt_dictation_llm
+        && winstt_settings.general.recording_mode != RecordingMode::Listen
+    {
+        let pairs = crate::winstt::commands::llm::replacement_pairs(&winstt_settings);
+        if !pairs.is_empty() {
+            let (replaced, n) =
+                crate::winstt::llm::apply_replacement_pairs_counted(&final_text, &pairs);
+            if n > 0 {
+                final_text = replaced;
+                post_processed_text = Some(final_text.clone());
+                dictionary_fixes = Some(dictionary_fixes.unwrap_or(0) + n as i64);
+            }
+        }
+        let terms: Vec<String> = winstt_settings
+            .dictionary
+            .iter()
+            .filter(|d| {
+                d.replacement
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty()
+            })
+            .map(|d| d.term.clone())
+            .filter(|t| !t.trim().is_empty())
+            .collect();
+        if !terms.is_empty() {
+            let corrected = crate::winstt::encoder_dict::correct_vocabulary(
+                app,
+                &final_text,
+                &terms,
+                crate::winstt::encoder_dict::DEFAULT_RANK_K,
+            )
+            .await;
+            if corrected != final_text {
+                final_text = corrected;
+                post_processed_text = Some(final_text.clone());
+            }
+        }
+    }
+
     if dictation_post_processing {
         if post_processed_text.is_none() && final_text != transcription {
             post_processed_text = Some(final_text.clone());

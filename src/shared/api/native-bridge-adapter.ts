@@ -464,14 +464,14 @@ function reshape(channel: string, payload: unknown): unknown {
 	}
 	// TTS chunk: the backend emits `pcm` as a serde `Vec<u8>`, which Tauri's JSON
 	// event bridge delivers as a plain `number[]` of byte values — NOT the binary
-	// `ArrayBuffer` that Electron's structured-clone IPC produced (and that the
-	// renderer's `TtsChunkPayload.pcm: ArrayBuffer` type + playback-queue assume).
+	// `ArrayBuffer` that the renderer's `TtsChunkPayload.pcm: ArrayBuffer` type +
+	// playback-queue assume.
 	// The playback path does `new Float32Array(pcm)` (f32le) / `decodeAudioData(pcm)`
 	// (mp3); both REQUIRE a real ArrayBuffer. Handed a raw `number[]`, `Float32Array`
 	// reads each *byte* as a float (0–255) → 4× the samples, all far outside [-1,1],
 	// which `copyToChannel` hard-clips to ±1 = full-scale high-frequency NOISE (and
 	// `decodeAudioData` would reject it outright). Normalize to an ArrayBuffer here at
-	// the port boundary so the rest of the renderer stays Electron-shaped.
+	// the port boundary so the rest of the renderer stays the same shape.
 	if (
 		channel === IPC.TTS_CHUNK &&
 		payload !== null &&
@@ -494,8 +494,8 @@ function reshape(channel: string, payload: unknown): unknown {
 
 // ── Plugin dispatch ─────────────────────────────────────────────────────────────
 // The Rust updater facade owns GitHub release selection, download/install state,
-// and the shared status history. This bridge keeps the ported Electron-style IPC
-// names stable for the renderer.
+// and the shared status history. This bridge keeps the legacy IPC shape
+// stable for the renderer.
 let updaterCheckPromise: Promise<UpdaterCommandResult> | null = null;
 
 async function checkAndDownloadUpdate(

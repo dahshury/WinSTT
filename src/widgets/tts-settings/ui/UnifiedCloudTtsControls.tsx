@@ -1,4 +1,4 @@
-import { OpenRouterModelSelector } from "@picker";
+import { OpenRouterModelSelector } from "@/widgets/model-picker";
 import { useEffect } from "react";
 import type { useTranslations } from "use-intl";
 import { SettingField, useSettingsStore } from "@/entities/setting";

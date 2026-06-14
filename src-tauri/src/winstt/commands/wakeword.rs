@@ -1,4 +1,4 @@
-// Reference: frontend/electron/ipc/wakeword. Wraps managers::WakeWordManager.
+// Wraps managers::WakeWordManager.
 //
 // Wake-word commands. wakeword_set_model rebuilds the detector from the chosen preset
 // (or custom phrase) + sensitivity + timeout; wakeword_list_presets feeds the

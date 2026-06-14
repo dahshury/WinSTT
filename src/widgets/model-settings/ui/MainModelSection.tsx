@@ -1,5 +1,5 @@
 import { AiMicIcon } from "@hugeicons/core-free-icons";
-import { SttModelSelector } from "@picker";
+import { SttModelSelector } from "@/widgets/model-picker";
 import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
 import { providerOf } from "@/entities/cloud-stt-provider";

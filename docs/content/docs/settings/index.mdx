@@ -5,7 +5,19 @@ description: The frameless WinSTT settings window for model, audio, processing, 
 
 Every knob in WinSTT lives in one frameless settings window — pick a model, tune voice detection, rebind the hotkey, or wire up an LLM, all from a single searchable sidebar.
 
-<Screenshot src="settings-general" alt="The WinSTT settings window: a vertical sidebar of settings panels on the left and the General panel open on the right." label="Settings — General" caption="The sidebar groups the app's configuration panels. The titlebar is the drag region — there is no window frame." />
+<Screenshot
+  src="settings-general"
+  alt="The WinSTT settings window: a vertical sidebar of settings panels on the left and the General panel open on the right."
+  chrome="window"
+  label="Settings — General"
+  caption="The sidebar groups the app's configuration panels. The titlebar is the drag region — there is no window frame."
+/>
+
+<StatGrid>
+  <Stat value="1" label="frameless window" />
+  <Stat value="0" label="Save buttons — changes save live" />
+  <Stat value="3" label="opt-in cloud providers" />
+</StatGrid>
 
 ## The window
 
@@ -31,14 +43,14 @@ Two panels — **Model** and **General** — host sub-sections that have their o
   <BentoCell icon="keyboard" title="Hotkey" href="/docs/settings/hotkey">
     The combo-string format for the dictation hotkey and the re-paste shortcut. The hotkey itself is bound in the General panel.
   </BentoCell>
-  <BentoCell icon="llm" title="LLM cleanup" href="/docs/settings/llm">
+  <BentoCell icon="llm" title="LLM cleanup" href="/docs/settings/quality#llm-cleanup">
     Reshape dictated text with tone presets and custom modifiers — local Ollama, OpenRouter, or Apple Intelligence. Sub-section of Model.
   </BentoCell>
   <BentoCell icon="tts" title="Text-to-Speech" href="/docs/settings/tts">
     Read selected text aloud with the bundled Kokoro-82M voice — 54 voices across 9 languages. Sub-section of Model.
   </BentoCell>
   <BentoCell span={2} icon="integrations" title="Integrations" href="/docs/settings/integrations">
-    API keys and verification for the optional cloud providers — Ollama, OpenRouter, OpenAI, and ElevenLabs. Every provider is opt-in; the app stays fully functional offline.
+    API keys and verification for the optional cloud providers — Ollama, OpenRouter, and ElevenLabs. OpenRouter covers cloud LLM and cloud transcription; ElevenLabs is cloud transcription. Every provider is opt-in; the app stays fully functional offline.
   </BentoCell>
 </BentoGrid>
 
@@ -46,9 +58,15 @@ The sidebar also has a **Dictionary** panel (fuzzy corrections), a **Snippets** 
 
 ## How changes are saved
 
-Settings save automatically the moment you change them — there is no "Save" or "Apply" button. The Rust backend writes them to the Tauri app-data store and applies live-safe changes through the in-process manager layer.
+Settings save automatically the moment you change them — there is no "Save" or "Apply" button. WinSTT writes them to your local app data instantly and applies whatever it safely can without a restart.
 
-<Screenshot src="settings-model" alt="The Model settings panel showing the main-model source toggle, model selector, language, device, and unload timeout." label="Settings — Model" caption="Most model changes hot-swap live; the overlay shows a brief 'swapping' state." />
+<Screenshot
+  src="settings-model"
+  alt="The Model settings panel showing the main-model source toggle, model selector, language, device, and unload timeout."
+  chrome="window"
+  label="Settings — Model"
+  caption="Most model changes hot-swap live; the overlay shows a brief 'swapping' state."
+/>
 
 Most changes apply live, including swapping the active model. A few changes have to restart the speech engine, which reconnects the WebSocket and takes a moment:
 

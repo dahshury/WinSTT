@@ -13,10 +13,11 @@ The hotkey recorder UI sits in the **Audio** tab, under the input-device picker 
   src="sec-audio-hotkeys"
   alt="The Hotkey Configuration section of the Audio tab: the push-to-talk recorder with its current combo, and the live shortcuts legend beneath it."
   chrome="card"
+  label="Audio tab — hotkey recorder"
   caption="The push-to-talk recorder and the live shortcuts legend, on the Audio tab."
 />
 
-Every binding is a uiohook-style combo string — physical-key tokens joined with `+`, with left/right-specific modifiers (`LCtrl`, `RCtrl`, `LShift`, `RShift`, `LAlt`, `RAlt`, `LMeta`). These are **not** Electron accelerators. Picking `LMeta` over a generic `Meta` cuts down on conflicts.
+Every binding is a uiohook-style combo string — physical-key tokens joined with `+`, with left/right-specific modifiers (`LCtrl`, `RCtrl`, `LShift`, `RShift`, `LAlt`, `RAlt`, `LMeta`). Because each token names a specific physical key, picking `LMeta` over a generic `Meta` cuts down on conflicts.
 
 ## The four hotkeys
 
@@ -183,7 +184,7 @@ A second pass runs at startup as defense against hand-edited `settings.json` or 
 ## Related
 
 <Cards>
-  <Card title="Recording modes" href="/docs/recording-modes">
+  <Card title="Recording modes" href="/docs/dictation">
     Push-to-talk, toggle, listen, and wake-word — what the hotkey triggers in
     each.
   </Card>
@@ -193,7 +194,7 @@ A second pass runs at startup as defense against hand-edited `settings.json` or 
   <Card title="Text-to-speech" href="/docs/text-to-speech">
     Enable TTS so the read-aloud hotkey is armed; pick a voice and language.
   </Card>
-  <Card title="LLM cleanup" href="/docs/settings/llm">
+  <Card title="LLM cleanup" href="/docs/settings/quality#llm-cleanup">
     Build the composed transform that the transform hotkey runs on a selection.
   </Card>
 </Cards>

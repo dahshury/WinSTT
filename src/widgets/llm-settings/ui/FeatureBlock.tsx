@@ -1,5 +1,5 @@
 import { MagicWand01Icon, PencilIcon } from "@hugeicons/core-free-icons";
-import { computeModelExclusionConfig } from "@picker";
+import { computeModelExclusionConfig } from "@/widgets/model-picker";
 import { type ReactNode, useEffect, useState } from "react";
 import { SettingSubsection } from "@/entities/setting";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";

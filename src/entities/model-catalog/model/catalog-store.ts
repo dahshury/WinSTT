@@ -42,8 +42,7 @@ export interface ModelInfo {
 	onnxModelName: string | null;
 	/**
 	 * Exact on-HF download size in bytes for each available quantization.
-	 * Baked into `catalog.json` by
-	 * `examples/winstt-electron/server/scripts/refresh_catalog.py` from
+	 * Baked into `catalog.json` by `refresh_catalog.py` from
 	 * `HfApi.model_info(files_metadata=True)`. Empty for custom-model entries
 	 * and catalog rows the refresh hasn't covered; consumers fall back to
 	 * `sizeLabel` (the param-derived human label) in that case. The

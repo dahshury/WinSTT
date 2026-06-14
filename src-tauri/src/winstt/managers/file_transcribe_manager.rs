@@ -1,5 +1,3 @@
-// Reference (authoritative):
-// frontend/electron/ipc/file-transcribe-queue.ts (the canonical multi-file queue).
 // Decode via symphonia
 // (in-process; no external ffmpeg, unlike the Python server's ffmpeg shell-out).
 //

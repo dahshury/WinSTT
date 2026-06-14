@@ -1,10 +1,10 @@
-// Deep-import the lightweight cache helpers (not the `@picker` barrel) so this
+// Deep-import the lightweight cache helpers (not the `@/widgets/model-picker` barrel) so this
 // main-window-reachable dialog doesn't drag the whole model-picker UI into the
 // main entry chunk via the barrel re-export.
 import {
 	resolveEffectiveQuant,
 	resolveQuantCache,
-} from "@picker/stt/lib/cache-helpers";
+} from "@/widgets/model-picker/stt/lib/cache-helpers";
 import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
 import type {
@@ -292,7 +292,7 @@ function IdleInfoCard({
 	const pausedDownloaded = targetCache?.downloaded_bytes ?? 0;
 	const pausedTotal = targetCache?.total_bytes ?? 0;
 	// Prefer the per-quant byte count baked into the catalog by
-	// `examples/winstt-electron/server/scripts/refresh_catalog.py` — that's the exact HF-reported download
+	// `refresh_catalog.py` — that's the exact HF-reported download
 	// size for the selected precision and is known offline. Fall back to
 	// the partial-cache delta (resume scenario), then to the size_label hint.
 	let sizeLine: string;
@@ -388,7 +388,7 @@ function DownloadConfirmationContent({
 	};
 	const displayName = info?.displayName ?? pending?.modelId ?? "";
 	// Exact HF download bytes for the selected quantization — baked into the
-	// catalog by `examples/winstt-electron/server/scripts/refresh_catalog.py`. Zero when the catalog hasn't
+	// catalog by `refresh_catalog.py`. Zero when the catalog hasn't
 	// covered this variant (custom models, fresh entries before next refresh).
 	const catalogBytes = info?.sizeBytesByQuantization?.[targetQuant] ?? 0;
 	// Header label still uses the human-readable param-derived hint

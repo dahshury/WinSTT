@@ -5,7 +5,20 @@ description: The Text-to-Speech settings section — enable, pick a voice and sp
 
 The **Text-to-Speech** section turns selected text into speech with the local Kokoro-82M ONNX model — 54 voices across 9 languages, all on-device.
 
-<Screenshot src="section-tts" alt="The Text-to-Speech settings section with an enable toggle, a voice picker, a speed slider, and a speak hotkey field." chrome="card" label="Settings — Text-to-Speech" />
+<StatGrid>
+  <Stat value="54" label="Voices" />
+  <Stat value="9" label="Languages" />
+  <Stat value="~190 MB" label="On-demand pack" />
+  <Stat value="0.5–2.0x" label="Speed range" />
+</StatGrid>
+
+<Screenshot
+  src="section-tts"
+  alt="The Text-to-Speech settings section with an enable toggle, a voice picker, a speed slider, and a speak hotkey field."
+  chrome="card"
+  label="Settings — Text-to-Speech"
+  caption="Enable, pick a voice and speed, and bind a speak hotkey — all in one panel."
+/>
 
 This page is the quick settings reference. For the full walkthrough — voice catalog, previews, playback flow, and troubleshooting — see the [Text-to-Speech guide](/docs/text-to-speech).
 
@@ -48,9 +61,32 @@ This page is the quick settings reference. For the full walkthrough — voice ca
 ## On-demand voice pack
 
 The Kokoro assets ship **separately** from the installer and download once on first enable,
-then cache indefinitely. Total is **~190 MB**: a ~50 MB engine pack, the ~100 MB Kokoro
-model, and ~40 MB of voicepacks. An install banner under the controls shows phase and
-percent and lets you **pause**, **resume**, or **cancel**.
+then cache indefinitely. Total is **~190 MB**, split across three parts:
+
+<ModelTable
+  head={["Part", "Size"]}
+  numeric={[1]}
+  rows={[
+    ["Engine pack", "~50 MB"],
+    ["Kokoro model", "~100 MB"],
+    ["Voicepacks", "~40 MB"],
+    [<strong>Total</strong>, <strong>~190 MB</strong>],
+  ]}
+  caption="The voice pack downloads once on first enable, then caches indefinitely."
+/>
+
+An install banner under the controls shows phase and percent while the pack downloads,
+with three controls:
+
+<ModelTable
+  head={["Control", "What it does"]}
+  rows={[
+    ["Pause", "Halt the download in place — the partial file is kept so you can resume later."],
+    ["Resume", "Continue a paused download from where it stopped."],
+    ["Cancel", "Abort and discard the in-flight download."],
+  ]}
+  caption="The Enable toggle stays disabled while a download is in flight."
+/>
 
 <Callout type="info" title="Downloaded once">
   Audio is synthesized fully on-device — nothing is sent to the cloud. After the first
@@ -77,7 +113,7 @@ percent and lets you **pause**, **resume**, or **cancel**.
   <Card title="Hotkeys" href="/docs/settings/general">
     Bind the speak-selection combo and the rest of WinSTT's shortcuts.
   </Card>
-  <Card title="LLM cleanup" href="/docs/settings/llm">
+  <Card title="LLM cleanup" href="/docs/settings/quality#llm-cleanup">
     Reshape dictation with tone presets and custom modifiers.
   </Card>
 </Cards>

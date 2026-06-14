@@ -1,41 +1,38 @@
 ---
 title: Dictation
-description: The core record → transcribe → optional LLM cleanup → paste loop — press your hotkey, speak, and the text lands at your cursor in any app.
+description: Press your hotkey (or just speak) and WinSTT drops polished text at your cursor. The four modes — Push-to-Talk, Toggle, Listen, and Wake Word — decide what starts a recording; everything after is identical.
 ---
 
 Press your hotkey, speak, and WinSTT pastes the polished text straight into whatever you
 were typing in — a chat box, an editor, a terminal, a search bar. Everything between the
-hotkey and the paste happens on your machine.
+trigger and the paste happens on your machine.
 
 <Screenshot
   src="main"
   alt="The WinSTT main window: a 9-band audio visualizer with the active hotkey, microphone, and model shown in the footer."
   label="WinSTT — main window"
-  caption="The footer shows your active hotkey, input device, and model. Press the hotkey from anywhere — WinSTT doesn't need focus."
+  caption="The footer shows your active hotkey, input device, and model. Trigger it from anywhere — WinSTT doesn't need focus."
 />
 
 ## The dictation loop
 
-Every recording mode — <ModeBadge mode="ptt" />, <ModeBadge mode="toggle" />,
-
-<ModeBadge mode="listen" />, and <ModeBadge mode="wakeword" /> — runs the same
-four steps. Only the start trigger differs; the transcribe → cleanup → paste
-tail is identical.
+Whatever starts a recording — a held key, a tapped key, your speakers, or a spoken
+keyword — every mode runs the same four steps. Only the **start trigger** differs; the
+transcribe → optional cleanup → paste tail is identical.
 
 <Video
   src="dictation-loop"
   chrome="card"
-  alt="A WinSTT workflow diagram showing the hotkey trigger, live preview, final accurate pass, and paste delivery at the cursor."
+  alt="A WinSTT workflow diagram showing the trigger, live preview, final accurate pass, and paste delivery at the cursor."
+  label="The dictation loop"
   caption="Every mode shares the same tail: preview, final pass, optional cleanup, paste."
 />
 
 <StepFlow>
   <Step title="Trigger a recording">
-    Press your **Push-to-Talk** hotkey (default <Combo keys="LCtrl+LMeta" />
-    ). In push-to-talk you hold it; in toggle you tap to start; in wake-word you
-    say the keyword; in listen WinSTT captures system audio. A short chime
-    confirms the start (off in listen/wake-word modes), and the recording
-    overlay appears.
+    Hold your **Push-to-Talk** key, **tap** the toggle key, **say** the wake word,
+    or let **Listen** mode capture system audio. A short chime confirms the start
+    (off in Listen / Wake Word modes), and the recording overlay appears.
   </Step>
   <Step title="Speak — watch the live preview">
     A small, fast realtime model streams a rough preview of your words as you
@@ -45,16 +42,16 @@ tail is identical.
     <a href="#live-transcription-display">Live-transcription display</a>).
   </Step>
   <Step title="Stop">
-    **Release** the key (push-to-talk), **press again** (toggle), or just **stop
+    **Release** the key (Push-to-Talk), **press again** (Toggle), or just **stop
     talking** — the Smart Endpoint and post-speech silence timer end the
     utterance automatically after `0.7s` of silence (default). The overlay shows
     a brief "thinking" state while the main, accurate model produces the final
     transcription.
   </Step>
   <Step title="(Optional) LLM cleanup, then paste">
-    If you've enabled [LLM cleanup](/docs/settings/llm), the final text runs
+    If you've enabled [LLM cleanup](/docs/settings/quality#llm-cleanup), the final text runs
     through your chosen modifier (tone, translate, custom) before delivery.
-    WinSTT then pastes the result at your cursor — and optionally presses Enter
+    WinSTT then drops the result at your cursor — and optionally presses Enter
     to submit.
   </Step>
 </StepFlow>
@@ -65,43 +62,178 @@ tail is identical.
   mode without opening settings.
 </Callout>
 
-## How text gets pasted
+## The four recording modes
 
-WinSTT delivers text the same way a fast typist's clipboard does, and falls back when an
-app refuses the clipboard.
+A recording mode decides **what starts a recording** — a held key, a tapped key, your
+speakers, or a spoken keyword. All four share a single pipeline and **one paste
+endpoint**, so switching modes never changes transcription quality, only the way you kick
+it off. Set the mode under [General Settings](/docs/settings/general).
 
-<StepFlow>
-  <Step title="Clipboard + atomic Ctrl+V (primary)">
-    WinSTT puts the transcription on the clipboard, fires a single{" "}
-    <Combo keys="Ctrl+V" />, then restores your previous clipboard contents.
-    This is one atomic paste — the whole sentence appears at once, matching the
-    behavior users expect from modern dictation tools. No more "typing bit by bit."
-  </Step>
-  <Step title="Per-character injection (fallback)">
-    If an app blocks programmatic paste, WinSTT types the text
-    character-by-character through the platform's synthetic text-input path.
-    On Windows, that path uses Unicode key events (`KEYEVENTF_UNICODE`).
-    Slower, but it works in fields that reject <Combo keys="Ctrl+V" />.
-  </Step>
-</StepFlow>
+<SettingRow label="Recording Mode" settingKey="general.recordingMode" default="ptt">
+  Selects the trigger strategy: **Push-to-Talk**, **Toggle**, **Listen**, or **Wake
+  Word**. The mode only governs the start (and, for some modes, the stop) trigger — the
+  downstream transcription and paste are identical across all four.
+</SettingRow>
 
-<Callout type="info" title="Paste guard">
-  WinSTT suppresses the synthetic keystrokes it injects for ~50 ms so its own
-  <Combo keys="Ctrl+V" /> doesn't re-trigger your push-to-talk combo. You never
-  see this; it just means dictation won't recurse on itself.
+### Push-to-Talk
+
+<ModeDemo
+  mode="ptt"
+  caption="Hold to record, release to transcribe — the clip lasts exactly as long as you hold the key."
+/>
+
+The default mode, and the most predictable. **Hold** the hotkey, speak, **release** to
+stop — the recording lasts exactly as long as you hold the key. There's no silence
+detection on the stop side, so a release triggers an immediate, fast finalize. One press
+authorizes exactly one recording, then clears.
+
+Push-to-Talk is also the only mode that **bypasses the speech-onset debounce** (see
+[below](#why-the-other-modes-wait-a-beat)) — because holding the key already declares
+intent, there's no noise to gate.
+
+<SettingRow label="Push-to-Talk Hotkey" settingKey="hotkey.pushToTalkKey" default="LCtrl+LMeta">
+  The key (or combo) you hold to record. Captured via the global keyboard hook, so it
+  works in any focused app. Change it on the [Hotkeys](/docs/settings/hotkey) page; it
+  updates at runtime without a restart.
+</SettingRow>
+
+**Best for:** quick bursts, voice commands, and noisy rooms where automatic voice
+detection would false-trigger.
+
+### Toggle
+
+<ModeDemo
+  mode="toggle"
+  caption="Tap once to open a hands-free session that records turn after turn; tap again to close it."
+/>
+
+Tap the hotkey once to open a **continuous session** and tap again to close it — between
+those two taps, WinSTT records utterance after utterance hands-free. After you stop
+talking it finalizes the turn on silence; when you start again it opens the next recording
+automatically. The recording pill stays up for the whole session, not just the first
+sentence.
+
+<SettingRow label="Manual Toggle Stop" settingKey="general.manualToggleStop" default="false">
+  When on, **disables** silence-based endpoint detection so the session records
+  continuously from the first tap to the second — nothing stops a turn but you. Good for
+  long-form dictation with long natural pauses; with it off, each pause ends a turn.
+</SettingRow>
+
+**Best for:** hands-free long-form dictation, dictating with natural pauses, or capturing
+a stretch of speech without holding a key.
+
+### Listen
+
+<ModeDemo
+  mode="listen"
+  caption="No hotkey — system audio streams into a rolling, optionally speaker-labeled subtitle feed."
+/>
+
+Listen mode captures **system audio** — what comes out of your speakers — over a WASAPI
+loopback device, then streams a rolling, continuously-transcribed subtitle feed. There's
+no hotkey; it runs as soon as the mode is active and a loopback device is selected. It uses
+the **realtime model only**, and caps each utterance at 15 seconds so the feed never stalls
+on a long monologue.
+
+<Screenshot src="settings-general-listen" alt="The General tab in Listen mode, showing the loopback device picker and the Speaker Diarization toggle that replace the microphone controls." label="Settings — General (Listen)" chrome="card" caption="Microphone controls swap for a loopback picker and a diarization toggle." />
+
+<SettingRow label="Loopback Device" settingKey="general.loopbackDeviceIndex" default="null" startupOnly>
+  The WASAPI loopback (system-audio) device to capture from. You need a loopback source
+  available — many sound cards expose one, or install a virtual cable such as VB-Audio
+  Virtual Cable. The standard microphone **Input Device** picker is hidden in this mode.
+</SettingRow>
+
+<SettingRow label="Speaker Diarization" settingKey="general.speakerDiarization" default="false">
+  Labels each line of the subtitle feed with a speaker (Speaker 1, Speaker 2…). Toggles
+  **at runtime** — no restart, and it even applies to an in-flight session.
+</SettingRow>
+
+<Callout type="warn" title="A loopback device is required">
+  Listen mode can't start without a loopback source. If none is available, the device
+  picker is empty and the mode has nothing to capture — pick a real microphone mode or
+  install a virtual cable first. The loopback device is read at startup, so changing it
+  needs a server restart.
 </Callout>
+
+**Best for:** transcribing meetings, calls, videos, and anything else playing through your
+speakers.
+
+### Wake Word
+
+<ModeDemo
+  mode="wakeword"
+  caption="Fully hands-free — say the keyword (Alexa, Computer, Jarvis…) and it arms a recording instantly."
+/>
+
+Wake Word mode listens continuously for a spoken keyword and starts recording the instant
+it hears one — fully hands-free, no hotkey. After detection it records a turn and ends it
+on silence (the same way Toggle does), then goes back to waiting for the keyword. WinSTT
+picks the detection backend automatically (a composite of **Porcupine** and
+**openWakeWord**) based on the chosen keyword.
+
+<Screenshot src="settings-general-wakeword" alt="The General tab in Wake Word mode, showing the wake-word selector, sensitivity slider, and detection-timeout controls." label="Settings — General (Wake Word)" chrome="card" caption="Exposes the keyword, sensitivity, and a post-trigger timeout." />
+
+<SettingRow label="Wake Word" settingKey="general.wakeWord" default="alexa">
+  The keyword that arms a recording — for example **Alexa**, **Computer**, **Jarvis**, or
+  **Hey Google**. The right backend (Porcupine or openWakeWord) is selected automatically
+  for the chosen word.
+</SettingRow>
+
+<SettingRow label="Wake Word Sensitivity" settingKey="general.wakeWordSensitivity" default="0.6" startupOnly>
+  How eager the detector is, from 0 to 1. Higher catches the keyword more reliably but
+  raises false triggers; lower is stricter. Each engine clamps the value internally.
+</SettingRow>
+
+<SettingRow label="Wake Word Timeout" settingKey="general.wakeWordTimeout" default="5" startupOnly>
+  Seconds (1–30) the recording stays armed after the keyword fires before it gives up and
+  returns to listening. This is independent of the per-utterance silence timer.
+</SettingRow>
+
+<Callout type="warn" title="Wake-word settings apply at startup">
+  The keyword, its sensitivity, and the timeout are read when the detection engine loads.
+  Changing any of them needs a server restart to take effect.
+</Callout>
+
+**Best for:** fully hands-free, always-on voice activation across the room.
+
+## Why the other modes wait a beat
+
+Toggle, Listen, and Wake Word all start a turn from *audio*, so a cough or a door slam
+could pop the pill and wake the model for nothing. To prevent that, those modes gate the
+start behind a short **speech-onset debounce** — the pipeline waits for a few consecutive
+speech chunks (default **3**) before it commits to a recording. **Push-to-Talk skips this
+gate entirely**, since holding the key is already an explicit signal of intent.
+
+The post-speech silence window then governs how long a pause must run before a turn ends —
+but only for the modes that stop on silence:
+
+<ModelTable
+  head={["Mode", "Silence timing role"]}
+  rows={[
+    ["Push-to-Talk", "Unused. Releasing the key triggers an immediate, fast stop."],
+    ["Toggle", "Active — ends each turn after the silence window. Disabled when Manual Toggle Stop is on."],
+    ["Listen", "Active — segments the continuous loopback feed into turns."],
+    ["Wake Word", "Active after the keyword fires — ends the turn the same way Toggle does."],
+  ]}
+  caption="Tune the window itself in Audio settings; when Smart Endpoint is on, its classifier supersedes the fixed timers."
+/>
+
+Lower silence values make WinSTT react faster to pauses but can clip speech with natural
+breaks; higher values tolerate longer pauses at the cost of a later finalize. When
+[Smart Endpoint](/docs/settings/quality) is enabled, a sentence classifier decides when a
+turn is complete instead of the fixed timers.
+
+## After the paste
+
+WinSTT drops the finished text at your cursor as one block — the whole sentence appears at
+once, the way modern dictation tools behave. Two optional behaviors round out delivery.
 
 ### Auto-submit after paste
 
 Found under **Settings → General → Paste Behavior**. Off by default to preserve the
 classic "paste and let me review" behavior.
 
-<Video
-  src="auto-submit"
-  chrome="card"
-  alt="A dictated message lands in a chat box, then WinSTT presses Enter and the message sends on its own."
-  caption="After the paste lands, WinSTT presses Enter and the message sends."
-/>
+<AutoSubmitDemo caption="The dictated message lands in the chat field, then WinSTT presses Enter — and it sends on its own." />
 
 <SettingRow
   label="Auto-Submit After Paste"
@@ -134,8 +266,7 @@ without speaking again.
   default="LCtrl+LShift+V"
 >
   An **exclusive** global shortcut (it swallows the combo system-wide) that
-  re-pastes your last transcription via the same clipboard +{" "}
-  <Combo keys="Ctrl+V" /> path as dictation. Silent if nothing has been
+  re-pastes your last transcription at your cursor. Silent if nothing has been
   transcribed yet. Set it to empty to disable. If it collides with your
   push-to-talk key it's reset to default at startup.
 </SettingRow>
@@ -251,15 +382,14 @@ available.
 ## Related
 
 <Cards>
-  <Card title="Recording modes" href="/docs/recording-modes">
-    Push-to-talk, toggle, listen, and wake-word — the four ways to trigger this
-    loop.
-  </Card>
   <Card title="Hotkeys & overlay" href="/docs/settings/hotkey">
     Rebind push-to-talk, re-paste, and TTS; tune the overlay layout and
     visualizer.
   </Card>
-  <Card title="LLM cleanup" href="/docs/settings/llm">
+  <Card title="Audio settings" href="/docs/settings/audio">
+    Input device, microphone release policy, and the post-speech silence window.
+  </Card>
+  <Card title="LLM cleanup" href="/docs/settings/quality#llm-cleanup">
     Reshape the transcription with tone presets, translate, and custom
     modifiers.
   </Card>

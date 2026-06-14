@@ -3,13 +3,13 @@ title: File Transcription
 description: Drag an audio or video file onto WinSTT — or pick one from the tray — and get a plain-text or timestamped SRT transcript next to it. Uses your main model, fully offline.
 ---
 
+import { ShowcaseFileTranscribe } from "@/components/file-transcribe-showcase";
+
 Drop an existing recording onto WinSTT and it transcribes the whole file in one
 pass, writing the text to a `.txt` or `.srt` file beside the source — no dictation,
 no hotkey, same on-device model you use for live dictation.
 
-<Video src="transcribe-file" chrome="card" alt="An interview.mp3 is dragged into a drop zone, a progress bar fills, and interview.srt appears beside it." caption="Drag in an audio file; a timestamped .srt is written right beside it." />
-
-<Screenshot src="sec-quality-filetx" alt="The File Transcription section of the Processing tab: a Format switcher between TXT and SRT and a save-location choice." chrome="card" caption="The File Transcription format lives in the Processing tab — TXT for plain text, SRT for timestamped subtitles." />
+<ShowcaseFileTranscribe />
 
 ## Two ways to start
 
@@ -51,6 +51,14 @@ format" message.
 ## Output format
 
 One setting, in the **Processing** tab, decides what gets written.
+
+<Screenshot
+  src="sec-quality-filetx"
+  alt="The File Transcription section of the Processing tab: a Format switcher between TXT and SRT and a save-location choice."
+  chrome="card"
+  label="Processing tab — File Transcription"
+  caption="The format switcher lives in the Processing tab — TXT for plain text, SRT for timestamped subtitles."
+/>
 
 <SettingRow label="File Transcription Format" settingKey="general.fileTranscriptionFormat" default="txt">
   **TXT** writes the transcript as plain text. **SRT** writes SubRip subtitles with

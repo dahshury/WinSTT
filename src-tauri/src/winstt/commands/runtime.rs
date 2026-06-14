@@ -2,7 +2,6 @@
 //   frontend/src/shared/api/ipc-client.ts (fetchRuntimeInfo / fetchModelsWithState /
 //     assessDictationFit / assessOllamaFitOnServer + the RuntimeInfoPayload /
 //     ModelsWithStatePayload / FitAssessmentEntry shapes)
-//   + frontend/electron/ipc/stt-runtime.ts / stt-models.ts (the channel handlers)
 //   + server/src/recorder/infrastructure/model_state.py + fit_assessment.py.
 //
 // The runtime / fitness command surface for the picker. These read the catalog + the loaded-model

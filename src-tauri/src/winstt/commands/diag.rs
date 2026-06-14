@@ -1,4 +1,4 @@
-// Reference: frontend/electron/ipc/diag-bundle.ts. No manager — reads logs + zips them.
+// No manager — reads logs + zips them.
 //
 // The About panel's "Open logs folder" / "Save diagnostic bundle" actions map to:
 //   diag_open_logs_folder -> DiagOpenLogsFolderResult { ok, error?, path? }

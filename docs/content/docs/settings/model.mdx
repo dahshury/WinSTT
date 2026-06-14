@@ -3,21 +3,42 @@ title: Model
 description: Choose the speech-to-text model, quantization, and device — plus the realtime preview model and one-pass translation to English.
 ---
 
-The **Model** tab is where you pick the engine that turns your speech into text. It also
-configures the smaller model used for the live preview.
+The **Model** tab is where you pick the engine that turns your speech into text. It runs
+two models: a large one for the final, accurate pass, and a smaller one for the live
+preview you see while you speak.
+
+<StatGrid>
+  <Stat value="40+" label="Models across 8 families" />
+  <Stat value="5" label="Quantization formats" />
+  <Stat value="2" label="Models (final + preview)" />
+  <Stat value="Local" label="Default source" />
+</StatGrid>
 
 ## Main model
 
 The main model runs the **final, accurate** transcription pass — the text that actually
 gets pasted. Everything in this section configures it.
 
-<Video src="model-picker-flow" chrome="card" alt="The model picker opens with model rows, quantization badges, and a download progress bar moving in the background." caption="Search the catalog, pick a quantization, and let model downloads stream in the background." />
-
-<Screenshot src="sec-model-main" alt="The Main Model section: a Local/Cloud source toggle, the model selector, language, device, model-unload timeout, and a Translate to English switch." chrome="card" caption="The Main Model section controls every part of the final transcription pass." />
+<MediaGrid cols={2}>
+  <Video
+    src="model-picker-flow"
+    chrome="card"
+    alt="The model picker opens with model rows, quantization badges, and a download progress bar moving in the background."
+    label="Picking a model"
+    caption="Search the catalog, pick a quantization, and let downloads stream in the background."
+  />
+  <Screenshot
+    src="sec-model-main"
+    chrome="card"
+    alt="The Main Model section: a Local/Cloud source toggle, the model selector, language, device, model-unload timeout, and a Translate to English switch."
+    label="Main Model section"
+    caption="Source, model, language, device, unload timeout, and Translate to English."
+  />
+</MediaGrid>
 
 <SettingRow label="Source" settingKey="model.model" default="Local">
   Run transcription **locally** (on-device ONNX models) or via a **cloud** provider
-  (OpenAI Whisper, ElevenLabs). Cloud is locked until you add an API key in
+  (ElevenLabs, OpenRouter). Cloud is locked until you add an API key in
   [Integrations](/docs/settings/integrations). Removing a cloud key silently reverts to
   your last local model.
 </SettingRow>
@@ -83,7 +104,13 @@ The realtime model powers the **live preview** that appears while you speak. It 
 smaller, faster model so words show up instantly; the main model still produces the final
 text.
 
-<Screenshot src="section-realtime" alt="The Realtime Model section with a model selector and an update-interval stepper." chrome="card" />
+<Screenshot
+  src="section-realtime"
+  chrome="card"
+  alt="The Realtime Model section with a model selector and an update-interval stepper."
+  label="Realtime Model section"
+  caption="A smaller model and an update-interval stepper drive the live preview."
+/>
 
 <SettingRow label="Realtime Model" settingKey="model.realtimeModel" default="tiny">
   Any model under ~700M parameters. If your **main** model is already small enough to run
@@ -109,10 +136,10 @@ text.
   <Card title="Compute & quantization" href="/docs/models/compute-types">
     What CPU, DirectML, and OpenVINO mean — and how to read the quantization labels.
   </Card>
-  <Card title="LLM cleanup" href="/docs/settings/llm">
+  <Card title="LLM cleanup" href="/docs/settings/quality#llm-cleanup">
     Reshape the transcribed text with tone presets and custom modifiers.
   </Card>
   <Card title="Cloud STT" href="/docs/settings/integrations">
-    Use OpenAI or ElevenLabs instead of a local model.
+    Use ElevenLabs or OpenRouter instead of a local model.
   </Card>
 </Cards>

@@ -23,7 +23,7 @@ import {
  *
  * `isRecordingActive` is deliberately NOT reset here. The main process sends
  * STT_RECORDING_START *before* it calls `showOverlay()` (see
- * `runAdmittedRecordingStart` in electron/ipc/relay.ts), so the renderer
+ * `runAdmittedRecordingStart`), so the renderer
  * almost always processes that arming IPC — setting `isRecordingActive = true`
  * — BEFORE the OS delivers `visibilitychange` (which is gated on a compositor
  * pass). Resetting the flag to `false` here therefore clobbered the

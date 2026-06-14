@@ -5,9 +5,19 @@ description: Pick your input and output devices, tune the dual-VAD pipeline that
 
 The **Audio** tab controls how WinSTT captures sound and decides when speech starts and stops — the microphone it listens on, the two voice-activity detectors that gate recording, and the timing knobs around them.
 
+<StatGrid>
+  <Stat value="2" label="VAD stages (AND logic)" />
+  <Stat value="0.7" label="Silero default sensitivity" />
+  <Stat value="0.7 s" label="Post-speech silence" />
+  <Stat value="1.0 s" label="Pre-recording buffer" />
+</StatGrid>
+
 ## Devices
 
-<Screenshot src="sec-audio-input" alt="The Audio tab's input section: the microphone Input Device picker above the Silero and WebRTC voice-activity sliders." chrome="card" caption="Input device and the dual-VAD sliders that gate recording." />
+<MediaGrid cols={2}>
+  <Screenshot src="sec-audio-input" alt="The Audio tab's input section: the microphone Input Device picker above the Silero and WebRTC voice-activity sliders." chrome="card" label="Input section" caption="Input device above the dual-VAD sliders that gate recording." />
+  <Screenshot src="device-picker" alt="An open audio device picker dropdown listing the system default microphone followed by the enumerated capture devices." chrome="card" label="Device picker" caption="The system default lists first, then every enumerated device." />
+</MediaGrid>
 
 <SettingRow label="Input Device" settingKey="audio.inputDeviceIndex" default="System default">
   The microphone WinSTT records from. The list is the system default plus every enumerated
@@ -16,9 +26,7 @@ The **Audio** tab controls how WinSTT captures sound and decides when speech sta
   instead (see [General](/docs/settings/general)).
 </SettingRow>
 
-<Screenshot src="device-picker" alt="An open audio device picker dropdown listing the system default microphone followed by the enumerated capture devices." chrome="card" caption="The device picker lists the system default first, then every enumerated device." />
-
-<Screenshot src="sec-audio-output" alt="The Audio tab's Output Device picker, where start/stop chimes and text-to-speech play back." chrome="card" caption="The output device for chimes and text-to-speech." maxWidth={620} />
+<Screenshot src="sec-audio-output" alt="The Audio tab's Output Device picker, where start/stop chimes and text-to-speech play back." chrome="card" label="Output device" caption="The output device for chimes and text-to-speech." maxWidth={620} />
 
 <SettingRow label="Output Device" settingKey="general.outputDeviceId" default="System default">
   Where start/stop chimes and text-to-speech play. Only shown when the recording sound or TTS
@@ -102,13 +110,22 @@ WinSTT also keeps a short **pre-recording buffer** — a 1.0-second ring of audi
 buffer back-fills the first syllable so the start of your sentence isn't lost. It's fixed at
 1.0 s and not exposed as a UI control.
 
-<Callout type="info" title="Two settings live in the schema but not the UI">
-  `audio.minGapBetweenRecordings` (default `0`) was reserved for a future minimum-pause feature
-  and is never enforced. `audio.extraRecordingBufferMs` (default `0`, range 0–2000 ms) would
-  capture extra audio after a user-driven stop to catch trailing syllables, but it isn't surfaced
-  as a control yet either. `audio.sampleRate` (16,000 Hz, Whisper-native) and `audio.bufferSize`
-  (512 frames) are low-level infrastructure pinned for stability — don't expect them in the UI.
+<Callout type="info" title="These settings live in the schema but not the UI">
+  Four audio keys exist in the schema with no UI control — reserved for future features or pinned
+  for stability.
 </Callout>
+
+<ModelTable
+  dense
+  head={["Setting key", "Default", "Status"]}
+  rows={[
+    ["audio.minGapBetweenRecordings", "0", "Reserved for a minimum-pause feature; never enforced."],
+    ["audio.extraRecordingBufferMs", "0 (range 0–2000 ms)", "Would capture extra audio after a user-driven stop to catch trailing syllables; not surfaced yet."],
+    ["audio.sampleRate", "16,000 Hz", "Whisper-native; low-level infrastructure pinned for stability."],
+    ["audio.bufferSize", "512 frames", "Low-level infrastructure pinned for stability."],
+  ]}
+  caption="Schema-only audio keys with no UI control."
+/>
 
 ## Microphone lifecycle
 

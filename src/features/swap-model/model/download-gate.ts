@@ -1,10 +1,10 @@
-// Deep-import the lightweight cache helpers (not the `@picker` barrel) so this
+// Deep-import the lightweight cache helpers (not the `@/widgets/model-picker` barrel) so this
 // main-window-reachable feature doesn't drag the whole model-picker UI into the
 // main entry chunk via the barrel re-export.
 import {
 	resolveEffectiveQuant,
 	resolveQuantCache,
-} from "@picker/stt/lib/cache-helpers";
+} from "@/widgets/model-picker/stt/lib/cache-helpers";
 import {
 	assessDictationFitClient,
 	useSystemResourcesStore,

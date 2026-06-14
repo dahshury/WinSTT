@@ -607,8 +607,17 @@
     "conflictOtherTts": "Text-to-speech"
   },
   "dictionary": {
+    "encoderTitle": "On-device dictionary model",
+    "encoderDescription": "Without LLM cleanup, the dictionary uses a small on-device model to correct your terms in context. Download it once (~310 MB) to turn this on.",
+    "encoderDownload": "Download model (~310 MB)",
+    "encoderDownloading": "Downloading…",
+    "encoderPaused": "Paused",
+    "encoderPause": "Pause",
+    "encoderResume": "Resume",
+    "encoderReady": "On-device model ready — the dictionary works without LLM cleanup.",
+    "requiresCleanup": "Dictionary and snippets are applied by the LLM during cleanup. Turn on dictation cleanup in Processing to use them.",
     "title": "Dictionary",
-    "description": "Teach Whisper your names, jargon, and domain terms. When a transcribed word is phonetically close to one of these entries it's snapped to the canonical spelling automatically.",
+    "description": "Teach the LLM cleanup pass your names, jargon, and domain terms. During cleanup the model fixes mis-transcribed words to your canonical spellings, using context so real words like \"video\" aren't changed. Requires dictation cleanup.",
     "term": "Term",
     "termPlaceholder": "Add a name, brand, or term...",
     "replacement": "Replace with",

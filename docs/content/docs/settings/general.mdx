@@ -7,6 +7,13 @@ The **General** tab is where you choose how recording is triggered, how WinSTT l
 you dictate, and how it starts at sign-in. It is the busiest settings tab — and several
 controls appear or hide depending on the recording mode you pick.
 
+<StatGrid>
+  <Stat value="3" label="Sections — Recording, Display, Startup" />
+  <Stat value="4" label="Recording modes" />
+  <Stat value="5" label="Visualizer styles" />
+  <Stat value="6" label="Display languages, fully translated" />
+</StatGrid>
+
 ## Recording
 
 This section sets the trigger strategy and the feedback you get while dictating. The first
@@ -19,7 +26,7 @@ control swaps the rest of the section in and out.
   <ModeBadge mode="listen" /> <ModeBadge mode="wakeword" />. Push-to-talk holds to record;
   toggle starts/stops on a tap; listen transcribes system audio from a loopback device;
   wake word arms a keyword detector. Switching mode shows or hides the mode-specific
-  controls below. See [Recording modes](/docs/recording-modes) for when to use each.
+  controls below. See [Recording modes](/docs/dictation) for when to use each.
 </SettingRow>
 
 <SettingRow label="Manual Toggle Stop" settingKey="general.manualToggleStop" default="false">
@@ -189,9 +196,8 @@ How WinSTT behaves at sign-in and when you close the window.
 </SettingRow>
 
 <Callout type="restart">
-  Toggling **Send Crash Reports** takes effect on the next launch. Sentry's `init()` can't be
-  cleanly reversed at runtime, so both the renderer and main process read this flag once at
-  startup.
+  Toggling **Send Crash Reports** takes effect on the next launch — crash reporting is
+  switched on or off once when WinSTT starts and can't be changed mid-session.
 </Callout>
 
 ## Related General settings on other tabs
@@ -199,17 +205,22 @@ How WinSTT behaves at sign-in and when you close the window.
 A handful of controls live under the same `general.*` schema but are surfaced on the tab
 that fits them best:
 
-| Setting | Key | Default | Where it lives |
-|---|---|---|---|
-| Auto-submit after paste | `general.autoSubmit` | `false` | [Quality](/docs/settings/quality) |
-| Auto-submit key | `general.autoSubmitKey` | `enter` | [Quality](/docs/settings/quality) |
-| Context awareness | `general.contextAwareness` | `false` | [Quality](/docs/settings/quality) |
-| Context deny-list | `general.contextDenyList` | 6 password managers | [LLM cleanup](/docs/settings/llm) |
-| History max entries | `general.historyMaxEntries` | `1000` | [History](/docs/transcription-history) |
-| Recording retention | `general.recordingRetention` | `cap` | [History](/docs/transcription-history) |
-| Word-correction threshold | `general.wordCorrectionThreshold` | `0.18` | [Dictionary](/docs/dictionary) |
-| Pre-release updates | `general.receivePrereleaseUpdates` | `false` | About tab |
-| Output device | `general.outputDeviceId` | system default | [Audio](/docs/settings/audio) |
+<ModelTable
+  dense
+  head={["Setting", "Key", "Default", "Where it lives"]}
+  rows={[
+    ["Auto-submit after paste", <code>general.autoSubmit</code>, <code>false</code>, <a href="/docs/settings/quality">Quality</a>],
+    ["Auto-submit key", <code>general.autoSubmitKey</code>, <code>enter</code>, <a href="/docs/settings/quality">Quality</a>],
+    ["Context awareness", <code>general.contextAwareness</code>, <code>false</code>, <a href="/docs/settings/quality">Quality</a>],
+    ["Context deny-list", <code>general.contextDenyList</code>, "6 password managers", <a href="/docs/settings/quality#llm-cleanup">LLM cleanup</a>],
+    ["History max entries", <code>general.historyMaxEntries</code>, <code>1000</code>, <a href="/docs/transcription-history">History</a>],
+    ["Recording retention", <code>general.recordingRetention</code>, <code>cap</code>, <a href="/docs/transcription-history">History</a>],
+    ["Word-correction threshold", <code>general.wordCorrectionThreshold</code>, <code>0.18</code>, <a href="/docs/dictionary">Dictionary</a>],
+    ["Pre-release updates", <code>general.receivePrereleaseUpdates</code>, <code>false</code>, "About tab"],
+    ["Output device", <code>general.outputDeviceId</code>, "system default", <a href="/docs/settings/audio">Audio</a>],
+  ]}
+  caption="general.* keys surfaced on the tab that fits them best."
+/>
 
 A few highlights, with their gotchas:
 
@@ -269,7 +280,7 @@ confirmation dialog.
 ## Related
 
 <Cards>
-  <Card title="Recording modes" href="/docs/recording-modes">
+  <Card title="Recording modes" href="/docs/dictation">
     Push-to-talk, toggle, listen, and wake word explained in depth, with the controls each one
     unlocks.
   </Card>

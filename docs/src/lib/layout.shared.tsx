@@ -38,6 +38,9 @@ export function baseOptions(): BaseLayoutProps {
         text: "Documentation",
         url: "/docs",
         active: "nested-url",
+        // Top-nav only — the sidebar already has the "WinSTT" page-tree root
+        // pointing at /docs, so showing this in the sidebar menu duplicates it.
+        on: "nav",
       },
     ],
   };

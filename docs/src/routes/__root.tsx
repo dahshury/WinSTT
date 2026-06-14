@@ -27,18 +27,17 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: "stylesheet", href: appCss },
+      // fonttrio "startup" trio — Nunito (headings), Nunito Sans (body),
+      // Fira Code (mono). Loaded from Google Fonts; CSS vars in app.css.
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
       {
         rel: "preconnect",
-        href: "https://cdn.jsdelivr.net",
+        href: "https://fonts.gstatic.com",
         crossOrigin: "anonymous",
       },
       {
         rel: "stylesheet",
-        href: "https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/style.css",
-      },
-      {
-        rel: "stylesheet",
-        href: "https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-mono/style.css",
+        href: "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Nunito:wght@400;600;700;800;900&family=Nunito+Sans:wght@400;600;700&display=swap",
       },
     ],
   }),
@@ -106,7 +105,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body
         className="flex flex-col min-h-screen"
-        style={{ fontFamily: '"Geist", system-ui, -apple-system, sans-serif' }}
+        style={{ fontFamily: "var(--font-body)" }}
       >
         <RootProvider theme={{ enabled: false }}>{children}</RootProvider>
         <Scripts />

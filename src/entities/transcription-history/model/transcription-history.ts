@@ -1,8 +1,7 @@
 /**
- * Renderer-side mirror of the main-process `HistoryEntryRow` shape (see
- * `electron/ipc/history-store.ts`). Field names match the OpenAPI
- * `HistoryEntry` schema 1:1 so a future spec-driven refactor can swap this
- * for a generated type without touching call sites.
+ * Renderer-side mirror of the main-process `HistoryEntryRow` shape. Field names
+ * match the OpenAPI `HistoryEntry` schema 1:1 so a future spec-driven refactor
+ * can swap this for a generated type without touching call sites.
  */
 
 export type RecordingRetention =

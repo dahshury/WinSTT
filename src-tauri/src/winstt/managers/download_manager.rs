@@ -1,5 +1,5 @@
 // Models slice. Reference shapes:
-//   frontend/electron/ipc/stt-commands.ts + frontend/src/shared/api/ipc-client.ts
+//   frontend/src/shared/api/ipc-client.ts
 //     (predownload/pause/resume/cancel/delete + the model_download_start/progress/complete +
 //      model_cache_changed broadcasts — the EXACT renderer-facing IPC shapes)
 //   + frontend/src/features/model-download/* (per-quant keyed map, coalesced progress, optimistic

@@ -8,21 +8,44 @@ address" and WinSTT pastes `user@example.test`; say "sign off" and it drops in y
 full signature. The expansion happens on the server, after transcription, before the
 text reaches your cursor.
 
-<Video src="snippets" chrome="card" alt="A short trigger phrase being spoken and instantly expanding into the full text it stands for." caption="Say a short trigger (“my address”) — it expands into the full text." />
+<Video
+  src="snippets"
+  chrome="card"
+  alt="A short trigger phrase being spoken and instantly expanding into the full text it stands for."
+  label="Trigger → expansion"
+  caption="Say a short trigger (“my address”) — it expands into the full text."
+/>
 
-<Screenshot src="settings-snippets" alt="The Snippets settings panel: a Trigger and Expansion input row with an Add button, above a two-column table of saved snippets with the trigger in purple and a per-row delete button." label="Settings — Snippets" caption="Add a trigger/expansion pair, then watch the table fill with your saved snippets." />
+<StatGrid>
+  <Stat value="Every" label="Mode it applies to" />
+  <Stat value="Fuzzy" label="Trigger matching" />
+  <Stat value="0" label="Default snippets" />
+  <Stat value="No restart" label="To go live" />
+</StatGrid>
+
+<Screenshot
+  src="settings-snippets"
+  alt="The Snippets settings panel: a Trigger and Expansion input row with an Add button, above a two-column table of saved snippets with the trigger in purple and a per-row delete button."
+  label="Settings — Snippets"
+  caption="Add a trigger/expansion pair, then watch the table fill with your saved snippets."
+/>
 
 ## How it works
 
-Each snippet is a **trigger → expansion**
-pair. When a transcription comes back, the server scans it for any trigger and swaps the
-matched span for that trigger's expansion. Matching is **fuzzy**, so small transcription differences still fire:
-"my email address" still matches even if Whisper hears "my e-mail address".
+Each snippet is a **trigger → expansion** pair. When a transcription comes back, the
+server scans it for any trigger and swaps the matched span for that trigger's expansion.
+Matching is **fuzzy**, so small transcription differences still fire: "my email address"
+still matches even if Whisper hears "my e-mail address".
 
 Snippets run alongside (and after) [Dictionary](/docs/dictionary) corrections — the
 dictionary nudges individual mistranscribed words toward the right spelling, while
-snippets replace a whole phrase with arbitrary, longer text. The renderer only stores
-the plaintext pairs; all matching logic lives in the Rust backend.
+snippets replace a whole phrase with arbitrary, longer text. WinSTT stores the plaintext
+pairs locally and does all the matching on your device.
+
+<Callout type="success" title="Stays on your machine">
+  WinSTT stores only the plaintext trigger/expansion pairs, saved locally on your device.
+  Matching happens on-device during dictation — the pairs never leave your machine.
+</Callout>
 
 <Callout type="info" title="Where snippets apply">
   Expansion runs on **every** transcription, regardless of recording mode — push-to-talk,
@@ -105,9 +128,8 @@ This cannot be undone."*
 
 Snippets persist as an array under `settings.snippets`, each entry shaped
 `{ id, trigger, expansion }`. The default is an empty array on first run. Like every
-WinSTT setting, the array is written to disk by the Rust backend and applied to the
-in-process dictation pipeline — there's no save or apply button. The plaintext pairs
-never leave your machine.
+WinSTT setting, the array is saved locally and applied to dictation immediately — there's
+no save or apply button. The plaintext pairs never leave your machine.
 
 ## Related
 
@@ -116,13 +138,13 @@ never leave your machine.
     The companion feature: fuzzy term correction for names and jargon, plus the snippet
     entry-field reference.
   </Card>
-  <Card title="LLM cleanup" href="/docs/settings/llm">
+  <Card title="LLM cleanup" href="/docs/settings/quality#llm-cleanup">
     Reshape dictated text with tone presets and custom modifiers after transcription.
   </Card>
   <Card title="Processing (Quality)" href="/docs/settings/quality">
     Smart endpoint detection, realtime preview behavior, and context awareness.
   </Card>
   <Card title="Settings overview" href="/docs/settings">
-    All nine settings panels and where each feature lives.
+    All eight settings panels and where each feature lives.
   </Card>
 </Cards>

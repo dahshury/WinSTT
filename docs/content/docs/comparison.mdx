@@ -7,6 +7,20 @@ Most speech-to-text apps fall into two camps: **cloud dictation services** that 
 audio to a server for a monthly fee, and **local tools** that run on your machine. WinSTT is
 firmly in the second camp — and aims to be one of the most capable local-first desktop options.
 
+<StatGrid>
+  <Stat value="$0" label="one-time price (MIT)" />
+  <Stat value="40+" label="STT models, 8 families" />
+  <Stat value="0" label="bytes uploaded by default" />
+  <Stat value="100%" label="works offline" />
+</StatGrid>
+
+<Callout type="success" title="Your voice stays on your machine">
+  WinSTT processes audio in memory on your own hardware and discards it — nothing is
+  uploaded and there are no usage analytics. Cloud dictation apps stream every utterance
+  to a vendor server and bill monthly. You can still opt into a cloud provider per-feature
+  if you want, but it's never required.
+</Callout>
+
 ## WinSTT vs. cloud dictation
 
 The biggest decision is local vs. cloud. Cloud services (Wispr Flow, superwhisper's cloud
@@ -15,15 +29,15 @@ tier, and similar) are convenient but send your voice off-device and bill monthl
 <ModelTable
   head={["", "WinSTT", "Typical cloud dictation app"]}
   rows={[
-    ["Where audio is processed", "On your machine, in memory", "Uploaded to a server"]
-    ,["Works offline", "Yes — fully", "No"]
-    ,["Price", "Free, forever (MIT)", "Subscription (~$10–15/mo)"]
-    ,["Data ownership", "Never leaves your device", "Stored/processed by the vendor"]
-    ,["Model choice", "40+ models, swap any time", "Whatever the vendor runs"]
-    ,["Source code", "Open — fully auditable", "Closed"]
-    ,["Telemetry", "None (opt-out crash reports only)", "Usage analytics typical"]
+    ["Where audio is processed", "On your machine, in memory", "Uploaded to a server"],
+    ["Works offline", "Yes — fully", "No"],
+    ["Price", "Free, forever (MIT)", "Subscription (~$10–15/mo)"],
+    ["Data ownership", "Never leaves your device", "Stored/processed by the vendor"],
+    ["Model choice", "40+ models, swap any time", "Whatever the vendor runs"],
+    ["Source code", "Open — fully auditable", "Closed"],
+    ["Telemetry", "None (opt-out crash reports only)", "Usage analytics typical"],
   ]}
-  caption="Cloud capabilities vary by vendor and change over time — check each product. WinSTT can also call OpenAI/ElevenLabs as an opt-in cloud option if you want it."
+  caption="Cloud capabilities vary by vendor and change over time — check each product. WinSTT can also call ElevenLabs or OpenRouter as an opt-in cloud option if you want it."
 />
 
 <Callout type="success" title="The economics of local">
@@ -42,15 +56,15 @@ across desktop platforms.
 <ModelTable
   head={["Capability", "WinSTT", "Minimal local tools"]}
   rows={[
-    ["Platforms", "Windows / macOS Apple Silicon / Linux", "Windows / macOS / Linux"]
-    ,["STT models", "40+ across 8 families", "Whisper + Parakeet"]
-    ,["Recording modes", "Push-to-talk, toggle, listen, wake word", "Push-to-talk, toggle"]
-    ,["Listen mode (system audio)", "Yes — loopback capture + diarization", "No"]
-    ,["LLM text cleanup", "Yes — Ollama / OpenRouter / Apple", "No"]
-    ,["Text-to-speech", "Yes — Kokoro, 54 voices", "No"]
-    ,["File transcription", "Yes — TXT / SRT", "Varies"]
-    ,["Transcription history", "Yes — dashboard + heatmap + playback", "Basic"]
-    ,["Dictionary & snippets", "Yes", "Dictionary"]
+    ["Platforms", "Windows / macOS Apple Silicon / Linux", "Windows / macOS / Linux"],
+    ["STT models", "40+ across 8 families", "Whisper + Parakeet"],
+    ["Recording modes", "Push-to-talk, toggle, listen, wake word", "Push-to-talk, toggle"],
+    ["Listen mode (system audio)", "Yes — loopback capture + diarization", "No"],
+    ["LLM text cleanup", "Yes — Ollama / OpenRouter / Apple", "No"],
+    ["Text-to-speech", "Yes — Kokoro, 54 voices", "No"],
+    ["File transcription", "Yes — TXT / SRT", "Varies"],
+    ["Transcription history", "Yes — dashboard + heatmap + playback", "Basic"],
+    ["Dictionary & snippets", "Yes", "Dictionary"],
   ]}
   caption="Feature sets as of 2026 — local tools move fast. If you want the smallest dictation loop, a minimal local tool may fit; if you want a broader local voice toolkit, that's WinSTT."
 />
@@ -84,5 +98,8 @@ across desktop platforms.
   </Card>
   <Card title="Browse the models" href="/docs/models">
     The 40+ models WinSTT can run, with accuracy and speed trade-offs.
+  </Card>
+  <Card title="Verify the download" href="/docs/verify-releases">
+    Check the release signature and hashes so you know exactly what runs.
   </Card>
 </Cards>

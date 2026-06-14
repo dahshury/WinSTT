@@ -1,5 +1,4 @@
-// Settings persistence + apply. Reference: frontend/electron/ipc/settings.ts
-// (the behavioral truth), frontend/electron/lib/store.ts + secret-storage.ts. Wraps
+// Settings persistence + apply. Wraps
 // winstt::settings_schema (the ~150-field nested WinsttSettings tree).
 //
 // winstt_get_settings / winstt_set_settings expose the full nested WinsttSettings tree

@@ -11,8 +11,8 @@ const LEADING_SLASH_RE = /^\/+/;
  *   `/foo.png` already resolves against the server root, so it's returned
  *   unchanged.
  * - `file:` origin (a packaged build): the main window is `<root>/index.html`
- *   and every secondary window is one level deep at `<root>/windows/<name>.html`
- *   (see `electron/lib/renderer-url.ts`). The asset is resolved against
+ *   and every secondary window is one level deep at `<root>/windows/<name>.html`.
+ *   The asset is resolved against
  *   `<root>` regardless of which window asks, so `/foo.png` lands at
  *   `<root>/foo.png` instead of the filesystem drive root.
  */

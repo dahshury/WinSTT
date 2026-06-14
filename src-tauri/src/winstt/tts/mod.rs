@@ -1,5 +1,4 @@
 // Reference: server/src/synthesizer/ (Kokoro-ONNX hexagonal subsystem),
-//   frontend/electron/ipc/{tts.ts,tts-cloud.ts,tts-reader.ts,tts-hotkey.ts},
 //   frontend/src/shared/config/settings-schema.ts (ttsSettingsSchema).
 //
 // TtsManager + 54-voice Kokoro catalog + sentence-splitter + per-sentence streaming + cancel +

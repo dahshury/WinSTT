@@ -47,7 +47,6 @@ export const DEMOS: Record<string, ComponentType> = {
   "overlay-floating": vid("overlay-floating"),
   "overlay-island": vid("overlay-island"),
   // Larger documentation walkthroughs.
-  "quick-start-flow": vid("quick-start-flow"),
   "dictation-loop": vid("dictation-loop"),
   "model-picker-flow": vid("model-picker-flow"),
   "audio-vad-flow": vid("audio-vad-flow"),

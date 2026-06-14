@@ -4,12 +4,24 @@ description: The flags the WinSTT app accepts at launch, and the developer-only 
 ---
 
 WinSTT is a single native executable. It accepts a small set of launch flags, and because it
-runs single-instance, a few of them are **forwarded to an already-running instance** — which
+runs single-instance, three of them are **forwarded to an already-running instance** — which
 makes them useful targets for OS-level keyboard shortcuts or automation.
 
 ```bash
 WinSTT [OPTIONS]
 ```
+
+<StatGrid>
+  <Stat value="1" label="Native executable" />
+  <Stat value="7" label="Launch flags" />
+  <Stat value="3" label="Forwarded to the running instance" />
+</StatGrid>
+
+<Callout type="info" title="Most config lives in the UI, not the CLI">
+  The model, language, device, VAD, realtime, wake words, and TTS are all configured in the
+  [Settings UI](/docs/settings) and persisted. The flags below only control startup behavior and
+  the three forwarded actions you can wire to a shortcut.
+</Callout>
 
 ## App flags
 
@@ -33,14 +45,13 @@ WinSTT [OPTIONS]
   to `WinSTT.exe --toggle-transcription` to start/stop dictation from anywhere.
 </Callout>
 
-Everything else — the model, language, device, VAD, realtime, wake words, TTS — is configured
-in the [Settings UI](/docs/settings) and persisted, not passed on the command line.
-
 ## Developer spike binaries
 
-The repo ships a few **non-shipped** `cargo run --example` harnesses used to benchmark and
-de-risk the engines during the port. They live in `src-tauri/examples/` and are driven by
-environment variables. You only need these if you're hacking on the inference path.
+<Callout type="warn" title="Developer-only — not in the shipped app">
+  These `cargo run --example` harnesses live in `src-tauri/examples/` and are driven by
+  environment variables. You only need them if you're hacking on the inference path. They are
+  used to benchmark and de-risk the STT/TTS engines during the port.
+</Callout>
 
 ### `stt_spike` — STT decode benchmark
 
@@ -72,8 +83,13 @@ cargo run --release --example tts_spike
 SPIKE_TTS_DEVICE=dml cargo run --release --example tts_spike   # measure the GPU path
 ```
 
-`WINSTT_KOKORO_DIR` overrides the model/voicepack location; `SPIKE_TTS_DEVICE` selects
-`cpu` (default) or `dml`.
+<ModelTable
+  head={["Env var", "What it does"]}
+  rows={[
+    ["SPIKE_TTS_DEVICE", "Execution device: cpu (default) or dml."],
+    ["WINSTT_KOKORO_DIR", "Override the model / voicepack location."],
+  ]}
+/>
 
 ### `tts_engine_spike` — exploratory TTS engines
 
@@ -85,12 +101,20 @@ rem from the repo root — wraps the MSVC env + redirects output to spike_out.lo
 tools\windows\spike.bat <engine> [voice] [text]
 ```
 
-`WINSTT_TTS_CACHE` overrides the cache root; `ESPEAK_NG_LIBRARY` points at the espeak-ng DLL
-(auto-resolved to the bundled copy if unset).
+<ModelTable
+  head={["Env var", "What it does"]}
+  rows={[
+    ["WINSTT_TTS_CACHE", "Override the cache root that holds .tts-cache/<engine>/."],
+    ["ESPEAK_NG_LIBRARY", "Path to the espeak-ng DLL (auto-resolved to the bundled copy if unset)."],
+  ]}
+/>
 
 ## Related
 
 <Cards>
+  <Card title="Settings UI" href="/docs/settings">
+    Where the model, language, device, VAD, wake words, and TTS actually live.
+  </Card>
   <Card title="Choose a model" href="/docs/settings/model">
     Model, device, quantization, and realtime — set from the UI.
   </Card>

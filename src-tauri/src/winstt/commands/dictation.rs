@@ -1,6 +1,5 @@
 // Main window dictation core (overlay + PTT + live transcription).
-// Reference: frontend/electron/ipc/stt-commands.ts
-// + relay.ts (the IPC → recorder bridge) + frontend/src/shared/api/ipc-client.ts
+// Reference: frontend/src/shared/api/ipc-client.ts
 // (sttSetParameter / sttGetParameter / sttCallMethod / sttReloadModel wrappers).
 //
 // The STT dictation-core command seam the reused renderer drives. WinSTT's renderer
@@ -248,8 +247,9 @@ impl SttEvents {
     /// realtime/ephemeral state and arms `isRecordingActive` (the overlay pill gate).
     pub fn recording_start(app: &AppHandle) {
         log::info!("[stt] emit stt:recording-start (visualizer arm)");
-        // Ducking is sequenced by `TranscribeAction::start` after the recording
-        // chime, so the user's configured recording sound is not attenuated.
+        // Ducking is sequenced by `TranscribeAction::start` (duck_then_play_recording_chime):
+        // background audio is ducked BEFORE the chime plays, and the chime — played in
+        // WinSTT's own protected process — is never attenuated.
         crate::tray::on_tray_recording_start(app);
         let _ = app.emit("stt:recording-start", ());
     }

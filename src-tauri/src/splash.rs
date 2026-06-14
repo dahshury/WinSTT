@@ -1,5 +1,4 @@
-// Startup splash window — ported 1:1 from the reference in-app splash
-// (frontend/electron/lib/splash-window.ts + splash-html.ts).
+// Startup splash window.
 //
 // Why this exists: the Tauri main pill is created `visible(false)` in lib.rs
 // setup and only `show()`n after `initialize_core_logic` + `prewarm_windows`
@@ -51,8 +50,7 @@ const STARTUP_PROGRESS_TOTAL_PHASES: usize = 32;
 
 /// Set once the MAIN window's renderer reports `on_page_load(Finished)` — i.e. the
 /// React pill has actually painted ("the application fully loads"). The single
-/// source the ready-watcher polls; the reference gates its `showOnce` on the
-/// equivalent Electron `did-finish-load`.
+/// source the ready-watcher polls.
 static RENDERER_PAINTED: AtomicBool = AtomicBool::new(false);
 
 /// Set once the MAIN React tree has mounted and completed its first critical IPC

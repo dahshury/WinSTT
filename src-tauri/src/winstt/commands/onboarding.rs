@@ -76,7 +76,6 @@ fn now_ms() -> i64 {
 
 /// `onboarding_finish` — record the wizard as completed/skipped, broadcast the
 /// new settings snapshot, then hide onboarding and surface the main window.
-/// Mirrors the reference's `handleFinish` (frontend/electron/ipc/onboarding-window.ts).
 #[tauri::command]
 #[specta::specta]
 pub fn onboarding_finish(app: AppHandle, args: OnboardingFinishArgs) -> Result<(), String> {

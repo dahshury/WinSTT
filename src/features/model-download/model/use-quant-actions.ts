@@ -1,6 +1,6 @@
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { useModelStateStore } from "@/entities/model-catalog";
-import { resolveQuantCache } from "@picker/stt/lib/cache-helpers";
+import { resolveQuantCache } from "@/widgets/model-picker/stt/lib/cache-helpers";
 import {
 	quantDownloadSeedFromCache,
 	type QuantDownloadState,

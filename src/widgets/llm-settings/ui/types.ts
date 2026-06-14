@@ -60,7 +60,7 @@ export interface FeatureBlockProps {
 	endpoint: string;
 	feature: "dictation" | "transforms";
 	featureSnapshot: LlmFeatureDraft;
-	librarySearch: import("@picker").OllamaModelSelectorProps["librarySearch"];
+	librarySearch: import("@/widgets/model-picker").OllamaModelSelectorProps["librarySearch"];
 	ollamaCatalog: OllamaCatalogState;
 	ollamaPullBundle: OllamaPullBundle;
 	ollamaReachable: boolean | null;

@@ -1,11 +1,11 @@
 import { Separator } from "@base-ui/react/separator";
 import { Mic01Icon } from "@hugeicons/core-free-icons";
-// Deep-import the lightweight STT label helpers (not the `@picker` barrel) so
+// Deep-import the lightweight STT label helpers (not the `@/widgets/model-picker` barrel) so
 // the heavy SttModelSelector / Ollama / OpenRouter / TTS picker UI trees are
 // not dragged into the `main` window's chunk — StatusBar only needs these two
 // helpers, and the barrel re-export would otherwise pull the whole
 // model-picker package into the main entry.
-import { variantDisplayName } from "@picker/stt/lib/family-helpers";
+import { variantDisplayName } from "@/widgets/model-picker/stt/lib/family-helpers";
 import { useTranslations } from "use-intl";
 import {
 	buildInputDeviceOptions,

@@ -5,6 +5,13 @@ description: The open-source models, runtimes, and tools WinSTT is built on — 
 
 WinSTT stands on a lot of generous open-source work. This page is the friendly summary of who to thank; the full per-file license text lives in [THIRD_PARTY_NOTICES.md](https://github.com/dahshury/WinSTT/blob/main/THIRD_PARTY_NOTICES.md).
 
+<StatGrid>
+  <Stat value="8" label="STT model families" />
+  <Stat value="MIT" label="WinSTT's own license" />
+  <Stat value="ONNX" label="single inference format" />
+  <Stat value="0" label="PyTorch in the transcribe path" />
+</StatGrid>
+
 <Callout type="info" title="Check the model licenses for your use case">
   WinSTT is MIT, but the **models** it can download carry their own terms. Most are Apache 2.0 or MIT, but a few (Cohere weights, NeMo weights) are CC BY-NC / CC BY — fine for personal use, but read the upstream license before shipping anything commercial.
 </Callout>
@@ -31,42 +38,67 @@ Every model is loaded as ONNX through the engine below — WinSTT runs no PyTorc
 
 ## Voice activity & wake word
 
-- **[Silero VAD](https://github.com/snakers4/silero-vad)** — neural voice-activity detection. MIT.
-- **[WebRTC VAD](https://webrtc.org/)** — fast classical VAD for the pre-check stage. BSD.
-- **[Picovoice Porcupine](https://picovoice.ai/platform/porcupine/)** — free-tier wake-word engine. Apache 2.0 SDK; built-in keywords under Picovoice's free-tier license.
+<ModelTable
+  head={["Project", "Role in WinSTT", "License"]}
+  rows={[
+    [<a href="https://github.com/snakers4/silero-vad">Silero VAD</a>, "Neural voice-activity detection", "MIT"],
+    [<a href="https://webrtc.org/">WebRTC VAD</a>, "Fast classical VAD for the pre-check stage", "BSD"],
+    [<a href="https://picovoice.ai/platform/porcupine/">Picovoice Porcupine</a>, "Free-tier wake-word engine; built-in keywords under Picovoice's free-tier license", "Apache 2.0 (SDK)"],
+  ]}
+/>
 
 ## Text-to-speech
 
-- **[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)** — the bundled ONNX TTS voice model. Apache 2.0.
-- **[kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx)** — reference implementation that helped validate the ONNX voice model. MIT.
+<ModelTable
+  head={["Project", "Role in WinSTT", "License"]}
+  rows={[
+    [<a href="https://huggingface.co/hexgrad/Kokoro-82M">Kokoro-82M</a>, "The bundled ONNX TTS voice model", "Apache 2.0"],
+    [<a href="https://github.com/thewh1teagle/kokoro-onnx">kokoro-onnx</a>, "Reference implementation that helped validate the ONNX voice model", "MIT"],
+  ]}
+/>
 
 ## Inference & audio runtime
 
-- **[ONNX Runtime](https://onnxruntime.ai/)** — the single inference engine WinSTT ships. MIT.
-- **[DirectML](https://github.com/microsoft/DirectML)** — the execution provider that makes the default GPU build vendor-agnostic (AMD / Intel / NVIDIA via DirectX 12). MIT.
-- **[OpenVINO](https://github.com/openvinotoolkit/openvino)** — the EP for the Intel-tuned build (ARC dGPU / Iris Xe). Apache 2.0.
-- **[PortAudio](http://www.portaudio.com/)** — cross-platform audio I/O. MIT-style.
-- **[onnx-asr](https://github.com/istupakov/onnx-asr)** — reference ASR implementation used by the original Electron app and retained for parity benchmarking. MIT.
+<ModelTable
+  head={["Project", "Role in WinSTT", "License"]}
+  rows={[
+    [<a href="https://onnxruntime.ai/">ONNX Runtime</a>, "The single inference engine WinSTT ships", "MIT"],
+    [<a href="https://github.com/microsoft/DirectML">DirectML</a>, "Execution provider that makes the default GPU build vendor-agnostic (AMD / Intel / NVIDIA via DirectX 12)", "MIT"],
+    [<a href="https://github.com/openvinotoolkit/openvino">OpenVINO</a>, "The EP for the Intel-tuned build (ARC dGPU / Iris Xe)", "Apache 2.0"],
+    [<a href="http://www.portaudio.com/">PortAudio</a>, "Cross-platform audio I/O", "MIT-style"],
+    [<a href="https://github.com/istupakov/onnx-asr">onnx-asr</a>, "Reference ASR implementation used by an earlier version of WinSTT and retained for benchmarking", "MIT"],
+  ]}
+/>
 
 ## Frontend & desktop
 
-- **[Tauri](https://tauri.app/)** — desktop runtime and WebView shell. MIT / Apache 2.0.
-- **[Vite](https://vitejs.dev/)** — renderer build tool. MIT.
-- **[React](https://react.dev/)** + **[React Compiler](https://react.dev/learn/react-compiler)** — UI library + Babel plugin that frees the renderer from `useMemo` / `useCallback`. MIT.
-- **[Base UI](https://base-ui.com/)** — accessible unstyled component primitives. MIT.
-- **[Hugeicons](https://hugeicons.com/)** — icon set. Free icons under their free license.
-- **[Zustand](https://github.com/pmndrs/zustand)** — state stores. MIT.
-- **[use-intl](https://www.npmjs.com/package/use-intl)** — i18n runtime. MIT.
-- **[uiohook-napi](https://github.com/SnosMe/uiohook-napi)** — global keyboard hook for Push-to-Talk / Toggle. MIT.
+<ModelTable
+  head={["Project", "Role in WinSTT", "License"]}
+  rows={[
+    [<a href="https://tauri.app/">Tauri</a>, "Desktop runtime and WebView shell", "MIT / Apache 2.0"],
+    [<a href="https://vitejs.dev/">Vite</a>, "Renderer build tool", "MIT"],
+    [<a href="https://react.dev/">React</a>, <>UI library — with the <a href="https://react.dev/learn/react-compiler">React Compiler</a> Babel plugin that frees the renderer from useMemo / useCallback</>, "MIT"],
+    [<a href="https://base-ui.com/">Base UI</a>, "Accessible unstyled component primitives", "MIT"],
+    [<a href="https://hugeicons.com/">Hugeicons</a>, "Icon set", "Free-license icons"],
+    [<a href="https://github.com/pmndrs/zustand">Zustand</a>, "State stores", "MIT"],
+    [<a href="https://www.npmjs.com/package/use-intl">use-intl</a>, "i18n runtime", "MIT"],
+    [<a href="https://github.com/SnosMe/uiohook-napi">uiohook-napi</a>, "Global keyboard hook for Push-to-Talk / Toggle", "MIT"],
+  ]}
+/>
 
 ## Backend & build tooling
 
-- **[Rust](https://www.rust-lang.org/)** — native backend language and toolchain. MIT / Apache 2.0.
-- **[Cargo](https://doc.rust-lang.org/cargo/)** — Rust package manager and build runner. MIT / Apache 2.0.
-- **[hf-hub](https://github.com/huggingface/hf-hub)** — Hugging Face model download / cache layer. MIT / Apache 2.0.
-- **[Bun](https://bun.sh/)** — JavaScript runtime + package manager. MIT.
-- **[ESLint](https://eslint.org/)** + **[typescript-eslint](https://typescript-eslint.io/)** — TypeScript linting. MIT.
-- **[Sentry](https://sentry.io/)** — opt-out crash reporting. BSL.
+<ModelTable
+  head={["Project", "Role in WinSTT", "License"]}
+  rows={[
+    [<a href="https://www.rust-lang.org/">Rust</a>, "Native backend language and toolchain", "MIT / Apache 2.0"],
+    [<a href="https://doc.rust-lang.org/cargo/">Cargo</a>, "Rust package manager and build runner", "MIT / Apache 2.0"],
+    [<a href="https://github.com/huggingface/hf-hub">hf-hub</a>, "Hugging Face model download / cache layer", "MIT / Apache 2.0"],
+    [<a href="https://bun.sh/">Bun</a>, "JavaScript runtime + package manager", "MIT"],
+    [<a href="https://eslint.org/">ESLint</a>, "TypeScript linting, with typescript-eslint", "MIT"],
+    [<a href="https://sentry.io/">Sentry</a>, "Opt-out crash reporting", "BSL"],
+  ]}
+/>
 
 ## Documentation
 
@@ -74,12 +106,19 @@ Every model is loaded as ONNX through the engine below — WinSTT runs no PyTorc
 
 ## Inspiration & adjacent projects
 
-- **[RealtimeSTT](https://github.com/KoljaB/RealtimeSTT)** — one of the upstream projects that informed the original WinSTT reference app. MIT.
-- **[Whisper.cpp](https://github.com/ggerganov/whisper.cpp)** — the project that proved Whisper could run efficiently on CPU. MIT.
+<ModelTable
+  head={["Project", "Why it matters", "License"]}
+  rows={[
+    [<a href="https://github.com/KoljaB/RealtimeSTT">RealtimeSTT</a>, "One of the upstream projects that informed the original WinSTT reference app", "MIT"],
+    [<a href="https://github.com/ggerganov/whisper.cpp">Whisper.cpp</a>, "The project that proved Whisper could run efficiently on CPU", "MIT"],
+  ]}
+/>
 
 ## And a personal thanks
 
-To everyone who has filed an issue, opened a PR, suggested a model, or asked a sharp question on Discussions. WinSTT is a side project; the community feedback is what keeps it focused. Want to contribute? Start with [CONTRIBUTING.md](https://github.com/dahshury/WinSTT/blob/main/CONTRIBUTING.md).
+<Callout type="success" title="Thank you to the community">
+  To everyone who has filed an issue, opened a PR, suggested a model, or asked a sharp question on Discussions. WinSTT is a side project; the community feedback is what keeps it focused. Want to contribute? Start with [CONTRIBUTING.md](https://github.com/dahshury/WinSTT/blob/main/CONTRIBUTING.md).
+</Callout>
 
 ## Related
 

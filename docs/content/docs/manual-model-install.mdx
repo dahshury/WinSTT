@@ -17,10 +17,13 @@ WinSTT normally downloads built-in models from the [Hugging Face Hub](https://hu
 
 WinSTT uses the standard `huggingface_hub` cache, not its own `models/` directory.
 
-| Scope | Path |
-|---|---|
-| **Windows (default)** | `C:\Users\<you>\.cache\huggingface\hub\` |
-| **Override** | Set `HF_HOME=<somewhere>` before launching WinSTT — the cache becomes `<HF_HOME>\hub\` |
+<ModelTable
+  head={["Scope", "Path"]}
+  rows={[
+    ["Windows (default)", "C:\\Users\\<you>\\.cache\\huggingface\\hub\\"],
+    ["Override", "Set HF_HOME=<somewhere> before launching WinSTT — the cache becomes <HF_HOME>\\hub\\"],
+  ]}
+/>
 
 Inside the cache each repo gets a folder named `models--<owner>--<repo>` with `blobs/`, `refs/`, and `snapshots/` subfolders. `huggingface_hub` resumes interrupted pulls automatically — a partial download leaves a `*.incomplete` marker that resumes on the next attempt.
 

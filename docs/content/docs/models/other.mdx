@@ -7,6 +7,13 @@ Beyond Whisper and NeMo, WinSTT ships five more model families on the same ONNX 
 
 Every model on this page runs through the single `onnx-asr` ONNX engine, supports the live realtime preview, and is hot-swappable from the [Model](/docs/settings/model) tab — no restart, no backend to choose. Precision is set per-model via `onnxQuantization`; see [Compute Types](/docs/models/compute-types).
 
+<StatGrid>
+  <Stat value="5" label="model families on this page" />
+  <Stat value="5.1" label="lowest WER (Cohere Transcribe)" />
+  <Stat value="1800" label="fastest RTFx (Moonshine Tiny)" />
+  <Stat value="3" label="Russian-specialist engines" />
+</StatGrid>
+
 ## Moonshine
 
 Useful Sensors Moonshine is a raw-audio encoder built for **latency**, not raw accuracy. The tiny model is ~5.8× faster than Whisper tiny at the same scale, which makes it a strong realtime-preview and live-dictation pick. The base English models and the five language fine-tunes (Chinese, Japanese, Korean, Arabic, Vietnamese) round out the family — each fine-tune is single-language only, with no auto-detect.
@@ -141,6 +148,12 @@ Use this to narrow the list before weighing accuracy and speed:
   The Moonshine fine-tunes and every Russian model are single-language — the **Language**
   control in the Model tab disappears for them, since there is nothing to detect or pin.
   Cohere and SenseVoice support auto-detect, so they keep it.
+</Callout>
+
+<Callout type="info" title="Hot-swapping vs. family switches">
+  Switching between models within this group hot-swaps live without a restart. Changing to a
+  different model *family* (e.g. Moonshine → Cohere) reconnects the engine — the overlay shows a
+  brief "swapping" state.
 </Callout>
 
 ## Related

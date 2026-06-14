@@ -1,5 +1,4 @@
-// Cloud STT pure layer. Source: frontend/electron/ipc/stt-cloud.ts +
-// frontend/electron/ipc/credentials.ts + entities/cloud-stt-provider/model/catalog.ts.
+// Cloud STT pure layer. Source: entities/cloud-stt-provider/model/catalog.ts.
 //
 // Cloud STT: reqwest JSON+base64 POST to OpenRouter /audio/transcriptions and
 // multipart POST to ElevenLabs /v1/speech-to-text. In WinSTT-the reference the Python pipeline's

@@ -1,5 +1,4 @@
-// Tauri-state wrapper around winstt::tts. Reference shapes:
-// frontend/electron/ipc/{tts,tts-reader,tts-cloud}.ts.
+// Tauri-state wrapper around winstt::tts.
 //
 // The `tts` slice already defines the engine port (`TtsEngine`), the local Kokoro
 // + cloud ElevenLabs engines, the 54-voice catalog, sentence splitter, and the

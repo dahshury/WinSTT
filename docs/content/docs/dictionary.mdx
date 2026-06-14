@@ -1,53 +1,71 @@
 ---
 title: Dictionary
-description: Teach WinSTT the names, jargon, and brands it keeps mishearing — with vocabulary biasing for the model and LLM, plus deterministic find→replace rules applied after cleanup.
+description: Teach WinSTT the names, jargon, and brands it keeps mishearing — corrected in context by your LLM cleanup pass, or by an on-device language model when cleanup is off.
 ---
 
 The **Dictionary** tab is where you fix the words WinSTT gets wrong — proper nouns, product names, and domain jargon — so the right spelling lands every time.
 
-<Screenshot src="settings-dictionary" alt="The Dictionary settings tab: a suggested-terms strip, an add-a-term form, the entries table, and the Correction strictness stepper." label="Settings — Dictionary" />
+<Callout type="info" title="Context-aware — and it works with or without LLM cleanup">
+  Telling a real word from a mis-transcription needs _meaning and context_ — "I watched a
+  **video**" must stay "video", while "I use **veet** for builds" should become "Vite". WinSTT
+  uses a language model for that judgement either way:
+
+  - **LLM cleanup ON** → your dictation cleanup model applies the dictionary.
+  - **LLM cleanup OFF** → a small **on-device model** (mmBERT) does it instead. It downloads once
+    (~310 MB) in the background the first time you dictate with a dictionary; until it's ready,
+    terms are simply left untouched.
+
+  Either way there's **no blind string replacement** — a correctly-heard everyday word is never
+  swapped for a look-alike term.
+</Callout>
+
+<Screenshot src="settings-dictionary" alt="The Dictionary settings tab: a suggested-terms strip, an add-a-term form, and the entries table." label="Settings — Dictionary" caption="Suggested terms up top, the add-a-term form and entries table below." />
 
 ## Two ways to fix a word
 
-The dictionary uses the same two-mode model as Wispr Flow. Every entry is either a **vocabulary word** or a **replacement pair**, and the difference is _when_ and _how_ the fix is applied.
+Every entry is either a **vocabulary word** or a **replacement pair**. Both are folded into the
+LLM cleanup prompt as structured blocks; the difference is how strongly the model is told to act.
 
 <ModelTable
-  head={["Mode", "Entry", "What it does", "When it runs"]}
+  head={["Mode", "Entry", "What it does"]}
   rows={[
     [
       "Vocabulary word",
       "Term only",
-      "Biases the model and LLM toward your spelling, and snaps phonetic near-misses to it.",
-      "During transcription — fuzzy pass before LLM cleanup, plus folded into the LLM prompt.",
+      "Lists your canonical spelling as a preferred term. The LLM fixes a mis-transcribed near-miss to it — using context, so a real word that merely sounds similar is left alone.",
     ],
     [
       "Replacement pair",
       "Term → Replace with",
-      "Forces an exact, case-insensitive whole-word find→replace.",
-      "After LLM cleanup — a deterministic safety net that always fires.",
+      "A find→replace rule the LLM is told to apply verbatim, preserving your exact casing, whenever it sees a whole-word match of the term.",
     ],
   ]}
-  caption="Both modes also appear in the LLM system prompt; the replacement pair's after-cleanup pass guarantees the rule fires even if the model ignored it."
+  caption="Both run during LLM cleanup — there is no separate deterministic pass."
 />
 
 A **vocabulary word** is a single canonical spelling — a name, brand, or term — with no
-"Replace with" value. WinSTT biases toward it two ways: the server fuzzy-matches every
-transcribed word against it (see <a href="#correction-strictness">strictness</a> below), and the word
-is handed to the LLM as a spelling reference. Use it when the model hears _roughly_ the
-right sounds but spells them wrong.
+"Replace with" value. It's listed in the cleanup prompt's `<preferred-terms>` block so the model
+nudges a clear mis-hearing toward your spelling. Because the model reads the surrounding words, it
+only swaps when the dictation genuinely sounds like the term — it won't turn a correctly-heard
+common word into a look-alike. Use it when the model hears _roughly_ the right sounds but spells
+them wrong.
 
 A **replacement pair** adds a "Replace with" value. The **Term** is a mis-transcription you
-keep seeing; the replacement is what it should always become. This is a deterministic
-`find → replace` — not a guess — so it's the right tool when fuzzy matching can't help
-(e.g. an acronym the model spells out, or a phrase you want rewritten verbatim).
+keep seeing; the replacement is what it should always become. It's listed in the prompt's
+`<replacement-pairs>` block as a mechanical find→replace rule, so it's the right tool when a
+vocabulary word is too soft (e.g. an acronym the model spells out, or a phrase you want rewritten
+verbatim).
 
-<Video src="dictionary" chrome="card" alt="A dictionary replacement pair rewriting a mis-heard word: the transcribed 'wuster·sher' is replaced with 'Worcestershire' after cleanup." caption="A mis-heard word (wuster·sher) is corrected to Worcestershire." />
+<Video src="dictionary" chrome="card" label="Replacement pair in action" alt="A dictionary replacement pair rewriting a mis-heard word: the transcribed 'wuster·sher' is replaced with 'Worcestershire' during cleanup." caption="A mis-heard word (wuster·sher) is corrected to Worcestershire." />
 
-<Callout type="info" title="Replacement pairs fire last, on purpose">
-  Replacement pairs run as a case-insensitive whole-word string replace **after** the LLM
-  cleanup pass. That ordering is deliberate: the LLM sees the original mis-transcription
-  (and the pair, so it can apply context), and the after-cleanup pass is the guaranteed
-  backstop that fires regardless of what the model did.
+<Callout type="info" title="Why a language model does the matching">
+  Earlier builds used a server-side fuzzy string matcher. It was removed: by letter-distance
+  "video" is actually _closer_ to "Vite" than a genuine mis-hearing like "veet" is, so no
+  string-similarity rule can accept one and reject the other — only a model that understands the
+  sentence can. So the matching always runs through a language model: your cleanup LLM when it's
+  on, or a small on-device encoder (mmBERT) when it's off. The encoder is conservative by design
+  (it favors leaving a word alone over a wrong replacement), so it fixes most mis-hearings and
+  never clobbers a correctly-heard word.
 </Callout>
 
 ## Adding and managing entries
@@ -92,56 +110,25 @@ in the suggestion strip at the top of the tab.
   enabled, since the suggestions come from that pipeline.
 </Callout>
 
-## Correction strictness
+## Getting good results
 
-The fuzzy corrector runs **on the server, right after transcription and before LLM
-cleanup**. It walks 1–3-word windows through the text and snaps any close near-miss to a
-matching vocabulary word, using normalized Levenshtein distance with a Soundex phonetic
-boost so words that _sound_ alike match even when their letters diverge.
+Because the dictionary rides on the LLM cleanup pass, the quality of corrections tracks the
+quality of your cleanup model. A few tips:
 
-<SettingRow label="Correction strictness" settingKey="general.wordCorrectionThreshold" default="0.18">
-  The maximum fuzzy-match score the corrector will accept (0.00–1.00, step 0.02). **Lower =
-  stricter** — fewer false replacements but more genuine near-misses left for the LLM.
-  **Higher** snaps more aggressively and risks rewriting words you didn't mean. `0.18` is
-  the reference Whisper/Wispr default. Changes apply on the next transcription.
-</SettingRow>
-
-<ModelTable
-  head={["Value", "Behavior"]}
-  numeric={[0]}
-  rows={[
-    ["0.00", "Effectively off — only near-exact matches snap."],
-    ["0.18", "Default sweet spot — catches phonetic mishears, few false positives."],
-    ["0.50+", "Aggressive — snaps loosely; expect occasional wrong rewrites."],
-  ]}
-  caption="Anything the deterministic pass misses still gets a second chance from the LLM modifiers."
-/>
-
-## How LLM on/off changes things
-
-The dictionary works either way, but the path differs:
-
-<ModelTable
-  head={["LLM cleanup", "Vocabulary words", "Replacement pairs"]}
-  rows={[
-    [
-      "On",
-      "Fuzzy-matched server-side, then reinforced in the LLM prompt.",
-      "Sent to the LLM as find→replace rules, then re-applied deterministically after cleanup.",
-    ],
-    [
-      "Off",
-      "Fuzzy matcher is the only line of defense.",
-      "Applied deterministically (no LLM pass to precede them).",
-    ],
-  ]}
-  caption="With LLM off, lean harder on the dictionary and tune Correction strictness, since there's no model pass to fix what the fuzzy matcher leaves behind."
-/>
+- **Pick a capable cleanup model.** A small local model handles obvious mis-hearings; subtler
+  ones (a foreign brand pronounced unlike its spelling) reward a stronger model.
+- **Spell the term the way you want it to appear** — casing and all ("PyTorch", "GitHub"). The
+  model is told to preserve it.
+- **Reach for a replacement pair when a vocabulary word is too soft.** If the model keeps
+  spelling an acronym out or won't pick up a particular mis-hearing, a `Term → Replace with`
+  pair states the rule mechanically.
+- **One spelling per entry.** The model maps any close-sounding dictation onto it; you don't
+  need to enumerate every mis-spelling.
 
 <Callout type="warn" title="Suggested terms need the LLM">
   The proper-noun suggestion strip is driven by the LLM cleanup pipeline. With LLM cleanup
   off, no suggestions are generated — add terms by hand instead. Turn cleanup on in
-  [LLM settings](/docs/settings/llm).
+  [LLM settings](/docs/settings/quality#llm-cleanup).
 </Callout>
 
 ## Related
@@ -150,7 +137,7 @@ The dictionary works either way, but the path differs:
   <Card title="Snippets" href="/docs/snippets">
     Expand a short spoken phrase into longer text — addresses, signatures, boilerplate.
   </Card>
-  <Card title="LLM cleanup" href="/docs/settings/llm">
+  <Card title="LLM cleanup" href="/docs/settings/quality#llm-cleanup">
     Tone presets, custom modifiers, and the pass that powers term suggestions.
   </Card>
   <Card title="Choose a model" href="/docs/models">

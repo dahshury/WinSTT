@@ -1,9 +1,7 @@
-// Faithful Rust port of
-// `frontend/electron/ipc/ollama-registry.ts` (the HTML scraper) — Ollama publishes no JSON search
+// HTML scraper for the Ollama registry — Ollama publishes no JSON search
 // API, so we scrape ollama.com/library, ollama.com/search, and ollama.com/library/<m>/tags with a
-// handful of regex extractors (no scraper/cheerio dep, matching the TS source byte-for-byte on
-// payload shape). Cached in-process with a short TTL so opening/closing the picker repeatedly
-// doesn't hammer Ollama's CDN.
+// handful of regex extractors (no scraper/cheerio dep). Cached in-process with a short TTL so
+// opening/closing the picker repeatedly doesn't hammer Ollama's CDN.
 //
 // Commands (registered in lib.rs collect_commands![]):
 //   - ollama_refresh_library → LLM_FETCH_OLLAMA_LIBRARY  (full catalog, ~230 models, 1h TTL)
@@ -35,8 +33,7 @@ const PAGE_SIZE: usize = 20;
 // from one client and stalls the queued ones past the timeout. Browsing the library
 // fires many tag scrapes at once (one renderer `invoke` per row), so a single
 // request always succeeds while the burst fails. The fetch gate (in `OllamaManager`)
-// caps concurrency; here we retry the transient drops with backoff — mirrors
-// `electron/ipc/ollama-registry.ts`.
+// caps concurrency; here we retry the transient drops with backoff.
 const MAX_FETCH_RETRIES: u32 = 2;
 const RETRY_BACKOFF_MS: u64 = 400;
 

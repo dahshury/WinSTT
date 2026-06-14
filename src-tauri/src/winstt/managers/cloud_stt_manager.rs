@@ -1,5 +1,4 @@
-// Cloud STT transport. Source: frontend/electron/ipc/stt-cloud.ts + credentials.ts.
-// Wraps winstt::cloud_stt's pure layer.
+// Cloud STT transport. Wraps winstt::cloud_stt's pure layer.
 //
 // CloudSttManager owns the reqwest client + the in-flight transcribe cancel set.
 // It implements the multipart upload against real reqwest, and routes

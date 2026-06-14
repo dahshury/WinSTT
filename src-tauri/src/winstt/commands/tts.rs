@@ -1,4 +1,4 @@
-// Reference: frontend/electron/ipc/{tts,tts-cloud,tts-reader}.ts. Wraps managers::TtsManager.
+// Wraps managers::TtsManager.
 //
 // TTS commands. Local synthesis runs blocking on a worker (spawn_blocking) so the
 // async pump never stalls on the first-run download / session create / inference.

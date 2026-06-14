@@ -7,6 +7,12 @@ Confirm that the package you downloaded matches the artifact published by the
 WinSTT release workflow. Current alpha releases publish downloadable packages for
 macOS Apple Silicon, Linux x64, and Windows x64.
 
+<StatGrid>
+  <Stat value="3" label="Platforms published" />
+  <Stat value="SHA-256" label="Digest to match" />
+  <Stat value="1" label="Trusted source — GitHub Releases" />
+</StatGrid>
+
 <Callout type="warn" title="Alpha signing status">
   The current alpha packages are downloadable release artifacts, but updater metadata,
   detached signature sidecars, notarization, and platform code-signing are not fully wired
@@ -15,60 +21,75 @@ macOS Apple Silicon, Linux x64, and Windows x64.
 
 ## What to verify
 
-| Platform | Current artifact pattern |
-|---|---|
-| macOS Apple Silicon | `WinSTT_<version>_aarch64.dmg` |
-| Linux x64 | `WinSTT_<version>_amd64.AppImage`, `WinSTT_<version>_amd64.deb`, `WinSTT-<version>-1.x86_64.rpm` |
-| Windows x64 | `WinSTT.exe`, `WinSTT-portable.zip` |
+<ModelTable
+  head={["Platform", "Current artifact pattern"]}
+  rows={[
+    ["macOS Apple Silicon", "WinSTT_<version>_aarch64.dmg"],
+    ["Linux x64", "WinSTT_<version>_amd64.AppImage / WinSTT_<version>_amd64.deb / WinSTT-<version>-1.x86_64.rpm"],
+    ["Windows x64", "WinSTT.exe / WinSTT-portable.zip"],
+  ]}
+  caption="Asset name patterns published by the release workflow, by platform."
+/>
 
-Download only from the [GitHub Releases page](https://github.com/dahshury/WinSTT/releases).
+<Callout type="info" title="Download from one place only">
+  Pull every asset from the [GitHub Releases page](https://github.com/dahshury/WinSTT/releases).
+  Mirrors and re-uploads can't be matched against the release digest.
+</Callout>
 
-## Check SHA-256
+## Verify in three steps
 
-<Tabs items={["Windows", "macOS", "Linux"]}>
-  <Tab value="Windows">
-    ```powershell
-    Get-FileHash .\WinSTT.exe -Algorithm SHA256
-    ```
-  </Tab>
-  <Tab value="macOS">
+<StepFlow>
+  <Step title="Compute the file's SHA-256">
+    Run the hashing command for your platform against the file you downloaded.
+
+    <Tabs items={["Windows", "macOS", "Linux"]}>
+      <Tab value="Windows">
+        ```powershell
+        Get-FileHash .\WinSTT.exe -Algorithm SHA256
+        ```
+      </Tab>
+      <Tab value="macOS">
+        ```bash
+        shasum -a 256 WinSTT_0.1.3-alpha.1_aarch64.dmg
+        ```
+      </Tab>
+      <Tab value="Linux">
+        ```bash
+        sha256sum WinSTT_0.1.3-alpha.1_amd64.AppImage
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Compare it to the release digest">
+    Match the digest against the `sha256:` digest shown for that asset in
+    GitHub's release metadata. With the GitHub CLI:
+
     ```bash
-    shasum -a 256 WinSTT_0.1.3-alpha.1_aarch64.dmg
+    gh release view v0.1.3-alpha.1 \
+      --repo dahshury/WinSTT \
+      --json assets \
+      --jq '.assets[] | {name, digest}'
     ```
-  </Tab>
-  <Tab value="Linux">
-    ```bash
-    sha256sum WinSTT_0.1.3-alpha.1_amd64.AppImage
-    ```
-  </Tab>
-</Tabs>
+  </Step>
+  <Step title="Verify provenance from the workflow run">
+    Each alpha release is produced by the repository release workflow. From the
+    release page, open the linked workflow run and confirm that the platform
+    build jobs and the final upload job succeeded. The expected jobs are:
 
-Compare the digest with the `sha256:` digest shown for that asset in GitHub's
-release metadata. With the GitHub CLI:
-
-```bash
-gh release view v0.1.3-alpha.1 \
-  --repo dahshury/WinSTT \
-  --json assets \
-  --jq '.assets[] | {name, digest}'
-```
-
-## Verify provenance
-
-Each alpha release is produced by the repository release workflow. From the release page,
-open the linked workflow run and confirm that the platform build jobs and the final
-upload job succeeded. The expected jobs are:
-
-- `Build macOS bundle artifacts (aarch64)`
-- `Build Linux bundle artifacts`
-- `Build Windows portable artifacts`
-- `Upload assets to GitHub release`
+    - `Build macOS bundle artifacts (aarch64)`
+    - `Build Linux bundle artifacts`
+    - `Build Windows portable artifacts`
+    - `Upload assets to GitHub release`
+  </Step>
+</StepFlow>
 
 ## If verification fails
 
-Do not run the package. Re-download it from the GitHub Release, then compare the digest
-again. If it still differs, open an issue with the asset name, size, SHA-256 value, and
-the release URL.
+<Callout type="error" title="Do not run the package">
+  Re-download it from the GitHub Release, then compare the digest again. If it
+  still differs, open an issue with the asset name, size, SHA-256 value, and the
+  release URL.
+</Callout>
 
 ## Related
 

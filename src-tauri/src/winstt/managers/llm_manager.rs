@@ -1,4 +1,4 @@
-// Reference: frontend/electron/ipc/llm.ts + ollama.ts. Wraps winstt::llm (pure prompt/leakage logic).
+// Wraps winstt::llm (pure prompt/leakage logic).
 //
 // LlmManager owns LLM orchestration, request ids, cancellation, and renderer events.
 // Ollama's raw HTTP transport lives in winstt::ollama_client.

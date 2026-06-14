@@ -607,6 +607,15 @@
     "conflictOtherTts": "Text-to-speech"
   },
   "dictionary": {
+    "encoderTitle": "On-device dictionary model",
+    "encoderDescription": "Without LLM cleanup, the dictionary uses a small on-device model to correct your terms in context. Download it once (~310 MB) to turn this on.",
+    "encoderDownload": "Download model (~310 MB)",
+    "encoderDownloading": "Downloading…",
+    "encoderPaused": "Paused",
+    "encoderPause": "Pause",
+    "encoderResume": "Resume",
+    "encoderReady": "On-device model ready — the dictionary works without LLM cleanup.",
+    "requiresCleanup": "Dictionary and snippets are applied by the LLM during cleanup. Turn on dictation cleanup in Processing to use them.",
     "title": "शब्दकोश",
     "description": "Whisper को अपने नाम, तकनीकी शब्दावली और डोमेन विशिष्ट शब्द सिखाएं। जब ट्रांसक्राइब किया गया शब्द किसी प्रविष्टि के ध्वनि के करीब होगा, तो उसे स्वतः सही रूप में बदल दिया जाएगा।",
     "term": "शब्द",

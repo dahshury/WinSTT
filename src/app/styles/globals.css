@@ -2,7 +2,6 @@
 @source "../../../index.html";
 @source "../../../windows";
 @source "../../../src";
-@source "../../../packages/model-picker/src";
 
 /* Transitions.dev shared variables used by reusable animation primitives. */
 :root {

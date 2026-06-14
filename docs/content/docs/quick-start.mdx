@@ -4,13 +4,19 @@ description: Download, launch, and dictate your first sentence in under two minu
 ---
 
 import { latestReleaseUrl } from "@/lib/site";
+import { QuickStartShowcase } from "@/components/quick-start-showcase";
 
 Go from a fresh download to text at your cursor in five steps — the onboarding wizard
 picks a model and tests your mic for you, then you hold a hotkey and speak.
 
-<Video src="quick-start-flow" chrome="card" alt="A four-step WinSTT quick-start animation: install the portable app, finish onboarding, choose a model, then dictate text at the cursor." caption="The whole first-run path: install, onboard, pick a model, dictate." />
+<QuickStartShowcase />
 
-<Screenshot src="onboarding" alt="The WinSTT onboarding wizard on first launch: choose between a local on-device model or a cloud provider, then run a quick microphone test." label="WinSTT — first-run onboarding" caption="The wizard runs once on first launch: pick local vs cloud, test your mic, and download a starter model." />
+<StatGrid>
+  <Stat value="5" label="steps to first transcription" />
+  <Stat value="0" label="accounts or sign-ups" />
+  <Stat value="tiny" label="model bundled, ready to go" />
+  <Stat value="100%" label="on-device, works offline" />
+</StatGrid>
 
 WinSTT is local-first. The installer bundles the speech engine and a starter model, so
 the only thing you need is a microphone. Audio is transcribed in memory by on-device ONNX
@@ -73,7 +79,7 @@ models and never leaves your machine.
 <Callout type="info" title="Don't like the default hotkey?">
   Push-to-Talk is bound to <Combo keys="LCtrl+LMeta" /> out of the box. Change it — or
   switch to Toggle, Listen, or Wake-word triggering — on the
-  [Hotkey](/docs/settings/hotkey) and [recording modes](/docs/recording-modes) pages.
+  [Hotkey](/docs/settings/hotkey) and [recording modes](/docs/dictation) pages.
 </Callout>
 
 <Callout type="warn" title="If the hotkey does nothing">
@@ -89,7 +95,7 @@ models and never leaves your machine.
   <Card title="Install" href="/docs/install">
     Pick the macOS, Linux, or Windows package that matches your machine.
   </Card>
-  <Card title="Recording modes" href="/docs/recording-modes">
+  <Card title="Recording modes" href="/docs/dictation">
     Push-to-talk, toggle, listen, and wake-word — and when to use each.
   </Card>
   <Card title="Choose a model" href="/docs/models">

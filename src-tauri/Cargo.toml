@@ -100,7 +100,6 @@ futures-util = "0.3"
 genai = { version = "0.6.5", default-features = false, features = ["rustls-tls"] }
 rustfft = "6.4.0"
 strsim = "0.11.0"
-natural = "0.5.0"
 regex = "1"
 unicode-normalization = "0.1"
 chrono = "0.4"
@@ -177,6 +176,9 @@ windows = { version = "0.61.3", features = [
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
+  # UIA reader for the native `winstt_context` sidecar bin (IUIAutomation,
+  # TextPattern, ValuePattern, TreeWalker, control-type IDs).
+  "Win32_UI_Accessibility",
   "Win32_Graphics_Dxgi",
   "Win32_System_Console",
 ] }

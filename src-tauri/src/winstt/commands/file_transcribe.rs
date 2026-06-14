@@ -1,5 +1,4 @@
-// Reference (authoritative):
-// frontend/electron/ipc/file-transcribe-queue.ts. Wraps managers::FileTranscribeManager.
+// Wraps managers::FileTranscribeManager.
 //
 // The multi-file transcription queue command surface. The renderer
 // (`features/file-transcription` + `widgets/audio-display`) drives these via the

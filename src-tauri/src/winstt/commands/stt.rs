@@ -1,5 +1,3 @@
-// Reference: frontend/electron/ipc/stt-models / model-picker.
-//
 // STT catalog + picker commands. These wrap the pure `winstt::catalog` policy
 // tables (the 65-model catalog, quant/EP resolution, effective-quant badge) and
 // surface them to the detached model-picker window. The actual model

@@ -8,8 +8,8 @@ import { formatKeyName } from "@/shared/lib/format-key-name";
 import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 
 /**
- * Visual legend for the two hotkey combos detected in
- * `electron/ipc/hotkey.ts` while the global hotkey is held:
+ * Visual legend for the two hotkey combos detected while the global hotkey is
+ * held:
  *
  *   ┌── While the hotkey is held ────────────────────────────────────┐
  *   │                                                                │
@@ -21,8 +21,8 @@ import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
  *   │  [Esc]            Cancel transcription                         │
  *   └────────────────────────────────────────────────────────────────┘
  *
- * The mode chain reads left-to-right as the actual `MODE_CYCLE` order in
- * `electron/main.ts` (ptt → toggle → listen → wakeword → ptt). The
+ * The mode chain reads left-to-right as the actual `MODE_CYCLE` order
+ * (ptt → toggle → listen → wakeword → ptt). The
  * currently-active mode is marked with the single app accent (the same
  * selection treatment the model cards use) so the legend doubles as a
  * "you are here" indicator; every other link stays neutral grayscale.

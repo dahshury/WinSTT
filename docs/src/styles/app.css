@@ -41,6 +41,16 @@
   --border: oklch(19% 0.015 260);
   --divider: oklch(94% 0.015 265 / 0.08);
 
+  /* Typography — fonttrio "startup" trio (heading / body / mono).
+     Mirrors `shadcn add @fonttrio/startup`, wired for this TanStack Start
+     site (CDN @font-face + CSS vars) rather than next/font. The fonts load
+     in __root.tsx; the Tailwind `--font-sans` / `--font-mono` theme vars are
+     repointed so utilities and prose pick up the trio too. */
+  --font-heading: "Nunito", system-ui, -apple-system, sans-serif;
+  --font-body: "Nunito Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: var(--font-body);
+
   /* Fumadocs token overrides */
   --color-fd-background: var(--surface-0);
   --color-fd-foreground: var(--fg-strong);
@@ -72,10 +82,19 @@
 }
 
 body {
-  font-family:
-    "Geist", var(--font-geist-sans, system-ui), -apple-system, sans-serif;
+  font-family: var(--font-body);
   background: var(--surface-0);
   color: var(--fg-strong);
+}
+
+/* Headings use the display face of the trio (Nunito) across the whole site. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
 }
 
 body::before {
@@ -141,53 +160,123 @@ button[aria-label="Toggle Theme"] {
   border-top: 1px solid var(--divider);
 }
 
-/* ── App mock animations ──
-   The hero AppMock mirrors the real audio-visualizer "bar" mode plus the
-   connection indicator pulse. Bars sway between 30% and full height with a
-   sequencer feel (per-bar animation-delay applied inline). */
-@keyframes mock-bar-sway {
-  0%,
-  100% {
-    transform: scaleY(0.35);
+/* ── Voice-bar animations ──
+   The dictation feature showcase (feature-showcases.tsx) renders these bars,
+   mirroring the real audio-visualizer "bar" mode. The bars animate like a
+   voice: each bar's
+   inline `--peak` sets a center-weighted ceiling (mid bands tallest), and the
+   two cadence keyframes below scale each bar through irregular syllable bursts
+   with brief pauses — every bar shares the same burst timeline (so the row
+   pulses together like speech) while the A/B split varies the quiet texture.
+   Per-bar `--peak` resolves inside calc() to a concrete number, so the browser
+   still interpolates each scaleY normally. */
+@keyframes mock-bar-speak-a {
+  0% {
+    transform: scaleY(calc(var(--peak) * 0.14));
+  }
+  8% {
+    transform: scaleY(calc(var(--peak) * 0.5));
+  }
+  16% {
+    transform: scaleY(calc(var(--peak) * 0.82));
+  }
+  24% {
+    transform: scaleY(calc(var(--peak) * 0.3));
+  }
+  35% {
+    transform: scaleY(calc(var(--peak) * 0.96));
+  }
+  44% {
+    transform: scaleY(calc(var(--peak) * 0.22));
   }
   50% {
-    transform: scaleY(1);
+    transform: scaleY(calc(var(--peak) * 0.16));
+  }
+  58% {
+    transform: scaleY(calc(var(--peak) * 0.66));
+  }
+  64% {
+    transform: scaleY(calc(var(--peak) * 0.9));
+  }
+  72% {
+    transform: scaleY(calc(var(--peak) * 0.28));
+  }
+  80% {
+    transform: scaleY(calc(var(--peak) * 0.58));
+  }
+  88% {
+    transform: scaleY(calc(var(--peak) * 0.24));
+  }
+  96% {
+    transform: scaleY(calc(var(--peak) * 0.4));
+  }
+  100% {
+    transform: scaleY(calc(var(--peak) * 0.14));
   }
 }
 
-@keyframes glow-pulse {
-  0%,
-  100% {
-    opacity: 0.55;
+@keyframes mock-bar-speak-b {
+  0% {
+    transform: scaleY(calc(var(--peak) * 0.18));
+  }
+  8% {
+    transform: scaleY(calc(var(--peak) * 0.34));
+  }
+  16% {
+    transform: scaleY(calc(var(--peak) * 0.78));
+  }
+  24% {
+    transform: scaleY(calc(var(--peak) * 0.44));
+  }
+  35% {
+    transform: scaleY(calc(var(--peak) * 0.92));
+  }
+  44% {
+    transform: scaleY(calc(var(--peak) * 0.34));
   }
   50% {
-    opacity: 0.85;
+    transform: scaleY(calc(var(--peak) * 0.2));
   }
-}
-
-@keyframes status-pulse {
-  0%,
+  58% {
+    transform: scaleY(calc(var(--peak) * 0.5));
+  }
+  64% {
+    transform: scaleY(calc(var(--peak) * 0.86));
+  }
+  72% {
+    transform: scaleY(calc(var(--peak) * 0.4));
+  }
+  80% {
+    transform: scaleY(calc(var(--peak) * 0.46));
+  }
+  88% {
+    transform: scaleY(calc(var(--peak) * 0.32));
+  }
+  96% {
+    transform: scaleY(calc(var(--peak) * 0.3));
+  }
   100% {
-    opacity: 1;
-    box-shadow: 0 0 6px oklch(68% 0.17 150);
-  }
-  50% {
-    opacity: 0.45;
-    box-shadow: 0 0 2px oklch(68% 0.17 150);
+    transform: scaleY(calc(var(--peak) * 0.18));
   }
 }
 
 .mock-bar {
   transform-origin: center;
-  animation: mock-bar-sway 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  /* Resting state (used as-is under reduced motion): a static center-weighted
+     silhouette so the visualizer still reads as a voice level meter. */
+  transform: scaleY(calc(var(--peak, 1) * 0.55));
 }
 
-.mock-glow-pulse {
-  animation: glow-pulse 3.2s ease-in-out infinite;
-}
-
-.mock-status-pulse {
-  animation: status-pulse 2s ease-in-out infinite;
+@media (prefers-reduced-motion: no-preference) {
+  .mock-bar {
+    will-change: transform;
+  }
+  .mock-bar--a {
+    animation: mock-bar-speak-a 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+  .mock-bar--b {
+    animation: mock-bar-speak-b 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
 }
 
 /* ── Landing page feature cards ── */

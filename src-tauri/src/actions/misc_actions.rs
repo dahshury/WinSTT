@@ -47,8 +47,7 @@ impl ShortcutAction for TransformAction {
 // the most recent dictation transcription without re-dictating. The key hook registers
 // the combo with blocking, so the accelerator is consumed system-wide (the reference's
 // "exclusive" globalShortcut semantics) — pressing it ONLY re-pastes, it does not also
-// trigger the focused app's native binding for the same combo. Mirrors
-// electron/ipc/repaste-hotkey.ts.
+// trigger the focused app's native binding for the same combo.
 pub(super) struct RepasteAction;
 
 impl ShortcutAction for RepasteAction {
@@ -101,7 +100,7 @@ impl ShortcutAction for RepasteAction {
 
 // Read-Aloud Action (WinSTT tts.hotkey, default LCtrl+Space): capture the active
 // selection and read it aloud through the source-aware TTS pipeline (local Kokoro /
-// cloud ElevenLabs). Single-shot on press. Mirrors electron/ipc/tts-hotkey.ts.
+// cloud ElevenLabs). Single-shot on press.
 pub(super) struct ReadAloudAction;
 
 impl ShortcutAction for ReadAloudAction {

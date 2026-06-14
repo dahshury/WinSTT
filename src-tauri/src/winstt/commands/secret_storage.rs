@@ -1,8 +1,7 @@
-// Settings secret-at-rest. Reference: frontend/electron/lib/secret-storage.ts.
+// Settings secret-at-rest.
 //
-// This is the Rust analogue of Electron's `safeStorage` wrapper: the persisted
-// settings tree carries an `enc:v1:<hex>` envelope, while IPC callers continue to
-// receive plaintext. On Windows, the envelope payload is protected with DPAPI,
+// The persisted settings tree carries an `enc:v1:<hex>` envelope, while IPC callers
+// continue to receive plaintext. On Windows, the envelope payload is protected with DPAPI,
 // tying it to the current OS user account. There is no local crypto fallback:
 // malformed envelopes or unavailable OS storage fail explicitly instead of being
 // treated as "empty secret".

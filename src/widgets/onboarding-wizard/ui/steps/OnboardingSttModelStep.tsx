@@ -9,7 +9,7 @@ import {
 	resolveEffectiveQuant,
 	resolveQuantCache,
 	SttModelSelector,
-} from "@picker";
+} from "@/widgets/model-picker";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
 	isVisibleSttModel,

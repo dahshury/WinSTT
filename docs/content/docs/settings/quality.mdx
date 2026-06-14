@@ -1,11 +1,38 @@
 ---
 title: Processing
-description: Control the live preview timing, smart endpoint detection, sentence-pause heuristics, context awareness, and paste behavior.
+description: Everything WinSTT does between speech and paste — live-preview timing, smart endpoint detection, optional LLM cleanup and hotkey transforms, context awareness, and paste behavior.
 ---
 
-The **Processing** tab governs everything that happens between speech and paste — how fast the live preview updates, when WinSTT decides you've finished a sentence, and whether context is included for cleanup.
+The **Processing** tab governs everything that happens between speech and paste: how fast the live preview updates, when WinSTT decides you've finished a sentence, whether a language model cleans up or rewrites the text, and how the result lands at your cursor.
 
-<Video src="quality-pipeline" chrome="card" alt="The Processing settings pipeline: realtime preview timing, Smart Endpoint, context awareness, and optional auto-submit lighting up in sequence." caption="Processing controls tune the live preview, endpoint timing, context, and paste behavior." />
+<Video src="quality-pipeline" chrome="card" label="Processing pipeline" alt="The Processing settings pipeline: realtime preview timing, Smart Endpoint, LLM cleanup, context awareness, and optional auto-submit lighting up in sequence." caption="Processing tunes the live preview, endpoint timing, LLM cleanup, context, and paste behavior." />
+
+<BentoGrid cols={4}>
+  <BentoCell icon="realtime" title="Realtime preview" href="#realtime-preview">
+    Tune how fast the live-preview model streams words while you speak.
+  </BentoCell>
+  <BentoCell icon="speed" title="Smart Endpoint" href="#smart-endpoint">
+    A classifier decides when a sentence is finished in hands-free modes.
+  </BentoCell>
+  <BentoCell icon="pipeline" title="Sentence pauses" href="#sentence-pauses">
+    Punctuation-based silence timers — the fallback when Smart Endpoint is off.
+  </BentoCell>
+  <BentoCell icon="brain" title="LLM cleanup" href="#llm-cleanup">
+    Auto-polish every transcription with a local or cloud model.
+  </BentoCell>
+  <BentoCell icon="transform" title="Transforms" href="#transforms">
+    Rewrite any selected text on a hotkey — "make this an email", and more.
+  </BentoCell>
+  <BentoCell icon="sparkles" title="Context awareness" href="#context-awareness">
+    Feed focused-window text into the cleanup prompt for accurate names.
+  </BentoCell>
+  <BentoCell icon="keyboard" title="Paste behavior" href="#paste-behavior">
+    Optionally fire a submit key right after each paste.
+  </BentoCell>
+  <BentoCell icon="file" title="File format" href="#file-transcription">
+    Pick the batch-export format: plain TXT or timestamped SRT.
+  </BentoCell>
+</BentoGrid>
 
 ## Realtime preview
 
@@ -34,7 +61,7 @@ While you speak, a fast model streams words into the overlay so you see text imm
 
 ## Smart Endpoint
 
-In **Toggle** and **Wake Word** modes WinSTT keeps recording across natural pauses, so it needs to decide when a sentence is actually finished. **Smart Endpoint** uses a DistilBERT classifier (`KoljaB/SentenceFinishedClassification`) to read the live transcript and judge whether you've completed a thought, then sets the silence threshold accordingly.
+In **Toggle** and **Wake Word** modes WinSTT keeps recording across natural pauses, so it needs to decide when a sentence is actually finished. **Smart Endpoint** uses a sentence-completion classifier to read the live transcript and judge whether you've completed a thought, then sets the silence threshold accordingly.
 
 <SettingRow label="Smart Endpoint" settingKey="quality.smartEndpoint" default="true">
   AI sentence-completion detection. The pause it waits for is computed as
@@ -53,13 +80,13 @@ In **Toggle** and **Wake Word** modes WinSTT keeps recording across natural paus
   Enabling Smart Endpoint **disables LLM dictation cleanup**, and vice-versa. The
   classifier reads the raw live transcript to time the endpoint, so the two can't both own
   the post-speech stage. Pick the one that fits your workflow — fast hands-free finalizing
-  (Smart Endpoint) or rewritten output ([LLM cleanup](/docs/settings/llm)).
+  (Smart Endpoint) or rewritten output ([LLM cleanup](#llm-cleanup)).
 </Callout>
 
-<Callout type="warn" title="Needs the sentence-classifier server extra">
-  Smart Endpoint relies on the server `sentence-classifier` extra — the only component
-  that pulls in PyTorch. If it isn't installed, the feature **fails soft** and falls back
-  to the manual Sentence Pauses below.
+<Callout type="warn" title="Smart Endpoint falls back when unavailable">
+  Smart Endpoint relies on an on-device sentence classifier that runs through ONNX Runtime
+  like the rest of WinSTT. If that component isn't available, the feature **fails soft** and
+  falls back to the manual Sentence Pauses below.
 </Callout>
 
 ## Sentence pauses
@@ -93,41 +120,320 @@ When Smart Endpoint is **off**, WinSTT falls back to a punctuation-based heurist
   so ordinary mid-thought pauses don't get clipped.
 </SettingRow>
 
+## LLM cleanup
+
+A language model can reshape your words before they're pasted. There is **no master LLM switch** — this section holds two features that are configured and toggled separately, both running on a local Ollama model by default so nothing leaves your machine unless you point a feature at the cloud.
+
+<Screenshot src="section-llm" alt="The LLM settings showing the Dictation toggle, a provider and model picker, tone presets, modifier chips, and a prompt playground." chrome="card" label="Settings — Processing → LLM" caption="Two features: dictation cleanup and transforms, each with its own provider, model, and prompt." />
+
+<BentoGrid cols={2}>
+  <BentoCell icon="brain" title="Dictation cleanup">
+    Runs automatically on every transcription before the text is pasted. Use it to fix
+    punctuation, set a tone, or tighten wording without lifting a finger.
+  </BentoCell>
+  <BentoCell icon="transform" title="Transforms">
+    On-demand rewrites of whatever text is currently selected, triggered by a hotkey. Use
+    them for "make this an email", "fix grammar", or any custom prompt.
+  </BentoCell>
+</BentoGrid>
+
+Each feature runs only when **its own `enabled` is on _and_ a model is configured for its chosen provider**. They pick their provider independently — dictation can stay local on Ollama while transforms call OpenRouter, or vice versa. When both are off, the LLM subsystem is dormant.
+
+<Callout type="warn" title="Dictation cleanup vs. Smart Endpoint">
+  Dictation cleanup is **mutually exclusive** with [Smart Endpoint](#smart-endpoint). Both
+  want to own the end of an utterance, so enabling one disables the other. Pick the LLM pass
+  for nicer text, or Smart Endpoint for faster, classifier-driven stops.
+</Callout>
+
+### Provider
+
+Both features choose one of three providers. Switching provider resets that feature's model selection.
+
+<ModelTable
+  head={["Provider", "Where it runs", "Setup", "Cost"]}
+  rows={[
+    ["Ollama", "Local — on your machine", "Install Ollama, pull a model", "Free"],
+    ["OpenRouter", "Cloud", "Add an API key in Integrations", "Per token"],
+    ["Apple Intelligence", "Local — on-device (macOS)", "macOS on Apple Silicon only", "Free"],
+  ]}
+  caption="Apple Intelligence appears only on macOS Apple Silicon; the option is hidden on other platforms but a value persisted from another machine is still accepted."
+/>
+
+<SettingRow label="Provider" settingKey="llm.dictation.provider" default="ollama">
+  `ollama`, `openrouter`, or `apple-intelligence`. Each feature carries its own copy, so
+  the two can run on different backends at the same time.
+</SettingRow>
+
+<Callout type="success" title="Local-first, cloud opt-in">
+  Ollama and Apple Intelligence run entirely on-device. OpenRouter is the only cloud path,
+  and it is used only after you add an API key in [Integrations](/docs/settings/integrations)
+  and explicitly select it for a feature. Your dictated text never leaves your machine on
+  the local providers.
+</Callout>
+
+### Model and effort
+
+The model field depends on the active provider.
+
+<SettingRow label="Model (Ollama)" settingKey="llm.dictation.model" default='""'>
+  The Ollama model name to use. The picker shows installed models grouped by family with a
+  parameter-size chip and a hardware-fit assessment. Required for the feature to run on
+  Ollama.
+</SettingRow>
+
+<SettingRow label="Thinking Effort (Ollama)" settingKey="llm.dictation.thinkingEffort" default="medium">
+  `off`, `low`, `medium`, or `high` — the reasoning budget for Ollama models that advertise
+  the `thinking` capability. The control only appears when the selected model supports it;
+  non-thinking models ignore the value.
+</SettingRow>
+
+<SettingRow label="Model (OpenRouter)" settingKey="llm.dictation.openrouterModel" default='""'>
+  Encoded as `modelId` or `modelId@providerSlug`. An empty string means **OpenRouter Auto**
+  (let the router choose). Used only when the provider is OpenRouter.
+</SettingRow>
+
+<SettingRow label="Fallback Model (OpenRouter)" settingKey="llm.dictation.openrouterFallbackModel" default='""'>
+  Retried if the primary model errors or times out. Same encoding as the primary; empty
+  disables fallback. It cannot duplicate the primary model.
+</SettingRow>
+
+When the selected OpenRouter model advertises support, three optional parameters are sent:
+
+<ModelTable
+  head={["Parameter", "Setting key", "Values", "Default"]}
+  rows={[
+    ["Reasoning effort", "llm.dictation.reasoningEffort", "low / medium / high", "medium"],
+    ["Verbosity", "llm.dictation.verbosity", "low / medium / high", "medium"],
+    ["Max output tokens", "llm.dictation.maxOutputTokens", "integer or null", "null (model decides)"],
+  ]}
+  caption="Each parameter is omitted from the request when the chosen model does not list it in its supported parameters."
+/>
+
+### Dictation cleanup
+
+When dictation cleanup is on, every transcription is passed through your chosen presets before it lands at your cursor.
+
+<Video src="llm-dictation" chrome="card" alt="A raw transcription appearing, then being rewritten into cleaned, punctuated text inside a pill at the cursor." caption="Raw transcription → cleaned text, in a pill." />
+
+<SettingRow label="Enabled" settingKey="llm.dictation.enabled" default="false">
+  Activate the cleanup pass. The feature runs only when this is on **and** a model is set
+  for the active provider. Mutually exclusive with Smart Endpoint.
+</SettingRow>
+
+<SettingRow label="Presets" settingKey="llm.dictation.presets" default='[{ "key": "neutral" }]'>
+  An ordered list of cleanup presets applied to dictated text — one tone plus any number of
+  independent modifiers.
+</SettingRow>
+
+#### Tone presets (pick one)
+
+A tone sets the overall register of the cleanup. **At most one** tone preset may be active at a time; choosing a new one replaces the old.
+
+<ModelTable
+  head={["Tone", "What it does"]}
+  rows={[
+    ["neutral", "Polish only — fix punctuation and obvious errors, keep your voice (the default)"],
+    ["formal", "Lift the register to professional, complete sentences"],
+    ["friendly", "Warmer, more conversational phrasing"],
+    ["technical", "Precise, jargon-aware wording"],
+    ["casual", "Relaxed, everyday phrasing"],
+  ]}
+  caption="neutral is the universal base; the other four layer their register on top of it."
+/>
+
+#### Modifiers (independent)
+
+Modifiers stack on top of the tone in any combination. Some carry an intensity **level**.
+
+<ModelTable
+  head={["Modifier", "Levels", "What it does"]}
+  rows={[
+    ["concise", "light / medium / high", "Trim filler and tighten phrasing"],
+    ["summarize", "light / medium / high", "Condense to the key points"],
+    ["reorder", "—", "Reorder ideas into a logical flow"],
+    ["restructure", "—", "Reshape into cleaner paragraphs/lists"],
+    ["rewordForClarity", "—", "Rephrase confusing passages for readability"],
+    ["translate", "language picker", "Translate the output into a chosen target language (100+ options)"],
+  ]}
+  caption="level is valid only for concise and summarize. translate carries a target language instead of a level."
+/>
+
+<Callout type="info" title="Level and language memory">
+  Toggling a leveled modifier off and back on restores its last `level`, and re-enabling
+  translate restores its last target language. You don't have to re-pick every time.
+</Callout>
+
+#### Custom modifiers
+
+Beyond the built-ins you can author your own modifiers, each with an optional intensity hint. They are stored separately and merged into the prompt at the end of the modifier stack. The list scrolls once it passes 7 rows.
+
+<Callout type="info" title="Disabled custom modifiers persist">
+  A custom modifier you toggle off stays in the list (with its level remembered) until you
+  explicitly delete it — turning it off does not remove it.
+</Callout>
+
+#### How presets compose
+
+The presets you enable are assembled into a single prompt in a fixed order, so the result is predictable no matter what you toggle:
+
+<StepFlow>
+  <Step title="Polish base">
+    A universal foundation (clean punctuation, fix obvious errors) is included **once** per
+    prompt — the same base every tone builds on.
+  </Step>
+  <Step title="Tone">
+    Your single chosen tone (formal / friendly / technical / casual) layers its register on
+    top of the base. `neutral` adds nothing beyond the base.
+  </Step>
+  <Step title="Modifiers">
+    Each enabled built-in and custom modifier is appended, each with its level or intensity
+    hint where it has one.
+  </Step>
+  <Step title="Translate — always last">
+    If translate is enabled, it is folded in **last** with a language-generalization clause,
+    so the whole cleaned result is translated as the final step.
+  </Step>
+</StepFlow>
+
+A schema clamp is appended to every composed prompt to keep the model returning only the transformed text.
+
+#### Warmup banner
+
+For Ollama, the panel surfaces a per-feature banner when the model isn't ready, covering three outcomes:
+
+<ModelTable
+  head={["Outcome", "Severity", "Inline action"]}
+  rows={[
+    ["Ollama unreachable", "Warning", "Retry now (or install Ollama if missing)"],
+    ["Model not found", "Warning", "Open the model manager to pull it"],
+    ["Model load failed", "Error", "Open the manager; shows the verbatim error"],
+  ]}
+  caption="OpenRouter and Apple Intelligence have no cold-start banner."
+/>
+
+<Callout type="info" title="The toggle never auto-disables">
+  A warmup failure never flips the feature off. You already authorized it, so the toggle
+  stays on and the banner tells you exactly what to fix — bouncing back to off on every
+  retry would just hide the cause.
+</Callout>
+
+#### Playground
+
+Each feature has a playground: type sample text, run it through the **composed prompt**, and see the result. It has **no clipboard side effects** and its state is transient — nothing is saved, and closing the tab clears it. Use it to confirm your tone + modifier stack does what you expect before turning the feature loose on real dictation.
+
+## Transforms
+
+Transforms reuse all of the provider / model / thinking / tone / modifier machinery above, and add two things: a global hotkey and your own prompt list. They act on the **currently selected text** rather than dictation.
+
+<Video src="llm-transform" chrome="card" alt="Text selected in an app, a hotkey pressed, and the selection replaced in place with the rewritten version." caption="Select text, hit the hotkey, it's rewritten in place." />
+
+<SettingRow label="Enabled" settingKey="llm.transforms.enabled" default="false">
+  Activate transforms. Like dictation, runs only with a configured model for the active
+  provider.
+</SettingRow>
+
+<SettingRow label="Global Hotkey" settingKey="llm.transforms.hotkey" default='""'>
+  A single global hotkey for the transforms feature. Empty by default (no hotkey). Press
+  <Combo keys="LCtrl+LShift+P" /> (example) to run a transform on your selection.
+</SettingRow>
+
+<SettingRow label="Custom Prompts" settingKey="llm.transforms.prompts" default="[]">
+  Your list of text transforms. Each entry carries its own system prompt and an optional
+  per-transform hotkey.
+</SettingRow>
+
+Each transform entry has these fields:
+
+<ModelTable
+  head={["Field", "What it is"]}
+  rows={[
+    ["id", "Stable slug; built-ins use kebab-case (e.g. polish)"],
+    ["name", "Display name shown in the list"],
+    ["prompt", "Full system prompt; your selection is the user turn, the model returns only the rewritten text"],
+    ["hotkey", "Key combo (e.g. LCtrl+LShift+P); empty = reachable only from the Transforms UI"],
+    ["builtin", "App-seeded entries (Polish, Prompt Engineer) show Reset instead of Delete"],
+  ]}
+/>
+
+<Callout type="warn" title="Per-transform hotkeys aren't validated">
+  There is no UI check for conflicting per-transform hotkeys. If two transforms (or another
+  global shortcut) share a combo, the result is undefined — assign distinct keys yourself.
+</Callout>
+
+The Transforms playground works the same as dictation's, with its own per-transform editable prompt and transient state.
+
 ## Context awareness
 
-When LLM cleanup is on, WinSTT can read the focused window's text right before each dictation and feed it to the cleanup pass, so names and jargon get spelled the way they already appear on screen.
+Dictation cleanup can read text from the window you're typing into so names and jargon get spelled correctly. These controls live next to the LLM config and **disappear entirely when the dictation LLM is not configured** — the capture pipeline never runs in that case.
 
-<Screenshot src="sec-quality-context" alt="The Context awareness section with a single Context awareness toggle, switched on." chrome="card" caption="Feeds focused-window text into the LLM cleanup prompt. Off by default — opt in per the in-app dialog." />
+<Screenshot src="sec-quality-context" alt="The Context awareness section with a single Context awareness toggle, switched on." chrome="card" label="Settings → Processing → Context awareness" caption="Feeds focused-window text into the LLM cleanup prompt. Off by default — opt in per the in-app dialog." />
 
-<SettingRow label="Context awareness" settingKey="general.contextAwareness" default="false">
-  Reads focused-window text through the platform's accessibility APIs immediately before
-  each dictation and includes it in the LLM cleanup prompt. It does nothing on its own —
-  it needs [LLM cleanup](/docs/settings/llm) enabled. Full detail, including the deny-list
-  and privacy notes, lives under [Dictation → Context-awareness](/docs/dictation#context-awareness-caret-split).
+<SettingRow label="Context Awareness" settingKey="general.contextAwareness" default="false">
+  Off by default. When on, WinSTT reads the focused window's text immediately before each
+  dictation and feeds it to the cleanup step. It does nothing without [LLM cleanup](#llm-cleanup)
+  enabled. Platform-gated, and it requires an explicit opt-in dialog because it reads content
+  from any focused app.
 </SettingRow>
+
+<SettingRow label="Deny-List" settingKey="general.contextDenyList">
+  Apps and sites that context capture should skip. Entries are either an **exe name**
+  (`1password.exe`, matched against the foreground process) or a **URL host**
+  (`chase.com`, matched as a suffix so subdomains are covered). Seeded with six common
+  password managers so secrets are never captured. Full detail lives under
+  [Dictation → Context-awareness](/docs/dictation#context-awareness-caret-split).
+</SettingRow>
+
+<Callout type="success" title="What context capture sees stays local">
+  Captured context is only ever passed to the LLM cleanup pass you've already chosen — to
+  your local Ollama/Apple model, or to OpenRouter only if you selected it. Denied apps are
+  skipped before any text is read.
+</Callout>
 
 ## Paste behavior
 
 After the final text is produced (and optionally cleaned), WinSTT pastes it at your cursor. This toggle decides whether it also presses a submit key.
 
-<Screenshot src="sec-quality-paste" alt="The Paste Behavior section with the Auto-Submit After Paste toggle, switched off." chrome="card" caption="Auto-Submit fires a submit key right after each paste — off by default." />
+<Screenshot src="sec-quality-paste" alt="The Paste Behavior section with the Auto-Submit After Paste toggle, switched off." chrome="card" label="Settings → Processing → Paste behavior" caption="Auto-Submit fires a submit key right after each paste — off by default." />
 
 <SettingRow label="Auto-Submit After Paste" settingKey="general.autoSubmit" default="false">
   When on, WinSTT injects a submit key right after each successful paste — so a dictated
   chat message ships without a separate Enter press. The submit key and re-paste shortcut
-  are covered under [Dictation → How text gets pasted](/docs/dictation#how-text-gets-pasted).
+  are covered under [Dictation → After the paste](/docs/dictation#after-the-paste).
 </SettingRow>
 
 ## File transcription
 
 When you drop an audio file in for batch transcription, this setting picks the output format. It applies to file jobs only, not live dictation.
 
-<Screenshot src="sec-quality-filetx" alt="The File Transcription section with a Format control toggled between TXT and SRT — TXT selected." chrome="card" caption="Pick the batch-export format: plain TXT or timestamped SRT subtitles." />
+<Screenshot src="sec-quality-filetx" alt="The File Transcription section with a Format control toggled between TXT and SRT — TXT selected." chrome="card" label="Settings → Processing → File transcription" caption="Pick the batch-export format: plain TXT or timestamped SRT subtitles." />
 
 <SettingRow label="File Transcription Format" settingKey="general.fileTranscriptionFormat" default="txt">
   **TXT** writes plain text; **SRT** writes SubRip subtitles with timecodes. Full details
   on the batch workflow live in [File transcription](/docs/file-transcription).
 </SettingRow>
+
+## Shared LLM infrastructure
+
+These settings are shared by both LLM features — one Ollama instance, one OpenRouter account.
+
+<SettingRow label="Ollama Endpoint" settingKey="llm.endpoint" default="http://localhost:11434">
+  The Ollama URL used by both features when their provider is Ollama.
+</SettingRow>
+
+<SettingRow label="OpenRouter API Key" settingKey="llm.openrouterApiKey" default='""'>
+  Shared across both features. Stored encrypted on your device and never shown again after
+  you enter it. Set and verify it in [Integrations](/docs/settings/integrations).
+</SettingRow>
+
+<SettingRow label="Timeout" settingKey="llm.timeout" default="5000">
+  Request timeout in milliseconds (range 1000–30000), persisted and wired through IPC.
+</SettingRow>
+
+<Callout type="warn" title="Timeout is persisted but not enforced">
+  `llm.timeout` is saved and passed through, but it is **not applied at the network layer**.
+  Local LLM cold starts routinely exceed any finite cap, and aborting would paste
+  un-processed text — so the value is kept only for settings stability.
+</Callout>
 
 ## Related
 
@@ -135,8 +441,8 @@ When you drop an audio file in for batch transcription, this setting picks the o
   <Card title="Model & realtime model" href="/docs/settings/model">
     Pick the main and live-preview models that these timing controls drive.
   </Card>
-  <Card title="LLM cleanup" href="/docs/settings/llm">
-    Rewrite dictation with tone presets — the mutually-exclusive alternative to Smart Endpoint.
+  <Card title="Integrations" href="/docs/settings/integrations">
+    Add and verify your OpenRouter API key (and cloud STT/TTS keys) — provider config lives here.
   </Card>
   <Card title="Audio & VAD" href="/docs/settings/audio">
     Microphone, mute behavior, and the voice-activity tuning that feeds endpoint detection.

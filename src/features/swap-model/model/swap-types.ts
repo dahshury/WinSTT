@@ -61,7 +61,7 @@ export interface SwapController {
 	 *  (the precision-badge "download this variant" action) WITHOUT selecting /
 	 *  swapping to the model. The dialog's Download button runs the same
 	 *  background predownload the badge used to fire directly — gating it behind
-	 *  the size + hardware-fit confirmation (Electron parity). */
+	 *  the size + hardware-fit confirmation. */
 	promptDownload: (
 		kind: "main" | "realtime",
 		modelId: string,

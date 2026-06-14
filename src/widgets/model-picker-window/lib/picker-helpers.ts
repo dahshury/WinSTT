@@ -1,4 +1,7 @@
-import { resolveEffectiveQuant, STT_PICKER_WIDTH_PX } from "@picker";
+import {
+	resolveEffectiveQuant,
+	STT_PICKER_WIDTH_PX,
+} from "@/widgets/model-picker";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import type {
 	useCatalogStore,

@@ -1,6 +1,5 @@
 // Reference (authoritative):
-// frontend/electron/ipc/context-playground-window.ts + frontend/electron/lib/context-debug.ts
-// + src/shared/api/context-debug-types.ts (the renderer's ContextDebugReport /
+// src/shared/api/context-debug-types.ts (the renderer's ContextDebugReport /
 //   ContextPlaygroundPush contract) + src/views/context-playground/model/use-context-playground.ts.
 //
 // DEBUG-ONLY context-awareness playground backend. Enable Cargo feature

@@ -12,11 +12,12 @@ struct Args {
     input: Option<PathBuf>,
     label: Option<String>,
     require_prompt_json: bool,
-    electron_fixtures: Option<PathBuf>,
+    dump_prompt: bool,
+    context_fixtures: Option<PathBuf>,
 }
 
 #[derive(Debug)]
-struct ElectronFixture {
+struct ContextFixture {
     index: usize,
     app: String,
     exe: String,
@@ -36,8 +37,8 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
-    if let Some(path) = args.electron_fixtures.as_deref() {
-        return run_electron_fixtures(path);
+    if let Some(path) = args.context_fixtures.as_deref() {
+        return run_context_fixtures(path);
     }
 
     let raw = read_input(args.input.as_ref())?;
@@ -46,6 +47,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let prompt = format_context_for_prompt(&snapshot);
     let prompt_json: Result<Value, _> = serde_json::from_str(&prompt);
     let prompt_valid = prompt_json.is_ok();
+
+    // Diagnostic: print the raw emitted prompt fragment (the JSON the LLM would
+    // receive) so a re-capture can eyeball the attributed turns. No report.
+    if args.dump_prompt {
+        println!("{prompt}");
+        return Ok(());
+    }
 
     if args.require_prompt_json && !prompt_valid {
         let report = build_report(args.label.as_deref(), &raw_json, &prompt_json, &prompt);
@@ -73,14 +81,15 @@ fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
                 args.label = Some(iter.next().ok_or("--label requires a value")?);
             }
             "--require-prompt-json" => args.require_prompt_json = true,
-            "--electron-fixtures" => {
-                args.electron_fixtures = Some(PathBuf::from(
-                    iter.next().ok_or("--electron-fixtures requires a path")?,
+            "--dump-prompt" => args.dump_prompt = true,
+            "--context-fixtures" => {
+                args.context_fixtures = Some(PathBuf::from(
+                    iter.next().ok_or("--context-fixtures requires a path")?,
                 ));
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: context_prompt_smoke [--input PATH|-] [--label LABEL] [--require-prompt-json] [--electron-fixtures PATH]"
+                    "Usage: context_prompt_smoke [--input PATH|-] [--label LABEL] [--require-prompt-json] [--context-fixtures PATH]"
                 );
                 std::process::exit(0);
             }
@@ -102,9 +111,9 @@ fn read_input(path: Option<&PathBuf>) -> io::Result<String> {
     Ok(raw.trim_start_matches('\u{feff}').to_string())
 }
 
-fn run_electron_fixtures(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn run_context_fixtures(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(path)?;
-    let fixtures = parse_electron_fixtures(&source)?;
+    let fixtures = parse_context_fixtures(&source)?;
     let mut items = Vec::new();
     let mut failed = 0usize;
 
@@ -153,13 +162,13 @@ fn run_electron_fixtures(path: &Path) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-fn parse_electron_fixtures(
+fn parse_context_fixtures(
     source: &str,
-) -> Result<Vec<ElectronFixture>, Box<dyn std::error::Error>> {
+) -> Result<Vec<ContextFixture>, Box<dyn std::error::Error>> {
     let blocks = extract_ts_object_blocks(source, "APP_FIXTURES")?;
     let mut fixtures = Vec::with_capacity(blocks.len());
     for (i, block) in blocks.iter().enumerate() {
-        fixtures.push(ElectronFixture {
+        fixtures.push(ContextFixture {
             index: i,
             app: read_ts_string_field(block, "app")?,
             exe: read_ts_string_field(block, "exe")?,
@@ -327,7 +336,7 @@ fn unescape_ts_string(raw: &str) -> String {
     out
 }
 
-fn fixture_raw_snapshot(fixture: &ElectronFixture) -> String {
+fn fixture_raw_snapshot(fixture: &ContextFixture) -> String {
     json!({
         "windowTitle": fixture_window_title(fixture),
         "elementName": focused_element_name(&fixture.example_ax_html)
@@ -342,7 +351,7 @@ fn fixture_raw_snapshot(fixture: &ElectronFixture) -> String {
     .to_string()
 }
 
-fn fixture_window_title(fixture: &ElectronFixture) -> String {
+fn fixture_window_title(fixture: &ContextFixture) -> String {
     Regex::new(r#"(?is)<window\b[^>]*>"#)
         .unwrap()
         .find(&fixture.example_ax_html)
@@ -380,7 +389,7 @@ fn attr_value(tag: &str, attr: &str) -> Option<String> {
     None
 }
 
-fn infer_fixture_url(fixture: &ElectronFixture) -> String {
+fn infer_fixture_url(fixture: &ContextFixture) -> String {
     if let Some(url) = extract_known_url(&fixture.example_ax_html) {
         return url;
     }
@@ -417,7 +426,7 @@ fn extract_known_url(value: &str) -> Option<String> {
     }
 }
 
-fn fixture_label(fixture: &ElectronFixture) -> String {
+fn fixture_label(fixture: &ContextFixture) -> String {
     let app = fixture.app.to_lowercase();
     if app.contains("gmail") || app.contains("outlook") {
         "gmail".to_string()
@@ -454,7 +463,7 @@ fn fixture_label(fixture: &ElectronFixture) -> String {
 }
 
 fn validate_fixture_prompt(
-    fixture: &ElectronFixture,
+    fixture: &ContextFixture,
     _label: &str,
     prompt_json: &Result<Value, serde_json::Error>,
 ) -> Value {
@@ -491,7 +500,7 @@ fn validate_fixture_prompt(
     })
 }
 
-fn fixture_min_context_chars(fixture: &ElectronFixture) -> usize {
+fn fixture_min_context_chars(fixture: &ContextFixture) -> usize {
     match fixture.surface_type.as_str() {
         "webmail" | "chat" => 80,
         "social" | "editor" | "doc" => 40,
@@ -499,12 +508,12 @@ fn fixture_min_context_chars(fixture: &ElectronFixture) -> usize {
     }
 }
 
-fn requires_reply_ready_fixture(fixture: &ElectronFixture) -> bool {
+fn requires_reply_ready_fixture(fixture: &ContextFixture) -> bool {
     matches!(fixture.surface_type.as_str(), "webmail" | "chat" | "social")
 }
 
 fn fixture_prompt_reply_ready(
-    fixture: &ElectronFixture,
+    fixture: &ContextFixture,
     prompt_json: &Result<Value, serde_json::Error>,
 ) -> bool {
     let Some(object) = prompt_json.as_ref().ok().and_then(Value::as_object) else {
@@ -1102,7 +1111,7 @@ mod tests {
     }
 
     #[test]
-    fn electron_fixture_parser_skips_type_annotation_and_unescapes_strings() {
+    fn context_fixture_parser_skips_type_annotation_and_unescapes_strings() {
         let source = r#"
             export interface AppFixture { app: string; }
             export const APP_FIXTURES: readonly AppFixture[] = [
@@ -1120,7 +1129,7 @@ mod tests {
             ] as const;
         "#;
 
-        let fixtures = parse_electron_fixtures(source).unwrap();
+        let fixtures = parse_context_fixtures(source).unwrap();
         assert_eq!(fixtures.len(), 1);
         assert_eq!(fixtures[0].app, "Messenger");
         assert_eq!(fixtures[0].expected_tier, 3);
@@ -1129,7 +1138,7 @@ mod tests {
 
     #[test]
     fn fixture_validation_accepts_messenger_name_body_turns() {
-        let fixture = ElectronFixture {
+        let fixture = ContextFixture {
             index: 0,
             app: "Messenger (messenger.com / Facebook Messages in Chrome)".to_string(),
             exe: "chrome.exe".to_string(),

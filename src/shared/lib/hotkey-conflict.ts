@@ -2,7 +2,7 @@
  * Pairwise conflict detection between two uiohook-style accelerator strings
  * (e.g. `"LCtrl+LShift+V"`).
  *
- * The matchers in `electron/ipc/hotkey.ts`, `tts-hotkey.ts`, and (effectively)
+ * The matchers in `hotkey.ts`, `tts-hotkey.ts`, and (effectively)
  * `repaste-hotkey.ts` all fire when their bound key set is a SUBSET of the
  * currently-held physical keys. That means two bindings collide whenever one's
  * key set is equal to, a subset of, or a superset of the other's — pressing

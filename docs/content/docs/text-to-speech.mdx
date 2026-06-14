@@ -3,13 +3,22 @@ title: Text-to-Speech
 description: Read any selected text aloud with the on-device Kokoro-82M voice — 54 voices across 9 languages, all synthesized locally.
 ---
 
+import { ShowcaseReadAloud } from "@/components/tts-showcase";
+
 Select text anywhere, press a hotkey, and WinSTT reads it back to you in one of 54
 voices — synthesized on your own machine by the bundled Kokoro-82M ONNX model, with no
 cloud round-trip.
 
-<Screenshot src="section-tts" alt="The Text-to-Speech settings section: a master toggle, a searchable voice picker with per-row preview buttons, and a speed slider." chrome="card" label="Settings — Text-to-Speech" caption="Enable TTS, pick a voice, and set the playback speed." />
+<StatGrid>
+  <Stat value="54" label="Voices" />
+  <Stat value="9" label="Languages" />
+  <Stat value="82M" label="Model params" />
+  <Stat value="0" label="Cloud calls" />
+</StatGrid>
 
-<Video src="tts-voice-flow" chrome="card" alt="A text-to-speech animation showing selected text, the local Kokoro synthesis step, and a waveform playing through the chosen output device." caption="Selected text is captured, synthesized locally, and played through your output device." />
+<ShowcaseReadAloud />
+
+<Screenshot src="section-tts" alt="The Text-to-Speech settings section: a master toggle, a searchable voice picker with per-row preview buttons, and a speed slider." chrome="card" label="Settings — Read Aloud" caption="Enable read-aloud, pick a voice, and set the playback speed in Settings → Read Aloud." />
 
 ## How it works
 
@@ -158,7 +167,7 @@ speech-to-text model's device — set it once with **Device** in the
   <Card title="Audio & output" href="/docs/settings/audio">
     Choose the output device for TTS playback and recording chimes.
   </Card>
-  <Card title="LLM cleanup" href="/docs/settings/llm">
+  <Card title="LLM cleanup" href="/docs/settings/quality#llm-cleanup">
     Reshape dictation with tone presets before you read it back.
   </Card>
 </Cards>

@@ -281,7 +281,7 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
         // native OS context menu from the reference implementation. No native menu is
         // attached (see tray.rs::update_tray_menu).
         //
-        // Click routing mirrors the reference tray (electron/ipc/tray.ts):
+        // Click routing mirrors the reference tray:
         //   - LEFT click / DOUBLE click → show + raise the main window
         //     (`tray.on("click", () => win.show())`).
         //   - RIGHT click → toggle the custom HTML tray menu at the cursor
@@ -619,8 +619,8 @@ pub fn run(cli_args: CliArgs) {
                     return;
                 }
                 // Secondary windows generally hide so the app keeps running for the hotkey.
-                // Debug-only Context Playground is destroyed below to match the Electron
-                // reference and reset its live-capture renderer state on the next open.
+                // Debug-only Context Playground is destroyed below to reset its
+                // live-capture renderer state on the next open.
                 api.prevent_close();
 
                 // Native close of Settings (Alt+F4 etc.) bypasses close_self_window,

@@ -1,22 +1,18 @@
 # WinSTT — Rust + Tauri (repo root)
 
-This repository root is the **Rust + Tauri port of WinSTT** (a local-first
-speech-to-text desktop app). The original **Electron + Python** implementation now lives under
-[`examples/winstt-electron/`](examples/winstt-electron/) as the reference/source-of-truth
-for feature parity; `main` still tracks that Electron app.
+This repository is **WinSTT** — a local-first speech-to-text desktop app built
+with **Rust + Tauri** (React renderer, `ort`/ONNX Runtime STT backend).
 
 ## Layout
 
 ```
 /                      ← Tauri WinSTT app (this is the app)
-├── src/               renderer (FSD; ported 1:1 from the reference frontend)
+├── src/               renderer (Feature-Sliced Design)
 ├── src-tauri/         Rust backend (winstt::* modules, STT engines on `ort`)
 ├── public/ windows/ messages/ packages/ spec/ tools/
 ├── docs/              project docs
 ├── index.html  package.json  vite.config.ts  tsconfig*.json
-├── tools/windows/     Windows build helpers (.bat: vcvars + cargo/bun)
-├── examples/
-│   └── winstt-electron/   the original Electron+Python app (parity reference)
+└── tools/windows/     Windows build helpers (.bat: vcvars + cargo/bun)
 ```
 
 ## Build / run (Windows)
@@ -33,7 +29,7 @@ The Tauri app needs the VS build env + bun/cargo on PATH. Use the helpers in
 Note: `cargo build --release` leaves Tauri in **dev mode** (webview loads the dev URL);
 only `tauri build` produces a standalone exe.
 
-## Critical rules (carried from the reference AGENTS.md)
+## Critical rules
 
 - **NEVER `git stash`** in any form — the working tree is huge and stash conflicts hold
   work hostage. Use `cp file file.bak` or `git show <ref>:<path>` to compare.
@@ -73,6 +69,3 @@ only `tauri build` produces a standalone exe.
   ROUTE event has no backend emitter, or a canonical backend event has no listener
   (the prefix-drift bug class); add an allowlist entry with a reason for a
   deliberately dead/internal edge.
-
-For the Electron/Python app's instructions, see
-[`examples/winstt-electron/AGENTS.md`](examples/winstt-electron/AGENTS.md).

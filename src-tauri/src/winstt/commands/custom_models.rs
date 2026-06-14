@@ -1,6 +1,3 @@
-// Reference (authoritative):
-// frontend/electron/ipc/custom-models.ts.
-//
 // The Settings → Models "Open custom-models folder" button sends
 // `CUSTOM_MODELS_OPEN_FOLDER`. The adapter (native-bridge-adapter.ts) routes it as
 // `{ kind: "plugin", plugin: "opener:custom-models" }`, whose handler INVOKES the

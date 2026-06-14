@@ -73,6 +73,9 @@ pub(crate) fn register_winstt_managers(app_handle: &AppHandle, managers: &CoreMa
     app_handle.manage(Arc::new(
         crate::winstt::managers::tts_download_manager::TtsDownloadManager::new(app_handle),
     ));
+    app_handle.manage(Arc::new(
+        crate::winstt::encoder_dict::download::EncoderModelDownloader::new(app_handle),
+    ));
 
     {
         let settings = crate::winstt::commands::settings::read_settings(app_handle);

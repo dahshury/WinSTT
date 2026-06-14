@@ -362,7 +362,7 @@ export function ModelSettingsPanel() {
 	});
 
 	// Gate a precision-badge "download this variant" click into the confirmation
-	// dialog for the right slot (Electron parity); pause/resume/cancel still
+	// dialog for the right slot; pause/resume/cancel still
 	// dispatch straight to the server.
 	const { handleMainDownloadAction, handleRealtimeDownloadAction } =
 		useDownloadGating({ controller, handleDownloadAction });

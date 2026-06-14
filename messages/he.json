@@ -607,6 +607,15 @@
     "conflictOtherTts": "טקסט לדיבור"
   },
   "dictionary": {
+    "encoderTitle": "On-device dictionary model",
+    "encoderDescription": "Without LLM cleanup, the dictionary uses a small on-device model to correct your terms in context. Download it once (~310 MB) to turn this on.",
+    "encoderDownload": "Download model (~310 MB)",
+    "encoderDownloading": "Downloading…",
+    "encoderPaused": "Paused",
+    "encoderPause": "Pause",
+    "encoderResume": "Resume",
+    "encoderReady": "On-device model ready — the dictionary works without LLM cleanup.",
+    "requiresCleanup": "Dictionary and snippets are applied by the LLM during cleanup. Turn on dictation cleanup in Processing to use them.",
     "title": "מילון",
     "description": "למד ל-Whisper את שמותיך, ז'רגון ומונחי תחום. כאשר מילה שתומללה קרובה פונטית לאחד מהרשומות הללו היא מתוקנת לאיות הקנוני אוטומטית.",
     "term": "מונח",

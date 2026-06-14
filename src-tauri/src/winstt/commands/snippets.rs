@@ -1,8 +1,6 @@
 // Snippet expansion command + cache-warm bridge.
 //
-// Reference (behavioral): frontend/electron/lib/text-processing.ts
-// (`applyPostProcessing` / `getPostProcessingVocab` / the `onDidChange("snippets")`
-// watcher) + frontend/src/shared/lib/fuzzy-match.ts (`replaceWithSnippets`).
+// Reference (behavioral): frontend/src/shared/lib/fuzzy-match.ts (`replaceWithSnippets`).
 //
 // Snippet CRUD has NO dedicated IPC command in the reference — the snippets array
 // is part of the settings tree and is edited wholesale through

@@ -5,8 +5,8 @@
  * settings switcher, and the tray icon always agree on which mode is active:
  *   - Settings switcher (`@/shared/ui/switcher`) tints labels and pressed bg
  *   - Audio visualizer (`@/features/audio-visualizer`) overrides bar color
- *   - the reference tray/taskbar indicator (`@electron/lib/recording-indicator`)
- *     blends the icon with the matching RGB triple
+ *   - the reference tray/taskbar indicator blends the icon with the matching
+ *     RGB triple
  */
 
 export type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword";

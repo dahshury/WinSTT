@@ -60,7 +60,7 @@ impl ShortcutAction for TranscribeAction {
         if is_always_on {
             // Always-on mode: the mic stream is already open, so mute can apply
             // immediately. The start chime is the winstt recording sound played
-            // below (play_recording_chime_then_duck) — it routes to the OUTPUT
+            // below (duck_then_play_recording_chime) — it routes to the OUTPUT
             // device and is independent of the INPUT mute applied here.
             debug!("Always-on mode: applying mute");
             rm.apply_mute();
@@ -122,7 +122,11 @@ impl ShortcutAction for TranscribeAction {
             // `general.recording_sound` and fires on a worker thread (non-blocking).
             // Listen mode goes through loopback_manager (not this path), matching the
             // reference's "suppressed in listen mode".
-            crate::winstt::commands::sound::play_recording_chime_then_duck(
+            //
+            // System-audio ducking is sequenced INSIDE this call: background audio
+            // is ducked first (per-session, protecting WinSTT's process tree), then
+            // the chime plays at full volume — so the chime is never attenuated.
+            crate::winstt::commands::sound::duck_then_play_recording_chime(
                 app,
                 rm.recording_generation(),
             );
@@ -183,7 +187,7 @@ impl ShortcutAction for TranscribeAction {
 
         // Restore the input mute applied at recording start. The winstt sound
         // system has a single recording chime (played on start by
-        // play_recording_chime_then_duck) and no separate stop sound, so there is
+        // duck_then_play_recording_chime) and no separate stop sound, so there is
         // no stop chime to gate this on.
         rm.remove_mute();
 

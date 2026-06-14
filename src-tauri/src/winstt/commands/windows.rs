@@ -2,15 +2,15 @@
 // the reference BrowserWindow becomes a Tauri WebviewWindow loading its own HTML
 // entry (main at "/", secondary windows at "windows/<name>.html"). The chrome
 // (size, transparency, decorations, always-on-top, skip-taskbar) is translated
-// 1:1 from frontend/electron/main.ts + electron/ipc/*-window.ts.
+// 1:1 from the reference window creators.
 //
 // Creation policy (matches the reference's keep-alive semantics):
 //   - `main` is created eagerly in lib.rs setup (NOT here).
 //   - settings/history/onboarding/pickers/overlay/tray-menu are created LAZILY on
 //     first `open_window` and HIDDEN (not destroyed) on `close_window`, so re-open
 //     preserves renderer state.
-//   - optional context-playground is created lazily but DESTROYED on close, matching
-//     the Electron debug window and resetting its live-capture renderer state.
+//   - optional context-playground is created lazily but DESTROYED on close,
+//     resetting its live-capture renderer state.
 //
 // Two placement regimes (ported from the reference window creators):
 //   - PLAIN windows (settings/history/onboarding and optional context-playground): created at
@@ -857,8 +857,8 @@ pub(crate) fn close_window_internal(app: &AppHandle, name: &str) -> Result<(), S
 }
 
 /// `close_window` — HIDE the labelled keep-alive windows so re-open keeps state.
-/// Debug-only context-playground is destroyed on close to mirror the Electron
-/// reference and force a fresh live-capture renderer on next open.
+/// Debug-only context-playground is destroyed on close to force a fresh
+/// live-capture renderer on next open.
 #[tauri::command]
 #[specta::specta]
 pub fn close_window(

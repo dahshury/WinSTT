@@ -1776,8 +1776,8 @@ async openWindow(name: string, x: number | null, y: number | null, width: number
 },
 /**
  * `close_window` — HIDE the labelled keep-alive windows so re-open keeps state.
- * Debug-only context-playground is destroyed on close to mirror the Electron
- * reference and force a fresh live-capture renderer on next open.
+ * Debug-only context-playground is destroyed on close to force a fresh
+ * live-capture renderer on next open.
  */
 async closeWindow(name: string) : Promise<Result<null, string>> {
     try {
@@ -1836,7 +1836,6 @@ async anchorWindow(name: string, x: number, y: number) : Promise<Result<null, st
 /**
  * `onboarding_finish` — record the wizard as completed/skipped, broadcast the
  * new settings snapshot, then hide onboarding and surface the main window.
- * Mirrors the reference's `handleFinish` (frontend/electron/ipc/onboarding-window.ts).
  */
 async onboardingFinish(args: OnboardingFinishArgs) : Promise<Result<null, string>> {
     try {

@@ -11,11 +11,15 @@ When something goes wrong, the fastest path to a fix is attaching a diagnostic b
 
 WinSTT writes rolling logs in its app log folder. They are written at **verbose** level all the time, so the full trace is captured even on a normal launch — you do not have to reproduce in a special mode first.
 
-| File | Source | Rotation |
-|---|---|---|
-| `WinSTT.log` | Tauri/Rust backend plus renderer diagnostics. | Managed by the Tauri log plugin. |
-| `debug.log` / `debug.old.log` | Legacy-compatible app log names, included when present. | Rolls when configured by the app. |
-| `stt-server.log` | Legacy-compatible engine log name, included when present. | Included only if a previous or compatibility path wrote it. |
+<ModelTable
+  head={["File", "Source", "Rotation"]}
+  rows={[
+    ["WinSTT.log", "Tauri/Rust backend plus renderer diagnostics.", "Managed by the Tauri log plugin."],
+    ["debug.log / debug.old.log", "Legacy-compatible app log names, included when present.", "Rolls when configured by the app."],
+    ["stt-server.log", "Legacy-compatible engine log name, included when present.", "Included only if a previous or compatibility path wrote it."],
+  ]}
+  caption="Every log that can land in the bundle, and how each one rotates."
+/>
 
 Installed builds store logs under the WinSTT app-data log folder; portable builds use their local `Data/logs` folder. Use **Open Logs Folder** from the tray or About panel instead of guessing the path.
 
@@ -83,23 +87,31 @@ Both files share the `[HH:MM:SS.mmm] [scope] message` format. Filter by scope to
 
 Application log:
 
-| Scope | What it covers |
-|---|---|
-| `backend` / `winstt` | Rust backend startup, model loading, and command handling. |
-| `ipc` / `relay` | The bridge between Tauri commands/events and renderer windows. |
-| `settings` | Settings persistence. Look here when a setting appears to revert. |
-| `hotkey` | Global hotkey registration. A `register false` line means another app claimed the chord. |
-| `diag-bundle` | The bundle generator itself. |
-| `tray-menu` | Tray actions, including **Open Logs Folder**. |
+<ModelTable
+  head={["Scope", "What it covers"]}
+  rows={[
+    ["backend / winstt", "Rust backend startup, model loading, and command handling."],
+    ["ipc / relay", "The bridge between Tauri commands/events and renderer windows."],
+    ["settings", "Settings persistence. Look here when a setting appears to revert."],
+    ["hotkey", "Global hotkey registration. A register false line means another app claimed the chord."],
+    ["diag-bundle", "The bundle generator itself."],
+    ["tray-menu", "Tray actions, including Open Logs Folder."],
+  ]}
+  caption="Application-log scopes — filter on these to narrow a search."
+/>
 
 Engine compatibility log, when present:
 
-| Scope | What it covers |
-|---|---|
-| `bootstrap` | Engine wiring at startup — the first lines say which audio device, VAD, transcriber, and wake-word backend were resolved. |
-| `recorder.application` | `RecorderService` lifecycle and state-machine transitions. |
-| `recorder.pipeline` | The VAD loop, per-chunk decisions, and turn boundaries. Very chatty. |
-| `model_swap` | Hot-swap of STT models. Failures here usually mean a quantization that is incompatible with the chosen backend. |
+<ModelTable
+  head={["Scope", "What it covers"]}
+  rows={[
+    ["bootstrap", "Engine wiring at startup — the first lines say which audio device, VAD, transcriber, and wake-word backend were resolved."],
+    ["recorder.application", "RecorderService lifecycle and state-machine transitions."],
+    ["recorder.pipeline", "The VAD loop, per-chunk decisions, and turn boundaries. Very chatty."],
+    ["model_swap", "Hot-swap of STT models. Failures here usually mean a quantization that is incompatible with the chosen backend."],
+  ]}
+  caption="Engine-compatibility scopes, present only when the legacy engine log exists."
+/>
 
 ## Verbose terminal output
 
@@ -124,7 +136,7 @@ If a crash escapes, WinSTT forwards a redacted exception payload to Sentry. This
   <Card title="CLI & Signals" href="/docs/cli">
     Every command-line flag, including `--verbose`.
   </Card>
-  <Card title="Recording modes" href="/docs/recording-modes">
+  <Card title="Recording modes" href="/docs/dictation">
     Push-to-talk, toggle, listen, and wake-word — and when to use each.
   </Card>
   <Card title="Choose a model" href="/docs/models">

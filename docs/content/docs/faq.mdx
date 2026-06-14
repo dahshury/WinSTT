@@ -7,6 +7,13 @@ Short, self-contained answers to the questions people ask most before and after 
 
 <Screenshot src="main" alt="The WinSTT main window: a 9-band audio visualizer with the active hotkey, microphone, and model shown in the footer." label="WinSTT — main window" caption="Everything below describes this app's default desktop behavior unless a platform note says otherwise." />
 
+<StatGrid>
+  <Stat value="$0" label="Free, MIT-licensed" />
+  <Stat value="100%" label="Local by default" />
+  <Stat value="40+" label="Models, 8 families" />
+  <Stat value="~99" label="Languages (Whisper)" />
+</StatGrid>
+
 ## Privacy & offline
 
 ### Is my audio uploaded anywhere?
@@ -34,13 +41,24 @@ Yes. WinSTT is free and open source under the MIT license. There are no accounts
 
 ### Do I have to use any cloud services?
 
-No. Cloud LLM cleanup (OpenRouter) and cloud STT (OpenAI, ElevenLabs) are strictly opt-in and locked until you add your own API key under [Integrations](/docs/settings/integrations). With no keys configured, WinSTT is 100% local. If you use a cloud provider, you pay that provider directly — WinSTT takes no cut and adds no markup.
+No. Cloud LLM cleanup (OpenRouter) and cloud STT (ElevenLabs, OpenRouter) are strictly opt-in and locked until you add your own API key under [Integrations](/docs/settings/integrations). With no keys configured, WinSTT is 100% local. If you use a cloud provider, you pay that provider directly — WinSTT takes no cut and adds no markup.
 
 ## Languages
 
 ### What languages can WinSTT transcribe?
 
-That depends on the model you pick. Multilingual Whisper models cover ~99 languages; NeMo Parakeet/Canary cover ~25; English-only models (e.g. `whisper-tiny.en`) and language-specific families (GigaAM and T-One for Russian) are also available. Pin a language under [Settings → Model](/docs/settings/model) or leave it on auto-detect.
+That depends on the model you pick. Pin a language under [Settings → Model](/docs/settings/model) or leave it on auto-detect.
+
+<ModelTable
+  head={["Model family", "Coverage"]}
+  rows={[
+    ["Multilingual Whisper", "~99 languages"],
+    ["NeMo Parakeet / Canary", "~25 languages"],
+    ["English-only (e.g. `whisper-tiny.en`)", "English"],
+    ["GigaAM, T-One", "Russian"],
+  ]}
+  caption="Transcription coverage is per-model; the interface language is set independently."
+/>
 
 ### What languages is the interface in?
 

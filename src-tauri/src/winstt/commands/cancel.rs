@@ -1,7 +1,3 @@
-// Reference (authoritative):
-// frontend/electron/ipc/stt-commands.ts::handleAbortOperation + frontend/electron/main.ts
-// (the overlay X button + Escape cancel shortcut both call it).
-//
 // The renderer's user-initiated cancel — overlay X button, and (in the reference build)
 // the Escape shortcut — sends `STT_ABORT_OPERATION`, which the adapter
 // (native-bridge-adapter.ts) routes to the Tauri command `cancel_current_operation`.

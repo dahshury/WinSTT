@@ -1775,7 +1775,7 @@ fn default_dictation_presets() -> Vec<PresetEntry> {
 // Hot-swap classification.
 //
 // The Rust/Tauri port has no externally managed STT server process. Settings that
-// used to be CLI/startup-only in the Electron+Python app are either read live
+// used to be CLI/startup-only are either read live
 // (realtime timing/display, wakeword config, crash-report opt-out) or applied by
 // a targeted in-process reload (model.device / quantization). Therefore no
 // settings path should surface "restart the STT server/app" while the app is running.

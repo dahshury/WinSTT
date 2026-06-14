@@ -25,8 +25,7 @@ pub(super) struct RecordingErrorEvent {
 }
 
 /// Single-slot memory of the most recent dictation transcription, read back by the
-/// re-paste hotkey (`RepasteAction`). Ported from the reference's
-/// `electron/lib/last-transcription.ts`: deliberately ONE slot (the shortcut's
+/// re-paste hotkey (`RepasteAction`). Deliberately ONE slot (the shortcut's
 /// contract is "paste the thing you just dictated"), not the full history store.
 /// Set at the same point dictation auto-pastes the final text (`TranscribeAction::stop`).
 static LAST_TRANSCRIPTION: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));

@@ -72,7 +72,7 @@ function DocsContent({ toc, frontmatter, default: MDX }: DocsClientPage) {
 
   return (
     <DocsPage toc={toc}>
-      <DocsTitle>{frontmatter.title}</DocsTitle>
+      <DocsTitle className="gradient-heading">{frontmatter.title}</DocsTitle>
       <DocsDescription className="mb-0">
         {frontmatter.description}
       </DocsDescription>

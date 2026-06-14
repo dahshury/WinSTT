@@ -2,15 +2,10 @@ import i18next from "eslint-plugin-i18next";
 import tsParser from "@typescript-eslint/parser";
 import tseslint from "@typescript-eslint/eslint-plugin";
 
-const typeCheckedSourceFiles = [
-	"src/**/*.{ts,tsx}",
-	"packages/model-picker/src/**/*.{ts,tsx}",
-];
+const typeCheckedSourceFiles = ["src/**/*.{ts,tsx}"];
 const testSourceFiles = [
 	"src/**/*.{test,spec}.{ts,tsx}",
 	"src/**/*test-helpers*.{ts,tsx}",
-	"packages/model-picker/src/**/*.{test,spec}.{ts,tsx}",
-	"packages/model-picker/src/**/*test-helpers*.{ts,tsx}",
 ];
 
 export default [
@@ -37,7 +32,7 @@ export default [
 		},
 	},
 	{
-		files: ["src/**/*.{ts,tsx}", "packages/model-picker/src/**/*.{ts,tsx}"],
+		files: ["src/**/*.{ts,tsx}"],
 		plugins: {
 			i18next,
 		},

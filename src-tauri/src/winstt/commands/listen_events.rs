@@ -1,6 +1,3 @@
-// Reference: frontend/electron/ipc/relay.ts
-// (DATA_EVENT_HANDLERS — the exact camelCase shapes the renderer consumes).
-//
 // PLAIN-event emit helpers for the WinSTT diarization channel. These are
 // deliberately PLAIN `app.emit(name, json)` (lib_wiring §4b) rather than
 // specta-typed `collect_events!` payloads so the reused renderer's listeners

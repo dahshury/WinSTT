@@ -5,7 +5,21 @@ description: OpenAI Whisper — tiny through large-v3 — plus the compressed Li
 
 Whisper is OpenAI's general-purpose speech recognition model, and the Whisper family is the most flexible engine WinSTT ships: 13 entries spanning a 38M-parameter realtime model up to a 1.55B-parameter accuracy ceiling, covering 99 languages with optional one-pass translation to English.
 
+<StatGrid>
+  <Stat value="13" label="Models in the family" />
+  <Stat value="99" label="Languages, with auto-detect" />
+  <Stat value="38M–1.55B" label="Parameter span" />
+  <Stat value="7.4" label="Accuracy ceiling (large-v3 WER)" />
+</StatGrid>
+
 WinSTT runs every Whisper model through the same `onnx-asr` ONNX Runtime engine as all other families — **not** CTranslate2/faster-whisper. There is no backend to choose; pick a model in the [Model](/docs/settings/model) tab and it loads on the one engine.
+
+<Screenshot
+  src="model-dropdown"
+  alt="The WinSTT model picker open over the main window, showing selectable Whisper models with their accuracy and speed bars."
+  label="Model picker — Whisper family"
+  caption="Pick any Whisper model in the Model tab. The accuracy and speed bars map to the WER and RTFx figures below."
+/>
 
 ## How to read the numbers
 

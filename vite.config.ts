@@ -110,8 +110,8 @@ export default defineConfig(({ command }) => {
 	return {
 		root: rootDir,
 		base: "./",
-		// Vite 8 resolves tsconfig `paths` (@/*, @picker, @picker/*)
-		// natively — replaces vite-tsconfig-paths.
+		// Vite 8 resolves tsconfig `paths` (@/*) natively — replaces
+		// vite-tsconfig-paths.
 		resolve: { tsconfigPaths: true },
 		plugins: [
 			winsttDevSettingsBridge(),

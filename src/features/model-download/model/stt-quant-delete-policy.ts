@@ -1,7 +1,7 @@
 import {
 	resolveEffectiveQuant,
 	resolveQuantCache,
-} from "@picker/stt/lib/cache-helpers";
+} from "@/widgets/model-picker/stt/lib/cache-helpers";
 import type { ModelInfo } from "@/entities/model-catalog";
 import {
 	isSelectableRealtimeModel,

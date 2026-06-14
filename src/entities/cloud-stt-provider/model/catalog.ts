@@ -18,8 +18,7 @@ export interface CloudModel {
  * Hand-written metadata (nice names, one-liners, the default flag) for the
  * well-known model ids. This is ONLY metadata — the authoritative *list* of
  * which models exist comes from the AI SDK's own internal unions (see
- * `cloud-models.generated.ts`, produced by
- * `examples/winstt-electron/frontend/scripts/generate-cloud-models.ts`).
+ * `cloud-models.generated.ts`).
  * An id present in the generated list but absent here gets a prettified label;
  * a curated id the SDK has dropped is still shown (union, never drops).
  */

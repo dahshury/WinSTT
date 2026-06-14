@@ -1,8 +1,3 @@
-// Reference (authoritative):
-// frontend/electron/ipc/transforms.ts + frontend/electron/ipc/transform-hotkeys.ts
-// + frontend/electron/lib/selection-capture.ts
-// + frontend/electron/ipc/llm.ts (runProcessText provider routing).
-//
 // The Transforms apply/preview pipeline + its renderer feedback events. WU-13
 // owns the `transforms:applied` / `transforms:failed` PLAIN events (matching
 // WinSTT's the reference IPC shape byte-for-byte so the reused

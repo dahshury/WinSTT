@@ -130,9 +130,8 @@ crate's upstream repository, linked below.
 These are the direct dependencies declared in the root `package.json`. The
 renderer is bundled by Vite at build time, so runtime packages are compiled into
 the shipped asset bundle. `@base-ui/react`, `@hugeicons/react`,
-`@hugeicons/core-free-icons`, `virtua`, and `fuse.js` also satisfy the
-`peerDependencies` of the in-tree `packages/model-picker` workspace package
-(which declares no dependencies of its own). Dev-only packages are used during
+`@hugeicons/core-free-icons`, `virtua`, and `fuse.js` are also used by the
+in-tree model-picker widget (`src/widgets/model-picker`). Dev-only packages are used during
 build/test and are not redistributed; they are listed for completeness.
 
 ### Runtime dependencies

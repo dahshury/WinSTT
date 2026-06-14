@@ -1,8 +1,4 @@
-// Realtime worker. Reference: examples/winstt-electron/server/src/recorder/application/
-// recorder_service.py `_realtime_worker` (L2621-2638) + its helpers
-// `_realtime_step` / `_realtime_idle_reset` / `_realtime_mark_recording_start` /
-// `_realtime_ready` / `_realtime_run_if_fresh` / `_realtime_process_once` /
-// `_realtime_commit_if_needed` / `_realtime_publish_fresh` / `_publish_realtime_update`.
+// Realtime worker.
 //
 // The realtime daemon worker: one background thread that periodically decodes a growing
 // window of the in-flight recording for the live-preview overlay, driving the

@@ -124,7 +124,7 @@ function jsonRoundTripArg(arg: unknown): unknown {
  * whole call throw `"An object could not be cloned."` and the renderer
  * crashes mid-flow (it took down `settingsSave` and the post-`fullSentence`
  * path). The main process already guards the reverse direction with
- * `structuredClone` in `electron/ipc/settings.ts`; this is the missing
+ * `structuredClone`; this is the missing
  * renderer-side equivalent.
  *
  * `structuredClone` uses the exact same algorithm the bridge does, so if it

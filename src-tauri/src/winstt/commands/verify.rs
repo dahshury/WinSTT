@@ -1,5 +1,4 @@
-// Reference: frontend/electron/ipc/credentials.ts + frontend/electron/lib/
-// cloud-provider-http.ts. Owns the ONE renderer verify seam (`integrations:verify`).
+// Owns the ONE renderer verify seam (`integrations:verify`).
 //
 // The WinSTT renderer probes ALL THREE cloud credentials — OpenAI, ElevenLabs AND OpenRouter —
 // through a SINGLE channel `INTEGRATIONS_VERIFY` (`integrations:verify`), expecting the response

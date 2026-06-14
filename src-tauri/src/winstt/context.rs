@@ -1,6 +1,3 @@
-// Source: frontend/electron/native/src/winstt-context.c
-// + frontend/electron/lib/context-reader.ts + frontend/electron/lib/context-snapshot.ts
-//
 // Context-awareness for the dictation cleanup path. ZERO reimplementation of
 // the UIA reader — `winstt-context.exe` (the existing C binary, byte-identical
 // to the reference build) ships as a Tauri SIDECAR (externalBin) and is invoked
@@ -583,8 +580,16 @@ fn format_context_for_prompt_legacy(snapshot: &WindowContextSnapshot) -> String 
     sections.join("\n")
 }
 
-static JSON_LLM_NOISE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[\p{C}\p{So}\x{2022}\x{2023}\x{2043}\x{1F000}-\x{1FAFF}]").unwrap());
+static JSON_LLM_NOISE_RE: Lazy<Regex> = Lazy::new(|| {
+    // \p{C} already covers most control/format codepoints (incl. U+200B-U+200F
+    // and U+034F), but list the invisible-separator runs Gmail injects into
+    // preview snippets explicitly so intent is clear: U+034F (CGJ), U+200C/D
+    // (ZWNJ/ZWJ), U+200E/F (LRM/RLM).
+    Regex::new(
+        r"[\p{C}\p{So}\x{2022}\x{2023}\x{2043}\x{034F}\x{200C}-\x{200F}\x{1F000}-\x{1FAFF}]",
+    )
+    .unwrap()
+});
 static JSON_INBOX_DATE_ROW_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"^(?:\d{1,2}:\d{2}\s?[AP]M|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2})$",
@@ -596,10 +601,10 @@ static JSON_ROLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^</?\s*([a-z][a-z0-
 static JSON_NAME_ATTR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"\bname="([^"]*)""#).unwrap());
 static JSON_FOCUS_ATTR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"\bfocus="1""#).unwrap());
 static JSON_NAV_NAME_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(?:chats?|conversations?|inbox|channels?|direct messages|members?|participants?|navigation|recents?|recent threads?|threads?|projects?|workspaces?|files?|explorer|folders?|sidebar|side panel|mailbox|page list|pages|primary|timeline tabs|who to follow|what's happening)\b").unwrap()
+    Regex::new(r"(?i)\b(?:chats?|conversations?|inbox|channels?|direct messages|members?|participants?|navigation|recents?|recent threads?|threads?|projects?|workspaces?|files?|explorer|folders?|sidebar|side panel|mailbox|page list|pages|primary|timeline tabs|who to follow|what's happening|for you|following|premium|live on x|trending|grok)\b").unwrap()
 });
 static JSON_CONTAINER_NAV_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(?:sidebar|side panel|side bar|navigation|nav rail|primary column|sidebar column|servers?|roster|app bar|browser chrome|left rail)\b").unwrap()
+    Regex::new(r"(?i)\b(?:sidebar|side panel|side bar|navigation|nav rail|primary column|sidebar column|servers?|roster|app bar|browser chrome|left rail|chat list|chats)\b").unwrap()
 });
 static JSON_CONTENT_LIST_NAME_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -616,9 +621,23 @@ static JSON_TIME_OR_META_LINE_RE: Lazy<Regex> = Lazy::new(|| {
         |
         ^\d{1,2}:\d{2}\s?[ap]m$
         |
+        # 'H:MM AM · Jun 14, 2026' datetime / 'H:MM AM · <anything>' meta row (X)
+        ^\d{1,2}:\d{2}\s?[ap]m\s+·\s+.+$
+        |
         ^\d+[smhdw]$
         |
+        # bare month-day, e.g. 'Jun 14' / 'May 3' (X relative date row)
+        ^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2}$
+        |
         ^(?:online|offline|typing\.\.\.)$
+        |
+        # presence / receipt meta (chat apps)
+        ^(?:active|last\ seen)\b.*$
+        |
+        ^(?:seen|delivered|sent)$
+        |
+        # WhatsApp end-to-end-encryption banner
+        ^.*messages\ and\ calls\ are\ end-to-end\ encrypted.*$
     ",
     )
     .unwrap()
@@ -629,8 +648,22 @@ static JSON_LOW_SIGNAL_UI_LINE_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?ix)
         ^
-        (?:sponsored|reply|like|comment|share|send|follow|following|write\ a\ comment|see\ more)
+        (?:
+            sponsored|reply|like|comment|share|send|follow|following|
+            write\ a\ comment|see\ more|show\ more|
+            # standalone engagement / chrome words (X, social feeds)
+            views|view\ quotes|show\ translation|embedded\ video|relevant|
+            subscribe|unsubscribe|verified\ sender|ad
+        )
         $
+        |
+        # promoted-block marker: a line that ENDS with ' Ad' (X interleaves
+        # '<account> Ad' promoted posts). Speaker-prefixed lines are exempted
+        # by json_is_low_signal_ui_line before this regex runs.
+        \ ad$
+        |
+        # bare engagement count on its own line: '232.9K', '41', '1.1K'
+        ^\d+(?:[.,]\d+)?[kmb]?$
         |
         ^\d+(?:[.,]\d+)?[kmb]?\s+(?:likes?|comments?|shares?|reposts?|views?|reactions?)$
         |
@@ -652,6 +685,104 @@ static JSON_LOW_SIGNAL_UI_LINE_RE: Lazy<Regex> = Lazy::new(|| {
 const JSON_CARET_BEFORE_LLM_MAX: usize = 24_000;
 const JSON_LANDMARK_MIN_CHARS: usize = 20;
 const JSON_MAX_LLM_CONTEXT_CHARS: usize = 12_000;
+
+// ──────────────── flat-stream speaker attribution ─────────────────────
+//
+// The synthetic test fixtures use idealized nested <item>/<group> trees, but
+// REAL Chrome UIA captures of Discord / X / Messenger arrive as FLAT text:
+// either the focused composer's `textBefore` (Discord — a newline stream of
+// `author / timestamp / datetime / body` rows) or a single page-spanning
+// `<doc>` TextPattern blob (X, Messenger). The tree reconstructor never sees a
+// per-message node in those shapes, so attribution has to be recovered from the
+// flat text. These helpers do that conservatively (only when a conversation
+// shape is confidently detected) and are applied as a post-process on both the
+// cleaned beforeCaret blob and the prune_ax_html_for_llm output.
+
+/// Lines/badges that masquerade as "Author:" speakers but are UI chrome. The
+/// canonical offender is Discord's "Server Tag: <CLAN>" badge that renders right
+/// under each author header; also drop standalone scripture/citation colons.
+static JSON_FALSE_SPEAKER_PREFIX_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?ix)
+        ^\s*(?:
+            server\ tag            # Discord clan-tag badge under the author
+            | the\ short\ reason   # sentence fragments seen in real X/Messenger blobs
+            | the\ long\ reason
+            | reason
+            | note
+            | edit
+            | edited
+            | replying\ to
+            | quote
+            | reply
+            | forwarded
+            | original\ message
+        )\s*:
+        |
+        # Arabic scripture/citation openers ('Allah says:', 'he said:') — a colon
+        # after these is a quotation marker, never a chat speaker.
+        ^\s*(?:قوله\ تعالى|قال\ تعالى|قال|وقال|يقول|قوله)\s*:
+    ",
+    )
+    .unwrap()
+});
+
+/// A chat timestamp / datetime row that separates message groups and must never
+/// become a body line or an author. Covers the real shapes seen in captures:
+/// `6/11/26, 2:07 PM`, `Thursday, June 11, 2026 at 2:07 PM`, `June 11, 2026`,
+/// `Yesterday at 9:45 AM`, bare `9:37 AM`, Messenger `5:14am`.
+static JSON_CHAT_TIMESTAMP_LINE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?ix)
+        ^\s*
+        (?:
+            # M/D/YY or M/D/YYYY optionally with a clock: '6/11/26, 2:07 PM'
+            \d{1,2}/\d{1,2}/\d{2,4}(?:\s*,?\s*\d{1,2}:\d{2}\s?[ap]m?)?
+            |
+            # full weekday datetime: 'Thursday, June 11, 2026 at 2:07 PM'
+            (?:mon|tues?|wed(?:nes)?|thur?s?|fri|sat(?:ur)?|sun)(?:day)?\s*,?.*\b\d{4}\b.*
+            |
+            # day separator: 'June 11, 2026'
+            (?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2},\s*\d{4}
+            |
+            # relative: 'Yesterday at 9:45 AM' / 'Today at 2:14 PM'
+            (?:today|yesterday)\s+at\s+\d{1,2}:\d{2}\s?[ap]m
+            |
+            # bare clock (continuation marker): '9:37 AM' / '5:14am'
+            \d{1,2}:\d{2}\s?[ap]m
+        )
+        \s*$
+    ",
+    )
+    .unwrap()
+});
+
+/// Discord per-message UI affordances that interleave the flat stream and are
+/// not part of any message body.
+static JSON_DISCORD_AFFORDANCE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?ix)
+        ^\s*(?:
+            add\ reaction | more\ message\ options | play\ voice\ message
+            | control\ volume | remove\ all\ embeds | \d+x | \d{1,2}:\d{2}
+            | started\ a\ call.* | .*started\ a\ call\ that\ lasted.*
+        )\s*$
+    ",
+    )
+    .unwrap()
+});
+
+/// An X (Twitter) author header line: a `@handle` standing alone, or a display
+/// name immediately followed by ` @handle`. Used to attribute the flat tweet
+/// blob positionally (X has no `Author:` prefix).
+static JSON_X_HANDLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"@[A-Za-z0-9_]{2,15}\b").unwrap());
+
+/// Messenger embeds authorship as `... by <Author>:` inside its flat doc blob
+/// (`Enter, Message sent Saturday 8:15am by موه: <body>`). This captures the
+/// author + the start of the body so we can rebuild `Author: body`.
+static JSON_MESSENGER_BY_AUTHOR_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:Enter,\s*)?Message sent[^\n]*?\bby\s+(?P<author>[^:\n]{1,40}?):\s*").unwrap()
+});
 
 fn json_collapse_inline_ws(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
@@ -900,13 +1031,29 @@ fn json_is_omnibox(node: &JsonAxNode) -> bool {
     node.role == "edit"
         && matches!(
             node.name.trim().to_lowercase().as_str(),
-            "address and search bar" | "search" | "search mail" | "urlbar"
+            "address and search bar"
+                | "search"
+                | "search mail"
+                | "search messenger"
+                | "urlbar"
         )
+}
+
+/// True when a line is a genuine `Author: message` speaker turn — it matches the
+/// speaker-prefix shape AND its prefix is not a known false positive (Discord's
+/// "Server Tag:" badge, sentence fragments like "The short reason:", or scripture
+/// citations like "قوله تعالى:"). This is the single gate every speaker-prefix
+/// decision flows through, so the false-positive filter applies uniformly.
+fn json_is_speaker_turn_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    JSON_SPEAKER_PREFIX_RE.is_match(trimmed) && !JSON_FALSE_SPEAKER_PREFIX_RE.is_match(trimmed)
 }
 
 fn json_is_low_signal_ui_line(line: &str) -> bool {
     let trimmed = line.trim();
-    !JSON_SPEAKER_PREFIX_RE.is_match(trimmed) && JSON_LOW_SIGNAL_UI_LINE_RE.is_match(trimmed)
+    !json_is_speaker_turn_line(trimmed)
+        && (JSON_LOW_SIGNAL_UI_LINE_RE.is_match(trimmed)
+            || JSON_FALSE_SPEAKER_PREFIX_RE.is_match(trimmed))
 }
 
 fn json_is_time_or_meta_line(line: &str) -> bool {
@@ -952,6 +1099,417 @@ fn json_normalize_author(raw: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// True when a bare line looks like a chat author *header* (a display name on its
+/// own line), as opposed to a message body or chrome. Conservative: a name is
+/// short, has at most ~4 words, no sentence punctuation, and is not a timestamp /
+/// nav / low-signal line. Used by the flat-stream reconstructor where the author
+/// is a standalone line (Discord) rather than an `Author:` prefix.
+fn json_looks_like_author_header(line: &str) -> bool {
+    let t = line.trim();
+    if t.chars().count() < 2 || t.chars().count() > 40 {
+        return false;
+    }
+    if JSON_CHAT_TIMESTAMP_LINE_RE.is_match(t)
+        || JSON_DISCORD_AFFORDANCE_RE.is_match(t)
+        || json_is_low_signal_ui_line(t)
+        || JSON_NAV_NAME_RE.is_match(t)
+        || JSON_CONTAINER_NAV_RE.is_match(t)
+        || JSON_CONTENT_LIST_NAME_RE.is_match(t)
+        || JSON_FALSE_SPEAKER_PREFIX_RE.is_match(t)
+    {
+        return false;
+    }
+    // A header is a name, not a sentence: reject lines that end with sentence
+    // punctuation or carry a colon (those are bodies / already-attributed turns).
+    if t.ends_with(['.', '!', '?', ',']) || t.contains(':') {
+        return false;
+    }
+    if !t.chars().any(char::is_alphabetic) {
+        return false;
+    }
+    // A display name is a short token group (≤3 words) AND each word reads like a
+    // name token, not a sentence word: it starts with an uppercase letter / digit
+    // / non-Latin script (Arabic, CJK), OR carries a handle marker. This rejects
+    // all-lowercase body fragments like "btw limits are reset" that happen to sit
+    // right before a continuation timestamp.
+    let words: Vec<&str> = t.split_whitespace().collect();
+    if words.is_empty() || words.len() > 3 {
+        return false;
+    }
+    words.iter().all(|w| {
+        let first = w.chars().next().unwrap_or(' ');
+        // Latin lowercase first letter ⇒ a sentence word, not a name token.
+        !(first.is_ascii_lowercase())
+    })
+}
+
+/// True when a flat caret blob is actually a chat-app LEFT-RAIL chat list (the
+/// roster of conversations), not a message log. WhatsApp Web's composer exposes
+/// the chat-list pane through its caret TextPattern range, so its `beforeCaret`
+/// is the list of contacts + previews (which would otherwise be mis-attributed
+/// as message authors). Keyed on the WhatsApp chat-list nav header that never
+/// appears inside an actual conversation transcript.
+fn json_text_is_chat_list_pane(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    // Require several co-occurring chat-list nav markers (any one alone could
+    // appear in a real message), so a genuine transcript is never suppressed.
+    const LIST_MARKERS: &[&str] = &[
+        "search or start a new chat",
+        "archived",
+        "status updates in status",
+        "new chat",
+        "unread message",
+        "muted chat",
+    ];
+    LIST_MARKERS
+        .iter()
+        .filter(|marker| lower.contains(**marker))
+        .count()
+        >= 2
+}
+
+/// Reconstruct `Author: message` turns from a Discord-style FLAT line stream
+/// (the focused composer's `textBefore`). The stream groups each message as:
+///   `<Author>` / [`Server Tag: X`] / `<timestamp>` / `<full datetime>` / `<body…>`
+/// with same-author continuations marked by a bare clock line and no header.
+/// Returns `None` when the text does not look like such a stream (so callers
+/// fall back to the unmodified blob).
+fn json_reconstruct_discord_stream(text: &str) -> Option<String> {
+    // Guard: a chat-LIST pane (WhatsApp Web's left column, whose composer
+    // TextPattern range spans the chat list, NOT the open conversation) mimics
+    // the author/timestamp/preview grouping and would fabricate fake "Contact:"
+    // turns from chat-list rows. Bail when the unmistakable chat-list nav header
+    // is present so this stream-reconstruction only runs on a real message log.
+    if json_text_is_chat_list_pane(text) {
+        return None;
+    }
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    if lines.len() < 4 {
+        return None;
+    }
+    let mut current_author: Option<String> = None;
+    let mut turns: Vec<String> = Vec::new();
+    let mut header_count = 0usize;
+    let mut i = 0usize;
+    while i < lines.len() {
+        let line = lines[i];
+        // Drop timestamps, affordances, false-speaker badges and low-signal chrome.
+        if JSON_CHAT_TIMESTAMP_LINE_RE.is_match(line)
+            || JSON_DISCORD_AFFORDANCE_RE.is_match(line)
+            || JSON_FALSE_SPEAKER_PREFIX_RE.is_match(line)
+            || json_is_low_signal_ui_line(line)
+        {
+            i += 1;
+            continue;
+        }
+        // An author header switches the active speaker IF the next non-chrome line
+        // is a timestamp (the canonical Discord author/time/body grouping). This
+        // disambiguates a real header ("Master") from a one-word message body.
+        if json_looks_like_author_header(line) {
+            let next_is_time = lines[i + 1..]
+                .iter()
+                .find(|l| {
+                    !JSON_FALSE_SPEAKER_PREFIX_RE.is_match(l) && !json_is_low_signal_ui_line(l)
+                })
+                .map(|l| JSON_CHAT_TIMESTAMP_LINE_RE.is_match(l))
+                .unwrap_or(false);
+            if next_is_time {
+                current_author = json_normalize_author(line);
+                header_count += 1;
+                i += 1;
+                continue;
+            }
+        }
+        // Otherwise this is a body line — attribute it to the active author.
+        if let Some(author) = &current_author {
+            if json_is_speaker_turn_line(line) {
+                turns.push(line.to_string());
+            } else {
+                turns.push(format!("{author}: {line}"));
+            }
+        }
+        i += 1;
+    }
+    // Only trust the reconstruction when it found a real conversation: at least
+    // two distinct author headers (or one author with several attributed turns).
+    let distinct = {
+        let mut authors: Vec<&str> = turns
+            .iter()
+            .filter_map(|t| t.split_once(": ").map(|(a, _)| a))
+            .collect();
+        authors.sort_unstable();
+        authors.dedup();
+        authors.len()
+    };
+    if turns.is_empty() || (header_count < 2 && distinct < 2 && turns.len() < 3) {
+        return None;
+    }
+    Some(json_dedupe_consecutive(turns).join("\n"))
+}
+
+/// Reconstruct `Author: message` turns from Facebook Messenger's flat `<doc>`
+/// blob, which embeds authorship as `… Message sent <when> by <Author>: <body>`.
+/// Splits on each "Message sent … by <Author>:" marker and attributes the text
+/// up to the next marker. Returns `None` when no such marker is present.
+fn json_reconstruct_messenger_blob(text: &str) -> Option<String> {
+    let markers: Vec<regex::Match> = JSON_MESSENGER_BY_AUTHOR_RE.find_iter(text).collect();
+    if markers.len() < 2 {
+        return None;
+    }
+    let mut turns: Vec<String> = Vec::new();
+    for (idx, m) in markers.iter().enumerate() {
+        let caps = match JSON_MESSENGER_BY_AUTHOR_RE.captures(m.as_str()) {
+            Some(c) => c,
+            None => continue,
+        };
+        let Some(author) = caps.name("author").map(|a| a.as_str().trim().to_string()) else {
+            continue;
+        };
+        let body_start = m.end();
+        let body_end = markers
+            .get(idx + 1)
+            .map(|next| next.start())
+            .unwrap_or(text.len());
+        let body = text[body_start..body_end].trim();
+        if author.is_empty() || body.is_empty() {
+            continue;
+        }
+        let Some(author) = json_normalize_author(&author) else {
+            continue;
+        };
+        // Messenger duplicates the body once verbatim after the colon
+        // ("...by موه: <body> <body>") — keep just the first half if it repeats.
+        let body = json_dedupe_repeated_half(body);
+        let body = json_messenger_clean_body(&body);
+        if body.is_empty() {
+            continue;
+        }
+        turns.push(format!("{author}: {}", json_collapse_inline_ws(&body)));
+    }
+    if turns.len() < 2 {
+        return None;
+    }
+    Some(json_dedupe_consecutive(turns).join("\n"))
+}
+
+/// Trim Messenger composer/footer chrome that trails the LAST message in the
+/// flat doc blob (the message log has no closing delimiter, so the final turn's
+/// body otherwise swallows the composer toolbar, the "Continue without
+/// restoring?" modal, etc.). Also drop the "Original message:" reply-quote
+/// preamble Messenger injects before an edited message.
+fn json_messenger_clean_body(body: &str) -> String {
+    let mut s = body;
+    for cut in [
+        " Compose ",
+        " Open more actions",
+        " Play video",
+        " Play voice",
+        " Attach a file",
+        " Choose a sticker",
+        " Choose a GIF",
+        " Write to ",
+        " Chat notifications",
+        " Continue without restoring",
+        " Opened group chat",
+        " Original message:",
+    ] {
+        if let Some(i) = s.find(cut) {
+            s = &s[..i];
+        }
+    }
+    s.trim().to_string()
+}
+
+/// Reconstruct `DisplayName: tweet` turns from X's flat conversation blob. X has
+/// no `Author:` prefix — each tweet is positionally `<DisplayName> @handle
+/// [relative-time] <body> <engagement-counts>`. We split the blob on `@handle`
+/// boundaries: the words immediately BEFORE a handle are that tweet's display
+/// name, and the text AFTER the handle (minus a leading relative-time token) up
+/// to the next handle is the body. Self-identity (the author pair that appears
+/// before the "Conversation"/"Replying to" boundary) and the quoted/embedded
+/// tweet chrome are dropped. Returns `None` when fewer than one real tweet author
+/// is recoverable (so a non-X blob is never mangled).
+fn json_reconstruct_x_blob(blob: &str) -> Option<String> {
+    // Only engage on an X conversation blob (the "Conversation" landmark word is
+    // present in every captured reply page and absent elsewhere).
+    if !blob.contains("Conversation") {
+        return None;
+    }
+    // Scope to AFTER the "Conversation" boundary so the top-bar self-identity
+    // (Mostafa @Dahshury) and left-nav are excluded.
+    let scoped = match blob.find("Conversation") {
+        Some(i) => &blob[i + "Conversation".len()..],
+        None => blob,
+    };
+    let handles: Vec<regex::Match> = JSON_X_HANDLE_RE.find_iter(scoped).collect();
+    if handles.is_empty() {
+        return None;
+    }
+    let mut turns: Vec<String> = Vec::new();
+    let mut seen_handles: Vec<String> = Vec::new();
+    for (idx, h) in handles.iter().enumerate() {
+        let handle = h.as_str();
+        // Display name = the tail of the text since the previous handle's body
+        // start, taking the last 1–3 capitalized-ish words right before @handle.
+        let name_region_start = if idx == 0 {
+            0
+        } else {
+            handles[idx - 1].end()
+        };
+        let name_region = &scoped[name_region_start..h.start()];
+        let display_name = json_x_trailing_display_name(name_region);
+        // Body = text after the handle up to the next handle.
+        let body_start = h.end();
+        let body_end = handles
+            .get(idx + 1)
+            .map(|n| {
+                // back up to the start of that tweet's display name so the next
+                // author's name isn't appended to this body.
+                let region = &scoped[h.end()..n.start()];
+                h.end() + json_x_body_cutoff(region)
+            })
+            .unwrap_or(scoped.len());
+        if body_end <= body_start {
+            continue;
+        }
+        let body = json_x_clean_body(&scoped[body_start..body_end]);
+        // Skip the quoted/embedded tweet (it follows a "Quote" marker) and empty
+        // bodies; dedupe consecutive same-handle continuations.
+        let Some(name) = display_name.filter(|n| !n.is_empty()) else {
+            continue;
+        };
+        // Drop chrome "names" (the 'Replying to @x' marker, bare 'Post'/'Quote').
+        let name_lower = name.to_lowercase();
+        if matches!(name_lower.as_str(), "replying to" | "replying" | "post" | "quote" | "reply") {
+            continue;
+        }
+        if body.chars().count() < 8 {
+            continue;
+        }
+        // Drop the user's own reply-compose prompt and known chrome bodies.
+        if body.eq_ignore_ascii_case("Post your reply") || body.starts_with("Replying to") {
+            continue;
+        }
+        // Format as `DisplayName: body` so it matches the speaker-prefix contract
+        // (the parenthetical-handle form breaks JSON_SPEAKER_PREFIX_RE). The
+        // @handle is preserved inline at the end of the name when it is the only
+        // identity signal (display name == handle).
+        if seen_handles.last().map(String::as_str) != Some(handle) {
+            seen_handles.push(handle.to_string());
+        }
+        turns.push(format!("{name}: {body}"));
+    }
+    if turns.is_empty() {
+        return None;
+    }
+    Some(json_dedupe_consecutive(turns).join("\n"))
+}
+
+/// The display name preceding an `@handle`: the last short run of name words in
+/// `region` (after stripping leading chrome words like Post/Quote/Reply/counts).
+fn json_x_trailing_display_name(region: &str) -> Option<String> {
+    let words: Vec<&str> = region.split_whitespace().collect();
+    // Take up to the last 4 tokens, dropping chrome/count tokens.
+    let mut name_words: Vec<&str> = Vec::new();
+    for w in words.iter().rev() {
+        if name_words.len() >= 4 {
+            break;
+        }
+        let lw = w.to_lowercase();
+        let is_count = w
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | 'K' | 'M' | 'B'));
+        let is_chrome = matches!(
+            lw.as_str(),
+            "post" | "quote" | "reply" | "views" | "view" | "quotes" | "relevant" | "·"
+                | "show" | "replies" | "translation" | "·jun" | "grok" | "chat"
+        ) || JSON_CHAT_TIMESTAMP_LINE_RE.is_match(w)
+            || lw.ends_with('h')
+                && lw.trim_end_matches('h').chars().all(|c| c.is_ascii_digit())
+            || lw.ends_with('m')
+                && lw.trim_end_matches('m').chars().all(|c| c.is_ascii_digit());
+        if is_count || is_chrome {
+            if name_words.is_empty() {
+                continue;
+            }
+            break;
+        }
+        name_words.push(w);
+    }
+    name_words.reverse();
+    let name = name_words.join(" ");
+    let name = json_normalize_author(&name)?;
+    Some(name)
+}
+
+/// Where this tweet's body ends inside `region` (the span between two handles).
+/// The next author's display name (~1–4 words) sits at the very end of `region`;
+/// since the name detector for the next turn re-scans from this handle's end, a
+/// small overlap is harmless, so we keep the whole span up to its trailing
+/// whitespace.
+fn json_x_body_cutoff(region: &str) -> usize {
+    region.trim_end().len()
+}
+
+/// Clean an X tweet body: strip leading relative-time/counts, trailing engagement
+/// counts and known chrome words, and collapse whitespace.
+fn json_x_clean_body(raw: &str) -> String {
+    let collapsed = json_collapse_inline_ws(raw);
+    let mut s = collapsed.as_str();
+    // strip a leading relative-time token ('9h', '20h', '30m', '·', 'Jun 14').
+    loop {
+        let trimmed = s.trim_start();
+        let first = trimmed.split_whitespace().next().unwrap_or("");
+        let flw = first.to_lowercase();
+        let is_rel = (flw.ends_with('h') || flw.ends_with('m') || flw.ends_with('d'))
+            && flw[..flw.len().saturating_sub(1)]
+                .chars()
+                .all(|c| c.is_ascii_digit())
+            && !flw.is_empty()
+            && flw.len() <= 4;
+        if first == "·" || is_rel {
+            s = &trimmed[first.len()..];
+        } else {
+            break;
+        }
+    }
+    // Cut the body at the engagement/footer markers that follow every tweet.
+    for cut in [
+        " Quote ",
+        " Show replies",
+        " Show this thread",
+        " Show translation",
+        " View quotes",
+        " Replying to ",
+        " · ",
+    ] {
+        if let Some(i) = s.find(cut) {
+            s = &s[..i];
+        }
+    }
+    json_collapse_inline_ws(s).trim().to_string()
+}
+
+/// Some UIA TextPattern reads emit a value followed by an exact duplicate of
+/// itself ("X X"). When the back half exactly repeats the front, drop it.
+fn json_dedupe_repeated_half(body: &str) -> String {
+    let trimmed = body.trim();
+    let count = trimmed.chars().count();
+    if count >= 4 && count.is_multiple_of(2) {
+        // Split at the char (not byte) midpoint so multibyte text is safe.
+        let mid_byte = trimmed
+            .char_indices()
+            .nth(count / 2)
+            .map(|(i, _)| i)
+            .unwrap_or(trimmed.len());
+        let (a, b) = trimmed.split_at(mid_byte);
+        if a.trim() == b.trim() {
+            return a.trim().to_string();
+        }
+    }
+    trimmed.to_string()
 }
 
 fn json_collect_descendant_text_values(tree: &JsonAxTree, node_idx: usize, out: &mut Vec<String>) {
@@ -1012,7 +1570,7 @@ fn json_reconstruct_speaker_turns(tree: &JsonAxTree, node_idx: usize) -> Option<
         messages
             .into_iter()
             .map(|message| {
-                if JSON_SPEAKER_PREFIX_RE.is_match(&message) {
+                if json_is_speaker_turn_line(&message) {
                     message
                 } else {
                     format!("{author}: {message}")
@@ -1162,7 +1720,7 @@ fn json_should_clip_thread_tail(lines: &[String], focus: Option<usize>) -> bool 
     focus.is_some()
         && lines
             .iter()
-            .filter(|line| JSON_SPEAKER_PREFIX_RE.is_match(line.trim()))
+            .filter(|line| json_is_speaker_turn_line(line.trim()))
             .take(3)
             .count()
             >= 3
@@ -1181,12 +1739,50 @@ fn json_resolve_landmark(tree: &JsonAxTree) -> Option<usize> {
     json_find_largest_landmark(tree)
 }
 
+/// True when the focused control is a compose box (an `edit`/`doc` with a focus
+/// flag) that has NO real CONTENT landmark on its ancestor path — i.e. the only
+/// thing the landmark resolver could pick is the whole-page largest landmark
+/// (the timeline feed on X home). In that case there is no thread to attribute,
+/// so the tree path must emit nothing for `screen` and rely on the draft
+/// (`fieldText`). This is the X-compose vs X-reply discriminator (plan B1):
+/// X-reply has a `doc`/`Conversation` content landmark ON the focus path, so
+/// `json_find_landmark_on_path` returns it and this guard does NOT fire.
+fn json_compose_only_no_thread_landmark(tree: &JsonAxTree) -> bool {
+    let Some(path) = json_find_focus_path(tree) else {
+        return false;
+    };
+    let Some(&focus) = path.last() else {
+        return false;
+    };
+    let focus_node = &tree.nodes[focus];
+    // Only relevant when the focus is an editable composer.
+    if !matches!(focus_node.role.as_str(), "edit" | "doc") || json_is_omnibox(focus_node) {
+        return false;
+    }
+    // A content landmark anywhere on the focus path means a thread is present
+    // (X-reply Conversation doc, Gmail reading-pane group) — keep it.
+    if json_find_landmark_on_path(tree, &path, focus).is_some() {
+        return false;
+    }
+    // A content-list (messages/conversation/thread/timeline) that WRAPS the
+    // focus is also a thread context — keep it.
+    let in_content_list = path
+        .iter()
+        .any(|&idx| JSON_CONTENT_LIST_NAME_RE.is_match(&tree.nodes[idx].name));
+    !in_content_list
+}
+
 pub fn prune_ax_html_for_llm(ax_html: Option<&str>) -> String {
     let ax_html = ax_html.unwrap_or("").trim();
     if ax_html.is_empty() {
         return String::new();
     }
     let tree = json_parse_ax_html(ax_html);
+    // B1 — compose-vs-thread guard: a bare composer with no thread landmark on
+    // its focus path (X home compose) must NOT dump the timeline feed.
+    if json_compose_only_no_thread_landmark(&tree) {
+        return String::new();
+    }
     let Some(landmark) = json_resolve_landmark(&tree) else {
         return String::new();
     };
@@ -1196,11 +1792,30 @@ pub fn prune_ax_html_for_llm(ax_html: Option<&str>) -> String {
     if out.chars().count() < JSON_LANDMARK_MIN_CHARS {
         return String::new();
     }
+    // The landmark pruner often resolves to ONE big `<doc>` node whose text is a
+    // flat page-spanning TextPattern blob (X conversation, Messenger thread) with
+    // no per-message nodes. Try to recover `Author: message` turns from that flat
+    // text; only succeeds when a known conversation shape is confidently detected.
+    let out = json_attribute_flat_blob(&out);
     if json_should_clip_thread_tail(&lines, focus) {
         clip_tail(&out, JSON_MAX_LLM_CONTEXT_CHARS)
     } else {
         clip_head(&out, JSON_MAX_LLM_CONTEXT_CHARS)
     }
+}
+
+/// Best-effort speaker attribution for a flat (page-spanning) text blob. Tries
+/// each known surface shape in turn (Messenger "by Author:" markers, then X
+/// display-name/@handle positional attribution); returns the original blob
+/// unchanged when none match, so a non-conversation page is never corrupted.
+fn json_attribute_flat_blob(blob: &str) -> String {
+    if let Some(turns) = json_reconstruct_messenger_blob(blob) {
+        return turns;
+    }
+    if let Some(turns) = json_reconstruct_x_blob(blob) {
+        return turns;
+    }
+    blob.to_string()
 }
 
 enum JsonPromptValue {
@@ -1320,6 +1935,11 @@ fn json_build_content_sections(snapshot: &WindowContextSnapshot) -> Vec<JsonProm
     let before = json_clean_caret(snapshot.text_before.as_deref());
     let after = json_clean_caret(snapshot.text_after.as_deref());
     if !before.is_empty() || !after.is_empty() {
+        // A "rich" beforeCaret on a chat composer (Discord) is the rendered
+        // backlog as a FLAT author/timestamp/body line stream — reconstruct it
+        // into `Author: message` turns before clipping. Falls back to the raw
+        // blob when it is not conversation-shaped (e.g. a real typed draft).
+        let before = json_reconstruct_discord_stream(&before).unwrap_or(before);
         return vec![
             JsonPromptSection::text("beforeCaret", clip_tail(&before, JSON_CARET_BEFORE_LLM_MAX)),
             JsonPromptSection::text("afterCaret", clip_head(&after, CARET_AFTER_LLM_MAX)),
@@ -1329,6 +1949,53 @@ fn json_build_content_sections(snapshot: &WindowContextSnapshot) -> Vec<JsonProm
         "fieldText",
         json_clean_caret(Some(&snapshot.focused_text)),
     )]
+}
+
+/// Nav markers that co-occur in a page-spanning UIA TextPattern range (Gmail
+/// reading pane / X article) but never in a real typed draft. Kept lowercase.
+const JSON_PAGE_NAV_MARKERS: &[&str] = &[
+    "inbox",
+    "compose",
+    "snoozed",
+    "drafts",
+    "promotions",
+    "home",
+    "explore",
+    "notifications",
+    "bookmarks",
+    "what's happening",
+    "trending",
+    "who to follow",
+    "address and search bar",
+];
+
+/// True when caret text is "rich" only because the focused control's UIA
+/// TextPattern range spans the WHOLE page (Gmail reading-pane / X article),
+/// not because the user typed a long draft. In that case the flat `beforeCaret`
+/// blob leaks left-nav + inbox + counts; the formatter must instead route to
+/// the role-based tree pruner. A real typed draft has no nav markers and is
+/// short, so it stays on the fast `beforeCaret` path.
+///
+/// Heuristic (mirrors the plan A1):
+/// - >=2 co-occurring browser/app nav markers, OR
+/// - a speaker-prefix line is present AND the blob is long (>12 lines) — i.e.
+///   it already looks like a rendered conversation, not a draft.
+fn json_caret_is_page_scrollback(text: &str) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+    let lower = text.to_lowercase();
+    let nav_hits = JSON_PAGE_NAV_MARKERS
+        .iter()
+        .filter(|marker| lower.contains(**marker))
+        .count();
+    let has_speaker_line = text.lines().any(json_is_speaker_turn_line);
+    // A chat-list rail (WhatsApp left column) is page-scrollback too — reroute it
+    // to the tree path so its contact-list previews (and any delivery/OTP codes)
+    // do not leak through the flat beforeCaret.
+    json_text_is_chat_list_pane(text)
+        || nav_hits >= 2
+        || (has_speaker_line && text.lines().count() > 12)
 }
 
 fn format_context_for_prompt_json(snapshot: &WindowContextSnapshot) -> String {
@@ -1344,14 +2011,62 @@ fn format_context_for_prompt_json(snapshot: &WindowContextSnapshot) -> String {
         return json_serialize_context(sections);
     }
 
-    if json_focused_field_is_rich(snapshot) {
+    // A1/A2 — the highest-impact fix. A "rich" focused field whose caret text is
+    // actually a page-spanning scrollback (Gmail reading pane / X article) leaks
+    // nav/inbox/counts through the flat beforeCaret path. When we ALSO have an
+    // ax_html tree, prefer the role-based pruner (the `screen` key) which
+    // structurally drops the nav/inbox/toolbar subtrees. Real typed drafts (no
+    // nav markers, short) keep the fast beforeCaret path.
+    //
+    // NB: detect on the RAW (denoise-only) caret, NOT the fully-cleaned one —
+    // json_clean_caret runs strip_list_scrollback which would already have
+    // removed the nav/inbox markers we key on, hiding the leak from the detector.
+    let has_tree = snapshot
+        .ax_html
+        .as_deref()
+        .is_some_and(|ax| !ax.trim().is_empty());
+    let caret_is_scrollback =
+        json_caret_is_page_scrollback(&denoise_for_llm(snapshot.text_before.as_deref()));
+
+    // Chat composers (Discord) expose the rendered backlog ONLY in the focused
+    // field's beforeCaret as a flat author/timestamp/body stream — it is not in
+    // the ax_html tree. When that stream confidently reconstructs into multi-
+    // author `Author: message` turns, keep it on the beforeCaret path with the
+    // reconstructed turns (the scrollback reroute would send it to the tree,
+    // which has no thread). This must win over the page-scrollback heuristic.
+    //
+    // NB: reconstruct from the DENOISED caret, NOT json_clean_caret — the latter
+    // runs strip_list_scrollback, whose inbox-date-row cut treats Discord's bare
+    // `H:MM PM` timestamp lines as list rows and would amputate the whole thread.
+    let reconstructed_chat = denoise_for_llm(snapshot.text_before.as_deref());
+    if let Some(turns) = json_reconstruct_discord_stream(&reconstructed_chat) {
+        sections.push(JsonPromptSection::text(
+            "beforeCaret",
+            clip_tail(&turns, JSON_CARET_BEFORE_LLM_MAX),
+        ));
+        let after = json_clean_caret(snapshot.text_after.as_deref());
+        sections.push(JsonPromptSection::text(
+            "afterCaret",
+            clip_head(&after, CARET_AFTER_LLM_MAX),
+        ));
+        sections.push(json_build_clipboard_section(snapshot));
+        return json_serialize_context(sections);
+    }
+
+    if json_focused_field_is_rich(snapshot) && !(has_tree && caret_is_scrollback) {
         sections.extend(json_build_content_sections(snapshot));
         sections.push(json_build_clipboard_section(snapshot));
         return json_serialize_context(sections);
     }
 
     sections.push(json_build_fallback_tree_section(snapshot));
-    sections.extend(json_build_content_sections(snapshot));
+    // When we rerouted here BECAUSE the caret blob is page-spanning scrollback,
+    // the flat content sections would re-leak that same polluted blob as
+    // `beforeCaret` — so suppress them. The pruned tree (`screen` above) is the
+    // clean signal. The empty-tree thin-field case still emits `fieldText`.
+    if !(has_tree && caret_is_scrollback) {
+        sections.extend(json_build_content_sections(snapshot));
+    }
     sections.push(json_build_ocr_section(snapshot));
     sections.push(json_build_clipboard_section(snapshot));
     json_serialize_context(sections)
@@ -2718,6 +3433,507 @@ mod tests {
         assert!(!screen.contains("Facebook"));
         assert!(!screen.contains("Claude"));
         assert!(!screen.contains("ChatGPT"));
+    }
+
+    // ── A1/A2: page-spanning caret reroutes to the pruned tree ──
+
+    // Gmail inline reply: the composer's UIA TextPattern range spans the whole
+    // page, so text_before is "rich" but full of left-nav + inbox rows + an OTP
+    // email that lives in OTHER inbox rows (not the open email). With an ax_html
+    // tree present, the formatter must route to the pruned `screen` and NOT leak
+    // the inbox/OTP via beforeCaret. (Real Gmail leak shape from the artifact.)
+    #[test]
+    fn gmail_page_spanning_caret_reroutes_to_clean_screen_no_inbox_or_otp() {
+        let before = [
+            "Compose",
+            "Inbox 2,677",
+            "Snoozed",
+            "Sent",
+            "Drafts",
+            "Promotions 25,370",
+            "Amazon.sa",
+            "Delivered: 1 item Order # 405-1234567",
+            "May 13",
+            "Google",
+            "Your Google verification code is 622297",
+            "May 13",
+            "Qiwa",
+            "One time password 7596",
+            "Jun 9",
+            "Kiwi.com",
+            "Thinking of adding travel insurance to your trip?",
+            "to me",
+            "Show details",
+            "Hi Mostafa, your upcoming trip to Rome is in two weeks.",
+            "We noticed you have not added travel insurance yet.",
+        ]
+        .join("\n");
+        let s = WindowContextSnapshot {
+            window_title: "Thinking of adding travel insurance - Gmail".into(),
+            element_name: "Message Body".into(),
+            app_exe: Some("chrome.exe".into()),
+            // url is EMPTY for Chrome captures — detection must not rely on it.
+            text_before: Some(before),
+            ax_html: Some(
+                r#"
+                <pane name="Gmail">
+                  <list name="Mailbox"><item name="Compose"/><item name="Inbox 2,677"/><item name="Snoozed"/></list>
+                  <list name="Inbox">
+                    <item name="Amazon.sa: Delivered: 1 item Order # 405-1234567"/>
+                    <item name="Google: Your Google verification code is 622297"/>
+                    <item name="Qiwa: One time password 7596"/>
+                  </list>
+                  <doc name="Thinking of adding travel insurance">
+                    <group name="Kiwi.com email">
+                      <text>Hi Mostafa, your upcoming trip to Rome is in two weeks.</text>
+                      <text>We noticed you have not added travel insurance yet.</text>
+                    </group>
+                    <edit name="Message Body" focus="1"></edit>
+                  </doc>
+                </pane>
+                "#
+                .into(),
+            ),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let ctx = context_json(&out);
+        let screen = ctx["screen"].as_str().unwrap_or("");
+        // the open email body survives
+        assert!(screen.contains("upcoming trip to Rome"), "{screen}");
+        // inbox rows + OTP codes are structurally gone, and beforeCaret (the
+        // polluted blob) must not be emitted at all
+        assert!(ctx.get("beforeCaret").is_none(), "{out}");
+        assert!(!out.contains("622297"), "OTP leaked: {out}");
+        assert!(!out.contains("7596"), "OTP leaked: {out}");
+        assert!(!out.contains("Amazon.sa"), "inbox row leaked: {out}");
+        assert!(!out.contains("25,370"), "nav counter leaked: {out}");
+    }
+
+    // X reply: the composer TextPattern range spans the whole article, so
+    // text_before is "rich" but leaks the nav rail, the user's own identity, and
+    // engagement counts (232.9K / Views / 41 / Show translation). With a tree
+    // present, the formatter reroutes to the pruned conversation `screen`.
+    #[test]
+    fn x_reply_page_spanning_caret_reroutes_clean_screen_drops_nav_and_counts() {
+        let before = [
+            "Home",
+            "Explore",
+            "Notifications",
+            "Bookmarks",
+            "Mostafa",
+            "@Dahshury",
+            "Post",
+            "Conversation",
+            "Saker",
+            "@SakerSport",
+            "Everyone thought Brazil was the team playing in red yesterday.",
+            "232.9K",
+            "Views",
+            "Show translation",
+            "Replying to @SakerSport",
+            "Thamer",
+            "@Dexcris17",
+            "What hurts is after all those touches there is no finish.",
+            "41",
+            "82",
+            "Post your reply",
+        ]
+        .join("\n");
+        let s = WindowContextSnapshot {
+            window_title: "Saker on X: \"Everyone thought...\" / X".into(),
+            element_name: "Post text".into(),
+            app_exe: Some("chrome.exe".into()),
+            text_before: Some(before),
+            // Realistic X shape: nav rail + self-identity live in chrome regions
+            // (banner / nav list) that json_drop_subtree_role + json_is_nav_chrome
+            // strip; the conversation is a content-list inside the article doc.
+            ax_html: Some(
+                r#"
+                <pane name="X">
+                  <banner name="Top bar"><text>Mostafa</text><text>@Dahshury</text></banner>
+                  <list name="Primary"><link name="Home"/><link name="Explore"/><link name="Notifications"/></list>
+                  <doc name="Conversation">
+                    <list name="Timeline: Conversation">
+                      <item name="Saker: Everyone thought Brazil was the team playing in red yesterday."/>
+                      <item name="Thamer: What hurts is after all those touches there is no finish."/>
+                    </list>
+                    <edit name="Post text" focus="1"></edit>
+                  </doc>
+                  <list name="Who to follow"><item name="Suggested account"/></list>
+                </pane>
+                "#
+                .into(),
+            ),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let ctx = context_json(&out);
+        let screen = ctx["screen"].as_str().unwrap_or("");
+        assert!(screen.contains("Saker: Everyone thought Brazil"), "{screen}");
+        assert!(screen.contains("Thamer: What hurts"), "{screen}");
+        // beforeCaret with nav/counts must be gone
+        assert!(ctx.get("beforeCaret").is_none(), "{out}");
+        assert!(!out.contains("232.9K"), "engagement count leaked: {out}");
+        assert!(!out.contains("Show translation"), "chrome leaked: {out}");
+        assert!(!out.contains("@Dahshury"), "self identity leaked: {out}");
+        assert!(!screen.contains("Who to follow"), "right column leaked: {screen}");
+    }
+
+    // A short, real typed draft with NO nav markers keeps the fast beforeCaret
+    // path (does NOT get rerouted to the tree even though a tree exists).
+    #[test]
+    fn short_typed_draft_keeps_before_caret_path() {
+        let s = WindowContextSnapshot {
+            window_title: "Compose - Gmail".into(),
+            element_name: "Message Body".into(),
+            app_exe: Some("chrome.exe".into()),
+            text_before: Some(
+                "Hi team, just confirming the rollout window is still Friday at noon.".into(),
+            ),
+            ax_html: Some("<doc>some page chrome here for reference</doc>".into()),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let ctx = context_json(&out);
+        assert!(
+            ctx["beforeCaret"]
+                .as_str()
+                .unwrap_or("")
+                .contains("rollout window is still Friday"),
+            "{out}"
+        );
+        assert!(ctx.get("screen").is_none(), "{out}");
+    }
+
+    // ── B1: X compose (no thread) emits the thin draft shape, not the feed ──
+
+    #[test]
+    fn x_compose_emits_thin_field_text_not_timeline_feed() {
+        let s = WindowContextSnapshot {
+            window_title: "Home / X - Google Chrome".into(),
+            element_name: "Post text".into(),
+            app_exe: Some("chrome.exe".into()),
+            focused_text: "so excited to finally ship the new dictation context feature".into(),
+            ax_html: Some(
+                r#"
+                <pane name="X">
+                  <list name="Primary"><link name="Home"/><link name="Explore"/></list>
+                  <doc name="Home timeline">
+                    <list name="Timeline: Your Home Timeline">
+                      <item name="Someone: a random post on the home feed about lunch"/>
+                      <item name="Bitget TradFi Ad"/>
+                      <item name="Another: yet another unrelated home feed post"/>
+                    </list>
+                  </doc>
+                  <group name="Composer"><edit name="Post text" focus="1"></edit></group>
+                </pane>
+                "#
+                .into(),
+            ),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let ctx = context_json(&out);
+        // thin shape: the draft is present, the feed is NOT dumped as screen
+        assert!(
+            ctx["fieldText"]
+                .as_str()
+                .unwrap_or("")
+                .contains("ship the new dictation context feature"),
+            "{out}"
+        );
+        assert!(ctx.get("screen").is_none(), "feed dumped on compose: {out}");
+        assert!(!out.contains("random post on the home feed"), "{out}");
+        assert!(!out.contains("Bitget TradFi Ad"), "{out}");
+    }
+
+    // ── A5: standalone 'Ad' / '<account> Ad' promoted blocks are dropped ──
+
+    #[test]
+    fn x_promoted_ad_block_is_dropped_from_thread_context() {
+        let s = WindowContextSnapshot {
+            window_title: "Saker on X / X".into(),
+            element_name: "Post text".into(),
+            app_exe: Some("chrome.exe".into()),
+            ax_html: Some(
+                r#"
+                <pane name="X">
+                  <doc name="Conversation">
+                    <list name="Timeline: Conversation">
+                      <item name="Saker: The original tweet text that should be kept."/>
+                      <item name="Bitget TradFi Ad"/>
+                      <item name="Ad"/>
+                      <item name="Thamer: A genuine reply that must survive."/>
+                      <edit name="Post text" focus="1"></edit>
+                    </list>
+                  </doc>
+                </pane>
+                "#
+                .into(),
+            ),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let ctx = context_json(&out);
+        let screen = ctx["screen"].as_str().unwrap_or("");
+        assert!(screen.contains("Saker: The original tweet"), "{screen}");
+        assert!(screen.contains("Thamer: A genuine reply"), "{screen}");
+        assert!(!screen.contains("Bitget TradFi Ad"), "{screen}");
+        assert!(
+            !screen.lines().any(|l| l.trim() == "Ad"),
+            "bare Ad line leaked: {screen}"
+        );
+    }
+
+    // ── D4: Messenger left-rail search box is treated as an omnibox ──
+
+    #[test]
+    fn messenger_search_box_is_not_picked_as_field_content() {
+        let node = JsonAxNode {
+            children: Vec::new(),
+            focused: false,
+            name: "Search Messenger".to_string(),
+            role: "edit".to_string(),
+            text: String::new(),
+        };
+        assert!(json_is_omnibox(&node));
+    }
+
+    // ── REAL-CAPTURE shapes: flat-stream speaker attribution ──────────────
+    //
+    // The following fixtures are lightly-truncated excerpts of ACTUAL Chrome UIA
+    // captures (artifacts/context-cdp/*/rawSnapshot.json). They exercise the flat
+    // beforeCaret / page-spanning-doc shapes that the synthetic <item> fixtures
+    // above do NOT cover, and which were producing wrong attribution.
+
+    // Discord DM: the focused composer's `textBefore` is a flat newline stream of
+    // `author / [Server Tag: CLAN] / timestamp / full-datetime / body` rows, with
+    // same-author continuations marked by a bare clock line. The reconstruction
+    // must (a) attribute each body to its real author header (Fancy / Master),
+    // (b) DROP the "Server Tag: W00T"/"Server Tag: CCO" badge lines (the prior bug
+    // attributed those as speakers), and (c) carry the author across continuations.
+    #[test]
+    fn discord_real_flat_stream_attributes_authors_and_drops_server_tag() {
+        let text_before = "\
+Fancy chat
+June 11, 2026
+Fancy
+6/11/26, 2:07 PM
+Thursday, June 11, 2026 at 2:07 PM
+Feeh 7agat htt3ml fel nos ofcourse
+Master
+Server Tag: W00T
+6/11/26, 2:07 PM
+Thursday, June 11, 2026 at 2:07 PM
+can we talk a little
+Fancy
+6/11/26, 2:07 PM
+Thursday, June 11, 2026 at 2:07 PM
+Yeah sure
+Master
+Server Tag: W00T
+6/11/26, 11:56 PM
+Thursday, June 11, 2026 at 11:56 PM
+Did you do whatever you wanted to do before pushing
+11:57 PM
+Thursday, June 11, 2026 at 11:57 PM
+Can I test";
+        let s = WindowContextSnapshot {
+            window_title: "(1153) Discord | @Fancy - Google Chrome".into(),
+            element_name: "Message @Fancy".into(),
+            app_exe: Some("chrome.exe".into()),
+            text_before: Some(text_before.into()),
+            ax_html: Some("<window name=\"Discord\"><edit name=\"Message @Fancy\" focus=\"1\"/></window>".into()),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let ctx = context_json(&out);
+        let before = ctx["beforeCaret"].as_str().unwrap_or("");
+        assert!(
+            before.contains("Fancy: Feeh 7agat htt3ml fel nos ofcourse"),
+            "{before}"
+        );
+        assert!(before.contains("Master: can we talk a little"), "{before}");
+        assert!(before.contains("Fancy: Yeah sure"), "{before}");
+        // continuation line keeps the Master author across the bare clock line
+        assert!(before.contains("Master: Can I test"), "{before}");
+        // the Server Tag badge is NOT a speaker and must be gone entirely
+        assert!(!out.contains("Server Tag"), "server tag leaked: {out}");
+        // and the datetime rows must not appear as bodies
+        assert!(!before.contains("Thursday, June 11"), "{before}");
+        // two distinct real authors are attributed (multi-speaker correct)
+        let speakers = before
+            .lines()
+            .filter_map(|l| l.split_once(": ").map(|(a, _)| a))
+            .filter(|a| *a == "Fancy" || *a == "Master")
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(speakers.len(), 2, "{before}");
+    }
+
+    // A real typed Discord draft (short, no timestamp grouping) must NOT be
+    // mangled by the stream reconstructor — it stays on the plain beforeCaret path.
+    #[test]
+    fn discord_short_typed_draft_is_not_reconstructed() {
+        let s = WindowContextSnapshot {
+            window_title: "Discord | @Fancy".into(),
+            element_name: "Message @Fancy".into(),
+            app_exe: Some("chrome.exe".into()),
+            text_before: Some(
+                "hey can you take a look at the deploy script before we ship it tonight".into(),
+            ),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let ctx = context_json(&out);
+        assert!(
+            ctx["beforeCaret"]
+                .as_str()
+                .unwrap_or("")
+                .contains("deploy script before we ship"),
+            "{out}"
+        );
+    }
+
+    // Messenger (facebook.com/messages): the conversation is a single flat `<doc>`
+    // TextPattern blob that embeds authorship as `… Message sent <when> by
+    // <Author>: <body>`. Reconstruction must attribute each segment to the author
+    // after "by", and must NOT false-match the scripture "قوله تعالى:" as a speaker.
+    #[test]
+    fn messenger_real_by_author_blob_attributes_authors() {
+        let s = WindowContextSnapshot {
+            window_title: "Messenger | Facebook - Google Chrome".into(),
+            element_name: "Write to موه".into(),
+            app_exe: Some("chrome.exe".into()),
+            ax_html: Some(
+                "<window name=\"Messenger | Facebook - Google Chrome\">\
+                 <doc name=\"Messenger | Facebook\">Conversation titled موه \
+                 Enter, Message sent Saturday 5:14am by سول: السلام عليكم \
+                 Enter, Message sent Saturday 8:15am by موه: وعليكم السلام ورحمة الله \
+                 Enter, Message sent Saturday 8:18am by موه: قوله تعالى: ماتعبدون من بعدي</doc>\
+                 <edit name=\"Write to موه\" focus=\"1\"></edit></window>"
+                    .into(),
+            ),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let ctx = context_json(&out);
+        let screen = ctx["screen"].as_str().unwrap_or("");
+        assert!(screen.contains("سول: السلام عليكم"), "{screen}");
+        assert!(screen.contains("موه: وعليكم السلام"), "{screen}");
+        // the scripture colon must NOT be picked as a separate speaker
+        assert!(
+            !screen.lines().any(|l| l.trim_start().starts_with("قوله تعالى:")),
+            "scripture matched as speaker: {screen}"
+        );
+    }
+
+    // X reply: the conversation lives in a single flat `<doc>` blob with no
+    // `Author:` prefixes — each tweet is `<DisplayName> @handle [time] <body>`.
+    // Reconstruction must attribute the original tweet to its author handle and
+    // drop the logged-in user's own top-bar identity + the "The short reason:"
+    // sentence-colon false positive.
+    #[test]
+    fn x_real_flat_conversation_attributes_tweet_author() {
+        let doc = "To view keyboard shortcuts Home Explore Notifications Post \
+            Mostafa @Dahshury Post Conversation Andrew Trask @iamtrask This is a bigger deal \
+            than it seems. The short reason: combinations of models will always outperform \
+            individual models. More in article below Quote OpenRouter @OpenRouter 20h \
+            Introducing the Fusion API 7:59 AM Replying to @iamtrask Post your reply \
+            Delta, Dirac @DeltaClimbs 8h A neat thing about AI is that it gradually teaches people";
+        // Real shape: the X reply page exposes ONE <doc> whose flat TextPattern
+        // text is the whole conversation; the composer carries no focus marker in
+        // the captured tree (verified against artifacts/context-cdp/x-reply).
+        let s = WindowContextSnapshot {
+            window_title: "Andrew Trask on X / X - Google Chrome".into(),
+            element_name: "Post text".into(),
+            app_exe: Some("chrome.exe".into()),
+            ax_html: Some(format!(
+                "<window name=\"Andrew Trask on X / X\">\
+                 <doc name=\"Andrew Trask on X\">{doc}</doc></window>"
+            )),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let ctx = context_json(&out);
+        let screen = ctx["screen"].as_str().unwrap_or("");
+        // the original tweet is attributed to its real author (display name) — the
+        // `DisplayName: body` form matches the speaker-prefix contract.
+        assert!(
+            screen.contains("Andrew Trask: This is a bigger deal"),
+            "{screen}"
+        );
+        // a second distinct author is attributed (the comma-suffix is normalized
+        // off, so 'Delta, Dirac' becomes 'Delta')
+        assert!(screen.contains("Delta: "), "{screen}");
+        // the logged-in user's own identity is NOT emitted as a turn
+        assert!(
+            !screen.lines().any(|l| l.starts_with("Mostafa:")),
+            "self identity leaked as a turn: {screen}"
+        );
+        // 'The short reason:' must NOT be treated as a speaker turn (it can appear
+        // INSIDE the tweet body, but never as a line prefix)
+        assert!(
+            !screen.lines().any(|l| l.trim_start().starts_with("The short reason:")),
+            "sentence-colon matched as speaker: {screen}"
+        );
+        // the 'Replying to @x' marker is not attributed as an author
+        assert!(
+            !screen.lines().any(|l| l.starts_with("Replying to:")),
+            "replying-to marker leaked as a speaker: {screen}"
+        );
+    }
+
+    // WhatsApp Web's composer caret TextPattern range spans the chat-LIST rail,
+    // not the open conversation — so its beforeCaret is the roster of contacts +
+    // previews (incl. a delivery/OTP 6-digit code). The Discord stream
+    // reconstructor must NOT fabricate "Contact: preview" turns from it, and the
+    // formatter must NOT leak the list (or its codes) through beforeCaret. (Real
+    // shape from artifacts/context-cdp/whatsapp.)
+    #[test]
+    fn whatsapp_chat_list_pane_is_not_attributed_and_does_not_leak() {
+        let chat_list = "\
+Chats 2 Status Updates in Status Channels Communities
+Search or start a new chat
+All Unread Favorites Groups
+Cousin Omar
+5:08 PM
+Turing intelligence test passed
+Muted chat
+Bosta
+برجاء إظهار الكود 3005137 مندوب بوسطة وصل عندك
+1 unread message
+Momen
+2 unread messages
+Archived";
+        // chat-list guard fires on the flat stream
+        assert!(json_text_is_chat_list_pane(chat_list));
+        assert!(json_reconstruct_discord_stream(chat_list).is_none());
+        let s = WindowContextSnapshot {
+            window_title: "(2) WhatsApp - Google Chrome".into(),
+            element_name: "Type a message to Cousin Omar".into(),
+            app_exe: Some("chrome.exe".into()),
+            text_before: Some(chat_list.into()),
+            ax_html: Some("<window name=\"WhatsApp\"><doc name=\"WhatsApp\">chat list pane only</doc></window>".into()),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        // no fabricated 'Cousin Omar:' speaker turn, and the delivery code is gone
+        assert!(!out.contains("Cousin Omar:"), "fabricated chat-list speaker: {out}");
+        assert!(!out.contains("3005137"), "delivery/OTP code leaked: {out}");
+    }
+
+    // The false-speaker filter is uniform: 'Server Tag: X', sentence fragments and
+    // scripture colons are never counted as speaker turns by the central gate.
+    #[test]
+    fn false_speaker_prefixes_are_rejected() {
+        assert!(json_is_speaker_turn_line("Fancy: hey there"));
+        assert!(json_is_speaker_turn_line("You: sure"));
+        assert!(json_is_speaker_turn_line("Alex Rivera: can you review"));
+        assert!(!json_is_speaker_turn_line("Server Tag: W00T"));
+        assert!(!json_is_speaker_turn_line("The short reason: combinations win"));
+        assert!(!json_is_speaker_turn_line("Replying to: @someone"));
+        assert!(!json_is_speaker_turn_line("قوله تعالى: ماتعبدون"));
     }
 
     struct FakeReader(WindowContextSnapshot);

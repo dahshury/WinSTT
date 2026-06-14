@@ -1,51 +1,90 @@
 ---
 title: Transcription History
-description: A local dashboard of everything you've dictated — four stat tiles, an activity heatmap, date-range filters, a searchable log, and karaoke playback of saved recordings.
+description: A local dashboard of everything you've dictated — an Overall Stats hero, usage breakdowns, a daily-activity contribution graph, a Voice Profile, a searchable log, and karaoke playback of saved recordings.
 ---
 
-Every completed transcription lands in a local dashboard you can search, filter, and play back — word-by-word — without anything leaving your machine. Open it from the Settings window → Transcription History tab; it updates live as you dictate.
+Every completed transcription lands in a local dashboard you can search, filter, and play back — word-by-word — without anything leaving your machine. Open it from the Settings window → Transcription History tab; it updates the moment a dictation finishes.
 
-The dashboard reads from a local store on disk and updates the moment a dictation finishes. Entries are kept in `userData/history.json`; optional audio recordings live in `userData/recordings/`. Nothing is uploaded.
+The tab is a single scrollable page in this order: an **Overall Stats** hero, a **Transcription models** usage breakdown, a **Content categories** usage breakdown, a **Daily Activity** block (streak banner, contribution graph, and interactive calendar), a **Voice Profile**, the **Transcriptions** table, a **Transformations** table, and **Limits & Retention**.
 
-<Video src="history-playback" chrome="card" alt="The transcription history dashboard animating stat tiles, an activity heatmap, and a saved row playing back with word-by-word highlighting." caption="Searchable local history, activity stats, and karaoke playback for saved recordings." />
+<Video src="history-playback" chrome="card" label="Transcription history dashboard" alt="The transcription history dashboard animating the Overall Stats hero, a daily-activity contribution graph, and a saved row playing back with word-by-word highlighting." caption="Searchable local history, activity stats, and karaoke playback for saved recordings." />
+
+<Callout type="success" title="Everything stays on disk">
+  Transcribed text persists to `userData/history.json`; optional recordings live in
+  `userData/recordings/` (16 kHz mono PCM WAV). Both stay local — nothing is uploaded, and
+  you can clear or delete entries at any time.
+</Callout>
 
 ## What gets recorded
 
 Each finished transcription is appended as one entry:
 
-| Field | Description |
-|-------|-------------|
-| `text` | The final text (after LLM cleanup, if a Dictation feature ran). |
-| `originalText` | The pre-LLM text. Present only when an LLM transformed the result; omitted otherwise. |
-| `timestamp` | When the transcription completed. |
-| `durationMs` | How long the spoken audio was. |
-| `wordCount` | Number of words in the final text. |
-| `audioFilePath` | Path to the saved WAV, when a recording was kept (see <a href="#retention-policy">Retention</a>). |
-| `id` | Stable identifier, used to de-duplicate. |
+<ModelTable
+  head={["Field", "Description"]}
+  rows={[
+    ["text", "The final text (after LLM cleanup, if a Dictation feature ran)."],
+    ["originalText", "The pre-LLM text. Present only when an LLM transformed the result; omitted otherwise."],
+    ["timestamp", "When the transcription completed."],
+    ["durationMs", "How long the spoken audio was."],
+    ["wordCount", "Number of words in the final text."],
+    ["audioFilePath", "Path to the saved WAV, when a recording was kept (see Retention below)."],
+    ["id", "Stable identifier, used to de-duplicate."],
+  ]}
+  caption="One entry per finished transcription, appended to userData/history.json."
+/>
 
-## Summary tiles
+## Overall Stats
 
-Four tiles aggregate whatever is currently in view — they recompute against the active <a href="#date-range">date range</a> rather than the whole history.
+The hero row at the top of the tab is three cards. Everything here aggregates whatever is currently in view — it recomputes against the active <a href="#date-range">date range</a> rather than the whole history.
 
-<Screenshot src="sec-history-stats" chrome="card" alt="The four summary tiles across the top of the history tab: Total Transcriptions, Total Words, Speaking Time, and Overall WPM, each with a large value and a label." caption="The four stat tiles recompute against the selected date range, not the whole history." />
+<Screenshot src="sec-history-stats" chrome="card" label="Overall Stats hero" alt="The Overall Stats hero row at the top of the history tab: a semicircular Overall WPM gauge, an AI Impact card listing Fixes made, Words corrected, and Dictionary fixes, and a Total Words card with a recent-trend sparkline plus Transcriptions and Speaking Time." caption="The three hero cards recompute against the selected date range, not the whole history." />
+
+- **Overall WPM** — a semicircular gauge of your aggregate speaking rate, `total words × 60,000 ÷ total ms`. Shows `—` when the in-range duration is too short to be meaningful.
+- **AI Impact** — **Fixes made** is the headline; below it sit **Words corrected** and **Dictionary fixes**. These count what LLM cleanup and your dictionary changed across the entries in range.
+- **Total Words** — the sum of every entry's `wordCount`, headline, with a recent-trend **sparkline** beneath it and two mini-rows: **Transcriptions** (entry count in range) and **Speaking Time** (total spoken duration, `Xh YYm ZZs`, or `<1s` under one second).
+
+<Callout type="info" title="The sparkline reads recent activity, not the selected range">
+  The Total-Words **sparkline** plots the last 30 days of daily word totals from the full history, so
+  it stays a stable "recent activity" signal even when you filter the rest of the tab to a past window.
+</Callout>
+
+The headline figures in plain numbers:
 
 <StatGrid>
-  <Stat value="1,250" label="Total Transcriptions" />
-  <Stat value="48,300" label="Total Words" />
-  <Stat value="3h 12m 40s" label="Speaking Time" />
   <Stat value="151.4" label="Overall WPM" />
+  <Stat value="48,300" label="Total Words" />
+  <Stat value="1,250" label="Transcriptions" />
+  <Stat value="3h 12m 40s" label="Speaking Time" />
 </StatGrid>
 
-- **Total Transcriptions** — count of entries in range, localized (e.g. `1,250`).
-- **Total Words** — sum of every entry's `wordCount`.
-- **Speaking Time** — total spoken duration, shown as `Xh YYm ZZs` (or `<1s` under one second).
-- **Overall WPM** — aggregate speaking rate, `total words × 60,000 ÷ total ms`. Shows `—` when the in-range duration is under 500 ms (too little signal to be meaningful).
+## Usage breakdowns
 
-## Activity heatmap
+Two horizontal-bar sections sit below the hero, each one labeled track per category filled to its share of the in-range total. A section only appears when it has data.
 
-A GitHub-style calendar over a rolling **365-day** window from today, with weeks starting on Sunday and five intensity levels. Days with zero activity are dimmed and not selectable.
+- **Transcription models** — which STT model produced each entry.
+- **Content categories** — the dictation LLM's content tag for each entry (Code, Email, Meeting…), with anything uncategorized grouped under **Other**.
 
-<Screenshot src="sec-history-heatmap" chrome="card" alt="The calendar activity heatmap: a year-long grid of day cells shaded by intensity, with a Metric selector and a Calendar selector above it." caption="A rolling 365-day grid. Click a day to start a range; the Metric and Calendar selectors are session-only." />
+## Daily Activity
+
+This block stacks three habit views. The streak banner and the contribution graph read your **full history** (they're all-time habit signals); only the interactive calendar below them drives the date range.
+
+<StepFlow>
+  <Step title="Streak banner">
+    A flame and your **current day streak** as the focal number, with **Longest streak** sitting
+    quietly to the right as the personal best to beat.
+  </Step>
+  <Step title="Contribution graph">
+    A read-only GitHub-style yearly grid — Sunday-started week columns, Mon/Wed/Fri row labels,
+    month labels along the top — shaded on a teal ramp. Hover a cell for the date and word count.
+  </Step>
+  <Step title="Interactive calendar">
+    The same year of activity, but clickable: this is where you pick a date range to filter the tab.
+  </Step>
+</StepFlow>
+
+The interactive calendar is a GitHub-style grid over a rolling **365-day** window from today, with weeks starting on Sunday and five intensity levels. Days with zero activity are dimmed and not selectable.
+
+<Screenshot src="sec-history-heatmap" chrome="card" label="Daily Activity" alt="The Daily Activity block: a day-streak banner with a longest-streak figure, a GitHub-style yearly contribution graph, and the interactive calendar grid below it with a Metric selector and a Calendar selector." caption="A streak banner and yearly contribution graph above the interactive calendar. Click a day in the calendar to start a range; the Metric and Calendar selectors are session-only." />
 
 <SettingRow label="Metric" default="transcriptions">
   Choose what drives the color intensity: **transcriptions** (entry count), **words**, or
@@ -75,18 +114,27 @@ Click a day to start a range, click another to end it; the range bar with the fo
     ["Year to date", "Jan 1 of the current year → now"],
     ["Last year", "Full previous calendar year"],
   ]}
-  caption="The selected range filters both the summary tiles and the history table. Ranges are session-scoped — they reset when you reopen the tab."
+  caption="The selected range filters the Overall Stats hero, the usage breakdowns, the Voice Profile, and the Transcriptions table. Ranges are session-scoped — they reset when you reopen the tab."
 />
 
-## History table
+## Voice Profile
+
+A personality snapshot of the in-range history, computed entirely on your machine — no LLM. Four tiles:
+
+- **Most used word** — the word you lean on most, with its count.
+- **Catchphrase** — your distinctive runner-up word.
+- **Most corrected word** — the word the AI fixes for you most often.
+- **Peak time** — the weekday and hour you dictate most.
+
+Any tile with no data shows `—`.
+
+## Transcriptions
 
 A scrollable list sorted newest-first. Each row carries the transcribed text, action buttons, and a metadata strip showing **time**, **words**, **duration**, and — when available — **WPM** and the **model** that produced it. Lists under 50 entries render directly; longer ones virtualize for smooth scrolling, capped at a 460 px scroll area.
 
 A **play** button appears on the left of a row only when that entry has a saved recording. Other rows have no play button (see the <a href="#gotchas">gotchas</a> below).
 
-<Screenshot src="sec-history-table" chrome="card" alt="The searchable history table: timestamped rows of transcribed text, each with a metadata strip (time, words, duration, WPM, model) and copy/delete buttons; rows with a saved recording show a play button on the left." caption="Newest-first rows with copy, delete, and — when a recording exists — a play button that drives the karaoke word highlight." />
-
-
+<Screenshot src="sec-history-table" chrome="card" label="History table" alt="The searchable history table: timestamped rows of transcribed text, each with a metadata strip (time, words, duration, WPM, model) and copy/delete buttons; rows with a saved recording show a play button on the left." caption="Newest-first rows with copy, delete, and — when a recording exists — a play button that drives the karaoke word highlight." />
 
 <SettingRow label="Copy">
   Copies the final `text`; the icon flips to a check for 1.6 s.
@@ -107,11 +155,15 @@ Press play and the audio streams while the matching words highlight in sequence 
 
 Playback routes through the output device set in [Audio settings](/docs/settings/audio); if that device is unavailable it falls back to the system default. Word timings are computed on demand by a tiny timestamped-Whisper aligner (~40 MB, CPU) using cross-attention DTW, with a VAD-based fallback — alignment takes roughly 100–200 ms per clip and isn't cached, so it recomputes each play. If alignment fails, the clip still plays; it just won't highlight word-by-word.
 
-## Limits & retention
+## Transformations
+
+A separate table, in the same row style as the Transcriptions table, logs text **transforms** — selections you reshaped with a WinSTT-tree hotkey rather than dictated fresh. These rows carry no audio stats, so they have no play button and no recording. The table header has its own **Clear** action, and rows can be deleted individually.
+
+## Limits & Retention
 
 These two controls live at the bottom of the tab and are the only persisted settings here.
 
-<Screenshot src="sec-history-retention" chrome="card" alt="The Max History Entries stepper and the Recording Retention selector at the bottom of the history tab — the only two persisted settings here." caption="The two persisted controls: a Max History Entries stepper and the Recording Retention selector." />
+<Screenshot src="sec-history-retention" chrome="card" label="Limits & retention" alt="The Max History Entries stepper and the Recording Retention selector at the bottom of the history tab — the only two persisted settings here." caption="The two persisted controls: a Max History Entries stepper and the Recording Retention selector." />
 
 <SettingRow label="Max History Entries" settingKey="general.historyMaxEntries" default="1000">
   A stepper from **10** to **10,000**. When you exceed the limit, the oldest entries are
@@ -133,21 +185,15 @@ These two controls live at the bottom of the tab and are the only persisted sett
   recording on disk at all, that's a separate audio-capture decision, not a retention value.
 </Callout>
 
-<Callout type="info" title="Where transcripts and recordings live">
-  Transcribed text persists to `userData/history.json` and recordings to
-  `userData/recordings/` (16 kHz mono PCM WAV). Both stay local and are never uploaded.
-  Clear or delete entries at any time to remove them.
-</Callout>
-
 <Callout type="warn" title="Cloud STT keeps text, not audio">
-  When you transcribe through a **cloud provider** (OpenAI or ElevenLabs), the text is still
+  When you transcribe through a **cloud provider** (ElevenLabs or OpenRouter), the text is still
   logged, but **no audio is saved to disk** — so those rows never show a play button. Saved
   recordings only exist for **local** transcriptions with audio capture enabled.
 </Callout>
 
 ## Clearing history
 
-A **Clear** action in the table header wipes every stored entry and its recordings.
+The **Clear** action in the Transcriptions table header wipes every stored entry and its recordings; the Transformations table has its own independent Clear.
 
 <Callout type="error" title="Clearing is permanent">
   Clearing prompts for confirmation, then deletes all entries and their WAV files with no
@@ -156,12 +202,16 @@ A **Clear** action in the table header wipes every stored entry and its recordin
 
 ## Gotchas
 
-- **No play button** appears when audio capture was off, the source was cloud STT, or the
-  recording was deleted or aged out by retention.
-- **Original text is missing** when no LLM ran on that entry — “Copy original” stays disabled.
-- **Date-range boundaries are local time**, matching the heatmap, not UTC.
-- **Heatmap colors are relative** to your busiest day in the 365-day window, not an absolute
-  per-day count.
+<ModelTable
+  head={["What you see", "Why"]}
+  rows={[
+    ["No play button on a row", "Audio capture was off, the source was cloud STT, or the recording was deleted or aged out by retention."],
+    ["“Copy original” is disabled", "No LLM ran on that entry, so there's no pre-LLM originalText to copy."],
+    ["A late-night session lands on the previous day", "Date-range and heatmap boundaries are computed in local time, not UTC."],
+    ["A quiet month still shows contrast", "Heatmap colors are relative to your busiest day in the 365-day window, not an absolute per-day count."],
+  ]}
+  caption="Expected behavior that can look like a bug at first glance."
+/>
 
 ## Related
 
@@ -172,7 +222,7 @@ A **Clear** action in the table header wipes every stored entry and its recordin
   <Card title="Audio & playback device" href="/docs/settings/audio">
     Pick the output device used for history playback and the input device for capture.
   </Card>
-  <Card title="LLM cleanup" href="/docs/settings/llm">
+  <Card title="LLM cleanup" href="/docs/settings/quality#llm-cleanup">
     What populates an entry's pre-LLM `originalText` versus its final `text`.
   </Card>
   <Card title="Cloud STT" href="/docs/settings/integrations">

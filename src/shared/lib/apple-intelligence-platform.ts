@@ -11,9 +11,9 @@
  * `navigator.userAgent` / `navigator.platform` instead — the same data
  * any web app would use.
  *
- * This is a UI-only signal — the actual runtime gate lives in
- * `electron/ipc/apple-intelligence.ts` (which uses `process.platform` /
- * `process.arch` for ground truth). The classifier here is "good
+ * This is a UI-only signal — the actual runtime gate lives in the main
+ * process (which uses `process.platform` / `process.arch` for ground truth).
+ * The classifier here is "good
  * enough" to drive the picker visibility / tooltip; if a user
  * somehow picks Apple Intelligence on a misclassified host, the IPC
  * layer rejects the call cleanly.
