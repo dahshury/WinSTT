@@ -34,6 +34,7 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 	const ti = useTranslations("integrations");
 	const tHist = useTranslations("history");
 	const tAbout = useTranslations("about");
+	const tSettings = useTranslations("settings");
 	const tDict = useTranslations("dictionary");
 	const tSnip = useTranslations("snippets");
 	const tLlm = useTranslations("llm");
@@ -146,9 +147,11 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			tAbout("diagnosticsTitle"),
 			tAbout("openLogsFolder"),
 			tAbout("saveDiagnosticBundle"),
+			tSettings("settingsExport"),
+			tSettings("settingsImport"),
 			tg("startOnLogin"),
 			tg("sendCrashReports"),
-			"startup login crash reports reset defaults updates version logs diagnostics diagnostic bundle support",
+			"startup login crash reports reset defaults updates version logs diagnostics diagnostic bundle support settings export import backup restore",
 		].join(" "),
 	};
 }

@@ -169,7 +169,7 @@ function PlaygroundModelPicker({
 	};
 
 	return (
-		<div className="flex flex-col divide-y divide-surface-1">
+		<div className="flex flex-col">
 			<div className="col-span-2">
 				<FormControl label={t("provider")} tooltip={t("providerTooltip")}>
 					<ElevatedSurface>

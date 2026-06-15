@@ -755,11 +755,15 @@ mod tests {
 
     #[test]
     fn winstt_postprocess_formats_when_dictation_toggle_is_enabled() {
-        // Cleanup ON: deterministic formatting runs (spoken "comma" -> "," + sentence-cap). No
-        // dictionary correction happens here anymore — that's the LLM's job.
+        // Cleanup ON: deterministic formatting runs — here the spoken "comma" -> "," conversion.
+        // The leading word stays lowercase: sentence-casing is a SEPARATE toggle
+        // (`format_basic_punctuation_casing`, off here) and is suppressed anyway for the fixture's
+        // default Whisper "tiny" model, which formats natively. No dictionary correction happens
+        // either — that's the LLM's job now (the old "Hello" came from the removed fuzzy
+        // dictionary pass, see apply_custom_words in git history).
         let ws = postprocess_settings(true);
 
-        assert_eq!(winstt_postprocess("hello comma world", &ws), "Hello, world");
+        assert_eq!(winstt_postprocess("hello comma world", &ws), "hello, world");
     }
 
     #[test]

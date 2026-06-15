@@ -21,6 +21,7 @@ interface StatusPayload {
 	progress: number;
 	downloadedBytes: number;
 	totalBytes: number;
+	speedBps?: number;
 }
 interface CompletePayload {
 	present: boolean;
@@ -30,22 +31,30 @@ interface CompletePayload {
 export interface EncoderModel {
 	downloadedBytes: number;
 	progress: number; // 0..1
+	speedBps: number;
 	state: EncoderModelState;
 	totalBytes: number;
 	cancel: () => void;
 	pause: () => void;
+	/** Load + warm the model in the background so the first dictation is fast (no-op if not present). */
+	preload: () => void;
+	/** Delete the model from disk (and any in-flight transfer) — used when the feature is turned off. */
+	remove: () => void;
 	resume: () => void;
 	start: () => void;
+	/** Drop the loaded model from memory (keeps files on disk) — frees RAM when the feature is off. */
+	unload: () => void;
 }
 
 const INITIAL: Omit<
 	EncoderModel,
-	"start" | "pause" | "resume" | "cancel"
+	"start" | "pause" | "resume" | "cancel" | "remove" | "preload" | "unload"
 > = {
 	state: "loading",
 	progress: 0,
 	downloadedBytes: 0,
 	totalBytes: 0,
+	speedBps: 0,
 };
 
 function applyStatus(p: StatusPayload) {
@@ -54,6 +63,7 @@ function applyStatus(p: StatusPayload) {
 		progress: p.progress,
 		downloadedBytes: p.downloadedBytes,
 		totalBytes: p.totalBytes,
+		speedBps: p.speedBps ?? 0,
 	};
 }
 
@@ -82,8 +92,20 @@ export function useEncoderModel(): EncoderModel {
 			(e) =>
 				setS(
 					e.payload.present
-						? { state: "present", progress: 1, downloadedBytes: 0, totalBytes: 0 }
-						: { state: "absent", progress: 0, downloadedBytes: 0, totalBytes: 0 },
+						? {
+								state: "present",
+								progress: 1,
+								downloadedBytes: 0,
+								totalBytes: 0,
+								speedBps: 0,
+							}
+						: {
+								state: "absent",
+								progress: 0,
+								downloadedBytes: 0,
+								totalBytes: 0,
+								speedBps: 0,
+							},
 				),
 		);
 		return () => {
@@ -108,6 +130,24 @@ export function useEncoderModel(): EncoderModel {
 	const cancel = useCallback(() => {
 		invoke("encoder_dict_download_cancel").catch(() => {});
 	}, []);
+	const remove = useCallback(() => {
+		// Optimistically drop to "absent" so the card reflects the off-switch
+		// immediately; the backend `download-complete` event confirms it.
+		setS({
+			state: "absent",
+			progress: 0,
+			downloadedBytes: 0,
+			totalBytes: 0,
+			speedBps: 0,
+		});
+		invoke("encoder_dict_remove").catch(() => {});
+	}, []);
+	const preload = useCallback(() => {
+		invoke("encoder_dict_preload").catch(() => {});
+	}, []);
+	const unload = useCallback(() => {
+		invoke("encoder_dict_unload").catch(() => {});
+	}, []);
 
-	return { ...s, start, pause, resume, cancel };
+	return { ...s, start, pause, resume, cancel, remove, preload, unload };
 }

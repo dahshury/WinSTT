@@ -635,7 +635,8 @@
     "clearDescription": "Todas as entradas do dicionário serão removidas permanentemente. Esta ação não pode ser desfeita.",
     "thresholdLabel": "Rigor da correção",
     "thresholdCaption": "Pontuação máxima de correspondência difusa que o corretor do servidor aceitará. Menor = mais rigoroso (menos substituições incorretas).",
-    "thresholdTooltip": "O corretor determinístico é executado no servidor logo após a transcrição e ANTES da limpeza pelo LLM. O que este falhar ainda recebe uma segunda passagem pelos modificadores LLM."
+    "thresholdTooltip": "O corretor determinístico é executado no servidor logo após a transcrição e ANTES da limpeza pelo LLM. O que este falhar ainda recebe uma segunda passagem pelos modificadores LLM.",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "Não foi possível carregar {model}",

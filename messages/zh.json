@@ -635,7 +635,8 @@
     "clearDescription": "所有词典条目将被永久删除。此操作无法撤销。",
     "thresholdLabel": "纠正严格度",
     "thresholdCaption": "服务器端纠正器可接受的最大模糊匹配分数。越低越严格（误替换越少）。",
-    "thresholdTooltip": "确定性纠正器在转录完成后、LLM 清理之前在服务器端运行。凡被其遗漏的内容，仍会经过 LLM 修饰器的二次处理。"
+    "thresholdTooltip": "确定性纠正器在转录完成后、LLM 清理之前在服务器端运行。凡被其遗漏的内容，仍会经过 LLM 修饰器的二次处理。",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "无法加载 {model}",

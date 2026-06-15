@@ -198,7 +198,7 @@ function ContextAwarenessSection({
 	};
 	return (
 		<SettingSection icon={EyeIcon} title={tg("contextAwarenessSection")}>
-			<div className="flex flex-col divide-y divide-surface-1">
+			<div className="flex flex-col">
 				<SettingField
 					disabled={disabled}
 					disabledTooltip={

@@ -264,7 +264,7 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 			toggleDisabled={forceDisabled}
 			toggleDisabledTooltip={forceDisabledTooltip}
 		>
-			<div className="flex flex-col divide-y divide-surface-1">
+			<div className="flex flex-col">
 				<FormControl
 					disabled={forceDisabled}
 					label={t("provider")}

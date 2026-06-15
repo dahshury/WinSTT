@@ -91,6 +91,26 @@ function Test-ExternalTerminationNoiseLine {
     )
 }
 
+# Build + stage the native context sidecar (winstt_context) BEFORE handing off to
+# `tauri dev`. It is a SEPARATE cargo bin that `tauri dev` does not build on its own,
+# and nothing else copies it into place — without this, ContextManager can't resolve
+# winstt-context.exe at runtime and context-awareness (the focused-field --split
+# capture) silently no-ops. Best-effort: a sidecar build failure warns but does not
+# abort the dev session (the app still runs, just without context capture). This runs
+# after the 'Continue' handoff above, so cargo's exit code is checked, not thrown.
+Write-Host "Building + staging the context sidecar (winstt_context)..."
+& cargo build --manifest-path (Join-Path $repoRoot 'src-tauri\Cargo.toml') --bin winstt_context
+if ($LASTEXITCODE -eq 0) {
+    $binDir = Join-Path $repoRoot 'src-tauri\binaries'
+    New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+    Copy-Item -Force `
+        -Path (Join-Path $repoRoot 'src-tauri\target\debug\winstt_context.exe') `
+        -Destination (Join-Path $binDir 'winstt-context.exe')
+    Write-Host "Staged winstt-context.exe -> src-tauri/binaries/."
+} else {
+    Write-Warning "Context sidecar build failed; context-awareness is disabled this run."
+}
+
 $tauriDevOutput = New-Object System.Collections.Generic.List[string]
 $tauriDevTail = New-Object System.Collections.Generic.Queue[string]
 $tauriDevTailLimit = 8

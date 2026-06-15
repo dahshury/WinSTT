@@ -635,7 +635,8 @@
     "clearDescription": "Alle Wörterbucheinträge werden dauerhaft entfernt. Dies kann nicht rückgängig gemacht werden.",
     "thresholdLabel": "Korrektur-Strenge",
     "thresholdCaption": "Maximaler Fuzzy-Match-Wert, den der serverseitige Korrektor akzeptiert. Niedriger = strenger (weniger falsche Ersetzungen).",
-    "thresholdTooltip": "Der deterministische Korrektor läuft auf dem Server direkt nach der Transkription und VOR der LLM-Bereinigung. Was er übersieht, erhält noch einen zweiten Durchlauf durch die LLM-Modifier."
+    "thresholdTooltip": "Der deterministische Korrektor läuft auf dem Server direkt nach der Transkription und VOR der LLM-Bereinigung. Was er übersieht, erhält noch einen zweiten Durchlauf durch die LLM-Modifier.",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "{model} konnte nicht geladen werden",

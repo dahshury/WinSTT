@@ -6,6 +6,10 @@
 # will have schema files for capabilities auto-completion
 /gen/schemas
 
+# Staged native context sidecar (winstt-context.exe). Built + copied here from
+# target/ by tools/windows/tauri-dev.ps1 on each dev run — a build artifact, not source.
+/binaries/
+
 # STT spike test artifacts (proven engine — see project memory)
 jfk_16k_mono.f32
 spike_run.log

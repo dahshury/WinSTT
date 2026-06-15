@@ -82,6 +82,13 @@ pub(crate) fn register_winstt_managers(app_handle: &AppHandle, managers: &CoreMa
         if crate::winstt::commands::settings::should_warm_tts(&settings) {
             crate::winstt::commands::settings::warm_tts_async(app_handle);
         }
+        // Preload + warm the on-device dictionary encoder when the feature is on and the model is
+        // already downloaded, so the first non-LLM dictation doesn't pay the cold-load cost.
+        if settings.general.encoder_dictionary_enabled
+            && crate::winstt::encoder_dict::is_model_present(app_handle)
+        {
+            crate::winstt::encoder_dict::preload_async(app_handle);
+        }
     }
     llm_manager.start_warmup_loop();
 

@@ -97,7 +97,7 @@ pub(super) fn center_window(app: &AppHandle, window: &tauri::WebviewWindow, cent
     let (w, h) = window
         .inner_size()
         .map(|s| (s.width as f64 / scale, s.height as f64 / scale))
-        .unwrap_or((692.0, 560.0));
+        .unwrap_or((900.0, 640.0));
 
     if center_on_main {
         if let Some(main) = app.get_webview_window("main") {

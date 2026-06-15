@@ -339,8 +339,17 @@ fn capture_winstt_dictation_context(app: &AppHandle, settings: &WinsttSettings) 
         return String::new();
     };
 
+    // Focused-field capture (competitor-parity: Wispr Flow / superwhisper read
+    // the focused field + caret-nearby text + app identity via accessibility,
+    // NOT a whole-window tree dump). `Split` gives caret-aware before/after text
+    // of the focused field plus window/app/url metadata — without the `--tree`
+    // UIA subtree walk that leaked sidebars/inbox rows and forced the per-app
+    // reconstruction machinery. The formatter routes a no-`axHtml` snapshot down
+    // the clean focused-field path (beforeCaret/afterCaret/fieldText + metadata),
+    // and the OTP scrub + deny-list still apply. For a "reply to this" the quoted
+    // thread sits in `afterCaret`, so reply context survives within the field.
     context.capture_fragment(
-        ContextMode::Tree,
+        ContextMode::Split,
         settings.general.context_app_mode,
         &settings.general.context_deny_list,
         &settings.general.context_allow_list,
@@ -574,6 +583,7 @@ pub(crate) async fn process_transcription_output(
     // encoder model downloads on demand and this whole block is fail-soft (returns text unchanged
     // until ready). Listen mode stays raw. When the LLM path ran, it owns the dictionary instead.
     if !winstt_dictation_llm
+        && winstt_settings.general.encoder_dictionary_enabled
         && winstt_settings.general.recording_mode != RecordingMode::Listen
     {
         let pairs = crate::winstt::commands::llm::replacement_pairs(&winstt_settings);

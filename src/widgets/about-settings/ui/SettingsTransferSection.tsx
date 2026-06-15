@@ -1,8 +1,6 @@
-import { Button as BaseButton } from "@base-ui/react/button";
 import { FileExportIcon, FileImportIcon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
-import type { ReactNode } from "react";
-import { useState } from "react";
+import type { IconSvgElement } from "@hugeicons/react";
+import { type ReactNode, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	commands,
@@ -10,13 +8,12 @@ import {
 	type SettingsImportResult,
 	type SettingsRestoreItem,
 } from "@/bindings";
-import { useSettingsStore } from "@/entities/setting";
+import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { settingsLoadStrict } from "@/shared/api/ipc-client";
-import { ButtonGroup } from "@/shared/ui/button-group";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { DialogActionButton, DialogClose } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
-import { Tooltip } from "@/shared/ui/tooltip";
+import { AboutActionButton } from "./AboutActionButton";
 
 function unwrapCommand<T>(result: Result<T, string>): T {
 	if (result.status === "error") {
@@ -139,13 +136,41 @@ function TransferErrorDialog({
 	);
 }
 
-export function SettingsSidebarHeaderActions({
-	collapsed,
-	toggleButton,
+function SettingsTransferRow({
+	buttonLabel,
+	disabled,
+	icon,
+	iconClassName,
+	onClick,
+	title,
 }: {
-	collapsed: boolean;
-	toggleButton: ReactNode;
+	buttonLabel: string;
+	disabled?: boolean;
+	icon: IconSvgElement;
+	iconClassName?: string | undefined;
+	onClick: () => void;
+	title: string;
 }) {
+	return (
+		<div className="flex items-center gap-4 py-3">
+			<div className="flex min-w-0 flex-1 flex-col gap-1">
+				<span className="font-medium text-body text-foreground leading-tight">
+					{title}
+				</span>
+			</div>
+			<AboutActionButton
+				icon={icon}
+				onClick={onClick}
+				{...(disabled !== undefined ? { disabled } : {})}
+				{...(iconClassName !== undefined ? { iconClassName } : {})}
+			>
+				{buttonLabel}
+			</AboutActionButton>
+		</div>
+	);
+}
+
+export function SettingsTransferSection(): ReactNode {
 	const settingsT = useTranslations("settings");
 	const commonT = useTranslations("common");
 	const [exporting, setExporting] = useState(false);
@@ -198,56 +223,8 @@ export function SettingsSidebarHeaderActions({
 		}
 	};
 
-	const buttonClass =
-		"titlebar-no-drag flex size-7 shrink-0 items-center justify-center bg-transparent text-foreground-muted outline-none transition-colors duration-150 hover:bg-foreground/10 hover:text-foreground-secondary focus-visible:ring-2 focus-visible:ring-accent disabled:pointer-events-none disabled:opacity-50";
-
 	return (
 		<>
-			<ButtonGroup
-				aria-label={settingsT("settingsHeaderActions")}
-				className="titlebar-no-drag shrink-0"
-				connected
-				orientation={collapsed ? "vertical" : "horizontal"}
-			>
-				{collapsed ? null : (
-					<>
-						<Tooltip content={settingsT("settingsExport")} side="right">
-							<BaseButton
-								aria-label={settingsT("settingsExport")}
-								className={buttonClass}
-								data-testid="settings-export-button"
-								disabled={exporting || importing}
-								onClick={handleExport}
-								type="button"
-							>
-								<HugeiconsIcon
-									className={exporting ? "animate-spin" : undefined}
-									icon={FileExportIcon}
-									size={16}
-								/>
-							</BaseButton>
-						</Tooltip>
-						<Tooltip content={settingsT("settingsImport")} side="right">
-							<BaseButton
-								aria-label={settingsT("settingsImport")}
-								className={buttonClass}
-								data-testid="settings-import-button"
-								disabled={exporting || importing}
-								onClick={() => setImportConfirmOpen(true)}
-								type="button"
-							>
-								<HugeiconsIcon
-									className={importing ? "animate-spin" : undefined}
-									icon={FileImportIcon}
-									size={16}
-								/>
-							</BaseButton>
-						</Tooltip>
-					</>
-				)}
-				{toggleButton}
-			</ButtonGroup>
-
 			<ConfirmDialog
 				cancelLabel={commonT("cancel")}
 				confirmLabel={settingsT("settingsImportConfirm")}
@@ -275,6 +252,28 @@ export function SettingsSidebarHeaderActions({
 				}}
 				title={errorTitle}
 			/>
+			<SettingSection
+				divided
+				icon={FileExportIcon}
+				title={`${settingsT("settingsExport")} / ${settingsT("settingsImport")}`}
+			>
+				<SettingsTransferRow
+					buttonLabel={settingsT("settingsExport")}
+					disabled={exporting || importing}
+					icon={FileExportIcon}
+					iconClassName={exporting ? "animate-spin" : undefined}
+					onClick={handleExport}
+					title={settingsT("settingsExport")}
+				/>
+				<SettingsTransferRow
+					buttonLabel={settingsT("settingsImport")}
+					disabled={exporting || importing}
+					icon={FileImportIcon}
+					iconClassName={importing ? "animate-spin" : undefined}
+					onClick={() => setImportConfirmOpen(true)}
+					title={settingsT("settingsImport")}
+				/>
+			</SettingSection>
 		</>
 	);
 }

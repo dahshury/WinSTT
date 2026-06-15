@@ -585,10 +585,8 @@ static JSON_LLM_NOISE_RE: Lazy<Regex> = Lazy::new(|| {
     // and U+034F), but list the invisible-separator runs Gmail injects into
     // preview snippets explicitly so intent is clear: U+034F (CGJ), U+200C/D
     // (ZWNJ/ZWJ), U+200E/F (LRM/RLM).
-    Regex::new(
-        r"[\p{C}\p{So}\x{2022}\x{2023}\x{2043}\x{034F}\x{200C}-\x{200F}\x{1F000}-\x{1FAFF}]",
-    )
-    .unwrap()
+    Regex::new(r"[\p{C}\p{So}\x{2022}\x{2023}\x{2043}\x{034F}\x{200C}-\x{200F}\x{1F000}-\x{1FAFF}]")
+        .unwrap()
 });
 static JSON_INBOX_DATE_ROW_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -601,7 +599,7 @@ static JSON_ROLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^</?\s*([a-z][a-z0-
 static JSON_NAME_ATTR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"\bname="([^"]*)""#).unwrap());
 static JSON_FOCUS_ATTR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"\bfocus="1""#).unwrap());
 static JSON_NAV_NAME_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(?:chats?|conversations?|inbox|channels?|direct messages|members?|participants?|navigation|recents?|recent threads?|threads?|projects?|workspaces?|files?|explorer|folders?|sidebar|side panel|mailbox|page list|pages|primary|timeline tabs|who to follow|what's happening|for you|following|premium|live on x|trending|grok)\b").unwrap()
+    Regex::new(r"(?i)\b(?:chats?|conversations?|inbox|channels?|direct messages|members?|participants?|navigation|navigation pane|recents?|recent threads?|threads?|projects?|workspaces?|files?|explorer|folders?|sidebar|side panel|mailbox|page list|pages|primary|timeline tabs|who to follow|what's happening|for you|following|premium|live on x|trending|grok|junk email|sent items|deleted items|archive|favorites|conversation history|message list|new mail)\b").unwrap()
 });
 static JSON_CONTAINER_NAV_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(?:sidebar|side panel|side bar|navigation|nav rail|primary column|sidebar column|servers?|roster|app bar|browser chrome|left rail|chat list|chats)\b").unwrap()
@@ -677,7 +675,20 @@ static JSON_LOW_SIGNAL_UI_LINE_RE: Lazy<Regex> = Lazy::new(|| {
             changed\ the\ channel\ name|
             added\ .+\ to\ the\ (?:channel|conversation)|
             removed\ .+\ from\ the\ (?:channel|conversation)
-        )\b",
+        )\b
+        |
+        # Discord per-user clan badge + user-profile card chrome (the trailing
+        # profile flyout: 'View Full Profile', 'Member Since Mar 12, 2017',
+        # 'Mutual Servers — 3', 'Originally known as …', 'Add Note (only visible
+        # to you)'). These leak as standalone lines in the textBefore stream.
+        ^\s*(?:
+            server\ tag\b
+            | view\ (?:full\ )?profile
+            | member\ since\b
+            | mutual\ (?:servers?|friends?)\b
+            | originally\ known\ as\b
+            | add\ note(?:\ \(only\ visible\ to\ you\))?
+        )",
     )
     .unwrap()
 });
@@ -781,7 +792,13 @@ static JSON_X_HANDLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"@[A-Za-z0-9_]{2
 /// (`Enter, Message sent Saturday 8:15am by موه: <body>`). This captures the
 /// author + the start of the body so we can rebuild `Author: body`.
 static JSON_MESSENGER_BY_AUTHOR_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?:Enter,\s*)?Message sent[^\n]*?\bby\s+(?P<author>[^:\n]{1,40}?):\s*").unwrap()
+    // The author runs from "by " to the colon-and-body OR end-of-line. The colon
+    // group is OPTIONAL because attachment/video messages render as a marker with
+    // NO inline body ("Enter, Message sent 2:32 PM by موه\n"); requiring a colon
+    // made the capture greedily swallow the next line's clock (the `5:43` colon).
+    // Anchoring the author at `[^:\n]` (no colon, no newline) keeps it tight.
+    Regex::new(r"(?:Enter,\s*)?Message sent[^\n]*?\bby\s+(?P<author>[^:\n]{1,40}?)\s*(?::\s*|\n|$)")
+        .unwrap()
 });
 
 fn json_collapse_inline_ws(raw: &str) -> String {
@@ -862,6 +879,90 @@ pub fn strip_list_scrollback(text: &str) -> String {
 
 fn json_clean_caret(raw: Option<&str>) -> String {
     strip_list_scrollback(&denoise_for_llm(raw))
+}
+
+/// Per-message Outlook reading-pane chrome (the action toolbar each open message
+/// renders: `View with a light background / Reply / Reply all / Forward / Apps /
+/// More items / Show original size`, the recipient `To:` row, and the
+/// header-expand / pop-out footer). Dropped from the scrubbed mail blob so only
+/// the sender + subject + body survive.
+static JSON_OUTLOOK_MSG_CHROME_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?ix)
+        ^\s*(?:
+            view\ with\ a\ light\ background
+            | reply\ all | reply | forward | apps | more\ items
+            | show\ original\ size | show\ original
+            | expand\ header(?:\ and\ show\ message\ history)?
+            | expand\ conversation | collapse\ conversation
+            | header\ action\ menu
+            | pop\ out | send | more\ send\ options | discard
+            | to:?\u{200b}? | to: | open\ font(?:\ size)?
+            | hide\ navigation\ pane | navigation\ pane
+            | go\ to\ groups | select | jump\ to | filter
+            | focused | other | switch\ layouts | more\ options
+        )\s*$
+    ",
+    )
+    .unwrap()
+});
+
+/// An inbox-list preview row — a mail-list entry whose subject/snippet is rendered
+/// TWICE (full text + a `…`-truncated copy). These rows are the message LIST, not
+/// the open thread, so they are cut off as scrollback. Keyed on the trailing
+/// horizontal-ellipsis truncation that only the list previews carry.
+fn json_is_mail_list_preview_row(line: &str) -> bool {
+    line.contains('\u{2026}')
+}
+
+/// Scrub a flat, page-spanning mail blob (Outlook / Gmail web) whose UIA tree is a
+/// single structureless `<doc>` (no per-message nodes to prune). Operates on the
+/// newline-preserved, denoised text so it can filter ROW-BY-ROW: (1) cut the
+/// inbox-list scrollback prefix at the last `…`-truncated preview row (the message
+/// list ends there; the open thread follows), (2) drop the per-message Outlook
+/// action chrome, blank rows, and any OTP / single-use / verification / sign-in
+/// security-code rows, and (3) collapse the yearly/threaded repeats (consecutive
+/// duplicate lines).
+///
+/// Returns `None` when the blob does not look like a mail reading pane (no list
+/// preview row found) so a non-mail page is never mangled.
+fn json_scrub_mail_blob(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() < 4 {
+        return None;
+    }
+    // Cut at the LAST list-preview row in the first 85% — everything after it is
+    // the open thread (the list is always above the reading pane).
+    let limit = lines.len() * 85 / 100;
+    let mut cut: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
+        if i > limit {
+            break;
+        }
+        if json_is_mail_list_preview_row(line) {
+            cut = Some(i);
+        }
+    }
+    let cut = cut?;
+    let kept: Vec<String> = lines
+        .iter()
+        .skip(cut + 1)
+        .map(|line| line.trim())
+        .filter(|line| {
+            !line.is_empty()
+                && !JSON_OUTLOOK_MSG_CHROME_RE.is_match(line)
+                && !json_is_gmail_chrome_line(line)
+                && !json_is_otp_or_signin_row(line)
+                && !json_is_mail_list_preview_row(line)
+        })
+        .map(|line| line.to_string())
+        .collect();
+    let scrubbed = json_dedupe_consecutive(kept).join("\n");
+    let scrubbed = scrubbed.trim();
+    if scrubbed.chars().count() < JSON_LANDMARK_MIN_CHARS {
+        return None;
+    }
+    Some(scrubbed.to_string())
 }
 
 fn json_focused_field_is_rich(snapshot: &WindowContextSnapshot) -> bool {
@@ -1031,11 +1132,7 @@ fn json_is_omnibox(node: &JsonAxNode) -> bool {
     node.role == "edit"
         && matches!(
             node.name.trim().to_lowercase().as_str(),
-            "address and search bar"
-                | "search"
-                | "search mail"
-                | "search messenger"
-                | "urlbar"
+            "address and search bar" | "search" | "search mail" | "search messenger" | "urlbar"
         )
 }
 
@@ -1049,8 +1146,323 @@ fn json_is_speaker_turn_line(line: &str) -> bool {
     JSON_SPEAKER_PREFIX_RE.is_match(trimmed) && !JSON_FALSE_SPEAKER_PREFIX_RE.is_match(trimmed)
 }
 
+/// A row that carries a one-time / single-use / verification / sign-in security
+/// code (or merely announces one). These ride in OTHER inbox rows of a mail app
+/// (Gmail / Outlook), NEVER in the open email/thread the user is replying to, so
+/// they must never survive into the pruned context. Defense-in-depth on top of
+/// the structural nav-list drop: even if a single OTP-bearing row leaks out of a
+/// landmark, this line filter removes it.
+static JSON_OTP_ROW_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?ix)
+        \b(?:
+            one[-\ ]time\ (?:code|password|passcode|pin)
+            | single[-\ ]use\ (?:code|password|passcode|pin)
+            | verification\ code
+            | security\ code
+            | login\ code
+            | sign[-\ ]?in\ code
+            | your\ .*\ (?:verification|security|login)\ code
+            | otp
+        )\b
+        |
+        # bare 'amazon.eg: Sign-in' style sign-in-notice row subjects.
+        :\s*sign[-\ ]?in\b
+    ",
+    )
+    .unwrap()
+});
+
+/// True when a row is a one-time / verification / sign-in security-code line that
+/// must be scrubbed from any mail context (see `JSON_OTP_ROW_RE`). Bounded to a
+/// single row's worth of text (<=200 chars): a page-spanning flat mail blob will
+/// also contain such a phrase, but dropping the WHOLE blob on a single buried
+/// match would discard the open thread too — the blob path scrubs those phrases
+/// separately (see `json_scrub_mail_blob`).
+fn json_is_otp_or_signin_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.chars().count() <= 200 && JSON_OTP_ROW_RE.is_match(trimmed)
+}
+
+// ───────────────── unconditional final OTP / secret-code scrub ─────────────────
+//
+// PRIVACY-CRITICAL. The per-row `json_is_otp_or_signin_row` filter above only
+// fires on the paths that iterate ROW-BY-ROW (the mail-blob scrubber, the
+// nav-list pruner). The window-dump fallback (`format_context_for_prompt_json`'s
+// final `JsonPromptSection::text("screen", raw_axHtml)` branch) emits the whole
+// `<doc>` as a SINGLE line — so a buried `... verification OTP is: 17042 ...`
+// never gets seen by the per-row filter and leaks. This pass is the LAST gate:
+// it runs on the assembled output strings (screen / beforeCaret / afterCaret /
+// fieldText / selection / clipboard / screenOcr) inside `json_serialize_context`
+// — i.e. no matter which branch produced them — and is intentionally
+// keyword-anchored so it cannot over-redact ordinary numbers (prices, years,
+// counts, phone numbers) that sit in normal conversation.
+//
+// Two complementary rules, applied per SEGMENT (a segment is a line, further
+// split on sentence terminators so one giant single-line blob is still broken
+// into sentence-sized units):
+//   1. Drop any whole segment that announces / carries a verification, OTP,
+//      one-time / single-use / security / passcode / 2FA / login / sign-in code
+//      (the `JSON_SECRET_CODE_PHRASE_RE` phrase set).
+//   2. Within a surviving segment, redact a bare 4-8 digit run (or a
+//      `G-123456` / `G123456` provider-prefixed code) ONLY when an OTP /
+//      verification / code keyword sits next to it — so a year ("2026"), a price
+//      ("$4,200"), a count ("10926 unread") or a phone number never gets touched.
+
+/// Phrase set that marks a segment as carrying / announcing a single-use secret
+/// code. A match drops the WHOLE segment. Broader than `JSON_OTP_ROW_RE` (which
+/// is tuned for short inbox-list rows): this also catches the open-email body
+/// shapes ("Your account verification OTP is: …", "your verification code:",
+/// "passcode", "2FA code", "G-123456 is your Google verification code").
+static JSON_SECRET_CODE_PHRASE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?ix)
+        \b(?:
+            one[-\ ]?time\ (?:code|password|passcode|pin|passphrase)
+            | single[-\ ]?use\ (?:code|password|passcode|pin|link)
+            | verification\ (?:code|otp|pin|number)
+            | verification\ otp
+            | confirmation\ code
+            | security\ code
+            | login\ code
+            | log[-\ ]?in\ code
+            | sign[-\ ]?in\ code
+            | access\ code
+            | passcode
+            | pass\ code
+            | auth(?:entication)?\ code
+            | 2fa\ code | 2[-\ ]?factor\ code
+            | two[-\ ]?factor\ (?:code|authentication)
+            | otp
+            | one[-\ ]?time\ pin
+            # 'your ... verification/security/login/access code' (open-email body)
+            | your\ .{0,40}?\ (?:verification|security|login|access|confirmation)\ code
+            # explicit 'verification ... is: NNNN' / 'code is NNNN' announcements
+            | (?:verification|security|access|confirmation|login)\ \w{0,12}?\ is:?\s*\d
+        )\b
+        |
+        # 'amazon.eg: Sign-in' notice-row subject shape.
+        :\s*sign[-\ ]?in\b
+    ",
+    )
+    .unwrap()
+});
+
+/// A keyword that, when adjacent to a digit run, marks that digit run as a
+/// secret code (used by rule 2 for in-segment digit redaction). This set is
+/// STRICT — only terms that actually PRESENT a code value. The bare word
+/// "verification" is deliberately excluded: it rides in inbox subject lines
+/// ("Account Verification") next to unrelated counts ("10926 unread"), and must
+/// not make those counts look like codes. The full announcing phrases (e.g.
+/// "verification code") are still covered here and by the phrase set.
+static JSON_SECRET_CODE_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?ix)
+        (?:
+            \botp\b
+            | \bone[-\ ]?time\ (?:code|password|passcode|pin)\b
+            | \bsingle[-\ ]?use\ (?:code|password|passcode|pin)\b
+            | \bpasscode\b | \bpass\ code\b
+            | \bverification\ (?:code|pin|number)\b
+            | \bsecurity\ code\b | \blogin\ code\b | \blog[-\ ]?in\ code\b
+            | \bsign[-\ ]?in\ code\b | \baccess\ code\b | \bconfirmation\ code\b
+            | \bauth(?:entication)?\ code\b
+            | \b2fa\b | \btwo[-\ ]?factor\ (?:code|authentication)\b
+            # generic 'code is' / 'code:' / 'pin is' value-presentation cues
+            | \bcode\ is\b | \bcode:\s | \bpin\ is\b | \bpin:\s
+        )
+    ",
+    )
+    .unwrap()
+});
+
+/// A bare secret-code-shaped digit run: 4-8 digits, OR a provider-prefixed
+/// `G-123456` / `G123456` style code (a single letter + optional dash + 4-8
+/// digits). Used by rule 2; only redacted when keyword-adjacent.
+static JSON_BARE_CODE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\b[A-Z]?-?\d{4,8}\b").unwrap());
+
+const SECRET_CODE_REDACTION: &str = "[redacted code]";
+
+/// True when the given byte offset window of `segment` puts a digit run close
+/// enough to a secret-code keyword to call it a code. "Close enough" = the
+/// keyword and the digit run share a small character window (<=48 chars between
+/// the nearest keyword edge and the digit run) — tight enough that an unrelated
+/// number elsewhere in a long sentence is not pulled in.
+fn json_digit_run_is_code_adjacent(segment: &str, run_start: usize, run_end: usize) -> bool {
+    const WINDOW: usize = 48;
+    for kw in JSON_SECRET_CODE_KEYWORD_RE.find_iter(segment) {
+        // distance from the keyword to the digit run (whichever side it is on)
+        let gap = if kw.end() <= run_start {
+            run_start - kw.end()
+        } else if run_end <= kw.start() {
+            kw.start() - run_end
+        } else {
+            0
+        };
+        if gap <= WINDOW {
+            return true;
+        }
+    }
+    false
+}
+
+/// Redact keyword-adjacent bare digit codes inside a single segment, leaving all
+/// other numbers untouched. Returns the segment with each adjacent code replaced
+/// by `[redacted code]`.
+fn json_redact_adjacent_codes(segment: &str) -> String {
+    if !JSON_SECRET_CODE_KEYWORD_RE.is_match(segment) {
+        return segment.to_string();
+    }
+    let mut out = String::with_capacity(segment.len());
+    let mut last = 0usize;
+    for m in JSON_BARE_CODE_RE.find_iter(segment) {
+        if json_digit_run_is_code_adjacent(segment, m.start(), m.end()) {
+            out.push_str(&segment[last..m.start()]);
+            out.push_str(SECRET_CODE_REDACTION);
+            last = m.end();
+        }
+    }
+    out.push_str(&segment[last..]);
+    out
+}
+
+/// Snap a clause boundary backwards from `pos` to the start of the secret-code
+/// PHRASE/announcement — i.e. swallow a short leading run (<= back chars) so the
+/// dropped span covers `Your account verification` rather than just `verification`
+/// — but stop at a sentence terminator so unrelated earlier text is preserved.
+fn json_clause_start(line: &str, pos: usize, back: usize) -> usize {
+    let floor = pos.saturating_sub(back);
+    let mut start = pos;
+    // Walk back to the nearest sentence terminator (`.`/`!`/`?` + space) or the
+    // back-window floor, whichever comes first, then trim leading whitespace.
+    let prefix = &line[..pos];
+    for (i, ch) in prefix.char_indices().rev() {
+        if i < floor {
+            break;
+        }
+        if matches!(ch, '.' | '!' | '?' | '\n') {
+            start = i + ch.len_utf8();
+            break;
+        }
+        start = i;
+    }
+    // Trim leading whitespace inside the chosen window.
+    while start < pos && line.as_bytes()[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    start
+}
+
+/// Snap a clause boundary forwards from `pos` to the end of the secret-code
+/// clause: extend past any adjacent bare code and stop at the next sentence
+/// terminator (or the forward-window cap), so a single run-on blob loses only the
+/// code clause, not everything up to the next period.
+fn json_clause_end(line: &str, pos: usize, forward: usize) -> usize {
+    let cap = (pos + forward).min(line.len());
+    let mut end = pos;
+    let tail = &line[pos..cap];
+    for (rel, ch) in tail.char_indices() {
+        let abs = pos + rel;
+        end = abs + ch.len_utf8();
+        if matches!(ch, '.' | '!' | '?' | '\n') {
+            break;
+        }
+    }
+    // Snap to a char boundary at/under cap.
+    while end < line.len() && !line.is_char_boundary(end) {
+        end += 1;
+    }
+    end.min(line.len())
+}
+
+/// The unconditional, path-independent final secret-code scrub. Applied to every
+/// assembled context string before it leaves the formatter.
+///
+/// Two-stage, span-based (so a single giant one-line window-dump blob loses only
+/// the code CLAUSE, never the whole blob):
+///   1. For every secret-code PHRASE match, excise a tight clause around it
+///      (back to the sentence start / a short window, forward to the sentence end
+///      / a short window). This removes `Your account verification OTP is: 17042`
+///      while keeping the inbox counts and the signature that surround it.
+///   2. In what remains, redact any bare 4-8 digit (or `G-123456`) code that is
+///      keyword-adjacent — defense-in-depth for a code split from its phrase.
+///
+/// A blob with no secret-code keyword or phrase at all is returned byte-for-byte
+/// unchanged, so a normal conversation (prices, years, counts, phone numbers) is
+/// never touched.
+fn json_scrub_secret_codes(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    // Fast path: nothing remotely code-like → leave the text exactly as-is.
+    if !JSON_SECRET_CODE_KEYWORD_RE.is_match(text) && !JSON_SECRET_CODE_PHRASE_RE.is_match(text) {
+        return text.to_string();
+    }
+
+    // How far a dropped clause may extend on each side of a phrase match. Bounded
+    // so an unpunctuated run-on (the Outlook <doc>) loses a sentence-sized window
+    // around the code, not the entire blob.
+    const CLAUSE_BACK: usize = 64;
+    const CLAUSE_FWD: usize = 96;
+
+    let mut lines_out: Vec<String> = Vec::new();
+    for line in text.split('\n') {
+        // Stage 1: collect drop spans for every phrase match, then excise.
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        for m in JSON_SECRET_CODE_PHRASE_RE.find_iter(line) {
+            let start = json_clause_start(line, m.start(), CLAUSE_BACK);
+            let end = json_clause_end(line, m.end(), CLAUSE_FWD);
+            spans.push((start, end));
+        }
+        let kept = if spans.is_empty() {
+            line.to_string()
+        } else {
+            // Merge overlapping spans, then keep the gaps between them.
+            spans.sort_by_key(|s| s.0);
+            let mut merged: Vec<(usize, usize)> = Vec::new();
+            for (s, e) in spans {
+                match merged.last_mut() {
+                    Some(last) if s <= last.1 => last.1 = last.1.max(e),
+                    _ => merged.push((s, e)),
+                }
+            }
+            let mut out = String::with_capacity(line.len());
+            let mut cursor = 0usize;
+            for (s, e) in merged {
+                if s > cursor {
+                    out.push_str(&line[cursor..s]);
+                }
+                cursor = e;
+            }
+            if cursor < line.len() {
+                out.push_str(&line[cursor..]);
+            }
+            json_collapse_inline_ws(&out)
+        };
+
+        // Stage 2: redact any keyword-adjacent code that survived stage 1.
+        let kept = json_redact_adjacent_codes(&kept);
+        let kept = kept.trim_end().to_string();
+
+        if !line.trim().is_empty() && kept.trim().is_empty() {
+            // The whole line was a secret-code row → drop the line entirely.
+            continue;
+        }
+        lines_out.push(kept);
+    }
+    lines_out.join("\n")
+}
+
 fn json_is_low_signal_ui_line(line: &str) -> bool {
     let trimmed = line.trim();
+    // An OTP / verification / sign-in security-code row is always low-signal — it
+    // overrides even the speaker-turn shape (a row like "amazon.eg: Sign-in" or
+    // "Google: Your verification code is 622297" otherwise reads as a speaker
+    // turn and would survive).
+    if json_is_otp_or_signin_row(trimmed) {
+        return true;
+    }
     !json_is_speaker_turn_line(trimmed)
         && (JSON_LOW_SIGNAL_UI_LINE_RE.is_match(trimmed)
             || JSON_FALSE_SPEAKER_PREFIX_RE.is_match(trimmed))
@@ -1058,6 +1470,16 @@ fn json_is_low_signal_ui_line(line: &str) -> bool {
 
 fn json_is_time_or_meta_line(line: &str) -> bool {
     JSON_TIME_OR_META_LINE_RE.is_match(line.trim())
+}
+
+/// True when a candidate author still carries Messenger/feed marker boilerplate
+/// ("Enter", "Message sent", "Original message") — a sign the marker regex
+/// over-captured past the real name. Never a legitimate display name.
+fn json_author_is_marker_contaminated(author: &str) -> bool {
+    let lower = author.to_lowercase();
+    lower.contains("message sent")
+        || lower.contains("original message")
+        || contains_word(&lower, "enter")
 }
 
 fn json_normalize_author(raw: &str) -> Option<String> {
@@ -1072,6 +1494,7 @@ fn json_normalize_author(raw: &str) -> Option<String> {
         || JSON_NAV_NAME_RE.is_match(&author)
         || JSON_CONTAINER_NAV_RE.is_match(&author)
         || JSON_CONTENT_LIST_NAME_RE.is_match(&author)
+        || json_author_is_marker_contaminated(&author)
         || json_is_low_signal_ui_line(&author)
     {
         return None;
@@ -1185,7 +1608,11 @@ fn json_reconstruct_discord_stream(text: &str) -> Option<String> {
     if json_text_is_chat_list_pane(text) {
         return None;
     }
-    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
     if lines.len() < 4 {
         return None;
     }
@@ -1249,22 +1676,44 @@ fn json_reconstruct_discord_stream(text: &str) -> Option<String> {
     Some(json_dedupe_consecutive(turns).join("\n"))
 }
 
+/// One Messenger message: the resolved author plus its raw inline body span.
+struct JsonMessengerTurn {
+    author: String,
+    body: String,
+}
+
 /// Reconstruct `Author: message` turns from Facebook Messenger's flat `<doc>`
 /// blob, which embeds authorship as `… Message sent <when> by <Author>: <body>`.
 /// Splits on each "Message sent … by <Author>:" marker and attributes the text
 /// up to the next marker. Returns `None` when no such marker is present.
+///
+/// Messenger renders each message as `<body>\n￼\n Enter, Message sent … by X:
+/// <body>` — the body is duplicated as a preview ABOVE the marker, then echoed
+/// after the colon. The naive "after the colon up to the next marker" span
+/// therefore bleeds the NEXT message's preview into this turn (so
+/// `سول: السلام عليكم` swallowed the next `صباح الخير`). Two passes fix it:
+///   1. cut the inline body at the first object-replacement char (`￼`, U+FFFC),
+///      which Messenger inserts between a body and the next preview, and
+///   2. strip any trailing suffix of turn N that is the leading text of turn N+1
+///      (the carried-over preview between two consecutive single-line messages
+///      that share no `￼` separator).
 fn json_reconstruct_messenger_blob(text: &str) -> Option<String> {
     let markers: Vec<regex::Match> = JSON_MESSENGER_BY_AUTHOR_RE.find_iter(text).collect();
     if markers.len() < 2 {
         return None;
     }
-    let mut turns: Vec<String> = Vec::new();
+
+    // Pass 1: per-marker author + raw inline body (cut at the U+FFFC preview
+    // boundary, deduped if the half-repeat shape is present, chrome-trimmed).
+    let mut raw: Vec<JsonMessengerTurn> = Vec::new();
     for (idx, m) in markers.iter().enumerate() {
-        let caps = match JSON_MESSENGER_BY_AUTHOR_RE.captures(m.as_str()) {
-            Some(c) => c,
-            None => continue,
+        let Some(caps) = JSON_MESSENGER_BY_AUTHOR_RE.captures(m.as_str()) else {
+            continue;
         };
         let Some(author) = caps.name("author").map(|a| a.as_str().trim().to_string()) else {
+            continue;
+        };
+        let Some(author) = json_normalize_author(&author) else {
             continue;
         };
         let body_start = m.end();
@@ -1272,26 +1721,90 @@ fn json_reconstruct_messenger_blob(text: &str) -> Option<String> {
             .get(idx + 1)
             .map(|next| next.start())
             .unwrap_or(text.len());
-        let body = text[body_start..body_end].trim();
-        if author.is_empty() || body.is_empty() {
-            continue;
+        let mut body = &text[body_start..body_end];
+        // Cut at the object-replacement char Messenger drops between this body
+        // and the next message's preview (multi-line bodies all end there).
+        if let Some(obj) = body.find('\u{fffc}') {
+            body = &body[..obj];
         }
-        let Some(author) = json_normalize_author(&author) else {
-            continue;
-        };
-        // Messenger duplicates the body once verbatim after the colon
-        // ("...by موه: <body> <body>") — keep just the first half if it repeats.
-        let body = json_dedupe_repeated_half(body);
+        // Denoise (strip `￼` placeholders + invisible runs), collapse ALL
+        // whitespace to single spaces, THEN trim chrome. Order matters: the
+        // chrome-cut tokens are space-delimited (" Compose "), so they must run
+        // after newlines are folded to spaces or a trailing "Compose\nOpen …"
+        // toolbar dump would survive. Collapsing first also makes the body match
+        // the next marker's preview text for the cross-marker bleed strip.
+        let body = json_collapse_inline_ws(&denoise_for_llm(Some(body)));
+        let body = json_dedupe_repeated_half(&body);
         let body = json_messenger_clean_body(&body);
         if body.is_empty() {
             continue;
         }
-        turns.push(format!("{author}: {}", json_collapse_inline_ws(&body)));
+        raw.push(JsonMessengerTurn { author, body });
+    }
+    if raw.len() < 2 {
+        return None;
+    }
+
+    // Pass 2: strip the cross-marker preview bleed — when turn N ends with the
+    // start of turn N+1's body (the carried preview), drop that shared tail.
+    let mut turns: Vec<String> = Vec::with_capacity(raw.len());
+    for idx in 0..raw.len() {
+        let next_body = raw.get(idx + 1).map(|t| t.body.as_str()).unwrap_or("");
+        let body = json_strip_shared_suffix_prefix(&raw[idx].body, next_body);
+        if body.is_empty() {
+            continue;
+        }
+        turns.push(format!("{}: {body}", raw[idx].author));
     }
     if turns.len() < 2 {
         return None;
     }
     Some(json_dedupe_consecutive(turns).join("\n"))
+}
+
+/// When `body` ends with the leading run of `next_body` (Messenger carries the
+/// next message's preview onto the tail of the current one), drop that shared
+/// span. The comparison IGNORES whitespace — the carried preview and the next
+/// marker's own body differ only in incidental spacing (`لهم :(` vs `لهم : (`),
+/// so an exact char match would miss the bleed. The cut is made on the ORIGINAL
+/// (spaced) body at the first character of the matched preview. Conservative:
+/// requires a >=8 non-space-char overlap so short repeated words are kept.
+fn json_strip_shared_suffix_prefix(body: &str, next_body: &str) -> String {
+    let body = body.trim();
+    let next_body = next_body.trim();
+    if next_body.is_empty() {
+        return body.to_string();
+    }
+    // Map each non-whitespace char of `body` to its byte offset, building the
+    // compacted (space-free) string in parallel.
+    let mut compact = String::with_capacity(body.len());
+    let mut offsets: Vec<usize> = Vec::with_capacity(body.len());
+    for (idx, ch) in body.char_indices() {
+        if !ch.is_whitespace() {
+            compact.push(ch);
+            offsets.push(idx);
+        }
+    }
+    let next_compact: String = next_body.chars().filter(|c| !c.is_whitespace()).collect();
+    if next_compact.chars().count() < 8 {
+        return body.to_string();
+    }
+    let compact_chars: Vec<char> = compact.chars().collect();
+    let next_chars: Vec<char> = next_compact.chars().collect();
+    let max = compact_chars.len().min(next_chars.len());
+    let mut overlap = 0usize;
+    for len in (8..=max).rev() {
+        if compact_chars[compact_chars.len() - len..] == next_chars[..len] {
+            overlap = len;
+            break;
+        }
+    }
+    if overlap == 0 {
+        return body.to_string();
+    }
+    // Cut at the original byte offset of the first overlapping char.
+    let cut_byte = offsets[compact_chars.len() - overlap];
+    body[..cut_byte].trim().to_string()
 }
 
 /// Trim Messenger composer/footer chrome that trails the LAST message in the
@@ -1300,7 +1813,12 @@ fn json_reconstruct_messenger_blob(text: &str) -> Option<String> {
 /// restoring?" modal, etc.). Also drop the "Original message:" reply-quote
 /// preamble Messenger injects before an edited message.
 fn json_messenger_clean_body(body: &str) -> String {
-    let mut s = body;
+    // Search against a space-padded copy so a chrome token at the VERY START of
+    // the body (an attachment-only marker whose span runs straight into the
+    // composer toolbar: "Compose Open more actions …") is cut too, not just
+    // mid-body occurrences. Offsets map back 1:1 minus the leading pad.
+    let padded = format!(" {body}");
+    let mut cut_at = padded.len();
     for cut in [
         " Compose ",
         " Open more actions",
@@ -1315,11 +1833,13 @@ fn json_messenger_clean_body(body: &str) -> String {
         " Opened group chat",
         " Original message:",
     ] {
-        if let Some(i) = s.find(cut) {
-            s = &s[..i];
+        if let Some(i) = padded.find(cut) {
+            cut_at = cut_at.min(i);
         }
     }
-    s.trim().to_string()
+    // Map back to the unpadded body (drop the 1-byte leading space).
+    let end = cut_at.saturating_sub(1).min(body.len());
+    body[..end].trim().to_string()
 }
 
 /// Reconstruct `DisplayName: tweet` turns from X's flat conversation blob. X has
@@ -1339,25 +1859,32 @@ fn json_reconstruct_x_blob(blob: &str) -> Option<String> {
     }
     // Scope to AFTER the "Conversation" boundary so the top-bar self-identity
     // (Mostafa @Dahshury) and left-nav are excluded.
-    let scoped = match blob.find("Conversation") {
+    let mut scoped = match blob.find("Conversation") {
         Some(i) => &blob[i + "Conversation".len()..],
         None => blob,
     };
+    // Truncate the post-thread footer (X appends "Relevant people", "Live on X",
+    // and the trending/"What's happening" rail after the last reply) so its
+    // account names + Arabic news headlines never become fabricated tweet turns.
+    for footer in [
+        " Relevant people",
+        " Live on X ",
+        " What's happening",
+        " Trending now",
+    ] {
+        if let Some(i) = scoped.find(footer) {
+            scoped = &scoped[..i];
+        }
+    }
     let handles: Vec<regex::Match> = JSON_X_HANDLE_RE.find_iter(scoped).collect();
     if handles.is_empty() {
         return None;
     }
-    let mut turns: Vec<String> = Vec::new();
-    let mut seen_handles: Vec<String> = Vec::new();
+    let mut pairs: Vec<(String, String)> = Vec::new();
     for (idx, h) in handles.iter().enumerate() {
-        let handle = h.as_str();
         // Display name = the tail of the text since the previous handle's body
         // start, taking the last 1–3 capitalized-ish words right before @handle.
-        let name_region_start = if idx == 0 {
-            0
-        } else {
-            handles[idx - 1].end()
-        };
+        let name_region_start = if idx == 0 { 0 } else { handles[idx - 1].end() };
         let name_region = &scoped[name_region_start..h.start()];
         let display_name = json_x_trailing_display_name(name_region);
         // Body = text after the handle up to the next handle.
@@ -1382,7 +1909,10 @@ fn json_reconstruct_x_blob(blob: &str) -> Option<String> {
         };
         // Drop chrome "names" (the 'Replying to @x' marker, bare 'Post'/'Quote').
         let name_lower = name.to_lowercase();
-        if matches!(name_lower.as_str(), "replying to" | "replying" | "post" | "quote" | "reply") {
+        if matches!(
+            name_lower.as_str(),
+            "replying to" | "replying" | "post" | "quote" | "reply"
+        ) {
             continue;
         }
         if body.chars().count() < 8 {
@@ -1392,19 +1922,60 @@ fn json_reconstruct_x_blob(blob: &str) -> Option<String> {
         if body.eq_ignore_ascii_case("Post your reply") || body.starts_with("Replying to") {
             continue;
         }
-        // Format as `DisplayName: body` so it matches the speaker-prefix contract
-        // (the parenthetical-handle form breaks JSON_SPEAKER_PREFIX_RE). The
-        // @handle is preserved inline at the end of the name when it is the only
-        // identity signal (display name == handle).
-        if seen_handles.last().map(String::as_str) != Some(handle) {
-            seen_handles.push(handle.to_string());
+        pairs.push((name, body));
+    }
+    if pairs.is_empty() {
+        return None;
+    }
+    // Post-pass: a tweet body that runs up to the next tweet's `@handle` still
+    // carries that next tweet's display-name words (and an intervening lone
+    // like-count token) on its tail — `… what's fusion using? 146 Andrew Trask`.
+    // Strip the trailing copy of turn N+1's display name, plus any count token
+    // left between, so the next author's name never bleeds into this turn.
+    let mut turns: Vec<String> = Vec::with_capacity(pairs.len());
+    for idx in 0..pairs.len() {
+        let next_name = pairs.get(idx + 1).map(|(n, _)| n.as_str()).unwrap_or("");
+        let body = json_x_strip_trailing_next_name(&pairs[idx].1, next_name);
+        if body.chars().count() < 8 {
+            continue;
         }
-        turns.push(format!("{name}: {body}"));
+        // Format as `DisplayName: body` so it matches the speaker-prefix contract.
+        turns.push(format!("{}: {body}", pairs[idx].0));
     }
     if turns.is_empty() {
         return None;
     }
     Some(json_dedupe_consecutive(turns).join("\n"))
+}
+
+/// Strip the next tweet's leaked display name (and an intervening lone count
+/// token) off the tail of a body. `…what's fusion using? 146 Andrew Trask` with
+/// `next_name = "Andrew Trask"` → `…what's fusion using?`.
+fn json_x_strip_trailing_next_name(body: &str, next_name: &str) -> String {
+    let body = body.trim();
+    if next_name.is_empty() {
+        return body.to_string();
+    }
+    let mut tokens: Vec<&str> = body.split_whitespace().collect();
+    let name_tokens: Vec<&str> = next_name.split_whitespace().collect();
+    // Drop the trailing run that equals the next name's tokens (case-sensitive,
+    // these are proper nouns), tolerating a comma the display-name split left.
+    if tokens.len() > name_tokens.len()
+        && tokens[tokens.len() - name_tokens.len()..]
+            .iter()
+            .zip(&name_tokens)
+            .all(|(a, b)| a.trim_end_matches(',') == *b)
+    {
+        tokens.truncate(tokens.len() - name_tokens.len());
+    }
+    // Then strip a single trailing like-count token (`146`, `30`, `15`).
+    while tokens
+        .last()
+        .is_some_and(|t| json_is_engagement_count_token(t))
+    {
+        tokens.pop();
+    }
+    tokens.join(" ")
 }
 
 /// The display name preceding an `@handle`: the last short run of name words in
@@ -1423,13 +1994,23 @@ fn json_x_trailing_display_name(region: &str) -> Option<String> {
             .all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | 'K' | 'M' | 'B'));
         let is_chrome = matches!(
             lw.as_str(),
-            "post" | "quote" | "reply" | "views" | "view" | "quotes" | "relevant" | "·"
-                | "show" | "replies" | "translation" | "·jun" | "grok" | "chat"
+            "post"
+                | "quote"
+                | "reply"
+                | "views"
+                | "view"
+                | "quotes"
+                | "relevant"
+                | "·"
+                | "show"
+                | "replies"
+                | "translation"
+                | "·jun"
+                | "grok"
+                | "chat"
         ) || JSON_CHAT_TIMESTAMP_LINE_RE.is_match(w)
-            || lw.ends_with('h')
-                && lw.trim_end_matches('h').chars().all(|c| c.is_ascii_digit())
-            || lw.ends_with('m')
-                && lw.trim_end_matches('m').chars().all(|c| c.is_ascii_digit());
+            || lw.ends_with('h') && lw.trim_end_matches('h').chars().all(|c| c.is_ascii_digit())
+            || lw.ends_with('m') && lw.trim_end_matches('m').chars().all(|c| c.is_ascii_digit());
         if is_count || is_chrome {
             if name_words.is_empty() {
                 continue;
@@ -1479,17 +2060,68 @@ fn json_x_clean_body(raw: &str) -> String {
     for cut in [
         " Quote ",
         " Show replies",
+        " Show more",
         " Show this thread",
         " Show translation",
         " View quotes",
         " Replying to ",
+        " Relevant people",
+        " Live on X ",
         " · ",
     ] {
         if let Some(i) = s.find(cut) {
             s = &s[..i];
         }
     }
-    json_collapse_inline_ws(s).trim().to_string()
+    json_cut_at_engagement_counts(&json_collapse_inline_ws(s))
+}
+
+/// Truncate an X tweet body at its engagement-count footer. After every tweet
+/// X renders `<reply> <repost> <like> [<views>]` as a run of bare-number tokens,
+/// immediately followed by the NEXT tweet's display-name words (the region
+/// between two `@handle`s spans into the next author's name). Cutting at the
+/// FIRST run of >=2 consecutive count tokens drops both the counts AND the
+/// leaked next-author name in one move, so `…complex networks 2 5 85 8.3K Andrew
+/// Trask` becomes `…complex networks`. Tweet prose effectively never contains
+/// two bare numbers back-to-back, so this is safe. A trailing single count token
+/// (`… what's fusion using? 146`) is also stripped.
+fn json_cut_at_engagement_counts(body: &str) -> String {
+    let tokens: Vec<&str> = body.split_whitespace().collect();
+    // Find the first index where a run of >=2 consecutive count tokens begins.
+    let mut cut = tokens.len();
+    let mut idx = 0;
+    while idx < tokens.len() {
+        if json_is_engagement_count_token(tokens[idx]) {
+            let run_end = tokens[idx..]
+                .iter()
+                .take_while(|t| json_is_engagement_count_token(t))
+                .count();
+            if run_end >= 2 {
+                cut = idx;
+                break;
+            }
+            idx += run_end;
+        } else {
+            idx += 1;
+        }
+    }
+    let mut kept: Vec<&str> = tokens[..cut].to_vec();
+    // Also strip a lone trailing count token (single like/quote tally).
+    while kept
+        .last()
+        .is_some_and(|t| json_is_engagement_count_token(t))
+    {
+        kept.pop();
+    }
+    kept.join(" ")
+}
+
+fn json_is_engagement_count_token(token: &str) -> bool {
+    let trimmed = token.trim_end_matches(['K', 'M', 'B']);
+    !trimmed.is_empty()
+        && trimmed.len() != token.len() // had a K/M/B suffix
+        && trimmed.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | ','))
+        || (!token.is_empty() && token.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Some UIA TextPattern reads emit a value followed by an exact duplicate of
@@ -1805,10 +2437,14 @@ pub fn prune_ax_html_for_llm(ax_html: Option<&str>) -> String {
 }
 
 /// Best-effort speaker attribution for a flat (page-spanning) text blob. Tries
-/// each known surface shape in turn (Messenger "by Author:" markers, then X
-/// display-name/@handle positional attribution); returns the original blob
-/// unchanged when none match, so a non-conversation page is never corrupted.
+/// each known surface shape in turn (AI-chat role turns, then Messenger "by
+/// Author:" markers, then X display-name/@handle positional attribution);
+/// returns the original blob unchanged when none match, so a non-conversation
+/// page is never corrupted.
 fn json_attribute_flat_blob(blob: &str) -> String {
+    if let Some(turns) = json_reconstruct_ai_chat_blob(blob) {
+        return turns;
+    }
     if let Some(turns) = json_reconstruct_messenger_blob(blob) {
         return turns;
     }
@@ -1816,6 +2452,554 @@ fn json_attribute_flat_blob(blob: &str) -> String {
         return turns;
     }
     blob.to_string()
+}
+
+/// Role-label markers an AI chat (ChatGPT / Claude / Gemini / Copilot) renders
+/// before each turn. ChatGPT exposes `You said:` / `ChatGPT said:`; Claude's real
+/// app shape uses `You said:` / `Claude responded:` (and `<App> responded:`);
+/// Gemini and Copilot may use a bare `You` / `<assistant>` label. The capture
+/// group is the speaker label; the alternation flips between the user and the
+/// assistant. The `said|responded` verb is part of the label so it is consumed
+/// (never leaks into the body) and so a bare brand mention without the verb still
+/// only matches when followed by a colon.
+static JSON_AI_CHAT_ROLE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\b(You said|You|(?:ChatGPT|Claude|Gemini|Copilot|Assistant)(?:\s+(?:said|responded|replied))?)\s*:\s*",
+    )
+    .unwrap()
+});
+
+/// Classify an AI-chat role label into its canonical speaker name. `You` →
+/// `User`; any assistant brand (with or without a `said`/`responded`/`replied`
+/// verb) → `Assistant`. Returns `None` for a label that is not a recognized chat
+/// role (so it never fabricates a turn).
+fn json_ai_chat_role_speaker(label: &str) -> Option<&'static str> {
+    let normalized = label
+        .to_lowercase()
+        .replace(" responded", "")
+        .replace(" replied", "")
+        .replace(" said", "")
+        .trim()
+        .to_string();
+    match normalized.as_str() {
+        "you" => Some("User"),
+        "chatgpt" | "assistant" | "claude" | "gemini" | "copilot" => Some("Assistant"),
+        _ => None,
+    }
+}
+
+/// Per-turn UI chrome an AI chat (Claude / ChatGPT / Gemini) interleaves around
+/// each message: the message-action toolbar (`Retry Edit Copy Read aloud …`), the
+/// artifact/tool-use affordances (`View <artifact>`, `Download`, `Code · HTML`),
+/// the per-response feedback row, the composer chrome, the model picker, and the
+/// "is AI / can make mistakes" footer. A real AI-chat body never starts with one
+/// of these phrases, so cutting each turn body at the FIRST occurrence of any of
+/// them drops the trailing chrome that runs between this turn and the next role
+/// marker. Lower-case search against a space-padded copy (so a phrase at the very
+/// start of a chrome-only span is cut too).
+const JSON_AI_CHAT_CHROME_CUTS: &[&str] = &[
+    " retry edit copy",
+    " read aloud",
+    " give positive feedback",
+    " give negative feedback",
+    " copy code",
+    " download copy",
+    // Claude artifact card toolbar: `View <Artifact> <Artifact> Code · <lang>
+    // Download Copy …`. The `Code · ` language tag is the stable anchor; cutting
+    // there drops the whole artifact chrome run. The bare `View <name>` opener
+    // (one line up) is handled by the standalone-line filter below.
+    " code · ",
+    " code \u{00b7} ",
+    " download copy",
+    " add files, connectors, and more",
+    " add files and more",
+    " ask anything",
+    " ask chatgpt",
+    " enter a prompt for gemini",
+    " press and hold to record",
+    " is ai and can make mistakes",
+    " is ai. by using it",
+    " can make mistakes",
+    " your previous message wasn't sent",
+    " your previous message was not sent",
+    " learn more (opens in new tab)",
+    " is currently unavailable",
+    " show thinking",
+    " good response",
+    " bad response",
+];
+
+/// Whole low-signal AI-chat chrome lines/tokens that survive between role markers
+/// (sidebar nav, the per-turn action buttons rendered as standalone words, the
+/// thinking/tool-use status lines). Matched on a single collapsed body line.
+static JSON_AI_CHAT_CHROME_LINE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?ix)
+        ^\s*(?:
+            new\ chat | chats | projects | artifacts | customize
+            | retry | edit | copy | share | files
+            | read\ aloud
+            | give\ (?:positive|negative)\ feedback
+            | download | code(?:\ ·\ html)? | view\ \w+
+            | press\ and\ hold\ to\ record
+            | add\ files(?:,\ connectors,\ and\ more|\ and\ more)?
+            | search\ chats | images | settings | help | close\ sidebar
+            | skip\ to\ content | chat\ history | home | open\ sidebar
+            | temporary\ chat | recents | library | notebooks
+            | see\ plans\ and\ pricing | log\ in | sign\ up\ for\ free
+            | what'?s\ on\ the\ agenda\ today\? | ask\ anything
+            | enter\ a\ prompt\ for\ gemini
+            | (?:claude|chatgpt|gemini)\ is\ ai.* | .*can\ make\ mistakes.*
+            | learn\ more(?:\ \(opens\ in\ new\ tab\))? | .*is\ currently\ unavailable.*
+            | your\ previous\ message\ (?:was\ ?n'?t|was\ not)\ sent.*
+            | opus\ \d.* | gpt-?\d.* | press\ and\ hold.*
+        )\s*$
+    ",
+    )
+    .unwrap()
+});
+
+/// A trailing `… 1:33 AM` / `… 1:36 AM` per-turn timestamp Claude renders at the
+/// end of a user message, and the trailing `View <Artifact>` artifact-card opener
+/// (the line above the `Code · <lang>` toolbar). Both are stripped off the tail
+/// of an AI-chat turn body after the chrome cut.
+static JSON_AI_CHAT_TURN_TAIL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(?:\s+\d{1,2}:\d{2}\s?[ap]m|\s+view(?:\s+\S+){0,3})\s*$").unwrap()
+});
+
+/// Cut an AI-chat turn body at the first interleaved chrome phrase, then drop any
+/// remaining standalone chrome lines and the trailing per-turn timestamp /
+/// artifact-card opener. `body` is the already-collapsed (single space, denoised)
+/// turn text.
+fn json_ai_chat_clean_body(body: &str) -> String {
+    let lower = format!(" {}", body.to_lowercase());
+    let mut cut_at = body.len() + 1; // +1 for the leading pad
+    for cut in JSON_AI_CHAT_CHROME_CUTS {
+        if let Some(i) = lower.find(cut) {
+            cut_at = cut_at.min(i);
+        }
+    }
+    // Map the padded offset back to the unpadded body (drop the 1-byte pad).
+    let end = cut_at.saturating_sub(1).min(body.len());
+    let head = &body[..end];
+    // Drop any standalone chrome lines that survived the cut (chrome rendered as
+    // its own line rather than a trailing run).
+    let joined = head
+        .split('\n')
+        .filter(|line| !JSON_AI_CHAT_CHROME_LINE_RE.is_match(line))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    // Strip a trailing per-turn timestamp / `View <artifact>` opener (applied
+    // repeatedly: `… 1:33 AM` then a `View Uplinq` left behind by the `Code · `
+    // cut both come off).
+    let mut out = joined;
+    loop {
+        let trimmed = JSON_AI_CHAT_TURN_TAIL_RE.replace(&out, "").into_owned();
+        if trimmed.len() == out.len() {
+            break;
+        }
+        out = trimmed;
+    }
+    out.trim().to_string()
+}
+
+/// Collapse a `TitleTitle…` self-duplication Gemini renders for each recents /
+/// sidebar entry (the full title immediately followed by a truncated copy ending
+/// in `…`). Returns the de-duplicated head, or the input unchanged.
+fn json_strip_truncation_echo(text: &str) -> String {
+    // Split on the horizontal-ellipsis: a `<full> <prefix-of-full>…` echo has the
+    // truncated copy as the tail; keep only the full leading copy.
+    if let Some(idx) = text.find('\u{2026}') {
+        let head = &text[..idx];
+        // The truncated tail (after dropping the …) is a prefix of `head`; when so,
+        // it is an echo — drop it. Compare on a compacted (space-free) basis.
+        let tail = head.trim_end();
+        if !tail.is_empty() {
+            return tail.to_string();
+        }
+    }
+    text.to_string()
+}
+
+/// True when a flat doc blob is a Gemini-style sidebar dump: the leading nav run
+/// (`Gemini Temporary chat Close sidebar New chat …`) followed by a `Recents`
+/// roster of past-conversation titles. Keyed on the co-occurring sidebar nav
+/// markers so a real conversation blob (which has none of them) is never scrubbed.
+fn json_blob_is_gemini_sidebar(blob: &str) -> bool {
+    let lower = blob.to_lowercase();
+    let markers = [
+        "temporary chat",
+        "close sidebar",
+        "new chat",
+        "search chats",
+        "recents",
+        "new notebook",
+    ];
+    markers.iter().filter(|m| lower.contains(**m)).count() >= 3
+}
+
+/// Scrub the Gemini sidebar/recents chrome out of a flat AI-chat doc blob that
+/// carries NO role markers (the real `gemini.google.com` capture exposes the whole
+/// app as one structureless `<doc>`). Cuts the leading nav prefix up to and
+/// including the `Recents` roster header, drops the short `…`-truncated roster
+/// titles, strips the trailing `Ask Gemini` / `Enter a prompt for Gemini`
+/// placeholder + `Gemini can make mistakes` footer, and collapses each
+/// `TitleTitle…` echo. Returns `None` when the blob is not a Gemini sidebar shape.
+fn json_scrub_gemini_sidebar_blob(blob: &str) -> Option<String> {
+    if !json_blob_is_gemini_sidebar(blob) {
+        return None;
+    }
+    // Drop everything up to and including the `Recents` roster label — the prefix
+    // is pure sidebar nav (Gemini Temporary chat Close sidebar New chat …) and the
+    // pre-Recents titles are roster entries too.
+    let after_recents = match blob.rfind("Recents ") {
+        Some(i) => &blob[i + "Recents ".len()..],
+        None => blob,
+    };
+    // Strip the trailing composer/footer chrome.
+    let mut body = after_recents;
+    for cut in [
+        " Conversation with Gemini",
+        " Ask Gemini",
+        " Enter a prompt for Gemini",
+        " Gemini can make mistakes",
+        " Let's jump in",
+    ] {
+        if let Some(i) = body.find(cut) {
+            body = &body[..i];
+        }
+    }
+    // Collapse the `…`-truncation echoes the roster + prompt previews carry, drop
+    // standalone chrome lines, and re-join. The blob is space-joined, so split on
+    // the ellipsis-echo boundary first, then filter token runs that are chrome.
+    let cleaned = json_collapse_inline_ws(
+        &body
+            .split('\u{2026}')
+            .map(str::trim)
+            .filter(|seg| !seg.is_empty())
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    let cleaned = json_strip_truncation_echo(&cleaned);
+    // Drop the leading Recents-roster titles. Gemini renders the recents rail as a
+    // run of short Title-Case past-conversation titles immediately after `Recents`
+    // with NO structural boundary before the first real turn (its turns collapse
+    // into one undelimited <doc> — see json_strip_gemini_recents_roster).
+    let cleaned = json_strip_gemini_recents_roster(&cleaned);
+    if cleaned.chars().count() < JSON_LANDMARK_MIN_CHARS {
+        return None;
+    }
+    Some(cleaned)
+}
+
+/// Lowercase connector/function words that may appear *inside* a Title-Case
+/// recents-roster title ("Ants `on` Food", "Models `on` Hugging Face", "Turning
+/// `Off` AC `Before` Car", "Papaya Tree Health `and` Pests"). A lowercase word NOT
+/// in this set signals the roster has ended and the free-text conversation (the
+/// first real prompt) has begun.
+const JSON_GEMINI_TITLE_CONNECTORS: &[&str] = &[
+    "a", "an", "and", "the", "of", "on", "in", "to", "for", "is", "it", "as", "at", "or", "off",
+    "before", "after", "with", "by", "vs", "via",
+];
+
+/// True when `word` reads like a token of a Title-Case recents-roster title: it
+/// starts with an uppercase letter, a digit, or a non-Latin (CJK/etc.) script —
+/// OR it is a lowercase connector word that legitimately appears inside a title.
+/// Internal-capital CamelCase glue like "RumorsWhatsApp" (left by an un-split
+/// truncation echo) starts uppercase and so still qualifies.
+fn json_is_gemini_title_word(word: &str) -> bool {
+    let cleaned = word.trim_matches(|c: char| !c.is_alphanumeric());
+    let Some(first) = cleaned.chars().next() else {
+        return false;
+    };
+    if first.is_uppercase() || first.is_ascii_digit() {
+        return true;
+    }
+    // Non-Latin scripts have no case; treat them as title-ish (never a sentence
+    // boundary signal). Only a *lowercase Latin* word can end the roster.
+    if first.is_alphabetic() && !first.is_lowercase() {
+        return true;
+    }
+    JSON_GEMINI_TITLE_CONNECTORS.contains(&cleaned.to_lowercase().as_str())
+}
+
+/// Drop the leading run of Recents-roster conversation titles from a Gemini doc
+/// blob whose sidebar prefix has already been cut at `Recents`. The roster is a
+/// space-joined run of short Title-Case titles with no delimiter before the first
+/// real turn; we consume leading title-shaped words and stop at the first
+/// lowercase non-connector word (the free-text prompt boundary). Conservative: if
+/// no such boundary is found within the leading region the blob is returned
+/// unchanged (never over-cut). Documented structural reality: Gemini collapses its
+/// turns into ONE undelimited UIA <doc> node, so true per-turn `User:`/`Gemini:`
+/// attribution is NOT recoverable — the only job here is to drop the recents-rail
+/// noise, never to fabricate turns.
+fn json_strip_gemini_recents_roster(blob: &str) -> String {
+    let words: Vec<&str> = blob.split_whitespace().collect();
+    if words.is_empty() {
+        return blob.to_string();
+    }
+    // Walk the leading title run. The boundary is the first lowercase non-connector
+    // word (e.g. "picture" in "a picture of a VR headset …").
+    let mut boundary: Option<usize> = None;
+    for (idx, word) in words.iter().enumerate() {
+        if !json_is_gemini_title_word(word) {
+            boundary = Some(idx);
+            break;
+        }
+    }
+    let Some(mut boundary) = boundary else {
+        // The whole leading region is Title-Case: this is not a recognizable
+        // roster/prompt split — leave it untouched rather than risk eating a real
+        // (Title-Case) opening turn.
+        return blob.to_string();
+    };
+    // Back up over any trailing lowercase connector words right before the boundary
+    // (e.g. the leading article in "a picture of a VR headset …"): a roster title
+    // never ends on a bare lowercase connector, so those belong to the first real
+    // prompt, not the preceding title.
+    while boundary > 0 {
+        let prev = words[boundary - 1];
+        let cleaned = prev.trim_matches(|c: char| !c.is_alphanumeric());
+        if JSON_GEMINI_TITLE_CONNECTORS.contains(&cleaned.to_lowercase().as_str()) {
+            boundary -= 1;
+        } else {
+            break;
+        }
+    }
+    // Safety: only treat the leading run as a roster when it is plausibly a roster
+    // (at least one title word) and the boundary lands inside a reasonable rail
+    // span — a runaway boundary deep into the blob means the heuristic is unsure.
+    if boundary == 0 {
+        return blob.to_string();
+    }
+    let rest = words[boundary..].join(" ");
+    if rest.chars().count() < JSON_LANDMARK_MIN_CHARS {
+        // Dropping the roster would leave too little real content — keep the blob.
+        return blob.to_string();
+    }
+    rest
+}
+
+/// The Discord per-user clan "Server Tag" badge (`Server Tag: CCO`, `Server Tag:
+/// W00T`) that renders right under each author header AND in the DM member roster.
+/// `JSON_FALSE_SPEAKER_PREFIX_RE` already stops it from becoming a speaker *line*,
+/// but the real capture arrives as one space-joined `<doc>` blob (no newlines), so
+/// each badge sits INLINE inside the turn stream and must be removed by an inline
+/// replace. The clan tag value is a short alphanumeric token.
+static JSON_DISCORD_SERVER_TAG_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\bServer Tag:\s*[A-Za-z0-9][A-Za-z0-9._-]{0,15}").unwrap());
+
+/// Markers that open Discord's trailing user-profile card / popout chrome (the
+/// block Discord renders after the last message when a user-profile flyout is
+/// open): `View Full Profile` / `View Profile`, the `Add Note` field, the
+/// `Originally known as` alias, and the profile-card stats `Member Since` /
+/// `Mutual Servers` / `Mutual Friends`. The card is a contiguous trailing run, so
+/// the blob is cut at the EARLIEST of these markers found in its tail.
+const JSON_DISCORD_PROFILE_CARD_MARKERS: &[&str] = &[
+    // composer / message affordance row that always trails the last message and
+    // opens the chrome run leading into the profile card.
+    "More message options Send GIF",
+    "'s profile Friend",
+    "View Full Profile",
+    "View Profile",
+    "Add Note (only visible to you)",
+    "Originally known as",
+    "Member Since",
+    "Mutual Servers",
+    "Mutual Friends",
+];
+
+/// True when a flat doc blob is a Discord page dump — keyed on the co-occurring
+/// Discord-shell nav markers so a non-Discord blob (which carries none of them) is
+/// never scrubbed by `json_scrub_discord_blob`.
+fn json_blob_is_discord(blob: &str) -> bool {
+    let lower = blob.to_lowercase();
+    let markers = [
+        "direct messages",
+        "add a server",
+        "find or start a conversation",
+        "message requests",
+        "server tag",
+        "pinned messages",
+    ];
+    markers.iter().filter(|m| lower.contains(**m)).count() >= 2
+}
+
+/// Scrub Discord profile/badge chrome out of a flat (space-joined) `<doc>` blob:
+/// (1) remove every inline `Server Tag: <CLAN>` clan-tag badge, and (2) cut the
+/// trailing user-profile card (`… View Full Profile … Member Since … Mutual
+/// Servers — 3 Mutual Friends — 3 View Full Profile`) at its earliest marker. The
+/// profile card always sits after the last message, so cutting the tail at the
+/// first profile-card marker found in the back half of the blob drops the whole
+/// card without touching the conversation. Returns the blob unchanged when it is
+/// not a Discord shape (so no other surface is affected).
+fn json_scrub_discord_blob(blob: &str) -> String {
+    if !json_blob_is_discord(blob) {
+        return blob.to_string();
+    }
+    // (1) Strip inline `Server Tag: <CLAN>` badges wherever they appear.
+    let badge_free = JSON_DISCORD_SERVER_TAG_RE.replace_all(blob, " ");
+    let badge_free = json_collapse_inline_ws(&badge_free);
+    // (2) Cut the trailing profile-card block. Only consider markers in the back
+    // half of the blob so a message that merely mentions one of these phrases mid
+    // conversation is never used as the cut point.
+    let half = badge_free.len() / 2;
+    let mut card_cut = badge_free.len();
+    for marker in JSON_DISCORD_PROFILE_CARD_MARKERS {
+        if let Some(i) = badge_free.find(marker) {
+            if i >= half {
+                card_cut = card_cut.min(i);
+            }
+        }
+    }
+    badge_free[..card_cut].trim().to_string()
+}
+
+/// Per-turn ChatGPT affordance chrome that interleaves the flat transcript blob
+/// (the user-turn `Copy message`/`Edit message` and the assistant-turn `Copy
+/// response`/`Good response`/`Bad response`/`Share`/`Switch model`/`More
+/// actions`/`Sources` toolbar, plus the `Thought for 26s` reasoning header). These
+/// run mid-blob (not just at the edges), so they are removed by a global replace.
+static JSON_AI_CHAT_INLINE_CHROME_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\s*\b(?:Copy message|Edit message|Copy response|Copy code|Copy link|Open conversation options|Good response|Bad response|Switch model|More actions|Read aloud|Thought for \d+\s*(?:s|sec|secs|seconds|m|min|mins|minutes)?)\b",
+    )
+    .unwrap()
+});
+
+/// True when a flat doc blob carries the unmistakable framing chrome of an AI-chat
+/// page (the skip-link / composer / placeholder / footer that ONLY ChatGPT /
+/// Claude / Gemini render). Gates the chrome trimmer so a normal pruned chat
+/// thread (Discord / Slack / Gmail) — whose newline structure must be preserved —
+/// is never collapsed.
+fn json_blob_is_ai_chat_doc(blob: &str) -> bool {
+    let lower = blob.to_lowercase();
+    [
+        "skip to content",
+        "open sidebar",
+        "ask anything",
+        "add files and more",
+        "enter a prompt for gemini",
+        "can make mistakes",
+        "press and hold to record",
+        "copy response",
+        "copy message",
+    ]
+    .iter()
+    .any(|m| lower.contains(m))
+}
+
+/// Leading / trailing chrome runs an AI-chat doc (ChatGPT / Claude / Gemini)
+/// wraps around the transcript when it is exposed as one flat `<doc>` with no role
+/// markers: the page opens with `Skip to content Open sidebar …` and closes with
+/// the composer (`Add files and more`), the placeholder (`Ask anything` / `Enter a
+/// prompt for Gemini`), the model picker, and the `… can make mistakes` footer; it
+/// also interleaves per-turn affordance chrome (`Copy message` / `Copy response` /
+/// `Good response` …). These are stripped off the head/tail and the inline runs
+/// removed. Returns the blob UNCHANGED (newlines intact) when it is not an AI-chat
+/// doc, so the role-pruned chat threads (Discord / Slack / Gmail) keep their
+/// per-turn line structure.
+fn json_trim_ai_chat_doc_chrome(blob: &str) -> String {
+    if !json_blob_is_ai_chat_doc(blob) {
+        return blob.to_string();
+    }
+    let blob = JSON_AI_CHAT_INLINE_CHROME_RE.replace_all(blob, " ");
+    let blob = json_collapse_inline_ws(&blob);
+    let mut body = blob.trim();
+    // Trailing chrome — cut at the EARLIEST trailing-chrome marker found.
+    let mut tail_cut = body.len();
+    for cut in [
+        " Add files and more",
+        " Add files, connectors, and more",
+        " Ask anything",
+        " Ask ChatGPT",
+        " Enter a prompt for Gemini",
+        " Message ChatGPT",
+        " can make mistakes",
+        " is AI and can make mistakes",
+        " is AI. By using it",
+        " Press and hold to record",
+        " Share Sources",
+    ] {
+        if let Some(i) = body.find(cut) {
+            tail_cut = tail_cut.min(i);
+        }
+    }
+    body = body[..tail_cut].trim();
+    // Leading chrome — drop a known nav/skip-link prefix.
+    for cut in [
+        "Skip to content Open sidebar Copy link Open conversation options ",
+        "Skip to content Open sidebar ",
+        "Skip to content Close sidebar ",
+        "Skip to content ",
+        "Open sidebar Copy link Open conversation options ",
+    ] {
+        if let Some(rest) = body.strip_prefix(cut) {
+            body = rest.trim();
+            break;
+        }
+    }
+    body.to_string()
+}
+
+/// Reconstruct `User:` / `Assistant:` turns from an AI chat's flat conversation
+/// blob (ChatGPT / Claude / Gemini / Copilot). These surfaces render alternating
+/// role-labeled blocks — `You said: …` then `ChatGPT said: …` / `Claude
+/// responded: …` — which the tree flattens into one TextPattern blob. We split on
+/// each role-label marker and attribute the text up to the next marker, dropping
+/// the interleaved UI chrome (action buttons, model picker, footer) and
+/// collapsing the two-role alternation to the canonical `User` / `Assistant`
+/// speakers. Requires at least one of each role so a page that merely contains
+/// the brand name (e.g. a "ChatGPT:" footer) is never mistaken for a
+/// conversation. Returns `None` otherwise.
+fn json_reconstruct_ai_chat_blob(blob: &str) -> Option<String> {
+    let markers: Vec<regex::Match> = JSON_AI_CHAT_ROLE_RE.find_iter(blob).collect();
+    if markers.len() < 2 {
+        return None;
+    }
+    // Resolve each marker to (speaker, body-span). Skip labels that are not a
+    // recognized chat role.
+    let mut entries: Vec<(&'static str, usize, usize)> = Vec::new();
+    for (idx, m) in markers.iter().enumerate() {
+        let caps = match JSON_AI_CHAT_ROLE_RE.captures(m.as_str()) {
+            Some(c) => c,
+            None => continue,
+        };
+        let Some(label) = caps.get(1) else { continue };
+        let Some(speaker) = json_ai_chat_role_speaker(label.as_str()) else {
+            continue;
+        };
+        let body_start = m.end();
+        let body_end = markers
+            .get(idx + 1)
+            .map(|next| next.start())
+            .unwrap_or(blob.len());
+        if body_end > body_start {
+            entries.push((speaker, body_start, body_end));
+        }
+    }
+    // Require a genuine 2-role conversation: at least one User and one Assistant.
+    let has_user = entries.iter().any(|(s, _, _)| *s == "User");
+    let has_assistant = entries.iter().any(|(s, _, _)| *s == "Assistant");
+    if !has_user || !has_assistant {
+        return None;
+    }
+    let mut turns: Vec<String> = Vec::new();
+    for (speaker, start, end) in entries {
+        let collapsed = json_collapse_inline_ws(&denoise_for_llm(Some(&blob[start..end])));
+        let body = json_ai_chat_clean_body(&collapsed);
+        if body.chars().count() < 2 {
+            continue;
+        }
+        turns.push(format!("{speaker}: {body}"));
+    }
+    if turns.len() < 2 {
+        return None;
+    }
+    Some(json_dedupe_consecutive(turns).join("\n"))
 }
 
 enum JsonPromptValue {
@@ -1852,8 +3036,21 @@ impl JsonPromptSection {
 }
 
 fn json_serialize_context(sections: Vec<JsonPromptSection>) -> String {
+    // PRIVACY-CRITICAL final gate: scrub OTP / verification / single-use secret
+    // codes from EVERY assembled text section, no matter which formatter branch
+    // produced it (window-dump, pruned-tree reroute, flat beforeCaret, etc.).
+    // Bool sections (e.g. `ide`) and metadata are left untouched. This runs after
+    // assembly and before serialization so it is impossible to bypass.
     let sections = sections
         .into_iter()
+        .map(|mut section| {
+            if let JsonPromptValue::Text(value) = &section.value {
+                if json_section_carries_content(section.key) {
+                    section.value = JsonPromptValue::Text(json_scrub_secret_codes(value));
+                }
+            }
+            section
+        })
         .filter(JsonPromptSection::has_value)
         .collect::<Vec<_>>();
     if sections.is_empty() {
@@ -1880,6 +3077,18 @@ fn json_serialize_context(sections: Vec<JsonPromptSection>) -> String {
     }
     out.push('}');
     out
+}
+
+/// True for the prompt sections that carry CAPTURED page/field content (and so
+/// could contain a leaked secret code). The lightweight metadata sections
+/// (`app` / `url` / `window` / `field` / `note`) are excluded so a window title
+/// that happens to contain digits is never mangled.
+fn json_section_carries_content(key: &str) -> bool {
+    matches!(
+        key,
+        "selection" | "beforeCaret" | "afterCaret" | "fieldText" | "screen" | "screenOcr"
+            | "clipboard"
+    )
 }
 
 fn json_trim_or_empty(raw: Option<&str>) -> String {
@@ -1922,9 +3131,56 @@ fn json_build_fallback_tree_section(snapshot: &WindowContextSnapshot) -> JsonPro
     }
     let pruned = prune_ax_html_for_llm(snapshot.ax_html.as_deref());
     if !pruned.is_empty() {
-        return JsonPromptSection::text("screen", pruned);
+        // A flat AI-chat doc (ChatGPT / Claude / Gemini) is emitted whole by the
+        // pruner with the sidebar/composer chrome inline. Gemini additionally has
+        // a Recents roster; strip that first, then trim the leading skip-link /
+        // trailing composer + footer chrome common to all three. A non-AI-chat
+        // blob (Gmail thread, GitHub issue) carries none of these phrases, so both
+        // passes are no-ops and the pruned blob is returned unchanged.
+        let screen = json_scrub_gemini_sidebar_blob(&pruned).unwrap_or(pruned);
+        let screen = json_trim_ai_chat_doc_chrome(&screen);
+        // Discord's flat page <doc> carries inline `Server Tag: <CLAN>` clan badges
+        // and a trailing user-profile card (`Member Since` / `Mutual Servers` /
+        // `View Full Profile`); strip both. A non-Discord blob is returned unchanged.
+        let screen = json_scrub_discord_blob(&screen);
+        return JsonPromptSection::text("screen", clip_head(&screen, JSON_MAX_LLM_CONTEXT_CHARS));
+    }
+    // AI chats (ChatGPT/Claude/Gemini) render the focused composer as a bare
+    // `<doc>`/`<edit>` with the whole transcript as its TextPattern blob and no
+    // separate content landmark — the pruner's compose-vs-thread guard then
+    // (correctly, for X-compose) bails to empty. Before dumping raw axHtml, try
+    // recovering `User:`/`Assistant:` role turns from the flattened tree text.
+    let flattened = json_flatten_ax_text(snapshot.ax_html.as_deref());
+    if let Some(turns) = json_reconstruct_ai_chat_blob(&flattened) {
+        return JsonPromptSection::text("screen", clip_head(&turns, JSON_MAX_LLM_CONTEXT_CHARS));
+    }
+    // Outlook web exposes the ENTIRE mail app (left rail + inbox list + open
+    // thread) as a single structureless `<doc>` TextPattern blob with no
+    // per-message nodes and no focus marker — so the role pruner can't isolate the
+    // thread, and dumping the raw axHtml would leak the inbox list (+ any OTP /
+    // sign-in rows). The composer's `textBefore` carries the SAME content but with
+    // real per-row newlines, so scrub THAT row-by-row instead (cut the inbox-list
+    // scrollback, drop the message-action chrome + OTP rows) and emit the open
+    // thread as `screen`.
+    if let Some(scrubbed) = json_scrub_mail_blob(&denoise_for_llm(snapshot.text_before.as_deref()))
+    {
+        return JsonPromptSection::text("screen", clip_head(&scrubbed, JSON_MAX_LLM_CONTEXT_CHARS));
     }
     JsonPromptSection::text("screen", json_trim_or_empty(snapshot.ax_html.as_deref()))
+}
+
+/// Flatten an axHtml tree to its visible text (every node's name + text, in
+/// document order, denoised). Used as the AI-chat reconstruction input when the
+/// role-based pruner declines to emit a landmark.
+fn json_flatten_ax_text(ax_html: Option<&str>) -> String {
+    let ax_html = ax_html.unwrap_or("").trim();
+    if ax_html.is_empty() {
+        return String::new();
+    }
+    let tree = json_parse_ax_html(ax_html);
+    let mut out = Vec::new();
+    json_collect_descendant_text_values(&tree, 0, &mut out);
+    denoise_for_llm(Some(&out.join(" ")))
 }
 
 fn json_build_ocr_section(snapshot: &WindowContextSnapshot) -> JsonPromptSection {
@@ -1952,7 +3208,10 @@ fn json_build_content_sections(snapshot: &WindowContextSnapshot) -> Vec<JsonProm
 }
 
 /// Nav markers that co-occur in a page-spanning UIA TextPattern range (Gmail
-/// reading pane / X article) but never in a real typed draft. Kept lowercase.
+/// reading pane / X article / Outlook mail) but never in a real typed draft. Kept
+/// lowercase. The Outlook block mirrors the Gmail one: its left-rail folder names
+/// plus the message-list sort markers prove the caret range spans the whole mail
+/// app (not a draft), so the formatter reroutes to the pruned tree path.
 const JSON_PAGE_NAV_MARKERS: &[&str] = &[
     "inbox",
     "compose",
@@ -1967,6 +3226,17 @@ const JSON_PAGE_NAV_MARKERS: &[&str] = &[
     "trending",
     "who to follow",
     "address and search bar",
+    // Outlook web (outlook.live.com / outlook.office.com) folder + list chrome.
+    "junk email",
+    "sent items",
+    "deleted items",
+    "archive",
+    "favorites",
+    "conversation history",
+    "navigation pane",
+    "sorted: by date",
+    "focused",
+    "other emails",
 ];
 
 /// True when caret text is "rich" only because the focused control's UIA
@@ -2038,19 +3308,47 @@ fn format_context_for_prompt_json(snapshot: &WindowContextSnapshot) -> String {
     // NB: reconstruct from the DENOISED caret, NOT json_clean_caret — the latter
     // runs strip_list_scrollback, whose inbox-date-row cut treats Discord's bare
     // `H:MM PM` timestamp lines as list rows and would amputate the whole thread.
-    let reconstructed_chat = denoise_for_llm(snapshot.text_before.as_deref());
-    if let Some(turns) = json_reconstruct_discord_stream(&reconstructed_chat) {
+    // Facebook Messenger embeds authorship as `Enter, Message sent <when> by
+    // <Author>: <body>` markers in the composer's RAW (newline-preserved)
+    // `textBefore`. Reconstruct from that raw text — NOT the denoised blob —
+    // because denoising strips the `￼` (U+FFFC) preview separators and the
+    // per-message newlines the body-bleed dedup relies on, and it lets
+    // attachment-only markers (no colon) collapse onto the next clock. When it
+    // yields clean `Author: body` turns, emit them as the thread `screen`.
+    if let Some(turns) =
+        json_reconstruct_messenger_blob(snapshot.text_before.as_deref().unwrap_or(""))
+    {
         sections.push(JsonPromptSection::text(
-            "beforeCaret",
-            clip_tail(&turns, JSON_CARET_BEFORE_LLM_MAX),
-        ));
-        let after = json_clean_caret(snapshot.text_after.as_deref());
-        sections.push(JsonPromptSection::text(
-            "afterCaret",
-            clip_head(&after, CARET_AFTER_LLM_MAX),
+            "screen",
+            clip_head(&turns, JSON_MAX_LLM_CONTEXT_CHARS),
         ));
         sections.push(json_build_clipboard_section(snapshot));
         return json_serialize_context(sections);
+    }
+
+    // The Discord stream reconstructor keys on `<author>/<timestamp>/<body>`
+    // grouping — but a mail app's message-list (Outlook / Gmail) has the SAME
+    // shape (a repeated sender name + a `Mon 6/12 12:00 PM` timestamp per row), so
+    // it would fabricate `Sender: row` turns from the inbox list. When the caret
+    // is page-spanning scrollback AND a tree is present, the role-based tree
+    // pruner is the clean signal, so the flat Discord reconstruction must NOT run
+    // (the reroute below sends it to `screen`). A real Discord composer has no
+    // page-nav markers and no scrollback tree, so it still reaches this path.
+    let reconstructed_chat = denoise_for_llm(snapshot.text_before.as_deref());
+    if !(has_tree && caret_is_scrollback) {
+        if let Some(turns) = json_reconstruct_discord_stream(&reconstructed_chat) {
+            sections.push(JsonPromptSection::text(
+                "beforeCaret",
+                clip_tail(&turns, JSON_CARET_BEFORE_LLM_MAX),
+            ));
+            let after = json_clean_caret(snapshot.text_after.as_deref());
+            sections.push(JsonPromptSection::text(
+                "afterCaret",
+                clip_head(&after, CARET_AFTER_LLM_MAX),
+            ));
+            sections.push(json_build_clipboard_section(snapshot));
+            return json_serialize_context(sections);
+        }
     }
 
     if json_focused_field_is_rich(snapshot) && !(has_tree && caret_is_scrollback) {
@@ -3570,14 +4868,20 @@ mod tests {
         let out = format_context_for_prompt(&s);
         let ctx = context_json(&out);
         let screen = ctx["screen"].as_str().unwrap_or("");
-        assert!(screen.contains("Saker: Everyone thought Brazil"), "{screen}");
+        assert!(
+            screen.contains("Saker: Everyone thought Brazil"),
+            "{screen}"
+        );
         assert!(screen.contains("Thamer: What hurts"), "{screen}");
         // beforeCaret with nav/counts must be gone
         assert!(ctx.get("beforeCaret").is_none(), "{out}");
         assert!(!out.contains("232.9K"), "engagement count leaked: {out}");
         assert!(!out.contains("Show translation"), "chrome leaked: {out}");
         assert!(!out.contains("@Dahshury"), "self identity leaked: {out}");
-        assert!(!screen.contains("Who to follow"), "right column leaked: {screen}");
+        assert!(
+            !screen.contains("Who to follow"),
+            "right column leaked: {screen}"
+        );
     }
 
     // A short, real typed draft with NO nav markers keeps the fast beforeCaret
@@ -3744,7 +5048,10 @@ Can I test";
             element_name: "Message @Fancy".into(),
             app_exe: Some("chrome.exe".into()),
             text_before: Some(text_before.into()),
-            ax_html: Some("<window name=\"Discord\"><edit name=\"Message @Fancy\" focus=\"1\"/></window>".into()),
+            ax_html: Some(
+                "<window name=\"Discord\"><edit name=\"Message @Fancy\" focus=\"1\"/></window>"
+                    .into(),
+            ),
             ..snap()
         };
         let out = format_context_for_prompt(&s);
@@ -3823,7 +5130,9 @@ Can I test";
         assert!(screen.contains("موه: وعليكم السلام"), "{screen}");
         // the scripture colon must NOT be picked as a separate speaker
         assert!(
-            !screen.lines().any(|l| l.trim_start().starts_with("قوله تعالى:")),
+            !screen
+                .lines()
+                .any(|l| l.trim_start().starts_with("قوله تعالى:")),
             "scripture matched as speaker: {screen}"
         );
     }
@@ -3874,7 +5183,9 @@ Can I test";
         // 'The short reason:' must NOT be treated as a speaker turn (it can appear
         // INSIDE the tweet body, but never as a line prefix)
         assert!(
-            !screen.lines().any(|l| l.trim_start().starts_with("The short reason:")),
+            !screen
+                .lines()
+                .any(|l| l.trim_start().starts_with("The short reason:")),
             "sentence-colon matched as speaker: {screen}"
         );
         // the 'Replying to @x' marker is not attributed as an author
@@ -3919,7 +5230,10 @@ Archived";
         };
         let out = format_context_for_prompt(&s);
         // no fabricated 'Cousin Omar:' speaker turn, and the delivery code is gone
-        assert!(!out.contains("Cousin Omar:"), "fabricated chat-list speaker: {out}");
+        assert!(
+            !out.contains("Cousin Omar:"),
+            "fabricated chat-list speaker: {out}"
+        );
         assert!(!out.contains("3005137"), "delivery/OTP code leaked: {out}");
     }
 
@@ -3931,9 +5245,134 @@ Archived";
         assert!(json_is_speaker_turn_line("You: sure"));
         assert!(json_is_speaker_turn_line("Alex Rivera: can you review"));
         assert!(!json_is_speaker_turn_line("Server Tag: W00T"));
-        assert!(!json_is_speaker_turn_line("The short reason: combinations win"));
+        assert!(!json_is_speaker_turn_line(
+            "The short reason: combinations win"
+        ));
         assert!(!json_is_speaker_turn_line("Replying to: @someone"));
         assert!(!json_is_speaker_turn_line("قوله تعالى: ماتعبدون"));
+    }
+
+    // ─────────── real-capture chrome scrubbing (discord / gemini) ───────────
+    //
+    // The slices below are lifted verbatim from the actual captured `<doc>` blobs
+    // in artifacts/context-cdp/{discord,gemini}/rawSnapshot.json — the exact flat
+    // (space-joined, no-newline) shapes the extractor must strip.
+
+    /// On the real Discord capture the page arrives as ONE space-joined `<doc>`
+    /// blob, so the per-user `Server Tag: <CLAN>` clan badge and the trailing
+    /// user-profile card (`Member Since` / `Mutual Servers` / `View Full Profile`)
+    /// sit inline and survive the line filters. `json_scrub_discord_blob` removes
+    /// both. Slice lifted verbatim from artifacts/context-cdp/discord/rawSnapshot.
+    #[test]
+    fn discord_blob_scrub_drops_server_tag_and_profile_card() {
+        let blob = "Direct Messages Create Message !Evirios! Fancy FLX MO PriNce OoS \
+            anaskame1 Pacok Jake Edvin Server Tag: CCO Home Dachi Speranski Pinned Messages \
+            Master Server Tag: W00T 6/13/26, 1:13 AM but I didn't make the websites \
+            !Evirios! Yesterday at 10:18 PM yeah on 15k$ tourney grandfinals ek \
+            More message options Send GIF !Evirios!'s profile Friend More View Full Profile \
+            !Evirios! Add Note (only visible to you) evirios Originally known as !Evirios!#1950 \
+            Bio . Member Since Mar 12, 2017 Mutual Servers — 3 Mutual Friends — 3 View Full Profile";
+        let out = json_scrub_discord_blob(blob);
+        // Every Server Tag clan badge is gone (it appears twice in the real blob).
+        assert!(!out.contains("Server Tag"), "Server Tag badge leaked: {out}");
+        // The whole trailing profile card is cut.
+        assert!(!out.contains("Member Since"), "profile card leaked: {out}");
+        assert!(!out.contains("Mutual Servers"), "profile card leaked: {out}");
+        assert!(!out.contains("Mutual Friends"), "profile card leaked: {out}");
+        assert!(!out.contains("View Full Profile"), "profile card leaked: {out}");
+        assert!(!out.contains("Originally known as"), "profile card leaked: {out}");
+        // The real conversation survives untouched.
+        assert!(out.contains("but I didn't make the websites"));
+        assert!(out.contains("yeah on 15k$ tourney grandfinals ek"));
+        // A non-Discord blob is returned unchanged.
+        let other = "Subject: Q3 plan To me Sat 2:07 PM Hi team, here is the plan.";
+        assert_eq!(json_scrub_discord_blob(other), other);
+    }
+
+    /// End-to-end through `format_context_for_prompt`: the real Discord `axHtml`
+    /// doc must yield a `screen` with no `Server Tag` badge and no profile card.
+    #[test]
+    fn discord_screen_has_no_server_tag_or_profile_card() {
+        let ax = "<window name=\"Discord\" focus=\"1\"><pane name=\"Discord\">\
+            <doc name=\"Discord\"> Direct Messages Find or start a conversation \
+            Friends Message Requests Add a Server Pinned Messages \
+            Master Server Tag: W00T 6/13/26, 1:13 AM Saturday, June 13, 2026 at 1:13 AM \
+            but I didn't make the websites 1:13 AM I just used them \
+            !Evirios! 6/13/26, 1:19 AM Saturday, June 13, 2026 at 1:19 AM Yeah after nod that's cool \
+            Master Server Tag: W00T Yesterday at 10:17 PM hw show off? \
+            More message options Send GIF !Evirios!'s profile Friend More View Full Profile \
+            evirios Originally known as !Evirios!#1950 Member Since Mar 12, 2017 \
+            Mutual Servers — 3 Mutual Friends — 3 View Full Profile </doc></pane></window>";
+        let s = WindowContextSnapshot {
+            window_title: "(1155) Discord | @!Evirios! - Google Chrome".into(),
+            element_name: "(1155) Discord | @!Evirios! - Google Chrome".into(),
+            app_exe: Some("chrome.exe".into()),
+            ax_html: Some(ax.into()),
+            ..snap()
+        };
+        let screen = screen_text(s);
+        assert!(!screen.is_empty(), "screen unexpectedly empty");
+        assert!(!screen.contains("Server Tag"), "Server Tag leaked: {screen}");
+        assert!(!screen.contains("Member Since"), "profile card leaked: {screen}");
+        assert!(!screen.contains("Mutual Friends"), "profile card leaked: {screen}");
+        assert!(!screen.contains("View Full Profile"), "profile card leaked: {screen}");
+        assert!(screen.contains("but I didn't make the websites"));
+    }
+
+    /// The real Gemini capture exposes the whole app as ONE undelimited `<doc>`
+    /// (per-turn `User:`/`Gemini:` attribution is structurally NOT recoverable from
+    /// UIA — see the function docs); the only job is to drop the leading Recents
+    /// rail. `json_scrub_gemini_sidebar_blob` must remove the roster titles and keep
+    /// the first real prompt. Slice lifted verbatim from
+    /// artifacts/context-cdp/gemini/rawSnapshot.json.
+    #[test]
+    fn gemini_sidebar_scrub_drops_recents_roster_keeps_first_prompt() {
+        // Sidebar nav head + Recents roster + first real prompt, verbatim shapes
+        // (incl. the `TitleTitle…` truncation echo Gemini renders per entry).
+        let blob = "Gemini Temporary chat Close sidebar New chat Search chats Images New \
+            Videos Library Notebooks New notebook \
+            Recents Coffee Vending Machines Explained Queue Management System Explained \
+            Ants on Food: Is It Safe? Text Formatting Models on Hugging Face \
+            RTX 50 Series Laptop Pricing Turning Off AC Before Car Papaya Tree Health and Pests \
+            WhatsApp Premium Subscription Rumors\u{2026} AI Coding Language Performance \
+            a picture of a VR headset as an app icon with a speech visualizer inside it, \
+            dynamic lighting, mascot Enter a prompt for Gemini Gemini can make mistakes";
+        let out = json_scrub_gemini_sidebar_blob(blob).expect("gemini sidebar shape");
+        // Every recents-roster title is gone.
+        for title in [
+            "Recents",
+            "Coffee Vending Machines Explained",
+            "Queue Management System Explained",
+            "Papaya Tree Health and Pests",
+            "RTX 50 Series Laptop Pricing",
+            "WhatsApp Premium Subscription Rumors",
+            "AI Coding Language Performance",
+        ] {
+            assert!(!out.contains(title), "recents roster leaked {title:?}: {out}");
+        }
+        // The first real prompt survives, leading article intact (not over-trimmed).
+        assert!(
+            out.starts_with("a picture of a VR headset as an app icon"),
+            "first prompt lost / over-trimmed: {out}"
+        );
+        // Trailing composer/footer chrome is dropped.
+        assert!(!out.contains("Enter a prompt for Gemini"), "footer leaked: {out}");
+        assert!(!out.contains("can make mistakes"), "footer leaked: {out}");
+    }
+
+    /// The roster-strip is conservative: a blob with no lowercase-prompt boundary
+    /// (all Title-Case) is returned unchanged so a real Title-Case opening turn is
+    /// never eaten, and a connector-only/empty input is a no-op.
+    #[test]
+    fn gemini_recents_roster_strip_is_conservative() {
+        // No lowercase non-connector boundary → unchanged.
+        let all_titles = "Coffee Vending Machines Explained Queue Management System Explained";
+        assert_eq!(json_strip_gemini_recents_roster(all_titles), all_titles);
+        // Empty / whitespace → unchanged.
+        assert_eq!(json_strip_gemini_recents_roster(""), "");
+        // Boundary at index 0 (starts lowercase) → unchanged (nothing to strip).
+        let starts_lower = "a picture of a VR headset as an app icon with a visualizer";
+        assert_eq!(json_strip_gemini_recents_roster(starts_lower), starts_lower);
     }
 
     struct FakeReader(WindowContextSnapshot);
@@ -3969,5 +5408,946 @@ Archived";
         assert_eq!(ContextMode::Selection.flag(), Some("--selection"));
         assert_eq!(ContextMode::Split.flag(), Some("--split"));
         assert_eq!(ContextMode::Tree.flag(), Some("--tree"));
+    }
+
+    // ───── focused-field (--split) dictation capture — competitor parity ─────
+    //
+    // The dictation pipeline captures with `ContextMode::Split`: the focused
+    // field's caret-aware text + app identity, and NO `axHtml` (no whole-window
+    // tree walk). The fragment must stay a clean focused-field shape — never the
+    // old `screen` tree dump that leaked sidebars / inbox rows.
+
+    #[test]
+    fn split_dictation_capture_is_clean_focused_field() {
+        // A Gmail reply: the draft sits in beforeCaret, the quoted thread in
+        // afterCaret (so "reply to this" context survives within the field),
+        // app identity comes from app/url/window — and there is NO tree `screen`.
+        let reader = FakeReader(WindowContextSnapshot {
+            window_title: "Inbox (3) - me@example.com - Gmail".into(),
+            element_name: "Message Body".into(),
+            text_before: Some("Hi Dana, thanks for the update. ".into()),
+            text_after: Some("On Mon, Jun 15, Dana Lee wrote: see the attached draft.".into()),
+            app_exe: Some("chrome.exe".into()),
+            url: Some("https://mail.google.com/mail/u/0/".into()),
+            ..snap()
+        });
+        let out = capture_prompt_fragment(
+            &reader,
+            ContextMode::Split,
+            ContextAppMode::AllExceptDenied,
+            &[],
+            &[],
+        );
+        let ctx = context_json(&out);
+        assert_eq!(ctx["app"], "chrome.exe");
+        assert_eq!(ctx["url"], "https://mail.google.com/mail/u/0/");
+        assert!(ctx["window"].as_str().unwrap_or("").contains("Gmail"));
+        assert!(ctx["beforeCaret"]
+            .as_str()
+            .unwrap_or("")
+            .contains("thanks for the update"));
+        assert!(ctx["afterCaret"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Dana Lee wrote"));
+        // The focused-field path must NOT emit a whole-window tree dump.
+        assert!(
+            ctx.get("screen").is_none(),
+            "focused-field capture must not emit a tree `screen`: {out}"
+        );
+    }
+
+    #[test]
+    fn split_dictation_capture_url_deny_list_still_redacts() {
+        // The host-based privacy deny-list must keep working on the focused-field
+        // (--split) path now that --split carries the url. A banking host →
+        // redacted to bare metadata, field text dropped.
+        let reader = FakeReader(WindowContextSnapshot {
+            window_title: "Transfer funds".into(),
+            element_name: "Amount".into(),
+            text_before: Some("move 5000 to savings".into()),
+            app_exe: Some("chrome.exe".into()),
+            url: Some("https://secure.bankofamerica.com/transfer".into()),
+            ..snap()
+        });
+        let out = capture_prompt_fragment(
+            &reader,
+            ContextMode::Split,
+            ContextAppMode::AllExceptDenied,
+            &["bankofamerica.com".into()],
+            &[],
+        );
+        assert!(
+            !out.contains("move 5000 to savings"),
+            "denied-host field text leaked: {out}"
+        );
+        let ctx = context_json(&out);
+        assert_eq!(ctx["window"], "Transfer funds");
+    }
+
+    // ───────── real-capture speaker attribution (who-said-what) ─────────
+    //
+    // Each fixture below is a representative slice of the ACTUAL captured tree in
+    // artifacts/context-cdp/<app>/rawSnapshot.json — the exact UI shapes the
+    // extractor must attribute correctly (or filter as false speakers).
+
+    fn before_caret_text(snapshot: WindowContextSnapshot) -> String {
+        let out = format_context_for_prompt(&snapshot);
+        context_json(&out)["beforeCaret"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// The Discord "Server Tag: CCO" clan-tag badge (renders right under a user
+    /// header) must NEVER become an `Author:` speaker line — it is a per-user
+    /// badge, not a sender. Shape lifted from the real Discord friends-page doc.
+    #[test]
+    fn discord_server_tag_badge_is_not_a_speaker() {
+        assert!(JSON_FALSE_SPEAKER_PREFIX_RE.is_match("Server Tag: CCO"));
+        assert!(!json_is_speaker_turn_line("Server Tag: CCO"));
+        // And in a real flat blob the badge is plain roster text, never a turn.
+        let blob = "anaskame1 Pacok Jake Edvin Server Tag: CCO Home Dachi Speranski";
+        assert_eq!(json_attribute_flat_blob(blob), blob);
+        assert!(!blob
+            .lines()
+            .any(|l| json_is_speaker_turn_line(l) && l.starts_with("Server Tag")));
+    }
+
+    /// Discord renders a real message group as `<Author>` / [`Server Tag: X`] /
+    /// `<H:MM AM>` / `<full datetime>` / `<body…>`. The username heads the group;
+    /// the Server-Tag badge under it must be dropped, not treated as the author.
+    #[test]
+    fn discord_thread_attributes_username_not_server_tag() {
+        let stream = [
+            "Maya",
+            "Server Tag: CCO",
+            "9:41 AM",
+            "Today at 9:41 AM",
+            "The Windows build still needs signing.",
+            "Chris",
+            "Server Tag: CCO",
+            "9:43 AM",
+            "Today at 9:43 AM",
+            "I uploaded the cert bundle.",
+        ]
+        .join("\n");
+        let s = WindowContextSnapshot {
+            window_title: "Discord | #release".into(),
+            element_name: "Message #release".into(),
+            app_exe: Some("chrome.exe".into()),
+            text_before: Some(stream),
+            ..snap()
+        };
+        let before = before_caret_text(s);
+        assert!(before.contains("Maya: The Windows build still needs signing."));
+        assert!(before.contains("Chris: I uploaded the cert bundle."));
+        // The clan-tag badge is gone and never attributed.
+        assert!(!before.contains("Server Tag"));
+        assert!(!before.contains("Server Tag: CCO"));
+    }
+
+    /// Facebook Messenger embeds authorship as `Enter, Message sent <when> by
+    /// <Author>: <body>` with the body ALSO previewed before the marker. The
+    /// reconstructor must (1) attribute each turn to its real author, (2) not let
+    /// one turn's body bleed into the next preview, and (3) keep a Quran-verse
+    /// "قوله تعالى:" line as a BODY of its sender — never as a fabricated speaker.
+    /// Shape lifted verbatim from the real facebook/rawSnapshot.json textBefore.
+    #[test]
+    fn messenger_by_author_marker_attributes_turns_without_bleed() {
+        let text = concat!(
+            "السلام عليكم\n\u{fffc}\n",
+            "Enter, Message sent Saturday 5:14am by سول: السلام عليكم\n",
+            "صباح الخير\n\u{fffc}\n",
+            "Enter, Message sent Saturday 5:14am by سول: صباح الخير\n",
+            "وعليكم السلام ورحمة الله وبركاته شكرا ياعمورة على الدعوة الصباحية الجميلة\n\u{fffc}\n",
+            "Enter, Message sent Saturday 8:15am by موه: وعليكم السلام ورحمة الله وبركاته شكرا ياعمورة على الدعوة الصباحية الجميلة\n",
+            "قوله تعالى: ﴿أَمْ كُنتُمْ شُهَدَاءَ﴾\n\u{fffc}\n",
+            "Enter, Message sent Saturday 9:23am by موه: قوله تعالى: ﴿أَمْ كُنتُمْ شُهَدَاءَ﴾\n",
+            "Compose\nOpen more actions\nWrite to ماما\n"
+        );
+        let s = WindowContextSnapshot {
+            window_title: "Messenger | Facebook - Google Chrome".into(),
+            element_name: "Write to ماما".into(),
+            app_exe: Some("chrome.exe".into()),
+            text_before: Some(text.into()),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let screen = context_json(&out)["screen"].as_str().unwrap().to_string();
+        // Each message attributed to its real author.
+        assert!(screen.contains("سول: السلام عليكم"));
+        assert!(screen.contains("سول: صباح الخير"));
+        assert!(screen.contains("موه: وعليكم السلام"));
+        // The first سول turn must NOT have swallowed the next preview line.
+        assert!(!screen.contains("سول: السلام عليكم صباح الخير"));
+        // The Quran verse is a BODY of موه, not a standalone "قوله تعالى:" speaker.
+        assert!(screen.contains("موه: قوله تعالى:"));
+        assert!(!screen.contains("\nقوله تعالى:"));
+        // The trailing composer toolbar chrome never leaks into a turn.
+        assert!(!screen.contains("Compose"));
+        assert!(!screen.contains("Open more actions"));
+        assert!(!screen.contains("Write to ماما"));
+    }
+
+    /// X (Twitter) reply page: no `Author:` prefix — each tweet is positionally
+    /// `<DisplayName> @handle [time] <body> <engagement-counts>`. The
+    /// reconstructor attributes by handle, strips the trailing count run, and must
+    /// not fuse the NEXT author's display name onto a body. Shape from the real
+    /// x-reply/rawSnapshot.json doc blob; "The short reason:" is body text, not a
+    /// speaker. The whole-blob flows through the doc-landmark + flat-attribution
+    /// path, so this drives format_context_for_prompt end-to-end.
+    #[test]
+    fn x_reply_attributes_by_handle_and_strips_counts() {
+        let doc = concat!(
+            "Conversation ",
+            "Andrew Trask @iamtrask ",
+            "This is a way bigger deal than it seems. The short reason: combinations of models will always outperform individual models ",
+            "Quote OpenRouter @OpenRouter 20h Introducing the Fusion API ",
+            "7:59 AM Jun 14, 2026 563.4K Views 148 237 2.8K 2.3K Relevant View quotes Replying to @iamtrask Post your reply ",
+            "Trevor I. Lasn @trevorlasn 4h yeah different models miss different things so ensembling cancels the errors. what is fusion using? 146 ",
+            "Christian Niven @christian_niven 6h No it is not. I do not understand how you were fooled by this marketing. 2 1 305 ",
+            "Relevant people Andrew Trask @iamtrask Follow Live on X العربية is hosting trending"
+        );
+        // Real X-reply shape: the conversation is a flat `<doc>` content landmark
+        // (page-spanning TextPattern blob, no per-tweet nodes) and the focused
+        // composer is a sibling `<edit>` — so the landmark resolver picks the doc
+        // and routes it through the flat positional @handle attribution path.
+        let s = WindowContextSnapshot {
+            window_title: "Andrew Trask on X - Google Chrome".into(),
+            element_name: "Post text".into(),
+            app_exe: Some("chrome.exe".into()),
+            ax_html: Some(format!(
+                r#"<pane name="X"><doc name="Conversation">{doc}</doc><edit name="Post text" focus="1"></edit></pane>"#
+            )),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let screen = context_json(&out)["screen"].as_str().unwrap().to_string();
+        assert!(
+            screen.contains("Andrew Trask: This is a way bigger deal"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("Trevor I. Lasn: yeah different models miss"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("Christian Niven: No it is not."),
+            "{screen}"
+        );
+        // "The short reason:" stays inside Andrew Trask's body, not a speaker line.
+        assert!(!screen.contains("\nThe short reason:"));
+        // Trailing engagement counts and the next author's name are stripped.
+        assert!(!screen.contains("146 Christian"));
+        assert!(!screen.contains("305 Relevant"));
+        assert!(!screen.contains("2 1 305"));
+        // The post-thread footer (Relevant people / Live on X / trending) is cut.
+        assert!(!screen.contains("Live on X"));
+        assert!(!screen.contains("Relevant people"));
+    }
+
+    /// An AI chat (ChatGPT/Claude/Gemini) renders alternating role-labeled blocks
+    /// (`You said:` / `ChatGPT said:`). They must collapse to a clean two-role
+    /// `User:` / `Assistant:` alternation so the LLM sees who said what.
+    #[test]
+    fn ai_chat_collapses_to_user_assistant_turns() {
+        let doc = "ChatGPT You said: How do I reverse a string in Rust? \
+            ChatGPT said: Call chars rev collect on the input. \
+            You said: Does that handle Unicode correctly? \
+            ChatGPT said: It reverses by Unicode scalar values so most text is fine.";
+        let s = WindowContextSnapshot {
+            window_title: "ChatGPT - Google Chrome".into(),
+            element_name: "Ask anything".into(),
+            app_exe: Some("chrome.exe".into()),
+            url: Some("https://chatgpt.com/c/abc".into()),
+            ax_html: Some(format!(
+                r#"<window name="ChatGPT"><doc name="ChatGPT" focus="1">{doc}</doc></window>"#
+            )),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let screen = context_json(&out)["screen"].as_str().unwrap().to_string();
+        assert!(screen.contains("User: How do I reverse a string in Rust?"));
+        assert!(screen.contains("Assistant: Call chars rev collect"));
+        assert!(screen.contains("User: Does that handle Unicode correctly?"));
+        assert!(screen.contains("Assistant: It reverses by Unicode scalar values"));
+        // The brand label never survives as a speaker; only User/Assistant do.
+        assert!(!screen.contains("ChatGPT:"));
+        assert!(!screen.contains("You said:"));
+    }
+
+    /// A page that merely MENTIONS an assistant brand (a "ChatGPT:" footer link)
+    /// without a real two-role exchange must NOT be mistaken for a conversation.
+    #[test]
+    fn ai_chat_requires_both_roles() {
+        // Only an assistant label, no "You" — not a conversation.
+        assert!(json_reconstruct_ai_chat_blob(
+            "ChatGPT: the smartest model. Gemini: also great. Footer links here."
+        )
+        .is_none());
+        // Only a user label — not a conversation either.
+        assert!(json_reconstruct_ai_chat_blob("You: typed this. Some other text here.").is_none());
+    }
+
+    /// Generic false-speaker guard: a `prefix:` whose prefix is a sentence
+    /// fragment, a known UI string, or a scripture/quote opener must be filtered,
+    /// while genuine display names (incl. non-Latin and `You`) are kept.
+    #[test]
+    fn false_speaker_prefixes_are_filtered() {
+        // False speakers (UI badges, sentence fragments, scripture openers).
+        for line in [
+            "Server Tag: CCO",
+            "The short reason: combinations of models win",
+            "Replying to: @someone",
+            "Original message: text",
+            "قوله تعالى: ﴿آية﴾",
+        ] {
+            assert!(
+                !json_is_speaker_turn_line(line),
+                "{line:?} must NOT be a speaker turn"
+            );
+        }
+        // Genuine speakers.
+        for line in [
+            "Maya: the build needs signing",
+            "You: I will ship it",
+            "علي: تمام يا باشا",
+            "Trevor I. Lasn: ensembling cancels the errors",
+        ] {
+            assert!(
+                json_is_speaker_turn_line(line),
+                "{line:?} SHOULD be a speaker turn"
+            );
+        }
+    }
+
+    /// A sentence fragment ending the body that ALSO ends in a colon (e.g. an
+    /// over-long prefix) is rejected by the >40-char / sentence-shape guard so it
+    /// never fabricates a speaker out of mid-sentence text.
+    #[test]
+    fn over_long_or_sentence_prefix_is_not_a_speaker() {
+        let long = "This is a very long sentence fragment that clearly is not a chat author name at all: body";
+        assert!(!json_is_speaker_turn_line(long));
+        // A prefix carrying terminal sentence punctuation is not a name.
+        assert!(!json_looks_like_author_header(
+            "but anyway, that is the whole point."
+        ));
+    }
+
+    // ─────────── REAL CAPTURE shapes: AI chat + Outlook attribution ───────────
+    //
+    // The fixtures below are lifted VERBATIM from the on-disk captures in
+    // artifacts/context-cdp/{claude,gemini,chatgpt,outlook}/rawSnapshot.json (the
+    // axHtml `<doc>` blob / the composer `textBefore`). They pin the four problem
+    // shapes the finalize-attribution pass had to fix.
+
+    /// Claude (artifacts/context-cdp/claude): the real app renders the transcript
+    /// as `You said: …` / `Claude responded: …` app literals inside one flat
+    /// `<doc>` TextPattern blob, surrounded by heavy UI chrome (the sidebar nav,
+    /// the per-turn `Retry Edit Copy / Read aloud / Give positive feedback`
+    /// toolbar, the artifact card `View <name> … Code · HTML Download Copy`, the
+    /// composer + model picker, the `Claude is AI and can make mistakes` footer,
+    /// and a `Your previous message wasn't sent` notice). The reconstruction must
+    /// collapse to `User:` / `Assistant:` and filter ALL of that chrome.
+    #[test]
+    fn claude_real_doc_collapses_to_user_assistant_and_drops_chrome() {
+        // Verbatim slice of the real claude/rawSnapshot.json axHtml `<doc>` text.
+        let doc = "New chat Chats Projects Artifacts Customize M Mostafa Max plan \
+            HTML CSS pixel perfect clone More options for HTML CSS pixel perfect clone \
+            You said: clone this in html css pixel perfect clone this in html css pixel perfect \
+            1:33 AM Retry Edit Copy \
+            Claude responded: This is a faithful clone task—the brief pins down everything. \
+            Architected pixel-perfect HTML/CSS layout with dark theme and chart \
+            Done. Single-file uplinq.html — two-column dark panel, mint headline. \
+            View Uplinq Uplinq Code · HTML Download Copy Read aloud Give positive feedback \
+            Give negative feedback Retry \
+            You said: not exact. not exact. edge highlights of the main card missing \
+            1:36 AM Retry Edit Copy \
+            Claude responded: Found the gaps. The original has a bright top-edge highlight. \
+            View Uplinq Uplinq Code · HTML Download Copy Read aloud Give positive feedback \
+            Give negative feedback Retry Claude Fable 5 is currently unavailable. \
+            Learn more (opens in new tab) \
+            Add files, connectors, and more Opus 4.8 High Press and hold to record \
+            Claude is AI and can make mistakes. Please double-check responses. Files Share \
+            Your previous message wasn't sent. You can try again. Close";
+        let s = WindowContextSnapshot {
+            window_title: "HTML CSS pixel perfect clone - Claude - Google Chrome".into(),
+            element_name: "Write your prompt to Claude".into(),
+            app_exe: Some("chrome.exe".into()),
+            ax_html: Some(format!(
+                r#"<window name="HTML CSS pixel perfect clone - Claude - Google Chrome"><doc name="HTML CSS pixel perfect clone - Claude" focus="1">{doc}</doc></window>"#
+            )),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let screen = context_json(&out)["screen"].as_str().unwrap().to_string();
+        // Collapsed to the canonical two roles.
+        assert!(
+            screen.contains("User: clone this in html css pixel perfect"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("Assistant: This is a faithful clone task"),
+            "{screen}"
+        );
+        assert!(screen.contains("User: not exact."), "{screen}");
+        assert!(screen.contains("Assistant: Found the gaps."), "{screen}");
+        // App literals never survive as speaker labels.
+        assert!(!screen.contains("You said:"), "{screen}");
+        assert!(!screen.contains("Claude responded:"), "{screen}");
+        // Every named chrome run is filtered.
+        for chrome in [
+            "New chat Chats Projects",
+            "Retry Edit Copy",
+            "Read aloud",
+            "Give positive feedback",
+            "Give negative feedback",
+            "Add files, connectors, and more",
+            "Opus 4.8",
+            "Press and hold to record",
+            "Claude is AI and can make mistakes",
+            "double-check responses",
+            "Your previous message wasn't sent",
+            "Code · HTML",
+            "Download Copy",
+            "View Uplinq",
+            "is currently unavailable",
+        ] {
+            assert!(
+                !screen.contains(chrome),
+                "chrome leaked ({chrome}): {screen}"
+            );
+        }
+        // Per-turn timestamps are stripped off the user-message tails.
+        assert!(!screen.contains("1:33 AM"), "{screen}");
+        assert!(!screen.contains("1:36 AM"), "{screen}");
+    }
+
+    /// The role regex matches the real Claude / ChatGPT verbs and the speaker
+    /// classifier collapses them, but a bare brand mention WITHOUT a colon (the
+    /// `Claude is AI and can make mistakes` footer) is never a role marker.
+    #[test]
+    fn ai_chat_role_markers_match_real_verbs_only_with_colon() {
+        assert_eq!(json_ai_chat_role_speaker("You said"), Some("User"));
+        assert_eq!(
+            json_ai_chat_role_speaker("Claude responded"),
+            Some("Assistant")
+        );
+        assert_eq!(json_ai_chat_role_speaker("ChatGPT said"), Some("Assistant"));
+        assert_eq!(
+            json_ai_chat_role_speaker("Gemini replied"),
+            Some("Assistant")
+        );
+        assert_eq!(json_ai_chat_role_speaker("Random label"), None);
+        // A bare brand WITHOUT a colon is not a marker (footer text is not a turn).
+        assert!(json_reconstruct_ai_chat_blob(
+            "Claude is AI and can make mistakes. Please double-check responses."
+        )
+        .is_none());
+    }
+
+    /// Claude/ChatGPT collapse also covers the `ChatGPT said:` shape the recipe is
+    /// being fixed to capture (artifacts/context-cdp/chatgpt, label `claude`).
+    #[test]
+    fn chatgpt_said_shape_collapses_and_filters_chrome() {
+        let doc = "Skip to content Chat history Home Close sidebar New chat Search chats \
+            You said: please find this website \
+            ChatGPT said: Found it: Specc. Website: speccapp.com. It matches the product. \
+            You said: does it have a free tier? \
+            ChatGPT said: Yes, the launch post mentions a free plan. \
+            Ask anything ChatGPT can make mistakes. Check important info.";
+        let s = WindowContextSnapshot {
+            window_title: "ChatGPT - Google Chrome".into(),
+            element_name: "Message ChatGPT".into(),
+            app_exe: Some("chrome.exe".into()),
+            ax_html: Some(format!(
+                r#"<window name="ChatGPT - Google Chrome"><doc name="ChatGPT" focus="1">{doc}</doc></window>"#
+            )),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let screen = context_json(&out)["screen"].as_str().unwrap().to_string();
+        assert!(
+            screen.contains("User: please find this website"),
+            "{screen}"
+        );
+        assert!(screen.contains("Assistant: Found it: Specc"), "{screen}");
+        assert!(
+            screen.contains("User: does it have a free tier?"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("Assistant: Yes, the launch post"),
+            "{screen}"
+        );
+        assert!(!screen.contains("ChatGPT said:"), "{screen}");
+        assert!(!screen.contains("You said:"), "{screen}");
+        assert!(!screen.contains("Skip to content"), "{screen}");
+        assert!(!screen.contains("ChatGPT can make mistakes"), "{screen}");
+        assert!(!screen.contains("Ask anything"), "{screen}");
+    }
+
+    /// ChatGPT's CURRENT real capture (artifacts/context-cdp/chatgpt) uses
+    /// affordance-based turns (no role labels): the doc opens with `Skip to content
+    /// Open sidebar …`, interleaves `Copy message`/`Copy response`/`Good response`
+    /// affordances + a `Thought for 26s` reasoning header, and closes with `Add
+    /// files and more Ask anything … ChatGPT can make mistakes`. Even without role
+    /// markers the framing + inline chrome must be stripped so the user query and
+    /// the answer survive cleanly.
+    #[test]
+    fn chatgpt_affordance_doc_strips_framing_and_inline_chrome() {
+        // Verbatim slice of the real chatgpt/rawSnapshot.json `<doc>` blob.
+        let doc = "Skip to content Open sidebar Copy link Open conversation options \
+            please find this website Copy message Edit message Thought for 26s \
+            Found it: Specc Website: speccapp.com Specc \
+            It matches the screenshot's product: AI that turns calls/transcripts into \
+            developer-ready tickets and specs, with Jira/Linear/Notion integrations. \
+            indiehackers.com Copy response Good response Bad response Share Switch model \
+            More actions Sources Add files and more Ask anything Medium Start Voice \
+            ChatGPT can make mistakes. Check important info.";
+        let s = WindowContextSnapshot {
+            window_title: "Website Search Result - Google Chrome".into(),
+            element_name: "Message ChatGPT".into(),
+            app_exe: Some("chrome.exe".into()),
+            ax_html: Some(format!(
+                r#"<window name="Website Search Result - Google Chrome"><doc name="Website Search Result">{doc}</doc></window>"#
+            )),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let screen = context_json(&out)["screen"].as_str().unwrap().to_string();
+        // Real content survives.
+        assert!(screen.contains("please find this website"), "{screen}");
+        assert!(screen.contains("speccapp.com"), "{screen}");
+        // Framing + inline affordance chrome is stripped.
+        for chrome in [
+            "Skip to content",
+            "Open sidebar",
+            "Copy link",
+            "Copy message",
+            "Edit message",
+            "Copy response",
+            "Good response",
+            "Bad response",
+            "Switch model",
+            "More actions",
+            "Thought for 26s",
+            "Add files and more",
+            "Ask anything",
+            "ChatGPT can make mistakes",
+        ] {
+            assert!(
+                !screen.contains(chrome),
+                "chrome leaked ({chrome}): {screen}"
+            );
+        }
+    }
+
+    /// Gemini (artifacts/context-cdp/gemini): the real app exposes the whole UI as
+    /// one structureless `<doc>` — a sidebar nav prefix, a `Recents` roster of past
+    /// chat titles (each echoed `TitleTitle…`), then the user's prompts, closing
+    /// with `Ask Gemini`. The scrub must drop the sidebar nav, the `Recents` label,
+    /// the placeholder, and the footer, keeping the real prompt content.
+    #[test]
+    fn gemini_real_sidebar_doc_drops_nav_recents_and_placeholder() {
+        // Verbatim slice of the real gemini/rawSnapshot.json `<doc>` blob.
+        let doc = "Gemini Temporary chat Close sidebar New chat Search chats Images New \
+            Videos Library Notebooks New notebook \
+            Health in Hajj: Training and Guidance ManualHealth in Hajj: Training and Guida… \
+            Recents Coffee Vending Machines Explained Queue Management System Explained \
+            WhatsApp Premium Subscription RumorsWhatsApp Premium Subscription Rum… \
+            Create a neon, cyberpunk-inspired logo of a stylized soundwave piercing through \
+            a glowing text caret, with bright glowing lines and vibrant colors for a sleek \
+            modern look using electric blue, neon pink, and bright purple gradients. \
+            Conversation with Gemini Let's jump in, Mostafa Ask Gemini";
+        let s = WindowContextSnapshot {
+            window_title: "Google Gemini - Google Chrome".into(),
+            element_name: "Enter a prompt for Gemini".into(),
+            app_exe: Some("chrome.exe".into()),
+            ax_html: Some(format!(
+                r#"<window name="Google Gemini - Google Chrome"><doc name="Google Gemini">{doc}</doc></window>"#
+            )),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let screen = context_json(&out)["screen"].as_str().unwrap().to_string();
+        // The real prompt content survives.
+        assert!(screen.contains("neon, cyberpunk-inspired logo"), "{screen}");
+        // Sidebar nav / Recents label / placeholder / footer are gone.
+        for chrome in [
+            "Gemini Temporary chat",
+            "Close sidebar",
+            "New notebook",
+            "Recents",
+            "Ask Gemini",
+            "Enter a prompt for Gemini",
+            "Let's jump in",
+            "Conversation with Gemini",
+        ] {
+            assert!(
+                !screen.contains(chrome),
+                "chrome leaked ({chrome}): {screen}"
+            );
+        }
+        // The `TitleTitle…` truncation echo is collapsed (no stray `…`).
+        assert!(
+            !screen.contains('\u{2026}'),
+            "truncation echo leaked: {screen}"
+        );
+    }
+
+    /// Outlook (artifacts/context-cdp/outlook, label `gmail`): the composer focuses
+    /// (`Message body`) but its caret TextPattern range spans the WHOLE mail app —
+    /// the left-rail folders, the inbox message LIST (rows like `Reminder: …
+    /// birthday`, `amazon.eg: Sign-in`, `… Account Verification`), then the open
+    /// thread. The Outlook folder/sort markers must reroute it to the pruned path,
+    /// and the message-list + any sign-in / verification / OTP rows must be dropped
+    /// — only the open thread (sender + subject + body) survives. Shape lifted
+    /// verbatim from the real outlook/rawSnapshot.json textBefore.
+    #[test]
+    fn outlook_inbox_list_reroutes_and_drops_message_list_and_otp() {
+        let text_before = "\
+Hide navigation pane
+File
+Home
+Navigation pane
+Favorites
+Inbox
+10927
+unread
+Sent Items
+Drafts
+Archive
+Junk Email
+Deleted Items
+Conversation HistoryConversation Histo…
+Focused
+Other
+Sorted: By Date
+Other Emails (90)
+info@codebasics.io
+CodeBasics | Account Verification
+Yesterday
+Header action menu
+support@storyblocks.com
+Verify Your Storyblocks API AccountVerify Your Storyblocks API…
+Sun 1:32 PM
+amazon.eg
+amazon.eg: Sign-in
+Mon 6/1
+Mostafa Eldahsory, Someone signed-in to your account.
+SaSa Darsh
+Reminder: kevin.e.13's birthdayReminder: kevin.e.13's birth…
+Fri 12:00 PM
+Your reminder for kevin.e.13's birthday 6/13/2026 All DayYour reminder for kevin.e.13's birthday 6…
+Reminder: kevin.e.13's birthday
+SaSa Darsh
+View with a light background
+Reply
+Reply all
+Forward
+Apps
+More items
+To:
+SaSa Darsh <MASTER_X_3@live.com>
+Fri 6/12/2026 12:00 PM
+Show original size
+Your reminder for kevin.e.13's birthday
+6/13/2026
+All Day
+Expand header and show message history
+Pop Out";
+        let s = WindowContextSnapshot {
+            window_title: "Mail - SaSa Darsh - Outlook - Google Chrome".into(),
+            element_name: "Message body".into(),
+            app_exe: Some("chrome.exe".into()),
+            text_before: Some(text_before.into()),
+            // The real Outlook tree is one structureless <doc> whose entire content
+            // is a single page-spanning TextPattern blob the role pruner classifies
+            // as one low-signal line (it ends in an ` Ad` chrome token) and drops —
+            // so the pruner yields nothing and the formatter scrubs the newline
+            // `textBefore` instead. A bare toolbar-only tree reproduces that
+            // "tree prunes to empty" condition.
+            ax_html: Some(
+                "<window name=\"Mail - SaSa Darsh - Outlook - Google Chrome\">\
+                 <pane name=\"Mail - SaSa Darsh - Outlook - Google Chrome\">\
+                 <toolbar name=\"Bookmarks\"><button name=\"Work\"></button></toolbar>\
+                 </pane></window>"
+                    .into(),
+            ),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        let ctx = context_json(&out);
+        // Rerouted to the pruned `screen`; the polluted beforeCaret is NOT emitted.
+        let screen = ctx["screen"].as_str().unwrap_or("");
+        assert!(
+            ctx.get("beforeCaret").is_none(),
+            "beforeCaret leaked: {out}"
+        );
+        // The open email thread survives.
+        assert!(
+            screen.contains("Your reminder for kevin.e.13's birthday"),
+            "{screen}"
+        );
+        // The message LIST + the sign-in / verification / OTP rows are gone.
+        for leaked in [
+            "amazon.eg: Sign-in",
+            "Sign-in",
+            "Account Verification",
+            "Verify Your Storyblocks",
+            "Someone signed-in",
+            "Inbox",
+            "Junk Email",
+            "Deleted Items",
+            "Sent Items",
+            "Conversation History",
+            "Sorted: By Date",
+            "Header action menu",
+            "Other Emails",
+            // per-message reading-pane action chrome
+            "View with a light background",
+            "Reply all",
+            "Expand header and show message history",
+            "Pop Out",
+        ] {
+            assert!(
+                !out.contains(leaked),
+                "outlook chrome leaked ({leaked}): {out}"
+            );
+        }
+        // No verification / single-use / sign-in OTP phrase survives anywhere.
+        assert!(json_is_otp_or_signin_row("amazon.eg: Sign-in"));
+        assert!(json_is_otp_or_signin_row(
+            "Google: Your verification code is 622297"
+        ));
+        assert!(json_is_otp_or_signin_row("Qiwa: One time password 7596"));
+        assert!(!out.to_lowercase().contains("verification code"), "{out}");
+        assert!(!out.to_lowercase().contains("single-use"), "{out}");
+    }
+
+    /// The Outlook folder / sort markers are present in JSON_PAGE_NAV_MARKERS so a
+    /// mail caret blob is detected as page-spanning scrollback (and rerouted off
+    /// the flat beforeCaret path).
+    #[test]
+    fn outlook_folder_markers_detected_as_page_scrollback() {
+        let blob = "Favorites Inbox Sent Items Drafts Archive Junk Email Deleted Items \
+            Conversation History Focused Other Sorted: By Date";
+        assert!(json_caret_is_page_scrollback(blob));
+    }
+
+    /// The mail-blob scrubber cuts the inbox-list scrollback at the last
+    /// `…`-truncated preview row and drops the per-message Outlook chrome, keeping
+    /// only the open thread.
+    #[test]
+    fn mail_blob_scrubber_cuts_list_and_keeps_thread() {
+        let text = "\
+Inbox
+amazon.eg: Sign-inamazon.eg: Sign-…
+Mon 6/1
+Reminder: kevin.e.13's birthdayReminder: kevin.e.13's birth…
+SaSa Darsh
+View with a light background
+Reply
+Reply all
+Forward
+To:
+SaSa Darsh <MASTER_X_3@live.com>
+Your reminder for kevin.e.13's birthday
+All Day
+Pop Out";
+        let scrubbed = json_scrub_mail_blob(text).expect("mail shape recognized");
+        assert!(
+            scrubbed.contains("Your reminder for kevin.e.13's birthday"),
+            "{scrubbed}"
+        );
+        assert!(!scrubbed.contains("amazon.eg"), "{scrubbed}");
+        assert!(!scrubbed.contains("Sign-in"), "{scrubbed}");
+        assert!(
+            !scrubbed.contains("View with a light background"),
+            "{scrubbed}"
+        );
+        assert!(!scrubbed.contains("Reply all"), "{scrubbed}");
+        assert!(!scrubbed.contains("Pop Out"), "{scrubbed}");
+    }
+
+    // ── unconditional final OTP / secret-code scrub (privacy-critical) ──
+
+    /// The exact Outlook leak shape from artifacts/context-cdp/outlook: the whole
+    /// mail app is a single structureless `<doc>` whose TextPattern blob carries
+    /// the open email body `... Your account verification OTP is: 17042 ...`. With
+    /// empty caret fields the formatter falls all the way through to the raw
+    /// window-dump (`screen = ax_html`), which the per-ROW OTP filter never sees
+    /// because the whole `<doc>` is ONE line. The unconditional final scrub must
+    /// still strip the code on THIS path.
+    #[test]
+    fn outlook_window_dump_scrubs_verification_otp_code() {
+        let ax_html = "<window name=\"Mail - SaSa Darsh - Outlook - Google Chrome\">\
+            <doc name=\"Mail - SaSa Darsh - Outlook\"> Inbox 10926 unread \
+            CodeBasics | Account Verification info@codebasics.io View with a light background \
+            Reply Reply all More items Mon 2/26/2024 10:28 PM Show original size \
+            Dear master el master, Your account verification OTP is: 17042 \
+            If you have any questions, please do not hesitate to reach out to us. \
+            Best regards, Team Codebasics Questions or FAQ? Contact us at info@codebasics.io. \
+            Copyright 2024 codebasics.io. Pop Out </doc></window>";
+        let s = WindowContextSnapshot {
+            window_title: "Mail - SaSa Darsh - Outlook - Google Chrome".into(),
+            element_name: "Mail - SaSa Darsh - Outlook - Google Chrome".into(),
+            app_exe: Some("chrome.exe".into()),
+            // No caret / focused text: forces the raw window-dump branch.
+            ax_html: Some(ax_html.into()),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        assert!(!out.is_empty());
+        assert!(serde_json::from_str::<serde_json::Value>(&out).is_ok());
+        // THE leak: the real OTP code and its announcing phrase are gone.
+        assert!(!out.contains("17042"), "OTP code leaked via window-dump: {out}");
+        assert!(
+            !out.to_lowercase().contains("verification otp"),
+            "OTP phrase leaked: {out}"
+        );
+        assert!(
+            !out.to_lowercase().contains("otp is"),
+            "OTP phrase leaked: {out}"
+        );
+        // Benign surrounding context (the sender, the signature) still survives,
+        // and incidental numbers in the dump (the year 2024, the 10926 unread
+        // count) are NOT collateral-damaged.
+        assert!(out.contains("Team Codebasics"), "body context lost: {out}");
+        assert!(out.contains("2024"), "year over-redacted: {out}");
+        assert!(out.contains("10926"), "unread count over-redacted: {out}");
+    }
+
+    /// Same Outlook OTP body, but delivered through the page-spanning caret
+    /// REROUTE path (rich `textBefore` + a tree present). The mail-blob scrubber
+    /// handles most of it, but the final scrub is the guarantee the code never
+    /// survives regardless of which branch wins.
+    #[test]
+    fn outlook_reroute_path_scrubs_verification_otp_code() {
+        let text_before = "\
+Inbox
+amazon.eg: Sign-inamazon.eg: Sign-…
+Sorted: By Date
+CodeBasics | Account VerificationCodeBasics | Account Verif…
+info@codebasics.io
+View with a light background
+Reply
+Reply all
+Show original size
+Dear master el master,
+Your account verification OTP is: 17042
+If you have any questions, please do not hesitate to reach out to us.
+Best regards, Team Codebasics";
+        let s = WindowContextSnapshot {
+            window_title: "Mail - SaSa Darsh - Outlook - Google Chrome".into(),
+            element_name: "Message body".into(),
+            app_exe: Some("chrome.exe".into()),
+            text_before: Some(text_before.into()),
+            ax_html: Some(
+                "<window name=\"Mail - SaSa Darsh - Outlook - Google Chrome\">\
+                 <pane name=\"Mail - SaSa Darsh - Outlook - Google Chrome\">\
+                 <toolbar name=\"Bookmarks\"><button name=\"Work\"></button></toolbar>\
+                 </pane></window>"
+                    .into(),
+            ),
+            ..snap()
+        };
+        let out = format_context_for_prompt(&s);
+        assert!(serde_json::from_str::<serde_json::Value>(&out).is_ok());
+        assert!(!out.contains("17042"), "OTP code leaked via reroute: {out}");
+        assert!(
+            !out.to_lowercase().contains("verification otp"),
+            "OTP phrase leaked via reroute: {out}"
+        );
+    }
+
+    /// A normal conversation full of INCIDENTAL numbers (prices, years, counts,
+    /// phone-ish ids, order numbers) that are NOT next to any OTP/verification
+    /// keyword must pass through completely untouched.
+    #[test]
+    fn normal_conversation_numbers_are_not_over_redacted() {
+        let thread = [
+            "Alice: The Q3 budget came in at $42,500, up from 38900 last year.",
+            "Bob: We shipped 1284 units in 2025 and expect 2026 to double that.",
+            "Alice: Call me at 5551234 when the 405 invoice clears.",
+            "Bob: Order 4051234567 was delivered; the room is 1408 on floor 12.",
+        ]
+        .join("\n");
+        let scrubbed = json_scrub_secret_codes(&thread);
+        // Identical: no OTP keyword anywhere → byte-for-byte unchanged.
+        assert_eq!(scrubbed, thread);
+        for n in ["42,500", "38900", "1284", "2025", "2026", "5551234", "405", "4051234567", "1408", "12"] {
+            assert!(scrubbed.contains(n), "number {n} was over-redacted: {scrubbed}");
+        }
+    }
+
+    /// The scrub drops whole secret-code sentences AND redacts keyword-adjacent
+    /// bare codes in the canonical leak shapes, while leaving a non-code number in
+    /// the SAME blob (a year) intact.
+    #[test]
+    fn scrub_drops_code_phrases_and_redacts_adjacent_codes() {
+        // Each of these whole sentences carries a secret-code phrase → dropped.
+        for leak in [
+            "Your account verification OTP is: 17042",
+            "your code is 482913",
+            "Google: Your verification code is 622297",
+            "Qiwa: One time password 7596",
+            "Use single-use passcode 99213 to continue.",
+            "Your 2FA code is 1029 — do not share it.",
+            "G-123456 is your Google verification code.",
+            "amazon.eg: Sign-in",
+        ] {
+            let scrubbed = json_scrub_secret_codes(leak);
+            assert!(
+                scrubbed.trim().is_empty()
+                    || !scrubbed.chars().any(|c| c.is_ascii_digit())
+                    || !JSON_SECRET_CODE_PHRASE_RE.is_match(&scrubbed),
+                "secret-code phrase survived: {leak:?} -> {scrubbed:?}"
+            );
+        }
+        // The specific codes must be gone.
+        assert!(!json_scrub_secret_codes("Your account verification OTP is: 17042").contains("17042"));
+        assert!(!json_scrub_secret_codes("your verification code is 622297").contains("622297"));
+        assert!(!json_scrub_secret_codes("G-123456 is your Google verification code.").contains("123456"));
+
+        // The code-bearing sentence is dropped, but an incidental number in a
+        // SEPARATE sentence of the same blob is preserved.
+        let mixed = "The OTP is 884412. The budget for 2026 is due Friday.";
+        let scrubbed = json_scrub_secret_codes(mixed);
+        assert!(!scrubbed.contains("884412"), "code survived: {scrubbed}");
+        assert!(
+            scrubbed.contains("2026"),
+            "year in a separate sentence lost: {scrubbed}"
+        );
+        assert!(
+            scrubbed.contains("budget"),
+            "separate sentence lost: {scrubbed}"
+        );
+
+        // Stage-2 catch: a bare code keyword-adjacent to a digit run inside a
+        // sentence whose full phrase does NOT match (so the sentence is kept) is
+        // still redacted in place.
+        let residue = json_scrub_secret_codes("Reference pin: 4821 for the meeting room.");
+        assert!(!residue.contains("4821"), "pin code survived: {residue}");
+        assert!(residue.contains("meeting room"), "context lost: {residue}");
+    }
+
+    /// Multi-line blob: only the secret-code line is dropped; the surrounding
+    /// conversation lines (and their incidental numbers) are preserved verbatim.
+    #[test]
+    fn scrub_is_line_local_and_preserves_surrounding_context() {
+        let blob = "Maya: standup at 9:30 tomorrow, room 1408.\n\
+            Bank: Your one-time code is 553201.\n\
+            Maya: also the 2026 budget is due Friday.";
+        let scrubbed = json_scrub_secret_codes(blob);
+        assert!(scrubbed.contains("standup at 9:30 tomorrow, room 1408"));
+        assert!(scrubbed.contains("2026 budget is due Friday"));
+        assert!(!scrubbed.contains("553201"), "OTP code leaked: {scrubbed}");
+        assert!(
+            !scrubbed.to_lowercase().contains("one-time code"),
+            "OTP phrase leaked: {scrubbed}"
+        );
     }
 }

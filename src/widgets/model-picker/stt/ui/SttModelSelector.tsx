@@ -117,7 +117,7 @@ export interface SttModelSelectorProps {
 		| undefined;
 	/** When set, the trigger opens a detached picker window (passing its
 	 *  on-screen rect) INSTEAD of the in-window popup — used by the settings
-	 *  panel so the picker can extend beyond the 700×560 settings window, the
+	 *  panel so the picker can extend beyond the settings window, the
 	 *  same way the main-window footer chip does. The inline popup is fully
 	 *  suppressed in this mode. */
 	onOpenDetached?: (rect: DOMRect) => void;

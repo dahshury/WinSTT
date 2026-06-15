@@ -635,7 +635,8 @@
     "clearDescription": "Tutte le voci del dizionario verranno rimosse definitivamente. Questa operazione non può essere annullata.",
     "thresholdLabel": "Rigidità della correzione",
     "thresholdCaption": "Punteggio massimo di corrispondenza fuzzy che il correttore lato server accetterà. Più basso = più rigoroso (meno sostituzioni errate).",
-    "thresholdTooltip": "Il correttore deterministico viene eseguito sul server subito dopo la trascrizione e PRIMA della pulizia LLM. Tutto ciò che sfugge riceve un secondo passaggio attraverso i modificatori LLM."
+    "thresholdTooltip": "Il correttore deterministico viene eseguito sul server subito dopo la trascrizione e PRIMA della pulizia LLM. Tutto ciò che sfugge riceve un secondo passaggio attraverso i modificatori LLM.",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "Impossibile caricare {model}",

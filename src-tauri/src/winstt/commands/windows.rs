@@ -108,7 +108,7 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         ignore_cursor: false,
         background: None,
     },
-    // Settings — 692×560 frameless, opaque, centered on the main pill. Ported
+    // Settings — 900×640 frameless, opaque, centered on the main pill. Ported
     // from main.ts createSettingsWindow(), but reworked into a MODAL CHILD of the
     // pill (owner = main, set in `ensure_window`): it sits above the pill, can't be
     // dismissed independently, and the pill is input-disabled while it's open
@@ -119,10 +119,10 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         label: "settings",
         url: "windows/settings.html",
         title: "WinSTT Settings",
-        width: 692.0,
-        height: 560.0,
-        min_width: 692.0,
-        min_height: 560.0,
+        width: 900.0,
+        height: 640.0,
+        min_width: 900.0,
+        min_height: 640.0,
         resizable: false,
         decorations: false,
         transparent: false,

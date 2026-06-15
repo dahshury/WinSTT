@@ -635,7 +635,8 @@
     "clearDescription": "Toutes les entrées du dictionnaire seront définitivement supprimées. Cette action est irréversible.",
     "thresholdLabel": "Rigueur de correction",
     "thresholdCaption": "Score de correspondance approximative maximum accepté par le correcteur côté serveur. Plus bas = plus strict (moins de remplacements erronés).",
-    "thresholdTooltip": "Le correcteur déterministe s'exécute sur le serveur juste après la transcription et AVANT le nettoyage LLM. Ce qu'il manque bénéficie encore d'un second passage via les modificateurs LLM."
+    "thresholdTooltip": "Le correcteur déterministe s'exécute sur le serveur juste après la transcription et AVANT le nettoyage LLM. Ce qu'il manque bénéficie encore d'un second passage via les modificateurs LLM.",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "Impossible de charger {model}",

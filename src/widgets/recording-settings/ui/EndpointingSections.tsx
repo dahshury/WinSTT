@@ -43,7 +43,7 @@ export function SmartEndpointSection({
 	const enabled = q?.smartEndpoint ?? false;
 	return (
 		<SettingSection icon={Radar02Icon} title={t("smartEndpoint")}>
-			<div className="flex flex-col divide-y divide-surface-1">
+			<div className="flex flex-col">
 				<SettingField
 					isDefault={enabled === DEFAULT_SETTINGS.quality.smartEndpoint}
 					label={t("smartEndpointLabel")}
@@ -104,7 +104,7 @@ export function SentencePauseSection({
 }: SentencePauseSectionProps) {
 	return (
 		<SettingSection icon={PauseCircleIcon} title={t("sentencePauses")}>
-			<div className="flex flex-col divide-y divide-surface-1">
+			<div className="flex flex-col">
 				<SettingField
 					isDefault={
 						(q?.endOfSentenceDetectionPause ??
@@ -226,7 +226,7 @@ export function AdvancedSection({
 	];
 	return (
 		<SettingSection icon={SlidersHorizontalIcon} title={t("advancedTitle")}>
-			<div className="flex flex-col divide-y divide-surface-1">
+			<div className="flex flex-col">
 				<SettingField
 					isDefault={
 						microphoneRelease === DEFAULT_SETTINGS.audio.microphoneRelease

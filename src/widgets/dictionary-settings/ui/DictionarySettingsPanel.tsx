@@ -7,16 +7,10 @@ import { Badge } from "@/shared/ui/badge";
 import { dictionaryContainsTerm } from "../lib/dictionary-terms";
 import { AutoAddSuggestions } from "./AutoAddSuggestions";
 import { DictionaryTable } from "./DictionaryTable";
-import { EncoderModelCard } from "./EncoderModelCard";
 
 export function DictionarySettingsPanel() {
 	const dictionary = useSettingsStore((s) => s.settings.dictionary) ?? [];
 	const updateDictionary = useSettingsStore((s) => s.updateDictionary);
-	// When LLM cleanup is off, the dictionary is applied by the on-device encoder model — surface
-	// its (opt-in) download here. When cleanup is on, the LLM does it and the card is hidden.
-	const llmCleanupEnabled = useSettingsStore(
-		(s) => s.settings.llm?.dictation?.enabled ?? false,
-	);
 	const t = useTranslations("dictionary");
 
 	// Compute existing terms inline (React Compiler memoises this — per
@@ -77,7 +71,6 @@ export function DictionarySettingsPanel() {
 			title={t("title")}
 		>
 			<div className="flex flex-col gap-3 py-2">
-				{llmCleanupEnabled ? null : <EncoderModelCard />}
 				<AutoAddSuggestions
 					existingTerms={existingTerms}
 					onAccept={(term) => handleAdd({ term, autoAdded: true })}

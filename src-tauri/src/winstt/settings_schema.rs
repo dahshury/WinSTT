@@ -868,6 +868,11 @@ pub struct GeneralSettings {
     /// Server fuzzy-corrector max score (lower=stricter). Range 0..1. HOT-SWAP. Zod `.catch(0.18)`.
     #[serde(default = "GeneralSettings::default_word_correction_threshold")]
     pub word_correction_threshold: f64,
+    /// Master switch for the on-device (encoder) dictionary fallback + its model. When false, the
+    /// non-LLM vocabulary path is off entirely: the model is never downloaded/run and the
+    /// Vocabulary tab's dictionary is inert unless LLM cleanup is on. HOT-SWAP. Zod `.catch(true)`.
+    #[serde(default = "GeneralSettings::default_encoder_dictionary_enabled")]
+    pub encoder_dictionary_enabled: bool,
 }
 
 impl GeneralSettings {
@@ -921,6 +926,9 @@ impl GeneralSettings {
     }
     fn default_word_correction_threshold() -> f64 {
         0.18
+    }
+    fn default_encoder_dictionary_enabled() -> bool {
+        true
     }
     /// The exact seed list from the Zod schema (also used as Zod's `.catch`).
     pub fn default_context_deny_list() -> Vec<String> {
@@ -1058,6 +1066,7 @@ impl Default for GeneralSettings {
             history_max_entries: Self::default_history_max_entries(),
             recording_retention: RecordingRetention::default(),
             word_correction_threshold: Self::default_word_correction_threshold(),
+            encoder_dictionary_enabled: Self::default_encoder_dictionary_enabled(),
         }
     }
 }

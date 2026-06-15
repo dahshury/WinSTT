@@ -635,7 +635,8 @@
     "clearDescription": "Alla ordlisteposter tas bort permanent. Det går inte att ångra detta.",
     "thresholdLabel": "Korrigeringsstrikthets",
     "thresholdCaption": "Maximalt fuzzy-matchningspoäng som serversideskorrigeraren accepterar. Lägre = striktare (färre falska ersättningar).",
-    "thresholdTooltip": "Den deterministiska korrigeraren körs på servern direkt efter transkribering och FÖRE LLM-rensning. Allt den missar får ett andra steg via LLM-modifierarna."
+    "thresholdTooltip": "Den deterministiska korrigeraren körs på servern direkt efter transkribering och FÖRE LLM-rensning. Allt den missar får ett andra steg via LLM-modifierarna.",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "Kunde inte läsa in {model}",

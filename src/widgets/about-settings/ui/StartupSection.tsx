@@ -44,7 +44,7 @@ export function StartupSection({
 	const flags = readStartupFlags(general);
 	return (
 		<SettingSection icon={PowerSocket01Icon} title={t("startup")}>
-			<div className="flex flex-col divide-y divide-surface-1">
+			<div className="flex flex-col">
 				{/* Single "Start on login" switch — on launches WinSTT on sign-in,
 				    minimized straight to the tray (autoStart + startMinimized +
 				    minimizeToTray together); off disables auto-launch. The former

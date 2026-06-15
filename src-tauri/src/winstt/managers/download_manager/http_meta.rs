@@ -76,7 +76,7 @@ pub(super) fn fetch_repo_file_sizes(http: &reqwest::Client, model: &str) -> BTre
 /// `repo_path → size` map (paths normalized to forward slashes to match the download plan's keys).
 /// Siblings without a numeric `size` (e.g. a response that wasn't `?blobs=true`) are skipped, so a
 /// caller seeds only the files whose totals are actually known.
-pub(super) fn parse_sibling_sizes(body: &serde_json::Value) -> BTreeMap<String, u64> {
+pub(crate) fn parse_sibling_sizes(body: &serde_json::Value) -> BTreeMap<String, u64> {
     let mut out = BTreeMap::new();
     if let Some(siblings) = body.get("siblings").and_then(|s| s.as_array()) {
         for s in siblings {

@@ -52,18 +52,31 @@ describe("SettingsPage", () => {
 		expect(screen.getByText("Recording Mode")).toBeDefined();
 	});
 
-	test("renders settings transfer controls in the sidebar header", () => {
+	test("renders settings transfer controls in the About tab", () => {
+		useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isLoaded: true });
+		useSettingsHydrationStore.setState({ error: null, status: "unavailable" });
 		renderSettingsPage();
 
-		expect(screen.getByTestId("settings-export-button")).toBeDefined();
-		expect(screen.getByTestId("settings-import-button")).toBeDefined();
+		expect(screen.queryByTestId("settings-export-button")).toBeNull();
+		expect(screen.queryByTestId("settings-import-button")).toBeNull();
+		fireEvent.click(screen.getByRole("tab", { name: /about/i }));
+
+		expect(
+			screen.getByRole("button", { name: "Export settings" }),
+		).toBeDefined();
+		expect(
+			screen.getByRole("button", { name: "Import settings" }),
+		).toBeDefined();
 		expect(screen.queryByTestId("settings-update-button")).toBeNull();
 	});
 
 	test("requires confirmation before importing settings", () => {
+		useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isLoaded: true });
+		useSettingsHydrationStore.setState({ error: null, status: "unavailable" });
 		renderSettingsPage();
 
-		fireEvent.click(screen.getByTestId("settings-import-button"));
+		fireEvent.click(screen.getByRole("tab", { name: /about/i }));
+		fireEvent.click(screen.getByRole("button", { name: "Import settings" }));
 
 		expect(screen.getByText("Restore settings?")).toBeDefined();
 		expect(screen.getByText("Restore")).toBeDefined();

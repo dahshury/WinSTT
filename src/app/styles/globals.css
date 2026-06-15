@@ -88,6 +88,15 @@
 		inset 0 0 0 1px oklch(100% 0 0 / 0.055), 0 0 0 1px oklch(0% 0 0 / 0.65),
 		0 12px 24px 0 oklch(0% 0 0 / 0.5), 0 24px 48px 0 oklch(0% 0 0 / 0.3);
 
+	/* Sidebar active tab — a raised, beveled "plate" for the selected nav row:
+	   a pronounced top highlight (brighter than the surface scale so the
+	   selection pops), a faint bottom highlight, a hairline inner ring, and a
+	   single soft drop so the row reads as lifted off the rail. */
+	--shadow-sidebar-active:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.15),
+		inset 0 -1px 0 0 oklch(100% 0 0 / 0.06),
+		inset 0 0 0 1px oklch(100% 0 0 / 0.045), 0 1px 2px 0 oklch(0% 0 0 / 0.35);
+
 	/* Foreground — blue-tinted whites */
 	--color-foreground: oklch(94% 0.015 265);
 	--color-foreground-secondary: oklch(73% 0.025 260);
@@ -289,6 +298,261 @@
 	--color-text-secondary: var(--color-foreground-secondary);
 	--color-text-muted: var(--color-foreground-muted);
 	--color-text-dim: var(--color-foreground-dim);
+}
+
+/* Settings window chrome and sidebar visual treatment */
+@layer components {
+	.settings-window-shell {
+		/* Shared substrate behind BOTH the sidebar and the content-card gutter.
+		   Uses the same surface-1/surface-2 darkness family as the main window,
+		   with only broad, low-contrast light shaping so the gradients remain
+		   without creating a different black target beside the sidebar. */
+		background:
+			radial-gradient(
+				ellipse 120% 72% at 50% -18%,
+				oklch(15% 0.014 265 / 0.38),
+				transparent 38rem
+			),
+			linear-gradient(
+				180deg,
+				oklch(13% 0.015 265) 0%,
+				oklch(10.5% 0.015 265) 100%
+			) !important;
+	}
+
+	.settings-content-frame {
+		/* Transparent: the window substrate should flow continuously from the
+		   sidebar into the gutter around the elevated content card. */
+		background: transparent;
+	}
+
+	.settings-content-card {
+		/* Elevated tab surface aligned to the main window's surface-3 card
+		   family. Keep the center/top light bloom, but avoid drifting into a
+		   warmer/brighter charcoal than the main app targets. */
+		background:
+			radial-gradient(
+				ellipse 112% 86% at 52% 42%,
+				oklch(26% 0.013 265 / 0.52) 0%,
+				oklch(21% 0.014 265 / 0.34) 36%,
+				transparent 76%
+			),
+			radial-gradient(
+				ellipse 130% 50% at 48% -8%,
+				oklch(22.5% 0.013 265 / 0.34),
+				transparent 31rem
+			),
+			linear-gradient(
+				180deg,
+				oklch(17% 0.015 265) 0%,
+				oklch(14% 0.015 265) 100%
+			) !important;
+	}
+
+	.settings-content-card::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		background:
+			radial-gradient(
+				ellipse 78% 46% at 50% 44%,
+				oklch(30% 0.012 265 / 0.14),
+				transparent 70%
+			),
+			linear-gradient(
+				180deg,
+				oklch(100% 0 0 / 0.035) 0%,
+				transparent 15rem
+			);
+	}
+
+	.settings-sidebar-shell {
+		isolation: isolate;
+		/* Transparent — the window substrate (`.settings-window-shell`, a ~#101216
+		   gradient) shows straight through, so the rail and the gutter framing the
+		   content card read as ONE continuous dark field. No own background, no
+		   right-edge seam, no drop shadow; window-wide noise (`.noise-overlay`)
+		   already covers it, so no separate noise layer either. The content card
+		   is the only thing that lifts above this substrate. */
+		background: transparent;
+	}
+
+	.settings-sidebar-shell::before {
+		content: "";
+		position: absolute;
+		inset: 0 -2.25rem 0 0;
+		z-index: 0;
+		pointer-events: none;
+		background:
+			radial-gradient(
+				ellipse 135% 58% at 40% -8%,
+				oklch(24% 0.014 265 / 0.62),
+				oklch(17.5% 0.014 265 / 0.24) 46%,
+				transparent 25rem
+			),
+			radial-gradient(
+				ellipse 96% 72% at 36% 42%,
+				oklch(20% 0.014 265 / 0.48),
+				oklch(14% 0.015 265 / 0.26) 50%,
+				transparent 24rem
+			),
+			linear-gradient(
+				90deg,
+				oklch(15.5% 0.015 265 / 0.98) 0%,
+				oklch(13% 0.015 265 / 0.9) 58%,
+				oklch(11.5% 0.015 265 / 0.42) 84%,
+				transparent 100%
+			),
+			linear-gradient(
+				180deg,
+				oklch(14.2% 0.015 265 / 0.96) 0%,
+				oklch(10% 0.015 265 / 0.92) 100%
+			);
+		mask-image: linear-gradient(90deg, #000 0%, #000 88%, transparent 100%);
+		-webkit-mask-image: linear-gradient(
+			90deg,
+			#000 0%,
+			#000 88%,
+			transparent 100%
+		);
+	}
+
+	.settings-sidebar-shell > * {
+		position: relative;
+		z-index: 1;
+	}
+
+	.settings-sidebar-title {
+		color: oklch(72% 0.02 265 / 0.82);
+		font-size: 0.74rem;
+		letter-spacing: 0.14em;
+		line-height: 1;
+	}
+
+	.settings-sidebar-icon-button {
+		width: 2rem;
+		height: 2rem;
+		border-radius: 0.8rem;
+		color: oklch(66% 0.025 265 / 0.72);
+	}
+
+	.settings-sidebar-icon-button:hover {
+		background: oklch(100% 0 0 / 0.07);
+		box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.06);
+	}
+
+	.settings-sidebar-icon-button:active {
+		background: oklch(100% 0 0 / 0.09);
+	}
+
+	.settings-sidebar-search-input {
+		height: 2.5rem;
+		border-color: oklch(100% 0 0 / 0.08);
+		border-radius: 1rem;
+		background: linear-gradient(
+			180deg,
+			oklch(24% 0.012 265 / 0.58),
+			oklch(16% 0.014 265 / 0.92)
+		) !important;
+		box-shadow:
+			inset 0 1px 0 oklch(100% 0 0 / 0.07),
+			0 0 0 1px oklch(0% 0 0 / 0.18) !important;
+	}
+
+	.settings-sidebar-list {
+		gap: 0.35rem;
+	}
+
+	.settings-sidebar-list [data-settings-search-result] {
+		gap: 0.35rem;
+	}
+
+	.settings-sidebar-separator {
+		width: calc(100% - 1.5rem);
+		height: 1px;
+		margin: 0.48rem 0.75rem 0.42rem;
+		background: linear-gradient(
+			90deg,
+			transparent 0%,
+			oklch(100% 0 0 / 0.13) 18%,
+			oklch(100% 0 0 / 0.2) 50%,
+			oklch(100% 0 0 / 0.1) 82%,
+			transparent 100%
+		);
+		box-shadow: 0 1px 0 oklch(0% 0 0 / 0.36);
+	}
+
+	/* Every row shares one fixed height. The active row is NOT taller and the
+	   label/icon metrics stay identical, so selecting a tab cannot resize it. */
+	.settings-sidebar-tab {
+		width: 100%;
+		height: 2.4rem;
+		min-height: 2.4rem;
+		border-radius: var(--radius-lg);
+		color: oklch(63% 0.025 265 / 0.72);
+	}
+
+	.settings-sidebar-tab:hover {
+		background: oklch(100% 0 0 / 0.04);
+		color: oklch(78% 0.02 265 / 0.9);
+	}
+
+	/* Active row — a raised, beveled plate using the same rounded-lg corner
+	   language as the settings dropdown triggers. Sampled targets: body ≈
+	   #252529 (oklch 25.5%), top dome ≈ #39393d (oklch 34% via a broad,
+	   centered radial), with a crisp light hairline ring so the plate reads as
+	   lifted a step above the charcoal panel. */
+	.settings-sidebar-tab[data-active] {
+		color: oklch(98% 0 0);
+		background:
+			radial-gradient(
+				ellipse 96% 130% at 50% -24%,
+				oklch(40% 0.006 265),
+				oklch(32% 0.007 265) 40%,
+				oklch(26.5% 0.008 265) 74%,
+				oklch(25.5% 0.008 265)
+			),
+			linear-gradient(180deg, oklch(28% 0.008 265), oklch(24.5% 0.009 265));
+		box-shadow:
+			inset 0 1px 0 oklch(100% 0 0 / 0.14),
+			inset 0 0 0 1px oklch(64% 0.006 265 / 0.46),
+			inset 0 -2px 4px oklch(0% 0 0 / 0.3),
+			0 2px 6px oklch(0% 0 0 / 0.5),
+			0 16px 34px oklch(0% 0 0 / 0.28);
+	}
+
+	.settings-sidebar-tab[data-active]:hover {
+		background:
+			radial-gradient(
+				ellipse 96% 130% at 50% -24%,
+				oklch(42% 0.006 265),
+				oklch(33% 0.007 265) 40%,
+				oklch(27.5% 0.008 265) 74%,
+				oklch(26.5% 0.008 265)
+			),
+			linear-gradient(180deg, oklch(29% 0.008 265), oklch(25.5% 0.009 265));
+	}
+
+	.settings-sidebar-tab-icon {
+		color: currentColor !important;
+		opacity: 0.92;
+	}
+
+	.settings-sidebar-tab-label {
+		color: currentColor;
+		font-size: 0.95rem;
+		font-weight: 620;
+		letter-spacing: 0;
+		line-height: 1.1;
+		transition: color 0.18s ease;
+	}
+
+	.settings-sidebar-tab-collapsed {
+		/* Square icon button that fits the 56px collapsed rail (≈40px inner). The
+		   base row's min-height supplies the matching height. */
+		width: 2.4rem;
+	}
 }
 
 /* ── Keyframes (top-level, referenced by @theme --animate-* tokens) ── */

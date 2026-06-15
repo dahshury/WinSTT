@@ -162,9 +162,7 @@ fn run_context_fixtures(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_context_fixtures(
-    source: &str,
-) -> Result<Vec<ContextFixture>, Box<dyn std::error::Error>> {
+fn parse_context_fixtures(source: &str) -> Result<Vec<ContextFixture>, Box<dyn std::error::Error>> {
     let blocks = extract_ts_object_blocks(source, "APP_FIXTURES")?;
     let mut fixtures = Vec::with_capacity(blocks.len());
     for (i, block) in blocks.iter().enumerate() {
@@ -444,6 +442,8 @@ fn fixture_label(fixture: &ContextFixture) -> String {
         "codex".to_string()
     } else if app.contains("claude") {
         "claude".to_string()
+    } else if app.contains("gemini") {
+        "gemini".to_string()
     } else if app.contains("instagram") {
         "facebook-messenger".to_string()
     } else if fixture.surface_type == "chat" {
@@ -823,7 +823,9 @@ fn min_context_lines(label: &str) -> usize {
         "gmail" => 5,
         "discord" | "facebook-messenger" | "slack" | "whatsapp" => 4,
         "facebook-main" | "x" => 4,
-        "codex" | "claude" => 3,
+        // AI-chat family (ChatGPT/Codex, Claude, Gemini): a single recovered turn
+        // can be one long line, so the line floor is lower than a chat thread.
+        "codex" | "claude" | "gemini" => 3,
         _ => 2,
     }
 }
@@ -833,14 +835,14 @@ fn min_context_chars(label: &str) -> usize {
         "gmail" => 400,
         "discord" | "facebook-messenger" | "slack" | "whatsapp" => 250,
         "facebook-main" | "x" => 250,
-        "codex" | "claude" => 180,
+        "codex" | "claude" | "gemini" => 180,
         _ => 120,
     }
 }
 
 fn min_speaker_lines(label: &str) -> usize {
     match label {
-        "gmail" | "codex" | "claude" => 1,
+        "gmail" | "codex" | "claude" | "gemini" => 1,
         "facebook-main" | "x" => 1,
         _ => 2,
     }
@@ -857,6 +859,7 @@ fn is_chat_like_label(label: &str) -> bool {
             | "x"
             | "codex"
             | "claude"
+            | "gemini"
     )
 }
 
@@ -1006,8 +1009,13 @@ mod tests {
         assert_eq!(report["quality"]["replyContextReady"], true);
     }
 
+    // The formatter now applies an UNCONDITIONAL final secret-code scrub, so an
+    // OTP / verification code is removed from the prompt BEFORE it ever reaches
+    // this report. The downstream "otp noise" detector is a belt-and-suspenders
+    // net — with the scrub upstream, the prompt is already clean, so this test
+    // proves the stronger guarantee: the code and its announcing phrase are gone.
     #[test]
-    fn smoke_rejects_otp_noise_as_usable_payload() {
+    fn smoke_scrubs_otp_code_before_it_reaches_the_prompt() {
         let raw = json!({
             "windowTitle": "Security notice - Gmail",
             "elementName": "Message Body",
@@ -1018,15 +1026,30 @@ mod tests {
         })
         .to_string();
 
+        let snapshot = parse_snapshot(&raw);
+        let prompt = format_context_for_prompt(&snapshot);
+        let prompt_json: Result<Value, _> = serde_json::from_str(&prompt);
+        let context_text = prompt_context_text(&prompt_json);
+
+        // Valid JSON, but the code and the OTP phrasing are gone.
+        assert!(prompt_json.is_ok());
+        assert!(!context_text.contains("123456"), "OTP code leaked: {context_text}");
+        assert!(
+            !context_text.to_lowercase().contains("verification code"),
+            "OTP phrase leaked: {context_text}"
+        );
+        assert!(
+            !context_text.to_lowercase().contains("one-time code"),
+            "OTP phrase leaked: {context_text}"
+        );
+        // The benign tail of the message survives.
+        assert!(context_text.contains("Do not share it"), "{context_text}");
+
+        // And the downstream report now sees NO otp noise (it was scrubbed).
         let report = report_for_raw(&raw, "gmail");
         assert_eq!(report["promptJsonValid"], true);
-        assert_eq!(report["quality"]["contextPayloadUsable"], false);
-        assert!(report["quality"]["warnings"]
-            .as_array()
-            .unwrap()
-            .contains(&Value::String(
-                "otp_or_login_code_noise_detected".to_string()
-            )));
+        assert_eq!(report["privacySignals"]["otpNoiseWordCount"], 0);
+        assert_eq!(report["privacySignals"]["sixDigitCodeLikeCount"], 0);
     }
 
     #[test]

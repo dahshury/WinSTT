@@ -119,8 +119,11 @@ fn word_spans(text: &str) -> Vec<(usize, usize)> {
 /// closest-edit, so e.g. "oh llama" beats the 1-word "llama" for "ollama".
 pub fn candidates(text: &str, terms: &[String]) -> Vec<Candidate> {
     let words = word_spans(text);
-    let term_norms: Vec<(String, &String)> =
-        terms.iter().map(|t| (normalize(t), t)).filter(|(n, _)| !n.is_empty()).collect();
+    let term_norms: Vec<(String, &String)> = terms
+        .iter()
+        .map(|t| (normalize(t), t))
+        .filter(|(n, _)| !n.is_empty())
+        .collect();
     let mut out: Vec<Candidate> = Vec::new();
     for (tnorm, term) in &term_norms {
         for n in (1..=2).rev() {
@@ -180,7 +183,10 @@ mod tests {
         let c = candidates("run it with oh llama tonight", &["ollama".to_string()]);
         assert!(!c.is_empty());
         assert_eq!(c[0].words, 2);
-        assert_eq!(&"run it with oh llama tonight"[c[0].start..c[0].end], "oh llama");
+        assert_eq!(
+            &"run it with oh llama tonight"[c[0].start..c[0].end],
+            "oh llama"
+        );
     }
 
     #[test]

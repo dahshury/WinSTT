@@ -26,13 +26,18 @@ import {
 	useSettingsHydrationStore,
 } from "@/features/update-settings";
 import { settingsWindowReady, windowCloseSelf } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
 import { Elevated, SurfaceProvider } from "@/shared/lib/surface";
 import { useTouchActivation } from "@/shared/lib/use-touch-activation";
 import { useEscapeToClose } from "@/shared/lib/window-effects";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { AboutSettingsPanel } from "@/widgets/about-settings";
 import { AppearanceSettingsPanel } from "@/widgets/appearance-settings";
-import { DictionarySettingsPanel } from "@/widgets/dictionary-settings";
+import {
+	DictionarySettingsPanel,
+	EncoderModelCard,
+	useEncoderModel,
+} from "@/widgets/dictionary-settings";
 import { IntegrationsSettingsPanel } from "@/widgets/integrations-settings";
 import { LlmSettingsPanel } from "@/widgets/llm-settings";
 import { ModelSettingsPanel } from "@/widgets/model-settings";
@@ -50,6 +55,62 @@ import { TtsModelPickerHost, TtsModelSection } from "@/widgets/tts-settings";
 import { useSettingsSearchKeywords } from "../lib/settings-search";
 import { SettingsSidebar, type SidebarLink } from "./SettingsSidebar";
 
+// Composes the Dictionary + Snippets ("vocabulary") tab. The dictionary works with OR without LLM
+// cleanup: the LLM owns it when cleanup is on, otherwise the on-device encoder model does (when the
+// user has it both enabled and downloaded). The encoder card carries the master on/off switch —
+// turning it off disables the feature and removes the model. When neither path can act, the editing
+// UI is disabled (greyed + inert), leaving only the encoder card interactive.
+function VocabularyTab(): ReactNode {
+	const llmCleanupEnabled = useSettingsStore(
+		(s) => s.settings.llm?.dictation?.enabled ?? false,
+	);
+	const encoderEnabled = useSettingsStore(
+		(s) => s.settings.general?.encoderDictionaryEnabled ?? true,
+	);
+	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
+	const model = useEncoderModel();
+	const handleEncoderToggle = useCallback(
+		(next: boolean) => {
+			// Enable/disable only — the downloaded model stays on disk so re-enabling is instant.
+			// Deleting it (to reclaim ~310 MB) is an explicit action via the card's trash button.
+			updateGeneral({ encoderDictionaryEnabled: next });
+			// Preload + warm immediately on enable so the first dictation is fast; drop it from
+			// memory on disable to free the session it was holding. Both no-op if not downloaded.
+			if (next) {
+				model.preload();
+			} else {
+				model.unload();
+			}
+		},
+		[updateGeneral, model],
+	);
+	// The non-LLM path can act only when the feature is on AND the model is present.
+	const encoderActive = encoderEnabled && model.state === "present";
+	const disabled =
+		!llmCleanupEnabled && !encoderActive && model.state !== "loading";
+	return (
+		<>
+			{llmCleanupEnabled ? null : (
+				<EncoderModelCard
+					enabled={encoderEnabled}
+					model={model}
+					onToggle={handleEncoderToggle}
+				/>
+			)}
+			<div
+				className={cn(
+					!llmCleanupEnabled && "pt-5",
+					disabled && "pointer-events-none select-none opacity-50",
+				)}
+				{...(disabled ? { inert: true } : {})}
+			>
+				<DictionarySettingsPanel />
+				<SnippetsSettingsPanel />
+			</div>
+		</>
+	);
+}
+
 function SettingsPanelContent({ tab }: { tab: string }): ReactNode {
 	switch (tab) {
 		case "recording":
@@ -64,14 +125,7 @@ function SettingsPanelContent({ tab }: { tab: string }): ReactNode {
 				</>
 			);
 		case "vocabulary":
-			// Works with OR without LLM cleanup: the LLM owns the dictionary when cleanup is on,
-			// otherwise the on-device masked-LM encoder fallback handles it (backend).
-			return (
-				<>
-					<DictionarySettingsPanel />
-					<SnippetsSettingsPanel />
-				</>
-			);
+			return <VocabularyTab />;
 		case "output":
 			return (
 				<>
@@ -274,7 +328,7 @@ export function SettingsPage() {
 
 	return (
 		<SurfaceProvider value={1}>
-			<div className="noise-overlay flex h-dvh min-h-dvh bg-surface-1">
+			<div className="noise-overlay settings-window-shell flex h-dvh min-h-dvh bg-surface-1">
 				{/* Keep the settings shell visible while backend settings hydrate. */}
 				<Tabs.Root
 					className="flex flex-1 overflow-hidden"
@@ -283,14 +337,9 @@ export function SettingsPage() {
 					value={activeTab}
 				>
 					<SettingsSidebar links={links} />
-					{/* Content card — a rounded, shadowed panel inset on top/end/bottom
-						    so the surface-1 substrate frames it without wasting vertical space.
-						    The sidebar reads as built into the window while each tab's content
-						    floats a layer above.
-						    Lifts to surface-3 (a clear ~8% step above the surface-1 sidebar) so
-						    the colour difference is obvious; nested SettingSection controls lift
-						    from there as usual. */}
-					<div className="relative min-w-0 flex-1 py-1.5 pe-1.5">
+					{/* Content card — rounded, bordered, and elevated above the shared
+						    settings background. */}
+					<div className="settings-content-frame relative min-w-0 flex-1 py-2 pe-2">
 						{/* Drag strip — the thin surface-1 margin above the content card. The
 							    window is frameless, so this gives the right (content) side a grab
 							    handle that lines up with the sidebar's own top drag strip, making
@@ -300,7 +349,7 @@ export function SettingsPage() {
 							className="titlebar-drag absolute inset-x-0 top-0 z-titlebar h-1.5"
 						/>
 						<Elevated
-							className="relative flex h-full flex-col overflow-hidden rounded-xl ring-1 ring-divider-strong"
+							className="settings-content-card relative flex h-full flex-col overflow-hidden rounded-[1.35rem] ring-1 ring-divider-strong"
 							offset={2}
 							shadowLevel={5}
 						>

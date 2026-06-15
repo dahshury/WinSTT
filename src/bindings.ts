@@ -1088,6 +1088,77 @@ async deleteModelCache(modelId: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async encoderDictStatus() : Promise<EncoderDownloadStatus> {
+    return await TAURI_INVOKE("encoder_dict_status");
+},
+async encoderDictDownloadStart() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("encoder_dict_download_start") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async encoderDictDownloadPause() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("encoder_dict_download_pause") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async encoderDictDownloadResume() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("encoder_dict_download_resume") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async encoderDictDownloadCancel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("encoder_dict_download_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Delete the downloaded model from disk (and drop it from memory) — used when the user turns the
+ * on-device dictionary feature off.
+ */
+async encoderDictRemove() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("encoder_dict_remove") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Preload + warm the model in the background (no-op if not downloaded yet). Called when the user
+ * turns the feature on, so the first dictation is fast instead of cold-loading.
+ */
+async encoderDictPreload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("encoder_dict_preload") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Drop the loaded model from memory (keeps the files on disk) — called when the user turns the
+ * feature off, to free the ~310 MB session it was holding.
+ */
+async encoderDictUnload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("encoder_dict_unload") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * `get_runtime_info` — the active EP + loaded-model snapshot the GPU/CPU chip and the active-model
  * reconciliation (`useSyncActiveModel`) read. Reads the loaded model from the TranscriptionManager
@@ -2233,6 +2304,14 @@ export type DroppedFile = { filePath: string; fileName?: string }
  */
 export type EffortLevel = "low" | "medium" | "high"
 /**
+ * Current download status for the UI (mirrors the `encoder-dict:download-progress` payload).
+ */
+export type EncoderDownloadStatus = {
+/**
+ * "absent" | "downloading" | "paused" | "present"
+ */
+state: string; progress: number; downloadedBytes: number; totalBytes: number; speedBps: number }
+/**
  * `general.fileTranscriptionSaveLocation`. `auto` = beside source, `ask` = dialog.
  */
 export type FileSaveLocation = "auto" | "ask"
@@ -2430,7 +2509,13 @@ recordingRetention?: RecordingRetention;
 /**
  * Server fuzzy-corrector max score (lower=stricter). Range 0..1. HOT-SWAP. Zod `.catch(0.18)`.
  */
-wordCorrectionThreshold?: number }
+wordCorrectionThreshold?: number;
+/**
+ * Master switch for the on-device (encoder) dictionary fallback + its model. When false, the
+ * non-LLM vocabulary path is off entirely: the model is never downloaded/run and the
+ * Vocabulary tab's dictionary is inert unless LLM cleanup is on. HOT-SWAP. Zod `.catch(true)`.
+ */
+encoderDictionaryEnabled?: boolean }
 export type GlobalSettings = {
 /**
  * Idle-unload policy shared by local STT, realtime preview, local TTS, and

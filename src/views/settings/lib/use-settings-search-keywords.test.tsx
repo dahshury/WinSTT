@@ -61,6 +61,12 @@ describe("useSettingsSearchKeywords (real i18n wiring)", () => {
 		expect(matchesSearchQuery(kw("shortcuts"), "configuration")).toBe(true);
 	});
 
+	test("About keywords surface settings import/export actions", () => {
+		const about = kw("about");
+		expect(matchesSearchQuery(about, "export")).toBe(true);
+		expect(matchesSearchQuery(about, "import")).toBe(true);
+	});
+
 	test("every tab has a non-empty keyword string", () => {
 		for (const tab of [
 			"recording",

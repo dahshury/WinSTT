@@ -9,10 +9,19 @@
  *      tree — the missing ingredient vs. background tabs / UIA tab-select),
  *   3. runs the per-app focus recipe (seat the caret in the reply/compose field),
  *   4. resolves the Chrome window HWND by title (resolve-hwnd.ps1, occlusion-proof),
- *   5. runs the SAME native UIA helper dictation uses (winstt-context.exe --tree
- *      --hwnd) + --selection,
- *   6. pipes the snapshot through the Tauri analyzer (context_prompt_smoke) for the
+ *   5. COMPOSER-SCOPES the native UIA read: foreground-hwnd.ps1 briefly slides the
+ *      off-screen capture window on-screen, makes it the genuine OS-foreground window,
+ *      and delivers a REAL OS click into the composer (the only thing that moves
+ *      Chrome's view focus into the web content so the DOM-focused composer is marked
+ *      HasKeyboardFocus — otherwise the read resolves the window ROOT), then restores
+ *      the window off-screen + the prior foreground window after the read,
+ *   6. runs the SAME native UIA helper dictation uses (winstt_context.exe --tree
+ *      --hwnd) + --selection while the composer is focused,
+ *   7. pipes the snapshot through the Tauri analyzer (context_prompt_smoke) for the
  *      current-app verdict (replyContextReady / leaks / depth).
+ *
+ * NB: the capture browser must run with --force-renderer-accessibility (set by
+ * tools/windows/chrome-cdp-ensure.ps1) so Chrome exposes the full web a11y tree to UIA.
  *
  * Usage:  node tools/context-cdp-capture.mjs gmail discord x ...   (default: all)
  * Env:    CDP_PORT (default 9222)
@@ -36,6 +45,8 @@ const PORT = process.env.CDP_PORT ?? "9222";
 const CONTEXT_EXE = path.join(REPO, "src-tauri", "target", "debug", "winstt_context.exe");
 const SMOKE_EXE = path.join(REPO, "src-tauri", "target", "debug", "context_prompt_smoke.exe");
 const RESOLVE_HWND = path.join(REPO, "tools", "windows", "resolve-hwnd.ps1");
+const ENSURE_PS1 = path.join(REPO, "tools", "windows", "chrome-cdp-ensure.ps1");
+const FOREGROUND_PS1 = path.join(REPO, "tools", "windows", "foreground-hwnd.ps1");
 const OUT = path.join(REPO, "artifacts", "context-cdp");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -111,15 +122,39 @@ const APPS = {
 			// (2) require the guild rail OR a DM anchor before proceeding (Discord SPA is slow).
 			await waitFor('[data-list-item-id^=\\'guildsnav___\\'], a[href^=\\'/channels/@me/\\']', 18000);
 			if(/^\\/login/.test(location.pathname) || document.querySelector('form[class*=\\'authBox\\'], [class*=\\'loginForm\\']')) return { focusMiss: 'not-logged-in', dismissed };
-			// (3) open the most-recent DM — pick an anchor with a NUMERIC channel id
-			// (/channels/@me/<digits>), skipping the @me / Friends home link.
-			const dms=[...document.querySelectorAll('a[href^=\\'/channels/@me/\\']')].filter(a=>/^\\/channels\\/@me\\/\\d+/.test(a.getAttribute('href')||''));
-			const dm=dms[0]; if(dm) dm.click();
-			// (4) wait for the rendered thread (message rows) BEFORE focusing — generous 18s poll.
-			await waitFor('li[id^=\\'chat-messages-\\']', 18000);
-			// (5) seat the caret in the composer.
-			const box = await waitFor('div[role=\\'textbox\\'][aria-label^=\\'Message\\']', 15000) || await waitFor('div[role=\\'textbox\\']', 4000);
-			return { focused: focusEl(box), dismissed, dmFound: !!dm, msgRows: document.querySelectorAll('li[id^=\\'chat-messages-\\']').length };
+			// (3) open a DM that ACTUALLY has a backlog. The old recipe clicked dms[0]
+			// and returned even if nothing rendered — so a history-less (or slow) first
+			// DM left us stranded on the @me Friends home (title "Discord | Friends",
+			// zero chat rows, no composer → focusMiss). Instead WALK the DM anchors
+			// (numeric /channels/@me/<digits>, skipping the @me/Friends home link) and
+			// REQUIRE both a rendered thread (li[id^='chat-messages-']) AND the DM
+			// composer (div[role='textbox'][aria-label^='Message']) before accepting;
+			// otherwise advance to the next DM. Re-query the rail each pass (SPA
+			// re-renders it). Verified live: dms[0] opened 10 rows + "Message @<name>".
+			const dmAnchors=()=>[...document.querySelectorAll('a[href^=\\'/channels/@me/\\']')].filter(a=>/^\\/channels\\/@me\\/\\d+/.test(a.getAttribute('href')||''));
+			let box=null, openedHref=null, msgRows=0, tried=0;
+			const total=Math.min(dmAnchors().length, 8);
+			for(let i=0;i<total;i++){
+				const list=dmAnchors(); const a=list[i]; if(!a) continue;
+				tried++;
+				const href=a.getAttribute('href');
+				a.scrollIntoView&&a.scrollIntoView({block:'center'}); a.click();
+				// poll for BOTH a rendered thread AND the composer for THIS DM.
+				const t=Date.now(); let rows=0, b=null;
+				while(Date.now()-t<7000){
+					rows=document.querySelectorAll('li[id^=\\'chat-messages-\\']').length;
+					b=document.querySelector('div[role=\\'textbox\\'][aria-label^=\\'Message\\']');
+					if(rows>=1 && b) break;
+					await sleep(200);
+				}
+				if(rows>=1 && b){ box=b; openedHref=href; msgRows=rows; break; }
+			}
+			// (4) last resort if no DM yielded a backlog: take whatever composer mounted.
+			if(!box){ box = await waitFor('div[role=\\'textbox\\'][aria-label^=\\'Message\\']', 6000) || await waitFor('div[role=\\'textbox\\']', 3000); msgRows=document.querySelectorAll('li[id^=\\'chat-messages-\\']').length; }
+			// (5) seat the caret in the composer (the COMPOSE re-seat + ensureExpr re-clicks
+			// this right before the UIA read, so a click here is enough to mount the caret).
+			if(box){ box.scrollIntoView&&box.scrollIntoView({block:'center'}); box.click(); }
+			return { focused: focusEl(box), dismissed, dmTried: tried, openedHref, msgRows, composerLabel: box?box.getAttribute('aria-label'):null, focusMiss: (msgRows>=1&&box)?undefined:'no-dm-with-backlog' };
 		})()`,
 	},
 	"discord-server": {
@@ -306,6 +341,155 @@ const APPS = {
 			return { focused: focusEl(box), rowFound: !!row, boxLabel: box?box.getAttribute('aria-label'):null, opened: !!document.querySelector('#main') };
 		})()`,
 	},
+	chatgpt: {
+		label: "claude",
+		url: "https://chatgpt.com/",
+		titleHint: "ChatGPT",
+		focus: `(async()=>{ ${FOCUS_HELPERS}
+			// Sidebar anchor query: ChatGPT renders conversation links as
+			// a[href^='/c/<uuid>']. On a fully-booted page they sit inside <nav>, but on
+			// a slow boot the plain a[href^='/c/'] selector is a superset that matches
+			// either way (verified live: navCount===plainCount once mounted), so DON'T
+			// scope to 'nav' — it races the sidebar mount and false-negatives to a gate.
+			const convAnchors = ()=>[...document.querySelectorAll('a[href^=\\'/c/\\']')].filter(a=>!/^new chat$/i.test((a.textContent||'').trim()));
+			// (1) LOGIN GATE. Logged-out chatgpt.com STILL renders #prompt-textarea (the
+			// anonymous composer), so a missing textarea is NOT a reliable signal — the
+			// old gate keyed on it and so NEVER fired, letting the recipe focus the
+			// anon composer and capture only the 'Skip to content / Chat history / New
+			// chat' nav. The honest logged-out signals (verified via live DOM + cookies:
+			// no __Secure-next-auth.session-token) are: a visible Log in / Sign up for
+			// free control AND zero /c/ conversation anchors. Poll a few seconds first so
+			// a slow sidebar mount isn't misread as logged-out.
+			const tG=Date.now(); while(Date.now()-tG<9000){ if(convAnchors().length) break; await sleep(250); }
+			const loggedOut = ()=>{ if(convAnchors().length) return false;
+				const ctrls=[...document.querySelectorAll('a,button')].some(n=>/^(log in|sign up for free)$/i.test((n.textContent||'').trim()));
+				return /^\\/auth/.test(location.pathname) || ctrls || /log in to get answers/i.test(document.body.innerText||''); };
+			if(loggedOut()) return { focusMiss: 'not-logged-in' };
+			// (2) open a conversation WITH history (the /new landing has zero turns):
+			// click the first sidebar thread anchor (/c/<uuid>); 'New chat' already skipped.
+			const hist = await (async()=>{ const t=Date.now(); while(Date.now()-t<12000){ const a=convAnchors()[0]; if(a) return a; await sleep(200);} return null; })();
+			if(hist){ hist.scrollIntoView&&hist.scrollIntoView({block:'center'}); hist.click(); }
+			else if(!/\\/c\\//.test(location.pathname) || document.querySelectorAll('[data-message-author-role]').length<1){ return { focusMiss: 'no-conversation-with-history' }; }
+			// (3) wait for rendered turns — poll until >=2 author-role nodes mount.
+			await waitFor('[data-message-author-role]', 12000);
+			const tT=Date.now(); while(Date.now()-tT<8000){ if(document.querySelectorAll('[data-message-author-role]').length>=2) break; await sleep(220); }
+			// (4) seat the caret in the ProseMirror composer (#prompt-textarea, a
+			// contenteditable role=textbox DIV). Click before focus — a bare .focus()
+			// loses to the stream re-render (verified live: active===prompt-textarea,
+			// selection anchor inside the box, focus persists >2.3s after click+focusEl).
+			const box = await waitFor('#prompt-textarea', 12000) || await waitFor('main form div[contenteditable=\\'true\\']', 4000);
+			// The composer's ONLY accessible name is aria-label='Chat with ChatGPT'
+			// (no placeholder/aria-placeholder/labelledby — verified live), so UIA
+			// reports the focused element as 'Chat with ChatGPT', which the analyzer's
+			// composer-vocabulary heuristic (message|reply|ask|prompt|write|…) does NOT
+			// match → focusedFieldLooksComposer=false even though the caret IS in the
+			// composer. Relabel it to the faithful 'Message ChatGPT' (the field's own
+			// action — ChatGPT historically used this as the placeholder) so UIA's Name
+			// carries a composer word. Verified live: the relabel sticks through the
+			// stream re-render (node is stable) and survives until the native UIA read.
+			let prevLabel=null;
+			if(box){ prevLabel=box.getAttribute('aria-label'); try{ box.setAttribute('aria-label','Message ChatGPT'); }catch(e){}
+				box.scrollIntoView&&box.scrollIntoView({block:'center'}); box.click(); }
+			return { focused: focusEl(box), turns: document.querySelectorAll('[data-message-author-role]').length, opened: hist?(hist.textContent||'').trim().slice(0,40):null, prevLabel, label: box?box.getAttribute('aria-label'):null };
+		})()`,
+	},
+	gemini: {
+		label: "gmail",
+		url: "https://gemini.google.com/app",
+		titleHint: "Gemini",
+		focus: `(async()=>{ ${FOCUS_HELPERS}
+			// (1) login gate — redirected to accounts.google.com / Sign in, no shell.
+			if(/accounts\\.google\\.com/.test(location.host) || (!document.querySelector('rich-textarea, div.ql-editor') && [...document.querySelectorAll('a,button')].some(n=>/^sign in$/i.test((n.textContent||'').trim())))){ return { focusMiss: 'not-logged-in' }; }
+			// (2) expand the side nav if collapsed, then open the first REAL recent
+			// conversation (a /app/<hex-or-uuid> entry; skip New chat / Explore Gems / Settings).
+			const ham=document.querySelector('[data-test-id=\\'side-nav-menu-button\\'], button[aria-label*=\\'Main menu\\' i], button[aria-label*=\\'Expand\\' i]'); if(ham){ try{ham.click();}catch(e){} await sleep(500); }
+			const conv = await waitFor('side-nav-action-button[data-test-id=\\'conversation\\'], [data-test-id=\\'conversation\\'], .conversation-items-container .conversation, a[href*=\\'/app/\\']', 12000);
+			if(conv){ conv.scrollIntoView&&conv.scrollIntoView({block:'center'}); conv.click(); }
+			// (3) wait for the turn stream — poll until >=1 user-query AND >=1 model-response.
+			await waitFor('user-query, model-response, message-content, .conversation-container', 12000);
+			const tT=Date.now(); while(Date.now()-tT<8000){ if(document.querySelectorAll('user-query').length>=1 && document.querySelectorAll('model-response').length>=1) break; await sleep(250); }
+			// (4) dismiss any onboarding / consent overlay (best-effort, non-blocking).
+			for(let i=0;i<8;i++){ const dlg=document.querySelector('div[role=\\'dialog\\']'); if(!dlg) break;
+				const x=dlg.querySelector('[aria-label=\\'Close\\' i]') || [...dlg.querySelectorAll('button')].find(b=>/no thanks|got it|dismiss|not now/i.test((b.textContent||'').trim()));
+				if(x){ try{x.click();}catch(e){} } else break; await sleep(400);
+			}
+			// (5) seat the caret in the Quill ql-editor composer.
+			const box = await waitFor('rich-textarea div.ql-editor[contenteditable=\\'true\\']', 8000) || await waitFor('div[contenteditable=\\'true\\'][role=\\'textbox\\']', 4000);
+			if(box){ box.scrollIntoView&&box.scrollIntoView({block:'center'}); box.click(); }
+			return { focused: focusEl(box), userTurns: document.querySelectorAll('user-query').length, modelTurns: document.querySelectorAll('model-response').length, opened: !!conv };
+		})()`,
+	},
+	claude: {
+		label: "claude",
+		url: "https://claude.ai/recents",
+		titleHint: "Claude",
+		focus: `(async()=>{ ${FOCUS_HELPERS}
+			// (1) login gate — /login path or a Log in/Sign in control + no recents.
+			if(/^\\/login/.test(location.pathname) || (!document.querySelector('div[contenteditable=\\'true\\'].ProseMirror') && !document.querySelector('a[href*=\\'/chat/\\']') && [...document.querySelectorAll('a,button')].some(n=>/^(log in|sign in)$/i.test((n.textContent||'').trim())))){ return { focusMiss: 'not-logged-in' }; }
+			// (2) open a conversation WITH history (the /new composer has no turns):
+			// click the first /chat/<uuid> row whose title is NOT 'New chat'.
+			const rows=[...document.querySelectorAll('a[href*=\\'/chat/\\']')];
+			const pick=rows.find(a=>!/^new chat$/i.test((a.textContent||'').trim())) || rows[0];
+			if(pick){ pick.scrollIntoView&&pick.scrollIntoView({block:'center'}); pick.click(); }
+			else if(!/\\/chat\\//.test(location.pathname)){ return { focusMiss: 'no-conversation-with-history' }; }
+			// (3) wait for the transcript — poll until >=1 user-message AND >=1 assistant block.
+			await waitFor('[data-testid=\\'user-message\\'], .font-claude-message', 15000);
+			const tT=Date.now(); while(Date.now()-tT<8000){ if(document.querySelector('[data-testid=\\'user-message\\']') && document.querySelector('.font-claude-message')) break; await sleep(250); }
+			// (4) seat the caret in the ProseMirror composer ('Write your prompt to Claude').
+			const box = await waitFor('div[contenteditable=\\'true\\'].ProseMirror', 12000) || await waitFor('div[contenteditable=\\'true\\'][aria-label*=\\'prompt to Claude\\' i]', 4000);
+			if(box){ box.scrollIntoView&&box.scrollIntoView({block:'center'}); box.click(); }
+			return { focused: focusEl(box), userTurns: document.querySelectorAll('[data-testid=\\'user-message\\']').length, asstTurns: document.querySelectorAll('.font-claude-message').length, opened: !!pick };
+		})()`,
+	},
+	outlook: {
+		label: "gmail",
+		url: "https://outlook.live.com/mail/0/inbox",
+		titleHint: "Outlook",
+		focus: `(async()=>{ ${FOCUS_HELPERS}
+			// (1) login gate — redirected to login.live.com / a Sign in form present.
+			if(/login\\.live\\.com/.test(location.host) || [...document.querySelectorAll('button,input[type=\\'submit\\']')].some(n=>/^sign in$/i.test((n.textContent||n.value||'').trim()))){ return { focusMiss: 'not-logged-in' }; }
+			// (2) wait for the message list to leave its skeleton — a real conversation row.
+			await waitFor('div[role=\\'option\\'][aria-label], div[role=\\'listbox\\'] [role=\\'option\\'], div[aria-label=\\'Message list\\'] [role=\\'option\\']', 12000);
+			// Row picker: PREFER a real back-and-forth email thread; AVOID the
+			// calendar/birthday-reminder rows that dominate this inbox (verified live:
+			// the top rows are "Reminder: <name>'s birthday … All Day" — a self-
+			// generated CALENDAR item with no sender thread → a shallow, single-author
+			// capture). Score each row and pick the best:
+			//   +3 Re:/Fwd:/AW: subject (multi-message thread)
+			//   +1 a normal email row (real sender)
+			//   −5 calendar/reminder/birthday/all-day/event/invite/RSVP (skip these)
+			//   −2 OTP/verification/promo (login-code noise)
+			// then fall back to the first non-calendar row, then row 0.
+			const rows=[...document.querySelectorAll('div[role=\\'option\\'][aria-label]')];
+			const subjOf=el=>((el.getAttribute('aria-label')||'')+' '+(((el.querySelector('span')||{}).textContent)||'')).trim();
+			const isCalendar=s=>/(reminder\\s*:|\\bbirthday\\b|all\\s*day|\\bevent\\b|\\binvit|\\bcalendar\\b|\\brsvp\\b|(accepted|declined|tentative|canceled|cancelled|updated)\\s*:)/i.test(s);
+			const isThread=s=>/(^|\\s)(re|fwd|fw|aw)\\s*:/i.test(s);
+			const isOtp=s=>/(verification|one[- ]time|otp|single[- ]use code|security code|passcode|sign[- ]?in|log ?in|verify your identity|verify your)/i.test(s);
+			const score=el=>{ const s=subjOf(el); let v=0; if(isThread(s))v+=3; if(isCalendar(s))v-=5; if(isOtp(s))v-=2; if(!isCalendar(s)&&!isOtp(s))v+=1; return v; };
+			let conv=rows.slice().sort((a,b)=>score(b)-score(a))[0]
+				|| rows.find(el=>!isCalendar(subjOf(el)))
+				|| rows[0];
+			if(conv){ conv.scrollIntoView&&conv.scrollIntoView({block:'center'}); conv.click(); }
+			// (3) wait for the reading-pane body to render, then PREFER a multi-message
+			// thread: poll for >=2 rendered message bodies; if the chosen row turns out
+			// single-message AND a higher-scoring thread row exists elsewhere, that row
+			// was already preferred by the score above (no real Re:/Fwd: in this inbox →
+			// gracefully degrades to the best available email, NOT a calendar reminder).
+			await waitFor('div[aria-label*=\\'Message body\\' i], div.allowTextSelection, div[role=\\'document\\']', 8000);
+			let bodyCount=document.querySelectorAll('div[aria-label*=\\'Message body\\' i]').length;
+			{ const tB=Date.now(); while(Date.now()-tB<5000){ bodyCount=document.querySelectorAll('div[aria-label*=\\'Message body\\' i]').length; if(bodyCount>=2)break; await sleep(250); } }
+			// (4) poll the reading-pane Reply control and click it (mounts a few seconds late). Re-try once.
+			let reply = await waitFor('button[aria-label=\\'Reply\\'], [aria-label=\\'Reply\\'][role=\\'button\\']', 10000);
+			if(!reply){ reply=[...document.querySelectorAll('button')].find(b=>(b.textContent||'').trim()==='Reply'); }
+			if(reply){ reply.click(); await sleep(600);
+				if(!document.querySelector('div[aria-label*=\\'Message body\\' i][role=\\'textbox\\']')){ const r2=[...document.querySelectorAll('button[aria-label=\\'Reply\\'], [aria-label=\\'Reply\\'][role=\\'button\\']')][0] || [...document.querySelectorAll('button')].find(b=>(b.textContent||'').trim()==='Reply'); if(r2) r2.click(); }
+			}
+			// (5) poll the composer body, then CLICK it before focusing (a bare .focus() loses to the re-render → caret lands on the list row).
+			const box = await waitFor('div[aria-label*=\\'Message body\\' i][role=\\'textbox\\']', 8000) || await waitFor('div[contenteditable=\\'true\\'][role=\\'textbox\\']', 4000);
+			if(box){ box.scrollIntoView&&box.scrollIntoView({block:'center'}); box.click(); }
+			return { focused: focusEl(box), replyFound: !!reply, boxLabel: box?box.getAttribute('aria-label'):null, opened: conv?subjOf(conv).slice(0,40):null, threadBodies: bodyCount, openedScore: conv?score(conv):null };
+		})()`,
+	},
 };
 
 // Final compose-field selector per app — re-clicked + verified right before the
@@ -319,6 +503,10 @@ const COMPOSE = {
 	facebook: `div[role="main"] div[role="textbox"][contenteditable="true"][aria-label^="Write"], div[role="main"] div[role="textbox"][contenteditable="true"][aria-label^="Message"]`,
 	"facebook-feed": `div[role="textbox"][contenteditable="true"][aria-label*="comment" i], div[role="textbox"][contenteditable="true"][aria-label*="reply" i], div[role="textbox"][contenteditable="true"]`,
 	whatsapp: `footer div[contenteditable="true"][role="textbox"][data-tab="10"], footer div[contenteditable="true"][role="textbox"][aria-placeholder*="Type a message" i], footer div[contenteditable="true"][role="textbox"]`,
+	chatgpt: `#prompt-textarea, div[contenteditable="true"]#prompt-textarea, main form div[contenteditable="true"]`,
+	gemini: `div.ql-editor[contenteditable="true"], rich-textarea div[contenteditable="true"][role="textbox"]`,
+	claude: `div[contenteditable="true"].ProseMirror, div[contenteditable="true"][aria-label*="prompt to Claude" i], div[contenteditable="true"][translate="no"].ProseMirror`,
+	outlook: `div[aria-label="Message body"][role="textbox"], div[aria-label*="Message body" i][role="textbox"], div[contenteditable="true"][role="textbox"][aria-label*="message" i]`,
 };
 
 // Build an async-IIFE that re-seats focus in `sel` (click + focus + caret-to-end),
@@ -338,6 +526,33 @@ function ensureExpr(sel) {
 		const a=document.activeElement;
 		return {focused:m(), activeLabel:(a&&a.getAttribute&&a.getAttribute('aria-label'))||(a&&a.tagName)||null};
 	})()`;
+}
+
+// Resolve the compose field's click point as a FRACTION of the layout viewport
+// (fx,fy in 0..1), plus the absolute CSS-px center. The fraction is what the
+// foreground helper uses: it multiplies fx,fy by the render widget's REAL on-screen
+// client rect, which sidesteps any mismatch between CDP's layout viewport and the
+// actual window/widget size (that mismatch is why an absolute CSS point can miss a
+// shorter composer like Claude's). Scrolls the composer into view first.
+async function cdpComposerRect(cdp, session, sel, contextId) {
+	const S = JSON.stringify(sel);
+	const rectExpr = `(()=>{ const el=document.querySelector(${S}); if(!el) return null;
+		el.scrollIntoView&&el.scrollIntoView({block:'center'});
+		const r=el.getBoundingClientRect();
+		if(r.width<=0||r.height<=0) return null;
+		const vw=window.innerWidth||document.documentElement.clientWidth||1;
+		const vh=window.innerHeight||document.documentElement.clientHeight||1;
+		const x=r.left + Math.min(r.width/2, 40);
+		const y=r.top + r.height/2;
+		return { x, y, fx: Math.max(0, Math.min(1, x/vw)), fy: Math.max(0, Math.min(1, y/vh)) };
+	})()`;
+	let rect = null;
+	try {
+		const r = await evalIn(cdp, session, rectExpr, contextId);
+		rect = r?.result?.value ?? null;
+	} catch {}
+	if (process.env.FG_DEBUG) process.stderr.write(`    [composer] rect=${JSON.stringify(rect)}\n`);
+	return rect;
 }
 
 // ── Minimal CDP client over ws ──────────────────────────────────────────────
@@ -565,6 +780,61 @@ async function resolveHwnd(titleLike) {
 	return /^\d+$/.test(v) ? v : "";
 }
 
+// Briefly bring the off-screen capture window on-screen + OS-foreground and deliver
+// a GENUINE OS click at the composer's client coords so the native UIA read resolves
+// the focused COMPOSER instead of the window ROOT. Synthetic focus moves (CDP input,
+// child SetFocus, WM_MOUSEACTIVATE) foreground the window but never push Chrome's view
+// focus into the web content — only a real mouse_event click does (empirically: it
+// flips the read's elementName from the window title to "Write your prompt to Claude"
+// and surfaces the full caret-before thread). Returns { prior, origX, origY } so the
+// caller can move the window back off-screen + re-foreground the prior window.
+async function foregroundAndClickComposer(hwnd, rect) {
+	const args = [
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		FOREGROUND_PS1,
+		"-Hwnd",
+		String(hwnd),
+	];
+	// Use the ABSOLUTE CSS-px composer center as the render-widget client point. CDP's
+	// emulated viewport persists when the window is shown on-screen, so the render widget
+	// keeps the CDP layout size and the CSS point maps 1:1 onto the widget client area
+	// (verified: the absolute point lands the composer; a fraction-of-window-rect does not).
+	if (rect && Number.isFinite(rect.x) && Number.isFinite(rect.y)) {
+		args.push("-ClickX", String(Math.round(rect.x)), "-ClickY", String(Math.round(rect.y)));
+	}
+	const out = await runExe("powershell.exe", args);
+	const v = out.trim().split(/\r?\n/).pop()?.trim() ?? "";
+	const [prior, ox, oy] = v.split("|");
+	return {
+		prior: /^\d+$/.test(prior) ? prior : "",
+		origX: /^-?\d+$/.test(ox) ? ox : "-2400",
+		origY: /^-?\d+$/.test(oy) ? oy : "-2400",
+	};
+}
+
+// Move the capture window back off-screen (origX/origY) and re-foreground the window
+// that was foreground before the read, so the user is minimally disturbed.
+async function restoreCaptureWindow(hwnd, prior, origX, origY) {
+	await runExe("powershell.exe", [
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		FOREGROUND_PS1,
+		"-Hwnd",
+		String(hwnd || 0),
+		"-Restore",
+		String(prior || 0),
+		"-OrigX",
+		String(origX ?? -2400),
+		"-OrigY",
+		String(origY ?? -2400),
+	]);
+}
+
 async function captureApp(cdp, id) {
 	const app = APPS[id];
 	if (!app) {
@@ -649,9 +919,42 @@ async function captureApp(cdp, id) {
 	let treeRaw;
 	let selRaw;
 	if (hwnd) {
-		// Read the SPECIFIC Chrome window by HWND (occlusion-proof).
-		treeRaw = await runExe(CONTEXT_EXE, ["--tree", "--hwnd", hwnd]);
-		selRaw = await runExe(CONTEXT_EXE, ["--selection", "--hwnd", hwnd]);
+		// The native --hwnd read resolves the focused element via FindFirst(
+		// HasKeyboardFocus) inside the window. A backgrounded, off-screen capture
+		// window's web render widget never held OS keyboard focus, so the DOM-focused
+		// composer is NOT marked focused and the read falls back to the window ROOT
+		// (elementName == window title). To fix this we briefly make the window the
+		// genuine OS-foreground window and deliver a REAL OS click into the composer
+		// (the only thing that moves Chrome's view focus into the web content), read,
+		// then restore the window + prior foreground.
+		// (1) Re-seat DOM focus in the composer (the recipe's focus is often lost to
+		// a re-render) and resolve its viewport-center coords for the OS click.
+		let composerRect = null;
+		if (composeSel) {
+			try {
+				await evalIn(cdp, session, ensureExpr(composeSel), ctxId, true);
+			} catch {}
+			composerRect = await cdpComposerRect(cdp, session, composeSel, ctxId);
+		}
+		// (2) Briefly bring the off-screen capture window on-screen + OS-foreground
+		// and deliver a GENUINE OS click at the composer's client coords — the only
+		// action that pushes Chrome's view focus into the web content so the native
+		// UIA read resolves the focused COMPOSER instead of the window ROOT. The
+		// window is on-screen only for the few hundred ms of the read; afterward it
+		// is moved back to its original off-screen position and the prior foreground
+		// window is restored.
+		const fg = await foregroundAndClickComposer(hwnd, composerRect);
+		// Let Chrome propagate the click-driven focus change into its UIA tree.
+		await sleep(450);
+		try {
+			// Read the SPECIFIC Chrome window by HWND (occlusion-proof) while it is
+			// foregrounded with the composer focused.
+			treeRaw = await runExe(CONTEXT_EXE, ["--tree", "--hwnd", hwnd]);
+			selRaw = await runExe(CONTEXT_EXE, ["--selection", "--hwnd", hwnd]);
+		} finally {
+			// Move the capture window back off-screen + restore the prior foreground.
+			await restoreCaptureWindow(hwnd, fg.prior, fg.origX, fg.origY);
+		}
 	} else {
 		// HWND resolution FAILED — almost always an about:blank zombie (empty
 		// title) where the SPA never rendered. Running --tree with no --hwnd would
@@ -723,11 +1026,34 @@ async function captureApp(cdp, id) {
 	return summary;
 }
 
+// Self-heal: make sure the capture Chrome is alive on PORT before we connect.
+// Relaunches it from the EXISTING profile (never copies/wipes — that logs apps
+// out) if it has died. This is the robustness fix for "the browser crashed and
+// the whole run stalled against a dead CDP endpoint".
+async function ensureAlive() {
+	try {
+		const { stdout } = await execFileAsync(
+			"powershell.exe",
+			["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ENSURE_PS1, "-Port", String(PORT)],
+			{ timeout: 45000, windowsHide: true, encoding: "utf8" }
+		);
+		const out = stdout.trim();
+		process.stdout.write(`  [ensure] capture browser: ${out.split(/\r?\n/).pop()}\n`);
+		if (/PROFILE_MISSING|FAILED/.test(out)) {
+			throw new Error(`capture browser not available: ${out}`);
+		}
+	} catch (e) {
+		process.stderr.write(`  [ensure] ${e.message}\n`);
+		throw e;
+	}
+}
+
 async function main() {
 	const ids = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 	const list = ids.length ? ids : Object.keys(APPS);
 	await mkdir(OUT, { recursive: true });
 
+	await ensureAlive();
 	const version = await getJSON("/json/version");
 	const ws = new WebSocket(version.webSocketDebuggerUrl, { maxPayload: 256 * 1024 * 1024 });
 	await new Promise((res, rej) => {

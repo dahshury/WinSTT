@@ -93,6 +93,22 @@ Import-Llvm
 
 Push-Location $RepoRoot
 try {
+    # Build + stage the native context sidecar (winstt_context) BEFORE the bundle so
+    # the bundler picks it up via tauri.conf.json `resources` (binaries/winstt-context.exe).
+    # It is a SEPARATE cargo bin that `tauri build` does NOT build on its own, and nothing
+    # else stages it — without this the packaged app cannot resolve winstt-context.exe and
+    # context-awareness is silently disabled in release. (Dev parity: tauri-dev.ps1.)
+    # Fatal here (unlike dev): a release that ships without the sidecar is broken.
+    cargo build --release --manifest-path (Join-Path $RepoRoot "src-tauri\Cargo.toml") --bin winstt_context
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to build the winstt_context sidecar (exit code $LASTEXITCODE)"
+    }
+    $BinDir = Join-Path $RepoRoot "src-tauri\binaries"
+    New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+    Copy-Item -Force `
+        -Path (Join-Path $RepoRoot "src-tauri\target\release\winstt_context.exe") `
+        -Destination (Join-Path $BinDir "winstt-context.exe")
+
     bun run tauri build @BuildArgs
     if ($LASTEXITCODE -ne 0) {
         throw "Tauri build failed with exit code $LASTEXITCODE"

@@ -11,10 +11,9 @@ export interface SettingSectionProps {
 	/** Optional help text shown in an info-icon tooltip next to the section title. */
 	description?: string;
 	/**
-	 * Wrap the body in the standard hairline-divided column
-	 * (`flex flex-col divide-y divide-surface-1`) so each child row is
-	 * separated by a divider. The common case for a stack of `SettingField`
-	 * rows — saves repeating the wrapper at every call site.
+	 * Wrap the body in the standard settings field column (`flex flex-col`).
+	 * Kept for existing call sites that want child rows stacked without adding
+	 * another wrapper. Rows in the same section intentionally have no dividers.
 	 */
 	divided?: boolean;
 	/** Custom footer content for status, warnings, or actions that must stay visible. */
@@ -68,7 +67,7 @@ export function SettingSection({
 	const hasBody =
 		children !== undefined && children !== null && children !== false;
 	const body = divided ? (
-		<div className="flex flex-col divide-y divide-surface-1">{children}</div>
+		<div className="flex flex-col">{children}</div>
 	) : (
 		children
 	);

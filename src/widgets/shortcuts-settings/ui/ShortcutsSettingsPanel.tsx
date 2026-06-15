@@ -72,7 +72,7 @@ export function ShortcutsSettingsPanel() {
 			{/* ── Hotkey (Push-to-Talk disabled in Listen mode — the hotkey
 			    isn't used to start/stop a server-driven listen session) */}
 			<SettingSection icon={CommandIcon} title={th("configuration")}>
-				<div className="flex flex-col divide-y divide-surface-1">
+				<div className="flex flex-col">
 					<div className="py-2">
 						<SettingField
 							disabled={recordingMode === "listen"}

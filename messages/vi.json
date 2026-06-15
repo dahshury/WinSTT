@@ -635,7 +635,8 @@
     "clearDescription": "Tất cả mục từ điển sẽ bị xóa vĩnh viễn. Không thể hoàn tác thao tác này.",
     "thresholdLabel": "Độ chặt chẽ hiệu chỉnh",
     "thresholdCaption": "Điểm khớp mờ tối đa mà bộ hiệu chỉnh phía server chấp nhận. Thấp hơn = chặt hơn (ít thay thế sai hơn).",
-    "thresholdTooltip": "Bộ hiệu chỉnh xác định chạy trên server ngay sau khi chuyển đổi và TRƯỚC khi dọn dẹp LLM. Bất kỳ thứ gì nó bỏ lỡ vẫn có cơ hội thứ hai qua các công cụ sửa đổi LLM."
+    "thresholdTooltip": "Bộ hiệu chỉnh xác định chạy trên server ngay sau khi chuyển đổi và TRƯỚC khi dọn dẹp LLM. Bất kỳ thứ gì nó bỏ lỡ vẫn có cơ hội thứ hai qua các công cụ sửa đổi LLM.",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "Không thể tải {model}",

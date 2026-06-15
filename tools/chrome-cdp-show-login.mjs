@@ -11,13 +11,22 @@ const WS = require("ws");
 const PORT = process.env.CDP_PORT ?? "9222";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const LOGINS = [
+const ALL_LOGINS = [
 	["Google / Gmail", "https://accounts.google.com/ServiceLogin?continue=https://mail.google.com/mail/u/0/"],
 	["Discord", "https://discord.com/login"],
 	["X (Twitter)", "https://x.com/i/flow/login"],
 	["Facebook / Messenger", "https://www.facebook.com/login/"],
 	["WhatsApp (scan QR with phone)", "https://web.whatsapp.com/"],
+	["Outlook", "https://outlook.live.com/mail/"],
+	["ChatGPT", "https://chatgpt.com/"],
+	["Gemini", "https://gemini.google.com/app"],
+	["Claude.ai", "https://claude.ai/"],
 ];
+// Pass app ids/labels as argv to open only a subset (default: all).
+const wanted = process.argv.slice(2).map((a) => a.toLowerCase());
+const LOGINS = wanted.length
+	? ALL_LOGINS.filter(([name]) => wanted.some((w) => name.toLowerCase().includes(w)))
+	: ALL_LOGINS;
 
 function getJSON(p) {
 	return new Promise((res, rej) => {

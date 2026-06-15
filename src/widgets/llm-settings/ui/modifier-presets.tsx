@@ -841,7 +841,7 @@ export function FeaturePresetControls({
 		activeSttModel !== undefined &&
 		supportsTranslateToEnglish(activeSttModel);
 	return (
-		<div className="flex flex-col divide-y divide-surface-1">
+		<div className="flex flex-col">
 			<div className="col-span-2">
 				<FormControl
 					label={t("tone")}

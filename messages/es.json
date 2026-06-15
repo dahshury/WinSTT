@@ -635,7 +635,8 @@
     "clearDescription": "Todas las entradas del diccionario se eliminarán permanentemente. Esta acción no se puede deshacer.",
     "thresholdLabel": "Estrictez de corrección",
     "thresholdCaption": "Puntuación máxima de coincidencia aproximada que acepta el corrector del servidor. Menor = más estricto (menos reemplazos incorrectos).",
-    "thresholdTooltip": "El corrector determinista se ejecuta en el servidor justo después de la transcripción y ANTES de la limpieza LLM. Lo que no detecta recibe una segunda pasada a través de los modificadores LLM."
+    "thresholdTooltip": "El corrector determinista se ejecuta en el servidor justo después de la transcripción y ANTES de la limpieza LLM. Lo que no detecta recibe una segunda pasada a través de los modificadores LLM.",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "No se pudo cargar {model}",

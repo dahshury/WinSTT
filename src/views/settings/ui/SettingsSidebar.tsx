@@ -21,15 +21,9 @@ import { cn } from "@/shared/lib/cn";
 import { ClearableTextField } from "@/shared/ui/text-field";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { matchesSearchQuery } from "../lib/settings-search";
-import { SettingsSidebarHeaderActions } from "./SettingsSidebarHeaderActions";
 
 function RailSeparator() {
-	return (
-		<div
-			aria-hidden="true"
-			className="my-2 h-px w-full bg-[var(--color-divider)]"
-		/>
-	);
+	return <div aria-hidden="true" className="settings-sidebar-separator" />;
 }
 
 export interface SidebarLink {
@@ -54,7 +48,6 @@ interface SettingsSidebarProps {
 
 const SIDEBAR_WIDTH = 200;
 const COLLAPSED_WIDTH = 56;
-const TAB_HEIGHT = 36;
 const COLLAPSE_STORAGE_KEY = "winstt:settings-sidebar-collapsed";
 
 function SearchResultRow({
@@ -71,7 +64,7 @@ function SearchResultRow({
 		<m.div
 			animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
 			aria-hidden={isPresent ? undefined : true}
-			className={cn("flex flex-col", collapsed ? "w-9" : "w-full")}
+			className={cn("flex flex-col", collapsed ? "w-[2.4rem]" : "w-full")}
 			data-settings-search-result="true"
 			exit={
 				reduceMotion
@@ -112,19 +105,15 @@ function writeCollapsed(next: boolean): void {
 }
 
 /**
- * Settings sidebar — a column that shares the page substrate (surface-1) so it
- * reads as built into the window, with each tab's content floating a layer
- * above. Holds a search affordance (an icon that grows into a live filter
- * field), the wordmark, a collapse toggle, and the vertical tab list (hairline
- * separators close logical groups). The window close button lives in the
- * content card (top-right), not here.
+ * Settings sidebar — a roomy, dark navigation rail with compact utility
+ * controls, search affordance, collapse toggle, and pill-shaped tab rows. The
+ * window close button lives in the content card (top-right), not here.
  *
- * The search starts as an icon sitting where the close button used to (leading
- * edge of the header). Clicking it tweens a field open over the "Settings"
- * wordmark (width transition via `.t-resize`); the wordmark hides while it's
- * open. The field folds back when it loses focus — either a blur, or a pointer
- * press anywhere outside it (a plain click on a non-focusable region never
- * blurs an input, so the outside-press listener is what actually catches it).
+ * Clicking search tweens a field open over the title region (width transition
+ * via `.t-resize`); the wordmark hides while it's open. The field
+ * folds back when it loses focus — either a blur, or a pointer press anywhere
+ * outside it (a plain click on a non-focusable region never blurs an input, so
+ * the outside-press listener is what actually catches it).
  *
  * Collapsible: the toggle beside the wordmark shrinks the column to an
  * icon-only rail (labels become hover tooltips) and back.
@@ -229,11 +218,11 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 	const searchButton = (
 		<BaseButton
 			aria-label={t("searchPlaceholder")}
-			className="titlebar-no-drag flex size-7 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground-muted outline-none transition-colors duration-150 hover:bg-foreground/10 hover:text-foreground-secondary focus-visible:ring-2 focus-visible:ring-accent"
+			className="settings-sidebar-icon-button titlebar-no-drag flex shrink-0 items-center justify-center bg-transparent text-foreground-muted outline-none transition-[background-color,color,transform,box-shadow] duration-200 hover:text-foreground-secondary active:translate-y-px focus-visible:ring-2 focus-visible:ring-accent"
 			onClick={openSearch}
 			type="button"
 		>
-			<HugeiconsIcon icon={Search01Icon} size={16} />
+			<HugeiconsIcon icon={Search01Icon} size={17} />
 		</BaseButton>
 	);
 
@@ -244,13 +233,13 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 		>
 			<BaseButton
 				aria-label={collapsed ? t("expandSidebar") : t("collapseSidebar")}
-				className="titlebar-no-drag flex size-7 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground-muted outline-none transition-colors duration-150 hover:bg-foreground/10 hover:text-foreground-secondary focus-visible:ring-2 focus-visible:ring-accent"
+				className="settings-sidebar-icon-button titlebar-no-drag flex shrink-0 items-center justify-center bg-transparent text-foreground-muted outline-none transition-[background-color,color,transform,box-shadow] duration-200 hover:text-foreground-secondary active:translate-y-px focus-visible:ring-2 focus-visible:ring-accent"
 				onClick={toggleCollapsed}
 				type="button"
 			>
 				<HugeiconsIcon
 					icon={collapsed ? PanelLeftOpenIcon : PanelLeftCloseIcon}
-					size={16}
+					size={17}
 				/>
 			</BaseButton>
 		</Tooltip>
@@ -258,14 +247,15 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 
 	return (
 		<aside
-			className="relative flex h-full shrink-0 flex-col bg-surface-1 transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
+			className="settings-sidebar-shell relative flex h-full shrink-0 flex-col transition-[width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+			data-collapsed={collapsed ? "true" : undefined}
 			style={{ width: collapsed ? COLLAPSED_WIDTH : SIDEBAR_WIDTH }}
 		>
-			{/* Header strip — search affordance + wordmark + collapse toggle. The
-			    h-12 band gives the column a compact title region. Draggable for window move;
-			    opening search tweens a field over the wordmark. */}
+			{/* Header strip — search affordance, wordmark, and collapse toggle. The
+			    wordmark area remains draggable for window move;
+			    opening search tweens a field over the title region. */}
 			{collapsed ? (
-				<div className="relative flex shrink-0 items-center justify-center px-2 pt-4 pb-2">
+				<div className="settings-sidebar-collapsed-header relative flex shrink-0 items-center justify-center px-2 pt-5 pb-4">
 					{/* Dedicated window-move handle. It must be its OWN element, never a
 					    wrapper around the buttons: an interactive control can't live inside
 					    an `-webkit-app-region: drag` region because on touch devices the OS
@@ -276,13 +266,10 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 					    controls. */}
 					<div
 						aria-hidden="true"
-						className="titlebar-drag absolute inset-x-0 top-0 h-3.5"
+						className="titlebar-drag absolute inset-x-0 top-0 h-4"
 						data-slot="settings-sidebar-top-drag"
 					/>
-					<SettingsSidebarHeaderActions
-						collapsed={collapsed}
-						toggleButton={toggleButton}
-					/>
+					{toggleButton}
 				</div>
 			) : (
 				// The header itself is NOT a drag region — only the wordmark below is
@@ -290,32 +277,30 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 				// them tappable on touch (Tauri #4746), and a neutral header also means a
 				// press in the gutter while the field is open reaches the outside-press
 				// listener that folds the field away.
-				<div className="relative flex h-12 shrink-0 items-center gap-2 px-3">
+				<div className="settings-sidebar-header relative flex h-[4.25rem] shrink-0 items-center gap-2 px-5 pt-4 pb-3">
 					<div
 						aria-hidden="true"
-						className="titlebar-drag absolute inset-x-0 top-0 h-3.5"
+						className="titlebar-drag absolute inset-x-0 top-0 h-4"
 						data-slot="settings-sidebar-top-drag"
 					/>
 					<div
-						className="relative flex h-full min-w-0 flex-1 items-center gap-2"
+						className="relative flex h-10 min-w-0 flex-1 items-center gap-2"
 						ref={searchRegionRef}
 					>
+						{searchOpen ? null : searchButton}
 						{searchOpen ? null : (
-							<>
-								{searchButton}
-								{/* The wordmark doubles as the window-move handle (`drag`). It
-								    sits between the buttons, so they keep their own plain client
-								    pixels and stay tappable on touch — see the collapsed-header
-								    note and Tauri #4746. `self-stretch` makes the drag box fill the
-								    FULL header height (not just the text line), so the strip ABOVE
-								    and below the word is draggable too; the inner span keeps the
-								    truncating text vertically centred. */}
-								<span className="titlebar-drag flex min-w-0 flex-1 items-center self-stretch">
-									<span className="min-w-0 flex-1 truncate font-semibold text-2xs text-foreground-secondary uppercase tracking-[0.14em]">
-										{t("title")}
-									</span>
+							// The wordmark doubles as the window-move handle (`drag`). It
+							// sits between the buttons, so they keep their own plain client
+							// pixels and stay tappable on touch — see the collapsed-header
+							// note and Tauri #4746. `self-stretch` makes the drag box fill the
+							// FULL header height (not just the text line), so the strip ABOVE
+							// and below the word is draggable too; the inner span keeps the
+							// truncating text vertically centred.
+							<span className="titlebar-drag flex min-w-0 flex-1 items-center self-stretch">
+								<span className="settings-sidebar-title min-w-0 flex-1 truncate font-semibold uppercase">
+									{t("title")}
 								</span>
-							</>
+							</span>
 						)}
 						{/* Search field — an overlay that tweens its width 0 → full over the
 						    region (the `.t-resize` recipe) so it grows in / out instead of
@@ -329,12 +314,12 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 								aria-hidden={!searchOpen}
 								aria-label={t("searchPlaceholder")}
 								clearLabel={t("searchClear")}
-								className="h-8 rounded-md border border-border bg-surface-2 shadow-none transition-colors focus-visible:border-border-hover focus-visible:ring-0 focus-visible:ring-offset-0"
+								className="settings-sidebar-search-input border shadow-none transition-colors focus-visible:ring-0 focus-visible:ring-offset-0"
 								leadingIcon={
 									<HugeiconsIcon
 										aria-hidden="true"
 										icon={Search01Icon}
-										size={14}
+										size={17}
 									/>
 								}
 								onBlur={handleSearchBlur}
@@ -355,18 +340,15 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 							/>
 						</div>
 					</div>
-					<SettingsSidebarHeaderActions
-						collapsed={collapsed}
-						toggleButton={toggleButton}
-					/>
+					{toggleButton}
 				</div>
 			)}
 
 			{/* Tab list */}
 			<Tabs.List
 				className={cn(
-					"relative flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-3",
-					collapsed ? "items-center px-2" : "px-2",
+					"settings-sidebar-list relative flex min-h-0 flex-1 flex-col overflow-y-auto",
+					collapsed ? "items-center px-2 pt-1 pb-5" : "px-4 pt-3 pb-6",
 				)}
 			>
 				<LazyMotion features={domAnimation} strict>
@@ -404,21 +386,20 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 								const tab = (
 									<Tabs.Tab
 										className={cn(
-											"group/seg relative flex cursor-pointer items-center rounded-md border-0 bg-transparent py-0 outline-none transition-[background-color,color,transform] duration-150 ease-out hover:bg-foreground/[0.04] active:translate-y-px data-[active]:bg-foreground/[0.08] data-[active]:hover:bg-foreground/[0.09]",
+											"settings-sidebar-tab group/seg relative flex cursor-pointer items-center border-0 bg-transparent py-0 outline-none transition-[background-color,color,transform,box-shadow] duration-200 ease-out active:translate-y-px focus-visible:ring-2 focus-visible:ring-accent",
 											collapsed
-												? "w-9 justify-center"
-												: "w-full gap-2.5 ps-2.5 pe-2.5",
+												? "settings-sidebar-tab-collapsed justify-center"
+												: "w-full gap-2.5 ps-4 pe-4",
 										)}
-										style={{ height: TAB_HEIGHT }}
 										value={link.key}
 									>
 										<HugeiconsIcon
-											className="shrink-0 text-foreground-muted transition-colors duration-150 group-hover/seg:text-foreground-secondary group-data-[active]/seg:text-foreground"
+											className="settings-sidebar-tab-icon shrink-0 text-foreground-muted transition-colors duration-200 group-hover/seg:text-foreground-secondary group-data-[active]/seg:text-foreground"
 											icon={link.icon}
 											size={17}
 										/>
 										{collapsed ? null : (
-											<span className="min-w-0 flex-1 truncate text-start font-sans font-medium text-body text-foreground-secondary transition-colors duration-150 group-data-[active]/seg:text-foreground">
+											<span className="settings-sidebar-tab-label min-w-0 flex-1 truncate text-start font-sans transition-colors duration-200 group-data-[active]/seg:text-foreground">
 												{link.label}
 											</span>
 										)}

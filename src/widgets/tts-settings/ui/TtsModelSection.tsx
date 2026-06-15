@@ -452,10 +452,10 @@ export function TtsModelSection() {
 				toggleDisabled={installing}
 				toggled={enabled}
 			>
-				<div className="flex flex-col divide-y divide-surface-1">
+				<div className="flex flex-col">
 					<div
 						className={cn(
-							"flex flex-col divide-y divide-surface-1 transition-opacity duration-200 ease-out",
+							"flex flex-col transition-opacity duration-200 ease-out",
 							installing && "pointer-events-none opacity-40",
 						)}
 					>

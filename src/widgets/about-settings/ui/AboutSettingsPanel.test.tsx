@@ -214,4 +214,47 @@ describe("AboutSettingsPanel", () => {
 			tauriWindow.__TAURI_INTERNALS__.invoke = previousTauriInvoke;
 		}
 	});
+
+	test("renders settings import and export actions in the About tab", async () => {
+		const tauriWindow = window as Window & {
+			__TAURI_INTERNALS__: TauriInternals;
+		};
+		const previousNativeBridge = window.nativeBridge;
+		const previousTauriInvoke = tauriWindow.__TAURI_INTERNALS__.invoke;
+
+		window.nativeBridge = {
+			...previousNativeBridge,
+			invoke: async () => undefined,
+			secureInvoke: async (channel: string) => {
+				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
+					return [{ status: "not-available", timestamp: 1 }];
+				}
+				return;
+			},
+		};
+		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
+			if (cmd === "about_get_app_info") {
+				return { version: "1.2.3", copyright: "Copyright WinSTT" };
+			}
+			return;
+		};
+
+		try {
+			render(
+				<IntlProvider>
+					<AboutSettingsPanel />
+				</IntlProvider>,
+			);
+
+			expect(
+				await screen.findByRole("button", { name: "Export settings" }),
+			).toBeDefined();
+			expect(
+				screen.getByRole("button", { name: "Import settings" }),
+			).toBeDefined();
+		} finally {
+			window.nativeBridge = previousNativeBridge;
+			tauriWindow.__TAURI_INTERNALS__.invoke = previousTauriInvoke;
+		}
+	});
 });

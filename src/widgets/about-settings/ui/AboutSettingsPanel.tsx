@@ -5,6 +5,7 @@ import { type AboutAppInfo, aboutGetAppInfo } from "@/shared/api/ipc-client";
 import { EMPTY_APP_INFO } from "./AppInfoSection";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { ResetSection } from "./ResetSection";
+import { SettingsTransferSection } from "./SettingsTransferSection";
 import { StartupSection } from "./StartupSection";
 import { UpdatesSection } from "./UpdatesSection";
 
@@ -36,6 +37,7 @@ export function AboutSettingsPanel() {
 		<div className="flex flex-col gap-2">
 			<UpdatesSection info={info} t={t} />
 			<StartupSection general={general} t={tg} update={update} />
+			<SettingsTransferSection />
 			<DiagnosticsSection t={t} />
 			<ResetSection />
 		</div>

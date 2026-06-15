@@ -56,22 +56,32 @@ describe("SettingsSidebar", () => {
 		expect(tabs).toHaveLength(links.length);
 	});
 
-	test("renders compact flat tab rows without the old active chrome", () => {
+	test("renders clone-scaled compact beveled tab rows", () => {
 		renderSidebar();
 		const general = screen.getByRole("tab", { name: /general/i });
+		const icon = general.querySelector("svg");
 
-		expect(general.getAttribute("style")).toContain("height: 36px");
-		expect(general.className).toContain("data-[active]:bg-foreground/[0.08]");
+		expect(general.getAttribute("style")).toBeNull();
+		expect(general.className).toContain("settings-sidebar-tab");
+		expect(icon?.getAttribute("width")).toBe("17");
+		expect(icon?.getAttribute("height")).toBe("17");
+		expect(general.className).not.toContain("data-[active]:bg-foreground");
 		expect(general.className).not.toContain("linear-gradient");
-		expect(general.className).not.toContain("shadow");
 	});
 
-	test("keeps tab rows free of the accent focus ring", () => {
+	test("does not render the clone logo in the app sidebar header", () => {
+		const { container } = renderSidebar();
+
+		expect(container.querySelector(".settings-sidebar-brand-mark")).toBeNull();
+		expect(screen.getByText("Settings")).toBeDefined();
+	});
+
+	test("keeps tab rows keyboard-focusable", () => {
 		renderSidebar();
 		const general = screen.getByRole("tab", { name: /general/i });
 
-		expect(general.className).not.toContain("focus-visible:ring-accent");
-		expect(general.className).not.toContain("focus-visible:ring-2");
+		expect(general.className).toContain("focus-visible:ring-accent");
+		expect(general.className).toContain("focus-visible:ring-2");
 	});
 
 	test("does not render a reset control (reset lives in General settings now)", () => {
@@ -96,7 +106,7 @@ describe("SettingsSidebar", () => {
 		renderSidebar();
 		const search = openSearch();
 
-		expect(search.className).toContain("border-border");
+		expect(search.className).toContain("settings-sidebar-search-input");
 		expect(search.className).toContain("focus-visible:ring-0");
 	});
 
@@ -107,7 +117,7 @@ describe("SettingsSidebar", () => {
 		);
 
 		expect(dragStrip?.className).toContain("titlebar-drag");
-		expect(dragStrip?.className).toContain("h-3.5");
+		expect(dragStrip?.className).toContain("h-4");
 	});
 
 	test("hides the Settings wordmark while the search field is open", () => {
@@ -115,6 +125,14 @@ describe("SettingsSidebar", () => {
 		expect(screen.getByText("Settings")).toBeDefined();
 		openSearch();
 		expect(screen.queryByText("Settings")).toBeNull();
+	});
+
+	test("uses the left search affordance as the expanded field group", () => {
+		renderSidebar();
+		openSearch();
+
+		expect(screen.queryByRole("button", { name: /search/i })).toBeNull();
+		expect(screen.getByRole("textbox")).toBeDefined();
 	});
 
 	test("filters the tab list by label as you type", () => {
@@ -168,13 +186,13 @@ describe("SettingsSidebar", () => {
 		renderSidebar();
 		// Expanded: tab labels visible.
 		expect(screen.getByText("General")).toBeDefined();
-		expect(screen.getByTestId("settings-export-button")).toBeDefined();
-		expect(screen.getByTestId("settings-import-button")).toBeDefined();
+		expect(screen.queryByTestId("settings-export-button")).toBeNull();
+		expect(screen.queryByTestId("settings-import-button")).toBeNull();
 
 		fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
 
-		// Collapsed: tab labels removed (icon-only), tabs remain, and transfer
-		// controls stay hidden until the full sidebar header returns.
+		// Collapsed: tab labels removed (icon-only), tabs remain, and the header
+		// keeps only the expand/collapse affordance.
 		expect(screen.queryByText("General")).toBeNull();
 		expect(screen.getAllByRole("tab")).toHaveLength(links.length);
 		expect(screen.queryByRole("button", { name: /search/i })).toBeNull();
@@ -184,8 +202,8 @@ describe("SettingsSidebar", () => {
 		// The toggle flips to an expand affordance and restores the rail.
 		fireEvent.click(screen.getByRole("button", { name: /expand sidebar/i }));
 		expect(screen.getByText("General")).toBeDefined();
-		expect(screen.getByTestId("settings-export-button")).toBeDefined();
-		expect(screen.getByTestId("settings-import-button")).toBeDefined();
+		expect(screen.queryByTestId("settings-export-button")).toBeNull();
+		expect(screen.queryByTestId("settings-import-button")).toBeNull();
 	});
 
 	test("does not render the RAM or VRAM footer meter", () => {

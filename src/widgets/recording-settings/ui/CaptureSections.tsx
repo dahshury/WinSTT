@@ -167,7 +167,7 @@ export function InputDeviceSection({
 
 	return (
 		<SettingSection icon={Mic02Icon} title={t("inputDevice")}>
-			<div className="flex flex-col divide-y divide-surface-1">
+			<div className="flex flex-col">
 				<SettingField
 					isDefault={currentDeviceId === "default"}
 					label={t("device")}
@@ -235,7 +235,7 @@ export function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 			title={ta("vad")}
 			toggled={audio?.sileroDeactivityDetection ?? true}
 		>
-			<div className="flex flex-col divide-y divide-surface-1">
+			<div className="flex flex-col">
 				<SettingField
 					isDefault={
 						(audio?.sileroSensitivity ??

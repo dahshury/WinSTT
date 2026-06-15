@@ -377,7 +377,7 @@ export function RecordingModeSection({
 	};
 	return (
 		<SettingSection icon={RecordIcon} title={t("recording")}>
-			<div className="flex flex-col divide-y divide-surface-1">
+			<div className="flex flex-col">
 				<SettingField
 					isDefault={recordingMode === DEFAULT_SETTINGS.general.recordingMode}
 					label={t("recordingMode")}

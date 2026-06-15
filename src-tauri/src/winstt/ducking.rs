@@ -142,7 +142,10 @@ impl SessionDuckState {
     /// IMMEDIATELY when every reason was released while the duck was in flight
     /// (the unmute-racing-pending-duck case); empty otherwise. Mirrors applyDuck
     /// flipping isDucked=true, plus the audio-mute.ts race latch.
-    fn on_duck_complete(&mut self, snapshots: Vec<SessionVolumeSnapshot>) -> Vec<SessionVolumeSnapshot> {
+    fn on_duck_complete(
+        &mut self,
+        snapshots: Vec<SessionVolumeSnapshot>,
+    ) -> Vec<SessionVolumeSnapshot> {
         self.snapshots = snapshots;
         self.ducked = true;
         if self.active_reasons == 0 {
@@ -468,7 +471,10 @@ mod tests {
     #[test]
     fn duck_then_restore_full_cycle() {
         let mut s = SessionDuckState::default();
-        assert_eq!(s.request_duck(DuckReason::Dictation), SessionDuckAction::Duck);
+        assert_eq!(
+            s.request_duck(DuckReason::Dictation),
+            SessionDuckAction::Duck
+        );
         // COM captured two background sessions; nobody released, so nothing to
         // restore yet.
         assert!(s
@@ -485,11 +491,20 @@ mod tests {
     #[test]
     fn second_reason_piggybacks_first_duck() {
         let mut s = SessionDuckState::default();
-        assert_eq!(s.request_duck(DuckReason::Dictation), SessionDuckAction::Duck);
+        assert_eq!(
+            s.request_duck(DuckReason::Dictation),
+            SessionDuckAction::Duck
+        );
         // a second reason while already ducked does NOT re-enumerate.
-        assert_eq!(s.request_duck(DuckReason::ReadAloud), SessionDuckAction::NoOp);
+        assert_eq!(
+            s.request_duck(DuckReason::ReadAloud),
+            SessionDuckAction::NoOp
+        );
         // duplicate request for an already-active reason is also a no-op.
-        assert_eq!(s.request_duck(DuckReason::Dictation), SessionDuckAction::NoOp);
+        assert_eq!(
+            s.request_duck(DuckReason::Dictation),
+            SessionDuckAction::NoOp
+        );
     }
 
     #[test]
@@ -510,7 +525,10 @@ mod tests {
         // Models a super-fast PTT tap: the restore arrives before the duck COM
         // reported its captured snapshots.
         let mut s = SessionDuckState::default();
-        assert_eq!(s.request_duck(DuckReason::Dictation), SessionDuckAction::Duck);
+        assert_eq!(
+            s.request_duck(DuckReason::Dictation),
+            SessionDuckAction::Duck
+        );
         // unmute arrives before on_duck_complete → nothing to restore yet (the
         // duck worker still owns the snapshots).
         assert!(s.request_restore(DuckReason::Dictation).is_empty());

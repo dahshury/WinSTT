@@ -56,6 +56,13 @@ impl EncoderDict {
         })
     }
 
+    /// Run a single throwaway forward pass so ONNX Runtime allocates its arena / compiles kernels.
+    /// The first *real* correction then lands warm instead of paying the cold-start cost. Errors are
+    /// swallowed — warming is best-effort.
+    pub fn warm(&mut self) {
+        let _ = self.mean_rank("warm up the dictation model", 0, 4);
+    }
+
     /// Apply vocabulary corrections to `text`. Replacement PAIRS are NOT handled here — the caller
     /// applies those deterministically (they're unambiguous find→replace). Only vocabulary `terms`
     /// (canonical spellings, no replacement value) are context-judged. `rank_k` is the
@@ -95,7 +102,7 @@ impl EncoderDict {
         let enc = self.tokenizer.encode(text, true).ok()?;
         let ids = enc.get_ids();
         let offsets = enc.get_offsets(); // CHARACTER offsets into `text` (verified)
-        // Our candidate spans are BYTE offsets; the tokenizer reports CHAR offsets — convert.
+                                         // Our candidate spans are BYTE offsets; the tokenizer reports CHAR offsets — convert.
         let char_start = text.get(..byte_start)?.chars().count();
         let char_end = text.get(..byte_end)?.chars().count();
         let span: Vec<usize> = offsets

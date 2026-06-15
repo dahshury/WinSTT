@@ -635,7 +635,8 @@
     "clearDescription": "Wszystkie wpisy słownika zostaną trwale usunięte. Tej operacji nie można cofnąć.",
     "thresholdLabel": "Surowość korekty",
     "thresholdCaption": "Maksymalny wynik rozmytego dopasowania akceptowany przez korektor po stronie serwera. Niższy = surowszy (mniej fałszywych zamian).",
-    "thresholdTooltip": "Deterministyczny korektor działa na serwerze tuż po transkrypcji i PRZED czyszczeniem LLM. Wszystko, co pominie, przechodzi przez modyfikatory LLM w drugim podejściu."
+    "thresholdTooltip": "Deterministyczny korektor działa na serwerze tuż po transkrypcji i PRZED czyszczeniem LLM. Wszystko, co pominie, przechodzi przez modyfikatory LLM w drugim podejściu.",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "Nie można załadować {model}",

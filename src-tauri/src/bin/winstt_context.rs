@@ -10,7 +10,10 @@
 // Modes (mutually exclusive; default = focused):
 //   (default)   — focused element text via TextPattern → ValuePattern (focusedText).
 //   --selection — only the user's selected text (focusedText).
-//   --split     — caret-aware split: textBefore / textAfter around the caret.
+//   --split     — caret-aware split: textBefore / textAfter around the caret,
+//                 PLUS the browser url (focused-field context for dictation —
+//                 the competitor-parity capture: focused field + app identity,
+//                 NO whole-window tree walk, so no sidebar/inbox/OTP-tree leak).
 //   --tree      — Wispr-style: caret split + full UIA subtree axHtml + appExe + url.
 //   --hwnd <DECIMAL> — scope the read to that top-level window HWND (else
 //                      GetForegroundWindow()).
@@ -84,15 +87,16 @@ mod windows_impl {
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
         IUIAutomationTextRange, IUIAutomationTreeWalker, IUIAutomationValuePattern,
         UIA_AutomationIdPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
+        UIA_ControlTypePropertyId,
         UIA_ComboBoxControlTypeId, UIA_DataItemControlTypeId, UIA_DocumentControlTypeId,
         UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId,
         UIA_HeaderControlTypeId, UIA_HeaderItemControlTypeId, UIA_HyperlinkControlTypeId,
         UIA_ImageControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
         UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_PaneControlTypeId,
         UIA_RadioButtonControlTypeId, UIA_StatusBarControlTypeId, UIA_TabControlTypeId,
-        UIA_TabItemControlTypeId, UIA_TableControlTypeId, UIA_TextControlTypeId,
-        UIA_TextPatternId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
-        UIA_TreeItemControlTypeId, UIA_ValuePatternId, UIA_WindowControlTypeId,
+        UIA_TabItemControlTypeId, UIA_TableControlTypeId, UIA_TextControlTypeId, UIA_TextPatternId,
+        UIA_ToolBarControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
+        UIA_ValuePatternId, UIA_WindowControlTypeId,
     };
     use windows::Win32::UI::Accessibility::{
         TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
@@ -171,9 +175,9 @@ mod windows_impl {
         let com_ok = co.is_ok() || co == windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 
         if com_ok {
-            if let Ok(uia) =
-                unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
-            {
+            if let Ok(uia) = unsafe {
+                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+            } {
                 if cli.tree {
                     read_focused_split(
                         &uia,
@@ -194,6 +198,12 @@ mod windows_impl {
                         &mut focused_text,
                         &mut element_name,
                     );
+                    // App identity for web apps WITHOUT the expensive/leaky tree
+                    // walk: a single targeted omnibox lookup. The dictation path
+                    // uses --split, and the URL is what (a) lets the LLM tell
+                    // Gmail from Docs and (b) drives the host-based privacy
+                    // deny-list (e.g. *.bankofamerica.com). axHtml stays empty.
+                    url = find_browser_url(&uia, fg, &app_exe);
                 } else {
                     read_focused_context(
                         &uia,
@@ -294,8 +304,7 @@ mod windows_impl {
         if pid == 0 {
             return String::new();
         }
-        let Ok(handle) =
-            (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
+        let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
         else {
             return String::new();
         };
@@ -314,11 +323,7 @@ mod windows_impl {
             return String::new();
         }
         let path = String::from_utf16_lossy(&buf[..len as usize]);
-        let base = path
-            .rsplit(['\\', '/'])
-            .next()
-            .unwrap_or(&path)
-            .to_string();
+        let base = path.rsplit(['\\', '/']).next().unwrap_or(&path).to_string();
         base.to_lowercase()
     }
 
@@ -386,13 +391,11 @@ mod windows_impl {
 
     /// Depth-unbounded FindFirst(HasKeyboardFocus==TRUE) inside the scope window
     /// (Gmail's reply box sits very deep). Mirrors find_focused_in_window.
-    fn find_focused_in_window(
-        uia: &IUIAutomation,
-        hwnd: HWND,
-    ) -> Option<IUIAutomationElement> {
+    fn find_focused_in_window(uia: &IUIAutomation, hwnd: HWND) -> Option<IUIAutomationElement> {
         let root = unsafe { uia.ElementFromHandle(hwnd) }.ok()?;
         let v = windows::Win32::System::Variant::VARIANT::from(true);
-        let cond = unsafe { uia.CreatePropertyCondition(UIA_HasKeyboardFocusPropertyId, &v) }.ok()?;
+        let cond =
+            unsafe { uia.CreatePropertyCondition(UIA_HasKeyboardFocusPropertyId, &v) }.ok()?;
         unsafe { root.FindFirst(TreeScope_Subtree, &cond) }.ok()
     }
 
@@ -448,8 +451,7 @@ mod windows_impl {
         *out_name = read_element_name(&focused);
         if !read_caret_split(&focused, out_before, out_after) {
             // No caret — degrade to the whole-text read.
-            if let Some(text) =
-                read_text_pattern(&focused).or_else(|| read_value_pattern(&focused))
+            if let Some(text) = read_text_pattern(&focused).or_else(|| read_value_pattern(&focused))
             {
                 *out_text = text;
             }
@@ -726,11 +728,16 @@ mod windows_impl {
         }
 
         // Never expose password-bearing elements (or their children).
-        if unsafe { elem.CurrentIsPassword() }.unwrap_or_default().as_bool() {
+        if unsafe { elem.CurrentIsPassword() }
+            .unwrap_or_default()
+            .as_bool()
+        {
             return true;
         }
 
-        let ctype = unsafe { elem.CurrentControlType() }.map(|c| c.0).unwrap_or(0);
+        let ctype = unsafe { elem.CurrentControlType() }
+            .map(|c| c.0)
+            .unwrap_or(0);
         let name = read_element_name(elem);
         let has_focus = unsafe { elem.CurrentHasKeyboardFocus() }
             .unwrap_or_default()
@@ -744,8 +751,9 @@ mod windows_impl {
             || ctype == UIA_DocumentControlTypeId.0
             || ctype == UIA_TextControlTypeId.0
         {
-            let is_content =
-                has_focus || ctype == UIA_EditControlTypeId.0 || ctype == UIA_DocumentControlTypeId.0;
+            let is_content = has_focus
+                || ctype == UIA_EditControlTypeId.0
+                || ctype == UIA_DocumentControlTypeId.0;
             if let Some(v) = tree_read_value(elem) {
                 value = v;
             }
@@ -872,9 +880,17 @@ mod windows_impl {
         if hwnd.is_invalid() {
             return String::new();
         }
-        let is_chromium = ["chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe", "opera.exe", "arc.exe", "thorium.exe"]
-            .iter()
-            .any(|b| app_exe.contains(b));
+        let is_chromium = [
+            "chrome.exe",
+            "msedge.exe",
+            "brave.exe",
+            "vivaldi.exe",
+            "opera.exe",
+            "arc.exe",
+            "thorium.exe",
+        ]
+        .iter()
+        .any(|b| app_exe.contains(b));
         let is_firefox = ["firefox.exe", "librewolf.exe", "zen.exe", "waterfox.exe"]
             .iter()
             .any(|b| app_exe.contains(b));
@@ -884,18 +900,70 @@ mod windows_impl {
         let Ok(root) = (unsafe { uia.ElementFromHandle(hwnd) }) else {
             return String::new();
         };
-        let target_id: PCWSTR = if is_chromium { w!("omnibox") } else { w!("urlbar") };
+        // Fast path: the historical stable AutomationId (Firefox "urlbar" and older
+        // Chromium "omnibox").
+        let target_id: PCWSTR = if is_chromium {
+            w!("omnibox")
+        } else {
+            w!("urlbar")
+        };
         let v = windows::Win32::System::Variant::VARIANT::from(BSTR::from_wide(unsafe {
             target_id.as_wide()
         }));
-        let Ok(cond) =
-            (unsafe { uia.CreatePropertyCondition(UIA_AutomationIdPropertyId, &v) })
-        else {
-            return String::new();
-        };
-        let Ok(omnibox) = (unsafe { root.FindFirst(TreeScope_Descendants, &cond) }) else {
-            return String::new();
-        };
-        read_value_pattern(&omnibox).unwrap_or_default()
+        if let Ok(cond) = unsafe { uia.CreatePropertyCondition(UIA_AutomationIdPropertyId, &v) } {
+            if let Ok(el) = unsafe { root.FindFirst(TreeScope_Descendants, &cond) } {
+                if let Some(url) = read_value_pattern(&el) {
+                    if looks_like_url_or_host(&url) {
+                        return url;
+                    }
+                }
+            }
+        }
+
+        // Fallback: modern Chrome assigns the omnibox a GENERATED AutomationId (e.g.
+        // "view_1012"), so the id match misses. Identify the address bar by value
+        // SHAPE instead: among the window's Edit controls (in tree order — the
+        // toolbar precedes the web content), the address bar holds a single-line
+        // URL/host while page fields hold prose. Return the first URL/host value.
+        // Locale-independent (no control-name match) and version-independent.
+        let ctype = windows::Win32::System::Variant::VARIANT::from(UIA_EditControlTypeId.0);
+        if let Ok(cond) = unsafe { uia.CreatePropertyCondition(UIA_ControlTypePropertyId, &ctype) } {
+            if let Ok(edits) = unsafe { root.FindAll(TreeScope_Descendants, &cond) } {
+                let len = unsafe { edits.Length() }.unwrap_or(0);
+                for i in 0..len {
+                    if let Ok(el) = unsafe { edits.GetElement(i) } {
+                        if let Some(val) =
+                            read_value_pattern(&el).or_else(|| read_text_pattern(&el))
+                        {
+                            if looks_like_url_or_host(&val) {
+                                return val;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        String::new()
+    }
+
+    /// True when `value` looks like a browser address-bar URL or bare host (single
+    /// line, no whitespace, http(s) scheme or a dotted label-shaped host) — used to
+    /// pick the omnibox Edit out of the window's Edit controls without relying on
+    /// Chrome's (now generated, unstable) omnibox AutomationId or a localized name.
+    fn looks_like_url_or_host(value: &str) -> bool {
+        let v = value.trim();
+        if v.is_empty() || v.len() > 2048 || v.chars().any(char::is_whitespace) {
+            return false;
+        }
+        if v.starts_with("http://") || v.starts_with("https://") {
+            return true;
+        }
+        // Bare host such as "example.com" / "mail.google.com" (optionally followed
+        // by a path): the part before the first '/' is a dotted, label-shaped host.
+        let host = v.split('/').next().unwrap_or(v);
+        host.contains('.')
+            && host
+                .split('.')
+                .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
     }
 }

@@ -198,7 +198,7 @@ function SourceArea({
 		handleModelChange(modelId, quantization);
 	};
 	// Open the detached picker window (full work area, can extend beyond the
-	// 700×560 settings window) instead of an in-window popup — mirrors the
+	// settings window) instead of an in-window popup — mirrors the
 	// main-window footer chip. It anchors above this trigger's rect.
 	const openDetachedPicker = (rect: DOMRect) =>
 		ipcSend(IPC.MODEL_PICKER_OPEN, {
@@ -330,7 +330,7 @@ export function MainModelSection({
 
 	return (
 		<SettingSection icon={AiMicIcon} title={t("mainModel")}>
-			<div className="flex flex-col divide-y divide-surface-1">
+			<div className="flex flex-col">
 				{/* `key` resets the local `source` state inside SourceArea whenever
 				 *  the persisted model's source changes or API-key availability
 				 *  flips — no derived-state effect needed. */}

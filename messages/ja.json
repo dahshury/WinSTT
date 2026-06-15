@@ -635,7 +635,8 @@
     "clearDescription": "すべての辞書エントリが完全に削除されます。この操作は元に戻せません。",
     "thresholdLabel": "修正の厳密さ",
     "thresholdCaption": "サーバーサイドの修正器が受け入れる最大ファジーマッチスコア。低いほど厳格（誤置換が少ない）。",
-    "thresholdTooltip": "決定論的修正器は文字起こし直後、LLM クリーンアップの前にサーバーで実行されます。見逃したものはすべて LLM 修飾子を通じて再度処理されます。"
+    "thresholdTooltip": "決定論的修正器は文字起こし直後、LLM クリーンアップの前にサーバーで実行されます。見逃したものはすべて LLM 修飾子を通じて再度処理されます。",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "{model} を読み込めませんでした",

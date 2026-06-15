@@ -635,7 +635,8 @@
     "clearDescription": "Všechny záznamy slovníku budou trvale odstraněny. Tuto akci nelze vrátit zpět.",
     "thresholdLabel": "Přísnost oprav",
     "thresholdCaption": "Maximální skóre fuzzy shody, které serverový korektor přijme. Nižší = přísnější (méně falešných náhrad).",
-    "thresholdTooltip": "Deterministický korektor běží na serveru ihned po přepisu a PŘED čištěním LLM. Vše, co propustí, dostane druhý průchod přes modifikátory LLM."
+    "thresholdTooltip": "Deterministický korektor běží na serveru ihned po přepisu a PŘED čištěním LLM. Vše, co propustí, dostane druhý průchod přes modifikátory LLM.",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "{model} nelze načíst",

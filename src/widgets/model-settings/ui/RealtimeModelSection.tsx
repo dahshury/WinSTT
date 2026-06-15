@@ -109,7 +109,7 @@ export function RealtimeModelSection({
 		: `${t("realtimeModelCaption")} ${t("realtimeModelTooltip")}`;
 	return (
 		<SettingSection icon={Activity03Icon} title={t("realtimeModelSection")}>
-			<div className="flex flex-col divide-y divide-surface-1">
+			<div className="flex flex-col">
 				<div className="col-span-2">
 					<FormControl label={t("realtimeModel")} tooltip={realtimeTooltip}>
 						<SttModelSelector

@@ -33,7 +33,7 @@
 //   - `cache_delete` — per-quant + whole-model HF cache deletion + the `key()` composite-key helper.
 
 mod cache_delete;
-mod http_meta;
+pub(crate) mod http_meta;
 mod progress;
 
 use std::collections::BTreeMap;

@@ -331,4 +331,10 @@ export const generalSettingsSchema = z.object({
 	// keeps an older persisted value (or a corrupt entry) from wiping the
 	// whole `general` section on upgrade.
 	wordCorrectionThreshold: z.number().min(0).max(1).default(0.18).catch(0.18),
+	// Master switch for the on-device (non-LLM) encoder dictionary fallback.
+	// When off, the Vocabulary tab's masked-LM corrector never runs even if the
+	// model is downloaded — but the download is left on disk so re-enabling is
+	// instant (deleting it is a separate, explicit action). The dictionary still
+	// works through the LLM cleanup path when that's enabled, independent of this flag.
+	encoderDictionaryEnabled: z.boolean().default(true).catch(true),
 });

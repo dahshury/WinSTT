@@ -635,7 +635,8 @@
     "clearDescription": "Tüm sözlük girişleri kalıcı olarak kaldırılacak. Bu işlem geri alınamaz.",
     "thresholdLabel": "Düzeltme katılığı",
     "thresholdCaption": "Sunucu taraflı düzelticinin kabul edeceği maksimum bulanık eşleşme puanı. Düşük = daha katı (daha az yanlış değiştirme).",
-    "thresholdTooltip": "Deterministik düzeltici, transkripsiyon sonrasında ve LLM temizlemeden ÖNCE sunucuda çalışır. Kaçırdığı her şey yine de LLM değiştiricilerden ikinci bir geçiş alır."
+    "thresholdTooltip": "Deterministik düzeltici, transkripsiyon sonrasında ve LLM temizlemeden ÖNCE sunucuda çalışır. Kaçırdığı her şey yine de LLM değiştiricilerden ikinci bir geçiş alır.",
+    "encoderDownloadedOff": "Model downloaded — turn on to use it."
   },
   "swapFailure": {
     "headline": "{model} yüklenemedi",

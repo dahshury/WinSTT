@@ -228,7 +228,7 @@ export function IntegrationsSettingsPanel() {
 				icon={AiBrain01Icon}
 				title={t("llmSectionTitle")}
 			>
-				<div className="flex flex-col divide-y divide-surface-1">
+				<div className="flex flex-col">
 					<div className="col-span-2">
 						<SettingField
 							isDefault={endpoint === DEFAULT_SETTINGS.llm.endpoint}
@@ -327,7 +327,7 @@ export function IntegrationsSettingsPanel() {
 				icon={ApiIcon}
 				title={t("sttSectionTitle")}
 			>
-				<div className="flex flex-col divide-y divide-surface-1">
+				<div className="flex flex-col">
 					<ProviderIntegrationSection
 						keyCaption={t("elevenlabsApiKeyCaption")}
 						keyLabel={t("elevenlabsApiKey")}
