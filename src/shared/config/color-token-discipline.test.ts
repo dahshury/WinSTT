@@ -27,8 +27,8 @@ const TOKEN_SOURCE_FILES = new Set([
 	"public/splash.html",
 ]);
 
-const TOKEN_DECLARATION_PATTERN =
-	/^\s*--(?:color|shadow)-[a-z0-9-]+\s*:[^;\n}]+[;}]/gim;
+const BLOCK_COMMENT_PATTERN = /\/\*[\s\S]*?\*\/|<!--[\s\S]*?-->/g;
+const TOKEN_DECLARATION_PATTERN = /^\s*--[a-z0-9-]+\s*:[\s\S]*?;/gim;
 const COLOR_PATTERNS: Array<[label: string, pattern: RegExp]> = [
 	["hex color", /#[0-9a-fA-F]{3,8}\b/g],
 	["color function", /\b(?:rgba?|hsla?|oklch)\(/g],
@@ -86,10 +86,19 @@ function blankTokenDeclarations(source: string): string {
 	);
 }
 
+function blankBlockComments(source: string): string {
+	return source.replace(BLOCK_COMMENT_PATTERN, (match) =>
+		match.replace(/[^\r\n]/g, " "),
+	);
+}
+
 function sourceForScanning(file: string): string {
 	const rel = relativeNormalized(file);
 	const source = readFileSync(file, "utf8");
-	return TOKEN_SOURCE_FILES.has(rel) ? blankTokenDeclarations(source) : source;
+	const uncommented = blankBlockComments(source);
+	return TOKEN_SOURCE_FILES.has(rel)
+		? blankTokenDeclarations(uncommented)
+		: uncommented;
 }
 
 function lineNumber(source: string, index: number): number {

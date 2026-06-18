@@ -123,6 +123,68 @@
 	--color-subtitle-scrim-soft: oklch(0% 0 0 / 0.08);
 	--color-subtitle-scrim-bottom: oklch(0% 0 0 / 0.55);
 
+	/* Settings shell material: window substrate, rail chrome, and active tabs. */
+	--color-settings-window-bloom: oklch(15% 0.014 265 / 0.38);
+	--color-settings-window-top: oklch(13% 0.015 265);
+	--color-settings-window-bottom: oklch(10.5% 0.015 265);
+	--color-settings-card-bloom-strong: oklch(26% 0.013 265 / 0.52);
+	--color-settings-card-bloom-soft: oklch(21% 0.014 265 / 0.34);
+	--color-settings-card-top-bloom: oklch(22.5% 0.013 265 / 0.34);
+	--color-settings-card-top: oklch(17% 0.015 265);
+	--color-settings-card-bottom: oklch(14% 0.015 265);
+	--color-settings-card-overlay-bloom: oklch(30% 0.012 265 / 0.14);
+	--color-settings-card-overlay-highlight: oklch(100% 0 0 / 0.035);
+	--color-settings-sidebar-bloom-strong: oklch(24% 0.014 265 / 0.62);
+	--color-settings-sidebar-bloom-mid: oklch(17.5% 0.014 265 / 0.24);
+	--color-settings-sidebar-bloom-soft: oklch(20% 0.014 265 / 0.48);
+	--color-settings-sidebar-bloom-floor: oklch(14% 0.015 265 / 0.26);
+	--color-settings-sidebar-fade-start: oklch(15.5% 0.015 265 / 0.98);
+	--color-settings-sidebar-fade-mid: oklch(13% 0.015 265 / 0.9);
+	--color-settings-sidebar-fade-end: oklch(11.5% 0.015 265 / 0.42);
+	--color-settings-sidebar-vertical-top: oklch(14.2% 0.015 265 / 0.96);
+	--color-settings-sidebar-vertical-bottom: oklch(10% 0.015 265 / 0.92);
+	--color-settings-sidebar-mask: #000;
+	--color-settings-sidebar-title: oklch(72% 0.02 265 / 0.82);
+	--color-settings-sidebar-icon: oklch(66% 0.025 265 / 0.72);
+	--color-settings-sidebar-icon-hover-bg: oklch(100% 0 0 / 0.07);
+	--color-settings-sidebar-icon-hover-edge: oklch(100% 0 0 / 0.06);
+	--color-settings-sidebar-icon-active-bg: oklch(100% 0 0 / 0.09);
+	--color-settings-sidebar-search-border: oklch(100% 0 0 / 0.08);
+	--color-settings-sidebar-search-top: oklch(24% 0.012 265 / 0.58);
+	--color-settings-sidebar-search-bottom: oklch(16% 0.014 265 / 0.92);
+	--color-settings-sidebar-search-edge: oklch(100% 0 0 / 0.07);
+	--color-settings-sidebar-search-outline: oklch(0% 0 0 / 0.18);
+	--color-settings-sidebar-separator-faint: oklch(100% 0 0 / 0.13);
+	--color-settings-sidebar-separator-mid: oklch(100% 0 0 / 0.2);
+	--color-settings-sidebar-separator-soft: oklch(100% 0 0 / 0.1);
+	--color-settings-sidebar-separator-shadow: oklch(0% 0 0 / 0.36);
+	--color-settings-sidebar-tab-text: oklch(63% 0.025 265 / 0.72);
+	--color-settings-sidebar-tab-hover-bg: oklch(100% 0 0 / 0.04);
+	--color-settings-sidebar-tab-hover-text: oklch(78% 0.02 265 / 0.9);
+	--color-settings-sidebar-tab-active-text: oklch(98% 0 0);
+	--color-settings-sidebar-tab-active-dome-top: oklch(40% 0.006 265);
+	--color-settings-sidebar-tab-active-dome-mid: oklch(32% 0.007 265);
+	--color-settings-sidebar-tab-active-dome-base: oklch(26.5% 0.008 265);
+	--color-settings-sidebar-tab-active-dome-bottom: oklch(25.5% 0.008 265);
+	--color-settings-sidebar-tab-active-gradient-top: oklch(28% 0.008 265);
+	--color-settings-sidebar-tab-active-gradient-bottom: oklch(24.5% 0.009 265);
+	--color-settings-sidebar-tab-active-edge: oklch(100% 0 0 / 0.14);
+	--color-settings-sidebar-tab-active-ring: oklch(64% 0.006 265 / 0.46);
+	--color-settings-sidebar-tab-active-shade: oklch(0% 0 0 / 0.3);
+	--color-settings-sidebar-tab-active-drop: oklch(0% 0 0 / 0.5);
+	--color-settings-sidebar-tab-active-drop-soft: oklch(0% 0 0 / 0.28);
+	--color-settings-sidebar-tab-active-hover-dome-top: oklch(42% 0.006 265);
+	--color-settings-sidebar-tab-active-hover-dome-mid: oklch(33% 0.007 265);
+	--color-settings-sidebar-tab-active-hover-dome-base: oklch(27.5% 0.008 265);
+	--color-settings-sidebar-tab-active-hover-dome-bottom: oklch(26.5% 0.008 265);
+	--color-settings-sidebar-tab-active-hover-gradient-top: oklch(29% 0.008 265);
+	--color-settings-sidebar-tab-active-hover-gradient-bottom: oklch(
+		25.5% 0.009 265
+	);
+	--color-shimmer-text-muted: var(--color-foreground-secondary);
+	--color-shimmer-text-strong: var(--color-foreground);
+	--color-secret-reveal-edge: oklch(98% 0 0 / 0.16);
+
 	/* Accent — Docker Blue (primary interactive: buttons, dropdowns, focus rings) */
 	--color-accent: oklch(62% 0.19 260);
 	--color-accent-hover: oklch(70% 0.155 255);
@@ -425,13 +487,13 @@
 		background:
 			radial-gradient(
 				ellipse 120% 72% at 50% -18%,
-				oklch(15% 0.014 265 / 0.38),
+				var(--color-settings-window-bloom),
 				transparent 38rem
 			),
 			linear-gradient(
 				180deg,
-				oklch(13% 0.015 265) 0%,
-				oklch(10.5% 0.015 265) 100%
+				var(--color-settings-window-top) 0%,
+				var(--color-settings-window-bottom) 100%
 			) !important;
 	}
 
@@ -448,19 +510,19 @@
 		background:
 			radial-gradient(
 				ellipse 112% 86% at 52% 42%,
-				oklch(26% 0.013 265 / 0.52) 0%,
-				oklch(21% 0.014 265 / 0.34) 36%,
+				var(--color-settings-card-bloom-strong) 0%,
+				var(--color-settings-card-bloom-soft) 36%,
 				transparent 76%
 			),
 			radial-gradient(
 				ellipse 130% 50% at 48% -8%,
-				oklch(22.5% 0.013 265 / 0.34),
+				var(--color-settings-card-top-bloom),
 				transparent 31rem
 			),
 			linear-gradient(
 				180deg,
-				oklch(17% 0.015 265) 0%,
-				oklch(14% 0.015 265) 100%
+				var(--color-settings-card-top) 0%,
+				var(--color-settings-card-bottom) 100%
 			) !important;
 	}
 
@@ -472,10 +534,14 @@
 		background:
 			radial-gradient(
 				ellipse 78% 46% at 50% 44%,
-				oklch(30% 0.012 265 / 0.14),
+				var(--color-settings-card-overlay-bloom),
 				transparent 70%
 			),
-			linear-gradient(180deg, oklch(100% 0 0 / 0.035) 0%, transparent 15rem);
+			linear-gradient(
+				180deg,
+				var(--color-settings-card-overlay-highlight) 0%,
+				transparent 15rem
+			);
 	}
 
 	.settings-sidebar-shell {
@@ -498,33 +564,38 @@
 		background:
 			radial-gradient(
 				ellipse 135% 58% at 40% -8%,
-				oklch(24% 0.014 265 / 0.62),
-				oklch(17.5% 0.014 265 / 0.24) 46%,
+				var(--color-settings-sidebar-bloom-strong),
+				var(--color-settings-sidebar-bloom-mid) 46%,
 				transparent 25rem
 			),
 			radial-gradient(
 				ellipse 96% 72% at 36% 42%,
-				oklch(20% 0.014 265 / 0.48),
-				oklch(14% 0.015 265 / 0.26) 50%,
+				var(--color-settings-sidebar-bloom-soft),
+				var(--color-settings-sidebar-bloom-floor) 50%,
 				transparent 24rem
 			),
 			linear-gradient(
 				90deg,
-				oklch(15.5% 0.015 265 / 0.98) 0%,
-				oklch(13% 0.015 265 / 0.9) 58%,
-				oklch(11.5% 0.015 265 / 0.42) 84%,
+				var(--color-settings-sidebar-fade-start) 0%,
+				var(--color-settings-sidebar-fade-mid) 58%,
+				var(--color-settings-sidebar-fade-end) 84%,
 				transparent 100%
 			),
 			linear-gradient(
 				180deg,
-				oklch(14.2% 0.015 265 / 0.96) 0%,
-				oklch(10% 0.015 265 / 0.92) 100%
+				var(--color-settings-sidebar-vertical-top) 0%,
+				var(--color-settings-sidebar-vertical-bottom) 100%
 			);
-		mask-image: linear-gradient(90deg, #000 0%, #000 88%, transparent 100%);
+		mask-image: linear-gradient(
+			90deg,
+			var(--color-settings-sidebar-mask) 0%,
+			var(--color-settings-sidebar-mask) 88%,
+			transparent 100%
+		);
 		-webkit-mask-image: linear-gradient(
 			90deg,
-			#000 0%,
-			#000 88%,
+			var(--color-settings-sidebar-mask) 0%,
+			var(--color-settings-sidebar-mask) 88%,
 			transparent 100%
 		);
 	}
@@ -535,7 +606,7 @@
 	}
 
 	.settings-sidebar-title {
-		color: oklch(72% 0.02 265 / 0.82);
+		color: var(--color-settings-sidebar-title);
 		font-size: 0.74rem;
 		letter-spacing: 0.14em;
 		line-height: 1;
@@ -545,30 +616,30 @@
 		width: 2rem;
 		height: 2rem;
 		border-radius: 0.8rem;
-		color: oklch(66% 0.025 265 / 0.72);
+		color: var(--color-settings-sidebar-icon);
 	}
 
 	.settings-sidebar-icon-button:hover {
-		background: oklch(100% 0 0 / 0.07);
-		box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.06);
+		background: var(--color-settings-sidebar-icon-hover-bg);
+		box-shadow: inset 0 1px 0 var(--color-settings-sidebar-icon-hover-edge);
 	}
 
 	.settings-sidebar-icon-button:active {
-		background: oklch(100% 0 0 / 0.09);
+		background: var(--color-settings-sidebar-icon-active-bg);
 	}
 
 	.settings-sidebar-search-input {
 		height: 2.5rem;
-		border-color: oklch(100% 0 0 / 0.08);
+		border-color: var(--color-settings-sidebar-search-border);
 		border-radius: 1rem;
 		background: linear-gradient(
 			180deg,
-			oklch(24% 0.012 265 / 0.58),
-			oklch(16% 0.014 265 / 0.92)
+			var(--color-settings-sidebar-search-top),
+			var(--color-settings-sidebar-search-bottom)
 		) !important;
 		box-shadow:
-			inset 0 1px 0 oklch(100% 0 0 / 0.07),
-			0 0 0 1px oklch(0% 0 0 / 0.18) !important;
+			inset 0 1px 0 var(--color-settings-sidebar-search-edge),
+			0 0 0 1px var(--color-settings-sidebar-search-outline) !important;
 	}
 
 	.settings-sidebar-list {
@@ -586,12 +657,12 @@
 		background: linear-gradient(
 			90deg,
 			transparent 0%,
-			oklch(100% 0 0 / 0.13) 18%,
-			oklch(100% 0 0 / 0.2) 50%,
-			oklch(100% 0 0 / 0.1) 82%,
+			var(--color-settings-sidebar-separator-faint) 18%,
+			var(--color-settings-sidebar-separator-mid) 50%,
+			var(--color-settings-sidebar-separator-soft) 82%,
 			transparent 100%
 		);
-		box-shadow: 0 1px 0 oklch(0% 0 0 / 0.36);
+		box-shadow: 0 1px 0 var(--color-settings-sidebar-separator-shadow);
 	}
 
 	/* Every row shares one fixed height. The active row is NOT taller and the
@@ -601,12 +672,12 @@
 		height: 2.4rem;
 		min-height: 2.4rem;
 		border-radius: var(--radius-lg);
-		color: oklch(63% 0.025 265 / 0.72);
+		color: var(--color-settings-sidebar-tab-text);
 	}
 
 	.settings-sidebar-tab:hover {
-		background: oklch(100% 0 0 / 0.04);
-		color: oklch(78% 0.02 265 / 0.9);
+		background: var(--color-settings-sidebar-tab-hover-bg);
+		color: var(--color-settings-sidebar-tab-hover-text);
 	}
 
 	/* Active row — a raised, beveled plate using the same rounded-lg corner
@@ -615,34 +686,42 @@
 	   centered radial), with a crisp light hairline ring so the plate reads as
 	   lifted a step above the charcoal panel. */
 	.settings-sidebar-tab[data-active] {
-		color: oklch(98% 0 0);
+		color: var(--color-settings-sidebar-tab-active-text);
 		background:
 			radial-gradient(
 				ellipse 96% 130% at 50% -24%,
-				oklch(40% 0.006 265),
-				oklch(32% 0.007 265) 40%,
-				oklch(26.5% 0.008 265) 74%,
-				oklch(25.5% 0.008 265)
+				var(--color-settings-sidebar-tab-active-dome-top),
+				var(--color-settings-sidebar-tab-active-dome-mid) 40%,
+				var(--color-settings-sidebar-tab-active-dome-base) 74%,
+				var(--color-settings-sidebar-tab-active-dome-bottom)
 			),
-			linear-gradient(180deg, oklch(28% 0.008 265), oklch(24.5% 0.009 265));
+			linear-gradient(
+				180deg,
+				var(--color-settings-sidebar-tab-active-gradient-top),
+				var(--color-settings-sidebar-tab-active-gradient-bottom)
+			);
 		box-shadow:
-			inset 0 1px 0 oklch(100% 0 0 / 0.14),
-			inset 0 0 0 1px oklch(64% 0.006 265 / 0.46),
-			inset 0 -2px 4px oklch(0% 0 0 / 0.3),
-			0 2px 6px oklch(0% 0 0 / 0.5),
-			0 16px 34px oklch(0% 0 0 / 0.28);
+			inset 0 1px 0 var(--color-settings-sidebar-tab-active-edge),
+			inset 0 0 0 1px var(--color-settings-sidebar-tab-active-ring),
+			inset 0 -2px 4px var(--color-settings-sidebar-tab-active-shade),
+			0 2px 6px var(--color-settings-sidebar-tab-active-drop),
+			0 16px 34px var(--color-settings-sidebar-tab-active-drop-soft);
 	}
 
 	.settings-sidebar-tab[data-active]:hover {
 		background:
 			radial-gradient(
 				ellipse 96% 130% at 50% -24%,
-				oklch(42% 0.006 265),
-				oklch(33% 0.007 265) 40%,
-				oklch(27.5% 0.008 265) 74%,
-				oklch(26.5% 0.008 265)
+				var(--color-settings-sidebar-tab-active-hover-dome-top),
+				var(--color-settings-sidebar-tab-active-hover-dome-mid) 40%,
+				var(--color-settings-sidebar-tab-active-hover-dome-base) 74%,
+				var(--color-settings-sidebar-tab-active-hover-dome-bottom)
 			),
-			linear-gradient(180deg, oklch(29% 0.008 265), oklch(25.5% 0.009 265));
+			linear-gradient(
+				180deg,
+				var(--color-settings-sidebar-tab-active-hover-gradient-top),
+				var(--color-settings-sidebar-tab-active-hover-gradient-bottom)
+			);
 	}
 
 	.settings-sidebar-tab-icon {
@@ -713,10 +792,10 @@
 @keyframes pulse-glow {
 	0%,
 	100% {
-		box-shadow: 0 0 8px rgba(59, 130, 246, 0.15);
+		box-shadow: 0 0 8px var(--color-accent-glow);
 	}
 	50% {
-		box-shadow: 0 0 16px rgba(59, 130, 246, 0.3);
+		box-shadow: 0 0 16px var(--color-accent-glow-strong);
 	}
 }
 
@@ -811,11 +890,11 @@
 	color: transparent;
 	background: linear-gradient(
 		90deg,
-		oklch(73% 0.025 260) 0%,
-		oklch(73% 0.025 260) 35%,
-		oklch(94% 0.015 265) 50%,
-		oklch(73% 0.025 260) 65%,
-		oklch(73% 0.025 260) 100%
+		var(--color-shimmer-text-muted) 0%,
+		var(--color-shimmer-text-muted) 35%,
+		var(--color-shimmer-text-strong) 50%,
+		var(--color-shimmer-text-muted) 65%,
+		var(--color-shimmer-text-muted) 100%
 	);
 	-webkit-background-clip: text;
 	background-clip: text;
@@ -1463,9 +1542,9 @@
 	background: linear-gradient(
 		90deg,
 		transparent 0%,
-		rgba(255, 255, 255, 0.16) 42%,
-		rgba(139, 92, 246, 0.22) 50%,
-		rgba(255, 255, 255, 0.16) 58%,
+		var(--color-secret-reveal-edge) 42%,
+		var(--color-accent-glow-strong) 50%,
+		var(--color-secret-reveal-edge) 58%,
 		transparent 100%
 	);
 	animation: t-secret-reveal 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
