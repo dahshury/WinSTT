@@ -80,9 +80,9 @@ const FAVORITES_RAIL_ID = FAVORITES_GROUP_VALUE;
 const SORTED_RAIL_ID = "__sorted__";
 
 const OLLAMA_DOWNLOADING_CARD_CLASSES = cn(
-	"border-accent/45 bg-[linear-gradient(135deg,var(--color-surface-4)_0%,oklch(62%_0.19_260/0.15)_46%,var(--color-surface-2)_100%)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08),0_10px_28px_-18px_var(--color-accent-glow-strong)] ring-1 ring-accent/20",
-	"hover:border-accent/60 hover:bg-[linear-gradient(135deg,var(--color-surface-5)_0%,oklch(62%_0.19_260/0.18)_46%,var(--color-surface-3)_100%)]",
-	"data-[highlighted]:border-accent/60 data-[highlighted]:bg-[linear-gradient(135deg,var(--color-surface-5)_0%,oklch(62%_0.19_260/0.18)_46%,var(--color-surface-3)_100%)]",
+	"border-accent/45 bg-[linear-gradient(135deg,var(--color-surface-4)_0%,var(--color-accent-card-wash)_46%,var(--color-surface-2)_100%)] shadow-glass-trigger-raised ring-1 ring-accent/20",
+	"hover:border-accent/60 hover:bg-[linear-gradient(135deg,var(--color-surface-5)_0%,var(--color-accent-card-wash-strong)_46%,var(--color-surface-3)_100%)]",
+	"data-[highlighted]:border-accent/60 data-[highlighted]:bg-[linear-gradient(135deg,var(--color-surface-5)_0%,var(--color-accent-card-wash-strong)_46%,var(--color-surface-3)_100%)]",
 	"before:pointer-events-none before:absolute before:inset-x-3 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-accent/70 before:to-transparent before:content-[''] before:animate-[hairline-pulse_1.8s_ease-in-out_infinite]",
 );
 
@@ -378,7 +378,7 @@ function LibraryRowBadges({
 	return (
 		<>
 			{status.installedCount > 0 ? (
-				<span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/[0.08] px-1.5 py-px font-medium text-[10px] text-emerald-300/80">
+				<span className="inline-flex items-center gap-1 rounded-full bg-capability-ready/[0.08] px-1.5 py-px font-medium text-[10px] text-capability-ready/80">
 					{"✓ "}
 					{t("installedCount", { count: status.installedCount })}
 				</span>
@@ -390,7 +390,7 @@ function LibraryRowBadges({
 				</span>
 			) : null}
 			{!status.activePull && status.pausedPull ? (
-				<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/[0.08] px-1.5 py-px font-medium text-[10px] text-amber-300/80">
+				<span className="inline-flex items-center gap-1 rounded-full bg-capability-partial/[0.08] px-1.5 py-px font-medium text-[10px] text-capability-partial/80">
 					{t("pausedAtPercent", { percent: progressPercent ?? 0 })}
 				</span>
 			) : null}

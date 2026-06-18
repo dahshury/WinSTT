@@ -51,9 +51,9 @@ export function MainPage() {
 					{/* Drag strip — dedicated titlebar-drag region above canvas */}
 					<div className="titlebar-drag absolute top-0 right-0 left-0 z-titlebar flex h-5 items-center justify-center">
 						<div className="pointer-events-none flex gap-[3px]">
-							<div className="size-[3px] rounded-full bg-white/[0.08]" />
-							<div className="size-[3px] rounded-full bg-white/[0.08]" />
-							<div className="size-[3px] rounded-full bg-white/[0.08]" />
+							<div className="size-[3px] rounded-full bg-overlay-foreground/[0.08]" />
+							<div className="size-[3px] rounded-full bg-overlay-foreground/[0.08]" />
+							<div className="size-[3px] rounded-full bg-overlay-foreground/[0.08]" />
 						</div>
 					</div>
 				</>
@@ -66,20 +66,22 @@ export function MainPage() {
 						className={cn(
 							"titlebar-no-drag absolute right-1 z-titlebar-float gap-1.5 rounded-md px-2 py-1 transition-opacity duration-200",
 							listenSurfaceActive
-								? "top-1 opacity-[0.15] hover:bg-white/10 hover:opacity-100"
+								? "top-1 opacity-[0.15] hover:bg-overlay-foreground/10 hover:opacity-100"
 								: "bottom-7 border border-border bg-surface-3 text-foreground-secondary shadow-sm opacity-70 hover:bg-surface-4 hover:opacity-100",
 						)}
 						{...pttActivation}
 					>
 						<HugeiconsIcon
-							className={listenSurfaceActive ? "text-white/60" : undefined}
+							className={
+								listenSurfaceActive ? "text-overlay-foreground/60" : undefined
+							}
 							icon={Mic01Icon}
 							size={14}
 						/>
 						<span
 							className={cn(
 								"font-medium text-xs-tight",
-								listenSurfaceActive && "text-white/60",
+								listenSurfaceActive && "text-overlay-foreground/60",
 							)}
 						>
 							{t("pttButton")}

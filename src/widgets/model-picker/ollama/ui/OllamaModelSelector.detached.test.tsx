@@ -62,7 +62,7 @@ describe("OllamaModelSelector detached-open mode", () => {
 		expect(trigger).not.toBeNull();
 		const className = trigger?.getAttribute("class") ?? "";
 		expect(className).toContain("bg-gradient-to-b");
-		expect(className).toContain("ring-white/[0.07]");
+		expect(className).toContain("ring-overlay-foreground/[0.07]");
 		expect(className).not.toContain("border-border");
 	});
 

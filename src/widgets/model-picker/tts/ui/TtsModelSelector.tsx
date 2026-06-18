@@ -7,6 +7,7 @@ import { type ReactNode, useEffect, useReducer, useState } from "react";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { Button } from "@/shared/ui/button";
+import { MODEL_TRIGGER_GLASS_CLASSES } from "@/shared/ui/switching-trigger";
 import {
 	GroupRail,
 	type GroupRailItem,
@@ -217,7 +218,7 @@ function DefaultTrigger({
 				<Button
 					{...p}
 					aria-expanded={open}
-					className="group relative flex h-auto min-h-[3.25rem] w-full items-center justify-between gap-2 overflow-hidden rounded-lg bg-gradient-to-b from-[var(--color-surface-3)]/85 to-[var(--color-surface-2)]/95 px-3 py-2 text-left shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06),0_2px_6px_-3px_rgba(2,3,8,0.55)] ring-1 ring-white/[0.07] ring-inset transition-[transform,background-color,box-shadow] duration-150 ease-out hover:from-[var(--color-surface-4)]/85 hover:to-[var(--color-surface-3)]/95 hover:ring-white/[0.13] active:scale-[0.99] disabled:cursor-not-allowed data-[state=open]:ring-accent/40"
+					className={MODEL_TRIGGER_GLASS_CLASSES}
 					data-slot="tts-model-selector-trigger"
 					data-state={open ? "open" : "closed"}
 					disabled={disabled}

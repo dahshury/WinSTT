@@ -561,13 +561,13 @@ describe("getNonFreeBaseTextColor", () => {
 });
 
 describe("getPricingBaseTextColor", () => {
-	test("free returns emerald colors", () => {
+	test("free returns the semantic free-pricing color", () => {
 		expect(
 			helpers.getPricingBaseTextColor(
 				{ tier: "free", label: "Free", className: "x" },
 				true,
 			),
-		).toContain("emerald");
+		).toContain("model-free");
 	});
 
 	test("non-free delegates to non-free helper", () => {
@@ -609,7 +609,7 @@ describe("getPricingClassName", () => {
 			true,
 		);
 		expect(cls).toContain("font-semibold");
-		expect(cls).toContain("emerald");
+		expect(cls).toContain("model-free");
 	});
 
 	test("non-free includes tier className", () => {

@@ -69,7 +69,7 @@ function FavoriteToggleButton({
 						<HugeiconsIcon
 							className={cn(
 								"size-3",
-								isFavorite && "fill-amber-400 text-amber-400",
+								isFavorite && "fill-favorite text-favorite",
 							)}
 							icon={StarIcon}
 						/>

@@ -27,8 +27,8 @@ export function FavoritesGroupLabel({
 			className={GROUP_HEADER_CLASSES}
 			data-rail-section={FAVORITES_GROUP_VALUE}
 		>
-			<span className="flex size-4 items-center justify-center rounded bg-amber-400/[0.12] text-amber-400">
-				<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
+			<span className="flex size-4 items-center justify-center rounded bg-favorite/[0.12] text-favorite">
+				<HugeiconsIcon className="size-3 fill-favorite" icon={StarIcon} />
 			</span>
 			<span className="font-semibold text-[10px] text-foreground-muted uppercase tracking-[0.12em]">
 				{t("favorites")}

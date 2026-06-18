@@ -48,12 +48,15 @@ want maximum accuracy on one phrase.
 
 ## Local Benchmarks Run
 
-Generated fixtures/results live under:
+Reusable fixtures and harnesses live under:
 
 - `tools/bench/wakeword-fixtures/`
-- `tools/bench/wakeword-results/`
 - `src-tauri/examples/wakeword_bench.rs`
 - `tools/bench/wakeword_porcupine195_bench.py`
+
+Raw wakeword result CSVs and generated `.rpw` models are not tracked source.
+Regenerate them locally when needed; `tools/bench/wakeword-results/` is ignored
+for that purpose. The conclusions below retain the relevant measured summaries.
 
 Benchmark caveats:
 
@@ -66,7 +69,8 @@ Benchmark caveats:
 
 ### sherpa-onnx after exact SentencePiece tokenization
 
-Results file: `tools/bench/wakeword-results/sherpa_sapi_sentencepiece_matrix.csv`
+Original raw output: `tools/bench/wakeword-results/sherpa_sapi_sentencepiece_matrix.csv`
+(regeneratable, not tracked).
 
 | Phrase | fp32 hits | int8 hits | Notes |
 | --- | ---: | ---: | --- |
@@ -93,7 +97,8 @@ still needed before claiming an idle-power win.
 
 ### Legacy Porcupine 1.9.5 reference
 
-Results file: `tools/bench/wakeword-results/porcupine195_sapi.csv`
+Original raw output: `tools/bench/wakeword-results/porcupine195_sapi.csv`
+(regeneratable, not tracked).
 
 Tested with `pvporcupine==1.9.5`, the old keyless SDK path. On the same SAPI
 fixtures, built-in phrases were strong:
@@ -114,11 +119,8 @@ accepted; current Picovoice SDKs require an AccessKey.
 
 ### rustpotter reference mode
 
-Results files:
-
-- `tools/bench/wakeword-results/rustpotter_sapi_t060_a037_m6.csv`
-- `tools/bench/wakeword-results/rustpotter_hey_winstt_avg_threshold.csv`
-- `tools/bench/wakeword-results/rustpotter_sapi_threshold_models.csv`
+Original raw outputs were generated under `tools/bench/wakeword-results/`
+(regeneratable, not tracked).
 
 Reference models were built from synthetic enrollment WAVs for `alexa`,
 `computer`, and `hey_winstt`. The best tested setting was:

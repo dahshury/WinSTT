@@ -412,7 +412,7 @@ impl TranscriptionManager {
         crate::log_model_duration(&format!("stt warmup '{model_id}'"), warmup_started);
     }
 
-    /// Load a WinSTT-catalog model through the unified ort-ONNX engine (the proven STT spike
+    /// Load a WinSTT-catalog model through the unified ort-ONNX engine (the proven STT benchmark
     /// path). The WinSTT-specific work — catalog resolution, effective-quant + provider-list
     /// policy, the offline HF file-set resolve, and the engine build — is owned by the
     /// [`SttBackend`] (audit #14). This core keeps ONLY the generic engine-lifecycle

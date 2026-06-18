@@ -10,24 +10,17 @@ interface PerfBarsProps {
 }
 
 /**
- * Map a 0..1 score to a MUTED health-bar colour — soft rose (worst) → soft
- * amber (mid) → soft sage (best). Each channel is pulled toward a mid-grey so
- * the bars read as gently-tinted signals inside the otherwise-grayscale card
- * rather than a neon rainbow. Higher is better, so a fast-but-sloppy model
- * shows a sage speed bar over a rose accuracy bar at a glance.
+ * Map a 0..1 score to the semantic health-bar scale. Higher is better, so a
+ * fast-but-sloppy model shows a high speed bar over a low accuracy bar.
  */
 function scoreColor(score: number): string {
 	const t = Math.max(0, Math.min(1, score));
-	const mix = (a: number, b: number, k: number): number =>
-		Math.round(a + (b - a) * k);
 	if (t < 0.5) {
-		// rose (188,108,108) → amber (190,162,104)
-		const k = t * 2;
-		return `rgb(${mix(188, 190, k)}, ${mix(108, 162, k)}, ${mix(108, 104, k)})`;
+		const lowPct = Math.round((1 - t * 2) * 100);
+		return `color-mix(in oklch, var(--color-performance-low) ${lowPct}%, var(--color-performance-mid))`;
 	}
-	// amber (190,162,104) → sage (120,176,138)
-	const k = (t - 0.5) * 2;
-	return `rgb(${mix(190, 120, k)}, ${mix(162, 176, k)}, ${mix(104, 138, k)})`;
+	const midPct = Math.round((1 - (t - 0.5) * 2) * 100);
+	return `color-mix(in oklch, var(--color-performance-mid) ${midPct}%, var(--color-performance-high))`;
 }
 
 interface PerfBarProps {
@@ -75,8 +68,8 @@ function PerfBar({ icon, label, score }: PerfBarProps) {
 
 /**
  * The speed + accuracy module pinned to a card's top-right. Hidden when the
- * catalog reports the unknown-default 0.5/0.5 — two half-full bars on every
- * variant would just teach the user to ignore them.
+ * catalog reports the unknown-default 0.5/0.5 because two half-full bars on
+ * every variant would teach the user to ignore them.
  */
 export function PerfBars({ speedScore, accuracyScore }: PerfBarsProps) {
 	const hasSignal = speedScore !== 0.5 || accuracyScore !== 0.5;

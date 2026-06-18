@@ -10,6 +10,7 @@ import { Button } from "@/shared/ui/button";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import {
 	buildSwitchingClassName,
+	MODEL_TRIGGER_GLASS_CLASSES,
 	SwapSweepBar,
 	SwitchingFromToRow,
 	SwitchingPill,
@@ -439,8 +440,7 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 	// pill, the sweep bar — so the user gets the same "something is in
 	// flight" affordance regardless of which pathway initiated the bytes.
 	const isTriggerActive = isSwitching || isBackgroundDownload;
-	const baseClass =
-		"group relative flex h-auto min-h-[3.25rem] w-full items-center justify-between gap-2 overflow-hidden rounded-lg bg-gradient-to-b from-[var(--color-surface-3)]/85 to-[var(--color-surface-2)]/95 px-3 py-2 text-left shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06),0_2px_6px_-3px_rgba(2,3,8,0.55)] ring-1 ring-white/[0.07] ring-inset transition-[transform,background-color,box-shadow] duration-150 ease-out hover:from-[var(--color-surface-4)]/85 hover:to-[var(--color-surface-3)]/95 hover:ring-white/[0.13] active:scale-[0.99] disabled:cursor-not-allowed data-[state=open]:from-[oklch(62%_0.19_260/0.10)] data-[state=open]:to-[var(--color-surface-2)]/95 data-[state=open]:ring-accent/40";
+	const baseClass = MODEL_TRIGGER_GLASS_CLASSES;
 	return (
 		<Button
 			{...buttonProps}

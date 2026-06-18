@@ -133,7 +133,7 @@ function EnhanceControls() {
 					{tp("run")}
 				</Button>
 				<Button
-					className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-1.5 font-medium text-sm text-white transition-colors hover:bg-accent-hover"
+					className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-1.5 font-medium text-sm text-on-accent transition-colors hover:bg-accent-hover"
 					onClick={sendPreview}
 				>
 					<HugeiconsIcon icon={Tick02Icon} size={15} />

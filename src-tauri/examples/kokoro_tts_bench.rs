@@ -1,17 +1,17 @@
-// TTS de-risking spike (mirrors stt_spike.rs). Proves the in-process Kokoro-82M
+// Kokoro TTS benchmark (mirrors stt_decode_bench.rs). Proves the in-process Kokoro-82M
 // ONNX engine + espeak-ng FFI phonemizer synthesize a real cached voice
-// end-to-end. NOT shipped — a `cargo run --example tts_spike` harness only.
+// end-to-end. NOT shipped — a `cargo run --example kokoro_tts_bench` harness only.
 //
-//   cargo run --release --example tts_spike                       # af_heart, en-us, default sentence
-//   cargo run --release --example tts_spike -- am_michael         # pick a voice (lang inferred from catalog)
-//   cargo run --release --example tts_spike -- af_heart "custom text here"
-//   cargo run --release --example tts_spike -- --multi            # synth a representative voice per language
-//   SPIKE_TTS_DEVICE=dml cargo run --release --example tts_spike  # measure the DirectML/GPU path
+//   cargo run --release --example kokoro_tts_bench                       # af_heart, en-us, default sentence
+//   cargo run --release --example kokoro_tts_bench -- am_michael         # pick a voice (lang inferred from catalog)
+//   cargo run --release --example kokoro_tts_bench -- af_heart "custom text here"
+//   cargo run --release --example kokoro_tts_bench -- --multi            # synth a representative voice per language
+//   KOKORO_TTS_BENCH_DEVICE=dml cargo run --release --example kokoro_tts_bench  # measure the DirectML/GPU path
 //
 // Model files (auto-detected, override with WINSTT_KOKORO_DIR):
 //   %LOCALAPPDATA%/winstt/tts/kokoro/{kokoro-v1.0.fp16.onnx, voices-v1.0.bin}
 //
-// Output: writes a 24 kHz mono WAV per synthesis to the CWD (tts_spike_<voice>.wav)
+// Output: writes a 24 kHz mono WAV per synthesis to the CWD (kokoro_tts_bench_<voice>.wav)
 //   so the audio can be auditioned, and prints: token count, synth time,
 //   output samples/duration, RTF (synth_time / audio_duration).
 
@@ -32,7 +32,7 @@ fn kokoro_cache_dir() -> PathBuf {
         return PathBuf::from(d);
     }
     // Fall back to %USERPROFILE%\AppData\Local (or $HOME) rather than a
-    // machine-specific absolute path, so the spike isn't pinned to one layout.
+    // machine-specific absolute path, so the benchmark isn't pinned to one layout.
     let local = std::env::var_os("LOCALAPPDATA").map_or_else(
         || {
             let home = std::env::var("USERPROFILE")
@@ -46,7 +46,7 @@ fn kokoro_cache_dir() -> PathBuf {
 }
 
 fn device_from_env() -> KokoroDevice {
-    match std::env::var("SPIKE_TTS_DEVICE")
+    match std::env::var("KOKORO_TTS_BENCH_DEVICE")
         .unwrap_or_default()
         .to_lowercase()
         .as_str()
@@ -165,7 +165,7 @@ fn synth_one(engine: &KokoroEngine, voice: &str, lang: &str, text: &str) {
                     ok
                 );
                 if label == "warm" {
-                    let out = format!("tts_spike_{voice}.wav");
+                    let out = format!("kokoro_tts_bench_{voice}.wav");
                     write_wav(&out, &samples, KOKORO_SAMPLE_RATE);
                     eprintln!("  wrote {out}");
                 }
@@ -181,7 +181,7 @@ fn synth_one(engine: &KokoroEngine, voice: &str, lang: &str, text: &str) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    eprintln!("=== TTS SPIKE ===");
+    eprintln!("=== KOKORO TTS BENCH ===");
     eprintln!("device   : {:?}", device_from_env());
     match resolve_espeak_lib() {
         Some((lib, data)) => eprintln!("espeak-ng: {} (data {:?})", lib.display(), data),

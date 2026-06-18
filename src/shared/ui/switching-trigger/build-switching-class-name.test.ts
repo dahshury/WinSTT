@@ -9,8 +9,8 @@ describe("buildSwitchingClassName", () => {
 		expect(result).toContain("opacity-100!");
 		// Accent tint + gradient signal "active swap".
 		expect(result).toContain("ring-accent/40!");
-		expect(result).toContain("from-[oklch(62%_0.19_260/0.10)]!");
-		expect(result).toContain("to-[var(--color-surface-2)]/95!");
+		expect(result).toContain("from-accent-wash!");
+		expect(result).toContain("to-surface-2/95!");
 	});
 
 	test("returns only the disabled-opacity default when not switching", () => {

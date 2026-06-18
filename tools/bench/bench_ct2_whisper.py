@@ -1,5 +1,5 @@
 """Bench CTranslate2 faster-whisper (a fast CPU/CUDA whisper path)
-on the SAME raw f32 clip our stt_spike decodes. CT2 has NO DirectML — it's CPU/CUDA only — so this
+on the SAME raw f32 clip our stt_decode_bench decodes. CT2 has NO DirectML — it's CPU/CUDA only — so this
 measures the CPU whisper ceiling. Greedy (beam_size=1) to match our greedy decode.
 
   python bench_ct2_whisper.py <repo_or_dir> <audio.f32> [compute_type] [device]

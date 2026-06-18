@@ -5,4 +5,4 @@ call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\v
 set "PATH=%USERPROFILE%\.cargo\bin;C:\Program Files\LLVM\bin;%PATH%"
 set "LIBCLANG_PATH=C:\Program Files\LLVM\bin"
 cd /d "%REPO_ROOT%\src-tauri"
-cargo check --release --example tts_spike %*
+cargo check --release --example kokoro_tts_bench %*

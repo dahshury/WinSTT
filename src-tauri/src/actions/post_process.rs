@@ -6,7 +6,7 @@ use crate::winstt::llm::DictationSideEffects;
 use crate::winstt::managers::{ContextManager, LlmManager};
 use crate::winstt::settings_schema::{LlmProvider, RecordingMode, WinsttSettings};
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::AppHandle;
@@ -604,6 +604,12 @@ pub(crate) async fn process_transcription_output(
             .filter(|t| !t.trim().is_empty())
             .collect();
         if !terms.is_empty() {
+            let encoder_started = Instant::now();
+            info!(
+                "[stt-ui] encoder_dict_start chars={} terms={}",
+                final_text.chars().count(),
+                terms.len()
+            );
             let corrected = crate::winstt::encoder_dict::correct_vocabulary(
                 app,
                 &final_text,
@@ -611,6 +617,11 @@ pub(crate) async fn process_transcription_output(
                 crate::winstt::encoder_dict::DEFAULT_RANK_K,
             )
             .await;
+            info!(
+                "[stt-ui] encoder_dict_complete duration_ms={} changed={}",
+                encoder_started.elapsed().as_millis(),
+                corrected != final_text
+            );
             if corrected != final_text {
                 final_text = corrected;
                 post_processed_text = Some(final_text.clone());

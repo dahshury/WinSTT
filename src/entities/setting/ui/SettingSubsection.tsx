@@ -58,7 +58,7 @@ export function SettingSubsection({
 				{icon && (
 					<span
 						aria-hidden="true"
-						className="flex size-7 shrink-0 items-center justify-center rounded bg-teal/10 text-teal ring-1 ring-teal/20"
+						className="flex size-7 shrink-0 items-center justify-center rounded bg-activity/10 text-activity ring-1 ring-activity/20"
 					>
 						<HugeiconsIcon icon={icon} size={13} />
 					</span>

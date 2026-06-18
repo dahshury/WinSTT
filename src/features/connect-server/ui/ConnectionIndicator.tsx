@@ -183,7 +183,7 @@ function GpuChip({ isGpu, gpuName, resource, t }: GpuChipProps): ReactNode {
 		<Tooltip content={tooltipContent} delay={FOOTER_TOOLTIP_DELAY} side="top">
 			<output
 				aria-label={`${label}, ${resourceLabel}`}
-				className="relative isolate flex cursor-help items-center gap-1 overflow-hidden rounded-xs px-1.5 py-[1px] shadow-[inset_0_0_0_1px_oklch(100%_0_0_/_0.035)]"
+				className="relative isolate flex cursor-help items-center gap-1 overflow-hidden rounded-xs px-1.5 py-[1px] shadow-[inset_0_0_0_1px_var(--color-divider)]"
 			>
 				<span
 					aria-hidden="true"
@@ -200,7 +200,7 @@ function GpuChip({ isGpu, gpuName, resource, t }: GpuChipProps): ReactNode {
 				/>
 				<span
 					aria-hidden="true"
-					className="absolute inset-0 bg-[linear-gradient(180deg,oklch(100%_0_0_/_0.055),transparent_62%)]"
+					className="absolute inset-0 bg-gradient-to-b from-overlay-foreground/[0.055] to-transparent"
 				/>
 				<HugeiconsIcon
 					className={cn("relative z-raised", colorClass)}

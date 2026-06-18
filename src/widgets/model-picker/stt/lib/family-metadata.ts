@@ -25,31 +25,31 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 	whisper: {
 		icon: AudioWave02Icon,
 		label: "Whisper",
-		chip: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+		chip: "bg-model-family-whisper/15 text-model-family-whisper",
 		logoSrc: "/provider-icons/openai.svg",
 	},
 	"lite-whisper": {
 		icon: AudioWave02Icon,
 		label: "Lite-Whisper",
-		chip: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
+		chip: "bg-model-family-lite-whisper/15 text-model-family-lite-whisper",
 		logoSrc: "/provider-icons/openai.svg",
 	},
 	nemo: {
 		icon: AiChipIcon,
 		label: "NeMo",
-		chip: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+		chip: "bg-model-family-nemo/15 text-model-family-nemo",
 		logoSrc: "/provider-icons/nvidia.svg",
 	},
 	granite: {
 		icon: AiChipIcon,
 		label: "Granite",
-		chip: "bg-stone-500/15 text-stone-600 dark:text-stone-400",
+		chip: "bg-model-family-granite/15 text-model-family-granite",
 		logoSrc: "/provider-icons/ibm-granite.svg",
 	},
 	gigaam: {
 		icon: Radio01Icon,
 		label: "GigaAM",
-		chip: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+		chip: "bg-model-family-gigaam/15 text-model-family-gigaam",
 		// Sber/GigaChat swirl emblem (single-path SVG, recolored white for the
 		// dark UI). The earlier HF org avatar was a full-bleed opaque tile that
 		// read as a solid rectangle in the chip.
@@ -58,14 +58,14 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 	kaldi: {
 		icon: CpuIcon,
 		label: "Kaldi",
-		chip: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
+		chip: "bg-model-family-kaldi/15 text-model-family-kaldi",
 		// Vosk's transparent diamond mark.
 		logoSrc: "/provider-icons/vosk.png",
 	},
 	"t-one": {
 		icon: FlashIcon,
 		label: "T-One",
-		chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+		chip: "bg-model-family-t-one/15 text-model-family-t-one",
 		// T-Bank's shield emblem (transparent SVG) — the HF org avatar was an
 		// opaque dark tile that read as a solid rectangle in the chip.
 		logoSrc: "/provider-icons/t-bank.svg",
@@ -73,26 +73,26 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 	moonshine: {
 		icon: FlashIcon,
 		label: "Moonshine",
-		chip: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
+		chip: "bg-model-family-moonshine/15 text-model-family-moonshine",
 		// Useful Sensors' Moonshine crescent + waveform mark (transparent).
 		logoSrc: "/provider-icons/moonshine.png",
 	},
 	cohere: {
 		icon: AiChipIcon,
 		label: "Cohere",
-		chip: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
+		chip: "bg-model-family-cohere/15 text-model-family-cohere",
 		logoSrc: "/provider-icons/cohere.svg",
 	},
 	sense_voice: {
 		icon: AudioWave02Icon,
 		label: "SenseVoice",
-		chip: "bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400",
+		chip: "bg-model-family-sense-voice/15 text-model-family-sense-voice",
 		logoSrc: "/provider-icons/funaudiollm.png",
 	},
 	dolphin: {
 		icon: AudioWave02Icon,
 		label: "Dolphin",
-		chip: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
+		chip: "bg-model-family-dolphin/15 text-model-family-dolphin",
 		// DataoceanAI's wordmark (transparent). It's a wide wordmark, so the
 		// logo `<img>` uses object-contain (not cover) to show it whole.
 		logoSrc: "/provider-icons/dataoceanai.png",
@@ -100,7 +100,7 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 	custom: {
 		icon: FolderLibraryIcon,
 		label: "Custom",
-		chip: "bg-slate-500/15 text-slate-600 dark:text-slate-400",
+		chip: "bg-model-family-custom/15 text-model-family-custom",
 		// No brand logo — these are user-provided drops, not first-party models.
 	},
 };

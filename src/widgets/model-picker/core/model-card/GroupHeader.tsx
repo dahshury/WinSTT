@@ -59,12 +59,12 @@ export function NeutralHeaderIcon({
 			className={cn(
 				"flex size-4 items-center justify-center rounded",
 				tone === "favorites"
-					? "bg-amber-400/[0.12] text-amber-400"
+					? "bg-favorite/[0.12] text-favorite"
 					: "bg-foreground/[0.06] text-foreground-muted",
 			)}
 		>
 			<HugeiconsIcon
-				className={cn("size-3", tone === "favorites" && "fill-amber-400")}
+				className={cn("size-3", tone === "favorites" && "fill-favorite")}
 				icon={icon}
 			/>
 		</span>

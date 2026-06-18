@@ -80,7 +80,7 @@ export function CrudAddForm({
 						aria-label={labels.add}
 						className={cn(
 							joined &&
-								"rounded-none text-accent shadow-none ring-0 hover:bg-accent hover:text-white disabled:text-foreground-dim disabled:hover:bg-transparent",
+								"rounded-none text-accent shadow-none ring-0 hover:bg-accent hover:text-on-accent disabled:text-foreground-dim disabled:hover:bg-transparent",
 						)}
 						disabled={isAddDisabled}
 						tone={joined ? "ghost" : "surface"}

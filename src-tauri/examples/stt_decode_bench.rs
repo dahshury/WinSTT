@@ -1,10 +1,10 @@
-// STT de-risking spike (PORT/03 §11). Proves the unified ort-ONNX Whisper engine
-// transcribes a real cached model end-to-end. NOT shipped — a `cargo run --example stt_spike`
+// STT decode benchmark (PORT/03 §11). Proves the unified ort-ONNX Whisper engine
+// transcribes a real cached model end-to-end. NOT shipped — a `cargo run --example stt_decode_bench`
 // harness only.
 //
-//   cargo run --release --example stt_spike            # default: whisper-tiny.en, CPU
-//   cargo run --release --example stt_spike -- <hf_snapshot_dir> [n_mels] [lang]
-//   SPIKE_PROVIDER=dml cargo run --release --example stt_spike   # measure the DirectML/GPU path
+//   cargo run --release --example stt_decode_bench            # default: whisper-tiny.en, CPU
+//   cargo run --release --example stt_decode_bench -- <hf_snapshot_dir> [n_mels] [lang]
+//   STT_BENCH_PROVIDER=dml cargo run --release --example stt_decode_bench   # measure the DirectML/GPU path
 //
 // Audio: tools/bench/audio/jfk_short_3s.f32 (raw f32le 16 kHz mono, pre-decoded from
 //   examples/faster-whisper/tests/data/jfk.flac via ffmpeg). Expected transcript:
@@ -23,11 +23,11 @@ use winstt_app_lib::winstt::stt::{
     TranscribeOptions, Transcriber, WhisperEngine,
 };
 
-struct SpikeLogger;
+struct BenchLogger;
 
-static SPIKE_LOGGER: SpikeLogger = SpikeLogger;
+static STT_BENCH_LOGGER: BenchLogger = BenchLogger;
 
-impl log::Log for SpikeLogger {
+impl log::Log for BenchLogger {
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
         metadata.level() <= log::max_level()
     }
@@ -41,8 +41,8 @@ impl log::Log for SpikeLogger {
     fn flush(&self) {}
 }
 
-fn init_spike_logger() {
-    let level = std::env::var("SPIKE_LOG")
+fn init_bench_logger() {
+    let level = std::env::var("STT_BENCH_LOG")
         .or_else(|_| std::env::var("RUST_LOG"))
         .ok()
         .and_then(|level| match level.trim().to_ascii_lowercase().as_str() {
@@ -55,14 +55,14 @@ fn init_spike_logger() {
             _ => None,
         })
         .unwrap_or(LevelFilter::Warn);
-    if log::set_logger(&SPIKE_LOGGER).is_ok() {
+    if log::set_logger(&STT_BENCH_LOGGER).is_ok() {
         log::set_max_level(level);
     }
 }
 
 /// Default snapshot: the whisper-tiny.en hf-hub cache dir on this machine.
 /// Derived from `HF_HOME`/`HF_HUB_CACHE` (or `$HOME/.cache/huggingface/hub`)
-/// instead of a hardcoded absolute path so the spike isn't pinned to one
+/// instead of a hardcoded absolute path so the benchmark isn't pinned to one
 /// machine's layout. The trailing snapshot hash can vary across re-downloads,
 /// so we glob the `snapshots/` dir and pick the first entry. Falls back to
 /// the canonical relative path string when nothing is cached (the run then
@@ -92,11 +92,11 @@ fn default_snap() -> String {
         .into_owned()
 }
 
-/// Provider selection for the spike, via `SPIKE_PROVIDER` (cpu|dml|cuda; default cpu).
+/// Provider selection for the benchmark, via `STT_BENCH_PROVIDER` (cpu|dml|cuda; default cpu).
 /// DirectML/CUDA fall back to CPU inside `execution_providers()` if the EP isn't present,
-/// so the spike still runs; the active-providers print tells you what actually bound.
+/// so the benchmark still runs; the active-providers print tells you what actually bound.
 fn providers_from_env() -> Vec<Accelerator> {
-    match std::env::var("SPIKE_PROVIDER")
+    match std::env::var("STT_BENCH_PROVIDER")
         .unwrap_or_default()
         .to_lowercase()
         .as_str()
@@ -107,21 +107,21 @@ fn providers_from_env() -> Vec<Accelerator> {
     }
 }
 
-fn spike_passes(default: usize) -> usize {
-    std::env::var("SPIKE_PASSES")
+fn bench_passes(default: usize) -> usize {
+    std::env::var("STT_BENCH_PASSES")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .filter(|&n| n > 0)
         .unwrap_or(default)
 }
 
-/// Locate the pre-decoded test audio. Prefers an explicit `SPIKE_AUDIO`, then
-/// the repo benchmark fixture so the spike works regardless of where it's
+/// Locate the pre-decoded test audio. Prefers an explicit `STT_BENCH_AUDIO`, then
+/// the repo benchmark fixture so the benchmark works regardless of where it's
 /// launched from — no machine-specific absolute path.
 fn audio_path() -> PathBuf {
-    // BENCH override: `SPIKE_AUDIO` points at any raw f32le 16 kHz mono clip (short/
+    // BENCH override: `STT_BENCH_AUDIO` points at any raw f32le 16 kHz mono clip (short/
     // long/varied) so the same harness can stress the engine on real long-form audio.
-    if let Ok(p) = std::env::var("SPIKE_AUDIO") {
+    if let Ok(p) = std::env::var("STT_BENCH_AUDIO") {
         return PathBuf::from(p);
     }
     let cwd = PathBuf::from("tools/bench/audio/jfk_short_3s.f32");
@@ -201,7 +201,7 @@ fn resolved_from_snapshot_dir(
         }
         _ => {
             return Err(format!(
-                "SPIKE_SNAPSHOT_DIR override is not wired for {kind:?}; use the resolver path"
+                "STT_BENCH_SNAPSHOT_DIR override is not wired for {kind:?}; use the resolver path"
             ));
         }
     }
@@ -253,10 +253,10 @@ fn run_catalog_mode(cat_id: &str) {
     );
 
     // Download if not cached (family models often aren't pre-cached); cache-first when present.
-    let local_files_only = std::env::var("SPIKE_CACHE_ONLY").is_ok();
-    // SPIKE_QUANT overrides the resolved quantization so we can A/B fp32 vs int8 (and match the
+    let local_files_only = std::env::var("STT_BENCH_CACHE_ONLY").is_ok();
+    // STT_BENCH_QUANT overrides the resolved quantization so we can A/B fp32 vs int8 (and match the
     // prod Auto→int8 path the app actually loads for NeMo/Cohere/etc.). Default = fp32 ("").
-    let effective_quant = match std::env::var("SPIKE_QUANT")
+    let effective_quant = match std::env::var("STT_BENCH_QUANT")
         .unwrap_or_default()
         .to_lowercase()
         .as_str()
@@ -270,8 +270,8 @@ fn run_catalog_mode(cat_id: &str) {
         "uint8" => Quantization::Uint8,
         _ => Quantization::Default,
     };
-    eprintln!("quant      : {effective_quant:?} (SPIKE_QUANT env)");
-    let resolved = if let Ok(snapshot_dir) = std::env::var("SPIKE_SNAPSHOT_DIR") {
+    eprintln!("quant      : {effective_quant:?} (STT_BENCH_QUANT env)");
+    let resolved = if let Ok(snapshot_dir) = std::env::var("STT_BENCH_SNAPSHOT_DIR") {
         let snapshot_dir = PathBuf::from(snapshot_dir);
         eprintln!("snapshot  : {}", snapshot_dir.display());
         match resolved_from_snapshot_dir(snapshot_dir, kind, effective_quant) {
@@ -333,8 +333,8 @@ fn run_catalog_mode(cat_id: &str) {
         audio.len(),
         audio.len() as f32 / 16_000.0
     );
-    let segment = std::env::var("SPIKE_SEGMENT").is_ok();
-    let segment_max_s = std::env::var("SPIKE_SEGMENT_MAX")
+    let segment = std::env::var("STT_BENCH_SEGMENT").is_ok();
+    let segment_max_s = std::env::var("STT_BENCH_SEGMENT_MAX")
         .ok()
         .and_then(|s| s.parse::<f32>().ok())
         .filter(|&s| s > 0.0)
@@ -342,7 +342,7 @@ fn run_catalog_mode(cat_id: &str) {
     if segment {
         eprintln!("segment   : vad max_chunk_s={segment_max_s:.1}");
     }
-    let segment_prior = std::env::var("SPIKE_SEGMENT_PRIOR").map_or_else(
+    let segment_prior = std::env::var("STT_BENCH_SEGMENT_PRIOR").map_or_else(
         |_| kind.needs_past_context(),
         |s| {
             !matches!(
@@ -354,7 +354,7 @@ fn run_catalog_mode(cat_id: &str) {
     if segment {
         eprintln!("prior     : {segment_prior}");
     }
-    let profile_only = std::env::var("SPIKE_PROFILE_ONLY").is_ok();
+    let profile_only = std::env::var("STT_BENCH_PROFILE_ONLY").is_ok();
     let mut segment_vad = if segment {
         let vad_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("resources")
@@ -375,7 +375,7 @@ fn run_catalog_mode(cat_id: &str) {
         None
     };
     // cold pass (DML compiles kernels on first inference), then warm passes (steady-state).
-    for pass in 0..spike_passes(2) {
+    for pass in 0..bench_passes(2) {
         let label = match pass {
             0 => "cold".to_string(),
             1 => "warm".to_string(),
@@ -393,7 +393,7 @@ fn run_catalog_mode(cat_id: &str) {
                     segment_prior,
                     vad,
                     &opts,
-                    &format!("stt-spike-{pass}"),
+                    &format!("stt-bench-{pass}"),
                 ),
                 None => Err(SttError::Inference("segmentation VAD was not built".into())),
             }
@@ -428,7 +428,7 @@ fn run_catalog_mode(cat_id: &str) {
 fn real_main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // Catalog mode: `stt_spike --catalog <catalog_id>` (verifies the resolver→engine path).
+    // Catalog mode: `stt_decode_bench --catalog <catalog_id>` (verifies the resolver→engine path).
     if args.get(1).is_some_and(|s| s == "--catalog") {
         let cat_id = args
             .get(2)
@@ -444,7 +444,7 @@ fn real_main() {
         .unwrap_or(80);
     let lang = args.get(3).cloned().unwrap_or_else(|| "en".to_string());
 
-    eprintln!("=== STT SPIKE ===");
+    eprintln!("=== STT DECODE BENCH ===");
     eprintln!("snapshot : {snap}");
     eprintln!("n_mels   : {n_mels}");
     eprintln!("language : {lang}");
@@ -549,11 +549,11 @@ fn real_main() {
 }
 
 fn main() {
-    init_spike_logger();
+    init_bench_logger();
     let handle = std::thread::Builder::new()
-        .name("stt-spike-large-stack".to_string())
+        .name("stt-bench-large-stack".to_string())
         .stack_size(64 * 1024 * 1024)
         .spawn(real_main)
-        .expect("spawn stt spike worker");
-    handle.join().expect("stt spike worker panicked");
+        .expect("spawn STT bench worker");
+    handle.join().expect("STT bench worker panicked");
 }

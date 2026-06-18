@@ -188,7 +188,7 @@ export function Toggle({
 				"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
 				surfaceBg(trackLevel),
 				// On-state fills with teal so it reads from across the panel.
-				"data-[checked]:bg-teal data-[checked]:ring-teal-hover",
+				"data-[checked]:bg-control-checked data-[checked]:ring-control-checked-hover",
 				disabled && "cursor-not-allowed opacity-50",
 			)}
 			disabled={disabled}
@@ -231,7 +231,7 @@ export function Toggle({
 							className={cn(
 								"absolute top-0 left-0 block rounded-full shadow-sm ring-1",
 								checked
-									? "bg-white ring-white/40"
+									? "bg-on-accent ring-overlay-foreground/40"
 									: cn(surfaceBg(thumbLevel), "ring-foreground/15"),
 							)}
 							initial={false}

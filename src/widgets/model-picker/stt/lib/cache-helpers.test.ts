@@ -98,7 +98,7 @@ describe("getCachePillConfig", () => {
 	test("labels a cached model as Downloaded", () => {
 		const config = getCachePillConfig(cacheInfo({ state: "cached" }));
 		expect(config?.label).toBe("Downloaded");
-		expect(config?.className).toContain("emerald");
+		expect(config?.className).toContain("cache-complete");
 		expect(config?.icon).toBeDefined();
 	});
 
@@ -107,7 +107,7 @@ describe("getCachePillConfig", () => {
 			cacheInfo({ state: "partial", progress: 0.426 }),
 		);
 		expect(config?.label).toBe("43%");
-		expect(config?.className).toContain("amber");
+		expect(config?.className).toContain("cache-partial");
 	});
 
 	test("labels a not-cached model as Not downloaded", () => {

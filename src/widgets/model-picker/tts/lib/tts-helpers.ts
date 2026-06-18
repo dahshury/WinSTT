@@ -51,35 +51,35 @@ const ENGINE_CONFIG: Record<string, TtsEngineConfig> = {
 		label: "Kokoro",
 		maker: "hexgrad",
 		logoSrc: "/provider-icons/hexgrad.webp",
-		chip: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+		chip: "bg-tts-engine-kokoro/15 text-tts-engine-kokoro",
 	},
 	kitten: {
 		icon: CatIcon,
 		label: "Kitten",
 		maker: "KittenML",
 		logoSrc: "/provider-icons/kittenml.webp",
-		chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+		chip: "bg-tts-engine-kitten/15 text-tts-engine-kitten",
 	},
 	piper: {
 		icon: WaterfallUp01Icon,
 		label: "Piper",
 		maker: "Rhasspy",
 		logoSrc: "/provider-icons/rhasspy.svg",
-		chip: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+		chip: "bg-tts-engine-piper/15 text-tts-engine-piper",
 	},
 	supertonic: {
 		icon: FlashIcon,
 		label: "Supertonic",
 		maker: "Supertone",
 		logoSrc: "/provider-icons/supertone.svg",
-		chip: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
+		chip: "bg-tts-engine-supertonic/15 text-tts-engine-supertonic",
 	},
 	chatterbox: {
 		icon: VoiceIcon,
 		label: "Chatterbox",
 		maker: "Resemble AI",
 		logoSrc: "/provider-icons/resemble.svg",
-		chip: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
+		chip: "bg-tts-engine-chatterbox/15 text-tts-engine-chatterbox",
 	},
 };
 
@@ -87,7 +87,7 @@ const DEFAULT_ENGINE_CONFIG: TtsEngineConfig = {
 	icon: VoiceIcon,
 	label: "Speech",
 	maker: "Unknown",
-	chip: "bg-slate-500/15 text-slate-600 dark:text-slate-400",
+	chip: "bg-tts-engine-unknown/15 text-tts-engine-unknown",
 };
 
 export function getEngineConfig(

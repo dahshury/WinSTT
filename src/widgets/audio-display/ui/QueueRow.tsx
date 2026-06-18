@@ -24,7 +24,7 @@ const GLYPH = {
 	queued: { icon: Clock01Icon, cls: "text-foreground-muted" },
 	transcribing: {
 		icon: Loading03Icon,
-		cls: "text-teal motion-safe:animate-[spin_1s_linear_infinite]",
+		cls: "text-activity motion-safe:animate-[spin_1s_linear_infinite]",
 	},
 	complete: {
 		icon: CheckmarkCircle02Icon,
@@ -52,7 +52,7 @@ function labelClass(status: FileQueueStatus): string {
 // dimmer teal) so resume doesn't flash the bar back to 0 before it continues.
 function indicatorClass(status: FileQueueStatus, hasProgress: boolean): string {
 	if (status === "transcribing") {
-		return "bg-teal";
+		return "bg-activity";
 	}
 	if (status === "complete") {
 		return "bg-success";
@@ -64,7 +64,7 @@ function indicatorClass(status: FileQueueStatus, hasProgress: boolean): string {
 		return "w-[12%] bg-error";
 	}
 	if (status === "queued" && hasProgress) {
-		return "bg-teal/70";
+		return "bg-activity/70";
 	}
 	return "w-0"; // fresh queued / canceled — no fill, just the grey track
 }
@@ -73,9 +73,9 @@ function RowStatusText({ item, pct }: { item: FileQueueItem; pct: number }) {
 	const t = useTranslations("fileOverlay");
 	if (item.status === "transcribing") {
 		return (
-			<span className="shrink-0 font-mono text-[11px] text-teal tabular-nums">
+			<span className="shrink-0 font-mono text-[11px] text-activity tabular-nums">
 				{pct}
-				<span className="text-teal/45">%</span>
+				<span className="text-activity/45">%</span>
 			</span>
 		);
 	}
@@ -131,7 +131,7 @@ function RowActions({
 					aria-label={t("pauseFile", { name })}
 					className={cn(
 						PRIMARY_BTN,
-						"text-foreground-muted hover:text-foreground-dim focus-visible:ring-teal/60",
+						"text-foreground-muted hover:text-foreground-dim focus-visible:ring-activity/60",
 					)}
 					onClick={() => h.onPause(item.id)}
 					type="button"
@@ -144,7 +144,7 @@ function RowActions({
 					aria-label={t("resumeFile", { name })}
 					className={cn(
 						PRIMARY_BTN,
-						"text-teal/90 hover:text-teal focus-visible:ring-teal/60",
+						"text-activity/90 hover:text-activity focus-visible:ring-activity/60",
 					)}
 					onClick={() => h.onResume(item.id)}
 					type="button"
@@ -170,7 +170,7 @@ function RowActions({
 					aria-label={t("copyFile", { name })}
 					className={cn(
 						HOVER_BTN,
-						"text-foreground-muted hover:text-foreground-dim focus-visible:ring-teal/60",
+						"text-foreground-muted hover:text-foreground-dim focus-visible:ring-activity/60",
 					)}
 					onClick={() => h.onCopy(item.id)}
 					type="button"
@@ -227,7 +227,7 @@ export function QueueRow({
 				isActive
 					? cn(
 							surfaceBg(rowLevel),
-							"shadow-[inset_2px_0_0_0_var(--color-teal)]",
+							"shadow-[inset_2px_0_0_0_var(--color-activity)]",
 						)
 					: "bg-transparent",
 			)}

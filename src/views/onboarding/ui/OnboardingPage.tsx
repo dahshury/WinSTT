@@ -101,7 +101,7 @@ export function OnboardingPage() {
 						<Tooltip content="Quit WinSTT">
 							<Button
 								aria-label="Quit WinSTT"
-								className="group flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-error/85 hover:text-white"
+								className="group flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-error/85 hover:text-on-error"
 								{...quitActivation}
 							>
 								<HugeiconsIcon

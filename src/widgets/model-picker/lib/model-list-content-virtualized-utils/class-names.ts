@@ -73,7 +73,7 @@ export function getPricingBaseTextColor(
 ): string {
 	if (pricingInfo.tier === "free") {
 		// Muted emerald — a gentle "cheap" signal, not a glowing badge.
-		return "text-emerald-300/80";
+		return "text-model-free/80";
 	}
 	return getNonFreeBaseTextColor(withForegroundFallback);
 }

@@ -384,10 +384,10 @@ function latencyToneClass(
 		return "bg-accent/20 text-accent ring-accent/50";
 	}
 	if (cacheState === "cached") {
-		return "bg-emerald-500/[0.08] text-emerald-300/80 ring-border hover:bg-emerald-500/[0.14]";
+		return "bg-cache-complete/[0.08] text-cache-complete/80 ring-border hover:bg-cache-complete/[0.14]";
 	}
 	if (cacheState === "partial") {
-		return "bg-amber-500/[0.08] text-amber-300/80 ring-border hover:bg-amber-500/[0.14]";
+		return "bg-cache-partial/[0.08] text-cache-partial/80 ring-border hover:bg-cache-partial/[0.14]";
 	}
 	return "bg-foreground/[0.04] text-foreground-muted ring-border hover:bg-foreground/[0.08]";
 }

@@ -23,7 +23,7 @@ export function UsageBars({ buckets }: UsageBarsProps) {
 					</span>
 					<span className="relative h-2 flex-1 overflow-hidden rounded-full bg-surface-elevated">
 						<span
-							className="absolute inset-y-0 left-0 rounded-full bg-teal"
+							className="absolute inset-y-0 left-0 rounded-full bg-activity"
 							style={{ width: `${bucket.pct}%` }}
 						/>
 					</span>

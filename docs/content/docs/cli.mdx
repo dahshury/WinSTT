@@ -1,6 +1,6 @@
 ---
 title: Command-Line Flags
-description: The flags the WinSTT app accepts at launch, and the developer-only spike binaries for benchmarking STT/TTS.
+description: The flags the WinSTT app accepts at launch, and the developer-only benchmark binaries for STT/TTS.
 ---
 
 WinSTT is a single native executable. It accepts a small set of launch flags, and because it
@@ -45,7 +45,7 @@ WinSTT [OPTIONS]
   to `WinSTT.exe --toggle-transcription` to start/stop dictation from anywhere.
 </Callout>
 
-## Developer spike binaries
+## Developer Benchmark Binaries
 
 <Callout type="warn" title="Developer-only — not in the shipped app">
   These `cargo run --example` harnesses live in `src-tauri/examples/` and are driven by
@@ -53,52 +53,52 @@ WinSTT [OPTIONS]
   used to benchmark and de-risk the STT/TTS engines during the port.
 </Callout>
 
-### `stt_spike` — STT decode benchmark
+### `stt_decode_bench` — STT decode benchmark
 
 Decodes a fixed 16 kHz JFK sample through the unified `ort` engine and prints the transcript +
 timing, so you can A/B a model, quantization, or execution provider.
 
 ```bash
-cargo run --release --example stt_spike                       # whisper-tiny.en, CPU
-cargo run --release --example stt_spike -- <hf_snapshot_dir> [n_mels] [lang]
-SPIKE_PROVIDER=dml cargo run --release --example stt_spike    # measure the DirectML path
+cargo run --release --example stt_decode_bench                       # whisper-tiny.en, CPU
+cargo run --release --example stt_decode_bench -- <hf_snapshot_dir> [n_mels] [lang]
+STT_BENCH_PROVIDER=dml cargo run --release --example stt_decode_bench    # measure the DirectML path
 ```
 
 <ModelTable
   head={["Env var", "What it does"]}
   rows={[
-    ["SPIKE_PROVIDER", "Execution provider: cpu (default), dml, or cuda."],
-    ["SPIKE_QUANT", "Override the resolved quantization (e.g. int8, fp16) to A/B precisions."],
-    ["SPIKE_CACHE_ONLY", "Resolve from the on-disk HF cache only (no network)."],
+    ["STT_BENCH_PROVIDER", "Execution provider: cpu (default), dml, or cuda."],
+    ["STT_BENCH_QUANT", "Override the resolved quantization (e.g. int8, fp16) to A/B precisions."],
+    ["STT_BENCH_CACHE_ONLY", "Resolve from the on-disk HF cache only (no network)."],
     ["HF_HUB_CACHE / HF_HOME", "Where to find / download model snapshots."],
   ]}
 />
 
-### `tts_spike` — Kokoro TTS benchmark
+### `kokoro_tts_bench` — Kokoro TTS benchmark
 
 Times the shipped Kokoro synthesis path (warm/cold) on CPU or DirectML.
 
 ```bash
-cargo run --release --example tts_spike
-SPIKE_TTS_DEVICE=dml cargo run --release --example tts_spike   # measure the GPU path
+cargo run --release --example kokoro_tts_bench
+KOKORO_TTS_BENCH_DEVICE=dml cargo run --release --example kokoro_tts_bench   # measure the GPU path
 ```
 
 <ModelTable
   head={["Env var", "What it does"]}
   rows={[
-    ["SPIKE_TTS_DEVICE", "Execution device: cpu (default) or dml."],
+    ["KOKORO_TTS_BENCH_DEVICE", "Execution device: cpu (default) or dml."],
     ["WINSTT_KOKORO_DIR", "Override the model / voicepack location."],
   ]}
 />
 
-### `tts_engine_spike` — exploratory TTS engines
+### `tts_engine_bench` — exploratory TTS engines
 
 Runs the experimental TTS engines (kitten / piper / supertonic / chatterbox) that are **not**
 in the shipped app, loading their weights from `.tts-cache/<engine>/`.
 
 ```bat
-rem from the repo root — wraps the MSVC env + redirects output to spike_out.log
-tools\windows\spike.bat <engine> [voice] [text]
+rem from the repo root — wraps the MSVC env + redirects output to %TEMP%\winstt-tts-engine-bench.log
+tools\windows\tts-engine-bench.bat <engine> [voice] [text]
 ```
 
 <ModelTable
@@ -108,6 +108,18 @@ tools\windows\spike.bat <engine> [voice] [text]
     ["ESPEAK_NG_LIBRARY", "Path to the espeak-ng DLL (auto-resolved to the bundled copy if unset)."],
   ]}
 />
+
+### `dictation_prompt_cases` — dictation prompt fixtures
+
+Writes the exact dictation system/user prompts used by the app for a small set of vocabulary and
+replacement-pair cases. The companion runner sends them to a local Ollama model and verifies the
+expected terms.
+
+```bash
+cd src-tauri
+cargo run --example dictation_prompt_cases > cases.json
+python ../tools/bench/run_dictation_cases.py cases.json [model]
+```
 
 ## Related
 
@@ -119,7 +131,7 @@ tools\windows\spike.bat <engine> [voice] [text]
     Model, device, quantization, and realtime — set from the UI.
   </Card>
   <Card title="Backend Architecture" href="/docs/architecture/backend">
-    How the engines the spikes exercise are loaded and run.
+    How the benchmarked engines are loaded and run.
   </Card>
   <Card title="Dev Environment Setup" href="/docs/dev-setup">
     Toolchain, build helpers, and running the app from source.

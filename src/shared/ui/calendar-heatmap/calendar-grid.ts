@@ -199,10 +199,10 @@ export function computeDayState(
 }
 
 export const STATE_CLASSES: Record<Exclude<DayState, null>, string> = {
-	selected: "bg-teal text-white",
-	"range-start": "bg-teal text-white rounded-r-none",
-	"range-end": "bg-teal text-white rounded-l-none",
-	"range-middle": "bg-teal/25 text-foreground rounded-none",
+	selected: "bg-activity text-on-activity",
+	"range-start": "bg-activity text-on-activity rounded-r-none",
+	"range-end": "bg-activity text-on-activity rounded-l-none",
+	"range-middle": "bg-activity/25 text-foreground rounded-none",
 };
 
 export const NAV_BUTTON_CLASS =

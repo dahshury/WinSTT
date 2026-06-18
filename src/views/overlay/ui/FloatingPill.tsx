@@ -183,7 +183,7 @@ function FloatingMorphSurface({
 				>
 					<div
 						aria-hidden="true"
-						className={`pointer-events-none absolute top-0 h-px bg-gradient-to-r from-transparent ${isPreviewActive ? "inset-x-5 via-[oklch(62%_0.19_260/0.5)]" : "inset-x-4 via-white/25"} to-transparent`}
+						className={`pointer-events-none absolute top-0 h-px bg-gradient-to-r from-transparent ${isPreviewActive ? "inset-x-5 via-accent-hairline" : "inset-x-4 via-overlay-foreground/25"} to-transparent`}
 					/>
 					{isPreviewActive ? (
 						<div
@@ -218,8 +218,7 @@ function FloatingMorphSurface({
 										initial="initial"
 										key="speaking-breathe"
 										style={{
-											boxShadow:
-												"inset 0 0 18px 0 oklch(62% 0.19 260 / 0.28), inset 0 0 1px 0 oklch(75% 0.15 260 / 0.4)",
+											boxShadow: "var(--shadow-speaking-breathe)",
 										}}
 										variants={breatheVariants}
 									/>
@@ -294,12 +293,12 @@ function FloatingBottomPill({
 							>
 								<div
 									aria-hidden="true"
-									className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-[oklch(62%_0.19_260/0.5)] to-transparent"
+									className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-accent-hairline to-transparent"
 								/>
 								<div>
 									<ScrollingText
 										className="text-center font-medium text-foreground text-sm tracking-tight"
-										fadeColor="oklch(8% 0.015 265 / 0.95)"
+										fadeColor="var(--color-overlay-fade)"
 										lineHeight={1.25}
 										maxLines={5}
 										text={text}

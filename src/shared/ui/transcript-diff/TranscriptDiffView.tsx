@@ -330,7 +330,7 @@ export function TranscriptDiffView({
 						{review.discardLabel}
 					</BaseButton>
 					<BaseButton
-						className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 font-medium text-sm text-white transition-colors hover:bg-accent-hover"
+						className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 font-medium text-sm text-on-accent transition-colors hover:bg-accent-hover"
 						onClick={review.onCommit}
 						type="button"
 					>

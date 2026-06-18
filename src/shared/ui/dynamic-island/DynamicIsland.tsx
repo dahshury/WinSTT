@@ -327,8 +327,8 @@ export function DynamicIsland({
 	);
 
 	const baseClasses = [
-		"relative overflow-hidden bg-black text-white",
-		"shadow-[0_10px_30px_-10px_rgba(0,0,0,0.7)] ring-1 ring-white/[0.06] ring-inset",
+		"relative overflow-hidden bg-overlay-surface text-overlay-foreground",
+		"shadow-overlay ring-1 ring-overlay-foreground/[0.06] ring-inset",
 		isVisible ? null : "pointer-events-none",
 	].filter(Boolean);
 	if (className) {

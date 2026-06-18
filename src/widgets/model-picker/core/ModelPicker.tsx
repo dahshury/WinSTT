@@ -43,9 +43,8 @@ const DEFAULT_POPUP_WIDTH = "w-[max(520px,var(--anchor-width))]";
 const POPUP_BASE_CLASSES = cn(
 	"t-dropdown relative z-popover flex flex-col overflow-hidden rounded-xl p-0",
 	"max-w-[calc(100vw-32px)]",
-	"bg-gradient-to-b from-[var(--color-surface-3)]/95 to-[var(--color-surface-2)]/98",
-	"shadow-[0_12px_32px_-12px_rgba(2,3,8,0.65),inset_0_1px_0_0_rgba(255,255,255,0.06)]",
-	"ring-1 ring-white/[0.08] ring-inset",
+	"bg-gradient-to-b from-surface-3/95 to-surface-2/98",
+	"shadow-model-picker-popup ring-1 ring-overlay-foreground/[0.08] ring-inset",
 	"backdrop-blur-md backdrop-saturate-150",
 );
 
@@ -57,11 +56,11 @@ const SEARCH_INPUT_CLASSES = cn(
 	"focus-visible:text-foreground",
 );
 const SEARCH_SHELL_CLASSES = cn(
-	"relative flex min-h-12 w-full items-center border-divider border-b bg-[var(--color-surface-1)]/72 px-2",
-	"shadow-[inset_0_1px_0_0_rgba(255,255,255,0.035)]",
+	"relative flex min-h-12 w-full items-center border-divider border-b bg-surface-1/72 px-2",
+	"shadow-model-picker-search",
 	"transition-[background-color,box-shadow] duration-150 ease-out",
-	"hover:bg-[var(--color-surface-1)]/86",
-	"focus-within:bg-[var(--color-surface-2)]/72 focus-within:shadow-[inset_0_-1px_0_0_rgba(255,255,255,0.055)]",
+	"hover:bg-surface-1/86",
+	"focus-within:bg-surface-2/72 focus-within:shadow-model-picker-search-focus",
 );
 const SEARCH_ICON_BUTTON_CLASSES = cn(
 	"inline-flex size-7 shrink-0 items-center justify-center rounded-md",

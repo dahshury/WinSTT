@@ -17,7 +17,7 @@ export function ScrollingText({
 	maxLines,
 	lineHeight = 1.5,
 	className,
-	fadeColor = "rgba(8, 8, 12, 0.92)",
+	fadeColor = "var(--color-overlay-fade)",
 }: ScrollingTextProps) {
 	const viewportRef = useRef<HTMLDivElement>(null);
 	// Overflow is purely a function of the viewport's DOM measurements — it

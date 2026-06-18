@@ -454,7 +454,7 @@ function WizardPrimaryButton({ disabled, onClick, children }: ButtonProps) {
 	return (
 		<MotionBaseButton
 			className={cn(
-				"inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-accent px-4 font-medium text-body text-white outline-none transition-[background-color,box-shadow] duration-150",
+				"inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-accent px-4 font-medium text-body text-on-accent outline-none transition-[background-color,box-shadow] duration-150",
 				"shadow-elevated hover:bg-accent-hover",
 				"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
 				"disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none",

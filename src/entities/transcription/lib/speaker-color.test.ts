@@ -8,8 +8,8 @@ describe("colorForSpeaker", () => {
 		expect(colorForSpeaker(-5)).toBe("currentColor");
 	});
 
-	test("maps speaker 0 to the first palette entry (sky-400)", () => {
-		expect(colorForSpeaker(0)).toBe("#38bdf8");
+	test("maps speaker 0 to the first semantic palette token", () => {
+		expect(colorForSpeaker(0)).toBe("var(--color-speaker-1)");
 	});
 
 	test("returns distinct colors for the first 8 speakers (full palette)", () => {
@@ -17,14 +17,14 @@ describe("colorForSpeaker", () => {
 		// surface here as a collision or shuffled order.
 		const colors = Array.from({ length: 8 }, (_, i) => colorForSpeaker(i));
 		expect(colors).toEqual([
-			"#38bdf8",
-			"#fb923c",
-			"#34d399",
-			"#f472b6",
-			"#facc15",
-			"#a78bfa",
-			"#fb7185",
-			"#22d3ee",
+			"var(--color-speaker-1)",
+			"var(--color-speaker-2)",
+			"var(--color-speaker-3)",
+			"var(--color-speaker-4)",
+			"var(--color-speaker-5)",
+			"var(--color-speaker-6)",
+			"var(--color-speaker-7)",
+			"var(--color-speaker-8)",
 		]);
 		// No collisions among the first 8 ids.
 		expect(new Set(colors).size).toBe(8);

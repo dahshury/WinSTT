@@ -49,7 +49,7 @@ const TONE_FRAME: Record<
 		active:
 			"ring-1 ring-accent/40 shadow-[0_0_0_4px_var(--color-accent-glow),var(--shadow-elevated)]",
 		danger:
-			"ring-1 ring-error/45 shadow-[0_0_0_4px_oklch(59%_0.22_25/0.12),var(--shadow-elevated)]",
+			"ring-1 ring-error/45 shadow-[0_0_0_4px_var(--color-error-glow-soft),var(--shadow-elevated)]",
 		muted: "ring-1 ring-divider/60 opacity-70",
 	},
 	minimal: {
@@ -247,14 +247,14 @@ export interface InputGroupButtonProps
 // see InputGroupButton below.
 const BUTTON_TONE: Record<"default" | "danger" | "ghost", string> = {
 	default: [
-		"bg-accent text-white",
-		"shadow-[inset_0_1px_0_0_oklch(100%_0_0/0.18),0_1px_2px_0_oklch(0%_0_0/0.45),0_6px_18px_-6px_var(--color-accent-glow-strong)]",
-		"hover:bg-accent-hover hover:shadow-[inset_0_1px_0_0_oklch(100%_0_0/0.22),0_1px_2px_0_oklch(0%_0_0/0.45),0_10px_28px_-8px_var(--color-accent-glow-strong)]",
+		"bg-accent text-on-accent",
+		"shadow-action-accent",
+		"hover:bg-accent-hover hover:shadow-action-accent-hover",
 	].join(" "),
 	danger: [
-		"bg-error text-white",
-		"shadow-[inset_0_1px_0_0_oklch(100%_0_0/0.18),0_1px_2px_0_oklch(0%_0_0/0.45),0_6px_18px_-6px_oklch(59%_0.22_25/0.5)]",
-		"hover:bg-error/95 hover:shadow-[inset_0_1px_0_0_oklch(100%_0_0/0.22),0_1px_2px_0_oklch(0%_0_0/0.45),0_10px_28px_-8px_oklch(59%_0.22_25/0.6)]",
+		"bg-error text-on-error",
+		"shadow-action-danger",
+		"hover:bg-error/95 hover:shadow-action-danger-hover",
 	].join(" "),
 	ghost:
 		"bg-transparent text-foreground-muted hover:bg-foreground/[0.06] hover:text-foreground",

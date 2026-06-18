@@ -55,7 +55,7 @@ export function FilterMenuTriggerButton({
 				<span
 					className={cn(
 						"absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full",
-						"border border-divider bg-accent px-1 font-semibold text-[9px] text-white tabular-nums leading-none",
+						"border border-divider bg-accent px-1 font-semibold text-[9px] text-on-accent tabular-nums leading-none",
 					)}
 				>
 					{displayCount(count)}

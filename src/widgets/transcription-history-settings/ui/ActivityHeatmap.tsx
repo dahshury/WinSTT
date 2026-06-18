@@ -44,10 +44,10 @@ interface DayStat {
 
 const EMPTY_CLASS = "bg-surface-elevated";
 const VARIANT_CLASSES: string[] = [
-	"bg-teal/20 hover:bg-teal/20 text-foreground",
-	"bg-teal/40 hover:bg-teal/40 text-foreground",
-	"bg-teal/65 hover:bg-teal/65 text-white",
-	"bg-teal hover:bg-teal text-white",
+	"bg-activity/20 hover:bg-activity/20 text-foreground",
+	"bg-activity/40 hover:bg-activity/40 text-foreground",
+	"bg-activity/65 hover:bg-activity/65 text-on-activity",
+	"bg-activity hover:bg-activity text-on-activity",
 ];
 const LEGEND_CLASSES = [EMPTY_CLASS, ...VARIANT_CLASSES];
 
@@ -313,7 +313,7 @@ export function ActivityHeatmap({
 									className={cn(
 										"inline-flex h-7 items-center justify-center px-3 font-medium text-xs-tight transition-colors",
 										active
-											? "bg-teal text-white"
+											? "bg-activity text-on-activity"
 											: "text-foreground-secondary hover:bg-surface-hover hover:text-foreground",
 									)}
 									key={preset.label}

@@ -38,7 +38,7 @@ export function SnippetsTable({
 					editFieldName: "trigger",
 					header: t("trigger"),
 					render: (e) => (
-						<code className="inline-block rounded bg-surface-5/70 px-1.5 py-0.5 font-mono text-2xs text-teal ring-1 ring-divider/70">
+						<code className="inline-block rounded bg-surface-5/70 px-1.5 py-0.5 font-mono text-2xs text-activity ring-1 ring-divider/70">
 							{e.trigger}
 						</code>
 					),

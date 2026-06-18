@@ -51,10 +51,10 @@ output/
 result
 
 # Local reference clones / scratch — never committed.
-examples/
+/examples/
 .i18n-work/
 
-# Custom cargo target dirs (spike / moon / verify builds). `/target/` is already
+# Custom cargo target dirs (benchmark / moon / verify builds). `/target/` is already
 # ignored above; these are alternate build outputs that must never be committed.
 src-tauri/target*/
 target-moon/
@@ -62,7 +62,7 @@ target-spike/
 target-verify*/
 
 # Local research / capture scratch (context probes, nemotron-eval, capture
-# dumps). Re-generatable spike output, ~tens of MB; never commit.
+# dumps). Re-generatable benchmark output, ~tens of MB; never commit.
 artifacts/
 
 # Python tooling cache (ruff) — stray ephemeral cache, never commit
@@ -73,7 +73,9 @@ artifacts/
 .tts-cache/
 
 tools/windows/*.log
-spike_out.log
+tools/bench/wakeword-results/
+kokoro_tts_bench_*.wav
+tts_engine_bench_*.wav
 
 # Generated codebase audit artifacts
 /tmp_*

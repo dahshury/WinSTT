@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Bench our Rust stt_spike for one (catalog_id, provider, quant, audio) config.
-# Runs the spike 3× (fresh process each = own cold→warm), extracts the WARM timing
+# Bench our Rust stt_decode_bench for one (catalog_id, provider, quant, audio) config.
+# Runs the benchmark 3× (fresh process each = own cold→warm), extracts the WARM timing
 # (steady-state inference, kernel-compile excluded), prints median + a transcript snippet.
 #
-# Usage: bench_spike.sh <catalog_id> <cpu|dml> <quant|none> <audio.f32>
+# Usage: bench_stt_decode.sh <catalog_id> <cpu|dml> <quant|none> <audio.f32>
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-EXE="$REPO_ROOT/src-tauri/target/release/examples/stt_spike.exe"
+EXE="$REPO_ROOT/src-tauri/target/release/examples/stt_decode_bench.exe"
 ID="$1"; PROV="$2"; QUANT="${3:-none}"; AUDIO="$4"
 [ "$QUANT" = "none" ] && QUANT=""
 DUR=$(python -c "import os;print(f'{os.path.getsize(\"$AUDIO\")/4/16000:.2f}')")
@@ -15,7 +15,7 @@ DUR=$(python -c "import os;print(f'{os.path.getsize(\"$AUDIO\")/4/16000:.2f}')")
 warms=()
 text=""
 for i in 1 2 3; do
-  out=$(SPIKE_PROVIDER="$PROV" SPIKE_QUANT="$QUANT" SPIKE_AUDIO="$AUDIO" SPIKE_CACHE_ONLY=1 \
+  out=$(STT_BENCH_PROVIDER="$PROV" STT_BENCH_QUANT="$QUANT" STT_BENCH_AUDIO="$AUDIO" STT_BENCH_CACHE_ONLY=1 \
         "$EXE" --catalog "$ID" 2>/dev/null)
   # warm timing line: "=== CATALOG TRANSCRIPT (id, warm 109.12ms) ==="
   w=$(printf '%s\n' "$out" | grep -oE "warm [0-9.]+(ms|µs|s)\)" | head -1 | grep -oE "[0-9.]+(ms|µs|s)")

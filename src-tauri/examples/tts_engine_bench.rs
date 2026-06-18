@@ -1,11 +1,11 @@
-// Tier-1 TTS engine de-risk spike. Proves Kitten / Piper / Supertonic load + synthesize
+// Tier-1 TTS engine benchmark. Proves Kitten / Piper / Supertonic load + synthesize
 // end-to-end from cached HF files, reports latency/RTF, and writes an audible WAV.
 //
-//   cargo run --release --example tts_engine_spike -- kitten
-//   cargo run --release --example tts_engine_spike -- kitten expr-voice-2-f "custom text"
-//   cargo run --release --example tts_engine_spike -- piper
-//   cargo run --release --example tts_engine_spike -- supertonic M3 en
-//   cargo run --release --example tts_engine_spike -- supertonic M3 fr "Bonjour, ceci est une courte démonstration."
+//   cargo run --release --example tts_engine_bench -- kitten
+//   cargo run --release --example tts_engine_bench -- kitten expr-voice-2-f "custom text"
+//   cargo run --release --example tts_engine_bench -- piper
+//   cargo run --release --example tts_engine_bench -- supertonic M3 en
+//   cargo run --release --example tts_engine_bench -- supertonic M3 fr "Bonjour, ceci est une courte démonstration."
 //
 // Model files live under  <repo>/.tts-cache/<engine>/  (override WINSTT_TTS_CACHE).
 // espeak-ng is auto-pointed at the app-data runtime if it has been installed.
@@ -117,7 +117,7 @@ fn report(
         ok
     );
     if label == "warm" {
-        let out = format!("tts_spike_{engine}_{voice}.wav");
+        let out = format!("tts_engine_bench_{engine}_{voice}.wav");
         write_wav(&out, samples, sr);
         eprintln!("  wrote {out}");
     }

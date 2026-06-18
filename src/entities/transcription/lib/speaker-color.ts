@@ -1,24 +1,22 @@
 /**
- * Stable color palette for diarized speakers.
+ * Stable semantic color slots for diarized speakers.
  *
- * Picked for contrast on both light and dark backgrounds, and for distinct
- * pairwise hue separation up to 8 concurrent speakers. Beyond 8, the palette
- * wraps — collision is rare in real conversations and acceptable here
- * (the alternative, generating arbitrary HSL on the fly, lands on muddy
- * mid-saturation greens for most ids).
+ * The concrete palette lives in `globals.css` as `--color-speaker-*` tokens.
+ * Beyond 8 speakers, slots wrap; collision is rare in real conversations and
+ * acceptable here.
  */
 const SPEAKER_PALETTE: readonly string[] = [
-	"#38bdf8", // sky-400
-	"#fb923c", // orange-400
-	"#34d399", // emerald-400
-	"#f472b6", // pink-400
-	"#facc15", // yellow-400
-	"#a78bfa", // violet-400
-	"#fb7185", // rose-400
-	"#22d3ee", // cyan-400
+	"var(--color-speaker-1)",
+	"var(--color-speaker-2)",
+	"var(--color-speaker-3)",
+	"var(--color-speaker-4)",
+	"var(--color-speaker-5)",
+	"var(--color-speaker-6)",
+	"var(--color-speaker-7)",
+	"var(--color-speaker-8)",
 ];
 
-/** Return the palette color for ``speaker``; negative ids map to "muted". */
+/** Return the palette color for `speaker`; negative ids map to "muted". */
 export function colorForSpeaker(speaker: number): string {
 	if (speaker < 0) {
 		return "currentColor";

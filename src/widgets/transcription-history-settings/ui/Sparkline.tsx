@@ -39,7 +39,7 @@ export function Sparkline({ values, className }: SparklineProps) {
 				strokeLinejoin="round"
 				strokeWidth={1.5}
 				style={{
-					stroke: "var(--color-teal)",
+					stroke: "var(--color-activity)",
 					vectorEffect: "non-scaling-stroke",
 				}}
 			/>

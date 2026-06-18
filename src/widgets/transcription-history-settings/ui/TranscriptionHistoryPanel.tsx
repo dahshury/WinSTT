@@ -184,7 +184,7 @@ export function TranscriptionHistoryPanel() {
 							title={t("clearTitle")}
 						/>
 						<Button
-							className="flex items-center gap-1.5 bg-surface-elevated px-3 py-1.5 text-foreground-secondary text-xs-tight hover:bg-error hover:text-white disabled:opacity-50"
+							className="flex items-center gap-1.5 bg-surface-elevated px-3 py-1.5 text-foreground-secondary text-xs-tight hover:bg-error hover:text-on-error disabled:opacity-50"
 							disabled={entries.length === 0}
 							onClick={() => setConfirmOpen(true)}
 						>
@@ -213,7 +213,7 @@ export function TranscriptionHistoryPanel() {
 							title={t("clearTransformsTitle")}
 						/>
 						<Button
-							className="flex items-center gap-1.5 bg-surface-elevated px-3 py-1.5 text-foreground-secondary text-xs-tight hover:bg-error hover:text-white disabled:opacity-50"
+							className="flex items-center gap-1.5 bg-surface-elevated px-3 py-1.5 text-foreground-secondary text-xs-tight hover:bg-error hover:text-on-error disabled:opacity-50"
 							disabled={transformEntries.length === 0}
 							onClick={() => setConfirmTransformsOpen(true)}
 						>

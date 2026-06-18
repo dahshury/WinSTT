@@ -15,7 +15,12 @@ interface ContributionGraphProps {
 // Teal ramp matching the calendar heatmap's legend (20/40/65/100% opacity) so
 // both activity views read on one scale. Index 0 (empty) is supplied at render
 // time from the surface so it sits a touch above the card.
-const VARIANT_BG = ["bg-teal/20", "bg-teal/40", "bg-teal/65", "bg-teal"];
+const VARIANT_BG = [
+	"bg-activity/20",
+	"bg-activity/40",
+	"bg-activity/65",
+	"bg-activity",
+];
 
 // Mon / Wed / Fri rows get a label, like a GitHub contribution graph — labeling
 // all seven crowds the 9px cells.

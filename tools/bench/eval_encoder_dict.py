@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Spike: can a small multilingual masked-LM (encoder) act as the NON-LLM dictionary fallback?
+"""Evaluate whether a small multilingual masked-LM (encoder) can act as the NON-LLM dictionary fallback.
 
 Approach under test (deterministic, no generative LLM):
   1. PERMISSIVE phonetic candidate generation — propose (span -> dictionary term) whenever a 1-2 word

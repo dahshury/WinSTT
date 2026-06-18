@@ -42,7 +42,7 @@ export function FavoriteToggle({
 					"inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors",
 					"motion-reduce:transition-none",
 					isFavorited
-						? "text-amber-400 hover:bg-amber-400/15"
+						? "text-favorite hover:bg-favorite/15"
 						: "text-foreground-muted opacity-55 hover:bg-foreground/[0.08] hover:text-foreground hover:opacity-100",
 				)}
 				onClick={(e) => {
@@ -53,7 +53,7 @@ export function FavoriteToggle({
 				type="button"
 			>
 				<HugeiconsIcon
-					className={cn("size-3.5", isFavorited && "fill-amber-400")}
+					className={cn("size-3.5", isFavorited && "fill-favorite")}
 					icon={StarIcon}
 				/>
 			</BaseButton>

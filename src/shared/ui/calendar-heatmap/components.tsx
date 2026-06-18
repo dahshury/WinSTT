@@ -338,7 +338,8 @@ function PickerGrid({
 					<BaseButton
 						className={cn(
 							"rounded-md py-2 text-foreground-secondary text-sm hover:bg-surface-hover hover:text-foreground",
-							isActive && "bg-teal text-white hover:bg-teal hover:text-white",
+							isActive &&
+								"bg-activity text-on-activity hover:bg-activity hover:text-on-activity",
 							isCurrent && !isActive && "ring-1 ring-border ring-inset",
 						)}
 						key={cell.label + cell.date.toISOString()}

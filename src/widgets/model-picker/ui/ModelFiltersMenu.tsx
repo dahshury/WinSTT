@@ -361,7 +361,7 @@ function SelectedBox({ selected }: { selected: boolean }) {
 			className={cn(
 				"flex size-5 shrink-0 items-center justify-center rounded-md border",
 				selected
-					? "border-accent bg-accent text-white"
+					? "border-accent bg-accent text-on-accent"
 					: "border-border/70 bg-surface-2",
 			)}
 		>
@@ -424,7 +424,7 @@ function AuthorRow({
 						aria-hidden="true"
 						className={cn(
 							"size-3.5",
-							isFavorite && "fill-amber-400 text-amber-400",
+							isFavorite && "fill-favorite text-favorite",
 						)}
 						icon={StarIcon}
 					/>

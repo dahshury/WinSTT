@@ -120,7 +120,8 @@ function StepBox({
 			aria-hidden
 			className={cn(
 				"flex size-4 shrink-0 items-center justify-center rounded-sm transition-colors duration-150",
-				status === "complete" && "bg-teal text-white ring-1 ring-teal-hover",
+				status === "complete" &&
+					"bg-activity text-on-activity ring-1 ring-activity-hover",
 				status === "current" &&
 					"bg-transparent shadow-[0_0_6px_var(--color-accent-glow-strong)] ring-2 ring-accent",
 				status === "upcoming" && cn(upcomingBox, "ring-1 ring-divider-strong"),

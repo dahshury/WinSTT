@@ -211,10 +211,10 @@ pub fn ctc_greedy_collapse(ids: &[i64], blank_id: i64) -> Vec<i64> {
 /// CPU EP uses physical cores capped at 16; GPU EP uses 2 feeder threads.
 /// (0 = "all cores" is 49–84% SLOWER — never use the default.)
 pub fn pick_intra_op_threads(is_gpu: bool, cpu_count: usize) -> usize {
-    // Benchmark compatibility override: `SPIKE_INTRA_THREADS` is the existing env var used to
+    // Benchmark compatibility override: `STT_BENCH_INTRA_THREADS` lets the STT benchmark
     // sweep the intra-op thread count without recompiling (0 = let ORT auto-pick = physical cores,
     // matching onnx-asr's default).
-    if let Ok(Ok(n)) = std::env::var("SPIKE_INTRA_THREADS").map(|v| v.trim().parse::<usize>()) {
+    if let Ok(Ok(n)) = std::env::var("STT_BENCH_INTRA_THREADS").map(|v| v.trim().parse::<usize>()) {
         return n;
     }
     if is_gpu {

@@ -122,7 +122,7 @@ To sanity-check the layout before launching the app, run the Rust STT example in
 
 ```bash
 cd src-tauri
-SPIKE_CACHE_ONLY=1 cargo run --release --example stt_spike -- --catalog tiny.en
+STT_BENCH_CACHE_ONLY=1 cargo run --release --example stt_decode_bench -- --catalog tiny.en
 ```
 
 The example uses the same catalog resolver as the app and fails with the missing file or cache path if the staged snapshot is incomplete:

@@ -111,14 +111,14 @@ function IslandControlButton({
 	return (
 		<BaseButton
 			aria-label={label}
-			className={`pointer-events-auto relative flex shrink-0 items-center justify-center overflow-hidden rounded-full text-white/75 transition-colors hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
+			className={`pointer-events-auto relative flex shrink-0 items-center justify-center overflow-hidden rounded-full text-overlay-foreground/75 transition-colors hover:text-overlay-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-overlay-foreground/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
 			onClick={onClick}
 			style={{ width: size, height: size, boxSizing: "border-box" }}
 			type="button"
 		>
 			<span
 				aria-hidden="true"
-				className="pointer-events-none absolute inset-0 rounded-full bg-white/0 transition-colors duration-150 hover:bg-white/[0.08]"
+				className="pointer-events-none absolute inset-0 rounded-full bg-overlay-foreground/0 transition-colors duration-150 hover:bg-overlay-foreground/[0.08]"
 			/>
 			<IslandControlGlyph kind={kind} size={Math.round(size * 0.5)} />
 		</BaseButton>
@@ -150,7 +150,7 @@ function SpeedButton({
 	return (
 		<BaseButton
 			aria-label={`Reading speed ${label}, tap to change`}
-			className={`pointer-events-auto flex h-[18px] shrink-0 items-center justify-center rounded-full px-1.5 font-medium text-[10px] text-white/75 tabular-nums transition-colors hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
+			className={`pointer-events-auto flex h-[18px] shrink-0 items-center justify-center rounded-full px-1.5 font-medium text-[10px] text-overlay-foreground/75 tabular-nums transition-colors hover:text-overlay-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-overlay-foreground/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
 			onClick={() => ttsSetSpeed(nextTtsSpeedPreset(speed, presets))}
 			title={`Reading speed ${label}`}
 			type="button"
@@ -192,14 +192,14 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 			<div className="flex h-full items-center justify-between gap-2 px-4">
 				<div className="flex items-center">
 					{loading ? (
-						<div className="flex size-6 items-center justify-center text-white/70">
+						<div className="flex size-6 items-center justify-center text-overlay-foreground/70">
 							<Spinner
 								aria-label="Generating speech"
 								className="size-3 border-[1.5px]"
 							/>
 						</div>
 					) : paused ? (
-						<div className="flex size-6 items-center justify-center text-white/60">
+						<div className="flex size-6 items-center justify-center text-overlay-foreground/60">
 							<IslandControlGlyph kind="pause" size={12} />
 						</div>
 					) : (

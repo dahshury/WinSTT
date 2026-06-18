@@ -173,7 +173,7 @@ export function OnboardingMicTestStep() {
 								{micTestPassed ? (
 									<m.span
 										animate={{ opacity: 1, scale: 1, y: 0 }}
-										className="inline-flex items-center gap-1 rounded-sm bg-teal/15 px-1.5 py-0.5 text-2xs text-teal ring-1 ring-teal/30"
+										className="inline-flex items-center gap-1 rounded-sm bg-activity/15 px-1.5 py-0.5 text-2xs text-activity ring-1 ring-activity/30"
 										exit={{ opacity: 0, scale: 0.9, y: -2 }}
 										initial={{ opacity: 0, scale: 0.85, y: 3 }}
 										transition={{ type: "spring", stiffness: 620, damping: 28 }}
@@ -240,7 +240,7 @@ function Meter({ level, permission }: MeterProps) {
 						opacity:
 							permission === "granted" ? Math.min(normalized * 0.28, 0.32) : 0,
 					}}
-					className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_50%,var(--color-teal)_0%,transparent_52%)]"
+					className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_50%,var(--color-activity)_0%,transparent_52%)]"
 					transition={{ duration: reduceMotion ? 0 : 0.16 }}
 				/>
 				<m.span
@@ -309,5 +309,5 @@ function segmentClass(active: boolean, hot: boolean): string {
 	if (!active) {
 		return "bg-surface-1/80 ring-1 ring-divider/60 ring-inset";
 	}
-	return hot ? "bg-warning ring-warning/60" : "bg-teal ring-teal/55";
+	return hot ? "bg-warning ring-warning/60" : "bg-activity ring-activity/55";
 }

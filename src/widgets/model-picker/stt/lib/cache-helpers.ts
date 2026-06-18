@@ -22,13 +22,12 @@ const CACHE_PILL_CONFIG: Record<CacheState, CachePillConfig> = {
 		icon: CheckmarkCircle02Icon,
 		label: () => "Downloaded",
 		className:
-			"bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+			"bg-cache-complete/15 text-cache-complete border-cache-complete/30",
 	},
 	partial: {
 		icon: Download04Icon,
 		label: (cache) => `${Math.round(cache.progress * 100)}%`,
-		className:
-			"bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+		className: "bg-cache-partial/15 text-cache-partial border-cache-partial/30",
 	},
 	not_cached: {
 		icon: CloudDownloadIcon,

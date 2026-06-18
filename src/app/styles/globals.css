@@ -102,6 +102,26 @@
 	--color-foreground-secondary: oklch(73% 0.025 260);
 	--color-foreground-muted: oklch(55% 0.035 255);
 	--color-foreground-dim: oklch(38% 0.035 260);
+	--color-on-accent: oklch(98% 0 0);
+	--color-on-success: oklch(98% 0 0);
+	--color-on-warning: oklch(12% 0.015 265);
+	--color-on-error: oklch(98% 0 0);
+
+	/* Overlay chrome: transcript subtitles, floating pills, modal scrims. */
+	--color-overlay-surface: oklch(5.5% 0.012 265);
+	--color-overlay-foreground: oklch(98% 0 0);
+	--color-overlay-scrim: oklch(0% 0 0 / 0.6);
+	--color-overlay-scrim-soft: oklch(0% 0 0 / 0.4);
+	--color-overlay-fade: oklch(5.5% 0.012 265 / 0.95);
+	--color-overlay-tint: oklch(98% 0 0 / 0.08);
+	--color-overlay-ring: oklch(98% 0 0 / 0.08);
+	--color-overlay-ring-strong: oklch(98% 0 0 / 0.4);
+	--color-overlay-highlight: oklch(98% 0 0 / 0.1);
+	--color-overlay-text-shadow: oklch(0% 0 0 / 0.95);
+	--color-subtitle-scrim-strong: oklch(0% 0 0 / 0.62);
+	--color-subtitle-scrim-medium: oklch(0% 0 0 / 0.34);
+	--color-subtitle-scrim-soft: oklch(0% 0 0 / 0.08);
+	--color-subtitle-scrim-bottom: oklch(0% 0 0 / 0.55);
 
 	/* Accent — Docker Blue (primary interactive: buttons, dropdowns, focus rings) */
 	--color-accent: oklch(62% 0.19 260);
@@ -110,11 +130,21 @@
 	--color-accent-dim: oklch(14% 0.04 265);
 	--color-accent-glow: oklch(62% 0.19 260 / 0.12);
 	--color-accent-glow-strong: oklch(62% 0.19 260 / 0.25);
+	--color-accent-wash: oklch(62% 0.19 260 / 0.1);
+	--color-accent-card-wash: oklch(62% 0.19 260 / 0.15);
+	--color-accent-card-wash-strong: oklch(62% 0.19 260 / 0.18);
+	--color-accent-hairline: oklch(62% 0.19 260 / 0.5);
 
 	/* Teal → Bright Blue (waveform, toggles, sliders, progress, sidebar indicator) */
 	--color-teal: oklch(71% 0.13 245);
 	--color-teal-hover: oklch(77% 0.1 245);
 	--color-teal-dim: oklch(14.5% 0.04 260);
+	--color-activity: var(--color-teal);
+	--color-activity-hover: var(--color-teal-hover);
+	--color-activity-dim: var(--color-teal-dim);
+	--color-on-activity: var(--color-on-success);
+	--color-control-checked: var(--color-teal);
+	--color-control-checked-hover: var(--color-teal-hover);
 
 	/* Purple — kept as token aliases for legacy call sites; visually folded
 	   into teal so the UI reads with one functional accent (Docker blue) +
@@ -135,6 +165,57 @@
 	--color-warning-dim: oklch(27% 0.06 60);
 	--color-error: oklch(59% 0.22 25);
 	--color-error-dim: oklch(20% 0.06 25);
+	--color-error-glow-soft: oklch(59% 0.22 25 / 0.12);
+	--color-error-glow: oklch(59% 0.22 25 / 0.5);
+	--color-error-glow-strong: oklch(59% 0.22 25 / 0.6);
+
+	/* Domain roles: call sites should read as meaning, not palette picks. */
+	--color-favorite: var(--color-warning);
+	--color-favorite-dim: var(--color-warning-dim);
+	--color-cache-complete: var(--color-success);
+	--color-cache-partial: var(--color-warning);
+	--color-model-free: var(--color-success);
+	--color-capability-ready: var(--color-success);
+	--color-capability-partial: var(--color-warning);
+	--color-performance-low: oklch(62% 0.12 25);
+	--color-performance-mid: oklch(70% 0.11 80);
+	--color-performance-high: oklch(70% 0.11 150);
+
+	/* Recording mode accents. HEX/RGB bridge constants mirror these tokens. */
+	--color-recording-mode-ptt: oklch(62% 0.19 260);
+	--color-recording-mode-toggle: var(--color-warning);
+	--color-recording-mode-listen: var(--color-success);
+	--color-recording-mode-wakeword: oklch(68% 0.19 48);
+
+	/* Diarization speaker palette. */
+	--color-speaker-1: oklch(74.6% 0.16 232);
+	--color-speaker-2: oklch(74.6% 0.16 58);
+	--color-speaker-3: oklch(76.5% 0.16 160);
+	--color-speaker-4: oklch(71.8% 0.2 350);
+	--color-speaker-5: var(--color-warning);
+	--color-speaker-6: oklch(70.2% 0.18 294);
+	--color-speaker-7: oklch(71.2% 0.19 13);
+	--color-speaker-8: oklch(77.7% 0.15 215);
+
+	/* STT/LLM/TTS catalog family accents. */
+	--color-model-family-whisper: oklch(74.6% 0.16 232);
+	--color-model-family-lite-whisper: oklch(77.7% 0.15 215);
+	--color-model-family-nemo: var(--color-success);
+	--color-model-family-granite: oklch(71% 0.025 265);
+	--color-model-family-gigaam: var(--color-warning);
+	--color-model-family-kaldi: oklch(70.2% 0.18 294);
+	--color-model-family-t-one: oklch(71.2% 0.19 13);
+	--color-model-family-moonshine: oklch(67.3% 0.18 276);
+	--color-model-family-cohere: oklch(74.6% 0.16 58);
+	--color-model-family-sense-voice: oklch(74% 0.18 327);
+	--color-model-family-dolphin: var(--color-teal);
+	--color-model-family-custom: var(--color-foreground-muted);
+	--color-tts-engine-kokoro: var(--color-model-family-whisper);
+	--color-tts-engine-kitten: var(--color-model-family-t-one);
+	--color-tts-engine-piper: var(--color-success);
+	--color-tts-engine-supertonic: var(--color-model-family-kaldi);
+	--color-tts-engine-chatterbox: var(--color-teal);
+	--color-tts-engine-unknown: var(--color-foreground-muted);
 
 	/* Border — blue-tinted dark edges */
 	--color-border: oklch(19% 0.015 260);
@@ -183,6 +264,40 @@
 	--shadow-md: 0 4px 12px oklch(3% 0.02 265 / 0.5);
 	--shadow-lg: 0 8px 24px oklch(3% 0.02 265 / 0.6);
 	--shadow-glow: 0 0 20px oklch(62% 0.19 260 / 0.08);
+	--shadow-glass-trigger:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.06),
+		0 2px 6px -3px oklch(3% 0.02 265 / 0.55);
+	--shadow-glass-trigger-raised:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.08),
+		0 10px 28px -18px var(--color-accent-glow-strong);
+	--shadow-glass-pill:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.1), inset 0 -1px 0 0 oklch(0% 0 0 / 0.4),
+		0 8px 24px -8px oklch(3% 0.02 265 / 0.65);
+	--shadow-glass-chip:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.1), inset 0 -1px 0 0 oklch(0% 0 0 / 0.4),
+		0 4px 14px -6px oklch(3% 0.02 265 / 0.6);
+	--shadow-overlay: 0 10px 30px -10px oklch(0% 0 0 / 0.7);
+	--shadow-tooltip: 0 12px 32px -12px oklch(3% 0.02 265 / 0.7);
+	--shadow-speaking-breathe:
+		inset 0 0 18px 0 oklch(62% 0.19 260 / 0.28),
+		inset 0 0 1px 0 oklch(75% 0.15 260 / 0.4);
+	--shadow-model-picker-popup:
+		0 12px 32px -12px oklch(3% 0.02 265 / 0.65),
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.06);
+	--shadow-model-picker-search: inset 0 1px 0 0 oklch(100% 0 0 / 0.035);
+	--shadow-model-picker-search-focus: inset 0 -1px 0 0 oklch(100% 0 0 / 0.055);
+	--shadow-action-accent:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.18), 0 1px 2px 0 oklch(0% 0 0 / 0.45),
+		0 6px 18px -6px var(--color-accent-glow-strong);
+	--shadow-action-accent-hover:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.22), 0 1px 2px 0 oklch(0% 0 0 / 0.45),
+		0 10px 28px -8px var(--color-accent-glow-strong);
+	--shadow-action-danger:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.18), 0 1px 2px 0 oklch(0% 0 0 / 0.45),
+		0 6px 18px -6px var(--color-error-glow);
+	--shadow-action-danger-hover:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.22), 0 1px 2px 0 oklch(0% 0 0 / 0.45),
+		0 10px 28px -8px var(--color-error-glow-strong);
 	/* Signature elevated-control shadow — fluidfunctionalism recipe
 	   (inset highlight + inset ring + outer hairline + stacked drops) plus
 	   the n8n-extracted accent bottom edge as our brand signature. Apply

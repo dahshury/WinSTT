@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Send dictation-prompt cases (from `cargo run --example dictation_prompt_spike`) to a local
+"""Send dictation-prompt cases (from `cargo run --example dictation_prompt_cases`) to a local
 Ollama model and check the cleaned output against expectations.
 
 Usage:
-    cargo run --example dictation_prompt_spike > cases.json      # from src-tauri/
+    cargo run --example dictation_prompt_cases > cases.json      # from src-tauri/
     python tools/bench/run_dictation_cases.py cases.json [model]
 
 Verifies the LLM-only dictionary: real words preserved (video), near-misses fixed (veet->Vite,

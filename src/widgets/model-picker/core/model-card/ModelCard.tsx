@@ -142,7 +142,7 @@ function IdentityColumn({
 			</div>
 			{unavailable ? null : metaRow}
 			{!unavailable && badges ? (
-				<div className="flex w-fit max-w-full min-w-0 flex-wrap items-center gap-1 rounded-md bg-foreground/[0.025] px-1.5 py-1 ring-1 ring-white/[0.035]">
+				<div className="flex w-fit max-w-full min-w-0 flex-wrap items-center gap-1 rounded-md bg-foreground/[0.025] px-1.5 py-1 ring-1 ring-overlay-foreground/[0.035]">
 					{badges}
 				</div>
 			) : null}

@@ -122,7 +122,7 @@ export function TitleBar() {
 					<Tooltip content={t("close")}>
 						<TitleBarActionButton
 							ariaLabel={t("close")}
-							className="flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-error hover:text-white"
+							className="flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-error hover:text-on-error"
 							onActivate={windowClose}
 						>
 							<HugeiconsIcon icon={Cancel01Icon} size={12} />

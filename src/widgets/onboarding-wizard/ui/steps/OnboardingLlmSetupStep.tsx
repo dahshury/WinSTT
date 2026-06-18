@@ -293,7 +293,7 @@ function NotInstalledPanel({
 				<div className="mt-3 flex flex-wrap items-center gap-2.5">
 					<MotionBaseButton
 						className={cn(
-							"inline-flex h-7 items-center justify-center rounded-md bg-accent px-3 font-medium text-body-sm text-white outline-none transition-[background-color,box-shadow] duration-150",
+							"inline-flex h-7 items-center justify-center rounded-md bg-accent px-3 font-medium text-body-sm text-on-accent outline-none transition-[background-color,box-shadow] duration-150",
 							"shadow-elevated hover:bg-accent-hover",
 							"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
 							"disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none",

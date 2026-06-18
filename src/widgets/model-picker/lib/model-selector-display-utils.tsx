@@ -95,7 +95,7 @@ interface PricingTierResult {
 const FREE_PRICING_RESULT: PricingTierResult = {
 	label: "Free",
 	tier: "free",
-	className: "text-emerald-300/80",
+	className: "text-model-free/80",
 };
 
 function classifyAvgCost(avgCost: number): Omit<PricingTierResult, "label"> {

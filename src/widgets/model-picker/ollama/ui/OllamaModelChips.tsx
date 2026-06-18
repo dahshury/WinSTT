@@ -232,8 +232,8 @@ export function RecommendedStar() {
 	const t = useTranslations("modelPicker");
 	return (
 		<ContentTooltip content={t("recommendedTip")} side="top">
-			<span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-amber-400/[0.12] px-1.5 font-medium text-[10px] text-amber-400 leading-none">
-				<HugeiconsIcon className="size-2.5 fill-amber-400" icon={StarIcon} />
+			<span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-favorite/[0.12] px-1.5 font-medium text-[10px] text-favorite leading-none">
+				<HugeiconsIcon className="size-2.5 fill-favorite" icon={StarIcon} />
 				{t("recommended")}
 			</span>
 		</ContentTooltip>

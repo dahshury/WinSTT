@@ -72,7 +72,7 @@ const TILE_BASE_CLASSES = cn(
 // the same restrained selection treatment the model cards use.
 const TILE_ACTIVE = "bg-accent/15 text-accent ring-accent/40 shadow-sm";
 
-const STAR_FAVORITED = "text-amber-400 opacity-100";
+const STAR_FAVORITED = "text-favorite opacity-100";
 const STAR_IDLE = cn(
 	"text-foreground-muted opacity-0",
 	"focus-visible:opacity-100 group-hover/tile:opacity-100",
@@ -275,7 +275,7 @@ function GroupRailTile({
 					type="button"
 				>
 					<HugeiconsIcon
-						className={cn("size-3", isFavorited && "fill-amber-400")}
+						className={cn("size-3", isFavorited && "fill-favorite")}
 						icon={StarIcon}
 					/>
 				</BaseButton>
@@ -304,7 +304,7 @@ export function RailIconChip({
 			className={cn(
 				"flex size-5 items-center justify-center rounded",
 				tone === "favorite"
-					? "bg-amber-400/[0.12] text-amber-400"
+					? "bg-favorite/[0.12] text-favorite"
 					: "bg-foreground/[0.06] text-foreground-muted",
 			)}
 		>

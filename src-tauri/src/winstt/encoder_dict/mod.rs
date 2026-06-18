@@ -15,7 +15,8 @@ pub mod engine;
 pub mod phonetics;
 
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
+use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
@@ -25,9 +26,44 @@ pub use engine::DEFAULT_RANK_K;
 /// Local filenames the model is stored under (in the app-data `encoder-dict` dir).
 pub(crate) const MODEL_FILENAME: &str = "model_int8.onnx";
 pub(crate) const TOKENIZER_FILENAME: &str = "tokenizer.json";
+const CORRECTION_TIMEOUT_MS: u64 = 2_000;
+const ENGINE_LOCK_TIMEOUT_MS: u64 = 500;
 
 /// Loaded engine, created once after the model is present. `None` until then.
 static ENGINE: OnceLock<Mutex<Option<EncoderDict>>> = OnceLock::new();
+
+fn lock_engine<'a>(
+    cell: &'a Mutex<Option<EncoderDict>>,
+    context: &str,
+) -> Option<MutexGuard<'a, Option<EncoderDict>>> {
+    let started = Instant::now();
+    log::info!("[encoder-dict] lock_start context={context}");
+    loop {
+        match cell.try_lock() {
+            Ok(guard) => {
+                log::info!(
+                    "[encoder-dict] lock_complete context={context} duration_ms={}",
+                    started.elapsed().as_millis()
+                );
+                return Some(guard);
+            }
+            Err(TryLockError::Poisoned(poisoned)) => {
+                log::warn!("[encoder-dict] lock poisoned in {context}; recovering");
+                return Some(poisoned.into_inner());
+            }
+            Err(TryLockError::WouldBlock) => {
+                if started.elapsed() >= Duration::from_millis(ENGINE_LOCK_TIMEOUT_MS) {
+                    log::warn!(
+                        "[encoder-dict] lock_timeout context={context} duration_ms={}",
+                        started.elapsed().as_millis()
+                    );
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+}
 
 /// Directory the encoder model + tokenizer live in.
 pub(crate) fn model_dir(app: &AppHandle) -> Option<PathBuf> {
@@ -99,6 +135,11 @@ pub async fn correct_vocabulary(
     if terms.is_empty() || text.trim().is_empty() || !is_model_present(app) {
         return text.to_string();
     }
+    log::info!(
+        "[encoder-dict] correction_start chars={} terms={} rank_k={rank_k}",
+        text.chars().count(),
+        terms.len()
+    );
     let Some(dir) = model_dir(app) else {
         return text.to_string();
     };
@@ -108,12 +149,24 @@ pub async fn correct_vocabulary(
     let text_owned = text.to_string();
     let terms_owned = terms.to_vec();
     let fallback = text.to_string();
-    tokio::task::spawn_blocking(move || {
+    let correction_started = Instant::now();
+    let task = tokio::task::spawn_blocking(move || {
+        let blocking_started = Instant::now();
         let cell = ENGINE.get_or_init(|| Mutex::new(None));
-        let mut guard = cell.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(mut guard) = lock_engine(cell, "correction") else {
+            return text_owned;
+        };
         if guard.is_none() {
+            let load_started = Instant::now();
+            log::info!("[encoder-dict] load_start");
             match EncoderDict::load(&model_path, &tok_path) {
-                Ok(e) => *guard = Some(e),
+                Ok(e) => {
+                    log::info!(
+                        "[encoder-dict] load_complete duration_ms={}",
+                        load_started.elapsed().as_millis()
+                    );
+                    *guard = Some(e);
+                }
                 Err(e) => {
                     log::warn!("[encoder-dict] load failed, skipping: {e}");
                     return text_owned;
@@ -121,10 +174,41 @@ pub async fn correct_vocabulary(
             }
         }
         match guard.as_mut() {
-            Some(e) => e.correct(&text_owned, &terms_owned, rank_k),
+            Some(e) => {
+                let infer_started = Instant::now();
+                log::info!("[encoder-dict] infer_start");
+                let corrected = e.correct(&text_owned, &terms_owned, rank_k);
+                log::info!(
+                    "[encoder-dict] infer_complete duration_ms={} changed={} total_blocking_ms={}",
+                    infer_started.elapsed().as_millis(),
+                    corrected != text_owned,
+                    blocking_started.elapsed().as_millis()
+                );
+                corrected
+            }
             None => text_owned,
         }
-    })
-    .await
-    .unwrap_or(fallback)
+    });
+
+    match tokio::time::timeout(Duration::from_millis(CORRECTION_TIMEOUT_MS), task).await {
+        Ok(Ok(corrected)) => {
+            log::info!(
+                "[encoder-dict] correction_complete duration_ms={} changed={}",
+                correction_started.elapsed().as_millis(),
+                corrected != fallback
+            );
+            corrected
+        }
+        Ok(Err(err)) => {
+            log::warn!("[encoder-dict] correction task failed, skipping: {err}");
+            fallback
+        }
+        Err(_) => {
+            log::warn!(
+                "[encoder-dict] correction_timeout duration_ms={} returning_original=true",
+                correction_started.elapsed().as_millis()
+            );
+            fallback
+        }
+    }
 }

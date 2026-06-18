@@ -91,7 +91,7 @@ export function DataGridPagination({
 								className={cn(
 									PAGE_BUTTON_CLASS,
 									isCurrent &&
-										"bg-accent text-white hover:bg-accent-hover hover:text-white",
+										"bg-accent text-on-accent hover:bg-accent-hover hover:text-on-accent",
 								)}
 								key={page}
 								onClick={() => table.setPageIndex(page - 1)}

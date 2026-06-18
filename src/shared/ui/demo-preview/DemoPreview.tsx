@@ -49,7 +49,7 @@ export function DemoPreview({
 						sideOffset={8}
 						style={{ zIndex: Z_INDEX.tooltip }}
 					>
-						<TooltipPrimitive.Popup className="origin-(--transform-origin) overflow-hidden rounded-xl border border-border bg-surface-2 shadow-[0_12px_32px_-12px_rgba(2,3,8,0.7)] transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0">
+						<TooltipPrimitive.Popup className="origin-(--transform-origin) overflow-hidden rounded-xl border border-border bg-surface-2 shadow-tooltip transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0">
 							<video
 								aria-label={`${demo} demo`}
 								autoPlay

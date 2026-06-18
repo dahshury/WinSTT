@@ -41,7 +41,7 @@ export function WpmGauge({ value, max = 160 }: WpmGaugeProps) {
 				strokeDasharray={`${filled} 100`}
 				strokeLinecap="round"
 				strokeWidth={8}
-				style={{ stroke: "var(--color-teal)" }}
+				style={{ stroke: "var(--color-activity)" }}
 			/>
 			<text
 				className="font-mono font-semibold tabular-nums"

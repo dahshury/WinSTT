@@ -49,10 +49,10 @@ const NEUTRAL_VARIANT_CHROME = {
 } as const;
 
 const FREE_VARIANT_CHROME = {
-	bgClass: "bg-emerald-500/[0.08]",
-	textClass: "text-emerald-300/80",
-	borderClass: "border-emerald-500/20",
-	gradientClass: "from-emerald-500/[0.06] via-transparent to-transparent",
+	bgClass: "bg-model-free/[0.08]",
+	textClass: "text-model-free/80",
+	borderClass: "border-model-free/20",
+	gradientClass: "from-model-free/[0.06] via-transparent to-transparent",
 } as const;
 
 export const MODEL_VARIANT_INFO: Record<ModelVariant, ModelVariantInfo> = {

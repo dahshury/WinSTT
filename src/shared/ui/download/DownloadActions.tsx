@@ -61,7 +61,7 @@ const SIZE_CLASS: Record<NonNullable<DownloadActionsProps["size"]>, string> = {
 const NEUTRAL_STATIC =
 	"inline-flex items-center gap-1.5 rounded-md border border-border text-foreground-secondary transition-colors";
 const ACCENT_BASE =
-	"inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent font-medium text-white transition-colors hover:bg-accent-dim";
+	"inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent font-medium text-on-accent transition-colors hover:bg-accent-dim";
 
 function actionIconSize(
 	size: NonNullable<DownloadActionsProps["size"]>,

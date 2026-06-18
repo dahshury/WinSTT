@@ -20,7 +20,9 @@ export function StreakBanner({ streak }: StreakBannerProps) {
 			<div className="flex items-center gap-2.5">
 				<HugeiconsIcon
 					aria-hidden
-					className={streak.current > 0 ? "text-teal" : "text-foreground-muted"}
+					className={
+						streak.current > 0 ? "text-activity" : "text-foreground-muted"
+					}
 					icon={FireIcon}
 					size={22}
 					strokeWidth={1.75}

@@ -104,11 +104,11 @@ export function TranscriptionThinking() {
 						initial={{ opacity: 0 }}
 						key="main-thinking"
 					>
-						<div className="relative inline-flex max-w-[460px] flex-col items-center overflow-hidden rounded-2xl bg-gradient-to-b from-[var(--color-surface-3)]/65 to-[var(--color-surface-1)]/92 px-3 py-2 ring-1 ring-white/[0.08] ring-inset backdrop-blur-md backdrop-saturate-150">
+						<div className="relative inline-flex max-w-[460px] flex-col items-center overflow-hidden rounded-2xl bg-gradient-to-b from-surface-3/65 to-surface-1/92 px-3 py-2 ring-1 ring-overlay-foreground/[0.08] ring-inset backdrop-blur-md backdrop-saturate-150">
 							{/* Brand-accent hairline — mirrors the pill bubble's top edge. */}
 							<div
 								aria-hidden="true"
-								className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-[oklch(62%_0.19_260/0.5)] to-transparent"
+								className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-accent-hairline to-transparent"
 							/>
 							<ThinkingIndicator
 								reasoning={reasoning}

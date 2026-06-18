@@ -128,11 +128,9 @@ export const breatheVariants: Variants = {
 };
 
 export const GLASS_SURFACE =
-	"bg-gradient-to-b from-[var(--color-surface-3)]/65 to-[var(--color-surface-1)]/92 ring-1 ring-white/[0.08] ring-inset backdrop-blur-md backdrop-saturate-150";
-export const BUBBLE_SHADOW =
-	"shadow-[inset_0_1px_0_0_rgba(255,255,255,0.10),inset_0_-1px_0_0_rgba(0,0,0,0.40),0_8px_24px_-8px_rgba(2,3,8,0.65)]";
-export const CHIP_SHADOW =
-	"shadow-[inset_0_1px_0_0_rgba(255,255,255,0.10),inset_0_-1px_0_0_rgba(0,0,0,0.40),0_4px_14px_-6px_rgba(2,3,8,0.6)]";
+	"bg-gradient-to-b from-surface-3/65 to-surface-1/92 ring-1 ring-overlay-foreground/[0.08] ring-inset backdrop-blur-md backdrop-saturate-150";
+export const BUBBLE_SHADOW = "shadow-glass-pill";
+export const CHIP_SHADOW = "shadow-glass-chip";
 export const OVERLAY_PANEL_CLOSE_MS = 380;
 
 export function useDelayedUnmount(visible: boolean, exitMs: number): boolean {

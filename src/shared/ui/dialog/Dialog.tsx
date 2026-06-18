@@ -199,7 +199,7 @@ export function DialogContent({
 
 	const backdropClass = cn(
 		dialogAnimation.backdrop,
-		"fixed inset-0 bg-black/60 backdrop-blur-sm",
+		"fixed inset-0 bg-overlay-scrim backdrop-blur-sm",
 		alert ? "z-confirm-backdrop" : "z-modal-backdrop",
 	);
 	const usePreset = !(fluid || width !== undefined);
@@ -363,8 +363,8 @@ export function DialogActionButton({
 	// Neutral derives its fill/hover from the popup surface, so it can't live in
 	// a static map; accent/danger are flat brand colors.
 	const solidVariant: Record<"accent" | "danger", string> = {
-		accent: "bg-accent text-white shadow-elevated hover:bg-accent-hover",
-		danger: "bg-error text-white shadow-elevated hover:bg-error/95",
+		accent: "bg-accent text-on-accent shadow-elevated hover:bg-accent-hover",
+		danger: "bg-error text-on-error shadow-elevated hover:bg-error/95",
 	};
 	const variantClass =
 		variant === "neutral"

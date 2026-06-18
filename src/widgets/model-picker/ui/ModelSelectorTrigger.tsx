@@ -11,6 +11,7 @@ import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { PulseDot } from "@/shared/ui/pulse-dot";
+import { MODEL_TRIGGER_GLASS_CLASSES } from "@/shared/ui/switching-trigger";
 import { VariantBadge } from "../lib/model-list-meta-chips";
 import { getVariantClasses } from "../lib/model-selector-display-utils";
 import { formatMaker, formatModelName } from "../lib/model-selector-utils";
@@ -26,8 +27,7 @@ import { TruncatedText } from "./TruncatedText";
 // hairline inset ring, inset top highlight, tinted drop shadow. Hover
 // lifts a surface level; open swaps to an accent-tinted wash and reveals
 // the Docker-blue hairline at the top edge.
-const TRIGGER_GLASS_CLASSES =
-	"group relative flex h-auto min-h-[3.25rem] w-full items-center justify-between gap-2 overflow-hidden rounded-lg bg-gradient-to-b from-[var(--color-surface-3)]/85 to-[var(--color-surface-2)]/95 px-3 py-2 text-left shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06),0_2px_6px_-3px_rgba(2,3,8,0.55)] ring-1 ring-white/[0.07] ring-inset transition-[transform,background-color,box-shadow] duration-150 ease-out hover:from-[var(--color-surface-4)]/85 hover:to-[var(--color-surface-3)]/95 hover:ring-white/[0.13] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:from-[oklch(62%_0.19_260/0.10)] data-[state=open]:to-[var(--color-surface-2)]/95 data-[state=open]:ring-accent/40";
+const TRIGGER_GLASS_CLASSES = `${MODEL_TRIGGER_GLASS_CLASSES} disabled:opacity-50`;
 
 export interface ModelSelectorTriggerProps {
 	disabled: boolean;

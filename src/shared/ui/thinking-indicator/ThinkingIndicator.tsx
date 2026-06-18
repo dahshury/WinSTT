@@ -432,7 +432,7 @@ export function ThinkingIndicator({
 				<div className="inline-flex items-center gap-2 self-center">
 					<m.svg
 						aria-hidden
-						className="shrink-0 text-white/85"
+						className="shrink-0 text-overlay-foreground/85"
 						fill="none"
 						height={18}
 						stroke="currentColor"
@@ -498,7 +498,7 @@ export function ThinkingIndicator({
 					</span>
 					{showTimer && (
 						<span
-							className="text-[10.5px] text-white/45 tabular-nums leading-tight"
+							className="text-[10.5px] text-overlay-foreground/45 tabular-nums leading-tight"
 							style={{
 								fontFamily: MONO_STACK,
 								letterSpacing: "-0.005em",
@@ -538,13 +538,13 @@ export function ThinkingIndicator({
 							    so the band reads as nested. */}
 							<div
 								aria-hidden="true"
-								className="pointer-events-none h-px self-stretch bg-gradient-to-r from-transparent via-[oklch(62%_0.19_260/0.35)] to-transparent"
+								className="pointer-events-none h-px self-stretch bg-gradient-to-r from-transparent via-accent/35 to-transparent"
 							/>
 							{/* Scroll viewport. Mask gradient fades the top edge
 							    of older text into the bubble so users only ever
 							    visually anchor on the trailing tokens. */}
 							<div
-								className="relative mt-1 max-h-[3.6em] overflow-hidden text-white/55"
+								className="relative mt-1 max-h-[3.6em] overflow-hidden text-overlay-foreground/55"
 								ref={scrollRef}
 								style={{
 									fontFamily: MONO_STACK,
@@ -552,9 +552,9 @@ export function ThinkingIndicator({
 									letterSpacing: "-0.005em",
 									lineHeight: 1.45,
 									WebkitMaskImage:
-										"linear-gradient(to bottom, transparent 0, rgba(0,0,0,0.4) 25%, rgba(0,0,0,1) 60%)",
+										"linear-gradient(to bottom, transparent 0, var(--color-overlay-scrim-soft) 25%, var(--color-overlay-surface) 60%)",
 									maskImage:
-										"linear-gradient(to bottom, transparent 0, rgba(0,0,0,0.4) 25%, rgba(0,0,0,1) 60%)",
+										"linear-gradient(to bottom, transparent 0, var(--color-overlay-scrim-soft) 25%, var(--color-overlay-surface) 60%)",
 								}}
 							>
 								<span className="whitespace-pre-wrap break-words">
@@ -568,8 +568,8 @@ export function ThinkingIndicator({
 										width: "1px",
 										height: "0.95em",
 										marginLeft: "2px",
-										backgroundColor: "oklch(62% 0.19 260 / 0.85)",
-										boxShadow: "0 0 6px 0 oklch(62% 0.19 260 / 0.45)",
+										backgroundColor: "var(--color-accent)",
+										boxShadow: "0 0 6px 0 var(--color-accent-hairline)",
 									}}
 									transition={{
 										duration: 1.2,

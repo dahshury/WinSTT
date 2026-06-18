@@ -172,7 +172,7 @@ function DynamicIslandPillContent({
 					<div className="flex items-center gap-1.5">
 						<LivePulse isSpeaking={isSpeaking} />
 						<span
-							className="font-mono text-white/70 tabular-nums"
+							className="font-mono text-overlay-foreground/70 tabular-nums"
 							style={{ fontSize: timerFontSize }}
 						>
 							{elapsed}
@@ -186,10 +186,10 @@ function DynamicIslandPillContent({
 			{showText ? (
 				<div className="w-full" style={{ fontSize: textFontSize }}>
 					<ScrollingText
-						className="text-start font-medium text-white tracking-tight"
+						className="text-start font-medium text-overlay-foreground tracking-tight"
 						// Solid black fade-mask matches the island's bg so the
 						// edge fade reads as "more text" rather than a band.
-						fadeColor="rgb(0 0 0 / 0.95)"
+						fadeColor="var(--color-overlay-fade)"
 						lineHeight={1.25}
 						maxLines={5}
 						text={text}

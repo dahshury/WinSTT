@@ -302,16 +302,16 @@ pub struct EngineConfig {
 /// are owned by their respective slices and land as they're ported.
 pub fn build_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>> {
     match cfg.kind {
-        // Whisper family (whisper / lite-whisper / distil / crisper) — PROVEN via the STT spike.
+        // Whisper family (whisper / lite-whisper / distil / crisper) — proven via the STT benchmark.
         EngineKind::WhisperHf => Ok(Box::new(whisper::WhisperEngine::load(&cfg)?)),
         // Own engine files not yet ported.
         EngineKind::WhisperOrt => Err(SttError::Unsupported("WhisperOrt engine not yet ported")),
         EngineKind::Moonshine => Ok(Box::new(moonshine::MoonshineEngine::load(&cfg)?)),
         // All other families dispatch through `families::build_family_engine` (SenseVoice /
         // Dolphin / NeMo {Ctc,Rnnt,Tdt,Aed} / Kaldi / GigaAM / Cohere). Their numerics are
-        // drafted but spike-gated — the LIVE path only enables a family after it's validated
-        // (see `engine_kind_for` whitelist in managers/transcription.rs); the spike harness
-        // (`stt_spike --catalog`) reaches them directly to drive that validation.
+        // drafted but benchmark-gated — the LIVE path only enables a family after it's validated
+        // (see `engine_kind_for` whitelist in managers/transcription.rs); the benchmark harness
+        // (`stt_decode_bench --catalog`) reaches them directly to drive that validation.
         _ => families::build_family_engine(cfg),
     }
 }

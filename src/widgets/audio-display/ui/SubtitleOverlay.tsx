@@ -20,6 +20,7 @@ const FADE_AFTER_MS = 500;
 /** Normal PTT/toggle captions are fully transparent after this many ms. */
 const GONE_AFTER_MS = 1100;
 const SUBTITLE_EXIT_TRANSITION = "opacity 140ms ease-out";
+const SUBTITLE_TEXT_SHADOW = "0 1px 4px var(--color-overlay-text-shadow)";
 
 /** Ephemeral status messages (e.g. "no audio detected") fade faster. */
 const EPHEMERAL_FADE_AFTER_MS = 2000;
@@ -181,12 +182,12 @@ export function SubtitleOverlay() {
 				className="titlebar-no-drag absolute inset-0"
 				style={{
 					maskImage:
-						"linear-gradient(to bottom, transparent 0%, black 14%, black 100%)",
+						"linear-gradient(to bottom, transparent 0%, var(--color-overlay-surface) 14%, var(--color-overlay-surface) 100%)",
 					WebkitMaskImage:
-						"linear-gradient(to bottom, transparent 0%, black 14%, black 100%)",
+						"linear-gradient(to bottom, transparent 0%, var(--color-overlay-surface) 14%, var(--color-overlay-surface) 100%)",
 					// Scrim so subtitles stay legible over arbitrary video.
 					background:
-						"linear-gradient(to top, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.34) 55%, rgba(0,0,0,0.08) 100%)",
+						"linear-gradient(to top, var(--color-subtitle-scrim-strong) 0%, var(--color-subtitle-scrim-medium) 55%, var(--color-subtitle-scrim-soft) 100%)",
 				}}
 				viewportRef={scrollRef}
 			>
@@ -202,10 +203,13 @@ export function SubtitleOverlay() {
 						const color = spk >= 0 ? colorForSpeaker(spk) : undefined;
 						return (
 							<p
-								className="font-sans text-foreground text-title leading-snug [text-shadow:0_1px_4px_rgba(0,0,0,0.95)]"
+								className="font-sans text-foreground text-title leading-snug"
 								data-subtitle-line="true"
 								key={item.id}
-								{...(color ? { style: { color } } : {})}
+								style={{
+									...(color ? { color } : {}),
+									textShadow: SUBTITLE_TEXT_SHADOW,
+								}}
 							>
 								{spk >= 0 ? (
 									<span className="font-semibold">{`Speaker ${spk + 1}: `}</span>
@@ -216,9 +220,10 @@ export function SubtitleOverlay() {
 					})}
 					{liveText ? (
 						<p
-							className="font-sans text-foreground/75 text-title leading-snug [text-shadow:0_1px_4px_rgba(0,0,0,0.95)]"
+							className="font-sans text-foreground/75 text-title leading-snug"
 							data-subtitle-line="live"
 							dir="auto"
+							style={{ textShadow: SUBTITLE_TEXT_SHADOW }}
 						>
 							{liveText}
 						</p>
@@ -263,7 +268,7 @@ export function SubtitleOverlay() {
 			className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center justify-end gap-0.5 px-5 pt-8 pb-2"
 			style={{
 				background:
-					"linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.55) 100%)",
+					"linear-gradient(to bottom, transparent 0%, var(--color-subtitle-scrim-bottom) 100%)",
 			}}
 		>
 			{visibleSubtitleItems.map(({ item, opacity }) => {
