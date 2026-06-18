@@ -41,9 +41,9 @@ describe("ApplicationError", () => {
 		expect(json["message"]).toBe("boom");
 		expect(json["context"]).toEqual({ x: 1 });
 		expect(typeof json["timestamp"]).toBe("number");
-		expect(typeof json["stack"] === "string" || json["stack"] === undefined).toBe(
-			true,
-		);
+		expect(
+			typeof json["stack"] === "string" || json["stack"] === undefined,
+		).toBe(true);
 	});
 });
 

@@ -26,9 +26,7 @@ import {
 	useLlmConfigurationsStore,
 } from "../model/configurations";
 import type { LlmSettingsPanelModel } from "./LlmSettingsPanel";
-import {
-	FeaturePresetControls,
-} from "./modifier-presets";
+import { FeaturePresetControls } from "./modifier-presets";
 import { seedDraftFromFeature } from "./modifier-presets-state";
 import { Playground } from "./Playground";
 import { ProviderSection } from "./provider-sections";

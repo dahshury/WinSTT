@@ -159,7 +159,10 @@ function useShaderToyEngine(
 		const displayHeight = Math.floor((rect?.height ?? 1) * realToCSSPixels);
 		gl.canvas.width = displayWidth;
 		gl.canvas.height = displayHeight;
-		if (uniformsRef.current["iResolution"]?.isNeeded && shaderProgramRef.current) {
+		if (
+			uniformsRef.current["iResolution"]?.isNeeded &&
+			shaderProgramRef.current
+		) {
 			const rUniform = gl.getUniformLocation(
 				shaderProgramRef.current,
 				UNIFORM_RESOLUTION,
@@ -180,7 +183,9 @@ function useShaderToyEngine(
 		gl.shaderSource(shader, shaderCodeAsText);
 		gl.compileShader(shader);
 		if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-			reportShaderWarning(log(`Error compiling the shader:\n${shaderCodeAsText}`));
+			reportShaderWarning(
+				log(`Error compiling the shader:\n${shaderCodeAsText}`),
+			);
 			const compilationLog = gl.getShaderInfoLog(shader);
 			gl.deleteShader(shader);
 			reportShaderError(log(`Shader compiler log: ${compilationLog}`));

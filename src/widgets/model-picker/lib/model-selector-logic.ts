@@ -21,7 +21,10 @@ interface LowerCasedModel {
 
 const lowerCasedCache = new WeakMap<OpenRouterModel, LowerCasedModel>();
 const searchCorpusCache = new WeakMap<OpenRouterModel, string[]>();
-const supportedParametersCache = new WeakMap<readonly string[], ReadonlySet<string>>();
+const supportedParametersCache = new WeakMap<
+	readonly string[],
+	ReadonlySet<string>
+>();
 
 function toLowerOrEmpty(value: string | undefined): string {
 	return value?.toLowerCase() ?? "";

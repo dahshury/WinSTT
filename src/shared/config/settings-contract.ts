@@ -12,6 +12,7 @@ export const SETTINGS_CONTRACT = {
 		"general.contextAllowList",
 		"general.contextAppMode",
 		"general.contextDenyList",
+		"general.encoderDictionaryEnabled",
 		"general.historyMaxEntries",
 		"general.loopbackDeviceIndex",
 		"general.manualToggleStop",

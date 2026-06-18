@@ -781,10 +781,9 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 };
 
 const IPC_DIRECTION_SETS = new Map<IpcChannel, ReadonlySet<IpcDirection>>(
-	(Object.entries(IPC_DIRECTIONS) as [
-		IpcChannel,
-		readonly IpcDirection[],
-	][]).map(([channel, directions]) => [channel, new Set(directions)]),
+	(
+		Object.entries(IPC_DIRECTIONS) as [IpcChannel, readonly IpcDirection[]][]
+	).map(([channel, directions]) => [channel, new Set(directions)]),
 );
 
 /** Return every channel whose direction list includes the given direction. */

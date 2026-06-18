@@ -143,7 +143,10 @@ beforeEach(() => {
 			args: [{ parameter, value }],
 		});
 	};
-	commands.winsttCallMethod = async (method: string, args: unknown[] | null) => {
+	commands.winsttCallMethod = async (
+		method: string,
+		args: unknown[] | null,
+	) => {
 		sentChannels.push({
 			channel: IPC.STT_CALL_METHOD,
 			args: [{ method, args: args ?? undefined }],

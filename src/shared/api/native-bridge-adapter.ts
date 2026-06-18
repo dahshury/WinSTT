@@ -45,10 +45,8 @@ function assertNever(x: never): never {
 // per the adapter's typed-IPC invariant — there is no untyped `invoke(string)`
 // here. The remaining string transport is event LISTENING (`evt.listen`).
 const evt = {
-	listen: (
-		event: string,
-		handler: (e: { payload: unknown }) => void,
-	) => tauriListen<unknown>(event, handler),
+	listen: (event: string, handler: (e: { payload: unknown }) => void) =>
+		tauriListen<unknown>(event, handler),
 };
 
 // ── Route kinds ───────────────────────────────────────────────────────────────

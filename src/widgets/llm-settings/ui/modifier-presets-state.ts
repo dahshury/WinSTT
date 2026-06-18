@@ -1,4 +1,7 @@
-import type { LlmFeatureDraft, PresetCarrier } from "../lib/llm-settings-panel-test-helpers";
+import type {
+	LlmFeatureDraft,
+	PresetCarrier,
+} from "../lib/llm-settings-panel-test-helpers";
 import type { LlmConfiguration } from "../model/configurations";
 
 export function seedDraftFromFeature(

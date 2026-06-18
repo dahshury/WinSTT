@@ -90,9 +90,7 @@ export function useSoundPreview(): UseSoundPreviewReturn {
 		[],
 	);
 
-	const ensureContext = async (
-		outputDeviceId = "",
-	): Promise<AudioContext> => {
+	const ensureContext = async (outputDeviceId = ""): Promise<AudioContext> => {
 		if (!ctxRef.current) {
 			ctxRef.current = createOutputContext(outputDeviceId);
 			outputDeviceIdRef.current = outputDeviceId;

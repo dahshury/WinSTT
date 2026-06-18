@@ -121,9 +121,9 @@ describe("useModelStateStore.setAll (covers toMap)", () => {
 			estimated_bytes: 999,
 		};
 		useModelStateStore.getState().setAll([first, second], SYSTEM_INFO);
-		expect(useModelStateStore.getState().statesById["dup"]?.estimated_bytes).toBe(
-			999,
-		);
+		expect(
+			useModelStateStore.getState().statesById["dup"]?.estimated_bytes,
+		).toBe(999);
 	});
 });
 

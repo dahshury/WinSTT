@@ -4,9 +4,7 @@ import {
 	resolveBarCount,
 	resolveBarSequencerInterval,
 } from "./AudioVisualizerBar.helpers";
-import {
-	AudioVisualizerBar,
-} from "./AudioVisualizerBar";
+import { AudioVisualizerBar } from "./AudioVisualizerBar";
 
 describe("AudioVisualizerBar", () => {
 	test("renders 9 bars at default 'md' size", () => {

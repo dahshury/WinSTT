@@ -237,10 +237,7 @@ function OpenRouterDetachedTrigger({
 	};
 
 	return (
-		<div
-			className="flex flex-col gap-2"
-			data-slot="openrouter-model-selector"
-		>
+		<div className="flex flex-col gap-2" data-slot="openrouter-model-selector">
 			<label
 				className="text-body-sm text-foreground-secondary"
 				htmlFor="openrouter-model-selector-input"
@@ -659,9 +656,7 @@ function useOpenRouterModelSelectorPanelFrameProps({
 			<>
 				{reasoningBlock}
 				{description ? (
-					<p className="text-foreground-muted text-xs-tight">
-						{description}
-					</p>
+					<p className="text-foreground-muted text-xs-tight">{description}</p>
 				) : null}
 			</>
 		),

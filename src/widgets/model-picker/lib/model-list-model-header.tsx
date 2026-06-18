@@ -20,12 +20,8 @@ import {
 	getExpandAriaLabel,
 	getProviderCountTooltip,
 } from "./model-list-content-virtualized-utils/class-names";
-import {
-	computeModelHeaderState,
-} from "./model-list-content-virtualized-utils/header";
-import {
-	resolveMakerIconSrc,
-} from "./model-list-content-virtualized-utils/items";
+import { computeModelHeaderState } from "./model-list-content-virtualized-utils/header";
+import { resolveMakerIconSrc } from "./model-list-content-virtualized-utils/items";
 import { InlineModelMeta, ModelDescription } from "./model-list-meta-chips";
 import { formatModelName } from "./model-selector-utils";
 import { publicAsset } from "./public-asset";

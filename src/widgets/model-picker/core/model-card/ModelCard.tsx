@@ -312,14 +312,10 @@ export function ModelCard({
 	}
 	if (bodyClickable) {
 		return (
-			<div
-				className={cardClass}
-				data-model-id={dataModelId}
-				title={title}
-			>
+			<div className={cardClass} data-model-id={dataModelId} title={title}>
 				<button
 					aria-label={`Select ${name}`}
-					className="absolute inset-0 z-0 rounded-lg border-0 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/70"
+					className="absolute inset-0 rounded-lg border-0 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/70"
 					onClick={onBodyClick}
 					type="button"
 				/>

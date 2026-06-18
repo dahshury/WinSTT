@@ -3,7 +3,12 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
-import { Elevated, surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
+import {
+	Elevated,
+	surfaceBg,
+	surfaceHoverBg,
+	useSurface,
+} from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { DownloadActions, DownloadProgressBar } from "@/shared/ui/download";
 import { Toggle } from "@/shared/ui/toggle";
@@ -116,7 +121,10 @@ export function EncoderModelCard({
 			<div className="flex items-center justify-between gap-2">
 				{enabled ? (
 					<span className="flex items-center gap-1.5 text-foreground-muted text-xs">
-						<span className="size-1.5 rounded-full bg-success" aria-hidden="true" />
+						<span
+							className="size-1.5 rounded-full bg-success"
+							aria-hidden="true"
+						/>
 						{t("encoderReady")}
 					</span>
 				) : (
@@ -142,7 +150,9 @@ export function EncoderModelCard({
 				/>
 				<div className="flex items-center justify-between text-foreground-muted text-xs tabular-nums">
 					<span>
-						{m.state === "paused" ? t("encoderPaused") : t("encoderDownloading")}
+						{m.state === "paused"
+							? t("encoderPaused")
+							: t("encoderDownloading")}
 						{percent !== null ? ` · ${percent}%` : ""}
 					</span>
 					{bytesLabel ? (

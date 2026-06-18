@@ -342,7 +342,9 @@ describe("useOnboardingWizardStore — goToStep (indicator jump-back)", () => {
 	test("jumps backwards to an earlier visited step", () => {
 		useOnboardingWizardStore.setState({ track: "local", currentStep: "llm" });
 		useOnboardingWizardStore.getState().goToStep("capabilities");
-		expect(useOnboardingWizardStore.getState().currentStep).toBe("capabilities");
+		expect(useOnboardingWizardStore.getState().currentStep).toBe(
+			"capabilities",
+		);
 		useOnboardingWizardStore.getState().goToStep("welcome");
 		expect(useOnboardingWizardStore.getState().currentStep).toBe("welcome");
 	});

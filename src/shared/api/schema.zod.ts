@@ -178,12 +178,7 @@ const FitReasonSchema = z.enum([
 ]);
 export type FitReason = z.infer<typeof FitReasonSchema>;
 
-const ServerStatusSchema = z.enum([
-	"idle",
-	"starting",
-	"running",
-	"error",
-]);
+const ServerStatusSchema = z.enum(["idle", "starting", "running", "error"]);
 export type ServerStatus = z.infer<typeof ServerStatusSchema>;
 
 const ConnectionStatusSchema = z.enum([

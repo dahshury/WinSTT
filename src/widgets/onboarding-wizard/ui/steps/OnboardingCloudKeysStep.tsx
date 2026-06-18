@@ -65,7 +65,10 @@ function statusFromVerify(response: VerifyResponse): {
 		return { status: "verified" };
 	}
 	const status = response.code === "network" ? "offline" : "invalid";
-	return { status, ...(response.message ? { lastError: response.message } : {}) };
+	return {
+		status,
+		...(response.message ? { lastError: response.message } : {}),
+	};
 }
 
 const VERIFY_BUTTON_MOTION_PROPS = {

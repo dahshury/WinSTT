@@ -6,9 +6,7 @@ import {
 	resolveRadialDistancePct,
 	resolveRadialSequencerInterval,
 } from "./AudioVisualizerRadial.helpers";
-import {
-	AudioVisualizerRadial,
-} from "./AudioVisualizerRadial";
+import { AudioVisualizerRadial } from "./AudioVisualizerRadial";
 
 describe("AudioVisualizerRadial", () => {
 	test("renders without throwing at default size", () => {

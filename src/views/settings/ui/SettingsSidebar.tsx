@@ -91,8 +91,7 @@ function readCollapsed(): boolean {
 function writeCollapsed(next: boolean): void {
 	try {
 		window.localStorage.setItem(COLLAPSE_STORAGE_KEY, next ? "1" : "0");
-	} catch {
-	}
+	} catch {}
 }
 
 export function SettingsSidebar({ links }: SettingsSidebarProps) {

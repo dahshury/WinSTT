@@ -234,8 +234,10 @@ export function ActivityHeatmap({
 		}
 	};
 
-	const presetGroups: { group: CalendarPresetGroup; items: CalendarPreset[] }[] =
-		[];
+	const presetGroups: {
+		group: CalendarPresetGroup;
+		items: CalendarPreset[];
+	}[] = [];
 	for (const group of PRESET_GROUP_ORDER) {
 		const items: CalendarPreset[] = [];
 		for (const preset of presets) {

@@ -373,11 +373,11 @@ export function OllamaQuantShelf({
 export { InstalledQuantShelf } from "./InstalledQuantShelf";
 export { LazyQuantShelf } from "./LazyQuantShelf";
 
-	/** Library slug whose sibling tags to fetch + render (`gemma3`). */
-	/** Tags to merge with fetched library tags. */
-	/** Param size the card represents (`4b`). Filters the tag list. */
-	/** Rendered until tags load — keeps a single badge visible so the shelf
-	 *  doesn't flicker empty for an installed model whose siblings are en route. */
+/** Library slug whose sibling tags to fetch + render (`gemma3`). */
+/** Tags to merge with fetched library tags. */
+/** Param size the card represents (`4b`). Filters the tag list. */
+/** Rendered until tags load — keeps a single badge visible so the shelf
+ *  doesn't flicker empty for an installed model whose siblings are en route. */
 
 /** Lazily fetches the base-slug tags (idempotent in the store) and renders the
  *  quant shelf once they're available. Used by every card type so installed,
@@ -402,4 +402,4 @@ export { LazyQuantShelf } from "./LazyQuantShelf";
  *  click-to-pull. Until the tags load (or if the scrape fails) the model's own
  *  quant shows as a placeholder so the shelf never flickers empty. */
 
-		// forget-paused-pull handler — mirrors STT, whose delete hits a real delete.
+// forget-paused-pull handler — mirrors STT, whose delete hits a real delete.

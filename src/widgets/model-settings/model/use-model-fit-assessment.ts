@@ -59,11 +59,7 @@ export function useModelFitAssessment({
 				mainId,
 				mainQuant: quantForFit(statesById, mainId, currentQuantization),
 				realtimeId,
-				realtimeQuant: quantForFit(
-					statesById,
-					realtimeId,
-					currentQuantization,
-				),
+				realtimeQuant: quantForFit(statesById, realtimeId, currentQuantization),
 			},
 			requestedDevice: requestedDeviceForFit(deviceValue),
 			statesById,

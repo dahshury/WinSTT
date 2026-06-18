@@ -83,7 +83,7 @@ describe("CheckboxItem trailing-control propagation", () => {
 			const row = container.querySelector("[data-proximity-index='0']");
 
 			expect(row).not.toBeNull();
-			fireEvent.click(row as HTMLElement);
+			fireEvent.pointerUp(row as HTMLElement);
 
 			expect(onToggle).toHaveBeenCalledTimes(1);
 			expect(scroller.scrollTop).toBe(160);

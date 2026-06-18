@@ -74,7 +74,10 @@ export function useWaveAnimator(
 			case "connecting":
 			case "initializing":
 				if (uniformsRef.current?.["uSpeed"]) {
-					uniformsRef.current["uSpeed"] = { type: "1f", value: DEFAULT_SPEED * 4 };
+					uniformsRef.current["uSpeed"] = {
+						type: "1f",
+						value: DEFAULT_SPEED * 4,
+					};
 				}
 				animateAmplitude(DEFAULT_AMPLITUDE / 4, DEFAULT_TRANSITION);
 				animateFrequency(DEFAULT_FREQUENCY * 4, DEFAULT_TRANSITION);
@@ -86,7 +89,10 @@ export function useWaveAnimator(
 				return;
 			default:
 				if (uniformsRef.current?.["uSpeed"]) {
-					uniformsRef.current["uSpeed"] = { type: "1f", value: DEFAULT_SPEED * 2 };
+					uniformsRef.current["uSpeed"] = {
+						type: "1f",
+						value: DEFAULT_SPEED * 2,
+					};
 				}
 				animateAmplitude(DEFAULT_AMPLITUDE, DEFAULT_TRANSITION);
 				animateFrequency(DEFAULT_FREQUENCY, DEFAULT_TRANSITION);

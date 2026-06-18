@@ -11,9 +11,7 @@ export {
 	filterModelsForFallback,
 	isFallbackExcluded,
 } from "./lib/model-exclusion";
-export {
-	OllamaModelSelector,
-} from "./ollama/ui/OllamaModelSelector";
+export { OllamaModelSelector } from "./ollama/ui/OllamaModelSelector";
 export type { OllamaModelSelectorProps } from "./ollama/ui/ollama-selector-types";
 export {
 	resolveEffectiveQuant,

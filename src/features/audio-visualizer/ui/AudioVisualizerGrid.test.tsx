@@ -5,9 +5,7 @@ import {
 	isSpeakingCellHighlighted,
 	resolveTransitionDuration,
 } from "./AudioVisualizerGrid.helpers";
-import {
-	AudioVisualizerGrid,
-} from "./AudioVisualizerGrid";
+import { AudioVisualizerGrid } from "./AudioVisualizerGrid";
 
 describe("AudioVisualizerGrid", () => {
 	test("renders a grid container at default 'md' size", () => {

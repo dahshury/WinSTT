@@ -98,9 +98,7 @@ export function getQuantizationOptions(model: ModelInfo): QuantizationOption[] {
 					},
 				]
 			: [],
-	).sort(
-		(a, b) => QUANTIZATION_WEIGHT[b.value] - QUANTIZATION_WEIGHT[a.value],
-	);
+	).sort((a, b) => QUANTIZATION_WEIGHT[b.value] - QUANTIZATION_WEIGHT[a.value]);
 }
 
 /**

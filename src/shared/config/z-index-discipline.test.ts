@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 /**
@@ -68,7 +68,9 @@ function isWhitelisted(file: string): boolean {
 	return WHITELIST.has(relWindows) || WHITELIST_POSIX.has(relPosix);
 }
 
-const SCAN_FILES = SCAN_DIRS.flatMap(walk).filter((f) => !isWhitelisted(f));
+const SCAN_FILES = SCAN_DIRS.filter(existsSync)
+	.flatMap(walk)
+	.filter((f) => !isWhitelisted(f));
 
 describe("z-index discipline", () => {
 	test("no raw `z-[N]` Tailwind classes outside the canonical scale", () => {

@@ -348,7 +348,10 @@ function Keycaps({ keys }: { keys: readonly string[] }) {
 	return (
 		<span className="inline-flex items-center gap-1.5">
 			{keys.map((key, index) => (
-				<span className="inline-flex items-center gap-1.5" key={`${key}-${index}`}>
+				<span
+					className="inline-flex items-center gap-1.5"
+					key={`${key}-${index}`}
+				>
 					{index > 0 ? (
 						<span aria-hidden className="text-foreground-dim">
 							{KEY_SEPARATOR}

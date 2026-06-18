@@ -118,6 +118,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 	const popupStateClass =
 		!inline && !effectiveOpen ? "is-closing" : effectiveOpen ? "is-open" : "";
 	const renderPanelControls = inline || effectiveOpen;
+	const [hasRenderedCollection, setHasRenderedCollection] = useState(inline);
 
 	const setPopupNode = (node: HTMLElement | null) => {
 		popupNodeRef.current = node;
@@ -152,7 +153,28 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 		setPopupSide(spaceAbove > spaceBelow ? "top" : "bottom");
 	}, [effectiveOpen, inline]);
 
-	const renderCollection = inline || effectiveOpen;
+	useEffect(() => {
+		if (inline) {
+			setHasRenderedCollection(true);
+			return;
+		}
+		if (!effectiveOpen || hasRenderedCollection) {
+			return;
+		}
+		let firstFrame = 0;
+		let secondFrame = 0;
+		firstFrame = requestAnimationFrame(() => {
+			secondFrame = requestAnimationFrame(() => {
+				setHasRenderedCollection(true);
+			});
+		});
+		return () => {
+			cancelAnimationFrame(firstFrame);
+			cancelAnimationFrame(secondFrame);
+		};
+	}, [effectiveOpen, hasRenderedCollection, inline]);
+
+	const renderCollection = inline || hasRenderedCollection;
 
 	useEffect(() => {
 		if (!effectiveOpen || !renderCollection || !selectedItemKey) {

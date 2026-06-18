@@ -1,6 +1,10 @@
 import { BellRingIcon } from "@hugeicons/core-free-icons";
 import type { ReactNode } from "react";
-import { DEFAULT_SETTINGS, SettingField, SettingSection } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingField,
+	SettingSection,
+} from "@/entities/setting";
 import { SoundLibrary } from "@/features/recording-sound";
 import { cn } from "@/shared/lib/cn";
 import { Toggle } from "@/shared/ui/toggle";

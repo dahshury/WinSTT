@@ -234,72 +234,72 @@ function Meter({ level, permission }: MeterProps) {
 				value={meterPercent}
 			/>
 			<div className="relative flex items-center gap-2.5 overflow-hidden rounded-md bg-surface-2/70 px-2 py-2 ring-1 ring-divider">
-			<m.span
-				aria-hidden
-				animate={{
-					opacity:
-						permission === "granted" ? Math.min(normalized * 0.28, 0.32) : 0,
-				}}
-				className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_50%,var(--color-teal)_0%,transparent_52%)]"
-				transition={{ duration: reduceMotion ? 0 : 0.16 }}
-			/>
-			<m.span
-				animate={{
-					scale: permission === "granted" && normalized > 0.25 ? 1.08 : 1,
-					color:
-						permission === "denied"
-							? "var(--color-error)"
-							: "var(--color-foreground-muted)",
-				}}
-				className={cn("relative z-raised inline-flex shrink-0", iconClass)}
-				transition={METER_SPRING}
-			>
-				<HugeiconsIcon icon={Icon} size={14} />
-			</m.span>
-			<div
-				className="relative z-raised flex h-8 flex-1 items-end gap-[3px]"
-				role="presentation"
-			>
-				{Array.from({ length: METER_SEGMENTS }, (_, i) => {
-					const activity = Math.max(0, Math.min(1, filled - i));
-					const active = activity > 0;
-					const hot = i > METER_SEGMENTS * 0.78;
-					const height =
-						7 + activity * (hot ? 21 : 17) + Math.sin(i * 0.7) * activity * 4;
-					return (
-						<m.span
-							className={cn(
-								"flex-1 rounded-[2px] ring-1 ring-inset transition-colors duration-75 ease-linear",
-								segmentClass(active, hot),
-							)}
-							animate={
-								permission === "pending" && !reduceMotion
-									? {
-											height: [7, 18, 7],
-											opacity: [0.25, 0.62, 0.25],
-										}
-									: {
-											height: reduceMotion ? (active ? 18 : 7) : height,
-											opacity: active ? 1 : 0.34,
-											scaleY: active ? 1 : 0.72,
-										}
-							}
-							key={`seg-${i}`}
-							style={{ transformOrigin: "bottom" }}
-							transition={
-								permission === "pending" && !reduceMotion
-									? {
-											delay: i * 0.025,
-											duration: 1.1,
-											ease: "easeInOut",
-											repeat: Infinity,
-										}
-									: METER_SPRING
-							}
-						/>
-					);
-				})}
-			</div>
+				<m.span
+					aria-hidden
+					animate={{
+						opacity:
+							permission === "granted" ? Math.min(normalized * 0.28, 0.32) : 0,
+					}}
+					className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_50%,var(--color-teal)_0%,transparent_52%)]"
+					transition={{ duration: reduceMotion ? 0 : 0.16 }}
+				/>
+				<m.span
+					animate={{
+						scale: permission === "granted" && normalized > 0.25 ? 1.08 : 1,
+						color:
+							permission === "denied"
+								? "var(--color-error)"
+								: "var(--color-foreground-muted)",
+					}}
+					className={cn("relative z-raised inline-flex shrink-0", iconClass)}
+					transition={METER_SPRING}
+				>
+					<HugeiconsIcon icon={Icon} size={14} />
+				</m.span>
+				<div
+					className="relative z-raised flex h-8 flex-1 items-end gap-[3px]"
+					role="presentation"
+				>
+					{Array.from({ length: METER_SEGMENTS }, (_, i) => {
+						const activity = Math.max(0, Math.min(1, filled - i));
+						const active = activity > 0;
+						const hot = i > METER_SEGMENTS * 0.78;
+						const height =
+							7 + activity * (hot ? 21 : 17) + Math.sin(i * 0.7) * activity * 4;
+						return (
+							<m.span
+								className={cn(
+									"flex-1 rounded-[2px] ring-1 ring-inset transition-colors duration-75 ease-linear",
+									segmentClass(active, hot),
+								)}
+								animate={
+									permission === "pending" && !reduceMotion
+										? {
+												height: [7, 18, 7],
+												opacity: [0.25, 0.62, 0.25],
+											}
+										: {
+												height: reduceMotion ? (active ? 18 : 7) : height,
+												opacity: active ? 1 : 0.34,
+												scaleY: active ? 1 : 0.72,
+											}
+								}
+								key={`seg-${i}`}
+								style={{ transformOrigin: "bottom" }}
+								transition={
+									permission === "pending" && !reduceMotion
+										? {
+												delay: i * 0.025,
+												duration: 1.1,
+												ease: "easeInOut",
+												repeat: Infinity,
+											}
+										: METER_SPRING
+								}
+							/>
+						);
+					})}
+				</div>
 			</div>
 		</>
 	);

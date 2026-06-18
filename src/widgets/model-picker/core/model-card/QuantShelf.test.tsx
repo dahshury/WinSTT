@@ -2,10 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { buildQuantTooltipContent } from "./quant-shelf-state";
-import {
-	QuantShelf,
-	type QuantShelfEntry,
-} from "./QuantShelf";
+import { QuantShelf, type QuantShelfEntry } from "./QuantShelf";
 
 function entry(overrides: Partial<QuantShelfEntry> = {}): QuantShelfEntry {
 	return {

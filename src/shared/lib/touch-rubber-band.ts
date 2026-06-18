@@ -139,7 +139,10 @@ export function installTouchRubberBand(): void {
 		}
 
 		const nextViewport = findScrollableAncestor(event.target);
-		if (!nextViewport || nextViewport.dataset["rubberBandManaged"] === "local") {
+		if (
+			!nextViewport ||
+			nextViewport.dataset["rubberBandManaged"] === "local"
+		) {
 			active = false;
 			viewport = null;
 			return;

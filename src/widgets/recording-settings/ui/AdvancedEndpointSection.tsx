@@ -7,7 +7,11 @@ import {
 	Timer01Icon,
 } from "@hugeicons/core-free-icons";
 import type { ReactNode } from "react";
-import { DEFAULT_SETTINGS, SettingField, SettingSection } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingField,
+	SettingSection,
+} from "@/entities/setting";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import type {

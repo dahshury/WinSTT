@@ -8,7 +8,10 @@ interface CachedEntryDiff {
 	text: string;
 }
 
-const entryDiffCache = new WeakMap<TranscriptionHistoryEntry, CachedEntryDiff>();
+const entryDiffCache = new WeakMap<
+	TranscriptionHistoryEntry,
+	CachedEntryDiff
+>();
 
 export function getEntryTranscriptDiff(
 	entry: TranscriptionHistoryEntry,

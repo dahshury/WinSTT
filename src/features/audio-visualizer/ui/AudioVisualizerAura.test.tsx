@@ -5,9 +5,7 @@ import {
 	resolveAuraTheme,
 	themeModeToUniform,
 } from "./AudioVisualizerAura.helpers";
-import {
-	AudioVisualizerAura,
-} from "./AudioVisualizerAura";
+import { AudioVisualizerAura } from "./AudioVisualizerAura";
 
 describe("AudioVisualizerAura", () => {
 	test("renders without throwing at default size", () => {

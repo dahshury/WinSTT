@@ -15,10 +15,7 @@ import { cn } from "@/shared/lib/cn";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import { Tooltip } from "@/shared/ui/tooltip";
-import {
-	buildQuantTooltipContent,
-	clampPercent,
-} from "./quant-shelf-state";
+import { buildQuantTooltipContent, clampPercent } from "./quant-shelf-state";
 
 /**
  * The recessed precision/quantization shelf shared by every model picker (STT,

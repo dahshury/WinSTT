@@ -1,9 +1,7 @@
 export type AuraShape = "circle" | "line";
 export type AuraTheme = "dark" | "light";
 
-export function resolveAuraTheme(
-	themeMode: AuraTheme | undefined,
-): AuraTheme {
+export function resolveAuraTheme(themeMode: AuraTheme | undefined): AuraTheme {
 	return themeMode ?? "dark";
 }
 

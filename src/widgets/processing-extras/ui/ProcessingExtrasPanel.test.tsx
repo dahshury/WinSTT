@@ -41,13 +41,13 @@ describe("ProcessingExtrasPanel formatting rules", () => {
 		renderPanel();
 
 		const merged = getVisibleText("Spoken punctuation and code commands");
-		fireEvent.click(merged);
+		fireEvent.pointerUp(merged);
 
 		let quality = useSettingsStore.getState().settings.quality;
 		expect(quality.formatSpokenPunctuationCommands).toBe(true);
 		expect(quality.formatSpokenSymbolCommands).toBe(true);
 
-		fireEvent.click(merged);
+		fireEvent.pointerUp(merged);
 
 		quality = useSettingsStore.getState().settings.quality;
 		expect(quality.formatSpokenPunctuationCommands).toBe(false);

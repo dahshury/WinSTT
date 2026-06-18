@@ -286,15 +286,13 @@ export function CalendarHeatmap({
 
 	const anyPickerOpen = viewModes.some((v) => v !== "days");
 	const timeBlock =
-		!anyPickerOpen && withTime
-			? (
-					<TimeFields
-						makeHandler={handleTimeChange}
-						mode={mode}
-						selected={currentSelected}
-					/>
-				)
-			: null;
+		!anyPickerOpen && withTime ? (
+			<TimeFields
+				makeHandler={handleTimeChange}
+				mode={mode}
+				selected={currentSelected}
+			/>
+		) : null;
 
 	return (
 		<div className={rootClass} style={containerStyle}>

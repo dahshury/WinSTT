@@ -303,7 +303,9 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.STT_LIST_MODELS_WITH_STATE]: () => commands.sttListModelsWithState(),
 	[IPC.STT_GET_RUNTIME_INFO]: () => commands.getRuntimeInfo(),
 	[IPC.STT_GET_LIVE_RESOURCES]: (a) =>
-		commands.getLiveResources((a["forceRefresh"] as boolean | undefined) ?? null),
+		commands.getLiveResources(
+			(a["forceRefresh"] as boolean | undefined) ?? null,
+		),
 	[IPC.STT_ASSESS_DICTATION_FIT]: (a) =>
 		commands.assessDictationFit(
 			a["modelId"] as string,
@@ -315,13 +317,25 @@ const COMMAND_INVOKERS: Partial<
 
 	// ── Per-quant download lifecycle ──
 	[IPC.STT_PREDOWNLOAD_QUANT]: (a) =>
-		commands.sttPredownloadQuant(a["modelId"] as string, a["quantization"] as string),
+		commands.sttPredownloadQuant(
+			a["modelId"] as string,
+			a["quantization"] as string,
+		),
 	[IPC.STT_DOWNLOAD_PAUSE]: (a) =>
-		commands.downloadPauseQuant(a["modelId"] as string, a["quantization"] as string),
+		commands.downloadPauseQuant(
+			a["modelId"] as string,
+			a["quantization"] as string,
+		),
 	[IPC.STT_DOWNLOAD_RESUME]: (a) =>
-		commands.downloadResumeQuant(a["modelId"] as string, a["quantization"] as string),
+		commands.downloadResumeQuant(
+			a["modelId"] as string,
+			a["quantization"] as string,
+		),
 	[IPC.STT_DOWNLOAD_CANCEL_QUANT]: (a) =>
-		commands.downloadCancelQuant(a["modelId"] as string, a["quantization"] as string),
+		commands.downloadCancelQuant(
+			a["modelId"] as string,
+			a["quantization"] as string,
+		),
 	[IPC.STT_DELETE_MODEL_QUANTIZATION]: (a) =>
 		commands.deleteModelQuantization(
 			a["modelId"] as string,
@@ -333,7 +347,8 @@ const COMMAND_INVOKERS: Partial<
 
 	// ── Settings ──
 	[IPC.SETTINGS_LOAD]: () => commands.winsttGetSettings(),
-	[IPC.SETTINGS_SAVE]: (a) => commands.winsttSetSettings(a["settings"] as never),
+	[IPC.SETTINGS_SAVE]: (a) =>
+		commands.winsttSetSettings(a["settings"] as never),
 	[IPC.SETTINGS_REMOVE_APPLICATION_DATA]: (a) =>
 		commands.removeApplicationData(
 			(a["deleteOllamaModels"] as boolean | undefined) ?? false,
@@ -428,9 +443,13 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.TTS_INSTALL_RESUME]: () => commands.ttsInstallResume(),
 	[IPC.TTS_INSTALL_CANCEL]: () => commands.ttsInstallCancel(),
 	[IPC.TTS_REQUEST_PLAYBACK_PAUSE]: (a) =>
-		commands.ttsPausePlayback((a["reason"] as string | null | undefined) ?? null),
+		commands.ttsPausePlayback(
+			(a["reason"] as string | null | undefined) ?? null,
+		),
 	[IPC.TTS_REQUEST_PLAYBACK_RESUME]: (a) =>
-		commands.ttsResumePlayback((a["reason"] as string | null | undefined) ?? null),
+		commands.ttsResumePlayback(
+			(a["reason"] as string | null | undefined) ?? null,
+		),
 	[IPC.TTS_REPORT_PLAYBACK_STARTED]: (a) =>
 		commands.ttsReportPlaybackStarted(a["requestId"] as string),
 	[IPC.TTS_REPORT_PLAYBACK_ENDED]: (a) =>
@@ -438,15 +457,30 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.TTS_LIST_MODELS]: () => commands.ttsListModels(),
 	[IPC.TTS_LIST_MODELS_WITH_STATE]: () => commands.ttsListModelsWithState(),
 	[IPC.TTS_PREDOWNLOAD]: (a) =>
-		commands.ttsPredownloadModel(a["modelId"] as string, a["quantization"] as string),
+		commands.ttsPredownloadModel(
+			a["modelId"] as string,
+			a["quantization"] as string,
+		),
 	[IPC.TTS_DOWNLOAD_PAUSE]: (a) =>
-		commands.ttsDownloadPause(a["modelId"] as string, a["quantization"] as string),
+		commands.ttsDownloadPause(
+			a["modelId"] as string,
+			a["quantization"] as string,
+		),
 	[IPC.TTS_DOWNLOAD_RESUME]: (a) =>
-		commands.ttsDownloadResume(a["modelId"] as string, a["quantization"] as string),
+		commands.ttsDownloadResume(
+			a["modelId"] as string,
+			a["quantization"] as string,
+		),
 	[IPC.TTS_DOWNLOAD_CANCEL]: (a) =>
-		commands.ttsDownloadCancel(a["modelId"] as string, a["quantization"] as string),
+		commands.ttsDownloadCancel(
+			a["modelId"] as string,
+			a["quantization"] as string,
+		),
 	[IPC.TTS_DELETE_MODEL]: (a) =>
-		commands.ttsDeleteModel(a["modelId"] as string, a["quantization"] as string),
+		commands.ttsDeleteModel(
+			a["modelId"] as string,
+			a["quantization"] as string,
+		),
 
 	// ── LLM / Ollama / OpenRouter ──
 	[IPC.LLM_SCAN_MODELS]: () => commands.ollamaRefreshModels(),
@@ -489,7 +523,8 @@ const COMMAND_INVOKERS: Partial<
 		commands.transformHistoryDelete(a["id"] as string),
 
 	// ── Preview-before-pasting ──
-	[IPC.PREVIEW_CONFIRM_PASTE]: (a) => commands.confirmPaste(a["text"] as string),
+	[IPC.PREVIEW_CONFIRM_PASTE]: (a) =>
+		commands.confirmPaste(a["text"] as string),
 	[IPC.PREVIEW_CANCEL]: () => commands.cancelPreview(),
 
 	// ── File transcription queue ──
@@ -497,14 +532,20 @@ const COMMAND_INVOKERS: Partial<
 		commands.fileTranscribeEnqueue(a["files"] as never[]),
 	[IPC.FILE_QUEUE_PICK_AND_ENQUEUE]: () =>
 		commands.fileTranscribePickAndEnqueue(),
-	[IPC.FILE_QUEUE_CANCEL]: (a) => commands.fileTranscribeCancel(a["id"] as string),
-	[IPC.FILE_QUEUE_RETRY]: (a) => commands.fileTranscribeRetry(a["id"] as string),
+	[IPC.FILE_QUEUE_CANCEL]: (a) =>
+		commands.fileTranscribeCancel(a["id"] as string),
+	[IPC.FILE_QUEUE_RETRY]: (a) =>
+		commands.fileTranscribeRetry(a["id"] as string),
 	[IPC.FILE_QUEUE_COPY]: (a) => commands.fileTranscribeCopy(a["id"] as string),
 	[IPC.FILE_QUEUE_CLEAR]: () => commands.fileTranscribeClear(),
 	[IPC.FILE_QUEUE_PAUSE]: (a) =>
-		commands.fileTranscribePause((a["id"] as string | null | undefined) ?? null),
+		commands.fileTranscribePause(
+			(a["id"] as string | null | undefined) ?? null,
+		),
 	[IPC.FILE_QUEUE_RESUME]: (a) =>
-		commands.fileTranscribeResume((a["id"] as string | null | undefined) ?? null),
+		commands.fileTranscribeResume(
+			(a["id"] as string | null | undefined) ?? null,
+		),
 	[IPC.FILE_QUEUE_DISCARD_ALL]: () => commands.fileTranscribeDiscardAll(),
 	[IPC.FILE_QUEUE_GET_ACTIVE]: () => commands.fileTranscribeGetActive(),
 

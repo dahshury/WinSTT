@@ -8,9 +8,7 @@ import {
 	getProcessingStartedAt,
 	ThinkingIndicator,
 } from "@/shared/ui/thinking-indicator";
-import {
-	CancelButton,
-} from "./overlay-shell";
+import { CancelButton } from "./overlay-shell";
 import {
 	breatheVariants,
 	BUBBLE_SHADOW,

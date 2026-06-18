@@ -42,7 +42,11 @@ function statusFor(index: number, currentIdx: number): StepStatus {
  * legible against the heading; completed/upcoming steps are box-only with
  * `sr-only` labels for screen readers.
  */
-export function StepIndicator({ steps, current, onSelect }: StepIndicatorProps) {
+export function StepIndicator({
+	steps,
+	current,
+	onSelect,
+}: StepIndicatorProps) {
 	const substrate = useSurface();
 	const groupBox = surfaceBg(Math.min(substrate + 1, 8));
 	const upcomingBox = surfaceBg(Math.min(substrate + 2, 8));

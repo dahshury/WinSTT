@@ -1,9 +1,6 @@
 import type { OllamaLibraryTag, OllamaModel } from "@/shared/api/models";
 import { formatOllamaSize } from "../lib/family-helpers";
-import {
-	libraryBaseSlug,
-	paramSizeFromName,
-} from "../lib/quant-shelf-helpers";
+import { libraryBaseSlug, paramSizeFromName } from "../lib/quant-shelf-helpers";
 import { LazyQuantShelf } from "./LazyQuantShelf";
 import { OllamaQuantShelf } from "./OllamaQuantShelf";
 import type { QuantShelfDeps } from "./ollama-selector-types";

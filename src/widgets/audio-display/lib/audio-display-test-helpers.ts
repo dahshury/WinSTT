@@ -51,7 +51,9 @@ export function collectDroppedFiles(files: readonly File[]): DroppedFile[] {
 	return out;
 }
 
-export function collectDroppedFilePaths(paths: readonly string[]): DroppedFile[] {
+export function collectDroppedFilePaths(
+	paths: readonly string[],
+): DroppedFile[] {
 	const out: DroppedFile[] = [];
 	for (const filePath of paths) {
 		const fileName = baseName(filePath);

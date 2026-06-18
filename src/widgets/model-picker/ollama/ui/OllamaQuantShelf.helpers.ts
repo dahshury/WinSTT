@@ -1,5 +1,8 @@
 import type { OllamaPullProgress } from "@/shared/api/models";
-import { findInstalledOllamaTag, isSameOllamaTag } from "../lib/quant-shelf-helpers";
+import {
+	findInstalledOllamaTag,
+	isSameOllamaTag,
+} from "../lib/quant-shelf-helpers";
 import type {
 	OllamaFitInfo,
 	OllamaLibrarySearchProps,
@@ -56,7 +59,9 @@ export function buildQuantShelfDeps(opts: {
 		getTags: tagsByModel
 			? (baseSlug: string) => tagsByModel[baseSlug.toLowerCase()]?.tags ?? []
 			: undefined,
-		fetchTags: fetchTags ? (baseSlug: string) => fetchTags(baseSlug) : undefined,
+		fetchTags: fetchTags
+			? (baseSlug: string) => fetchTags(baseSlug)
+			: undefined,
 		installedNames: opts.installedNames,
 		selectedName: opts.value,
 		pulls: opts.pulls,

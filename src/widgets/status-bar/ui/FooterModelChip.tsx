@@ -68,9 +68,7 @@ function FooterModelGlyph({
 				aria-hidden="true"
 				className="size-[11px] shrink-0 bg-foreground-dim [mask-image:var(--footer-model-logo)] [mask-position:center] [mask-repeat:no-repeat] [mask-size:contain] [-webkit-mask-image:var(--footer-model-logo)] [-webkit-mask-position:center] [-webkit-mask-repeat:no-repeat] [-webkit-mask-size:contain]"
 				data-logo-src={logoSrc}
-				style={
-					{ "--footer-model-logo": `url("${logoSrc}")` } as CSSProperties
-				}
+				style={{ "--footer-model-logo": `url("${logoSrc}")` } as CSSProperties}
 			/>
 		);
 	}

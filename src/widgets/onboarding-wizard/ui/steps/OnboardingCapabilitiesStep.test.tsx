@@ -10,7 +10,9 @@ const { IntlProvider } = await import("@/app/providers/IntlProvider");
 const { DEFAULT_SETTINGS, useSettingsStore } = await import(
 	"@/entities/setting"
 );
-const { OnboardingCapabilitiesStep } = await import("./OnboardingCapabilitiesStep");
+const { OnboardingCapabilitiesStep } = await import(
+	"./OnboardingCapabilitiesStep"
+);
 
 interface TauriInvocation {
 	args?: unknown;
@@ -22,7 +24,10 @@ let rendered: RenderResult | null = null;
 
 function tauriInternals(): {
 	invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
-	transformCallback: (cb?: (payload: unknown) => void, once?: boolean) => number;
+	transformCallback: (
+		cb?: (payload: unknown) => void,
+		once?: boolean,
+	) => number;
 } {
 	return (
 		window as unknown as {

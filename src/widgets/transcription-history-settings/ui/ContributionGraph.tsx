@@ -204,9 +204,7 @@ export function ContributionGraph({ entries }: ContributionGraphProps) {
 							<div className="flex flex-col gap-[2px]" key={col.key}>
 								{keyedColumnCells(col).map(({ cell, key }) => {
 									if (cell === null) {
-										return (
-											<div className="h-[9px] w-[9px]" key={key} />
-										);
+										return <div className="h-[9px] w-[9px]" key={key} />;
 									}
 									const level = intensityLevel(cell.wordCount, max);
 									const bg = level === 0 ? emptyBg : VARIANT_BG[level - 1];

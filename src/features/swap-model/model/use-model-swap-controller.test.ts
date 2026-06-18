@@ -231,9 +231,7 @@ describe("resolveTargetQuant", () => {
 
 	test("honors a concrete pick (incl fp32) over the auto-effective precision", () => {
 		const state = { id: "m", effective_quantization: "int8" } as never;
-		expect(t.resolveTargetQuant("fp16", AUTO_QUANTIZATION, state)).toBe(
-			"fp16",
-		);
+		expect(t.resolveTargetQuant("fp16", AUTO_QUANTIZATION, state)).toBe("fp16");
 		// "" is EXPLICIT fp32 now — a concrete pick, not re-resolved to int8.
 		expect(t.resolveTargetQuant("", AUTO_QUANTIZATION, state)).toBe("");
 	});
@@ -247,13 +245,7 @@ describe("isSwapBlockedByDownload", () => {
 		// effective int8. int8 is downloading, so switching to it must be refused.
 		const dl = (id: string, q: string) => id === "m" && q === "int8";
 		expect(
-			t.isSwapBlockedByDownload(
-				"m",
-				undefined,
-				AUTO_QUANTIZATION,
-				states,
-				dl,
-			),
+			t.isSwapBlockedByDownload("m", undefined, AUTO_QUANTIZATION, states, dl),
 		).toBe(true);
 	});
 

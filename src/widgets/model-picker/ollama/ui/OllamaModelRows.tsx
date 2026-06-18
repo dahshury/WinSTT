@@ -26,7 +26,10 @@ import { DownloadProgressBar } from "@/shared/ui/download";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import { FAVORITES_GROUP_VALUE } from "../../core/favorites";
 import type { MetaEntry } from "../../core/model-card/CardMeta";
-import { GroupHeader, NeutralHeaderIcon } from "../../core/model-card/GroupHeader";
+import {
+	GroupHeader,
+	NeutralHeaderIcon,
+} from "../../core/model-card/GroupHeader";
 import { ModelCard } from "../../core/model-card/ModelCard";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/Tooltip";
 import {
@@ -36,10 +39,7 @@ import {
 	getOllamaPublisher,
 	getOllamaPublisherBySlug,
 } from "../lib/family-helpers";
-import {
-	libraryBaseSlug,
-	paramSizeFromName,
-} from "../lib/quant-shelf-helpers";
+import { libraryBaseSlug, paramSizeFromName } from "../lib/quant-shelf-helpers";
 import {
 	OLLAMA_SORT_HEADER_LABEL,
 	type OllamaSortKey,

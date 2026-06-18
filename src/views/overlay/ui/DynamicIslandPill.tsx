@@ -2,19 +2,14 @@ import { useState } from "react";
 import type { TranscriptionProcessingPhase } from "@/entities/transcription";
 import { AudioVisualizer } from "@/features/audio-visualizer";
 import { TranscriptPreview } from "@/features/transcript-preview";
-import {
-	DynamicIsland,
-} from "@/shared/ui/dynamic-island";
+import { DynamicIsland } from "@/shared/ui/dynamic-island";
 import { ScrollingText } from "@/shared/ui/scrolling-text";
 import {
 	getProcessingStartedAt,
 	ThinkingIndicator,
 } from "@/shared/ui/thinking-indicator";
 import { computeIslandSize } from "../lib/overlay-reveal";
-import {
-	CancelButton,
-	LivePulse,
-} from "./overlay-shell";
+import { CancelButton, LivePulse } from "./overlay-shell";
 import {
 	ICON_PRESET_PX,
 	OVERLAY_PANEL_CLOSE_MS,

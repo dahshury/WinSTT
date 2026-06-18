@@ -128,7 +128,10 @@ function cachedDateRange(
 	return filtered;
 }
 
-const aggregateCache = new WeakMap<TranscriptionHistoryEntry[], AggregateStats>();
+const aggregateCache = new WeakMap<
+	TranscriptionHistoryEntry[],
+	AggregateStats
+>();
 
 export function aggregate(
 	entries: TranscriptionHistoryEntry[],

@@ -25,9 +25,7 @@ import {
 	getPricingClassName,
 	getPricingLabel,
 } from "./model-list-content-virtualized-utils/class-names";
-import {
-	getFeaturedEndpoint,
-} from "./model-list-content-virtualized-utils/header";
+import { getFeaturedEndpoint } from "./model-list-content-virtualized-utils/header";
 import {
 	isPositiveNumber,
 	shouldRenderInlineMeta,

@@ -1,5 +1,9 @@
 import { PauseCircleIcon } from "@hugeicons/core-free-icons";
-import { DEFAULT_SETTINGS, SettingField, SettingSection } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingField,
+	SettingSection,
+} from "@/entities/setting";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import type {

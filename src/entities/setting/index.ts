@@ -5,7 +5,10 @@ export {
 	subscribePendingSettingsSection,
 	takePendingSettingsSection,
 } from "./model/settings-deep-link";
-export { getSettingsStoreState, useSettingsStore } from "./model/settings-store";
+export {
+	getSettingsStoreState,
+	useSettingsStore,
+} from "./model/settings-store";
 export { useSettingsTabStore } from "./model/settings-tab-store";
 export { SettingField } from "./ui/SettingField";
 export { SettingSection } from "./ui/SettingSection";

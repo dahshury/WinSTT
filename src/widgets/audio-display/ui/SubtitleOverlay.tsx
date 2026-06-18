@@ -240,7 +240,8 @@ export function SubtitleOverlay() {
 
 	// Normal mode — show last 3 items with discrete opacity + time-based fade
 	const visibleItems = items.slice(-VISIBLE_COUNT);
-	const visibleSubtitleItems: { item: TranscriptionItem; opacity: number }[] = [];
+	const visibleSubtitleItems: { item: TranscriptionItem; opacity: number }[] =
+		[];
 	for (const [index, item] of visibleItems.entries()) {
 		const age = visibleItems.length - 1 - index;
 		const positionOpacity = FADE_OPACITIES[age] ?? 0.1;

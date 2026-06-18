@@ -16,7 +16,9 @@ import { getSettingsStoreState } from "@/entities/setting";
 
 type CatalogModels = ReturnType<typeof useCatalogStore.getState>["models"];
 type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
-type UpdateModelFn = ReturnType<typeof getSettingsStoreState>["updateModelSettings"];
+type UpdateModelFn = ReturnType<
+	typeof getSettingsStoreState
+>["updateModelSettings"];
 type ModelPatch = Parameters<UpdateModelFn>[0];
 
 // Cloud STT ids route by provider prefix; the backend field is still required

@@ -184,7 +184,11 @@ export function OnboardingLlmSetupStep() {
 		}
 		const fallback = installedModels[0]?.name;
 		if (fallback) {
-			updateLlmDictation({ enabled: true, model: fallback, provider: "ollama" });
+			updateLlmDictation({
+				enabled: true,
+				model: fallback,
+				provider: "ollama",
+			});
 			return;
 		}
 		// Nothing installed to enable with yet — reveal the picker so the user can

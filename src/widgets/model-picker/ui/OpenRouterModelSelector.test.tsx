@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
-import {
-	fireEvent,
-	render,
-	screen,
-	within,
-} from "../test/render-with-intl";
+import { fireEvent, render, screen, within } from "../test/render-with-intl";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import * as helpers from "../lib/openrouter-model-selector-test-helpers";
 import { OpenRouterModelSelector } from "./OpenRouterModelSelector";
