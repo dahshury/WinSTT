@@ -53,6 +53,7 @@ jobs:
     name: Build Windows portable artifacts
     needs: metadata
     runs-on: windows-latest
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -140,6 +141,7 @@ jobs:
     name: Build Linux bundle artifacts
     needs: metadata
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -147,9 +149,26 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Linux Tauri dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -e "$source" ] || continue
+            sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+          done
+
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            -o DPkg::Lock::Timeout=120 \
+            update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            -o DPkg::Lock::Timeout=120 \
+            install -y --no-install-recommends \
             build-essential \
             curl \
             file \
@@ -204,6 +223,7 @@ jobs:
     name: Build macOS bundle artifacts (${{ matrix.arch }})
     needs: metadata
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     permissions:
       contents: read
     strategy:
