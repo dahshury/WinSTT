@@ -253,9 +253,10 @@ mod platform_impl {
         _addresses: NonNull<AudioObjectPropertyAddress>,
         client_data: *mut c_void,
     ) -> i32 {
-        if !client_data.is_null() {
-            let tx = client_data as *const Sender<()>;
-            let _ = (*tx).send(());
+        if let Some(tx) = NonNull::new(client_data.cast::<Sender<()>>()) {
+            // SAFETY: client_data is created from CoreAudioDeviceListeners::client_data
+            // and remains valid until the listener is removed in Drop.
+            let _ = unsafe { tx.as_ref() }.send(());
         }
         0
     }

@@ -133,7 +133,7 @@ fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
 // than cfg-gating it away.
 #[cfg_attr(
     not(windows),
-    expect(dead_code, reason = "UIA sidecar arguments are Windows-only")
+    allow(dead_code, reason = "UIA sidecar arguments are Windows-only")
 )]
 fn sidecar_args(mode: ContextMode, hwnd: Option<u64>) -> Vec<String> {
     let mut args = Vec::new();
