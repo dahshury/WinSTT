@@ -345,8 +345,7 @@ fn command_available(name: &str) -> bool {
     Command::new("which")
         .arg(name)
         .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|output| output.status.success())
 }
 
 /// Type text directly via wtype on Wayland.

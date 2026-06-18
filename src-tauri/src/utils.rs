@@ -79,17 +79,13 @@ pub fn unregister_cancel_shortcut_if_idle(app: &AppHandle) {
 #[cfg(target_os = "linux")]
 pub fn is_wayland() -> bool {
     std::env::var("WAYLAND_DISPLAY").is_ok()
-        || std::env::var("XDG_SESSION_TYPE")
-            .map(|v| v.to_lowercase() == "wayland")
-            .unwrap_or(false)
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v.to_lowercase() == "wayland")
 }
 
 /// Check if running on KDE Plasma desktop environment
 #[cfg(target_os = "linux")]
 pub fn is_kde_plasma() -> bool {
-    std::env::var("XDG_CURRENT_DESKTOP")
-        .map(|v| v.to_uppercase().contains("KDE"))
-        .unwrap_or(false)
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|v| v.to_uppercase().contains("KDE"))
         || std::env::var("KDE_SESSION_VERSION").is_ok()
 }
 

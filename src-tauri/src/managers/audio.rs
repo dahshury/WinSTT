@@ -153,8 +153,7 @@ fn set_mute(mute: bool) {
         if Command::new("wpctl")
             .args(["set-mute", "@DEFAULT_AUDIO_SINK@", mute_val])
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .is_ok_and(|o| o.status.success())
         {
             return;
         }
@@ -163,8 +162,7 @@ fn set_mute(mute: bool) {
         if Command::new("pactl")
             .args(["set-sink-mute", "@DEFAULT_SINK@", mute_val])
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .is_ok_and(|o| o.status.success())
         {
             return;
         }
