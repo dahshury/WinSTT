@@ -121,14 +121,12 @@ pub(crate) fn dev_hotkey_dispatch_is_suppressed() -> bool {
 
 #[cfg(all(windows, debug_assertions))]
 fn dev_hotkeys_forced() -> bool {
-    std::env::var("WINSTT_DEV_HOTKEYS")
-        .map(|value| {
-            !matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "" | "0" | "false" | "no" | "off"
-            )
-        })
-        .unwrap_or(false)
+    std::env::var("WINSTT_DEV_HOTKEYS").is_ok_and(|value| {
+        !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "" | "0" | "false" | "no" | "off"
+        )
+    })
 }
 
 #[cfg(all(windows, debug_assertions))]

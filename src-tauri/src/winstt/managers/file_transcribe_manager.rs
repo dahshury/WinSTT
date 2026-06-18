@@ -607,7 +607,7 @@ impl FileTranscribeManager {
                         QueueStatus::Error => {
                             it.stage = "error".into();
                             it.message = error_message
-                                .clone()
+                                .take()
                                 .unwrap_or_else(|| "Transcription failed".into());
                             observed_error = Some((
                                 it.file_name.clone(),

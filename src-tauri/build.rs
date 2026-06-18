@@ -5,7 +5,29 @@ fn main() {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     build_apple_intelligence_bridge();
 
+    ensure_context_sidecar_resource_placeholder();
+
     tauri_build::build()
+}
+
+fn ensure_context_sidecar_resource_placeholder() {
+    use std::fs;
+    use std::path::Path;
+
+    let path = Path::new("binaries").join("winstt-context.exe");
+    println!("cargo:rerun-if-changed={}", path.display());
+    if path.exists() {
+        return;
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("failed to create generated sidecar resource dir");
+    }
+    fs::write(
+        &path,
+        b"Generated placeholder for clean cargo checks. Release builds overwrite this with the real winstt_context sidecar.\n",
+    )
+    .expect("failed to create generated sidecar resource placeholder");
 }
 
 #[cfg(target_os = "windows")]

@@ -397,7 +397,7 @@ impl TranscriptionManager {
                         "model_warmup_recovery",
                         "STT warmup recovery failed",
                     )
-                    .detail(reload_err.to_string())
+                    .detail(reload_err)
                     .model_id(model_id.clone())
                     .severity("error")
                     .record(Some(&self.app_handle));

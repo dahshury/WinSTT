@@ -231,7 +231,7 @@ impl LoopbackCapture {
             .map_err(|e| LoopbackError::Backend(format!("resolve render device: {e}")))?;
         self.stop.store(false, Ordering::SeqCst);
         let stop = self.stop.clone();
-        let capture_device_id = device_id;
+        let capture_device_id = Some(info.id.clone());
         let capture_info = info.clone();
         let thread_stop = stop;
         let worker = std::thread::Builder::new()
@@ -559,7 +559,11 @@ mod windows_impl {
         let _com = ComGuard::enter();
         let enumerator = wasapi::DeviceEnumerator::new()
             .map_err(|e| anyhow::anyhow!("DeviceEnumerator::new: {e:?}"))?;
-        let device = open_device(&enumerator, device_id)?;
+        let device = open_openable_device(&enumerator, device_id)?;
+        device_info(&device)
+    }
+
+    fn device_info(device: &wasapi::Device) -> anyhow::Result<DeviceInfo> {
         let id = device
             .get_id()
             .map_err(|e| anyhow::anyhow!("device id: {e:?}"))?;
@@ -580,23 +584,32 @@ mod windows_impl {
         })
     }
 
-    /// Open the default render device, or the one matching `device_id`.
-    fn open_device(
+    fn default_render_device(
+        enumerator: &wasapi::DeviceEnumerator,
+    ) -> anyhow::Result<wasapi::Device> {
+        enumerator
+            .get_default_device(&Direction::Render)
+            .map_err(|e| anyhow::anyhow!("get_default_device(Render): {e:?}"))
+    }
+
+    fn open_openable_device(
         enumerator: &wasapi::DeviceEnumerator,
         device_id: Option<&str>,
     ) -> anyhow::Result<wasapi::Device> {
         if let Some(target) = device_id {
-            // get_device resolves an endpoint by its WASAPI id string directly.
             match enumerator.get_device(target) {
-                Ok(dev) => return Ok(dev),
+                Ok(dev) => match device_info(&dev) {
+                    Ok(_) => return Ok(dev),
+                    Err(e) => log::warn!(
+                        "[loopback] device id {target} could not open IAudioClient ({e}); using default render"
+                    ),
+                },
                 Err(e) => log::warn!(
                     "[loopback] device id {target} not found ({e:?}); using default render"
                 ),
             }
         }
-        enumerator
-            .get_default_device(&Direction::Render)
-            .map_err(|e| anyhow::anyhow!("get_default_device(Render): {e:?}"))
+        default_render_device(enumerator)
     }
 
     /// List render endpoints (the loopback-capable outputs).
@@ -641,7 +654,7 @@ mod windows_impl {
 
         let enumerator = wasapi::DeviceEnumerator::new()
             .map_err(|e| anyhow::anyhow!("DeviceEnumerator::new: {e:?}"))?;
-        let device = open_device(&enumerator, device_id)?;
+        let device = open_openable_device(&enumerator, device_id)?;
         let mut client = device
             .get_iaudioclient()
             .map_err(|e| anyhow::anyhow!("get_iaudioclient: {e:?}"))?;

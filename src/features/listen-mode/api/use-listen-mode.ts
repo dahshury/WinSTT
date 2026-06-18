@@ -200,12 +200,39 @@ export function resolveOutputLoopbackDeviceIndex(
 	return fuzzy?.index ?? defaultLoopbackIndex(loopbackDevices);
 }
 
+export function resolveListenLoopbackDeviceIndex(
+	loopbackDevices: readonly LoopbackDevice[],
+	outputDevices: readonly OutputDevice[],
+	outputDeviceId: string,
+	selectedLoopbackDeviceIndex: number | null | undefined,
+): number | null {
+	if (loopbackDevices.length === 0) {
+		return null;
+	}
+	if (
+		selectedLoopbackDeviceIndex != null &&
+		loopbackDevices.some(
+			(device) => device.index === selectedLoopbackDeviceIndex,
+		)
+	) {
+		return selectedLoopbackDeviceIndex;
+	}
+	return resolveOutputLoopbackDeviceIndex(
+		loopbackDevices,
+		outputDevices,
+		outputDeviceId,
+	);
+}
+
 export function useListenMode(): void {
 	const recordingMode = useSettingsStore(
 		(s) => s.settings.general?.recordingMode ?? "ptt",
 	);
 	const outputDeviceId = useSettingsStore(
 		(s) => s.settings.general?.outputDeviceId ?? "",
+	);
+	const selectedLoopbackDeviceIndex = useSettingsStore(
+		(s) => s.settings.general?.loopbackDeviceIndex ?? null,
 	);
 	const onboarded = useSettingsStore(
 		(s) => s.settings.general?.onboarded ?? false,
@@ -232,10 +259,11 @@ export function useListenMode(): void {
 		catalogModels,
 		statesById,
 	);
-	const loopbackDeviceIndex = resolveOutputLoopbackDeviceIndex(
+	const loopbackDeviceIndex = resolveListenLoopbackDeviceIndex(
 		loopbackDevices,
 		outputDevices,
 		outputDeviceId,
+		selectedLoopbackDeviceIndex,
 	);
 	const prevModeRef = useRef<RecordingMode | null>(null);
 	const prevLoopbackDeviceIndexRef = useRef<number | null>(loopbackDeviceIndex);
@@ -348,7 +376,13 @@ export function useListenMode(): void {
 		prevModeRef.current = recordingMode;
 		prevLoopbackDeviceIndexRef.current = loopbackDeviceIndex;
 		prevListenModelIdRef.current = listenModelId;
-	}, [onboarded, onboardedAt, recordingMode, loopbackDeviceIndex, listenModelId]);
+	}, [
+		onboarded,
+		onboardedAt,
+		recordingMode,
+		loopbackDeviceIndex,
+		listenModelId,
+	]);
 
 	// Stop loopback on unmount if active
 	useEffect(

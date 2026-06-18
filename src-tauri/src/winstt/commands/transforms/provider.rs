@@ -25,6 +25,10 @@ use super::convert::openrouter_options;
 ///   - Apple Intelligence → soft-fail to the original text in this command path.
 ///   - OpenRouter → OpenAI-compatible structured-output chat with fallback model.
 ///   - Ollama → the all-Rust streaming `/api/chat` path.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "provider routing mirrors the configured transform request surface"
+)]
 pub(super) async fn run_transform_provider(
     app: &AppHandle,
     mgr: &Arc<LlmManager>,
@@ -184,6 +188,10 @@ async fn run_openrouter_with_fallback(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "observability records provider/model/request context without allocating an options struct"
+)]
 fn record_transform_issue(
     app: &AppHandle,
     operation: &str,

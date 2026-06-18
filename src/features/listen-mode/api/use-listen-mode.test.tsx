@@ -15,6 +15,7 @@ import { useListenStore } from "../model/listen-store";
 import {
 	applyLoopbackTransition,
 	handleLoopbackListError,
+	resolveListenLoopbackDeviceIndex,
 	resolveOutputLoopbackDeviceIndex,
 	useListenMode,
 	validateDevices,
@@ -485,6 +486,48 @@ describe("resolveOutputLoopbackDeviceIndex", () => {
 	});
 });
 
+describe("resolveListenLoopbackDeviceIndex", () => {
+	const loopbackDevices = [
+		{
+			id: "endpoint-speakers",
+			index: 0,
+			name: "Speakers",
+			defaultSampleRate: 48_000,
+			maxOutputChannels: 2,
+			isDefault: true,
+		},
+		{
+			id: "endpoint-headset",
+			index: 3,
+			name: "Headset",
+			defaultSampleRate: 48_000,
+			maxOutputChannels: 2,
+			isDefault: false,
+		},
+	];
+	const outputDevices = [
+		{ deviceId: "default", isDefault: true, label: "Speakers" },
+		{ deviceId: "headset-sink", isDefault: false, label: "Headset" },
+	];
+
+	test("honors the saved loopback device index when it is still available", () => {
+		expect(
+			resolveListenLoopbackDeviceIndex(loopbackDevices, outputDevices, "", 3),
+		).toBe(3);
+	});
+
+	test("falls back to output-device mapping when the saved loopback index is stale", () => {
+		expect(
+			resolveListenLoopbackDeviceIndex(
+				loopbackDevices,
+				outputDevices,
+				"headset-sink",
+				42,
+			),
+		).toBe(3);
+	});
+});
+
 describe("handleLoopbackListError", () => {
 	const originalError = console.error;
 	let calls: unknown[][] = [];
@@ -619,6 +662,7 @@ describe("useListenMode", () => {
 					onboardedAt: 1,
 					recordingMode: "listen",
 					outputDeviceId: "",
+					loopbackDeviceIndex: null,
 				},
 			},
 		});
@@ -627,6 +671,33 @@ describe("useListenMode", () => {
 		expect(tauriCalls).toContainEqual({
 			cmd: "start_listen",
 			args: { deviceIndex: 0, modelId: STREAMING_MODEL_ID },
+		});
+	});
+
+	test("starts loopback with the saved loopback device when it is available", async () => {
+		window.nativeBridge = makeApi();
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				model: {
+					...initialSettings.model,
+					realtimeModel: STREAMING_MODEL_ID,
+				},
+				general: {
+					...initialSettings.general,
+					onboarded: true,
+					onboardedAt: 1,
+					recordingMode: "listen",
+					outputDeviceId: "",
+					loopbackDeviceIndex: 3,
+				},
+			},
+		});
+		renderHook(() => useListenMode());
+		await flushAsyncHookEffects();
+		expect(tauriCalls).toContainEqual({
+			cmd: "start_listen",
+			args: { deviceIndex: 3, modelId: STREAMING_MODEL_ID },
 		});
 	});
 
@@ -645,6 +716,7 @@ describe("useListenMode", () => {
 					onboardedAt: 1,
 					recordingMode: "listen",
 					outputDeviceId: "headset-sink",
+					loopbackDeviceIndex: null,
 				},
 			},
 		});

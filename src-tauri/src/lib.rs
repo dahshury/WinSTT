@@ -381,7 +381,7 @@ fn initialize_core_logic(
     // gap vs the reference app, whose server warms at boot). Start this immediately after WinSTT
     // managers are registered so cloud STT has its managed state and local STT overlaps the rest of
     // startup.
-    spawn_stt_boot_warmup(app_handle, core_managers.transcription.clone());
+    spawn_stt_boot_warmup(app_handle, core_managers.transcription);
     advance_startup_phase(startup, app_handle, "STT boot/warmup scheduled");
     // If the persisted WinSTT mode is wakeword, arm the detector and open the
     // microphone stream during startup. The renderer treats wakeword as
@@ -620,7 +620,7 @@ fn continue_startup_after_splash_paint(app_handle: AppHandle, cli_args: CliArgs)
             "core_initialization",
             "WinSTT core startup failed",
         )
-        .detail(err.to_string())
+        .detail(err)
         .severity("error")
         .record(Some(&app_handle));
         splash::close_splash_window(&app_handle);
@@ -685,7 +685,7 @@ fn continue_startup_after_splash_paint(app_handle: AppHandle, cli_args: CliArgs)
                     "onboarding_window_open",
                     "Startup could not open the onboarding window",
                 )
-                .detail(e.to_string())
+                .detail(e)
                 .record(Some(&app_handle));
                 // The wizard never opened, so `onboarding_finish` will never run to
                 // lift the model gate. Drop straight into normal-launch behaviour:
@@ -771,11 +771,11 @@ pub fn run(cli_args: CliArgs) {
                         "panic",
                         "A WinSTT thread panicked",
                     )
-                    .detail(payload.clone())
+                    .detail(payload)
                     .kind("panic")
                     .severity("error")
                     .context("thread", name.to_string())
-                    .context("location", location.clone())
+                    .context("location", location)
                     .record(Some(&app_for_panic));
                     prev_hook(info);
                 }));

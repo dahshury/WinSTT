@@ -25,8 +25,8 @@ use std::path::Path;
 
 use winstt_app_lib::winstt::settings_schema::default_fixture_json;
 
-fn main() {
-    let json = default_fixture_json();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let json = default_fixture_json()?;
     // `CARGO_MANIFEST_DIR` is `src-tauri`; the fixture lives at the repo root.
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -34,8 +34,9 @@ fn main() {
         .join("fixtures")
         .join("winstt-settings.default.json");
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).expect("create spec/fixtures dir");
+        std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&path, json).expect("write settings fixture");
+    std::fs::write(&path, json)?;
     println!("wrote {}", path.display());
+    Ok(())
 }

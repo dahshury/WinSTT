@@ -179,7 +179,7 @@ impl TranscriptionManager {
                     )
                     .detail(e.to_string())
                     .model_id(desired.to_string())
-                    .request_id(request_id.clone())
+                    .request_id(request_id.as_str())
                     .duration_ms(st.elapsed().as_millis() as u64)
                     .record(Some(&self.app_handle));
                     return Err(e);
@@ -197,7 +197,7 @@ impl TranscriptionManager {
             )
             .detail(e.to_string())
             .model_id(desired.to_string())
-            .request_id(request_id.clone())
+            .request_id(request_id.as_str())
             .duration_ms(st.elapsed().as_millis() as u64)
             .record(Some(&self.app_handle));
             anyhow::anyhow!("failed to load model '{desired}': {e}")
@@ -238,7 +238,7 @@ impl TranscriptionManager {
                 )
                 .detail("engine state was empty after model load wait")
                 .model_id(desired.to_string())
-                .request_id(request_id.clone())
+                .request_id(request_id.as_str())
                 .severity("error")
                 .record(Some(&self.app_handle));
                 return Err(anyhow::anyhow!("Model is not loaded for transcription."));
@@ -272,7 +272,7 @@ impl TranscriptionManager {
                     )
                     .detail("engine mutex was empty after load wait")
                     .model_id(desired.to_string())
-                    .request_id(request_id.clone())
+                    .request_id(request_id.as_str())
                     .severity("error")
                     .record(Some(&self.app_handle));
                     return Err(anyhow::anyhow!(
