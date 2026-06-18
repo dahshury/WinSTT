@@ -701,8 +701,7 @@ fn sh_cleanup_script(plan: &CleanupPlan) -> String {
     let app_dir = plan
         .app_dir
         .as_ref()
-        .map(|path| sh_quote(path))
-        .unwrap_or_else(|| "''".to_string());
+        .map_or_else(|| "''".to_string(), |path| sh_quote(path));
     format!(
         r#"pid={pid}
 while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
