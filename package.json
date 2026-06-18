@@ -1,7 +1,7 @@
 {
 	"name": "winstt-app",
 	"private": true,
-	"version": "0.1.3-alpha.1",
+	"version": "0.1.3-alpha.2",
 	"type": "module",
 	"scripts": {
 		"dev": "vite",

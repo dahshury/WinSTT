@@ -259,12 +259,73 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
 
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
           merge-multiple: true
+
+      - name: Generate release notes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          $tag = "v$env:VERSION"
+          $previousTag = git tag --list "v*" --sort=-creatordate |
+            Where-Object { $_ -ne $tag } |
+            Select-Object -First 1
+
+          $noteArgs = @(
+            "api",
+            "repos/$env:GITHUB_REPOSITORY/releases/generate-notes",
+            "--method",
+            "POST",
+            "--field",
+            "tag_name=$tag",
+            "--field",
+            "target_commitish=$env:GITHUB_SHA",
+            "--jq",
+            ".body"
+          )
+          if ($previousTag) {
+            $noteArgs += @("--field", "previous_tag_name=$previousTag")
+            Write-Host "Generating release notes for $tag from $previousTag."
+          } else {
+            Write-Host "Generating release notes for $tag without a previous tag."
+          }
+
+          $range = if ($previousTag) { "$previousTag..HEAD" } else { "HEAD" }
+          $changeLines = @(git log $range --pretty=format:"- %s (%h)")
+          if ($LASTEXITCODE -ne 0) {
+            throw "git log $range failed with exit code $LASTEXITCODE"
+          }
+          if ($changeLines.Count -eq 0) {
+            $changeLines = @("- Maintenance release.")
+          }
+
+          $generatedNotes = @(& gh @noteArgs)
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub release notes generation failed with exit code $LASTEXITCODE"
+          }
+
+          $sinceTitle = if ($previousTag) { "## Changes since $previousTag" } else { "## Changes in this release" }
+          @(
+            "# WinSTT $env:VERSION",
+            "",
+            $sinceTitle,
+            "",
+            $changeLines,
+            "",
+            $generatedNotes
+          ) | Set-Content -LiteralPath release-notes.md -Encoding utf8
+
+          if ((Get-Item -LiteralPath release-notes.md).Length -eq 0) {
+            throw "GitHub release notes generation returned an empty body."
+          }
 
       - name: Create or update release assets
         shell: pwsh
@@ -275,9 +336,11 @@ jobs:
         run: |
           $draft = [System.Convert]::ToBoolean($env:RELEASE_DRAFT)
           $prerelease = $true
+          $notes = Get-Content -LiteralPath release-notes.md -Raw
           tools/release/upload-github-assets.ps1 `
             -AssetsRoot release-assets `
             -Version $env:VERSION `
+            -Notes $notes `
             -Target $env:GITHUB_SHA `
             -Prerelease:$prerelease `
             -Draft:$draft
