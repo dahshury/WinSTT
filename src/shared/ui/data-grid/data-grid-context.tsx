@@ -69,7 +69,7 @@ export interface DataGridContextValue {
 	 * `flexRender` and column metadata, neither of which needs the concrete row
 	 * type, so erasing it here keeps the context non-generic.
 	 */
-	table: Table<RowData>;
+	table: Table<unknown>;
 }
 
 export const DataGridContext = createContext<DataGridContextValue | null>(null);

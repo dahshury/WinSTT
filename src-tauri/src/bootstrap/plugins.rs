@@ -13,33 +13,39 @@ pub(crate) fn install_runtime_plugins(
     console_filter: Filter,
     cli_args: CliArgs,
 ) -> Builder<Wry> {
-    #[allow(unused_mut)]
-    let mut builder = builder
+    let builder = builder
         .device_event_filter(tauri::DeviceEventFilter::Always)
         .plugin(tauri_plugin_dialog::init())
         .plugin(build_log_plugin(console_filter));
 
     #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        if args.iter().any(|a| a == "--toggle-transcription") {
+            crate::signal_handle::send_transcription_input(app, "transcribe", "CLI");
+        } else if args.iter().any(|a| a == "--toggle-post-process") {
+            crate::signal_handle::send_transcription_input(
+                app,
+                "transcribe_with_post_process",
+                "CLI",
+            );
+        } else if args.iter().any(|a| a == "--cancel") {
+            crate::utils::cancel_current_operation(app);
+        } else {
+            crate::show_main_window(app);
+        }
+    }));
+
+    #[cfg(debug_assertions)]
     {
-        builder = builder.plugin(tauri_nspanel::init());
+        log::info!(
+            "single-instance plugin disabled for debug builds so packaged WinSTT can run beside tauri dev"
+        );
     }
 
     builder
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if args.iter().any(|a| a == "--toggle-transcription") {
-                crate::signal_handle::send_transcription_input(app, "transcribe", "CLI");
-            } else if args.iter().any(|a| a == "--toggle-post-process") {
-                crate::signal_handle::send_transcription_input(
-                    app,
-                    "transcribe_with_post_process",
-                    "CLI",
-                );
-            } else if args.iter().any(|a| a == "--cancel") {
-                crate::utils::cancel_current_operation(app);
-            } else {
-                crate::show_main_window(app);
-            }
-        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -63,7 +69,7 @@ fn build_log_plugin(console_filter: Filter) -> tauri::plugin::TauriPlugin<Wry> {
         .clear_targets()
         .targets([
             Target::new(TargetKind::Stdout).filter({
-                let console_filter = console_filter.clone();
+                let console_filter = console_filter;
                 move |metadata| console_filter.enabled(metadata)
             }),
             Target::new(if let Some(data_dir) = crate::portable::data_dir() {

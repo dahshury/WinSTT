@@ -12,12 +12,11 @@ import {
 	m,
 	useReducedMotion,
 } from "motion/react";
-import type { MouseEvent, PointerEvent, ReactElement, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
-import { Button } from "@/shared/ui/button";
-import { DialogActionButton } from "@/shared/ui/dialog";
 import { Tooltip } from "@/shared/ui/tooltip";
+import { DownloadActionButton } from "./DownloadActionButton";
 
 /** Phase of the download workflow as seen by the action row.
  *  - `idle`   nothing on disk, nothing in flight → primary "Download"
@@ -70,26 +69,6 @@ function actionIconSize(
 	return size === "sm" ? 13 : 14;
 }
 
-type DownloadButtonEvent =
-	| MouseEvent<HTMLButtonElement>
-	| PointerEvent<HTMLButtonElement>;
-
-function stopDownloadButtonPropagation(event: DownloadButtonEvent): void {
-	event.stopPropagation();
-}
-
-function downloadButtonHandlers(onAction: () => void) {
-	return {
-		onClick: (event: MouseEvent<HTMLButtonElement>) => {
-			event.preventDefault();
-			event.stopPropagation();
-			onAction();
-		},
-		onMouseDown: stopDownloadButtonPropagation,
-		onPointerDown: stopDownloadButtonPropagation,
-	};
-}
-
 /** Tri-state action row. Renders only the phase-specific primary (+
  *  destructive) buttons — any modal-level dismiss button ("Cancel",
  *  "Close", "Hide") stays at the caller because it isn't a download
@@ -117,45 +96,30 @@ export function DownloadActions({
 		surfaceHoverBg(buttonHover),
 	);
 	const reduceMotion = useReducedMotion();
-	const renderActionButton = (
-		variant: "neutral" | "accent",
-		defaultClassName: string,
-		onAction: () => void,
-		icon: ReactNode,
-		label: string,
-	): ReactElement => {
-		const handlers = downloadButtonHandlers(onAction);
-		if (dialogAppearance) {
-			return (
-				<DialogActionButton className={sizeCls} variant={variant} {...handlers}>
-					{icon}
-					<span>{label}</span>
-				</DialogActionButton>
-			);
-		}
-		return (
-			<Button className={cn(defaultClassName, sizeCls)} {...handlers}>
-				{icon}
-				<span>{label}</span>
-			</Button>
-		);
-	};
 	let content: ReactNode;
 	if (phase === "active") {
-		content = renderActionButton(
-			"neutral",
-			neutralCls,
-			onStop,
-			<HugeiconsIcon icon={PauseIcon} size={iconSize} />,
-			labels.stop,
+		content = (
+			<DownloadActionButton
+				defaultClassName={neutralCls}
+				dialogAppearance={dialogAppearance}
+				icon={<HugeiconsIcon icon={PauseIcon} size={iconSize} />}
+				label={labels.stop}
+				onAction={onStop}
+				sizeClassName={sizeCls}
+				variant="neutral"
+			/>
 		);
 	} else if (phase === "paused") {
-		const discardButton = renderActionButton(
-			"neutral",
-			neutralCls,
-			onDiscard,
-			<HugeiconsIcon icon={Cancel01Icon} size={iconSize} />,
-			labels.discard,
+		const discardButton = (
+			<DownloadActionButton
+				defaultClassName={neutralCls}
+				dialogAppearance={dialogAppearance}
+				icon={<HugeiconsIcon icon={Cancel01Icon} size={iconSize} />}
+				label={labels.discard}
+				onAction={onDiscard}
+				sizeClassName={sizeCls}
+				variant="neutral"
+			/>
 		);
 		content = (
 			<div
@@ -171,22 +135,28 @@ export function DownloadActions({
 				) : (
 					discardButton
 				)}
-				{renderActionButton(
-					"accent",
-					ACCENT_BASE,
-					onResume,
-					<HugeiconsIcon icon={PlayIcon} size={iconSize} />,
-					labels.resume,
-				)}
+				<DownloadActionButton
+					defaultClassName={ACCENT_BASE}
+					dialogAppearance={dialogAppearance}
+					icon={<HugeiconsIcon icon={PlayIcon} size={iconSize} />}
+					label={labels.resume}
+					onAction={onResume}
+					sizeClassName={sizeCls}
+					variant="accent"
+				/>
 			</div>
 		);
 	} else {
-		content = renderActionButton(
-			"accent",
-			ACCENT_BASE,
-			onDownload,
-			<HugeiconsIcon icon={CloudDownloadIcon} size={iconSize} />,
-			labels.download,
+		content = (
+			<DownloadActionButton
+				defaultClassName={ACCENT_BASE}
+				dialogAppearance={dialogAppearance}
+				icon={<HugeiconsIcon icon={CloudDownloadIcon} size={iconSize} />}
+				label={labels.download}
+				onAction={onDownload}
+				sizeClassName={sizeCls}
+				variant="accent"
+			/>
 		);
 	}
 	return (

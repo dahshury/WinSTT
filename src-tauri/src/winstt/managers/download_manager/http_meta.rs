@@ -98,9 +98,7 @@ pub(super) fn ensure_cache_ref(ref_file: &std::path::Path, commit: &str) -> std:
     if let Some(parent) = ref_file.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let needs_write = std::fs::read_to_string(ref_file)
-        .map(|s| s.trim() != commit)
-        .unwrap_or(true);
+    let needs_write = std::fs::read_to_string(ref_file).map_or(true, |s| s.trim() != commit);
     if needs_write {
         std::fs::write(ref_file, commit)?;
     }

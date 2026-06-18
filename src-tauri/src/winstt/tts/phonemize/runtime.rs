@@ -62,9 +62,10 @@ pub fn espeak_runtime_available() -> bool {
 }
 
 pub fn espeak_runtime_install_required_message() -> String {
-    let path = espeak_runtime_loader_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "%LOCALAPPDATA%\\winstt\\tts\\runtime\\espeakng_loader".to_string());
+    let path = espeak_runtime_loader_dir().map_or_else(
+        || "%LOCALAPPDATA%\\winstt\\tts\\runtime\\espeakng_loader".to_string(),
+        |p| p.display().to_string(),
+    );
     format!(
         "eSpeak NG runtime is required for this TTS model. Expected espeak-ng.dll \
          and espeak-ng-data under {path}. Install eSpeak NG and set ESPEAK_NG_LIBRARY, \

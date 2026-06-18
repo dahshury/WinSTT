@@ -8,6 +8,14 @@ import {
 	useDownloadStore,
 } from "./download-store";
 
+const seedFor = (modelId: string, quantization: OnnxQuantization) =>
+	quantDownloadSeedFromCache(
+		resolveQuantCache(
+			useModelStateStore.getState().statesById[modelId],
+			quantization,
+		),
+	);
+
 interface QuantActions {
 	/** Per-quant delete → AlertDialog confirm (rendered inside the picker) →
 	 *  this callback → IPC delete. Server broadcasts model_cache_changed; the
@@ -67,14 +75,6 @@ export function useQuantActions(): QuantActions {
 		quantization: OnnxQuantization,
 	): QuantDownloadState | undefined =>
 		quantDownloads[`${modelId}@${quantization}`];
-
-	const seedFor = (modelId: string, quantization: OnnxQuantization) =>
-		quantDownloadSeedFromCache(
-			resolveQuantCache(
-				useModelStateStore.getState().statesById[modelId],
-				quantization,
-			),
-		);
 
 	const handleDownloadAction = (
 		action: "start" | "pause" | "resume" | "cancel",

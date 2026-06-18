@@ -18,7 +18,6 @@ interface VoiceProfileProps {
 }
 
 const EMPTY = "—";
-
 // 2024-01-07 is a Sunday, so adding `dayOfWeek` (0=Sun) lands on the right
 // weekday — a stable reference week for formatting a (weekday, hour) bucket.
 function formatPeakTime(peak: PeakTime | null, locale: string): string {
@@ -26,10 +25,18 @@ function formatPeakTime(peak: PeakTime | null, locale: string): string {
 		return EMPTY;
 	}
 	const date = new Date(2024, 0, 7 + peak.dayOfWeek, peak.hour);
-	return new Intl.DateTimeFormat(locale, {
+	return date.toLocaleString(locale, {
 		hour: "numeric",
 		weekday: "short",
-	}).format(date);
+	});
+}
+
+function wordTile(
+	word: WordCount | null,
+): Pick<StatTileData, "unit" | "value"> {
+	return word === null
+		? { value: EMPTY }
+		: { unit: `${word.count.toLocaleString()}×`, value: word.word };
 }
 
 /**
@@ -42,13 +49,6 @@ function formatPeakTime(peak: PeakTime | null, locale: string): string {
 export function VoiceProfile({ stats }: VoiceProfileProps) {
 	const t = useTranslations("history");
 	const locale = useLocaleStore((s) => s.locale);
-
-	const wordTile = (
-		word: WordCount | null,
-	): Pick<StatTileData, "unit" | "value"> =>
-		word === null
-			? { value: EMPTY }
-			: { unit: `${word.count.toLocaleString()}×`, value: word.word };
 
 	const tiles: StatTileData[] = [
 		{

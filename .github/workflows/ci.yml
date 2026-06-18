@@ -99,7 +99,7 @@ jobs:
       - name: i18n parity check
         run: bun run check:i18n
 
-      # Renderer bundle smoke. `build` still runs its own tsc as part of the
+      # Renderer bundle smoke. `build` re-runs the tsgo typecheck as part of the
       # local developer contract; the explicit typecheck step above gives CI a
       # focused TypeScript failure before the bundle work starts.
       - name: Build renderer

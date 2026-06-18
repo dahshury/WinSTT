@@ -77,7 +77,8 @@ pub(crate) use self::runtime::{
     core_timeout_from_winstt, enabled_ollama_models, should_warm_tts, warm_tts_async,
 };
 pub(crate) use self::wakeword::{
-    rearm_wakeword_runtime_if_active, sync_wakeword_runtime_from_settings_in_background,
+    disarm_wakeword_runtime_for_onboarding, rearm_wakeword_runtime_if_active,
+    sync_wakeword_runtime_from_settings_in_background,
 };
 
 pub const WINSTT_SETTINGS_KEY: &str = "winstt_settings";
@@ -258,7 +259,7 @@ pub fn apply_settings_patch(
     //     other window re-hydrates the same canonical view. Secret fields are
     //     masked before crossing IPC; a later save that echoes the sentinel
     //     preserves the stored secret, while an empty string still clears it.
-    let mut renderer_next = next.clone();
+    let mut renderer_next = next;
     sanitize_settings_for_renderer(&mut renderer_next);
     let snapshot = serde_json::to_value(&renderer_next).map_err(|e| e.to_string())?;
     let _ = app.emit(
@@ -1177,11 +1178,10 @@ fn has_extension(path: &str, allowed: &[&str]) -> bool {
     std::path::Path::new(path)
         .extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| {
+        .is_some_and(|ext| {
             let ext = ext.to_ascii_lowercase();
             allowed.iter().any(|allowed| *allowed == ext)
         })
-        .unwrap_or(false)
 }
 
 fn has_parent_segment(path: &str) -> bool {

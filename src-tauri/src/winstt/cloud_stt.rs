@@ -326,13 +326,37 @@ pub fn emit_cloud_failure(
     if !code.should_notify() {
         return;
     }
+    let message = message.into();
+    let issue_kind = match code {
+        CloudSttErrorCode::Auth => "auth",
+        CloudSttErrorCode::Network => "network",
+        CloudSttErrorCode::RateLimit => "rate_limited",
+        CloudSttErrorCode::KeyMissing => "key_missing",
+        CloudSttErrorCode::AudioTooLarge => "audio_too_large",
+        CloudSttErrorCode::ProviderError => "provider_error",
+        CloudSttErrorCode::Aborted => "cancelled",
+        CloudSttErrorCode::Timeout => "timeout",
+    };
+    let mut issue = crate::winstt::observability::IssueBuilder::new(
+        "cloud",
+        "provider_request",
+        "Cloud provider request failed",
+    )
+    .detail(message.clone())
+    .provider(provider.id())
+    .kind(issue_kind);
+    if let Some(retry) = retry_after_seconds {
+        issue = issue.context("retryAfterSeconds", retry.to_string());
+    }
+    issue.record(Some(app));
+
     let mut payload = serde_json::Map::new();
     payload.insert(
         "code".into(),
         serde_json::json!(cloud_error_fanout_code(code)),
     );
     payload.insert("provider".into(), serde_json::json!(provider.id()));
-    payload.insert("message".into(), serde_json::json!(message.into()));
+    payload.insert("message".into(), serde_json::json!(message));
     if let Some(retry) = retry_after_seconds {
         payload.insert("retryAfter".into(), serde_json::json!(retry));
     }

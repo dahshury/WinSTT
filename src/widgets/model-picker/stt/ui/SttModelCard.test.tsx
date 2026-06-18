@@ -277,6 +277,46 @@ describe("SttModelCard precision-badge download affordance", () => {
 		expect(screen.queryByText("5.0 GB")).toBeNull();
 	});
 
+	test("card meta shows the catalog size, not a partial download's on-disk bytes", () => {
+		// Regression: a leftover/partial download reports only the few sidecar
+		// bytes on disk (cohere's config files are ~1 MB). That progress number
+		// must NOT masquerade as the model's multi-GB download size.
+		const model = makeModel({
+			availableQuantizations: [""],
+			sizeBytesByQuantization: { "": 5_066_516_727 },
+		});
+		render(
+			<TooltipProvider.Provider>
+				<Combobox.Root items={[model]}>
+					<Combobox.List>
+						{() => (
+							<SttModelCard
+								currentQuantization=""
+								key={model.id}
+								model={model}
+								onSelect={mock(() => undefined)}
+								selectedId={undefined}
+								state={makeState({
+									cache_by_quantization: {
+										"": {
+											state: "partial",
+											progress: 0.0002,
+											downloaded_bytes: 1_048_576,
+											total_bytes: 1_048_576,
+										},
+									},
+								})}
+								systemInfo={null}
+							/>
+						)}
+					</Combobox.List>
+				</Combobox.Root>
+			</TooltipProvider.Provider>,
+		);
+		expect(screen.getByText("4.7 GB")).toBeDefined();
+		expect(screen.queryByText("1 MB")).toBeNull();
+	});
+
 	test("an uncached CONCRETE badge IS the download trigger — no separate download button", () => {
 		const { onSelect, onDownloadAction } = renderDownloadCard(
 			makeModel({ availableQuantizations: ["int8"] }),

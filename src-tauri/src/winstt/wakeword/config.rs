@@ -98,8 +98,7 @@ impl KwsModelPaths {
     pub fn bpe_model(&self) -> PathBuf {
         self.tokens
             .parent()
-            .map(|dir| dir.join(KWS_BPE_FILE))
-            .unwrap_or_else(|| PathBuf::from(KWS_BPE_FILE))
+            .map_or_else(|| PathBuf::from(KWS_BPE_FILE), |dir| dir.join(KWS_BPE_FILE))
     }
 }
 
@@ -158,54 +157,39 @@ impl LegacyPorcupinePaths {
     }
 
     fn library_relative_path_opt() -> Option<PathBuf> {
-        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-        {
-            return Some(PathBuf::from("lib/windows/amd64/libpv_porcupine.dll"));
+        if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+            Some(PathBuf::from("lib/windows/amd64/libpv_porcupine.dll"))
+        } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            Some(PathBuf::from("lib/linux/x86_64/libpv_porcupine.so"))
+        } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+            Some(PathBuf::from("lib/mac/x86_64/libpv_porcupine.dylib"))
+        } else {
+            None
         }
-        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-        {
-            return Some(PathBuf::from("lib/linux/x86_64/libpv_porcupine.so"));
-        }
-        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-        {
-            return Some(PathBuf::from("lib/mac/x86_64/libpv_porcupine.dylib"));
-        }
-        #[allow(unreachable_code)]
-        None
     }
 
     fn keyword_platform_dir() -> &'static str {
-        #[cfg(target_os = "windows")]
-        {
-            return "windows";
+        if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "linux") {
+            "linux"
+        } else if cfg!(target_os = "macos") {
+            "mac"
+        } else {
+            "unsupported"
         }
-        #[cfg(target_os = "linux")]
-        {
-            return "linux";
-        }
-        #[cfg(target_os = "macos")]
-        {
-            return "mac";
-        }
-        #[allow(unreachable_code)]
-        "unsupported"
     }
 
     fn keyword_platform_suffix() -> &'static str {
-        #[cfg(target_os = "windows")]
-        {
-            return "windows";
+        if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "linux") {
+            "linux"
+        } else if cfg!(target_os = "macos") {
+            "mac"
+        } else {
+            "unsupported"
         }
-        #[cfg(target_os = "linux")]
-        {
-            return "linux";
-        }
-        #[cfg(target_os = "macos")]
-        {
-            return "mac";
-        }
-        #[allow(unreachable_code)]
-        "unsupported"
     }
 }
 

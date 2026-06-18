@@ -240,14 +240,16 @@ export function SubtitleOverlay() {
 
 	// Normal mode — show last 3 items with discrete opacity + time-based fade
 	const visibleItems = items.slice(-VISIBLE_COUNT);
-	const visibleSubtitleItems = visibleItems
-		.map((item, i) => {
-			const age = visibleItems.length - 1 - i;
-			const positionOpacity = FADE_OPACITIES[age] ?? 0.1;
-			const tf = timeFade(item.timestamp, now);
-			return { item, opacity: Math.min(positionOpacity, tf) };
-		})
-		.filter(({ opacity }) => opacity > 0);
+	const visibleSubtitleItems: { item: TranscriptionItem; opacity: number }[] = [];
+	for (const [index, item] of visibleItems.entries()) {
+		const age = visibleItems.length - 1 - index;
+		const positionOpacity = FADE_OPACITIES[age] ?? 0.1;
+		const tf = timeFade(item.timestamp, now);
+		const opacity = Math.min(positionOpacity, tf);
+		if (opacity > 0) {
+			visibleSubtitleItems.push({ item, opacity });
+		}
+	}
 	const hasContent =
 		visibleSubtitleItems.length > 0 || liveText || showEphemeral;
 

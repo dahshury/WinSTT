@@ -295,8 +295,7 @@ impl OrtEmbedder {
             .tensor_shape()
             .and_then(|shape| shape.get(2).copied())
             .filter(|&dim| dim > 0)
-            .map(|dim| dim as usize)
-            .unwrap_or(frontend::KALDI_N_MELS);
+            .map_or(frontend::KALDI_N_MELS, |dim| dim as usize);
         if feature_dim != frontend::KALDI_N_MELS {
             anyhow::bail!(
                 "embedding model expects {feature_dim} features, WinSTT diarization supplies {}",
@@ -324,8 +323,7 @@ impl OrtEmbedder {
             .unwrap_or(DIARIZER_SAMPLE_RATE);
         let normalize_samples = metadata
             .get("normalize_samples")
-            .map(|value| matches!(value.as_str(), "1" | "true" | "True" | "TRUE"))
-            .unwrap_or(true);
+            .is_none_or(|value| matches!(value.as_str(), "1" | "true" | "True" | "TRUE"));
         let feature_normalize_type = metadata
             .get("feature_normalize_type")
             .cloned()

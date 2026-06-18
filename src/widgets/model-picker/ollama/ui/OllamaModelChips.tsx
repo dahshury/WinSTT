@@ -172,9 +172,11 @@ function CapabilityChips({
 	);
 }
 
-export function installedCapabilityBadges(
-	capabilities: readonly string[] | undefined,
-): ReactNode {
+export function InstalledCapabilityBadges({
+	capabilities,
+}: {
+	capabilities: readonly string[] | undefined;
+}): ReactNode {
 	const hasThinking = normalizedCapabilitySet(capabilities).has("thinking");
 	const hasTools = supportsOllamaToolCalling(capabilities);
 	const labels = visibleCapabilities(capabilities, { excludeTools: true });

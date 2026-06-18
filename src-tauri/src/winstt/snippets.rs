@@ -41,6 +41,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use tauri::AppHandle;
 
+use crate::helpers::regex::static_regex;
 use crate::winstt::commands::settings::read_settings;
 use crate::winstt::settings_schema::SnippetEntry;
 use phonetic::{double_metaphone, jaro_winkler, phonetic_overlap, SNIPPET_JW_THRESHOLD};
@@ -50,8 +51,7 @@ use phonetic::{double_metaphone, jaro_winkler, phonetic_overlap, SNIPPET_JW_THRE
 // "address." stays as match("address") + literal ".". Mirrors the TS
 // `WORD_RE = /[\p{L}\p{N}']+/gu`. The `regex` crate has Unicode classes on by
 // default, so `\p{L}` / `\p{N}` resolve the same way.
-static WORD_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[\p{L}\p{N}']+").expect("valid word regex"));
+static WORD_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"[\p{L}\p{N}']+"));
 
 // ===========================================================================
 // Sliding-window fuzzy snippet matcher (ports findSnippetMatches / replaceWith…)

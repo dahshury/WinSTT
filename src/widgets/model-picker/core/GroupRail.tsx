@@ -1,7 +1,7 @@
 "use client";
 
 import { Button as BaseButton } from "@base-ui/react/button";
-import { Grid3X3Icon, StarIcon } from "@hugeicons/core-free-icons";
+import { StarIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { useEffect, useRef } from "react";
@@ -13,9 +13,6 @@ import {
 	useSurface,
 } from "@/shared/lib/surface";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
-import { FAVORITES_GROUP_VALUE } from "./favorites";
-
-export const ALL_AUTHORS_RAIL_ID = "__all_authors__";
 
 /**
  * A single rail tile descriptor. Pickers compute these from their own
@@ -295,26 +292,6 @@ function GroupRailTile({
  * Favorites tile. A semi-transparent foreground tint, so it reads correctly on
  * any tile shade without needing the substrate level.
  */
-/**
- * The pinned "All authors" rail tile. Selecting it returns the picker to its
- * normal grouped view (Favorites / sort / sections), while author tiles narrow
- * the list to that author only.
- */
-export function buildAllAuthorsRailItem(count: number): GroupRailItem {
-	return {
-		id: ALL_AUTHORS_RAIL_ID,
-		label: "All authors",
-		pinned: true,
-		starrable: false,
-		badge: count,
-		icon: (
-			<RailIconChip>
-				<HugeiconsIcon className="size-3" icon={Grid3X3Icon} />
-			</RailIconChip>
-		),
-	};
-}
-
 export function RailIconChip({
 	children,
 	tone = "neutral",

@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { useTranslations } from "use-intl";
 import { useLocaleStore } from "@/shared/i18n";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
@@ -21,19 +20,51 @@ const VARIANT_BG = ["bg-teal/20", "bg-teal/40", "bg-teal/65", "bg-teal"];
 // Mon / Wed / Fri rows get a label, like a GitHub contribution graph — labeling
 // all seven crowds the 9px cells.
 const WEEKDAY_LABEL_ROWS = new Set([1, 3, 5]);
+const WEEKDAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+
+function formatMonth(date: Date, locale: string): string {
+	return date.toLocaleDateString(locale, { month: "short" });
+}
+
+function formatWeekday(date: Date, locale: string): string {
+	return date.toLocaleDateString(locale, { weekday: "short" });
+}
+
+function formatCellDate(date: Date, locale: string): string {
+	return date.toLocaleDateString(locale, {
+		year: "numeric",
+		month: "short",
+		day: "numeric",
+	});
+}
 
 interface Column {
 	/** Seven cells, Sunday→Saturday; `null` pads the partial first/last week. */
 	cells: (DayBucket | null)[];
+	/**
+	 * Stable React key: the `dayKey` of the column's first real day, which is
+	 * unique per week across the rolling-year window. Survives reorders/filters
+	 * where the positional index would not.
+	 */
+	key: string;
 	/** Short month name shown above the column when the month changes here. */
 	monthLabel: string;
+}
+
+function keyedColumnCells(col: Column): {
+	cell: DayBucket | null;
+	key: string;
+}[] {
+	return col.cells.map((cell, dow) => ({
+		cell,
+		key: cell?.dayKey ?? `${col.key}-pad-${WEEKDAY_KEYS[dow]}`,
+	}));
 }
 
 /** Group the rolling-year buckets into Sunday-started week columns. */
 function toColumns(buckets: DayBucket[], locale: string): Column[] {
 	const columns: Column[] = [];
 	let cells: (DayBucket | null)[] = [];
-	const monthFmt = new Intl.DateTimeFormat(locale, { month: "short" });
 	let lastMonth = -1;
 
 	const firstDow = buckets[0]?.date.getDay() ?? 0;
@@ -50,11 +81,12 @@ function toColumns(buckets: DayBucket[], locale: string): Column[] {
 		if (firstReal) {
 			const month = firstReal.date.getMonth();
 			if (month !== lastMonth) {
-				monthLabel = monthFmt.format(firstReal.date);
+				monthLabel = formatMonth(firstReal.date, locale);
 				lastMonth = month;
 			}
 		}
-		columns.push({ cells, monthLabel });
+		const key = firstReal ? firstReal.dayKey : `pad-${columns.length}`;
+		columns.push({ cells, key, monthLabel });
 		cells = [];
 	};
 
@@ -70,13 +102,41 @@ function toColumns(buckets: DayBucket[], locale: string): Column[] {
 	return columns;
 }
 
+const columnsCache = new WeakMap<DayBucket[], Map<string, Column[]>>();
+
+function cachedColumns(buckets: DayBucket[], locale: string): Column[] {
+	let byLocale = columnsCache.get(buckets);
+	if (!byLocale) {
+		byLocale = new Map();
+		columnsCache.set(buckets, byLocale);
+	}
+	const cached = byLocale.get(locale);
+	if (cached) {
+		return cached;
+	}
+	const columns = toColumns(buckets, locale);
+	byLocale.set(locale, columns);
+	return columns;
+}
+
 /** Localized short weekday names indexed by day-of-week (0 = Sunday). */
 function weekdayNames(locale: string): string[] {
-	const fmt = new Intl.DateTimeFormat(locale, { weekday: "short" });
 	// 2024-01-07 is a Sunday; +dow lands on each weekday.
 	return Array.from({ length: 7 }, (_, dow) =>
-		fmt.format(new Date(2024, 0, 7 + dow)),
+		formatWeekday(new Date(2024, 0, 7 + dow), locale),
 	);
+}
+
+const weekdayNamesCache = new Map<string, string[]>();
+
+function cachedWeekdayNames(locale: string): string[] {
+	const cached = weekdayNamesCache.get(locale);
+	if (cached) {
+		return cached;
+	}
+	const names = weekdayNames(locale);
+	weekdayNamesCache.set(locale, names);
+	return names;
 }
 
 /**
@@ -91,32 +151,21 @@ export function ContributionGraph({ entries }: ContributionGraphProps) {
 	const locale = useLocaleStore((s) => s.locale);
 	const emptyBg = surfaceBg(Math.min(useSurface() + 2, 8));
 
-	const { columns, weekdays } = useMemo(() => {
-		const buckets = buildHeatmap(entries);
-		return {
-			columns: toColumns(buckets, locale),
-			weekdays: weekdayNames(locale),
-		};
-	}, [entries, locale]);
+	const buckets = buildHeatmap(entries);
+	const columns = cachedColumns(buckets, locale);
+	const weekdays = cachedWeekdayNames(locale);
 
-	const max = useMemo(() => {
-		let highest = 0;
-		for (const col of columns) {
-			for (const cell of col.cells) {
-				if (cell && cell.wordCount > highest) {
-					highest = cell.wordCount;
-				}
+	let max = 0;
+	for (const col of columns) {
+		for (const cell of col.cells) {
+			if (cell && cell.wordCount > max) {
+				max = cell.wordCount;
 			}
 		}
-		return highest;
-	}, [columns]);
+	}
 
 	const cellTitle = (cell: DayBucket): string => {
-		const date = cell.date.toLocaleDateString(locale, {
-			year: "numeric",
-			month: "short",
-			day: "numeric",
-		});
+		const date = formatCellDate(cell.date, locale);
 		if (cell.wordCount <= 0) {
 			return date;
 		}
@@ -128,11 +177,10 @@ export function ContributionGraph({ entries }: ContributionGraphProps) {
 			<div className="inline-flex min-w-max flex-col gap-1">
 				<div className="flex">
 					<div className="w-7 shrink-0" />
-					{columns.map((col, i) => (
+					{columns.map((col) => (
 						<div
 							className="w-[11px] shrink-0 whitespace-nowrap text-[9px] text-foreground-muted leading-none"
-							// Columns are positional; the index is the only stable key.
-							key={`m-${i}`}
+							key={`m-${col.key}`}
 						>
 							{col.monthLabel}
 						</div>
@@ -152,12 +200,12 @@ export function ContributionGraph({ entries }: ContributionGraphProps) {
 					</div>
 
 					<div className="flex gap-[2px]">
-						{columns.map((col, ci) => (
-							<div className="flex flex-col gap-[2px]" key={`c-${ci}`}>
-								{col.cells.map((cell, ri) => {
+						{columns.map((col) => (
+							<div className="flex flex-col gap-[2px]" key={col.key}>
+								{keyedColumnCells(col).map(({ cell, key }) => {
 									if (cell === null) {
 										return (
-											<div className="h-[9px] w-[9px]" key={`${ci}-${ri}`} />
+											<div className="h-[9px] w-[9px]" key={key} />
 										);
 									}
 									const level = intensityLevel(cell.wordCount, max);

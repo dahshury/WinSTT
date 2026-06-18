@@ -14,7 +14,7 @@ import {
 	VoiceIdIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
@@ -52,6 +52,22 @@ import { UsageBars } from "./UsageBreakdown";
 import { VoiceProfile } from "./VoiceProfile";
 
 type RetentionValue = "never" | "cap" | "days3" | "weeks2" | "months3";
+
+const handleDeleteTransform = (id: string) => {
+	deleteTransformHistoryEntry(id).catch(() => undefined);
+};
+
+const recentDailyWordsCache = new WeakMap<object, number[]>();
+
+function recentDailyWords(entries: ReturnType<typeof buildHeatmap>): number[] {
+	const cached = recentDailyWordsCache.get(entries);
+	if (cached) {
+		return cached;
+	}
+	const words = entries.slice(-30).map((b) => b.wordCount);
+	recentDailyWordsCache.set(entries, words);
+	return words;
+}
 
 export function TranscriptionHistoryPanel() {
 	const t = useTranslations("history");
@@ -94,29 +110,17 @@ export function TranscriptionHistoryPanel() {
 		selectedRange?.from ?? null,
 		selectedRange?.to ?? null,
 	);
-	const stats = useMemo(() => aggregate(filteredEntries), [filteredEntries]);
-	const voiceProfile = useMemo(
-		() => computeVoiceProfile(filteredEntries),
-		[filteredEntries],
-	);
+	const stats = aggregate(filteredEntries);
+	const voiceProfile = computeVoiceProfile(filteredEntries);
 	const usageOtherLabel = t("usageOther");
-	const usage = useMemo(
-		() => computeUsage(filteredEntries, usageOtherLabel),
-		[filteredEntries, usageOtherLabel],
-	);
+	const usage = computeUsage(filteredEntries, usageOtherLabel);
 	// Streak and the year-long contribution graph are all-time habit views, so
 	// they read the full history rather than the selected date range.
-	const streak = useMemo(() => computeStreak(entries), [entries]);
+	const streak = computeStreak(entries);
 	// Recent 30-day word trend for the hero sparkline — a stable "recent
 	// activity" signal independent of the selected range, so filtering to a past
 	// window doesn't blank it out.
-	const dailyWords = useMemo(
-		() =>
-			buildHeatmap(entries)
-				.slice(-30)
-				.map((b) => b.wordCount),
-		[entries],
-	);
+	const dailyWords = recentDailyWords(buildHeatmap(entries));
 
 	const handleClear = () => {
 		clearTranscriptionHistory().then(() => clearLocal());
@@ -124,10 +128,6 @@ export function TranscriptionHistoryPanel() {
 
 	const handleClearTransforms = () => {
 		clearTransformHistory().then(() => clearTransformLocal());
-	};
-
-	const handleDeleteTransform = (id: string) => {
-		deleteTransformHistoryEntry(id).catch(() => undefined);
 	};
 
 	return (

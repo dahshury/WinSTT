@@ -32,15 +32,16 @@ const TRAY_MENU_LABEL: &str = "tray-menu";
 /// overlaps it. Native context menus leave a small gap; we replicate that.
 const TASKBAR_MARGIN: f64 = 8.0;
 
-/// Off-screen parking coordinate (logical px). Mirrors the reference tray menu's
-/// `OFFSCREEN = -9999`: instead of OS `hide()`/`show()` (which triggers a
-/// show/repaint animation → the user's "hard flicker"), we keep the window
-/// *always shown* and merely PARK it off-screen when dismissed and MOVE it on
-/// screen when opened. The window paints exactly once, off-screen, and every
-/// subsequent open/close is a pure reposition with no visibility transition.
+/// Off-screen parking coordinate (logical px). The tray menu parks here while
+/// dismissed so stale on-screen bounds do not make it look open to the
+/// position-based visibility checks.
 const OFFSCREEN: f64 = -9999.0;
 
 static TRAY_MENU_LIFECYCLE_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+const TRAY_MENU_WILL_OPEN_EVENT: &str = "winstt:tray-menu-will-open";
+const TRAY_MENU_OPENED_EVENT: &str = "winstt:tray-menu-opened";
+const TRAY_MENU_HIDDEN_EVENT: &str = "winstt:tray-menu-hidden";
 
 /// Last anchor point the tray menu was shown at, in LOGICAL screen pixels.
 /// Stored so a `tray-menu:resize` (the renderer's ResizeObserver reports the
@@ -114,9 +115,14 @@ fn resolve_anchor(app: &AppHandle, x: Option<f64>, y: Option<f64>) -> (f64, f64)
     if let (Some(x), Some(y)) = (x, y) {
         return (x, y);
     }
-    crate::input::get_cursor_position(app)
-        .map(|(cx, cy)| (cx as f64, cy as f64))
-        .unwrap_or((0.0, 0.0))
+    crate::input::get_cursor_position(app).map_or((0.0, 0.0), |(cx, cy)| (cx as f64, cy as f64))
+}
+
+fn dispatch_tray_menu_dom_event(window: &tauri::WebviewWindow, event: &str) {
+    let script = format!("window.dispatchEvent(new Event({event:?}));");
+    if let Err(e) = window.eval(&script) {
+        log::debug!("tray-menu DOM event dispatch failed for {event}: {e}");
+    }
 }
 
 /// Clamp the anchor against the live menu size + monitor work area and move the
@@ -132,10 +138,9 @@ fn position_tray_menu(
     // `w-max max-w-[…]` — and reports its real size right after mount via
     // TRAY_MENU_RESIZE → resize_window).
     let scale = window.scale_factor().unwrap_or(1.0);
-    let menu_size = window
-        .inner_size()
-        .map(|s| (s.width as f64 / scale, s.height as f64 / scale))
-        .unwrap_or((192.0, 360.0));
+    let menu_size = window.inner_size().map_or((192.0, 360.0), |s| {
+        (s.width as f64 / scale, s.height as f64 / scale)
+    });
 
     let work_area = monitor_rect_for_point(app, anchor);
     let (px, py) = clamp_to_work_area(anchor, menu_size, work_area);
@@ -160,28 +165,22 @@ fn is_tray_menu_on_screen(window: &tauri::WebviewWindow) -> bool {
     let scale = window.scale_factor().unwrap_or(1.0);
     window
         .outer_position()
-        .map(|p| (p.y as f64 / scale) > OFFSCREEN / 2.0)
-        .unwrap_or(false)
+        .is_ok_and(|p| (p.y as f64 / scale) > OFFSCREEN / 2.0)
 }
 
-/// Core placement: ensure the tray-menu window exists, clamp the anchor to the
-/// monitor work area, position + focus it.
-///
-/// The window is created hidden in setup and PARK-SHOWN off-screen once (in
-/// `install_tray_menu_lifecycle`) so it has already painted at full content size.
-/// Opening it is therefore a pure reposition — no `show()` (which on Windows
-/// fires an OS show animation + a transparent-surface repaint, the source of the
-/// "hard flicker"). The first open before the pre-show has landed falls back to a
-/// real `show()` so the menu still appears.
-/// Current Tauri path intentionally uses real show/hide so focus loss reliably
-/// dismisses the popup when the user clicks outside it.
+/// Core open placement: ensure the tray-menu window exists, clamp the anchor to
+/// the monitor work area, position, show, and focus it.
 fn place_tray_menu(app: &AppHandle, anchor: (f64, f64)) -> Result<(), String> {
     install_tray_menu_lifecycle(app);
     let window = ensure_window(app, TRAY_MENU_LABEL)?;
+    dispatch_tray_menu_dom_event(&window, TRAY_MENU_WILL_OPEN_EVENT);
     position_tray_menu(app, &window, anchor)?;
-    window.show().map_err(|e| e.to_string())?;
+    if !window.is_visible().unwrap_or(false) {
+        window.show().map_err(|e| e.to_string())?;
+    }
     let _ = window.unminimize();
     let _ = window.set_focus();
+    dispatch_tray_menu_dom_event(&window, TRAY_MENU_OPENED_EVENT);
     Ok(())
 }
 
@@ -212,7 +211,9 @@ pub fn reanchor_tray_menu(app: AppHandle) -> Result<(), String> {
         .try_state::<TrayMenuAnchor>()
         .and_then(|state| state.0.lock().ok().and_then(|g| *g));
     if let Some(anchor) = anchor {
-        return place_tray_menu(&app, anchor);
+        install_tray_menu_lifecycle(&app);
+        let window = ensure_window(&app, TRAY_MENU_LABEL)?;
+        return position_tray_menu(&app, &window, anchor);
     }
     Ok(())
 }
@@ -233,16 +234,12 @@ pub fn hide_tray_menu(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Dismiss the tray menu by MOVING it off-screen (the reference's `moveOffscreen`),
-/// NOT `hide()`. Keeping the window shown-but-parked means re-opening is a pure
-/// reposition with no OS show animation / transparent-surface repaint — the fix
-/// for the open flicker. Before the lifecycle pre-show has run the window may
-/// still be genuinely hidden; parking it is harmless in that case.
-/// Current Tauri path parks and then hides the window, preserving the webview
-/// without leaving an always-visible transparent popup on the desktop.
+/// Dismiss the tray menu by parking it off-screen. Keeping it shown avoids the
+/// Windows show animation on the next open; the position check is the source of
+/// truth for whether the popup is open.
 fn hide_tray_menu_window(window: &tauri::WebviewWindow) {
+    dispatch_tray_menu_dom_event(window, TRAY_MENU_HIDDEN_EVENT);
     let _ = window.set_position(LogicalPosition::new(OFFSCREEN, OFFSCREEN));
-    let _ = window.hide();
 }
 
 /// Hide the tray menu directly (no command roundtrip). Used by the blur/resize
@@ -271,8 +268,7 @@ pub fn show_tray_menu_at_physical(app: &AppHandle, physical_x: f64, physical_y: 
         .primary_monitor()
         .ok()
         .flatten()
-        .map(|m| m.scale_factor())
-        .unwrap_or(1.0);
+        .map_or(1.0, |m| m.scale_factor());
     let logical = (physical_x / scale, physical_y / scale);
     if let Some(state) = app.try_state::<TrayMenuAnchor>() {
         if let Ok(mut guard) = state.0.lock() {
@@ -293,8 +289,7 @@ pub fn toggle_tray_menu_at_physical(app: &AppHandle, physical_x: f64, physical_y
     // "is it open?" is a POSITION test, not `is_visible()` (which is always true).
     let on_screen = app
         .get_webview_window(TRAY_MENU_LABEL)
-        .map(|w| is_tray_menu_on_screen(&w))
-        .unwrap_or(false);
+        .is_some_and(|w| is_tray_menu_on_screen(&w));
     if on_screen {
         hide_tray_menu_internal(app);
     } else {
@@ -360,8 +355,7 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
                     // collapses the whole menu — so it still dismisses correctly afterward.
                     let picker_open = app_handle
                         .get_webview_window("device-picker")
-                        .map(|p| p.is_visible().unwrap_or(false))
-                        .unwrap_or(false);
+                        .is_some_and(|p| p.is_visible().unwrap_or(false));
                     if !picker_open {
                         hide_tray_menu_internal(&app_handle);
                     }
@@ -371,16 +365,10 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
         _ => {}
     });
 
-    // PRE-SHOW OFF-SCREEN (the reference parity: applyTrayMenuStyles → win.showInactive()).
-    // Park the window off-screen and show it ONCE at startup so its transparent
-    // webview surface composes and the React tree mounts + reports its real
-    // content size (TRAY_MENU_RESIZE → resize_window → OS resize) while invisible.
-    // By the time the user first right-clicks the tray, the window is already at
-    // its final content size and merely needs repositioning — eliminating both the
-    // OS show animation flicker AND the visible "grow/jump" from the post-mount
-    // resize landing after the window was already on screen.
+    // Park the window off-screen and show it once so WebView2 loads and the
+    // renderer can report its real size before the user's first tray click.
     let _ = window.set_position(LogicalPosition::new(OFFSCREEN, OFFSCREEN));
-    let _ = window.hide();
+    let _ = window.show();
 }
 
 #[cfg(test)]

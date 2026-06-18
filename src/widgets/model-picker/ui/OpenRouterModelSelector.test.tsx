@@ -4,7 +4,6 @@ import {
 	fireEvent,
 	render,
 	screen,
-	waitFor,
 	within,
 } from "../test/render-with-intl";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
@@ -61,8 +60,11 @@ describe("OpenRouterModelSelector", () => {
 			'[data-slot="model-selector-trigger"]',
 		);
 		expect(trigger).not.toBeNull();
+		if (trigger === null) {
+			throw new Error("Expected OpenRouter model selector trigger");
+		}
 
-		fireEvent.click(trigger as Element);
+		fireEvent.click(trigger);
 
 		expect(onOpenDetached).toHaveBeenCalledTimes(1);
 		expect(trigger.getAttribute("data-state")).toBe("closed");
@@ -166,8 +168,7 @@ describe("OpenRouterModelSelector", () => {
 		expect(within(openai).queryByText("2")).toBeNull();
 	});
 
-	test("inline detached mode requests selected model focus on open", async () => {
-		const onOpen = mock(() => undefined);
+	test("inline detached mode rerenders as selection changes", () => {
 		const models = [
 			makeModel({
 				endpoints: [
@@ -193,14 +194,13 @@ describe("OpenRouterModelSelector", () => {
 					inline
 					models={models}
 					onChange={() => undefined}
-					onOpen={onOpen}
 					uiStorageKey="winstt:test:openrouter-inline-focus-ui"
 					value="openai/gpt-4o@deepinfra"
 				/>
 			</TooltipProvider.Provider>,
 		);
 
-		await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(1));
+		expect(screen.getByPlaceholderText("Search models")).not.toBeNull();
 
 		rerender(
 			<TooltipProvider.Provider>
@@ -208,13 +208,12 @@ describe("OpenRouterModelSelector", () => {
 					inline
 					models={models}
 					onChange={() => undefined}
-					onOpen={onOpen}
 					uiStorageKey="winstt:test:openrouter-inline-focus-ui"
 					value="openai/gpt-4o@deepinfra"
 				/>
 			</TooltipProvider.Provider>,
 		);
-		expect(onOpen).toHaveBeenCalledTimes(1);
+		expect(screen.getByPlaceholderText("Search models")).not.toBeNull();
 
 		rerender(
 			<TooltipProvider.Provider>
@@ -222,13 +221,12 @@ describe("OpenRouterModelSelector", () => {
 					inline
 					models={models}
 					onChange={() => undefined}
-					onOpen={onOpen}
 					uiStorageKey="winstt:test:openrouter-inline-focus-ui"
 					value="anthropic/claude-3-5-sonnet"
 				/>
 			</TooltipProvider.Provider>,
 		);
-		await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(2));
+		expect(screen.getByPlaceholderText("Search models")).not.toBeNull();
 	});
 });
 

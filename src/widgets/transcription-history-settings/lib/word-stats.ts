@@ -1,5 +1,6 @@
 import { buildTranscriptDiff } from "@/shared/lib/transcript-diff";
 import type { TranscriptionHistoryEntry } from "../model/history-store";
+import { getEntryTranscriptDiff } from "./transcript-diff-cache";
 
 const MS_PER_MIN = 60 * 1000;
 const MIN_DURATION_FOR_WPM_MS = 500;
@@ -97,12 +98,46 @@ export function filterEntriesByDateRange(
 		return entries;
 	}
 	const { fromTs, toTs } = bounds;
-	return entries.filter((e) => e.timestamp >= fromTs && e.timestamp <= toTs);
+	return cachedDateRange(entries, fromTs, toTs);
 }
+
+const rangeCache = new WeakMap<
+	TranscriptionHistoryEntry[],
+	Map<string, TranscriptionHistoryEntry[]>
+>();
+
+function cachedDateRange(
+	entries: TranscriptionHistoryEntry[],
+	fromTs: number,
+	toTs: number,
+): TranscriptionHistoryEntry[] {
+	const key = `${fromTs}:${toTs}`;
+	let byRange = rangeCache.get(entries);
+	if (!byRange) {
+		byRange = new Map();
+		rangeCache.set(entries, byRange);
+	}
+	const cached = byRange.get(key);
+	if (cached) {
+		return cached;
+	}
+	const filtered = entries.filter(
+		(e) => e.timestamp >= fromTs && e.timestamp <= toTs,
+	);
+	byRange.set(key, filtered);
+	return filtered;
+}
+
+const aggregateCache = new WeakMap<TranscriptionHistoryEntry[], AggregateStats>();
 
 export function aggregate(
 	entries: TranscriptionHistoryEntry[],
 ): AggregateStats {
+	const cached = aggregateCache.get(entries);
+	if (cached) {
+		return cached;
+	}
+
 	let totalWords = 0;
 	let totalDurationMs = 0;
 	let aiFixes = 0;
@@ -119,14 +154,23 @@ export function aggregate(
 			typeof entry.originalText === "string" &&
 			entry.originalText.length > 0
 		) {
-			const corrected = wordsCorrectedBetween(entry.originalText, entry.text);
+			const diff = getEntryTranscriptDiff(entry);
+			let corrected = 0;
+			if (diff !== null) {
+				for (const change of diff.changes) {
+					corrected += Math.max(
+						countWords(change.before),
+						countWords(change.after),
+					);
+				}
+			}
 			if (corrected > 0) {
 				aiFixes += 1;
 				wordsCorrected += corrected;
 			}
 		}
 	}
-	return {
+	const stats = {
 		aiFixes,
 		count: entries.length,
 		dictionaryFixes,
@@ -135,6 +179,8 @@ export function aggregate(
 		wordsCorrected,
 		wpm: wordsPerMinute(totalWords, totalDurationMs),
 	};
+	aggregateCache.set(entries, stats);
+	return stats;
 }
 
 export function wordsPerMinute(words: number, durationMs: number): number {
@@ -178,6 +224,23 @@ export function sumWordsByDay(
 	return totals;
 }
 
+const wordsByDayCache = new WeakMap<
+	TranscriptionHistoryEntry[],
+	Map<string, number>
+>();
+
+function cachedWordsByDay(
+	entries: TranscriptionHistoryEntry[],
+): Map<string, number> {
+	const cached = wordsByDayCache.get(entries);
+	if (cached) {
+		return cached;
+	}
+	const totals = sumWordsByDay(entries);
+	wordsByDayCache.set(entries, totals);
+	return totals;
+}
+
 /**
  * Returns midnight (local time) of the given timestamp. Splitting this out
  * keeps `buildHeatmap` linear and easy to reason about.
@@ -210,12 +273,29 @@ export function buildHeatmap(
 	entries: TranscriptionHistoryEntry[],
 	now: number = Date.now(),
 ): DayBucket[] {
-	const totals = sumWordsByDay(entries);
 	const today = startOfLocalDay(now);
-	return Array.from({ length: HEATMAP_DAYS }, (_, i) =>
+	const todayTs = today.getTime();
+	const cached = heatmapCache.get(entries)?.get(todayTs);
+	if (cached) {
+		return cached;
+	}
+	const totals = cachedWordsByDay(entries);
+	const buckets = Array.from({ length: HEATMAP_DAYS }, (_, i) =>
 		makeBucket(today, HEATMAP_DAYS - 1 - i, totals),
 	);
+	let byDay = heatmapCache.get(entries);
+	if (!byDay) {
+		byDay = new Map();
+		heatmapCache.set(entries, byDay);
+	}
+	byDay.set(todayTs, buckets);
+	return buckets;
 }
+
+const heatmapCache = new WeakMap<
+	TranscriptionHistoryEntry[],
+	Map<number, DayBucket[]>
+>();
 
 type IntensityLevel = 0 | 1 | 2 | 3 | 4;
 

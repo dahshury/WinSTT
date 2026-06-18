@@ -3,23 +3,19 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import {
-	type ReactNode,
-	useEffect,
-	useMemo,
-	useReducer,
-	useState,
-} from "react";
+import { type ReactNode, useEffect, useReducer, useState } from "react";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { Button } from "@/shared/ui/button";
 import {
-	ALL_AUTHORS_RAIL_ID,
-	buildAllAuthorsRailItem,
 	GroupRail,
 	type GroupRailItem,
 	RailIconChip,
 } from "../../core/GroupRail";
+import {
+	ALL_AUTHORS_RAIL_ID,
+	buildAllAuthorsRailItem,
+} from "../../core/group-rail-items";
 import { ModelPicker } from "../../core/ModelPicker";
 import { useFavoriteSet } from "../../core/use-favorite-set";
 import { useModelPickerCloseGuard } from "../../lib/model-picker-close-guard";
@@ -241,6 +237,11 @@ function DefaultTrigger({
 	);
 }
 
+// Text search delegated to Base UI's filtering pipeline (groups + keyboard).
+const filter = (model: TtsModelInfo, query: string) => {
+	return matchesFuzzySearch(buildTtsSearchCorpus(model), query);
+};
+
 /**
  * Top-level TTS voice/model picker — the TTS analogue of `SttModelSelector`.
  * Composes the shared {@link ModelPicker} shell with the engine-grouped
@@ -296,10 +297,7 @@ export function TtsModelSelector({
 	const { favorites: favoriteAuthors, toggleFavorite: toggleAuthorFavorite } =
 		useFavoriteSet("winstt:tts-favorite-authors");
 
-	const selectedModel = useMemo(
-		() => models.find((m) => m.id === value) ?? null,
-		[models, value],
-	);
+	const selectedModel = models.find((m) => m.id === value) ?? null;
 	// Computed each render (not memoized): `isFavorite` is a fresh closure per
 	// render, so memoizing on it would recompute anyway — mirrors the STT picker.
 	const [uiState, dispatch] = useReducer(uiReducer, undefined, () => ({
@@ -311,11 +309,13 @@ export function TtsModelSelector({
 		open: false,
 	}));
 	const { activeRailId, open } = uiState;
+	const effectiveOpen = inline ? true : open;
+	const shouldBuildList = effectiveOpen;
 	useEffect(() => {
 		writePersistedSelectorState(TTS_SELECTOR_UI_STORAGE_KEY, { activeRailId });
 	}, [activeRailId]);
 
-	const engineGroups = groupModelsByEngine(models);
+	const engineGroups = shouldBuildList ? groupModelsByEngine(models) : [];
 	const allGroups: TtsListGroup[] = withTtsFavoritesGroup(
 		engineGroups,
 		isFavorite,
@@ -338,11 +338,6 @@ export function TtsModelSelector({
 		onChange(modelId, quantization);
 	};
 
-	// Text search delegated to Base UI's filtering pipeline (groups + keyboard).
-	const filter = (model: TtsModelInfo, query: string) => {
-		return matchesFuzzySearch(buildTtsSearchCorpus(model), query);
-	};
-
 	return (
 		<>
 			<ModelPicker<TtsModelInfo, TtsModelInfo | null>
@@ -351,22 +346,24 @@ export function TtsModelSelector({
 				inline={inline}
 				isItemEqualToValue={(a, b) => a?.id === b?.id}
 				isLoading={isLoading}
-				items={groups}
+				items={shouldBuildList ? groups : []}
 				itemToStringLabel={(item) => item?.displayName ?? ""}
 				list={
-					<TtsModelList
-						currentQuantization={currentQuantization}
-						getDownloadSnapshot={onDownloadSnapshot}
-						hasActiveFilters={false}
-						isFavorite={isFavorite}
-						onDownloadAction={onDownloadAction}
-						onRequestDeleteQuant={handleRequestDelete}
-						onSelect={handleSelect}
-						onToggleFavorite={toggleFavorite}
-						selectedId={value}
-						statesById={statesById}
-						visibleModelCount={visibleModelCount}
-					/>
+					shouldBuildList ? (
+						<TtsModelList
+							currentQuantization={currentQuantization}
+							getDownloadSnapshot={onDownloadSnapshot}
+							hasActiveFilters={false}
+							isFavorite={isFavorite}
+							onDownloadAction={onDownloadAction}
+							onRequestDeleteQuant={handleRequestDelete}
+							onSelect={handleSelect}
+							onToggleFavorite={toggleFavorite}
+							selectedId={value}
+							statesById={statesById}
+							visibleModelCount={visibleModelCount}
+						/>
+					) : null
 				}
 				onOpenChange={openGuard.handleOpenChange}
 				onValueChange={(next) => {
@@ -379,7 +376,7 @@ export function TtsModelSelector({
 						handleSelect(next.id, fallback);
 					}
 				}}
-				open={inline ? true : open}
+				open={effectiveOpen}
 				popupHeightClass={popupHeightClass}
 				popupRef={(node) => {
 					openGuard.setPopupNode(node);
@@ -388,7 +385,7 @@ export function TtsModelSelector({
 				searchPlaceholder="Search voice models"
 				selectedItemKey={value || undefined}
 				sidebarSlot={
-					railItems.length > 1 ? (
+					shouldBuildList && railItems.length > 1 ? (
 						<GroupRail
 							activeId={activeRailId}
 							favorites={favoriteAuthors}

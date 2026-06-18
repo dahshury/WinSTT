@@ -8,7 +8,7 @@ import {
 import {
 	createContext,
 	type HTMLAttributes,
-	type MouseEvent as ReactMouseEvent,
+	type PointerEvent as ReactPointerEvent,
 	type ReactNode,
 	type Ref,
 	use,
@@ -140,11 +140,7 @@ export function CheckboxGroup({
 		setActiveIndex,
 	} = useProximityHover(containerRef);
 
-	// Re-measure on children identity change (rows added/removed). `measureItems`
-	// is exposed as a stable function reference by `useProximityHover` (pinned
-	// once via useRef inside the hook), so including it in deps is cheap and
-	// won't thrash the effect.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `children` is the trigger we want — biome only sees it as unused because the body calls measureItems(), not children directly
+	// Re-measure on children identity change (rows added/removed).
 	useEffect(() => {
 		measureItems();
 	}, [children, measureItems]);
@@ -409,7 +405,7 @@ export function CheckboxItem({
 		onToggle();
 	};
 
-	const handleRowClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+	const handleRowPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
 		const target = event.target;
 		if (target instanceof HTMLInputElement) {
 			return;
@@ -431,6 +427,8 @@ export function CheckboxItem({
 		// Row text clicks focus the visible checkbox without scrolling; direct
 		// checkbox clicks still go through Base UI's own controlled path.
 		// biome-ignore lint/a11y/noStaticElementInteractions: full-row activation mirrors a native checkbox label; the Base UI checkbox owns the a11y semantics
+		// react-doctor-disable-next-line react-doctor/no-static-element-interactions -- pointer-forwarding label-proxy wrapper: onPointerUp skips the interactive checkbox descendant and just redirects row-text clicks to the Base UI Checkbox.Root, which already carries role="checkbox", aria-label, and full keyboard support; adding role+tabIndex would create a spurious competing tab stop.
+		// react-doctor-disable-next-line react-doctor/click-events-have-key-events -- same label-proxy wrapper: keyboard activation is owned by the inner Checkbox.Root; the row only forwards pointer events to mirror a native checkbox label.
 		<div
 			aria-disabled={disabled || undefined}
 			className={cn(
@@ -439,7 +437,7 @@ export function CheckboxItem({
 				className,
 			)}
 			data-proximity-index={disabled ? undefined : index}
-			onClick={handleRowClick}
+			onPointerUp={handleRowPointerUp}
 			ref={setRef}
 		>
 			<Checkbox.Root

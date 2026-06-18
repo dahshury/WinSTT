@@ -18,6 +18,8 @@ function generateSpeakingSequence(columns: number): number[][] {
 	return [new Array(columns).fill(0).map((_, idx) => idx)];
 }
 
+const sequenceCache = new Map<string, number[][]>();
+
 // Dispatch table keeps buildSequence at CC=2 (just the `??` fallback) instead
 // of a ladder of `if`s. New states only need a row here.
 const SEQUENCE_BUILDERS: Partial<
@@ -31,7 +33,14 @@ const SEQUENCE_BUILDERS: Partial<
 };
 
 function buildSequence(state: AgentState, columns: number): number[][] {
-	return SEQUENCE_BUILDERS[state]?.(columns) ?? [[]];
+	const key = `${state}:${columns}`;
+	const cached = sequenceCache.get(key);
+	if (cached) {
+		return cached;
+	}
+	const sequence = SEQUENCE_BUILDERS[state]?.(columns) ?? [[]];
+	sequenceCache.set(key, sequence);
+	return sequence;
 }
 
 export function useBarAnimator(

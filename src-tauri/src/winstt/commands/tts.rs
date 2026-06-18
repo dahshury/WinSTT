@@ -536,10 +536,7 @@ fn to_model_info(m: &TtsModelEntry) -> TtsModelInfoDto {
     for q in m.quants {
         size_by.insert(q.id.to_string(), q.size_bytes);
     }
-    let default_size = m
-        .quant(m.default_quant())
-        .map(|q| q.size_bytes)
-        .unwrap_or(0);
+    let default_size = m.quant(m.default_quant()).map_or(0, |q| q.size_bytes);
     TtsModelInfoDto {
         id: m.id.to_string(),
         engine: m.engine.as_str().to_string(),
@@ -575,7 +572,7 @@ fn to_model_state(m: &TtsModelEntry, dl: &TtsDownloadManager) -> TtsModelStateDt
         );
     }
     let eff = m.default_quant().to_string();
-    let estimated_bytes = m.quant(&eff).map(|q| q.size_bytes).unwrap_or(0);
+    let estimated_bytes = m.quant(&eff).map_or(0, |q| q.size_bytes);
     TtsModelStateDto {
         id: m.id.to_string(),
         cache_by_quantization: by_quant,

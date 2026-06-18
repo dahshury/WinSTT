@@ -2,9 +2,10 @@ import {
 	type AnimationPlaybackControlsWithThen,
 	animate,
 	useMotionValue,
+	useMotionValueEvent,
 	type ValueAnimationTransition,
 } from "motion/react";
-import { useCallback, useEffect, useRef } from "react";
+import { useRef } from "react";
 import type { Uniforms } from "../ui/ReactShaderToy";
 
 /**
@@ -25,23 +26,20 @@ export function useRefAnimatedValue(
 	const motionValue = useMotionValue(initialValue);
 	const controlsRef = useRef<AnimationPlaybackControlsWithThen | null>(null);
 
-	// Write every motion value change directly into the shared uniforms ref
-	useEffect(() => {
-		const unsubscribe = motionValue.on("change", (v: number) => {
-			const uniforms = uniformsRef.current;
-			if (uniforms?.[uniformName]) {
-				uniforms[uniformName] = { type: uniformType, value: v };
-			}
-		});
-		return unsubscribe;
-	}, [motionValue, uniformsRef, uniformName, uniformType]);
+	// Write every motion value change directly into the shared uniforms ref.
+	useMotionValueEvent(motionValue, "change", (v: number) => {
+		const uniforms = uniformsRef.current;
+		if (uniforms?.[uniformName]) {
+			uniforms[uniformName] = { type: uniformType, value: v };
+		}
+	});
 
-	const animateFn = useCallback(
-		(targetValue: number | number[], transition: ValueAnimationTransition) => {
-			controlsRef.current = animate(motionValue, targetValue, transition);
-		},
-		[motionValue],
-	);
+	const animateFn = (
+		targetValue: number | number[],
+		transition: ValueAnimationTransition,
+	) => {
+		controlsRef.current = animate(motionValue, targetValue, transition);
+	};
 
 	return { motionValue, controls: controlsRef, animate: animateFn };
 }

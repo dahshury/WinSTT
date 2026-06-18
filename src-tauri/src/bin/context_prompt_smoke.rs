@@ -28,6 +28,42 @@ struct ContextFixture {
     example_text_before: String,
 }
 
+type SmokeResult<T> = Result<T, SmokeError>;
+
+#[derive(Debug, thiserror::Error)]
+enum SmokeError {
+    #[error("{0}")]
+    Message(String),
+
+    #[error(transparent)]
+    Io(#[from] io::Error),
+
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+
+    #[error(transparent)]
+    ParseInt(#[from] std::num::ParseIntError),
+}
+
+impl From<String> for SmokeError {
+    fn from(value: String) -> Self {
+        Self::Message(value)
+    }
+}
+
+impl From<&'static str> for SmokeError {
+    fn from(value: &'static str) -> Self {
+        Self::Message(value.to_string())
+    }
+}
+
+fn static_regex(pattern: &str) -> Regex {
+    match Regex::new(pattern) {
+        Ok(regex) => regex,
+        Err(err) => unreachable!("invalid static regex {pattern:?}: {err}"),
+    }
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("{err}");
@@ -35,7 +71,7 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
+fn run() -> SmokeResult<()> {
     let args = parse_args()?;
     if let Some(path) = args.context_fixtures.as_deref() {
         return run_context_fixtures(path);
@@ -66,7 +102,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
+fn parse_args() -> SmokeResult<Args> {
     let mut args = Args::default();
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -111,7 +147,7 @@ fn read_input(path: Option<&PathBuf>) -> io::Result<String> {
     Ok(raw.trim_start_matches('\u{feff}').to_string())
 }
 
-fn run_context_fixtures(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn run_context_fixtures(path: &Path) -> SmokeResult<()> {
     let source = fs::read_to_string(path)?;
     let fixtures = parse_context_fixtures(&source)?;
     let mut items = Vec::new();
@@ -162,7 +198,7 @@ fn run_context_fixtures(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_context_fixtures(source: &str) -> Result<Vec<ContextFixture>, Box<dyn std::error::Error>> {
+fn parse_context_fixtures(source: &str) -> SmokeResult<Vec<ContextFixture>> {
     let blocks = extract_ts_object_blocks(source, "APP_FIXTURES")?;
     let mut fixtures = Vec::with_capacity(blocks.len());
     for (i, block) in blocks.iter().enumerate() {
@@ -180,10 +216,7 @@ fn parse_context_fixtures(source: &str) -> Result<Vec<ContextFixture>, Box<dyn s
     Ok(fixtures)
 }
 
-fn extract_ts_object_blocks(
-    source: &str,
-    array_name: &str,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+fn extract_ts_object_blocks(source: &str, array_name: &str) -> SmokeResult<Vec<String>> {
     let array_pos = source
         .find(array_name)
         .ok_or_else(|| format!("{array_name} array not found"))?;
@@ -246,7 +279,7 @@ fn extract_ts_object_blocks(
     Ok(blocks)
 }
 
-fn read_ts_string_field(block: &str, key: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn read_ts_string_field(block: &str, key: &str) -> SmokeResult<String> {
     let value_start = field_value_start(block, key)?;
     let quote = block[value_start..]
         .chars()
@@ -277,7 +310,7 @@ fn read_ts_string_field(block: &str, key: &str) -> Result<String, Box<dyn std::e
     Err(format!("{key} string literal is unterminated").into())
 }
 
-fn read_ts_number_field(block: &str, key: &str) -> Result<u64, Box<dyn std::error::Error>> {
+fn read_ts_number_field(block: &str, key: &str) -> SmokeResult<u64> {
     let value_start = field_value_start(block, key)?;
     let value = block[value_start..]
         .chars()
@@ -289,7 +322,7 @@ fn read_ts_number_field(block: &str, key: &str) -> Result<u64, Box<dyn std::erro
     Ok(value.parse()?)
 }
 
-fn field_value_start(block: &str, key: &str) -> Result<usize, Box<dyn std::error::Error>> {
+fn field_value_start(block: &str, key: &str) -> SmokeResult<usize> {
     let key_pos = block
         .find(key)
         .ok_or_else(|| format!("{key} field not found"))?;
@@ -350,16 +383,14 @@ fn fixture_raw_snapshot(fixture: &ContextFixture) -> String {
 }
 
 fn fixture_window_title(fixture: &ContextFixture) -> String {
-    Regex::new(r#"(?is)<window\b[^>]*>"#)
-        .unwrap()
+    static_regex(r#"(?is)<window\b[^>]*>"#)
         .find(&fixture.example_ax_html)
         .and_then(|tag| attr_value(tag.as_str(), "name"))
-        .map(|value| decode_xml_entities(&value))
-        .unwrap_or_else(|| fixture.app.clone())
+        .map_or_else(|| fixture.app.clone(), |value| decode_xml_entities(&value))
 }
 
 fn focused_element_name(ax_html: &str) -> Option<String> {
-    let tag_re = Regex::new(r#"(?is)<[^>]*\bfocus=["']1["'][^>]*>"#).unwrap();
+    let tag_re = static_regex(r#"(?is)<[^>]*\bfocus=["']1["'][^>]*>"#);
     for tag in tag_re.find_iter(ax_html) {
         if let Some(value) = attr_value(tag.as_str(), "name") {
             return Some(decode_xml_entities(&value));
@@ -412,10 +443,9 @@ fn infer_fixture_url(fixture: &ContextFixture) -> String {
 }
 
 fn extract_known_url(value: &str) -> Option<String> {
-    let re = Regex::new(
+    let re = static_regex(
         r#"(?i)\b((?:https?://)?(?:mail\.google\.com|messenger\.com|facebook\.com|chatgpt\.com|claude\.ai|x\.com|twitter\.com|github\.com|instagram\.com|canva\.com|docs\.google\.com|figma\.com)[^<>"'\s]*)"#,
-    )
-    .unwrap();
+    );
     let raw = re.captures(value)?.get(1)?.as_str().trim();
     if raw.starts_with("http://") || raw.starts_with("https://") {
         Some(raw.to_string())
@@ -725,7 +755,7 @@ fn build_report(
 }
 
 fn sanitize_for_report(value: &str) -> String {
-    let email_re = Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}").unwrap();
+    let email_re = static_regex(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}");
     email_re
         .replace_all(value, "[email]")
         .split_whitespace()
@@ -748,12 +778,18 @@ fn line_count(value: Option<&str>) -> usize {
 }
 
 fn speaker_like_line_count(value: &str) -> usize {
-    let re = Regex::new(r"(?m)^\s*(?:@?[\p{L}\p{N} _.'-]{2,40}|You|Me):\s+\S").unwrap();
+    let re = static_regex(r"(?m)^\s*(?:@?[\p{L}\p{N} _.'-]{2,40}|You|Me):\s+\S");
     re.find_iter(value).count()
 }
 
 fn count_regex(value: &str, pattern: &str) -> usize {
-    Regex::new(pattern).unwrap().find_iter(value).count()
+    match Regex::new(pattern) {
+        Ok(regex) => regex.find_iter(value).count(),
+        Err(err) => {
+            eprintln!("invalid smoke-report regex {pattern:?}: {err}");
+            0
+        }
+    }
 }
 
 fn login_or_skeleton_noise_present(value: &str) -> bool {
@@ -766,7 +802,10 @@ fn login_or_skeleton_noise_present(value: &str) -> bool {
         || (lower.contains("loading") && lower.contains("please wait"))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "quality report builder intentionally keeps the smoke-test fields flat"
+)]
 fn build_quality(
     label: &str,
     element: &str,
@@ -864,14 +903,16 @@ fn is_chat_like_label(label: &str) -> bool {
 }
 
 fn looks_like_composer_field(element: &str) -> bool {
-    Regex::new(
+    static_regex(
         r"(?i)\b(?:message|reply|comment|compose|write|type a message|send a chat|ask|prompt|post|tweet|body)\b",
     )
-    .unwrap()
     .is_match(element)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "quality warning classifier intentionally keeps the smoke-test fields flat"
+)]
 fn quality_warnings(
     prompt_json_valid: bool,
     prompt_empty: bool,
@@ -1033,7 +1074,10 @@ mod tests {
 
         // Valid JSON, but the code and the OTP phrasing are gone.
         assert!(prompt_json.is_ok());
-        assert!(!context_text.contains("123456"), "OTP code leaked: {context_text}");
+        assert!(
+            !context_text.contains("123456"),
+            "OTP code leaked: {context_text}"
+        );
         assert!(
             !context_text.to_lowercase().contains("verification code"),
             "OTP phrase leaked: {context_text}"

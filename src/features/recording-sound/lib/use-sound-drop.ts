@@ -1,4 +1,4 @@
-import { type DragEvent, useCallback, useState } from "react";
+import { type DragEvent, useState } from "react";
 import type { useTranslations } from "use-intl";
 import { getFilePath } from "@/shared/api/ipc-client";
 
@@ -104,37 +104,34 @@ export function useSoundDrop({
 	const [dragOver, setDragOver] = useState(false);
 	const [dropError, setDropError] = useState("");
 
-	const handleDrop = useCallback(
-		async (e: DragEvent<HTMLElement>) => {
-			e.preventDefault();
-			setDragOver(false);
-			setDropError("");
-			const file = e.dataTransfer.files[0];
-			if (!file) {
-				return;
-			}
-			const result = await validateDroppedFile(file, t);
-			if (!result.ok) {
-				setDropError(result.error);
-				return;
-			}
-			await onAdd(result.sourcePath, result.displayName);
-		},
-		[onAdd, t],
-	);
+	const handleDrop = async (e: DragEvent<HTMLElement>) => {
+		e.preventDefault();
+		setDragOver(false);
+		setDropError("");
+		const file = e.dataTransfer.files[0];
+		if (!file) {
+			return;
+		}
+		const result = await validateDroppedFile(file, t);
+		if (!result.ok) {
+			setDropError(result.error);
+			return;
+		}
+		await onAdd(result.sourcePath, result.displayName);
+	};
 
-	const handleDragOver = useCallback((e: DragEvent<HTMLElement>) => {
+	const handleDragOver = (e: DragEvent<HTMLElement>) => {
 		e.preventDefault();
 		setDragOver(true);
-	}, []);
+	};
 
-	const handleDragLeave = useCallback(() => {
+	const handleDragLeave = () => {
 		setDragOver(false);
-	}, []);
+	};
 
-	const resetError = useCallback(() => {
+	const resetError = () => {
 		setDropError("");
-	}, []);
+	};
 
 	return {
 		dragOver,

@@ -148,10 +148,10 @@ export function AudioVisualizerWave({
 	// Keep non-animated uniforms in sync with props (post-render mutation; ReactShaderToy
 	// reads uniformsRef on each rAF tick, so the next frame picks up the new values).
 	useEffect(() => {
-		uniformsRef.current.uLineWidth = { type: "1f", value: _lineWidth };
-		uniformsRef.current.uSmoothing = { type: "1f", value: smoothing };
-		uniformsRef.current.uColor = { type: "3fv", value: rgbColor };
-		uniformsRef.current.uColorShift = { type: "1f", value: colorShift };
+		uniformsRef.current["uLineWidth"] = { type: "1f", value: _lineWidth };
+		uniformsRef.current["uSmoothing"] = { type: "1f", value: smoothing };
+		uniformsRef.current["uColor"] = { type: "3fv", value: rgbColor };
+		uniformsRef.current["uColorShift"] = { type: "1f", value: colorShift };
 	}, [_lineWidth, smoothing, rgbColor, colorShift]);
 
 	// Hook up motion-value-driven animations that write to uniformsRef (zero re-renders)
@@ -175,8 +175,6 @@ export function AudioVisualizerWave({
 			<ReactShaderToy
 				devicePixelRatio={globalThis.devicePixelRatio ?? 1}
 				fs={waveShaderSource}
-				onError={(error) => console.error("Shader error:", error)}
-				onWarning={(warning) => console.warn("Shader warning:", warning)}
 				style={{ width: "100%", height: "100%" }}
 				uniforms={getUniforms}
 			/>

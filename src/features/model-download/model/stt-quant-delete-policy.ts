@@ -63,9 +63,14 @@ function cachedQuantizations(entry: ModelStateEntry | undefined): string[] {
 	if (!entry) {
 		return [];
 	}
-	const perQuant = Object.entries(entry.cache_by_quantization ?? {})
-		.filter(([, cache]) => cache.state === "cached")
-		.map(([quantization]) => quantization);
+	const perQuant: string[] = [];
+	for (const [quantization, cache] of Object.entries(
+		entry.cache_by_quantization ?? {},
+	)) {
+		if (cache.state === "cached") {
+			perQuant.push(quantization);
+		}
+	}
 	if (perQuant.length > 0) {
 		return perQuant;
 	}
@@ -187,8 +192,11 @@ function pickPreviousTarget(
 	targets: readonly ({ model: ModelInfo } & SttSwitchTarget)[],
 	previousModelIds: readonly string[],
 ): ({ model: ModelInfo } & SttSwitchTarget) | null {
+	const byModelId = new Map(
+		targets.map((candidate) => [candidate.modelId, candidate]),
+	);
 	for (const id of previousModelIds) {
-		const target = targets.find((candidate) => candidate.modelId === id);
+		const target = byModelId.get(id);
 		if (target) {
 			return target;
 		}
@@ -208,21 +216,25 @@ function stripModel(
 }
 
 function pickReplacement(args: PickReplacementArgs): SttSwitchTarget | null {
-	const targets = args.models
-		.filter(
-			(model) =>
-				model.available !== false &&
-				isVisibleSttModel(model) &&
-				!args.excludeIds.has(model.id) &&
-				args.filter(model),
-		)
-		.map((model) =>
-			targetForModel(model, args.statesById, args.preferredQuantization),
-		)
-		.filter(
-			(target): target is { model: ModelInfo } & SttSwitchTarget =>
-				target !== null,
+	const targets: ({ model: ModelInfo } & SttSwitchTarget)[] = [];
+	for (const model of args.models) {
+		if (
+			model.available === false ||
+			!isVisibleSttModel(model) ||
+			args.excludeIds.has(model.id) ||
+			!args.filter(model)
+		) {
+			continue;
+		}
+		const target = targetForModel(
+			model,
+			args.statesById,
+			args.preferredQuantization,
 		);
+		if (target !== null) {
+			targets.push(target);
+		}
+	}
 	const sorted = targets.toSorted(
 		compareBySimilarity(args.sourceModel, args.statesById),
 	);

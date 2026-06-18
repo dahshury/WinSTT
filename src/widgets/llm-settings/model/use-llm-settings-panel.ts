@@ -32,6 +32,26 @@ import type {
 	OpenRouterCatalogState,
 } from "../ui/types";
 
+const resolveOpenRouterEnablePatch = (
+	currentOpenRouterModel: string,
+): Partial<LlmFeatureDraft> =>
+	currentOpenRouterModel.length > 0
+		? { enabled: true }
+		: { openrouterModel: DEFAULT_OPENROUTER_MODEL, enabled: true };
+
+// Open the model-picker modal (rendered at the SettingsPage view level, since
+// the dialog is a widget and widgets can't import widgets). Toggling a feature
+// on with no installed model routes here; the picker's install callback then
+// commits `enabled: true` — the toggle never enables on its own.
+const setShowModelPickerFor =
+	(feature: "dictation" | "transforms") => (v: boolean) => {
+		if (v) {
+			useLlmModelPickerStore.getState().openFor(feature, true);
+		} else {
+			useLlmModelPickerStore.getState().close();
+		}
+	};
+
 /**
  * Owns every store subscription, derived snapshot, effect and handler the
  * panel needs. Extracted out of `LlmSettingsPanel` so the component stays a
@@ -321,13 +341,6 @@ export function useLlmSettingsPanel() {
 		return {};
 	};
 
-	const resolveOpenRouterEnablePatch = (
-		currentOpenRouterModel: string,
-	): Partial<LlmFeatureDraft> =>
-		currentOpenRouterModel.length > 0
-			? { enabled: true }
-			: { openrouterModel: DEFAULT_OPENROUTER_MODEL, enabled: true };
-
 	const handleOllamaStarted = () => {
 		setShowOllamaDialog(false);
 		scanOllama();
@@ -375,18 +388,6 @@ export function useLlmSettingsPanel() {
 			setShowApiKeyDialog(v);
 			if (v) {
 				setPendingFeature(feature);
-			}
-		};
-	// Open the model-picker modal (rendered at the SettingsPage view level, since
-	// the dialog is a widget and widgets can't import widgets). Toggling a feature
-	// on with no installed model routes here; the picker's install callback then
-	// commits `enabled: true` — the toggle never enables on its own.
-	const setShowModelPickerFor =
-		(feature: "dictation" | "transforms") => (v: boolean) => {
-			if (v) {
-				useLlmModelPickerStore.getState().openFor(feature, true);
-			} else {
-				useLlmModelPickerStore.getState().close();
 			}
 		};
 

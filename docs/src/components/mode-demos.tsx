@@ -147,6 +147,17 @@ const FEED_LINES: { who: 1 | 2; text: string }[] = [
   { who: 2, text: "Let's pull that into the board deck." },
 ];
 
+const MARQUEE_FEED_LINES = [
+  ...FEED_LINES.map((line) => ({
+    ...line,
+    key: `first-${line.who}-${line.text}`,
+  })),
+  ...FEED_LINES.map((line) => ({
+    ...line,
+    key: `second-${line.who}-${line.text}`,
+  })),
+];
+
 function FeedLine({ who, text }: { who: 1 | 2; text: string }) {
   return (
     <span className="md-feed-line">
@@ -186,13 +197,8 @@ function ListenScene() {
 
       <div className="md-feed">
         <div className="md-feed-track">
-          {[...FEED_LINES, ...FEED_LINES].map((l, i) => (
-            <FeedLine
-              // biome-ignore lint/suspicious/noArrayIndexKey: fixed, duplicated marquee list
-              key={`fl-${i}`}
-              who={l.who}
-              text={l.text}
-            />
+          {MARQUEE_FEED_LINES.map((line) => (
+            <FeedLine key={line.key} who={line.who} text={line.text} />
           ))}
         </div>
       </div>
@@ -284,7 +290,6 @@ export function ModeDemo({ mode, caption }: ModeDemoProps) {
     >
       <div
         className="md-card"
-        role="img"
         aria-label={`${meta.label} — ${meta.tagline}`}
       >
         <div className="md-head">

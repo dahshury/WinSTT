@@ -91,6 +91,12 @@ const INITIAL_TRAY_MENU_STATE: TrayMenuState = {
 	receivePrereleaseUpdates: false,
 };
 
+const TRAY_MENU_OPEN_SHELL_CLASS = "tray-menu-open-shell";
+const TRAY_MENU_OPEN_ANIMATION_CLASS = "tray-menu-open-enter";
+const TRAY_MENU_WILL_OPEN_EVENT = "winstt:tray-menu-will-open";
+const TRAY_MENU_OPENED_EVENT = "winstt:tray-menu-opened";
+const TRAY_MENU_HIDDEN_EVENT = "winstt:tray-menu-hidden";
+
 function isEditableShortcutTarget(target: EventTarget | null): boolean {
 	if (!(target instanceof HTMLElement)) {
 		return false;
@@ -103,7 +109,37 @@ function isEditableShortcutTarget(target: EventTarget | null): boolean {
 	);
 }
 
-export function TrayMenu() {
+const closeTrayMenu = () => windowCloseNamed("tray-menu");
+
+const handleOpenContextPlayground = () => {
+	windowOpenContextPlayground();
+};
+
+const handleQuit = () => {
+	windowQuitApp();
+};
+
+function handleShowWindow(): void {
+	windowShowMain();
+	closeTrayMenu();
+}
+
+function handleSettings(): void {
+	trayWindowOpenSettings();
+	closeTrayMenu();
+}
+
+async function handleCopyLastTranscript(): Promise<void> {
+	await copyLastTranscript();
+	closeTrayMenu();
+}
+
+async function handleTranscribeFile(): Promise<void> {
+	await fileQueuePickAndEnqueue();
+	closeTrayMenu();
+}
+
+function useTrayMenuRender() {
 	const [state, dispatch] = useReducer(
 		trayMenuReducer,
 		INITIAL_TRAY_MENU_STATE,
@@ -130,6 +166,35 @@ export function TrayMenu() {
 	}, [refreshModelState]);
 
 	useEffect(() => {
+		const resetOpenAnimation = () => {
+			const el = containerRef.current;
+			if (!el) {
+				return;
+			}
+			el.classList.remove(TRAY_MENU_OPEN_ANIMATION_CLASS);
+		};
+
+		const playOpenAnimation = () => {
+			const el = containerRef.current;
+			if (!el) {
+				return;
+			}
+			el.classList.remove(TRAY_MENU_OPEN_ANIMATION_CLASS);
+			void el.offsetWidth;
+			el.classList.add(TRAY_MENU_OPEN_ANIMATION_CLASS);
+		};
+
+		window.addEventListener(TRAY_MENU_WILL_OPEN_EVENT, resetOpenAnimation);
+		window.addEventListener(TRAY_MENU_OPENED_EVENT, playOpenAnimation);
+		window.addEventListener(TRAY_MENU_HIDDEN_EVENT, resetOpenAnimation);
+		return () => {
+			window.removeEventListener(TRAY_MENU_WILL_OPEN_EVENT, resetOpenAnimation);
+			window.removeEventListener(TRAY_MENU_OPENED_EVENT, playOpenAnimation);
+			window.removeEventListener(TRAY_MENU_HIDDEN_EVENT, resetOpenAnimation);
+		};
+	}, []);
+
+	useEffect(() => {
 		settingsLoad().then((settings) => {
 			dispatch({
 				type: "load-settings",
@@ -146,8 +211,6 @@ export function TrayMenu() {
 		const unsubscribeConn = onConnectionChange((connected) => {
 			dispatch({ type: "set-connected", value: connected });
 		});
-		// The device popup and About panel write settings from other windows; mirror
-		// the relevant fields while the persistent tray window is up.
 		const unsubscribeSettings = onSettingsChanged((s) => {
 			dispatch({
 				type: "load-settings",
@@ -178,25 +241,6 @@ export function TrayMenu() {
 		return () => observer.disconnect();
 	}, []);
 
-	const closeTrayMenu = () => windowCloseNamed("tray-menu");
-
-	const handleShowWindow = () => {
-		windowShowMain();
-		closeTrayMenu();
-	};
-
-	const handleSettings = () => {
-		trayWindowOpenSettings();
-		closeTrayMenu();
-	};
-
-	// Copy the most recent completed transcription to the clipboard. Reads the
-	// history DB directly (no STT server needed), so it stays enabled offline.
-	const handleCopyLastTranscript = async () => {
-		await copyLastTranscript();
-		closeTrayMenu();
-	};
-
 	const handleModeChange = async (mode: RecordingMode) => {
 		const settings = await settingsLoad();
 		if (mode === "listen") {
@@ -224,9 +268,6 @@ export function TrayMenu() {
 		});
 	};
 
-	// Keep the tray microphone selector inside the tray webview. The detached
-	// transparent picker can become an invisible always-on-top input capture
-	// window if it fails to paint, which makes the app look hung.
 	const handleOpenDevicePicker = () => {
 		setDevicePickerOpen((open) => !open);
 	};
@@ -241,24 +282,11 @@ export function TrayMenu() {
 		closeTrayMenu();
 	};
 
-	const handleTranscribeFile = async () => {
-		await fileQueuePickAndEnqueue();
-		closeTrayMenu();
-	};
-
 	const handleCheckForUpdates = async () => {
 		closeTrayMenu();
 		await updaterCheckNow({
 			includePrereleaseUpdates: receivePrereleaseUpdates,
 		});
-	};
-
-	const handleOpenContextPlayground = () => {
-		windowOpenContextPlayground();
-	};
-
-	const handleQuit = () => {
-		windowQuitApp();
 	};
 
 	useEffect(() => {
@@ -335,11 +363,6 @@ export function TrayMenu() {
 		deviceOptions.map((option) => option.id),
 	);
 
-	// Match the settings window's panel treatment. The settings content card sits
-	// at surface-3 with a `ring-1 ring-divider-strong` outline and `rounded-xl`
-	// corners; the tray menu used a much-lighter surface-5 box with no ring, so it
-	// read as a different app. Pin the menu to that same dark surface-3 base (items
-	// lift on hover/active from there) and mirror the ring + rounding below.
 	const menuLevel = 3;
 	const hoverLevel = Math.min(menuLevel + 1, 8);
 	const activeLevel = Math.min(menuLevel + 2, 8);
@@ -350,6 +373,7 @@ export function TrayMenu() {
 		<SurfaceProvider value={menuLevel}>
 			<div
 				className={cn(
+					TRAY_MENU_OPEN_SHELL_CLASS,
 					"relative flex flex-row-reverse items-start justify-end gap-2 transition-[width] duration-100 ease-out",
 					devicePickerOpen ? "w-[440px]" : "w-[192px]",
 				)}
@@ -428,19 +452,6 @@ export function TrayMenu() {
 					</div>
 				)}
 				<div
-					// FIXED compact width — ~31% narrower than the old ~280px menu. The big
-					// win is the recording-mode switcher: a 4-wide text row (~270px) is now
-					// a 2×2 grid (~half the width), so the menu no longer has to be wide to
-					// hold it.
-					//
-					// Why fixed, not the old `w-max`: with `w-max` the menu shrinks to its
-					// widest *non-shrinking* row (now the switcher), and the text labels —
-					// which sit in `truncate` spans inside `min-w-0` flex rows — collapse and
-					// ellipsize to fit that narrower box. Pinning the width to fit the real
-					// labels keeps every action fully readable; only the genuinely variable
-					// device name (its own `max-w`) still truncates. The width matches the
-					// window's initial size (windows.rs), so the ResizeObserver settles it
-					// with no first-frame jump.
 					className={cn(
 						"w-[192px] rounded-xl p-1 ring-1 ring-divider-strong",
 						surfaceClasses(menuLevel, Math.max(menuLevel, 7)),
@@ -502,9 +513,6 @@ export function TrayMenu() {
 									icon={Mic01Icon}
 									size={13}
 								/>
-								{/* Cap the device name so a long label (e.g. "System Default
-							    (Microphone (Realtek(R) Audio))") truncates here instead of
-							    eating the whole fixed-width row (keeps the chevron visible). */}
 								<span className="max-w-[9rem] truncate">
 									{currentDeviceLabel}
 								</span>
@@ -572,6 +580,10 @@ export function TrayMenu() {
 	);
 }
 
+export function TrayMenu() {
+	return useTrayMenuRender();
+}
+
 interface MenuItemProps {
 	activeBg: string;
 	children: React.ReactNode;
@@ -614,9 +626,6 @@ function MenuItem({
 				<span className="truncate">{children}</span>
 			</span>
 			{shortcut && (
-				// Way-smaller, non-shrinking hint column so the label (which truncates)
-				// yields width first — keeps the accelerator visible without widening
-				// the now-compact menu.
 				<span className="shrink-0 text-[8px] tracking-tight text-foreground-muted">
 					{shortcut}
 				</span>

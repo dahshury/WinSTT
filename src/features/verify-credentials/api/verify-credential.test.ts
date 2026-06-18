@@ -7,10 +7,19 @@ import { useCredentialStatusStore } from "@/entities/cloud-stt-credential";
 // directly (no IPC string channel). Mock it to return the tauri-specta `Result`
 // shape (`{ status:"ok", data }`) so `verifyCredentialCommand`'s unwrap is
 // exercised; a thrown rejection still flows through the network-fallback path.
-const mockVerify = mock(async (_provider: string, _apiKey: string) => ({
-	status: "ok" as const,
-	data: { ok: true } as { ok: boolean; code?: string; message?: string },
-}));
+type VerifyCredentialResult = Awaited<
+	ReturnType<typeof realBindings.commands.verifyCredential>
+>;
+
+const mockVerify = mock(
+	async (
+		_provider: string,
+		_apiKey: string,
+	): Promise<VerifyCredentialResult> => ({
+		status: "ok" as const,
+		data: { ok: true } as { ok: boolean; code?: string; message?: string },
+	}),
+);
 
 // Spread the REAL bindings and override only `verifyCredential`. A bare
 // `{ commands: { verifyCredential } }` would clobber every other `commands.*`

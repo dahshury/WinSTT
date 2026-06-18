@@ -1,4 +1,4 @@
-import { getFilePath } from "@/shared/api/ipc-client";
+import { fileQueueEnqueue, getFilePath } from "@/shared/api/ipc-client";
 
 const SUPPORTED_EXTENSIONS = new Set([
 	".mp3",
@@ -27,12 +27,14 @@ export interface DroppedFile {
 	filePath: string;
 }
 
+function baseName(path: string): string {
+	return path.split(/[\\/]/).pop() ?? path;
+}
+
 /**
  * Filter a raw drop to the audio/video files we can actually transcribe and
- * resolve each to a native path. Unsupported types (a stray image, a folder)
- * and files we can't get a path for are dropped silently — the queue only ever
- * sees real, transcribable inputs. Order is preserved so the queue reflects the
- * drop order.
+ * resolve each to a native path. Unsupported types and files without a native
+ * path are ignored. Order is preserved so the queue reflects the drop order.
  */
 export function collectDroppedFiles(files: readonly File[]): DroppedFile[] {
 	const out: DroppedFile[] = [];
@@ -49,16 +51,39 @@ export function collectDroppedFiles(files: readonly File[]): DroppedFile[] {
 	return out;
 }
 
-/**
- * Drag/drop exposes renderer-resolved file paths, which the backend no longer
- * accepts for file transcription. Keep collection helpers for tests/display, but
- * do not enqueue from dropped paths.
- */
+export function collectDroppedFilePaths(paths: readonly string[]): DroppedFile[] {
+	const out: DroppedFile[] = [];
+	for (const filePath of paths) {
+		const fileName = baseName(filePath);
+		if (!SUPPORTED_EXTENSIONS.has(getExtension(fileName))) {
+			continue;
+		}
+		out.push({ filePath, fileName });
+	}
+	return out;
+}
+
+/** Enqueue supported dropped files and return the number of backend-assigned rows. */
 export async function enqueueDroppedFiles(
 	files: readonly File[],
 ): Promise<number> {
-	const _collected = collectDroppedFiles(files);
-	return 0;
+	const dropped = collectDroppedFiles(files);
+	if (dropped.length === 0) {
+		return 0;
+	}
+	const ids = await fileQueueEnqueue(dropped);
+	return Array.isArray(ids) ? ids.length : 0;
+}
+
+export async function enqueueDroppedFilePaths(
+	paths: readonly string[],
+): Promise<number> {
+	const dropped = collectDroppedFilePaths(paths);
+	if (dropped.length === 0) {
+		return 0;
+	}
+	const ids = await fileQueueEnqueue(dropped);
+	return Array.isArray(ids) ? ids.length : 0;
 }
 
 export function getContainerClassName(isListenMode: boolean): string {

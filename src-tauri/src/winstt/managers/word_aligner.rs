@@ -46,8 +46,7 @@ impl WordAligner {
     pub fn is_loaded(&self) -> bool {
         self.engine
             .lock()
-            .map(|e| matches!(e.as_ref(), Some(Some(_))))
-            .unwrap_or(false)
+            .is_ok_and(|e| matches!(e.as_ref(), Some(Some(_))))
     }
 
     /// Produce per-word timings for `audio` (mono 16 kHz f32) given the known `text`. Lazily loads

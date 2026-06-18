@@ -229,16 +229,17 @@ pub fn display_name_without_export_qualifiers(display_name: &str) -> String {
 
 pub fn display_name_for_id(id: &str) -> String {
     let id = canonical_model_id(id);
-    find(id)
-        .map(|m| display_name_without_export_qualifiers(m.display_name))
-        .unwrap_or_else(|| id.to_string())
+    find(id).map_or_else(
+        || id.to_string(),
+        |m| display_name_without_export_qualifiers(m.display_name),
+    )
 }
 
 /// The published quantization list for `id`. Thin wrapper over the catalog field; kept as a named
 /// accessor so call sites read intent and so any future per-model correction has one chokepoint.
 /// Unknown ids default to `[""]` (fp32 default export — the permissive off-catalog assumption).
 pub fn quantizations_for_id(id: &str) -> &'static [&'static str] {
-    find(id).map(|m| m.available_quantizations).unwrap_or(&[""])
+    find(id).map_or(&[""], |m| m.available_quantizations)
 }
 
 /// `true` when the active execution provider is the real CUDA EP (NVIDIA). DirectML / ROCm /

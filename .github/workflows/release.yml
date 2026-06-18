@@ -101,10 +101,10 @@ jobs:
       - name: Install renderer dependencies
         shell: pwsh
         run: |
-          bun install --frozen-lockfile
+          bun install --frozen-lockfile --ignore-scripts
           if ($LASTEXITCODE -ne 0) {
             bun pm cache rm
-            bun install --frozen-lockfile
+            bun install --frozen-lockfile --ignore-scripts
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

@@ -5,7 +5,8 @@ use crate::managers::transcription::{is_silent_recording, TranscriptionManager};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
 use crate::utils::{self, show_recording_overlay};
-use log::{debug, error};
+use log::{debug, error, info, warn};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::Manager;
@@ -17,6 +18,104 @@ use super::{
     ShortcutAction,
 };
 
+const AUDIO_SAMPLE_RATE: usize = 16_000;
+const SLOW_RECORDING_STOP_MS: u128 = 2_000;
+const SLOW_HISTORY_AUDIO_PERSIST_MS: u128 = 2_000;
+
+fn samples_to_ms(samples: usize) -> u64 {
+    ((samples as u128 * 1000) / AUDIO_SAMPLE_RATE as u128) as u64
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "history persistence mirrors HistoryManager::save_entry row fields"
+)]
+fn persist_history_after_wav(
+    app: AppHandle,
+    hm: Arc<HistoryManager>,
+    wav_handle: tauri::async_runtime::JoinHandle<anyhow::Result<()>>,
+    wav_path_for_verify: PathBuf,
+    sample_count: usize,
+    file_name: String,
+    transcription_text: String,
+    post_process_requested: bool,
+    post_processed_text: Option<String>,
+    post_process_prompt: Option<String>,
+    llm_meta: Option<String>,
+    dictionary_fixes: Option<i64>,
+    history_tag: Option<String>,
+    privacy_markers_json: Option<String>,
+    stt_model: Option<String>,
+) {
+    tauri::async_runtime::spawn(async move {
+        let started = Instant::now();
+        info!(
+            "[history] wav_persist_start file='{file_name}' samples={sample_count} audio_ms={}",
+            samples_to_ms(sample_count)
+        );
+
+        let wav_saved = match wav_handle.await {
+            Ok(Ok(())) => {
+                match crate::audio_toolkit::verify_wav_file(&wav_path_for_verify, sample_count) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        error!("WAV verification failed: {}", e);
+                        false
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                error!("Failed to save WAV file: {}", e);
+                false
+            }
+            Err(e) => {
+                error!("WAV save task panicked: {}", e);
+                false
+            }
+        };
+
+        let elapsed_ms = started.elapsed().as_millis();
+        if elapsed_ms >= SLOW_HISTORY_AUDIO_PERSIST_MS {
+            warn!(
+                "[history] wav_persist_slow file='{file_name}' duration_ms={elapsed_ms} samples={sample_count}"
+            );
+            crate::winstt::observability::IssueBuilder::new(
+                "history",
+                "wav_persistence",
+                "Recording WAV persistence was slow",
+            )
+            .detail(format!("WAV persistence completed in {elapsed_ms}ms"))
+            .kind("timeout")
+            .severity("warn")
+            .duration_ms(elapsed_ms as u64)
+            .user_visible(false)
+            .context("fileName", file_name.clone())
+            .context("samples", sample_count.to_string())
+            .context("audioMs", samples_to_ms(sample_count).to_string())
+            .record(Some(&app));
+        }
+
+        if !wav_saved {
+            return;
+        }
+
+        if let Err(err) = hm.save_entry(
+            file_name,
+            transcription_text,
+            post_process_requested,
+            post_processed_text,
+            post_process_prompt,
+            llm_meta,
+            dictionary_fixes,
+            history_tag,
+            privacy_markers_json,
+            stt_model,
+        ) {
+            error!("Failed to save history entry: {}", err);
+        }
+    });
+}
+
 // Transcribe Action
 pub(super) struct TranscribeAction {
     pub(super) post_process: bool,
@@ -26,6 +125,10 @@ impl ShortcutAction for TranscribeAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         let start_time = Instant::now();
         debug!("TranscribeAction::start called for binding: {}", binding_id);
+        if crate::winstt::commands::onboarding::is_onboarding_active() {
+            debug!("TranscribeAction::start ignored while onboarding is active");
+            return;
+        }
 
         // Load model in the background
         let tm = app.state::<Arc<TranscriptionManager>>();
@@ -213,11 +316,30 @@ impl ShortcutAction for TranscribeAction {
 
             let stop_recording_time = Instant::now();
             if let Some(samples) = rm.stop_recording(&binding_id) {
+                let stop_recording_elapsed = stop_recording_time.elapsed();
                 debug!(
                     "Recording stopped and samples retrieved in {:?}, sample count: {}",
-                    stop_recording_time.elapsed(),
+                    stop_recording_elapsed,
                     samples.len()
                 );
+                if stop_recording_elapsed.as_millis() >= SLOW_RECORDING_STOP_MS {
+                    crate::winstt::observability::IssueBuilder::new(
+                        "stt",
+                        "recording_stop",
+                        "Recording stop took a long time before transcription",
+                    )
+                    .detail(format!(
+                        "recording stop completed in {}ms",
+                        stop_recording_elapsed.as_millis()
+                    ))
+                    .kind("timeout")
+                    .severity("warn")
+                    .duration_ms(stop_recording_elapsed.as_millis() as u64)
+                    .user_visible(false)
+                    .context("samples", samples.len().to_string())
+                    .context("audioMs", samples_to_ms(samples.len()).to_string())
+                    .record(Some(&ah));
+                }
 
                 if cancelled_session_cleanup(&ah, session_id, "recording stop") {
                     return;
@@ -307,30 +429,6 @@ impl ShortcutAction for TranscribeAction {
                             Err(e) => Err(anyhow::anyhow!("Transcription task panicked: {e}")),
                         };
 
-                    // Await WAV save and verify
-                    let wav_saved = match wav_handle.await {
-                        Ok(Ok(())) => {
-                            match crate::audio_toolkit::verify_wav_file(
-                                &wav_path_for_verify,
-                                sample_count,
-                            ) {
-                                Ok(()) => true,
-                                Err(e) => {
-                                    error!("WAV verification failed: {}", e);
-                                    false
-                                }
-                            }
-                        }
-                        Ok(Err(e)) => {
-                            error!("Failed to save WAV file: {}", e);
-                            false
-                        }
-                        Err(e) => {
-                            error!("WAV save task panicked: {}", e);
-                            false
-                        }
-                    };
-
                     if cancelled_session_cleanup(&ah, session_id, "transcription") {
                         return;
                     }
@@ -353,9 +451,20 @@ impl ShortcutAction for TranscribeAction {
                             if cancelled_session_cleanup(&ah, session_id, "post-processing start") {
                                 return;
                             }
+                            let post_process_started = Instant::now();
+                            info!(
+                                "[stt-ui] post_process_start session_id={session_id} raw_chars={} hotkey_post_process={post_process}",
+                                transcription.chars().count()
+                            );
                             let processed =
                                 process_transcription_output(&ah, &transcription, post_process)
                                     .await;
+                            info!(
+                                "[stt-ui] post_process_complete session_id={session_id} duration_ms={} final_chars={} post_processed={}",
+                                post_process_started.elapsed().as_millis(),
+                                processed.final_text.chars().count(),
+                                processed.post_processed_text.is_some()
+                            );
 
                             if cancelled_session_cleanup(&ah, session_id, "post-processing") {
                                 return;
@@ -366,27 +475,26 @@ impl ShortcutAction for TranscribeAction {
                             // consumes `transcription` when a WAV was saved.
                             let original_transcript = transcription.clone();
 
-                            // Save to history if WAV was saved
-                            if wav_saved {
-                                let privacy_markers_json =
-                                    serde_json::to_string(&processed.privacy_markers).ok();
-                                if let Err(err) = hm.save_entry(
-                                    file_name,
-                                    transcription,
-                                    processed.post_process_requested,
-                                    processed.post_processed_text.clone(),
-                                    processed.post_process_prompt.clone(),
-                                    processed.llm_meta.clone(),
-                                    processed.dictionary_fixes,
-                                    processed.history_tag.clone(),
-                                    privacy_markers_json,
-                                    // Stamp the row with whichever STT ("main")
-                                    // model is loaded — it produced this decode.
-                                    tm.get_current_model(),
-                                ) {
-                                    error!("Failed to save history entry: {}", err);
-                                }
-                            }
+                            let privacy_markers_json =
+                                serde_json::to_string(&processed.privacy_markers).ok();
+                            persist_history_after_wav(
+                                ah.clone(),
+                                Arc::clone(&hm),
+                                wav_handle,
+                                wav_path_for_verify,
+                                sample_count,
+                                file_name,
+                                transcription,
+                                processed.post_process_requested,
+                                processed.post_processed_text.clone(),
+                                processed.post_process_prompt.clone(),
+                                processed.llm_meta.clone(),
+                                processed.dictionary_fixes,
+                                processed.history_tag.clone(),
+                                privacy_markers_json,
+                                // Stamp the row with whichever STT ("main") model is loaded.
+                                tm.get_current_model(),
+                            );
 
                             if processed.final_text.is_empty() {
                                 // WinSTT terminal: the engine ran but produced no
@@ -464,14 +572,28 @@ impl ShortcutAction for TranscribeAction {
                                         &ah,
                                         &processed.final_text,
                                     );
-                                    let ah_clone = ah.clone();
-                                    let paste_time = Instant::now();
-                                    let final_text = processed.final_text;
-                                    ah.run_on_main_thread(move || {
+
+                                    // The transcription session is complete before paste delivery.
+                                    // Clipboard/key synthesis can be blocked by the target app or
+                                    // Windows clipboard ownership; keep that out of the island's
+                                    // lifetime so a paste stall cannot look like infinite STT.
+                                    utils::hide_recording_overlay(&ah);
+                                    change_tray_icon(&ah, TrayIconState::Idle);
+
+                                    #[cfg(target_os = "macos")]
+                                    {
+                                        let ah_clone = ah.clone();
+                                        let paste_time = Instant::now();
+                                        let final_text = processed.final_text;
+                                        let paste_chars = final_text.chars().count();
+                                        ah.run_on_main_thread(move || {
+                                        info!(
+                                            "[stt-ui] paste_start target=main_thread chars={paste_chars}"
+                                        );
                                         match utils::paste(final_text, ah_clone.clone()) {
-                                            Ok(()) => debug!(
-                                                "Text pasted successfully in {:?}",
-                                                paste_time.elapsed()
+                                            Ok(()) => info!(
+                                                "[stt-ui] paste_complete target=main_thread duration_ms={}",
+                                                paste_time.elapsed().as_millis()
                                             ),
                                             Err(e) => {
                                                 error!("Failed to paste transcription: {}", e);
@@ -480,14 +602,44 @@ impl ShortcutAction for TranscribeAction {
                                                 );
                                             }
                                         }
-                                        utils::hide_recording_overlay(&ah_clone);
-                                        change_tray_icon(&ah_clone, TrayIconState::Idle);
-                                    })
-                                    .unwrap_or_else(|e| {
-                                        error!("Failed to run paste on main thread: {:?}", e);
-                                        utils::hide_recording_overlay(&ah);
-                                        change_tray_icon(&ah, TrayIconState::Idle);
-                                    });
+                                        })
+                                        .unwrap_or_else(|e| {
+                                            error!("Failed to run paste on main thread: {:?}", e);
+                                        });
+                                    }
+
+                                    #[cfg(not(target_os = "macos"))]
+                                    {
+                                        let ah_clone = ah.clone();
+                                        let final_text = processed.final_text;
+                                        let paste_chars = final_text.chars().count();
+                                        std::thread::spawn(move || {
+                                            #[cfg(target_os = "windows")]
+                                            {
+                                                crate::input::release_held_modifiers();
+                                                std::thread::sleep(
+                                                    std::time::Duration::from_millis(15),
+                                                );
+                                            }
+
+                                            let paste_time = Instant::now();
+                                            info!(
+                                                "[stt-ui] paste_start target=worker chars={paste_chars}"
+                                            );
+                                            match utils::paste(final_text, ah_clone.clone()) {
+                                                Ok(()) => info!(
+                                                    "[stt-ui] paste_complete target=worker duration_ms={}",
+                                                    paste_time.elapsed().as_millis()
+                                                ),
+                                                Err(e) => {
+                                                    error!("Failed to paste transcription: {}", e);
+                                                    crate::winstt::commands::events::emit_paste_error(
+                                                        &ah_clone,
+                                                    );
+                                                }
+                                            }
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -504,25 +656,27 @@ impl ShortcutAction for TranscribeAction {
                                 &ah,
                                 Some(&failure_reason),
                             );
-                            // Save entry with empty text so user can retry
-                            if wav_saved {
-                                if let Err(save_err) = hm.save_entry(
-                                    file_name,
-                                    String::new(),
-                                    post_process,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    // Record the model that was active when the
-                                    // decode failed (may be None if it unloaded).
-                                    tm.get_current_model(),
-                                ) {
-                                    error!("Failed to save failed history entry: {}", save_err);
-                                }
-                            }
+                            // Save entry with empty text so user can retry, but do not block the
+                            // failed-terminal UI on recorder-file persistence.
+                            persist_history_after_wav(
+                                ah.clone(),
+                                Arc::clone(&hm),
+                                wav_handle,
+                                wav_path_for_verify,
+                                sample_count,
+                                file_name,
+                                String::new(),
+                                post_process,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                // Record the model that was active when the decode failed
+                                // (may be None if it unloaded).
+                                tm.get_current_model(),
+                            );
                             utils::hide_recording_overlay(&ah);
                             change_tray_icon(&ah, TrayIconState::Idle);
                         }

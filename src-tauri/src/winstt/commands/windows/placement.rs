@@ -83,8 +83,7 @@ fn outer_position_logical(window: &tauri::WebviewWindow) -> (f64, f64) {
     let scale = window.scale_factor().unwrap_or(1.0);
     window
         .outer_position()
-        .map(|p| (p.x as f64 / scale, p.y as f64 / scale))
-        .unwrap_or((0.0, 0.0))
+        .map_or((0.0, 0.0), |p| (p.x as f64 / scale, p.y as f64 / scale))
 }
 
 // ── Centering (plain windows) ───────────────────────────────────────────────
@@ -94,20 +93,18 @@ fn outer_position_logical(window: &tauri::WebviewWindow) -> (f64, f64) {
 /// the onboarding/history/playground center-on-primary-display behavior.
 pub(super) fn center_window(app: &AppHandle, window: &tauri::WebviewWindow, center_on_main: bool) {
     let scale = window.scale_factor().unwrap_or(1.0);
-    let (w, h) = window
-        .inner_size()
-        .map(|s| (s.width as f64 / scale, s.height as f64 / scale))
-        .unwrap_or((900.0, 640.0));
+    let (w, h) = window.inner_size().map_or((900.0, 640.0), |s| {
+        (s.width as f64 / scale, s.height as f64 / scale)
+    });
 
     if center_on_main {
         if let Some(main) = app.get_webview_window("main") {
             if main.is_visible().unwrap_or(false) {
                 let mscale = main.scale_factor().unwrap_or(1.0);
                 let (mx, my) = outer_position_logical(&main);
-                let (mw, mh) = main
-                    .outer_size()
-                    .map(|s| (s.width as f64 / mscale, s.height as f64 / mscale))
-                    .unwrap_or((420.0, 150.0));
+                let (mw, mh) = main.outer_size().map_or((420.0, 150.0), |s| {
+                    (s.width as f64 / mscale, s.height as f64 / mscale)
+                });
                 let x = (mx + (mw - w) / 2.0).round();
                 let y = (my + (mh - h) / 2.0).round();
                 // CLAMP into the monitor the pill is on. These windows are frameless

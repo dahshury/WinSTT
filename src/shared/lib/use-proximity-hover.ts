@@ -1,4 +1,11 @@
-import { type RefObject, useEffect, useRef, useState } from "react";
+import {
+	type Dispatch,
+	type RefObject,
+	type SetStateAction,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 
 interface ProximityRect {
 	height: number;
@@ -35,6 +42,37 @@ function rectFromElement(el: HTMLElement, container: DOMRect): ProximityRect {
 	};
 }
 
+function rectsEqual(
+	left: Record<number, ProximityRect>,
+	right: Record<number, ProximityRect>,
+): boolean {
+	const leftKeys = Object.keys(left);
+	const rightKeys = Object.keys(right);
+	if (leftKeys.length !== rightKeys.length) {
+		return false;
+	}
+	return leftKeys.every((key) => {
+		const index = Number(key);
+		const a = left[index];
+		const b = right[index];
+		return (
+			a !== undefined &&
+			b !== undefined &&
+			a.top === b.top &&
+			a.left === b.left &&
+			a.width === b.width &&
+			a.height === b.height
+		);
+	});
+}
+
+function updateRectsIfChanged(
+	setItemRects: Dispatch<SetStateAction<Record<number, ProximityRect>>>,
+	next: Record<number, ProximityRect>,
+): void {
+	setItemRects((prev) => (rectsEqual(prev, next) ? prev : next));
+}
+
 /**
  * True iff `localY` falls inside `rect`'s vertical span widened by
  * `ITEM_BUFFER_PX` on each end. Extracted so `findActiveIndex` is a flat
@@ -51,36 +89,41 @@ export function useProximityHover(
 ): UseProximityHover {
 	const [activeIndex, setActiveIndex] = useState<number | null>(null);
 	const [itemRects, setItemRects] = useState<Record<number, ProximityRect>>({});
-	const itemsRef = useRef<Map<number, HTMLElement>>(new Map());
+	// Stable, mutated-in-place collection of registered elements. Created once
+	// via `useState`'s lazy initializer so it survives re-renders without
+	// allocating a fresh `Map` each render.
+	const [items] = useState<Map<number, HTMLElement>>(
+		() => new Map<number, HTMLElement>(),
+	);
 	const sessionRef = useRef(0);
 	const rectsRef = useRef<Record<number, ProximityRect>>({});
 
-	rectsRef.current = itemRects;
+	// Mirror the latest `itemRects` into a ref so the `onMouseMove` event
+	// handler can read fresh rects without re-subscribing.
+	useEffect(() => {
+		rectsRef.current = itemRects;
+	}, [itemRects]);
 
-	// `measureItems` is exposed as a *stable* function reference (memoized once
-	// via `useRef` at mount) so consumers can depend on it in `useEffect` deps
-	// without triggering an effect-thrash loop. The stable wrapper reads
-	// `containerRef` and `itemsRef` (both refs, stable) on each invocation —
-	// no captured closure value goes stale.
-	const measureItemsRef = useRef<() => void>(() => {
+	// Consumers depend on this in effects; create it once from stable refs/state
+	// so measuring rows does not schedule another measurement on the next render.
+	const [measureItems] = useState(() => () => {
 		const container = containerRef.current;
 		if (!container) {
 			return;
 		}
 		const containerRect = container.getBoundingClientRect();
 		const next: Record<number, ProximityRect> = {};
-		for (const [idx, el] of itemsRef.current.entries()) {
+		for (const [idx, el] of items.entries()) {
 			next[idx] = rectFromElement(el, containerRect);
 		}
-		setItemRects(next);
+		updateRectsIfChanged(setItemRects, next);
 	});
-	const measureItems = measureItemsRef.current;
 
 	function registerItem(index: number, element: HTMLElement | null) {
 		if (element) {
-			itemsRef.current.set(index, element);
+			items.set(index, element);
 		} else {
-			itemsRef.current.delete(index);
+			items.delete(index);
 		}
 	}
 
@@ -92,18 +135,18 @@ export function useProximityHover(
 		const measure = () => {
 			const rect = container.getBoundingClientRect();
 			const next: Record<number, ProximityRect> = {};
-			for (const [idx, el] of itemsRef.current.entries()) {
+			for (const [idx, el] of items.entries()) {
 				next[idx] = rectFromElement(el, rect);
 			}
-			setItemRects(next);
+			updateRectsIfChanged(setItemRects, next);
 		};
 		const ro = new ResizeObserver(measure);
 		ro.observe(container);
-		for (const el of itemsRef.current.values()) {
+		for (const el of items.values()) {
 			ro.observe(el);
 		}
 		return () => ro.disconnect();
-	}, [containerRef]);
+	}, [containerRef, items]);
 
 	function findActiveIndex(localY: number): number | null {
 		const rects = rectsRef.current;

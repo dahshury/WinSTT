@@ -144,6 +144,7 @@ fn windows_has_lid() -> Result<bool, String> {
     use windows::Win32::System::Power::{GetPwrCapabilities, SYSTEM_POWER_CAPABILITIES};
 
     let mut caps = SYSTEM_POWER_CAPABILITIES::default();
+    // SAFETY: `caps` is a valid writable SYSTEM_POWER_CAPABILITIES buffer for the OS call.
     if unsafe { GetPwrCapabilities(&mut caps) } {
         Ok(caps.LidPresent)
     } else {
@@ -207,10 +208,12 @@ fn run_windows_lid_message_loop() {
         lparam: LPARAM,
     ) -> LRESULT {
         if msg == WM_POWERBROADCAST && wparam.0 as u32 == PBT_POWERSETTINGCHANGE {
-            update_lid_state_from_power_broadcast(lparam);
+            // SAFETY: Windows supplies `lparam` for WM_POWERBROADCAST; the callee validates it.
+            unsafe { update_lid_state_from_power_broadcast(lparam) };
             return LRESULT(1);
         }
 
+        // SAFETY: Forwarding unhandled messages to the default window proc with original params.
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     }
 
@@ -223,6 +226,8 @@ fn run_windows_lid_message_loop() {
             return;
         }
 
+        // SAFETY: `setting` is non-null and points to the POWERBROADCAST_SETTING payload
+        // provided by Windows for the current message.
         let setting = unsafe { &*setting };
         if setting.PowerSetting != GUID_LIDSWITCH_STATE_CHANGE || setting.DataLength == 0 {
             return;
@@ -235,6 +240,8 @@ fn run_windows_lid_message_loop() {
         }
     }
 
+    // SAFETY: All Win32 handles/pointers used here are created in this block and checked for
+    // failure before use; the message-only window lives for the duration of the loop.
     unsafe {
         let class_name = w!("WinSTTLidMonitorWindow");
         let hmodule = match GetModuleHandleW(None) {

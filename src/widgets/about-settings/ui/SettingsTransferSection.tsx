@@ -1,6 +1,6 @@
 import { FileExportIcon, FileImportIcon } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useReducer } from "react";
 import { useTranslations } from "use-intl";
 import {
 	commands,
@@ -24,6 +24,115 @@ function unwrapCommand<T>(result: Result<T, string>): T {
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+type SettingsSnapshot = Awaited<ReturnType<typeof settingsLoadStrict>>;
+
+type ExportOutcome = { ok: true } | { message: string; ok: false };
+
+type ImportOutcome =
+	| { status: "cancelled" }
+	| { message: string; status: "failed" }
+	| {
+			report: SettingsImportResult;
+			settings: SettingsSnapshot;
+			status: "imported";
+	  };
+
+async function runSettingsExport(
+	failureMessage: string,
+): Promise<ExportOutcome> {
+	try {
+		const result = unwrapCommand(await commands.settingsExportFull());
+		if (!result.cancelled && !result.ok) {
+			return { message: result.error ?? failureMessage, ok: false };
+		}
+		return { ok: true };
+	} catch (error) {
+		return { message: errorMessage(error), ok: false };
+	}
+}
+
+async function runSettingsImport(
+	failureMessage: string,
+): Promise<ImportOutcome> {
+	try {
+		const result = unwrapCommand(await commands.settingsImportFull());
+		if (result.cancelled) {
+			return { status: "cancelled" };
+		}
+		if (!result.ok) {
+			return {
+				message: result.error ?? failureMessage,
+				status: "failed",
+			};
+		}
+		const settings = await settingsLoadStrict();
+		return { report: result, settings, status: "imported" };
+	} catch (error) {
+		return { message: errorMessage(error), status: "failed" };
+	}
+}
+
+interface TransferState {
+	exporting: boolean;
+	importing: boolean;
+	importConfirmOpen: boolean;
+	importReport: SettingsImportResult | null;
+	errorTitle: string;
+	errorMessageText: string | null;
+}
+
+type TransferAction =
+	| { type: "exportStarted" }
+	| { type: "exportFinished" }
+	| { type: "importStarted" }
+	| { type: "importFinished" }
+	| { type: "transferFailed"; title: string; message: string }
+	| { type: "importSucceeded"; report: SettingsImportResult }
+	| { type: "importReportClosed" }
+	| { type: "errorDismissed" }
+	| { type: "importConfirmOpenChanged"; open: boolean };
+
+const INITIAL_TRANSFER_STATE: TransferState = {
+	exporting: false,
+	importing: false,
+	importConfirmOpen: false,
+	importReport: null,
+	errorTitle: "",
+	errorMessageText: null,
+};
+
+function transferReducer(
+	state: TransferState,
+	action: TransferAction,
+): TransferState {
+	switch (action.type) {
+		case "exportStarted":
+			return { ...state, exporting: true, errorMessageText: null };
+		case "exportFinished":
+			return { ...state, exporting: false };
+		case "importStarted":
+			return { ...state, importing: true, errorMessageText: null };
+		case "importFinished":
+			return { ...state, importing: false };
+		case "transferFailed":
+			return {
+				...state,
+				errorTitle: action.title,
+				errorMessageText: action.message,
+			};
+		case "importSucceeded":
+			return { ...state, importReport: action.report };
+		case "importReportClosed":
+			return { ...state, importReport: null };
+		case "errorDismissed":
+			return { ...state, errorMessageText: null };
+		case "importConfirmOpenChanged":
+			return { ...state, importConfirmOpen: action.open };
+		default:
+			return state;
+	}
 }
 
 function ReportList({
@@ -171,56 +280,67 @@ function SettingsTransferRow({
 }
 
 export function SettingsTransferSection(): ReactNode {
+	// 'use no memo' — handleExport / handleImportConfirm contain try/catch/finally
+	// the React Compiler cannot memoize yet (react-hooks-js/todo). The error
+	// handling is load-bearing and the closures capture component scope, so the
+	// bodies cannot be hoisted out; the consolidated reducer below keeps renders
+	// low even without the compiler.
+	"use no memo";
 	const settingsT = useTranslations("settings");
 	const commonT = useTranslations("common");
-	const [exporting, setExporting] = useState(false);
-	const [importing, setImporting] = useState(false);
-	const [importConfirmOpen, setImportConfirmOpen] = useState(false);
-	const [importReport, setImportReport] = useState<SettingsImportResult | null>(
-		null,
-	);
-	const [errorMessageText, setErrorMessageText] = useState<string | null>(null);
-	const [errorTitle, setErrorTitle] = useState("");
+	const [state, dispatch] = useReducer(transferReducer, INITIAL_TRANSFER_STATE);
+	const {
+		exporting,
+		importing,
+		importConfirmOpen,
+		importReport,
+		errorMessageText,
+		errorTitle,
+	} = state;
 
-	const handleExport = async () => {
-		setExporting(true);
-		setErrorMessageText(null);
-		try {
-			const result = unwrapCommand(await commands.settingsExportFull());
-			if (!result.cancelled && !result.ok) {
-				setErrorTitle(settingsT("settingsExportFailed"));
-				setErrorMessageText(result.error ?? settingsT("settingsExportFailed"));
-			}
-		} catch (error) {
-			setErrorTitle(settingsT("settingsExportFailed"));
-			setErrorMessageText(errorMessage(error));
-		} finally {
-			setExporting(false);
-		}
+	const handleExport = () => {
+		const failureTitle = settingsT("settingsExportFailed");
+		dispatch({ type: "exportStarted" });
+		void runSettingsExport(failureTitle)
+			.then((result) => {
+				if (result.ok) {
+					return;
+				}
+				dispatch({
+					type: "transferFailed",
+					title: failureTitle,
+					message: result.message,
+				});
+			})
+			.finally(() => {
+				dispatch({ type: "exportFinished" });
+			});
 	};
 
-	const handleImportConfirm = async () => {
-		setImporting(true);
-		setErrorMessageText(null);
-		try {
-			const result = unwrapCommand(await commands.settingsImportFull());
-			if (result.cancelled) {
-				return;
-			}
-			if (!result.ok) {
-				setErrorTitle(settingsT("settingsImportFailed"));
-				setErrorMessageText(result.error ?? settingsT("settingsImportFailed"));
-				return;
-			}
-			const settings = await settingsLoadStrict();
-			useSettingsStore.getState().setSettings(settings);
-			setImportReport(result);
-		} catch (error) {
-			setErrorTitle(settingsT("settingsImportFailed"));
-			setErrorMessageText(errorMessage(error));
-		} finally {
-			setImporting(false);
-		}
+	const handleImportConfirm = () => {
+		const failureTitle = settingsT("settingsImportFailed");
+		dispatch({ type: "importStarted" });
+		void runSettingsImport(failureTitle)
+			.then((result) => {
+				switch (result.status) {
+					case "cancelled":
+						return;
+					case "failed":
+						dispatch({
+							type: "transferFailed",
+							title: failureTitle,
+							message: result.message,
+						});
+						return;
+					case "imported":
+						useSettingsStore.getState().setSettings(result.settings);
+						dispatch({ type: "importSucceeded", report: result.report });
+						return;
+				}
+			})
+			.finally(() => {
+				dispatch({ type: "importFinished" });
+			});
 	};
 
 	return (
@@ -230,14 +350,16 @@ export function SettingsTransferSection(): ReactNode {
 				confirmLabel={settingsT("settingsImportConfirm")}
 				description={settingsT("settingsImportConfirmDescription")}
 				onConfirm={handleImportConfirm}
-				onOpenChange={setImportConfirmOpen}
+				onOpenChange={(open) =>
+					dispatch({ open, type: "importConfirmOpenChanged" })
+				}
 				open={importConfirmOpen}
 				title={settingsT("settingsImportConfirmTitle")}
 			/>
 			<ImportReportDialog
 				onOpenChange={(open) => {
 					if (!open) {
-						setImportReport(null);
+						dispatch({ type: "importReportClosed" });
 					}
 				}}
 				open={importReport !== null}
@@ -247,7 +369,7 @@ export function SettingsTransferSection(): ReactNode {
 				message={errorMessageText}
 				onOpenChange={(open) => {
 					if (!open) {
-						setErrorMessageText(null);
+						dispatch({ type: "errorDismissed" });
 					}
 				}}
 				title={errorTitle}
@@ -270,7 +392,9 @@ export function SettingsTransferSection(): ReactNode {
 					disabled={exporting || importing}
 					icon={FileImportIcon}
 					iconClassName={importing ? "animate-spin" : undefined}
-					onClick={() => setImportConfirmOpen(true)}
+					onClick={() =>
+						dispatch({ open: true, type: "importConfirmOpenChanged" })
+					}
 					title={settingsT("settingsImport")}
 				/>
 			</SettingSection>

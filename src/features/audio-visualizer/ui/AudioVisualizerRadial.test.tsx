@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
 import {
-	AudioVisualizerRadial,
 	resolveRadialBarCount,
 	resolveRadialDistance,
 	resolveRadialDistancePct,
 	resolveRadialSequencerInterval,
+} from "./AudioVisualizerRadial.helpers";
+import {
+	AudioVisualizerRadial,
 } from "./AudioVisualizerRadial";
 
 describe("AudioVisualizerRadial", () => {

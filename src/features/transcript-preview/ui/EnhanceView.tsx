@@ -4,7 +4,6 @@ import {
 	Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useMemo } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { runLlmPreview } from "@/shared/api/ipc-client";
@@ -116,6 +115,7 @@ function EnhanceControls() {
 			</div>
 
 			<textarea
+				aria-label={tp("customInstructionPlaceholder")}
 				className="min-h-[2.25rem] w-full resize-none rounded-md border border-border bg-surface-1 px-2.5 py-1.5 text-foreground text-sm placeholder:text-foreground-subtle focus:outline-none focus:ring-1 focus:ring-accent/60"
 				dir="auto"
 				onChange={(e) => store.setCustomInstruction(e.currentTarget.value)}
@@ -151,6 +151,7 @@ function TranscriptTopPanel() {
 	return (
 		<SectionPanel title={tp("transcriptLabel")}>
 			<textarea
+				aria-label={tp("transcriptLabel")}
 				className="max-h-44 min-h-[3rem] w-full resize-none rounded-md border border-border bg-surface-1 px-2.5 py-2 text-foreground text-sm leading-snug placeholder:text-foreground-subtle focus:outline-none focus:ring-1 focus:ring-accent/60"
 				dir="auto"
 				onChange={(e) => {
@@ -183,10 +184,7 @@ function DiffReviewTopPanel({
 }) {
 	const tp = useTranslations("preview");
 	const store = useTranscriptPreviewStore();
-	const diff = useMemo(
-		() => buildTranscriptDiff(base, candidate),
-		[base, candidate],
-	);
+	const diff = buildTranscriptDiff(base, candidate);
 	const labels: TranscriptDiffLabels = {
 		aiEdits: tp("aiEdits"),
 		before: tp("previousTranscript"),
@@ -197,10 +195,7 @@ function DiffReviewTopPanel({
 		changeCount: (count) => tp("changeCount", { count }),
 		moreChanges: (count) => tp("moreChanges", { count }),
 	};
-	const rejected = useMemo(
-		() => new Set(store.rejectedChanges),
-		[store.rejectedChanges],
-	);
+	const rejected = new Set(store.rejectedChanges);
 
 	if (diff === null) {
 		// The AI returned text equivalent to the base — nothing to review.

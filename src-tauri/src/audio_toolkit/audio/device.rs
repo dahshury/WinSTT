@@ -13,7 +13,7 @@ pub(crate) fn device_display_name(device: &cpal::Device) -> Result<String, cpal:
         .map(|description| description.name().to_string())
 }
 
-pub fn list_input_devices() -> Result<Vec<CpalDeviceInfo>, Box<dyn std::error::Error>> {
+pub fn list_input_devices() -> Result<Vec<CpalDeviceInfo>, cpal::DevicesError> {
     let host = crate::audio_toolkit::get_cpal_host();
     let default_name = host
         .default_input_device()
@@ -37,7 +37,7 @@ pub fn list_input_devices() -> Result<Vec<CpalDeviceInfo>, Box<dyn std::error::E
     Ok(out)
 }
 
-pub fn list_output_devices() -> Result<Vec<CpalDeviceInfo>, Box<dyn std::error::Error>> {
+pub fn list_output_devices() -> Result<Vec<CpalDeviceInfo>, cpal::DevicesError> {
     let host = crate::audio_toolkit::get_cpal_host();
     let default_name = host
         .default_output_device()

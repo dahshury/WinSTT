@@ -97,7 +97,10 @@ export function runConfirmPendingDownload(
 	) => void,
 ): void {
 	const present = pendingDownload === null ? [] : [pendingDownload];
-	present.map(toIssueSwapInvoker(issueSwap)).forEach(invokeReload);
+	const toInvoker = toIssueSwapInvoker(issueSwap);
+	for (const pd of present) {
+		invokeReload(toInvoker(pd));
+	}
 }
 
 export function toIssueSwapInvoker(

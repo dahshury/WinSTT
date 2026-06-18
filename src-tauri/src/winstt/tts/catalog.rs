@@ -87,7 +87,7 @@ pub struct TtsModelEntry {
 impl TtsModelEntry {
     /// Default/smallest usable quant id (first listed).
     pub fn default_quant(&self) -> &'static str {
-        self.quants.first().map(|q| q.id).unwrap_or("")
+        self.quants.first().map_or("", |q| q.id)
     }
     pub fn quant(&self, id: &str) -> Option<&TtsQuant> {
         self.quants.iter().find(|q| q.id == id)

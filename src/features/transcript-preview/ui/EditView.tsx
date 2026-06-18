@@ -11,6 +11,10 @@ import {
 import { useTranscriptPreviewStore } from "../model/preview-store";
 import { PreviewInfoPill, StaggerReveal } from "./preview-primitives";
 
+function isPresetKey(key: string): key is PresetKey {
+	return (ALL_PRESET_KEYS as readonly string[]).includes(key);
+}
+
 /** Entry view: the editable transcript + Enhance/Send toolbar. Shown when AI
  *  post-processing did not auto-enhance the transcript (or after returning here
  *  from the enhance view). */
@@ -28,14 +32,18 @@ export function EditView() {
 		: tp("enhanceDisabledNoPostProcessing");
 
 	const openEnhance = () => {
-		const presetKeys = (dictation?.presets ?? [])
-			.map((p) => p.key)
-			.filter((key): key is PresetKey =>
-				(ALL_PRESET_KEYS as readonly string[]).includes(key),
-			);
-		const modifierIds = (dictation?.customModifiers ?? [])
-			.filter((m) => m.enabled)
-			.map((m) => m.id);
+		const presetKeys: PresetKey[] = [];
+		for (const preset of dictation?.presets ?? []) {
+			if (isPresetKey(preset.key)) {
+				presetKeys.push(preset.key);
+			}
+		}
+		const modifierIds: string[] = [];
+		for (const modifier of dictation?.customModifiers ?? []) {
+			if (modifier.enabled) {
+				modifierIds.push(modifier.id);
+			}
+		}
 		store.seedEnhance(presetKeys, modifierIds);
 		store.setView("enhance");
 	};
@@ -44,6 +52,7 @@ export function EditView() {
 		<div className="flex flex-col gap-2 px-1">
 			<StaggerReveal>
 				<textarea
+					aria-label={tp("placeholder")}
 					className="t-stagger-line max-h-56 min-h-[3rem] w-full resize-none rounded-md border border-border bg-surface-2 px-2.5 py-2 text-foreground text-sm leading-snug placeholder:text-foreground-subtle focus:outline-none focus:ring-1 focus:ring-accent/60"
 					dir="auto"
 					onChange={(e) => {

@@ -26,7 +26,13 @@
 // MAX_AXHTML_CHARS = 150000; TREE_WALK_BUDGET_MS = 600; WATCHDOG_TIMEOUT_MS = 750).
 // On non-Windows this is a stub that prints an empty snapshot.
 
-#![cfg_attr(not(windows), allow(unused))]
+#![cfg_attr(
+    not(windows),
+    expect(
+        unused,
+        reason = "non-Windows sidecar build is a stub that leaves Windows UIA code unused"
+    )
+)]
 
 // ─────────────────────────── shared caps ──────────────────────────────
 
@@ -87,16 +93,15 @@ mod windows_impl {
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
         IUIAutomationTextRange, IUIAutomationTreeWalker, IUIAutomationValuePattern,
         UIA_AutomationIdPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
-        UIA_ControlTypePropertyId,
-        UIA_ComboBoxControlTypeId, UIA_DataItemControlTypeId, UIA_DocumentControlTypeId,
-        UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId,
-        UIA_HeaderControlTypeId, UIA_HeaderItemControlTypeId, UIA_HyperlinkControlTypeId,
-        UIA_ImageControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
-        UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_PaneControlTypeId,
-        UIA_RadioButtonControlTypeId, UIA_StatusBarControlTypeId, UIA_TabControlTypeId,
-        UIA_TabItemControlTypeId, UIA_TableControlTypeId, UIA_TextControlTypeId, UIA_TextPatternId,
-        UIA_ToolBarControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
-        UIA_ValuePatternId, UIA_WindowControlTypeId,
+        UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId, UIA_DataItemControlTypeId,
+        UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_GroupControlTypeId,
+        UIA_HasKeyboardFocusPropertyId, UIA_HeaderControlTypeId, UIA_HeaderItemControlTypeId,
+        UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId, UIA_ListControlTypeId,
+        UIA_ListItemControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId,
+        UIA_PaneControlTypeId, UIA_RadioButtonControlTypeId, UIA_StatusBarControlTypeId,
+        UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_TableControlTypeId,
+        UIA_TextControlTypeId, UIA_TextPatternId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
+        UIA_TreeItemControlTypeId, UIA_ValuePatternId, UIA_WindowControlTypeId,
     };
     use windows::Win32::UI::Accessibility::{
         TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
@@ -157,6 +162,7 @@ mod windows_impl {
         // Snapshot title + exe up front — useful even when UIA fails.
         let fg: HWND = match scope {
             Some(h) => h,
+            // SAFETY: Reads the current foreground window handle; no ownership is transferred.
             None => unsafe { GetForegroundWindow() },
         };
         let window_title = get_window_title(fg);
@@ -170,11 +176,14 @@ mod windows_impl {
         let mut ax_html = String::new();
 
         // COM apartment (single-threaded, like the C COINIT_APARTMENTTHREADED).
+        // SAFETY: Initializes COM for this helper process thread before any UIA COM calls.
         let co = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
         // RPC_E_CHANGED_MODE is harmless. Any other hard failure → emit metadata only.
         let com_ok = co.is_ok() || co == windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 
         if com_ok {
+            // SAFETY: COM was initialized or already in a compatible mode; the UIA instance is
+            // used only on this thread and released before CoUninitialize.
             if let Ok(uia) = unsafe {
                 CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
             } {
@@ -215,6 +224,7 @@ mod windows_impl {
                 }
             }
             // Drop `uia` (Release) before CoUninitialize.
+            // SAFETY: Balances this thread's successful CoInitializeEx call.
             unsafe { CoUninitialize() };
         }
 
@@ -281,6 +291,7 @@ mod windows_impl {
             return String::new();
         }
         let mut buf = [0u16; 512];
+        // SAFETY: `hwnd` is a borrowed window handle and `buf` is valid writable UTF-16 storage.
         let n = unsafe { GetWindowTextW(hwnd, &mut buf) };
         if n <= 0 {
             return String::new();
@@ -300,16 +311,19 @@ mod windows_impl {
             return String::new();
         }
         let mut pid: u32 = 0;
+        // SAFETY: `pid` is valid writable storage and `hwnd` is a borrowed window handle.
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
         if pid == 0 {
             return String::new();
         }
+        // SAFETY: Opens a query-only process handle for the PID reported by Win32.
         let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
         else {
             return String::new();
         };
         let mut buf = [0u16; 260];
         let mut len = buf.len() as u32;
+        // SAFETY: `handle` is live and `buf`/`len` are valid writable outputs for the call.
         let ok = unsafe {
             QueryFullProcessImageNameW(
                 handle,
@@ -318,6 +332,7 @@ mod windows_impl {
                 &mut len,
             )
         };
+        // SAFETY: `handle` was returned by OpenProcess and is not used again after closing.
         let _ = unsafe { CloseHandle(handle) };
         if ok.is_err() || len == 0 {
             return String::new();
@@ -331,9 +346,12 @@ mod windows_impl {
 
     /// TextPattern.DocumentRange.GetText(-1). Returns the whole document text.
     fn read_text_pattern(elem: &IUIAutomationElement) -> Option<String> {
+        // SAFETY: `elem` is a live UIA element and the requested pattern/interface type matches.
         let pat: IUIAutomationTextPattern =
             unsafe { elem.GetCurrentPatternAs(UIA_TextPatternId) }.ok()?;
+        // SAFETY: `pat` is a live TextPattern interface returned by UIA.
         let range: IUIAutomationTextRange = unsafe { pat.DocumentRange() }.ok()?;
+        // SAFETY: `range` is a live UIA text range; -1 asks UIA for the whole range.
         let text: BSTR = unsafe { range.GetText(-1) }.ok()?;
         let s = text.to_string();
         if s.is_empty() {
@@ -346,16 +364,21 @@ mod windows_impl {
     /// TextPattern selection ranges, concatenated. Mirrors
     /// read_text_pattern_selection (multi-caret editors).
     fn read_text_pattern_selection(elem: &IUIAutomationElement) -> Option<String> {
+        // SAFETY: `elem` is a live UIA element and the requested pattern/interface type matches.
         let pat: IUIAutomationTextPattern =
             unsafe { elem.GetCurrentPatternAs(UIA_TextPatternId) }.ok()?;
+        // SAFETY: `pat` is a live TextPattern interface returned by UIA.
         let ranges = unsafe { pat.GetSelection() }.ok()?;
+        // SAFETY: `ranges` is a live UIA selection collection.
         let length = unsafe { ranges.Length() }.ok()?;
         if length <= 0 {
             return None;
         }
         let mut out = String::new();
         for i in 0..length {
+            // SAFETY: `i` is within the collection length returned by UIA.
             if let Ok(range) = unsafe { ranges.GetElement(i) } {
+                // SAFETY: `range` is a live UIA text range; -1 asks UIA for the whole range.
                 if let Ok(text) = unsafe { range.GetText(-1) } {
                     out.push_str(&text.to_string());
                 }
@@ -370,8 +393,10 @@ mod windows_impl {
 
     /// ValuePattern.CurrentValue (plain edit controls / address bars).
     fn read_value_pattern(elem: &IUIAutomationElement) -> Option<String> {
+        // SAFETY: `elem` is a live UIA element and the requested pattern/interface type matches.
         let pat: IUIAutomationValuePattern =
             unsafe { elem.GetCurrentPatternAs(UIA_ValuePatternId) }.ok()?;
+        // SAFETY: `pat` is a live ValuePattern interface returned by UIA.
         let text: BSTR = unsafe { pat.CurrentValue() }.ok()?;
         let s = text.to_string();
         if s.is_empty() {
@@ -382,6 +407,7 @@ mod windows_impl {
     }
 
     fn read_element_name(elem: &IUIAutomationElement) -> String {
+        // SAFETY: `elem` is a live UIA element; UIA reports failure for inaccessible elements.
         unsafe { elem.CurrentName() }
             .map(|b| b.to_string())
             .unwrap_or_default()
@@ -392,10 +418,13 @@ mod windows_impl {
     /// Depth-unbounded FindFirst(HasKeyboardFocus==TRUE) inside the scope window
     /// (Gmail's reply box sits very deep). Mirrors find_focused_in_window.
     fn find_focused_in_window(uia: &IUIAutomation, hwnd: HWND) -> Option<IUIAutomationElement> {
+        // SAFETY: `hwnd` is a borrowed native window handle; UIA validates accessibility access.
         let root = unsafe { uia.ElementFromHandle(hwnd) }.ok()?;
         let v = windows::Win32::System::Variant::VARIANT::from(true);
+        // SAFETY: `uia` is a live UIA root object and `v` is a valid VARIANT value.
         let cond =
             unsafe { uia.CreatePropertyCondition(UIA_HasKeyboardFocusPropertyId, &v) }.ok()?;
+        // SAFETY: `root` and `cond` are live UIA interfaces; no ownership crosses this call.
         unsafe { root.FindFirst(TreeScope_Subtree, &cond) }.ok()
     }
 
@@ -408,6 +437,7 @@ mod windows_impl {
         if let Some(hwnd) = scope {
             find_focused_in_window(uia, hwnd)
         } else {
+            // SAFETY: `uia` is a live UIA root object for this initialized COM thread.
             unsafe { uia.GetFocusedElement() }.ok()
         }
     }
@@ -466,21 +496,26 @@ mod windows_impl {
         out_before: &mut String,
         out_after: &mut String,
     ) -> bool {
+        // SAFETY: `elem` is a live UIA element and the requested pattern/interface type matches.
         let Ok(pat) =
             (unsafe { elem.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId) })
         else {
             return false;
         };
+        // SAFETY: `pat` is a live TextPattern interface returned by UIA.
         let Ok(doc) = (unsafe { pat.DocumentRange() }) else {
             return false;
         };
+        // SAFETY: `pat` is a live TextPattern interface returned by UIA.
         let Ok(sels) = (unsafe { pat.GetSelection() }) else {
             return false;
         };
+        // SAFETY: `sels` is a live UIA selection collection.
         let sel_len = unsafe { sels.Length() }.unwrap_or(0);
         if sel_len <= 0 {
             return false;
         }
+        // SAFETY: `sel_len > 0`, so index 0 is valid for the UIA selection collection.
         let Ok(sel) = (unsafe { sels.GetElement(0) }) else {
             return false;
         };
@@ -488,7 +523,9 @@ mod windows_impl {
         let mut got = false;
 
         // BEFORE: [docStart, caretStart], keep only the trailing CARET_BEFORE_CHARS.
+        // SAFETY: `doc` is a live text range; Clone returns an independent range object.
         if let Ok(before) = unsafe { doc.Clone() } {
+            // SAFETY: `before` and `sel` are live ranges from the same TextPattern document.
             unsafe {
                 let _ = before.MoveEndpointByRange(
                     TextPatternRangeEndpoint_End,
@@ -496,7 +533,10 @@ mod windows_impl {
                     TextPatternRangeEndpoint_Start,
                 );
             }
+            // SAFETY: `before` is a live text range; Clone returns an independent range object.
             if let Ok(tail) = unsafe { before.Clone() } {
+                // SAFETY: `tail` is a live text range; endpoint moves stay within UIA-managed
+                // document bounds and GetText uses UIA's range cap.
                 unsafe {
                     // Collapse to the end, then move the start back CARET_BEFORE_CHARS.
                     let _ = tail.MoveEndpointByRange(
@@ -518,7 +558,9 @@ mod windows_impl {
         }
 
         // AFTER: [caretEnd, docEnd], capped at CARET_AFTER_CHARS.
+        // SAFETY: `doc` is a live text range; Clone returns an independent range object.
         if let Ok(after) = unsafe { doc.Clone() } {
+            // SAFETY: `after` and `sel` are live ranges from the same TextPattern document.
             unsafe {
                 let _ = after.MoveEndpointByRange(
                     TextPatternRangeEndpoint_Start,
@@ -728,6 +770,7 @@ mod windows_impl {
         }
 
         // Never expose password-bearing elements (or their children).
+        // SAFETY: `elem` is a live UIA element; UIA returns an error for inaccessible elements.
         if unsafe { elem.CurrentIsPassword() }
             .unwrap_or_default()
             .as_bool()
@@ -735,10 +778,10 @@ mod windows_impl {
             return true;
         }
 
-        let ctype = unsafe { elem.CurrentControlType() }
-            .map(|c| c.0)
-            .unwrap_or(0);
+        // SAFETY: `elem` is a live UIA element; UIA returns an error for inaccessible elements.
+        let ctype = unsafe { elem.CurrentControlType() }.map_or(0, |c| c.0);
         let name = read_element_name(elem);
+        // SAFETY: `elem` is a live UIA element; UIA returns an error for inaccessible elements.
         let has_focus = unsafe { elem.CurrentHasKeyboardFocus() }
             .unwrap_or_default()
             .as_bool();
@@ -801,12 +844,14 @@ mod windows_impl {
         } else {
             depth + 1
         };
+        // SAFETY: `walker` and `elem` are live UIA interfaces for the same tree.
         if let Ok(mut child) = unsafe { walker.GetFirstChildElement(elem) } {
             loop {
                 if !tb.has_budget() {
                     break;
                 }
                 walk_tree(tb, walker, &child, child_depth);
+                // SAFETY: `child` is the current live UIA element returned by this walker.
                 match unsafe { walker.GetNextSiblingElement(&child) } {
                     Ok(next) => child = next,
                     Err(_) => break,
@@ -829,12 +874,14 @@ mod windows_impl {
         if hwnd.is_invalid() {
             return String::new();
         }
+        // SAFETY: `uia` is live and returns a control-view walker for this COM thread.
         let Ok(walker) = (unsafe { uia.ControlViewWalker() }) else {
             return String::new();
         };
 
         let mut out = String::new();
         for attempt in 0..2 {
+            // SAFETY: `hwnd` is a borrowed native window handle; UIA validates access.
             let Ok(root) = (unsafe { uia.ElementFromHandle(hwnd) }) else {
                 break;
             };
@@ -897,6 +944,7 @@ mod windows_impl {
         if !is_chromium && !is_firefox {
             return String::new();
         }
+        // SAFETY: `hwnd` is a borrowed native window handle; UIA validates access.
         let Ok(root) = (unsafe { uia.ElementFromHandle(hwnd) }) else {
             return String::new();
         };
@@ -907,10 +955,13 @@ mod windows_impl {
         } else {
             w!("urlbar")
         };
+        // SAFETY: `target_id` is a compile-time null-terminated PCWSTR from `w!`.
         let v = windows::Win32::System::Variant::VARIANT::from(BSTR::from_wide(unsafe {
             target_id.as_wide()
         }));
+        // SAFETY: `uia` is live and `v` contains a valid AutomationId string.
         if let Ok(cond) = unsafe { uia.CreatePropertyCondition(UIA_AutomationIdPropertyId, &v) } {
+            // SAFETY: `root` and `cond` are live UIA interfaces; no ownership crosses this call.
             if let Ok(el) = unsafe { root.FindFirst(TreeScope_Descendants, &cond) } {
                 if let Some(url) = read_value_pattern(&el) {
                     if looks_like_url_or_host(&url) {
@@ -927,10 +978,15 @@ mod windows_impl {
         // URL/host while page fields hold prose. Return the first URL/host value.
         // Locale-independent (no control-name match) and version-independent.
         let ctype = windows::Win32::System::Variant::VARIANT::from(UIA_EditControlTypeId.0);
-        if let Ok(cond) = unsafe { uia.CreatePropertyCondition(UIA_ControlTypePropertyId, &ctype) } {
+        // SAFETY: `uia` is live and `ctype` contains a valid UIA control type id.
+        if let Ok(cond) = unsafe { uia.CreatePropertyCondition(UIA_ControlTypePropertyId, &ctype) }
+        {
+            // SAFETY: `root` and `cond` are live UIA interfaces; no ownership crosses this call.
             if let Ok(edits) = unsafe { root.FindAll(TreeScope_Descendants, &cond) } {
+                // SAFETY: `edits` is a live UIA element collection.
                 let len = unsafe { edits.Length() }.unwrap_or(0);
                 for i in 0..len {
+                    // SAFETY: `i` is within the collection length returned by UIA.
                     if let Ok(el) = unsafe { edits.GetElement(i) } {
                         if let Some(val) =
                             read_value_pattern(&el).or_else(|| read_text_pattern(&el))
@@ -962,8 +1018,8 @@ mod windows_impl {
         // by a path): the part before the first '/' is a dotted, label-shaped host.
         let host = v.split('/').next().unwrap_or(v);
         host.contains('.')
-            && host
-                .split('.')
-                .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+            && host.split('.').all(|seg| {
+                !seg.is_empty() && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+            })
     }
 }

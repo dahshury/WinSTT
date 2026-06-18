@@ -8,6 +8,7 @@ describe("AudioDevice type alias", () => {
 			name: "Microphone",
 			isDefault: true,
 			maxInputChannels: 2,
+			defaultSampleRate: 48_000,
 		};
 		expect(dev.name).toBe("Microphone");
 	});

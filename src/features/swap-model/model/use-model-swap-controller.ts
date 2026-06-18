@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSystemResourcesStore } from "@/entities/system-resources";
 import {
 	onModelDownloadComplete,
@@ -112,194 +112,149 @@ export function useModelSwapController(
 	const currentMainModel = resolveCurrentMainModel(settings, selectedModel);
 	const currentRealtimeModel = resolveCurrentRealtimeModel(settings);
 
-	const issueSwap = useCallback(
-		(
-			kind: "main" | "realtime",
-			value: string,
-			previous: string,
-			quantization?: OnnxQuantization,
-		) => {
-			runIssueSwap({
-				kind,
-				value,
-				previous,
-				quantization,
-				currentQuantization,
-				currentMainModel,
-				currentRealtimeModel,
-				getModel,
-				update,
-				prevMainModelRef,
-				prevRealtimeModelRef,
-			});
-		},
-		[
-			update,
-			getModel,
+	const issueSwap = (
+		kind: "main" | "realtime",
+		value: string,
+		previous: string,
+		quantization?: OnnxQuantization,
+	) => {
+		runIssueSwap({
+			kind,
+			value,
+			previous,
+			quantization,
 			currentQuantization,
 			currentMainModel,
 			currentRealtimeModel,
-		],
-	);
+			getModel,
+			update,
+			prevMainModelRef,
+			prevRealtimeModelRef,
+		});
+	};
 
 	// Common downstream behavior once the user has accepted any warnings:
 	// either prompt for download (if target precision isn't cached) or
 	// hot-swap directly.
-	const proceedWithSelection = useCallback(
-		(
-			kind: "main" | "realtime",
-			v: string,
-			previous: string,
-			quantization: OnnxQuantization | undefined,
-		) => {
-			runProceedWithSelection({
-				kind,
-				value: v,
-				previous,
-				quantization,
-				currentQuantization,
-				statesById,
-				issueSwap,
-				setPendingDownload,
-			});
-		},
-		[issueSwap, statesById, currentQuantization],
-	);
+	const proceedWithSelection = (
+		kind: "main" | "realtime",
+		v: string,
+		previous: string,
+		quantization: OnnxQuantization | undefined,
+	) => {
+		runProceedWithSelection({
+			kind,
+			value: v,
+			previous,
+			quantization,
+			currentQuantization,
+			statesById,
+			issueSwap,
+			setPendingDownload,
+		});
+	};
 
 	// Resource-aware gate: round-trip the server for an authoritative fit
 	// verdict. If ``critical`` (won't fit given current load), surface the
 	// ResourceWarningDialog and stash the onward action; otherwise proceed
 	// straight to the existing download/swap path.
-	const gateWithAssessment = useCallback(
-		(
-			kind: "main" | "realtime",
-			v: string,
-			previous: string,
-			quantization: OnnxQuantization | undefined,
-		) =>
-			runGateWithAssessment({
-				kind,
-				value: v,
-				previous,
-				quantization,
-				currentQuantization,
-				deviceValue,
-				getModel,
-				currentMainModel,
-				currentRealtimeModel,
-				assessDictationFitOnServer,
-				proceed: proceedWithSelection,
-				setPendingFitWarning,
-				statesById,
-			}),
-		[
-			assessDictationFitOnServer,
+	const gateWithAssessment = (
+		kind: "main" | "realtime",
+		v: string,
+		previous: string,
+		quantization: OnnxQuantization | undefined,
+	) =>
+		runGateWithAssessment({
+			kind,
+			value: v,
+			previous,
+			quantization,
 			currentQuantization,
-			currentMainModel,
-			currentRealtimeModel,
 			deviceValue,
 			getModel,
-			proceedWithSelection,
-			statesById,
-		],
-	);
-
-	const handleModelChange = useCallback(
-		(v: string, quantization?: OnnxQuantization) => {
-			// Block model swaps while the file-transcription queue is busy — the
-			// swap would yank the shared transcriber out from under in-flight
-			// file work. The UI also disables the selector when busy.
-			if (isFileQueueBusy()) {
-				return;
-			}
-			// Refuse to switch TO a model whose target precision is still
-			// downloading — it isn't on disk yet, so a swap would just fail /
-			// re-trigger a fetch. The download keeps running in the background;
-			// the user can switch once it finishes.
-			if (
-				isSwapBlockedByDownload(
-					v,
-					quantization,
-					currentQuantization,
-					statesById,
-					isQuantDownloading,
-				)
-			) {
-				return;
-			}
-			runHandleMainChange({
-				value: v,
-				quantization,
-				currentModel: currentMainModel,
-				currentQuantization,
-				kind: "main",
-				update,
-				issueSwap,
-				gateWithAssessment,
-			});
-		},
-		[
-			gateWithAssessment,
-			issueSwap,
 			currentMainModel,
-			currentQuantization,
-			update,
-			statesById,
-			isQuantDownloading,
-			isFileQueueBusy,
-		],
-	);
-
-	const handleRealtimeModelChange = useCallback(
-		(v: string, quantization?: OnnxQuantization) => {
-			if (isFileQueueBusy()) {
-				return;
-			}
-			if (
-				isSwapBlockedByDownload(
-					v,
-					quantization,
-					currentQuantization,
-					statesById,
-					isQuantDownloading,
-				)
-			) {
-				return;
-			}
-			runHandleRealtimeChange({
-				value: v,
-				quantization,
-				currentModel: currentRealtimeModel,
-				currentQuantization,
-				kind: "realtime",
-				update,
-				issueSwap,
-				gateWithAssessment,
-			});
-		},
-		[
-			gateWithAssessment,
-			issueSwap,
 			currentRealtimeModel,
-			currentQuantization,
-			update,
+			assessDictationFitOnServer,
+			proceed: proceedWithSelection,
+			setPendingFitWarning,
 			statesById,
-			isQuantDownloading,
-			isFileQueueBusy,
-		],
-	);
+		});
+
+	const handleModelChange = (v: string, quantization?: OnnxQuantization) => {
+		// Block model swaps while the file-transcription queue is busy — the
+		// swap would yank the shared transcriber out from under in-flight
+		// file work. The UI also disables the selector when busy.
+		if (isFileQueueBusy()) {
+			return;
+		}
+		// Refuse to switch TO a model whose target precision is still
+		// downloading — it isn't on disk yet, so a swap would just fail /
+		// re-trigger a fetch. The download keeps running in the background;
+		// the user can switch once it finishes.
+		if (
+			isSwapBlockedByDownload(
+				v,
+				quantization,
+				currentQuantization,
+				statesById,
+				isQuantDownloading,
+			)
+		) {
+			return;
+		}
+		runHandleMainChange({
+			value: v,
+			quantization,
+			currentModel: currentMainModel,
+			currentQuantization,
+			kind: "main",
+			update,
+			issueSwap,
+			gateWithAssessment,
+		});
+	};
+
+	const handleRealtimeModelChange = (
+		v: string,
+		quantization?: OnnxQuantization,
+	) => {
+		if (isFileQueueBusy()) {
+			return;
+		}
+		if (
+			isSwapBlockedByDownload(
+				v,
+				quantization,
+				currentQuantization,
+				statesById,
+				isQuantDownloading,
+			)
+		) {
+			return;
+		}
+		runHandleRealtimeChange({
+			value: v,
+			quantization,
+			currentModel: currentRealtimeModel,
+			currentQuantization,
+			kind: "realtime",
+			update,
+			issueSwap,
+			gateWithAssessment,
+		});
+	};
 
 	// Kick off the swap (which triggers the download) but keep the modal
 	// open so the user sees live progress and can Stop without re-clicking
 	// the picker. Closing only happens on explicit Cancel/Esc or when the
 	// download-complete event fires (handled below).
-	const confirmPendingDownload = useCallback(() => {
+	const confirmPendingDownload = () => {
 		runConfirmPendingDownload(pendingDownload, issueSwap);
-	}, [issueSwap, pendingDownload]);
+	};
 
-	const cancelPendingDownload = useCallback(() => {
+	const cancelPendingDownload = () => {
 		setPendingDownload(null);
-	}, []);
+	};
 
 	// Explicit per-quant download (precision-badge click): open the confirmation
 	// dialog for ``(modelId, quantization)`` without touching the loaded model.
@@ -308,22 +263,19 @@ export function useModelSwapController(
 	// silently kicks off a multi-GB fetch. ``previousModelId``
 	// is the currently-loaded model for the slot; it is only consulted by the
 	// swap-rollback path, which this predownload-only flow never reaches.
-	const promptDownload = useCallback(
-		(
-			kind: "main" | "realtime",
-			modelId: string,
-			quantization?: OnnxQuantization,
-		) => {
-			setPendingDownload({
-				kind,
-				modelId,
-				previousModelId:
-					kind === "main" ? currentMainModel : currentRealtimeModel,
-				quantization,
-			});
-		},
-		[currentMainModel, currentRealtimeModel],
-	);
+	const promptDownload = (
+		kind: "main" | "realtime",
+		modelId: string,
+		quantization?: OnnxQuantization,
+	) => {
+		setPendingDownload({
+			kind,
+			modelId,
+			previousModelId:
+				kind === "main" ? currentMainModel : currentRealtimeModel,
+			quantization,
+		});
+	};
 
 	// Auto-close when the model the modal is targeting finishes downloading
 	// successfully — at that point the swap completes naturally and the

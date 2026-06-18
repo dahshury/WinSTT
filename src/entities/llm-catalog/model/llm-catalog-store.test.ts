@@ -158,8 +158,8 @@ describe("useLlmCatalogStore.setPullProgress", () => {
 			statusText: "downloading",
 		});
 		const { pulls } = useLlmCatalogStore.getState();
-		expect(pulls.llama3).toBeDefined();
-		expect(pulls.llama3!.progress.status).toBe("pulling");
+		expect(pulls["llama3"]).toBeDefined();
+		expect(pulls["llama3"]!.progress.status).toBe("pulling");
 	});
 
 	test("updates an existing pull entry and preserves startedAt", () => {
@@ -178,8 +178,8 @@ describe("useLlmCatalogStore.setPullProgress", () => {
 			statusText: "second",
 		});
 		const { pulls } = useLlmCatalogStore.getState();
-		expect(pulls.llama3!.startedAt).toBe(startedAt);
-		expect(pulls.llama3!.progress.statusText).toBe("second");
+		expect(pulls["llama3"]!.startedAt).toBe(startedAt);
+		expect(pulls["llama3"]!.progress.statusText).toBe("second");
 	});
 
 	test("removes pull entry on 'success' terminal status", () => {
@@ -196,7 +196,7 @@ describe("useLlmCatalogStore.setPullProgress", () => {
 			status: "success",
 			statusText: "done",
 		});
-		expect(useLlmCatalogStore.getState().pulls.llama3).toBeUndefined();
+		expect(useLlmCatalogStore.getState().pulls["llama3"]).toBeUndefined();
 	});
 
 	test("removes pull entry on 'error' terminal status", () => {
@@ -213,7 +213,7 @@ describe("useLlmCatalogStore.setPullProgress", () => {
 			status: "error",
 			statusText: "failed",
 		});
-		expect(useLlmCatalogStore.getState().pulls.llama3).toBeUndefined();
+		expect(useLlmCatalogStore.getState().pulls["llama3"]).toBeUndefined();
 	});
 
 	test("removes pull entry on 'cancelled' terminal status", () => {
@@ -230,7 +230,7 @@ describe("useLlmCatalogStore.setPullProgress", () => {
 			status: "cancelled",
 			statusText: "cancelled",
 		});
-		expect(useLlmCatalogStore.getState().pulls.llama3).toBeUndefined();
+		expect(useLlmCatalogStore.getState().pulls["llama3"]).toBeUndefined();
 	});
 });
 
@@ -267,7 +267,7 @@ describe("useLlmCatalogStore.pullModel", () => {
 		// We verify the model appears in the store at some point during the call
 		let seenPull = false;
 		const unsub = useLlmCatalogStore.subscribe((state) => {
-			if (state.pulls.phi !== undefined) {
+			if (state.pulls["phi"] !== undefined) {
 				seenPull = true;
 			}
 		});
@@ -286,7 +286,7 @@ describe("useLlmCatalogStore.pullModel", () => {
 			statusText?: string;
 		} | null = null;
 		const unsub = useLlmCatalogStore.subscribe((state) => {
-			const entry = state.pulls.gemma;
+			const entry = state.pulls["gemma"];
 			if (entry && capturedProgress === null) {
 				capturedProgress = entry.progress;
 			}
@@ -410,10 +410,10 @@ describe("useLlmCatalogStore.pullModel", () => {
 			statusText: "done",
 		});
 		const { pulls } = useLlmCatalogStore.getState();
-		expect(pulls.phi).toBeUndefined();
+		expect(pulls["phi"]).toBeUndefined();
 		// gemma must still be present — kills `const next = {}` mutant.
-		expect(pulls.gemma).toBeDefined();
-		expect(pulls.gemma?.startedAt).toBe(200);
+		expect(pulls["gemma"]).toBeDefined();
+		expect(pulls["gemma"]?.startedAt).toBe(200);
 	});
 });
 
@@ -445,12 +445,12 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 			.getState()
 			.setPullProgress({ model: "phi", status: "cancelled" });
 		const state = useLlmCatalogStore.getState();
-		expect(state.pulls.phi).toBeUndefined();
-		expect(state.pausedPulls.phi).toBeDefined();
+		expect(state.pulls["phi"]).toBeUndefined();
+		expect(state.pausedPulls["phi"]).toBeDefined();
 		// The paused snapshot must carry the LAST known active progress, not
 		// the cancelled status itself — that's what the UI bar renders.
-		expect(state.pausedPulls.phi?.progress.percent).toBe(60);
-		expect(state.pausedPulls.phi?.progress.status).toBe("downloading");
+		expect(state.pausedPulls["phi"]?.progress.percent).toBe(60);
+		expect(state.pausedPulls["phi"]?.progress.status).toBe("downloading");
 	});
 
 	test("a 'cancelled' status with no active pull does not synthesize a paused entry", () => {
@@ -459,7 +459,7 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 			.getState()
 			.setPullProgress({ model: "ghost", status: "cancelled" });
 		const state = useLlmCatalogStore.getState();
-		expect(state.pausedPulls.ghost).toBeUndefined();
+		expect(state.pausedPulls["ghost"]).toBeUndefined();
 	});
 
 	test("a 'success' status clears any paused entry for the same model", () => {
@@ -475,7 +475,7 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 		useLlmCatalogStore
 			.getState()
 			.setPullProgress({ model: "phi", status: "success" });
-		expect(useLlmCatalogStore.getState().pausedPulls.phi).toBeUndefined();
+		expect(useLlmCatalogStore.getState().pausedPulls["phi"]).toBeUndefined();
 	});
 
 	test("an 'error' status clears any paused entry for the same model", () => {
@@ -491,7 +491,7 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 		useLlmCatalogStore
 			.getState()
 			.setPullProgress({ model: "phi", status: "error", error: "bad" });
-		expect(useLlmCatalogStore.getState().pausedPulls.phi).toBeUndefined();
+		expect(useLlmCatalogStore.getState().pausedPulls["phi"]).toBeUndefined();
 	});
 
 	test("late non-terminal progress after stop does not resurrect an active pull", () => {
@@ -508,8 +508,8 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 			.getState()
 			.setPullProgress({ model: "phi", status: "downloading", percent: 35 });
 		const state = useLlmCatalogStore.getState();
-		expect(state.pulls.phi).toBeUndefined();
-		expect(state.pausedPulls.phi?.progress.percent).toBe(30);
+		expect(state.pulls["phi"]).toBeUndefined();
+		expect(state.pausedPulls["phi"]?.progress.percent).toBe(30);
 	});
 
 	test("active progress is monotonic across resume frames", () => {
@@ -537,10 +537,10 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 			total: 900,
 		});
 		let state = useLlmCatalogStore.getState();
-		expect(state.pulls.phi?.progress.percent).toBe(80);
-		expect(state.pulls.phi?.progress.completed).toBe(800);
-		expect(state.pulls.phi?.progress.total).toBe(1000);
-		expect(state.pulls.phi?.progress.status).toBe("downloading");
+		expect(state.pulls["phi"]?.progress.percent).toBe(80);
+		expect(state.pulls["phi"]?.progress.completed).toBe(800);
+		expect(state.pulls["phi"]?.progress.total).toBe(1000);
+		expect(state.pulls["phi"]?.progress.status).toBe("downloading");
 
 		useLlmCatalogStore.getState().setPullProgress({
 			model: "phi",
@@ -550,8 +550,8 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 			total: 1000,
 		});
 		state = useLlmCatalogStore.getState();
-		expect(state.pulls.phi?.progress.percent).toBe(85);
-		expect(state.pulls.phi?.progress.completed).toBe(850);
+		expect(state.pulls["phi"]?.progress.percent).toBe(85);
+		expect(state.pulls["phi"]?.progress.completed).toBe(850);
 	});
 
 	test("discardPausedPull removes the entry without touching active pulls", () => {
@@ -571,8 +571,8 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 		});
 		useLlmCatalogStore.getState().discardPausedPull("phi");
 		const state = useLlmCatalogStore.getState();
-		expect(state.pausedPulls.phi).toBeUndefined();
-		expect(state.pulls.other).toBeDefined();
+		expect(state.pausedPulls["phi"]).toBeUndefined();
+		expect(state.pulls["other"]).toBeDefined();
 	});
 
 	test("discardPausedPull is a no-op when the model has no paused entry", () => {
@@ -596,9 +596,9 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 		const result = await useLlmCatalogStore.getState().resumePull("phi");
 		expect(result.success).toBe(true);
 		const state = useLlmCatalogStore.getState();
-		expect(state.pausedPulls.phi).toBeUndefined();
-		expect(state.pulls.phi?.progress.percent).toBe(80);
-		expect(state.pulls.phi?.progress.statusText).toBe("resuming");
+		expect(state.pausedPulls["phi"]).toBeUndefined();
+		expect(state.pulls["phi"]?.progress.percent).toBe(80);
+		expect(state.pulls["phi"]?.progress.statusText).toBe("resuming");
 	});
 });
 

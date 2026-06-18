@@ -5,25 +5,15 @@
  *   - clips are app-faithful story demos, using WinSTT's dark palette and UI
  *     patterns while keeping file sizes suitable for docs.
  */
-import type { ComponentType } from "react";
-import { withBasePath } from "@/lib/site";
+import { createElement, type ComponentType } from "react";
+import { DemoVideo } from "./demo-video";
 
-function DemoVideo({ src }: { src: string }) {
-  return (
-    <video
-      className="demo-video"
-      src={withBasePath(`/demos/${src}.webm`)}
-      autoPlay
-      loop
-      muted
-      playsInline
-      preload="metadata"
-      tabIndex={-1}
-    />
-  );
-}
-
-const vid = (src: string) => () => <DemoVideo src={src} />;
+const vid = (src: string): ComponentType => {
+  function DemoClip() {
+    return createElement(DemoVideo, { src });
+  }
+  return DemoClip;
+};
 
 export const DEMOS: Record<string, ComponentType> = {
   // Core story flows.

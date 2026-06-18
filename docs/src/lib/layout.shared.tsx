@@ -24,7 +24,10 @@ export function baseOptions(): BaseLayoutProps {
         </span>
       ),
       url: "/",
-      transparentMode: "top",
+      // Keep the bar opaque at all scroll positions so its slightly-darker
+      // surface (see `#nd-nav > div` in app.css) reads as distinct from the
+      // page background even at the very top of the landing page.
+      transparentMode: "none",
     },
     themeSwitch: {
       enabled: false,

@@ -1,7 +1,7 @@
 "use client";
 
 import type * as React from "react";
-import { useDeferredValue, useMemo } from "react";
+import { useDeferredValue } from "react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import { getUniqueEndpoints } from "./model-selector-display-utils";
 import { filterModels, groupModelsByMaker } from "./model-selector-logic";
@@ -13,6 +13,29 @@ import {
 	sortOpenRouterModels,
 } from "./openrouter-sort";
 import { useFavoriteProviders } from "./use-favorite-providers";
+
+const EMPTY_PROVIDERS: string[] = [];
+const EMPTY_MODELS: OpenRouterModel[] = [];
+const EMPTY_GROUPED_MODELS: [string, OpenRouterModel[]][] = [];
+const EMPTY_COMBOBOX_ITEMS: string[] = [];
+
+const providersCache = new WeakMap<OpenRouterModel[], string[]>();
+
+function collectAllProviders(models: OpenRouterModel[]): string[] {
+	const cached = providersCache.get(models);
+	if (cached) {
+		return cached;
+	}
+	const providers = new Set<string>();
+	for (const model of models) {
+		if (model.maker) {
+			providers.add(model.maker);
+		}
+	}
+	const allProviders = Array.from(providers).sort();
+	providersCache.set(models, allProviders);
+	return allProviders;
+}
 
 /** Pure: appends `<modelId>@<provider>` for each endpoint into `items`. */
 function pushEndpointItems(
@@ -155,18 +178,16 @@ export function useModelSelectorFilters({
 	);
 
 	const deferredSearchQuery = useDeferredValue(searchQuery);
+	const shouldBuildCollections = isOpen;
 
-	const allProviders = useMemo(() => {
-		const providers = new Set<string>();
-		for (const model of models) {
-			if (model.maker) {
-				providers.add(model.maker);
-			}
+	const allProviders = shouldBuildCollections
+		? collectAllProviders(models)
+		: EMPTY_PROVIDERS;
+
+	const { favoriteProviders } = (() => {
+		if (!shouldBuildCollections) {
+			return { favoriteProviders: EMPTY_PROVIDERS };
 		}
-		return Array.from(providers).sort();
-	}, [models]);
-
-	const { favoriteProviders } = useMemo(() => {
 		const favoritesSet = new Set(favorites);
 		const favs: string[] = [];
 		for (const provider of allProviders) {
@@ -178,11 +199,11 @@ export function useModelSelectorFilters({
 			(a, b) => favorites.indexOf(a) - favorites.indexOf(b),
 		);
 		return { favoriteProviders: sortedFavs };
-	}, [allProviders, favorites]);
+	})();
 
-	const filteredModels = useMemo(() => {
-		if (!(isOpen || searchQuery)) {
-			return models;
+	const filteredModels = (() => {
+		if (!shouldBuildCollections) {
+			return EMPTY_MODELS;
 		}
 
 		return filterModels(models, {
@@ -192,28 +213,22 @@ export function useModelSelectorFilters({
 			selectedEndpointProvider,
 			selectedParameters,
 		});
-	}, [
-		models,
-		deferredSearchQuery,
-		selectedMakers,
-		selectedVariant,
-		selectedEndpointProvider,
-		selectedParameters,
-		isOpen,
-		searchQuery,
-	]);
+	})();
 
-	const groupedModelsAll = useMemo(() => {
+	const groupedModelsAll = (() => {
+		if (!shouldBuildCollections) {
+			return EMPTY_GROUPED_MODELS;
+		}
 		const hasSearch = searchQuery.trim() !== "";
 		return buildGroupedModels(filteredModels, hasSearch, sortKey);
-	}, [filteredModels, searchQuery, sortKey]);
+	})();
 
-	const comboboxItems = useMemo(() => {
-		if (!(isOpen || searchQuery)) {
-			return [];
+	const comboboxItems = (() => {
+		if (!shouldBuildCollections) {
+			return EMPTY_COMBOBOX_ITEMS;
 		}
 		return buildComboboxItems(groupedModelsAll);
-	}, [groupedModelsAll, isOpen, searchQuery]);
+	})();
 
 	const hasActiveFilters = computeHasActiveFilters(
 		selectedMakers,
@@ -270,6 +285,6 @@ export function useModelSelectorFilters({
 		handleEndpointProviderSelect,
 		handleParametersChange,
 		handleRemoveParameter,
-		isSearchPending: searchQuery !== deferredSearchQuery,
+		isSearchPending: isOpen && searchQuery !== deferredSearchQuery,
 	};
 }

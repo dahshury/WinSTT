@@ -57,13 +57,17 @@ function finalizeHunks(
 	hunks: TranscriptDiffHunk[],
 	coarse: boolean,
 ): TranscriptDiffResult | null {
-	const changes = hunks
-		.filter((hunk) => hunk.kind === "change")
-		.map((hunk) => ({
-			after: hunk.after,
-			before: hunk.before,
-			kind: changeKind(hunk.before, hunk.after),
-		}));
+	const changes = hunks.flatMap((hunk) =>
+		hunk.kind === "change"
+			? [
+					{
+						after: hunk.after,
+						before: hunk.before,
+						kind: changeKind(hunk.before, hunk.after),
+					},
+				]
+			: [],
+	);
 
 	if (changes.length === 0) {
 		return null;

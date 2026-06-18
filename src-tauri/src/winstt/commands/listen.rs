@@ -53,6 +53,10 @@ pub async fn start_listen(
     device_index: i32,
     model_id: String,
 ) -> Result<(), String> {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        return Err("Onboarding is active; listen mode is disabled".to_string());
+    }
+
     let model_id =
         ensure_cached_native_streaming_model(&app, downloads.inner().as_ref(), model_id.trim())
             .await?;
@@ -155,13 +159,25 @@ pub fn stop_listen(
     loopback: State<'_, Arc<LoopbackManager>>,
     diarization: State<'_, Arc<DiarizationManager>>,
 ) {
+    stop_listen_runtime(
+        &app,
+        loopback.inner().as_ref(),
+        diarization.inner().as_ref(),
+    );
+}
+
+pub(crate) fn stop_listen_runtime(
+    app: &AppHandle,
+    loopback: &LoopbackManager,
+    diarization: &DiarizationManager,
+) {
     let was_capturing = loopback.is_capturing();
     loopback.stop();
     diarization.set_enabled(false);
-    set_main_window_listen_mode(&app, false);
+    set_main_window_listen_mode(app, false);
     if was_capturing {
-        SttEvents::vad_stop(&app);
-        SttEvents::recording_stop(&app);
+        SttEvents::vad_stop(app);
+        SttEvents::recording_stop(app);
     }
     let _ = app.emit(names::LOOPBACK_STOPPED, serde_json::Value::Null);
 }

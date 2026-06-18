@@ -27,8 +27,8 @@ describe("InputGroup", () => {
 			</InputGroup>,
 		);
 		const root = container.firstChild as HTMLElement;
-		expect(root.dataset.size).toBe("sm");
-		expect(root.dataset.tone).toBe("active");
+		expect(root.dataset["size"]).toBe("sm");
+		expect(root.dataset["tone"]).toBe("active");
 	});
 
 	test("InputGroupAddon places content in start order by default", () => {
@@ -47,8 +47,8 @@ describe("InputGroup", () => {
 			.getByText("start")
 			.closest("[data-align]") as HTMLElement;
 		const end = screen.getByText("end").closest("[data-align]") as HTMLElement;
-		expect(start.dataset.align).toBe("inline-start");
-		expect(end.dataset.align).toBe("inline-end");
+		expect(start.dataset["align"]).toBe("inline-start");
+		expect(end.dataset["align"]).toBe("inline-end");
 	});
 
 	test("InputGroupInput renders an editable input that flexes to fill", () => {
@@ -97,7 +97,7 @@ describe("InputGroup", () => {
 			</InputGroup>,
 		);
 		const root = container.firstChild as HTMLElement;
-		expect(root.dataset.appearance).toBe("elevated");
+		expect(root.dataset["appearance"]).toBe("elevated");
 		expect(root.className).toContain("shadow-elevated");
 	});
 
@@ -108,7 +108,7 @@ describe("InputGroup", () => {
 			</InputGroup>,
 		);
 		const root = container.firstChild as HTMLElement;
-		expect(root.dataset.appearance).toBe("minimal");
+		expect(root.dataset["appearance"]).toBe("minimal");
 		expect(root.className).not.toContain("shadow-elevated");
 		expect(root.className).toContain("bg-transparent");
 	});

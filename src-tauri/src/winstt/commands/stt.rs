@@ -138,6 +138,8 @@ fn live_gpu_entries() -> Vec<LiveGpuEntry> {
         };
 
         let mut gpus = Vec::new();
+        // SAFETY: DXGI factory and adapter interfaces are used synchronously on this thread and
+        // every fallible COM call is checked before consuming returned data.
         unsafe {
             let factory: IDXGIFactory1 = match CreateDXGIFactory1() {
                 Ok(f) => f,
@@ -205,6 +207,8 @@ fn query_adapter_vram(
         return (total_vram_bytes, 0);
     };
     let mut info = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+    // SAFETY: `adapter` is a valid IDXGIAdapter3 interface obtained from DXGI enumeration and
+    // `info` is writable storage for the queried memory information.
     let ok = unsafe {
         adapter
             .QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut info)

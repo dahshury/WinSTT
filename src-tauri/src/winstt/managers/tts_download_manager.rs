@@ -122,7 +122,7 @@ impl TtsDownloadManager {
     }
 
     fn path_len(path: &Path) -> u64 {
-        std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+        std::fs::metadata(path).map_or(0, |m| m.len())
     }
 
     fn cached_or_partial_bytes(target: &Path) -> u64 {
@@ -323,7 +323,7 @@ impl TtsDownloadManager {
                 progress: 0.0,
             };
         };
-        let total = entry.quant(quant).map(|q| q.size_bytes).unwrap_or(0);
+        let total = entry.quant(quant).map_or(0, |q| q.size_bytes);
         let manifest = self.manifest(entry, quant);
         let mut all_present = !manifest.is_empty();
         let mut downloaded: u64 = 0;
@@ -366,8 +366,7 @@ impl TtsDownloadManager {
     pub fn pause(&self, model_id: &str, quant: &str) {
         if let Some(f) = self
             .inflight
-            .lock()
-            .unwrap()
+            .lock_recover()
             .get(&Self::key(model_id, quant))
         {
             f.pause.store(true, Ordering::Release);
@@ -376,8 +375,7 @@ impl TtsDownloadManager {
     pub fn cancel(&self, model_id: &str, quant: &str) {
         if let Some(f) = self
             .inflight
-            .lock()
-            .unwrap()
+            .lock_recover()
             .get(&Self::key(model_id, quant))
         {
             f.cancel.store(true, Ordering::Release);
@@ -392,7 +390,7 @@ impl TtsDownloadManager {
             if g.contains_key(&key) {
                 return; // already running
             }
-            g.insert(key.clone(), Arc::new(Flags::default()));
+            g.insert(key, Arc::new(Flags::default()));
         }
         let this = self.clone();
         let model_id = model_id.to_string();
@@ -400,12 +398,24 @@ impl TtsDownloadManager {
         std::thread::spawn(move || {
             let outcome = this.download_blocking(&model_id, &quant, true);
             this.inflight
-                .lock()
-                .unwrap()
+                .lock_recover()
                 .remove(&Self::key(&model_id, &quant));
             let paused = matches!(outcome, Err(TtsDownloadErr::Paused));
             if !paused {
                 let cancelled = matches!(outcome, Err(TtsDownloadErr::Cancelled));
+                if let Err(err) = &outcome {
+                    if !cancelled {
+                        crate::winstt::observability::IssueBuilder::new(
+                            "tts_download",
+                            "model_download",
+                            "TTS model download failed",
+                        )
+                        .detail(err.to_string())
+                        .model_id(model_id.clone())
+                        .context("quantization", quant.clone())
+                        .record(Some(&this.app));
+                    }
+                }
                 let _ = this.app.emit(
                     "tts:catalog-model-download-complete",
                     json!({ "model": model_id, "quantization": quant, "cancelled": cancelled }),
@@ -431,7 +441,7 @@ impl TtsDownloadManager {
         if manifest.is_empty() {
             return Err(TtsDownloadErr::Other("no download manifest".into()));
         }
-        let fallback_total = entry.quant(quant).map(|q| q.size_bytes).unwrap_or(0);
+        let fallback_total = entry.quant(quant).map_or(0, |q| q.size_bytes);
         let mut file_totals: Vec<u64> = manifest
             .iter()
             .map(|(url, target)| {
@@ -455,8 +465,7 @@ impl TtsDownloadManager {
         }
         let flags = self
             .inflight
-            .lock()
-            .unwrap()
+            .lock_recover()
             .entry(Self::key(model_id, quant))
             .or_insert_with(|| Arc::new(Flags::default()))
             .clone();

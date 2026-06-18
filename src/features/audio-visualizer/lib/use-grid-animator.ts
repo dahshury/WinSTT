@@ -141,14 +141,23 @@ const GRID_SEQUENCE_FACTORIES: Record<AgentState, GridSequenceFactory> = {
 	thinking: (rows, columns) => generateThinkingSequence(rows, columns),
 };
 
+const gridSequenceCache = new Map<string, Coordinate[]>();
+
 function buildGridSequence(
 	state: AgentState,
 	rows: number,
 	columns: number,
 	radius: number | undefined,
 ): Coordinate[] {
+	const key = `${state}:${rows}:${columns}:${radius ?? ""}`;
+	const cached = gridSequenceCache.get(key);
+	if (cached) {
+		return cached;
+	}
 	const factory = GRID_SEQUENCE_FACTORIES[state] ?? generateCenterSequence;
-	return factory(rows, columns, radius);
+	const sequence = factory(rows, columns, radius);
+	gridSequenceCache.set(key, sequence);
+	return sequence;
 }
 
 interface GridAnimatorInputs {

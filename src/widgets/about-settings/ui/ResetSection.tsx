@@ -4,7 +4,7 @@ import {
 	PackageRemoveIcon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useReducer } from "react";
 import { useTranslations } from "use-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import {
@@ -59,42 +59,108 @@ function ResetActionRow({
 	);
 }
 
+interface ResetSectionState {
+	cleanupError: string;
+	deleteOllamaModels: boolean;
+	deleteOllamaModelsWithModelCleanup: boolean;
+	modelCleanupError: string;
+	removeConfirmOpen: boolean;
+	removeModelsConfirmOpen: boolean;
+	resetConfirmOpen: boolean;
+}
+
+type ResetSectionAction =
+	| { open: boolean; type: "resetConfirmOpenChanged" }
+	| { open: boolean; type: "removeModelsConfirmOpenChanged" }
+	| { open: boolean; type: "removeConfirmOpenChanged" }
+	| { checked: boolean; type: "deleteOllamaModelsWithModelCleanupChanged" }
+	| { checked: boolean; type: "deleteOllamaModelsChanged" }
+	| { error: string; type: "modelCleanupErrorChanged" }
+	| { error: string; type: "cleanupErrorChanged" };
+
+const INITIAL_RESET_SECTION_STATE: ResetSectionState = {
+	cleanupError: "",
+	deleteOllamaModels: false,
+	deleteOllamaModelsWithModelCleanup: false,
+	modelCleanupError: "",
+	removeConfirmOpen: false,
+	removeModelsConfirmOpen: false,
+	resetConfirmOpen: false,
+};
+
+function resetSectionReducer(
+	state: ResetSectionState,
+	action: ResetSectionAction,
+): ResetSectionState {
+	switch (action.type) {
+		case "resetConfirmOpenChanged":
+			return { ...state, resetConfirmOpen: action.open };
+		case "removeModelsConfirmOpenChanged":
+			return { ...state, removeModelsConfirmOpen: action.open };
+		case "removeConfirmOpenChanged":
+			return { ...state, removeConfirmOpen: action.open };
+		case "deleteOllamaModelsWithModelCleanupChanged":
+			return {
+				...state,
+				deleteOllamaModelsWithModelCleanup: action.checked,
+			};
+		case "deleteOllamaModelsChanged":
+			return { ...state, deleteOllamaModels: action.checked };
+		case "modelCleanupErrorChanged":
+			return { ...state, modelCleanupError: action.error };
+		case "cleanupErrorChanged":
+			return { ...state, cleanupError: action.error };
+	}
+}
+
 export function ResetSection(): ReactNode {
 	const resetSettings = useSettingsStore((s) => s.resetSettings);
 	const ts = useTranslations("settings");
 	const tc = useTranslations("common");
-	const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
-	const [removeModelsConfirmOpen, setRemoveModelsConfirmOpen] = useState(false);
-	const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
-	const [
+	const [state, dispatch] = useReducer(
+		resetSectionReducer,
+		INITIAL_RESET_SECTION_STATE,
+	);
+	const {
+		cleanupError,
+		deleteOllamaModels,
 		deleteOllamaModelsWithModelCleanup,
-		setDeleteOllamaModelsWithModelCleanup,
-	] = useState(false);
-	const [deleteOllamaModels, setDeleteOllamaModels] = useState(false);
-	const [modelCleanupError, setModelCleanupError] = useState("");
-	const [cleanupError, setCleanupError] = useState("");
+		modelCleanupError,
+		removeConfirmOpen,
+		removeModelsConfirmOpen,
+		resetConfirmOpen,
+	} = state;
 
 	const handleRemoveDownloadedModels = () => {
-		setModelCleanupError("");
+		dispatch({ type: "modelCleanupErrorChanged", error: "" });
 		removeDownloadedModels(deleteOllamaModelsWithModelCleanup)
 			.then((result) => {
 				const issues = [...result.errors, ...result.ollamaErrors];
 				if (issues.length > 0) {
-					setModelCleanupError(issues.join("\n"));
-					setRemoveModelsConfirmOpen(true);
+					dispatch({
+						type: "modelCleanupErrorChanged",
+						error: issues.join("\n"),
+					});
+					dispatch({ type: "removeModelsConfirmOpenChanged", open: true });
 				}
 			})
 			.catch((err) => {
-				setModelCleanupError(err instanceof Error ? err.message : String(err));
-				setRemoveModelsConfirmOpen(true);
+				dispatch({
+					type: "modelCleanupErrorChanged",
+					error: err instanceof Error ? err.message : String(err),
+				});
+				dispatch({ type: "removeModelsConfirmOpenChanged", open: true });
 			});
 	};
 
 	const handleRemoveApplicationData = () => {
-		setCleanupError("");
+		dispatch({ type: "cleanupErrorChanged", error: "" });
 		removeApplicationData(deleteOllamaModels).catch((err) => {
-			setCleanupError(err instanceof Error ? err.message : String(err));
-			setRemoveConfirmOpen(true);
+			dispatch({
+				type: "cleanupErrorChanged",
+				error: err instanceof Error ? err.message : String(err),
+			});
+			dispatch({ type: "removeConfirmOpenChanged", open: true });
 		});
 	};
 
@@ -112,7 +178,9 @@ export function ResetSection(): ReactNode {
 					</div>
 				}
 				onConfirm={resetSettings}
-				onOpenChange={setResetConfirmOpen}
+				onOpenChange={(open) =>
+					dispatch({ type: "resetConfirmOpenChanged", open })
+				}
 				open={resetConfirmOpen}
 				title={ts("resetTitle")}
 			/>
@@ -137,7 +205,12 @@ export function ResetSection(): ReactNode {
 							<Toggle
 								aria-label={ts("removeApplicationDataOllama")}
 								checked={deleteOllamaModelsWithModelCleanup}
-								onCheckedChange={setDeleteOllamaModelsWithModelCleanup}
+								onCheckedChange={(checked) =>
+									dispatch({
+										type: "deleteOllamaModelsWithModelCleanupChanged",
+										checked,
+									})
+								}
 							/>
 						</div>
 						{modelCleanupError ? (
@@ -148,7 +221,9 @@ export function ResetSection(): ReactNode {
 					</div>
 				}
 				onConfirm={handleRemoveDownloadedModels}
-				onOpenChange={setRemoveModelsConfirmOpen}
+				onOpenChange={(open) =>
+					dispatch({ type: "removeModelsConfirmOpenChanged", open })
+				}
 				open={removeModelsConfirmOpen}
 				title={ts("removeDownloadedModelsTitle")}
 			/>
@@ -173,7 +248,9 @@ export function ResetSection(): ReactNode {
 							<Toggle
 								aria-label={ts("removeApplicationDataOllama")}
 								checked={deleteOllamaModels}
-								onCheckedChange={setDeleteOllamaModels}
+								onCheckedChange={(checked) =>
+									dispatch({ type: "deleteOllamaModelsChanged", checked })
+								}
 							/>
 						</div>
 						{cleanupError ? (
@@ -182,7 +259,9 @@ export function ResetSection(): ReactNode {
 					</div>
 				}
 				onConfirm={handleRemoveApplicationData}
-				onOpenChange={setRemoveConfirmOpen}
+				onOpenChange={(open) =>
+					dispatch({ type: "removeConfirmOpenChanged", open })
+				}
 				open={removeConfirmOpen}
 				title={ts("removeApplicationDataTitle")}
 			/>
@@ -195,7 +274,9 @@ export function ResetSection(): ReactNode {
 				<ResetActionRow
 					buttonLabel={ts("resetDefaults")}
 					icon={ArrowTurnBackwardIcon}
-					onClick={() => setResetConfirmOpen(true)}
+					onClick={() =>
+						dispatch({ type: "resetConfirmOpenChanged", open: true })
+					}
 					summary={ts("resetDefaultsSummary")}
 					title={ts("resetDefaults")}
 				/>
@@ -203,8 +284,8 @@ export function ResetSection(): ReactNode {
 					buttonLabel={ts("removeDownloadedModelsButton")}
 					icon={PackageRemoveIcon}
 					onClick={() => {
-						setModelCleanupError("");
-						setRemoveModelsConfirmOpen(true);
+						dispatch({ type: "modelCleanupErrorChanged", error: "" });
+						dispatch({ type: "removeModelsConfirmOpenChanged", open: true });
 					}}
 					summary={ts("removeDownloadedModelsSummary")}
 					title={ts("removeDownloadedModelsButton")}
@@ -214,8 +295,8 @@ export function ResetSection(): ReactNode {
 					destructive
 					icon={Delete02Icon}
 					onClick={() => {
-						setCleanupError("");
-						setRemoveConfirmOpen(true);
+						dispatch({ type: "cleanupErrorChanged", error: "" });
+						dispatch({ type: "removeConfirmOpenChanged", open: true });
 					}}
 					summary={ts("removeApplicationDataSummary")}
 					title={ts("removeApplicationDataButton")}

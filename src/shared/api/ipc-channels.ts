@@ -780,16 +780,20 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS]: ["invoke"],
 };
 
+const IPC_DIRECTION_SETS = new Map<IpcChannel, ReadonlySet<IpcDirection>>(
+	(Object.entries(IPC_DIRECTIONS) as [
+		IpcChannel,
+		readonly IpcDirection[],
+	][]).map(([channel, directions]) => [channel, new Set(directions)]),
+);
+
 /** Return every channel whose direction list includes the given direction. */
 export function channelsByDirection(
 	direction: IpcDirection,
 ): readonly IpcChannel[] {
 	const out: IpcChannel[] = [];
-	for (const [channel, directions] of Object.entries(IPC_DIRECTIONS) as [
-		IpcChannel,
-		readonly IpcDirection[],
-	][]) {
-		if (directions.includes(direction)) {
+	for (const [channel, directions] of IPC_DIRECTION_SETS) {
+		if (directions.has(direction)) {
 			out.push(channel);
 		}
 	}

@@ -177,12 +177,11 @@ fn to_view(s: &WindowContextSnapshot) -> ContextSnapshotView {
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 fn char_count(opt: Option<&str>) -> u64 {
-    opt.map(|s| s.chars().count() as u64).unwrap_or(0)
+    opt.map_or(0, |s| s.chars().count() as u64)
 }
 
 /// Sanitize + tail-cap the raw textBefore into the Whisper ASR prior-text bias.
@@ -254,8 +253,7 @@ fn build_report(
     let ocr_used = raw
         .ocr_text
         .as_deref()
-        .map(|t| !t.trim().is_empty())
-        .unwrap_or(false);
+        .is_some_and(|t| !t.trim().is_empty());
 
     let metrics = ContextMetrics {
         ax_html_cap: AX_HTML_CAP,
@@ -378,13 +376,11 @@ fn capture_mode(context: &ContextManager, mode: ContextMode, label: &str) -> Con
         || snapshot
             .text_before
             .as_deref()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false)
+            .is_some_and(|s| !s.trim().is_empty())
         || snapshot
             .ax_html
             .as_deref()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
+            .is_some_and(|s| !s.trim().is_empty());
     ContextModeResult {
         duration_ms,
         mode: label.to_string(),
@@ -408,13 +404,11 @@ fn capture_mode_hwnd(
         || snapshot
             .text_before
             .as_deref()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false)
+            .is_some_and(|s| !s.trim().is_empty())
         || snapshot
             .ax_html
             .as_deref()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
+            .is_some_and(|s| !s.trim().is_empty());
     ContextModeResult {
         duration_ms,
         mode: label.to_string(),
@@ -432,7 +426,7 @@ fn run_capture(app: &AppHandle, context: &ContextManager, deep: bool) {
     CAPTURING.store(true, Ordering::SeqCst);
     let settings = read_settings(app);
     let context_awareness_enabled = settings.general.context_awareness;
-    let deny_list = settings.general.context_deny_list.clone();
+    let deny_list = settings.general.context_deny_list;
 
     let start = std::time::Instant::now();
     // The production live path is the tree mode; deep adds the side-by-side modes.

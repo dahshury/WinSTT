@@ -1,146 +1,45 @@
-"use client";
+﻿"use client";
 
 import { Combobox } from "@base-ui/react/combobox";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
-import {
-	useCallback,
-	useEffect,
-	useLayoutEffect,
-	useRef,
-	useState,
-} from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { PulseDot } from "@/shared/ui/pulse-dot";
+import { scrollModelItemIntoView } from "./model-picker-scroll";
 
-/**
- * Generic combobox shell shared by every model picker in the package.
- *
- * What it owns by default:
- *   - The `Combobox.Root` instance + open state + search-input state
- *   - The popup container (Portal → Positioner → Popup) with consistent
- *     border / background / radius / shadow / animation tokens
- *   - The search input row with optional `filtersMenu` addon + loading pulse dot
- *   - The optional left sidebar slot (provider-rail style)
- *   - The optional active-filters bar below the search row
- *   - The optional content slot rendered below the popup (e.g. reasoning controls)
- *   - Auto-clear of the search query when the popup closes
- *   - `onOpen` lazy-refresh callback (used by Ollama + OpenRouter)
- *
- * Controlled mode: when `open` is supplied, the shell becomes fully
- * controlled — the consumer manages open transitions via `onOpenChange`.
- * Same for `inputValue` / `onInputValueChange`. OpenRouter uses this to
- * intercept "click in nested submenu" events so the popup doesn't close
- * when the user opens its filters menu.
- *
- * What the consumer supplies:
- *   - `trigger`: the closed-state button (rendered via `Combobox.Trigger`)
- *   - `list`:    the open-state list (typically `Combobox.List` + items)
- *   - The Combobox.Root passthrough props (`items`, `value`, `filter`,
- *     `isItemEqualToValue`, `itemToStringLabel`, `onValueChange`) — these vary
- *     per provider's data shape so the shell keeps them generic instead of
- *     enforcing a single normalized `UniModel`.
- *
- * The same shell renders the OpenRouter, STT, and Ollama pickers — each
- * provider just composes it with its own row chip vocabulary.
- */
 export interface ModelPickerProps<TItem, TValue> {
-	/** Optional bar shown directly below the search row (Active filters etc.). */
 	activeFiltersSlot?: ReactNode;
-	/** Optional content rendered below the popup (e.g. ReasoningControls). */
 	belowListSlot?: ReactNode;
 	disabled?: boolean;
-	/** Combobox.Root `filter` — return true for items that pass search. */
 	filter?: (item: TItem, query: string) => boolean;
-	/** Optional menu rendered inside the search input row (right-aligned). */
 	filtersMenuSlot?: ReactNode;
-	/**
-	 * Inline/panel mode. Renders the search row + sidebar + list directly
-	 * (no trigger, no Portal/Positioner/Popup) with the combobox forced
-	 * open, so the picker can fill a dedicated host (e.g. the detached
-	 * model-picker window) instead of floating off a trigger.
-	 */
 	inline?: boolean;
-	/**
-	 * Controlled search-input value. When supplied, `onInputValueChange`
-	 * must also be supplied; the shell stops managing search state.
-	 */
 	inputValue?: string;
-	/**
-	 * Combobox.Root `isItemEqualToValue`. Required when `value` is an object
-	 * (e.g. STT picker's selected ModelInfo) — omit when `value` is a string.
-	 */
 	isItemEqualToValue?: (a: TItem | null, b: TItem | null) => boolean;
 	isLoading?: boolean;
-	/**
-	 * Combobox.Root `items` — flat array OR Base UI's grouped collection
-	 * shape (`{ items: TItem[]; value?: unknown }[]`). Typed as `unknown[]`
-	 * here because the shell pipes the value through to Combobox.Root which
-	 * handles both shapes natively.
-	 */
 	items?: readonly unknown[];
-	/**
-	 * Combobox.Root `itemToStringLabel` — used by Base UI for keyboard
-	 * typeahead and accessibility narration of the selected item.
-	 */
 	itemToStringLabel?: (item: TItem | null) => string;
-	/** List body — typically `<Combobox.List>` + group headers + rows. */
 	list: ReactNode;
-	/** Called when the search input value changes (controlled mode). */
 	onInputValueChange?: (value: string) => void;
-	/**
-	 * Lazy-refresh hook fired the moment the popup opens — used by Ollama
-	 * (re-scan `/api/tags`) and OpenRouter (re-scan the catalog). In
-	 * controlled mode, callers can call this from their own `onOpenChange`.
-	 */
 	onOpen?: () => void;
-	/**
-	 * Called on every open transition. In uncontrolled mode the shell also
-	 * updates its own state; in controlled mode (when `open` is supplied)
-	 * the shell delegates entirely to this callback.
-	 */
 	onOpenChange?: (open: boolean, eventDetails?: unknown) => void;
-	/** Called with the selected item (or null for clear). */
 	onValueChange?: (next: TValue, eventDetails?: unknown) => void;
-	/**
-	 * Controlled open state. When supplied, the shell stops managing open
-	 * state — use this when the consumer needs to intercept close events
-	 * (e.g. OpenRouter's nested-submenu click suppression).
-	 */
 	open?: boolean;
-	/** Height class for the popup container. Tunable per picker. */
 	popupHeightClass?: string;
-	/**
-	 * Callback receiving the popup DOM node. Used by OpenRouter to wire its
-	 * click-tracking ref so clicks inside the nested filters submenu don't
-	 * cause the popup to close.
-	 */
 	popupRef?: (node: HTMLElement | null) => void;
-	/** Width class for the popup container. Tunable per picker. */
 	popupWidthClass?: string;
-	/** Localized search-input placeholder. */
 	searchPlaceholder?: string;
-	/** Stable ``data-model-id`` key to scroll into view when the picker opens. */
 	selectedItemKey?: string | null | undefined;
-	/** Left sidebar slot — used by OpenRouter for the maker-rail. */
 	sidebarSlot?: ReactNode;
-	/** Trigger button — `<Combobox.Trigger>` + the closed-state UI. */
 	trigger: ReactNode;
-	/** Current value (string for primitive, item object for object-value mode). */
 	value?: TValue;
 }
 
 const DEFAULT_POPUP_HEIGHT = "h-[min(620px,var(--available-height))]";
 const DEFAULT_POPUP_WIDTH = "w-[max(520px,var(--anchor-width))]";
-const POPUP_CLOSE_MS = 170;
-const MODEL_LIST_SELECTOR = [
-	'[data-slot="ollama-model-list"]',
-	'[data-slot="stt-model-list"]',
-	'[data-slot="tts-model-list"]',
-].join(",");
-
 const POPUP_BASE_CLASSES = cn(
 	"t-dropdown relative z-popover flex flex-col overflow-hidden rounded-xl p-0",
 	"max-w-[calc(100vw-32px)]",
@@ -171,53 +70,6 @@ const SEARCH_ICON_BUTTON_CLASSES = cn(
 	"focus-visible:ring-2 focus-visible:ring-accent/50",
 );
 
-function findModelItem(root: ParentNode, modelId: string): HTMLElement | null {
-	for (const item of root.querySelectorAll<HTMLElement>("[data-model-id]")) {
-		if (item.dataset.modelId === modelId) {
-			return item;
-		}
-	}
-	return null;
-}
-
-function findModelListContainer(
-	root: HTMLElement,
-	target: HTMLElement,
-): HTMLElement {
-	const slottedList = target.closest<HTMLElement>(MODEL_LIST_SELECTOR);
-	if (slottedList && root.contains(slottedList)) {
-		return slottedList;
-	}
-	for (
-		let element = target.parentElement;
-		element;
-		element = element.parentElement
-	) {
-		if (element.scrollHeight > element.clientHeight) {
-			return element;
-		}
-		if (element === root) {
-			break;
-		}
-	}
-	return root;
-}
-
-export function scrollModelItemIntoView(
-	root: HTMLElement,
-	modelId: string,
-): boolean {
-	const target = findModelItem(root, modelId);
-	if (!target) {
-		return false;
-	}
-	const scrollContainer = findModelListContainer(root, target);
-	const targetRect = target.getBoundingClientRect();
-	const containerRect = scrollContainer.getBoundingClientRect();
-	scrollContainer.scrollTop += targetRect.top - containerRect.top;
-	return true;
-}
-
 export function ModelPicker<TItem, TValue = TItem | null>({
 	activeFiltersSlot,
 	belowListSlot,
@@ -246,24 +98,13 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 }: ModelPickerProps<TItem, TValue>) {
 	const [internalOpen, setInternalOpen] = useState(false);
 	const [internalSearch, setInternalSearch] = useState("");
-	const [popupContentReady, setPopupContentReady] = useState(false);
-	const [popupClosing, setPopupClosing] = useState(false);
-	// Side the popup opens toward. Recomputed on every open: the popup is
-	// height-clamped to `--available-height`, so Base UI's flip never fires
-	// (it always "fits" below by shrinking) — we instead pick whichever of
-	// top / bottom has more room around the trigger so the list gets the most
-	// vertical space. Driven by the layout effect + `triggerWrapperRef` below.
 	const [popupSide, setPopupSide] = useState<"top" | "bottom">("bottom");
 	const triggerWrapperRef = useRef<HTMLDivElement>(null);
 	const popupNodeRef = useRef<HTMLElement | null>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
-	const wasEffectivelyOpenRef = useRef(false);
-	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const isOpenControlled = controlledOpen !== undefined;
 	const isSearchControlled = inputValue !== undefined;
-	// Inline mode pins the combobox open — there is no trigger to toggle it,
-	// the picker IS the surface.
 	const controlledOrInternalOpen = isOpenControlled
 		? controlledOpen
 		: internalOpen;
@@ -274,76 +115,29 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 		((item: TItem, query: string) =>
 			matchesFuzzySearch(itemToStringLabel?.(item) ?? String(item), query));
 	const popupOrigin = popupSide === "top" ? "bottom-left" : "top-left";
-	const closingFromOpen =
-		!inline && !effectiveOpen && wasEffectivelyOpenRef.current;
-	const isClosingPopup =
-		!inline && !effectiveOpen && (popupClosing || closingFromOpen);
-	const popupStateClass = isClosingPopup
-		? "is-closing"
-		: effectiveOpen
-			? "is-open"
-			: "";
+	const popupStateClass =
+		!inline && !effectiveOpen ? "is-closing" : effectiveOpen ? "is-open" : "";
+	const renderPanelControls = inline || effectiveOpen;
 
-	const clearPopupCloseTimer = useCallback(() => {
-		if (closeTimerRef.current !== null) {
-			clearTimeout(closeTimerRef.current);
-			closeTimerRef.current = null;
-		}
-	}, []);
-
-	const setPopupNode = useCallback(
-		(node: HTMLElement | null) => {
-			popupNodeRef.current = node;
-			popupRef?.(node);
-		},
-		[popupRef],
-	);
-
-	const beginPopupClose = useCallback(() => {
-		clearPopupCloseTimer();
-		setPopupClosing(true);
-		closeTimerRef.current = setTimeout(() => {
-			setPopupClosing(false);
-			closeTimerRef.current = null;
-		}, POPUP_CLOSE_MS);
-	}, [clearPopupCloseTimer]);
-
-	useEffect(() => clearPopupCloseTimer, [clearPopupCloseTimer]);
-
-	const focusSearchInput = useCallback(() => {
-		searchInputRef.current?.focus({ preventScroll: true });
-	}, []);
+	const setPopupNode = (node: HTMLElement | null) => {
+		popupNodeRef.current = node;
+		popupRef?.(node);
+	};
 
 	useLayoutEffect(() => {
 		if (!effectiveOpen) {
 			return;
 		}
-		// Opening from a trigger leaves focus on the button; move it into the
-		// search field so immediate typing filters the model list.
+		const focusSearchInput = () => {
+			searchInputRef.current?.focus({ preventScroll: true });
+		};
 		focusSearchInput();
 		const frame = requestAnimationFrame(focusSearchInput);
 		return () => {
 			cancelAnimationFrame(frame);
 		};
-	}, [effectiveOpen, focusSearchInput]);
+	}, [effectiveOpen]);
 
-	useEffect(() => {
-		if (inline) {
-			wasEffectivelyOpenRef.current = effectiveOpen;
-			return;
-		}
-		if (effectiveOpen) {
-			clearPopupCloseTimer();
-			setPopupClosing(false);
-		} else if (wasEffectivelyOpenRef.current) {
-			beginPopupClose();
-		}
-		wasEffectivelyOpenRef.current = effectiveOpen;
-	}, [beginPopupClose, clearPopupCloseTimer, effectiveOpen, inline]);
-
-	// Measure the trigger when the popup opens and steer it toward the side with
-	// more room (top vs bottom). Runs in a layout effect so the side is set
-	// before paint — no visible bottom→top jump on open.
 	useLayoutEffect(() => {
 		if (inline || !effectiveOpen) {
 			return;
@@ -358,28 +152,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 		setPopupSide(spaceAbove > spaceBelow ? "top" : "bottom");
 	}, [effectiveOpen, inline]);
 
-	useEffect(() => {
-		if (inline) {
-			setPopupContentReady(true);
-			return;
-		}
-		if (!effectiveOpen || popupContentReady) {
-			return;
-		}
-		setPopupContentReady(false);
-		let secondFrame: number | null = null;
-		const firstFrame = requestAnimationFrame(() => {
-			secondFrame = requestAnimationFrame(() => setPopupContentReady(true));
-		});
-		return () => {
-			cancelAnimationFrame(firstFrame);
-			if (secondFrame !== null) {
-				cancelAnimationFrame(secondFrame);
-			}
-		};
-	}, [effectiveOpen, inline, popupContentReady]);
-
-	const renderCollection = inline || popupContentReady;
+	const renderCollection = inline || effectiveOpen;
 
 	useEffect(() => {
 		if (!effectiveOpen || !renderCollection || !selectedItemKey) {
@@ -431,8 +204,6 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 	}, [effectiveOpen, renderCollection, selectedItemKey]);
 
 	const handleOpenChange = (next: boolean, eventDetails?: unknown) => {
-		// Inline mode never actually closes the combobox; it just forwards
-		// the intent (e.g. Esc) so the host can dismiss its window.
 		if (inline) {
 			onOpenChange?.(next, eventDetails);
 			return;
@@ -442,7 +213,6 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 			if (next) {
 				onOpen?.();
 			} else if (!isSearchControlled) {
-				// Clear search on close so the next open starts fresh.
 				setInternalSearch("");
 			}
 		}
@@ -458,11 +228,6 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 
 	const handleValueChange = (next: TValue, eventDetails?: unknown) => {
 		onValueChange?.(next, eventDetails);
-		// Selecting an item makes Base UI write that item's label into the
-		// search input. A normal popup hides this (it closes, then clears on
-		// close), but an always-open inline panel would stay filtered down to
-		// just the picked model. Clear the query after Base UI's synchronous
-		// input write so the full list comes back.
 		if (inline && !isSearchControlled) {
 			queueMicrotask(() => setInternalSearch(""));
 		}
@@ -475,10 +240,6 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 				className="pointer-events-none absolute inset-x-5 top-0 z-raised h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent"
 			/>
 			<div className="flex flex-col">
-				{/* Input group: the filter button sits INSIDE the search
-				    input on the right edge, and the search itself fills the
-				    whole top strip. There is no padded wrapper around it, so
-				    the selector reads like one enlarged bezel-less search bar. */}
 				<div className={SEARCH_SHELL_CLASSES}>
 					<Combobox.Input
 						className={cn(
@@ -502,9 +263,9 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 							)}
 						/>
 					) : null}
-					{filtersMenuSlot ? (
+					{renderPanelControls && filtersMenuSlot ? (
 						<div className={SEARCH_ICON_BUTTON_CLASSES}>{filtersMenuSlot}</div>
-					) : effectiveSearch.trim() !== "" ? (
+					) : renderPanelControls && effectiveSearch.trim() !== "" ? (
 						<button
 							aria-label="Clear search"
 							className={SEARCH_ICON_BUTTON_CLASSES}
@@ -519,7 +280,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 						</button>
 					) : null}
 				</div>
-				{activeFiltersSlot ? (
+				{renderPanelControls && activeFiltersSlot ? (
 					<div className="border-divider border-b bg-[var(--color-surface-1)]/42 px-2.5 py-2">
 						{activeFiltersSlot}
 					</div>
@@ -527,15 +288,6 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 			</div>
 			<div className="flex min-h-0 min-w-0 flex-1">
 				{renderCollection ? sidebarSlot : null}
-				{/* `min-w-0` is load-bearing: a flex child defaults to
-				    `min-width: auto` (= its content's intrinsic min size), so
-				    without this the list column refuses to shrink below the
-				    widest card's non-shrinking right column (perf bars +
-				    attribute badges + variant chevron) and the cards spill past
-				    the fixed-width popup — most visible under the realtime
-				    filter, whose surviving cards all carry that wide right
-				    column. With `min-w-0` the column tracks the available width
-				    and each card's own `min-w-0` left region truncates instead. */}
 				<div className="flex min-h-0 min-w-0 flex-1 flex-col">
 					{renderCollection ? (
 						list
@@ -563,8 +315,6 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 				onInputValueChange={handleInputValueChange}
 				onOpenChange={handleOpenChange}
 				onValueChange={handleValueChange as never}
-				// Let Base UI see the real closed state. It keeps the popup mounted
-				// during `data-ending-style`; `is-closing` is only our fallback class.
 				open={effectiveOpen}
 				value={value as never}
 			>
@@ -584,9 +334,6 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 					</div>
 				) : (
 					<>
-						{/* Wrapper measures the trigger's viewport position so the popup
-						    can open toward the side with more room — see triggerWrapperRef
-						    and the open-side layout effect. It adds no visual box. */}
 						<div className="w-full" ref={triggerWrapperRef}>
 							{trigger}
 						</div>

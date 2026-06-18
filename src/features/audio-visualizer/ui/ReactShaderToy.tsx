@@ -11,6 +11,7 @@ import {
 	type ComponentPropsWithoutRef,
 	type RefObject,
 	useEffect,
+	useLayoutEffect,
 	useRef,
 	useState,
 } from "react";
@@ -46,6 +47,14 @@ export type {
 
 const EMPTY_CONTEXT_ATTRIBUTES: Record<string, unknown> = {};
 
+function reportShaderError(message: string): void {
+	console.error(message);
+}
+
+function reportShaderWarning(message: string): void {
+	console.warn(message);
+}
+
 function useShaderToyEngine(
 	canvasRef: RefObject<HTMLCanvasElement | null>,
 	{
@@ -56,8 +65,6 @@ function useShaderToyEngine(
 		precision,
 		contextAttributes,
 		devicePixelRatio,
-		onError,
-		onWarning,
 		animateWhenNotVisible,
 	}: Required<
 		Pick<
@@ -68,8 +75,6 @@ function useShaderToyEngine(
 			| "precision"
 			| "contextAttributes"
 			| "devicePixelRatio"
-			| "onError"
-			| "onWarning"
 			| "animateWhenNotVisible"
 		>
 	> & {
@@ -154,7 +159,7 @@ function useShaderToyEngine(
 		const displayHeight = Math.floor((rect?.height ?? 1) * realToCSSPixels);
 		gl.canvas.width = displayWidth;
 		gl.canvas.height = displayHeight;
-		if (uniformsRef.current.iResolution?.isNeeded && shaderProgramRef.current) {
+		if (uniformsRef.current["iResolution"]?.isNeeded && shaderProgramRef.current) {
 			const rUniform = gl.getUniformLocation(
 				shaderProgramRef.current,
 				UNIFORM_RESOLUTION,
@@ -175,10 +180,10 @@ function useShaderToyEngine(
 		gl.shaderSource(shader, shaderCodeAsText);
 		gl.compileShader(shader);
 		if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-			onWarning?.(log(`Error compiling the shader:\n${shaderCodeAsText}`));
+			reportShaderWarning(log(`Error compiling the shader:\n${shaderCodeAsText}`));
 			const compilationLog = gl.getShaderInfoLog(shader);
 			gl.deleteShader(shader);
-			onError?.(log(`Shader compiler log: ${compilationLog}`));
+			reportShaderError(log(`Shader compiler log: ${compilationLog}`));
 		}
 		return shader;
 	};
@@ -198,7 +203,7 @@ function useShaderToyEngine(
 		gl.attachShader(shaderProgramRef.current, fragmentShaderObj);
 		gl.linkProgram(shaderProgramRef.current);
 		if (!gl.getProgramParameter(shaderProgramRef.current, gl.LINK_STATUS)) {
-			onError?.(
+			reportShaderError(
 				log(
 					`Unable to initialize the shader program: ${gl.getProgramInfoLog(shaderProgramRef.current)}`,
 				),
@@ -287,21 +292,21 @@ function useShaderToyEngine(
 				}
 			}
 		}
-		if (uniformsRef.current.iTime?.isNeeded) {
+		if (uniformsRef.current["iTime"]?.isNeeded) {
 			const timeUniform = gl.getUniformLocation(
 				shaderProgramRef.current,
 				UNIFORM_TIME,
 			);
 			gl.uniform1f(timeUniform, (timerRef.current += delta));
 		}
-		if (uniformsRef.current.iTimeDelta?.isNeeded) {
+		if (uniformsRef.current["iTimeDelta"]?.isNeeded) {
 			const loc = gl.getUniformLocation(
 				shaderProgramRef.current,
 				UNIFORM_TIMEDELTA,
 			);
 			gl.uniform1f(loc, delta);
 		}
-		if (uniformsRef.current.iDate?.isNeeded) {
+		if (uniformsRef.current["iDate"]?.isNeeded) {
 			const d = new Date();
 			const time =
 				d.getHours() * 3600 +
@@ -316,14 +321,14 @@ function useShaderToyEngine(
 				time,
 			]);
 		}
-		if (uniformsRef.current.iFrame?.isNeeded) {
+		if (uniformsRef.current["iFrame"]?.isNeeded) {
 			const loc = gl.getUniformLocation(
 				shaderProgramRef.current,
 				UNIFORM_FRAME,
 			);
-			const frameVal = uniformsRef.current.iFrame.value;
+			const frameVal = uniformsRef.current["iFrame"].value;
 			const frame = typeof frameVal === "number" ? frameVal : 0;
-			uniformsRef.current.iFrame.value = frame + 1;
+			uniformsRef.current["iFrame"].value = frame + 1;
 			gl.uniform1i(loc, frame);
 		}
 	};
@@ -410,7 +415,7 @@ function useShaderToyEngine(
 		return () => observer.disconnect();
 	}, [animateWhenNotVisible, pinnedHandlers, canvasRef]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const canvasNode = canvasRef.current;
 		if (!canvasNode) {
 			return;
@@ -422,6 +427,14 @@ function useShaderToyEngine(
 		// `webglcontextrestored` event — it recompiles shaders, recreates the
 		// vertex buffer, and restarts the draw loop on the fresh context.
 		// Cancels any in-flight rAF first so a restore never stacks two loops.
+		const cancelAnimationFrames = () => {
+			cancelAnimationFrame(initFrameIdRef.current ?? 0);
+			cancelAnimationFrame(animFrameIdRef.current ?? 0);
+			initFrameIdRef.current = undefined;
+			animFrameIdRef.current = undefined;
+		};
+		let activeShaderProgram: WebGLProgram | null = null;
+		let activeSquareVerticesBuffer: WebGLBuffer | null = null;
 		const bootstrapScene = () => {
 			const gl = glRef.current;
 			if (!gl) {
@@ -441,8 +454,9 @@ function useShaderToyEngine(
 				pinnedInitOpts.vs || BASIC_VS,
 			);
 			pinnedHandlers.initBuffers();
-			cancelAnimationFrame(initFrameIdRef.current ?? 0);
-			cancelAnimationFrame(animFrameIdRef.current ?? 0);
+			activeShaderProgram = shaderProgramRef.current;
+			activeSquareVerticesBuffer = squareVerticesBufferRef.current;
+			cancelAnimationFrames();
 			initFrameIdRef.current = requestAnimationFrame(pinnedHandlers.drawScene);
 			resizeHandler();
 		};
@@ -463,11 +477,12 @@ function useShaderToyEngine(
 		// remount rebuild on the still-live context.
 		const handleContextLost = (event: Event) => {
 			event.preventDefault();
-			cancelAnimationFrame(initFrameIdRef.current ?? 0);
-			cancelAnimationFrame(animFrameIdRef.current ?? 0);
+			cancelAnimationFrames();
 		};
+		let activeGl: WebGLRenderingContext | null = null;
 		const handleContextRestored = () => {
 			pinnedHandlers.initWebGL();
+			activeGl = glRef.current;
 			bootstrapScene();
 		};
 		canvasNode.addEventListener("webglcontextlost", handleContextLost);
@@ -475,6 +490,7 @@ function useShaderToyEngine(
 
 		pinnedHandlers.initWebGL();
 		const gl = glRef.current;
+		activeGl = gl;
 		let observer: ResizeObserver | null = null;
 		if (gl) {
 			bootstrapScene();
@@ -490,8 +506,7 @@ function useShaderToyEngine(
 				"webglcontextrestored",
 				handleContextRestored,
 			);
-			cancelAnimationFrame(initFrameIdRef.current ?? 0);
-			cancelAnimationFrame(animFrameIdRef.current ?? 0);
+			cancelAnimationFrames();
 			if (observer) {
 				observer.disconnect();
 				window.removeEventListener("resize", resizeHandler);
@@ -500,11 +515,10 @@ function useShaderToyEngine(
 			// memory) but leave the context itself alive — the canvas reclaims
 			// it on GC at real unmount, and keeping it live is what lets a
 			// StrictMode remount rebuild instead of inheriting a dead context.
-			const liveGl = glRef.current;
+			const liveGl = activeGl;
 			if (liveGl && !liveGl.isContextLost()) {
-				liveGl.useProgram(null);
-				liveGl.deleteProgram(shaderProgramRef.current ?? null);
-				liveGl.deleteBuffer(squareVerticesBufferRef.current ?? null);
+				liveGl.deleteProgram(activeShaderProgram);
+				liveGl.deleteBuffer(activeSquareVerticesBuffer);
 			}
 		};
 	}, [pinnedHandlers, pinnedInitOpts, canvasRef]);
@@ -519,8 +533,6 @@ export function ReactShaderToy({
 	style,
 	contextAttributes = EMPTY_CONTEXT_ATTRIBUTES,
 	devicePixelRatio = 1,
-	onError = console.error,
-	onWarning = console.warn,
 	animateWhenNotVisible = false,
 	...canvasProps
 }: ReactShaderToyProps & ComponentPropsWithoutRef<"canvas">) {
@@ -533,8 +545,6 @@ export function ReactShaderToy({
 		precision,
 		contextAttributes,
 		devicePixelRatio,
-		onError,
-		onWarning,
 		animateWhenNotVisible,
 	});
 

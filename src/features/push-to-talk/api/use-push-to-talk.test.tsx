@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
+import { commands } from "@/bindings";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import * as ipcClient from "@/shared/api/ipc-client";
@@ -19,15 +20,17 @@ import {
 // detection has to run at TEST execution time (not module load) because Bun
 // processes all `mock.module` calls after the import phase completes; checking
 // `ipcClient.onHotkeyPressed` at module top-level always sees the real export.
-function _ipcClientPolluted(): boolean {
-	return typeof ipcClient.onHotkeyPressed !== "function";
-}
-
 const originalApi = window.nativeBridge;
 const initialSettings = useSettingsStore.getState().settings;
 const sentChannels: Array<{ channel: string; args: unknown[] }> = [];
 const invokes: string[] = [];
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+const originalCommands = {
+	hotkeyRegister: commands.hotkeyRegister,
+	hotkeyUnregister: commands.hotkeyUnregister,
+	winsttCallMethod: commands.winsttCallMethod,
+	winsttSetParameter: commands.winsttSetParameter,
+};
 
 // The renderer's outbound IPC for STT/hotkey channels does NOT flow through
 // `window.nativeBridge` anymore — `ipc-client.ts`'s COMMAND_INVOKERS routes those
@@ -124,7 +127,38 @@ function makeApi() {
 }
 
 beforeEach(() => {
-	useSettingsStore.setState({ settings: initialSettings });
+	commands.hotkeyRegister = async (_accelerator: string) => {
+		invokes.push(IPC.HOTKEY_REGISTER);
+		return true;
+	};
+	commands.hotkeyUnregister = async (accelerator: string) => {
+		sentChannels.push({
+			channel: IPC.HOTKEY_UNREGISTER,
+			args: [{ accelerator }],
+		});
+	};
+	commands.winsttSetParameter = async (parameter: string, value: unknown) => {
+		sentChannels.push({
+			channel: IPC.STT_SET_PARAMETER,
+			args: [{ parameter, value }],
+		});
+	};
+	commands.winsttCallMethod = async (method: string, args: unknown[] | null) => {
+		sentChannels.push({
+			channel: IPC.STT_CALL_METHOD,
+			args: [{ method, args: args ?? undefined }],
+		});
+	};
+	useSettingsStore.setState({
+		settings: {
+			...initialSettings,
+			general: {
+				...initialSettings.general,
+				onboarded: true,
+				onboardedAt: 1,
+			},
+		},
+	});
 	useHotkeyStore.setState({
 		isPressed: false,
 		isActive: false,
@@ -134,6 +168,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	commands.hotkeyRegister = originalCommands.hotkeyRegister;
+	commands.hotkeyUnregister = originalCommands.hotkeyUnregister;
+	commands.winsttSetParameter = originalCommands.winsttSetParameter;
+	commands.winsttCallMethod = originalCommands.winsttCallMethod;
 	window.nativeBridge = originalApi;
 	(window as unknown as Record<string, unknown>)[TAURI_INTERNALS_KEY] =
 		originalTauriInternals;

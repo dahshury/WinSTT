@@ -28,6 +28,13 @@ pub fn handle_shortcut_event(
     hotkey_string: &str,
     is_pressed: bool,
 ) {
+    if crate::shortcut::dev_hotkey_dispatch_is_suppressed() {
+        return;
+    }
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        return;
+    }
+
     // WinSTT port: the backend is the single authority for hotkey dispatch.
     // The transcribe binding's accelerator drives the recorder DIRECTLY on the hotkey thread —
     // both PTT and TOGGLE branch straight into the coordinator here, killing the WebView2

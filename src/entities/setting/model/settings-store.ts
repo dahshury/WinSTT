@@ -30,7 +30,7 @@ type ModelPatchSansCouple = Partial<Omit<ModelSection, "model" | "backend">>;
  *
  * The discriminated union below makes that invariant a compile error:
  *
- *   - Patches without ``model``: any other field is freely settable.
+ *   - Patches without ``model`` may freely set every other field.
  *   - Patches with ``model``: ``backend`` is required.
  *
  * Authoring tip: when changing the main model, look up the catalog entry
@@ -281,6 +281,10 @@ export const useSettingsStore = create<SettingsState>()(
 		},
 	),
 );
+
+export function getSettingsStoreState(): SettingsState {
+	return useSettingsStore.getState();
+}
 
 // Mark loaded after localStorage hydration completes.
 // Cannot use onRehydrateStorage because it fires during create() before

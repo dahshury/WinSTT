@@ -47,7 +47,7 @@ beforeEach(() => {
 	useSettingsStore.setState({ settings: initialSettings });
 	useConnectionStore.setState({
 		connectionStatus: "disconnected",
-		gpuInfo: null,
+		gpuInfo: [],
 		serverStatus: "idle",
 	});
 	useListenStore.setState({ isListening: false, deviceName: "", devices: [] });

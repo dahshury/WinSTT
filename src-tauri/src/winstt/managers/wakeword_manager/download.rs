@@ -329,7 +329,7 @@ pub(super) fn extract_zip_archive(archive_path: &Path, staging_dir: &Path) -> Re
         let mut entry = archive
             .by_index(i)
             .map_err(|err| format!("read zip entry {i}: {err}"))?;
-        let Some(enclosed) = entry.enclosed_name().map(|path| path.to_owned()) else {
+        let Some(enclosed) = entry.enclosed_name() else {
             continue;
         };
         let out_path = staging_dir.join(enclosed);

@@ -1,24 +1,6 @@
-import type { OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { getPricingTier } from "../model-selector-display-utils";
 import type { SelectionFlags } from "./header";
-
-type ModelVariantKey = NonNullable<OpenRouterModel["variant"]>;
-
-// fluidfunctionalism: the decorative top variant strip is redundant with the
-// variant badge, so every variant now paints the SAME quiet neutral hairline
-// instead of a 7-hue rainbow ribbon. Color is reserved for selection; the strip
-// is just a faint structural seam at the card's top edge.
-const NEUTRAL_VARIANT_HAIRLINE = "from-foreground/[0.10] via-foreground/[0.04]";
-export const VARIANT_GRADIENT_MAP: Record<ModelVariantKey, string> = {
-	free: NEUTRAL_VARIANT_HAIRLINE,
-	nitro: NEUTRAL_VARIANT_HAIRLINE,
-	thinking: NEUTRAL_VARIANT_HAIRLINE,
-	extended: NEUTRAL_VARIANT_HAIRLINE,
-	exacto: NEUTRAL_VARIANT_HAIRLINE,
-	floor: NEUTRAL_VARIANT_HAIRLINE,
-	online: NEUTRAL_VARIANT_HAIRLINE,
-};
 
 const MODEL_CARD_BASE_CLASSES = cn(
 	"group/card relative flex items-stretch rounded-md border p-0 transition-[color,background-color,border-color,box-shadow] duration-200",
@@ -182,5 +164,3 @@ export function getSelectionProviderTooltip(
 		? `Provider: ${selectedProviderName}`
 		: "Provider selected";
 }
-
-export type { ModelVariantKey };

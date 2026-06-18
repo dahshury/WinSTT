@@ -74,8 +74,10 @@ function uniqueQuantizations(
 	b: readonly string[],
 ): OnnxQuantization[] {
 	const out: OnnxQuantization[] = [];
+	const seen = new Set<OnnxQuantization>();
 	for (const quant of [...a, ...b]) {
-		if ((quant === "" || quant === "int8") && !out.includes(quant)) {
+		if ((quant === "" || quant === "int8") && !seen.has(quant)) {
+			seen.add(quant);
 			out.push(quant);
 		}
 	}
@@ -130,7 +132,7 @@ function uniqueLatencyVariants(
 	for (const variant of variants) {
 		byKey.set(`${variant.latencyMs}:${variant.model.id}`, variant);
 	}
-	return [...byKey.values()].sort((a, b) => a.latencyMs - b.latencyMs);
+	return [...byKey.values()].toSorted((a, b) => a.latencyMs - b.latencyMs);
 }
 
 function defaultLatencyVariant(
@@ -309,6 +311,7 @@ function firstExistingState(
 			return statesById[modelId];
 		}
 	}
+	return undefined;
 }
 
 function firstCachedQuant(

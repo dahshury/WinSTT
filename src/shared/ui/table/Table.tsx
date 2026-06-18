@@ -2,6 +2,7 @@ import {
 	AnimatePresence,
 	m as motion,
 	useReducedMotion,
+	type HTMLMotionProps,
 	type MotionProps,
 } from "motion/react";
 import {
@@ -24,17 +25,13 @@ import { springs } from "@/shared/lib/springs";
 import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 import { useProximityHover } from "@/shared/lib/use-proximity-hover";
 
-type MotionTableRowProps = ComponentPropsWithoutRef<"tr"> &
-	Pick<
-		MotionProps,
-		"animate" | "exit" | "initial" | "layout" | "transition"
-	> & {
-		ref?: Ref<HTMLTableRowElement>;
-	};
-
-const MotionTableRow = motion.tr as unknown as (
-	props: MotionTableRowProps,
-) => ReactNode;
+type TableRowBaseProps = Omit<
+	ComponentPropsWithoutRef<"tr">,
+	keyof MotionProps
+> & {
+	children?: ReactNode;
+	style?: ComponentPropsWithoutRef<"tr">["style"];
+};
 
 interface TableContextValue {
 	activeIndex: number | null;
@@ -174,7 +171,7 @@ export function TableBody({
 	);
 }
 
-export interface TableRowProps extends ComponentPropsWithoutRef<"tr"> {
+export interface TableRowProps extends TableRowBaseProps {
 	index?: number;
 	ref?: Ref<HTMLTableRowElement>;
 }
@@ -229,7 +226,7 @@ export function TableRow({
 
 	if (isBodyRow) {
 		return (
-			<MotionTableRow
+			<motion.tr
 				animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
 				className={rowClassName}
 				data-animated-row="true"
@@ -248,7 +245,7 @@ export function TableRow({
 				ref={setRef}
 				{...props}
 				{...(reduceMotion ? {} : { layout: "position" as const })}
-				style={rowStyle}
+				style={rowStyle as NonNullable<HTMLMotionProps<"tr">["style"]>}
 				transition={
 					reduceMotion
 						? { duration: 0 }

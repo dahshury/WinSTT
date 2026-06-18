@@ -36,6 +36,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::winstt::audio_conditioning::{NormalizedFrame, StreamingRmsNormalizer};
 use crate::winstt::commands::events::WakeWordDetectedPayload;
+use crate::winstt::observability::IssueBuilder;
 use crate::winstt::wakeword::{
     build_keywords_file, keyword_label, resolve_phrase, sensitivity_to_threshold,
     tokenize_phrase_for_kws_model, wakeword_runtime_engine_for_name, KeywordSpec, KwsModelPaths,
@@ -262,7 +263,7 @@ impl WakeWordManager {
 
     /// The resolved `#threshold` for the current sensitivity (direction-flipped).
     pub fn current_threshold(&self) -> f32 {
-        let s = self.state.lock().map(|s| s.sensitivity).unwrap_or(0.6);
+        let s = self.state.lock().map_or(0.6, |s| s.sensitivity);
         sensitivity_to_threshold(s)
     }
 
@@ -276,12 +277,13 @@ impl WakeWordManager {
     pub fn current_engine(&self) -> WakeWordRuntimeEngine {
         self.state
             .lock()
-            .map(|s| wakeword_runtime_engine_for_name(&s.name))
-            .unwrap_or(WakeWordRuntimeEngine::SherpaKws)
+            .map_or(WakeWordRuntimeEngine::SherpaKws, |s| {
+                wakeword_runtime_engine_for_name(&s.name)
+            })
     }
 
     pub fn timeout_seconds(&self) -> f32 {
-        self.state.lock().map(|s| s.timeout_seconds).unwrap_or(5.0)
+        self.state.lock().map_or(5.0, |s| s.timeout_seconds)
     }
 
     pub fn is_armed(&self) -> bool {
@@ -291,7 +293,7 @@ impl WakeWordManager {
     /// True when a live detector is built (a valid phrase + a present model
     /// bundle). The audio consumer can cheaply skip the feed when this is false.
     pub fn has_detector(&self) -> bool {
-        self.detector.lock().map(|g| g.is_some()).unwrap_or(false)
+        self.detector.lock().is_ok_and(|g| g.is_some())
     }
 
     pub fn has_model_bundle(&self) -> bool {
@@ -392,9 +394,18 @@ impl WakeWordManager {
                             "[wakeword] failed to download {} runtime assets: {err}",
                             engine.label()
                         );
+                        let detail = err.clone();
                         inflight.store(false, Ordering::Release);
                         control.store(DOWNLOAD_CONTROL_NONE, Ordering::Release);
                         mark_download_failed(&snapshot, err);
+                        IssueBuilder::new(
+                            "wakeword_download",
+                            "model_bundle_download",
+                            "Wake-word runtime asset download failed",
+                        )
+                        .detail(detail)
+                        .model_id(engine.label().to_string())
+                        .record(Some(&app));
                         emit_wakeword_model_status(
                             &app,
                             &status_for_app(&app, &inflight, &snapshot),
@@ -410,6 +421,14 @@ impl WakeWordManager {
                 mark_download_failed(&self.model_download_snapshot, err.to_string());
                 emit_wakeword_model_status(&self.app, &self.model_status());
                 warn!("[wakeword] failed to start KWS model download thread: {err}");
+                IssueBuilder::new(
+                    "wakeword_download",
+                    "worker_spawn",
+                    "Wake-word runtime download worker failed to start",
+                )
+                .detail(err.to_string())
+                .model_id(engine.label().to_string())
+                .record(Some(&self.app));
                 false
             }
         }
@@ -615,8 +634,18 @@ impl WakeWordManager {
                     Ok(())
                 }
                 Err(e) => {
+                    let detail = format!("failed to build legacy Porcupine detector: {e}");
                     self.store_detector(None);
-                    Err(format!("failed to build legacy Porcupine detector: {e}"))
+                    IssueBuilder::new(
+                        "wakeword",
+                        "detector_build",
+                        "Wake-word detector failed to build",
+                    )
+                    .detail(detail.clone())
+                    .model_id(engine.label().to_string())
+                    .context("phrase", phrase.clone())
+                    .record(Some(&self.app));
+                    Err(detail)
                 }
             };
         }
@@ -643,7 +672,22 @@ impl WakeWordManager {
 
         // Build the inline keyword content (tokens + #threshold + @label) for the
         // single active phrase, then stand up the spotter.
-        let tokens = tokenize_phrase_for_kws_model(&phrase, &model)?;
+        let tokens = match tokenize_phrase_for_kws_model(&phrase, &model) {
+            Ok(tokens) => tokens,
+            Err(e) => {
+                self.store_detector(None);
+                IssueBuilder::new(
+                    "wakeword",
+                    "tokenize_phrase",
+                    "Wake-word phrase tokenization failed",
+                )
+                .detail(e.clone())
+                .model_id(engine.label().to_string())
+                .context("phrase", phrase.clone())
+                .record(Some(&self.app));
+                return Err(e);
+            }
+        };
         let keywords_content = build_keywords_file(&[KeywordSpec {
             tokens,
             label: keyword_label(&phrase),
@@ -675,8 +719,18 @@ impl WakeWordManager {
                 Ok(())
             }
             Err(e) => {
+                let detail = format!("failed to build wake-word detector: {e}");
                 self.store_detector(None);
-                Err(format!("failed to build wake-word detector: {e}"))
+                IssueBuilder::new(
+                    "wakeword",
+                    "detector_build",
+                    "Wake-word detector failed to build",
+                )
+                .detail(detail.clone())
+                .model_id(engine.label().to_string())
+                .context("phrase", phrase)
+                .record(Some(&self.app));
+                Err(detail)
             }
         }
     }
@@ -684,7 +738,7 @@ impl WakeWordManager {
     /// Pick the sherpa provider from the shared model device setting (TTS/STT
     /// share `model.device`) through the same platform-aware STT resolver.
     fn resolve_provider(&self) -> WakeWordProvider {
-        let device = crate::winstt::commands::settings::read_settings(&self.app)
+        let device = crate::winstt::commands::settings::read_settings_raw(&self.app)
             .model
             .device;
         WakeWordProvider::from_stt_accelerator(crate::winstt::stt::resolve_accelerator(device))

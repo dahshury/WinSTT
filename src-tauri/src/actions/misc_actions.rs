@@ -88,7 +88,7 @@ impl ShortcutAction for RepasteAction {
             #[cfg(target_os = "macos")]
             let result = crate::clipboard::paste_on_main_thread(&app, text, false);
             #[cfg(not(target_os = "macos"))]
-            let result = crate::clipboard::paste(text, app.clone());
+            let result = crate::clipboard::paste(text, app);
             if let Err(e) = result {
                 error!("RepasteAction: paste failed: {e}");
             }

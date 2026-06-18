@@ -25,16 +25,16 @@ export function resolveWinsttAppDataDir(
 	os = platform()
 ): string {
 	const join = pathJoinFor(os);
-	if (env.WINSTT_APP_DATA_DIR) {
-		return env.WINSTT_APP_DATA_DIR;
+	if (env["WINSTT_APP_DATA_DIR"]) {
+		return env["WINSTT_APP_DATA_DIR"];
 	}
 	if (os === "win32") {
-		return join(env.APPDATA ?? join(homeDir, "AppData", "Roaming"), APP_IDENTIFIER);
+		return join(env["APPDATA"] ?? join(homeDir, "AppData", "Roaming"), APP_IDENTIFIER);
 	}
 	if (os === "darwin") {
 		return join(homeDir, "Library", "Application Support", APP_IDENTIFIER);
 	}
-	return join(env.XDG_DATA_HOME ?? join(homeDir, ".local", "share"), APP_IDENTIFIER);
+	return join(env["XDG_DATA_HOME"] ?? join(homeDir, ".local", "share"), APP_IDENTIFIER);
 }
 
 export function resolveWinsttSettingsPath(): string {

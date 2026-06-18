@@ -43,6 +43,7 @@ use crate::winstt::llm::{
 };
 use crate::winstt::managers::llm_manager::PullOutcome;
 use crate::winstt::managers::LlmManager;
+use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::{LlmProvider, WinsttSettings};
 
 use super::ollama_pull::{clear_pull_cancel, is_pull_cancelled};
@@ -89,6 +90,46 @@ fn normalize_llm_text_output(text: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "observability records keep domain/provider/model/request context together"
+)]
+fn record_llm_issue(
+    app: &AppHandle,
+    area: &str,
+    operation: &str,
+    summary: &str,
+    detail: &str,
+    provider: &str,
+    model: &str,
+    request_id: &str,
+    feature: &str,
+    user_visible: bool,
+    extra_context: &[(&str, &str)],
+) {
+    let compact = llm::compact_error_for_log(detail);
+    let mut issue = IssueBuilder::new(area, operation, summary)
+        .detail(compact)
+        .provider(provider.to_string())
+        .user_visible(user_visible);
+    if !model.trim().is_empty() {
+        issue = issue.model_id(model.to_string());
+    }
+    if !request_id.trim().is_empty() {
+        issue = issue.request_id(request_id.to_string());
+    }
+    if !feature.trim().is_empty() {
+        issue = issue.context("feature", feature.to_string());
+    }
+    for (key, value) in extra_context {
+        if !value.trim().is_empty() {
+            issue = issue.context(*key, (*value).to_string());
+        }
+    }
+    issue.record(Some(app));
+}
+
 impl Drop for LlmCommandProcessingGuard {
     fn drop(&mut self) {
         let _ = self.app.emit("llm:processing-end", ());
@@ -202,6 +243,19 @@ pub(crate) async fn process_dictation_text(
                     "[llm][{request_id}] dictation Ollama model '{model}' failed; returning original text: {}",
                     compact
                 );
+                record_llm_issue(
+                    app,
+                    "llm",
+                    "dictation",
+                    "LLM dictation post-processing failed; original text was kept",
+                    &compact,
+                    "ollama",
+                    &model,
+                    &request_id,
+                    "dictation",
+                    true,
+                    &[],
+                );
                 failsoft_error = Some(format!("Ollama model '{model}' failed: {compact}"));
                 text.clone()
             }
@@ -285,10 +339,24 @@ pub async fn process_transform(
             )
             .await
             .unwrap_or_else(|err| {
+                let compact = llm::compact_error_for_log(&err);
                 warn!(
                     "[llm][{request_id}] transform '{}' Ollama model '{model}' failed; returning original text: {}",
                     transform_id,
-                    llm::compact_error_for_log(&err)
+                    compact
+                );
+                record_llm_issue(
+                    &app,
+                    "llm",
+                    "transform",
+                    "LLM transform failed; original text was kept",
+                    &compact,
+                    "ollama",
+                    &model,
+                    &request_id,
+                    &transform_id,
+                    true,
+                    &[],
                 );
                 text.clone()
             }),
@@ -426,6 +494,19 @@ async fn run_openrouter_with_fallback(
                 "[llm][{request_id}] {feature} OpenRouter primary model '{primary}' failed; trying fallback '{fallback}': {}",
                 llm::compact_error_for_log(&primary_err)
             );
+            record_llm_issue(
+                app,
+                "llm",
+                "openrouter_primary",
+                "OpenRouter primary LLM request failed; fallback will be tried",
+                &primary_err,
+                "openrouter",
+                primary,
+                request_id,
+                feature,
+                false,
+                &[("fallbackModel", fallback)],
+            );
             match run_openrouter_attempt(
                 mgr,
                 OpenRouterAttempt {
@@ -449,6 +530,19 @@ async fn run_openrouter_with_fallback(
                     );
                     emit_openrouter_failsoft_notice(app, feature, &fallback_err);
                     let compact = llm::compact_error_for_log(&fallback_err);
+                    record_llm_issue(
+                        app,
+                        "llm",
+                        "openrouter_fallback",
+                        "OpenRouter fallback LLM request failed; original text was kept",
+                        &fallback_err,
+                        "openrouter",
+                        fallback,
+                        request_id,
+                        feature,
+                        true,
+                        &[("primaryModel", primary)],
+                    );
                     OpenRouterFallbackOutcome::failsoft(
                         text,
                         format!(
@@ -465,6 +559,19 @@ async fn run_openrouter_with_fallback(
             );
             emit_openrouter_failsoft_notice(app, feature, &primary_err);
             let compact = llm::compact_error_for_log(&primary_err);
+            record_llm_issue(
+                app,
+                "llm",
+                "openrouter_request",
+                "OpenRouter LLM request failed; original text was kept",
+                &primary_err,
+                "openrouter",
+                primary,
+                request_id,
+                feature,
+                true,
+                &[],
+            );
             OpenRouterFallbackOutcome::failsoft(
                 text,
                 format!("OpenRouter model '{primary}' failed: {compact}"),
@@ -566,10 +673,24 @@ pub async fn ollama_refresh_models(
     // `reachable: false` (the reference's `safeFetch` error path) rather than a
     // generic parse error.
     if !mgr.ollama_detect(&endpoint).await {
+        let detail = format!("Could not reach Ollama at {endpoint}");
+        record_llm_issue(
+            &app,
+            "llm",
+            "ollama_catalog_refresh",
+            "Ollama model catalog refresh could not reach the daemon",
+            &detail,
+            "ollama",
+            "",
+            "",
+            "catalog",
+            true,
+            &[],
+        );
         return Ok(OllamaScanResultPayload {
             models: Vec::new(),
             reachable: false,
-            error: Some(format!("Could not reach Ollama at {endpoint}")),
+            error: Some(detail),
         });
     }
     match mgr.ollama_list_models_detailed(&endpoint).await {
@@ -578,11 +699,26 @@ pub async fn ollama_refresh_models(
             reachable: true,
             error: None,
         }),
-        Err(e) => Ok(OllamaScanResultPayload {
-            models: Vec::new(),
-            reachable: true,
-            error: Some(e),
-        }),
+        Err(e) => {
+            record_llm_issue(
+                &app,
+                "llm",
+                "ollama_catalog_refresh",
+                "Ollama model catalog refresh failed",
+                &e,
+                "ollama",
+                "",
+                "",
+                "catalog",
+                true,
+                &[],
+            );
+            Ok(OllamaScanResultPayload {
+                models: Vec::new(),
+                reachable: true,
+                error: Some(e),
+            })
+        }
     }
 }
 
@@ -601,6 +737,25 @@ pub async fn openrouter_refresh_models(
     let api_key = settings.llm.openrouter_api_key.clone();
     let mgr = llm_manager.inner().clone();
     let scan = mgr.scan_openrouter_enriched(&api_key).await;
+    if !scan.reachable || scan.error.is_some() {
+        let detail = scan
+            .error
+            .as_deref()
+            .unwrap_or("OpenRouter catalog was unreachable");
+        record_llm_issue(
+            &app,
+            "cloud",
+            "openrouter_catalog_refresh",
+            "OpenRouter model catalog refresh failed",
+            detail,
+            "openrouter",
+            "",
+            "",
+            "catalog",
+            true,
+            &[],
+        );
+    }
     Ok(OpenRouterScanResultPayload {
         models: scan.models.into_iter().map(Into::into).collect(),
         reachable: scan.reachable,
@@ -622,6 +777,25 @@ pub async fn openrouter_refresh_stt_models(
     let api_key = settings.llm.openrouter_api_key.clone();
     let mgr = llm_manager.inner().clone();
     let scan = mgr.scan_openrouter_transcription_enriched(&api_key).await;
+    if !scan.reachable || scan.error.is_some() {
+        let detail = scan
+            .error
+            .as_deref()
+            .unwrap_or("OpenRouter STT catalog was unreachable");
+        record_llm_issue(
+            &app,
+            "cloud",
+            "openrouter_stt_catalog_refresh",
+            "OpenRouter STT model catalog refresh failed",
+            detail,
+            "openrouter",
+            "",
+            "",
+            "stt_catalog",
+            true,
+            &[],
+        );
+    }
     Ok(OpenRouterSttScanResultPayload {
         models: scan
             .models
@@ -660,6 +834,25 @@ pub async fn openrouter_refresh_tts_models(
     let api_key = settings.llm.openrouter_api_key.clone();
     let mgr = llm_manager.inner().clone();
     let scan = mgr.scan_openrouter_speech(&api_key).await;
+    if !scan.reachable || scan.error.is_some() {
+        let detail = scan
+            .error
+            .as_deref()
+            .unwrap_or("OpenRouter TTS catalog was unreachable");
+        record_llm_issue(
+            &app,
+            "cloud",
+            "openrouter_tts_catalog_refresh",
+            "OpenRouter TTS model catalog refresh failed",
+            detail,
+            "openrouter",
+            "",
+            "",
+            "tts_catalog",
+            true,
+            &[],
+        );
+    }
     Ok(OpenRouterTtsScanResultPayload {
         models: scan
             .models
@@ -701,12 +894,39 @@ pub async fn ollama_start(
 ) -> Result<OllamaStartResultPayload, String> {
     let detected = detect_ollama_executable().await;
     let Some(path) = detected.path.filter(|_| detected.installed) else {
+        let detail = "Ollama is not installed";
+        record_llm_issue(
+            &app,
+            "llm",
+            "ollama_start",
+            "Ollama could not start because it is not installed",
+            detail,
+            "ollama",
+            "",
+            "",
+            "daemon",
+            true,
+            &[],
+        );
         return Ok(OllamaStartResultPayload {
             started: false,
-            error: Some("Ollama is not installed".to_string()),
+            error: Some(detail.to_string()),
         });
     };
     if let Err(e) = spawn_ollama_serve(&path) {
+        record_llm_issue(
+            &app,
+            "llm",
+            "ollama_start",
+            "Ollama daemon failed to start",
+            &e,
+            "ollama",
+            "",
+            "",
+            "daemon",
+            true,
+            &[("path", path.as_str())],
+        );
         return Ok(OllamaStartResultPayload {
             started: false,
             error: Some(e),
@@ -731,9 +951,23 @@ pub async fn ollama_start(
         })
         .await;
     }
+    let detail = "Ollama started but did not bind within 10s";
+    record_llm_issue(
+        &app,
+        "llm",
+        "ollama_start",
+        "Ollama daemon did not become reachable after start",
+        detail,
+        "ollama",
+        "",
+        "",
+        "daemon",
+        true,
+        &[("endpoint", endpoint.as_str())],
+    );
     Ok(OllamaStartResultPayload {
         started: false,
-        error: Some("Ollama started but did not bind within 10s".to_string()),
+        error: Some(detail.to_string()),
     })
 }
 
@@ -800,12 +1034,27 @@ pub async fn ollama_pull(
                 error: None,
             })
         }
-        PullOutcome::Error(msg) => Ok(OllamaPullResultPayload {
-            success: false,
-            model,
-            cancelled: None,
-            error: Some(msg),
-        }),
+        PullOutcome::Error(msg) => {
+            record_llm_issue(
+                &app,
+                "llm_download",
+                "ollama_pull",
+                "Ollama model pull failed",
+                &msg,
+                "ollama",
+                &model,
+                "",
+                "model_download",
+                true,
+                &[("endpoint", endpoint.as_str())],
+            );
+            Ok(OllamaPullResultPayload {
+                success: false,
+                model,
+                cancelled: None,
+                error: Some(msg),
+            })
+        }
     }
 }
 
@@ -838,6 +1087,23 @@ pub async fn ollama_delete(
     let endpoint = settings.llm.endpoint.clone();
     let mgr = llm_manager.inner().clone();
     let (success, error) = mgr.ollama_delete(&endpoint, &model).await;
+    if !success {
+        if let Some(detail) = error.as_deref() {
+            record_llm_issue(
+                &app,
+                "llm",
+                "ollama_delete",
+                "Ollama model delete failed",
+                detail,
+                "ollama",
+                &model,
+                "",
+                "model_management",
+                true,
+                &[("endpoint", endpoint.as_str())],
+            );
+        }
+    }
     Ok(OllamaDeleteResultPayload {
         success,
         model,
@@ -889,13 +1155,7 @@ pub(crate) fn build_vocab(settings: &WinsttSettings) -> Vocab {
     let dictionary: Vec<String> = settings
         .dictionary
         .iter()
-        .filter(|d| {
-            d.replacement
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or("")
-                .is_empty()
-        })
+        .filter(|d| d.replacement.as_deref().map_or("", str::trim).is_empty())
         .map(|d| d.term.clone())
         .collect();
     let snippets: Vec<(String, String)> = settings

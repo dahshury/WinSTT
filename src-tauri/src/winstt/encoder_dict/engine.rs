@@ -37,8 +37,7 @@ impl EncoderDict {
             .token_to_id("<mask>")
             .context("tokenizer has no <mask> token")? as i64;
         let threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
+            .map_or(4, |n| n.get())
             .clamp(1, 8);
         // `ort::Error` is not `Send+Sync`, so anyhow's `.context()` doesn't apply — map to strings.
         let session = Session::builder()

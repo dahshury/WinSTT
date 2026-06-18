@@ -84,7 +84,9 @@ impl OnlineSpeakerClustering {
     /// Place `embedding` into the first free slot, returning its global id.
     /// Caller guarantees a free slot exists.
     fn add_centroid(&mut self, embedding: &[f32]) -> i64 {
-        let centers = self.centers.as_mut().expect("centers allocated");
+        let Some(centers) = self.centers.as_mut() else {
+            return 0;
+        };
         for (i, active) in self.active.iter_mut().enumerate() {
             if !*active {
                 centers[i].clear();
@@ -99,7 +101,9 @@ impl OnlineSpeakerClustering {
 
     fn update_centroid(&mut self, centroid_id: usize, embedding: &[f32]) {
         let alpha = self.ema_alpha;
-        let centers = self.centers.as_mut().expect("centers allocated");
+        let Some(centers) = self.centers.as_mut() else {
+            return;
+        };
         let c = &mut centers[centroid_id];
         for (slot, &e) in c.iter_mut().zip(embedding.iter()) {
             *slot = alpha * e + (1.0 - alpha) * *slot;
@@ -140,17 +144,18 @@ impl OnlineSpeakerClustering {
             let mut closest_global: i64 = -1;
             let mut closest_dist = f32::INFINITY;
             {
-                let centers = self.centers.as_ref().expect("centers allocated");
-                for (j, &active) in self.active.iter().enumerate() {
-                    if !active {
-                        continue;
-                    }
-                    let ctr_n = l2_normalize(&centers[j]);
-                    let cos = dot(&ctr_n, &emb_n);
-                    let dist = 1.0 - cos;
-                    if dist < closest_dist {
-                        closest_dist = dist;
-                        closest_global = j as i64;
+                if let Some(centers) = self.centers.as_ref() {
+                    for (j, &active) in self.active.iter().enumerate() {
+                        if !active {
+                            continue;
+                        }
+                        let ctr_n = l2_normalize(&centers[j]);
+                        let cos = dot(&ctr_n, &emb_n);
+                        let dist = 1.0 - cos;
+                        if dist < closest_dist {
+                            closest_dist = dist;
+                            closest_global = j as i64;
+                        }
                     }
                 }
             }

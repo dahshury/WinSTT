@@ -34,8 +34,11 @@ describe("OllamaModelSelector detached-open mode", () => {
 			'[data-slot="ollama-model-selector-trigger"]',
 		);
 		expect(trigger).not.toBeNull();
+		if (trigger === null) {
+			throw new Error("Expected Ollama model selector trigger");
+		}
 
-		fireEvent.click(trigger as Element);
+		fireEvent.click(trigger);
 
 		expect(onOpenDetached).toHaveBeenCalledTimes(1);
 		expect(trigger.getAttribute("data-state")).toBe("closed");

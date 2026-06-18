@@ -1,4 +1,4 @@
-import { ALL_AUTHORS_RAIL_ID } from "../../core/GroupRail";
+import { ALL_AUTHORS_RAIL_ID } from "../../core/group-rail-items";
 import type { FamilyKey } from "../lib/family-helpers";
 import { EMPTY_FILTER_STATE, type SttFilterState } from "../lib/filter-state";
 import type { SttSortValue } from "../lib/sort-state";

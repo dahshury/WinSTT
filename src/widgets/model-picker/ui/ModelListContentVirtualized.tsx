@@ -11,19 +11,21 @@ import {
 } from "react";
 import { VList, type VListHandle } from "virtua";
 import type { OpenRouterModel } from "@/shared/api/models";
-import { GroupHeader, NeutralHeaderIcon } from "../core/model-card";
+import { GroupHeader, NeutralHeaderIcon } from "../core/model-card/GroupHeader";
 import {
 	EmptyState,
 	SectionHeader,
 	VirtualizedRow,
 } from "../lib/model-list-content-virtualized-components";
 import {
-	applyScrollToMakerRequest,
-	applyVirtualScrollMakerUpdate,
 	buildVirtualItems,
 	getRowKey,
+} from "../lib/model-list-content-virtualized-utils/items";
+import {
+	applyScrollToMakerRequest,
+	applyVirtualScrollMakerUpdate,
 	findActiveVirtualIndex,
-} from "../lib/model-list-content-virtualized-utils";
+} from "../lib/model-list-content-virtualized-utils/scroll";
 
 export interface ModelListContentVirtualizedProps {
 	expandedModels: Set<string>;
@@ -211,6 +213,21 @@ export function ModelListContentVirtualized({
 		}
 	};
 
+	const renderVirtualRow = (
+		item: ReturnType<typeof buildVirtualItems>[number],
+	) => (
+		<VirtualizedRow
+			isFavoriteModel={isFavoriteModel}
+			item={item}
+			key={getRowKey(item)}
+			onSelectModel={onSelectModel}
+			onToggleModelExpanded={onToggleModelExpanded}
+			onToggleModelFavorite={onToggleModelFavorite}
+			parsedModelId={parsedModelId}
+			parsedProviderSlug={parsedProviderSlug}
+		/>
+	);
+
 	useLayoutEffect(() => {
 		if (virtualItemsSignatureRef.current === virtualItemsSignature) {
 			return;
@@ -280,23 +297,13 @@ export function ModelListContentVirtualized({
 			) : null}
 			<VList
 				className="min-h-0 flex-1 overscroll-contain overflow-y-auto [overflow-y:overlay]"
+				data={virtualItems}
 				data-slot="model-list-scroll-container"
 				onScroll={handleVirtualScroll}
 				ref={virtualizerHandleRef}
 				style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
 			>
-				{virtualItems.map((item) => (
-					<VirtualizedRow
-						isFavoriteModel={isFavoriteModel}
-						item={item}
-						key={getRowKey(item)}
-						onSelectModel={onSelectModel}
-						onToggleModelExpanded={onToggleModelExpanded}
-						onToggleModelFavorite={onToggleModelFavorite}
-						parsedModelId={parsedModelId}
-						parsedProviderSlug={parsedProviderSlug}
-					/>
-				))}
+				{renderVirtualRow}
 			</VList>
 		</Combobox.List>
 	);

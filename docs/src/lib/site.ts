@@ -6,7 +6,7 @@ export const siteConfig = {
     "Documentation for WinSTT, a local-first speech-to-text desktop app.",
 };
 
-export const repositorySlug = `${siteConfig.owner}/${siteConfig.repo}`;
+const repositorySlug = `${siteConfig.owner}/${siteConfig.repo}`;
 export const repositoryUrl = `https://github.com/${repositorySlug}`;
 export const repositoryRawUrl = `https://raw.githubusercontent.com/${repositorySlug}`;
 const env = (
@@ -14,8 +14,8 @@ const env = (
     env?: { VITE_DOCS_URL?: string; VITE_WINSTT_VERSION?: string };
   }
 ).env;
-export const docsUrl = env?.VITE_DOCS_URL ?? "http://localhost:3001";
-export const currentAppVersion = env?.VITE_WINSTT_VERSION ?? "0.0.0-alpha.0";
+const docsUrl = env?.VITE_DOCS_URL ?? "http://localhost:3001";
+const currentAppVersion = env?.VITE_WINSTT_VERSION ?? "0.0.0-alpha.0";
 export const currentReleaseTag = `v${currentAppVersion}`;
 const encodedCurrentReleaseTag = encodeURIComponent(currentReleaseTag);
 export const latestReleaseUrl = `${repositoryUrl}/releases/tag/${encodedCurrentReleaseTag}`;

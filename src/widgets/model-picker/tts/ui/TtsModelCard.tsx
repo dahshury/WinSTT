@@ -11,15 +11,15 @@ import type { ReactNode } from "react";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { Tooltip } from "@/shared/ui/tooltip";
+import type { MetaEntry } from "../../core/model-card/CardMeta";
+import { ModelCard } from "../../core/model-card/ModelCard";
 import {
-	type MetaEntry,
-	ModelCard,
 	type QuantDownloadAction,
 	type QuantDownloadSnapshot,
 	QuantShelf,
 	type QuantShelfEntry,
-	resolveQuantDownloadState,
-} from "../../core/model-card";
+} from "../../core/model-card/QuantShelf";
+import { resolveQuantDownloadState } from "../../core/model-card/quant-shelf-state";
 import { cloningLabel, ttsLanguageMeta } from "../lib/tts-helpers";
 
 // Re-export the shelf download types from their canonical home so existing
@@ -28,7 +28,7 @@ import { cloningLabel, ttsLanguageMeta } from "../lib/tts-helpers";
 export type {
 	QuantDownloadAction,
 	QuantDownloadSnapshot,
-} from "../../core/model-card";
+} from "../../core/model-card/QuantShelf";
 
 /** Single per-quant cache entry from {@link TtsModelState.cacheByQuantization}. */
 type TtsQuantCache = TtsModelState["cacheByQuantization"][string] | undefined;
@@ -203,20 +203,27 @@ function resolveTtsDownloadSizeBytes({
 		currentQuantization === ""
 			? (state?.effectiveQuantization ?? model.availableQuantizations[0] ?? "")
 			: resolveTtsEffectiveQuant(state, currentQuantization);
+	// A model's download size is a static, known fact: the catalog ships it per
+	// quant, so it's authoritative whenever present — full stop. (Trusting a
+	// runtime number over it is what let a partial-download artifact masquerade
+	// as the model's size.)
+	const catalogBytes =
+		model.sizeBytesByQuantization[quant] ??
+		model.sizeBytesByQuantization[currentQuantization];
+	if (catalogBytes !== undefined && catalogBytes > 0) {
+		return catalogBytes;
+	}
+	// Catalog ships no size for this quant: surface a real downloaded total if we
+	// have one — but never a partial cache's on-disk bytes — else the estimate.
 	const download = getDownloadSnapshot?.(model.id, quant);
 	if (download && download.totalBytes > 0) {
 		return Math.max(download.totalBytes, download.downloadedBytes);
 	}
 	const cache = resolveTtsQuantCache(state, quant);
-	if (cache && cache.totalBytes > 0) {
+	if (cache && cache.state === "cached" && cache.totalBytes > 0) {
 		return Math.max(cache.totalBytes, cache.downloadedBytes);
 	}
-	return (
-		model.sizeBytesByQuantization[quant] ??
-		state?.estimatedBytes ??
-		model.sizeBytesByQuantization[currentQuantization] ??
-		null
-	);
+	return state?.estimatedBytes ?? null;
 }
 
 /** TTS precision shelf — builds the normalized entries and renders the shared

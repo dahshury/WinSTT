@@ -35,7 +35,6 @@ export function ShowcaseReadAloud() {
     <figure className="shot not-prose my-7">
       <div
         className="shot-frame showcase-frame"
-        role="img"
         aria-label="How read-aloud works: select text, synthesize on-device, play through your output device"
       >
         <div className="shot-bar" aria-hidden="true">

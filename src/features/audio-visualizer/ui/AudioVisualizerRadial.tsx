@@ -1,10 +1,17 @@
 import { cva } from "class-variance-authority";
 import type { ComponentProps, CSSProperties } from "react";
 import { cn } from "@/shared/lib/cn";
-import type { AgentState, VisualizerSize } from "../lib/audio-visualizer";
+import type { VisualizerSize } from "../lib/audio-visualizer";
 import { useAgentState } from "../lib/use-agent-state";
 import { useMultibandVolume } from "../lib/use-multiband-volume";
 import { useRadialAnimator } from "../lib/use-radial-animator";
+import {
+	RADIAL_CONTAINER_HALF,
+	resolveRadialBarCount,
+	resolveRadialDistance,
+	resolveRadialDistancePct,
+	resolveRadialSequencerInterval,
+} from "./AudioVisualizerRadial.helpers";
 
 const radialVariants = cva(
 	[
@@ -35,6 +42,18 @@ const radialVariants = cva(
 	},
 );
 
+const emptyBandsCache = new Map<number, number[]>();
+
+function emptyBands(count: number): number[] {
+	const cached = emptyBandsCache.get(count);
+	if (cached) {
+		return cached;
+	}
+	const bands = new Array(count).fill(0);
+	emptyBandsCache.set(count, bands);
+	return bands;
+}
+
 export interface AudioVisualizerRadialProps {
 	barCount?: number;
 	className?: string;
@@ -50,69 +69,7 @@ export interface AudioVisualizerRadialProps {
 	size?: VisualizerSize;
 }
 
-// Available half-height per size variant. Mirrors the heights in
 // `radialVariants` (icon 24, sm 56, md 112, lg 224, xl 448) — keep in sync.
-const RADIAL_CONTAINER_HALF: Record<VisualizerSize, number> = {
-	icon: 12,
-	sm: 28,
-	md: 56,
-	lg: 112,
-	xl: 224,
-};
-
-export function resolveRadialBarCount(
-	barCount: number | undefined,
-	size: VisualizerSize,
-): number {
-	if (barCount) {
-		return barCount;
-	}
-	return size === "icon" || size === "sm" ? 12 : 24;
-}
-
-const RADIAL_SEQUENCER_INTERVAL: Partial<Record<AgentState, number>> = {
-	connecting: 500,
-	listening: 500,
-	initializing: 250,
-	thinking: Number.POSITIVE_INFINITY,
-};
-
-export function resolveRadialSequencerInterval(state: AgentState): number {
-	return RADIAL_SEQUENCER_INTERVAL[state] ?? 1000;
-}
-
-const RADIAL_DISTANCE_BY_SIZE: Partial<Record<VisualizerSize, number>> = {
-	icon: 6,
-	xl: 128,
-	lg: 64,
-	sm: 16,
-};
-
-export function resolveRadialDistance(
-	radius: number | undefined,
-	size: VisualizerSize,
-): number {
-	if (radius) {
-		return radius;
-	}
-	return RADIAL_DISTANCE_BY_SIZE[size] ?? 32;
-}
-
-/**
- * Converts a size-relative radius percentage into an absolute pixel distance
- * for the given size variant. Returns `undefined` when no percentage is set so
- * callers can fall back to the size-derived default.
- */
-export function resolveRadialDistancePct(
-	radiusPct: number | undefined,
-	size: VisualizerSize,
-): number | undefined {
-	if (radiusPct === undefined) {
-		return;
-	}
-	return Math.round((RADIAL_CONTAINER_HALF[size] * radiusPct) / 100);
-}
-
 export function AudioVisualizerRadial({
 	size = "md",
 	color,
@@ -142,8 +99,8 @@ export function AudioVisualizerRadial({
 		_barCount,
 		sequencerInterval,
 	);
-	const bands =
-		state === "speaking" ? volumeBands : new Array(_barCount).fill(0);
+	const bands = state === "speaking" ? volumeBands : emptyBands(_barCount);
+	const allHighlighted = highlightedIndices.length >= _barCount;
 
 	const dotSize = (distanceFromCenter * Math.PI) / _barCount;
 
@@ -173,7 +130,9 @@ export function AudioVisualizerRadial({
 						}}
 					>
 						<div
-							data-lk-highlighted={highlightedIndices.includes(idx)}
+							data-lk-highlighted={
+								allHighlighted || highlightedIndices.includes(idx)
+							}
 							data-lk-index={idx}
 							style={{
 								width: dotSize,

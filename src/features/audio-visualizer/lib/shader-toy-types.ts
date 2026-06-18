@@ -26,8 +26,6 @@ export interface ReactShaderToyProps {
 	contextAttributes?: Record<string, unknown>;
 	devicePixelRatio?: number;
 	fs: string;
-	onError?: (error: string) => void;
-	onWarning?: (warning: string) => void;
 	precision?: "highp" | "lowp" | "mediump";
 	style?: CSSProperties;
 	uniforms?: UniformsProp;

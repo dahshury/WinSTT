@@ -1,6 +1,5 @@
 import { Button as BaseButton } from "@base-ui/react/button";
 import {
-	ArrowRight02Icon,
 	ArrowUpRight01Icon,
 	CheckmarkCircle02Icon,
 	Cursor01Icon,
@@ -10,22 +9,20 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
-import {
-	findRecommendedModel,
-	useLlmCatalogStore,
-} from "@/entities/llm-catalog";
+import { useLlmCatalogStore } from "@/entities/llm-catalog";
 import { useSettingsStore } from "@/entities/setting";
-import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import {
 	detectOllama,
 	type OllamaDetectResult,
 	startOllama,
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import { ollamaLlmSelectorUiStorageKey } from "@/shared/lib/model-picker-ui-storage-keys";
 import { FormControl } from "@/shared/ui/form-control";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import { Toggle } from "@/shared/ui/toggle";
+import { OllamaModelSelector } from "@/widgets/model-picker";
+import { useOnboardingOllamaPicker } from "../../model/use-onboarding-ollama-picker";
 
 const OLLAMA_HOMEPAGE = "https://ollama.com/download";
 const START_BUTTON_MOTION_PROPS = {
@@ -38,9 +35,10 @@ const MotionBaseButton = m.create(BaseButton);
  * Step 4: optional LLM cleanup. Tries to detect Ollama (`detectOllama` returns
  * `{ installed }` — `installed=true` means the daemon is reachable on the
  * default port, false means either not installed or not running). When
- * available, the user picks a model via the same `OllamaModelManagerDialog`
- * used in Settings (install + select happens inside the dialog) and toggles
- * dictation cleanup with the canonical `Toggle` switch.
+ * available, the user picks a model with the SAME rich inline
+ * `OllamaModelSelector` used in Settings → LLM (browse / install / delete /
+ * quant-shelf all happen in the dropdown) and toggles dictation cleanup with the
+ * canonical `Toggle` switch.
  *
  * Per the capability-toggle invariant (memory: feedback_capability_must_have_model)
  * we never flip `llm.dictation.enabled` true without first writing a real
@@ -52,11 +50,12 @@ export function OnboardingLlmSetupStep() {
 	const [detect, setDetect] = useState<OllamaDetectResult | null>(null);
 	const [starting, setStarting] = useState(false);
 	const [startError, setStartError] = useState<string | null>(null);
-	const openModelPicker = useLlmModelPickerStore((s) => s.openFor);
+	const [configuring, setConfiguring] = useState(false);
 	const llmDictation = useSettingsStore((s) => s.settings.llm.dictation);
 	const updateLlmDictation = useSettingsStore((s) => s.updateLlmDictation);
 	const installedModels = useLlmCatalogStore((s) => s.models);
 	const scanModels = useLlmCatalogStore((s) => s.scanModels);
+	const pickerProps = useOnboardingOllamaPicker();
 
 	useEffect(() => {
 		let cancelled = false;
@@ -141,20 +140,40 @@ export function OnboardingLlmSetupStep() {
 
 	const enabled = llmDictation.enabled;
 	const selectedModel = llmDictation.model;
-	const displayName = formatModelLabel(selectedModel, installedModels, t);
 	const isInstalled =
 		!!selectedModel && installedModels.some((m) => m.name === selectedModel);
 
+	// Post-processing is OPT-IN. The "Clean up dictation" toggle is the primary
+	// control; the model picker only appears once cleanup is on — so leaving the
+	// toggle off (the default) is a zero-click "no post-processing at all" with
+	// nothing to choose. `configuring` covers the one case the toggle can't
+	// resolve by itself: turning cleanup on while NO model is installed yet, where
+	// we reveal the picker so the user can install one first.
+	const showModelPicker = enabled || configuring;
+
+	// Picking a model records it (provider + id). If the user reached the picker by
+	// switching cleanup on with nothing installed, completing a pick also flips the
+	// feature on — the capability invariant only needs a real model, and now there
+	// is one (feedback_capability_must_have_model).
+	const handleSelectModel = (name: string) => {
+		updateLlmDictation(
+			configuring && !enabled
+				? { enabled: true, model: name, provider: "ollama" }
+				: { model: name, provider: "ollama" },
+		);
+	};
+
 	const handleToggle = (next: boolean) => {
 		if (!next) {
+			// Opting out is a single click — collapse the picker so the step reads
+			// as "no post-processing", not "you still have to pick a model".
 			updateLlmDictation({ enabled: false });
+			setConfiguring(false);
 			return;
 		}
 		// Never enable without a real, installed model (feedback_capability_must_have_model).
-		// If the current pick is installed, enable immediately; otherwise open the
-		// picker and let the install commit `enabled` (OnboardingPage wires the
-		// model-installed callback through the shared llm-model-picker store).
-		// Dismissing the picker without installing leaves the toggle off.
+		// If the current pick is installed, enable immediately; otherwise fall back
+		// to the first installed model.
 		if (isInstalled) {
 			updateLlmDictation({
 				enabled: true,
@@ -163,7 +182,14 @@ export function OnboardingLlmSetupStep() {
 			});
 			return;
 		}
-		openModelPicker("dictation", true);
+		const fallback = installedModels[0]?.name;
+		if (fallback) {
+			updateLlmDictation({ enabled: true, model: fallback, provider: "ollama" });
+			return;
+		}
+		// Nothing installed to enable with yet — reveal the picker so the user can
+		// install a model; the feature flips on once one lands (handleSelectModel).
+		setConfiguring(true);
 	};
 
 	return (
@@ -199,57 +225,6 @@ export function OnboardingLlmSetupStep() {
 				</m.div>
 
 				<FormControl
-					caption={t("modelCaption")}
-					label={t("modelLabel")}
-					layout="stacked"
-				>
-					<ElevatedSurface inline>
-						<MotionBaseButton
-							className={cn(
-								"flex h-8 w-full items-center justify-between gap-2 rounded-lg bg-transparent px-3 text-left outline-none transition-colors duration-150",
-								"hover:bg-foreground/[0.04]",
-								"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
-							)}
-							onClick={() => openModelPicker("dictation", false)}
-							whileHover={{ y: -1 }}
-							whileTap={{ scale: 0.985 }}
-							type="button"
-						>
-							<span className="flex min-w-0 flex-1 items-center gap-2">
-								{selectedModel ? (
-									<>
-										<span className="sr-only">
-											{isInstalled
-												? t("modelInstalled")
-												: t("modelNotInstalledShort")}
-										</span>
-										<span
-											aria-hidden="true"
-											className={cn(
-												"size-1.5 shrink-0 rounded-full",
-												isInstalled ? "bg-teal" : "bg-warning",
-											)}
-										/>
-									</>
-								) : null}
-								<span
-									className={cn(
-										"truncate text-body",
-										selectedModel ? "text-foreground" : "text-foreground-muted",
-									)}
-								>
-									{displayName}
-								</span>
-							</span>
-							<span className="inline-flex items-center gap-1 font-mono text-accent text-xs-tight uppercase tracking-[0.14em]">
-								{t("browse")}
-								<HugeiconsIcon icon={ArrowRight02Icon} size={10} />
-							</span>
-						</MotionBaseButton>
-					</ElevatedSurface>
-				</FormControl>
-
-				<FormControl
 					caption={t("cleanUpDictationCaption")}
 					label={t("cleanUpDictation")}
 					layout="row"
@@ -260,28 +235,29 @@ export function OnboardingLlmSetupStep() {
 						onCheckedChange={handleToggle}
 					/>
 				</FormControl>
+
+				{showModelPicker ? (
+					<FormControl
+						caption={t("modelCaption")}
+						label={t("modelLabel")}
+						layout="stacked"
+					>
+						<OllamaModelSelector
+							{...pickerProps}
+							onChange={handleSelectModel}
+							placeholder={t("noModelSelected")}
+							uiStorageKey={ollamaLlmSelectorUiStorageKey("dictation")}
+							value={selectedModel}
+						/>
+					</FormControl>
+				) : (
+					<p className="px-1 text-body-sm text-foreground-muted leading-snug">
+						{t("finishWithoutOllama")}
+					</p>
+				)}
 			</m.div>
 		</AnimatePresence>
 	);
-}
-
-type OnboardingT = ReturnType<typeof useTranslations<"onboarding">>;
-
-/** Human-readable label for the currently-selected model. */
-function formatModelLabel(
-	modelId: string,
-	installed: readonly { name: string }[],
-	t: OnboardingT,
-): string {
-	if (!modelId) {
-		return t("noModelSelected");
-	}
-	const recommended = findRecommendedModel(modelId);
-	if (recommended) {
-		return `${recommended.displayName} · ${recommended.paramSize}`;
-	}
-	const isInstalled = installed.some((m) => m.name === modelId);
-	return isInstalled ? modelId : t("modelNotInstalled", { model: modelId });
 }
 
 interface NotInstalledPanelProps {

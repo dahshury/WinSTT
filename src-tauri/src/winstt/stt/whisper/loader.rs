@@ -1,8 +1,6 @@
 // ORT session construction for the Whisper engine + the fp16 merged-decoder export repair.
 // Pure functions taking path/cfg/intra; split out of `whisper.rs` (engine state stays there).
 
-#![allow(dead_code)]
-
 use std::path::Path;
 
 use ort::session::builder::GraphOptimizationLevel;

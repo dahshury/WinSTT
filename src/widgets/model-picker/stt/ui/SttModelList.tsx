@@ -18,7 +18,7 @@ import type {
 import { openCustomModelsFolder } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
-import { FavoritesGroupLabel } from "../../core/model-card";
+import { FavoritesGroupLabel } from "../../core/model-card/FavoritesGroupLabel";
 import { publicAsset } from "../../lib/public-asset";
 import {
 	bundleVariants,
@@ -272,16 +272,17 @@ function SortedGroup({
  * drop folder. Lives inside the group so it scrolls with the custom-models
  * section and stays out of the way for users who don't use custom models.
  */
+// Fire-and-forget; the main process toasts on failure (rare — would
+// require the OS shell to reject opening %APPDATA%). We deliberately
+// don't await because the click handler doesn't need to block.
+// Biome's noVoid rule blocks `void promise` so chain a noop ``then``
+// to mark the dangling-promise as intentional.
+const handleOpenCustomModelsFolder = () => {
+	openCustomModelsFolder().catch(() => undefined);
+};
+
 function OpenCustomModelsFolderRow() {
 	const t = useTranslations("modelPicker");
-	const handleOpen = () => {
-		// Fire-and-forget; the main process toasts on failure (rare — would
-		// require the OS shell to reject opening %APPDATA%). We deliberately
-		// don't await because the click handler doesn't need to block.
-		// Biome's noVoid rule blocks `void promise` so chain a noop ``then``
-		// to mark the dangling-promise as intentional.
-		openCustomModelsFolder().catch(() => undefined);
-	};
 	return (
 		<BaseButton
 			className={cn(
@@ -289,7 +290,7 @@ function OpenCustomModelsFolderRow() {
 				"bg-foreground/[0.03] px-3 py-2.5 text-foreground-secondary text-sm outline-none transition-colors",
 				"hover:bg-foreground/[0.06] hover:text-foreground",
 			)}
-			onClick={handleOpen}
+			onClick={handleOpenCustomModelsFolder}
 			type="button"
 		>
 			<HugeiconsIcon className="size-4 shrink-0" icon={FolderOpenIcon} />

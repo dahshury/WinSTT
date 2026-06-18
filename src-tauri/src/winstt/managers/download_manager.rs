@@ -322,6 +322,7 @@ impl DownloadManager {
             let rx = Arc::new(Mutex::new(rx));
             for n in 0..MAX_CONCURRENT_DOWNLOADS {
                 let me = Arc::clone(self);
+                let app_for_spawn_error = me.app.clone();
                 let rx = Arc::clone(&rx);
                 let spawned = std::thread::Builder::new()
                     .name(format!("stt-download-worker-{n}"))
@@ -353,6 +354,15 @@ impl DownloadManager {
                     // queued downloads it would have served stall until another worker frees up — or
                     // forever if every worker failed. Loud log so the silent stall is diagnosable.
                     log::error!("[stt-download] failed to spawn download worker {n}: {e}");
+                    crate::winstt::observability::IssueBuilder::new(
+                        "stt_download",
+                        "worker_spawn",
+                        "STT download worker failed to start",
+                    )
+                    .detail(e.to_string())
+                    .severity("error")
+                    .context("worker", n.to_string())
+                    .record(Some(&app_for_spawn_error));
                 }
             }
             tx
@@ -645,6 +655,15 @@ impl DownloadManager {
             Ok(p) => p,
             Err(e) => {
                 log::warn!("[stt-download] plan failed for {model}@{quantization}: {e}");
+                crate::winstt::observability::IssueBuilder::new(
+                    "stt_download",
+                    "plan_download",
+                    "STT model download could not be planned",
+                )
+                .detail(e.to_string())
+                .model_id(model.clone())
+                .context("quantization", quantization.clone())
+                .record(Some(&self.app));
                 // No plan → nothing to download. Settle as cancelled so the badge clears rather than
                 // spinning forever (the renderer drops the in-flight entry on a cancelled-complete).
                 self.finish_quant(&model, &quantization, true);
@@ -783,6 +802,16 @@ impl DownloadManager {
                                 log::warn!(
                                     "[stt-download] file fetch failed (hf-hub fallback) {model}@{quantization} {repo_path}: {e}"
                                 );
+                                crate::winstt::observability::IssueBuilder::new(
+                                    "stt_download",
+                                    "fetch_file",
+                                    "STT model file download failed",
+                                )
+                                .detail(e.to_string())
+                                .model_id(model.clone())
+                                .context("quantization", quantization.clone())
+                                .context("repoPath", repo_path.clone())
+                                .record(Some(&self.app));
                                 self.finish_quant(&model, &quantization, false);
                                 return;
                             }
@@ -816,7 +845,10 @@ impl DownloadManager {
     /// Returns `Failed` (NOT an error) for anything our plain path can't handle — missing HEAD
     /// metadata, a private repo, a write/IO error — so the caller falls back to hf-hub and the bytes
     /// still land.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "HF cache streaming needs both HTTP clients plus model, quantization, and file metadata"
+    )]
     fn stream_file_into_hf_cache(
         &self,
         http: &reqwest::Client,
@@ -973,8 +1005,7 @@ impl DownloadManager {
 
     fn finish_quant(&self, model: &str, quantization: &str, cancelled: bool) {
         self.inflight
-            .lock()
-            .expect("download registry poisoned")
+            .lock_recover()
             .remove(&key(model, quantization));
         self.emit_complete(model, Some(quantization), cancelled);
     }
@@ -984,8 +1015,7 @@ impl DownloadManager {
     pub fn is_downloading(&self, model: &str, quantization: &str) -> bool {
         self.inflight
             .lock()
-            .map(|m| m.contains_key(&key(model, quantization)))
-            .unwrap_or(false)
+            .is_ok_and(|m| m.contains_key(&key(model, quantization)))
     }
 }
 

@@ -2,28 +2,20 @@
 
 import { BinaryCodeIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type ReactNode, useEffect } from "react";
-import type {
-	OllamaLibraryTag,
-	OllamaModel,
-	OllamaPullProgress,
-} from "@/shared/api/models";
+import type { OllamaLibraryTag, OllamaPullProgress } from "@/shared/api/models";
 import { Tooltip as ContentTooltip } from "@/shared/ui/tooltip";
 import {
 	type QuantDownloadAction,
+	type QuantDownloadSnapshot,
 	QuantShelf,
 	type QuantShelfEntry,
-} from "../../core/model-card";
-import {
-	formatOllamaDisplayName,
-	formatOllamaSize,
-} from "../lib/family-helpers";
+} from "../../core/model-card/QuantShelf";
+import { formatOllamaDisplayName } from "../lib/family-helpers";
 import {
 	findInstalledOllamaTag,
 	isSameOllamaTag,
 	isTagInstalled,
 	libraryBaseSlug,
-	paramSizeFromName,
 	pruneToShownQuants,
 	quantBadgeCacheState,
 	quantBadgeLabel,
@@ -31,10 +23,8 @@ import {
 } from "../lib/quant-shelf-helpers";
 import type {
 	OllamaFitInfo,
-	OllamaLibrarySearchProps,
 	PausedPullState,
 	QuantBadgeState,
-	QuantShelfDeps,
 } from "./ollama-selector-types";
 
 // ── Quantization precision shelf ──────────────────────────────────────
@@ -118,7 +108,7 @@ function ollamaQuantCacheStatus(state: QuantBadgeState): string {
 
 function activePullSnapshot(
 	progressPercent: number | null,
-): import("../../core/model-card").QuantDownloadSnapshot {
+): QuantDownloadSnapshot {
 	return {
 		downloadedBytes: 0,
 		totalBytes: 0,
@@ -380,122 +370,30 @@ export function OllamaQuantShelf({
  * Returns `undefined` when the tag is actively downloading (no body action while
  * the default is in flight — the user uses the shelf controls to pause/cancel).
  */
-export function defaultTagBodyClick(
-	deps: QuantShelfDeps,
-	defaultTag: string,
-): (() => void) | undefined {
-	if (findRecordKeyByOllamaTag(deps.pulls, defaultTag) !== undefined) {
-		return undefined;
-	}
-	const installedName = findInstalledOllamaTag(deps.installedNames, defaultTag);
-	if (installedName !== undefined) {
-		return () => deps.onSelect(installedName);
-	}
-	const pausedName = findRecordKeyByOllamaTag(deps.pausedPulls, defaultTag);
-	if (pausedName !== undefined) {
-		return () => deps.onResume(pausedName);
-	}
-	return () => deps.onPull(defaultTag);
-}
+export { InstalledQuantShelf } from "./InstalledQuantShelf";
+export { LazyQuantShelf } from "./LazyQuantShelf";
 
-function appendMissingOllamaTags(
-	tags: readonly OllamaLibraryTag[],
-	extraTags: readonly OllamaLibraryTag[],
-): readonly OllamaLibraryTag[] {
-	if (extraTags.length === 0) {
-		return tags;
-	}
-	const missing = extraTags.filter(
-		(extraTag) => !tags.some((tag) => isSameOllamaTag(tag.name, extraTag.name)),
-	);
-	return missing.length > 0 ? [...tags, ...missing] : tags;
-}
-
-interface LazyQuantShelfProps {
 	/** Library slug whose sibling tags to fetch + render (`gemma3`). */
-	baseSlug: string;
-	deps: QuantShelfDeps;
 	/** Tags to merge with fetched library tags. */
-	extraTags?: readonly OllamaLibraryTag[] | undefined;
-	forceKeepNames?: ReadonlySet<string> | undefined;
 	/** Param size the card represents (`4b`). Filters the tag list. */
-	paramSize: string | null | undefined;
 	/** Rendered until tags load — keeps a single badge visible so the shelf
 	 *  doesn't flicker empty for an installed model whose siblings are en route. */
-	placeholder?: ReactNode;
-}
 
 /** Lazily fetches the base-slug tags (idempotent in the store) and renders the
  *  quant shelf once they're available. Used by every card type so installed,
  *  recommended, and library rows all show the same precision strip. */
-export function LazyQuantShelf({
-	baseSlug,
-	paramSize,
-	deps,
-	extraTags,
-	forceKeepNames,
-	placeholder,
-}: LazyQuantShelfProps) {
-	const { fetchTags, getTags } = deps;
-	// Fetch is store-deduped, so firing it on every mount is a no-op after the
-	// first resolve. Re-runs only when the slug changes.
-	useEffect(() => {
-		if (baseSlug) {
-			fetchTags?.(baseSlug);
-		}
-	}, [baseSlug, fetchTags]);
-	const fetchedTags = baseSlug ? (getTags?.(baseSlug) ?? []) : [];
-	const tags = appendMissingOllamaTags(fetchedTags, extraTags ?? []);
-	if (tags.length === 0) {
-		return placeholder ?? null;
-	}
-	return (
-		<OllamaQuantShelf
-			forceKeepNames={forceKeepNames}
-			getFit={deps.getFit}
-			installedNames={deps.installedNames}
-			onDiscard={deps.onDiscard}
-			onPull={deps.onPull}
-			onResume={deps.onResume}
-			onSelect={deps.onSelect}
-			onStop={deps.onStop}
-			paramSize={paramSize}
-			pausedPulls={deps.pausedPulls}
-			pulls={deps.pulls}
-			selectedName={deps.selectedName}
-			tags={tags}
-		/>
-	);
-}
 
 /** Synthesize a one-tag list standing in for an installed model whose sibling
  *  library tags haven't loaded yet — the model's OWN tag, so the shelf shows at
  *  least the installed quant (muted-emerald, selectable) without flickering empty
  *  while {@link LazyQuantShelf} fetches the rest. Optional fields are omitted
  *  (not set to `undefined`) so the tag satisfies `exactOptionalPropertyTypes`. */
-export function installedSelfTag(model: OllamaModel): OllamaLibraryTag {
-	const tag: OllamaLibraryTag = { name: model.name };
-	if (model.size) {
-		tag.sizeBytes = model.size;
-		tag.sizeLabel = formatOllamaSize(model.size);
-	}
-	if (model.details?.quantizationLevel) {
-		tag.quantization = model.details.quantizationLevel;
-	}
-	if (model.details?.parameterSize) {
-		tag.parameterSize = model.details.parameterSize;
-	}
-	return tag;
-}
 
 /** The installed model's param size, as the token the library TAGS carry
  *  (`gemma3:4b` → `4b`). Ollama reports `details.parameterSize` as `4.3B`/`4.0B`
  *  — the rounded real param count, which never equals the tag token `4b` — so we
  *  parse the token out of the name and only fall back to the structured field
  *  when the name has no token (a bare `gemma3`). */
-function installedParamSize(model: OllamaModel): string {
-	return paramSizeFromName(model.name) || (model.details?.parameterSize ?? "");
-}
 
 /** The shelf rendered for an installed card. Lazily scrapes the family's sibling
  *  tags (gated to a few concurrent requests in the main process, so a picker-open
@@ -503,91 +401,5 @@ function installedParamSize(model: OllamaModel): string {
  *  param size — the installed one tinted as cached/selectable, the rest as
  *  click-to-pull. Until the tags load (or if the scrape fails) the model's own
  *  quant shows as a placeholder so the shelf never flickers empty. */
-export function InstalledQuantShelf({
-	model,
-	deps,
-}: {
-	deps: QuantShelfDeps;
-	model: OllamaModel;
-}) {
-	const paramSize = installedParamSize(model);
-	const selfPlaceholder = (
-		<OllamaQuantShelf
-			getFit={deps.getFit}
-			installedNames={deps.installedNames}
-			onDiscard={deps.onDiscard}
-			onPull={deps.onPull}
-			onResume={deps.onResume}
-			onSelect={deps.onSelect}
-			onStop={deps.onStop}
-			paramSize={paramSize}
-			pausedPulls={deps.pausedPulls}
-			pulls={deps.pulls}
-			selectedName={deps.selectedName}
-			tags={[installedSelfTag(model)]}
-		/>
-	);
-	return (
-		<LazyQuantShelf
-			baseSlug={libraryBaseSlug(model.name)}
-			deps={deps}
-			paramSize={paramSize}
-			placeholder={selfPlaceholder}
-		/>
-	);
-}
 
-/** Bundle the quant-shelf data source + handlers into a single {@link
- *  QuantShelfDeps} threaded to every row. Extracted from `OllamaModelSelector`
- *  to keep its cognitive complexity under the rule cap. */
-export function buildQuantShelfDeps(opts: {
-	installedNames: ReadonlySet<string>;
-	librarySearch: OllamaLibrarySearchProps | undefined;
-	onDelete: ((name: string) => void) | undefined;
-	onDiscardPull: ((name: string) => void) | undefined;
-	onPull: ((name: string) => void) | undefined;
-	onResumePull: ((name: string) => void) | undefined;
-	onSelect: (name: string) => void;
-	onStopPull: ((name: string) => void) | undefined;
-	pausedPulls: Readonly<Record<string, PausedPullState>>;
-	pulls: Readonly<Record<string, OllamaPullProgress>>;
-	systemFit: ((sizeBytes: number) => OllamaFitInfo) | undefined;
-	value: string;
-}): QuantShelfDeps {
-	const tagsByModel = opts.librarySearch?.tagsByModel;
-	const fetchTags = opts.librarySearch?.fetchTags;
-	return {
-		getFit: opts.systemFit,
-		getTags: tagsByModel
-			? (baseSlug: string) => tagsByModel[baseSlug.toLowerCase()]?.tags ?? []
-			: undefined,
-		fetchTags: fetchTags
-			? (baseSlug: string) => fetchTags(baseSlug)
-			: undefined,
-		installedNames: opts.installedNames,
-		selectedName: opts.value,
-		pulls: opts.pulls,
-		pausedPulls: opts.pausedPulls,
-		onSelect: opts.onSelect,
-		onPull: opts.onPull ?? noop,
-		onStop: opts.onStopPull ?? noop,
-		onResume: opts.onResumePull ?? noop,
-		// The shelf's single `onDiscard` serves two roles: cancel/forget an
-		// in-flight or paused pull (not yet installed) AND delete an installed
-		// quant's weights. Route by installed-ness so deleting an installed quant
-		// actually removes it from disk (onDelete) instead of no-oping on the
 		// forget-paused-pull handler — mirrors STT, whose delete hits a real delete.
-		onDiscard: (name: string) => {
-			const installedName = findInstalledOllamaTag(opts.installedNames, name);
-			if (installedName !== undefined) {
-				(opts.onDelete ?? noop)(installedName);
-				return;
-			}
-			(opts.onDiscardPull ?? noop)(name);
-		},
-	};
-}
-
-function noop() {
-	/* no-op fallback when caller doesn't supply pull callbacks */
-}

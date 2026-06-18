@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
 import {
-	AudioVisualizerBar,
 	resolveBarCount,
 	resolveBarSequencerInterval,
+} from "./AudioVisualizerBar.helpers";
+import {
+	AudioVisualizerBar,
 } from "./AudioVisualizerBar";
 
 describe("AudioVisualizerBar", () => {

@@ -18,14 +18,14 @@
 //   - `openrouter`   — the self-contained OpenRouter provider.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 
 use crate::winstt::cancel_registry::CancelRegistry;
-use crate::winstt::commands::settings::read_settings;
+use crate::winstt::commands::settings::{core_timeout_from_winstt, read_settings_raw};
 use crate::winstt::llm::{self, ollama_keep_alive_from_core_timeout};
 use crate::winstt::model_swap::ModelSwapCoordinator;
 use crate::winstt::ollama_client::OllamaClient;
@@ -49,6 +49,41 @@ const OLLAMA_EVICT_TIMEOUT: Duration = Duration::from_secs(5);
 const OLLAMA_BOOT_WAIT: Duration = Duration::from_secs(10);
 const OLLAMA_RECENT_WARM_SKIP: Duration = Duration::from_secs(30);
 const LLM_WARMUP_PASS_KEY: &str = "llm:warmup-pass";
+const CORE_TIMEOUT_NEVER: u8 = 0;
+const CORE_TIMEOUT_IMMEDIATELY: u8 = 1;
+const CORE_TIMEOUT_MIN2: u8 = 2;
+const CORE_TIMEOUT_MIN5: u8 = 3;
+const CORE_TIMEOUT_MIN10: u8 = 4;
+const CORE_TIMEOUT_MIN15: u8 = 5;
+const CORE_TIMEOUT_HOUR1: u8 = 6;
+const CORE_TIMEOUT_SEC15: u8 = 7;
+
+fn encode_core_timeout(timeout: crate::settings::ModelUnloadTimeout) -> u8 {
+    match timeout {
+        crate::settings::ModelUnloadTimeout::Never => CORE_TIMEOUT_NEVER,
+        crate::settings::ModelUnloadTimeout::Immediately => CORE_TIMEOUT_IMMEDIATELY,
+        crate::settings::ModelUnloadTimeout::Min2 => CORE_TIMEOUT_MIN2,
+        crate::settings::ModelUnloadTimeout::Min5 => CORE_TIMEOUT_MIN5,
+        crate::settings::ModelUnloadTimeout::Min10 => CORE_TIMEOUT_MIN10,
+        crate::settings::ModelUnloadTimeout::Min15 => CORE_TIMEOUT_MIN15,
+        crate::settings::ModelUnloadTimeout::Hour1 => CORE_TIMEOUT_HOUR1,
+        crate::settings::ModelUnloadTimeout::Sec15 => CORE_TIMEOUT_SEC15,
+    }
+}
+
+fn decode_core_timeout(code: u8) -> crate::settings::ModelUnloadTimeout {
+    match code {
+        CORE_TIMEOUT_NEVER => crate::settings::ModelUnloadTimeout::Never,
+        CORE_TIMEOUT_IMMEDIATELY => crate::settings::ModelUnloadTimeout::Immediately,
+        CORE_TIMEOUT_MIN2 => crate::settings::ModelUnloadTimeout::Min2,
+        CORE_TIMEOUT_MIN5 => crate::settings::ModelUnloadTimeout::Min5,
+        CORE_TIMEOUT_MIN10 => crate::settings::ModelUnloadTimeout::Min10,
+        CORE_TIMEOUT_MIN15 => crate::settings::ModelUnloadTimeout::Min15,
+        CORE_TIMEOUT_HOUR1 => crate::settings::ModelUnloadTimeout::Hour1,
+        CORE_TIMEOUT_SEC15 => crate::settings::ModelUnloadTimeout::Sec15,
+        _ => crate::settings::ModelUnloadTimeout::default(),
+    }
+}
 
 /// Thin emit sink that forwards live reasoning deltas to the renderer pill.
 /// Mirrors the `llm:reasoning-delta` plain-string event (07_* §4b).
@@ -77,6 +112,8 @@ pub struct LlmManager {
     seq: AtomicU64,
     /// Guards the app-lifetime periodic keep-alive loop against duplicate startup wiring.
     warmup_loop_started: AtomicBool,
+    /// Cached shared unload policy for Ollama `keep_alive`, updated by settings runtime hooks.
+    ollama_keep_alive_timeout: AtomicU8,
     /// Coalesces Ollama warmup passes and tracks models this process warmed.
     lifecycle: ModelSwapCoordinator,
     /// OpenRouter `supported_parameters` from the latest model scan. The chat
@@ -93,6 +130,7 @@ pub struct LlmChatOutput {
 impl LlmManager {
     pub fn new(app: &AppHandle) -> Self {
         let client = reqwest::Client::new();
+        let timeout = core_timeout_from_winstt(read_settings_raw(app).global.model_unload_timeout);
         Self {
             app: app.clone(),
             client: client.clone(),
@@ -100,6 +138,7 @@ impl LlmManager {
             cancelled: CancelRegistry::new(),
             seq: AtomicU64::new(1),
             warmup_loop_started: AtomicBool::new(false),
+            ollama_keep_alive_timeout: AtomicU8::new(encode_core_timeout(timeout)),
             lifecycle: ModelSwapCoordinator::new(),
             openrouter_supported_parameters: Mutex::new(HashMap::new()),
         }
@@ -131,9 +170,17 @@ impl LlmManager {
     }
 
     fn ollama_keep_alive(&self) -> serde_json::Value {
-        let timeout = read_settings(&self.app).global.model_unload_timeout;
-        let timeout = crate::winstt::commands::settings::core_timeout_from_winstt(timeout);
+        let timeout = decode_core_timeout(self.ollama_keep_alive_timeout.load(Ordering::Acquire));
         ollama_keep_alive_from_core_timeout(timeout)
+    }
+
+    pub(crate) fn update_model_unload_timeout(&self, timeout: crate::settings::ModelUnloadTimeout) {
+        self.ollama_keep_alive_timeout
+            .store(encode_core_timeout(timeout), Ordering::Release);
+    }
+
+    fn ollama_keep_alive_refresh_enabled(&self) -> bool {
+        self.ollama_keep_alive_timeout.load(Ordering::Acquire) == CORE_TIMEOUT_NEVER
     }
 
     pub fn client(&self) -> &reqwest::Client {

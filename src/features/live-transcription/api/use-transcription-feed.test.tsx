@@ -71,9 +71,9 @@ function withImmediateTimeout(run: () => void) {
 		if (typeof handler === "function") {
 			handler();
 		}
-		return 0 as ReturnType<typeof setTimeout>;
-	}) as typeof setTimeout;
-	globalThis.clearTimeout = (() => undefined) as typeof clearTimeout;
+		return 0 as unknown as ReturnType<typeof setTimeout>;
+	}) as unknown as typeof setTimeout;
+	globalThis.clearTimeout = (() => undefined) as unknown as typeof clearTimeout;
 	try {
 		run();
 	} finally {

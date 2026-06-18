@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 import { useTranslations } from "use-intl";
 import {
 	onWakewordModelStatus,
@@ -9,25 +9,30 @@ import { formatBytes } from "@/shared/lib/format-bytes";
 import { DialogActionButton } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
 import { DownloadActions, DownloadProgressBar } from "@/shared/ui/download";
-import { isLowerAccuracyWakeWord } from "../lib/recording-settings-helpers";
 import {
 	WAKEWORD_DOWNLOAD_SIZE_LABEL,
 	WAKEWORD_MODEL_STATUS_DEFAULT,
 } from "./recording-settings-types";
 
-export function useWakewordModelStatus(): WakewordModelStatusPayload {
+export function useWakewordModelStatus(
+	onStatus?: (next: WakewordModelStatusPayload) => void,
+): WakewordModelStatusPayload {
 	const [status, setStatus] = useState<WakewordModelStatusPayload>(
 		WAKEWORD_MODEL_STATUS_DEFAULT,
 	);
+	const handleStatus = useEffectEvent((next: WakewordModelStatusPayload) => {
+		setStatus(next);
+		onStatus?.(next);
+	});
 
 	useEffect(() => {
 		let mounted = true;
 		wakewordModelStatus().then((next) => {
 			if (mounted) {
-				setStatus(next);
+				handleStatus(next);
 			}
 		});
-		const unsubscribe = onWakewordModelStatus((next) => setStatus(next));
+		const unsubscribe = onWakewordModelStatus((next) => handleStatus(next));
 		return () => {
 			mounted = false;
 			unsubscribe();
@@ -269,55 +274,4 @@ export function WakewordDownloadDialog({
 			)}
 		</DialogShell>
 	);
-}
-
-interface WakewordRuntimeFallback {
-	artifactLabel: string;
-	downloadSizeLabel: string;
-	engine: string;
-	engineLabel: string;
-	qualityLabel: string;
-}
-
-function wakewordRuntimeFallback(
-	wakeWord: string | undefined,
-): WakewordRuntimeFallback {
-	const lowerAccuracy = isLowerAccuracyWakeWord(wakeWord);
-	return lowerAccuracy
-		? {
-				artifactLabel: "sherpa-onnx KWS archive",
-				downloadSizeLabel: WAKEWORD_DOWNLOAD_SIZE_LABEL,
-				engine: "sherpa-kws",
-				engineLabel: "sherpa-onnx custom wake words",
-				qualityLabel: "Lower accuracy custom",
-			}
-		: {
-				artifactLabel: "pvporcupine 1.9.5 wheel",
-				downloadSizeLabel: "about 2 MB",
-				engine: "porcupine-legacy",
-				engineLabel: "Porcupine built-in wake words",
-				qualityLabel: "High accuracy built-in",
-			};
-}
-
-export function wakewordStatusWithRuntimeFallback(
-	status: WakewordModelStatusPayload,
-	wakeWord: string | undefined,
-): WakewordModelStatusPayload {
-	const fallback = wakewordRuntimeFallback(wakeWord);
-	return {
-		...status,
-		artifactLabel: status.artifactLabel ?? fallback.artifactLabel,
-		downloadSizeLabel: status.downloadSizeLabel ?? fallback.downloadSizeLabel,
-		engine: status.engine ?? fallback.engine,
-		engineLabel: status.engineLabel ?? fallback.engineLabel,
-		phase:
-			status.phase ??
-			(status.available
-				? "complete"
-				: status.downloading
-					? "downloading"
-					: "idle"),
-		qualityLabel: status.qualityLabel ?? fallback.qualityLabel,
-	};
 }

@@ -1,5 +1,4 @@
 import { OpenRouterModelSelector } from "@/widgets/model-picker";
-import { useEffect } from "react";
 import type { useTranslations } from "use-intl";
 import { SettingField, useSettingsStore } from "@/entities/setting";
 import { parseModelSelection } from "@/shared/lib/openrouter-model-selection";
@@ -76,14 +75,6 @@ export function UnifiedCloudTtsControls({
 		(s) => s.scanModels,
 	);
 
-	// Lazily scan the OpenRouter speech catalog whenever it can contribute rows.
-	// The store caches on first load and dedupes concurrent calls.
-	useEffect(() => {
-		if (openrouterAvailable) {
-			scanOpenrouterModels().catch(() => undefined);
-		}
-	}, [openrouterAvailable, scanOpenrouterModels]);
-
 	const persisted: CloudTtsProvider = cloud.provider ?? "elevenlabs";
 	const activeProvider = resolveActiveCloudProvider(
 		persisted,
@@ -91,41 +82,8 @@ export function UnifiedCloudTtsControls({
 		openrouterAvailable,
 	);
 
-	// Heal a stale persisted provider (e.g. the default `elevenlabs` while only an
-	// OpenRouter key exists) so the picker value and the backend route agree and
-	// adding the other key later doesn't yank the user off their working provider.
-	useEffect(() => {
-		if (activeProvider !== cloud.provider) {
-			update({ cloud: { ...cloud, provider: activeProvider } });
-		}
-	}, [activeProvider, cloud, update]);
-
-	// Seed a default OpenRouter model (+ its first voice) once the catalog loads
 	// so voices appear without forcing a manual pick — only while OpenRouter is
 	// the active provider and the persisted model isn't a real catalog row.
-	useEffect(() => {
-		if (
-			activeProvider !== "openrouter" ||
-			openrouterScanning ||
-			openrouterModels.length === 0
-		) {
-			return;
-		}
-		if (openrouterModels.some((m) => m.id === cloud.openrouterModel)) {
-			return;
-		}
-		const first = openrouterModels[0];
-		if (first) {
-			update({
-				cloud: {
-					...cloud,
-					provider: "openrouter",
-					openrouterModel: first.id,
-					openrouterVoice: first.supported_voices[0] ?? "",
-				},
-			});
-		}
-	}, [activeProvider, openrouterScanning, openrouterModels, cloud, update]);
 
 	const pickerModels = buildCloudPickerModels({
 		elevenAvailable,
@@ -133,8 +91,14 @@ export function UnifiedCloudTtsControls({
 		openrouterModels,
 	});
 
+	const firstOpenrouterModel = openrouterModels[0] ?? null;
+	const selectedOpenrouterModel = openrouterModels.some(
+		(m) => m.id === cloud.openrouterModel,
+	)
+		? cloud.openrouterModel
+		: (firstOpenrouterModel?.id ?? cloud.openrouterModel);
 	const selectedModelId =
-		activeProvider === "elevenlabs" ? cloud.model : cloud.openrouterModel;
+		activeProvider === "elevenlabs" ? cloud.model : selectedOpenrouterModel;
 
 	let modelPlaceholder = "Choose a cloud voice model";
 	if (openrouterError && !elevenAvailable) {

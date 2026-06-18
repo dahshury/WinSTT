@@ -15,6 +15,18 @@ export const PEAK_DECAY = 0.99;
 /** audioLevel below this counts as silence. */
 export const SILENCE_THRESHOLD = 0.01;
 
+const zeroBandsCache = new Map<number, number[]>();
+
+function zeroBands(count: number): number[] {
+	const cached = zeroBandsCache.get(count);
+	if (cached) {
+		return cached;
+	}
+	const bands = new Array(count).fill(0);
+	zeroBandsCache.set(count, bands);
+	return bands;
+}
+
 /**
  * Computes the AGC-normalized amplified level from a raw audio level and a
  * running peak. Returns the new peak and the amplified value.
@@ -49,13 +61,13 @@ export function computeBandValue(
 }
 
 export function useMultibandVolume(bands: number): number[] {
-	const [volumes, setVolumes] = useState<number[]>(() =>
-		new Array(bands).fill(0),
-	);
+	const [volumes, setVolumes] = useState<number[]>(() => zeroBands(bands));
 	const rafRef = useRef(0);
 	const bandsRef = useRef(bands);
 	const peakRef = useRef(PEAK_FLOOR);
-	bandsRef.current = bands;
+	useEffect(() => {
+		bandsRef.current = bands;
+	}, [bands]);
 
 	// @crap-exclude rAF callback — AudioContext side effects; pure helpers (computeAmplified, computeBandValue) are unit tested
 	useEffect(() => {
@@ -79,7 +91,7 @@ export function useMultibandVolume(bands: number): number[] {
 					if (prev.length === n && prev.every((v) => v === 0)) {
 						return prev;
 					}
-					return new Array(n).fill(0);
+					return zeroBands(n);
 				});
 				// Idle: park the loop once we've emitted one zero frame; the
 				// subscription below restarts it as soon as audio comes in.
@@ -99,9 +111,9 @@ export function useMultibandVolume(bands: number): number[] {
 				);
 				peakRef.current = peak;
 
-				const next: number[] = [];
+				const next = new Array<number>(n);
 				for (let i = 0; i < n; i++) {
-					next.push(computeBandValue(i, n, time, amplified));
+					next[i] = computeBandValue(i, n, time, amplified);
 				}
 				setVolumes(next);
 			}

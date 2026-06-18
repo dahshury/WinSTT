@@ -5,7 +5,7 @@ import {
 	PlayIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	deleteHistoryRow,
@@ -86,7 +86,7 @@ function LongPressTranscript({ text }: { text: string }) {
 		[],
 	);
 
-	const handleLongPressCopy = useCallback(() => {
+	const handleLongPressCopy = () => {
 		if (!text) {
 			return;
 		}
@@ -100,7 +100,7 @@ function LongPressTranscript({ text }: { text: string }) {
 			() => setCopied(false),
 			TOUCH_COPY_FEEDBACK_MS,
 		);
-	}, [text]);
+	};
 
 	const longPress = useLongPress(handleLongPressCopy, {
 		disabled: text.length === 0,

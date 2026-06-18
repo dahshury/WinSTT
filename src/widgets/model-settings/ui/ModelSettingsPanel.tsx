@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+﻿import { useEffect } from "react";
 import { useTranslations } from "use-intl";
 import {
 	CLOUD_PROVIDERS,
@@ -49,26 +49,19 @@ import {
 } from "./model-settings-sections";
 import { RealtimeModelSection } from "./RealtimeModelSection";
 
-export function ModelSettingsPanel() {
+function useModelSettingsPanelRender() {
 	const global = useSettingsStore((s) => s.settings.global);
 	const updateGlobal = useSettingsStore((s) => s.updateGlobalSettings);
 	const settings = useSettingsStore((s) => s.settings.model);
 	const update = useSettingsStore((s) => s.updateModelSettings);
 	const quality = useSettingsStore((s) => s.settings.quality);
 	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
-	// Whether the LLM dictation "Translate" modifier is currently enabled — a
-	// boolean selector so the panel only re-renders when it flips (not on every
-	// preset edit). Drives the STT-translate ↔ LLM-translate lock below.
 	const llmTranslateEnabled = useSettingsStore((s) =>
 		s.settings.llm.dictation.presets.some((p) => p.key === "translate"),
 	);
 	const llmDictationEnabled = useSettingsStore(
 		(s) => s.settings.llm.dictation.enabled,
 	);
-	// Local Kokoro TTS shares the Model-tab compute device (mirrored onto the
-	// server's `--tts-device`), so the Device control must survive a cloud STT
-	// selection while local TTS is still running. `tts` + the ElevenLabs key
-	// status mirror TtsModelSection's effective-source gate.
 	const tts = useSettingsStore((s) => s.settings.tts);
 	const elevenlabs = useSettingsStore(
 		(s) => s.settings.integrations.elevenlabs,
@@ -91,9 +84,6 @@ export function ModelSettingsPanel() {
 	const wordByWordPasting = useSettingsStore(
 		(s) => s.settings.general?.wordByWordPasting ?? false,
 	);
-	// Realtime is fully derived from the display picker — the engine has no
-	// observable output without a display surface, so there is no separate
-	// on/off toggle. The realtime section here is hidden when this is false.
 	const realtimeEnabled = isRealtimeEnabled({
 		showRecordingOverlay,
 		liveTranscriptionDisplay,
@@ -112,16 +102,10 @@ export function ModelSettingsPanel() {
 	const catalogLoaded = useCatalogStore((s) => s.isLoaded);
 	const getModel = useCatalogStore((s) => s.getModel);
 
-	// Model-state store — drives the inline cache badges and the ⚠ icon
-	// in the dropdown labels. Refresh on mount so the server gets re-probed
-	// each time the settings panel opens; live updates come through the
-	// store's IPC subscriptions (model_cache_changed / swap_completed).
 	const statesById = useModelStateStore((s) => s.statesById);
 	const modelStatesLoaded = useModelStateStore((s) => s.isLoaded);
 	const systemInfo = useModelStateStore((s) => s.systemInfo);
 	const refreshModelState = useModelStateStore((s) => s.refresh);
-	// Live download + swap snapshot lives in its own hook so the panel stays
-	// at a reasonable cognitive-complexity score.
 	const {
 		mainDownloadProgress,
 		realtimeDownloadProgress,
@@ -129,9 +113,6 @@ export function ModelSettingsPanel() {
 		realtimeSwapping,
 	} = useSwapProgress();
 
-	// Live host resource snapshot (RAM available, free VRAM, CPU%) for the
-	// resource-aware warning modal. Refreshed when the panel mounts; the snapshot
-	// itself is read inside `useModelFitAssessment`.
 	const refreshLive = useSystemResourcesStore((s) => s.refresh);
 
 	useEffect(() => {
@@ -139,12 +120,6 @@ export function ModelSettingsPanel() {
 		refreshLive();
 	}, [refreshModelState, refreshLive]);
 
-	// Fallback matches the bundled offline base seeded into the HF cache by
-	// PyInstaller (see `seed_models.py` + `project_offline_base_and_tts_pack`
-	// memory). The legacy "large-v2" fallback resolved to a catalog id the
-	// picker no longer surfaces and produced a desync between the main
-	// window header ("large-v2") and the picker selection (vosk-russian as
-	// the first catalog row).
 	const selectedModel = settings?.model ?? "tiny";
 	const selectedIsCloud = providerOf(selectedModel) !== null;
 	const selectedInfo = selectedIsCloud ? undefined : getModel(selectedModel);
@@ -164,9 +139,6 @@ export function ModelSettingsPanel() {
 		? defaultCloudModelId(keyedCloudProvider)
 		: null;
 	const languageAutoDetect = languageAutoDetectEnabled(settings);
-	// Stale-model fallback for both slots lives in its own hook. Keep it after
-	// selectedInfo is known so realtime fallback uses the user's source-language
-	// constraints instead of broad catalog overlap.
 	useStaleModelFallback(
 		catalogLoaded,
 		catalogModels,
@@ -174,7 +146,6 @@ export function ModelSettingsPanel() {
 		modelStatesLoaded,
 		settings?.model,
 		settings?.realtimeModel,
-		update,
 		settings,
 		cloudFallbackModel,
 	);
@@ -182,24 +153,11 @@ export function ModelSettingsPanel() {
 		languageControlMode === "auto" || languageControlMode === "candidate-auto";
 	const effectiveLanguageAutoDetect =
 		languageAutoDetectSupported && languageAutoDetect;
-	// Remember the active local model so flipping the source switch Cloud→Local
-	// restores the user's last choice instead of resetting to the catalog
-	// default. Only local ids are recorded — a cloud selection delegates to the
-	// provider and must not overwrite the remembered local pick.
 	useEffect(() => {
 		if (!selectedIsCloud) {
 			recordLastLocalSttModel(selectedModel);
 		}
 	}, [selectedIsCloud, selectedModel]);
-	// Translate-to-English is honored on multilingual Whisper exports
-	// (via the ``<|translate|>`` prompt token) AND on NeMo Canary (via
-	// the ``target_language`` recognize kwarg). Anything else silently
-	// no-ops server-side, so we hide the toggle there to avoid lying
-	// to the user. ``.en`` Whisper variants are filtered by the
-	// language-detection capability — they advertise English only and
-	// have no need for translate-to-English. We likewise hide it when the
-	// user pins the source language to English: an en→en translate pass is
-	// a no-op, so the toggle would be just as misleading there.
 	const translateSupported =
 		!selectedIsCloud &&
 		selectedInfo !== undefined &&
@@ -208,17 +166,12 @@ export function ModelSettingsPanel() {
 			effectiveLanguageAutoDetect,
 			languageCandidates,
 		);
-	// When the STT decoder itself translates to English, force the LLM dictation
-	// "Translate" modifier off so the transcript isn't translated twice. The LLM
-	// panel additionally disables the row while this holds.
 	useLockLlmTranslate(
 		translateSupported && (settings?.translateToEnglish ?? false),
 		llmTranslateEnabled,
 	);
 	const currentQuantization = (settings?.onnxQuantization ??
 		"") as OnnxQuantization;
-	// Resource-aware fit assessor for both model sections — owns the live host
-	// snapshot subscription so the panel stays a thin composition root.
 	const getFitAssessment = useModelFitAssessment({
 		currentQuantization,
 		deviceValue,
@@ -229,11 +182,6 @@ export function ModelSettingsPanel() {
 		statesById,
 	});
 
-	// Which Model-tab controls stay visible. A cloud main hides the local-only
-	// knobs (language, idle-unload-timeout, device) — except Device, which
-	// local Kokoro TTS also rides on (`model.device` → `--tts-device`). The
-	// derivation lives in pure helpers to keep this component under the
-	// cognitive-complexity cap.
 	const { showDevice, showLanguage, showLifetime } =
 		resolveModelControlVisibility(
 			selectedIsCloud,
@@ -274,9 +222,6 @@ export function ModelSettingsPanel() {
 		update,
 	]);
 
-	// Block model switching while files are transcribing — the swap would reload
-	// the shared transcriber mid-queue. The detached picker also disables its
-	// selector; the reference main enforces the same block as a final safety net.
 	const controller = useModelSwapController(
 		settings,
 		selectedModel,
@@ -340,9 +285,6 @@ export function ModelSettingsPanel() {
 		useMainModelFlag,
 	]);
 
-	// Per-quant badge handlers (delete + the shared download snapshot/action
-	// handlers). The guarded delete reconciles the main/realtime selection to a
-	// safe fallback before dropping the bytes — extracted into its own hook.
 	const {
 		canDeleteQuant,
 		handleDownloadAction,
@@ -361,9 +303,6 @@ export function ModelSettingsPanel() {
 		useMainModelFlag,
 	});
 
-	// Gate a precision-badge "download this variant" click into the confirmation
-	// dialog for the right slot; pause/resume/cancel still
-	// dispatch straight to the server.
 	const { handleMainDownloadAction, handleRealtimeDownloadAction } =
 		useDownloadGating({ controller, handleDownloadAction });
 
@@ -423,18 +362,7 @@ export function ModelSettingsPanel() {
 				t={t}
 				updateQuality={updateQuality}
 			/>
-			{/* Speaker diarization - gated to Listen mode (plain cross-tab read of
-			    `general.recordingMode`), matching the original General-tab gate.
-			    Persists to `general.speakerDiarization`; the runtime toggle wiring
-			    lives in the diarization toggle store. */}
 			{isListenMode ? <SpeakerDiarizationSection /> : null}
-			{/* Compute device — standalone, shared by local STT + local TTS.
-			    Shown only when a GPU exists AND a local model needs a device
-			    (`showDevice`). With no GPU there is no choice to make (Auto
-			    resolves to CPU), so the toggle is hidden rather than shown as a
-			    dead single-option switch; it's also hidden when STT and TTS are
-			    both cloud. Rendered outside the STT/TTS sections so it doesn't
-			    read as belonging to either. */}
 			{showDevice && gpuAvailable && (
 				<DeviceSection
 					deviceOpts={deviceOpts}
@@ -460,4 +388,8 @@ export function ModelSettingsPanel() {
 			/>
 		</div>
 	);
+}
+
+export function ModelSettingsPanel() {
+	return useModelSettingsPanelRender();
 }

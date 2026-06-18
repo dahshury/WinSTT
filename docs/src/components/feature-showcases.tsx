@@ -121,7 +121,6 @@ export function ShowcaseCard({
     <figure className="shot shot--thumb not-prose">
       <div
         className="shot-frame shot-frame--browser showcase-frame"
-        role="img"
         aria-label={label}
       >
         <BrowserBar url={url} />
@@ -161,10 +160,10 @@ export function VoiceBars({
       {Array.from({ length: count }, (_, i) => {
         const peak = (1 - (Math.abs(i - center) / center) * 0.72) * amp;
         const phase = (((i * 37) % 11) / 11) * -0.22;
+        const barKey = `${peak.toFixed(3)}-${phase.toFixed(3)}`;
         return (
           <span
-            // biome-ignore lint/suspicious/noArrayIndexKey: fixed-length decorative bar row
-            key={`vb-${i}`}
+            key={barKey}
             className={`mock-bar mock-bar--${i % 2 === 0 ? "a" : "b"}`}
             style={
               {
@@ -622,10 +621,9 @@ export function ShowcaseHistory() {
           <span className="sc-heat-title">Activity</span>
           <span className="sc-heat-legend" aria-hidden="true">
             Less
-            {HEAT_BG.map((bg, i) => (
+            {HEAT_BG.map((bg) => (
               <span
-                // biome-ignore lint/suspicious/noArrayIndexKey: fixed 4-step legend
-                key={`lk-${i}`}
+                key={bg}
                 className="sc-heat-key"
                 style={{ background: bg }}
               />

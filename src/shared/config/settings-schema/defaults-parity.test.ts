@@ -26,6 +26,6 @@ describe("settings defaults: Rust↔zod parity", () => {
 		// shared surface both schemas must agree on.
 		expect(fixture).not.toHaveProperty("core");
 
-		expect(zodDefaults).toEqual(fixture);
+		expect(zodDefaults).toEqual(fixture as unknown as typeof zodDefaults);
 	});
 });

@@ -18,10 +18,11 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use crate::helpers::regex::static_regex;
+
 /// Matches an ordered-list marker: optional leading text, then a number with a
 /// `.` or `)` delimiter followed by a space. Captured per-line during scanning.
-static NUMBER_MARKER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(\d{1,3})[.)]\s+").expect("number-marker regex"));
+static NUMBER_MARKER: LazyLock<Regex> = LazyLock::new(|| static_regex(r"(\d{1,3})[.)]\s+"));
 
 /// Explode any line that carries an inline enumeration into one item per line.
 /// Lines without an inline enumeration (including already-correct one-item-per-
@@ -84,7 +85,7 @@ fn explode_numbered(line: &str) -> Option<String> {
         }
     }
     for (idx, &(_, content_start, num)) in run.iter().enumerate() {
-        let content_end = run.get(idx + 1).map(|next| next.0).unwrap_or(line.len());
+        let content_end = run.get(idx + 1).map_or(line.len(), |next| next.0);
         let item = line[content_start..content_end].trim();
         out.push_str(&format!("{num}. {item}"));
         if idx + 1 < run.len() {

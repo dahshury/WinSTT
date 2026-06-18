@@ -1,7 +1,7 @@
 import { Button as BaseButton } from "@base-ui/react/button";
 import { Mic01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	buildInputDeviceOptions,
@@ -33,6 +33,15 @@ const PANEL_SHADOW_LEVEL = 7;
 function close(): void {
 	windowCloseNamed("device-picker");
 }
+
+const handleSelect = async (id: string) => {
+	const next = id === "default" ? null : Number.parseInt(id, 10);
+	const settings = await settingsLoad();
+	await settingsSave({
+		audio: { ...settings.audio, inputDeviceIndex: next },
+	});
+	close();
+};
 
 /**
  * Renderer half of the detached input-device picker. The tray menu is a tiny
@@ -85,27 +94,14 @@ export function DevicePickerWindow() {
 		return () => observer.disconnect();
 	}, []);
 
-	const handleSelect = async (id: string) => {
-		const next = id === "default" ? null : Number.parseInt(id, 10);
-		const settings = await settingsLoad();
-		await settingsSave({
-			audio: { ...settings.audio, inputDeviceIndex: next },
-		});
-		close();
-	};
-
 	const defaultLabel = defaultDevice
 		? `${t("systemDefault")} (${defaultDevice.name})`
 		: t("systemDefault");
-	const { deviceOptions, currentDeviceId } = useMemo(
-		() =>
-			buildInputDeviceOptions(
-				devices,
-				inputDeviceIndex,
-				defaultLabel,
-				defaultDevice?.name,
-			),
-		[defaultDevice?.name, defaultLabel, devices, inputDeviceIndex],
+	const { deviceOptions, currentDeviceId } = buildInputDeviceOptions(
+		devices,
+		inputDeviceIndex,
+		defaultLabel,
+		defaultDevice?.name,
 	);
 	const levels = useMicrophoneLevels(
 		true,

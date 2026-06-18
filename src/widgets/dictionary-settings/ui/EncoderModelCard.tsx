@@ -108,41 +108,30 @@ export function EncoderModelCard({
 		/>
 	);
 
-	function renderBody(): ReactNode {
-		if (m.state === "loading") {
-			return null;
-		}
-		// Present → status + an explicit delete (available even when the feature is off, so the disk
+	let body: ReactNode = null;
+	if (m.state === "present") {
+		// Present -> status + an explicit delete (available even when the feature is off, so the disk
 		// can be reclaimed without re-enabling).
-		if (m.state === "present") {
-			return (
-				<div className="flex items-center justify-between gap-2">
-					{enabled ? (
-						<span className="flex items-center gap-1.5 text-foreground-muted text-xs">
-							<span
-								className="size-1.5 rounded-full bg-success"
-								aria-hidden="true"
-							/>
-							{t("encoderReady")}
-						</span>
-					) : (
-						<span className="text-foreground-muted text-xs">
-							{t("encoderDownloadedOff")}
-						</span>
-					)}
-					<DeleteModelButton label={common("delete")} onClick={m.remove} />
-				</div>
-			);
-		}
-		// Not present → downloading only matters while the feature is on.
-		if (!enabled) {
-			return null;
-		}
-		if (m.state === "absent") {
-			return downloadActions;
-		}
-		// downloading | paused → progress + caption + tri-state actions.
-		return (
+		body = (
+			<div className="flex items-center justify-between gap-2">
+				{enabled ? (
+					<span className="flex items-center gap-1.5 text-foreground-muted text-xs">
+						<span className="size-1.5 rounded-full bg-success" aria-hidden="true" />
+						{t("encoderReady")}
+					</span>
+				) : (
+					<span className="text-foreground-muted text-xs">
+						{t("encoderDownloadedOff")}
+					</span>
+				)}
+				<DeleteModelButton label={common("delete")} onClick={m.remove} />
+			</div>
+		);
+	} else if (enabled && m.state === "absent") {
+		body = downloadActions;
+	} else if (enabled && m.state !== "loading") {
+		// downloading | paused -> progress + caption + tri-state actions.
+		body = (
 			<div className="flex flex-col gap-2.5">
 				{/* Bar only — the byte/speed caption is rendered as PLAIN text below so the
 				    MB counter doesn't animate (DownloadProgressBar's label/statsLabel run
@@ -186,7 +175,7 @@ export function EncoderModelCard({
 					onCheckedChange={onToggle}
 				/>
 			</div>
-			{renderBody()}
+			{body}
 		</Elevated>
 	);
 }

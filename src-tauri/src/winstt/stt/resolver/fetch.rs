@@ -521,7 +521,7 @@ pub async fn is_file_cached(model_id: &str, repo_path: &str) -> bool {
             if repo_path.ends_with(".onnx") {
                 verify_external_data_complete(&p)
             } else {
-                p.metadata().map(|m| m.len() > 0).unwrap_or(false)
+                p.metadata().is_ok_and(|m| m.len() > 0)
             }
         }
         Err(_) => false,

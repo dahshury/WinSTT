@@ -1,13 +1,5 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
-
-const TEXT_SWAP_DUR_MS = 150;
-
-function prefersReducedMotion(): boolean {
-	return (
-		window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
-	);
-}
 
 export function AnimatedText({
 	text,
@@ -16,48 +8,9 @@ export function AnimatedText({
 	className?: string;
 	text: string;
 }) {
-	const [displayed, setDisplayed] = useState(text);
-	const [phase, setPhase] = useState<"" | "exit" | "enter">("");
-	const prev = useRef(text);
-	const rafRef = useRef<number | null>(null);
-	const reduced = prefersReducedMotion();
-
-	useEffect(() => {
-		if (reduced || text === prev.current) {
-			prev.current = text;
-			if (reduced) {
-				setDisplayed(text);
-			}
-			return;
-		}
-		prev.current = text;
-		setPhase("exit");
-		const exitTimer = window.setTimeout(() => {
-			setDisplayed(text);
-			setPhase("enter");
-			rafRef.current = requestAnimationFrame(() => {
-				rafRef.current = requestAnimationFrame(() => setPhase(""));
-			});
-		}, TEXT_SWAP_DUR_MS);
-		return () => {
-			window.clearTimeout(exitTimer);
-			if (rafRef.current !== null) {
-				cancelAnimationFrame(rafRef.current);
-				rafRef.current = null;
-			}
-		};
-	}, [text, reduced]);
-
 	return (
-		<span
-			className={cn(
-				"t-text-swap",
-				phase === "exit" && "is-exit",
-				phase === "enter" && "is-enter-start",
-				className,
-			)}
-		>
-			{reduced ? text : displayed}
+		<span className={cn("t-text-swap", className)} key={text}>
+			{text}
 		</span>
 	);
 }
@@ -70,31 +23,12 @@ export function AnimatedNumber({
 	value: number | string;
 }) {
 	const text = String(value);
-	const [animating, setAnimating] = useState(true);
-	const prev = useRef(text);
-
-	useEffect(() => {
-		if (text === prev.current || prefersReducedMotion()) {
-			prev.current = text;
-			return;
-		}
-		prev.current = text;
-		setAnimating(false);
-		const raf = requestAnimationFrame(() => {
-			setAnimating(true);
-		});
-		return () => cancelAnimationFrame(raf);
-	}, [text]);
-
-	const chars = useMemo(() => [...text], [text]);
+	const chars = [...text];
 	const firstStaggerIndex = Math.max(chars.length - 2, 0);
 
 	return (
-		<span className={cn("inline-flex items-baseline", className)}>
-			<span
-				aria-hidden="true"
-				className={cn("t-digit-group", animating && "is-animating")}
-			>
+		<span className={cn("inline-flex items-baseline", className)} key={text}>
+			<span aria-hidden="true" className="t-digit-group is-animating">
 				{chars.map((ch, index) => {
 					const stagger =
 						chars.length > 1 && index >= firstStaggerIndex

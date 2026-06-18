@@ -44,7 +44,12 @@ use crate::winstt::stt::vad_segment::{
 use crate::winstt::stt::{EngineConfig, TranscribeOptions, Transcriber};
 use anyhow::Result;
 use std::borrow::Cow;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
+
+const STT_SAMPLE_RATE: usize = 16_000;
+const SLOW_BACKEND_SETUP_PHASE_MS: u128 = 1_000;
+const SLOW_BACKEND_ENGINE_PHASE_MS: u128 = 10_000;
 
 /// Which load/decode path a model id routes to. Decided by id namespace (cloud prefix → catalog
 /// lookup → neither). The core branches on this in `dispatch_load` / `transcribe`.
@@ -120,6 +125,7 @@ pub trait SttBackend: Send + Sync {
         app: &AppHandle,
         engine: &mut dyn Transcriber,
         audio: &[f32],
+        request_id: &str,
     ) -> Result<String>;
 
     /// One realtime live-preview decode (RAW text, no post-processing) on the winstt-arm engine.
@@ -163,6 +169,51 @@ fn quantization_log_label_raw(raw: &str) -> &str {
     }
 }
 
+fn samples_to_ms(samples: usize) -> u64 {
+    ((samples as u128 * 1000) / STT_SAMPLE_RATE as u128) as u64
+}
+
+struct DecodePhaseMeta<'a> {
+    request_id: &'a str,
+    model_id: &'a str,
+    kind: &'a str,
+    providers: &'a str,
+    audio_samples: usize,
+}
+
+fn record_slow_backend_phase(
+    app: &AppHandle,
+    meta: &DecodePhaseMeta<'_>,
+    phase: &str,
+    elapsed: Duration,
+    threshold_ms: u128,
+) {
+    let elapsed_ms = elapsed.as_millis();
+    if elapsed_ms < threshold_ms {
+        return;
+    }
+
+    crate::winstt::observability::IssueBuilder::new(
+        "stt",
+        "local_decode_phase",
+        "STT local decode phase was slow",
+    )
+    .detail(format!("{phase} completed in {elapsed_ms}ms"))
+    .kind("timeout")
+    .severity("warn")
+    .model_id(meta.model_id.to_string())
+    .request_id(meta.request_id.to_string())
+    .duration_ms(elapsed_ms as u64)
+    .user_visible(false)
+    .context("phase", phase.to_string())
+    .context("modelKind", meta.kind.to_string())
+    .context("providers", meta.providers.to_string())
+    .context("audioSamples", meta.audio_samples.to_string())
+    .context("audioMs", samples_to_ms(meta.audio_samples).to_string())
+    .context("thresholdMs", threshold_ms.to_string())
+    .record(Some(app));
+}
+
 impl SttBackend for WinsttSttBackend {
     fn route_of(&self, model_id: &str) -> BackendRoute {
         if crate::winstt::cloud_stt::provider_of(model_id).is_some() {
@@ -179,7 +230,7 @@ impl SttBackend for WinsttSttBackend {
     }
 
     fn selected_model_id(&self, app: &AppHandle) -> String {
-        let model = crate::winstt::commands::settings::read_settings(app)
+        let model = crate::winstt::commands::settings::read_settings_raw(app)
             .model
             .model;
         crate::winstt::catalog::canonical_model_id(&model).to_string()
@@ -206,7 +257,7 @@ impl SttBackend for WinsttSttBackend {
             )
         })?;
 
-        let settings = crate::winstt::commands::settings::read_settings(app);
+        let settings = crate::winstt::commands::settings::read_settings_raw(app);
 
         // device → primary accelerator (CPU vs the shipped GPU flavor)
         let primary = stt::resolve_accelerator(settings.model.device);
@@ -215,8 +266,7 @@ impl SttBackend for WinsttSttBackend {
         // unsuffixed base export → Quantization::Default); the literal `"auto"` is the RAM/VRAM-aware
         // "recommended" sentinel. (They were previously conflated under the empty string.)
         let raw = quantization_override
-            .map(str::trim)
-            .unwrap_or_else(|| settings.model.onnx_quantization.trim());
+            .map_or_else(|| settings.model.onnx_quantization.trim(), str::trim);
         let available: Vec<Quantization> = entry
             .available_quantizations
             .iter()
@@ -334,9 +384,46 @@ impl SttBackend for WinsttSttBackend {
         app: &AppHandle,
         engine: &mut dyn Transcriber,
         audio: &[f32],
+        request_id: &str,
     ) -> Result<String> {
+        let decode_started = Instant::now();
+        let model_id = engine.model_name().to_string();
+        let kind = engine.kind();
+        let kind_label = format!("{kind:?}");
+        let providers = if engine.active_providers().is_empty() {
+            "unknown".to_string()
+        } else {
+            engine
+                .active_providers()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let meta = DecodePhaseMeta {
+            request_id,
+            model_id: &model_id,
+            kind: &kind_label,
+            providers: &providers,
+            audio_samples: audio.len(),
+        };
+
+        log::info!(
+            "[stt][{request_id}] local_decode_start model='{model_id}' kind={kind_label} providers='{providers}' audio_samples={} audio_ms={}",
+            audio.len(),
+            samples_to_ms(audio.len())
+        );
+
         // Read the WinSTT settings tree ONCE for this decode (picker is the source of truth).
-        let ws = crate::winstt::commands::settings::read_settings(app);
+        let settings_started = Instant::now();
+        let ws = crate::winstt::commands::settings::read_settings_raw(app);
+        record_slow_backend_phase(
+            app,
+            &meta,
+            "settings_read",
+            settings_started.elapsed(),
+            SLOW_BACKEND_SETUP_PHASE_MS,
+        );
 
         // WinSTT engine inputs (language / translate / initial-prompt) come from the picker store.
         // The initial prompt is the user's free-text decoder-bias field only — the dictionary is
@@ -360,35 +447,113 @@ impl SttBackend for WinsttSttBackend {
         };
 
         // Peak-normalize once at the WinSTT backend boundary.
+        let normalize_started = Instant::now();
         let conditioned = peak_normalize(audio);
+        record_slow_backend_phase(
+            app,
+            &meta,
+            "peak_normalize",
+            normalize_started.elapsed(),
+            SLOW_BACKEND_SETUP_PHASE_MS,
+        );
         // Pause-heavy recordings waste decoder time on thinking silence. For local offline engines,
         // run a VAD compaction pass that keeps at most a short natural pause between speech runs.
         // If the compacted result still exceeds an engine window (Whisper's 30 s mel wall, AED
         // token caps), the same path chunks it on speech boundaries.
         const MAX_CHUNK_S: f32 = 28.0; // headroom under Whisper's 30 s mel wall
-        let transcribe_once = |engine: &mut dyn Transcriber| -> Result<String> {
-            engine
+        let transcribe_once = |engine: &mut dyn Transcriber, phase: &str| -> Result<String> {
+            log::info!(
+                "[stt][{request_id}] {phase}_start model='{model_id}' kind={kind_label} samples={} audio_ms={}",
+                conditioned.len(),
+                samples_to_ms(conditioned.len())
+            );
+            let phase_started = Instant::now();
+            let result = engine
                 .transcribe(&conditioned, &opts)
                 .map(|t| t.text)
-                .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e))
+                .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e));
+            let elapsed = phase_started.elapsed();
+            match &result {
+                Ok(text) => log::info!(
+                    "[stt][{request_id}] {phase}_complete duration_ms={} output_chars={}",
+                    elapsed.as_millis(),
+                    text.chars().count()
+                ),
+                Err(err) => log::warn!(
+                    "[stt][{request_id}] {phase}_failed duration_ms={} error={err}",
+                    elapsed.as_millis()
+                ),
+            }
+            record_slow_backend_phase(app, &meta, phase, elapsed, SLOW_BACKEND_ENGINE_PHASE_MS);
+            result
         };
-        let kind = engine.kind();
         let non_native_offline = !kind.supports_native_streaming();
         let needs_long_form_segmenting =
             conditioned.len() > (MAX_CHUNK_S * 16_000.0) as usize && non_native_offline;
         let should_vad_compact =
             conditioned.len() > (VAD_COMPACT_MIN_S * 16_000.0) as usize && non_native_offline;
+        log::info!(
+            "[stt][{request_id}] local_decode_route model='{model_id}' kind={kind_label} path={} conditioned_samples={} conditioned_audio_ms={} vad_compact_min_s={VAD_COMPACT_MIN_S}",
+            if should_vad_compact {
+                "vad_segment"
+            } else {
+                "single_pass"
+            },
+            conditioned.len(),
+            samples_to_ms(conditioned.len())
+        );
         let text = if should_vad_compact {
+            let vad_build_started = Instant::now();
             match build_segmentation_vad(app) {
-                Ok(mut vad) => vad_segment_decode(
-                    engine,
-                    &conditioned,
-                    MAX_CHUNK_S,
-                    kind.needs_past_context(),
-                    &mut vad,
-                    &opts,
-                )
-                .map_err(|e| anyhow::anyhow!("WinSTT VAD-segment transcription failed: {}", e))?,
+                Ok(mut vad) => {
+                    let vad_build_elapsed = vad_build_started.elapsed();
+                    log::info!(
+                        "[stt][{request_id}] vad_build_complete duration_ms={}",
+                        vad_build_elapsed.as_millis()
+                    );
+                    record_slow_backend_phase(
+                        app,
+                        &meta,
+                        "vad_build",
+                        vad_build_elapsed,
+                        SLOW_BACKEND_SETUP_PHASE_MS,
+                    );
+                    let vad_segment_started = Instant::now();
+                    log::info!(
+                        "[stt][{request_id}] vad_segment_start model='{model_id}' kind={kind_label} max_chunk_s={MAX_CHUNK_S:.1} audio_ms={}",
+                        samples_to_ms(conditioned.len())
+                    );
+                    let result = vad_segment_decode(
+                        engine,
+                        &conditioned,
+                        MAX_CHUNK_S,
+                        kind.needs_past_context(),
+                        &mut vad,
+                        &opts,
+                        request_id,
+                    )
+                    .map_err(|e| anyhow::anyhow!("WinSTT VAD-segment transcription failed: {}", e));
+                    let vad_segment_elapsed = vad_segment_started.elapsed();
+                    match &result {
+                        Ok(text) => log::info!(
+                            "[stt][{request_id}] vad_segment_complete duration_ms={} output_chars={}",
+                            vad_segment_elapsed.as_millis(),
+                            text.chars().count()
+                        ),
+                        Err(err) => log::warn!(
+                            "[stt][{request_id}] vad_segment_failed duration_ms={} error={err}",
+                            vad_segment_elapsed.as_millis()
+                        ),
+                    }
+                    record_slow_backend_phase(
+                        app,
+                        &meta,
+                        "vad_segment",
+                        vad_segment_elapsed,
+                        SLOW_BACKEND_ENGINE_PHASE_MS,
+                    );
+                    result?
+                }
                 Err(e) => {
                     if needs_long_form_segmenting {
                         log::warn!(
@@ -397,18 +562,32 @@ impl SttBackend for WinsttSttBackend {
                     } else {
                         log::warn!("VAD silence compaction unavailable ({e}); single-pass decode");
                     }
-                    transcribe_once(engine)?
+                    transcribe_once(engine, "single_pass_vad_unavailable")?
                 }
             }
         } else {
-            transcribe_once(engine)?
+            transcribe_once(engine, "single_pass")?
         };
 
         // WinSTT-arm post-processing: custom-words correction, sourced from the SAME `ws`
         // snapshot. The core does not re-run generic cleanup on this output (avoids
         // double-processing). Shared with the realtime-reuse fast path (see
         // `winstt_postprocess`) so a reused live decode gets byte-identical cleanup.
-        Ok(winstt_postprocess(&text, &ws))
+        let postprocess_started = Instant::now();
+        let final_text = winstt_postprocess(&text, &ws);
+        record_slow_backend_phase(
+            app,
+            &meta,
+            "deterministic_postprocess",
+            postprocess_started.elapsed(),
+            SLOW_BACKEND_SETUP_PHASE_MS,
+        );
+        log::info!(
+            "[stt][{request_id}] local_decode_complete duration_ms={} output_chars={}",
+            decode_started.elapsed().as_millis(),
+            final_text.chars().count()
+        );
+        Ok(final_text)
     }
 
     fn decode_realtime(

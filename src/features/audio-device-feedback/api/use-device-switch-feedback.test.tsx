@@ -72,11 +72,7 @@ function installNativeBridgeStub(): void {
 			if (channel === IPC.SETTINGS_SAVE) {
 				const settings = (payload as { settings?: unknown } | undefined)
 					?.settings;
-				settingsSaveCalls.push(
-					settings as {
-						audio: { inputDeviceIndex: number | null } | undefined;
-					},
-				);
+				settingsSaveCalls.push(settings as (typeof settingsSaveCalls)[number]);
 			}
 		},
 		invoke: async (channel: string) => {

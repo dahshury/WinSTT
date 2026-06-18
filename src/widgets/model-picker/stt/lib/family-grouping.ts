@@ -60,7 +60,7 @@ export function groupByFamily(
 		if (list.length === 0) {
 			continue;
 		}
-		const sorted = [...list].sort(
+		const sorted = list.toSorted(
 			(a, b) =>
 				parseParameterSize(a.sizeLabel) - parseParameterSize(b.sizeLabel),
 		);

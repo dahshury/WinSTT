@@ -121,14 +121,10 @@ struct DownloadControlAdapter<'a> {
 
 impl TransferControl for DownloadControlAdapter<'_> {
     fn should_cancel(&self) -> bool {
-        self.control
-            .map(|control| control.should_cancel())
-            .unwrap_or(false)
+        self.control.is_some_and(|control| control.should_cancel())
     }
 
     fn should_pause(&self) -> bool {
-        self.control
-            .map(|control| control.should_pause())
-            .unwrap_or(false)
+        self.control.is_some_and(|control| control.should_pause())
     }
 }

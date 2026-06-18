@@ -11,7 +11,12 @@
 // Lifted verbatim out of the old monolithic `families.rs`; depends only on the shared `support`
 // layer and the `frontend` featurizers, never on a peer engine.
 
-#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
+#![expect(
+    dead_code,
+    reason = "staged STT family surface is defined ahead of call sites and wiring"
+)]
+
+use std::time::{Duration, Instant};
 
 use ndarray::{Array1, Array2, ArrayD, Axis};
 use ort::session::Session;
@@ -446,7 +451,11 @@ impl TransducerEngine {
                 let st = self.gigaam_decoder_step(last, &h, &c)?;
                 cached = Some(st);
             }
-            let pred = cached.as_ref().expect("cached set above");
+            let Some(pred) = cached.as_ref() else {
+                return Err(SttError::Inference(
+                    "GigaAM decoder cache was not initialized".into(),
+                ));
+            };
             let logits = self.gigaam_joiner_step(&enc_frame, &pred.dec)?;
             let (best, _) = argmax_1d(&logits);
             let token = best as i64;
@@ -454,7 +463,9 @@ impl TransducerEngine {
             if token != self.blank_id {
                 // Emit: advance the LSTM state to the just-computed (h,c) and invalidate the cache so
                 // the NEXT frame re-runs the decoder with the new last token (onnx-asr: prev_state=state).
-                let pred = cached.take().expect("cached set above");
+                let Some(pred) = cached.take() else {
+                    return Err(SttError::Inference("GigaAM decoder cache was empty".into()));
+                };
                 h = pred.h;
                 c = pred.c;
                 tokens.push(token);
@@ -491,7 +502,24 @@ impl Transcriber for TransducerEngine {
         if audio.is_empty() {
             return Ok(Transcription::default());
         }
+        let total_started = Instant::now();
+        let audio_ms = audio.len() * 1000 / 16_000;
+        log::debug!(
+            "[stt][transducer] transcribe_start model='{}' kind={:?} providers='{}' audio_ms={}",
+            self.model_name,
+            self.kind,
+            self.providers.join(","),
+            audio_ms
+        );
+        let encode_started = Instant::now();
         let (encoder_out, t_len) = self.encode(audio)?;
+        log::debug!(
+            "[stt][transducer] encode_complete model='{}' kind={:?} elapsed_ms={} frames={}",
+            self.model_name,
+            self.kind,
+            encode_started.elapsed().as_millis(),
+            t_len
+        );
         if t_len == 0 {
             return Ok(Transcription::default());
         }
@@ -499,9 +527,20 @@ impl Transcriber for TransducerEngine {
         // GigaAM RNN-T uses a distinct decoder/joiner archetype + decoder-output caching; decode it
         // with the dedicated faithful port, then share the symbol-join below.
         if self.tkind == TransducerKind::GigaamRnnt {
+            let decode_started = Instant::now();
             let tokens = self.transcribe_gigaam(&encoder_out, t_len)?;
             let syms: Vec<&str> = tokens.iter().filter_map(|&id| self.vocab.get(id)).collect();
             let text = join_and_normalize(&syms, self.vocab.lowercase_decoded);
+            log::debug!(
+                "[stt][transducer] decode_complete model='{}' kind={:?} elapsed_ms={} frames={} tokens={} text_chars={} total_ms={}",
+                self.model_name,
+                self.kind,
+                decode_started.elapsed().as_millis(),
+                t_len,
+                tokens.len(),
+                text.chars().count(),
+                total_started.elapsed().as_millis()
+            );
             return Ok(Transcription {
                 text,
                 ..Default::default()
@@ -517,8 +556,16 @@ impl Transcriber for TransducerEngine {
             TransducerKind::KaldiStateless => None,
             _ => Some(self.create_nemo_state()),
         };
+        let decode_started = Instant::now();
+        let mut iterations = 0usize;
+        let mut zero_step_emits = 0usize;
+        let mut positive_steps = 0usize;
+        let mut blank_steps = 0usize;
+        let mut capped_steps = 0usize;
+        let mut last_slow_progress = Instant::now();
         while t < t_len {
             let frame = encoder_out.index_axis(Axis(0), t).to_owned();
+            iterations += 1;
             let (logits, step, new_state) =
                 self.decode_frame(&tokens, prev_state.as_ref(), &frame)?;
             let (best, _) = argmax_1d(&logits);
@@ -534,14 +581,55 @@ impl Transcriber for TransducerEngine {
             if step > 0 {
                 t += step as usize;
                 emitted = 0;
+                positive_steps += 1;
             } else if token == self.blank_id || emitted == self.max_tokens_per_step {
+                if token == self.blank_id {
+                    blank_steps += 1;
+                } else {
+                    capped_steps += 1;
+                }
                 t += 1;
                 emitted = 0;
+            } else {
+                zero_step_emits += 1;
+            }
+
+            if last_slow_progress.elapsed() >= Duration::from_secs(5) {
+                log::warn!(
+                    "[stt][transducer] decode_slow_progress model='{}' kind={:?} elapsed_ms={} frame={} frames={} tokens={} iterations={} zero_step_emits={} positive_steps={} blank_steps={} capped_steps={}",
+                    self.model_name,
+                    self.kind,
+                    decode_started.elapsed().as_millis(),
+                    t,
+                    t_len,
+                    tokens.len(),
+                    iterations,
+                    zero_step_emits,
+                    positive_steps,
+                    blank_steps,
+                    capped_steps
+                );
+                last_slow_progress = Instant::now();
             }
         }
 
         let syms: Vec<&str> = tokens.iter().filter_map(|&id| self.vocab.get(id)).collect();
         let text = join_and_normalize(&syms, self.vocab.lowercase_decoded);
+        log::debug!(
+            "[stt][transducer] decode_complete model='{}' kind={:?} elapsed_ms={} frames={} tokens={} text_chars={} iterations={} zero_step_emits={} positive_steps={} blank_steps={} capped_steps={} total_ms={}",
+            self.model_name,
+            self.kind,
+            decode_started.elapsed().as_millis(),
+            t_len,
+            tokens.len(),
+            text.chars().count(),
+            iterations,
+            zero_step_emits,
+            positive_steps,
+            blank_steps,
+            capped_steps,
+            total_started.elapsed().as_millis()
+        );
         Ok(Transcription {
             text,
             ..Default::default()

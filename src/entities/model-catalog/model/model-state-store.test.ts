@@ -98,8 +98,8 @@ describe("useModelStateStore.setAll (covers toMap)", () => {
 			"small",
 			"tiny",
 		]);
-		expect(state.statesById.tiny?.id).toBe("tiny");
-		expect(state.statesById.base?.id).toBe("base");
+		expect(state.statesById["tiny"]?.id).toBe("tiny");
+		expect(state.statesById["base"]?.id).toBe("base");
 		expect(state.systemInfo).toEqual(SYSTEM_INFO);
 		expect(state.isLoaded).toBe(true);
 	});
@@ -121,7 +121,7 @@ describe("useModelStateStore.setAll (covers toMap)", () => {
 			estimated_bytes: 999,
 		};
 		useModelStateStore.getState().setAll([first, second], SYSTEM_INFO);
-		expect(useModelStateStore.getState().statesById.dup?.estimated_bytes).toBe(
+		expect(useModelStateStore.getState().statesById["dup"]?.estimated_bytes).toBe(
 			999,
 		);
 	});
@@ -146,8 +146,8 @@ describe("useModelStateStore.refresh", () => {
 		await useModelStateStore.getState().refresh();
 		const state = useModelStateStore.getState();
 		expect(state.isLoaded).toBe(true);
-		expect(state.statesById.tiny).toBeDefined();
-		expect(state.statesById.base).toBeDefined();
+		expect(state.statesById["tiny"]).toBeDefined();
+		expect(state.statesById["base"]).toBeDefined();
 		expect(state.systemInfo).toEqual(SYSTEM_INFO);
 	});
 
@@ -205,7 +205,7 @@ describe("useModelStateStore.refresh", () => {
 
 		const state = useModelStateStore.getState();
 		expect(state.isLoaded).toBe(true);
-		expect(state.statesById.vosk).toBeDefined();
+		expect(state.statesById["vosk"]).toBeDefined();
 	});
 
 	test("stops retrying once a fetch succeeds (no runaway timers)", async () => {

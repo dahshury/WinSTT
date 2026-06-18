@@ -59,9 +59,11 @@ function buildTiers(o: Required<FormatBytesOptions>): Tier[] {
 		{ suffix: "KB", rank: 1, divisor: KIB, decimals: o.kbDecimals, floor: KIB },
 		{ suffix: "B", rank: 0, divisor: 1, decimals: null, floor: 0 },
 	];
-	return raw
-		.filter((t) => t.rank >= minRank)
-		.map((t) => ({ ...t, floor: t.rank === minRank ? 0 : t.floor }));
+	return raw.flatMap((t) =>
+		t.rank >= minRank
+			? [{ ...t, floor: t.rank === minRank ? 0 : t.floor }]
+			: [],
+	);
 }
 
 function isValidByteCount(value: unknown): value is number {

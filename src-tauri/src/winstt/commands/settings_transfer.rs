@@ -165,8 +165,7 @@ fn report(area: &str, status: &str, message: impl Into<String>) -> SettingsResto
 fn now_epoch_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |duration| duration.as_secs())
 }
 
 fn default_export_filename() -> String {
@@ -295,8 +294,10 @@ fn fallback_stt_model(availability: &SettingsAvailability, defaults: &WinsttSett
     catalog::STT_CATALOG
         .iter()
         .find(|entry| availability.cached_stt_models.contains(entry.id))
-        .map(|entry| entry.id.to_string())
-        .unwrap_or_else(|| defaults.model.model.clone())
+        .map_or_else(
+            || defaults.model.model.clone(),
+            |entry| entry.id.to_string(),
+        )
 }
 
 fn reconcile_stt_model(
@@ -314,7 +315,7 @@ fn reconcile_stt_model(
         let fallback = fallback_stt_model(availability, &defaults);
         imported.model.model = fallback.clone();
         imported.model.backend = defaults.model.backend;
-        imported.model.onnx_quantization = defaults.model.onnx_quantization.clone();
+        imported.model.onnx_quantization = defaults.model.onnx_quantization;
         adjusted.push(report(
             "Transcription model",
             "adjusted",
@@ -335,7 +336,7 @@ fn reconcile_stt_model(
                 .get(canonical)
                 .is_some_and(|quants| quants.contains(&saved_quant));
             if !has_saved_quant {
-                imported.model.onnx_quantization = defaults.model.onnx_quantization.clone();
+                imported.model.onnx_quantization = defaults.model.onnx_quantization;
                 adjusted.push(report(
                     "Transcription precision",
                     "adjusted",
@@ -351,7 +352,7 @@ fn reconcile_stt_model(
     let fallback = fallback_stt_model(availability, &defaults);
     imported.model.model = fallback.clone();
     imported.model.backend = defaults.model.backend;
-    imported.model.onnx_quantization = defaults.model.onnx_quantization.clone();
+    imported.model.onnx_quantization = defaults.model.onnx_quantization;
     adjusted.push(report(
         "Transcription model",
         "adjusted",
@@ -514,8 +515,7 @@ fn fallback_tts_model(availability: &SettingsAvailability, defaults: &WinsttSett
     tts_catalog::TTS_CATALOG
         .iter()
         .find(|entry| availability.cached_tts_models.contains(entry.id))
-        .map(|entry| entry.id.to_string())
-        .unwrap_or_else(|| defaults.tts.model.clone())
+        .map_or_else(|| defaults.tts.model.clone(), |entry| entry.id.to_string())
 }
 
 fn local_tts_available(model_id: &str, availability: &SettingsAvailability) -> bool {

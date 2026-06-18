@@ -4,10 +4,12 @@ import {
 	CheckmarkCircle02Icon,
 	CloudIcon,
 	ComputerIcon,
+	InformationCircleIcon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { AnimatePresence, LayoutGroup, m } from "motion/react";
+import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import {
 	type OnboardingTrack,
@@ -38,10 +40,10 @@ const TRACKS: readonly TrackOption[] = [
 		id: "cloud",
 		icon: CloudIcon,
 		title: "Use a cloud provider",
-		subtitle: "Best-in-class accuracy via OpenAI or ElevenLabs.",
+		subtitle: "Best-in-class accuracy via OpenRouter or ElevenLabs.",
 		bullets: [
 			"Highest accuracy, lowest latency",
-			"Requires an OpenAI or ElevenLabs API key",
+			"Requires an OpenRouter or ElevenLabs API key",
 			"Audio is uploaded to the chosen provider",
 		],
 	},
@@ -52,7 +54,7 @@ const MotionRadioRoot = m.create(Radio.Root);
  * Step 1: pick the STT track for the user's first dictation. Renders as a
  * pair of selectable cards styled to match Settings' tile-style choices
  * (accent ring + accent/12 fill when selected, divider-strong ring +
- * surface-3 fill when not).
+ * surface-4 fill when not).
  */
 export function OnboardingLocalVsCloudStep() {
 	const track = useOnboardingWizardStore((s) => s.track);
@@ -62,7 +64,7 @@ export function OnboardingLocalVsCloudStep() {
 		<LayoutGroup id="onboarding-track-choice">
 			<RadioGroup
 				aria-label="Choose how WinSTT transcribes your voice"
-				className="grid gap-3 sm:grid-cols-2"
+				className="grid gap-4 sm:grid-cols-2"
 				onValueChange={(value) =>
 					setTrack(value as Exclude<OnboardingTrack, "">)
 				}
@@ -75,7 +77,45 @@ export function OnboardingLocalVsCloudStep() {
 					);
 				})}
 			</RadioGroup>
+			<TrackChoiceNote />
 		</LayoutGroup>
+	);
+}
+
+/**
+ * Footnote clarifying the scope of this choice. Two things users routinely
+ * assume wrongly here: (1) that the pick is permanent, and (2) that it locks
+ * every feature to local/cloud. Neither is true — this only seeds the
+ * speech-to-text engine for the first dictation; the track is changeable later
+ * in Settings, and text-to-speech and post-processing each pick local or cloud
+ * independently.
+ */
+function TrackChoiceNote() {
+	const t = useTranslations("onboarding");
+
+	return (
+		<m.div
+			animate={{ opacity: 1, y: 0 }}
+			className="mt-3 flex items-start gap-2.5 rounded-md bg-surface-2 px-3 py-2.5 ring-1 ring-divider"
+			initial={{ opacity: 0, y: 4 }}
+			transition={{ duration: 0.22, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
+		>
+			<span
+				aria-hidden
+				className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-sm bg-surface-3 text-foreground-muted ring-1 ring-divider"
+			>
+				<HugeiconsIcon icon={InformationCircleIcon} size={12} />
+			</span>
+			<p className="text-body text-foreground-muted leading-normal">
+				{t.rich("trackChoiceNote", {
+					strong: (chunks) => (
+						<span className="font-medium text-foreground-secondary">
+							{chunks}
+						</span>
+					),
+				})}
+			</p>
+		</m.div>
 	);
 }
 
@@ -89,7 +129,7 @@ function TrackCard({ option, selected }: TrackCardProps) {
 		<MotionRadioRoot
 			aria-label={option.title}
 			className={cn(
-				"group relative flex cursor-pointer flex-col items-start gap-2 overflow-hidden rounded-lg px-4 py-3.5 text-left outline-none transition-[background-color,box-shadow] duration-200 ease-out",
+				"group relative flex cursor-pointer flex-col items-start gap-3 overflow-hidden rounded-xl px-5 py-5 text-left outline-none transition-[background-color,box-shadow] duration-200 ease-out",
 				"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
 				selected
 					? "bg-accent/[0.08] shadow-elevated"
@@ -104,7 +144,7 @@ function TrackCard({ option, selected }: TrackCardProps) {
 			{selected ? (
 				<m.span
 					aria-hidden
-					className="pointer-events-none absolute inset-0 rounded-lg bg-accent/[0.07] ring-1 ring-accent"
+					className="pointer-events-none absolute inset-0 rounded-xl bg-accent/[0.07] ring-1 ring-accent"
 					layoutId="onboarding-track-selected-surface"
 					transition={{
 						type: "spring",
@@ -126,19 +166,19 @@ function TrackCard({ option, selected }: TrackCardProps) {
 				/>
 			) : null}
 
-			<div className="relative z-raised flex w-full items-center gap-2.5">
+			<div className="relative z-raised flex w-full items-center gap-3">
 				<span
 					aria-hidden
 					className={cn(
-						"flex size-8 shrink-0 items-center justify-center rounded-md transition-colors duration-150",
+						"flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors duration-150",
 						selected
 							? "bg-accent/15 text-accent ring-1 ring-accent/30"
 							: "bg-surface-2 text-foreground-muted ring-1 ring-divider",
 					)}
 				>
-					<HugeiconsIcon icon={option.icon} size={16} />
+					<HugeiconsIcon icon={option.icon} size={22} />
 				</span>
-				<span className="flex-1 font-semibold text-body text-foreground">
+				<span className="flex-1 font-semibold text-base text-foreground">
 					{option.title}
 				</span>
 				<AnimatePresence initial={false}>
@@ -153,20 +193,20 @@ function TrackCard({ option, selected }: TrackCardProps) {
 							<HugeiconsIcon
 								aria-hidden
 								icon={CheckmarkCircle02Icon}
-								size={14}
+								size={18}
 							/>
 						</m.span>
 					) : null}
 				</AnimatePresence>
 			</div>
 
-			<p className="relative z-raised text-body-sm text-foreground-muted leading-snug">
+			<p className="relative z-raised text-body text-foreground-secondary leading-normal">
 				{option.subtitle}
 			</p>
 
 			<m.ul
 				animate="visible"
-				className="relative z-raised mt-1 flex flex-col gap-1"
+				className="relative z-raised mt-1.5 flex flex-col gap-2"
 				initial="hidden"
 				variants={{
 					hidden: {},
@@ -175,7 +215,7 @@ function TrackCard({ option, selected }: TrackCardProps) {
 			>
 				{option.bullets.map((bullet) => (
 					<m.li
-						className="flex items-start gap-1.5 text-body-sm text-foreground-dim leading-snug"
+						className="flex items-start gap-2.5 text-body text-foreground-secondary leading-normal"
 						key={bullet}
 						variants={{
 							hidden: { opacity: 0, y: 4, filter: "blur(2px)" },
@@ -189,7 +229,7 @@ function TrackCard({ option, selected }: TrackCardProps) {
 					>
 						<span
 							aria-hidden
-							className="mt-1.5 size-1 shrink-0 rounded-full bg-foreground-dim"
+							className="mt-[7px] size-1.5 shrink-0 rounded-full bg-foreground-muted"
 						/>
 						<span>{bullet}</span>
 					</m.li>

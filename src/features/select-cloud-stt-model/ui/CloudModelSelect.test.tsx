@@ -87,6 +87,24 @@ describe("CloudModelSelect", () => {
 		);
 	});
 
+	test("emptyState='disabled' shows an inert selector instead of the Configure-key link", () => {
+		// Onboarding sets the key on the same page, so the link-into-Settings
+		// affordance is wrong there — a disabled selector should render instead.
+		setKeys("");
+		render(
+			<IntlProvider>
+				<CloudModelSelect
+					emptyState="disabled"
+					onSelect={() => undefined}
+					selectedId=""
+				/>
+			</IntlProvider>,
+		);
+		expect(screen.queryByText(/Configure key/)).toBeNull();
+		const input = screen.getByPlaceholderText("Cloud models");
+		expect((input as HTMLInputElement).disabled).toBe(true);
+	});
+
 	test("renders the static cloud catalog when a provider key is present", () => {
 		setKeys("sk-eleven");
 		// The catalog is built at module load from the AI SDK's generated ids +

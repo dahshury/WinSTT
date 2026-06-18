@@ -123,10 +123,9 @@ impl CancelRegistry {
     /// value returned if the lock is poisoned (TTS treats that as cancelled to
     /// fail safe; the others treat it as not-cancelled).
     pub fn is_cancelled(&self, request_id: &str, default_when_poisoned: bool) -> bool {
-        self.state
-            .lock()
-            .map(|state| state.cancelled.contains(request_id))
-            .unwrap_or(default_when_poisoned)
+        self.state.lock().map_or(default_when_poisoned, |state| {
+            state.cancelled.contains(request_id)
+        })
     }
 
     /// Stop tracking `request_id` (call when the request finishes). Drops its

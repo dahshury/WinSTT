@@ -47,7 +47,7 @@ export function IconButton({
 	return (
 		<Tooltip content={tooltip ?? ariaLabel}>
 			{disabled ? (
-				<span className="inline-flex" tabIndex={0}>
+				<span className="inline-flex" tabIndex={-1}>
 					{button}
 				</span>
 			) : (

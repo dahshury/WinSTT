@@ -19,14 +19,12 @@ function dictationEnhanceSeed(): {
 	modifierIds: string[];
 } {
 	const dictation = useSettingsStore.getState().settings.llm?.dictation;
-	const presetKeys = (dictation?.presets ?? [])
-		.map((p) => p.key)
-		.filter((key): key is PresetKey =>
-			(ALL_PRESET_KEYS as readonly string[]).includes(key),
-		);
-	const modifierIds = (dictation?.customModifiers ?? [])
-		.filter((m) => m.enabled)
-		.map((m) => m.id);
+	const presetKeys = (dictation?.presets ?? []).flatMap((p): PresetKey[] =>
+		(ALL_PRESET_KEYS as readonly string[]).includes(p.key) ? [p.key] : [],
+	);
+	const modifierIds = (dictation?.customModifiers ?? []).flatMap((m) =>
+		m.enabled ? [m.id] : [],
+	);
 	return { presetKeys, modifierIds };
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	audioGetDevices,
 	audioRefreshDevices,
@@ -26,20 +26,20 @@ function areDeviceListsEqual(
 	a: readonly AudioDevice[],
 	b: readonly AudioDevice[],
 ): boolean {
-	if (a.length !== b.length) {
-		return false;
-	}
-	return a.every((device, index) => {
-		const other = b[index];
-		return (
-			other !== undefined &&
-			device.index === other.index &&
-			device.name === other.name &&
-			device.isDefault === other.isDefault &&
-			device.maxInputChannels === other.maxInputChannels &&
-			device.defaultSampleRate === other.defaultSampleRate
-		);
-	});
+	return (
+		a.length === b.length &&
+		a.every((device, index) => {
+			const other = b[index];
+			return (
+				other !== undefined &&
+				device.index === other.index &&
+				device.name === other.name &&
+				device.isDefault === other.isDefault &&
+				device.maxInputChannels === other.maxInputChannels &&
+				device.defaultSampleRate === other.defaultSampleRate
+			);
+		})
+	);
 }
 
 let inputDeviceCache: AudioDevice[] = [];
@@ -93,13 +93,11 @@ function refreshInputDeviceCache(): Promise<void> {
  */
 export function useInputDevices(): UseInputDevicesResult {
 	const [devices, setDevices] = useState<AudioDevice[]>(() => inputDeviceCache);
-	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	const refresh = useCallback(() => refreshInputDeviceCache(), []);
+	const refresh = refreshInputDeviceCache;
 
 	useEffect(() => {
 		inputDeviceSubscribers.add(setDevices);
-		setDevices(inputDeviceCache);
 		const offDevicesChanged = onAudioDevicesChanged((list) => {
 			publishInputDevices(list);
 		});
@@ -110,6 +108,7 @@ export function useInputDevices(): UseInputDevicesResult {
 	}, []);
 
 	useEffect(() => {
+		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 		const loadSafely = () => {
 			loadInputDeviceCache().catch(() => undefined);
 		};
@@ -122,23 +121,24 @@ export function useInputDevices(): UseInputDevicesResult {
 		const handler = () => {
 			// Coalesce rapid devicechange bursts (5-10 events within ~10ms when
 			// a stream open fails and the OS retries) into a single enumeration.
-			if (debounceRef.current) {
-				clearTimeout(debounceRef.current);
+			if (debounceTimer) {
+				clearTimeout(debounceTimer);
 			}
-			debounceRef.current = setTimeout(() => {
-				debounceRef.current = null;
+			debounceTimer = setTimeout(() => {
+				debounceTimer = null;
 				refreshSafely();
 			}, DEVICECHANGE_DEBOUNCE_MS);
 		};
 		mediaDevices?.addEventListener("devicechange", handler);
 		return () => {
 			mediaDevices?.removeEventListener("devicechange", handler);
-			if (debounceRef.current) {
-				clearTimeout(debounceRef.current);
-				debounceRef.current = null;
+			const pendingDebounce = debounceTimer;
+			debounceTimer = null;
+			if (pendingDebounce) {
+				clearTimeout(pendingDebounce);
 			}
 		};
-	}, [refresh]);
+	}, []);
 
 	const defaultDevice = devices.find((d) => d.isDefault) ?? null;
 	return { devices, defaultDevice, refresh };

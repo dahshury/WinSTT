@@ -16,42 +16,23 @@ import { Collapsible } from "../core/Collapsible";
 import { EndpointFeatureIcons } from "../ui/EndpointFeatureIcons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
 import {
-	getEndpointProviderSlug,
 	getPricingClassName,
 	getPricingLabel,
 	getProviderCardClassName,
 	getSelectionDotClassName,
-	isPositiveNumber,
+} from "./model-list-content-virtualized-utils/class-names";
+import {
+	getEndpointProviderSlug,
 	isProviderSelected,
-	type ModelVariantKey,
+} from "./model-list-content-virtualized-utils/header";
+import {
+	isPositiveNumber,
 	shouldShowStatsRow,
-	VARIANT_GRADIENT_MAP,
-} from "./model-list-content-virtualized-utils";
+} from "./model-list-content-virtualized-utils/items";
 import {
 	formatContextLength,
 	getPricingTier,
 } from "./model-selector-display-utils";
-
-// Quiet neutral top hairline. Once a 4px per-variant rainbow ribbon; now a
-// faint 1px structural seam (the variant meaning lives in the meta-line token).
-export function VariantAccentStrip({
-	variant,
-	gradient,
-}: {
-	variant: ModelVariantKey;
-	gradient: string;
-}) {
-	return (
-		<div
-			aria-hidden="true"
-			className={cn(
-				"pointer-events-none absolute inset-x-0 top-0 h-px rounded-t-md bg-gradient-to-r",
-				gradient,
-				VARIANT_GRADIENT_MAP[variant],
-			)}
-		/>
-	);
-}
 
 function ProviderStatChip({
 	icon,

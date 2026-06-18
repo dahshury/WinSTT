@@ -13,19 +13,19 @@ const SETTINGS_KEY = "winstt_settings";
 const SECRET_PRESENT_SENTINEL = "__WINSTT_SECRET_PRESENT__";
 
 let tempDir: string | undefined;
-const originalAppDataDir = process.env.WINSTT_APP_DATA_DIR;
+const originalAppDataDir = process.env["WINSTT_APP_DATA_DIR"];
 
 async function useTempAppDataDir(): Promise<string> {
 	tempDir = await mkdtemp(join(tmpdir(), "winstt-settings-"));
-	process.env.WINSTT_APP_DATA_DIR = tempDir;
+	process.env["WINSTT_APP_DATA_DIR"] = tempDir;
 	return tempDir;
 }
 
 afterEach(async () => {
 	if (originalAppDataDir === undefined) {
-		delete process.env.WINSTT_APP_DATA_DIR;
+		delete process.env["WINSTT_APP_DATA_DIR"];
 	} else {
-		process.env.WINSTT_APP_DATA_DIR = originalAppDataDir;
+		process.env["WINSTT_APP_DATA_DIR"] = originalAppDataDir;
 	}
 	if (tempDir) {
 		await rm(tempDir, { force: true, recursive: true });

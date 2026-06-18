@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	type MicrophoneLevelMonitorTarget,
 	onMicrophoneLevels,
@@ -35,46 +35,41 @@ export function useMicrophoneLevels(
 	optionIds: readonly string[],
 ): Record<string, number> {
 	const optionIdsKey = optionIds.join("|");
-	const targets = useMemo(
-		() =>
-			optionIdsKey
-				.split("|")
-				.filter((id) => id.length > 0)
-				.map(monitorTargetForOption),
-		[optionIdsKey],
-	);
+	const targets = optionIdsKey
+		.split("|")
+		.filter((id) => id.length > 0)
+		.map(monitorTargetForOption);
 	const targetsKey = monitorTargetKey(targets);
-	const [levels, setLevels] = useState<Record<string, number>>({});
+	const currentKey = enabled ? targetsKey : null;
+	const [state, setState] = useState<{
+		key: string | null;
+		levels: Record<string, number>;
+	}>({ key: null, levels: {} });
 
 	useEffect(() => {
 		if (!enabled) {
-			setLevels({});
 			return;
 		}
-		return onMicrophoneLevels((payload) => {
-			setLevels(
-				Object.fromEntries(
+		const key = targetsKey;
+		const unsubscribe = onMicrophoneLevels((payload) => {
+			setState({
+				key,
+				levels: Object.fromEntries(
 					payload.levels.map((entry) => [
 						entry.id,
 						Math.max(0, Math.min(1, entry.level)),
 					]),
 				),
-			);
+			});
 		});
-	}, [enabled]);
-
-	useEffect(() => {
-		if (!enabled) {
-			return;
-		}
-		setLevels({});
 		void startMicrophoneLevelMonitor(targets);
 		return () => {
+			unsubscribe();
 			void stopMicrophoneLevelMonitor();
 		};
 	}, [enabled, targets, targetsKey]);
 
-	return levels;
+	return state.key === currentKey ? state.levels : {};
 }
 
 export function MicrophoneLevelMeter({

@@ -155,14 +155,7 @@ fn stable_word_boundary_prefix<'a>(previous: &str, latest: &'a str) -> &'a str {
     let common_len = common_prefix_len_on_char_boundary(previous, latest);
     let common = &latest[..common_len];
     match common.rfind(char::is_whitespace) {
-        Some(idx) => {
-            &common[..idx
-                + common[idx..]
-                    .chars()
-                    .next()
-                    .map(char::len_utf8)
-                    .unwrap_or(0)]
-        }
+        Some(idx) => &common[..idx + common[idx..].chars().next().map_or(0, char::len_utf8)],
         None => "",
     }
 }
@@ -287,7 +280,7 @@ impl RealtimeManager {
             return false;
         };
 
-        if crate::settings::get_settings(&self.app).append_trailing_space {
+        if read_settings_raw(&self.app).core.append_trailing_space {
             edit.text.push(' ');
         }
 
@@ -372,9 +365,9 @@ impl RealtimeManager {
 
         let generation = self.audio.recording_generation();
         self.handle_recording_edge(state, generation);
-        let seen_at = state
-            .recording_seen_at
-            .expect("set by handle_recording_edge");
+        let Some(seen_at) = state.recording_seen_at else {
+            return TickAction::Sleep(Duration::from_millis(10));
+        };
 
         // ── readiness gate (port of _realtime_ready) ──
         let init_after =

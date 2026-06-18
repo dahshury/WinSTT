@@ -8,7 +8,10 @@
 // (`ctc`, `transducer`, `aed`) call these via `use super::support::*`. Most fns are `pub(super)`
 // so the leakage stays inside the `families/` module tree (it does not widen the crate API).
 
-#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
+#![expect(
+    dead_code,
+    reason = "staged STT support surface is defined ahead of call sites and wiring"
+)]
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -133,7 +136,7 @@ pub(super) fn out_to_mask_f32(out: &ort::value::DynValue) -> SttResult<ArrayD<f3
 }
 
 /// argmax along the last axis of a 2-D `(T, vocab)` view → `Vec<i64>` of length `T`.
-pub(super) fn argmax_last_axis_2d(logits: ArrayView2<f32>) -> Vec<i64> {
+pub(super) fn argmax_last_axis_2d(logits: ArrayView2<'_, f32>) -> Vec<i64> {
     let mut out = Vec::with_capacity(logits.nrows());
     for row in logits.rows() {
         let mut best = 0usize;
@@ -219,8 +222,7 @@ impl Vocab {
         let blank_idx = id_to_sym
             .iter()
             .find(|(_, s)| s.as_str() == "<blk>")
-            .map(|(id, _)| *id)
-            .unwrap_or(0);
+            .map_or(0, |(id, _)| *id);
         let lowercase_decoded = vocab_is_uppercase(id_to_sym.values().map(String::as_str));
         let size = id_to_sym.len();
         Ok(Vocab {
@@ -417,8 +419,7 @@ pub(super) fn feat_dim_of(session: &Session, name: &str) -> usize {
         .and_then(|i| i.dtype().tensor_shape())
         .and_then(|s| s.get(1).copied())
         .filter(|&d| d > 0)
-        .map(|d| d as usize)
-        .unwrap_or(128)
+        .map_or(128, |d| d as usize)
 }
 
 /// Zero-init shape `[dim0, 1, dim2]` for a NeMo RNN-T predictor state input (`input_states_1/2`,
@@ -510,7 +511,7 @@ pub(super) fn pick_feat_len_inputs(inputs: &[String]) -> (String, String) {
     } else if has("features") {
         "features"
     } else {
-        inputs.first().map(String::as_str).unwrap_or("x")
+        inputs.first().map_or("x", String::as_str)
     };
     let len = if has("x_len") {
         "x_len"
@@ -519,7 +520,7 @@ pub(super) fn pick_feat_len_inputs(inputs: &[String]) -> (String, String) {
     } else if has("feature_lengths") {
         "feature_lengths"
     } else {
-        inputs.get(1).map(String::as_str).unwrap_or("x_len")
+        inputs.get(1).map_or("x_len", String::as_str)
     };
     (feat.to_string(), len.to_string())
 }

@@ -138,7 +138,11 @@ impl VoicePack {
             let style = load_voice_bin(&path)?;
             cache.insert(voice_id.to_string(), style);
         }
-        let style = cache.get(voice_id).expect("just inserted");
+        let Some(style) = cache.get(voice_id) else {
+            return Err(KokoroError::Voice(format!(
+                "voice style {voice_id} was not loaded"
+            )));
+        };
         Ok(style.row_for(token_count)?.to_vec())
     }
 }
@@ -342,7 +346,11 @@ impl KokoroEngine {
             *guard = Some(self.load()?);
             self.ready.store(true, Ordering::Release);
         }
-        let loaded = guard.as_mut().expect("just initialized");
+        let Some(loaded) = guard.as_mut() else {
+            return Err(KokoroError::Session(
+                "kokoro session was not initialized".into(),
+            ));
+        };
 
         // Style vector for the UNPADDED token count. kokoro_onnx does
         // `voice = voice[len(tokens)]` BEFORE padding to `[0, *tokens, 0]`, so the row

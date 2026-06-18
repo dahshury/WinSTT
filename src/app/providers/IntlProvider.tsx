@@ -28,8 +28,10 @@ export function IntlProvider({ children }: { children: ReactNode }) {
 	});
 
 	useEffect(() => {
+		// The default-locale case needs no async load: its messages are derived
+		// synchronously during render (see `messages` below), so the effect skips
+		// it entirely instead of writing the same value into state.
 		if (locale === DEFAULT_LOCALE) {
-			setBundle({ locale, messages: DEFAULT_MESSAGE_BUNDLE });
 			return;
 		}
 		let cancelled = false;

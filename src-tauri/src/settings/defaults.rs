@@ -64,9 +64,7 @@ pub(super) fn default_post_process_enabled() -> bool {
 }
 
 pub(super) fn default_app_language() -> String {
-    tauri_plugin_os::locale()
-        .map(|l| l.replace('_', "-"))
-        .unwrap_or_else(|| "en".to_string())
+    tauri_plugin_os::locale().map_or_else(|| "en".to_string(), |l| l.replace('_', "-"))
 }
 
 pub(super) fn default_show_tray_icon() -> bool {

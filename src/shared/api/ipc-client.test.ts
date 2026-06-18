@@ -186,12 +186,14 @@ describe("send wrappers (migrated to typed commands)", () => {
 		);
 		const maybeWindow = window as Window & { __TAURI_INTERNALS__?: unknown };
 		const previousInternals = maybeWindow.__TAURI_INTERNALS__;
-		const bridgeFetch = mock(async () => {
-			return new Response(JSON.stringify({ settings: {} }), {
-				headers: { "Content-Type": "application/json" },
-				status: 200,
-			});
-		});
+		const bridgeFetch = mock(
+			async (_input: RequestInfo | URL, _init?: RequestInit) => {
+				return new Response(JSON.stringify({ settings: {} }), {
+					headers: { "Content-Type": "application/json" },
+					status: 200,
+				});
+			},
+		);
 
 		try {
 			globalThis.fetch = bridgeFetch as unknown as typeof fetch;
@@ -235,19 +237,21 @@ describe("send wrappers (migrated to typed commands)", () => {
 		);
 		const maybeWindow = window as Window & { __TAURI_INTERNALS__?: unknown };
 		const previousInternals = maybeWindow.__TAURI_INTERNALS__;
-		const bridgeFetch = mock(async () => {
-			return new Response(
-				JSON.stringify({
-					settings: {
-						dictionary: [{ id: "term-1", term: "central" }],
+		const bridgeFetch = mock(
+			async (_input: RequestInfo | URL, _init?: RequestInit) => {
+				return new Response(
+					JSON.stringify({
+						settings: {
+							dictionary: [{ id: "term-1", term: "central" }],
+						},
+					}),
+					{
+						headers: { "Content-Type": "application/json" },
+						status: 200,
 					},
-				}),
-				{
-					headers: { "Content-Type": "application/json" },
-					status: 200,
-				},
-			);
-		});
+				);
+			},
+		);
 
 		try {
 			globalThis.fetch = bridgeFetch as unknown as typeof fetch;
@@ -359,7 +363,7 @@ describe("send wrappers (migrated to typed commands)", () => {
 		}
 		expect(lastTauriCall().cmd).toBe("winstt_set_settings");
 		expect(errorCalls).toHaveLength(1);
-		const [msg, err] = errorCalls[0];
+		const [msg, err] = errorCalls.at(0) ?? [];
 		expect(String(msg)).toContain("critical send");
 		expect(String(msg)).toContain(IPC.SETTINGS_SAVE);
 		expect(err).toBe("disk full");
@@ -453,6 +457,29 @@ describe("wrappers migrated to direct commands.* (no channel)", () => {
 		const result = await ipc.diagSaveBundle();
 		expect(lastTauriCall().cmd).toBe("diag_save_bundle");
 		expect(result.ok).toBe(true);
+	});
+
+	test("diagObservabilityTimeline calls diag_observability_timeline", async () => {
+		installMockApi();
+		setTauriInvoke(() => [
+			{
+				area: "stt",
+				context: {},
+				id: 1,
+				kind: "timeout",
+				operation: "transcription",
+				severity: "warn",
+				summary: "slow",
+				timestampMs: 10,
+				userVisible: false,
+			},
+		]);
+		const result = await ipc.diagObservabilityTimeline(5);
+		expect(lastTauriCall()).toEqual({
+			cmd: "diag_observability_timeline",
+			args: { limit: 5 },
+		});
+		expect(result).toHaveLength(1);
 	});
 
 	test("copyLastTranscript calls copy_last_transcript and returns the bool", async () => {
@@ -554,7 +581,7 @@ describe("wrappers migrated to direct commands.* (no channel)", () => {
 			ollamaInstalled: true,
 			reachable: true,
 			timestamp: 1_700_000_000_000,
-		};
+		} satisfies ipc.LlmWarmupStatus;
 		setTauriInvoke(() => snapshot);
 
 		await expect(ipc.retryLlmWarmup()).resolves.toEqual(snapshot);
@@ -620,7 +647,7 @@ describe("toCloneableArgs (contextBridge clone guard)", () => {
 	test("drops to no args when the payload is circular (does not crash the renderer)", () => {
 		const api = installMockApi();
 		const circular: Record<string, unknown> = { fn: () => 0 };
-		circular.self = circular;
+		circular["self"] = circular;
 		expect(() => ipc.ipcSend(IPC.AUTOSTART_SET, circular)).not.toThrow();
 		expect(api.send).toHaveBeenCalledWith(IPC.AUTOSTART_SET);
 	});
@@ -1338,7 +1365,7 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 	});
 
 	test("gpuGetInfo returns the gpu_get_info result when in a bridge context", async () => {
-		const info = [{ name: "RTX 4090", available: true }];
+		const info = [{ name: "RTX 4090", total_vram_bytes: 24 * 1024 ** 3 }];
 		installMockApi();
 		// `commands.gpuGetInfo` is a RAW command (returns the array directly).
 		setTauriInvoke(() => info);

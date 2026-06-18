@@ -95,9 +95,7 @@ pub fn store_path(relative: &str) -> PathBuf {
 /// Check if a marker file path contains the portable magic string.
 /// Extracted for testability.
 fn is_valid_portable_marker(path: &std::path::Path) -> bool {
-    std::fs::read_to_string(path)
-        .map(|s| s.trim().starts_with("WinSTT Portable Mode"))
-        .unwrap_or(false)
+    std::fs::read_to_string(path).is_ok_and(|s| s.trim().starts_with("WinSTT Portable Mode"))
 }
 
 #[cfg(test)]

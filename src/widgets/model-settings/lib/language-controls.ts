@@ -11,13 +11,17 @@ export type { LanguageControlMode };
 function languageBadge(code: string): string {
 	return code.toUpperCase();
 }
-const ALL_LANG_OPTS: SelectOption[] = LANGUAGES.filter(
-	(l) => l.code !== "",
-).map((l) => ({
-	id: l.code,
-	label: l.name,
-	badge: languageBadge(l.code),
-}));
+const ALL_LANG_OPTS: SelectOption[] = LANGUAGES.flatMap((l) =>
+	l.code !== ""
+		? [
+				{
+					id: l.code,
+					label: l.name,
+					badge: languageBadge(l.code),
+				},
+			]
+		: [],
+);
 
 export function buildLanguageOptions(
 	supportedLanguages: readonly string[] | undefined,
@@ -35,6 +39,7 @@ export function normalizeLanguageCandidates(
 	fallback: string,
 ): string[] {
 	const available = new Set(options.map((option) => option.id));
+	const seen = new Set<string>();
 	const normalized: string[] = [];
 	for (const raw of rawCandidates ?? []) {
 		const candidate = raw.trim();
@@ -45,7 +50,8 @@ export function normalizeLanguageCandidates(
 		) {
 			continue;
 		}
-		if (!normalized.includes(candidate)) {
+		if (!seen.has(candidate)) {
+			seen.add(candidate);
 			normalized.push(candidate);
 		}
 	}
@@ -63,6 +69,7 @@ export function normalizeLanguageCandidatesAllowEmpty(
 	options: readonly SelectOption[],
 ): string[] {
 	const available = new Set(options.map((option) => option.id));
+	const seen = new Set<string>();
 	const normalized: string[] = [];
 	for (const raw of rawCandidates ?? []) {
 		const candidate = raw.trim();
@@ -73,7 +80,8 @@ export function normalizeLanguageCandidatesAllowEmpty(
 		) {
 			continue;
 		}
-		if (!normalized.includes(candidate)) {
+		if (!seen.has(candidate)) {
+			seen.add(candidate);
 			normalized.push(candidate);
 		}
 	}

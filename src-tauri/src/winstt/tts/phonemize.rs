@@ -24,7 +24,10 @@
 //   * `resolve` — espeak shared-lib / data-home path resolution.
 //   * `vocab`   — the Kokoro v1.0 phoneme→token-id vocab table.
 
-#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
+#![expect(
+    dead_code,
+    reason = "staged TTS phonemizer surface is defined ahead of call sites and wiring"
+)]
 
 mod resolve;
 mod runtime;
@@ -182,8 +185,7 @@ impl Phonemizer for EspeakCliPhonemizer {
         Command::new(&self.binary)
             .arg("--version")
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .is_ok_and(|o| o.status.success())
     }
 }
 

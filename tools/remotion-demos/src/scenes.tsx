@@ -28,6 +28,174 @@ import {
 type Mode = keyof typeof MODE;
 type VisualKind = "bar" | "grid" | "radial" | "wave" | "aura";
 
+const smallButtonBase: CSSProperties = {
+  height: 34,
+  padding: "0 13px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: 7,
+  fontFamily: C.mono,
+  fontSize: 12,
+  fontWeight: 650
+};
+
+const transcriptLineBase: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  minHeight: 46,
+  padding: "0 18px",
+  borderRadius: 8,
+  background: C.surface2,
+  color: C.fg,
+  fontSize: 20
+};
+
+const modelRowBase: CSSProperties = {
+  position: "relative",
+  display: "grid",
+  gridTemplateColumns: "1fr 88px 94px 116px",
+  alignItems: "center",
+  height: 58,
+  padding: "0 14px",
+  borderRadius: 8,
+  overflow: "hidden"
+};
+
+const wLogoBox: CSSProperties = {
+  width: 46,
+  height: 46,
+  borderRadius: 8,
+  display: "grid",
+  placeItems: "center",
+  background: C.surface3,
+  border: `1px solid ${C.borderSoft}`,
+  color: C.accent,
+  fontFamily: C.mono,
+  fontWeight: 900
+};
+
+const overlayPreviewBase: CSSProperties = {
+  width: 520,
+  minHeight: 122,
+  padding: 20,
+  borderRadius: 12,
+  background: "rgba(8,9,13,0.86)"
+};
+
+const aiProcessingCard: CSSProperties = {
+  width: 142,
+  height: 142,
+  borderRadius: 8,
+  background: C.surface2,
+  border: `1px solid ${C.borderSoft}`,
+  display: "grid",
+  placeItems: "center",
+  position: "relative",
+  overflow: "hidden"
+};
+
+const autoSubmitBubbleBase: CSSProperties = {
+  maxWidth: 330,
+  padding: "14px 18px",
+  borderRadius: "14px 14px 4px 14px",
+  background: C.accent,
+  color: C.black,
+  fontSize: 20,
+  fontWeight: 720
+};
+
+const dropZoneBase: CSSProperties = {
+  marginTop: 42,
+  height: 260,
+  borderRadius: 12,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 24,
+  position: "relative",
+  overflow: "hidden"
+};
+
+const dropProgressTrackBase: CSSProperties = {
+  position: "absolute",
+  left: 190,
+  right: 190,
+  bottom: 42,
+  height: 8,
+  borderRadius: 999,
+  background: C.surface4,
+  overflow: "hidden"
+};
+
+const fileCardBadge: CSSProperties = {
+  width: 48,
+  height: 48,
+  borderRadius: 8,
+  display: "grid",
+  placeItems: "center",
+  color: C.black,
+  fontFamily: C.mono,
+  fontWeight: 900,
+  fontSize: 13
+};
+
+const overlayStageBox: CSSProperties = {
+  width: 1180,
+  height: 260,
+  position: "relative",
+  borderRadius: 12,
+  background: C.surface0,
+  border: `1px solid ${C.borderSoft}`,
+  boxShadow: "0 20px 70px rgba(0,0,0,0.4)",
+  overflow: "hidden"
+};
+
+const overlayBgCardBase: CSSProperties = {
+  position: "absolute",
+  top: 34,
+  width: 58,
+  height: 44,
+  borderRadius: 8,
+  border: `1px solid ${C.borderSoft}`
+};
+
+const overlayIslandBase: CSSProperties = {
+  position: "absolute",
+  left: "50%",
+  top: 22,
+  width: 560,
+  minHeight: 92,
+  padding: "12px 18px",
+  borderRadius: "0 0 28px 28px",
+  background: "rgba(4,5,8,0.94)",
+  borderTop: "none"
+};
+
+const flowPacketBase: CSSProperties = {
+  position: "absolute",
+  width: 13,
+  height: 13,
+  borderRadius: 999,
+  transform: "translate(-50%, -50%)"
+};
+
+const nodeBoxBase: CSSProperties = {
+  position: "absolute",
+  width: 174,
+  height: 82,
+  padding: 13,
+  borderRadius: 8
+};
+
+const aiProcessingDotBase: CSSProperties = {
+  position: "absolute",
+  width: 5,
+  height: 5,
+  borderRadius: 999,
+  background: C.accent
+};
+
 function PanelTitle({
   eyebrow,
   title,
@@ -64,18 +232,10 @@ function SmallButton({
   return (
     <div
       style={{
-        height: 34,
-        padding: "0 13px",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        borderRadius: 7,
+        ...smallButtonBase,
         background: active ? `${accent}28` : C.surface2,
         border: `1px solid ${active ? `${accent}88` : C.borderSoft}`,
         color: active ? C.fg : C.fg2,
-        fontFamily: C.mono,
-        fontSize: 12,
-        fontWeight: 650,
         ...style
       }}
     >
@@ -100,16 +260,9 @@ function TranscriptLine({
   return (
     <div
       style={{
-        display: "inline-flex",
-        alignItems: "center",
-        minHeight: 46,
-        padding: "0 18px",
-        borderRadius: 8,
-        background: C.surface2,
+        ...transcriptLineBase,
         border: `1px solid ${accent}44`,
         boxShadow: `0 0 28px ${accent}18`,
-        color: C.fg,
-        fontSize: 20,
         ...style
       }}
     >
@@ -157,16 +310,9 @@ function ModelRows({ active = 1, progress = 0 }: { active?: number; progress?: n
         <div
           key={row[0]}
           style={{
-            position: "relative",
-            display: "grid",
-            gridTemplateColumns: "1fr 88px 94px 116px",
-            alignItems: "center",
-            height: 58,
-            padding: "0 14px",
-            borderRadius: 8,
+            ...modelRowBase,
             background: i === active ? C.accentDim : C.surface2,
-            border: `1px solid ${i === active ? "rgba(74,131,255,0.36)" : C.borderSoft}`,
-            overflow: "hidden"
+            border: `1px solid ${i === active ? "rgba(74,131,255,0.36)" : C.borderSoft}`
           }}
         >
           {i === 1 && progress > 0 && progress < 1 ? (
@@ -292,15 +438,11 @@ function FlowPacket({
   return (
     <div
       style={{
-        position: "absolute",
+        ...flowPacketBase,
         left: x,
         top: y,
-        width: 13,
-        height: 13,
-        borderRadius: 999,
         background: color,
         opacity: op,
-        transform: "translate(-50%, -50%)",
         boxShadow: `0 0 22px ${color}`
       }}
     />
@@ -325,13 +467,9 @@ function NodeBox({
   return (
     <div
       style={{
-        position: "absolute",
+        ...nodeBoxBase,
         left: x,
         top: y,
-        width: 174,
-        height: 82,
-        padding: 13,
-        borderRadius: 8,
         background: active ? `${color}18` : C.surface2,
         border: `1px solid ${active ? `${color}75` : C.borderSoft}`,
         boxShadow: active ? `0 0 34px ${color}22` : "none"
@@ -361,20 +499,7 @@ export function MainDemo() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div
-                style={{
-                  width: 46,
-                  height: 46,
-                  borderRadius: 8,
-                  display: "grid",
-                  placeItems: "center",
-                  background: C.surface3,
-                  border: `1px solid ${C.borderSoft}`,
-                  color: C.accent,
-                  fontFamily: C.mono,
-                  fontWeight: 900
-                }}
-              >
+              <div style={wLogoBox}>
                 W
               </div>
               <div>
@@ -443,13 +568,9 @@ export function RecordingModeDemo({ mode }: { mode: Mode }) {
           <div style={{ height: "100%", display: "grid", placeItems: "center", padding: 26 }}>
             <div
               style={{
+                ...overlayPreviewBase,
                 opacity: overlayOp,
                 transform: `translateY(${mapRange(frame, [18, 34], [18, 0])}px)`,
-                width: 520,
-                minHeight: 122,
-                padding: 20,
-                borderRadius: 12,
-                background: "rgba(8,9,13,0.86)",
                 border: `1px solid ${accent}55`,
                 boxShadow: `0 22px 70px rgba(0,0,0,0.4), 0 0 38px ${accent}22`
               }}
@@ -518,19 +639,7 @@ export function LlmDictationDemo() {
 function AiProcessingCard() {
   const frame = useCurrentFrame();
   return (
-    <div
-      style={{
-        width: 142,
-        height: 142,
-        borderRadius: 8,
-        background: C.surface2,
-        border: `1px solid ${C.borderSoft}`,
-        display: "grid",
-        placeItems: "center",
-        position: "relative",
-        overflow: "hidden"
-      }}
-    >
+    <div style={aiProcessingCard}>
       {Array.from({ length: 25 }, (_, i) => {
         const x = (i % 5) * 24 + 22;
         const y = Math.floor(i / 5) * 24 + 22;
@@ -539,13 +648,9 @@ function AiProcessingCard() {
           <span
             key={i}
             style={{
-              position: "absolute",
+              ...aiProcessingDotBase,
               left: x,
               top: y,
-              width: 5,
-              height: 5,
-              borderRadius: 999,
-              background: C.accent,
               opacity: op
             }}
           />
@@ -609,15 +714,9 @@ export function AutoSubmitDemo() {
           <div style={{ height: 150, display: "flex", justifyContent: "flex-end", alignItems: "flex-end" }}>
             <div
               style={{
+                ...autoSubmitBubbleBase,
                 opacity: send,
                 transform: `translateY(${mapRange(frame, [92, 108], [24, 0])}px)`,
-                maxWidth: 330,
-                padding: "14px 18px",
-                borderRadius: "14px 14px 4px 14px",
-                background: C.accent,
-                color: C.black,
-                fontSize: 20,
-                fontWeight: 720,
                 boxShadow: `0 18px 44px ${C.accent}33`
               }}
             >
@@ -699,17 +798,9 @@ export function TranscribeFileDemo() {
         <PanelTitle eyebrow="Batch workflow" title="Drop audio, get a transcript beside it" />
         <div
           style={{
-            marginTop: 42,
-            height: 260,
-            borderRadius: 12,
+            ...dropZoneBase,
             border: `2px dashed ${drop < 1 ? C.accent : C.border}`,
-            background: drop < 1 ? C.accentDim : C.surface2,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 24,
-            position: "relative",
-            overflow: "hidden"
+            background: drop < 1 ? C.accentDim : C.surface2
           }}
         >
           <FileCard
@@ -735,14 +826,7 @@ export function TranscribeFileDemo() {
           />
           <div
             style={{
-              position: "absolute",
-              left: 190,
-              right: 190,
-              bottom: 42,
-              height: 8,
-              borderRadius: 999,
-              background: C.surface4,
-              overflow: "hidden",
+              ...dropProgressTrackBase,
               opacity: frame > 54 && frame < 142 ? 1 : 0.24
             }}
           >
@@ -770,20 +854,7 @@ function FileCard({
   return (
     <Card style={{ width: 250, padding: 16, background: C.surface1, ...style }}>
       <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-        <div
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: 8,
-            display: "grid",
-            placeItems: "center",
-            color: C.black,
-            background: color,
-            fontFamily: C.mono,
-            fontWeight: 900,
-            fontSize: 13
-          }}
-        >
+        <div style={{ ...fileCardBadge, background: color }}>
           {badge}
         </div>
         <div>
@@ -828,31 +899,15 @@ export function OverlayDemo({ kind }: { kind: "floating" | "island" }) {
   const open = hold(frame, 8, 24, 150, 174);
   return (
     <Stage label={kind === "floating" ? "Floating bottom overlay" : "Dynamic island overlay"} compact>
-      <div
-        style={{
-          width: 1180,
-          height: 260,
-          position: "relative",
-          borderRadius: 12,
-          background: C.surface0,
-          border: `1px solid ${C.borderSoft}`,
-          boxShadow: "0 20px 70px rgba(0,0,0,0.4)",
-          overflow: "hidden"
-        }}
-      >
+      <div style={overlayStageBox}>
         <div style={{ position: "absolute", inset: 0, opacity: 0.5 }}>
           {Array.from({ length: 12 }, (_, i) => (
             <div
               key={i}
               style={{
-                position: "absolute",
+                ...overlayBgCardBase,
                 left: 72 + i * 90,
-                top: 34,
-                width: 58,
-                height: 44,
-                borderRadius: 8,
-                background: i % 3 === 0 ? C.surface3 : C.surface2,
-                border: `1px solid ${C.borderSoft}`
+                background: i % 3 === 0 ? C.surface3 : C.surface2
               }}
             />
           ))}
@@ -880,16 +935,8 @@ export function OverlayDemo({ kind }: { kind: "floating" | "island" }) {
         ) : (
           <div
             style={{
-              position: "absolute",
-              left: "50%",
-              top: 22,
-              width: 560,
-              minHeight: 92,
-              padding: "12px 18px",
-              borderRadius: "0 0 28px 28px",
-              background: "rgba(4,5,8,0.94)",
+              ...overlayIslandBase,
               border: `1px solid ${accent}4d`,
-              borderTop: "none",
               boxShadow: `0 22px 60px rgba(0,0,0,0.38), 0 0 38px ${accent}22`,
               opacity: open,
               transform: `translateX(-50%) translateY(${mapRange(frame, [8, 24], [-34, 0])}px)`

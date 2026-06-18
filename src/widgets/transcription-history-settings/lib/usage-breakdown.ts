@@ -18,6 +18,11 @@ export interface UsageBreakdown {
 	categories: UsageBucket[];
 }
 
+const usageCache = new WeakMap<
+	TranscriptionHistoryEntry[],
+	Map<string, UsageBreakdown>
+>();
+
 /** Beyond this many bars the long tail is rolled into a single "Other" row. */
 const MAX_VISIBLE = 6;
 
@@ -43,7 +48,7 @@ function toBuckets(
 	total: number,
 	otherLabel: string,
 ): UsageBucket[] {
-	const sorted = [...tallies].sort((a, b) => b.count - a.count);
+	const sorted = tallies.toSorted((a, b) => b.count - a.count);
 	if (sorted.length <= MAX_VISIBLE) {
 		return sorted.map((t) => ({
 			key: t.key,
@@ -126,8 +131,19 @@ export function computeUsage(
 	entries: TranscriptionHistoryEntry[],
 	otherLabel: string,
 ): UsageBreakdown {
-	return {
+	let byLabel = usageCache.get(entries);
+	if (!byLabel) {
+		byLabel = new Map();
+		usageCache.set(entries, byLabel);
+	}
+	const cached = byLabel.get(otherLabel);
+	if (cached) {
+		return cached;
+	}
+	const breakdown = {
 		models: modelUsage(entries, otherLabel),
 		categories: categoryUsage(entries, otherLabel),
 	};
+	byLabel.set(otherLabel, breakdown);
+	return breakdown;
 }

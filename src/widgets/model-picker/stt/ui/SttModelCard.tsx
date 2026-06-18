@@ -25,15 +25,15 @@ import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { Tooltip } from "@/shared/ui/tooltip";
+import type { MetaEntry } from "../../core/model-card/CardMeta";
+import { ModelCard } from "../../core/model-card/ModelCard";
 import {
-	type MetaEntry,
-	ModelCard,
 	type QuantDownloadAction,
 	type QuantDownloadSnapshot,
 	QuantShelf,
 	type QuantShelfEntry,
-	resolveQuantDownloadState,
-} from "../../core/model-card";
+} from "../../core/model-card/QuantShelf";
+import { resolveQuantDownloadState } from "../../core/model-card/quant-shelf-state";
 import { resolveQuantCache } from "../lib/cache-helpers";
 import { variantDisplayName } from "../lib/family-helpers";
 import { severityFor } from "../lib/hardware-fit";
@@ -55,7 +55,7 @@ import {
 export type {
 	QuantDownloadAction,
 	QuantDownloadSnapshot,
-} from "../../core/model-card";
+} from "../../core/model-card/QuantShelf";
 
 /**
  * The model's language support as a SINGLE meta fact — collapsing the old split
@@ -305,16 +305,27 @@ function resolveSttDownloadSizeBytes({
 	state: ModelStateEntry | undefined;
 }): number | null {
 	const quant = resolveActiveSttQuant(currentQuantization, state);
+	// A model's download size is a static, known fact: the catalog ships it per
+	// quant, so it's authoritative whenever present — full stop. (Trusting a
+	// runtime number over it is exactly what let a 1 MB partial-download artifact
+	// masquerade as cohere's multi-GB size.)
+	const catalogBytes = model.sizeBytesByQuantization[quant];
+	if (catalogBytes !== undefined && catalogBytes > 0) {
+		return catalogBytes;
+	}
+	// Only the few catalog rows that ship NO size for this quant (e.g. moonshine)
+	// reach here. Surface a real downloaded total if we have one — but never a
+	// partial cache's on-disk bytes, which are a progress number, not the size.
 	const backingModelId = backingModelIdForQuant(model, quant);
 	const download = getDownloadSnapshot?.(backingModelId, quant);
 	if (download && download.totalBytes > 0) {
 		return Math.max(download.totalBytes, download.downloadedBytes);
 	}
 	const cache = resolveQuantCache(state, quant);
-	if (cache && cache.total_bytes > 0) {
+	if (cache && cache.state === "cached" && cache.total_bytes > 0) {
 		return Math.max(cache.total_bytes, cache.downloaded_bytes);
 	}
-	return model.sizeBytesByQuantization[quant] ?? null;
+	return null;
 }
 
 /** STT precision shelf — builds the normalized entries and renders the shared

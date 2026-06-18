@@ -38,7 +38,7 @@ export function ContextDenyListSection() {
 	// The deny-list is a set, so compare order-insensitively — re-adding a
 	// removed entry can shuffle insertion order without changing membership.
 	const isDefaultDenyList =
-		[...denyList].sort().join(" ") === [...defaultDenyList].sort().join(" ");
+		denyList.toSorted().join(" ") === defaultDenyList.toSorted().join(" ");
 
 	return (
 		<SettingField

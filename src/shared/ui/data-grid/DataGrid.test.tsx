@@ -8,7 +8,6 @@ import {
 	getSortedRowModel,
 	type PaginationState,
 	type SortingState,
-	useReactTable,
 	type VisibilityState,
 } from "@tanstack/react-table";
 import { useState } from "react";
@@ -20,6 +19,7 @@ import {
 	DataGridTable,
 	DataGridToolbar,
 } from "./index";
+import { useCompilerSafeReactTable } from "./use-compiler-safe-react-table";
 
 interface Fruit {
 	id: string;
@@ -69,6 +69,7 @@ function Harness({
 	initialPageSize?: number;
 	initialVisibility?: VisibilityState;
 }) {
+	"use no memo";
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [globalFilter, setGlobalFilter] = useState("");
 	const [columnVisibility, setColumnVisibility] =
@@ -77,7 +78,7 @@ function Harness({
 		pageIndex: 0,
 		pageSize: initialPageSize,
 	});
-	const table = useReactTable<Fruit>({
+	const table = useCompilerSafeReactTable<Fruit>({
 		columns: COLUMNS,
 		data,
 		getCoreRowModel: getCoreRowModel(),

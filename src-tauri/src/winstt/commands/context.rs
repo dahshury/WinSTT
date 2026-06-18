@@ -178,11 +178,14 @@ unsafe extern "system" fn enum_context_window(
     if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
         return TRUE;
     }
+    // SAFETY: `hwnd` comes from EnumWindows; the call does not take ownership and returns 0 for
+    // inaccessible or titleless windows.
     let text_len = unsafe { GetWindowTextLengthW(hwnd) };
     if text_len <= 0 {
         return TRUE;
     }
     let mut title = vec![0u16; text_len as usize + 1];
+    // SAFETY: `title` has space for the title plus terminator; `hwnd` comes from EnumWindows.
     let copied = unsafe { GetWindowTextW(hwnd, &mut title) };
     if copied <= 0 {
         return TRUE;
@@ -194,6 +197,7 @@ unsafe extern "system" fn enum_context_window(
     }
 
     let mut process_id = 0u32;
+    // SAFETY: `process_id` is valid writable storage and `hwnd` comes from EnumWindows.
     unsafe {
         GetWindowThreadProcessId(hwnd, Some(&mut process_id));
     }
@@ -201,6 +205,7 @@ unsafe extern "system" fn enum_context_window(
         return TRUE;
     }
 
+    // SAFETY: `lparam` is the pointer to the Vec passed to EnumWindows for this callback.
     let windows = unsafe { &mut *(lparam.0 as *mut Vec<RawContextWindow>) };
     windows.push(RawContextWindow {
         hwnd: hwnd.0 as usize as u64,
@@ -218,6 +223,7 @@ fn process_image_path(process_id: u32) -> Option<std::path::PathBuf> {
         OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
     };
 
+    // SAFETY: Opens a process handle for the provided PID; the handle is closed before return.
     let handle = unsafe {
         OpenProcess(
             PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
@@ -227,8 +233,10 @@ fn process_image_path(process_id: u32) -> Option<std::path::PathBuf> {
         .ok()?
     };
     let mut buffer = vec![0u16; 32768];
+    // SAFETY: `buffer` is valid writable storage and `handle` is a live process handle.
     let len =
         unsafe { K32GetModuleFileNameExW(Some(handle), Some(HMODULE::default()), &mut buffer) };
+    // SAFETY: `handle` was returned by OpenProcess and is no longer used after this point.
     let _ = unsafe { CloseHandle(handle) };
     if len == 0 {
         return None;
@@ -264,6 +272,7 @@ fn icon_data_uri_for_path(path: &std::path::Path) -> Option<String> {
     wide.push(0);
     let mut info = SHFILEINFOW::default();
     let flags = SHGFI_ICON | SHGFI_SMALLICON;
+    // SAFETY: `wide` is null-terminated and `info` is valid writable storage for SHGetFileInfoW.
     let ok = unsafe {
         SHGetFileInfoW(
             PCWSTR(wide.as_ptr()),
@@ -277,6 +286,7 @@ fn icon_data_uri_for_path(path: &std::path::Path) -> Option<String> {
         return None;
     }
     let data_uri = hicon_to_bmp_data_uri(info.hIcon);
+    // SAFETY: `info.hIcon` is owned by this call result and must be destroyed after conversion.
     let _ = unsafe { DestroyIcon(info.hIcon) };
     data_uri
 }
@@ -296,6 +306,8 @@ fn hicon_to_bmp_data_uri(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) 
     const BYTES_PER_PIXEL: usize = 4;
     const PIXEL_BYTES: usize = ICON_SIZE * ICON_SIZE * BYTES_PER_PIXEL;
 
+    // SAFETY: GDI handles are created, checked, selected/restored, and released in this block;
+    // `bits` is only read after CreateDIBSection succeeds and provides the backing memory.
     unsafe {
         let screen_dc = GetDC(None);
         if screen_dc.is_invalid() {

@@ -65,11 +65,11 @@ import {
 	toggleIndependent,
 } from "../lib/llm-settings-panel-test-helpers";
 import {
-	type LlmConfiguration,
 	matchConfigurationId,
 	useLlmConfigurationsStore,
 } from "../model/configurations";
 import type { LlmSettingsPanelModel } from "./LlmSettingsPanel";
+import { seedDraftFromFeature } from "./modifier-presets-state";
 import type { TranslateFn } from "./types";
 
 type IndependentKey = (typeof INDEPENDENT_PRESETS)[number];
@@ -715,24 +715,6 @@ export type PresetUpdate = Partial<{
 // the tone row captures a complete configuration that's also runnable in the
 // Playground — `seedDraftFromFeature` (hoisted, defined below) projects it.
 export type FullFeatureSnapshot = LlmFeatureDraft & PresetCarrier;
-
-export function seedDraftFromFeature(
-	f: LlmFeatureDraft & PresetCarrier,
-): LlmConfiguration {
-	return {
-		enabled: f.enabled,
-		maxOutputTokens: f.maxOutputTokens,
-		provider: f.provider,
-		model: f.model,
-		openrouterModel: f.openrouterModel,
-		openrouterFallbackModel: f.openrouterFallbackModel,
-		reasoningEffort: f.reasoningEffort,
-		thinkingEffort: f.thinkingEffort,
-		verbosity: f.verbosity,
-		presets: [...f.presets],
-		customModifiers: [...f.customModifiers],
-	};
-}
 
 /**
  * Configuration combobox for a feature's Tone row. Lists every saved

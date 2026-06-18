@@ -125,15 +125,21 @@ const ENGINE_SEARCH_ALIASES: Record<string, string[]> = {
 	chatterbox: ["resemble", "resemble ai", "voice cloning", "multilingual"],
 };
 
+const ttsSearchCorpusCache = new WeakMap<TtsModelInfo, string>();
+
 /**
  * Lowercase search corpus for a TTS model — display fields plus the engine
  * label / maker / aliases / languages. Centralised so the search input and any
  * future global search share one definition (mirrors `buildModelSearchCorpus`).
  */
 export function buildTtsSearchCorpus(model: TtsModelInfo): string {
+	const cached = ttsSearchCorpusCache.get(model);
+	if (cached !== undefined) {
+		return cached;
+	}
 	const cfg = getEngineConfig(model.engine);
 	const aliases = (ENGINE_SEARCH_ALIASES[model.engine] ?? []).join(" ");
-	return [
+	const corpus = [
 		model.displayName,
 		model.id,
 		model.engine,
@@ -145,6 +151,8 @@ export function buildTtsSearchCorpus(model: TtsModelInfo): string {
 	]
 		.join(" ")
 		.toLowerCase();
+	ttsSearchCorpusCache.set(model, corpus);
+	return corpus;
 }
 
 /**
@@ -184,7 +192,7 @@ export function groupModelsByEngine(
 		if (items === undefined || items.length === 0) {
 			continue;
 		}
-		const sorted = [...items].sort((a, b) => a.paramCountM - b.paramCountM);
+		const sorted = items.toSorted((a, b) => a.paramCountM - b.paramCountM);
 		groups.push({ value: engine, items: sorted });
 	}
 	groups.sort(

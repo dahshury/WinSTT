@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTtsModelStateStore } from "@/entities/tts-catalog";
 import {
 	mergeProgressIntoSnapshot,
@@ -49,11 +49,8 @@ export function useTtsModelDownloads(): {
 	) => void;
 } {
 	const [snaps, setSnaps] = useState<Record<string, TtsDownloadSnapshot>>({});
-	const snapsRef = useRef(snaps);
-	snapsRef.current = snaps;
 	const statesById = useTtsModelStateStore((s) => s.statesById);
-	const statesRef = useRef(statesById);
-	statesRef.current = statesById ?? {};
+	const states = statesById ?? {};
 	const refresh = useTtsModelStateStore((s) => s.refresh);
 
 	useEffect(() => {
@@ -91,64 +88,64 @@ export function useTtsModelDownloads(): {
 		};
 	}, [refresh]);
 
-	const getSnapshot = useCallback(
-		(modelId: string, quant: string): TtsDownloadSnapshot | undefined =>
-			snapsRef.current[keyOf(modelId, quant)],
-		[],
-	);
+	const getSnapshot = (
+		modelId: string,
+		quant: string,
+	): TtsDownloadSnapshot | undefined => snaps[keyOf(modelId, quant)];
 
-	const onDownloadAction = useCallback(
-		(action: DownloadAction, modelId: string, quant: string): void => {
-			const key = keyOf(modelId, quant);
-			const seed = quantDownloadSeedFromCache(
-				statesRef.current[modelId]?.cacheByQuantization?.[quant],
-			);
-			if (action === "start") {
-				ttsPredownloadModel(modelId, quant);
-				setSnaps((prev) => ({
+	const onDownloadAction = (
+		action: DownloadAction,
+		modelId: string,
+		quant: string,
+	): void => {
+		const key = keyOf(modelId, quant);
+		const seed = quantDownloadSeedFromCache(
+			states[modelId]?.cacheByQuantization?.[quant],
+		);
+		if (action === "start") {
+			ttsPredownloadModel(modelId, quant);
+			setSnaps((prev) => ({
+				...prev,
+				[key]: {
+					...mergeSeedIntoSnapshot(prev[key], seed),
+					paused: false,
+				},
+			}));
+		} else if (action === "pause") {
+			ttsDownloadPause(modelId, quant);
+			setSnaps((prev) => ({
+				...prev,
+				[key]: {
+					...mergeSeedIntoSnapshot(prev[key], seed),
+					paused: true,
+				},
+			}));
+		} else if (action === "resume") {
+			ttsDownloadResume(modelId, quant);
+			setSnaps((prev) => {
+				const previous = prev[key];
+				// No live entry and nothing to seed → don't create a
+				// zero-progress ghost (locked by the resume-without-snapshot test).
+				if (!previous && !seed) {
+					return prev;
+				}
+				return {
 					...prev,
 					[key]: {
-						...mergeSeedIntoSnapshot(prev[key], seed),
+						...mergeSeedIntoSnapshot(previous, seed),
 						paused: false,
 					},
-				}));
-			} else if (action === "pause") {
-				ttsDownloadPause(modelId, quant);
-				setSnaps((prev) => ({
-					...prev,
-					[key]: {
-						...mergeSeedIntoSnapshot(prev[key], seed),
-						paused: true,
-					},
-				}));
-			} else if (action === "resume") {
-				ttsDownloadResume(modelId, quant);
-				setSnaps((prev) => {
-					const previous = prev[key];
-					// No live entry and nothing to seed → don't create a
-					// zero-progress ghost (locked by the resume-without-snapshot test).
-					if (!previous && !seed) {
-						return prev;
-					}
-					return {
-						...prev,
-						[key]: {
-							...mergeSeedIntoSnapshot(previous, seed),
-							paused: false,
-						},
-					};
-				});
-			} else {
-				ttsDownloadCancel(modelId, quant);
-				setSnaps((prev) => {
-					const next = { ...prev };
-					delete next[key];
-					return next;
-				});
-			}
-		},
-		[],
-	);
+				};
+			});
+		} else {
+			ttsDownloadCancel(modelId, quant);
+			setSnaps((prev) => {
+				const next = { ...prev };
+				delete next[key];
+				return next;
+			});
+		}
+	};
 
 	return { getSnapshot, onDownloadAction };
 }

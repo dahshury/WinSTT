@@ -106,7 +106,10 @@ pub async fn remove_application_data(
 
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Tauri command signature mirrors IPC state injection and generated binding shape"
+)]
 pub async fn remove_downloaded_models(
     app: AppHandle,
     webview: WebviewWindow,
@@ -531,14 +534,12 @@ fn safe_to_remove_portable_app_dir(app_dir: &Path, app_data_dir: &Path, exe_path
     app_dir
         .file_name()
         .and_then(|name| name.to_str())
-        .map(|name| name.to_ascii_lowercase().contains("winstt"))
-        .unwrap_or(false)
+        .is_some_and(|name| name.to_ascii_lowercase().contains("winstt"))
 }
 
 fn valid_portable_marker(path: &Path) -> bool {
     std::fs::read_to_string(path)
-        .map(|value| value.trim().starts_with("WinSTT Portable Mode"))
-        .unwrap_or(false)
+        .is_ok_and(|value| value.trim().starts_with("WinSTT Portable Mode"))
 }
 
 fn is_well_known_user_dir(path: &Path) -> bool {
@@ -626,8 +627,7 @@ fn powershell_cleanup_script(plan: &CleanupPlan) -> String {
     let app_dir = plan
         .app_dir
         .as_ref()
-        .map(|path| ps_quote(path))
-        .unwrap_or_else(|| "$null".to_string());
+        .map_or_else(|| "$null".to_string(), |path| ps_quote(path));
     format!(
         r#"$ErrorActionPreference = 'SilentlyContinue'
 $pidToWait = {pid}

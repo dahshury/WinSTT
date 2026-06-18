@@ -3,7 +3,10 @@
 // The float literals are copied verbatim from numpy at full f64 print precision for
 // bit-exact parity; clippy::excessive_precision (the extra digits past f32 precision)
 // is expected and harmless here — trimming them would only risk a parity drift.
-#![allow(clippy::excessive_precision)]
+#![expect(
+    clippy::excessive_precision,
+    reason = "embedded f32 literals preserve bit-exact parity with the source numpy tables"
+)]
 
 /// Periodic-Hann-like analysis window (len 320) as stored in onnx_asr fbanks.npz.
 /// `static` (not `const`) so the 161×64 filterbank + window live in `.rodata` and `&` yields a real

@@ -1,6 +1,7 @@
 //! Accelerator settings reporting for the WinSTT-owned STT engine.
 
-use crate::settings::{get_settings, OrtAcceleratorSetting, WhisperAcceleratorSetting};
+use crate::settings::{OrtAcceleratorSetting, WhisperAcceleratorSetting};
+use crate::winstt::commands::settings::read_settings_raw;
 use serde::Serialize;
 use specta::Type;
 
@@ -8,7 +9,7 @@ use specta::Type;
 /// providers directly from WinSTT settings when a model loads, so this function is
 /// intentionally limited to logging the selected preferences for diagnostics.
 pub fn apply_accelerator_settings(app: &tauri::AppHandle) {
-    let settings = get_settings(app);
+    let settings = read_settings_raw(app).core;
     log::info!(
         "STT accelerator preferences: whisper={:?}, ort={:?}, gpu_device={}",
         settings.whisper_accelerator,

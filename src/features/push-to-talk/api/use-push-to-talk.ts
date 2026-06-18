@@ -58,9 +58,22 @@ export function usePushToTalk(): void {
 	const manualToggleStop = useSettingsStore(
 		(s) => s.settings.general?.manualToggleStop ?? false,
 	);
+	const onboarded = useSettingsStore(
+		(s) => s.settings.general?.onboarded ?? false,
+	);
 	const isActiveRef = useRef(false);
-	const recordingModeRef = useRef(recordingMode);
-	recordingModeRef.current = recordingMode;
+	// Initialised with a stable literal (not the reactive `recordingMode`) so
+	// the ref isn't touched with render-time reactive state — which
+	// `react-hooks-js/refs` flags. The effect below syncs the live value before
+	// any hotkey handler (subscribed in later effects) can read it.
+	const recordingModeRef = useRef<RecordingMode>("ptt");
+	const onboardedRef = useRef(false);
+	useEffect(() => {
+		recordingModeRef.current = recordingMode;
+	}, [recordingMode]);
+	useEffect(() => {
+		onboardedRef.current = onboarded;
+	}, [onboarded]);
 
 	// Register the global hotkey from the persisted PTT key — `settings.hotkey.pushToTalkKey`
 	// is the single source of truth. This runs on MOUNT (registering whatever was persisted,
@@ -85,12 +98,12 @@ export function usePushToTalk(): void {
 	// The backend also arms the WinSTT key at init, so the hotkey is
 	// live before this effect even runs; this effect just keeps it in sync on key changes.
 	useEffect(() => {
-		if (!pushToTalkKey) {
+		if (!onboarded || !pushToTalkKey) {
 			return;
 		}
 		setAccelerator(pushToTalkKey);
 		hotkeyRegister(pushToTalkKey);
-	}, [pushToTalkKey, setAccelerator]);
+	}, [onboarded, pushToTalkKey, setAccelerator]);
 
 	// Sync silence endpoint based on recording mode — set once, not per keypress.
 	// PTT mode never uses the silence endpoint (Smart Endpoint doesn't apply
@@ -98,11 +111,14 @@ export function usePushToTalk(): void {
 	// disables it so the recording runs press-to-press without VAD stopping
 	// the user mid-pause.
 	useEffect(() => {
+		if (!onboarded) {
+			return;
+		}
 		const enabled =
 			recordingMode !== "ptt" &&
 			!(recordingMode === "toggle" && manualToggleStop);
 		sttSetParameter("silence_endpoint_enabled", enabled);
-	}, [recordingMode, manualToggleStop]);
+	}, [onboarded, recordingMode, manualToggleStop]);
 
 	// Press handler — refs let us avoid re-subscribing when mode changes.
 	//
@@ -115,6 +131,9 @@ export function usePushToTalk(): void {
 	useEffect(
 		() =>
 			onHotkeyPressed(() => {
+				if (!onboardedRef.current) {
+					return;
+				}
 				const mode = recordingModeRef.current as RecordingMode;
 				const decision = decidePressAction(mode, isActiveRef.current);
 				if (decision === null) {
@@ -147,6 +166,9 @@ export function usePushToTalk(): void {
 	useEffect(
 		() =>
 			onHotkeyReleased(() => {
+				if (!onboardedRef.current) {
+					return;
+				}
 				const mode = recordingModeRef.current as RecordingMode;
 				if (SERVER_DRIVEN_MODES.has(mode)) {
 					return;

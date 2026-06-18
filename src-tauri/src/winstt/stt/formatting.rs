@@ -1,86 +1,63 @@
 use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
 
+use crate::helpers::regex::static_regex;
 use crate::winstt::catalog::{find, Family};
 use crate::winstt::settings_schema::WinsttSettings;
 
 static QUOTE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?i)\b(?:open quote|quote)\s+(.+?)\s+(?:close quote|end quote|unquote)\b"#)
-        .expect("quote-command regex")
+    static_regex(r#"(?i)\b(?:open quote|quote)\s+(.+?)\s+(?:close quote|end quote|unquote)\b"#)
 });
-static NEW_PARAGRAPH_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bnew paragraph\b").expect("new paragraph regex"));
+static NEW_PARAGRAPH_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bnew paragraph\b"));
 static NEW_LINE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\b(?:new line|newline|line break)\b").expect("new line regex"));
-static QUESTION_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bquestion mark\b").expect("question regex"));
+    Lazy::new(|| static_regex(r"(?i)\b(?:new line|newline|line break)\b"));
+static QUESTION_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bquestion mark\b"));
 static EXCLAMATION_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bexclamation (?:mark|point)\b").expect("exclamation regex"));
-static FULL_STOP_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bfull stop\b").expect("full stop regex"));
-static OPEN_PAREN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(?:open|left) parenthes(?:is|es)\b").expect("open paren regex")
-});
-static CLOSE_PAREN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(?:close|right) parenthes(?:is|es)\b").expect("close paren regex")
-});
-static COMMA_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\bcomma\b").expect("comma regex"));
-static PERIOD_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\bperiod\b").expect("period regex"));
-static COLON_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\bcolon\b").expect("colon regex"));
-static SEMICOLON_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bsemicolon\b").expect("semicolon regex"));
+    Lazy::new(|| static_regex(r"(?i)\bexclamation (?:mark|point)\b"));
+static FULL_STOP_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bfull stop\b"));
+static OPEN_PAREN_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r"(?i)\b(?:open|left) parenthes(?:is|es)\b"));
+static CLOSE_PAREN_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r"(?i)\b(?:close|right) parenthes(?:is|es)\b"));
+static COMMA_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bcomma\b"));
+static PERIOD_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bperiod\b"));
+static COLON_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bcolon\b"));
+static SEMICOLON_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bsemicolon\b"));
 
-static FILLER_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(?:um+|uh+|erm+|ah+|you know|i mean)\b[,\s]*").expect("filler regex")
-});
+static FILLER_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r"(?i)\b(?:um+|uh+|erm+|ah+|you know|i mean)\b[,\s]*"));
 static FLAG_LONG_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bdash dash\s+([a-z][a-z0-9_-]*)\b").expect("long flag regex"));
-static FLAG_SHORT_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bdash\s+([a-z])\b").expect("short flag regex"));
-static EMAIL_LOCAL_DOT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b([a-z0-9_%+-]+)\s+dot\s+([a-z0-9_%+-]+)\s+at\b")
-        .expect("email local dot regex")
-});
+    Lazy::new(|| static_regex(r"(?i)\bdash dash\s+([a-z][a-z0-9_-]*)\b"));
+static FLAG_SHORT_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bdash\s+([a-z])\b"));
+static EMAIL_LOCAL_DOT_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r"(?i)\b([a-z0-9_%+-]+)\s+dot\s+([a-z0-9_%+-]+)\s+at\b"));
 static EMAIL_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b([a-z0-9._%+-]+)\s+at\s+([a-z0-9-]+(?:\s+dot\s+[a-z0-9-]+)+)\b")
-        .expect("email regex")
+    static_regex(r"(?i)\b([a-z0-9._%+-]+)\s+at\s+([a-z0-9-]+(?:\s+dot\s+[a-z0-9-]+)+)\b")
 });
 static DOMAIN_TLD_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b([a-z0-9-]+)\s+dot\s+(com|org|net|io|ai|dev|app|edu|gov|co|uk)\b")
-        .expect("domain regex")
+    static_regex(r"(?i)\b([a-z0-9-]+)\s+dot\s+(com|org|net|io|ai|dev|app|edu|gov|co|uk)\b")
 });
 static DOMAIN_SLASH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?i)\b([a-z0-9.-]+\.(?:com|org|net|io|ai|dev|app|edu|gov|co|uk))\s+slash\s+([a-z0-9._~/-]+)\b",
     )
-    .expect("domain slash regex")
 });
-static ABSOLUTE_SLASH_PATH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\bslash\s+([a-z0-9_.-]+(?:\s+slash\s+[a-z0-9_.-]+)+)\b")
-        .expect("absolute slash path regex")
-});
-static DRIVE_BACKSLASH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b([a-z])\s+colon\s+backslash\s+").expect("drive backslash regex")
-});
+static ABSOLUTE_SLASH_PATH_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r"(?i)\bslash\s+([a-z0-9_.-]+(?:\s+slash\s+[a-z0-9_.-]+)+)\b"));
+static DRIVE_BACKSLASH_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r"(?i)\b([a-z])\s+colon\s+backslash\s+"));
 static PATH_BACKSLASH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?i)([A-Za-z]:\\(?:[A-Za-z0-9_.-]+\\)*[A-Za-z0-9_.-]+)\s+backslash\s+([A-Za-z0-9_.-]+)",
     )
-    .expect("path backslash regex")
 });
-static SPACE_BEFORE_PUNCT_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\s+([,.;:!?])").expect("space before punctuation regex"));
-static SPACE_AFTER_PUNCT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"([,;:!?])([^\s\\\]\)}"'])"#).expect("space after punctuation regex")
-});
-static OPEN_PAREN_SPACE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\(\s+").expect("open paren spacing regex"));
-static SPACE_CLOSE_PAREN_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\s+\)").expect("close paren spacing regex"));
-static MULTISPACE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[ \t]{2,}").expect("multi-space regex"));
-static NEWLINE_SPACE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[ \t]*\n[ \t]*").expect("newline spacing regex"));
+static SPACE_BEFORE_PUNCT_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"\s+([,.;:!?])"));
+static SPACE_AFTER_PUNCT_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r#"([,;:!?])([^\s\\\]\)}"'])"#));
+static OPEN_PAREN_SPACE_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"\(\s+"));
+static SPACE_CLOSE_PAREN_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"\s+\)"));
+static MULTISPACE_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"[ \t]{2,}"));
+static NEWLINE_SPACE_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"[ \t]*\n[ \t]*"));
 
 pub(crate) fn model_has_native_basic_formatting(model_id: &str) -> bool {
     let Some(entry) = find(model_id) else {

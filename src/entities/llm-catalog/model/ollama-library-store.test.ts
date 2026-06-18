@@ -173,7 +173,7 @@ describe("useOllamaLibraryStore.fetchTags", () => {
 			],
 		};
 		await useOllamaLibraryStore.getState().fetchTags(" Llama3 ");
-		const entry = useOllamaLibraryStore.getState().tagsByModel.llama3;
+		const entry = useOllamaLibraryStore.getState().tagsByModel["llama3"];
 		expect(entry).toBeDefined();
 		expect(entry?.isLoading).toBe(false);
 		expect(entry?.error).toBeNull();
@@ -204,7 +204,7 @@ describe("useOllamaLibraryStore.fetchTags", () => {
 		await useOllamaLibraryStore.getState().fetchTags("gemma");
 		expect(callCounts.tags).toBe(2);
 		expect(
-			useOllamaLibraryStore.getState().tagsByModel.gemma?.error,
+			useOllamaLibraryStore.getState().tagsByModel["gemma"]?.error,
 		).toBeNull();
 	});
 
@@ -223,7 +223,7 @@ describe("useOllamaLibraryStore.fetchTags", () => {
 		const promise = useOllamaLibraryStore.getState().fetchTags("phi");
 		// Synchronously after the call returns control to the microtask queue,
 		// the pending entry should be in place with the old tags preserved.
-		const mid = useOllamaLibraryStore.getState().tagsByModel.phi;
+		const mid = useOllamaLibraryStore.getState().tagsByModel["phi"];
 		expect(mid?.isLoading).toBe(true);
 		expect(mid?.error).toBeNull();
 		expect(mid?.tags).toHaveLength(1);
@@ -234,7 +234,7 @@ describe("useOllamaLibraryStore.fetchTags", () => {
 	test("propagates IPC error onto the cached entry", async () => {
 		tagsState.value = { model: "", tags: [], error: "ollama down" };
 		await useOllamaLibraryStore.getState().fetchTags("mistral");
-		const entry = useOllamaLibraryStore.getState().tagsByModel.mistral;
+		const entry = useOllamaLibraryStore.getState().tagsByModel["mistral"];
 		expect(entry?.error).toBe("ollama down");
 		expect(entry?.tags).toEqual([]);
 	});

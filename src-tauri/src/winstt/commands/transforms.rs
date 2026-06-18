@@ -56,6 +56,7 @@ use crate::winstt::llm::{
     PresetKey as LlmPresetKey,
 };
 use crate::winstt::managers::{ContextManager, LlmManager};
+use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::{
     CustomModifier as SettingsCustomModifier, LlmProvider, PresetEntry as SettingsPreset,
     WinsttSettings,
@@ -213,6 +214,26 @@ fn preview_timeout_error(provider: LlmProvider, model: &str) -> String {
         provider_label(provider),
         if model.trim().is_empty() { "auto" } else { model.trim() }
     )
+}
+
+fn record_transform_preview_issue(
+    app: &AppHandle,
+    summary: &str,
+    detail: &str,
+    provider: LlmProvider,
+    model: &str,
+    feature: &str,
+    duration_ms: u64,
+) {
+    let mut issue = IssueBuilder::new("llm", "transform_preview", summary)
+        .detail(llm::compact_error_for_log(detail))
+        .provider(provider_label(provider).to_string())
+        .duration_ms(duration_ms)
+        .context("feature", feature.to_string());
+    if !model.trim().is_empty() {
+        issue = issue.model_id(model.to_string());
+    }
+    issue.record(Some(app));
 }
 
 // ── enable gate (mirrors transforms.ts isTransformsEnabled) ────────────────────
@@ -413,6 +434,7 @@ pub async fn run_transform_pipeline(app: &AppHandle) -> TransformApplyResult {
     // `runLlm`'s catch → broadcast `transforms:failed` → rethrow).
     let processing_started = Instant::now();
     let transformed = match run_transform_provider(
+        app,
         &mgr,
         &settings,
         &system_prompt,
@@ -611,7 +633,7 @@ pub async fn apply_transform_preview(
     // Route the preview over the resolved provider (no selection/paste). Unlike
     // runtime dictation, the playground rejects provider failures so a broken
     // model call cannot masquerade as an intentional no-op.
-    let out = tokio::time::timeout(PLAYGROUND_PREVIEW_TIMEOUT, async {
+    let preview_result = tokio::time::timeout(PLAYGROUND_PREVIEW_TIMEOUT, async {
         match provider {
             LlmProvider::AppleIntelligence => Ok(text.clone()),
             LlmProvider::Openrouter => {
@@ -661,8 +683,35 @@ pub async fn apply_transform_preview(
             }
         }
     })
-    .await
-    .map_err(|_| preview_timeout_error(provider, &preview_model))??;
+    .await;
+    let out = match preview_result {
+        Ok(Ok(out)) => out,
+        Ok(Err(err)) => {
+            record_transform_preview_issue(
+                &app,
+                "LLM transform preview failed",
+                &err,
+                provider,
+                &preview_model,
+                &feature,
+                started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            );
+            return Err(err);
+        }
+        Err(_) => {
+            let err = preview_timeout_error(provider, &preview_model);
+            record_transform_preview_issue(
+                &app,
+                "LLM transform preview timed out",
+                &err,
+                provider,
+                &preview_model,
+                &feature,
+                PLAYGROUND_PREVIEW_TIMEOUT.as_millis().min(u64::MAX as u128) as u64,
+            );
+            return Err(err);
+        }
+    };
     let final_out = finalize_preview_answer(&settings, &out);
     log::info!(
         "[llm-preview] feature={feature} provider={} model='{}' active_modifier={} input_chars={} output_chars={} unchanged={} elapsed_ms={}",
@@ -678,13 +727,24 @@ pub async fn apply_transform_preview(
         text.trim() == final_out.trim(),
         started.elapsed().as_millis()
     );
-    ensure_preview_changed_if_required(
+    if let Err(err) = ensure_preview_changed_if_required(
         requires_visible_change,
         &text,
         &final_out,
         provider,
         &preview_model,
-    )?;
+    ) {
+        record_transform_preview_issue(
+            &app,
+            "LLM transform preview returned unchanged text",
+            &err,
+            provider,
+            &preview_model,
+            &feature,
+            started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        );
+        return Err(err);
+    }
     Ok(final_out)
 }
 

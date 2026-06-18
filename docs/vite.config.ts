@@ -7,8 +7,8 @@ import mdx from "fumadocs-mdx/vite";
 import { nitro } from "nitro/vite";
 import { defineConfig } from "vite";
 
-const githubPagesBase = process.env.DOCS_BASE_PATH ?? "/WinSTT/";
-const docsBase = process.env.GITHUB_PAGES === "true" ? githubPagesBase : "/";
+const githubPagesBase = process.env["DOCS_BASE_PATH"] ?? "/WinSTT/";
+const docsBase = process.env["GITHUB_PAGES"] === "true" ? githubPagesBase : "/";
 const appPackage = JSON.parse(
   readFileSync(join(process.cwd(), "..", "package.json"), "utf8"),
 ) as { version?: unknown };

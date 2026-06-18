@@ -49,12 +49,11 @@ pub struct DroppedFile {
 fn is_supported_media_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| {
+        .is_some_and(|ext| {
             SUPPORTED_MEDIA_EXTENSIONS
                 .iter()
                 .any(|allowed| ext.eq_ignore_ascii_case(allowed))
         })
-        .unwrap_or(false)
 }
 
 fn prepare_backend_selected_files(paths: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
@@ -77,6 +76,46 @@ fn prepare_backend_selected_files(paths: Vec<PathBuf>) -> Vec<(PathBuf, String)>
         .collect()
 }
 
+fn display_file_name(path: &std::path::Path, fallback: &str) -> String {
+    let fallback = fallback.trim();
+    if !fallback.is_empty() {
+        if let Some(name) = std::path::Path::new(fallback)
+            .file_name()
+            .and_then(|name| name.to_str())
+        {
+            return name.to_string();
+        }
+    }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("audio")
+        .to_string()
+}
+
+fn prepare_dropped_files(files: Vec<DroppedFile>) -> Vec<(PathBuf, String)> {
+    files
+        .into_iter()
+        .take(MAX_PICKED_FILES)
+        .filter_map(|file| {
+            let raw = file.file_path.trim();
+            if raw.is_empty() {
+                return None;
+            }
+            let path = PathBuf::from(raw);
+            if !is_supported_media_path(&path) {
+                return None;
+            }
+            let meta = std::fs::metadata(&path).ok()?;
+            if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+                return None;
+            }
+            let path = path.canonicalize().unwrap_or(path);
+            let file_name = display_file_name(&path, &file.file_name);
+            Some((path, file_name))
+        })
+        .collect()
+}
+
 fn enqueue_prepared(
     file_tx: State<'_, Arc<FileTranscribeManager>>,
     prepared: Vec<(PathBuf, String)>,
@@ -94,14 +133,11 @@ fn enqueue_prepared(
 #[tauri::command]
 #[specta::specta]
 pub fn file_transcribe_enqueue(
-    _file_tx: State<'_, Arc<FileTranscribeManager>>,
+    file_tx: State<'_, Arc<FileTranscribeManager>>,
     files: Vec<DroppedFile>,
 ) -> Vec<String> {
-    let count = files.len();
-    log::warn!(
-        "[file-transcribe] refused renderer-supplied enqueue of {count} file path(s); use file_transcribe_pick_and_enqueue"
-    );
-    Vec::new()
+    let prepared = prepare_dropped_files(files);
+    enqueue_prepared(file_tx, prepared)
 }
 
 /// Open a backend-owned native picker and enqueue only selected supported media

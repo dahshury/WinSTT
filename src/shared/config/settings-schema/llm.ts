@@ -177,7 +177,7 @@ const llmTransformsSchema = z.object({
 
 export const llmSettingsSchema = z.object({
 	// Shared infrastructure (one Ollama instance, one OpenRouter account).
-	endpoint: z.string().url().default("http://localhost:11434"),
+	endpoint: z.url().default("http://localhost:11434"),
 	openrouterApiKey: z.string().default(""),
 	// Per-feature config — each independently picks provider + model.
 	// The feature runs iff its own `enabled` is true AND a model is configured;

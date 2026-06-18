@@ -16,6 +16,7 @@ export const CARD_BASE = cn(
 	// Ollama delete button) — without it that button stays invisible/unclickable.
 	"group relative my-1.5 flex cursor-pointer flex-col gap-2.5 overflow-hidden rounded-lg px-3.5 py-3 outline-none",
 	"border border-border bg-surface-3 shadow-surface-2",
+	"[content-visibility:auto] [contain-intrinsic-size:0_136px]",
 	"transition-[transform,border-color,background-color,box-shadow] duration-150 ease-out",
 	"hover:-translate-y-px hover:border-border-hover hover:bg-surface-4 hover:shadow-surface-3",
 	"active:translate-y-0 active:scale-[0.99]",

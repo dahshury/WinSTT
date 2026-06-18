@@ -59,7 +59,7 @@ export function collectFilterableLanguages(
 			set.add(code);
 		}
 	}
-	return [...set].sort();
+	return [...set].toSorted();
 }
 
 function modelMatchesSearch(m: ModelInfo, query: string): boolean {

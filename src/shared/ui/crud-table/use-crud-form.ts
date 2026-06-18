@@ -38,7 +38,8 @@ export function useCrudForm<TAdd>({
 		setValues((prev) => ({ ...prev, [name]: value }));
 		if (errors[name]) {
 			setErrors((prev) => {
-				const { [name]: _omit, ...rest } = prev;
+				const rest = { ...prev };
+				delete rest[name];
 				return rest;
 			});
 		}

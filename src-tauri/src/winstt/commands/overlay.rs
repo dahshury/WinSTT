@@ -236,7 +236,13 @@ pub(crate) fn wait_for_overlay_page_loaded(timeout: Duration) -> bool {
     OVERLAY_PAGE_LOADED.load(Ordering::SeqCst)
 }
 
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[cfg_attr(
+    not(target_os = "windows"),
+    expect(
+        dead_code,
+        reason = "overlay opacity byte is consumed by Windows-only overlay code"
+    )
+)]
 fn overlay_opacity_byte(opacity: f64) -> u8 {
     (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
 }
@@ -251,6 +257,8 @@ fn set_overlay_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Re
 
     let alpha = overlay_opacity_byte(opacity);
     let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    // SAFETY: `hwnd` is the native handle for the Tauri window; the style and opacity calls do
+    // not take ownership and all fallible calls are checked.
     unsafe {
         let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         let layered_style = ex_style | WS_EX_LAYERED.0 as isize;
@@ -368,7 +376,7 @@ fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>,
         let _ = set_overlay_window_opacity(&window, 1.0);
         return;
     }
-    let win = window.clone();
+    let win = window;
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(
             OVERLAY_SHOW_OPACITY_RAMP_DELAY_MS,
@@ -418,6 +426,7 @@ fn force_overlay_topmost(window: &tauri::WebviewWindow) {
     let w = window.clone();
     let _ = window.run_on_main_thread(move || {
         if let Ok(hwnd) = w.hwnd() {
+            // SAFETY: `hwnd` belongs to the cloned Tauri window and the call only updates z-order.
             unsafe {
                 let _ = SetWindowPos(
                     hwnd,
@@ -467,6 +476,8 @@ fn apply_overlay_hit_regions(
 
     // Empty region = visible overlay can never capture a stale transparent box.
     // The renderer sends a non-empty region as soon as a pill surface is present.
+    // SAFETY: Creates a standalone GDI region handle that is either transferred to the window or
+    // explicitly deleted on failure.
     let combined = unsafe { CreateRectRgn(0, 0, 0, 0) };
     if combined.is_invalid() {
         return Err("failed to create overlay hit region".into());
@@ -476,18 +487,22 @@ fn apply_overlay_hit_regions(
         let Some((left, top, right, bottom)) = overlay_rect_to_physical(rect, scale) else {
             continue;
         };
+        // SAFETY: Coordinates were normalized to a non-empty physical rectangle.
         let part = unsafe { CreateRectRgn(left, top, right, bottom) };
         if part.is_invalid() {
             continue;
         }
+        // SAFETY: Both region handles are valid; `part` is deleted after it is combined.
         unsafe {
             let _ = CombineRgn(Some(combined), Some(combined), Some(part), RGN_OR);
             let _ = DeleteObject(part.into());
         }
     }
 
+    // SAFETY: Transfers ownership of `combined` to the window on success.
     let ok = unsafe { SetWindowRgn(hwnd, Some(combined), true) };
     if ok == 0 {
+        // SAFETY: SetWindowRgn failed, so ownership was not transferred and the handle must be freed.
         unsafe {
             let _ = DeleteObject(combined.into());
         }

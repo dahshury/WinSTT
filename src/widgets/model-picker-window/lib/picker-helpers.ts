@@ -86,17 +86,17 @@ export function normalizeDetachedModelPickerMode(
 	if (!isRecord(value)) {
 		return DEFAULT_MODEL_PICKER_MODE;
 	}
-	if (value.kind === "llm-ollama") {
+	if (value["kind"] === "llm-ollama") {
 		return {
 			kind: "llm-ollama",
-			feature: normalizeFeature(value.feature),
+			feature: normalizeFeature(value["feature"]),
 		};
 	}
-	if (value.kind === "llm-openrouter") {
+	if (value["kind"] === "llm-openrouter") {
 		return {
 			kind: "llm-openrouter",
-			feature: normalizeFeature(value.feature),
-			target: value.target === "fallback" ? "fallback" : "primary",
+			feature: normalizeFeature(value["feature"]),
+			target: value["target"] === "fallback" ? "fallback" : "primary",
 		};
 	}
 	return DEFAULT_MODEL_PICKER_MODE;

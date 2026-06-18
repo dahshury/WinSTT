@@ -221,9 +221,12 @@ describe("useSyncSettings", () => {
 	});
 
 	test("marks hydration unavailable without a persistent settings backend", async () => {
-		const maybeWindow = window as Window & { __TAURI_INTERNALS__?: unknown };
+		const maybeWindow = window as unknown as {
+			__TAURI_INTERNALS__?: unknown;
+			nativeBridge: Window["nativeBridge"] | undefined;
+		};
 		const previousInternals = maybeWindow.__TAURI_INTERNALS__;
-		window.nativeBridge = undefined;
+		maybeWindow.nativeBridge = undefined;
 		maybeWindow.__TAURI_INTERNALS__ = undefined;
 
 		try {

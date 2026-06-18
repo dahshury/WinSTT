@@ -16,7 +16,10 @@
 // used when none is supplied. EN-first: the `[en]` language tag is prepended; per-language CJK/he
 // frontends are deferred.
 
-#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
+#![expect(
+    dead_code,
+    reason = "staged TTS surface is defined ahead of call sites and wiring"
+)]
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -182,7 +185,11 @@ impl ChatterboxEngine {
             *guard = Some(self.load()?);
             self.ready.store(true, Ordering::Release);
         }
-        let loaded = guard.as_mut().expect("just loaded");
+        let Some(loaded) = guard.as_mut() else {
+            return Err(ChatterboxError::Session(
+                "chatterbox session was not initialized".into(),
+            ));
+        };
 
         // --- text -> ids ([en] tag prefix; EN frontend) ---
         let prompt = format!("[en]{trimmed}");
@@ -206,9 +213,8 @@ impl ChatterboxEngine {
             .collect();
 
         // --- reference audio (24k mono f32) ---
-        let ref_path = ref_wav
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| self.config.default_voice_path());
+        let ref_path =
+            ref_wav.map_or_else(|| self.config.default_voice_path(), |p| p.to_path_buf());
         let audio = load_wav_24k_mono(&ref_path)?;
         if audio.is_empty() {
             return Err(ChatterboxError::Audio("reference audio is empty".into()));
@@ -351,7 +357,9 @@ fn run_pipeline(
             SessionInputValue::from(mask_t),
         ));
         for name in &loaded.past_names {
-            let arr = kv.get(name).expect("kv present");
+            let arr = kv
+                .get(name)
+                .ok_or_else(|| ChatterboxError::Inference(format!("missing kv cache {name}")))?;
             let t = Tensor::from_array(arr.clone())
                 .map_err(|e| ChatterboxError::Inference(format!("kv {name}: {e}")))?;
             inputs.push((Cow::Owned(name.clone()), SessionInputValue::from(t)));
@@ -366,7 +374,10 @@ fn run_pipeline(
         let lshape = logits.shape().to_vec();
         let (seq, vocab) = (lshape[1], lshape[2]);
         let last = (seq - 1) * vocab;
-        let mut scores: Vec<f32> = logits.as_slice().expect("contig")[last..last + vocab].to_vec();
+        let logits_slice = logits
+            .as_slice()
+            .ok_or_else(|| ChatterboxError::Inference("logits tensor is not contiguous".into()))?;
+        let mut scores: Vec<f32> = logits_slice[last..last + vocab].to_vec();
         // repetition penalty over the running tokens (per unique id)
         let mut seen = std::collections::HashSet::new();
         for &tok in &generate_tokens {

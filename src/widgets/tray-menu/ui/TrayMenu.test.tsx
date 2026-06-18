@@ -58,4 +58,20 @@ describe("TrayMenu", () => {
 			"flex-row-reverse",
 		);
 	});
+
+	test("replays entrance animation when the tray window open event arrives", () => {
+		const { container } = render(
+			<IntlProvider>
+				<TrayMenu />
+			</IntlProvider>,
+		);
+		const root = container.firstElementChild as HTMLElement;
+
+		expect(root.classList.contains("tray-menu-open-shell")).toBe(true);
+		expect(root.classList.contains("tray-menu-open-enter")).toBe(false);
+		window.dispatchEvent(new Event("winstt:tray-menu-opened"));
+		expect(root.classList.contains("tray-menu-open-enter")).toBe(true);
+		window.dispatchEvent(new Event("winstt:tray-menu-hidden"));
+		expect(root.classList.contains("tray-menu-open-enter")).toBe(false);
+	});
 });

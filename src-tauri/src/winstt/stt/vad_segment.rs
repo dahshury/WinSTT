@@ -17,6 +17,7 @@
 //! separated by sub-`min_silence` gaps up to the `max_chunk` cap and cuts in the silence otherwise.
 
 use std::borrow::Cow;
+use std::time::Instant;
 
 use crate::audio_toolkit::vad::{SileroVad, VoiceActivityDetector, VAD_FRAME_SAMPLES};
 
@@ -282,28 +283,67 @@ pub fn vad_segment_decode(
     prior_prompt: bool,
     vad: &mut SileroVad,
     opts: &TranscribeOptions,
+    request_id: &str,
 ) -> super::SttResult<String> {
     let max_chunk = (max_chunk_s * SR as f32) as usize;
 
     // 1. Per-frame speech mask (30 ms / 480-sample Silero frames). Per-chunk
     // tracing goes to `log::debug!` (`[vad-segment] …`) — gate it via the log level.
+    log::debug!(
+        "[stt][{request_id}][vad-segment] speech_mask_start audio_ms={} max_chunk_ms={}",
+        audio.len() * 1000 / SR,
+        max_chunk * 1000 / SR
+    );
+    let mask_started = Instant::now();
     let mask = speech_mask(vad, audio);
+    log::debug!(
+        "[stt][{request_id}][vad-segment] speech_mask_complete duration_ms={} frames={}",
+        mask_started.elapsed().as_millis(),
+        mask.len()
+    );
     let raw_original = find_segments(&mask, VAD_FRAME_SAMPLES, audio.len());
 
     // The offline segmenter can score an all-silent buffer as zero chunks even though the upstream
     // RMS gate passed — fall back to a single pass so we still produce output.
     if raw_original.is_empty() {
-        return engine.transcribe(audio, opts).map(|t| t.text);
+        log::debug!(
+            "[stt][{request_id}][vad-segment] no_speech_segments_single_pass_start audio_ms={}",
+            audio.len() * 1000 / SR
+        );
+        let started = Instant::now();
+        let result = engine.transcribe(audio, opts).map(|t| t.text);
+        if let Ok(text) = &result {
+            log::debug!(
+                "[stt][{request_id}][vad-segment] no_speech_segments_single_pass_complete duration_ms={} output_chars={}",
+                started.elapsed().as_millis(),
+                text.chars().count()
+            );
+        }
+        return result;
     }
 
     let compacted = compact_silences(audio, &raw_original, MAX_RETAINED_SILENCE);
     log::debug!(
-        "[vad-segment] compacted {:.2}s -> {:.2}s (max_silence=200ms)",
-        audio.len() as f32 / SR as f32,
-        compacted.len() as f32 / SR as f32
+        "[stt][{request_id}][vad-segment] compacted audio_ms={} compacted_audio_ms={} raw_segments={} max_silence_ms=200",
+        audio.len() * 1000 / SR,
+        compacted.len() * 1000 / SR,
+        raw_original.len()
     );
     if compacted.len() <= max_chunk {
-        return engine.transcribe(&compacted, opts).map(|t| t.text);
+        log::debug!(
+            "[stt][{request_id}][vad-segment] compacted_single_pass_start audio_ms={}",
+            compacted.len() * 1000 / SR
+        );
+        let started = Instant::now();
+        let result = engine.transcribe(&compacted, opts).map(|t| t.text);
+        if let Ok(text) = &result {
+            log::debug!(
+                "[stt][{request_id}][vad-segment] compacted_single_pass_complete duration_ms={} output_chars={}",
+                started.elapsed().as_millis(),
+                text.chars().count()
+            );
+        }
+        return result;
     }
 
     // 2. Raw regions → merged chunks (onnx-asr constants @ 16 kHz).
@@ -317,7 +357,17 @@ pub fn vad_segment_decode(
                                                                 // across any pause and letting ONLY the max-chunk cap force a split (on a real region boundary).
                                                                 // This hands the decoder long, coherent context — the configuration that transcribes cleanly.
     let min_silence = max_chunk;
+    log::debug!(
+        "[stt][{request_id}][vad-segment] compacted_speech_mask_start compacted_audio_ms={}",
+        compacted.len() * 1000 / SR
+    );
+    let compacted_mask_started = Instant::now();
     let compacted_mask = speech_mask(vad, &compacted);
+    log::debug!(
+        "[stt][{request_id}][vad-segment] compacted_speech_mask_complete duration_ms={} frames={}",
+        compacted_mask_started.elapsed().as_millis(),
+        compacted_mask.len()
+    );
     let raw = find_segments(&compacted_mask, VAD_FRAME_SAMPLES, compacted.len());
     // Cap so a +pad on each side keeps the emitted chunk ≤ max_chunk (under the engine window).
     let merged = merge_segments(
@@ -331,20 +381,34 @@ pub fn vad_segment_decode(
     let merged_len = merged.len();
     let merged = coalesce_short_chunks(merged, max_chunk, MIN_DECODE_CHUNK);
     log::debug!(
-        "[vad-segment] raw={} merged={} coalesced={}",
+        "[stt][{request_id}][vad-segment] chunks_prepared raw={} merged={} coalesced={}",
         raw.len(),
         merged_len,
         merged.len()
     );
 
     if merged.is_empty() {
-        return engine.transcribe(&compacted, opts).map(|t| t.text);
+        log::debug!(
+            "[stt][{request_id}][vad-segment] empty_chunks_single_pass_start compacted_audio_ms={}",
+            compacted.len() * 1000 / SR
+        );
+        let started = Instant::now();
+        let result = engine.transcribe(&compacted, opts).map(|t| t.text);
+        if let Ok(text) = &result {
+            log::debug!(
+                "[stt][{request_id}][vad-segment] empty_chunks_single_pass_complete duration_ms={} output_chars={}",
+                started.elapsed().as_millis(),
+                text.chars().count()
+            );
+        }
+        return result;
     }
 
     // 3. Decode each chunk independently; optional Whisper prior-chunk prompt.
     let track_prev = prior_prompt && engine.kind().supports_initial_prompt();
     let mut prev = String::new();
     let mut parts: Vec<String> = Vec::with_capacity(merged.len());
+    let total_chunks = merged.len();
     for (idx, (s, e)) in merged.into_iter().enumerate() {
         let (s, e) = if e.saturating_sub(s) < MIN_DECODE_CHUNK {
             let expanded = expand_short_chunk(s, e, compacted.len(), MIN_DECODE_CHUNK);
@@ -367,24 +431,40 @@ pub fn vad_segment_decode(
             e as f32 / SR as f32,
             (e - s) as f32 / SR as f32
         );
+        log::debug!(
+            "[stt][{request_id}][vad-segment] chunk_start index={} total={} start_ms={} end_ms={} duration_ms={}",
+            idx + 1,
+            total_chunks,
+            s * 1000 / SR,
+            e * 1000 / SR,
+            (e - s) * 1000 / SR
+        );
         let mut o = opts.clone();
         if track_prev && !prev.trim().is_empty() {
             o.initial_prompt_text = Some(tail_chars(&prev, 200));
         }
+        let chunk_started = Instant::now();
         let txt = engine
             .transcribe(&compacted[s..e], &o)
             .map_err(|err| {
                 log::warn!(
-                    "[vad-segment] chunk {} failed at {:.2}s..{:.2}s: {err}",
+                    "[stt][{request_id}][vad-segment] chunk_failed index={} start_ms={} end_ms={} error={err}",
                     idx + 1,
-                    s as f32 / SR as f32,
-                    e as f32 / SR as f32
+                    s * 1000 / SR,
+                    e * 1000 / SR
                 );
                 err
             })?
             .text
             .trim()
             .to_string();
+        log::debug!(
+            "[stt][{request_id}][vad-segment] chunk_complete index={} total={} elapsed_ms={} text_chars={}",
+            idx + 1,
+            total_chunks,
+            chunk_started.elapsed().as_millis(),
+            txt.chars().count()
+        );
         log::debug!("[vad-segment] chunk {} text_len={}", idx + 1, txt.len());
         if !txt.is_empty() {
             if track_prev {

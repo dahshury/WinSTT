@@ -1,4 +1,3 @@
-import { useCallback } from "react";
 import {
 	assessDictationFitClient,
 	useSystemResourcesStore,
@@ -44,42 +43,31 @@ export function useModelFitAssessment({
 	statesById,
 }: UseModelFitAssessmentArgs): GetFitAssessment {
 	const liveResources = useSystemResourcesStore((s) => s.liveResources);
-	return useCallback<GetFitAssessment>(
-		(modelId) => {
-			if (liveResources === null) {
-				return null;
-			}
-			const mainId = localModelIdOrNull(selectedModel, !selectedIsCloud);
-			const realtimeId = localModelIdOrNull(
-				settings?.realtimeModel,
-				realtimeEnabled && !selectedIsCloud,
-			);
-			return assessDictationFitClient(modelId, {
-				candidateQuant: quantForFit(statesById, modelId, currentQuantization),
-				live: liveResources,
-				loaded: {
-					mainId,
-					mainQuant: quantForFit(statesById, mainId, currentQuantization),
-					realtimeId,
-					realtimeQuant: quantForFit(
-						statesById,
-						realtimeId,
-						currentQuantization,
-					),
-				},
-				requestedDevice: requestedDeviceForFit(deviceValue),
-				statesById,
-			});
-		},
-		[
-			currentQuantization,
-			deviceValue,
-			liveResources,
-			realtimeEnabled,
-			selectedIsCloud,
-			selectedModel,
+	const getFitAssessment: GetFitAssessment = (modelId) => {
+		if (liveResources === null) {
+			return null;
+		}
+		const mainId = localModelIdOrNull(selectedModel, !selectedIsCloud);
+		const realtimeId = localModelIdOrNull(
 			settings?.realtimeModel,
+			realtimeEnabled && !selectedIsCloud,
+		);
+		return assessDictationFitClient(modelId, {
+			candidateQuant: quantForFit(statesById, modelId, currentQuantization),
+			live: liveResources,
+			loaded: {
+				mainId,
+				mainQuant: quantForFit(statesById, mainId, currentQuantization),
+				realtimeId,
+				realtimeQuant: quantForFit(
+					statesById,
+					realtimeId,
+					currentQuantization,
+				),
+			},
+			requestedDevice: requestedDeviceForFit(deviceValue),
 			statesById,
-		],
-	);
+		});
+	};
+	return getFitAssessment;
 }

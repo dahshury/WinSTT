@@ -61,8 +61,10 @@ pub struct OpenRouterScan {
 const OPENROUTER_ENRICHMENT_CONCURRENCY: usize = 10;
 
 fn openrouter_models_url(output_modality: Option<&str>) -> reqwest::Url {
-    let mut url = reqwest::Url::parse("https://openrouter.ai/api/v1/models")
-        .expect("static OpenRouter models URL is valid");
+    let mut url = match reqwest::Url::parse("https://openrouter.ai/api/v1/models") {
+        Ok(url) => url,
+        Err(err) => unreachable!("static OpenRouter models URL is invalid: {err}"),
+    };
     if let Some(modality) = output_modality {
         url.query_pairs_mut()
             .append_pair("output_modalities", modality);

@@ -205,7 +205,9 @@ pub fn align_words<F: Fn(&[i64]) -> String>(
     }
 
     // Defensive: jump_times must cover all word boundaries.
-    let last_boundary = *word_boundaries.last().expect("non-empty");
+    let Some(&last_boundary) = word_boundaries.last() else {
+        return Ok(Vec::new());
+    };
     if jump_times_s.len() <= last_boundary {
         return Ok(Vec::new());
     }
@@ -218,7 +220,7 @@ pub fn align_words<F: Fn(&[i64]) -> String>(
         let end = jump_times_s[word_boundaries[k + 1]];
         let ids = &word_tokens[k];
         // Skip the trailing EOT word.
-        if ids.first().map(|&t| t == args.eot_id).unwrap_or(false) {
+        if ids.first().is_some_and(|&t| t == args.eot_id) {
             continue;
         }
         timings.push(WordTiming {

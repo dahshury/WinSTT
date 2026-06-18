@@ -131,7 +131,10 @@ fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
 // The UIA sidecar is Windows-only; on other platforms this helper has no caller
 // (context capture yields None there), so suppress the dead-code lint rather
 // than cfg-gating it away.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(
+    not(windows),
+    expect(dead_code, reason = "UIA sidecar arguments are Windows-only")
+)]
 fn sidecar_args(mode: ContextMode, hwnd: Option<u64>) -> Vec<String> {
     let mut args = Vec::new();
     if let Some(flag) = mode.flag() {
@@ -196,7 +199,7 @@ fn run_sidecar(bin: &std::path::Path, mode: ContextMode, hwnd: Option<u64>) -> O
         }
     };
     let status = child.wait().ok();
-    if status.map(|s| s.success()).unwrap_or(false) {
+    if status.is_some_and(|s| s.success()) {
         out
     } else {
         None

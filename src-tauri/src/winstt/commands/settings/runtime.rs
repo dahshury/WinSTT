@@ -38,7 +38,18 @@ pub(super) fn apply_model_runtime_settings(
     previous: &WinsttSettings,
     next: &WinsttSettings,
 ) {
+    // Moving the STT model to a cloud provider (openrouter:/elevenlabs:) frees any
+    // resident LOCAL engine right away — the user shouldn't keep a local model in
+    // memory after switching to the cloud (the first requirement of onboarding's
+    // "configure cloud → unload local"). Idempotent and cheap: a no-op when the
+    // swap controller already unloaded it (cloud ids report `is_model_loaded()==false`).
+    if previous.model.model != next.model.model
+        && crate::winstt::cloud_stt::provider_of(&next.model.model).is_some()
+    {
+        unload_loaded_stt_model_async(app);
+    }
     sync_core_model_unload_timeout(app, next.global.model_unload_timeout);
+    sync_stt_runtime_policy(app, next);
     let keep_stt_warm = should_keep_stt_model_warm_for_settings(next);
 
     if same_model_load_inputs_changed(previous, next) {
@@ -50,6 +61,18 @@ pub(super) fn apply_model_runtime_settings(
             unload_loaded_stt_model_async(app);
         }
     }
+}
+
+fn sync_stt_runtime_policy(app: &AppHandle, settings: &WinsttSettings) {
+    let Some(transcription) =
+        app.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
+    else {
+        return;
+    };
+    transcription.inner().update_runtime_policy(
+        core_timeout_from_winstt(settings.global.model_unload_timeout),
+        settings.general.recording_mode == RecordingMode::Listen,
+    );
 }
 
 fn sync_core_model_unload_timeout(app: &AppHandle, timeout: WinsttModelUnloadTimeout) {
@@ -107,6 +130,11 @@ fn unload_loaded_stt_model_async(app: &AppHandle) {
 }
 
 pub(crate) fn warm_stt_model_async(app: &AppHandle) {
+    // Onboarding stays model-free until the user finishes — see
+    // onboarding::is_onboarding_active. The deferred warm runs on finish.
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        return;
+    }
     let Some(transcription) =
         app.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
     else {
@@ -130,9 +158,18 @@ pub(super) fn apply_tts_runtime_settings(
     previous: &WinsttSettings,
     next: &WinsttSettings,
 ) {
+    sync_tts_idle_unload_timeout(app, next.global.model_unload_timeout);
     if tts_warm_inputs_changed(previous, next) {
         warm_tts_async(app);
     }
+}
+
+fn sync_tts_idle_unload_timeout(app: &AppHandle, timeout: WinsttModelUnloadTimeout) {
+    let Some(tts) = app.try_state::<Arc<crate::winstt::managers::TtsManager>>() else {
+        return;
+    };
+    tts.inner()
+        .update_idle_unload_timeout(core_timeout_from_winstt(timeout));
 }
 
 fn tts_warm_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
@@ -146,6 +183,10 @@ fn tts_warm_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> 
 }
 
 pub(crate) fn warm_tts_async(app: &AppHandle) {
+    // Held back while onboarding owns the launch (see onboarding::is_onboarding_active).
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        return;
+    }
     let Some(tts) = app.try_state::<Arc<crate::winstt::managers::TtsManager>>() else {
         return;
     };
@@ -162,9 +203,18 @@ pub(super) fn apply_llm_runtime_settings(
     previous: &WinsttSettings,
     next: &WinsttSettings,
 ) {
+    sync_llm_model_unload_timeout(app, next.global.model_unload_timeout);
     if llm_warm_inputs_changed(previous, next) {
         warm_llm_models_async(app);
     }
+}
+
+fn sync_llm_model_unload_timeout(app: &AppHandle, timeout: WinsttModelUnloadTimeout) {
+    let Some(llm) = app.try_state::<Arc<crate::winstt::managers::LlmManager>>() else {
+        return;
+    };
+    llm.inner()
+        .update_model_unload_timeout(core_timeout_from_winstt(timeout));
 }
 
 pub(super) fn apply_history_retention_settings(
@@ -191,6 +241,10 @@ pub(super) fn apply_audio_runtime_settings(
     previous: &WinsttSettings,
     next: &WinsttSettings,
 ) {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        return;
+    }
+
     let microphone_release_changed =
         previous.audio.microphone_release != next.audio.microphone_release;
     let input_device_changed = previous.audio.input_device_index != next.audio.input_device_index
@@ -272,6 +326,12 @@ fn llm_warm_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> 
 }
 
 pub(crate) fn warm_llm_models_async(app: &AppHandle) {
+    // Held back while onboarding owns the launch: enabling LLM cleanup in the wizard
+    // persists the setting but must not pull a model into VRAM until finish (see
+    // onboarding::is_onboarding_active). The warmup loop warms it after finish.
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        return;
+    }
     let Some(llm) = app.try_state::<Arc<crate::winstt::managers::LlmManager>>() else {
         return;
     };
@@ -407,7 +467,7 @@ mod tests {
         cloud.tts.source = TtsSource::Cloud;
         assert!(!should_warm_tts(&cloud));
 
-        let mut local = disabled.clone();
+        let mut local = disabled;
         local.tts.enabled = true;
         local.tts.source = TtsSource::Local;
         assert!(should_warm_tts(&local));

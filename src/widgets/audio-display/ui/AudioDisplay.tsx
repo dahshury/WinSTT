@@ -1,10 +1,16 @@
-import { type DragEvent, useRef, useState } from "react";
+import { type DragEvent, useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { useTranscriptionStore } from "@/entities/transcription";
 import { AudioVisualizer } from "@/features/audio-visualizer";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
+import {
+	FILE_DRAG_DROP_EVENT,
+	fileDragDropPayloadFromEvent,
+} from "@/shared/api/file-drag-drop";
 import { Elevated, surfaceBg90, useSurface } from "@/shared/lib/surface";
 import {
+	collectDroppedFilePaths,
+	enqueueDroppedFilePaths,
 	enqueueDroppedFiles,
 	getContainerClassName,
 } from "../lib/audio-display-test-helpers";
@@ -20,6 +26,12 @@ import { TranscriptionThinking } from "./TranscriptionThinking";
  * unaffected.)
  */
 const VISUALIZER_DIMMED_OPACITY = 0.2;
+
+function handleDragOver(e: DragEvent): void {
+	e.preventDefault();
+	e.stopPropagation();
+	e.dataTransfer.dropEffect = "copy";
+}
 
 function DropZoneOverlay({
 	visible,
@@ -66,6 +78,34 @@ export function AudioDisplay({
 
 	const [isDragOver, setIsDragOver] = useState(false);
 	const dragCounter = useRef(0);
+	const lastNativeDropAt = useRef(0);
+
+	useEffect(() => {
+		const handleNativeDragDrop = (event: Event) => {
+			const payload = fileDragDropPayloadFromEvent(event);
+			if (payload === null) {
+				return;
+			}
+			if (payload.type === "enter" || payload.type === "over") {
+				if (collectDroppedFilePaths(payload.paths).length > 0) {
+					setIsDragOver(true);
+				}
+				return;
+			}
+			dragCounter.current = 0;
+			setIsDragOver(false);
+			if (payload.type === "drop") {
+				lastNativeDropAt.current = Date.now();
+				enqueueDroppedFilePaths(payload.paths).catch(() => {
+					/* surfaced as queue rows */
+				});
+			}
+		};
+
+		window.addEventListener(FILE_DRAG_DROP_EVENT, handleNativeDragDrop);
+		return () =>
+			window.removeEventListener(FILE_DRAG_DROP_EVENT, handleNativeDragDrop);
+	}, []);
 
 	const handleDragEnter = (e: DragEvent) => {
 		e.preventDefault();
@@ -74,12 +114,6 @@ export function AudioDisplay({
 		if (e.dataTransfer.types.includes("Files")) {
 			setIsDragOver(true);
 		}
-	};
-
-	const handleDragOver = (e: DragEvent) => {
-		e.preventDefault();
-		e.stopPropagation();
-		e.dataTransfer.dropEffect = "copy";
 	};
 
 	const handleDragLeave = (e: DragEvent) => {
@@ -97,6 +131,9 @@ export function AudioDisplay({
 		e.stopPropagation();
 		dragCounter.current = 0;
 		setIsDragOver(false);
+		if (Date.now() - lastNativeDropAt.current < 500) {
+			return;
+		}
 		// Multi-file: append every transcribable file to the queue. Repeated
 		// drops accumulate — the main process never clears on a new drop.
 		// Enqueue errors surface as error rows from the main process.

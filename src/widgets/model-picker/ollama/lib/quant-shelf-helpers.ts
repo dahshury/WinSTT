@@ -246,7 +246,7 @@ function tagWeight(tag: OllamaLibraryTag): number {
 function sortByCapabilityDesc(
 	tags: readonly OllamaLibraryTag[],
 ): readonly OllamaLibraryTag[] {
-	return [...tags].sort((a, b) => tagWeight(b) - tagWeight(a));
+	return tags.toSorted((a, b) => tagWeight(b) - tagWeight(a));
 }
 
 /**

@@ -1,7 +1,7 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	DEFAULT_SETTINGS,
 	SettingField,
@@ -79,7 +79,7 @@ function buildOptions(
 			});
 		}
 	}
-	return [...byId.values()].sort((a, b) =>
+	return [...byId.values()].toSorted((a, b) =>
 		a.label
 			.toLowerCase()
 			.localeCompare(b.label.toLowerCase(), undefined, { sensitivity: "base" }),
@@ -131,47 +131,37 @@ function AppIcon({ icon, label }: { icon?: string | null; label: string }) {
 interface ContextAppsComboboxProps {
 	ariaLabel: string;
 	emptyLabel: string;
+	initialOpen?: boolean | undefined;
 	loadingLabel: string;
 	onChange: (value: string[]) => void;
-	/** Incrementing nonce from the parent: each new value (and a non-zero value
-	 * on mount) pops the popup open, so switching the scope into selected-only
-	 * mode lands the user straight in the app picker. */
-	openRequest?: number | undefined;
 	placeholder: string;
 	value: readonly string[];
+}
+
+interface AppsLoadState {
+	apps: ContextAppEntry[];
+	status: "idle" | "loading" | "loaded";
 }
 
 function ContextAppsCombobox({
 	ariaLabel,
 	emptyLabel,
+	initialOpen = false,
 	loadingLabel,
 	onChange,
-	openRequest,
 	placeholder,
 	value,
 }: ContextAppsComboboxProps) {
-	const [open, setOpen] = useState(false);
-	// Pop open on each new open-request. `undefined` initial ref means a non-zero
-	// request present at mount also fires once — the component remounts whenever
-	// the scope switches into selected-only, so that mount-open is the switch.
-	const lastOpenRequest = useRef<number | undefined>(undefined);
-	useEffect(() => {
-		if (openRequest === undefined || openRequest === lastOpenRequest.current) {
-			return;
-		}
-		lastOpenRequest.current = openRequest;
-		if (openRequest > 0) {
-			setOpen(true);
-		}
-	}, [openRequest]);
+	const [open, setOpen] = useState(initialOpen);
 	const [query, setQuery] = useState("");
-	const [apps, setApps] = useState<ContextAppEntry[]>([]);
-	const [loading, setLoading] = useState(false);
-	const normalizedValue = useMemo(() => uniqueNormalized(value), [value]);
-	const options = useMemo(
-		() => buildOptions(apps, normalizedValue),
-		[apps, normalizedValue],
-	);
+	const [appsState, setAppsState] = useState<AppsLoadState>(() => ({
+		apps: [],
+		status: initialOpen ? "loading" : "idle",
+	}));
+	const apps = appsState.apps;
+	const loading = open && appsState.status === "loading";
+	const normalizedValue = uniqueNormalized(value);
+	const options = buildOptions(apps, normalizedValue);
 	const selected = new Set(normalizedValue);
 	const visibleOptions = options.filter((option) =>
 		optionMatches(option, query),
@@ -184,26 +174,25 @@ function ContextAppsCombobox({
 	});
 
 	useEffect(() => {
-		if (!open) {
+		if (!open || appsState.status !== "loading") {
 			return;
 		}
 		let cancelled = false;
-		setLoading(true);
 		listContextApps()
 			.then((next) => {
 				if (!cancelled) {
-					setApps(next);
+					setAppsState({ apps: next, status: "loaded" });
 				}
 			})
-			.finally(() => {
+			.catch(() => {
 				if (!cancelled) {
-					setLoading(false);
+					setAppsState({ apps: [], status: "loaded" });
 				}
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [open]);
+	}, [appsState.status, open]);
 
 	const substrate = useSurface();
 	const inputLevel = Math.min(substrate + 1, 8);
@@ -222,6 +211,15 @@ function ContextAppsCombobox({
 		onChange(next);
 	};
 
+	const openCombobox = (): void => {
+		setOpen(true);
+		setAppsState((current) =>
+			current.status === "loading"
+				? current
+				: { apps: current.apps, status: "loading" },
+		);
+	};
+
 	return (
 		<Combobox.Root
 			filter={null}
@@ -229,8 +227,10 @@ function ContextAppsCombobox({
 			items={[]}
 			onInputValueChange={setQuery}
 			onOpenChange={(next) => {
-				setOpen(next);
-				if (!next) {
+				if (next) {
+					openCombobox();
+				} else {
+					setOpen(false);
 					setQuery("");
 				}
 			}}
@@ -241,7 +241,7 @@ function ContextAppsCombobox({
 				<Combobox.Input
 					aria-label={ariaLabel}
 					className={`flex h-8 w-full items-center rounded-lg ${surfaceClasses(inputLevel)} pr-7 pl-2.5 font-inherit text-body text-foreground leading-normal outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1`}
-					onClick={() => setOpen(true)}
+					onClick={openCombobox}
 					placeholder={placeholder}
 				/>
 				<Combobox.Trigger
@@ -305,16 +305,16 @@ function ContextAppsCombobox({
 }
 
 export function ContextAllowedAppsSection({
-	openRequest,
+	initialOpen,
 }: {
-	openRequest?: number | undefined;
+	initialOpen?: boolean | undefined;
 }) {
 	const general = useSettingsStore((s) => s.settings.general);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
 	const allowList = uniqueNormalized(general?.contextAllowList ?? []);
 	const defaultAllowList = DEFAULT_SETTINGS.general.contextAllowList;
 	const isDefaultAllowList =
-		[...allowList].sort().join(" ") === [...defaultAllowList].sort().join(" ");
+		allowList.toSorted().join(" ") === defaultAllowList.toSorted().join(" ");
 
 	return (
 		<SettingField
@@ -326,9 +326,9 @@ export function ContextAllowedAppsSection({
 			<ContextAppsCombobox
 				ariaLabel="Allowed apps"
 				emptyLabel="No running apps found."
+				initialOpen={initialOpen}
 				loadingLabel="Loading apps..."
 				onChange={(next) => update({ contextAllowList: next })}
-				openRequest={openRequest}
 				placeholder="Choose running apps..."
 				value={allowList}
 			/>

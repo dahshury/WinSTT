@@ -32,8 +32,7 @@ impl OllamaClient {
             .get(url)
             .send()
             .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false)
+            .is_ok_and(|r| r.status().is_success())
     }
 
     /// Load or refresh a model through `/api/generate` with an empty prompt.
@@ -636,7 +635,6 @@ fn parse_pull_line(
     Some((status, payload))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn pull_progress_json(
     model: &str,
     status: &str,

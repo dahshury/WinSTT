@@ -10,7 +10,6 @@ function model(
 	overrides: Partial<ModelInfo> & Pick<ModelInfo, "id">,
 ): ModelInfo {
 	return {
-		id: overrides.id,
 		displayName: overrides.displayName ?? overrides.id,
 		backend: overrides.backend ?? "onnx_asr",
 		family: overrides.family ?? "whisper",

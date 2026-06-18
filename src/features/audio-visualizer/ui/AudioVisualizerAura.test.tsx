@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
 import {
-	AudioVisualizerAura,
 	auraShapeToUniform,
 	resolveAuraTheme,
 	themeModeToUniform,
+} from "./AudioVisualizerAura.helpers";
+import {
+	AudioVisualizerAura,
 } from "./AudioVisualizerAura";
 
 describe("AudioVisualizerAura", () => {

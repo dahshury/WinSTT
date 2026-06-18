@@ -27,15 +27,16 @@ pub(crate) async fn detect_ollama_executable() -> OllamaDetectResultPayload {
 }
 
 fn detect_ollama_executable_blocking() -> OllamaDetectResultPayload {
-    detect_ollama_from_candidates(ollama_default_paths(), ollama_path_candidates())
-        .map(|path| OllamaDetectResultPayload {
-            installed: true,
-            path: Some(path_to_payload_string(&path)),
-        })
-        .unwrap_or(OllamaDetectResultPayload {
+    detect_ollama_from_candidates(ollama_default_paths(), ollama_path_candidates()).map_or(
+        OllamaDetectResultPayload {
             installed: false,
             path: None,
-        })
+        },
+        |path| OllamaDetectResultPayload {
+            installed: true,
+            path: Some(path_to_payload_string(&path)),
+        },
+    )
 }
 
 fn detect_ollama_from_candidates(

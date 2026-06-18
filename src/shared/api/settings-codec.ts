@@ -78,13 +78,13 @@ function payloadAsRecord(payload: unknown): Record<string, unknown> {
 
 function migrateLegacyGlobalSection(payload: unknown): Record<string, unknown> {
 	const root = payloadAsRecord(payload);
-	const model = payloadAsRecord(root.model);
-	const legacyTimeout = model.modelUnloadTimeout;
+	const model = payloadAsRecord(root["model"]);
+	const legacyTimeout = model["modelUnloadTimeout"];
 	if (legacyTimeout === undefined) {
 		return root;
 	}
-	const global = payloadAsRecord(root.global);
-	if (global.modelUnloadTimeout !== undefined) {
+	const global = payloadAsRecord(root["global"]);
+	if (global["modelUnloadTimeout"] !== undefined) {
 		return root;
 	}
 	return {

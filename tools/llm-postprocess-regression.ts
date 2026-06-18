@@ -611,9 +611,9 @@ async function callOllama(
 	userPrompt: string,
 	id: string,
 ): Promise<string> {
-	const endpoint = process.env.OLLAMA_ENDPOINT ?? "http://127.0.0.1:11434";
-	const model = process.env.OLLAMA_MODEL ?? "gemma4:e4b";
-	const numCtx = Number(process.env.OLLAMA_NUM_CTX ?? 16384);
+	const endpoint = process.env["OLLAMA_ENDPOINT"] ?? "http://127.0.0.1:11434";
+	const model = process.env["OLLAMA_MODEL"] ?? "gemma4:e4b";
+	const numCtx = Number(process.env["OLLAMA_NUM_CTX"] ?? 16384);
 	const response = await fetch(`${endpoint}/api/chat`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
@@ -644,12 +644,12 @@ async function callOpenRouter(
 	userPrompt: string,
 	id: string,
 ): Promise<string> {
-	const apiKey = process.env.OPENROUTER_API_KEY;
+	const apiKey = process.env["OPENROUTER_API_KEY"];
 	if (!apiKey)
 		throw new Error(
 			"OPENROUTER_API_KEY is required for the openrouter provider",
 		);
-	const model = process.env.OPENROUTER_MODEL ?? "google/gemini-3.1-flash-lite";
+	const model = process.env["OPENROUTER_MODEL"] ?? "google/gemini-3.1-flash-lite";
 	const response = await fetch(
 		"https://openrouter.ai/api/v1/chat/completions",
 		{
@@ -711,8 +711,8 @@ function extractText(raw: string): string {
 }
 
 const PROVIDER =
-	process.env.PROVIDER ??
-	(process.env.OPENROUTER_API_KEY ? "openrouter" : "ollama");
+	process.env["PROVIDER"] ??
+	(process.env["OPENROUTER_API_KEY"] ? "openrouter" : "ollama");
 
 async function runCase(testCase: RegressionCase, system: string) {
 	const userPrompt = buildUserPrompt(testCase.before);
@@ -759,8 +759,8 @@ if (process.argv.includes("--selftest")) {
 
 const MODEL_LABEL =
 	PROVIDER === "openrouter"
-		? (process.env.OPENROUTER_MODEL ?? "google/gemini-3.1-flash-lite")
-		: (process.env.OLLAMA_MODEL ?? "gemma4:e4b");
+		? (process.env["OPENROUTER_MODEL"] ?? "google/gemini-3.1-flash-lite")
+		: (process.env["OLLAMA_MODEL"] ?? "gemma4:e4b");
 
 if (CAPABILITY_GAPS_MODE) {
 	const cases = selectedCapabilityCases();

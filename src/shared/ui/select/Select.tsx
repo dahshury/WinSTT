@@ -76,16 +76,19 @@ function Badge({ text }: { text: string }) {
 	);
 }
 
+function swallowEvent(e: { stopPropagation: () => void }): void {
+	e.stopPropagation();
+}
+
 function StopBubble({ children }: { children: ReactNode }) {
-	const swallow = (e: { stopPropagation: () => void }) => e.stopPropagation();
 	return (
 		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: role="toolbar" is the interactive wrapper for trailing row controls; it only prevents the parent menu row from committing.
 		<div
 			className="shrink-0"
-			onClick={swallow}
-			onKeyDown={swallow}
-			onMouseDown={swallow}
-			onPointerDown={swallow}
+			onClick={swallowEvent}
+			onKeyDown={swallowEvent}
+			onMouseDown={swallowEvent}
+			onPointerDown={swallowEvent}
 			role="toolbar"
 			tabIndex={-1}
 		>

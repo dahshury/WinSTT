@@ -78,11 +78,14 @@ pub fn ahc_complete_linkage(
         }
 
         let (keep, drop) = if bi < bj { (bi, bj) } else { (bj, bi) };
-        let drop_members = members[drop].take().expect("drop cluster live");
-        members[keep]
-            .as_mut()
-            .expect("keep cluster live")
-            .extend(drop_members);
+        let Some(drop_members) = members[drop].take() else {
+            continue;
+        };
+        let Some(keep_members) = members[keep].as_mut() else {
+            members[keep] = Some(drop_members);
+            continue;
+        };
+        keep_members.extend(drop_members);
 
         // Complete linkage: new distance = max(keep, drop) per column.
         #[expect(
@@ -155,9 +158,13 @@ pub fn active_intervals(
     // Merge intervals separated by gaps shorter than `merge_frames`.
     let mut merged: Vec<(usize, usize)> = vec![intervals[0]];
     for &(s, e) in &intervals[1..] {
-        let (ps, pe) = *merged.last().expect("non-empty");
+        let Some(&(ps, pe)) = merged.last() else {
+            continue;
+        };
         if s - pe < merge_frames {
-            *merged.last_mut().expect("non-empty") = (ps, e);
+            if let Some(last) = merged.last_mut() {
+                *last = (ps, e);
+            }
         } else {
             merged.push((s, e));
         }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import {
 	type AudioOutputDevice,
 	audioGetOutputDevices,
@@ -44,18 +44,18 @@ function areOutputDeviceListsEqual(
 	a: readonly OutputDevice[],
 	b: readonly OutputDevice[],
 ): boolean {
-	if (a.length !== b.length) {
-		return false;
-	}
-	return a.every((device, index) => {
-		const other = b[index];
-		return (
-			other !== undefined &&
-			device.deviceId === other.deviceId &&
-			device.label === other.label &&
-			device.isDefault === other.isDefault
-		);
-	});
+	return (
+		a.length === b.length &&
+		a.every((device, index) => {
+			const other = b[index];
+			return (
+				other !== undefined &&
+				device.deviceId === other.deviceId &&
+				device.label === other.label &&
+				device.isDefault === other.isDefault
+			);
+		})
+	);
 }
 
 // ── Module-level state ────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ function areOutputDeviceListsEqual(
 // browser-derived list so behaviour never regresses below "what the browser
 // shows".
 let outputDeviceCache: OutputDevice[] = [];
-const outputDeviceSubscribers = new Set<(devices: OutputDevice[]) => void>();
+const outputDeviceSubscribers = new Set<() => void>();
 
 let backendOutputDevices: AudioOutputDevice[] = [];
 let browserSinkMap = new Map<string, string>();
@@ -91,7 +91,7 @@ let outputDeviceRefreshInFlight: Promise<void> | null = null;
 // published separately so a saved-deviceId reconcile can compare against the
 // browser's authority for browser-deviceId existence (see `sinkIds` doc above).
 let browserSinkIdsCache: string[] = [];
-const browserSinkIdsSubscribers = new Set<(ids: string[]) => void>();
+const browserSinkIdsSubscribers = new Set<() => void>();
 
 function publishOutputDevices(next: OutputDevice[]): void {
 	if (areOutputDeviceListsEqual(outputDeviceCache, next)) {
@@ -99,7 +99,7 @@ function publishOutputDevices(next: OutputDevice[]): void {
 	}
 	outputDeviceCache = next;
 	for (const subscriber of outputDeviceSubscribers) {
-		subscriber(next);
+		subscriber();
 	}
 }
 
@@ -113,12 +113,16 @@ function publishBrowserSinkIds(next: string[]): void {
 	}
 	browserSinkIdsCache = next;
 	for (const subscriber of browserSinkIdsSubscribers) {
-		subscriber(next);
+		subscriber();
 	}
 }
 
 function normalizeOutputName(name: string): string {
 	return name.trim().toLowerCase();
+}
+
+function containsText(haystack: string, needle: string): boolean {
+	return haystack.indexOf(needle) >= 0;
 }
 
 /**
@@ -140,7 +144,7 @@ function resolveSinkId(name: string): string {
 		return exact;
 	}
 	for (const [label, deviceId] of browserSinkMap) {
-		if (label.includes(normalized) || normalized.includes(label)) {
+		if (containsText(label, normalized) || containsText(normalized, label)) {
 			return deviceId;
 		}
 	}
@@ -230,6 +234,40 @@ function refreshBackendOutputDevices(): Promise<void> {
 		.catch(() => undefined);
 }
 
+function refreshOutputDevices(): Promise<void> {
+	return Promise.all([
+		refreshBackendOutputDevices(),
+		refreshBrowserOutputDevices(),
+	]).then(() => undefined);
+}
+
+// External-store adapters for `useSyncExternalStore`. The caches are only
+// reassigned (to a fresh array) inside `publishOutputDevices` /
+// `publishBrowserSinkIds`, which already short-circuit when the contents are
+// unchanged — so each snapshot getter returns a referentially stable value
+// between real changes, satisfying `useSyncExternalStore`'s tearing guard.
+function subscribeOutputDevices(onStoreChange: () => void): () => void {
+	outputDeviceSubscribers.add(onStoreChange);
+	return () => {
+		outputDeviceSubscribers.delete(onStoreChange);
+	};
+}
+
+function getOutputDevicesSnapshot(): OutputDevice[] {
+	return outputDeviceCache;
+}
+
+function subscribeBrowserSinkIds(onStoreChange: () => void): () => void {
+	browserSinkIdsSubscribers.add(onStoreChange);
+	return () => {
+		browserSinkIdsSubscribers.delete(onStoreChange);
+	};
+}
+
+function getBrowserSinkIdsSnapshot(): string[] {
+	return browserSinkIdsCache;
+}
+
 /**
  * Returns the list of audio OUTPUT devices, kept in sync with hot-plug events
  * in real time — exactly like :func:`useInputDevices`.
@@ -253,26 +291,18 @@ function refreshBackendOutputDevices(): Promise<void> {
  * routing to a non-default device falls back to the system default.
  */
 export function useOutputDevices(): UseOutputDevicesResult {
-	const [devices, setDevices] = useState<OutputDevice[]>(
-		() => outputDeviceCache,
+	const devices = useSyncExternalStore(
+		subscribeOutputDevices,
+		getOutputDevicesSnapshot,
 	);
-	const [sinkIds, setSinkIds] = useState<string[]>(() => browserSinkIdsCache);
-	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const sinkIds = useSyncExternalStore(
+		subscribeBrowserSinkIds,
+		getBrowserSinkIdsSnapshot,
+	);
 
-	const refresh = useCallback(
-		() =>
-			Promise.all([
-				refreshBackendOutputDevices(),
-				refreshBrowserOutputDevices(),
-			]).then(() => undefined),
-		[],
-	);
+	const refresh = refreshOutputDevices;
 
 	useEffect(() => {
-		outputDeviceSubscribers.add(setDevices);
-		browserSinkIdsSubscribers.add(setSinkIds);
-		setDevices(outputDeviceCache);
-		setSinkIds(browserSinkIdsCache);
 		// Real-time backend push: a hot-plugged speaker shows up the instant the
 		// native endpoint watcher reports it, without waiting on the browser.
 		const offOutputDevicesChanged = onAudioOutputDevicesChanged(
@@ -280,21 +310,20 @@ export function useOutputDevices(): UseOutputDevicesResult {
 		);
 		return () => {
 			offOutputDevicesChanged();
-			outputDeviceSubscribers.delete(setDevices);
-			browserSinkIdsSubscribers.delete(setSinkIds);
 		};
 	}, []);
 
 	useEffect(() => {
+		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 		const refreshBrowserSafely = () => {
 			refreshBrowserOutputDevices().catch(() => undefined);
 		};
 		const scheduleBrowserRefresh = () => {
-			if (debounceRef.current) {
-				clearTimeout(debounceRef.current);
+			if (debounceTimer) {
+				clearTimeout(debounceTimer);
 			}
-			debounceRef.current = setTimeout(() => {
-				debounceRef.current = null;
+			debounceTimer = setTimeout(() => {
+				debounceTimer = null;
 				refreshBrowserSafely();
 			}, DEVICECHANGE_DEBOUNCE_MS);
 		};
@@ -312,9 +341,10 @@ export function useOutputDevices(): UseOutputDevicesResult {
 		return () => {
 			offDeviceChangeDetected();
 			mediaDevices?.removeEventListener("devicechange", scheduleBrowserRefresh);
-			if (debounceRef.current) {
-				clearTimeout(debounceRef.current);
-				debounceRef.current = null;
+			const pendingDebounce = debounceTimer;
+			debounceTimer = null;
+			if (pendingDebounce) {
+				clearTimeout(pendingDebounce);
 			}
 		};
 	}, []);

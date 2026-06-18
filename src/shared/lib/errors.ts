@@ -13,8 +13,13 @@ export class ApplicationError extends Error {
 		this.timestamp = Date.now();
 
 		// Maintains proper stack trace for where error was thrown.
-		// V8 (the reference main + renderer) and JSC (Bun) both define this.
-		Error.captureStackTrace(this, this.constructor);
+		// `captureStackTrace` is a V8 (main + renderer) and JSC (Bun) extension,
+		// not part of the standard `ErrorConstructor` lib — feature-detect through
+		// a narrow local type so this stays sound without pulling in node types.
+		const errorCtor = Error as ErrorConstructor & {
+			captureStackTrace?: (target: object, ctor?: Function) => void;
+		};
+		errorCtor.captureStackTrace?.(this, this.constructor);
 	}
 
 	toJSON(): Record<string, unknown> {

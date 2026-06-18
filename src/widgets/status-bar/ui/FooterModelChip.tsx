@@ -15,7 +15,13 @@ import {
 	variantDisplayName,
 } from "@/widgets/model-picker/stt/lib/family-helpers";
 import { formatModelName } from "@/widgets/model-picker/lib/model-selector-utils";
-import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
+import {
+	type CSSProperties,
+	type MouseEvent,
+	type ReactNode,
+	useEffect,
+	useRef,
+} from "react";
 import { useTranslations } from "use-intl";
 import {
 	providerDisplayName,
@@ -60,18 +66,11 @@ function FooterModelGlyph({
 		return (
 			<span
 				aria-hidden="true"
-				className="size-[11px] shrink-0 bg-foreground-dim"
+				className="size-[11px] shrink-0 bg-foreground-dim [mask-image:var(--footer-model-logo)] [mask-position:center] [mask-repeat:no-repeat] [mask-size:contain] [-webkit-mask-image:var(--footer-model-logo)] [-webkit-mask-position:center] [-webkit-mask-repeat:no-repeat] [-webkit-mask-size:contain]"
 				data-logo-src={logoSrc}
-				style={{
-					maskImage: `url("${logoSrc}")`,
-					maskPosition: "center",
-					maskRepeat: "no-repeat",
-					maskSize: "contain",
-					WebkitMaskImage: `url("${logoSrc}")`,
-					WebkitMaskPosition: "center",
-					WebkitMaskRepeat: "no-repeat",
-					WebkitMaskSize: "contain",
-				}}
+				style={
+					{ "--footer-model-logo": `url("${logoSrc}")` } as CSSProperties
+				}
 			/>
 		);
 	}

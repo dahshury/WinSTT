@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "../../test/render-with-intl";
-import { installedCapabilityBadges } from "./OllamaModelChips";
+import { InstalledCapabilityBadges } from "./OllamaModelChips";
 
 function renderCapabilityBadges(capabilities: readonly string[]) {
 	return render(
 		<TooltipProvider.Provider>
-			{installedCapabilityBadges(capabilities)}
+			<InstalledCapabilityBadges capabilities={capabilities} />
 		</TooltipProvider.Provider>,
 	);
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useConnectionStore } from "@/entities/connection";
-import { useSettingsStore } from "@/entities/setting";
+import { getSettingsStoreState, useSettingsStore } from "@/entities/setting";
 import {
 	hasSettingsBackend,
 	onSettingsChanged,
@@ -51,7 +51,13 @@ export function useSyncSettings(): void {
 	const prevRef = useRef(settings);
 	const loadedOnceRef = useRef(false);
 	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const latestSettingsRef = useRef(settings);
+	// Initialised from the store's current snapshot (a non-reactive getState
+	// read, equal to `settings` on first render) rather than the reactive
+	// `settings` binding, so the sync effect below doesn't touch the ref with
+	// render-time reactive state — which `react-hooks-js/refs` flags. Every
+	// consumer reads `latestSettingsRef.current` after mount, by which point
+	// the effect has synced the live value.
+	const latestSettingsRef = useRef(getSettingsStoreState().settings);
 	const hasSyncedOnConnect = useRef(false);
 	const fromBroadcastRef = useRef(false);
 	const fromIpcLoadRef = useRef(false);
@@ -61,13 +67,15 @@ export function useSyncSettings(): void {
 	// the baseline for "what's user-dirty" so a `settings:changed` from another
 	// window can't wipe an unsaved local change the user just made.
 	const lastSavedRef = useRef<AppSettings | undefined>(undefined);
-	latestSettingsRef.current = settings;
+	useEffect(() => {
+		latestSettingsRef.current = settings;
+	}, [settings]);
 
 	// Reconcile with the backend store (source of truth) after localStorage hydration.
 	// Without a backend (plain Vite/browser), leave the local cache as the editable
 	// source and suppress backend side effects.
 	useEffect(() => {
-		const loadBaseline = useSettingsStore.getState().settings;
+		const loadBaseline = getSettingsStoreState().settings;
 		let cancelled = false;
 		const backendAvailable = hasSettingsBackend();
 		if (!backendAvailable) {
@@ -83,7 +91,7 @@ export function useSyncSettings(): void {
 				if (cancelled) {
 					return;
 				}
-				const current = useSettingsStore.getState().settings;
+				const current = getSettingsStoreState().settings;
 				const { merged, nextFromIpcLoad } = deriveIpcLoadUpdate(
 					loaded,
 					current,
@@ -121,7 +129,7 @@ export function useSyncSettings(): void {
 	// pending save, silently dropping the change.
 	useEffect(() => {
 		const applyBroadcast = (incoming: AppSettings): void => {
-			const current = useSettingsStore.getState().settings;
+			const current = getSettingsStoreState().settings;
 			const { merged, nextFromBroadcast } = deriveBroadcastUpdate(
 				incoming,
 				current,

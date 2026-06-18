@@ -19,6 +19,8 @@
 // Reuses `settings::read_settings` + the same store key/path so there is exactly
 // one `winstt_settings` blob.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
@@ -28,6 +30,41 @@ use crate::winstt::commands::settings::{
     SETTINGS_CHANGED_EVENT, WINSTT_SETTINGS_FILE, WINSTT_SETTINGS_KEY,
 };
 use crate::winstt::settings_schema::OnboardedTrack;
+
+/// While the first-run wizard owns the launch, the app stays MODEL-FREE: the boot
+/// STT load + warmup, the LLM/TTS/encoder background warmups, the settings-driven
+/// warm/load side-effects, and wakeword arming are all held back. The user
+/// shouldn't pay to load (or keep resident) a local model they may be about to
+/// replace with a cloud provider — and choosing cloud should leave nothing local
+/// loaded. Set at startup from the same predicate that opens the wizard window
+/// (`should_show_onboarding`); cleared by `onboarding_finish`, which then runs the
+/// deferred warmups via `warm_models_after_onboarding`.
+static ONBOARDING_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Mark the onboarding gate active (true while the wizard owns the launch).
+pub fn set_onboarding_active(active: bool) {
+    ONBOARDING_ACTIVE.store(active, Ordering::SeqCst);
+}
+
+/// True while onboarding is in progress — model load/warmup paths consult this to
+/// stay dormant until the user has configured a local or cloud model.
+pub fn is_onboarding_active() -> bool {
+    ONBOARDING_ACTIVE.load(Ordering::SeqCst)
+}
+
+/// True while the first-run wizard window is up (created AND visible). Distinct
+/// from `is_onboarding_active`, which the recording-mode demo lifts early to enable
+/// dictation — this stays true until `onboarding_finish` HIDES the window. Used to
+/// gate the main-window / settings entry points so the wizard can't be bypassed via
+/// the tray or a renderer command. Survives the dev `WINSTT_FORCE_ONBOARDING` case
+/// (which has `onboarded == true`) since it keys off the live window, not the flag.
+/// `onboarding_finish` hides the wizard BEFORE it shows the main window, so the
+/// completion path is never blocked by this check.
+pub fn is_onboarding_in_progress(app: &AppHandle) -> bool {
+    app.get_webview_window("onboarding")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
+}
 
 /// Payload the renderer sends when finishing (or skipping) the wizard. Mirrors
 /// `OnboardingWizard.handleFinish({ completed, track })`. `track` is the raw
@@ -70,8 +107,7 @@ fn mark_onboarded(app: &AppHandle, track: OnboardedTrack) -> Result<serde_json::
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_millis() as i64)
 }
 
 /// `onboarding_finish` — record the wizard as completed/skipped, broadcast the
@@ -100,6 +136,34 @@ pub fn onboarding_finish(app: AppHandle, args: OnboardingFinishArgs) -> Result<(
         let _ = window.hide();
     }
     crate::window_state::show_main_window(&app);
+
+    // 3. Onboarding is over (finished OR closed): lift the model gate and warm what
+    //    the user configured. A cloud track frees any resident local engine and
+    //    needs no local load; a local track loads + warms the selected model. This
+    //    also fires the TTS/encoder/LLM background warmups and wakeword arming that
+    //    were held back while the wizard was open.
+    set_onboarding_active(false);
+    crate::bootstrap::state::activate_runtime_after_onboarding(&app);
+    Ok(())
+}
+
+/// `onboarding_enable_dictation` — light up the real dictation runtime DURING the
+/// wizard so the recording-mode step can offer a live "press the hotkey and speak"
+/// demo. By this point the user has chosen a model (local pick or cloud keys) and
+/// tested their mic, so this is a deliberate, user-reached enable — not the boot
+/// auto-warmup the model-free gate exists to suppress. Lifts the gate and activates
+/// the runtime (loads + warms the configured model, arms the global hotkey, inits
+/// the paste pipeline). Idempotent: once the gate is down, re-entering the step
+/// no-ops. `onboarding_finish` still runs its own activation, which is then a cheap
+/// no-op because everything is already live.
+#[tauri::command]
+#[specta::specta]
+pub fn onboarding_enable_dictation(app: AppHandle) -> Result<(), String> {
+    if !is_onboarding_active() {
+        return Ok(());
+    }
+    set_onboarding_active(false);
+    crate::bootstrap::state::activate_runtime_after_onboarding(&app);
     Ok(())
 }
 

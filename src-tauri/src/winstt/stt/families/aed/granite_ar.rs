@@ -35,14 +35,10 @@ impl GraniteArEngine {
         let prompt_encode = build_session(file(&cfg.resolved, "prompt_encode")?, &cfg.providers)?;
         let decode_step = build_session(file(&cfg.resolved, "decode_step")?, &cfg.providers)?;
         let tokenizer = load_granite_tokenizer(file(&cfg.resolved, "tokenizer")?)?;
-        let audio_token_id = tokenizer
-            .token_to_id("<|audio|>")
-            .map(i64::from)
-            .unwrap_or(100352);
+        let audio_token_id = tokenizer.token_to_id("<|audio|>").map_or(100352, i64::from);
         let eos_token_id = tokenizer
             .token_to_id("<|end_of_text|>")
-            .map(i64::from)
-            .unwrap_or(100257);
+            .map_or(100257, i64::from);
         let past_input_names = filter_sorted_inputs(&decode_step, "past_key_values.");
         let present_output_names = filter_sorted_outputs(&decode_step, "present.");
         let (_, _, past_is_fp16) =

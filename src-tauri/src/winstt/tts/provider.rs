@@ -13,7 +13,13 @@ pub(crate) enum TtsOrtProviderPolicy {
     CpuOnly {
         reason: &'static str,
     },
-    #[allow(dead_code)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "staged for engines that should follow the active STT device"
+        )
+    )]
     FollowDevice,
 }
 

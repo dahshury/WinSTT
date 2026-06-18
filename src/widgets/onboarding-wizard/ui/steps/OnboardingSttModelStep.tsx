@@ -1,7 +1,5 @@
-import { Button as BaseButton } from "@base-ui/react/button";
 import {
 	CheckmarkCircle02Icon,
-	CloudDownloadIcon,
 	Download04Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -10,22 +8,16 @@ import {
 	resolveQuantCache,
 	SttModelSelector,
 } from "@/widgets/model-picker";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect } from "react";
 import {
 	isVisibleSttModel,
-	pickDefaultSttModel,
 	useCatalogStore,
 	useModelStateStore,
 } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
-import {
-	canDeleteSttQuant,
-	DownloadConfirmationDialog,
-	resolveSttDeleteRecovery,
-	useDownloadStore,
-	useQuantActions,
-} from "@/features/model-download";
-import type { ModelStateEntry } from "@/shared/api/ipc-client";
+import { useDownloadStore } from "@/features/model-download";
+import { type ModelStateEntry, ipcSend } from "@/shared/api/ipc-client";
+import { IPC } from "@/shared/api/ipc-channels";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
@@ -33,23 +25,27 @@ import { FormControl } from "@/shared/ui/form-control";
 import { Spinner } from "@/shared/ui/spinner";
 import { useOnboardingWizardStore } from "../../model/wizard-store";
 
-type PendingSttDownload = {
-	kind: "main";
-	modelId: string;
-	previousModelId: string;
-	quantization?: OnnxQuantization | undefined;
-};
-
-function normalizeDownloadQuant(quantization: string): OnnxQuantization {
-	return (quantization === "auto" ? "" : quantization) as OnnxQuantization;
+/**
+ * Open the detached model-picker window — the SAME canonical picker the settings
+ * Main-model selector uses (`MainModelSection`) — anchored to the trigger's
+ * on-screen rect. That window owns selection, download-gating, the engine
+ * swap/reload, and its own close, so onboarding never re-implements any of it.
+ * Crucially, picking there drives the real engine swap, so the chosen model is
+ * actually loaded (not just persisted) by the time the wizard finishes.
+ */
+function openDetachedPicker(rect: DOMRect): void {
+	ipcSend(IPC.MODEL_PICKER_OPEN, {
+		x: rect.x,
+		y: rect.y,
+		width: rect.width,
+		height: rect.height,
+	});
 }
 
-function targetQuantFor(
-	state: ModelStateEntry | undefined,
-	selectedQuantization: string,
-): string {
-	return resolveEffectiveQuant(state, selectedQuantization);
-}
+/** Selection is owned by the detached picker window, so the in-window `onChange`
+ *  is never invoked in this (detached) mode — the prop is still required by the
+ *  selector's contract. */
+const noopChange = () => undefined;
 
 function isCachedTarget(
 	state: ModelStateEntry | undefined,
@@ -66,45 +62,30 @@ export function OnboardingSttModelStep() {
 	const modelStatesLoaded = useModelStateStore((s) => s.isLoaded);
 	const systemInfo = useModelStateStore((s) => s.systemInfo);
 	const refreshModelState = useModelStateStore((s) => s.refresh);
-	const sttModelId = useOnboardingWizardStore((s) => s.sttModelId);
-	const sttQuantization = useOnboardingWizardStore((s) => s.sttQuantization);
-	const setSttSelection = useOnboardingWizardStore((s) => s.setSttSelection);
 	const setSttModelReady = useOnboardingWizardStore((s) => s.setSttModelReady);
 	const settingsModel = useSettingsStore((s) => s.settings.model);
-	const updateModelSettings = useSettingsStore((s) => s.updateModelSettings);
 	const quantDownloads = useDownloadStore((s) => s.quantDownloads);
-	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } =
-		useQuantActions();
-	const [pendingDownload, setPendingDownload] =
-		useState<PendingSttDownload | null>(null);
 
 	useEffect(() => {
 		refreshModelState();
 	}, [refreshModelState]);
 
-	const defaultModelId = useMemo(
-		() =>
-			pickDefaultSttModel(catalogModels, statesById, isVisibleSttModel) ?? "",
-		[catalogModels, statesById],
-	);
-
-	useEffect(() => {
-		if (!sttModelId && defaultModelId) {
-			setSttSelection(defaultModelId, "auto");
-		}
-	}, [defaultModelId, setSttSelection, sttModelId]);
-
-	const selectedModelId = sttModelId || defaultModelId;
+	// The chosen model lives in `settings.model` — written by the detached picker
+	// (through its swap controller) and broadcast back to this window via
+	// `useSyncSettings`. We only READ it here to drive the readiness gate; the
+	// picker is the sole writer.
+	const selectedModelId = settingsModel.model;
 	const selectedInfo = selectedModelId ? getModel(selectedModelId) : undefined;
 	const selectedState = selectedModelId
 		? statesById[selectedModelId]
 		: undefined;
-	const selectedQuantization = sttQuantization || "auto";
-	const targetQuantization = targetQuantFor(
+	const selectedQuantization = settingsModel.onnxQuantization;
+	const targetQuantization = resolveEffectiveQuant(
 		selectedState,
 		selectedQuantization,
 	);
-	const downloadQuantization = normalizeDownloadQuant(targetQuantization);
+	const downloadQuantization =
+		targetQuantization === "auto" ? "" : targetQuantization;
 	const targetCache = resolveQuantCache(selectedState, targetQuantization);
 	const ready =
 		selectedInfo !== undefined &&
@@ -113,126 +94,14 @@ export function OnboardingSttModelStep() {
 		quantDownloads[`${selectedModelId}@${downloadQuantization}`];
 	const busyDownloading =
 		downloadSnapshot !== undefined && !downloadSnapshot.paused;
-	const canRequestDownload =
-		selectedModelId !== "" &&
-		selectedInfo !== undefined &&
-		modelStatesLoaded &&
-		!ready &&
-		!busyDownloading;
 
 	useEffect(() => {
 		setSttModelReady(ready);
 	}, [ready, setSttModelReady]);
 
-	useEffect(() => {
-		if (!ready || selectedInfo === undefined) {
-			return;
-		}
-		const realtimeModel = selectedInfo.nativeStreaming ? selectedModelId : "";
-		if (
-			settingsModel.model === selectedModelId &&
-			settingsModel.onnxQuantization === selectedQuantization &&
-			settingsModel.realtimeModel === realtimeModel
-		) {
-			return;
-		}
-		updateModelSettings({
-			model: selectedModelId,
-			backend: selectedInfo.backend,
-			onnxQuantization: selectedQuantization,
-			realtimeModel,
-		});
-	}, [
-		ready,
-		selectedInfo,
-		selectedModelId,
-		selectedQuantization,
-		settingsModel.model,
-		settingsModel.onnxQuantization,
-		settingsModel.realtimeModel,
-		updateModelSettings,
-	]);
-
-	const openDownloadDialog = (
-		modelId = selectedModelId,
-		quantization = downloadQuantization,
-	) => {
-		if (!modelId) {
-			return;
-		}
-		setPendingDownload({
-			kind: "main",
-			modelId,
-			previousModelId: settingsModel.model,
-			quantization,
-		});
-	};
-
-	const handleSelect = (modelId: string, quantization?: OnnxQuantization) => {
-		const nextQuantization = quantization ?? "auto";
-		setSttSelection(modelId, nextQuantization);
-		const nextState = statesById[modelId];
-		const nextTargetQuantization = targetQuantFor(nextState, nextQuantization);
-		if (
-			nextState !== undefined &&
-			!isCachedTarget(nextState, nextTargetQuantization)
-		) {
-			openDownloadDialog(
-				modelId,
-				normalizeDownloadQuant(nextTargetQuantization),
-			);
-		}
-	};
-
-	const handleSelectorDownloadAction: typeof handleDownloadAction = (
-		action,
-		modelId,
-		quantization,
-	) => {
-		if (action === "start") {
-			setSttSelection(modelId, quantization);
-			openDownloadDialog(modelId, quantization);
-			return;
-		}
-		handleDownloadAction(action, modelId, quantization);
-	};
-	const canDeleteQuant = useCallback(
-		(modelId: string, quantization: OnnxQuantization) =>
-			canDeleteSttQuant(catalogModels, statesById, modelId, quantization),
-		[catalogModels, statesById],
-	);
-	const handleSelectorDeleteQuant = useCallback(
-		(modelId: string, quantization: OnnxQuantization) => {
-			const recovery = resolveSttDeleteRecovery({
-				currentMainModel: selectedModelId,
-				currentQuantization: selectedQuantization as OnnxQuantization | "auto",
-				mainModelInfo: selectedInfo,
-				modelId,
-				models: catalogModels,
-				quantization,
-				statesById,
-			});
-			if (!recovery.canDelete) {
-				return;
-			}
-			if (recovery.mainTarget) {
-				setSttSelection(
-					recovery.mainTarget.modelId,
-					recovery.mainTarget.quantization ?? "auto",
-				);
-			}
-			handleDeleteQuant(modelId, quantization);
-		},
-		[
-			catalogModels,
-			handleDeleteQuant,
-			selectedInfo,
-			selectedModelId,
-			selectedQuantization,
-			setSttSelection,
-			statesById,
-		],
-	);
+	const downloadProgress = busyDownloading
+		? { modelId: selectedModelId, percent: downloadSnapshot?.progress ?? null }
+		: null;
 
 	return (
 		<div className="flex flex-col gap-3">
@@ -243,15 +112,15 @@ export function OnboardingSttModelStep() {
 			>
 				<ElevatedSurface inline>
 					<SttModelSelector
-						currentQuantization={selectedQuantization as OnnxQuantization}
+						currentQuantization={
+							(selectedQuantization || "") as OnnxQuantization
+						}
+						downloadProgress={downloadProgress}
 						isLoading={!catalogLoaded || !modelStatesLoaded}
 						kind="main"
 						models={catalogModels}
-						onChange={handleSelect}
-						canDeleteQuant={canDeleteQuant}
-						onDeleteQuant={handleSelectorDeleteQuant}
-						onDownloadAction={handleSelectorDownloadAction}
-						onDownloadSnapshot={handleDownloadSnapshot}
+						onChange={noopChange}
+						onOpenDetached={openDetachedPicker}
 						placeholder="Select a speech model"
 						prefilter={isVisibleSttModel}
 						statesById={statesById}
@@ -264,34 +133,27 @@ export function OnboardingSttModelStep() {
 			<ModelReadinessCard
 				busyDownloading={busyDownloading}
 				cacheState={targetCache?.state ?? "not_cached"}
-				canRequestDownload={canRequestDownload}
 				catalogLoaded={catalogLoaded}
 				modelStatesLoaded={modelStatesLoaded}
-				onDownload={() => openDownloadDialog()}
 				progress={downloadSnapshot?.progress ?? null}
 				ready={ready}
 				selectedName={selectedInfo?.displayName ?? selectedModelId}
 				targetQuantization={targetQuantization}
 			/>
-
-			<DownloadConfirmationDialog
-				getModel={getModel}
-				onCancel={() => setPendingDownload(null)}
-				pending={pendingDownload}
-				statesById={statesById}
-				systemInfo={systemInfo}
-			/>
 		</div>
 	);
 }
 
+/**
+ * Read-only readiness reflector for the model in `settings.model`. The detached
+ * picker owns downloading + selecting; this card just tells the user whether the
+ * chosen model is on disk (which is what gates the wizard's Next button).
+ */
 function ModelReadinessCard({
 	busyDownloading,
 	cacheState,
-	canRequestDownload,
 	catalogLoaded,
 	modelStatesLoaded,
-	onDownload,
 	progress,
 	ready,
 	selectedName,
@@ -299,10 +161,8 @@ function ModelReadinessCard({
 }: {
 	busyDownloading: boolean;
 	cacheState: "cached" | "partial" | "not_cached";
-	canRequestDownload: boolean;
 	catalogLoaded: boolean;
 	modelStatesLoaded: boolean;
-	onDownload: () => void;
 	progress: number | null;
 	ready: boolean;
 	selectedName: string;
@@ -316,8 +176,6 @@ function ModelReadinessCard({
 		progress,
 		ready,
 	});
-	const actionLabel =
-		cacheState === "partial" ? "Resume download" : "Download model";
 
 	return (
 		<div
@@ -352,22 +210,6 @@ function ModelReadinessCard({
 					</span>
 				</span>
 			</div>
-			{!ready ? (
-				<BaseButton
-					className={cn(
-						"inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 font-medium text-body-sm outline-none transition-[background-color,box-shadow] duration-150",
-						"bg-accent text-white shadow-elevated hover:bg-accent-hover",
-						"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
-						"disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none",
-					)}
-					disabled={!canRequestDownload}
-					onClick={onDownload}
-					type="button"
-				>
-					<HugeiconsIcon icon={CloudDownloadIcon} size={13} />
-					<span>{actionLabel}</span>
-				</BaseButton>
-			) : null}
 		</div>
 	);
 }
@@ -415,5 +257,5 @@ function resolveStatusLabel({
 	if (cacheState === "partial") {
 		return "partial download found";
 	}
-	return "download required";
+	return "click above to choose and download";
 }

@@ -78,9 +78,7 @@ where
         fs::create_dir_all(parent).map_err(io_error)?;
     }
 
-    let existing_bytes = fs::metadata(request.partial_path)
-        .map(|metadata| metadata.len())
-        .unwrap_or(0);
+    let existing_bytes = fs::metadata(request.partial_path).map_or(0, |metadata| metadata.len());
     let mut http_request = client.get(request.url);
     if existing_bytes > 0 {
         http_request = http_request.header(RANGE, format!("bytes={existing_bytes}-"));

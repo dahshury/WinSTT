@@ -227,7 +227,7 @@ function LanguageFilterSection({
 	selected: string[];
 }) {
 	const options = [...new Set([...availableLanguages, ...selected])]
-		.sort((a, b) => languageLabel(a).localeCompare(languageLabel(b)))
+		.toSorted((a, b) => languageLabel(a).localeCompare(languageLabel(b)))
 		.map((code) => ({
 			badge: code.toUpperCase(),
 			id: code,

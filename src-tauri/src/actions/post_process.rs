@@ -599,13 +599,7 @@ pub(crate) async fn process_transcription_output(
         let terms: Vec<String> = winstt_settings
             .dictionary
             .iter()
-            .filter(|d| {
-                d.replacement
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or("")
-                    .is_empty()
-            })
+            .filter(|d| d.replacement.as_deref().map_or("", str::trim).is_empty())
             .map(|d| d.term.clone())
             .filter(|t| !t.trim().is_empty())
             .collect();

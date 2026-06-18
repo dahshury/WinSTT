@@ -1,4 +1,3 @@
-import { useCallback } from "react";
 import {
 	isSelectableRealtimeModel,
 	readLastLocalSttModelHistory,
@@ -77,80 +76,62 @@ export function useQuantDeletion({
 	// footer picker wire the exact same controls into SttModelSelector.
 	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } =
 		useQuantActions();
-	const canDeleteQuant = useCallback(
-		(modelId: string, quantization: OnnxQuantization) =>
-			canDeleteSttQuant(catalogModels, statesById, modelId, quantization),
-		[catalogModels, statesById],
-	);
-	const handleGuardedDeleteQuant = useCallback(
-		(modelId: string, quantization: OnnxQuantization) => {
-			const recovery = resolveSttDeleteRecovery({
-				currentMainModel: selectedModel,
-				currentQuantization,
-				currentRealtimeModel: settings?.realtimeModel,
-				mainModelInfo: selectedInfo,
-				modelId,
-				models: catalogModels,
-				previousModelIds: readLastLocalSttModelHistory(),
-				quantization,
-				statesById,
-			});
-			if (!recovery.canDelete) {
-				return;
-			}
-			const requiresRecovery =
-				recovery.mainTarget !== undefined ||
-				recovery.realtimeTarget !== undefined;
-			if (
-				requiresRecovery &&
-				useFileTranscriptionStore.getState().queueActive
-			) {
-				return;
-			}
-			if (recovery.mainTarget) {
-				controller.handleModelChange(
-					recovery.mainTarget.modelId,
-					recovery.mainTarget.quantization,
+	const canDeleteQuant = (modelId: string, quantization: OnnxQuantization) =>
+		canDeleteSttQuant(catalogModels, statesById, modelId, quantization);
+	const handleGuardedDeleteQuant = (
+		modelId: string,
+		quantization: OnnxQuantization,
+	) => {
+		const recovery = resolveSttDeleteRecovery({
+			currentMainModel: selectedModel,
+			currentQuantization,
+			currentRealtimeModel: settings?.realtimeModel,
+			mainModelInfo: selectedInfo,
+			modelId,
+			models: catalogModels,
+			previousModelIds: readLastLocalSttModelHistory(),
+			quantization,
+			statesById,
+		});
+		if (!recovery.canDelete) {
+			return;
+		}
+		const requiresRecovery =
+			recovery.mainTarget !== undefined ||
+			recovery.realtimeTarget !== undefined;
+		if (requiresRecovery && useFileTranscriptionStore.getState().queueActive) {
+			return;
+		}
+		if (recovery.mainTarget) {
+			controller.handleModelChange(
+				recovery.mainTarget.modelId,
+				recovery.mainTarget.quantization,
+			);
+		}
+		if (recovery.realtimeTarget !== undefined) {
+			if (recovery.realtimeTarget === null) {
+				controller.handleRealtimeModelChange("");
+				if (useMainModelFlag) {
+					updateQuality({ useMainModelForRealtime: false });
+				}
+			} else {
+				controller.handleRealtimeModelChange(
+					recovery.realtimeTarget.modelId,
+					recovery.realtimeTarget.quantization,
 				);
-			}
-			if (recovery.realtimeTarget !== undefined) {
-				if (recovery.realtimeTarget === null) {
-					controller.handleRealtimeModelChange("");
-					if (useMainModelFlag) {
-						updateQuality({ useMainModelForRealtime: false });
-					}
-				} else {
-					controller.handleRealtimeModelChange(
-						recovery.realtimeTarget.modelId,
-						recovery.realtimeTarget.quantization,
-					);
-					const nextMainId = recovery.mainTarget?.modelId ?? selectedModel;
-					const realtimeInfo = getModel(recovery.realtimeTarget.modelId);
-					const shouldReuseMain =
-						recovery.realtimeTarget.modelId === nextMainId &&
-						realtimeInfo !== undefined &&
-						isSelectableRealtimeModel(realtimeInfo);
-					if (shouldReuseMain !== useMainModelFlag) {
-						updateQuality({ useMainModelForRealtime: shouldReuseMain });
-					}
+				const nextMainId = recovery.mainTarget?.modelId ?? selectedModel;
+				const realtimeInfo = getModel(recovery.realtimeTarget.modelId);
+				const shouldReuseMain =
+					recovery.realtimeTarget.modelId === nextMainId &&
+					realtimeInfo !== undefined &&
+					isSelectableRealtimeModel(realtimeInfo);
+				if (shouldReuseMain !== useMainModelFlag) {
+					updateQuality({ useMainModelForRealtime: shouldReuseMain });
 				}
 			}
-			handleDeleteQuant(modelId, quantization);
-		},
-		[
-			catalogModels,
-			controller,
-			currentQuantization,
-			getModel,
-			handleDeleteQuant,
-			selectedInfo,
-			selectedModel,
-			settings?.realtimeModel,
-			statesById,
-			updateQuality,
-			useMainModelFlag,
-		],
-	);
+		}
+		handleDeleteQuant(modelId, quantization);
+	};
 	return {
 		canDeleteQuant,
 		handleDownloadSnapshot,

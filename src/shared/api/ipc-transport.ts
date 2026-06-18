@@ -206,12 +206,12 @@ async function devSettingsLoad(): Promise<unknown> {
 		headers: { Accept: "application/json" },
 	});
 	const body = await readDevSettingsBridgeJson(response);
-	return body.settings ?? {};
+	return body["settings"] ?? {};
 }
 
 async function devSettingsSave(args: unknown[]): Promise<void> {
 	const payload = firstObjArg(args);
-	const settings = "settings" in payload ? payload.settings : {};
+	const settings = "settings" in payload ? payload["settings"] : {};
 	const response = await fetch("/__winstt/settings", {
 		method: "PATCH",
 		headers: {
@@ -279,20 +279,20 @@ const COMMAND_INVOKERS: Partial<
 > = {
 	// ── STT dictation core ──
 	[IPC.STT_SET_PARAMETER]: (a) =>
-		commands.winsttSetParameter(a.parameter as string, a.value as never),
+		commands.winsttSetParameter(a["parameter"] as string, a["value"] as never),
 	[IPC.STT_GET_PARAMETER]: (a) =>
-		commands.winsttGetParameter(a.parameter as string),
+		commands.winsttGetParameter(a["parameter"] as string),
 	[IPC.STT_CALL_METHOD]: (a) =>
 		commands.winsttCallMethod(
-			a.method as string,
-			(a.args as never[] | undefined) ?? null,
+			a["method"] as string,
+			(a["args"] as never[] | undefined) ?? null,
 		),
 	[IPC.STT_ABORT_OPERATION]: () => commands.cancelCurrentOperation(),
 	[IPC.STT_RELOAD_MODEL]: (a) =>
 		commands.setWinsttModel(
-			a.kind as string,
-			a.name as string,
-			(a.quantization as string | null | undefined) ?? null,
+			a["kind"] as string,
+			a["name"] as string,
+			(a["quantization"] as string | null | undefined) ?? null,
 		),
 
 	// NB: WAKEWORD_*_MODEL_DOWNLOAD / GET_MODEL_STATUS were RETIRED — their
@@ -303,29 +303,29 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.STT_LIST_MODELS_WITH_STATE]: () => commands.sttListModelsWithState(),
 	[IPC.STT_GET_RUNTIME_INFO]: () => commands.getRuntimeInfo(),
 	[IPC.STT_GET_LIVE_RESOURCES]: (a) =>
-		commands.getLiveResources((a.forceRefresh as boolean | undefined) ?? null),
+		commands.getLiveResources((a["forceRefresh"] as boolean | undefined) ?? null),
 	[IPC.STT_ASSESS_DICTATION_FIT]: (a) =>
 		commands.assessDictationFit(
-			a.modelId as string,
-			(a.quantization as string | null | undefined) ?? null,
-			(a.device as string | null | undefined) ?? null,
+			a["modelId"] as string,
+			(a["quantization"] as string | null | undefined) ?? null,
+			(a["device"] as string | null | undefined) ?? null,
 		),
 	[IPC.STT_ASSESS_OLLAMA_FIT]: (a) =>
-		commands.assessOllamaFit(a.sizeBytes as number),
+		commands.assessOllamaFit(a["sizeBytes"] as number),
 
 	// ── Per-quant download lifecycle ──
 	[IPC.STT_PREDOWNLOAD_QUANT]: (a) =>
-		commands.sttPredownloadQuant(a.modelId as string, a.quantization as string),
+		commands.sttPredownloadQuant(a["modelId"] as string, a["quantization"] as string),
 	[IPC.STT_DOWNLOAD_PAUSE]: (a) =>
-		commands.downloadPauseQuant(a.modelId as string, a.quantization as string),
+		commands.downloadPauseQuant(a["modelId"] as string, a["quantization"] as string),
 	[IPC.STT_DOWNLOAD_RESUME]: (a) =>
-		commands.downloadResumeQuant(a.modelId as string, a.quantization as string),
+		commands.downloadResumeQuant(a["modelId"] as string, a["quantization"] as string),
 	[IPC.STT_DOWNLOAD_CANCEL_QUANT]: (a) =>
-		commands.downloadCancelQuant(a.modelId as string, a.quantization as string),
+		commands.downloadCancelQuant(a["modelId"] as string, a["quantization"] as string),
 	[IPC.STT_DELETE_MODEL_QUANTIZATION]: (a) =>
 		commands.deleteModelQuantization(
-			a.modelId as string,
-			a.quantization as string,
+			a["modelId"] as string,
+			a["quantization"] as string,
 		),
 	[IPC.STT_DELETE_MODEL_CACHE]: (a, args) =>
 		commands.deleteModelCache(stringCommandArg(a, args, "modelId")),
@@ -333,21 +333,21 @@ const COMMAND_INVOKERS: Partial<
 
 	// ── Settings ──
 	[IPC.SETTINGS_LOAD]: () => commands.winsttGetSettings(),
-	[IPC.SETTINGS_SAVE]: (a) => commands.winsttSetSettings(a.settings as never),
+	[IPC.SETTINGS_SAVE]: (a) => commands.winsttSetSettings(a["settings"] as never),
 	[IPC.SETTINGS_REMOVE_APPLICATION_DATA]: (a) =>
 		commands.removeApplicationData(
-			(a.deleteOllamaModels as boolean | undefined) ?? false,
+			(a["deleteOllamaModels"] as boolean | undefined) ?? false,
 		),
 	[IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS]: (a) =>
 		commands.removeDownloadedModels(
-			(a.deleteOllamaModels as boolean | undefined) ?? false,
+			(a["deleteOllamaModels"] as boolean | undefined) ?? false,
 		),
 
 	// ── Hotkey ──
 	[IPC.HOTKEY_REGISTER]: (a) =>
-		commands.hotkeyRegister(a.accelerator as string),
+		commands.hotkeyRegister(a["accelerator"] as string),
 	[IPC.HOTKEY_UNREGISTER]: (a) =>
-		commands.hotkeyUnregister(a.accelerator as string),
+		commands.hotkeyUnregister(a["accelerator"] as string),
 	[IPC.HOTKEY_START_RECORDING]: () => commands.hotkeyStartRecording(),
 	[IPC.HOTKEY_STOP_RECORDING]: () => commands.hotkeyStopRecording(),
 
@@ -358,10 +358,10 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.AUDIO_REFRESH_OUTPUT_DEVICES]: () =>
 		commands.refreshAudioOutputDevices(),
 	[IPC.AUDIO_SET_SELECTED_MICROPHONE]: (a) =>
-		commands.setSelectedMicrophone(a.deviceName as string),
+		commands.setSelectedMicrophone(a["deviceName"] as string),
 	[IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR]: (a) =>
 		commands.startMicrophoneLevelMonitor(
-			a.targets as MicrophoneLevelMonitorTarget[],
+			a["targets"] as MicrophoneLevelMonitorTarget[],
 		),
 	[IPC.AUDIO_STOP_MICROPHONE_LEVEL_MONITOR]: () =>
 		commands.stopMicrophoneLevelMonitor(),
@@ -385,20 +385,20 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.MODEL_PICKER_OPEN]: (a) =>
 		commands.openWindow(
 			"model-picker",
-			(a.x as number | null | undefined) ?? null,
-			(a.y as number | null | undefined) ?? null,
-			(a.width as number | null | undefined) ?? null,
-			(a.height as number | null | undefined) ?? null,
-			(a.pickerKind as string | null | undefined) ?? null,
-			(a.pickerFeature as string | null | undefined) ?? null,
-			(a.pickerTarget as string | null | undefined) ?? null,
+			(a["x"] as number | null | undefined) ?? null,
+			(a["y"] as number | null | undefined) ?? null,
+			(a["width"] as number | null | undefined) ?? null,
+			(a["height"] as number | null | undefined) ?? null,
+			(a["pickerKind"] as string | null | undefined) ?? null,
+			(a["pickerFeature"] as string | null | undefined) ?? null,
+			(a["pickerTarget"] as string | null | undefined) ?? null,
 		),
 	[IPC.MODEL_PICKER_CLOSE]: () => commands.closeWindow("model-picker"),
 	[IPC.MODEL_PICKER_RESIZE]: (a) =>
 		commands.resizeWindow(
 			"model-picker",
-			a.width as number,
-			a.height as number,
+			a["width"] as number,
+			a["height"] as number,
 		),
 
 	// Integrations / cloud-STT credential verification (`verify_credential`) is
@@ -408,45 +408,45 @@ const COMMAND_INVOKERS: Partial<
 	// ── TTS ──
 	[IPC.TTS_SPEAK]: (a) =>
 		commands.ttsSpeak(
-			a.text as string,
-			(a.voice as string | null | undefined) ?? null,
-			(a.lang as string | null | undefined) ?? null,
-			(a.speed as number | null | undefined) ?? null,
+			a["text"] as string,
+			(a["voice"] as string | null | undefined) ?? null,
+			(a["lang"] as string | null | undefined) ?? null,
+			(a["speed"] as number | null | undefined) ?? null,
 		),
 	[IPC.TTS_CANCEL]: (a) =>
-		commands.ttsCancel((a.requestId as string | null | undefined) ?? null),
-	[IPC.TTS_SET_SPEED]: (a) => commands.ttsSetSpeed(a.speed as number),
+		commands.ttsCancel((a["requestId"] as string | null | undefined) ?? null),
+	[IPC.TTS_SET_SPEED]: (a) => commands.ttsSetSpeed(a["speed"] as number),
 	[IPC.TTS_INIT]: () => commands.ttsInit(),
 	[IPC.TTS_LIST_VOICES]: (a) =>
-		commands.ttsListVoices((a.modelId as string | null | undefined) ?? null),
+		commands.ttsListVoices((a["modelId"] as string | null | undefined) ?? null),
 	[IPC.TTS_CLOUD_LIST_VOICES]: () => commands.ttsListCloudVoices(),
 	[IPC.TTS_CLOUD_PREVIEW]: (a) =>
-		commands.ttsPreviewCloud(a.previewUrl as string),
+		commands.ttsPreviewCloud(a["previewUrl"] as string),
 	[IPC.TTS_CLOUD_SUBSCRIPTION]: () => commands.ttsCloudSubscription(),
 	[IPC.TTS_DOWNLOAD_ESTIMATE]: () => commands.ttsDownloadEstimate(),
 	[IPC.TTS_INSTALL_PAUSE]: () => commands.ttsInstallPause(),
 	[IPC.TTS_INSTALL_RESUME]: () => commands.ttsInstallResume(),
 	[IPC.TTS_INSTALL_CANCEL]: () => commands.ttsInstallCancel(),
 	[IPC.TTS_REQUEST_PLAYBACK_PAUSE]: (a) =>
-		commands.ttsPausePlayback((a.reason as string | null | undefined) ?? null),
+		commands.ttsPausePlayback((a["reason"] as string | null | undefined) ?? null),
 	[IPC.TTS_REQUEST_PLAYBACK_RESUME]: (a) =>
-		commands.ttsResumePlayback((a.reason as string | null | undefined) ?? null),
+		commands.ttsResumePlayback((a["reason"] as string | null | undefined) ?? null),
 	[IPC.TTS_REPORT_PLAYBACK_STARTED]: (a) =>
-		commands.ttsReportPlaybackStarted(a.requestId as string),
+		commands.ttsReportPlaybackStarted(a["requestId"] as string),
 	[IPC.TTS_REPORT_PLAYBACK_ENDED]: (a) =>
-		commands.ttsReportPlaybackEnded(a.requestId as string),
+		commands.ttsReportPlaybackEnded(a["requestId"] as string),
 	[IPC.TTS_LIST_MODELS]: () => commands.ttsListModels(),
 	[IPC.TTS_LIST_MODELS_WITH_STATE]: () => commands.ttsListModelsWithState(),
 	[IPC.TTS_PREDOWNLOAD]: (a) =>
-		commands.ttsPredownloadModel(a.modelId as string, a.quantization as string),
+		commands.ttsPredownloadModel(a["modelId"] as string, a["quantization"] as string),
 	[IPC.TTS_DOWNLOAD_PAUSE]: (a) =>
-		commands.ttsDownloadPause(a.modelId as string, a.quantization as string),
+		commands.ttsDownloadPause(a["modelId"] as string, a["quantization"] as string),
 	[IPC.TTS_DOWNLOAD_RESUME]: (a) =>
-		commands.ttsDownloadResume(a.modelId as string, a.quantization as string),
+		commands.ttsDownloadResume(a["modelId"] as string, a["quantization"] as string),
 	[IPC.TTS_DOWNLOAD_CANCEL]: (a) =>
-		commands.ttsDownloadCancel(a.modelId as string, a.quantization as string),
+		commands.ttsDownloadCancel(a["modelId"] as string, a["quantization"] as string),
 	[IPC.TTS_DELETE_MODEL]: (a) =>
-		commands.ttsDeleteModel(a.modelId as string, a.quantization as string),
+		commands.ttsDeleteModel(a["modelId"] as string, a["quantization"] as string),
 
 	// ── LLM / Ollama / OpenRouter ──
 	[IPC.LLM_SCAN_MODELS]: () => commands.ollamaRefreshModels(),
@@ -455,79 +455,79 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.TTS_SCAN_OPENROUTER_MODELS]: () => commands.openrouterRefreshTtsModels(),
 	[IPC.LLM_DETECT_OLLAMA]: () => commands.ollamaDetect(),
 	[IPC.LLM_START_OLLAMA]: () => commands.ollamaStart(),
-	[IPC.LLM_PULL_MODEL]: (a) => commands.ollamaPull(a.model as string),
+	[IPC.LLM_PULL_MODEL]: (a) => commands.ollamaPull(a["model"] as string),
 	[IPC.LLM_CANCEL_PULL_MODEL]: (a) =>
-		commands.ollamaCancelPull(a.model as string),
-	[IPC.LLM_DELETE_MODEL]: (a) => commands.ollamaDelete(a.model as string),
+		commands.ollamaCancelPull(a["model"] as string),
+	[IPC.LLM_DELETE_MODEL]: (a) => commands.ollamaDelete(a["model"] as string),
 	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: () => commands.ollamaRefreshLibrary(),
 	[IPC.LLM_FETCH_OLLAMA_TAGS]: (a) =>
-		commands.ollamaRefreshTags(a.model as string),
+		commands.ollamaRefreshTags(a["model"] as string),
 	[IPC.LLM_GET_WARMUP_STATUS]: () => commands.llmWarmupStatus(),
 
 	// ── Transforms ──
 	[IPC.LLM_PROCESS_TEXT]: (a) =>
 		commands.processText(
-			a.text as string,
-			(a.context as string | undefined) ?? "",
+			a["text"] as string,
+			(a["context"] as string | undefined) ?? "",
 		),
 	[IPC.LLM_PROCESS_TEXT_CUSTOM]: (a) =>
 		commands.processText(
-			a.text as string,
-			(a.context as string | undefined) ?? "",
+			a["text"] as string,
+			(a["context"] as string | undefined) ?? "",
 		),
 
 	[IPC.TRANSFORMS_APPLY]: () => commands.applyTransform(),
 	[IPC.TRANSFORMS_PREVIEW]: (a) =>
 		commands.applyTransformPreview(
-			a.text as string,
-			a.feature as string,
-			(a.config as never | undefined) ?? null,
+			a["text"] as string,
+			a["feature"] as string,
+			(a["config"] as never | undefined) ?? null,
 		),
 	[IPC.TRANSFORM_HISTORY_GET_ALL]: () => commands.transformHistoryGetAll(),
 	[IPC.TRANSFORM_HISTORY_CLEAR]: () => commands.transformHistoryClear(),
 	[IPC.TRANSFORM_HISTORY_DELETE]: (a) =>
-		commands.transformHistoryDelete(a.id as string),
+		commands.transformHistoryDelete(a["id"] as string),
 
 	// ── Preview-before-pasting ──
-	[IPC.PREVIEW_CONFIRM_PASTE]: (a) => commands.confirmPaste(a.text as string),
+	[IPC.PREVIEW_CONFIRM_PASTE]: (a) => commands.confirmPaste(a["text"] as string),
 	[IPC.PREVIEW_CANCEL]: () => commands.cancelPreview(),
 
 	// ── File transcription queue ──
 	[IPC.FILE_QUEUE_ENQUEUE]: (a) =>
-		commands.fileTranscribeEnqueue(a.files as never[]),
+		commands.fileTranscribeEnqueue(a["files"] as never[]),
 	[IPC.FILE_QUEUE_PICK_AND_ENQUEUE]: () =>
 		commands.fileTranscribePickAndEnqueue(),
-	[IPC.FILE_QUEUE_CANCEL]: (a) => commands.fileTranscribeCancel(a.id as string),
-	[IPC.FILE_QUEUE_RETRY]: (a) => commands.fileTranscribeRetry(a.id as string),
-	[IPC.FILE_QUEUE_COPY]: (a) => commands.fileTranscribeCopy(a.id as string),
+	[IPC.FILE_QUEUE_CANCEL]: (a) => commands.fileTranscribeCancel(a["id"] as string),
+	[IPC.FILE_QUEUE_RETRY]: (a) => commands.fileTranscribeRetry(a["id"] as string),
+	[IPC.FILE_QUEUE_COPY]: (a) => commands.fileTranscribeCopy(a["id"] as string),
 	[IPC.FILE_QUEUE_CLEAR]: () => commands.fileTranscribeClear(),
 	[IPC.FILE_QUEUE_PAUSE]: (a) =>
-		commands.fileTranscribePause((a.id as string | null | undefined) ?? null),
+		commands.fileTranscribePause((a["id"] as string | null | undefined) ?? null),
 	[IPC.FILE_QUEUE_RESUME]: (a) =>
-		commands.fileTranscribeResume((a.id as string | null | undefined) ?? null),
+		commands.fileTranscribeResume((a["id"] as string | null | undefined) ?? null),
 	[IPC.FILE_QUEUE_DISCARD_ALL]: () => commands.fileTranscribeDiscardAll(),
 	[IPC.FILE_QUEUE_GET_ACTIVE]: () => commands.fileTranscribeGetActive(),
 
 	// ── Loopback / listen ──
 	[IPC.LOOPBACK_LIST_DEVICES]: () => commands.loopbackListDevices(),
 	[IPC.LOOPBACK_START]: (a) =>
-		commands.startListen(a.deviceIndex as number, a.modelId as string),
+		commands.startListen(a["deviceIndex"] as number, a["modelId"] as string),
 	[IPC.LOOPBACK_STOP]: () => commands.stopListen(),
 
 	// ── Sound library ──
 	[IPC.SOUND_LIBRARY_ADD]: (a) =>
 		commands.soundLibraryAdd(
-			a.sourcePath as string,
-			(a.name as string | null | undefined) ?? null,
+			a["sourcePath"] as string,
+			(a["name"] as string | null | undefined) ?? null,
 		),
 	[IPC.SOUND_LIBRARY_PICK_AND_ADD]: (a) =>
 		commands.soundLibraryPickAndAdd(
-			(a.name as string | null | undefined) ?? null,
+			(a["name"] as string | null | undefined) ?? null,
 		),
 	[IPC.SOUND_LIBRARY_REMOVE]: (a) =>
-		commands.soundLibraryRemove(a.path as string),
+		commands.soundLibraryRemove(a["path"] as string),
 	[IPC.SOUND_LIBRARY_READ_FILE]: (a) =>
-		commands.soundLibraryReadFile(a.path as string),
+		commands.soundLibraryReadFile(a["path"] as string),
 
 	// ── History ──
 	[IPC.HISTORY_GET_ALL]: () => commands.historyGetAll(),
@@ -540,11 +540,11 @@ const COMMAND_INVOKERS: Partial<
 		commands.alignWords(stringCommandArg(a, args, "entryId")),
 	// SQLite-backed history (object-arg; numeric row ids passed as `{ id }`).
 	[IPC.HISTORY_LIST]: (a) =>
-		commands.historyList(a.offset as number, a.limit as number),
-	[IPC.HISTORY_DELETE_ROW]: (a) => commands.historyDeleteRow(a.id as number),
-	[IPC.HISTORY_TOGGLE]: (a) => commands.historyToggle(a.id as number),
+		commands.historyList(a["offset"] as number, a["limit"] as number),
+	[IPC.HISTORY_DELETE_ROW]: (a) => commands.historyDeleteRow(a["id"] as number),
+	[IPC.HISTORY_TOGGLE]: (a) => commands.historyToggle(a["id"] as number),
 	[IPC.HISTORY_LOAD_AUDIO_BY_ROW]: (a) =>
-		commands.historyLoadAudioByRow(a.id as number),
+		commands.historyLoadAudioByRow(a["id"] as number),
 	// NB: TRANSCRIPT_COPY_LAST / DIAG_SAVE_BUNDLE / DIAG_WEBVIEW_LOG /
 	// ABOUT_GET_APP_INFO were RETIRED — their wrappers call `commands.*` directly
 	// (see shared/api/ipc/history-files.ts), so the channel + ROUTE + invoker are

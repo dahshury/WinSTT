@@ -62,8 +62,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isOpenRouterModel(value: unknown): value is OpenRouterModel {
 	return (
 		isRecord(value) &&
-		typeof value.id === "string" &&
-		typeof value.name === "string"
+		typeof value["id"] === "string" &&
+		typeof value["name"] === "string"
 	);
 }
 
@@ -72,10 +72,10 @@ function isPersistedOpenRouterCatalog(
 ): value is PersistedOpenRouterCatalog {
 	return (
 		isRecord(value) &&
-		value.version === OPENROUTER_CATALOG_CACHE_VERSION &&
-		typeof value.savedAt === "number" &&
-		Array.isArray(value.models) &&
-		value.models.every(isOpenRouterModel)
+		value["version"] === OPENROUTER_CATALOG_CACHE_VERSION &&
+		typeof value["savedAt"] === "number" &&
+		Array.isArray(value["models"]) &&
+		value["models"].every(isOpenRouterModel)
 	);
 }
 
@@ -356,8 +356,14 @@ function scanOpenRouterModelsInForeground(
 			return;
 		}
 		if (!force) {
-			await ensureCacheHydration(set, get);
 			if (get().isLoaded) {
+				return;
+			}
+			const hydratedCatalog = await ensureCacheHydration(set, get);
+			if (
+				(hydratedCatalog !== null && hydratedCatalog.models.length > 0) ||
+				get().isLoaded
+			) {
 				return;
 			}
 			if (backgroundRefresh !== null) {
@@ -369,11 +375,10 @@ function scanOpenRouterModelsInForeground(
 		set({ isScanning: true, error: null });
 		try {
 			const result = await fetchOpenRouterModels();
-			if (generation !== catalogMutationGeneration) {
-				return;
+			if (generation === catalogMutationGeneration) {
+				set(makeScanSuccessState(result));
+				await persistSuccessfulScan(result);
 			}
-			set(makeScanSuccessState(result));
-			await persistSuccessfulScan(result);
 		} catch (err) {
 			if (generation === catalogMutationGeneration) {
 				set(makeScanErrorState(err));

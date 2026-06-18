@@ -1,4 +1,7 @@
-import { commands } from "@/bindings";
+import {
+	commands,
+	type ObservabilityIssue as BindingObservabilityIssue,
+} from "@/bindings";
 import { IPC } from "../ipc-channels";
 import {
 	commandOrDefault,
@@ -365,6 +368,14 @@ export interface FileQueueItem {
 	status: FileQueueStatus;
 }
 
+export interface FileQueueDroppedFile {
+	fileName: string;
+	filePath: string;
+}
+
+export const fileQueueEnqueue = (files: FileQueueDroppedFile[]) =>
+	invokeOrDefault<string[]>(IPC.FILE_QUEUE_ENQUEUE, [], { files });
+
 export const fileQueuePickAndEnqueue = () =>
 	invokeOrDefault<string[]>(IPC.FILE_QUEUE_PICK_AND_ENQUEUE, []);
 
@@ -466,6 +477,18 @@ export const diagSaveBundle = (): Promise<DiagSaveBundleResult> =>
 // Open the user's custom-models drop folder (`{userData}/models/custom/`)
 // in the OS file manager so they can drag in HuggingFace-style ONNX
 // bundles. The directory is created lazily here on first click.
+// Recent local operational issues for the About > Diagnostics panel.
+export type ObservabilityIssue = BindingObservabilityIssue;
+
+export const diagObservabilityTimeline = (
+	limit = 20,
+): Promise<ObservabilityIssue[]> =>
+	commandOrDefault(
+		"diag_observability_timeline",
+		() => commands.diagObservabilityTimeline(limit),
+		[],
+	);
+
 export const webviewDiagLog = (
 	label: string,
 	level: "info" | "warn" | "error",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { type Dispatch, useEffect, useReducer, useRef } from "react";
 import {
 	hotkeyStartRecording,
 	hotkeyStopRecording,
@@ -161,6 +161,29 @@ function comboFromPeak(keys: readonly string[]): string | null {
 	return keys.join("+");
 }
 
+function finishRecorderState(
+	combo: string | null,
+	sendStop: boolean,
+	pendingDoneRef: { current: boolean },
+	recordingRef: { current: boolean },
+	heldKeysRef: { current: string[] },
+	peakKeysRef: { current: string[] },
+	onKeyRecordedRef: { current: ((key: string) => void) | undefined },
+	dispatch: Dispatch<RecorderAction>,
+): void {
+	pendingDoneRef.current = false;
+	recordingRef.current = false;
+	heldKeysRef.current = [];
+	peakKeysRef.current = [];
+	dispatch({ type: "done", combo });
+	if (combo) {
+		onKeyRecordedRef.current?.(combo);
+	}
+	if (sendStop) {
+		hotkeyStopRecording();
+	}
+}
+
 export function useKeyRecorder({
 	onKeyRecorded,
 }: UseKeyRecorderOptions = {}): UseKeyRecorderReturn {
@@ -175,41 +198,35 @@ export function useKeyRecorder({
 	// instance owns the next done event.
 	const pendingDoneRef = useRef(false);
 	const onKeyRecordedRef = useRef(onKeyRecorded);
-	onKeyRecordedRef.current = onKeyRecorded;
+	useEffect(() => {
+		onKeyRecordedRef.current = onKeyRecorded;
+	}, [onKeyRecorded]);
 
-	const finishRecording = useCallback(
-		(combo: string | null, sendStop: boolean) => {
-			pendingDoneRef.current = false;
-			recordingRef.current = false;
-			heldKeysRef.current = [];
-			peakKeysRef.current = [];
-			dispatch({ type: "done", combo });
-			if (combo) {
-				onKeyRecordedRef.current?.(combo);
-			}
-			if (sendStop) {
-				hotkeyStopRecording();
-			}
-		},
-		[],
-	);
-
-	const startRecording = useCallback(() => {
+	const startRecording = () => {
 		recordingRef.current = true;
 		pendingDoneRef.current = true;
 		heldKeysRef.current = [];
 		peakKeysRef.current = [];
 		dispatch({ type: "start" });
 		hotkeyStartRecording();
-	}, []);
+	};
 
-	const stopRecording = useCallback(() => {
+	const stopRecording = () => {
 		if (recordingRef.current) {
 			const combo = comboFromPeak(peakKeysRef.current);
 			dispatch({ type: "stop" });
-			finishRecording(combo, true);
+			finishRecorderState(
+				combo,
+				true,
+				pendingDoneRef,
+				recordingRef,
+				heldKeysRef,
+				peakKeysRef,
+				onKeyRecordedRef,
+				dispatch,
+			);
 		}
-	}, [finishRecording]);
+	};
 
 	useEffect(() => {
 		const handleKeyDown = (event: KeyboardEvent) => {
@@ -224,7 +241,16 @@ export function useKeyRecorder({
 			event.stopPropagation();
 
 			if (key === "Escape") {
-				finishRecording(null, true);
+				finishRecorderState(
+					null,
+					true,
+					pendingDoneRef,
+					recordingRef,
+					heldKeysRef,
+					peakKeysRef,
+					onKeyRecordedRef,
+					dispatch,
+				);
 				return;
 			}
 
@@ -256,7 +282,7 @@ export function useKeyRecorder({
 			window.removeEventListener("keydown", handleKeyDown, { capture: true });
 			window.removeEventListener("keyup", handleKeyUp, { capture: true });
 		};
-	}, [finishRecording]);
+	}, []);
 
 	useEffect(() => {
 		const unsubUpdate = onHotkeyRecordingUpdate((keys) => {
@@ -278,14 +304,16 @@ export function useKeyRecorder({
 			if (!pendingDoneRef.current) {
 				return;
 			}
-			pendingDoneRef.current = false;
-			recordingRef.current = false;
-			heldKeysRef.current = [];
-			peakKeysRef.current = [];
-			dispatch({ type: "done", combo });
-			if (combo) {
-				onKeyRecordedRef.current?.(combo);
-			}
+			finishRecorderState(
+				combo,
+				false,
+				pendingDoneRef,
+				recordingRef,
+				heldKeysRef,
+				peakKeysRef,
+				onKeyRecordedRef,
+				dispatch,
+			);
 		});
 
 		return () => {

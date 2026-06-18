@@ -1,7 +1,7 @@
 "use client";
 
 import { OpenRouterModelSelector } from "@/widgets/model-picker";
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { useTranslations } from "use-intl";
 import {
 	CLOUD_CATALOG,
@@ -34,6 +34,15 @@ interface CloudModelSelectProps {
 	 * the picker); the inline settings usage leaves it closed.
 	 */
 	defaultOpen?: boolean;
+	/**
+	 * What to render when NO provider has a configured key.
+	 *   - `"configure-link"` (default): a "Configure key →" link into
+	 *     Settings → Integrations — the right affordance from a settings surface.
+	 *   - `"disabled"`: an inert, disabled selector. Used by onboarding, where
+	 *     the key is entered on the very same page, so a link back to Settings
+	 *     makes no sense — the selector simply unlocks once a key lands.
+	 */
+	emptyState?: "configure-link" | "disabled";
 	onSelect: (modelId: string) => void;
 	selectedId: string;
 }
@@ -122,6 +131,7 @@ export function CloudModelSelect({
 	selectedId,
 	onSelect,
 	defaultOpen = false,
+	emptyState = "configure-link",
 }: CloudModelSelectProps) {
 	const t = useTranslations("integrations");
 	const integrations = useSettingsStore((s) => s.settings.integrations);
@@ -135,10 +145,7 @@ export function CloudModelSelect({
 	);
 
 	const openrouterConfigured = openrouterKey.trim().length > 0;
-
-	// Kick the live transcription-model scan when the OpenRouter key is present.
-	// The store caches on first load and dedupes concurrent calls.
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (!disabled && openrouterConfigured) {
 			scanOpenrouterModels().catch(() => undefined);
 		}
@@ -195,22 +202,41 @@ export function CloudModelSelect({
 			? selectedProvider
 			: firstProvider;
 	const hasValidSelection = options.some((o) => o.id === selectedId);
-	useEffect(() => {
-		if (!disabled && activeProvider && !hasValidSelection) {
-			const fallback = modelIdForProvider(activeProvider, firstOpenrouterId);
-			if (fallback) {
-				onSelect(fallback);
-			}
-		}
-	}, [
-		activeProvider,
-		disabled,
-		firstOpenrouterId,
-		hasValidSelection,
-		onSelect,
-	]);
+	const fallbackSelection =
+		activeProvider === undefined
+			? null
+			: modelIdForProvider(activeProvider, firstOpenrouterId);
+	const effectiveSelectedId = hasValidSelection
+		? selectedId
+		: (fallbackSelection ?? "");
+	if (!disabled && !hasValidSelection && fallbackSelection) {
+		queueMicrotask(() => {
+			onSelect(fallbackSelection);
+		});
+	}
 
 	if (availableProviders.length === 0) {
+		// Onboarding enters the key on the same page, so the link-into-Settings
+		// affordance is wrong there — show an inert selector that unlocks once a
+		// key is configured instead.
+		if (emptyState === "disabled") {
+			return (
+				<div className="flex flex-col gap-2">
+					<ElevatedSurface inline>
+						<SearchableSelect
+							disabled
+							groups={[]}
+							onChange={() => undefined}
+							placeholder={t("cloudModels")}
+							value=""
+						/>
+					</ElevatedSurface>
+					<span className="text-2xs text-foreground-muted">
+						{t("cloudHelper")}
+					</span>
+				</div>
+			);
+		}
 		return (
 			<div className="flex flex-col gap-2">
 				<Button
@@ -287,7 +313,7 @@ export function CloudModelSelect({
 					placeholder={t("cloudModels")}
 					popupWidthClass="w-[max(580px,var(--anchor-width))]"
 					uiStorageKey={OPENROUTER_STT_SELECTOR_UI_STORAGE_KEY}
-					value={stripOpenrouterSelectionPrefix(selectedId)}
+					value={stripOpenrouterSelectionPrefix(effectiveSelectedId)}
 				/>
 			) : (
 				<ElevatedSurface inline>
@@ -301,7 +327,7 @@ export function CloudModelSelect({
 							}
 						}}
 						placeholder={t("cloudModels")}
-						value={selectedId}
+						value={effectiveSelectedId}
 					/>
 				</ElevatedSurface>
 			)}

@@ -35,8 +35,7 @@ impl GraniteNarEngine {
         let tokenizer = load_granite_tokenizer(file(&cfg.resolved, "tokenizer")?)?;
         let blank_token_id = tokenizer
             .token_to_id("<|end_of_text|>")
-            .map(i64::from)
-            .unwrap_or(100257);
+            .map_or(100257, i64::from);
 
         Ok(GraniteNarEngine {
             encoder,

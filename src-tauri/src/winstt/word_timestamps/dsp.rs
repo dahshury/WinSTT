@@ -172,16 +172,15 @@ pub fn split_tokens_into_words<F: Fn(&[i64]) -> String>(
     let mut words: Vec<String> = Vec::new();
     let mut word_tokens: Vec<Vec<i64>> = Vec::new();
     for (subword, ids) in subwords.into_iter().zip(subword_tokens) {
-        let is_special = ids.first().map(|&t| t >= eot_id).unwrap_or(false);
+        let is_special = ids.first().is_some_and(|&t| t >= eot_id);
         let is_space_prefixed = subword.starts_with(' ');
         let is_punct = is_ascii_punct(subword.trim());
         if is_special || is_space_prefixed || is_punct || words.is_empty() {
             words.push(subword);
             word_tokens.push(ids);
-        } else {
-            let last = words.last_mut().expect("non-empty");
+        } else if let (Some(last), Some(last_tokens)) = (words.last_mut(), word_tokens.last_mut()) {
             last.push_str(&subword);
-            word_tokens.last_mut().expect("non-empty").extend(ids);
+            last_tokens.extend(ids);
         }
     }
     (words, word_tokens)

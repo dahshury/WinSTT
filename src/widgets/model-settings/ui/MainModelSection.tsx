@@ -44,6 +44,15 @@ import type {
 	UpdateModelFn,
 } from "../lib/types";
 
+function openDetachedPicker(rect: DOMRect): void {
+	ipcSend(IPC.MODEL_PICKER_OPEN, {
+		x: rect.x,
+		y: rect.y,
+		width: rect.width,
+		height: rect.height,
+	});
+}
+
 interface MainModelSectionProps {
 	catalogLoaded: boolean;
 	catalogModels: CatalogModels;
@@ -110,12 +119,9 @@ interface SourceAreaProps {
 	disabled?: boolean;
 	disabledTooltip?: string | undefined;
 	downloadProgress: { modelId: string; percent: number | null } | null;
+	flags: SourceAreaFlags;
 	getFitAssessment: GetFitAssessment;
 	handleModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
-	hasAnyCloudKey: boolean;
-	initialSourceIsCloud: boolean;
-	isCloud: boolean;
-	isSwapping: boolean;
 	onDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
 	canDeleteQuant: (modelId: string, quantization: OnnxQuantization) => boolean;
 	onDownloadAction: (
@@ -134,6 +140,13 @@ interface SourceAreaProps {
 	tIntegrations: TFn;
 }
 
+interface SourceAreaFlags {
+	hasAnyCloudKey: boolean;
+	initialSourceIsCloud: boolean;
+	isCloud: boolean;
+	isSwapping: boolean;
+}
+
 /**
  * Owns the local "which picker is on screen" UI state. The parent re-mounts
  * this component (via `key={effectiveSourceIsCloud}`) whenever the persisted
@@ -150,12 +163,9 @@ function SourceArea({
 	disabled = false,
 	disabledTooltip,
 	downloadProgress,
+	flags,
 	getFitAssessment,
 	handleModelChange,
-	hasAnyCloudKey,
-	initialSourceIsCloud,
-	isCloud,
-	isSwapping,
 	onDeleteQuant,
 	canDeleteQuant,
 	onDownloadAction,
@@ -166,6 +176,7 @@ function SourceArea({
 	t,
 	tIntegrations,
 }: SourceAreaProps): ReactNode {
+	const { hasAnyCloudKey, initialSourceIsCloud, isCloud, isSwapping } = flags;
 	const goToIntegrations = useSettingsTabStore((s) => s.setActiveTab);
 	const { source, sourceOpts, onSourceChange } = useSttSourceSwitch({
 		hasAnyCloudKey,
@@ -197,16 +208,6 @@ function SourceArea({
 		}
 		handleModelChange(modelId, quantization);
 	};
-	// Open the detached picker window (full work area, can extend beyond the
-	// settings window) instead of an in-window popup — mirrors the
-	// main-window footer chip. It anchors above this trigger's rect.
-	const openDetachedPicker = (rect: DOMRect) =>
-		ipcSend(IPC.MODEL_PICKER_OPEN, {
-			x: rect.x,
-			y: rect.y,
-			width: rect.width,
-			height: rect.height,
-		});
 	return (
 		<>
 			<div className="col-span-2">
@@ -341,12 +342,14 @@ export function MainModelSection({
 					disabled={disabled}
 					disabledTooltip={disabledTooltip}
 					downloadProgress={downloadProgress}
+					flags={{
+						hasAnyCloudKey,
+						initialSourceIsCloud: effectiveSourceIsCloud,
+						isCloud,
+						isSwapping,
+					}}
 					getFitAssessment={getFitAssessment}
 					handleModelChange={handleModelChange}
-					hasAnyCloudKey={hasAnyCloudKey}
-					initialSourceIsCloud={effectiveSourceIsCloud}
-					isCloud={isCloud}
-					isSwapping={isSwapping}
 					key={effectiveSourceIsCloud ? "cloud" : "local"}
 					onDeleteQuant={onDeleteQuant}
 					canDeleteQuant={canDeleteQuant}

@@ -7,6 +7,7 @@ mod accelerator_commands;
 mod handler;
 mod modifier_combo;
 mod post_process_commands;
+mod priority;
 mod settings_commands;
 mod tauri_impl;
 
@@ -28,8 +29,26 @@ static CANCEL_SHORTCUT_REGISTERED: AtomicBool = AtomicBool::new(false);
 
 /// Initialize shortcuts.
 pub fn init_shortcuts(app: &AppHandle) {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        log::debug!("skipping shortcut initialization while onboarding is active");
+        return;
+    }
+
+    priority::ensure_dev_priority_watcher(app);
+    if priority::refresh_dev_hotkey_priority(app) {
+        return;
+    }
+
     let _ = settings::load_or_create_app_settings(app);
     tauri_impl::init_shortcuts(app);
+}
+
+pub(crate) fn announce_packaged_hotkey_owner() {
+    priority::announce_packaged_hotkey_owner();
+}
+
+pub(crate) fn dev_hotkey_dispatch_is_suppressed() -> bool {
+    priority::dev_hotkey_dispatch_is_suppressed()
 }
 
 pub(crate) fn escape_cancel_binding() -> ShortcutBinding {
@@ -48,6 +67,14 @@ pub(crate) fn escape_cancel_binding() -> ShortcutBinding {
 
 /// Register the Escape cancel shortcut (called when dictation starts)
 pub fn register_cancel_shortcut(app: &AppHandle) {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        return;
+    }
+
+    if priority::refresh_dev_hotkey_priority(app) {
+        return;
+    }
+
     if CANCEL_SHORTCUT_REGISTERED.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -64,6 +91,22 @@ pub fn unregister_cancel_shortcut(app: &AppHandle) {
 
 /// Register a shortcut.
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        log::debug!(
+            "skipping shortcut '{}' registration while onboarding is active",
+            binding.id
+        );
+        return Ok(());
+    }
+
+    if priority::refresh_dev_hotkey_priority(app) {
+        log::debug!(
+            "skipping shortcut '{}' registration while packaged WinSTT owns hotkeys",
+            binding.id
+        );
+        return Ok(());
+    }
+
     if modifier_combo::register_if_modifier_only(app, &binding)? {
         return Ok(());
     }
@@ -128,6 +171,15 @@ pub(crate) fn is_winstt_tree_binding(id: &str) -> bool {
 /// Routes every accelerator through `change_binding`, which translates the WinSTT
 /// key names to the active shortcut backend's vocabulary and persists + (re)registers.
 pub fn reconcile_winstt_hotkeys(app: &AppHandle) {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        log::debug!("skipping WinSTT hotkey reconciliation while onboarding is active");
+        return;
+    }
+
+    if priority::refresh_dev_hotkey_priority(app) {
+        return;
+    }
+
     let ws = crate::winstt::commands::settings::read_settings(app);
     reconcile_one(
         app,
@@ -160,6 +212,47 @@ fn reconcile_one(app: &AppHandle, id: &str, enabled: bool, accel: &str) {
             // A not-currently-registered binding is the common case; log at debug.
             log::debug!("reconcile_winstt_hotkeys: '{}' not unregistered: {}", id, e);
         }
+    }
+}
+
+pub(crate) fn disarm_all_shortcuts(app: &AppHandle) {
+    CANCEL_SHORTCUT_REGISTERED.store(false, Ordering::SeqCst);
+
+    for mut binding in settings::get_bindings(app).into_values() {
+        if binding.id == "transcribe" {
+            let ptt = crate::winstt::commands::settings::read_settings_raw(app)
+                .hotkey
+                .push_to_talk_key;
+            binding.current_binding = ptt;
+        }
+        unregister_if_nonempty(app, binding);
+    }
+
+    let ws = crate::winstt::commands::settings::read_settings(app);
+    unregister_winstt_tree_binding(app, "transforms", &ws.llm.transforms.hotkey);
+    unregister_winstt_tree_binding(app, "read_aloud", &ws.tts.hotkey);
+    unregister_winstt_tree_binding(app, "repaste", &ws.general.repaste_hotkey);
+    unregister_if_nonempty(app, escape_cancel_binding());
+}
+
+fn unregister_winstt_tree_binding(app: &AppHandle, id: &str, accel: &str) {
+    let accel = accel.trim();
+    if accel.is_empty() {
+        return;
+    }
+
+    let mut binding = settings::get_stored_binding(app, id);
+    binding.current_binding = accel.to_string();
+    unregister_if_nonempty(app, binding);
+}
+
+fn unregister_if_nonempty(app: &AppHandle, binding: ShortcutBinding) {
+    if binding.current_binding.trim().is_empty() {
+        return;
+    }
+
+    if let Err(err) = unregister_shortcut(app, binding) {
+        log::debug!("dev hotkey disarm skipped one shortcut: {err}");
     }
 }
 
@@ -223,7 +316,7 @@ pub fn change_binding(
     // Escape cancel is fixed so old persisted hotkey+Backspace-style bindings do not linger.
     if id == "cancel" {
         let b = escape_cancel_binding();
-        settings.bindings.insert(id.clone(), b.clone());
+        settings.bindings.insert(id, b.clone());
         settings::write_settings(&app, settings);
         return Ok(BindingResponse {
             success: true,

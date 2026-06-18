@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
+import { asInvalid } from "@test/lib/cast";
 import { render } from "@testing-library/react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import * as helpers from "../lib/endpoint-feature-icons-test-helpers";
@@ -308,7 +309,7 @@ describe("ModelFeatureIcons", () => {
 	test("renders model-level capability badges when endpoints are absent", () => {
 		const { container } = renderModel(
 			makeModel({
-				endpoints: undefined,
+				endpoints: asInvalid<never>(undefined),
 				supported_parameters: ["structured_outputs"],
 				variant: "thinking",
 			}),

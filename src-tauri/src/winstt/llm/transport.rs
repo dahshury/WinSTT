@@ -63,9 +63,7 @@ pub fn openrouter_extra_body(provider_slug: Option<&str>) -> serde_json::Value {
 }
 
 fn openrouter_supported_has(supported_parameters: Option<&[String]>, key: &str) -> bool {
-    supported_parameters
-        .map(|params| params.iter().any(|p| p == key))
-        .unwrap_or(false)
+    supported_parameters.is_some_and(|params| params.iter().any(|p| p == key))
 }
 
 fn is_openrouter_reasoning_model_id(model_id: &str) -> bool {
@@ -240,9 +238,7 @@ fn is_loopback_ollama_host(host: &str) -> bool {
     if host.eq_ignore_ascii_case("localhost") {
         return true;
     }
-    host.parse::<IpAddr>()
-        .map(|ip| ip.is_loopback())
-        .unwrap_or(false)
+    host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 #[cfg(test)]

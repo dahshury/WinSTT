@@ -6,6 +6,13 @@
 
 import type { HistoryEntry } from "../model/transcription-history";
 
+// Hoisted to module scope: locale (system default) and options are constant, so
+// the formatter's locale-data tables load once instead of per call.
+const entryTimestampFormatter = new Intl.DateTimeFormat(undefined, {
+	dateStyle: "medium",
+	timeStyle: "short",
+});
+
 /**
  * Pick the user-facing transcription text for a row. Prefers the post-LLM
  * cleaned version when LLM ran and produced different output; otherwise the
@@ -30,10 +37,7 @@ export function formatEntryTimestamp(entry: HistoryEntry): string {
 	if (Number.isNaN(date.getTime())) {
 		return entry.title;
 	}
-	return new Intl.DateTimeFormat(undefined, {
-		dateStyle: "medium",
-		timeStyle: "short",
-	}).format(date);
+	return entryTimestampFormatter.format(date);
 }
 
 /**

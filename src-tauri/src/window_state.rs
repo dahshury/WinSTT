@@ -119,8 +119,7 @@ pub(crate) fn show_main_window(app: &AppHandle) {
     );
 }
 
-#[allow(unused_variables)]
-pub(crate) fn should_force_show_permissions_window(app: &AppHandle) -> bool {
+pub(crate) fn should_force_show_permissions_window(_app: &AppHandle) -> bool {
     #[cfg(target_os = "windows")]
     {
         let status = commands::audio::get_windows_microphone_permission_status();

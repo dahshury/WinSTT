@@ -189,9 +189,9 @@ export function mergePresetsWithCustomModifiers(
 	if (!Array.isArray(customModifiers) || customModifiers.length === 0) {
 		return [...presets];
 	}
-	const extras = customModifiers
-		.filter((m) => m.enabled && m.prompt.trim() !== "")
-		.map(customModifierToEntry);
+	const extras = customModifiers.flatMap((m) =>
+		m.enabled && m.prompt.trim() !== "" ? [customModifierToEntry(m)] : [],
+	);
 	return [...presets, ...extras];
 }
 

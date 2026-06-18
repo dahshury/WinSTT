@@ -6,10 +6,8 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
 import { isFavoritesGroupValue } from "../../core/favorites";
-import {
-	FavoritesGroupLabel,
-	GROUP_HEADER_CLASSES,
-} from "../../core/model-card";
+import { GROUP_HEADER_CLASSES } from "../../core/model-card/card-constants";
+import { FavoritesGroupLabel } from "../../core/model-card/FavoritesGroupLabel";
 import {
 	type TtsEngineKey,
 	type TtsListGroup,

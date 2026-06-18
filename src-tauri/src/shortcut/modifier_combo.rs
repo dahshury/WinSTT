@@ -90,7 +90,7 @@ mod platform {
         let thread_stop = Arc::clone(&stop);
         let app = app.clone();
         let accelerator = binding.current_binding.clone();
-        let thread_combo = combo.clone();
+        let thread_combo = combo;
         let thread = thread::Builder::new()
             .name("winstt-ptt-modifier-hotkey".into())
             .spawn(move || run_listener(app, thread_combo, thread_stop))

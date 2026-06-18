@@ -28,8 +28,8 @@ import {
 import type { LlmSettingsPanelModel } from "./LlmSettingsPanel";
 import {
 	FeaturePresetControls,
-	seedDraftFromFeature,
 } from "./modifier-presets";
+import { seedDraftFromFeature } from "./modifier-presets-state";
 import { Playground } from "./Playground";
 import { ProviderSection } from "./provider-sections";
 import type { LlmProvider, TranslateFn } from "./types";

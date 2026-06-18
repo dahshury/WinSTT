@@ -84,11 +84,16 @@ function hasExplicitLanguages(model: ModelInfo): boolean {
 }
 
 function explicitLanguages(models: readonly ModelInfo[]): string[] {
-	const codes = models
-		.filter(hasExplicitLanguages)
-		.flatMap((m) => m.languages)
-		.map((code) => code.toUpperCase());
-	return [...new Set(codes)].sort();
+	const codes = new Set<string>();
+	for (const m of models) {
+		if (!hasExplicitLanguages(m)) {
+			continue;
+		}
+		for (const code of m.languages) {
+			codes.add(code.toUpperCase());
+		}
+	}
+	return Array.from(codes).sort();
 }
 
 function buildLanguageNote(

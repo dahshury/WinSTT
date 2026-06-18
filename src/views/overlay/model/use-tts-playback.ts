@@ -194,7 +194,9 @@ export function useTtsPlayback(): void {
 	const activeIdRef = useRef<string | null>(null);
 
 	useEffect(() => {
-		queueRef.current ??= new TtsPlaybackQueue();
+		if (queueRef.current === null) {
+			queueRef.current = new TtsPlaybackQueue();
+		}
 		const queue = queueRef.current;
 		registerTtsQueue(queue);
 		const store = useTtsPlaybackStore.getState;

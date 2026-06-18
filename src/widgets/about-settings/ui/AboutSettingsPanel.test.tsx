@@ -23,7 +23,7 @@ describe("AboutSettingsPanel", () => {
 	test("auto-checks updates once when the About tab has no updater history", async () => {
 		const nativeInvokeCalls: Array<{ args: unknown[]; channel: string }> = [];
 		const secureInvokeCalls: Array<{ channel: string; payload: unknown }> = [];
-		const tauriWindow = window as Window & {
+		const tauriWindow = window as unknown as Window & {
 			__TAURI_INTERNALS__: TauriInternals;
 		};
 		const previousNativeBridge = window.nativeBridge;
@@ -64,7 +64,9 @@ describe("AboutSettingsPanel", () => {
 				name: "Updates",
 			});
 			expect(updateToolbar.textContent).toContain("Version");
-			expect(updateToolbar.textContent).toContain("1.2.3");
+			await waitFor(() => {
+				expect(updateToolbar.textContent).toContain("1.2.3");
+			});
 			expect(
 				within(updateToolbar).getByRole("button", { name: "Check now" }),
 			).toBeDefined();
@@ -108,7 +110,7 @@ describe("AboutSettingsPanel", () => {
 
 	test("renders the latest-version status as the single update button", async () => {
 		const nativeInvokeCalls: Array<{ args: unknown[]; channel: string }> = [];
-		const tauriWindow = window as Window & {
+		const tauriWindow = window as unknown as Window & {
 			__TAURI_INTERNALS__: TauriInternals;
 		};
 		const previousNativeBridge = window.nativeBridge;
@@ -165,7 +167,7 @@ describe("AboutSettingsPanel", () => {
 
 	test("runs the open-logs action from the About tab", async () => {
 		const nativeInvokeCalls: Array<{ args: unknown[]; channel: string }> = [];
-		const tauriWindow = window as Window & {
+		const tauriWindow = window as unknown as Window & {
 			__TAURI_INTERNALS__: TauriInternals;
 		};
 		const previousNativeBridge = window.nativeBridge;
@@ -181,7 +183,7 @@ describe("AboutSettingsPanel", () => {
 				return;
 			},
 		};
-		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd, args) => {
+		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
 			if (cmd === "about_get_app_info") {
 				return { version: "1.2.3", copyright: "Copyright WinSTT" };
 			}
@@ -216,7 +218,7 @@ describe("AboutSettingsPanel", () => {
 	});
 
 	test("renders settings import and export actions in the About tab", async () => {
-		const tauriWindow = window as Window & {
+		const tauriWindow = window as unknown as Window & {
 			__TAURI_INTERNALS__: TauriInternals;
 		};
 		const previousNativeBridge = window.nativeBridge;

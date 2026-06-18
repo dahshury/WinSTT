@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcOn, ipcSend } from "@/shared/api/ipc-client";
 import {
@@ -40,21 +40,21 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 	const panelPhaseRef = useRef<PanelPhase>("hidden");
 	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const openGenerationRef = useRef(0);
-	const setPanel = useCallback((next: PanelRect | null) => {
+	const [setPanel] = useState(() => (next: PanelRect | null) => {
 		panelRef.current = next;
 		setPanelState(next);
-	}, []);
-	const setPanelPhase = useCallback((next: PanelPhase) => {
+	});
+	const [setPanelPhase] = useState(() => (next: PanelPhase) => {
 		panelPhaseRef.current = next;
 		setPanelPhaseState(next);
-	}, []);
-	const clearCloseTimer = useCallback(() => {
+	});
+	const [clearCloseTimer] = useState(() => () => {
 		if (closeTimerRef.current !== null) {
 			clearTimeout(closeTimerRef.current);
 			closeTimerRef.current = null;
 		}
-	}, []);
-	useEffect(() => clearCloseTimer, [clearCloseTimer]);
+	});
+	useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
 	// A real rect positions + reveals. Legacy/null anchors can still arrive from
 	// an older hidden-window close path; ignore them once a fresh open is active
 	// so a stale close cannot blank the panel while the backdrop is visible.
@@ -81,28 +81,30 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 			}),
 		[clearCloseTimer, setPanel, setPanelPhase],
 	);
-	useEffect(
-		() =>
-			ipcOn(IPC.MODEL_PICKER_CLOSING, () => {
-				if (panelRef.current !== null) {
-					const closeGeneration = openGenerationRef.current;
-					clearCloseTimer();
-					setPanelPhase("closing");
-					closeTimerRef.current = setTimeout(() => {
-						closeTimerRef.current = null;
-						if (
-							openGenerationRef.current !== closeGeneration ||
-							panelPhaseRef.current !== "closing"
-						) {
-							return;
-						}
-						setPanel(null);
-						setPanelPhase("hidden");
-					}, MODEL_PICKER_CLOSE_MS);
-				}
-			}),
-		[clearCloseTimer, setPanel, setPanelPhase],
-	);
+	useEffect(() => {
+		const unsubscribe = ipcOn(IPC.MODEL_PICKER_CLOSING, () => {
+			if (panelRef.current !== null) {
+				const closeGeneration = openGenerationRef.current;
+				clearCloseTimer();
+				setPanelPhase("closing");
+				closeTimerRef.current = setTimeout(() => {
+					closeTimerRef.current = null;
+					if (
+						openGenerationRef.current !== closeGeneration ||
+						panelPhaseRef.current !== "closing"
+					) {
+						return;
+					}
+					setPanel(null);
+					setPanelPhase("hidden");
+				}, MODEL_PICKER_CLOSE_MS);
+			}
+		});
+		return () => {
+			clearCloseTimer();
+			unsubscribe();
+		};
+	}, [clearCloseTimer, setPanel, setPanelPhase]);
 
 	const mode = panel?.mode ?? DEFAULT_MODEL_PICKER_MODE;
 	const { height: desiredHeight, width: desiredWidth } =

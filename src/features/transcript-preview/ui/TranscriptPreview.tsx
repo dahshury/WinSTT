@@ -1,6 +1,5 @@
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useCallback } from "react";
 import { useTranslations } from "use-intl";
 import { cancelPreview } from "@/shared/api/ipc-client";
 import { SurfaceProvider } from "@/shared/lib/surface";
@@ -24,10 +23,10 @@ export function TranscriptPreview() {
 	const view = useTranscriptPreviewStore((s) => s.view);
 	const reset = useTranscriptPreviewStore((s) => s.reset);
 
-	const dismiss = useCallback(() => {
+	const dismiss = () => {
 		void cancelPreview();
 		reset();
-	}, [reset]);
+	};
 	useEscapeToClose(dismiss);
 
 	return (

@@ -14,6 +14,13 @@ import {
 } from "../lib/hex-to-rgb";
 import { useAgentState } from "../lib/use-agent-state";
 import { useAuraAnimator } from "../lib/use-aura-animator";
+import {
+	auraShapeToUniform,
+	resolveAuraTheme,
+	themeModeToUniform,
+	type AuraShape,
+	type AuraTheme,
+} from "./AudioVisualizerAura.helpers";
 import { ReactShaderToy, type Uniforms } from "./ReactShaderToy";
 
 const auraShaderSource = `
@@ -164,28 +171,9 @@ export interface AudioVisualizerAuraProps {
 	color?: `#${string}`;
 	colorShift?: number;
 	/** Base SDF shape — circle or line. Default "circle". */
-	shape?: "circle" | "line";
+	shape?: AuraShape;
 	size?: VisualizerSize;
-	themeMode?: "dark" | "light";
-}
-
-/** WinSTT is always dark-themed; resolves to "dark" unless overridden via prop. */
-export function resolveAuraTheme(
-	themeMode: "dark" | "light" | undefined,
-): "dark" | "light" {
-	// themeMode prop takes priority; otherwise always dark.
-	return themeMode ?? "dark";
-}
-
-export function themeModeToUniform(theme: "dark" | "light"): number {
-	return theme === "light" ? 1.0 : 0.0;
-}
-
-/** Maps the base-shape choice to the shader's `uShape` selector. */
-export function auraShapeToUniform(
-	shape: "circle" | "line" | undefined,
-): number {
-	return shape === "line" ? 2.0 : 1.0;
+	themeMode?: AuraTheme;
 }
 
 const DEFAULT_AURA_BLUR = 0.2;
@@ -233,12 +221,12 @@ export function AudioVisualizerAura({
 	// Keep non-animated uniforms in sync with props (post-render mutation; ReactShaderToy
 	// reads uniformsRef on each rAF tick, so the next frame picks up the new values).
 	useEffect(() => {
-		uniformsRef.current.uColorShift = { type: "1f", value: colorShift };
-		uniformsRef.current.uMode = { type: "1f", value: modeUniform };
-		uniformsRef.current.uColor = { type: "3fv", value: rgbColor };
-		uniformsRef.current.uBlur = { type: "1f", value: blur };
-		uniformsRef.current.uBloom = { type: "1f", value: bloom };
-		uniformsRef.current.uShape = { type: "1f", value: shapeUniform };
+		uniformsRef.current["uColorShift"] = { type: "1f", value: colorShift };
+		uniformsRef.current["uMode"] = { type: "1f", value: modeUniform };
+		uniformsRef.current["uColor"] = { type: "3fv", value: rgbColor };
+		uniformsRef.current["uBlur"] = { type: "1f", value: blur };
+		uniformsRef.current["uBloom"] = { type: "1f", value: bloom };
+		uniformsRef.current["uShape"] = { type: "1f", value: shapeUniform };
 	}, [colorShift, modeUniform, rgbColor, blur, bloom, shapeUniform]);
 
 	// Hook up motion-value-driven animations that write to uniformsRef (zero re-renders)
@@ -257,8 +245,6 @@ export function AudioVisualizerAura({
 			<ReactShaderToy
 				devicePixelRatio={DEVICE_PIXEL_RATIO}
 				fs={auraShaderSource}
-				onError={(error) => console.error("Shader error:", error)}
-				onWarning={(warning) => console.warn("Shader warning:", warning)}
 				style={{ width: "100%", height: "100%" }}
 				uniforms={getUniforms}
 			/>

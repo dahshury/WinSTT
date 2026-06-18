@@ -4,6 +4,11 @@ import type {
 	BuiltinPresetEntry,
 	CustomModifier,
 } from "@/entities/llm-catalog";
+import {
+	INDEPENDENT_PRESETS,
+	PRESET_LEVELS,
+	TONE_GROUP,
+} from "@/entities/llm-catalog";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";
 import type { PresetCarrier } from "../lib/llm-settings-panel-test-helpers";
@@ -117,15 +122,54 @@ export function matchConfigurationId(
 	return configs.find((c) => carrierSignature(c.config) === sig)?.id ?? "";
 }
 
-// Validate the persisted shape at the localStorage boundary. We keep this as
-// loose as the previous hand-rolled guard (id/name strings + a `config` object):
-// configurations are a non-critical convenience and `cloneLlmConfiguration` is
-// tolerant of extra/missing fields. The `config` widens back to
-// `LlmConfiguration` on the way out.
+const PRESET_KEYS = [...TONE_GROUP, ...INDEPENDENT_PRESETS] as const;
+
+const presetKeySchema = z.enum(PRESET_KEYS);
+const presetLevelSchema = z.enum(PRESET_LEVELS);
+const thinkingEffortSchema = z.enum(["off", "low", "medium", "high"]);
+const effortLevelSchema = z.enum(["low", "medium", "high"]);
+const llmProviderSchema = z.enum([
+	"ollama",
+	"openrouter",
+	"apple-intelligence",
+]);
+
+const builtinPresetEntrySchema = z.object({
+	key: presetKeySchema,
+	level: presetLevelSchema.optional(),
+	targetLang: z.string().optional(),
+});
+
+const customModifierSchema = z.object({
+	enabled: z.boolean().default(false),
+	id: z.string(),
+	level: presetLevelSchema.optional(),
+	levelsEnabled: z.boolean().default(false),
+	name: z.string().default(""),
+	prompt: z.string().default(""),
+});
+
+const llmConfigurationSchema = z.object({
+	customModifiers: z.array(customModifierSchema).default([]),
+	enabled: z.boolean().default(false),
+	maxOutputTokens: z.number().int().min(1).nullable().default(null),
+	model: z.string().default(""),
+	openrouterFallbackModel: z.string().default(""),
+	openrouterModel: z.string().default(""),
+	presets: z.array(builtinPresetEntrySchema).default([{ key: "neutral" }]),
+	provider: llmProviderSchema.default("ollama"),
+	reasoningEffort: thinkingEffortSchema.default("medium"),
+	thinkingEffort: thinkingEffortSchema.default("off"),
+	verbosity: effortLevelSchema.default("medium"),
+});
+
+// Validate and default the persisted shape at the localStorage boundary. Extra
+// fields are ignored by zod and missing convenience fields receive the same
+// defaults as a fresh LLM feature draft.
 const savedConfigurationSchema = z.object({
 	id: z.string(),
 	name: z.string(),
-	config: z.looseObject({}),
+	config: llmConfigurationSchema,
 });
 
 /** Load saved configurations from localStorage. Returns [] on any read/parse
@@ -143,14 +187,17 @@ function loadConfigurations(): SavedConfiguration[] {
 		if (!Array.isArray(parsed)) {
 			return [];
 		}
-		// Validate per-entry so one malformed configuration doesn't discard the
-		// rest. `config` widens from the validated object back to
-		// `LlmConfiguration` — a boundary cast (validated input → richer domain
-		// type), not raw input.
-		return parsed
-			.map((entry) => savedConfigurationSchema.safeParse(entry))
-			.filter((result) => result.success)
-			.map((result) => result.data as unknown as SavedConfiguration);
+		// Single pass: parse each entry and keep only the ones that validate,
+		// extracting `.data` inline so a malformed configuration is dropped
+		// without iterating the list twice.
+		const configs: SavedConfiguration[] = [];
+		for (const entry of parsed) {
+			const result = savedConfigurationSchema.safeParse(entry);
+			if (result.success) {
+				configs.push(result.data);
+			}
+		}
+		return configs;
 	} catch {
 		// localStorage unavailable / quota / parse failure — start empty.
 		return [];
@@ -209,12 +256,7 @@ export const useLlmConfigurationsStore = create<ConfigurationsState>()(
 // A partial/corrupt blob fails the parse and falls back to the live seed.
 const playgroundSessionSchema = z.object({
 	selection: z.string(),
-	config: z.looseObject({
-		provider: z.string(),
-		model: z.string(),
-		presets: z.array(z.unknown()),
-		customModifiers: z.array(z.unknown()),
-	}),
+	config: llmConfigurationSchema,
 });
 
 /** Load the last Playground session, or null if none/invalid. */
@@ -228,11 +270,9 @@ export function loadPlaygroundSession(): PlaygroundSession | null {
 		if (!parsed.success) {
 			return null;
 		}
-		// `config` widens from the validated object back to `LlmConfiguration` —
-		// a boundary cast (validated input → richer domain type).
 		return {
 			selection: parsed.data.selection,
-			config: parsed.data.config as unknown as LlmConfiguration,
+			config: parsed.data.config,
 		};
 	} catch {
 		return null;

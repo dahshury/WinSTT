@@ -3,7 +3,10 @@ import { renderHook } from "@testing-library/react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { useSettingsStore } from "@/entities/setting";
 import type { ModelStateEntry } from "@/shared/api/ipc-client";
-import { useStaleModelFallback } from "./use-stale-model-fallback";
+import {
+	_setStaleModelFallbackPatchApplierForTests,
+	useStaleModelFallback,
+} from "./use-stale-model-fallback";
 
 // Mirror the production action signature exactly so the mock satisfies the
 // hook's `update` parameter under exactOptionalPropertyTypes (the previous
@@ -66,6 +69,7 @@ interface HookArgs {
 }
 
 function renderFallback(args: HookArgs) {
+	_setStaleModelFallbackPatchApplierForTests(args.update);
 	return renderHook(
 		(p: HookArgs) =>
 			useStaleModelFallback(
@@ -75,7 +79,6 @@ function renderFallback(args: HookArgs) {
 				p.statesLoaded ?? true,
 				p.currentMainModel,
 				p.currentRealtimeModel,
-				p.update,
 				undefined,
 				p.cloudFallbackModel ?? null,
 			),

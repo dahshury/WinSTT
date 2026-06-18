@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import {
 	type DownloadProgressPayload,
 	onModelDownloadComplete,
@@ -54,15 +54,11 @@ export function useDownloadListener(): void {
 	const pauseQuantEntry = useDownloadStore((s) => s.pauseQuantEntry);
 	const resumeQuantEntry = useDownloadStore((s) => s.resumeQuantEntry);
 
-	// Latest buffered per-quant payload keyed by ``model@quant``, flushed on a
-	// trailing timer. Refs (not state) so buffering never schedules a render.
-	const pendingRef = useRef(new Map<string, DownloadProgressPayload>());
-	const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
 	useEffect(() => {
-		const pending = pendingRef.current;
+		const pending = new Map<string, DownloadProgressPayload>();
+		let flushTimer: ReturnType<typeof setTimeout> | null = null;
 		const flush = (): void => {
-			flushTimerRef.current = null;
+			flushTimer = null;
 			for (const payload of pending.values()) {
 				// ``quantization`` is always a string for buffered entries (only the
 				// per-quant branch buffers), but narrow for the type checker.
@@ -95,8 +91,8 @@ export function useDownloadListener(): void {
 					quantBufferKey(payload.model, payload.quantization),
 					payload,
 				);
-				if (flushTimerRef.current === null) {
-					flushTimerRef.current = setTimeout(flush, QUANT_PROGRESS_FLUSH_MS);
+				if (flushTimer === null) {
+					flushTimer = setTimeout(flush, QUANT_PROGRESS_FLUSH_MS);
 				}
 				return;
 			}
@@ -132,9 +128,10 @@ export function useDownloadListener(): void {
 			offProgress();
 			offPaused();
 			offComplete();
-			if (flushTimerRef.current !== null) {
-				clearTimeout(flushTimerRef.current);
-				flushTimerRef.current = null;
+			const pendingFlush = flushTimer;
+			flushTimer = null;
+			if (pendingFlush !== null) {
+				clearTimeout(pendingFlush);
 			}
 			pending.clear();
 		};

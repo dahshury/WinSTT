@@ -119,5 +119,5 @@ export function sortOllamaModels(
 	models: readonly OllamaModel[],
 	key: OllamaSortKey,
 ): OllamaModel[] {
-	return [...models].sort(COMPARATORS[key]);
+	return models.toSorted(COMPARATORS[key]);
 }

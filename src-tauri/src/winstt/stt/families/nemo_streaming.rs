@@ -74,8 +74,7 @@ impl NativeNemoStreamingEngine {
         let blank_id = vocab_size.saturating_sub(1) as i64;
         let normalize_type = metadata
             .get("normalize_type")
-            .map(|s| if s == "NA" { "" } else { s.as_str() })
-            .unwrap_or("")
+            .map_or("", |s| if s == "NA" { "" } else { s.as_str() })
             .to_string();
 
         let cache_last_channel_shape = vec![

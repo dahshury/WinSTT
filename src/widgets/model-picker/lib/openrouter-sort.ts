@@ -104,5 +104,5 @@ export function sortOpenRouterModels(
 	models: readonly OpenRouterModel[],
 	key: OpenRouterSortKey,
 ): OpenRouterModel[] {
-	return [...models].sort(COMPARATORS[key]);
+	return models.toSorted(COMPARATORS[key]);
 }

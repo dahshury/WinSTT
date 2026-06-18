@@ -1,5 +1,5 @@
-import { buildTranscriptDiff } from "@/shared/lib/transcript-diff";
 import type { TranscriptionHistoryEntry } from "../model/history-store";
+import { getEntryTranscriptDiff } from "./transcript-diff-cache";
 
 /**
  * Lowercase word tokens across scripts. Keeps intra-word apostrophes/hyphens
@@ -104,6 +104,11 @@ export interface VoiceProfileStats {
 	peakTime: PeakTime | null;
 }
 
+const voiceProfileCache = new WeakMap<
+	TranscriptionHistoryEntry[],
+	VoiceProfileStats
+>();
+
 /**
  * The `limit` highest-count entries of a frequency map, descending. `skip`
  * drops words from consideration (stopwords). Ties resolve to the word that
@@ -146,6 +151,11 @@ function bump(counts: Map<string, number>, key: string): void {
 export function computeVoiceProfile(
 	entries: TranscriptionHistoryEntry[],
 ): VoiceProfileStats {
+	const cached = voiceProfileCache.get(entries);
+	if (cached) {
+		return cached;
+	}
+
 	const wordCounts = new Map<string, number>();
 	const correctedCounts = new Map<string, number>();
 	const timeCounts = new Map<string, PeakTime>();
@@ -159,7 +169,7 @@ export function computeVoiceProfile(
 			typeof entry.originalText === "string" &&
 			entry.originalText.length > 0
 		) {
-			const diff = buildTranscriptDiff(entry.originalText, entry.text);
+			const diff = getEntryTranscriptDiff(entry);
 			if (diff !== null) {
 				for (const change of diff.changes) {
 					// `before` is the word the user actually said/ASR produced that the
@@ -199,10 +209,12 @@ export function computeVoiceProfile(
 	);
 	const [mostCorrectedWord = null] = topWords(correctedCounts, 1, STOPWORDS);
 
-	return {
+	const stats = {
 		catchphrase,
 		mostCorrectedWord,
 		mostUsedWord,
 		peakTime,
 	};
+	voiceProfileCache.set(entries, stats);
+	return stats;
 }

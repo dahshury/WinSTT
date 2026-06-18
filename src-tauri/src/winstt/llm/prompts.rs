@@ -143,7 +143,7 @@ fn translate_prompt_for(lang: &str) -> String {
 fn resolve_entry_prompt(entry: &PresetEntry) -> String {
     match entry {
         PresetEntry::Custom { prompt, level, .. } => {
-            let hint = level.map(custom_level_hint).unwrap_or("");
+            let hint = level.map_or("", custom_level_hint);
             format!("{}{}{}", prompt.trim(), hint, SCHEMA_CLAMP)
         }
         PresetEntry::Builtin {
@@ -405,7 +405,10 @@ fn with_context_prefix(system_prompt: &str, context: &str) -> String {
     with_context_prefix_json(system_prompt, context)
 }
 
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "legacy context prefix format is retained for prompt parity comparisons"
+)]
 fn with_context_prefix_legacy(system_prompt: &str, context: &str) -> String {
     if context.is_empty() {
         return system_prompt.to_string();
@@ -562,7 +565,7 @@ fn is_word_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 fn next_char_len(s: &str) -> usize {
-    s.chars().next().map(|c| c.len_utf8()).unwrap_or(1)
+    s.chars().next().map_or(1, |c| c.len_utf8())
 }
 const BASE_USER_CLEANUP: &str = r#"First apply base cleanup: fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken numbers, dates, times, currency, percentages, units, versions, and equations to figures and symbols (for example, "one" -> "1", "twenty five dollars" -> "$25", "five p m" -> "5 PM", "one percent" -> "1%", "one plus one equals two" -> "1 + 1 = 2"); preserve compact product/model/API/release version labels, keeping v plus a number joined and normalizing model/release "version N" to vN when clearly part of a name; convert spoken flags and separators inside code, command lines, URLs, file paths, email addresses, identifiers, and sensitive values to literal characters while preserving the spoken flag form (for example, "dash dash save" -> "--save", "dash m" -> "-m", and "c colon backslash temp backslash logs" -> "C:\\temp\\logs" in the final text for a backslash-based path) without masking the value; if the whole dictation is a bare email, URL, file path, command, code token, identifier, or field value, return only that literal after separator conversion without prose casing or terminal punctuation; never canonicalize, alias, or expand short CLI flags into long aliases (for example, "git commit dash m" must stay "git commit -m", not "git commit --message"); quote literal labels, values, error messages, and quote/unquote text, keeping punctuation outside quoted literals unless it was part of the literal; remove fillers, repeats, false starts, and adjacent restatements where a later clause replaces earlier words; later means the second or last adjacent alternative, never the first; when the same action, field, sentence frame, or predicate repeats back-to-back with a different subject, object, or value, keep only the later one unless additive wording clearly asks for both; abstract pattern: old value plus repeated frame followed immediately by new value plus same repeated frame means keep only the new-value frame; if both adjacent alternatives remain in the output, fix it before returning; the earlier replaced value is not a separate idea to preserve, even when it is a name, role, team, product, or other durable term; preserve the speaker's meaning and every idea."#;
 pub fn dictation_user_prompt(text: &str) -> String {

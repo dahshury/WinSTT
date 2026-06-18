@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsStore, useSettingsTabStore } from "@/entities/setting";
@@ -8,6 +8,7 @@ import {
 } from "@/features/listen-mode";
 import {
 	wakewordCancelModelDownload,
+	type WakewordModelStatusPayload,
 	wakewordPauseModelDownload,
 	wakewordResumeModelDownload,
 	wakewordStartModelDownload,
@@ -29,8 +30,12 @@ import { RecordingModeSection } from "./RecordingModeSection";
 import {
 	useWakewordModelStatus,
 	WakewordDownloadDialog,
-	wakewordStatusWithRuntimeFallback,
 } from "./WakewordDownload";
+import { wakewordStatusWithRuntimeFallback } from "./wakeword-status";
+
+const pauseWakewordDownload = () => {
+	void wakewordPauseModelDownload();
+};
 
 export function RecordingSettingsPanel() {
 	const general = useSettingsStore((s) => s.settings.general);
@@ -43,14 +48,27 @@ export function RecordingSettingsPanel() {
 	const updateLlmDictation = useSettingsStore((s) => s.updateLlmDictation);
 	const setActiveSettingsTab = useSettingsTabStore((s) => s.setActiveTab);
 	const recordingMode = general?.recordingMode ?? "ptt";
-	const rawWakewordStatus = useWakewordModelStatus();
+	const wakewordEnablePendingRef = useRef(false);
+	const [wakewordDialogOpen, setWakewordDialogOpen] = useState(false);
+	const [wakewordEnablePending, setWakewordEnablePending] = useState(false);
+	const [listenModelDialogOpen, setListenModelDialogOpen] = useState(false);
+	const finalizeWakewordEnable = (next: WakewordModelStatusPayload): void => {
+		if (
+			!wakewordEnablePendingRef.current ||
+			!wakewordStatusWithRuntimeFallback(next, general?.wakeWord).available
+		) {
+			return;
+		}
+		updateGeneral(recordingModePatch("wakeword", general?.wakeWord));
+		wakewordEnablePendingRef.current = false;
+		setWakewordEnablePending(false);
+		setWakewordDialogOpen(false);
+	};
+	const rawWakewordStatus = useWakewordModelStatus(finalizeWakewordEnable);
 	const wakewordStatus = wakewordStatusWithRuntimeFallback(
 		rawWakewordStatus,
 		general?.wakeWord,
 	);
-	const [wakewordDialogOpen, setWakewordDialogOpen] = useState(false);
-	const [wakewordEnablePending, setWakewordEnablePending] = useState(false);
-	const [listenModelDialogOpen, setListenModelDialogOpen] = useState(false);
 	const llmDictationEnabled = useSettingsStore(
 		(s) => s.settings.llm?.dictation?.enabled ?? false,
 	);
@@ -114,39 +132,24 @@ export function RecordingSettingsPanel() {
 		recordingMode === "wakeword";
 
 	const startWakewordDownload = () => {
+		wakewordEnablePendingRef.current = true;
 		setWakewordEnablePending(true);
 		setWakewordDialogOpen(true);
-		void wakewordStartModelDownload();
-	};
-
-	const pauseWakewordDownload = () => {
-		void wakewordPauseModelDownload();
+		void wakewordStartModelDownload().then(finalizeWakewordEnable);
 	};
 
 	const resumeWakewordDownload = () => {
+		wakewordEnablePendingRef.current = true;
 		setWakewordEnablePending(true);
 		setWakewordDialogOpen(true);
-		void wakewordResumeModelDownload();
+		void wakewordResumeModelDownload().then(finalizeWakewordEnable);
 	};
 
 	const cancelWakewordDownload = () => {
+		wakewordEnablePendingRef.current = false;
 		setWakewordEnablePending(false);
 		void wakewordCancelModelDownload();
 	};
-
-	useEffect(() => {
-		if (!wakewordEnablePending || !wakewordStatus.available) {
-			return;
-		}
-		updateGeneral(recordingModePatch("wakeword", general?.wakeWord));
-		setWakewordEnablePending(false);
-		setWakewordDialogOpen(false);
-	}, [
-		general?.wakeWord,
-		updateGeneral,
-		wakewordEnablePending,
-		wakewordStatus.available,
-	]);
 
 	return (
 		<div className="flex flex-col gap-2">

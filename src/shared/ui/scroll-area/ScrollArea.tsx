@@ -146,12 +146,6 @@ function useTouchRubberBand(
 			resetOffset(false);
 		};
 
-		const preventNativeOverscroll = (event: TouchEvent) => {
-			if (event.cancelable) {
-				event.preventDefault();
-			}
-		};
-
 		const onTouchStart = (event: TouchEvent) => {
 			if (event.touches.length !== 1 || isIgnoredTouchTarget(event.target)) {
 				active = false;
@@ -201,7 +195,6 @@ function useTouchRubberBand(
 				return;
 			}
 
-			preventNativeOverscroll(event);
 			const offset = dampenRubberBandDistance(outwardDistance);
 			setOffset(boundary === "top" ? offset : -offset, false);
 		};
@@ -214,7 +207,7 @@ function useTouchRubberBand(
 		};
 
 		viewport.addEventListener("touchstart", onTouchStart, { passive: true });
-		viewport.addEventListener("touchmove", onTouchMove, { passive: false });
+		viewport.addEventListener("touchmove", onTouchMove, { passive: true });
 		viewport.addEventListener("touchend", onTouchEnd, { passive: true });
 		viewport.addEventListener("touchcancel", onTouchEnd, { passive: true });
 

@@ -30,6 +30,7 @@ use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
 use crate::command_auth;
+use crate::winstt::observability::{self, ObservabilityIssue};
 
 const LOGS_FOLDER_ALLOWED_WINDOWS: &[&str] = &["settings"];
 
@@ -168,8 +169,7 @@ fn pad2(n: u32) -> String {
 fn default_bundle_filename() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     // Decompose the unix timestamp into a UTC civil date/time. The the reference build
     // used local time; UTC here keeps the filename deterministic without a
     // timezone dep — the value is cosmetic (uniqueness, not correctness).
@@ -250,6 +250,7 @@ fn write_zip_archive(
     out_path: &Path,
     log_files: &[LogEntry],
     system_info: &str,
+    observability_timeline: &str,
 ) -> Result<(), String> {
     let file = File::create(out_path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
@@ -268,6 +269,11 @@ fn write_zip_archive(
     zip.start_file("system-info.txt", options)
         .map_err(|e| e.to_string())?;
     zip.write_all(system_info.as_bytes())
+        .map_err(|e| e.to_string())?;
+
+    zip.start_file("observability-timeline.json", options)
+        .map_err(|e| e.to_string())?;
+    zip.write_all(observability_timeline.as_bytes())
         .map_err(|e| e.to_string())?;
 
     zip.finish().map_err(|e| e.to_string())?;
@@ -300,8 +306,15 @@ fn build_bundle(app: &AppHandle) -> DiagSaveBundleResult {
     let logs = logs_dir(app);
     let log_files = collect_existing_log_files(&logs);
     let system_info = build_system_info(app);
+    let observability_timeline = serde_json::to_string_pretty(&observability::recent_issues(None))
+        .unwrap_or_else(|err| {
+            format!(
+                "{{\"error\":\"failed to serialize observability timeline: {}\"}}",
+                err
+            )
+        });
 
-    match write_zip_archive(&out_path, &log_files, &system_info) {
+    match write_zip_archive(&out_path, &log_files, &system_info, &observability_timeline) {
         Ok(()) => DiagSaveBundleResult::ok_with(out_path),
         Err(e) => DiagSaveBundleResult::failed(e),
     }
@@ -315,6 +328,15 @@ fn build_bundle(app: &AppHandle) -> DiagSaveBundleResult {
 #[specta::specta]
 pub async fn diag_save_bundle(app: AppHandle) -> DiagSaveBundleResult {
     build_bundle(&app)
+}
+
+/// `diag_observability_timeline` - recent operational issues recorded by the
+/// backend. Used by Settings > About so the user can see what failed without
+/// reading raw logs.
+#[tauri::command]
+#[specta::specta]
+pub fn diag_observability_timeline(limit: Option<usize>) -> Vec<ObservabilityIssue> {
+    observability::recent_issues(limit)
 }
 
 #[cfg(test)]

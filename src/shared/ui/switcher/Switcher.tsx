@@ -168,7 +168,7 @@ export function Switcher<T extends string = string>({
 				: 1;
 			const next: Record<number, SegmentRect> = {};
 			for (const el of items) {
-				const idx = Number(el.dataset.switcherIndex);
+				const idx = Number(el.dataset["switcherIndex"]);
 				if (!Number.isNaN(idx)) {
 					next[idx] = rectFromElement(el, containerRect, scaleX, scaleY);
 				}

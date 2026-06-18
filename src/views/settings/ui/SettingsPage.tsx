@@ -15,9 +15,14 @@ import {
 	PlugSocketIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useCallback, useEffect, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useTranslations } from "use-intl";
-import { useSettingsStore, useSettingsTabStore } from "@/entities/setting";
+import {
+	subscribePendingSettingsSection,
+	takePendingSettingsSection,
+	useSettingsStore,
+	useSettingsTabStore,
+} from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import { useModelAssistanceAutoEnable } from "@/features/model-assistance";
 import { useCloudKeyAutoRevert } from "@/features/revert-cloud-on-key-removal";
@@ -69,21 +74,18 @@ function VocabularyTab(): ReactNode {
 	);
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
 	const model = useEncoderModel();
-	const handleEncoderToggle = useCallback(
-		(next: boolean) => {
-			// Enable/disable only — the downloaded model stays on disk so re-enabling is instant.
-			// Deleting it (to reclaim ~310 MB) is an explicit action via the card's trash button.
-			updateGeneral({ encoderDictionaryEnabled: next });
-			// Preload + warm immediately on enable so the first dictation is fast; drop it from
-			// memory on disable to free the session it was holding. Both no-op if not downloaded.
-			if (next) {
-				model.preload();
-			} else {
-				model.unload();
-			}
-		},
-		[updateGeneral, model],
-	);
+	const handleEncoderToggle = (next: boolean) => {
+		// Enable/disable only — the downloaded model stays on disk so re-enabling is instant.
+		// Deleting it (to reclaim ~310 MB) is an explicit action via the card's trash button.
+		updateGeneral({ encoderDictionaryEnabled: next });
+		// Preload + warm immediately on enable so the first dictation is fast; drop it from
+		// memory on disable to free the session it was holding. Both no-op if not downloaded.
+		if (next) {
+			model.preload();
+		} else {
+			model.unload();
+		}
+	};
 	// The non-LLM path can act only when the feature is on AND the model is present.
 	const encoderActive = encoderEnabled && model.state === "present";
 	const disabled =
@@ -225,9 +227,9 @@ export function SettingsPage() {
 	// from another window loses the cross-window user-dirty merge.
 	useCloudKeyAutoRevert(undefined, hydrationStatus === "ready");
 	const openLlmModelPicker = useLlmModelPickerStore((s) => s.openFor);
-	const openDictationCleanupPicker = useCallback(() => {
+	const openDictationCleanupPicker = () => {
 		openLlmModelPicker("dictation", true);
-	}, [openLlmModelPicker]);
+	};
 	useModelAssistanceAutoEnable({
 		enabled: canRenderSettings,
 		onOpenOllamaPicker: openDictationCleanupPicker,
@@ -243,48 +245,59 @@ export function SettingsPage() {
 	const closeActivation = useTouchActivation(windowCloseSelf);
 	useEscapeToClose(windowCloseSelf);
 
+	// Honor a cross-window deep-link request (e.g. an onboarding "configure this"
+	// link). A freshly-opened window picks up the pending section on mount; an
+	// already-open window navigates live via the `storage` event.
+	useEffect(() => {
+		const pending = takePendingSettingsSection();
+		if (pending) {
+			setActiveTab(pending);
+		}
+		return subscribePendingSettingsSection(setActiveTab);
+	}, [setActiveTab]);
+
 	const links: SidebarLink[] = [
 		{
 			key: "recording",
 			label: t("tabRecording"),
 			icon: Mic01Icon,
 			tooltip: t("tabRecordingTooltip"),
-			keywords: keywords.recording,
+			keywords: keywords["recording"],
 		},
 		{
 			key: "model",
 			label: t("tabTranscription"),
 			icon: AiChat02Icon,
 			tooltip: t("tabTranscriptionTooltip"),
-			keywords: keywords.model,
+			keywords: keywords["model"],
 		},
 		{
 			key: "processing",
 			label: t("tabProcessing"),
 			icon: AiEditingIcon,
 			tooltip: t("tabProcessingTooltip"),
-			keywords: keywords.processing,
+			keywords: keywords["processing"],
 		},
 		{
 			key: "vocabulary",
 			label: t("tabVocabulary"),
 			icon: Books02Icon,
 			tooltip: t("tabVocabularyTooltip"),
-			keywords: keywords.vocabulary,
+			keywords: keywords["vocabulary"],
 		},
 		{
 			key: "output",
 			label: t("tabDelivery"),
 			icon: PackageSentIcon,
 			tooltip: t("tabDeliveryTooltip"),
-			keywords: keywords.output,
+			keywords: keywords["output"],
 		},
 		{
 			key: "readAloud",
 			label: t("tabReadAloud"),
 			icon: AiVoiceGeneratorIcon,
 			tooltip: t("tabReadAloudTooltip"),
-			keywords: keywords.readAloud,
+			keywords: keywords["readAloud"],
 			groupEnd: true,
 		},
 		{
@@ -292,14 +305,14 @@ export function SettingsPage() {
 			label: t("tabShortcuts"),
 			icon: KeyboardIcon,
 			tooltip: t("tabShortcutsTooltip"),
-			keywords: keywords.shortcuts,
+			keywords: keywords["shortcuts"],
 		},
 		{
 			key: "appearance",
 			label: t("tabAppearance"),
 			icon: PaintBrush03Icon,
 			tooltip: t("tabAppearanceTooltip"),
-			keywords: keywords.appearance,
+			keywords: keywords["appearance"],
 			groupEnd: true,
 		},
 		{
@@ -307,7 +320,7 @@ export function SettingsPage() {
 			label: t("tabHistory"),
 			icon: ChartHistogramIcon,
 			tooltip: t("tabHistoryTooltip"),
-			keywords: keywords.history,
+			keywords: keywords["history"],
 			groupEnd: true,
 		},
 		{
@@ -315,14 +328,14 @@ export function SettingsPage() {
 			label: t("tabIntegrations"),
 			icon: PlugSocketIcon,
 			tooltip: t("tabIntegrationsTooltip"),
-			keywords: keywords.integrations,
+			keywords: keywords["integrations"],
 		},
 		{
 			key: "about",
 			label: t("tabAbout"),
 			icon: InformationCircleIcon,
 			tooltip: t("tabAboutTooltip"),
-			keywords: keywords.about,
+			keywords: keywords["about"],
 		},
 	];
 

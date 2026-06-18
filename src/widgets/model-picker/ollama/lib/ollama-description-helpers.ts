@@ -162,7 +162,10 @@ export function normalizedCapabilitySet(
 	capabilities: readonly string[] | null | undefined,
 ): Set<string> {
 	return new Set(
-		(capabilities ?? []).map((cap) => cap.trim().toLowerCase()).filter(Boolean),
+		(capabilities ?? []).flatMap((cap) => {
+			const normalized = cap.trim().toLowerCase();
+			return normalized ? [normalized] : [];
+		}),
 	);
 }
 

@@ -181,8 +181,7 @@ fn parse_variant(value: &str) -> Result<ModelVariant, Box<dyn std::error::Error>
 
 fn default_bundle_dir() -> PathBuf {
     env::var("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
+        .map_or_else(|_| PathBuf::from("."), PathBuf::from)
         .join("com.winstt.winstt")
         .join("wakeword")
         .join(KWS_BUNDLE_DIRNAME)

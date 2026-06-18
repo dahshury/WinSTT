@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, render, screen } from "@testing-library/react";
-import { ModelPicker, scrollModelItemIntoView } from "./ModelPicker";
+import { ModelPicker } from "./ModelPicker";
+import { scrollModelItemIntoView } from "./model-picker-scroll";
 
 const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
 const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;

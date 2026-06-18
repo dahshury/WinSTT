@@ -120,7 +120,6 @@ export function QuickStartShowcase() {
     <figure className="shot not-prose qs-figure">
       <div
         className="shot-frame qs-frame"
-        role="img"
         aria-label="The WinSTT first-run path in five steps: download the app, finish onboarding, pick a model, hold the hotkey and speak, then release to paste the text at your cursor."
       >
         <ol className="qs-rail">

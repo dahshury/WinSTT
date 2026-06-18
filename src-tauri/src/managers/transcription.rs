@@ -1,5 +1,5 @@
 use crate::managers::audio::AudioRecordingManager;
-use crate::settings::{get_settings, ModelUnloadTimeout};
+use crate::settings::ModelUnloadTimeout;
 use crate::winstt::settings_schema::RecordingMode;
 use crate::winstt::sync_ext::MutexExt;
 use anyhow::Result;
@@ -205,12 +205,10 @@ impl Drop for WarmingGuard<'_> {
 }
 
 const WHISPER_GARBAGE_MARKER: &str = "[whisper-garbage]";
+const STT_IDLE_UNLOAD_NEVER_SECS: u64 = u64::MAX;
 
-fn listen_mode_forces_model_resident(app: &AppHandle) -> bool {
-    crate::winstt::commands::settings::read_settings_raw(app)
-        .general
-        .recording_mode
-        == RecordingMode::Listen
+fn encode_stt_idle_unload_timeout(timeout: ModelUnloadTimeout) -> u64 {
+    timeout.to_seconds().unwrap_or(STT_IDLE_UNLOAD_NEVER_SECS)
 }
 
 fn is_degenerate_decode_error(err: &anyhow::Error) -> bool {
@@ -224,6 +222,8 @@ pub struct TranscriptionManager {
     app_handle: AppHandle,
     current_model_id: Arc<Mutex<Option<String>>>,
     last_activity: Arc<AtomicU64>,
+    model_unload_timeout_secs: Arc<AtomicU64>,
+    listen_mode_resident: Arc<AtomicBool>,
     shutdown_signal: Arc<AtomicBool>,
     watcher_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
     is_loading: Arc<Mutex<bool>>,
@@ -252,11 +252,20 @@ pub struct TranscriptionManager {
 
 impl TranscriptionManager {
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
+        let runtime_settings = crate::winstt::commands::settings::read_settings_raw(app_handle);
+        let model_unload_timeout = crate::winstt::commands::settings::core_timeout_from_winstt(
+            runtime_settings.global.model_unload_timeout,
+        );
+        let listen_mode_resident = runtime_settings.general.recording_mode == RecordingMode::Listen;
         let manager = Self {
             engine: Arc::new(Mutex::new(None)),
             app_handle: app_handle.clone(),
             current_model_id: Arc::new(Mutex::new(None)),
             last_activity: Arc::new(AtomicU64::new(Self::now_ms())),
+            model_unload_timeout_secs: Arc::new(AtomicU64::new(encode_stt_idle_unload_timeout(
+                model_unload_timeout,
+            ))),
+            listen_mode_resident: Arc::new(AtomicBool::new(listen_mode_resident)),
             shutdown_signal: Arc::new(AtomicBool::new(false)),
             watcher_handle: Arc::new(Mutex::new(None)),
             is_loading: Arc::new(Mutex::new(false)),
@@ -282,9 +291,7 @@ impl TranscriptionManager {
                         break;
                     }
 
-                    let settings = get_settings(&app_handle_cloned);
-                    let timeout = settings.model_unload_timeout;
-                    if listen_mode_forces_model_resident(&app_handle_cloned) {
+                    if manager_cloned.listen_mode_forces_model_resident() {
                         manager_cloned.touch_activity();
                         continue;
                     }
@@ -292,7 +299,8 @@ impl TranscriptionManager {
                     // Skip Immediately — that variant is handled by
                     // maybe_unload_immediately() after each transcription.
                     // Treating it as 0s here would unload the model mid-recording.
-                    if timeout == ModelUnloadTimeout::Immediately {
+                    let timeout_secs = manager_cloned.idle_unload_timeout_secs();
+                    if timeout_secs == 0 {
                         continue;
                     }
 
@@ -306,11 +314,11 @@ impl TranscriptionManager {
                         continue;
                     }
 
-                    if let Some(limit_seconds) = timeout.to_seconds() {
+                    if timeout_secs != STT_IDLE_UNLOAD_NEVER_SECS {
                         let last = manager_cloned.last_activity.load(Ordering::Relaxed);
                         let now_ms = TranscriptionManager::now_ms();
                         let idle_ms = now_ms.saturating_sub(last);
-                        let limit_ms = limit_seconds * 1000;
+                        let limit_ms = timeout_secs * 1000;
 
                         if idle_ms > limit_ms {
                             // idle -> unload
@@ -319,7 +327,7 @@ impl TranscriptionManager {
                                 info!(
                                     "Model idle for {}s (limit: {}s), unloading",
                                     idle_ms / 1000,
-                                    limit_seconds
+                                    timeout_secs
                                 );
                                 match manager_cloned.unload_model() {
                                     Ok(()) => {
@@ -428,8 +436,23 @@ impl TranscriptionManager {
         self.last_activity.store(Self::now_ms(), Ordering::Relaxed);
     }
 
+    fn idle_unload_timeout_secs(&self) -> u64 {
+        self.model_unload_timeout_secs.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn update_runtime_policy(
+        &self,
+        timeout: ModelUnloadTimeout,
+        listen_mode_resident: bool,
+    ) {
+        self.model_unload_timeout_secs
+            .store(encode_stt_idle_unload_timeout(timeout), Ordering::Release);
+        self.listen_mode_resident
+            .store(listen_mode_resident, Ordering::Release);
+    }
+
     pub(crate) fn listen_mode_forces_model_resident(&self) -> bool {
-        listen_mode_forces_model_resident(&self.app_handle)
+        self.listen_mode_resident.load(Ordering::Acquire)
     }
 }
 

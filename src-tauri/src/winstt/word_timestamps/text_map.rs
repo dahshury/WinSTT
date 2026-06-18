@@ -46,7 +46,7 @@ pub fn map_timings_to_text(timed: &[WordTiming], text_words: &[String]) -> Vec<M
     let opcodes = diff_opcodes(&a, &b);
 
     let mut out: Vec<MappedWord> = Vec::with_capacity(text_words.len());
-    let mut last_end = timed.first().map(|t| t.start).unwrap_or(0.0);
+    let mut last_end = timed.first().map_or(0.0, |t| t.start);
 
     for op in opcodes {
         match op {
@@ -76,8 +76,7 @@ pub fn map_timings_to_text(timed: &[WordTiming], text_words: &[String]) -> Vec<M
                 // Distribute the spanned source time evenly across the b-run.
                 let span_start = timed
                     .get(a0.min(timed.len().saturating_sub(1)))
-                    .map(|t| t.start)
-                    .unwrap_or(last_end)
+                    .map_or(last_end, |t| t.start)
                     .max(last_end);
                 let span_end = if a1 > a0 {
                     timed[(a1 - 1).min(timed.len() - 1)].end
@@ -168,7 +167,9 @@ fn diff_opcodes(a: &[String], b: &[String]) -> Vec<Opcode> {
     let mut iter = matches.into_iter().peekable();
     while iter.peek().is_some() {
         // Coalesce a contiguous run of matches into one Equal opcode.
-        let (ma, mb) = *iter.peek().expect("peeked");
+        let Some(&(ma, mb)) = iter.peek() else {
+            break;
+        };
         if ma > ai || mb > bi {
             push_nonequal(&mut ops, ai, ma, bi, mb);
             ai = ma;

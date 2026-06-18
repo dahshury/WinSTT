@@ -88,8 +88,7 @@ fn is_sound_library_operation_allowed(caller: &str) -> bool {
 fn next_sound_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     let seq = SOUND_ID_SEQ.fetch_add(1, Ordering::Relaxed);
     format!("{nanos}-{seq}")
 }

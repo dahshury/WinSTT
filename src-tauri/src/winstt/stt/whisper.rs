@@ -217,8 +217,7 @@ impl WhisperEngine {
         let is_gpu = cfg
             .providers
             .first()
-            .map(|a| !matches!(a, Accelerator::Cpu))
-            .unwrap_or(false);
+            .is_some_and(|a| !matches!(a, Accelerator::Cpu));
         let intra = super::pick_intra_op_threads(is_gpu, num_cpus());
 
         let encoder = build_session(encoder_path, cfg, intra, cfg.whisper_fp16_workaround)?;
@@ -573,7 +572,10 @@ impl WhisperEngine {
 
         // input_ids: full prompt on step 0, else only the last token.
         let (id_data, id_len): (Vec<i64>, usize) = if use_cache {
-            (vec![*state.tokens.last().unwrap()], 1)
+            let last = state.tokens.last().copied().ok_or_else(|| {
+                SttError::Inference("whisper decoder token history is empty".into())
+            })?;
+            (vec![last], 1)
         } else {
             (state.tokens.clone(), state.tokens.len())
         };
@@ -630,9 +632,11 @@ impl WhisperEngine {
                     .bind_input(name.as_str(), v)
                     .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?,
                 None => {
-                    let t = empty_iter
-                        .next()
-                        .expect("one empty tensor per None past entry");
+                    let Some(t) = empty_iter.next() else {
+                        return Err(SttError::Inference(
+                            "missing empty tensor for whisper past key/value input".into(),
+                        ));
+                    };
                     binding
                         .bind_input(name.as_str(), t)
                         .map_err(|e| SttError::Inference(format!("bind empty {name}: {e}")))?;
@@ -711,25 +715,27 @@ impl WhisperEngine {
             let selected = if step_index == 0 {
                 first_step_allowed
                     .filter(|allowed| !allowed.is_empty())
-                    .map(|allowed| {
-                        select_whisper_token_from_allowed(
-                            logits,
-                            allowed,
-                            self.tokenizer.eos_token_id,
-                            self.tokenizer.nospeech_token_id,
-                            true,
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        select_whisper_token(
-                            logits,
-                            &self.suppress_token_mask,
-                            self.tokenizer.eos_token_id,
-                            self.tokenizer.nospeech_token_id,
-                            true,
-                            &[],
-                        )
-                    })
+                    .map_or_else(
+                        || {
+                            select_whisper_token(
+                                logits,
+                                &self.suppress_token_mask,
+                                self.tokenizer.eos_token_id,
+                                self.tokenizer.nospeech_token_id,
+                                true,
+                                &[],
+                            )
+                        },
+                        |allowed| {
+                            select_whisper_token_from_allowed(
+                                logits,
+                                allowed,
+                                self.tokenizer.eos_token_id,
+                                self.tokenizer.nospeech_token_id,
+                                true,
+                            )
+                        },
+                    )
             } else {
                 // no_repeat_ngram over the GENERATED region only (prompt excluded): bans the
                 // continuations that would close a verbatim repetition loop, which is what the
@@ -754,7 +760,7 @@ impl WhisperEngine {
             selected.token
         };
         // EOS-sticky: once a row hit eos, freeze it.
-        if *state.tokens.last().unwrap() == eos {
+        if state.tokens.last().is_some_and(|&token| token == eos) {
             next = eos;
         }
 
@@ -818,8 +824,7 @@ impl WhisperEngine {
         let (dom_tok, dom_n) = counts
             .iter()
             .max_by_key(|(_, n)| **n)
-            .map(|(t, n)| (*t, *n))
-            .unwrap_or((-1, 0));
+            .map_or((-1, 0), |(t, n)| (*t, *n));
         let dom_frac = dom_n as f32 / generated.len().max(1) as f32;
         if dom_frac < 0.5 {
             return Ok(());
@@ -969,11 +974,7 @@ impl Transcriber for WhisperEngine {
         // Resolve the language slot for multilingual + no-language via the 3-token detect.
         let mut prompt = self.build_prompt(opts);
         if self.tokenizer.is_multilingual {
-            let no_lang = opts
-                .language
-                .as_deref()
-                .map(|l| l.is_empty())
-                .unwrap_or(true);
+            let no_lang = opts.language.as_deref().is_none_or(|l| l.is_empty());
             if no_lang && prompt.get(1).copied() == Some(self.tokenizer.eos_token_id) {
                 let lang_tok = self.detect_language(&encoder_out, &opts.language_candidates)?;
                 prompt[1] = lang_tok;
@@ -1071,11 +1072,7 @@ impl Transcriber for WhisperEngine {
         let encoder_out = self.encode(audio)?;
         let mut prompt = self.build_prompt(opts);
         if self.tokenizer.is_multilingual {
-            let no_lang = opts
-                .language
-                .as_deref()
-                .map(|l| l.is_empty())
-                .unwrap_or(true);
+            let no_lang = opts.language.as_deref().is_none_or(|l| l.is_empty());
             if no_lang && prompt.get(1).copied() == Some(self.tokenizer.eos_token_id) {
                 let lang_tok = self.detect_language(&encoder_out, &opts.language_candidates)?;
                 prompt[1] = lang_tok;

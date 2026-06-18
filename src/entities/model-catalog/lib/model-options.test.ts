@@ -254,73 +254,73 @@ describe("buildRealtimeOpts", () => {
 	test("collapses duplicated streaming export variants to canonical realtime rows", () => {
 		const models = [
 			{
-				...fixture[2],
+				...fixture[2]!,
 				id: "streaming-nemo-rnnt-en-80ms",
 				displayName: "RNN-T 80ms fp32",
 				nativeStreaming: true,
 			},
 			{
-				...fixture[2],
+				...fixture[2]!,
 				id: "streaming-nemo-rnnt-en-80ms-int8",
 				displayName: "RNN-T 80ms int8",
 				nativeStreaming: true,
 			},
 			{
-				...fixture[2],
+				...fixture[2]!,
 				id: "streaming-nemo-rnnt-en-1040ms",
 				displayName: "RNN-T 1040ms fp32",
 				nativeStreaming: true,
 			},
 			{
-				...fixture[2],
+				...fixture[2]!,
 				id: "streaming-nemo-rnnt-en-1040ms-int8",
 				displayName: "RNN-T 1040ms int8",
 				nativeStreaming: true,
 			},
 			{
-				...fixture[2],
+				...fixture[2]!,
 				id: "streaming-parakeet-unified-en-560ms-int8",
 				displayName: "Parakeet 560ms int8",
 				nativeStreaming: true,
 			},
 			{
-				...fixture[2],
+				...fixture[2]!,
 				id: "streaming-parakeet-unified-en-1120ms",
 				displayName: "Parakeet 1120ms fp32",
 				nativeStreaming: true,
 			},
 			{
-				...fixture[2],
+				...fixture[2]!,
 				id: "streaming-parakeet-unified-en-1120ms-int8",
 				displayName: "Parakeet 1120ms int8",
 				nativeStreaming: true,
 			},
 			{
-				...fixture[2],
+				...fixture[2]!,
 				id: "streaming-parakeet-unified-en-240ms-int8",
 				displayName: "Parakeet 240ms int8",
 				nativeStreaming: true,
 			},
 			{
-				...fixture[2],
+				...fixture[2]!,
 				id: "streaming-nemotron-en-560ms",
 				displayName: "Nemotron 560ms fp32",
 				nativeStreaming: true,
 			},
 			{
-				...fixture[2],
+				...fixture[2]!,
 				id: "streaming-nemotron-en-1120ms",
 				displayName: "Nemotron 1120ms fp32",
 				nativeStreaming: true,
 			},
 			{
-				...fixture[2],
+				...fixture[2]!,
 				id: "streaming-nemotron-en-1120ms-int8",
 				displayName: "Nemotron 1120ms int8",
 				nativeStreaming: true,
 			},
 			{
-				...fixture[0],
+				...fixture[0]!,
 				id: "t-tech/t-one",
 				displayName: "T-One",
 				family: "t-one",
@@ -342,7 +342,7 @@ describe("buildRealtimeOpts", () => {
 
 describe("isSelectableRealtimeModel", () => {
 	const realtime = (id: string, nativeStreaming = true): ModelInfo => ({
-		...fixture[2],
+		...fixture[2]!,
 		id,
 		nativeStreaming,
 	});

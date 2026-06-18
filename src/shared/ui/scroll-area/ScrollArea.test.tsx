@@ -106,7 +106,7 @@ describe("ScrollArea", () => {
 		);
 		const contentLayer = screen.getByTestId("content")
 			.parentElement as HTMLElement;
-		expect(contentLayer.dataset.rubberBandContent).toBe("true");
+		expect(contentLayer.dataset["rubberBandContent"]).toBe("true");
 	});
 
 	test("enables touch rubber banding by default", () => {
@@ -117,7 +117,7 @@ describe("ScrollArea", () => {
 		);
 		const contentLayer = screen.getByTestId("content")
 			.parentElement as HTMLElement;
-		expect(contentLayer.dataset.rubberBandContent).toBe("true");
+		expect(contentLayer.dataset["rubberBandContent"]).toBe("true");
 	});
 
 	test("pulls the content down when a touch drag overscrolls the top edge", () => {

@@ -38,7 +38,7 @@ export function PulseDot({
 				role={role ?? (hasAccessibleName ? "status" : undefined)}
 				style={{
 					animation:
-						"loading-ui-pulse-dot var(--duration, 1.2s) ease-in-out infinite",
+						"loading-ui-pulse-dot var(--duration, 900ms) ease-in-out infinite",
 					...style,
 				}}
 				{...props}

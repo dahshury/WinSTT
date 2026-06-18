@@ -12,6 +12,11 @@ export interface StreakStats {
 	longest: number;
 }
 
+const streakCache = new WeakMap<
+	TranscriptionHistoryEntry[],
+	Map<string, StreakStats>
+>();
+
 /** The local-day key `deltaDays` away from `key` (DST-safe via setDate). */
 function shiftDayKey(key: string, deltaDays: number): string {
 	// A date-time string with no offset parses as local time (unlike a bare
@@ -68,9 +73,21 @@ export function computeStreak(
 	if (entries.length === 0) {
 		return { current: 0, longest: 0 };
 	}
+	const todayKey = toDayKey(startOfLocalDay(now).getTime());
+	const cached = streakCache.get(entries)?.get(todayKey);
+	if (cached) {
+		return cached;
+	}
 	const days = new Set<string>();
 	for (const entry of entries) {
 		days.add(toDayKey(entry.timestamp));
 	}
-	return { current: currentRun(days, now), longest: longestRun(days) };
+	const stats = { current: currentRun(days, now), longest: longestRun(days) };
+	let byDay = streakCache.get(entries);
+	if (!byDay) {
+		byDay = new Map();
+		streakCache.set(entries, byDay);
+	}
+	byDay.set(todayKey, stats);
+	return stats;
 }

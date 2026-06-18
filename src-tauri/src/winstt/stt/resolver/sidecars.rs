@@ -25,9 +25,7 @@ pub const EXTERNAL_DATA_PARSE_SIZE_GUARD: u64 = 64 * 1024 * 1024;
 /// On any parse failure we fall back to the NAME-PATTERN guess (`<stem>.onnx_data*`,
 /// `<stem>.onnx.data*`) which the directory scan in `verify_external_data_complete` resolves.
 pub(crate) fn referenced_sidecars(onnx_path: &Path) -> Vec<String> {
-    let size = std::fs::metadata(onnx_path)
-        .map(|m| m.len())
-        .unwrap_or(u64::MAX);
+    let size = std::fs::metadata(onnx_path).map_or(u64::MAX, |m| m.len());
     if size >= EXTERNAL_DATA_PARSE_SIZE_GUARD {
         return Vec::new();
     }

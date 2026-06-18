@@ -1,14 +1,19 @@
-"use client";
+﻿"use client";
 
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import {
+	type MouseEvent,
+	type ReactNode,
+	useEffect,
+	useLayoutEffect,
+	useState,
+} from "react";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { parseModelSelection } from "@/shared/lib/openrouter-model-selection";
+import { GroupRail, type GroupRailItem } from "../core/GroupRail";
 import {
 	ALL_AUTHORS_RAIL_ID,
 	buildAllAuthorsRailItem,
-	GroupRail,
-	type GroupRailItem,
-} from "../core/GroupRail";
+} from "../core/group-rail-items";
 import { useFavoriteSet } from "../core/use-favorite-set";
 import { ModelPicker } from "../core/ModelPicker";
 import { isReasoningModel } from "../lib/model-selector-display-utils";
@@ -104,6 +109,97 @@ function isPersistedOpenRouterSelectorState(
 	);
 }
 
+const comboboxFilter = () => true;
+
+interface OpenRouterPickerFrameProps {
+	activeFiltersBar: ReactNode;
+	belowListSlot: ReactNode;
+	disabled: boolean;
+	externalOpen: boolean;
+	filtersMenu: ReactNode;
+	handleOpenChange: (open: boolean, eventDetails?: unknown) => void;
+	handleSearchChange: (value: string) => void;
+	handleValueChange: (next: string | null, eventDetails?: unknown) => void;
+	inline: boolean;
+	isLoading: boolean;
+	isSearchPending: boolean;
+	items: readonly unknown[];
+	label: string;
+	list: ReactNode;
+	open: boolean;
+	popupHeightClass: string;
+	popupRef: (node: HTMLElement | null) => void;
+	popupWidthClass: string;
+	searchQuery: string;
+	sidebar: ReactNode;
+	triggerNode: ReactNode;
+}
+
+function OpenRouterPickerFrame({
+	activeFiltersBar,
+	belowListSlot,
+	disabled,
+	externalOpen,
+	filtersMenu,
+	handleOpenChange,
+	handleSearchChange,
+	handleValueChange,
+	inline,
+	isLoading,
+	isSearchPending,
+	items,
+	label,
+	list,
+	open,
+	popupHeightClass,
+	popupRef,
+	popupWidthClass,
+	searchQuery,
+	sidebar,
+	triggerNode,
+}: OpenRouterPickerFrameProps) {
+	return (
+		<div
+			className={
+				inline
+					? "flex h-full min-h-0 flex-col [&>[data-slot=model-picker]]:min-h-0 [&>[data-slot=model-picker]]:flex-1"
+					: "flex flex-col gap-2"
+			}
+			data-slot="openrouter-model-selector"
+		>
+			{inline ? null : (
+				<label
+					className="text-body-sm text-foreground-secondary"
+					htmlFor="openrouter-model-selector-input"
+				>
+					{label}
+				</label>
+			)}
+			<ModelPicker<string, string | null>
+				activeFiltersSlot={activeFiltersBar}
+				belowListSlot={belowListSlot}
+				disabled={disabled}
+				filter={comboboxFilter}
+				filtersMenuSlot={filtersMenu}
+				inputValue={searchQuery}
+				isLoading={isLoading || isSearchPending}
+				items={items}
+				list={list}
+				onInputValueChange={handleSearchChange}
+				onOpenChange={handleOpenChange}
+				onValueChange={handleValueChange}
+				open={externalOpen ? false : open}
+				inline={inline}
+				popupHeightClass={popupHeightClass}
+				popupRef={popupRef}
+				popupWidthClass={popupWidthClass}
+				sidebarSlot={sidebar}
+				trigger={triggerNode}
+			/>
+		</div>
+	);
+}
+
 function countModelsByMaker(
 	models: readonly OpenRouterModel[],
 ): Map<string, number> {
@@ -114,6 +210,54 @@ function countModelsByMaker(
 		}
 	}
 	return counts;
+}
+
+function OpenRouterDetachedTrigger({
+	models,
+	value,
+	onOpen,
+	disabled = false,
+	isLoading = false,
+	placeholder = DEFAULT_PLACEHOLDER,
+	label = DEFAULT_LABEL,
+	exclusionConfig,
+	disabledModelIds,
+	onOpenDetached,
+}: OpenRouterModelSelectorProps) {
+	const filteredModels = applyModelFilters(
+		models,
+		exclusionConfig,
+		disabledModelIds,
+	);
+	const { modelId: parsedModelId } = parseModelSelection(value);
+	const selectedModel = filteredModels.find((m) => m.id === parsedModelId);
+	const handleDetachedOpen = (event: MouseEvent<HTMLButtonElement>) => {
+		onOpen?.();
+		onOpenDetached?.(event.currentTarget.getBoundingClientRect());
+	};
+
+	return (
+		<div
+			className="flex flex-col gap-2"
+			data-slot="openrouter-model-selector"
+		>
+			<label
+				className="text-body-sm text-foreground-secondary"
+				htmlFor="openrouter-model-selector-input"
+			>
+				{label}
+			</label>
+			<TriggerButton
+				buttonProps={{ onClick: handleDetachedOpen, type: "button" }}
+				disabled={disabled}
+				isLoading={isLoading}
+				open={false}
+				parsedModelId={parsedModelId}
+				placeholder={placeholder}
+				selectedModel={selectedModel}
+			/>
+		</div>
+	);
 }
 
 function useModelSelectorState({ storageKey }: { storageKey: string }) {
@@ -184,7 +328,7 @@ function useModelSelectorState({ storageKey }: { storageKey: string }) {
 	};
 }
 
-export function OpenRouterModelSelector({
+function useOpenRouterModelSelectorPanelFrameProps({
 	models,
 	value,
 	onChange,
@@ -209,7 +353,7 @@ export function OpenRouterModelSelector({
 	favoriteModelsStorageKey = DEFAULT_OPENROUTER_FAVORITE_MODELS_STORAGE_KEY,
 	favoriteProvidersStorageKey,
 	verbosity,
-}: OpenRouterModelSelectorProps) {
+}: OpenRouterModelSelectorProps): OpenRouterPickerFrameProps {
 	const filteredModels = applyModelFilters(
 		models,
 		exclusionConfig,
@@ -239,9 +383,7 @@ export function OpenRouterModelSelector({
 	});
 	const externalOpen = onOpenDetached != null;
 	const effectiveOpen = inline ? true : open;
-	// Per-MODEL favorites (the amber card star), alongside the per-MAKER `favorites`
-	// from useModelSelectorState (the rail). Mirrors the STT / Ollama model-favorite
-	// gesture so the star reads identically across every picker.
+	const shouldBuildList = effectiveOpen;
 	const { isFavorite: isFavoriteModel, toggleFavorite: toggleModelFavorite } =
 		useFavoriteSet(favoriteModelsStorageKey);
 
@@ -274,17 +416,19 @@ export function OpenRouterModelSelector({
 		setSelectedEndpointProvider,
 		setSelectedParameters,
 		sortKey,
-		isOpen: effectiveOpen,
+		isOpen: shouldBuildList,
 		favoriteProvidersStorageKey,
 	});
 
-	const railCountModels = filterModels(filteredModels, {
-		searchQuery,
-		selectedEndpointProvider,
-		selectedParameters,
-		selectedVariant,
-		selectedMakers: [],
-	});
+	const railCountModels = shouldBuildList
+		? filterModels(filteredModels, {
+				searchQuery,
+				selectedEndpointProvider,
+				selectedParameters,
+				selectedVariant,
+				selectedMakers: [],
+			})
+		: [];
 	const providerModelCounts = countModelsByMaker(railCountModels);
 
 	const { modelId: parsedModelId, providerSlug: parsedProviderSlug } =
@@ -321,47 +465,27 @@ export function OpenRouterModelSelector({
 			);
 		}
 	};
-	const inlineScrollKeyRef = useRef<string | null>(null);
-	const selectedModelId = selectedModel?.id;
-	const selectedModelMaker = selectedModel?.maker;
-	const selectedScrollKey = selectedModelId
-		? `${selectedModelId}@${parsedProviderSlug ?? ""}`
-		: null;
-	useEffect(() => {
-		if (
-			!(inline && selectedModelId && selectedModelMaker && selectedScrollKey)
-		) {
+	useLayoutEffect(() => {
+		if (!inline) {
 			return;
 		}
-		if (inlineScrollKeyRef.current === selectedScrollKey) {
-			return;
-		}
-		inlineScrollKeyRef.current = selectedScrollKey;
-		onOpen?.();
-		if (parsedProviderSlug) {
-			setExpandedModels((prev) =>
-				applyToggleExpanded(prev, selectedModelId, true),
+		if (selectedModel?.maker) {
+			if (parsedProviderSlug) {
+				setExpandedModels((prev) =>
+					applyToggleExpanded(prev, selectedModel.id, true),
+				);
+			}
+			setScrollToMakerRequest((prev) =>
+				buildScrollRequestForModel(prev, selectedModel, parsedProviderSlug),
 			);
 		}
-		setScrollToMakerRequest((prev) =>
-			buildScrollRequestForModel(
-				prev,
-				{
-					id: selectedModelId,
-					maker: selectedModelMaker,
-				},
-				parsedProviderSlug,
-			),
-		);
 	}, [
 		inline,
-		onOpen,
 		parsedProviderSlug,
-		selectedModelId,
-		selectedModelMaker,
-		selectedScrollKey,
+		selectedModel,
+		setExpandedModels,
+		setScrollToMakerRequest,
 	]);
-
 	const openGuard = useModelPickerCloseGuard({
 		setOpen,
 		onOpen: () => handleOpenWith(selectedModel),
@@ -393,7 +517,7 @@ export function OpenRouterModelSelector({
 		setSortKey(next);
 	};
 
-	const filtersMenu = (
+	const filtersMenu = shouldBuildList ? (
 		<ModelFiltersMenu
 			allProviders={allProviders}
 			favoriteProviders={favoriteProviders}
@@ -410,9 +534,9 @@ export function OpenRouterModelSelector({
 			selectedVariant={selectedVariant}
 			sortKey={sortKey}
 		/>
-	);
+	) : null;
 
-	const activeFiltersBar = (
+	const activeFiltersBar = shouldBuildList ? (
 		<ActiveFiltersBar
 			onEndpointProviderSelect={handleEndpointProviderSelect}
 			onMakerToggle={handleMakerToggle}
@@ -424,42 +548,36 @@ export function OpenRouterModelSelector({
 			selectedParameters={selectedParameters}
 			selectedVariant={selectedVariant}
 		/>
-	);
+	) : null;
 
-	const comboboxFilter = () => true;
 	const handleDetachedOpen = (event: MouseEvent<HTMLButtonElement>) => {
 		onOpen?.();
 		onOpenDetached?.(event.currentTarget.getBoundingClientRect());
 	};
 
-	const makerRailItems: GroupRailItem[] = allProviders.map((maker) => {
-		const iconSrc = getProviderIcon(maker);
-		return {
-			id: maker,
-			label: formatMaker(maker),
-			badge: providerModelCounts.get(maker) ?? 0,
-			// Real brand logo when we have one, else a neutral letter chip
-			// (GroupRail's FallbackInitial) — matching the STT rail, instead of
-			// repeating the OpenRouter logo for every maker without an icon.
-			icon: iconSrc ? (
-				<img
-					alt=""
-					className="size-5 rounded-[3px] object-contain"
-					height={20}
-					src={publicAsset(iconSrc)}
-					width={20}
-				/>
-			) : undefined,
-		};
-	});
-	const railItems: GroupRailItem[] = [
-		buildAllAuthorsRailItem(railCountModels.length),
-		...makerRailItems,
-	];
+	const makerRailItems: GroupRailItem[] = shouldBuildList
+		? allProviders.map((maker) => {
+				const iconSrc = getProviderIcon(maker);
+				return {
+					id: maker,
+					label: formatMaker(maker),
+					badge: providerModelCounts.get(maker) ?? 0,
+					icon: iconSrc ? (
+						<img
+							alt=""
+							className="size-5 rounded-[3px] object-contain"
+							height={20}
+							src={publicAsset(iconSrc)}
+							width={20}
+						/>
+					) : undefined,
+				};
+			})
+		: [];
+	const railItems: GroupRailItem[] = shouldBuildList
+		? [buildAllAuthorsRailItem(railCountModels.length), ...makerRailItems]
+		: [];
 
-	// All authors keeps the existing grouped/sorted OpenRouter view. A single
-	// provider tile applies a maker-only filter; multi-maker filters from the menu
-	// keep the rail visible without highlighting one author as active.
 	const activeRailId =
 		selectedMakers.length === 0
 			? ALL_AUTHORS_RAIL_ID
@@ -467,7 +585,7 @@ export function OpenRouterModelSelector({
 				? (selectedMakers[0] ?? ALL_AUTHORS_RAIL_ID)
 				: null;
 	const isAllAuthorsView = selectedMakers.length === 0;
-	const sidebar = (
+	const sidebar = shouldBuildList ? (
 		<GroupRail
 			activeId={activeRailId}
 			favorites={favorites}
@@ -475,9 +593,9 @@ export function OpenRouterModelSelector({
 			onClick={handleProviderRailClick}
 			onToggleFavorite={toggleFavorite}
 		/>
-	);
+	) : null;
 
-	const list = (
+	const list = shouldBuildList ? (
 		<ModelListContentVirtualized
 			expandedModels={expandedModels}
 			groupedModels={groupedModelsAll}
@@ -494,7 +612,7 @@ export function OpenRouterModelSelector({
 				sortKey === null ? undefined : OPENROUTER_SORT_HEADER_LABEL[sortKey]
 			}
 		/>
-	);
+	) : null;
 
 	const reasoningBlock = (
 		<ReasoningControls
@@ -535,53 +653,48 @@ export function OpenRouterModelSelector({
 		/>
 	);
 
-	return (
-		<div
-			className={
-				inline
-					? "flex h-full min-h-0 flex-col [&>[data-slot=model-picker]]:min-h-0 [&>[data-slot=model-picker]]:flex-1"
-					: "flex flex-col gap-2"
-			}
-			data-slot="openrouter-model-selector"
-		>
-			{inline ? null : (
-				<label
-					className="text-body-sm text-foreground-secondary"
-					htmlFor="openrouter-model-selector-input"
-				>
-					{label}
-				</label>
-			)}
-			<ModelPicker<string, string | null>
-				activeFiltersSlot={activeFiltersBar}
-				belowListSlot={
-					<>
-						{reasoningBlock}
-						{description ? (
-							<p className="text-foreground-muted text-xs-tight">
-								{description}
-							</p>
-						) : null}
-					</>
-				}
-				disabled={disabled}
-				filter={comboboxFilter}
-				filtersMenuSlot={filtersMenu}
-				inputValue={searchQuery}
-				isLoading={isLoading || isSearchPending}
-				items={comboboxItems}
-				list={list}
-				onInputValueChange={handleSearchChange}
-				onOpenChange={handleOpenChange}
-				onValueChange={handleValueChange}
-				open={externalOpen ? false : open}
-				inline={inline}
-				popupHeightClass={popupHeightClass}
-				popupRef={openGuard.setPopupNode}
-				popupWidthClass={popupWidthClass}
-				sidebarSlot={sidebar}
-				trigger={triggerNode}
-			/>
-		</div>
-	);
+	return {
+		activeFiltersBar,
+		belowListSlot: (
+			<>
+				{reasoningBlock}
+				{description ? (
+					<p className="text-foreground-muted text-xs-tight">
+						{description}
+					</p>
+				) : null}
+			</>
+		),
+		disabled,
+		externalOpen,
+		filtersMenu,
+		handleOpenChange,
+		handleSearchChange,
+		handleValueChange,
+		inline,
+		isLoading,
+		isSearchPending,
+		items: shouldBuildList ? comboboxItems : [],
+		label,
+		list,
+		open,
+		popupHeightClass,
+		popupRef: openGuard.setPopupNode,
+		popupWidthClass,
+		searchQuery,
+		sidebar,
+		triggerNode,
+	};
+}
+
+function OpenRouterModelSelectorPanel(props: OpenRouterModelSelectorProps) {
+	const frameProps = useOpenRouterModelSelectorPanelFrameProps(props);
+	return <OpenRouterPickerFrame {...frameProps} />;
+}
+
+export function OpenRouterModelSelector(props: OpenRouterModelSelectorProps) {
+	if (props.onOpenDetached && !props.inline) {
+		return <OpenRouterDetachedTrigger {...props} />;
+	}
+	return <OpenRouterModelSelectorPanel {...props} />;
 }

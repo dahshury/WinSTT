@@ -6,7 +6,7 @@
 
 import { z } from "zod";
 
-export const AllowedParameterSchema = z.enum([
+const AllowedParameterSchema = z.enum([
 	"model",
 	"language",
 	"silero_sensitivity",
@@ -40,7 +40,7 @@ export const AllowedParameterSchema = z.enum([
 ]);
 export type AllowedParameter = z.infer<typeof AllowedParameterSchema>;
 
-export const AllowedMethodSchema = z.enum([
+const AllowedMethodSchema = z.enum([
 	"set_microphone",
 	"abort",
 	"stop",
@@ -52,7 +52,7 @@ export const AllowedMethodSchema = z.enum([
 ]);
 export type AllowedMethod = z.infer<typeof AllowedMethodSchema>;
 
-export const WhisperModelSchema = z.enum([
+const WhisperModelSchema = z.enum([
 	"tiny",
 	"tiny.en",
 	"base",
@@ -71,7 +71,7 @@ export type WhisperModel = z.infer<typeof WhisperModelSchema>;
 export const DeviceTypeSchema = z.enum(["auto", "cpu"]);
 export type DeviceType = z.infer<typeof DeviceTypeSchema>;
 
-export const AcceleratorTypeSchema = z.enum([
+const AcceleratorTypeSchema = z.enum([
 	"auto",
 	"cuda",
 	"directml",
@@ -82,7 +82,7 @@ export const AcceleratorTypeSchema = z.enum([
 ]);
 export type AcceleratorType = z.infer<typeof AcceleratorTypeSchema>;
 
-export const RecorderStateSchema = z.enum([
+const RecorderStateSchema = z.enum([
 	"inactive",
 	"listening",
 	"wakeword",
@@ -110,14 +110,14 @@ export const ModelFamilySchema = z.enum([
 ]);
 export type ModelFamily = z.infer<typeof ModelFamilySchema>;
 
-export const LlmProviderSchema = z.enum([
+const LlmProviderSchema = z.enum([
 	"ollama",
 	"openrouter",
 	"apple-intelligence",
 ]);
 export type LlmProvider = z.infer<typeof LlmProviderSchema>;
 
-export const LlmPresetKeySchema = z.enum([
+const LlmPresetKeySchema = z.enum([
 	"neutral",
 	"formal",
 	"friendly",
@@ -130,7 +130,7 @@ export const LlmPresetKeySchema = z.enum([
 ]);
 export type LlmPresetKey = z.infer<typeof LlmPresetKeySchema>;
 
-export const LlmPresetLevelSchema = z.enum(["light", "medium", "high"]);
+const LlmPresetLevelSchema = z.enum(["light", "medium", "high"]);
 export type LlmPresetLevel = z.infer<typeof LlmPresetLevelSchema>;
 
 export const OllamaPullProgressStatusSchema = z.enum([
@@ -146,10 +146,10 @@ export type OllamaPullProgressStatus = z.infer<
 	typeof OllamaPullProgressStatusSchema
 >;
 
-export const CloudSttProviderSchema = z.enum(["elevenlabs", "openrouter"]);
+const CloudSttProviderSchema = z.enum(["elevenlabs", "openrouter"]);
 export type CloudSttProvider = z.infer<typeof CloudSttProviderSchema>;
 
-export const CloudSttErrorCodeSchema = z.enum([
+const CloudSttErrorCodeSchema = z.enum([
 	"auth",
 	"network",
 	"key_missing",
@@ -158,13 +158,13 @@ export const CloudSttErrorCodeSchema = z.enum([
 ]);
 export type CloudSttErrorCode = z.infer<typeof CloudSttErrorCodeSchema>;
 
-export const FitSeveritySchema = z.enum(["ok", "warning", "critical"]);
+const FitSeveritySchema = z.enum(["ok", "warning", "critical"]);
 export type FitSeverity = z.infer<typeof FitSeveritySchema>;
 
-export const FitTargetSchema = z.enum(["gpu", "cpu", "neither"]);
+const FitTargetSchema = z.enum(["gpu", "cpu", "neither"]);
 export type FitTarget = z.infer<typeof FitTargetSchema>;
 
-export const FitReasonSchema = z.enum([
+const FitReasonSchema = z.enum([
 	"exceeds_vram",
 	"exceeds_ram",
 	"tight_vram",
@@ -178,7 +178,7 @@ export const FitReasonSchema = z.enum([
 ]);
 export type FitReason = z.infer<typeof FitReasonSchema>;
 
-export const ServerStatusSchema = z.enum([
+const ServerStatusSchema = z.enum([
 	"idle",
 	"starting",
 	"running",
@@ -186,7 +186,7 @@ export const ServerStatusSchema = z.enum([
 ]);
 export type ServerStatus = z.infer<typeof ServerStatusSchema>;
 
-export const ConnectionStatusSchema = z.enum([
+const ConnectionStatusSchema = z.enum([
 	"disconnected",
 	"connecting",
 	"connected",

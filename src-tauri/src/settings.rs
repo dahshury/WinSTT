@@ -1,5 +1,7 @@
-// derivable_impls: explicit Default impls document the settings-schema defaults.
-#![allow(clippy::derivable_impls)]
+#![expect(
+    clippy::derivable_impls,
+    reason = "explicit Default impls document the settings-schema defaults"
+)]
 
 mod defaults;
 mod store;

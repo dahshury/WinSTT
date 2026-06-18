@@ -9,18 +9,18 @@ import {
 	type RowSelectionState,
 	type SortingState,
 	type Table,
-	useReactTable,
 	type VisibilityState,
 } from "@tanstack/react-table";
 import { type Dispatch, type SetStateAction, useState } from "react";
 import { cn } from "@/shared/lib/cn";
+import { useCompilerSafeReactTable } from "@/shared/ui/data-grid/use-compiler-safe-react-table";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { CrudEditableCell } from "./CrudRow";
 import { RowSelectionCheckbox } from "./RowSelectionCheckbox";
 import type { CrudColumn, CrudField } from "./types";
 import type { CrudEditingState } from "./use-crud-editing";
 
-interface UseCrudGridArgs<TEntry, TAdd> {
+interface UseCrudGridArgs<TEntry> {
 	columns: CrudColumn<TEntry>[];
 	deleteLabelFor: (entry: TEntry) => string;
 	editing: CrudEditingState<TEntry>;
@@ -46,7 +46,7 @@ interface UseCrudGridArgs<TEntry, TAdd> {
  * effect and the multi-row delete still live with the shell since they touch the
  * CRUD callbacks.
  */
-export function useCrudGrid<TEntry, TAdd>({
+export function useCrudGrid<TEntry>({
 	columns,
 	deleteLabelFor,
 	editing,
@@ -61,7 +61,8 @@ export function useCrudGrid<TEntry, TAdd>({
 	selectAllLabel,
 	setRowSelection,
 	sortable,
-}: UseCrudGridArgs<TEntry, TAdd>): Table<TEntry> {
+}: UseCrudGridArgs<TEntry>): Table<TEntry> {
+	"use no memo";
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [globalFilter, setGlobalFilter] = useState("");
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -165,7 +166,7 @@ export function useCrudGrid<TEntry, TAdd>({
 		}),
 	];
 
-	return useReactTable<TEntry>({
+	return useCompilerSafeReactTable<TEntry>({
 		columns: columnDefs,
 		data: entries,
 		enableColumnResizing: resizable,

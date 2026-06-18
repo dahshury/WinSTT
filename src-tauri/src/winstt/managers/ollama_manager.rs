@@ -70,7 +70,10 @@ impl OllamaManager {
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
-            .expect("failed to build reqwest client");
+            .unwrap_or_else(|err| {
+                log::warn!("failed to build timed Ollama HTTP client; using default client: {err}");
+                reqwest::Client::new()
+            });
         Self {
             http,
             fetch_gate: Semaphore::new(MAX_CONCURRENT_FETCHES),

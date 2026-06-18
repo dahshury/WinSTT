@@ -270,16 +270,19 @@ function RowContent({
 
 /** Eats pointer/keyboard events so the inline delete button doesn't also select
  *  (and close) the combobox row. Mirrors SearchableSelect. */
+function swallowEvent(e: { stopPropagation: () => void }): void {
+	e.stopPropagation();
+}
+
 function StopBubble({ children }: { children: ReactNode }) {
-	const swallow = (e: { stopPropagation: () => void }) => e.stopPropagation();
 	return (
 		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: role="toolbar" is interactive per WAI-ARIA; this shim only stops events from bubbling to the listbox row so the inner delete button can fire without selecting the row.
 		<div
 			className="ml-auto flex shrink-0 items-center"
-			onClick={swallow}
-			onKeyDown={swallow}
-			onMouseDown={swallow}
-			onPointerDown={swallow}
+			onClick={swallowEvent}
+			onKeyDown={swallowEvent}
+			onMouseDown={swallowEvent}
+			onPointerDown={swallowEvent}
 			role="toolbar"
 			tabIndex={-1}
 		>

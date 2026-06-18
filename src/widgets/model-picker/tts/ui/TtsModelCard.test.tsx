@@ -91,7 +91,10 @@ describe("TtsModelCard description", () => {
 });
 
 describe("TtsModelCard precision-badge download affordance (single-quant models)", () => {
-	test("card meta prefers live aggregate total over stale catalog size", () => {
+	test("card meta shows the catalog size — a known size is never overridden by a runtime total", () => {
+		// The download size is a static, known fact. With a catalog size present,
+		// no in-flight/aggregate runtime number may override it (that override is
+		// what let a partial download masquerade as the model's size).
 		renderCard({
 			model: makeModel({ sizeBytesByQuantization: { fp16: 83_886_080 } }),
 			snapshot: {
@@ -102,8 +105,22 @@ describe("TtsModelCard precision-badge download affordance (single-quant models)
 			},
 			state: makeState("not_cached"),
 		});
+		expect(screen.getByText("80 MB")).toBeDefined();
+		expect(screen.queryByText("183 MB")).toBeNull();
+	});
+
+	test("card meta falls back to the live total only when the catalog ships no size", () => {
+		renderCard({
+			model: makeModel({ sizeBytesByQuantization: {} }),
+			snapshot: {
+				downloadedBytes: 191_959_988,
+				paused: false,
+				progress: 100,
+				totalBytes: 191_959_988,
+			},
+			state: makeState("not_cached"),
+		});
 		expect(screen.getByText("183 MB")).toBeDefined();
-		expect(screen.queryByText("80 MB")).toBeNull();
 	});
 
 	test("a single uncached precision still renders a download badge", () => {

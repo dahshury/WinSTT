@@ -25,4 +25,4 @@
  * so the window spec + live commands exist exactly when this flag is true.
  */
 export const CONTEXT_PLAYGROUND_ENABLED =
-	import.meta.env.DEV || import.meta.env.VITE_CONTEXT_PLAYGROUND === "1";
+	import.meta.env.DEV || import.meta.env["VITE_CONTEXT_PLAYGROUND"] === "1";

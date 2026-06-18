@@ -3,15 +3,60 @@ use crate::input::{self, EnigoState};
 use crate::settings::TypingTool;
 use crate::settings::{get_settings, AutoSubmitKey, ClipboardHandling, PasteMethod};
 use enigo::{Direction, Enigo, Key, Keyboard};
-use log::info;
+use log::{info, warn};
 #[cfg(target_os = "linux")]
 use std::process::Command;
-use std::time::Duration;
+use std::sync::{MutexGuard, TryLockError};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[cfg(target_os = "linux")]
 use crate::utils::{is_kde_wayland, is_wayland};
+
+const SLOW_PASTE_PHASE_MS: u128 = 2_000;
+const ENIGO_LOCK_TIMEOUT_MS: u64 = 2_000;
+
+fn warn_if_slow_paste_phase(phase: &str, elapsed_ms: u128) {
+    if elapsed_ms >= SLOW_PASTE_PHASE_MS {
+        warn!("[clipboard] {phase}_slow duration_ms={elapsed_ms}");
+    }
+}
+
+fn lock_enigo<'a>(
+    enigo_state: &'a EnigoState,
+    context: &str,
+) -> Result<MutexGuard<'a, Enigo>, ClipboardError> {
+    let started = Instant::now();
+    info!("[clipboard] enigo_lock_start context={context}");
+    loop {
+        match enigo_state.0.try_lock() {
+            Ok(guard) => {
+                let elapsed_ms = started.elapsed().as_millis();
+                info!("[clipboard] enigo_lock_complete context={context} duration_ms={elapsed_ms}");
+                warn_if_slow_paste_phase("enigo_lock", elapsed_ms);
+                return Ok(guard);
+            }
+            Err(TryLockError::Poisoned(err)) => {
+                return Err(ClipboardError::Input(format!(
+                    "Failed to lock Enigo: {err}"
+                )));
+            }
+            Err(TryLockError::WouldBlock) => {
+                if started.elapsed() >= Duration::from_millis(ENIGO_LOCK_TIMEOUT_MS) {
+                    warn!(
+                        "[clipboard] enigo_lock_timeout context={context} duration_ms={}",
+                        started.elapsed().as_millis()
+                    );
+                    return Err(ClipboardError::Input(format!(
+                        "Timed out locking Enigo after {ENIGO_LOCK_TIMEOUT_MS}ms"
+                    )));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+}
 
 /// Typed error for the paste/clipboard pipeline. Used for internal error construction
 /// so each failure carries its category (clipboard I/O vs. external typing tool vs.
@@ -48,11 +93,29 @@ fn paste_via_clipboard(
     paste_method: &PasteMethod,
     paste_delay_ms: u64,
 ) -> Result<(), ClipboardError> {
+    let total_started = Instant::now();
+    info!(
+        "[clipboard] paste_via_clipboard_start method={paste_method:?} chars={} delay_ms={paste_delay_ms}",
+        text.chars().count()
+    );
     let clipboard = app_handle.clipboard();
+    let phase_started = Instant::now();
+    info!("[clipboard] read_original_start");
     let clipboard_content = clipboard.read_text().unwrap_or_default();
+    let elapsed_ms = phase_started.elapsed().as_millis();
+    info!(
+        "[clipboard] read_original_complete duration_ms={elapsed_ms} chars={}",
+        clipboard_content.chars().count()
+    );
+    warn_if_slow_paste_phase("read_original", elapsed_ms);
 
     // Write text to clipboard first
     // On Wayland, prefer wl-copy for better compatibility (especially with umlauts)
+    let phase_started = Instant::now();
+    info!(
+        "[clipboard] write_text_start chars={}",
+        text.chars().count()
+    );
     #[cfg(target_os = "linux")]
     let write_result = if is_wayland() && command_available("wl-copy") {
         info!("Using wl-copy for clipboard write on Wayland");
@@ -69,10 +132,15 @@ fn paste_via_clipboard(
         .map_err(|e| ClipboardError::Clipboard(format!("Failed to write to clipboard: {}", e)));
 
     write_result?;
+    let elapsed_ms = phase_started.elapsed().as_millis();
+    info!("[clipboard] write_text_complete duration_ms={elapsed_ms}");
+    warn_if_slow_paste_phase("write_text", elapsed_ms);
 
     std::thread::sleep(Duration::from_millis(paste_delay_ms));
 
     // Send paste key combo
+    let phase_started = Instant::now();
+    info!("[clipboard] key_combo_start method={paste_method:?}");
     #[cfg(target_os = "linux")]
     let key_combo_sent = try_send_key_combo_linux(paste_method)?;
 
@@ -96,11 +164,19 @@ fn paste_via_clipboard(
             }
         }
     }
+    let elapsed_ms = phase_started.elapsed().as_millis();
+    info!("[clipboard] key_combo_complete duration_ms={elapsed_ms}");
+    warn_if_slow_paste_phase("key_combo", elapsed_ms);
 
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     // Restore original clipboard content
     // On Wayland, prefer wl-copy for better compatibility
+    let phase_started = Instant::now();
+    info!(
+        "[clipboard] restore_original_start chars={}",
+        clipboard_content.chars().count()
+    );
     #[cfg(target_os = "linux")]
     if is_wayland() && command_available("wl-copy") {
         let _ = write_clipboard_via_wl_copy(&clipboard_content);
@@ -110,6 +186,13 @@ fn paste_via_clipboard(
 
     #[cfg(not(target_os = "linux"))]
     let _ = clipboard.write_text(&clipboard_content);
+    let elapsed_ms = phase_started.elapsed().as_millis();
+    info!("[clipboard] restore_original_complete duration_ms={elapsed_ms}");
+    warn_if_slow_paste_phase("restore_original", elapsed_ms);
+
+    let total_elapsed_ms = total_started.elapsed().as_millis();
+    info!("[clipboard] paste_via_clipboard_complete duration_ms={total_elapsed_ms}");
+    warn_if_slow_paste_phase("paste_via_clipboard", total_elapsed_ms);
 
     Ok(())
 }
@@ -606,10 +689,7 @@ fn paste_streaming_edit_inner(
     let enigo_state = app_handle
         .try_state::<EnigoState>()
         .ok_or_else(|| ClipboardError::Config("Enigo state not initialized".into()))?;
-    let mut enigo = enigo_state
-        .0
-        .lock()
-        .map_err(|e| ClipboardError::Input(format!("Failed to lock Enigo: {}", e)))?;
+    let mut enigo = lock_enigo(&enigo_state, "streaming_edit")?;
 
     // Streaming runs while the PTT hotkey can still be physically held. Avoid clipboard
     // accelerators here; Ctrl+V during Ctrl+Win can become Ctrl+Win+V, and a synthetic
@@ -645,10 +725,7 @@ fn submit_after_dictation_paste_inner(app_handle: AppHandle) -> Result<(), Clipb
     let enigo_state = app_handle
         .try_state::<EnigoState>()
         .ok_or_else(|| ClipboardError::Config("Enigo state not initialized".into()))?;
-    let mut enigo = enigo_state
-        .0
-        .lock()
-        .map_err(|e| ClipboardError::Input(format!("Failed to lock Enigo: {}", e)))?;
+    let mut enigo = lock_enigo(&enigo_state, "auto_submit")?;
 
     std::thread::sleep(Duration::from_millis(50));
     send_return_key(&mut enigo, settings.auto_submit_key)
@@ -737,6 +814,7 @@ fn paste_inner(
     replace_mode: bool,
     select_all_first: bool,
 ) -> Result<(), ClipboardError> {
+    let paste_started = Instant::now();
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
     let paste_delay_ms = settings.paste_delay_ms;
@@ -753,6 +831,10 @@ fn paste_inner(
         "Using paste method: {:?}, delay: {}ms",
         paste_method, paste_delay_ms
     );
+    info!(
+        "[clipboard] paste_start method={paste_method:?} chars={} replace_mode={replace_mode} select_all_first={select_all_first}",
+        text.chars().count()
+    );
 
     if paste_method == PasteMethod::None {
         info!("PasteMethod::None selected - skipping paste action");
@@ -763,13 +845,15 @@ fn paste_inner(
     let enigo_state = app_handle
         .try_state::<EnigoState>()
         .ok_or_else(|| ClipboardError::Config("Enigo state not initialized".into()))?;
-    let mut enigo = enigo_state
-        .0
-        .lock()
-        .map_err(|e| ClipboardError::Input(format!("Failed to lock Enigo: {}", e)))?;
+    let mut enigo = lock_enigo(&enigo_state, "paste")?;
 
     if select_all_first {
+        let phase_started = Instant::now();
+        info!("[clipboard] select_all_start");
         input::send_select_all(&mut enigo).map_err(ClipboardError::Input)?;
+        let elapsed_ms = phase_started.elapsed().as_millis();
+        info!("[clipboard] select_all_complete duration_ms={elapsed_ms}");
+        warn_if_slow_paste_phase("select_all", elapsed_ms);
         std::thread::sleep(Duration::from_millis(50));
     }
 
@@ -777,12 +861,20 @@ fn paste_inner(
     match paste_method {
         PasteMethod::None => unreachable!("PasteMethod::None returned before input synthesis"),
         PasteMethod::Direct => {
+            let phase_started = Instant::now();
+            info!(
+                "[clipboard] direct_paste_start chars={}",
+                text.chars().count()
+            );
             paste_direct(
                 &mut enigo,
                 &text,
                 #[cfg(target_os = "linux")]
                 settings.typing_tool,
             )?;
+            let elapsed_ms = phase_started.elapsed().as_millis();
+            info!("[clipboard] direct_paste_complete duration_ms={elapsed_ms}");
+            warn_if_slow_paste_phase("direct_paste", elapsed_ms);
         }
         PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
             paste_via_clipboard(
@@ -805,16 +897,36 @@ fn paste_inner(
     // the user never asked for).
     if !replace_mode && should_send_auto_submit(settings.auto_submit, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
+        let phase_started = Instant::now();
+        info!(
+            "[clipboard] auto_submit_start key={:?}",
+            settings.auto_submit_key
+        );
         send_return_key(&mut enigo, settings.auto_submit_key)?;
+        let elapsed_ms = phase_started.elapsed().as_millis();
+        info!("[clipboard] auto_submit_complete duration_ms={elapsed_ms}");
+        warn_if_slow_paste_phase("auto_submit", elapsed_ms);
     }
 
     // After pasting, optionally copy to clipboard based on settings
     if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
         let clipboard = app_handle.clipboard();
+        let phase_started = Instant::now();
+        info!(
+            "[clipboard] copy_to_clipboard_start chars={}",
+            text.chars().count()
+        );
         clipboard.write_text(&text).map_err(|e| {
             ClipboardError::Clipboard(format!("Failed to copy to clipboard: {}", e))
         })?;
+        let elapsed_ms = phase_started.elapsed().as_millis();
+        info!("[clipboard] copy_to_clipboard_complete duration_ms={elapsed_ms}");
+        warn_if_slow_paste_phase("copy_to_clipboard", elapsed_ms);
     }
+
+    let elapsed_ms = paste_started.elapsed().as_millis();
+    info!("[clipboard] paste_complete duration_ms={elapsed_ms}");
+    warn_if_slow_paste_phase("paste", elapsed_ms);
 
     Ok(())
 }

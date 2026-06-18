@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { type DynamicIslandSize } from "@/shared/ui/dynamic-island";
 
 /**
@@ -106,6 +106,12 @@ export function useStickyPillReveal({
 	sessionActive: boolean;
 	sessionShouldShow: boolean;
 }): boolean {
+	// Adjust the latch DURING render (React's "storing information from previous
+	// renders" pattern) rather than in an effect: the sticky `shown` value is
+	// genuine hysteresis state (its own prior value feeds back as `latched`), so
+	// it can't be a pure render-time derivation — but mutating it via setState in
+	// an effect forced a wasted second render before paint. Setting state while
+	// rendering lets React re-render in place without committing the stale frame.
 	const [latch, setLatch] = useState({
 		sessionId: recordingSessionId,
 		shown: false,
@@ -117,25 +123,9 @@ export function useStickyPillReveal({
 		sessionActive,
 		sessionShouldShow,
 	});
-
-	useEffect(() => {
-		setLatch((current) => {
-			const nextShown = computeStickyPillReveal({
-				latchSessionId: current.sessionId,
-				latched: current.shown,
-				recordingSessionId,
-				sessionActive,
-				sessionShouldShow,
-			});
-			if (
-				current.sessionId === recordingSessionId &&
-				current.shown === nextShown
-			) {
-				return current;
-			}
-			return { sessionId: recordingSessionId, shown: nextShown };
-		});
-	}, [recordingSessionId, sessionActive, sessionShouldShow]);
+	if (latch.sessionId !== recordingSessionId || latch.shown !== stickyShow) {
+		setLatch({ sessionId: recordingSessionId, shown: stickyShow });
+	}
 
 	return stickyShow;
 }

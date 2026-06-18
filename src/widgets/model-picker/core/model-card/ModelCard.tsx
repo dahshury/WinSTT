@@ -315,20 +315,17 @@ export function ModelCard({
 			<div
 				className={cardClass}
 				data-model-id={dataModelId}
-				onClick={onBodyClick}
-				onKeyDown={(e) => {
-					// Activate on Enter/Space like a button — the badges/actions inside
-					// already `stopPropagation`, so this only fires for the card body.
-					if (e.key === "Enter" || e.key === " ") {
-						e.preventDefault();
-						onBodyClick?.();
-					}
-				}}
-				role="button"
-				tabIndex={0}
 				title={title}
 			>
-				{body}
+				<button
+					aria-label={`Select ${name}`}
+					className="absolute inset-0 z-0 rounded-lg border-0 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/70"
+					onClick={onBodyClick}
+					type="button"
+				/>
+				<div className="pointer-events-none relative z-raised flex flex-col gap-2.5 [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_input]:pointer-events-auto [&_select]:pointer-events-auto [&_textarea]:pointer-events-auto [&_[role=button]]:pointer-events-auto">
+					{body}
+				</div>
 			</div>
 		);
 	}

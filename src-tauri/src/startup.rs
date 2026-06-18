@@ -56,19 +56,34 @@ pub(crate) fn build_console_filter() -> env_filter::Filter {
 }
 
 pub(crate) fn startup_profile_enabled() -> bool {
-    std::env::var("WINSTT_PROFILE_STARTUP")
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+    env_flag_enabled("WINSTT_PROFILE_STARTUP")
+}
+
+pub(crate) fn model_profile_enabled() -> bool {
+    env_flag_enabled("WINSTT_PROFILE_MODELS") || startup_profile_enabled()
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 pub(crate) fn log_startup_duration(label: &str, started: Instant) {
     if startup_profile_enabled() {
         log::info!("[startup] {label}: {} ms", started.elapsed().as_millis());
+    }
+}
+
+pub(crate) fn log_model_duration(label: &str, started: Instant) {
+    if model_profile_enabled() {
+        log::info!(
+            "[model-profile] {label}: {} ms",
+            started.elapsed().as_millis()
+        );
     }
 }
 
@@ -137,9 +152,10 @@ const RENDERER_DEV_SERVER_CONNECT_TIMEOUT: Duration = Duration::from_millis(200)
 
 #[cfg(debug_assertions)]
 pub(crate) fn wait_for_renderer_dev_server(startup: &mut StartupProfiler, app: &AppHandle) {
-    let addr: SocketAddr = RENDERER_DEV_SERVER_ADDR
-        .parse()
-        .expect("renderer dev server address must be a valid socket address");
+    let Ok(addr) = RENDERER_DEV_SERVER_ADDR.parse::<SocketAddr>() else {
+        log::error!("[dev-server] invalid renderer dev server address: {RENDERER_DEV_SERVER_ADDR}");
+        return;
+    };
     let started = Instant::now();
     let mut attempts = 0u32;
 

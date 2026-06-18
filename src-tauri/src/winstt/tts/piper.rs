@@ -79,8 +79,7 @@ impl PiperVoiceConfig {
         let f = |key: &str, def: f32| -> f32 {
             inf.and_then(|i| i.get(key))
                 .and_then(|x| x.as_f64())
-                .map(|x| x as f32)
-                .unwrap_or(def)
+                .map_or(def, |x| x as f32)
         };
         let noise_scale = f("noise_scale", DEFAULT_NOISE_SCALE);
         let length_scale = f("length_scale", DEFAULT_LENGTH_SCALE);
@@ -189,7 +188,11 @@ impl PiperEngine {
             *guard = Some(self.load()?);
             self.ready.store(true, Ordering::Release);
         }
-        let loaded = guard.as_mut().expect("just initialized");
+        let Some(loaded) = guard.as_mut() else {
+            return Err(PiperError::Session(
+                "piper session was not initialized".into(),
+            ));
+        };
 
         let phonemizer = self
             .phonemizer

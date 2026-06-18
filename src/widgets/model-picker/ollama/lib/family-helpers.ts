@@ -12,6 +12,10 @@ import type { OllamaModel } from "@/shared/api/models";
 
 const FAMILY_REGEX = /^([a-zA-Z]+)/;
 
+function containsFamilyToken(slug: string, token: string): boolean {
+	return slug.indexOf(token) >= 0;
+}
+
 /**
  * Extract the family slug from an Ollama model. Prefers the structured
  * `details.family` when available, falls back to a regex on the name.
@@ -322,7 +326,7 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 function matchPublisherRule(slug: string): OllamaPublisher | null {
 	for (const rule of PUBLISHER_RULES) {
 		for (const token of rule.tokens) {
-			if (slug.includes(token)) {
+			if (containsFamilyToken(slug, token)) {
 				return rule.publisher;
 			}
 		}

@@ -33,6 +33,7 @@ use std::collections::BTreeMap;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::helpers::regex::static_regex;
 use crate::winstt::settings_schema::ContextAppMode;
 
 /// The parsed UIA snapshot. Mirrors `WindowContextSnapshot`. Required triple
@@ -552,7 +553,10 @@ pub fn format_context_for_prompt(snapshot: &WindowContextSnapshot) -> String {
     format_context_for_prompt_json(snapshot)
 }
 
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "legacy prompt formatter is retained for parity comparisons"
+)]
 fn format_context_for_prompt_legacy(snapshot: &WindowContextSnapshot) -> String {
     let mut sections: Vec<String> = Vec::new();
     push_metadata(&mut sections, snapshot);
@@ -585,35 +589,38 @@ static JSON_LLM_NOISE_RE: Lazy<Regex> = Lazy::new(|| {
     // and U+034F), but list the invisible-separator runs Gmail injects into
     // preview snippets explicitly so intent is clear: U+034F (CGJ), U+200C/D
     // (ZWNJ/ZWJ), U+200E/F (LRM/RLM).
-    Regex::new(r"[\p{C}\p{So}\x{2022}\x{2023}\x{2043}\x{034F}\x{200C}-\x{200F}\x{1F000}-\x{1FAFF}]")
-        .unwrap()
+    static_regex(
+        r"[\p{C}\p{So}\x{2022}\x{2023}\x{2043}\x{034F}\x{200C}-\x{200F}\x{1F000}-\x{1FAFF}]",
+    )
 });
 static JSON_INBOX_DATE_ROW_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"^(?:\d{1,2}:\d{2}\s?[AP]M|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2})$",
     )
-    .unwrap()
 });
-static JSON_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
-static JSON_ROLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^</?\s*([a-z][a-z0-9]*)").unwrap());
-static JSON_NAME_ATTR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"\bname="([^"]*)""#).unwrap());
-static JSON_FOCUS_ATTR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"\bfocus="1""#).unwrap());
+static JSON_TAG_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"<[^>]+>"));
+static JSON_ROLE_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"^</?\s*([a-z][a-z0-9]*)"));
+static JSON_NAME_ATTR_RE: Lazy<Regex> = Lazy::new(|| static_regex(r#"\bname="([^"]*)""#));
+static JSON_FOCUS_ATTR_RE: Lazy<Regex> = Lazy::new(|| static_regex(r#"\bfocus="1""#));
 static JSON_NAV_NAME_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(?:chats?|conversations?|inbox|channels?|direct messages|members?|participants?|navigation|navigation pane|recents?|recent threads?|threads?|projects?|workspaces?|files?|explorer|folders?|sidebar|side panel|mailbox|page list|pages|primary|timeline tabs|who to follow|what's happening|for you|following|premium|live on x|trending|grok|junk email|sent items|deleted items|archive|favorites|conversation history|message list|new mail)\b").unwrap()
+    static_regex(
+        r"(?i)\b(?:chats?|conversations?|inbox|channels?|direct messages|members?|participants?|navigation|navigation pane|recents?|recent threads?|threads?|projects?|workspaces?|files?|explorer|folders?|sidebar|side panel|mailbox|page list|pages|primary|timeline tabs|who to follow|what's happening|for you|following|premium|live on x|trending|grok|junk email|sent items|deleted items|archive|favorites|conversation history|message list|new mail)\b",
+    )
 });
 static JSON_CONTAINER_NAV_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(?:sidebar|side panel|side bar|navigation|nav rail|primary column|sidebar column|servers?|roster|app bar|browser chrome|left rail|chat list|chats)\b").unwrap()
+    static_regex(
+        r"(?i)\b(?:sidebar|side panel|side bar|navigation|nav rail|primary column|sidebar column|servers?|roster|app bar|browser chrome|left rail|chat list|chats)\b",
+    )
 });
 static JSON_CONTENT_LIST_NAME_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?i)\b(?:messages?|conversation with|message thread|comment thread|comments?|timeline)\b",
     )
-    .unwrap()
 });
 static JSON_SPEAKER_PREFIX_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*(?:@?[\p{L}\p{N} _.'-]{2,40}|You|Me):\s+\S").unwrap());
+    Lazy::new(|| static_regex(r"^\s*(?:@?[\p{L}\p{N} _.'-]{2,40}|You|Me):\s+\S"));
 static JSON_TIME_OR_META_LINE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?ix)
         ^(?:today|yesterday)\s+at\s+\d{1,2}:\d{2}\s?[ap]m$
         |
@@ -638,12 +645,11 @@ static JSON_TIME_OR_META_LINE_RE: Lazy<Regex> = Lazy::new(|| {
         ^.*messages\ and\ calls\ are\ end-to-end\ encrypted.*$
     ",
     )
-    .unwrap()
 });
 static JSON_AUTHOR_TRAILING_TIME_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\s+\d{1,2}:\d{2}\s?[ap]m$").unwrap());
+    Lazy::new(|| static_regex(r"(?i)\s+\d{1,2}:\d{2}\s?[ap]m$"));
 static JSON_LOW_SIGNAL_UI_LINE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?ix)
         ^
         (?:
@@ -690,7 +696,6 @@ static JSON_LOW_SIGNAL_UI_LINE_RE: Lazy<Regex> = Lazy::new(|| {
             | add\ note(?:\ \(only\ visible\ to\ you\))?
         )",
     )
-    .unwrap()
 });
 
 const JSON_CARET_BEFORE_LLM_MAX: usize = 24_000;
@@ -713,7 +718,7 @@ const JSON_MAX_LLM_CONTEXT_CHARS: usize = 12_000;
 /// canonical offender is Discord's "Server Tag: <CLAN>" badge that renders right
 /// under each author header; also drop standalone scripture/citation colons.
 static JSON_FALSE_SPEAKER_PREFIX_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?ix)
         ^\s*(?:
             server\ tag            # Discord clan-tag badge under the author
@@ -735,7 +740,6 @@ static JSON_FALSE_SPEAKER_PREFIX_RE: Lazy<Regex> = Lazy::new(|| {
         ^\s*(?:قوله\ تعالى|قال\ تعالى|قال|وقال|يقول|قوله)\s*:
     ",
     )
-    .unwrap()
 });
 
 /// A chat timestamp / datetime row that separates message groups and must never
@@ -743,7 +747,7 @@ static JSON_FALSE_SPEAKER_PREFIX_RE: Lazy<Regex> = Lazy::new(|| {
 /// `6/11/26, 2:07 PM`, `Thursday, June 11, 2026 at 2:07 PM`, `June 11, 2026`,
 /// `Yesterday at 9:45 AM`, bare `9:37 AM`, Messenger `5:14am`.
 static JSON_CHAT_TIMESTAMP_LINE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?ix)
         ^\s*
         (?:
@@ -765,13 +769,12 @@ static JSON_CHAT_TIMESTAMP_LINE_RE: Lazy<Regex> = Lazy::new(|| {
         \s*$
     ",
     )
-    .unwrap()
 });
 
 /// Discord per-message UI affordances that interleave the flat stream and are
 /// not part of any message body.
 static JSON_DISCORD_AFFORDANCE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?ix)
         ^\s*(?:
             add\ reaction | more\ message\ options | play\ voice\ message
@@ -780,13 +783,12 @@ static JSON_DISCORD_AFFORDANCE_RE: Lazy<Regex> = Lazy::new(|| {
         )\s*$
     ",
     )
-    .unwrap()
 });
 
 /// An X (Twitter) author header line: a `@handle` standing alone, or a display
 /// name immediately followed by ` @handle`. Used to attribute the flat tweet
 /// blob positionally (X has no `Author:` prefix).
-static JSON_X_HANDLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"@[A-Za-z0-9_]{2,15}\b").unwrap());
+static JSON_X_HANDLE_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"@[A-Za-z0-9_]{2,15}\b"));
 
 /// Messenger embeds authorship as `... by <Author>:` inside its flat doc blob
 /// (`Enter, Message sent Saturday 8:15am by موه: <body>`). This captures the
@@ -797,8 +799,9 @@ static JSON_MESSENGER_BY_AUTHOR_RE: Lazy<Regex> = Lazy::new(|| {
     // NO inline body ("Enter, Message sent 2:32 PM by موه\n"); requiring a colon
     // made the capture greedily swallow the next line's clock (the `5:43` colon).
     // Anchoring the author at `[^:\n]` (no colon, no newline) keeps it tight.
-    Regex::new(r"(?:Enter,\s*)?Message sent[^\n]*?\bby\s+(?P<author>[^:\n]{1,40}?)\s*(?::\s*|\n|$)")
-        .unwrap()
+    static_regex(
+        r"(?:Enter,\s*)?Message sent[^\n]*?\bby\s+(?P<author>[^:\n]{1,40}?)\s*(?::\s*|\n|$)",
+    )
 });
 
 fn json_collapse_inline_ws(raw: &str) -> String {
@@ -887,7 +890,7 @@ fn json_clean_caret(raw: Option<&str>) -> String {
 /// header-expand / pop-out footer). Dropped from the scrubbed mail blob so only
 /// the sender + subject + body survive.
 static JSON_OUTLOOK_MSG_CHROME_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?ix)
         ^\s*(?:
             view\ with\ a\ light\ background
@@ -904,7 +907,6 @@ static JSON_OUTLOOK_MSG_CHROME_RE: Lazy<Regex> = Lazy::new(|| {
         )\s*$
     ",
     )
-    .unwrap()
 });
 
 /// An inbox-list preview row — a mail-list entry whose subject/snippet is rendered
@@ -1153,7 +1155,7 @@ fn json_is_speaker_turn_line(line: &str) -> bool {
 /// the structural nav-list drop: even if a single OTP-bearing row leaks out of a
 /// landmark, this line filter removes it.
 static JSON_OTP_ROW_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?ix)
         \b(?:
             one[-\ ]time\ (?:code|password|passcode|pin)
@@ -1170,7 +1172,6 @@ static JSON_OTP_ROW_RE: Lazy<Regex> = Lazy::new(|| {
         :\s*sign[-\ ]?in\b
     ",
     )
-    .unwrap()
 });
 
 /// True when a row is a one-time / verification / sign-in security-code line that
@@ -1215,7 +1216,7 @@ fn json_is_otp_or_signin_row(line: &str) -> bool {
 /// shapes ("Your account verification OTP is: …", "your verification code:",
 /// "passcode", "2FA code", "G-123456 is your Google verification code").
 static JSON_SECRET_CODE_PHRASE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?ix)
         \b(?:
             one[-\ ]?time\ (?:code|password|passcode|pin|passphrase)
@@ -1245,7 +1246,6 @@ static JSON_SECRET_CODE_PHRASE_RE: Lazy<Regex> = Lazy::new(|| {
         :\s*sign[-\ ]?in\b
     ",
     )
-    .unwrap()
 });
 
 /// A keyword that, when adjacent to a digit run, marks that digit run as a
@@ -1256,7 +1256,7 @@ static JSON_SECRET_CODE_PHRASE_RE: Lazy<Regex> = Lazy::new(|| {
 /// not make those counts look like codes. The full announcing phrases (e.g.
 /// "verification code") are still covered here and by the phrase set.
 static JSON_SECRET_CODE_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?ix)
         (?:
             \botp\b
@@ -1273,14 +1273,12 @@ static JSON_SECRET_CODE_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
         )
     ",
     )
-    .unwrap()
 });
 
 /// A bare secret-code-shaped digit run: 4-8 digits, OR a provider-prefixed
 /// `G-123456` / `G123456` style code (a single letter + optional dash + 4-8
 /// digits). Used by rule 2; only redacted when keyword-adjacent.
-static JSON_BARE_CODE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\b[A-Z]?-?\d{4,8}\b").unwrap());
+static JSON_BARE_CODE_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\b[A-Z]?-?\d{4,8}\b"));
 
 const SECRET_CODE_REDACTION: &str = "[redacted code]";
 
@@ -1640,8 +1638,7 @@ fn json_reconstruct_discord_stream(text: &str) -> Option<String> {
                 .find(|l| {
                     !JSON_FALSE_SPEAKER_PREFIX_RE.is_match(l) && !json_is_low_signal_ui_line(l)
                 })
-                .map(|l| JSON_CHAT_TIMESTAMP_LINE_RE.is_match(l))
-                .unwrap_or(false);
+                .is_some_and(|l| JSON_CHAT_TIMESTAMP_LINE_RE.is_match(l));
             if next_is_time {
                 current_author = json_normalize_author(line);
                 header_count += 1;
@@ -1698,7 +1695,7 @@ struct JsonMessengerTurn {
 ///      (the carried-over preview between two consecutive single-line messages
 ///      that share no `￼` separator).
 fn json_reconstruct_messenger_blob(text: &str) -> Option<String> {
-    let markers: Vec<regex::Match> = JSON_MESSENGER_BY_AUTHOR_RE.find_iter(text).collect();
+    let markers: Vec<regex::Match<'_>> = JSON_MESSENGER_BY_AUTHOR_RE.find_iter(text).collect();
     if markers.len() < 2 {
         return None;
     }
@@ -1717,10 +1714,7 @@ fn json_reconstruct_messenger_blob(text: &str) -> Option<String> {
             continue;
         };
         let body_start = m.end();
-        let body_end = markers
-            .get(idx + 1)
-            .map(|next| next.start())
-            .unwrap_or(text.len());
+        let body_end = markers.get(idx + 1).map_or(text.len(), |next| next.start());
         let mut body = &text[body_start..body_end];
         // Cut at the object-replacement char Messenger drops between this body
         // and the next message's preview (multi-line bodies all end there).
@@ -1749,7 +1743,7 @@ fn json_reconstruct_messenger_blob(text: &str) -> Option<String> {
     // start of turn N+1's body (the carried preview), drop that shared tail.
     let mut turns: Vec<String> = Vec::with_capacity(raw.len());
     for idx in 0..raw.len() {
-        let next_body = raw.get(idx + 1).map(|t| t.body.as_str()).unwrap_or("");
+        let next_body = raw.get(idx + 1).map_or("", |t| t.body.as_str());
         let body = json_strip_shared_suffix_prefix(&raw[idx].body, next_body);
         if body.is_empty() {
             continue;
@@ -1876,7 +1870,7 @@ fn json_reconstruct_x_blob(blob: &str) -> Option<String> {
             scoped = &scoped[..i];
         }
     }
-    let handles: Vec<regex::Match> = JSON_X_HANDLE_RE.find_iter(scoped).collect();
+    let handles: Vec<regex::Match<'_>> = JSON_X_HANDLE_RE.find_iter(scoped).collect();
     if handles.is_empty() {
         return None;
     }
@@ -1889,15 +1883,12 @@ fn json_reconstruct_x_blob(blob: &str) -> Option<String> {
         let display_name = json_x_trailing_display_name(name_region);
         // Body = text after the handle up to the next handle.
         let body_start = h.end();
-        let body_end = handles
-            .get(idx + 1)
-            .map(|n| {
-                // back up to the start of that tweet's display name so the next
-                // author's name isn't appended to this body.
-                let region = &scoped[h.end()..n.start()];
-                h.end() + json_x_body_cutoff(region)
-            })
-            .unwrap_or(scoped.len());
+        let body_end = handles.get(idx + 1).map_or(scoped.len(), |n| {
+            // back up to the start of that tweet's display name so the next
+            // author's name isn't appended to this body.
+            let region = &scoped[h.end()..n.start()];
+            h.end() + json_x_body_cutoff(region)
+        });
         if body_end <= body_start {
             continue;
         }
@@ -1934,7 +1925,7 @@ fn json_reconstruct_x_blob(blob: &str) -> Option<String> {
     // left between, so the next author's name never bleeds into this turn.
     let mut turns: Vec<String> = Vec::with_capacity(pairs.len());
     for idx in 0..pairs.len() {
-        let next_name = pairs.get(idx + 1).map(|(n, _)| n.as_str()).unwrap_or("");
+        let next_name = pairs.get(idx + 1).map_or("", |(n, _)| n.as_str());
         let body = json_x_strip_trailing_next_name(&pairs[idx].1, next_name);
         if body.chars().count() < 8 {
             continue;
@@ -2134,8 +2125,7 @@ fn json_dedupe_repeated_half(body: &str) -> String {
         let mid_byte = trimmed
             .char_indices()
             .nth(count / 2)
-            .map(|(i, _)| i)
-            .unwrap_or(trimmed.len());
+            .map_or(trimmed.len(), |(i, _)| i);
         let (a, b) = trimmed.split_at(mid_byte);
         if a.trim() == b.trim() {
             return a.trim().to_string();
@@ -2233,9 +2223,7 @@ fn json_is_nav_chrome(tree: &JsonAxTree, node_idx: usize, focus: Option<usize>) 
     if !matches_nav {
         return false;
     }
-    !focus
-        .map(|focus_idx| json_contains_node(tree, node_idx, focus_idx))
-        .unwrap_or(false)
+    !focus.is_some_and(|focus_idx| json_contains_node(tree, node_idx, focus_idx))
 }
 
 fn json_collect_lines(
@@ -2333,7 +2321,7 @@ fn json_find_largest_landmark_rec(
     let node = &tree.nodes[node_idx];
     if json_landmark_role(&node.role) {
         let len = json_scoped_content_len(tree, node_idx, None);
-        if best.map(|(_, best_len)| len > best_len).unwrap_or(true) {
+        if best.is_none_or(|(_, best_len)| len > best_len) {
             *best = Some((node_idx, len));
         }
     }
@@ -2463,10 +2451,9 @@ fn json_attribute_flat_blob(blob: &str) -> String {
 /// (never leaks into the body) and so a bare brand mention without the verb still
 /// only matches when followed by a colon.
 static JSON_AI_CHAT_ROLE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?i)\b(You said|You|(?:ChatGPT|Claude|Gemini|Copilot|Assistant)(?:\s+(?:said|responded|replied))?)\s*:\s*",
     )
-    .unwrap()
 });
 
 /// Classify an AI-chat role label into its canonical speaker name. `You` →
@@ -2533,7 +2520,7 @@ const JSON_AI_CHAT_CHROME_CUTS: &[&str] = &[
 /// (sidebar nav, the per-turn action buttons rendered as standalone words, the
 /// thinking/tool-use status lines). Matched on a single collapsed body line.
 static JSON_AI_CHAT_CHROME_LINE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?ix)
         ^\s*(?:
             new\ chat | chats | projects | artifacts | customize
@@ -2556,16 +2543,14 @@ static JSON_AI_CHAT_CHROME_LINE_RE: Lazy<Regex> = Lazy::new(|| {
         )\s*$
     ",
     )
-    .unwrap()
 });
 
 /// A trailing `… 1:33 AM` / `… 1:36 AM` per-turn timestamp Claude renders at the
 /// end of a user message, and the trailing `View <Artifact>` artifact-card opener
 /// (the line above the `Code · <lang>` toolbar). Both are stripped off the tail
 /// of an AI-chat turn body after the chrome cut.
-static JSON_AI_CHAT_TURN_TAIL_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(?:\s+\d{1,2}:\d{2}\s?[ap]m|\s+view(?:\s+\S+){0,3})\s*$").unwrap()
-});
+static JSON_AI_CHAT_TURN_TAIL_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r"(?i)(?:\s+\d{1,2}:\d{2}\s?[ap]m|\s+view(?:\s+\S+){0,3})\s*$"));
 
 /// Cut an AI-chat turn body at the first interleaved chrome phrase, then drop any
 /// remaining standalone chrome lines and the trailing per-turn timestamp /
@@ -2790,7 +2775,7 @@ fn json_strip_gemini_recents_roster(blob: &str) -> String {
 /// each badge sits INLINE inside the turn stream and must be removed by an inline
 /// replace. The clan tag value is a short alphanumeric token.
 static JSON_DISCORD_SERVER_TAG_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bServer Tag:\s*[A-Za-z0-9][A-Za-z0-9._-]{0,15}").unwrap());
+    Lazy::new(|| static_regex(r"(?i)\bServer Tag:\s*[A-Za-z0-9][A-Za-z0-9._-]{0,15}"));
 
 /// Markers that open Discord's trailing user-profile card / popout chrome (the
 /// block Discord renders after the last message when a user-profile flyout is
@@ -2864,10 +2849,9 @@ fn json_scrub_discord_blob(blob: &str) -> String {
 /// actions`/`Sources` toolbar, plus the `Thought for 26s` reasoning header). These
 /// run mid-blob (not just at the edges), so they are removed by a global replace.
 static JSON_AI_CHAT_INLINE_CHROME_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    static_regex(
         r"(?i)\s*\b(?:Copy message|Edit message|Copy response|Copy code|Copy link|Open conversation options|Good response|Bad response|Switch model|More actions|Read aloud|Thought for \d+\s*(?:s|sec|secs|seconds|m|min|mins|minutes)?)\b",
     )
-    .unwrap()
 });
 
 /// True when a flat doc blob carries the unmistakable framing chrome of an AI-chat
@@ -2956,7 +2940,7 @@ fn json_trim_ai_chat_doc_chrome(blob: &str) -> String {
 /// the brand name (e.g. a "ChatGPT:" footer) is never mistaken for a
 /// conversation. Returns `None` otherwise.
 fn json_reconstruct_ai_chat_blob(blob: &str) -> Option<String> {
-    let markers: Vec<regex::Match> = JSON_AI_CHAT_ROLE_RE.find_iter(blob).collect();
+    let markers: Vec<regex::Match<'_>> = JSON_AI_CHAT_ROLE_RE.find_iter(blob).collect();
     if markers.len() < 2 {
         return None;
     }
@@ -2973,10 +2957,7 @@ fn json_reconstruct_ai_chat_blob(blob: &str) -> Option<String> {
             continue;
         };
         let body_start = m.end();
-        let body_end = markers
-            .get(idx + 1)
-            .map(|next| next.start())
-            .unwrap_or(blob.len());
+        let body_end = markers.get(idx + 1).map_or(blob.len(), |next| next.start());
         if body_end > body_start {
             entries.push((speaker, body_start, body_end));
         }
@@ -3086,7 +3067,12 @@ fn json_serialize_context(sections: Vec<JsonPromptSection>) -> String {
 fn json_section_carries_content(key: &str) -> bool {
     matches!(
         key,
-        "selection" | "beforeCaret" | "afterCaret" | "fieldText" | "screen" | "screenOcr"
+        "selection"
+            | "beforeCaret"
+            | "afterCaret"
+            | "fieldText"
+            | "screen"
+            | "screenOcr"
             | "clipboard"
     )
 }
@@ -3443,7 +3429,10 @@ mod tests {
     }
 
     fn context_json(out: &str) -> serde_json::Value {
-        serde_json::from_str(out).expect("context fragment must be valid JSON")
+        match serde_json::from_str(out) {
+            Ok(value) => value,
+            Err(err) => panic!("context output should parse as JSON: {err}; output: {out}"),
+        }
     }
 
     fn screen_text(snapshot: WindowContextSnapshot) -> String {
@@ -5274,13 +5263,28 @@ Archived";
             Bio . Member Since Mar 12, 2017 Mutual Servers — 3 Mutual Friends — 3 View Full Profile";
         let out = json_scrub_discord_blob(blob);
         // Every Server Tag clan badge is gone (it appears twice in the real blob).
-        assert!(!out.contains("Server Tag"), "Server Tag badge leaked: {out}");
+        assert!(
+            !out.contains("Server Tag"),
+            "Server Tag badge leaked: {out}"
+        );
         // The whole trailing profile card is cut.
         assert!(!out.contains("Member Since"), "profile card leaked: {out}");
-        assert!(!out.contains("Mutual Servers"), "profile card leaked: {out}");
-        assert!(!out.contains("Mutual Friends"), "profile card leaked: {out}");
-        assert!(!out.contains("View Full Profile"), "profile card leaked: {out}");
-        assert!(!out.contains("Originally known as"), "profile card leaked: {out}");
+        assert!(
+            !out.contains("Mutual Servers"),
+            "profile card leaked: {out}"
+        );
+        assert!(
+            !out.contains("Mutual Friends"),
+            "profile card leaked: {out}"
+        );
+        assert!(
+            !out.contains("View Full Profile"),
+            "profile card leaked: {out}"
+        );
+        assert!(
+            !out.contains("Originally known as"),
+            "profile card leaked: {out}"
+        );
         // The real conversation survives untouched.
         assert!(out.contains("but I didn't make the websites"));
         assert!(out.contains("yeah on 15k$ tourney grandfinals ek"));
@@ -5312,10 +5316,22 @@ Archived";
         };
         let screen = screen_text(s);
         assert!(!screen.is_empty(), "screen unexpectedly empty");
-        assert!(!screen.contains("Server Tag"), "Server Tag leaked: {screen}");
-        assert!(!screen.contains("Member Since"), "profile card leaked: {screen}");
-        assert!(!screen.contains("Mutual Friends"), "profile card leaked: {screen}");
-        assert!(!screen.contains("View Full Profile"), "profile card leaked: {screen}");
+        assert!(
+            !screen.contains("Server Tag"),
+            "Server Tag leaked: {screen}"
+        );
+        assert!(
+            !screen.contains("Member Since"),
+            "profile card leaked: {screen}"
+        );
+        assert!(
+            !screen.contains("Mutual Friends"),
+            "profile card leaked: {screen}"
+        );
+        assert!(
+            !screen.contains("View Full Profile"),
+            "profile card leaked: {screen}"
+        );
         assert!(screen.contains("but I didn't make the websites"));
     }
 
@@ -5348,7 +5364,10 @@ Archived";
             "WhatsApp Premium Subscription Rumors",
             "AI Coding Language Performance",
         ] {
-            assert!(!out.contains(title), "recents roster leaked {title:?}: {out}");
+            assert!(
+                !out.contains(title),
+                "recents roster leaked {title:?}: {out}"
+            );
         }
         // The first real prompt survives, leading article intact (not over-trimmed).
         assert!(
@@ -5356,7 +5375,10 @@ Archived";
             "first prompt lost / over-trimmed: {out}"
         );
         // Trailing composer/footer chrome is dropped.
-        assert!(!out.contains("Enter a prompt for Gemini"), "footer leaked: {out}");
+        assert!(
+            !out.contains("Enter a prompt for Gemini"),
+            "footer leaked: {out}"
+        );
         assert!(!out.contains("can make mistakes"), "footer leaked: {out}");
     }
 
@@ -6203,7 +6225,10 @@ Pop Out";
         assert!(!out.is_empty());
         assert!(serde_json::from_str::<serde_json::Value>(&out).is_ok());
         // THE leak: the real OTP code and its announcing phrase are gone.
-        assert!(!out.contains("17042"), "OTP code leaked via window-dump: {out}");
+        assert!(
+            !out.contains("17042"),
+            "OTP code leaked via window-dump: {out}"
+        );
         assert!(
             !out.to_lowercase().contains("verification otp"),
             "OTP phrase leaked: {out}"
@@ -6278,8 +6303,22 @@ Best regards, Team Codebasics";
         let scrubbed = json_scrub_secret_codes(&thread);
         // Identical: no OTP keyword anywhere → byte-for-byte unchanged.
         assert_eq!(scrubbed, thread);
-        for n in ["42,500", "38900", "1284", "2025", "2026", "5551234", "405", "4051234567", "1408", "12"] {
-            assert!(scrubbed.contains(n), "number {n} was over-redacted: {scrubbed}");
+        for n in [
+            "42,500",
+            "38900",
+            "1284",
+            "2025",
+            "2026",
+            "5551234",
+            "405",
+            "4051234567",
+            "1408",
+            "12",
+        ] {
+            assert!(
+                scrubbed.contains(n),
+                "number {n} was over-redacted: {scrubbed}"
+            );
         }
     }
 
@@ -6308,9 +6347,14 @@ Best regards, Team Codebasics";
             );
         }
         // The specific codes must be gone.
-        assert!(!json_scrub_secret_codes("Your account verification OTP is: 17042").contains("17042"));
+        assert!(
+            !json_scrub_secret_codes("Your account verification OTP is: 17042").contains("17042")
+        );
         assert!(!json_scrub_secret_codes("your verification code is 622297").contains("622297"));
-        assert!(!json_scrub_secret_codes("G-123456 is your Google verification code.").contains("123456"));
+        assert!(
+            !json_scrub_secret_codes("G-123456 is your Google verification code.")
+                .contains("123456")
+        );
 
         // The code-bearing sentence is dropped, but an incidental number in a
         // SEPARATE sentence of the same blob is preserved.

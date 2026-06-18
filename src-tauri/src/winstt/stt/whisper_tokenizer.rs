@@ -193,10 +193,7 @@ impl WhisperTokenizer {
 
     /// True if `id` is a special `<|...|>` marker token (skipped in text decode).
     pub fn is_special(&self, id: i64) -> bool {
-        self.vocab
-            .get(&id)
-            .map(|t| t.starts_with("<|"))
-            .unwrap_or(false)
+        self.vocab.get(&id).is_some_and(|t| t.starts_with("<|"))
     }
 
     /// Decode token ids → text, skipping `<|...|>` markers and stripping ONE leading
@@ -284,12 +281,7 @@ impl WhisperTokenizer {
 
     /// Largest id in the vocab + 1 (used to look up the alignment-heads table by size).
     pub fn vocab_size(&self) -> i64 {
-        self.tokens
-            .values()
-            .copied()
-            .max()
-            .map(|m| m + 1)
-            .unwrap_or(0)
+        self.tokens.values().copied().max().map_or(0, |m| m + 1)
     }
 }
 

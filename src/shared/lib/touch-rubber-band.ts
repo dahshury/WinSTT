@@ -58,7 +58,11 @@ function applyPull(
 	target: HTMLElement,
 	offset: number,
 	release: boolean,
-	original: { transition: string; translate: string },
+	original: {
+		overscrollBehaviorY: string;
+		transition: string;
+		translate: string;
+	},
 ) {
 	target.style.transition = release
 		? `translate ${RUBBER_BAND_RELEASE_MS}ms ${RUBBER_BAND_RELEASE_EASING}`
@@ -93,7 +97,11 @@ export function installTouchRubberBand(): void {
 	let boundaryStartY = 0;
 	let boundary: "top" | "bottom" | null = null;
 	let currentOffset = 0;
-	let originalStyles = { transition: "", translate: "" };
+	let originalStyles = {
+		overscrollBehaviorY: "",
+		transition: "",
+		translate: "",
+	};
 
 	const restoreStyles = () => {
 		if (!viewport) {
@@ -101,6 +109,7 @@ export function installTouchRubberBand(): void {
 		}
 		viewport.style.transition = originalStyles.transition;
 		viewport.style.translate = originalStyles.translate;
+		viewport.style.overscrollBehaviorY = originalStyles.overscrollBehaviorY;
 	};
 
 	const resetOffset = (release: boolean) => {
@@ -130,7 +139,7 @@ export function installTouchRubberBand(): void {
 		}
 
 		const nextViewport = findScrollableAncestor(event.target);
-		if (!nextViewport || nextViewport.dataset.rubberBandManaged === "local") {
+		if (!nextViewport || nextViewport.dataset["rubberBandManaged"] === "local") {
 			active = false;
 			viewport = null;
 			return;
@@ -138,6 +147,7 @@ export function installTouchRubberBand(): void {
 
 		viewport = nextViewport;
 		originalStyles = {
+			overscrollBehaviorY: viewport.style.overscrollBehaviorY,
 			transition: viewport.style.transition,
 			translate: viewport.style.translate,
 		};
@@ -149,6 +159,7 @@ export function installTouchRubberBand(): void {
 		boundaryStartY = startY;
 		startedAtTop = viewport.scrollTop <= 0;
 		startedAtBottom = viewport.scrollTop >= getMaxScrollTop(viewport) - 1;
+		viewport.style.overscrollBehaviorY = "contain";
 		viewport.style.transition = "none";
 	};
 
@@ -182,9 +193,6 @@ export function installTouchRubberBand(): void {
 			return;
 		}
 
-		if (event.cancelable) {
-			event.preventDefault();
-		}
 		currentOffset =
 			boundary === "top"
 				? dampenRubberBandDistance(outwardDistance)
@@ -209,7 +217,7 @@ export function installTouchRubberBand(): void {
 	});
 	document.addEventListener("touchmove", onTouchMove, {
 		capture: true,
-		passive: false,
+		passive: true,
 	});
 	document.addEventListener("touchend", onTouchEnd, {
 		capture: true,

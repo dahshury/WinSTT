@@ -6,8 +6,8 @@ use std::io::BufReader;
 
 /// Failures from resolving an output device, opening the rodio stream, reading
 /// the sound file, or queuing it for playback. Replaces the previous
-/// `Box<dyn std::error::Error>` boundary so the error has a real type and
-/// `From` conversions instead of an opaque trait object.
+/// erased error boundary so the error has a real type and `From` conversions
+/// instead of an opaque trait object.
 #[derive(Debug, thiserror::Error)]
 pub enum AudioFeedbackError {
     #[error("failed to enumerate output devices: {0}")]

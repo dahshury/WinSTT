@@ -368,19 +368,24 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 		if (get().isScanning) {
 			return;
 		}
-		const run = async () => {
-			do {
-				queuedForcedScan = false;
-				set({ isScanning: true, error: null });
-				try {
-					const result = await fetchOllamaModels();
+		const runNextQueuedScan = (): Promise<void> => {
+			queuedForcedScan = false;
+			set({ isScanning: true, error: null });
+			return fetchOllamaModels()
+				.then((result) => {
 					set(makeScanSuccessState(result));
-				} catch (err) {
+				})
+				.catch((err: unknown) => {
 					set(makeScanErrorState(err));
-				}
-			} while (queuedForcedScan);
+				})
+				.then(() => {
+					if (queuedForcedScan) {
+						return runNextQueuedScan();
+					}
+					return undefined;
+				});
 		};
-		pendingScan = run().finally(() => {
+		pendingScan = runNextQueuedScan().finally(() => {
 			pendingScan = null;
 		});
 		await pendingScan;

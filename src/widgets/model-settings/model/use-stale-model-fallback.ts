@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import {
 	isSelectableRealtimeModel,
@@ -12,19 +12,33 @@ import {
 	type useCatalogStore,
 	type useModelStateStore,
 } from "@/entities/model-catalog";
-import type { useSettingsStore } from "@/entities/setting";
+import { getSettingsStoreState } from "@/entities/setting";
 
 type CatalogModels = ReturnType<typeof useCatalogStore.getState>["models"];
 type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
-type UpdateModelFn = ReturnType<
-	typeof useSettingsStore.getState
->["updateModelSettings"];
+type UpdateModelFn = ReturnType<typeof getSettingsStoreState>["updateModelSettings"];
 type ModelPatch = Parameters<UpdateModelFn>[0];
 
 // Cloud STT ids route by provider prefix; the backend field is still required
 // by the settings patch type, so persist the same benign backend the swap path
 // uses for cloud selections.
 const CLOUD_MODEL_BACKEND = "onnx_asr" as const;
+
+function applyModelPatch(patch: ModelPatch): void {
+	getSettingsStoreState().updateModelSettings(patch);
+}
+
+let applyModelPatchOverride: ((patch: ModelPatch) => void) | null = null;
+
+export function _setStaleModelFallbackPatchApplierForTests(
+	applier: ((patch: ModelPatch) => void) | null,
+): void {
+	applyModelPatchOverride = applier;
+}
+
+function applyResolvedPatch(patch: ModelPatch): void {
+	(applyModelPatchOverride ?? applyModelPatch)(patch);
+}
 
 function cloudFallbackPatch(
 	cloudFallbackModel: string | null,
@@ -218,11 +232,10 @@ export function useStaleModelFallback(
 	statesLoaded: boolean,
 	currentMainModel: string | undefined,
 	currentRealtimeModel: string | undefined,
-	update: UpdateModelFn,
 	sourceLanguageSelection?: SourceLanguageSelection,
 	cloudFallbackModel: string | null = null,
 ): void {
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (!catalogLoaded) {
 			return;
 		}
@@ -234,7 +247,7 @@ export function useStaleModelFallback(
 			cloudFallbackModel,
 		);
 		if (patch) {
-			update(patch);
+			applyResolvedPatch(patch);
 		}
 	}, [
 		catalogLoaded,
@@ -243,11 +256,10 @@ export function useStaleModelFallback(
 		statesLoaded,
 		currentMainModel,
 		cloudFallbackModel,
-		update,
 	]);
 
 	// Same guard for the realtime model, narrowed to native-streaming entries.
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (!catalogLoaded) {
 			return;
 		}
@@ -259,7 +271,7 @@ export function useStaleModelFallback(
 			statesLoaded,
 		);
 		if (patch) {
-			update(patch);
+			applyResolvedPatch(patch);
 		}
 	}, [
 		catalogLoaded,
@@ -269,6 +281,5 @@ export function useStaleModelFallback(
 		currentMainModel,
 		currentRealtimeModel,
 		sourceLanguageSelection,
-		update,
 	]);
 }

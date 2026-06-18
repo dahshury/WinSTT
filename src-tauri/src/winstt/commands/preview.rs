@@ -28,7 +28,10 @@ pub struct PreviewState {
 }
 
 #[derive(Clone, Copy)]
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[cfg_attr(
+    not(target_os = "windows"),
+    expect(dead_code, reason = "foreground capture is Windows-only")
+)]
 struct CapturedForeground {
     hwnd_raw: isize,
     process_id: u32,
@@ -185,7 +188,9 @@ impl ThreadInputAttach {
     unsafe fn new(from: u32, to: u32) -> Self {
         use windows::Win32::System::Threading::AttachThreadInput;
 
-        let attached = AttachThreadInput(from, to, true).as_bool();
+        // SAFETY: Caller supplies thread ids from Win32 foreground/current-thread queries; Drop
+        // detaches the same pair when attachment succeeds.
+        let attached = unsafe { AttachThreadInput(from, to, true) }.as_bool();
         Self { from, to, attached }
     }
 }

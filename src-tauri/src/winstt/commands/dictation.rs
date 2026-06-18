@@ -100,8 +100,9 @@ pub fn winstt_get_parameter(app: AppHandle, parameter: String) -> serde_json::Va
     match parameter.as_str() {
         "is_recording" => app
             .try_state::<Arc<AudioRecordingManager>>()
-            .map(|rm| serde_json::Value::Bool(rm.is_recording()))
-            .unwrap_or(serde_json::Value::Bool(false)),
+            .map_or(serde_json::Value::Bool(false), |rm| {
+                serde_json::Value::Bool(rm.is_recording())
+            }),
         _ => serde_json::Value::Null,
     }
 }
@@ -189,8 +190,7 @@ fn request_diarization_toggle(app: &AppHandle, enabled: bool) {
     );
     let applied = app
         .try_state::<Arc<DiarizationManager>>()
-        .map(|dm| dm.set_enabled(enabled))
-        .unwrap_or(false);
+        .is_some_and(|dm| dm.set_enabled(enabled));
     let message = if applied {
         "Diarization enabled"
     } else {

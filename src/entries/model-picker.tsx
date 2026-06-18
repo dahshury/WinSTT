@@ -1,4 +1,4 @@
-import { StrictMode, Suspense } from "react";
+import { StrictMode, Suspense, useEffect } from "react";
 import { renderReactRoot } from "@/app/lib/render-react-root";
 import { HtmlLang } from "@/app/layouts/HtmlLang";
 import { IntlProvider } from "@/app/providers/IntlProvider";
@@ -32,16 +32,18 @@ if (!container) {
 // settings entry for the same fix). The store hydration triggers many re-renders.
 let modelPickerBeaconSent = false;
 
-function ModelPickerBootstrap() {
+export function ModelPickerBootstrap() {
 	useSyncSettings();
 	useSyncActiveModel();
 	useRealtimePreviewFallback();
 	useDownloadListener();
 	useConnectionListener();
-	if (!modelPickerBeaconSent) {
-		modelPickerBeaconSent = true;
-		diagBeacon("model-picker", "ModelPickerBootstrap render reached");
-	}
+	useEffect(() => {
+		if (!modelPickerBeaconSent) {
+			modelPickerBeaconSent = true;
+			diagBeacon("model-picker", "ModelPickerBootstrap render reached");
+		}
+	}, []);
 	return <ModelPickerPage />;
 }
 

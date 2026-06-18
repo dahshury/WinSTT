@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 const DEFAULT_OPENROUTER_FAVORITE_PROVIDERS_STORAGE_KEY =
 	"winstt:openrouter-favorite-providers";
@@ -52,34 +52,31 @@ export function useFavoriteProviders(
 		}
 	}, [storageKey, favorites]);
 
-	const addFavorite = useCallback((provider: string) => {
+	const addFavorite = (provider: string) => {
 		setFavorites((prev) => {
 			if (prev.includes(provider)) {
 				return prev;
 			}
 			return [...prev, provider];
 		});
-	}, []);
+	};
 
-	const removeFavorite = useCallback((provider: string) => {
+	const removeFavorite = (provider: string) => {
 		setFavorites((prev) => prev.filter((p) => p !== provider));
-	}, []);
+	};
 
-	const toggleFavorite = useCallback((provider: string) => {
+	const toggleFavorite = (provider: string) => {
 		setFavorites((prev) => {
 			if (prev.includes(provider)) {
 				return prev.filter((p) => p !== provider);
 			}
 			return [...prev, provider];
 		});
-	}, []);
+	};
 
-	const favoritesSet = useMemo(() => new Set(favorites), [favorites]);
+	const favoritesSet = new Set(favorites);
 
-	const isFavorite = useCallback(
-		(provider: string) => favoritesSet.has(provider),
-		[favoritesSet],
-	);
+	const isFavorite = (provider: string) => favoritesSet.has(provider);
 
 	return {
 		favorites,

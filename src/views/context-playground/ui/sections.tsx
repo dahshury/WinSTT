@@ -6,7 +6,7 @@ import type {
 } from "@/shared/api/context-debug-types";
 import { cn } from "@/shared/lib/cn";
 import type { ContextPlaygroundController } from "../model/use-context-playground";
-import { Field, Pre, Section } from "./primitives";
+import { Field, Section } from "./primitives";
 
 /**
  * Always-available fallback for copying the report: a readonly textarea holding
@@ -22,6 +22,7 @@ export function RawJsonBlock({ report }: { report: ContextDebugReport }) {
 			title="Raw JSON"
 		>
 			<textarea
+				aria-label="Raw JSON report"
 				className="h-40 w-full resize-y rounded border border-border bg-surface px-2 py-1.5 font-mono text-[11px] text-foreground-secondary"
 				onFocus={(e) => e.currentTarget.select()}
 				readOnly

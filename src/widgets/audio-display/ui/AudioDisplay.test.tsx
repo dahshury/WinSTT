@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 // (afterEach/beforeEach are used by both the collectDroppedFiles and
 //  enqueueDroppedFiles describe blocks.)
 import { render } from "@testing-library/react";
@@ -119,7 +119,7 @@ describe("AudioDisplay helpers — enqueueDroppedFiles", () => {
 		tauriInternals().invoke = ((cmd: string) => {
 			if (cmd === "file_transcribe_enqueue") {
 				enqueueCalls += 1;
-				return Promise.resolve([]);
+				return Promise.resolve(["fq-1"]);
 			}
 			return Promise.resolve(undefined);
 		}) as unknown as TauriInternals["invoke"];
@@ -130,6 +130,7 @@ describe("AudioDisplay helpers — enqueueDroppedFiles", () => {
 			invoke: ((channel: string) => {
 				if (channel === "file:queue-enqueue") {
 					enqueueCalls += 1;
+					return Promise.resolve(["fq-1"]);
 				}
 				return Promise.resolve(null);
 			}) as typeof window.nativeBridge.invoke,
@@ -140,13 +141,13 @@ describe("AudioDisplay helpers — enqueueDroppedFiles", () => {
 		tauriInternals().invoke = savedTauriInvoke;
 	});
 
-	test("does not enqueue renderer-resolved dropped file paths", async () => {
+	test("enqueues renderer-resolved dropped file paths", async () => {
 		const count = await helpers.enqueueDroppedFiles([
 			makeFile("a.wav"),
 			makeFile("skip.txt"),
 		]);
-		expect(count).toBe(0);
-		expect(enqueueCalls).toBe(0);
+		expect(count).toBe(1);
+		expect(enqueueCalls).toBe(1);
 	});
 
 	test("returns 0 and does not enqueue when nothing is transcribable", async () => {

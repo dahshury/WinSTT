@@ -29,11 +29,11 @@ describe("ApplicationError property tests", () => {
 				const err = new ApplicationError(msg, ctx);
 				const json = err.toJSON();
 				return (
-					json.message === msg &&
-					json.name === "ApplicationError" &&
-					typeof json.timestamp === "number" &&
-					Number.isFinite(json.timestamp as number) &&
-					JSON.stringify(json.context) === JSON.stringify(ctx)
+					json["message"] === msg &&
+					json["name"] === "ApplicationError" &&
+					typeof json["timestamp"] === "number" &&
+					Number.isFinite(json["timestamp"] as number) &&
+					JSON.stringify(json["context"]) === JSON.stringify(ctx)
 				);
 			}),
 			{ numRuns: 200 },

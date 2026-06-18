@@ -12,7 +12,7 @@ import {
 	isValidElement,
 	type ReactElement,
 	type ReactNode,
-	useContext,
+	use,
 } from "react";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -42,7 +42,7 @@ const MIN_POPUP_SHADOW = 7;
 const AlertModeContext = createContext(false);
 
 function useAlertMode(): boolean {
-	return useContext(AlertModeContext);
+	return use(AlertModeContext);
 }
 
 export interface DialogProps {

@@ -25,12 +25,9 @@ import { Button } from "@/shared/ui/button";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import { FAVORITES_GROUP_VALUE } from "../../core/favorites";
-import {
-	GroupHeader,
-	type MetaEntry,
-	ModelCard,
-	NeutralHeaderIcon,
-} from "../../core/model-card";
+import type { MetaEntry } from "../../core/model-card/CardMeta";
+import { GroupHeader, NeutralHeaderIcon } from "../../core/model-card/GroupHeader";
+import { ModelCard } from "../../core/model-card/ModelCard";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/Tooltip";
 import {
 	formatOllamaDisplayName,
@@ -40,7 +37,6 @@ import {
 	getOllamaPublisherBySlug,
 } from "../lib/family-helpers";
 import {
-	isSameOllamaTag,
 	libraryBaseSlug,
 	paramSizeFromName,
 } from "../lib/quant-shelf-helpers";
@@ -59,18 +55,17 @@ import {
 } from "../lib/ollama-description-helpers";
 import { makerGroupCount, type MakerGroup } from "../lib/maker-groups";
 import {
-	installedCapabilityBadges,
+	InstalledCapabilityBadges,
 	OllamaMakerIcon,
 	RecommendedStar,
 	WontFitChip,
 } from "./OllamaModelChips";
 import {
-	defaultTagBodyClick,
 	InstalledQuantShelf,
-	installedSelfTag,
 	LazyQuantShelf,
 	OllamaQuantShelf,
 } from "./OllamaQuantShelf";
+import { defaultTagBodyClick } from "./OllamaQuantShelf.helpers";
 import type {
 	MakerGroupDeps,
 	OllamaFitInfo,
@@ -206,7 +201,11 @@ function OllamaModelRow({
 	return (
 		<ModelCard
 			as="combobox-item"
-			badges={installedCapabilityBadges(model.capabilities ?? undefined)}
+			badges={
+				model.capabilities?.length ? (
+					<InstalledCapabilityBadges capabilities={model.capabilities} />
+				) : null
+			}
 			className={activePullName ? OLLAMA_DOWNLOADING_CARD_CLASSES : undefined}
 			data-model-id={activePullName ?? model.name}
 			description={description}
@@ -452,7 +451,8 @@ function LibraryRowHeader({
 	// Demote status badges + capability pills off the name row to the card's
 	// subordinate `badges` wrap-row (mirrors RecommendedRow), so the name owns
 	// the top line.
-	const capabilityBadges = installedCapabilityBadges(caps);
+	const capabilityBadges =
+		caps.length > 0 ? <InstalledCapabilityBadges capabilities={caps} /> : null;
 	const hasBadges =
 		status.installedCount > 0 ||
 		Boolean(status.activePull) ||
@@ -741,18 +741,6 @@ function RecommendedRow({
 				/>
 			}
 		/>
-	);
-}
-
-export function matchingTypedModelTag(
-	info: TypedModelQueryInfo | null,
-	tagsState: OllamaTagsState,
-): OllamaLibraryTag | undefined {
-	if (!info) {
-		return undefined;
-	}
-	return tagsState?.tags.find((tag) =>
-		isSameOllamaTag(info.modelName, tag.name),
 	);
 }
 

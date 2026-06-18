@@ -17,22 +17,32 @@
     "verbatimModuleSyntax": true,
     "forceConsistentCasingInFileNames": true,
 
-    /* Path Aliases — renderer (@/*) + Tauri bindings (@/bindings) */
-    "baseUrl": ".",
+    /* Path Aliases — renderer (@/*) + Tauri bindings (@/bindings).
+       No `baseUrl` (removed in TS 7 / tsgo): non-relative `paths` mappings
+       resolve relative to this tsconfig's directory, so the explicit `./`
+       prefixes below are self-anchored. */
     "paths": {
       "@/bindings": ["./src/bindings.ts"],
       "@/*": ["./src/*"],
       "@test/*": ["./test/*"]
     },
 
-    /* Linting (matched to WinSTT's renderer tsconfig) */
+    /* Strictness — maximum type-soundness gate. Every type-checking
+       strictness lever TypeScript/tsgo exposes is on; the only ones left
+       off are emit-shape constraints (isolatedDeclarations) irrelevant to
+       this `noEmit` renderer. */
     "strict": true,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
-    "exactOptionalPropertyTypes": true
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedSideEffectImports": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false
   },
   "include": ["src", "spec"],
   "exclude": [
@@ -42,6 +52,5 @@
     "**/*.property.test.tsx",
     "**/*test-helpers*",
     "**/__tests__/**"
-  ],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  ]
 }

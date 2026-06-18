@@ -31,7 +31,6 @@ import {
 	surfaceHoverBg,
 	useSurface,
 } from "@/shared/lib/surface";
-import { buildTranscriptDiff } from "@/shared/lib/transcript-diff";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { Badge } from "@/shared/ui/badge";
 import {
@@ -41,6 +40,7 @@ import {
 	formatWpm,
 	wordsPerMinute,
 } from "../lib/word-stats";
+import { getEntryTranscriptDiff } from "../lib/transcript-diff-cache";
 import { useHistoryPlayback } from "../model/use-history-playback";
 import type { TranscriptionHistoryEntry } from "../model/history-store";
 import {
@@ -125,10 +125,7 @@ function HistoryRow({
 		Boolean(entry.audioFilePath),
 		outputDeviceId,
 	);
-	const transcriptDiff =
-		typeof entry.originalText === "string"
-			? buildTranscriptDiff(entry.originalText, entry.text)
-			: null;
+	const transcriptDiff = getEntryTranscriptDiff(entry);
 	const hasOriginal = transcriptDiff !== null;
 	// Each entry is its own elevated card, one surface step above the list it sits
 	// in (FF surfaces: substrate flows through context, lift +1). The meta footer
@@ -404,7 +401,7 @@ export function HistoryTable({
 		words: t("colWords"),
 	};
 
-	const rows = sorted.map((entry) => (
+	const renderRow = (entry: TranscriptionHistoryEntry) => (
 		<HistoryRow
 			copyLabel={copyLabel}
 			entry={entry}
@@ -417,7 +414,7 @@ export function HistoryTable({
 			viewOriginalLabel={viewOriginalLabel}
 			viewProcessedLabel={viewProcessedLabel}
 		/>
-	));
+	);
 
 	let body: React.ReactNode;
 	if (sorted.length === 0) {
@@ -437,12 +434,13 @@ export function HistoryTable({
 					WebkitOverflowScrolling: "touch",
 				}}
 			>
-				{rows}
+				{sorted.map(renderRow)}
 			</div>
 		);
 	} else {
 		body = (
 			<VList
+				data={sorted}
 				itemSize={ROW_HEIGHT_HINT_PX}
 				style={{
 					height: Math.min(
@@ -454,7 +452,7 @@ export function HistoryTable({
 					WebkitOverflowScrolling: "touch",
 				}}
 			>
-				{rows}
+				{renderRow}
 			</VList>
 		);
 	}

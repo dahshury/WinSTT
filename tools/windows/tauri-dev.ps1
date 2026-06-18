@@ -36,18 +36,32 @@ $prepend = @(
 $env:PATH = "$prepend;$env:PATH"
 $env:LIBCLANG_PATH = 'C:\Program Files\LLVM\bin'
 
+# Force the first-run onboarding wizard to open on EVERY dev launch, regardless of
+# the persisted `general.onboarded` flag (see is_force_onboarding_env_flag_set in
+# src-tauri/src/lib.rs). Handy while iterating on the wizard — finishing it still
+# sets onboarded=true, but this env var overrides that on the next launch so the
+# wizard always reappears. Comment this line out to return to normal dev behaviour
+# (onboarding only on a genuinely un-onboarded profile).
+$env:WINSTT_FORCE_ONBOARDING = '1'
+
 Set-Location $repoRoot
 
-# Kill any leftover dev app first. The app uses tauri-plugin-single-instance, so a relaunch
-# refocuses an existing winstt.exe instead of opening a fresh window — and that stale instance
-# keeps serving the frontend it loaded at startup (its webview never re-fetches), so a rebuilt
-# frontend silently never shows. The port-freeing below only stops vite, not the app, so a dev
-# app left running from a previous session would otherwise mask every code change. Stop it here
-# so the relaunch always loads the current code.
-Get-Process -Name winstt -ErrorAction SilentlyContinue | ForEach-Object {
-    Write-Host "Stopping stale dev app (winstt, pid $($_.Id))..."
-    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-}
+# Kill only this repo's leftover debug app first. Packaged/portable WinSTT may be
+# running at the same time to own the dictation hotkey, so never stop every
+# process named `winstt`.
+$debugWinsttExe = Join-Path $repoRoot 'src-tauri\target\debug\winstt.exe'
+Get-Process -Name winstt -ErrorAction SilentlyContinue |
+    Where-Object {
+        try {
+            [string]::Equals($_.Path, $debugWinsttExe, [System.StringComparison]::OrdinalIgnoreCase)
+        } catch {
+            $false
+        }
+    } |
+    ForEach-Object {
+        Write-Host "Stopping stale dev app (winstt, pid $($_.Id))..."
+        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    }
 
 # Free the dev ports first. Vite is configured strictPort:1420 (src-tauri devUrl), so a
 # previous `tauri dev` that didn't shut down cleanly leaves a stale listener and the next

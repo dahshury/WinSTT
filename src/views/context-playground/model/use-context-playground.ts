@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type {
 	ContextDebugReport,
 	ContextPlaygroundPush,
@@ -35,6 +35,11 @@ export interface ContextPlaygroundController {
 	waiting: ContextPlaygroundWaitReason | null;
 }
 
+function closeContextPlayground(): void {
+	contextPlaygroundSetLive(false);
+	windowCloseNamed("context-playground");
+}
+
 export function useContextPlayground(): ContextPlaygroundController {
 	const [report, setReport] = useState<ContextDebugReport | null>(null);
 	const [waiting, setWaiting] = useState<ContextPlaygroundWaitReason | null>(
@@ -42,11 +47,7 @@ export function useContextPlayground(): ContextPlaygroundController {
 	);
 	const [live, setLive] = useState(true);
 	const [deepArmed, setDeepArmed] = useState(false);
-	const close = useCallback(() => {
-		contextPlaygroundSetLive(false);
-		windowCloseNamed("context-playground");
-	}, []);
-	useEscapeToClose(close);
+	useEscapeToClose(closeContextPlayground);
 
 	useEffect(() => {
 		const unsubscribe = ipcOn(IPC.CONTEXT_PLAYGROUND_REPORT, (payload) => {

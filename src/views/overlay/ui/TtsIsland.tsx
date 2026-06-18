@@ -1,6 +1,6 @@
 import { Button as BaseButton } from "@base-ui/react/button";
 import { domMax, LazyMotion, m, type Variants } from "motion/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
 	AudioVisualizer,
@@ -16,7 +16,6 @@ import { Spinner } from "@/shared/ui/spinner";
 import {
 	DynamicIsland,
 	DynamicIslandProvider,
-	useDynamicIslandSize,
 } from "@/shared/ui/dynamic-island";
 import {
 	discardTts,
@@ -31,7 +30,7 @@ import {
 	GLASS_SURFACE,
 	OVERLAY_PANEL_CLOSE_MS,
 	useDelayedUnmount,
-} from "./overlay-shell";
+} from "./overlay-shell.shared";
 
 /**
  * SVG glyph for a TTS pill control. `pause`/`play` are filled; `discard` is the
@@ -170,10 +169,6 @@ function SpeedButton({
  * to the reader via IPC.
  */
 function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
-	const { setSize, state } = useDynamicIslandSize();
-	if (state.size !== "compactMedium") {
-		setSize("compactMedium");
-	}
 	const cloud = useSettingsStore((s) => s.settings.tts?.source) === "cloud";
 	const model = useSettingsStore((s) => s.settings.tts?.model);
 	const rawSpeed = useSettingsStore((s) =>
@@ -192,6 +187,7 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 			data-overlay-hit-region="true"
 			flatTop
 			id="winstt-tts-island"
+			size="compactMedium"
 		>
 			<div className="flex h-full items-center justify-between gap-2 px-4">
 				<div className="flex items-center">
@@ -301,10 +297,13 @@ function useTtsIslandBridge(sessionActive: boolean): void {
 	const status = useTtsPlaybackStore((s) => s.status);
 	const setAudioLevel = useVisualizerStore((s) => s.setAudioLevel);
 	const rafRef = useRef(0);
+	const pausePlayback = useEffectEvent(() => {
+		pauseTts();
+	});
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (sessionActive && status === "speaking") {
-			pauseTts();
+			pausePlayback();
 		}
 	}, [sessionActive, status]);
 

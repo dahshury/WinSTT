@@ -1,17 +1,15 @@
 import { domMax, LazyMotion } from "motion/react";
-import { useEffect } from "react";
 import {
 	DynamicIsland,
 	DynamicIslandProvider,
 	type DynamicIslandSize,
-	useDynamicIslandSize,
 } from "@/shared/ui/dynamic-island";
 import { ThinkingIndicator } from "@/shared/ui/thinking-indicator";
 import {
 	OVERLAY_PANEL_CLOSE_MS,
 	TRANSFORMING_WORDS,
 	useDelayedUnmount,
-} from "./overlay-shell";
+} from "./overlay-shell.shared";
 
 function DynamicTransformIslandPill({
 	revealed,
@@ -22,13 +20,7 @@ function DynamicTransformIslandPill({
 	thinkingText: string;
 	transformStartedAt: number | null;
 }) {
-	const { setSize, state } = useDynamicIslandSize();
 	const target: DynamicIslandSize = revealed ? "compactMedium" : "empty";
-	useEffect(() => {
-		if (state.size !== target) {
-			setSize(target);
-		}
-	}, [setSize, state.size, target]);
 	const renderContent = useDelayedUnmount(revealed, OVERLAY_PANEL_CLOSE_MS);
 
 	return (
@@ -37,6 +29,7 @@ function DynamicTransformIslandPill({
 			fitContent
 			flatTop
 			id="winstt-overlay-island"
+			size={target}
 		>
 			{renderContent ? (
 				<div

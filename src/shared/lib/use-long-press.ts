@@ -2,7 +2,7 @@ import type {
 	MouseEvent as ReactMouseEvent,
 	PointerEvent as ReactPointerEvent,
 } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const DEFAULT_POINTER_TYPES = ["touch", "pen"] as const;
 const DEFAULT_DELAY_MS = 520;
@@ -56,20 +56,20 @@ export function useLongPress(
 		onLongPressRef.current = onLongPress;
 	}, [onLongPress]);
 
-	const clearTimer = useCallback(() => {
+	const clearTimer = () => {
 		if (timerRef.current) {
 			clearTimeout(timerRef.current);
 			timerRef.current = null;
 		}
-	}, []);
+	};
 
-	const cancel = useCallback(() => {
+	const cancel = () => {
 		clearTimer();
 		activePointerRef.current = null;
 		setPressing(false);
-	}, [clearTimer]);
+	};
 
-	const suppressNextContextMenu = useCallback(() => {
+	const suppressNextContextMenu = () => {
 		suppressContextMenuRef.current = true;
 		if (contextMenuTimerRef.current) {
 			clearTimeout(contextMenuTimerRef.current);
@@ -78,67 +78,63 @@ export function useLongPress(
 			suppressContextMenuRef.current = false;
 			contextMenuTimerRef.current = null;
 		}, CONTEXT_MENU_SUPPRESS_MS);
-	}, []);
+	};
 
 	useEffect(
+		// Unmount-only cleanup. Touches refs only, so it carries no deps — referencing
+		// the per-render `clearTimer` here would re-run (and tear down the pending
+		// long-press timer) on every render once the manual memoization is gone.
 		() => () => {
-			clearTimer();
+			if (timerRef.current) {
+				clearTimeout(timerRef.current);
+			}
 			if (contextMenuTimerRef.current) {
 				clearTimeout(contextMenuTimerRef.current);
 			}
 		},
-		[clearTimer],
+		[],
 	);
 
-	const pointerAllowed = useCallback(
-		(event: ReactPointerEvent<HTMLElement>) => {
-			if (disabled || event.pointerType === "mouse") {
-				return false;
-			}
-			return pointerTypes.includes(event.pointerType);
-		},
-		[disabled, pointerTypes],
-	);
+	const pointerAllowed = (event: ReactPointerEvent<HTMLElement>) => {
+		if (disabled || event.pointerType === "mouse") {
+			return false;
+		}
+		return pointerTypes.includes(event.pointerType);
+	};
 
-	const onPointerDown = useCallback(
-		(event: ReactPointerEvent<HTMLElement>) => {
-			if (!pointerAllowed(event) || event.button !== 0) {
-				return;
-			}
-			clearTimer();
-			activePointerRef.current = {
-				id: event.pointerId,
-				x: event.clientX,
-				y: event.clientY,
-			};
-			setPressing(true);
-			timerRef.current = setTimeout(() => {
-				timerRef.current = null;
-				activePointerRef.current = null;
-				setPressing(false);
-				suppressNextContextMenu();
-				onLongPressRef.current();
-			}, delay);
-		},
-		[clearTimer, delay, pointerAllowed, suppressNextContextMenu],
-	);
+	const onPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+		if (!pointerAllowed(event) || event.button !== 0) {
+			return;
+		}
+		clearTimer();
+		activePointerRef.current = {
+			id: event.pointerId,
+			x: event.clientX,
+			y: event.clientY,
+		};
+		setPressing(true);
+		timerRef.current = setTimeout(() => {
+			timerRef.current = null;
+			activePointerRef.current = null;
+			setPressing(false);
+			suppressNextContextMenu();
+			onLongPressRef.current();
+		}, delay);
+	};
 
-	const onPointerMove = useCallback(
-		(event: ReactPointerEvent<HTMLElement>) => {
-			const activePointer = activePointerRef.current;
-			if (!activePointer || activePointer.id !== event.pointerId) {
-				return;
-			}
-			const dx = Math.abs(event.clientX - activePointer.x);
-			const dy = Math.abs(event.clientY - activePointer.y);
-			if (dx > moveTolerance || dy > moveTolerance) {
-				cancel();
-			}
-		},
-		[cancel, moveTolerance],
-	);
+	const onPointerMove = (event: ReactPointerEvent<HTMLElement>) => {
+		const activePointer = activePointerRef.current;
+		if (!activePointer || activePointer.id !== event.pointerId) {
+			return;
+		}
+		const dx = Math.abs(event.clientX - activePointer.x);
+		const dy = Math.abs(event.clientY - activePointer.y);
+		if (dx > moveTolerance || dy > moveTolerance) {
+			cancel();
+		}
+	};
 
-	const onContextMenu = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+	const onContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
 		if (!suppressContextMenuRef.current) {
 			return;
 		}
@@ -148,19 +144,16 @@ export function useLongPress(
 			clearTimeout(contextMenuTimerRef.current);
 			contextMenuTimerRef.current = null;
 		}
-	}, []);
+	};
 
-	const handlers = useMemo(
-		() => ({
-			onContextMenu,
-			onPointerCancel: cancel,
-			onPointerDown,
-			onPointerLeave: cancel,
-			onPointerMove,
-			onPointerUp: cancel,
-		}),
-		[cancel, onContextMenu, onPointerDown, onPointerMove],
-	);
+	const handlers = {
+		onContextMenu,
+		onPointerCancel: cancel,
+		onPointerDown,
+		onPointerLeave: cancel,
+		onPointerMove,
+		onPointerUp: cancel,
+	};
 
 	return { handlers, pressing };
 }

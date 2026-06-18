@@ -178,7 +178,7 @@ export function bundleVariants(items: readonly ModelInfo[]): VariantBundle[] {
 		if (variants === undefined || variants.length === 0) {
 			continue;
 		}
-		const sorted = [...variants].sort(
+		const sorted = variants.toSorted(
 			(a, b) => variantSortKey(a, baseId) - variantSortKey(b, baseId),
 		);
 		bundles.push({ baseId, variants: sorted });

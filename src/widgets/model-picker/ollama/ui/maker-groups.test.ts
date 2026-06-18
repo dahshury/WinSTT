@@ -2,23 +2,24 @@ import { describe, expect, it } from "bun:test";
 import type {
 	OllamaLibraryHit,
 	OllamaModel,
+	OllamaPullProgress,
 	RecommendedOllamaModel,
 } from "@/shared/api/models";
 import {
 	activePullNameForRow,
-	buildMakerGroups,
 	buildOllamaDescriptionIndex,
 	installedDescriptionForModel,
-	ollamaPullMatchesRow,
 	ollamaDescriptionForName,
+	ollamaPullMatchesRow,
 	singleActivePullName,
 	supportsOllamaToolCalling,
 	typedModelQueryInfo,
-	type MakerGroup,
-} from "./OllamaModelSelector";
+} from "../lib/ollama-description-helpers";
 import {
+	buildMakerGroups,
 	computeRecommendedVisible,
 	isCatalogBackedModel,
+	type MakerGroup,
 } from "../lib/maker-groups";
 
 function installed(name: string): OllamaModel {
@@ -29,6 +30,13 @@ function installed(name: string): OllamaModel {
 		digest: "",
 		modified_at: "",
 	} as OllamaModel;
+}
+function pull(model: string, percent: number): OllamaPullProgress {
+	return {
+		model,
+		percent,
+		status: "pulling",
+	};
 }
 function recommended(name: string, family: string): RecommendedOllamaModel {
 	return {
@@ -275,13 +283,15 @@ describe("typedModelQueryInfo", () => {
 
 describe("active Ollama pull focus helpers", () => {
 	it("returns the active pull only when exactly one model is downloading", () => {
-		expect(singleActivePullName({ "gemma3:4b-q4_K_M": { percent: 12 } })).toBe(
-			"gemma3:4b-q4_K_M",
-		);
 		expect(
 			singleActivePullName({
-				"gemma3:4b-q4_K_M": { percent: 12 },
-				"qwen3:4b-q4_K_M": { percent: 30 },
+				"gemma3:4b-q4_K_M": pull("gemma3:4b-q4_K_M", 12),
+			}),
+		).toBe("gemma3:4b-q4_K_M");
+		expect(
+			singleActivePullName({
+				"gemma3:4b-q4_K_M": pull("gemma3:4b-q4_K_M", 12),
+				"qwen3:4b-q4_K_M": pull("qwen3:4b-q4_K_M", 30),
 			}),
 		).toBeNull();
 		expect(singleActivePullName({})).toBeNull();
@@ -299,8 +309,8 @@ describe("active Ollama pull focus helpers", () => {
 
 	it("finds the pull that should highlight and scroll a row", () => {
 		const pulls = {
-			"gemma3:27b-q4_K_M": { percent: 20 },
-			"gemma3:4b-q8_0": { percent: 80 },
+			"gemma3:27b-q4_K_M": pull("gemma3:27b-q4_K_M", 20),
+			"gemma3:4b-q8_0": pull("gemma3:4b-q8_0", 80),
 		};
 
 		expect(activePullNameForRow(pulls, "gemma3:4b", "4B")).toBe(

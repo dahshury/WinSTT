@@ -1,4 +1,4 @@
-import type { RowData, Table } from "@tanstack/react-table";
+import type { Table } from "@tanstack/react-table";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -11,6 +11,7 @@ import {
 // unbounded and pushing the rest of a fixed-height settings panel off-screen.
 // ~7 rows visible before the scrollbar engages — matches the prior table frame.
 const DEFAULT_MAX_HEIGHT_PX = 280;
+const DEFAULT_TABLE_LAYOUT: DataGridTableLayout = {};
 
 /**
  * Root provider for the data grid. Holds a TanStack `Table` instance (created by
@@ -23,7 +24,7 @@ export function DataGrid<TData>({
 	labels,
 	resizable = false,
 	table,
-	tableLayout = {},
+	tableLayout = DEFAULT_TABLE_LAYOUT,
 }: {
 	children: ReactNode;
 	labels: DataGridLabels;
@@ -36,7 +37,7 @@ export function DataGrid<TData>({
 			value={{
 				labels,
 				resizable,
-				table: table as unknown as Table<RowData>,
+				table: table as Table<unknown>,
 				tableLayout,
 			}}
 		>

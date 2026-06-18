@@ -19,8 +19,7 @@ pub(crate) fn directml_degenerate_model_blocked(model_id: &str) -> bool {
                 .ok()
                 .map(|models| models.get(model_id).copied().unwrap_or(0))
         })
-        .map(|count| count >= DML_DEGENERATE_BLOCK_THRESHOLD)
-        .unwrap_or(false)
+        .is_some_and(|count| count >= DML_DEGENERATE_BLOCK_THRESHOLD)
 }
 
 pub(super) fn mark_directml_degenerate_model(model_id: &str) -> usize {

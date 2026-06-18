@@ -52,7 +52,7 @@ function findSelected(
 	return findDataAttributeElement(
 		container,
 		"[data-menu-option]",
-		(row) => row.dataset.menuOption,
+		(row) => row.dataset["menuOption"],
 		value,
 	);
 }

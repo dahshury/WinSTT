@@ -3,7 +3,6 @@ use crate::audio_toolkit::{
     SileroVad,
 };
 use crate::helpers::clamshell;
-use crate::settings::get_settings;
 use crate::winstt::commands::settings::read_settings_raw;
 use crate::winstt::settings_schema::{MicrophoneRelease, RecordingMode, WinsttSettings};
 use crate::winstt::sync_ext::MutexExt;
@@ -108,6 +107,8 @@ fn set_mute(mute: bool) {
 
     #[cfg(target_os = "windows")]
     {
+        // SAFETY: The COM objects are created and used on this thread only, all calls check
+        // their HRESULTs through `unwrap_or_return!`, and no raw pointers are retained.
         unsafe {
             use windows::Win32::{
                 Media::Audio::{
@@ -217,7 +218,6 @@ fn create_audio_recorder(
     // Recorder with VAD plus a spectrum-level callback that forwards updates to
     // the frontend.
     let recorder = AudioRecorder::new()
-        .map_err(|e| anyhow::anyhow!("Failed to create AudioRecorder: {}", e))?
         .with_realtime_audio_signal(realtime_audio_signal)
         .with_vad(Box::new(smoothed_vad))
         .with_level_callback({
@@ -343,9 +343,14 @@ impl AudioRecordingManager {
             )),
         };
 
-        // Always-on?  Open immediately.
+        // Always-on? Open immediately unless onboarding owns the launch. The
+        // post-onboarding activation path re-applies the saved microphone policy.
         if matches!(mode, MicrophoneMode::AlwaysOn) {
-            manager.start_microphone_stream()?;
+            if crate::winstt::commands::onboarding::is_onboarding_active() {
+                debug!("Deferring always-on microphone stream until onboarding completes");
+            } else {
+                manager.start_microphone_stream()?;
+            }
         }
 
         Ok(manager)
@@ -407,7 +412,7 @@ impl AudioRecordingManager {
         }
 
         let settings = read_settings_raw(&self.app_handle);
-        let legacy_settings = get_settings(&self.app_handle);
+        let legacy_settings = &settings.core;
         let use_clamshell_mic = clamshell::is_clamshell().unwrap_or(false)
             && (settings.audio.clamshell_microphone.is_some()
                 || legacy_settings.clamshell_microphone.is_some());
@@ -510,7 +515,7 @@ impl AudioRecordingManager {
 
     /// Applies mute if mute_while_recording is enabled and stream is open
     pub fn apply_mute(&self) {
-        let settings = get_settings(&self.app_handle);
+        let settings = read_settings_raw(&self.app_handle).core;
         let mut did_mute_guard = self.did_mute.lock_recover();
 
         if settings.mute_while_recording && *self.is_open.lock_recover() {
@@ -531,6 +536,11 @@ impl AudioRecordingManager {
     }
 
     pub fn preload_vad(&self) -> Result<(), anyhow::Error> {
+        if crate::winstt::commands::onboarding::is_onboarding_active() {
+            debug!("VAD preload skipped while onboarding is active");
+            return Ok(());
+        }
+
         let mut recorder_opt = self.recorder.lock_recover();
         if recorder_opt.is_none() {
             let vad_path = self
@@ -574,6 +584,11 @@ impl AudioRecordingManager {
     }
 
     pub fn start_microphone_stream(&self) -> Result<(), anyhow::Error> {
+        if crate::winstt::commands::onboarding::is_onboarding_active() {
+            debug!("Microphone stream start skipped while onboarding is active");
+            return Ok(());
+        }
+
         let mut open_flag = self.is_open.lock_recover();
         if *open_flag {
             debug!("Microphone stream already active");
@@ -593,9 +608,7 @@ impl AudioRecordingManager {
         // exist at all, fail early with a clear error instead of letting cpal
         // produce a cryptic backend-specific message.
         if selected_device.is_none() {
-            let has_any_device = list_input_devices()
-                .map(|devices| !devices.is_empty())
-                .unwrap_or(false);
+            let has_any_device = list_input_devices().is_ok_and(|devices| !devices.is_empty());
             if !has_any_device {
                 return Err(anyhow::anyhow!("No input device found"));
             }
@@ -651,6 +664,15 @@ impl AudioRecordingManager {
     /* ---------- mode switching --------------------------------------------- */
 
     pub fn update_mode(&self, new_mode: MicrophoneMode) -> Result<(), anyhow::Error> {
+        if crate::winstt::commands::onboarding::is_onboarding_active() {
+            {
+                *self.mode.lock_recover() = new_mode;
+            }
+            self.close_generation.fetch_add(1, Ordering::SeqCst);
+            self.stop_microphone_stream();
+            return Ok(());
+        }
+
         let cur_mode = self.mode.lock_recover().clone();
 
         match (cur_mode, &new_mode) {
@@ -673,9 +695,24 @@ impl AudioRecordingManager {
         Ok(())
     }
 
+    pub fn sync_microphone_mode_from_settings(&self) -> Result<(), anyhow::Error> {
+        let settings = read_settings_raw(&self.app_handle);
+        let mode = microphone_mode_from_settings(&settings);
+        self.update_mode(mode.clone())?;
+        let is_open = *self.is_open.lock_recover();
+        if matches!(mode, MicrophoneMode::AlwaysOn) && !is_open {
+            self.start_microphone_stream()?;
+        }
+        Ok(())
+    }
+
     /* ---------- recording --------------------------------------------------- */
 
     pub fn try_start_recording(&self, binding_id: &str) -> Result<(), String> {
+        if crate::winstt::commands::onboarding::is_onboarding_active() {
+            return Err("Onboarding is active; recording is disabled".to_string());
+        }
+
         let mut state = self.state.lock_recover();
 
         if let RecordingState::Idle = *state {
@@ -812,8 +849,7 @@ impl AudioRecordingManager {
         self.recorder
             .lock_recover()
             .as_ref()
-            .map(|rec| rec.snapshot_from(offset))
-            .unwrap_or((0, Vec::new()))
+            .map_or((0, Vec::new()), |rec| rec.snapshot_from(offset))
     }
 
     /// Block until the realtime mirror grows past `offset`, or until a recording-boundary reset

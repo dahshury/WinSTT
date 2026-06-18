@@ -130,7 +130,7 @@ crate's upstream repository, linked below.
 These are the direct dependencies declared in the root `package.json`. The
 renderer is bundled by Vite at build time, so runtime packages are compiled into
 the shipped asset bundle. `@base-ui/react`, `@hugeicons/react`,
-`@hugeicons/core-free-icons`, `virtua`, and `fuse.js` are also used by the
+`@hugeicons/core-free-icons`, and `virtua` are also used by the
 in-tree model-picker widget (`src/widgets/model-picker`). Dev-only packages are used during
 build/test and are not redistributed; they are listed for completeness.
 
@@ -154,7 +154,6 @@ build/test and are not redistributed; they are listed for completeness.
 | zustand                              | MIT               |                                         |
 | zod                                  | MIT               |                                         |
 | use-intl                             | MIT               | i18n runtime (next-intl core)           |
-| fuse.js                              | Apache-2.0        |                                         |
 | double-metaphone                     | MIT               |                                         |
 | @tauri-apps/api                      | Apache-2.0 OR MIT |                                         |
 | @tauri-apps/plugin-autostart         | MIT OR Apache-2.0 |                                         |

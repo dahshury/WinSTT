@@ -31,7 +31,7 @@ mod write;
 /// Note: For users upgrading from tauri-plugin-sql, migrate_from_tauri_plugin_sql()
 /// converts the old _sqlx_migrations table tracking to the user_version pragma,
 /// ensuring migrations don't re-run on existing databases.
-static MIGRATIONS: &[M] = &[
+static MIGRATIONS: &[M<'_>] = &[
     M::up(
         "CREATE TABLE IF NOT EXISTS transcription_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -182,7 +182,7 @@ impl HistoryManager {
 
         // Validate migrations in debug builds
         #[cfg(debug_assertions)]
-        migrations.validate().expect("Invalid migrations");
+        migrations.validate()?;
 
         // Get current version before migration
         let version_before: i32 =

@@ -103,7 +103,6 @@ mod platform_impl {
         }
     }
 
-    #[allow(non_snake_case)]
     impl IMMNotificationClient_Impl for AudioEndpointNotificationClient_Impl {
         fn OnDeviceStateChanged(
             &self,

@@ -1,7 +1,7 @@
 import { Menu } from "@base-ui/react/menu";
 import { CheckIcon, Layout01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { RowData, Table } from "@tanstack/react-table";
+import type { Table } from "@tanstack/react-table";
 import {
 	SurfaceProvider,
 	surfaceClasses,
@@ -24,7 +24,7 @@ export function DataGridColumnVisibility({
 }: {
 	embedded?: boolean;
 	label: string;
-	table: Table<RowData>;
+	table: Table<unknown>;
 }) {
 	const substrate = useSurface();
 	const triggerLevel = Math.min(substrate + 1, 8);

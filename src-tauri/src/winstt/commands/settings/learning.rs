@@ -59,7 +59,7 @@ pub(crate) fn auto_apply_dictation_learning(
     let current = read_settings(app);
     let mut dictionary = current.dictionary.clone();
     let mut snippets = current.snippets.clone();
-    let mut llm = current.llm.clone();
+    let mut llm = current.llm;
 
     let added_dictionary =
         append_auto_dictionary_terms(&mut dictionary, &side_effects.learned_proper_nouns);

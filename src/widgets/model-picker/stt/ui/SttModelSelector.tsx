@@ -10,12 +10,11 @@ import type {
 } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+import { type GroupRailItem, RailIconChip } from "../../core/GroupRail";
 import {
 	ALL_AUTHORS_RAIL_ID,
 	buildAllAuthorsRailItem,
-	type GroupRailItem,
-	RailIconChip,
-} from "../../core/GroupRail";
+} from "../../core/group-rail-items";
 import { useFavoriteSet } from "../../core/use-favorite-set";
 import { useModelPickerCloseGuard } from "../../lib/model-picker-close-guard";
 import {
@@ -173,6 +172,13 @@ function isSttSortValue(value: unknown): value is SttSortValue {
 	);
 }
 
+export function SttModelSelector(props: SttModelSelectorProps) {
+	if (props.onOpenDetached && !props.inline) {
+		return <SttModelSelectorDetachedTrigger {...props} />;
+	}
+	return <SttModelSelectorPanel {...props} />;
+}
+
 function isSttFilterState(value: unknown): value is SttFilterState {
 	if (typeof value !== "object" || value === null) {
 		return false;
@@ -226,6 +232,46 @@ function matchesQuery(model: ModelInfo, query: string): boolean {
 	return matchesFuzzySearch(buildModelSearchCorpus(model), query);
 }
 
+function SttModelSelectorDetachedTrigger({
+	models,
+	value,
+	disabled = false,
+	downloadProgress = null,
+	isLoading = false,
+	placeholder = "Select a model",
+	prefilter,
+	kind = "main",
+	onOpenDetached,
+}: SttModelSelectorProps) {
+	const prefilteredModels = applyPrefilter(models, prefilter);
+	const precisionModels = mergeStreamingPrecisionModels(prefilteredModels);
+	const baseModels = mergeStreamingLatencyModels(precisionModels);
+	const selectedCacheKey = `${kind}:${value}`;
+	const resolvedSelectedModel = findDisplayModelByBackingId(baseModels, value);
+	const cachedSelectedModel =
+		value.length > 0 && baseModels.length === 0
+			? (selectedModelMetadataCache.get(selectedCacheKey) ?? null)
+			: null;
+	const selectedModel = resolvedSelectedModel ?? cachedSelectedModel;
+	if (resolvedSelectedModel !== null) {
+		selectedModelMetadataCache.set(selectedCacheKey, resolvedSelectedModel);
+	}
+	return (
+		<SttModelSelectorTriggerButton
+			catalog={baseModels}
+			disabled={disabled || isLoading}
+			downloadProgress={downloadProgress}
+			kind={kind}
+			onActivate={(event) =>
+				onOpenDetached?.(event.currentTarget.getBoundingClientRect())
+			}
+			open={false}
+			placeholder={placeholder}
+			selectedModel={selectedModel ?? undefined}
+		/>
+	);
+}
+
 function buildRailItems(
 	groups: ReturnType<typeof groupModelsByAuthor>,
 	allModelCount: number,
@@ -268,7 +314,7 @@ function buildRailItems(
  * search clear; the shell auto-clears only the search query on close
  * (matching the OpenRouter + Ollama behaviour).
  */
-export function SttModelSelector({
+function SttModelSelectorPanel({
 	models,
 	value,
 	currentQuantization,
@@ -328,14 +374,6 @@ export function SttModelSelector({
 	const prefilteredModels = applyPrefilter(models, prefilter);
 	const precisionModels = mergeStreamingPrecisionModels(prefilteredModels);
 	const baseModels = mergeStreamingLatencyModels(precisionModels);
-	const precisionStatesById = mergeStreamingPrecisionStates(
-		precisionModels,
-		statesById,
-	);
-	const routedStatesById = mergeStreamingLatencyStates(
-		baseModels,
-		precisionStatesById,
-	);
 	const selectedCacheKey = `${kind}:${value}`;
 	const resolvedSelectedModel = findDisplayModelByBackingId(baseModels, value);
 	const cachedSelectedModel =
@@ -343,11 +381,9 @@ export function SttModelSelector({
 			? (selectedModelMetadataCache.get(selectedCacheKey) ?? null)
 			: null;
 	const selectedModel = resolvedSelectedModel ?? cachedSelectedModel;
-	useEffect(() => {
-		if (resolvedSelectedModel !== null) {
-			selectedModelMetadataCache.set(selectedCacheKey, resolvedSelectedModel);
-		}
-	}, [resolvedSelectedModel, selectedCacheKey]);
+	if (resolvedSelectedModel !== null) {
+		selectedModelMetadataCache.set(selectedCacheKey, resolvedSelectedModel);
+	}
 	const selectedFamily: FamilyKey | null = selectedModel?.family ?? null;
 	const selectedBaseId =
 		selectedModel === null ? null : getBaseId(selectedModel.id);
@@ -391,6 +427,13 @@ export function SttModelSelector({
 	const { filters, sort, activeRailId, expandedBundles, open } = uiState;
 	const lockedFilterKeys = kind === "realtime" ? REALTIME_LOCKED_FILTERS : [];
 	const effectiveFilters = applyLockedFilters(filters, lockedFilterKeys);
+	const shouldBuildList = inline || (!externalOpen && open);
+	const precisionStatesById = shouldBuildList
+		? mergeStreamingPrecisionStates(precisionModels, statesById)
+		: statesById;
+	const routedStatesById = shouldBuildList
+		? mergeStreamingLatencyStates(baseModels, precisionStatesById)
+		: statesById;
 	useEffect(() => {
 		writePersistedSelectorState(uiStorageKey, {
 			activeRailId,
@@ -402,15 +445,19 @@ export function SttModelSelector({
 	// Menu filters (cached / realtime / language / hardware) prune the items
 	// before the picker sees them; the text query is then handled by Base
 	// UI's `filter` (via the shell) so groups + keyboard nav stay consistent.
-	const menuFilteredModels = filterSttModels(baseModels, {
-		statesById: routedStatesById,
-		systemInfo,
-		filters: effectiveFilters,
-		searchQuery: "",
-	});
+	const menuFilteredModels = shouldBuildList
+		? filterSttModels(baseModels, {
+				statesById: routedStatesById,
+				systemInfo,
+				filters: effectiveFilters,
+				searchQuery: "",
+			})
+		: [];
 	// All authors keeps the current grouped/sorted view. Selecting a rail author
 	// narrows the list to that author only.
-	const authorGroups = groupModelsByAuthor(menuFilteredModels);
+	const authorGroups = shouldBuildList
+		? groupModelsByAuthor(menuFilteredModels)
+		: [];
 	const allGroups: SttListGroup[] =
 		sort === null
 			? withFavoritesGroup(authorGroups, isFavorite)
@@ -425,7 +472,9 @@ export function SttModelSelector({
 			? allGroups
 			: authorGroups.filter((group) => group.value === activeRailId);
 	const filtersActive = hasActiveFilters(effectiveFilters);
-	const availableLanguages = collectFilterableLanguages(baseModels);
+	const availableLanguages = shouldBuildList
+		? collectFilterableLanguages(baseModels)
+		: [];
 
 	// Shared rail: All authors plus one tile per family.
 	const railItems: GroupRailItem[] = buildRailItems(
@@ -475,6 +524,16 @@ export function SttModelSelector({
 
 	const handleSelect = (modelId: string, quantization?: OnnxQuantization) => {
 		onChange(modelId, quantization);
+		// In the in-window popup (onboarding), a real selection must dismiss the
+		// popup the way the detached settings picker does. Base UI only auto-closes
+		// on a card-BODY commit (onValueChange); a precision-BADGE pick routes
+		// straight to onSelect and stops propagation, so without this the popup
+		// would stay open after the user chose a quant. Download actions never reach
+		// here — they go through onDownloadAction — so the popup correctly STAYS
+		// open while a quant is downloading. Inline / detached modes own their close.
+		if (!(inline || externalOpen)) {
+			dispatch({ type: "setOpen", open: false });
+		}
 	};
 
 	return (

@@ -16,7 +16,10 @@
 //  * the tail trim is a fixed -5000 crop (not librosa energy trim).
 // Reuses the shared espeak-ng phonemizer (phonemize.rs) and a local npz/npy parser.
 
-#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
+#![expect(
+    dead_code,
+    reason = "staged TTS surface is defined ahead of call sites and wiring"
+)]
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -25,6 +28,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use regex::Regex;
+
+use crate::helpers::regex::static_regex;
 
 use super::phonemize::{default_phonemizer, Phonemizer};
 use super::provider::TtsOrtProviderPolicy;
@@ -112,7 +117,7 @@ fn kitten_symbol_count() -> usize {
 
 static BASIC_TOKENIZE_RE: OnceLock<Regex> = OnceLock::new();
 fn basic_tokenize_re() -> &'static Regex {
-    BASIC_TOKENIZE_RE.get_or_init(|| Regex::new(r"\w+|[^\w\s]").expect("valid regex"))
+    BASIC_TOKENIZE_RE.get_or_init(|| static_regex(r"\w+|[^\w\s]"))
 }
 
 /// `' '.join(re.findall(r"\w+|[^\w\s]", phonemes))` then char->id via the dense
@@ -377,7 +382,11 @@ impl KittenEngine {
             *guard = Some(self.load()?);
             self.ready.store(true, Ordering::Release);
         }
-        let loaded = guard.as_mut().expect("just initialized");
+        let Some(loaded) = guard.as_mut() else {
+            return Err(KittenError::Session(
+                "kitten session was not initialized".into(),
+            ));
+        };
 
         // Style row indexed by RAW INPUT TEXT char count (NOT token count).
         let text_chars = trimmed.chars().count();

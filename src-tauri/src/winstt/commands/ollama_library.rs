@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::State;
 
+use crate::helpers::regex::static_regex;
 use crate::winstt::managers::OllamaManager;
 
 const OLLAMA_BASE: &str = "https://ollama.com";
@@ -173,7 +174,7 @@ fn decode_entities(s: &str) -> String {
         .replace("&nbsp;", " ")
 }
 
-static TAG_STRIP_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
+static TAG_STRIP_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"<[^>]+>"));
 
 fn strip_tags(s: &str) -> String {
     decode_entities(&TAG_STRIP_RE.replace_all(s, ""))
@@ -186,19 +187,17 @@ fn strip_tags(s: &str) -> String {
 // ollama.com appends utility classes after `group w-full` (e.g. `space-y-5`), so
 // match the class prefix tolerantly — the strict `group w-full">` form silently
 // matched zero models after a site markup change, emptying the library browse.
-static SEARCH_HIT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"<a\s+href="/library/([^"]+)"\s+class="group w-full[^"]*">"#).unwrap()
-});
-static TITLE_ATTR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"title="([^"]+)""#).unwrap());
+static SEARCH_HIT_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r#"<a\s+href="/library/([^"]+)"\s+class="group w-full[^"]*">"#));
+static TITLE_ATTR_RE: Lazy<Regex> = Lazy::new(|| static_regex(r#"title="([^"]+)""#));
 static DESCRIPTION_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?s)<p[^>]*class="[^"]*max-w-lg[^"]*"[^>]*>(.*?)</p>"#).unwrap());
+    Lazy::new(|| static_regex(r#"(?s)<p[^>]*class="[^"]*max-w-lg[^"]*"[^>]*>(.*?)</p>"#));
 static PULLS_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?i)<span[^>]*>([\d.,]+[KMB]?)\s*Pulls?</span>"#).unwrap());
+    Lazy::new(|| static_regex(r#"(?i)<span[^>]*>([\d.,]+[KMB]?)\s*Pulls?</span>"#));
 static UPDATED_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?i)<span[^>]*>Updated\s+([^<]+)</span>"#).unwrap());
-static CAPABILITY_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"<span[^>]*class="[^"]*capability[^"]*"[^>]*>([^<]+)</span>"#).unwrap()
-});
+    Lazy::new(|| static_regex(r#"(?i)<span[^>]*>Updated\s+([^<]+)</span>"#));
+static CAPABILITY_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r#"<span[^>]*class="[^"]*capability[^"]*"[^>]*>([^<]+)</span>"#));
 
 fn parse_capabilities(block: &str) -> Option<Vec<String>> {
     let caps: Vec<String> = CAPABILITY_RE
@@ -223,8 +222,7 @@ fn name_from_title(block: &str, slug: &str) -> String {
     TITLE_ATTR_RE
         .captures(block)
         .and_then(|c| c.get(1))
-        .map(|m| m.as_str().to_string())
-        .unwrap_or_else(|| slug.to_string())
+        .map_or_else(|| slug.to_string(), |m| m.as_str().to_string())
 }
 
 fn parse_search_hit(block: &str, slug: &str) -> OllamaLibraryHit {
@@ -255,7 +253,7 @@ fn parse_search_page(html: &str) -> Vec<OllamaLibraryHit> {
         if !is_valid_slug(slug) {
             continue;
         }
-        let end = anchors.get(i + 1).map(|(s, _)| *s).unwrap_or(html.len());
+        let end = anchors.get(i + 1).map_or(html.len(), |(s, _)| *s);
         out.push(parse_search_hit(&html[*start..end], slug));
     }
     out
@@ -264,19 +262,17 @@ fn parse_search_page(html: &str) -> Vec<OllamaLibraryHit> {
 // ── Tag-page parser ─────────────────────────────────────────────────────────────
 
 static TAG_ANCHOR_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"<a\s+href="/library/([^"]+:[^"]+)"\s+class="md:hidden[^"]*"[^>]*>"#).unwrap()
+    static_regex(r#"<a\s+href="/library/([^"]+:[^"]+)"\s+class="md:hidden[^"]*"[^>]*>"#)
 });
-static SIZE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)([\d.]+)\s*(KB|MB|GB|TB)"#).unwrap());
+static SIZE_RE: Lazy<Regex> = Lazy::new(|| static_regex(r#"(?i)([\d.]+)\s*(KB|MB|GB|TB)"#));
 static CONTEXT_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?i)([\d.]+[KMB])\s*context\s*window"#).unwrap());
-static QUANT_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?i)(?:^|[-:_])(q\d[a-z0-9_]*|fp\d+|int\d+|bf\d+)($|[-:_])"#).unwrap()
-});
+    Lazy::new(|| static_regex(r#"(?i)([\d.]+[KMB])\s*context\s*window"#));
+static QUANT_TOKEN_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r#"(?i)(?:^|[-:_])(q\d[a-z0-9_]*|fp\d+|int\d+|bf\d+)($|[-:_])"#));
 // Optional `e` prefix captures Gemma 3n/4 MatFormer "effective" sizes (`e2b`).
 static PARAM_TOKEN_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?:^|[-:_])(e?\d+(?:\.\d+)?[mMbB])($|[-:_])"#).unwrap());
-static LATEST_TAG_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?i)text-blue-600[^>]*>latest<"#).unwrap());
+    Lazy::new(|| static_regex(r#"(?:^|[-:_])(e?\d+(?:\.\d+)?[mMbB])($|[-:_])"#));
+static LATEST_TAG_RE: Lazy<Regex> = Lazy::new(|| static_regex(r#"(?i)text-blue-600[^>]*>latest<"#));
 
 fn size_multiplier(unit: &str) -> u64 {
     match unit.to_uppercase().as_str() {
@@ -359,7 +355,7 @@ fn parse_tags_page(html: &str) -> Vec<OllamaLibraryTag> {
             continue;
         }
         seen.insert(name.clone());
-        let end = anchors.get(i + 1).map(|(s, _)| *s).unwrap_or(html.len());
+        let end = anchors.get(i + 1).map_or(html.len(), |(s, _)| *s);
         tags.push(build_library_tag(name, &html[*start..end]));
     }
     // The page renders a `:latest` alias first; surface it first, else preserve scrape order.

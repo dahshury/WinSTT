@@ -46,7 +46,7 @@ Link the GitHub Discussion or Issue this PR addresses.
 <!-- Mark with [x]. Empty boxes are fine — reviewers will help. -->
 
 - [ ] Code change has tests (renderer: `bun test` / property tests where it makes sense; backend: Rust unit tests where it makes sense).
-- [ ] Renderer gates pass: `bun run lint`, `bun run build` (tsc + Vite), `bun test`, `bun run check:i18n`.
+- [ ] Renderer gates pass: `bun run lint`, `bun run build` (tsgo + Vite), `bun test`, `bun run check:i18n`.
 - [ ] Backend gates pass in `src-tauri/` (via `rust-migration\cargo-env.bat`): `cargo fmt -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo check`.
 - [ ] If Tauri commands or shared types changed: `src/bindings.ts` regenerated (tauri-specta).
 - [ ] FSD layer/import contract preserved.

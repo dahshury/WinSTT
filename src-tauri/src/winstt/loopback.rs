@@ -233,7 +233,7 @@ impl LoopbackCapture {
         let stop = self.stop.clone();
         let capture_device_id = device_id;
         let capture_info = info.clone();
-        let thread_stop = stop.clone();
+        let thread_stop = stop;
         let worker = std::thread::Builder::new()
             .name("loopback-capture".into())
             .spawn(move || {
@@ -437,11 +437,12 @@ mod cpal_loopback {
         let channels = config.channels() as usize;
         let device_rate = config.sample_rate() as usize;
         let mut agc = SlowTrackingAgc::new();
-        let mut resampler = FrameResampler::new(
+        let mut resampler = FrameResampler::try_new(
             device_rate,
             WHISPER_SAMPLE_RATE as usize,
             Duration::from_millis(RESAMPLER_FRAME_MS),
-        );
+        )
+        .map_err(LoopbackError::Backend)?;
         let mut send_closed = false;
 
         let stream_cb = move |data: &[T], _: &cpal::InputCallbackInfo| {
@@ -681,11 +682,12 @@ mod windows_impl {
         // AGC runs at the device rate in int16 (Python parity), BEFORE resampling.
         let mut agc = SlowTrackingAgc::new();
         // Resample device-rate mono → 16 kHz mono, emitting 30 ms frames.
-        let mut resampler = FrameResampler::new(
+        let mut resampler = FrameResampler::try_new(
             device_rate as usize,
             WHISPER_SAMPLE_RATE as usize,
             Duration::from_millis(RESAMPLER_FRAME_MS),
-        );
+        )
+        .map_err(|err| anyhow::anyhow!(err))?;
 
         let mut raw: VecDeque<u8> = VecDeque::new();
         let mut consecutive_errors = 0u32;

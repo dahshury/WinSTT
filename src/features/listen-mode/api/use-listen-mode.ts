@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { useOutputDevices, type OutputDevice } from "@/entities/audio-device";
 import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
@@ -207,6 +207,12 @@ export function useListenMode(): void {
 	const outputDeviceId = useSettingsStore(
 		(s) => s.settings.general?.outputDeviceId ?? "",
 	);
+	const onboarded = useSettingsStore(
+		(s) => s.settings.general?.onboarded ?? false,
+	);
+	const onboardedAt = useSettingsStore(
+		(s) => s.settings.general?.onboardedAt ?? null,
+	);
 	const modelSettings = useSettingsStore((s) => s.settings.model);
 	const qualitySettings = useSettingsStore((s) => s.settings.quality);
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
@@ -220,24 +226,16 @@ export function useListenMode(): void {
 	const setDevices = useListenStore((s) => s.setDevices);
 	const clearTranscription = useTranscriptionStore((s) => s.clearAll);
 	const [loopbackDevices, setLoopbackDevices] = useState<LoopbackDevice[]>([]);
-	const listenModelId = useMemo(
-		() =>
-			resolveListenStreamingModelId(
-				modelSettings,
-				qualitySettings,
-				catalogModels,
-				statesById,
-			),
-		[modelSettings, qualitySettings, catalogModels, statesById],
+	const listenModelId = resolveListenStreamingModelId(
+		modelSettings,
+		qualitySettings,
+		catalogModels,
+		statesById,
 	);
-	const loopbackDeviceIndex = useMemo(
-		() =>
-			resolveOutputLoopbackDeviceIndex(
-				loopbackDevices,
-				outputDevices,
-				outputDeviceId,
-			),
-		[loopbackDevices, outputDevices, outputDeviceId],
+	const loopbackDeviceIndex = resolveOutputLoopbackDeviceIndex(
+		loopbackDevices,
+		outputDevices,
+		outputDeviceId,
 	);
 	const prevModeRef = useRef<RecordingMode | null>(null);
 	const prevLoopbackDeviceIndexRef = useRef<number | null>(loopbackDeviceIndex);
@@ -261,12 +259,15 @@ export function useListenMode(): void {
 	}, [recordingMode, clearTranscription]);
 
 	useEffect(() => {
-		if (recordingMode === "listen") {
+		if (onboarded && recordingMode === "listen") {
 			void refreshModelState();
 		}
-	}, [recordingMode, refreshModelState]);
+	}, [onboarded, recordingMode, refreshModelState]);
 
 	useLayoutEffect(() => {
+		if (!onboarded) {
+			return;
+		}
 		if (recordingMode !== "listen") {
 			lastNonListenModeRef.current = recordingMode;
 			return;
@@ -279,6 +280,7 @@ export function useListenMode(): void {
 		catalogLoaded,
 		listenModelId,
 		modelStatesLoaded,
+		onboarded,
 		recordingMode,
 		updateGeneral,
 	]);
@@ -289,6 +291,7 @@ export function useListenMode(): void {
 			setListening(true, deviceName);
 		});
 		const unsubStopped = onLoopbackStopped(() => {
+			prevModeRef.current = null;
 			setListening(false);
 		});
 		return () => {
@@ -300,7 +303,7 @@ export function useListenMode(): void {
 	// Fetch loopback devices when in listen mode. Tauri owns backend readiness;
 	// the legacy connection flag is only a display concern in this port.
 	useEffect(() => {
-		if (recordingMode !== "listen") {
+		if (!onboarded || recordingMode !== "listen") {
 			return;
 		}
 
@@ -324,10 +327,13 @@ export function useListenMode(): void {
 		return () => {
 			isCancelled = true;
 		};
-	}, [recordingMode, setDevices]);
+	}, [onboarded, recordingMode, setDevices]);
 
 	// Start/stop loopback when mode or device changes
 	useEffect(() => {
+		if (!onboarded) {
+			return;
+		}
 		const wasListen = prevModeRef.current === "listen";
 		const previousLoopbackDeviceIndex = prevLoopbackDeviceIndexRef.current;
 		const previousListenModelId = prevListenModelIdRef.current;
@@ -342,7 +348,7 @@ export function useListenMode(): void {
 		prevModeRef.current = recordingMode;
 		prevLoopbackDeviceIndexRef.current = loopbackDeviceIndex;
 		prevListenModelIdRef.current = listenModelId;
-	}, [recordingMode, loopbackDeviceIndex, listenModelId]);
+	}, [onboarded, onboardedAt, recordingMode, loopbackDeviceIndex, listenModelId]);
 
 	// Stop loopback on unmount if active
 	useEffect(

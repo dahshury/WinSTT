@@ -4,7 +4,7 @@ import { z } from "zod";
 // (never persisted); every entry here is a user-uploaded clip stored under
 // `userData/sounds/`. `path` is the absolute path on disk; `name` is the
 // display label (renamable independently of the on-disk filename).
-export const soundLibraryEntrySchema = z.object({
+const soundLibraryEntrySchema = z.object({
 	id: z.string().min(1),
 	name: z.string().min(1),
 	path: z.string().min(1),

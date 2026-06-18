@@ -62,16 +62,16 @@ describe("HotkeyDisplay", () => {
 		const { container } = renderIt(true);
 		const group = container.querySelector("kbd[data-tone]") as HTMLElement;
 		expect(group).not.toBeNull();
-		expect(group.dataset.tone).toBe("default");
-		expect(group.dataset.disconnected).toBeUndefined();
-		expect(group.dataset.pressed).toBeUndefined();
+		expect(group.dataset["tone"]).toBe("default");
+		expect(group.dataset["disconnected"]).toBeUndefined();
+		expect(group.dataset["pressed"]).toBeUndefined();
 	});
 
 	test("group exposes the muted tone when disconnected", () => {
 		const { container } = renderIt(false);
 		const group = container.querySelector("kbd[data-tone]") as HTMLElement;
-		expect(group.dataset.tone).toBe("muted");
-		expect(group.dataset.disconnected).toBe("true");
+		expect(group.dataset["tone"]).toBe("muted");
+		expect(group.dataset["disconnected"]).toBe("true");
 	});
 
 	test("renders the recording pulse dot when isPressed AND connected", () => {

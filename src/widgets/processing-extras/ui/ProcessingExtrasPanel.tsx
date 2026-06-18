@@ -30,7 +30,6 @@ import { ContextDenyListSection } from "./ContextDenyListSection";
 type GeneralSettings = NonNullable<
 	ReturnType<typeof useSettingsStore.getState>["settings"]["general"]
 >;
-type UpdateGeneralFn = (patch: Partial<GeneralSettings>) => void;
 type QualitySettings = NonNullable<
 	ReturnType<typeof useSettingsStore.getState>["settings"]["quality"]
 >;
@@ -257,7 +256,10 @@ function ContextAwarenessSection({
 						</ElevatedSurface>
 					</SettingField>
 					{contextAppMode === "selected-only" ? (
-						<ContextAllowedAppsSection openRequest={appsOpenNonce} />
+						<ContextAllowedAppsSection
+							initialOpen={appsOpenNonce > 0}
+							key={appsOpenNonce}
+						/>
 					) : (
 						<ContextDenyListSection />
 					)}
@@ -470,7 +472,7 @@ export function ProcessingExtrasPanel() {
 	//      / hallucinated outputs (see memory note `canary-cohere-prompt-
 	//      slot-untrained`). Moonshine / SenseVoice / CTC families have
 	//      no prompt mechanism at all.
-	//   2. LLM cleanup: any engine benefits when the dictation LLM runs.
+	//   2. LLM cleanup works for every engine when the dictation LLM runs.
 	// So the section is meaningful when EITHER condition is met; if
 	// neither is, the toggle does nothing — hide it.
 	const activeSttModelId = useSettingsStore(

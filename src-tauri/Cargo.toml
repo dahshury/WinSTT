@@ -191,15 +191,26 @@ objc2-core-audio = { version = "0.3.1", default-features = false, features = ["s
 [dev-dependencies]
 tempfile = "3"
 
-# Lint policy (rust-best-practices ch.2 §2.5). The default clippy groups
-# (correctness / suspicious / style / complexity / perf) are enforced as warnings
-# here so the editor + local `cargo clippy` match the CI gate
-# (`cargo clippy --all-targets -- -D warnings` in rust-ci.yml). pedantic/nursery
-# are intentionally NOT enabled: under `-D warnings` they would turn hundreds of
-# opinionated/unstable lints into hard errors. `priority = -1` lets any future
-# per-lint override win over the group.
+# Lint policy (rust-best-practices ch.2 §2.5). Plain `cargo check` and
+# `cargo clippy` should be warning-clean without depending on CI-only flags.
+# Pedantic/nursery are intentionally not enabled: they would turn broad API and
+# style preferences into hard errors across this Tauri command surface.
+[lints.rust]
+warnings = "deny"
+future-incompatible = "deny"
+nonstandard-style = "deny"
+rust-2018-idioms = "deny"
+unused = "deny"
+unsafe-op-in-unsafe-fn = "deny"
+
 [lints.clippy]
-all = { level = "warn", priority = -1 }
+all = { level = "deny", priority = -1 }
+clone_on_copy = "deny"
+large_enum_variant = "deny"
+manual_ok_or = "deny"
+map_unwrap_or = "deny"
+needless_collect = "deny"
+redundant_clone = "deny"
 
 [profile.release]
 lto = true

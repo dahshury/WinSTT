@@ -121,6 +121,11 @@ pub fn check_apple_intelligence_available() -> bool {
 pub fn initialize_enigo(app: AppHandle) -> Result<(), String> {
     use crate::input::EnigoState;
 
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        log::debug!("Deferring Enigo initialization until onboarding completes");
+        return Ok(());
+    }
+
     // Check if already initialized
     if app.try_state::<EnigoState>().is_some() {
         log::debug!("Enigo already initialized");
@@ -157,6 +162,11 @@ pub struct ShortcutsInitialized;
 #[specta::specta]
 #[tauri::command]
 pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        log::debug!("Deferring shortcut initialization until onboarding completes");
+        return Ok(());
+    }
+
     // Check if already initialized
     if app.try_state::<ShortcutsInitialized>().is_some() {
         log::debug!("Shortcuts already initialized");

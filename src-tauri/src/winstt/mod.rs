@@ -28,6 +28,9 @@ pub mod audio_device_watcher;
 /// Shared single-flight + warm-state tracking for heavyweight model lifecycles.
 pub mod model_swap;
 
+/// Local-only operational issue timeline for user-visible diagnostics and support bundles.
+pub mod observability;
+
 /// RealtimeSTT-faithful preview stabilizer + committed-watermark accumulator.
 pub mod realtime_stabilizer;
 

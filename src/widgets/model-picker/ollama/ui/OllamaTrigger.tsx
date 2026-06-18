@@ -4,7 +4,7 @@ import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, MouseEvent, ReactNode } from "react";
-import type { OllamaModel, OllamaPullProgress } from "@/shared/api/models";
+import type { OllamaModel } from "@/shared/api/models";
 import { Button } from "@/shared/ui/button";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import {
@@ -18,16 +18,13 @@ import {
 	formatOllamaDisplayName,
 	getOllamaFamily,
 } from "../lib/family-helpers";
-import { installedCapabilityBadges, PublisherChip } from "./OllamaModelChips";
+import { InstalledCapabilityBadges, PublisherChip } from "./OllamaModelChips";
 import type { TriggerPullSummary } from "./ollama-selector-types";
 
 // ── Trigger ───────────────────────────────────────────────────────────
 
 function SelectedTriggerContent({ model }: { model: OllamaModel }) {
 	const family = getOllamaFamily(model);
-	const capabilityBadges = installedCapabilityBadges(
-		model.capabilities ?? undefined,
-	);
 	return (
 		<div className="flex min-w-0 flex-1 items-center gap-2">
 			<PublisherChip family={family} />
@@ -35,9 +32,9 @@ function SelectedTriggerContent({ model }: { model: OllamaModel }) {
 				className="flex-1 font-medium text-foreground"
 				text={formatOllamaDisplayName(model.name)}
 			/>
-			{capabilityBadges ? (
+			{model.capabilities?.length ? (
 				<div className="flex shrink-0 items-center gap-1">
-					{capabilityBadges}
+					<InstalledCapabilityBadges capabilities={model.capabilities} />
 				</div>
 			) : null}
 		</div>
@@ -50,22 +47,6 @@ function SelectedTriggerContent({ model }: { model: OllamaModel }) {
 // Processing tab picker from blending into the settings background.
 const OLLAMA_TRIGGER_GLASS_CLASSES =
 	"group relative flex h-auto min-h-[3.25rem] w-full items-center justify-between gap-2 overflow-hidden rounded-lg bg-gradient-to-b from-[var(--color-surface-3)]/85 to-[var(--color-surface-2)]/95 px-3 py-2 text-left shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06),0_2px_6px_-3px_rgba(2,3,8,0.55)] ring-1 ring-white/[0.07] ring-inset transition-[transform,background-color,box-shadow] duration-150 ease-out hover:from-[var(--color-surface-4)]/85 hover:to-[var(--color-surface-3)]/95 hover:ring-white/[0.13] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:from-[oklch(62%_0.19_260/0.10)] data-[state=open]:to-[var(--color-surface-2)]/95 data-[state=open]:ring-accent/40";
-
-/** Pick the most-progressed active pull as the one to surface on the trigger.
- *  When multiple pulls run concurrently this keeps the visible bar moving
- *  monotonically toward done rather than flickering between models. */
-export function pickPrimaryPull(
-	pulls: Readonly<Record<string, OllamaPullProgress>>,
-): TriggerPullSummary | null {
-	let best: TriggerPullSummary | null = null;
-	for (const [name, progress] of Object.entries(pulls)) {
-		const percent = Math.round(progress.percent ?? 0);
-		if (!best || percent > best.percent) {
-			best = { model: name, percent, status: progress.status };
-		}
-	}
-	return best;
-}
 
 /** Ollama-flavored chip+name pair used as a slot inside `SwitchingFromToRow`.
  *  Mirrors the STT picker's `SttModelLabel` so both switching views read the

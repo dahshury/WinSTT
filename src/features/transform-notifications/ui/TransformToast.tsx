@@ -37,6 +37,10 @@ function resolveToastBody(notification: TransformNotification): string {
 	return notification.reason || "Transform failed";
 }
 
+const handleRetry = () => {
+	applyTransform().catch(() => undefined);
+};
+
 /**
  * Single transient toast for Transforms feedback. Mounts once at the app
  * root via the layout; subscribes to IPC `transforms:applied` /
@@ -87,10 +91,6 @@ export function TransformToast() {
 		current.kind === "failed" || current.kind === "no-selection";
 	const headline = HEADLINE;
 	const body = resolveToastBody(current);
-
-	const handleRetry = () => {
-		applyTransform().catch(() => undefined);
-	};
 
 	return (
 		<output

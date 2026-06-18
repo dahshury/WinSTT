@@ -4,9 +4,7 @@ import {
 	mergeSeedIntoSnapshot,
 	monotonicPercent,
 	percentFromFraction,
-	type QuantCacheSeedSource,
 	type QuantDownloadSeed,
-	quantDownloadSeedFromCache,
 } from "@/features/model-download/lib/download-progress-core";
 import {
 	cancelDownload as ipcCancelDownload,

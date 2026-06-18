@@ -38,7 +38,7 @@ function findRow(container: HTMLElement, id: string): HTMLElement | null {
 	return findDataAttributeElement(
 		container,
 		"[data-sound-row]",
-		(row) => row.dataset.soundRow,
+		(row) => row.dataset["soundRow"],
 		id,
 	);
 }

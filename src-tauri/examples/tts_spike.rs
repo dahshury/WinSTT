@@ -33,14 +33,15 @@ fn kokoro_cache_dir() -> PathBuf {
     }
     // Fall back to %USERPROFILE%\AppData\Local (or $HOME) rather than a
     // machine-specific absolute path, so the spike isn't pinned to one layout.
-    let local = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
+    let local = std::env::var_os("LOCALAPPDATA").map_or_else(
+        || {
             let home = std::env::var("USERPROFILE")
                 .or_else(|_| std::env::var("HOME"))
                 .unwrap_or_default();
             PathBuf::from(home).join("AppData/Local")
-        });
+        },
+        PathBuf::from,
+    );
     local.join("winstt/tts/kokoro-82m")
 }
 
@@ -190,7 +191,7 @@ fn main() {
     let engine = build_engine();
 
     // --multi: one representative voice per language in the catalog.
-    if args.get(1).map(|s| s == "--multi").unwrap_or(false) {
+    if args.get(1).is_some_and(|s| s == "--multi") {
         let mut seen: Vec<&str> = Vec::new();
         for v in KOKORO_VOICE_CATALOG {
             if seen.contains(&v.language) {
@@ -206,9 +207,7 @@ fn main() {
         .get(1)
         .cloned()
         .unwrap_or_else(|| "af_heart".to_string());
-    let lang = voice_by_id(&voice)
-        .map(|v| v.language.to_string())
-        .unwrap_or_else(|| "en-us".to_string());
+    let lang = voice_by_id(&voice).map_or_else(|| "en-us".to_string(), |v| v.language.to_string());
     let text = args
         .get(2)
         .cloned()

@@ -157,7 +157,7 @@ fn tone_snapshot_text(
     if all_logprobs.is_empty() {
         return Ok(String::new());
     }
-    let views: Vec<ArrayView2<f32>> = all_logprobs.iter().map(|a| a.view()).collect();
+    let views: Vec<ArrayView2<'_, f32>> = all_logprobs.iter().map(|a| a.view()).collect();
     let enc = ndarray::concatenate(Axis(0), &views)
         .map_err(|e| SttError::Inference(format!("t-one concat logprobs: {e}")))?;
     let ids = argmax_last_axis_2d(enc.view());
@@ -311,7 +311,11 @@ impl Transcriber for ToneEngine {
         let w8 = resample_16k_to_8k(pcm);
         let chunk_size = self.chunk_size;
         let state_size = self.state_size;
-        let st = self.stream.as_mut().expect("reset above");
+        let Some(st) = self.stream.as_mut() else {
+            return Err(SttError::Inference(
+                "T-One stream state was not initialized".into(),
+            ));
+        };
         st.pending8.extend_from_slice(&w8);
         while st.pending8.len() >= chunk_size {
             let chunk: Vec<f32> = st.pending8.drain(..chunk_size).collect();

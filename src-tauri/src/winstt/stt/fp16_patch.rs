@@ -38,8 +38,6 @@
 // rejected by ORT after this round trip, re-verify the tags against the exact `onnx.proto` the
 // target export was produced with. The fp16 protobuf round-trip being ORT-accepted is GATE 1 item 1.
 
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 
 use prost::Message;
@@ -73,7 +71,21 @@ pub fn should_skip_patch(model_path: &Path) -> bool {
 // ---------------------------------------------------------------------------
 
 /// ONNX elem_type enum values we care about (TensorProto.DataType).
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "kept with the ONNX element-type constants for fp16 patch parity"
+    )
+)]
 const ELEM_TYPE_FLOAT: i32 = 1;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "kept with the ONNX element-type constants for fp16 patch parity"
+    )
+)]
 const ELEM_TYPE_FLOAT16: i32 = 10;
 
 /// AttributeProto.AttributeType values we branch on.
@@ -306,8 +318,7 @@ fn fix_if_subgraph(
                     .r#type
                     .as_ref()
                     .and_then(|t| t.tensor_type.as_ref())
-                    .map(|t| t.elem_type)
-                    .unwrap_or(0);
+                    .map_or(0, |t| t.elem_type);
                 if want != 0 && want != have {
                     retypes.push((i, it.clone()));
                 }
@@ -541,7 +552,7 @@ mod tests {
             // value_info / output declare `logits` as fp16 so the type lookup sees the intended type.
             output: vec![ValueInfoProto {
                 name: "logits".into(),
-                r#type: Some(Box::new(fp16_type.clone())),
+                r#type: Some(Box::new(fp16_type)),
                 doc_string: String::new(),
             }],
             ..Default::default()

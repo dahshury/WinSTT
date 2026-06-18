@@ -16,6 +16,11 @@ const PTT_BINDING: &str = "transcribe";
 #[tauri::command]
 #[specta::specta]
 pub fn hotkey_register(app: AppHandle, accelerator: String) -> bool {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        log::debug!("[hotkey] registration ignored while onboarding is active");
+        return false;
+    }
+
     let accel = accelerator.trim();
     if accel.is_empty() {
         return false;
@@ -146,8 +151,10 @@ pub fn hotkey_stop_recording(app: AppHandle, webview: tauri::WebviewWindow) {
         return;
     }
 
-    let _ = crate::shortcut::resume_binding(app.clone(), PTT_BINDING.to_string());
-    crate::shortcut::reconcile_winstt_hotkeys(&app);
+    if !crate::winstt::commands::onboarding::is_onboarding_active() {
+        let _ = crate::shortcut::resume_binding(app.clone(), PTT_BINDING.to_string());
+        crate::shortcut::reconcile_winstt_hotkeys(&app);
+    }
 }
 
 /// Typed emit facade for hotkey events.

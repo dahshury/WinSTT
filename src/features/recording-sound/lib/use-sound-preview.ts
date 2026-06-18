@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { soundLibraryReadFile } from "@/shared/api/ipc-client";
 import {
 	createOutputContext,
@@ -71,7 +71,10 @@ async function resolveBuffer(
 export function useSoundPreview(): UseSoundPreviewReturn {
 	const ctxRef = useRef<AudioContext | null>(null);
 	const outputDeviceIdRef = useRef<string>("");
-	const cacheRef = useRef<Map<string, AudioBuffer>>(new Map());
+	const cacheRef = useRef<Map<string, AudioBuffer> | null>(null);
+	if (cacheRef.current === null) {
+		cacheRef.current = new Map();
+	}
 	const sourceRef = useRef<AudioBufferSourceNode | null>(null);
 	const [playingId, setPlayingId] = useState<string | null>(null);
 
@@ -82,73 +85,76 @@ export function useSoundPreview(): UseSoundPreviewReturn {
 			sourceRef.current = null;
 			ctxRef.current?.close();
 			ctxRef.current = null;
-			cacheRef.current.clear();
+			cacheRef.current?.clear();
 		},
 		[],
 	);
 
-	const ensureContext = useCallback(
-		async (outputDeviceId = ""): Promise<AudioContext> => {
-			if (!ctxRef.current) {
-				ctxRef.current = createOutputContext(outputDeviceId);
-				outputDeviceIdRef.current = outputDeviceId;
-			} else if (outputDeviceIdRef.current !== outputDeviceId) {
-				await routeContextToSink(ctxRef.current, outputDeviceId);
-				outputDeviceIdRef.current = outputDeviceId;
-			}
+	const ensureContext = async (
+		outputDeviceId = "",
+	): Promise<AudioContext> => {
+		if (!ctxRef.current) {
+			ctxRef.current = createOutputContext(outputDeviceId);
+			outputDeviceIdRef.current = outputDeviceId;
+		} else if (outputDeviceIdRef.current !== outputDeviceId) {
+			await routeContextToSink(ctxRef.current, outputDeviceId);
+			outputDeviceIdRef.current = outputDeviceId;
+		}
 
-			if (ctxRef.current.state === "suspended") {
-				await ctxRef.current.resume();
-			}
-			return ctxRef.current;
-		},
-		[],
-	);
+		if (ctxRef.current.state === "suspended") {
+			await ctxRef.current.resume();
+		}
+		return ctxRef.current;
+	};
 
-	const stop = useCallback(() => {
+	const stop = () => {
 		sourceRef.current?.stop();
 		sourceRef.current?.disconnect();
 		sourceRef.current = null;
 		setPlayingId(null);
-	}, []);
+	};
 
-	const play = useCallback(
-		async (id: string, path: string, outputDeviceId = ""): Promise<void> => {
-			const ctx = await ensureContext(outputDeviceId);
-			const buffer = await resolveBuffer(ctx, cacheRef.current, id, path);
-			if (!buffer) {
-				return;
+	const play = async (
+		id: string,
+		path: string,
+		outputDeviceId = "",
+	): Promise<void> => {
+		const ctx = await ensureContext(outputDeviceId);
+		const cache = cacheRef.current ?? new Map<string, AudioBuffer>();
+		cacheRef.current = cache;
+		const buffer = await resolveBuffer(ctx, cache, id, path);
+		if (!buffer) {
+			return;
+		}
+		stop();
+		const source = ctx.createBufferSource();
+		source.buffer = buffer;
+		source.connect(ctx.destination);
+		source.onended = () => {
+			// Only clear state if this source is still the active one — if a
+			// new preview started before the previous one finished, its onended
+			// would otherwise clobber the new playingId.
+			if (sourceRef.current === source) {
+				sourceRef.current = null;
+				setPlayingId(null);
 			}
+		};
+		sourceRef.current = source;
+		setPlayingId(id);
+		source.start();
+	};
+
+	const toggle = async (
+		id: string,
+		path: string,
+		outputDeviceId = "",
+	): Promise<void> => {
+		if (playingId === id) {
 			stop();
-			const source = ctx.createBufferSource();
-			source.buffer = buffer;
-			source.connect(ctx.destination);
-			source.onended = () => {
-				// Only clear state if this source is still the active one — if a
-				// new preview started before the previous one finished, its onended
-				// would otherwise clobber the new playingId.
-				if (sourceRef.current === source) {
-					sourceRef.current = null;
-					setPlayingId(null);
-				}
-			};
-			sourceRef.current = source;
-			setPlayingId(id);
-			source.start();
-		},
-		[ensureContext, stop],
-	);
-
-	const toggle = useCallback(
-		async (id: string, path: string, outputDeviceId = ""): Promise<void> => {
-			if (playingId === id) {
-				stop();
-				return;
-			}
-			await play(id, path, outputDeviceId);
-		},
-		[play, playingId, stop],
-	);
+			return;
+		}
+		await play(id, path, outputDeviceId);
+	};
 
 	return { playingId, toggle };
 }

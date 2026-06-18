@@ -6,7 +6,6 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
-import { useCallback } from "react";
 import { useTranslations } from "use-intl";
 import { useConnectionStore } from "@/entities/connection";
 import { HotkeyDisplay } from "@/features/push-to-talk";
@@ -51,6 +50,11 @@ function TitleBarActionButton({
 	);
 }
 
+function openSettings(): void {
+	diagBeacon("main", "settings button onClick fired");
+	windowOpenSettings();
+}
+
 export function TitleBar() {
 	const t = useTranslations("titleBar");
 	const substrate = useSurface();
@@ -58,11 +62,6 @@ export function TitleBar() {
 	const hoverLevel = Math.min(barLevel + 2, 8);
 	const isConnected =
 		useConnectionStore((s) => s.connectionStatus) === "connected";
-	const openSettings = useCallback(() => {
-		diagBeacon("main", "settings button onClick fired");
-		windowOpenSettings();
-	}, []);
-
 	return (
 		<SurfaceProvider value={barLevel}>
 			<header

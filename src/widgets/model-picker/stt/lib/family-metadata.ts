@@ -169,16 +169,22 @@ const FAMILY_SEARCH_ALIASES: Record<FamilyKey, string[]> = {
 	custom: ["custom", "user", "local", "byo", "bring your own"],
 };
 
+const searchCorpusCache = new WeakMap<ModelInfo, string>();
+
 /**
  * Builds the lowercase search corpus for a model: display fields plus the
  * authoring org and any brand aliases. Centralised here so the search input
  * and any future "global search" share one definition.
  */
 export function buildModelSearchCorpus(model: ModelInfo): string {
+	const cached = searchCorpusCache.get(model);
+	if (cached !== undefined) {
+		return cached;
+	}
 	const author = FAMILY_AUTHOR[model.family];
 	const aliases = FAMILY_SEARCH_ALIASES[model.family].join(" ");
 	const label = FAMILY_CONFIG[model.family].label;
-	return [
+	const corpus = [
 		model.displayName,
 		model.id,
 		model.family,
@@ -190,4 +196,6 @@ export function buildModelSearchCorpus(model: ModelInfo): string {
 	]
 		.join(" ")
 		.toLowerCase();
+	searchCorpusCache.set(model, corpus);
+	return corpus;
 }

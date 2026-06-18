@@ -72,6 +72,23 @@ function buildDayStats(
 	return stats;
 }
 
+const dayStatsCache = new WeakMap<
+	TranscriptionHistoryEntry[],
+	Map<string, DayStat>
+>();
+
+function cachedDayStats(
+	entries: TranscriptionHistoryEntry[],
+): Map<string, DayStat> {
+	const cached = dayStatsCache.get(entries);
+	if (cached) {
+		return cached;
+	}
+	const stats = buildDayStats(entries);
+	dayStatsCache.set(entries, stats);
+	return stats;
+}
+
 function metricValue(stat: DayStat | undefined, metric: Metric): number {
 	if (!stat) {
 		return 0;
@@ -119,7 +136,7 @@ export function ActivityHeatmap({
 	const panelBg = surfaceBg(level);
 	const insetBg = surfaceBg(Math.min(level + 1, 8));
 
-	const dayStats = buildDayStats(entries);
+	const dayStats = cachedDayStats(entries);
 	const buckets = buildHeatmap(entries);
 	const maxValue = buckets.reduce(
 		(acc, b) => Math.max(acc, metricValue(dayStats.get(b.dayKey), metric)),
@@ -217,10 +234,19 @@ export function ActivityHeatmap({
 		}
 	};
 
-	const presetGroups = PRESET_GROUP_ORDER.map((group) => ({
-		group,
-		items: presets.filter((preset) => preset.group === group),
-	})).filter((entry) => entry.items.length > 0);
+	const presetGroups: { group: CalendarPresetGroup; items: CalendarPreset[] }[] =
+		[];
+	for (const group of PRESET_GROUP_ORDER) {
+		const items: CalendarPreset[] = [];
+		for (const preset of presets) {
+			if (preset.group === group) {
+				items.push(preset);
+			}
+		}
+		if (items.length > 0) {
+			presetGroups.push({ group, items });
+		}
+	}
 
 	return (
 		<div className="flex w-full flex-col gap-3">

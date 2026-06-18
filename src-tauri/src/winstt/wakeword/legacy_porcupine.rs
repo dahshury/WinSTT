@@ -40,7 +40,7 @@ pub struct LegacyPorcupineDetector {
     pending: Vec<i16>,
 }
 
-// The native handle is only touched while the manager holds its detector mutex.
+// SAFETY: The native handle is only touched while the manager holds its detector mutex.
 unsafe impl Send for LegacyPorcupineDetector {}
 
 impl LegacyPorcupineDetector {
@@ -62,15 +62,24 @@ impl LegacyPorcupineDetector {
         let keyword_paths = [keyword_path.as_ptr()];
         let sensitivities = [sensitivity.clamp(0.0, 1.0) as c_float];
 
+        // SAFETY: Loading a user-selected dynamic library is constrained to the validated
+        // bundled Porcupine wheel path for the selected keyword.
         let library = unsafe { Library::new(paths.library())? };
+        // SAFETY: The legacy Porcupine library is validated by file presence and exports this ABI.
         let init: PvPorcupineInit = unsafe { *library.get(b"pv_porcupine_init\0")? };
+        // SAFETY: The legacy Porcupine library is validated by file presence and exports this ABI.
         let delete: PvPorcupineDelete = unsafe { *library.get(b"pv_porcupine_delete\0")? };
+        // SAFETY: The legacy Porcupine library is validated by file presence and exports this ABI.
         let process: PvPorcupineProcess = unsafe { *library.get(b"pv_porcupine_process\0")? };
+        // SAFETY: The legacy Porcupine library is validated by file presence and exports this ABI.
         let frame_length_fn: PvPorcupineFrameLength =
             unsafe { *library.get(b"pv_porcupine_frame_length\0")? };
+        // SAFETY: The legacy Porcupine library is validated by file presence and exports this ABI.
         let sample_rate_fn: PvSampleRate = unsafe { *library.get(b"pv_sample_rate\0")? };
 
         let mut handle: *mut c_void = std::ptr::null_mut();
+        // SAFETY: All C string pointers and arrays stay alive for the call, and `handle` points
+        // to writable storage for the native detector pointer.
         let status = unsafe {
             init(
                 model.as_ptr(),
@@ -84,13 +93,17 @@ impl LegacyPorcupineDetector {
             anyhow::bail!("pv_porcupine_init failed with status {status}");
         }
 
+        // SAFETY: Function pointer was loaded from the validated Porcupine library.
         let frame_length = unsafe { frame_length_fn() };
+        // SAFETY: Function pointer was loaded from the validated Porcupine library.
         let sample_rate = unsafe { sample_rate_fn() };
         if frame_length <= 0 {
+            // SAFETY: `handle` was returned by `pv_porcupine_init` and has not been freed.
             unsafe { delete(handle) };
             anyhow::bail!("pv_porcupine_frame_length returned {frame_length}");
         }
         if sample_rate != 16_000 {
+            // SAFETY: `handle` was returned by `pv_porcupine_init` and has not been freed.
             unsafe { delete(handle) };
             anyhow::bail!("pv_sample_rate returned {sample_rate}; expected 16000");
         }
@@ -121,6 +134,8 @@ impl LegacyPorcupineDetector {
         while self.pending.len().saturating_sub(consumed) >= self.frame_length {
             let frame = &self.pending[consumed..consumed + self.frame_length];
             let mut result = -1;
+            // SAFETY: `self.handle` is owned by this detector, `frame` has exactly the configured
+            // Porcupine frame length, and `result` is valid writable storage for the call.
             let status = unsafe { (self.process)(self.handle, frame.as_ptr(), &mut result) };
             consumed += self.frame_length;
             if status != 0 {
@@ -151,6 +166,7 @@ impl LegacyPorcupineDetector {
 impl Drop for LegacyPorcupineDetector {
     fn drop(&mut self) {
         if !self.handle.is_null() {
+            // SAFETY: `self.handle` is owned by this detector and is freed at most once in Drop.
             unsafe { (self.delete)(self.handle) };
             self.handle = std::ptr::null_mut();
         }

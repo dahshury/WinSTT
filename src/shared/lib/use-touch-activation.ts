@@ -2,7 +2,7 @@ import type {
 	MouseEvent as ReactMouseEvent,
 	PointerEvent as ReactPointerEvent,
 } from "react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 const DEFAULT_POINTER_TYPES = ["touch", "pen"] as const;
 const DEFAULT_MOVE_TOLERANCE_PX = 12;
@@ -29,6 +29,16 @@ interface UseTouchActivationResult {
 	onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
 }
 
+function clearSuppressionTimer(timerRef: {
+	current: ReturnType<typeof setTimeout> | null;
+}): void {
+	const pendingTimer = timerRef.current;
+	timerRef.current = null;
+	if (pendingTimer) {
+		clearTimeout(pendingTimer);
+	}
+}
+
 export function useTouchActivation(
 	onActivate: () => void,
 	{
@@ -46,117 +56,87 @@ export function useTouchActivation(
 		onActivateRef.current = onActivate;
 	}, [onActivate]);
 
-	const clearSuppressionTimer = useCallback(() => {
-		if (suppressTimerRef.current) {
-			clearTimeout(suppressTimerRef.current);
-			suppressTimerRef.current = null;
-		}
-	}, []);
-
-	const suppressNextClick = useCallback(() => {
+	const suppressNextClick = () => {
 		suppressClickRef.current = true;
-		clearSuppressionTimer();
+		clearSuppressionTimer(suppressTimerRef);
 		suppressTimerRef.current = setTimeout(() => {
 			suppressClickRef.current = false;
 			suppressTimerRef.current = null;
 		}, CLICK_SUPPRESS_MS);
-	}, [clearSuppressionTimer]);
+	};
 
-	const cancelTouchPointer = useCallback(() => {
+	const cancelTouchPointer = () => {
 		if (activePointerRef.current) {
 			suppressNextClick();
 		}
 		activePointerRef.current = null;
-	}, [suppressNextClick]);
+	};
 
-	useEffect(
-		() => () => {
-			clearSuppressionTimer();
-		},
-		[clearSuppressionTimer],
-	);
+	useEffect(() => () => clearSuppressionTimer(suppressTimerRef), []);
 
-	const pointerAllowed = useCallback(
-		(event: ReactPointerEvent<HTMLElement>) => {
-			if (disabled || event.pointerType === "mouse") {
-				return false;
-			}
-			return pointerTypes.includes(event.pointerType);
-		},
-		[disabled, pointerTypes],
-	);
+	const pointerAllowed = (event: ReactPointerEvent<HTMLElement>) => {
+		if (disabled || event.pointerType === "mouse") {
+			return false;
+		}
+		return pointerTypes.includes(event.pointerType);
+	};
 
-	const onPointerDown = useCallback(
-		(event: ReactPointerEvent<HTMLElement>) => {
-			if (!pointerAllowed(event) || event.button !== 0) {
-				return;
-			}
-			activePointerRef.current = {
-				id: event.pointerId,
-				x: event.clientX,
-				y: event.clientY,
-			};
-		},
-		[pointerAllowed],
-	);
+	const onPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+		if (!pointerAllowed(event) || event.button !== 0) {
+			return;
+		}
+		activePointerRef.current = {
+			id: event.pointerId,
+			x: event.clientX,
+			y: event.clientY,
+		};
+	};
 
-	const onPointerMove = useCallback(
-		(event: ReactPointerEvent<HTMLElement>) => {
-			const activePointer = activePointerRef.current;
-			if (!activePointer || activePointer.id !== event.pointerId) {
-				return;
-			}
-			const dx = Math.abs(event.clientX - activePointer.x);
-			const dy = Math.abs(event.clientY - activePointer.y);
-			if (dx > moveTolerance || dy > moveTolerance) {
-				cancelTouchPointer();
-			}
-		},
-		[cancelTouchPointer, moveTolerance],
-	);
+	const onPointerMove = (event: ReactPointerEvent<HTMLElement>) => {
+		const activePointer = activePointerRef.current;
+		if (!activePointer || activePointer.id !== event.pointerId) {
+			return;
+		}
+		const dx = Math.abs(event.clientX - activePointer.x);
+		const dy = Math.abs(event.clientY - activePointer.y);
+		if (dx > moveTolerance || dy > moveTolerance) {
+			cancelTouchPointer();
+		}
+	};
 
-	const onPointerUp = useCallback(
-		(event: ReactPointerEvent<HTMLElement>) => {
-			const activePointer = activePointerRef.current;
-			if (!activePointer || activePointer.id !== event.pointerId) {
-				return;
-			}
-			activePointerRef.current = null;
-			suppressNextClick();
+	const onPointerUp = (event: ReactPointerEvent<HTMLElement>) => {
+		const activePointer = activePointerRef.current;
+		if (!activePointer || activePointer.id !== event.pointerId) {
+			return;
+		}
+		activePointerRef.current = null;
+		suppressNextClick();
+		event.preventDefault();
+		event.stopPropagation();
+		onActivateRef.current();
+	};
+
+	const onClick = (event: ReactMouseEvent<HTMLElement>) => {
+		if (suppressClickRef.current) {
 			event.preventDefault();
 			event.stopPropagation();
-			onActivateRef.current();
-		},
-		[suppressNextClick],
-	);
+			suppressClickRef.current = false;
+			clearSuppressionTimer(suppressTimerRef);
+			return;
+		}
+		if (disabled) {
+			event.preventDefault();
+			return;
+		}
+		onActivateRef.current();
+	};
 
-	const onClick = useCallback(
-		(event: ReactMouseEvent<HTMLElement>) => {
-			if (suppressClickRef.current) {
-				event.preventDefault();
-				event.stopPropagation();
-				suppressClickRef.current = false;
-				clearSuppressionTimer();
-				return;
-			}
-			if (disabled) {
-				event.preventDefault();
-				return;
-			}
-			onActivateRef.current();
-		},
-		[clearSuppressionTimer, disabled],
-	);
-
-	return useMemo(
-		() => ({
-			onClick,
-			onPointerCancel: cancelTouchPointer,
-			onPointerDown,
-			onPointerLeave: cancelTouchPointer,
-			onPointerMove,
-			onPointerUp,
-		}),
-		[cancelTouchPointer, onClick, onPointerDown, onPointerMove, onPointerUp],
-	);
+	return {
+		onClick,
+		onPointerCancel: cancelTouchPointer,
+		onPointerDown,
+		onPointerLeave: cancelTouchPointer,
+		onPointerMove,
+		onPointerUp,
+	};
 }

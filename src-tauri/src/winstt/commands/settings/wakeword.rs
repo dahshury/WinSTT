@@ -69,15 +69,27 @@ pub(super) fn apply_wakeword_runtime_settings(
     previous: &WinsttSettings,
     next: &WinsttSettings,
 ) {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        return;
+    }
+
     apply_wakeword_runtime_transition(app, wakeword_runtime_transition(Some(previous), next), next);
 }
 
 pub(crate) fn sync_wakeword_runtime_from_settings(app: &AppHandle) {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        return;
+    }
+
     let settings = read_settings_raw(app);
     apply_wakeword_runtime_transition(app, wakeword_runtime_transition(None, &settings), &settings);
 }
 
 pub(crate) fn sync_wakeword_runtime_from_settings_in_background(app: &AppHandle) {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        return;
+    }
+
     let app = app.clone();
     if let Err(err) = std::thread::Builder::new()
         .name("winstt-wakeword-startup-arm".to_string())
@@ -92,6 +104,10 @@ pub(crate) fn rearm_wakeword_runtime_if_active(app: &AppHandle) {
     if settings.general.recording_mode == RecordingMode::Wakeword {
         apply_wakeword_runtime_transition(app, WakewordRuntimeTransition::Arm, &settings);
     }
+}
+
+pub(crate) fn disarm_wakeword_runtime_for_onboarding(app: &AppHandle) {
+    disarm_wakeword_runtime(app);
 }
 
 fn apply_wakeword_runtime_transition(

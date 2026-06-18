@@ -12,23 +12,21 @@ import { useTranslations } from "use-intl";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
-import { ModelCard, NeutralHeaderIcon } from "../core/model-card";
+import { NeutralHeaderIcon } from "../core/model-card/GroupHeader";
+import { ModelCard } from "../core/model-card/ModelCard";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
 import {
-	computeModelHeaderState,
 	getChevronClassName,
 	getExpandAriaLabel,
 	getProviderCountTooltip,
-	resolveMakerIconSrc,
-} from "./model-list-content-virtualized-utils";
+} from "./model-list-content-virtualized-utils/class-names";
 import {
-	InlineModelMeta,
-	MakerIcon,
-	ModelDescription,
-	VariantBadge,
-} from "./model-list-meta-chips";
-import { VariantAccentStrip } from "./model-list-provider-grid";
-import type { getVariantClasses } from "./model-selector-display-utils";
+	computeModelHeaderState,
+} from "./model-list-content-virtualized-utils/header";
+import {
+	resolveMakerIconSrc,
+} from "./model-list-content-virtualized-utils/items";
+import { InlineModelMeta, ModelDescription } from "./model-list-meta-chips";
 import { formatModelName } from "./model-selector-utils";
 import { publicAsset } from "./public-asset";
 
@@ -90,22 +88,6 @@ function ProvidersExpandButton({
 	);
 }
 
-/**
- * The name line. The model name OWNS this line at full body size + semibold
- * (`text-body`, dominant) — the variant badge has moved off it into the meta
- * line below, so the title no longer shares a row with competing metadata.
- */
-function ModelHeaderTitleRow({ model }: { model: OpenRouterModel }) {
-	return (
-		<div className="flex min-w-0 flex-1 items-center gap-1.5">
-			<MakerIcon maker={model.maker} />
-			<h3 className="min-w-0 truncate font-semibold text-body text-foreground leading-tight tracking-tight">
-				{formatModelName(model.model_name ?? model.name, model.maker)}
-			</h3>
-		</div>
-	);
-}
-
 interface ModelHeaderProps {
 	hasProviders: boolean;
 	isExpanded: boolean;
@@ -115,21 +97,6 @@ interface ModelHeaderProps {
 	onToggleFavorite?: ((id: string) => void) | undefined;
 	parsedModelId: string | undefined;
 	parsedProviderSlug: string | undefined;
-}
-
-function ModelVariantStrip({
-	variant,
-	variantClasses,
-}: {
-	variant: OpenRouterModel["variant"];
-	variantClasses: ReturnType<typeof getVariantClasses> | null;
-}) {
-	if (!(variant && variantClasses)) {
-		return null;
-	}
-	return (
-		<VariantAccentStrip gradient={variantClasses.gradient} variant={variant} />
-	);
 }
 
 function ModelHeaderProvidersButton({

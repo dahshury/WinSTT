@@ -37,11 +37,11 @@ describe("ApplicationError", () => {
 	test("toJSON includes name, message, context, timestamp, stack", () => {
 		const err = new ApplicationError("boom", { x: 1 });
 		const json = err.toJSON();
-		expect(json.name).toBe("ApplicationError");
-		expect(json.message).toBe("boom");
-		expect(json.context).toEqual({ x: 1 });
-		expect(typeof json.timestamp).toBe("number");
-		expect(typeof json.stack === "string" || json.stack === undefined).toBe(
+		expect(json["name"]).toBe("ApplicationError");
+		expect(json["message"]).toBe("boom");
+		expect(json["context"]).toEqual({ x: 1 });
+		expect(typeof json["timestamp"]).toBe("number");
+		expect(typeof json["stack"] === "string" || json["stack"] === undefined).toBe(
 			true,
 		);
 	});
@@ -58,9 +58,9 @@ describe("ValidationError", () => {
 	test("toJSON merges parent fields with field", () => {
 		const err = new ValidationError("invalid", "email", { value: "" });
 		const json = err.toJSON();
-		expect(json.message).toBe("invalid");
-		expect(json.field).toBe("email");
-		expect(json.context).toEqual({ value: "" });
+		expect(json["message"]).toBe("invalid");
+		expect(json["field"]).toBe("email");
+		expect(json["context"]).toEqual({ value: "" });
 	});
 
 	test("field is optional", () => {
@@ -86,8 +86,8 @@ describe("NotFoundError", () => {
 	test("toJSON includes resource and identifier", () => {
 		const err = new NotFoundError("User", "abc");
 		const json = err.toJSON();
-		expect(json.resource).toBe("User");
-		expect(json.identifier).toBe("abc");
+		expect(json["resource"]).toBe("User");
+		expect(json["identifier"]).toBe("abc");
 	});
 });
 
@@ -106,8 +106,8 @@ describe("ConnectionError", () => {
 	test("toJSON includes endpoint and retryable", () => {
 		const err = new ConnectionError("offline", "ws://server", false);
 		const json = err.toJSON();
-		expect(json.endpoint).toBe("ws://server");
-		expect(json.retryable).toBe(false);
+		expect(json["endpoint"]).toBe("ws://server");
+		expect(json["retryable"]).toBe(false);
 	});
 });
 
@@ -126,8 +126,8 @@ describe("TimeoutError", () => {
 
 	test("toJSON exposes timeoutMs and operation", () => {
 		const json = new TimeoutError(2000, "fetch").toJSON();
-		expect(json.timeoutMs).toBe(2000);
-		expect(json.operation).toBe("fetch");
+		expect(json["timeoutMs"]).toBe(2000);
+		expect(json["operation"]).toBe("fetch");
 	});
 });
 
@@ -140,8 +140,8 @@ describe("IpcError", () => {
 
 	test("toJSON includes channel and ipcOperation", () => {
 		const json = new IpcError("failed", "ch", "send").toJSON();
-		expect(json.channel).toBe("ch");
-		expect(json.ipcOperation).toBe("send");
+		expect(json["channel"]).toBe("ch");
+		expect(json["ipcOperation"]).toBe("send");
 	});
 });
 
@@ -154,8 +154,8 @@ describe("FileSystemError", () => {
 
 	test("toJSON includes filePath and operation", () => {
 		const json = new FileSystemError("ENOENT", "/x", "stat").toJSON();
-		expect(json.filePath).toBe("/x");
-		expect(json.operation).toBe("stat");
+		expect(json["filePath"]).toBe("/x");
+		expect(json["operation"]).toBe("stat");
 	});
 });
 
@@ -173,8 +173,8 @@ describe("ProcessSpawnError", () => {
 
 	test("toJSON includes command and exitCode", () => {
 		const json = new ProcessSpawnError("crashed", "node", 1).toJSON();
-		expect(json.command).toBe("node");
-		expect(json.exitCode).toBe(1);
+		expect(json["command"]).toBe("node");
+		expect(json["exitCode"]).toBe(1);
 	});
 });
 

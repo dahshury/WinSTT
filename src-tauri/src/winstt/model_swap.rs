@@ -34,20 +34,16 @@ impl ModelSwapCoordinator {
     pub fn is_warm(&self, key: &str) -> bool {
         self.state
             .lock()
-            .map(|state| state.warm.contains_key(key))
-            .unwrap_or(false)
+            .is_ok_and(|state| state.warm.contains_key(key))
     }
 
     pub fn is_warm_within(&self, key: &str, max_age: Duration) -> bool {
-        self.state
-            .lock()
-            .map(|state| {
-                state
-                    .warm
-                    .get(key)
-                    .is_some_and(|marked| marked.elapsed() <= max_age)
-            })
-            .unwrap_or(false)
+        self.state.lock().is_ok_and(|state| {
+            state
+                .warm
+                .get(key)
+                .is_some_and(|marked| marked.elapsed() <= max_age)
+        })
     }
 
     pub fn mark_warm(&self, key: impl Into<String>) {

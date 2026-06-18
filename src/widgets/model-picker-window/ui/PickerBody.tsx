@@ -89,21 +89,23 @@ function useOllamaPulls() {
 	return pulls;
 }
 
-function DetachedLlmPickerFrame({ children }: { children: ReactNode }) {
-	const handleKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
-		if (event.key !== "Escape") {
-			return;
-		}
-		event.preventDefault();
-		event.stopPropagation();
-		close();
-	};
+const handleKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
+	if (event.key !== "Escape") {
+		return;
+	}
+	event.preventDefault();
+	event.stopPropagation();
+	close();
+};
 
+function DetachedLlmPickerFrame({ children }: { children: ReactNode }) {
 	return (
+		// biome-ignore lint/a11y/useKeyWithClickEvents: backdrop only dismisses on a direct click (target===currentTarget); keyboard dismissal is the onKeyDownCapture Escape handler — interactive controls live in {children}
+		// biome-ignore lint/a11y/noStaticElementInteractions: backdrop surface, not itself an interaction target; the onClick is a click-outside dismiss, interactive controls live in {children}
 		<div
 			className="flex h-full min-h-0 flex-col"
 			onKeyDownCapture={handleKeyDownCapture}
-			onClick={(event) => {
+			onPointerDown={(event) => {
 				if (event.target === event.currentTarget) {
 					close();
 				}
@@ -296,9 +298,6 @@ function DetachedOpenRouterPicker({ mode }: { mode: DetachedOpenRouterMode }) {
 				isLoading={isScanning}
 				models={[...models]}
 				onChange={setModel}
-				onOpen={() => {
-					warmModels().catch(() => undefined);
-				}}
 				placeholder={
 					mode.target === "fallback"
 						? "Select fallback model"
@@ -372,9 +371,11 @@ export function PickerBody({
 		// completed click on it (not a child) closes the picker, same as the
 		// backdrop, without passing the click through to the selector underneath.
 		// In Local mode the grid fills via `flex-1`, leaving no gap.
+		// biome-ignore lint/a11y/useKeyWithClickEvents: backdrop only dismisses on a direct click (target===currentTarget); Escape dismissal is handled at the window level — interactive controls live in {children}
+		// biome-ignore lint/a11y/noStaticElementInteractions: backdrop surface, not itself an interaction target; the onClick is a click-outside dismiss, interactive controls live in {children}
 		<div
 			className="flex h-full flex-col justify-end gap-2"
-			onClick={(e) => {
+			onPointerDown={(e) => {
 				if (e.target === e.currentTarget) {
 					close();
 				}

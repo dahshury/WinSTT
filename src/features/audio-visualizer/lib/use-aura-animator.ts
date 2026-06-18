@@ -1,5 +1,5 @@
 import type { ValueAnimationTransition } from "motion/react";
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { useVisualizerStore } from "../model/visualizer-store";
 import type { Uniforms } from "../ui/ReactShaderToy";
 import type { AgentState } from "./audio-visualizer";
@@ -48,12 +48,12 @@ export function useAuraAnimator(
 	const audioLevel = useVisualizerStore((s) => s.audioLevel);
 
 	// @crap-exclude rAF callback — covered via E2E (state-driven animation transitions)
-	useEffect(() => {
+	useLayoutEffect(() => {
 		switch (state) {
 			case "disconnected":
 				// Speed is written directly to the ref (no animation needed)
-				if (uniformsRef.current?.uSpeed) {
-					uniformsRef.current.uSpeed = { type: "1f", value: 10 };
+				if (uniformsRef.current?.["uSpeed"]) {
+					uniformsRef.current["uSpeed"] = { type: "1f", value: 10 };
 				}
 				animateScale(0.2, DEFAULT_TRANSITION);
 				animateAmplitude(1.2, DEFAULT_TRANSITION);
@@ -61,8 +61,8 @@ export function useAuraAnimator(
 				animateBrightness(1.0, DEFAULT_TRANSITION);
 				return;
 			case "listening":
-				if (uniformsRef.current?.uSpeed) {
-					uniformsRef.current.uSpeed = { type: "1f", value: 20 };
+				if (uniformsRef.current?.["uSpeed"]) {
+					uniformsRef.current["uSpeed"] = { type: "1f", value: 20 };
 				}
 				animateScale(0.3, { type: "spring", duration: 1.0, bounce: 0.35 });
 				animateAmplitude(1.0, DEFAULT_TRANSITION);
@@ -72,8 +72,8 @@ export function useAuraAnimator(
 			case "thinking":
 			case "connecting":
 			case "initializing":
-				if (uniformsRef.current?.uSpeed) {
-					uniformsRef.current.uSpeed = { type: "1f", value: 30 };
+				if (uniformsRef.current?.["uSpeed"]) {
+					uniformsRef.current["uSpeed"] = { type: "1f", value: 30 };
 				}
 				animateScale(0.3, DEFAULT_TRANSITION);
 				animateAmplitude(0.5, DEFAULT_TRANSITION);
@@ -81,8 +81,8 @@ export function useAuraAnimator(
 				animateBrightness([0.5, 2.5], DEFAULT_PULSE_TRANSITION);
 				return;
 			case "speaking":
-				if (uniformsRef.current?.uSpeed) {
-					uniformsRef.current.uSpeed = { type: "1f", value: 70 };
+				if (uniformsRef.current?.["uSpeed"]) {
+					uniformsRef.current["uSpeed"] = { type: "1f", value: 70 };
 				}
 				animateScale(0.3, DEFAULT_TRANSITION);
 				animateAmplitude(0.75, DEFAULT_TRANSITION);
@@ -101,7 +101,7 @@ export function useAuraAnimator(
 		animateBrightness,
 	]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const shouldApply = shouldApplyAudioLevelScale(
 			state,
 			audioLevel,

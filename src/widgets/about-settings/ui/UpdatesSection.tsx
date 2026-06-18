@@ -1,6 +1,6 @@
 import { AppWindowIcon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
 	DEFAULT_SETTINGS,
 	SettingField,
@@ -173,6 +173,16 @@ function latestHistoryStatus(
 	return history.at(-1) ?? null;
 }
 
+const handleRestart = () => {
+	// Fire-and-forget — main will quit the app a tick later. The Promise
+	// from invokeOrDefault may never settle in practice; we don't need it,
+	// but `.catch(() => {})` keeps biome's no-floating-promises lint happy
+	// without the void-as-statement trick.
+	updaterQuitAndInstall().catch(() => {
+		// Intentionally ignored: the app is shutting down anyway.
+	});
+};
+
 export function UpdatesSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 	const receivePrereleaseUpdates = useSettingsStore(
 		(s) => s.settings.general?.receivePrereleaseUpdates ?? false,
@@ -181,11 +191,10 @@ export function UpdatesSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 	const [latestStatus, setLatestStatus] = useState<UpdaterStatusEntry | null>(
 		null,
 	);
-	const [historyLoaded, setHistoryLoaded] = useState(false);
 	const [checking, setChecking] = useState(false);
 	const autoCheckRequestedRef = useRef(false);
 
-	const handleCheck = useCallback(async () => {
+	const handleCheck = async () => {
 		setChecking(true);
 		try {
 			const result = await updaterCheckNow({
@@ -200,7 +209,19 @@ export function UpdatesSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 		} catch {
 			setChecking(false);
 		}
-	}, [receivePrereleaseUpdates]);
+	};
+	const handleAutoCheck = useEffectEvent(() => {
+		void handleCheck();
+	});
+	const requestAutoCheck = useEffectEvent(
+		(status: UpdaterStatusEntry | null) => {
+			if (autoCheckRequestedRef.current || !shouldAutoCheck(status)) {
+				return;
+			}
+			autoCheckRequestedRef.current = true;
+			handleAutoCheck();
+		},
+	);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -210,19 +231,16 @@ export function UpdatesSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 					return;
 				}
 				// History is append-only; the freshest entry is at the end.
-				setLatestStatus(latestHistoryStatus(history));
+				const latest = latestHistoryStatus(history);
+				setLatestStatus(latest);
+				requestAutoCheck(latest);
 			})
 			.catch(() => {
 				if (cancelled) {
 					return;
 				}
 				setLatestStatus(null);
-			})
-			.finally(() => {
-				if (cancelled) {
-					return;
-				}
-				setHistoryLoaded(true);
+				requestAutoCheck(null);
 			});
 		const off = onUpdaterStatus((entry) => {
 			setLatestStatus(entry);
@@ -235,29 +253,6 @@ export function UpdatesSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 			off();
 		};
 	}, []);
-
-	useEffect(() => {
-		if (
-			!historyLoaded ||
-			checking ||
-			autoCheckRequestedRef.current ||
-			!shouldAutoCheck(latestStatus)
-		) {
-			return;
-		}
-		autoCheckRequestedRef.current = true;
-		void handleCheck();
-	}, [checking, handleCheck, historyLoaded, latestStatus]);
-
-	const handleRestart = () => {
-		// Fire-and-forget — main will quit the app a tick later. The Promise
-		// from invokeOrDefault may never settle in practice; we don't need it,
-		// but `.catch(() => {})` keeps biome's no-floating-promises lint happy
-		// without the void-as-statement trick.
-		updaterQuitAndInstall().catch(() => {
-			// Intentionally ignored: the app is shutting down anyway.
-		});
-	};
 
 	const isDownloading = latestStatus?.status === "downloading";
 	const isDownloaded = latestStatus?.status === "downloaded";

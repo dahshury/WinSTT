@@ -63,8 +63,14 @@ export function useTranscriptionFeed(): void {
 	const recordingMode = useSettingsStore(
 		(s) => s.settings.general?.recordingMode ?? "ptt",
 	);
-	const recordingModeRef = useRef(recordingMode);
-	recordingModeRef.current = recordingMode;
+	// Initialised with a stable literal (not the reactive `recordingMode`) so
+	// the ref isn't touched with render-time reactive state — which
+	// `react-hooks-js/refs` flags. The effect below syncs the live value before
+	// any IPC handler (subscribed in the later effect) can read it.
+	const recordingModeRef = useRef<string>("ptt");
+	useEffect(() => {
+		recordingModeRef.current = recordingMode;
+	}, [recordingMode]);
 	const addFinalSentence = useTranscriptionStore((s) => s.addFinalSentence);
 	const attachSpeakerSegments = useTranscriptionStore(
 		(s) => s.attachSpeakerSegments,

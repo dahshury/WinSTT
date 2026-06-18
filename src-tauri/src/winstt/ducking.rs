@@ -324,6 +324,8 @@ fn enumerate_audio_session_volumes() -> Option<Vec<AudioSessionVolume>> {
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 
     let _com = crate::windows_com::ComApartment::init_multithreaded();
+    // SAFETY: COM is initialized for this thread and each interface returned by WASAPI is
+    // checked before use; interface values are kept within this thread-local enumeration.
     unsafe {
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
@@ -365,10 +367,12 @@ fn perform_session_duck(reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>>
         if protected.contains(&session.pid) {
             continue;
         }
+        // SAFETY: `session.volume` is a live WASAPI interface obtained during enumeration.
         let Ok(current) = (unsafe { session.volume.GetMasterVolume() }) else {
             continue;
         };
         let target = reduction_target(current, reduction_pct);
+        // SAFETY: `session.volume` is valid and `target` is clamped to the accepted 0.0..=1.0 range.
         if unsafe {
             session
                 .volume
@@ -395,6 +399,8 @@ fn perform_session_restore(snapshots: Vec<SessionVolumeSnapshot>) {
         let Some(snapshot) = snapshots.iter().find(|s| s.pid == session.pid) else {
             continue;
         };
+        // SAFETY: `session.volume` is a live WASAPI interface and `snapshot.volume` was read from
+        // the same API before ducking.
         let _ = unsafe {
             session
                 .volume

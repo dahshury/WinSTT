@@ -13,25 +13,31 @@ pub struct FrameResampler {
 }
 
 impl FrameResampler {
-    pub fn new(in_hz: usize, out_hz: usize, frame_dur: Duration) -> Self {
+    pub fn try_new(in_hz: usize, out_hz: usize, frame_dur: Duration) -> Result<Self, String> {
         let frame_samples = ((out_hz as f64 * frame_dur.as_secs_f64()).round()) as usize;
-        assert!(frame_samples > 0, "frame duration too short");
+        if frame_samples == 0 {
+            return Err("frame duration too short".to_string());
+        }
 
         // Use fixed chunk size instead of GCD-based
         let chunk_in = RESAMPLER_CHUNK_SIZE;
 
-        let resampler = (in_hz != out_hz).then(|| {
-            FftFixedIn::<f32>::new(in_hz, out_hz, chunk_in, 1, 1)
-                .expect("Failed to create resampler")
-        });
+        let resampler = if in_hz != out_hz {
+            Some(
+                FftFixedIn::<f32>::new(in_hz, out_hz, chunk_in, 1, 1)
+                    .map_err(|err| format!("failed to create resampler: {err}"))?,
+            )
+        } else {
+            None
+        };
 
-        Self {
+        Ok(Self {
             resampler,
             chunk_in,
             in_buf: Vec::with_capacity(chunk_in),
             frame_samples,
             pending: Vec::with_capacity(frame_samples),
-        }
+        })
     }
 
     pub fn push(&mut self, mut src: &[f32], mut emit: impl FnMut(&[f32])) {
@@ -48,15 +54,12 @@ impl FrameResampler {
 
             if self.in_buf.len() == self.chunk_in {
                 // let start = std::time::Instant::now();
-                if let Ok(out) = self
-                    .resampler
-                    .as_mut()
-                    .unwrap()
-                    .process(&[&self.in_buf[..]], None)
-                {
-                    // let duration = start.elapsed();
-                    // log::debug!("Resampler took: {:?}", duration);
-                    self.emit_frames(&out[0], &mut emit);
+                if let Some(resampler) = self.resampler.as_mut() {
+                    if let Ok(out) = resampler.process(&[&self.in_buf[..]], None) {
+                        // let duration = start.elapsed();
+                        // log::debug!("Resampler took: {:?}", duration);
+                        self.emit_frames(&out[0], &mut emit);
+                    }
                 }
                 self.in_buf.clear();
             }
@@ -109,7 +112,7 @@ mod tests {
     #[test]
     fn identity_passthrough_chunks_into_fixed_frames() {
         // in == out -> no resampler; pure 160-sample reframing, content preserved.
-        let mut r = FrameResampler::new(16_000, 16_000, frame_dur_for(160, 16_000));
+        let mut r = FrameResampler::try_new(16_000, 16_000, frame_dur_for(160, 16_000)).unwrap();
         let input: Vec<f32> = (0..320).map(|i| i as f32).collect();
         let mut frames: Vec<Vec<f32>> = Vec::new();
         r.push(&input, |f| frames.push(f.to_vec()));
@@ -120,7 +123,7 @@ mod tests {
 
     #[test]
     fn frames_accumulate_across_push_calls() {
-        let mut r = FrameResampler::new(16_000, 16_000, frame_dur_for(160, 16_000));
+        let mut r = FrameResampler::try_new(16_000, 16_000, frame_dur_for(160, 16_000)).unwrap();
         let mut frames: Vec<Vec<f32>> = Vec::new();
         r.push(&vec![1.0; 100], |f| frames.push(f.to_vec()));
         assert!(frames.is_empty(), "100 < 160, nothing emitted yet");
@@ -131,7 +134,7 @@ mod tests {
 
     #[test]
     fn finish_zero_pads_the_trailing_partial_frame() {
-        let mut r = FrameResampler::new(16_000, 16_000, frame_dur_for(160, 16_000));
+        let mut r = FrameResampler::try_new(16_000, 16_000, frame_dur_for(160, 16_000)).unwrap();
         let mut frames: Vec<Vec<f32>> = Vec::new();
         r.push(&vec![0.7; 200], |f| frames.push(f.to_vec())); // 1 full frame + 40 pending
         assert_eq!(frames.len(), 1);
@@ -144,8 +147,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "frame duration too short")]
     fn rejects_zero_length_frame_duration() {
-        let _ = FrameResampler::new(16_000, 16_000, Duration::from_nanos(1));
+        assert!(FrameResampler::try_new(16_000, 16_000, Duration::from_nanos(1)).is_err());
     }
 }

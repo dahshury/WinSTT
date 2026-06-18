@@ -1,7 +1,6 @@
 import { PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-	useCallback,
 	useLayoutEffect,
 	useRef,
 	useReducer,
@@ -102,9 +101,11 @@ export function Playground({
 
 	const canRun = !(running || disabled) && sample.trim().length > 0;
 
-	const autoResize = useCallback(() => {
+	useLayoutEffect(() => {
 		const el = textareaRef.current;
-		if (!el) return;
+		if (!el) {
+			return;
+		}
 		el.style.height = "auto";
 		const minHeight =
 			Number.parseFloat(getComputedStyle(el).lineHeight) * INPUT_MIN_ROWS;
@@ -115,13 +116,9 @@ export function Playground({
 		);
 		el.style.height = `${nextHeight}px`;
 		el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
-	}, []);
+	}, [sample]);
 
-	useLayoutEffect(() => {
-		autoResize();
-	}, [sample, autoResize]);
-
-	const handleRun = useCallback(async () => {
+	const handleRun = async () => {
 		if (!canRun) {
 			return;
 		}
@@ -135,47 +132,41 @@ export function Playground({
 				error: err instanceof Error ? err.message : String(err),
 			});
 		}
-	}, [canRun, run, sample]);
+	};
 
-	const handleSubmit = useCallback(() => {
+	const handleSubmit = () => {
 		void handleRun();
-	}, [handleRun]);
+	};
 
-	const focusComposer = useCallback(() => {
+	const focusComposer = () => {
 		if (disabled) {
 			return;
 		}
 		textareaRef.current?.focus();
-	}, [disabled]);
+	};
 
-	const handleMouseDown = useCallback(
-		(event: MouseEvent<HTMLDivElement>) => {
-			if (disabled || running) return;
-			const target = event.target as HTMLElement;
-			if (target === textareaRef.current) {
-				return;
-			}
-			if (target.closest("button, a, input, textarea, [role='button']")) {
-				return;
-			}
+	const handleMouseDown = (event: MouseEvent<HTMLDivElement>) => {
+		if (disabled || running) return;
+		const target = event.target as HTMLElement;
+		if (target === textareaRef.current) {
+			return;
+		}
+		if (target.closest("button, a, input, textarea, [role='button']")) {
+			return;
+		}
+		event.preventDefault();
+		focusComposer();
+	};
+
+	const handleTextareaKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+		if (event.nativeEvent.isComposing) {
+			return;
+		}
+		if (event.key === "Enter" && !event.shiftKey) {
 			event.preventDefault();
-			focusComposer();
-		},
-		[disabled, running, focusComposer],
-	);
-
-	const handleTextareaKeyDown = useCallback(
-		(event: KeyboardEvent<HTMLTextAreaElement>) => {
-			if (event.nativeEvent.isComposing) {
-				return;
-			}
-			if (event.key === "Enter" && !event.shiftKey) {
-				event.preventDefault();
-				handleSubmit();
-			}
-		},
-		[handleSubmit],
-	);
+			handleSubmit();
+		}
+	};
 
 	// Inputs sit one surface step above the panel they're on — same lift as other
 	// controls in this modal.
@@ -204,6 +195,7 @@ export function Playground({
 		<div className="flex flex-col">
 			<FormControl label={t("playgroundSample")} tooltip={t("playgroundHint")}>
 				<SurfaceProvider value={inputLevel}>
+					{/* react-doctor-disable-next-line react-doctor/no-static-element-interactions -- pointer-only focus-proxy wrapper: onMouseDown skips interactive descendants and just redirects empty-area clicks to the textarea, which is itself keyboard-reachable; adding role+tabIndex would create a spurious tab stop. */}
 					<div
 						aria-label={t("playgroundSample")}
 						className={composerClass}

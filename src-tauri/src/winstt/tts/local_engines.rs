@@ -448,8 +448,7 @@ impl TtsEngine for PiperLocalEngine {
         // Ready once ANY voice engine has loaded (warm_up loads the default voice).
         self.engines
             .lock()
-            .map(|m| m.values().any(|e| e.is_ready()))
-            .unwrap_or(false)
+            .is_ok_and(|m| m.values().any(|e| e.is_ready()))
     }
     fn warm_up(&self) -> TtsResult<()> {
         // Warm the default voice so the first read has a session ready; other voices

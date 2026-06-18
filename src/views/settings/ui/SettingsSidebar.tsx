@@ -1,4 +1,4 @@
-import { Button as BaseButton } from "@base-ui/react/button";
+﻿import { Button as BaseButton } from "@base-ui/react/button";
 import { Tabs } from "@base-ui/react/tabs";
 import {
 	PanelLeftCloseIcon,
@@ -27,18 +27,11 @@ function RailSeparator() {
 }
 
 export interface SidebarLink {
-	/** Render a separator after this row to close a logical tab group */
 	groupEnd?: boolean;
 	icon: IconSvgElement;
 	key: string;
-	/**
-	 * Section headings + key setting names this tab contains, fed into search so
-	 * a query surfaces the tab by its contents (e.g. "display" → General). See
-	 * `useSettingsSearchKeywords`.
-	 */
 	keywords?: string | undefined;
 	label: string;
-	/** Tooltip explaining what the tab configures — also fed into search */
 	tooltip?: string;
 }
 
@@ -88,7 +81,6 @@ function SearchResultRow({
 	);
 }
 
-// Persist the collapsed preference so it survives window reloads/reopens.
 function readCollapsed(): boolean {
 	try {
 		return window.localStorage.getItem(COLLAPSE_STORAGE_KEY) === "1";
@@ -100,24 +92,9 @@ function writeCollapsed(next: boolean): void {
 	try {
 		window.localStorage.setItem(COLLAPSE_STORAGE_KEY, next ? "1" : "0");
 	} catch {
-		// no-op: a denied localStorage just means the preference won't persist
 	}
 }
 
-/**
- * Settings sidebar — a roomy, dark navigation rail with compact utility
- * controls, search affordance, collapse toggle, and pill-shaped tab rows. The
- * window close button lives in the content card (top-right), not here.
- *
- * Clicking search tweens a field open over the title region (width transition
- * via `.t-resize`); the wordmark hides while it's open. The field
- * folds back when it loses focus — either a blur, or a pointer press anywhere
- * outside it (a plain click on a non-focusable region never blurs an input, so
- * the outside-press listener is what actually catches it).
- *
- * Collapsible: the toggle beside the wordmark shrinks the column to an
- * icon-only rail (labels become hover tooltips) and back.
- */
 export function SettingsSidebar({ links }: SettingsSidebarProps) {
 	const t = useTranslations("settings");
 	const [query, setQuery] = useState("");
@@ -125,22 +102,8 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 	const [searchOpen, setSearchOpen] = useState(false);
 	const reduceMotion = useReducedMotion();
 	const inputRef = useRef<HTMLInputElement>(null);
-	// Wraps the search affordance + field so an outside-press can tell whether
-	// the press landed on the search or somewhere it should fold away.
 	const searchRegionRef = useRef<HTMLDivElement>(null);
 
-	// Focus the field the moment it opens so the user can type immediately.
-	useEffect(() => {
-		if (searchOpen) {
-			inputRef.current?.focus();
-		}
-	}, [searchOpen]);
-
-	// Fold the field away on any pointer press outside it. A click on a
-	// non-focusable region (drag strip, a tab row, the content card) never
-	// blurs the input, so `onBlur` alone misses it — this is the catch-all.
-	// Deferred one tick so a press landing on a filtered tab selects it before
-	// the list reverts to the full set.
 	useEffect(() => {
 		if (!searchOpen) {
 			return;
@@ -155,10 +118,6 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 				setQuery("");
 			}, 120);
 		};
-		// Capture phase + pointerdown so the press is caught even when a child
-		// (a Base UI tab, the scroll area, a field in the tab content) stops
-		// propagation in the bubble phase — that was why some outside presses
-		// didn't fold the field away.
 		document.addEventListener("pointerdown", onOutsidePress, true);
 		return () =>
 			document.removeEventListener("pointerdown", onOutsidePress, true);
@@ -170,9 +129,6 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 		inputRef.current?.blur();
 	};
 
-	// Keyboard tab-away: focus leaves to a real focusable (toggle, a tab). A
-	// click on a non-focusable region is handled by the outside-press listener
-	// above instead. Deferred + guarded so refocus (e.g. the clear button) wins.
 	const handleSearchBlur = () => {
 		window.setTimeout(() => {
 			if (document.activeElement !== inputRef.current) {
@@ -183,7 +139,6 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 	};
 
 	const openSearch = () => {
-		// No room for the field in the collapsed rail — expand first.
 		if (collapsed) {
 			setCollapsed(false);
 			writeCollapsed(false);
@@ -195,7 +150,6 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 		const next = !collapsed;
 		setCollapsed(next);
 		writeCollapsed(next);
-		// Collapsing has no room for the search field — fold it away cleanly.
 		if (next) {
 			closeSearch();
 		}
@@ -203,9 +157,6 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 
 	const trimmed = query.trim().toLowerCase();
 	const searching = trimmed.length > 0 && !collapsed;
-	// Match against the tab's label, tooltip, AND its section/setting keywords
-	// (so "display" surfaces General), with the dictionary's fuzzy matcher for
-	// typo tolerance ("dispaly" → Display). See `matchesSearchQuery`.
 	const visibleLinks = searching
 		? links.filter((l) =>
 				matchesSearchQuery(
@@ -251,19 +202,8 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 			data-collapsed={collapsed ? "true" : undefined}
 			style={{ width: collapsed ? COLLAPSED_WIDTH : SIDEBAR_WIDTH }}
 		>
-			{/* Header strip — search affordance, wordmark, and collapse toggle. The
-			    wordmark area remains draggable for window move;
-			    opening search tweens a field over the title region. */}
 			{collapsed ? (
 				<div className="settings-sidebar-collapsed-header relative flex shrink-0 items-center justify-center px-2 pt-5 pb-4">
-					{/* Dedicated window-move handle. It must be its OWN element, never a
-					    wrapper around the buttons: an interactive control can't live inside
-					    an `-webkit-app-region: drag` region because on touch devices the OS
-					    caption path swallows the tap before the `no-drag` carve-out is
-					    consulted, leaving the button unclickable by touch (Tauri #4746). A
-					    short full-width strip keeps the rail draggable while the button
-					    stays centered on the same row as the expanded Search/Settings
-					    controls. */}
 					<div
 						aria-hidden="true"
 						className="titlebar-drag absolute inset-x-0 top-0 h-4"
@@ -272,11 +212,6 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 					{toggleButton}
 				</div>
 			) : (
-				// The header itself is NOT a drag region — only the wordmark below is
-				// (see its note). Keeping the buttons off any `drag` region is what makes
-				// them tappable on touch (Tauri #4746), and a neutral header also means a
-				// press in the gutter while the field is open reaches the outside-press
-				// listener that folds the field away.
 				<div className="settings-sidebar-header relative flex h-[4.25rem] shrink-0 items-center gap-2 px-5 pt-4 pb-3">
 					<div
 						aria-hidden="true"
@@ -289,32 +224,23 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 					>
 						{searchOpen ? null : searchButton}
 						{searchOpen ? null : (
-							// The wordmark doubles as the window-move handle (`drag`). It
-							// sits between the buttons, so they keep their own plain client
-							// pixels and stay tappable on touch — see the collapsed-header
-							// note and Tauri #4746. `self-stretch` makes the drag box fill the
-							// FULL header height (not just the text line), so the strip ABOVE
-							// and below the word is draggable too; the inner span keeps the
-							// truncating text vertically centred.
 							<span className="titlebar-drag flex min-w-0 flex-1 items-center self-stretch">
 								<span className="settings-sidebar-title min-w-0 flex-1 truncate font-semibold uppercase">
 									{t("title")}
 								</span>
 							</span>
 						)}
-						{/* Search field — an overlay that tweens its width 0 → full over the
-						    region (the `.t-resize` recipe) so it grows in / out instead of
-						    snapping. Always mounted so the close also animates; gated out of
-						    the a11y/tab order while folded. */}
 						<div
+							aria-hidden={searchOpen ? undefined : true}
 							className="t-resize titlebar-no-drag absolute inset-y-0 start-0 flex items-center overflow-hidden"
 							style={{ width: searchOpen ? "100%" : "0px" }}
 						>
 							<ClearableTextField
-								aria-hidden={!searchOpen}
 								aria-label={t("searchPlaceholder")}
+								autoFocus={searchOpen}
 								clearLabel={t("searchClear")}
 								className="settings-sidebar-search-input border shadow-none transition-colors focus-visible:ring-0 focus-visible:ring-offset-0"
+								key={searchOpen ? "search-open" : "search-closed"}
 								leadingIcon={
 									<HugeiconsIcon
 										aria-hidden="true"
@@ -325,7 +251,6 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 								onBlur={handleSearchBlur}
 								onKeyDown={(e) => {
 									if (e.key === "Escape") {
-										// Close the field, not the window.
 										e.stopPropagation();
 										closeSearch();
 									}
@@ -344,7 +269,6 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 				</div>
 			)}
 
-			{/* Tab list */}
 			<Tabs.List
 				className={cn(
 					"settings-sidebar-list relative flex min-h-0 flex-1 flex-col overflow-y-auto",
@@ -418,7 +342,6 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 										) : (
 											tab
 										)}
-										{/* Group separators only when the list isn't filtered */}
 										{!searching && link.groupEnd ? <RailSeparator /> : null}
 									</SearchResultRow>
 								);

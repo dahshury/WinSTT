@@ -57,6 +57,89 @@ export interface SearchableSelectProps {
 	value: string;
 }
 
+const EMPTY_OPTIONS: readonly SelectOption[] = [];
+
+const groupedFlatOptionsCache = new WeakMap<
+	readonly SelectOptionGroup[],
+	readonly SelectOption[]
+>();
+const groupedComboboxItemsCache = new WeakMap<
+	readonly SelectOptionGroup[],
+	readonly { items: SelectOption[]; value: string }[]
+>();
+const groupMetaCache = new WeakMap<
+	readonly SelectOptionGroup[],
+	Map<string, SelectOptionGroup>
+>();
+const flatComboboxItemsCache = new WeakMap<
+	readonly SelectOption[],
+	readonly SelectOption[]
+>();
+const optionByIdCache = new WeakMap<
+	readonly SelectOption[],
+	Map<string, SelectOption>
+>();
+
+function flattenedGroupOptions(
+	groups: readonly SelectOptionGroup[],
+): readonly SelectOption[] {
+	const cached = groupedFlatOptionsCache.get(groups);
+	if (cached) {
+		return cached;
+	}
+	const flat = groups.flatMap((g) => [...g.options]);
+	groupedFlatOptionsCache.set(groups, flat);
+	return flat;
+}
+
+function groupedComboboxItems(
+	groups: readonly SelectOptionGroup[],
+): readonly { items: SelectOption[]; value: string }[] {
+	const cached = groupedComboboxItemsCache.get(groups);
+	if (cached) {
+		return cached;
+	}
+	const items = groups.map((g) => ({ value: g.value, items: [...g.options] }));
+	groupedComboboxItemsCache.set(groups, items);
+	return items;
+}
+
+function groupMetaByValue(
+	groups: readonly SelectOptionGroup[],
+): Map<string, SelectOptionGroup> {
+	const cached = groupMetaCache.get(groups);
+	if (cached) {
+		return cached;
+	}
+	const meta = new Map(groups.map((g) => [g.value, g]));
+	groupMetaCache.set(groups, meta);
+	return meta;
+}
+
+function flatComboboxItems(
+	options: readonly SelectOption[],
+): readonly SelectOption[] {
+	const cached = flatComboboxItemsCache.get(options);
+	if (cached) {
+		return cached;
+	}
+	const items = [...options];
+	flatComboboxItemsCache.set(options, items);
+	return items;
+}
+
+function optionById(
+	options: readonly SelectOption[],
+): Map<string, SelectOption> {
+	const cached = optionByIdCache.get(options);
+	if (cached) {
+		return cached;
+	}
+	const byId = new Map(options.map((option) => [option.id, option]));
+	optionByIdCache.set(options, byId);
+	return byId;
+}
+
 function getItemLabel(item: SelectOption | null): string {
 	return item ? item.label : "";
 }
@@ -90,6 +173,10 @@ function Badge({ text }: { text: string }) {
  * suppressions). Keyboard activation flows through whichever inner `<button>`
  * is rendered as a child; the shim itself is never a tab stop.
  */
+function swallowEvent(e: { stopPropagation: () => void }): void {
+	e.stopPropagation();
+}
+
 function StopBubble({
 	children,
 	className,
@@ -104,15 +191,14 @@ function StopBubble({
 	// stopping it there silently drops the click from React entirely, which
 	// is what caused the row-preview button test to fail when this was
 	// rewritten to use addEventListener for lint cleanliness.
-	const swallow = (e: { stopPropagation: () => void }) => e.stopPropagation();
 	return (
 		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: role="toolbar" IS interactive per WAI-ARIA, and this shim's only job is to stop pointer/keyboard events from bubbling out to the parent listbox row so an inner control (preview button, etc.) can be activated without selecting the row.
 		<div
 			className={className}
-			onClick={swallow}
-			onKeyDown={swallow}
-			onMouseDown={swallow}
-			onPointerDown={swallow}
+			onClick={swallowEvent}
+			onKeyDown={swallowEvent}
+			onMouseDown={swallowEvent}
+			onPointerDown={swallowEvent}
 			role="toolbar"
 			tabIndex={-1}
 		>
@@ -237,17 +323,17 @@ export function SearchableSelect({
 	// Grouped mode flattens to a single list for the selected-value lookup +
 	// the Combobox value contract; the popup still renders grouped.
 	const flatOptions = groups
-		? groups.flatMap((g) => [...g.options])
-		: (options ?? []);
-	const selected = flatOptions.find((o) => o.id === value) ?? null;
+		? flattenedGroupOptions(groups)
+		: (options ?? EMPTY_OPTIONS);
+	const selected = optionById(flatOptions).get(value) ?? null;
 	// Base UI accepts either a flat item array or its grouped collection shape
 	// (`{ value, items }[]`, auto-detected via the nested `items` key); the
 	// leaf type is the same SelectOption either way. Group header label/badge
 	// aren't part of that shape, so look them up by `value` at render time.
 	const comboboxItems: readonly unknown[] = groups
-		? groups.map((g) => ({ value: g.value, items: [...g.options] }))
-		: [...flatOptions];
-	const groupMeta = new Map((groups ?? []).map((g) => [g.value, g]));
+		? groupedComboboxItems(groups)
+		: flatComboboxItems(flatOptions);
+	const groupMeta = groups ? groupMetaByValue(groups) : null;
 
 	const substrate = useSurface();
 	const inputLevel = Math.min(substrate + 1, 8);
@@ -361,7 +447,7 @@ export function SearchableSelect({
 							<Combobox.List className="pt-1 outline-none">
 								{groups
 									? (group: { items: SelectOption[]; value: string }) => {
-											const meta = groupMeta.get(group.value);
+											const meta = groupMeta?.get(group.value);
 											return (
 												<Combobox.Group
 													className="flex flex-col"

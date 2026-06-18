@@ -26,6 +26,13 @@ pub(crate) fn trigger_update_check(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub(crate) fn show_main_window_command(app: AppHandle) -> Result<(), String> {
+    // The first-run wizard must be completed, not bypassed: while it is up, no
+    // renderer/tray path may surface the main window. `onboarding_finish` shows the
+    // main window via `show_main_window` directly (after hiding the wizard), so the
+    // completion path is unaffected by this gate.
+    if crate::winstt::commands::onboarding::is_onboarding_in_progress(&app) {
+        return Ok(());
+    }
     crate::window_state::show_main_window(&app);
     Ok(())
 }
@@ -218,6 +225,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::about::about_get_notices,
         winstt::commands::diag::diag_open_logs_folder,
         winstt::commands::diag::diag_save_bundle,
+        winstt::commands::diag::diag_observability_timeline,
         winstt::commands::sound::sound_library_add,
         winstt::commands::sound::sound_library_pick_and_add,
         winstt::commands::sound::sound_library_read_file,
@@ -243,6 +251,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::windows::resize_window,
         winstt::commands::windows::anchor_window,
         winstt::commands::onboarding::onboarding_finish,
+        winstt::commands::onboarding::onboarding_enable_dictation,
         winstt::commands::tray_menu::show_tray_menu,
         winstt::commands::tray_menu::reanchor_tray_menu,
         winstt::commands::tray_menu::hide_tray_menu,

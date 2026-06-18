@@ -1,10 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useState } from "react";
 import type { TranscriptionProcessingPhase } from "@/entities/transcription";
 import { AudioVisualizer } from "@/features/audio-visualizer";
 import { TranscriptPreview } from "@/features/transcript-preview";
 import {
 	DynamicIsland,
-	useDynamicIslandSize,
 } from "@/shared/ui/dynamic-island";
 import { ScrollingText } from "@/shared/ui/scrolling-text";
 import {
@@ -14,8 +13,10 @@ import {
 import { computeIslandSize } from "../lib/overlay-reveal";
 import {
 	CancelButton,
-	ICON_PRESET_PX,
 	LivePulse,
+} from "./overlay-shell";
+import {
+	ICON_PRESET_PX,
 	OVERLAY_PANEL_CLOSE_MS,
 	PRESET_HEIGHT_PX,
 	type SizePreset,
@@ -24,7 +25,7 @@ import {
 	UPLOADING_WORDS,
 	useDelayedUnmount,
 	useRecordingElapsed,
-} from "./overlay-shell";
+} from "./overlay-shell.shared";
 
 /** Boolean flags collapsed into one nested object so the island's content
  *  component takes a single `state` arg instead of 4+ standalone booleans
@@ -229,7 +230,6 @@ function DynamicIslandPillContent({
  * by exactly one line's height.
  */
 function DynamicIslandPill(args: IslandStateArgs & { revealed: boolean }) {
-	const { setSize, state } = useDynamicIslandSize();
 	const { flags, text, revealed } = args;
 	// `revealed` is the sticky "actual words have been said this session" latch
 	// (shared with the floating-bottom pill via `computePillReveal` +
@@ -251,30 +251,30 @@ function DynamicIslandPill(args: IslandStateArgs & { revealed: boolean }) {
 				})
 			: "empty";
 
-	// Commit the closed state first, then flip size/open state after paint. A
-	// render-phase setState can collapse the `empty` frame into the first visible
-	// commit, making the panel reveal look like a pop instead of a slide.
-	useEffect(() => {
-		if (state.size !== target) {
-			setSize(target);
-		}
-	}, [setSize, state.size, target]);
-
-	const currentContentArgs: IslandStateArgs = {
-		flags,
-		sizePreset: args.sizePreset,
-		text,
-		thinkingStartedAt: args.thinkingStartedAt,
-		thinkingText: args.thinkingText,
-		transcribingPhase: args.transcribingPhase,
-		transcribingStartedAt: args.transcribingStartedAt,
-	};
-	const contentArgsRef = useRef(currentContentArgs);
-	if (revealed) {
-		contentArgsRef.current = currentContentArgs;
+	// Keep the args from the last `revealed` render so the close animation
+	// (renderContent still true while `revealed` has flipped false) renders
+	// the last-known content instead of stale/empty values. `args` is the
+	// parent-owned prop object, so its identity is stable per parent render —
+	// the render-phase setState only fires on a genuine change while revealed
+	// (the React "storing previous render info" pattern) and converges without
+	// looping. Using state instead of a ref lets the compiler optimize this
+	// component and avoids reading/writing `.current` during render.
+	const [lastRevealedArgs, setLastRevealedArgs] =
+		useState<IslandStateArgs | null>(null);
+	if (revealed && lastRevealedArgs !== args) {
+		setLastRevealedArgs(args);
 	}
 	const renderContent = useDelayedUnmount(revealed, OVERLAY_PANEL_CLOSE_MS);
-	const contentArgs = revealed ? currentContentArgs : contentArgsRef.current;
+	const sourceArgs = revealed ? args : (lastRevealedArgs ?? args);
+	const contentArgs: IslandStateArgs = {
+		flags: sourceArgs.flags,
+		sizePreset: sourceArgs.sizePreset,
+		text: sourceArgs.text,
+		thinkingStartedAt: sourceArgs.thinkingStartedAt,
+		thinkingText: sourceArgs.thinkingText,
+		transcribingPhase: sourceArgs.transcribingPhase,
+		transcribingStartedAt: sourceArgs.transcribingStartedAt,
+	};
 
 	return (
 		<DynamicIsland
@@ -282,6 +282,7 @@ function DynamicIslandPill(args: IslandStateArgs & { revealed: boolean }) {
 			fitContent
 			flatTop
 			id="winstt-overlay-island"
+			size={target}
 		>
 			{/* X cancel anchored to the top-right of the island, just inside the
 			    rounded bottom-right area. Absolute-positioned so it stays visible

@@ -46,10 +46,7 @@ impl SvMeta {
                 .and_then(|s| s.trim().parse::<i64>().ok())
                 .unwrap_or(d)
         };
-        let is_nano = meta
-            .get("comment")
-            .map(|c| c.contains("Nano"))
-            .unwrap_or(false);
+        let is_nano = meta.get("comment").is_some_and(|c| c.contains("Nano"));
         let _vocab_size = meta
             .get("vocab_size")
             .and_then(|s| s.trim().parse::<i64>().ok())
@@ -88,9 +85,8 @@ impl SvMeta {
                     lang2id.insert(code.to_string(), id);
                 }
             }
-            let neg_mean = parse_float_vec(meta.get("neg_mean").map(String::as_str).unwrap_or(""));
-            let inv_stddev =
-                parse_float_vec(meta.get("inv_stddev").map(String::as_str).unwrap_or(""));
+            let neg_mean = parse_float_vec(meta.get("neg_mean").map_or("", String::as_str));
+            let inv_stddev = parse_float_vec(meta.get("inv_stddev").map_or("", String::as_str));
             (with_itn_id, lang2id, neg_mean, inv_stddev)
         };
 
@@ -345,8 +341,8 @@ impl CtcEngine {
         let (blank_id, cmvn_mean, cmvn_invstd) = match frontend {
             CtcFrontend::KaldiWithMetaCmvn => {
                 let meta = read_custom_metadata(&session)?;
-                let mean = parse_float_vec(meta.get("mean").map(String::as_str).unwrap_or(""));
-                let invstd = parse_float_vec(meta.get("invstd").map(String::as_str).unwrap_or(""));
+                let mean = parse_float_vec(meta.get("mean").map_or("", String::as_str));
+                let invstd = parse_float_vec(meta.get("invstd").map_or("", String::as_str));
                 (0, mean, invstd)
             }
             CtcFrontend::GigaamV3 | CtcFrontend::NemoMel128 => {

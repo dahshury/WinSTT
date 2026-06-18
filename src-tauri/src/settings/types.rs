@@ -32,7 +32,7 @@ impl<'de> Deserialize<'de> for LogLevel {
         impl<'de> Visitor<'de> for LogLevelVisitor {
             type Value = LogLevel;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 formatter.write_str("a string or integer representing log level")
             }
 
@@ -186,7 +186,7 @@ impl<'de> Deserialize<'de> for KeyboardImplementation {
         impl<'de> Visitor<'de> for KeyboardImplementationVisitor {
             type Value = KeyboardImplementation;
 
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str("a keyboard shortcut backend name")
             }
 

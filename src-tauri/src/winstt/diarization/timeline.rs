@@ -194,8 +194,7 @@ pub fn assign_speakers_to_words(
             scores
                 .iter()
                 .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(spk, _)| *spk)
-                .unwrap_or(-1)
+                .map_or(-1, |(spk, _)| *spk)
         } else {
             // Nothing overlaps the window — nearest segment edge.
             segments
@@ -205,8 +204,7 @@ pub fn assign_speakers_to_words(
                     let db = (midpoint - b.start).abs().min((midpoint - b.end).abs());
                     da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
                 })
-                .map(|s| s.speaker)
-                .unwrap_or(-1)
+                .map_or(-1, |s| s.speaker)
         };
 
         out.push(SpeakerWord {

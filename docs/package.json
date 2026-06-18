@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build && tsc --noEmit",
-    "build:pages": "vite build && tsc --noEmit && node scripts/prepare-pages.mjs",
+    "build": "vite build && tsgo --noEmit",
+    "build:pages": "vite build && tsgo --noEmit && node scripts/prepare-pages.mjs",
     "preview": "vite preview",
     "start": "node .output/server/index.mjs",
-    "types:check": "tsc --noEmit",
+    "types:check": "tsgo --noEmit",
     "lint": "biome check",
     "format": "biome format --write"
   },
@@ -33,6 +33,7 @@
     "@types/node": "^25.6.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@typescript/native-preview": "^7.0.0-dev.20260615.1",
     "@vitejs/plugin-react": "^6.0.1",
     "nitro": "^3.0.260311-beta",
     "tailwindcss": "^4.2.4",

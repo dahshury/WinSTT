@@ -149,6 +149,9 @@ describe("isActive", () => {
 		const builtIn = builtInItems("System default").find(
 			(item) => item.path === "builtin:marimba_start.wav",
 		);
+		if (!builtIn) {
+			throw new Error("Expected the built-in marimba sound to exist");
+		}
 		const a = entryToItem({ id: "1", name: "A", path: "C:/a.wav" });
 		const b = entryToItem({ id: "2", name: "B", path: "C:/b.wav" });
 

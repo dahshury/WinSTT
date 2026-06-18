@@ -6,9 +6,15 @@
  * dismiss it.
  */
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { DEMOS } from "@/components/demos";
+import { DEMOS } from "@/components/demo-registry";
 
 type Side = "top" | "bottom" | "left" | "right";
+type TimerRef = { current: ReturnType<typeof setTimeout> | null };
+
+function clearTooltipTimer(timer: TimerRef) {
+  if (timer.current) clearTimeout(timer.current);
+  timer.current = null;
+}
 
 export interface ComponentPreviewTooltipProps {
   /** Demo scene name — a key in DEMOS. */
@@ -33,18 +39,18 @@ export function ComponentPreviewTooltip({
 
   useEffect(() => {
     return () => {
-      if (openTimer.current) clearTimeout(openTimer.current);
-      if (closeTimer.current) clearTimeout(closeTimer.current);
+      clearTooltipTimer(openTimer);
+      clearTooltipTimer(closeTimer);
     };
   }, []);
 
   const show = () => {
-    if (closeTimer.current) clearTimeout(closeTimer.current);
+    clearTooltipTimer(closeTimer);
     setMounted(true);
     openTimer.current = setTimeout(() => setOpen(true), 90);
   };
   const hide = () => {
-    if (openTimer.current) clearTimeout(openTimer.current);
+    clearTooltipTimer(openTimer);
     setOpen(false);
     closeTimer.current = setTimeout(() => setMounted(false), 220);
   };

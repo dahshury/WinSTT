@@ -360,11 +360,7 @@
 				oklch(30% 0.012 265 / 0.14),
 				transparent 70%
 			),
-			linear-gradient(
-				180deg,
-				oklch(100% 0 0 / 0.035) 0%,
-				transparent 15rem
-			);
+			linear-gradient(180deg, oklch(100% 0 0 / 0.035) 0%, transparent 15rem);
 	}
 
 	.settings-sidebar-shell {
@@ -564,6 +560,38 @@
 	to {
 		opacity: 1;
 		transform: translateY(0);
+	}
+}
+
+.tray-menu-open-shell {
+	opacity: 0;
+	transform: translateY(6px);
+}
+
+.tray-menu-open-shell.tray-menu-open-enter {
+	animation: tray-menu-open-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
+	will-change: opacity, transform;
+}
+
+@keyframes tray-menu-open-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tray-menu-open-shell {
+		opacity: 1;
+		transform: translateY(0);
+	}
+
+	.tray-menu-open-enter {
+		animation: none !important;
 	}
 }
 
@@ -1198,11 +1226,25 @@
    JS three-phase swap (see TextSwap.tsx): .is-exit slides the old text up +
    blurs + fades; the text is swapped; .is-enter-start jumps it below (no
    transition); removing it animates the new text back to rest. */
+@keyframes t-text-pop-in {
+	0% {
+		opacity: 0;
+		filter: blur(var(--text-swap-blur));
+		transform: translateY(var(--text-swap-translate-y));
+	}
+	100% {
+		opacity: 1;
+		filter: blur(0);
+		transform: translateY(0);
+	}
+}
+
 .t-text-swap {
 	display: inline-block;
 	opacity: 1;
 	filter: blur(0);
 	transform: translateY(0);
+	animation: t-text-pop-in var(--text-swap-dur) var(--text-swap-ease) both;
 	transition:
 		transform var(--text-swap-dur) var(--text-swap-ease),
 		filter var(--text-swap-dur) var(--text-swap-ease),
@@ -1324,6 +1366,7 @@
 	.t-text-swap,
 	.t-icon-swap .t-icon {
 		transition: none !important;
+		animation: none !important;
 	}
 	.t-secret-reveal {
 		opacity: 0 !important;

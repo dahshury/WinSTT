@@ -25,8 +25,10 @@
 // intentionally stays empty in this Tauri port because runtime-owned settings
 // are live-read or applied through targeted in-process reloads.
 
-// reason: explicit Default impls document the settings-schema defaults (parity with the Zod schema)
-#![allow(clippy::derivable_impls)]
+#![expect(
+    clippy::derivable_impls,
+    reason = "explicit Default impls document the settings-schema defaults (parity with the Zod schema)"
+)]
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -1567,15 +1569,14 @@ impl Default for WinsttSettings {
 /// committed fixture. Both the `cargo run --example export_settings_fixture`
 /// regenerator and the Rust parity test go through this one function so they
 /// never drift.
-pub fn default_fixture_json() -> String {
-    let mut value = serde_json::to_value(WinsttSettings::default())
-        .expect("WinsttSettings::default serializes");
+pub fn default_fixture_json() -> Result<String, serde_json::Error> {
+    let mut value = serde_json::to_value(WinsttSettings::default())?;
     if let Some(map) = value.as_object_mut() {
         map.remove("core");
     }
-    let mut json = serde_json::to_string_pretty(&value).expect("pretty-print settings fixture");
+    let mut json = serde_json::to_string_pretty(&value)?;
     json.push('\n');
-    json
+    Ok(json)
 }
 
 #[derive(Deserialize)]
@@ -1989,7 +1990,7 @@ mod tests {
         // zod side (`defaults-parity.test.ts`) must reproduce from
         // `appSettingsSchema.parse({})`. Any new field or changed default fails
         // here AND on the zod side, catching Rust↔zod drift in CI.
-        let generated = default_fixture_json();
+        let generated = default_fixture_json().expect("default fixture serializes");
         let committed = include_str!("../../../spec/fixtures/winstt-settings.default.json");
         assert_eq!(
             generated, committed,

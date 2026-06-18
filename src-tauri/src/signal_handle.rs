@@ -13,6 +13,13 @@ use std::thread;
 
 /// Send a transcription input to the coordinator.
 /// Used by signal handlers, CLI flags, and any other external trigger.
+#[cfg_attr(
+    all(windows, debug_assertions),
+    expect(
+        dead_code,
+        reason = "Windows debug disables single-instance so packaged WinSTT can run beside tauri dev"
+    )
+)]
 pub fn send_transcription_input(app: &AppHandle, binding_id: &str, source: &str) {
     if let Some(c) = app.try_state::<TranscriptionCoordinator>() {
         c.send_input(binding_id, source, true, false);
@@ -46,6 +53,8 @@ pub fn setup_signal_handler(app_handle: AppHandle, mut signals: Signals) {
 pub fn terminate_process_success() -> ! {
     use windows::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
 
+    // SAFETY: `GetCurrentProcess` returns the current pseudo-handle and `TerminateProcess`
+    // is intentionally used on this dev-console shutdown path with a fixed success code.
     unsafe {
         let _ = TerminateProcess(GetCurrentProcess(), 0);
     }
@@ -70,6 +79,7 @@ pub fn setup_windows_ctrl_handler() {
         }
     }
 
+    // SAFETY: `handler` has the required system ABI and remains valid for the process lifetime.
     if let Err(e) = unsafe { SetConsoleCtrlHandler(Some(handler), true) } {
         warn!("Failed to install Windows console Ctrl handler: {e}");
     }

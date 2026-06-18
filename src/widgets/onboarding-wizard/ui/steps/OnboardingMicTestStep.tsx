@@ -225,13 +225,15 @@ function Meter({ level, permission }: MeterProps) {
 	const iconClass =
 		permission === "denied" ? "text-error" : "text-foreground-muted";
 	return (
-		<div
-			aria-valuemax={100}
-			aria-valuemin={0}
-			aria-valuenow={meterPercent}
-			className="relative flex items-center gap-2.5 overflow-hidden rounded-md bg-surface-2/70 px-2 py-2 ring-1 ring-divider"
-			role="meter"
-		>
+		<>
+			<meter
+				aria-label="Microphone level"
+				className="sr-only"
+				max={100}
+				min={0}
+				value={meterPercent}
+			/>
+			<div className="relative flex items-center gap-2.5 overflow-hidden rounded-md bg-surface-2/70 px-2 py-2 ring-1 ring-divider">
 			<m.span
 				aria-hidden
 				animate={{
@@ -298,7 +300,8 @@ function Meter({ level, permission }: MeterProps) {
 					);
 				})}
 			</div>
-		</div>
+			</div>
+		</>
 	);
 }
 

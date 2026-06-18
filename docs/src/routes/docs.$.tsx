@@ -10,7 +10,7 @@ import {
   DocsPage,
   DocsTitle,
 } from "fumadocs-ui/layouts/docs/page";
-import { createContext, Suspense, useContext } from "react";
+import { createContext, Suspense, use } from "react";
 import { LLMCopyButton, ViewOptions } from "@/components/ai/page-actions";
 import { useMDXComponents } from "@/components/mdx";
 import { baseOptions, gitConfig } from "@/lib/layout.shared";
@@ -67,7 +67,7 @@ type DocsClientLoaderOptions = Parameters<
 type DocsClientPage = Parameters<DocsClientLoaderOptions["component"]>[0];
 
 function DocsContent({ toc, frontmatter, default: MDX }: DocsClientPage) {
-  const meta = useContext(PageMetaContext);
+  const meta = use(PageMetaContext);
   const components = useMDXComponents();
 
   return (

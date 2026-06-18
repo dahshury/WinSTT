@@ -5,7 +5,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { RowSelectionState } from "@tanstack/react-table";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import {
@@ -91,25 +91,25 @@ export function CrudTable<TEntry, TAdd>({
 		updateSchema,
 	});
 
-	useEffect(() => {
-		const validIds = new Set(entries.map((entry) => getId(entry)));
-		setRowSelection((prev) => {
-			let changed = false;
-			const next: RowSelectionState = {};
-			for (const [id, selected] of Object.entries(prev)) {
-				if (selected && validIds.has(id)) {
-					next[id] = true;
-				} else if (selected) {
-					changed = true;
-				}
-			}
-			return changed ? next : prev;
-		});
-	}, [entries, getId]);
+	const validIds = new Set(entries.map((entry) => getId(entry)));
+	const visibleRowSelection = Object.entries(
+		rowSelection,
+	).reduce<RowSelectionState>((next, [id, selected]) => {
+		if (selected && validIds.has(id)) {
+			next[id] = true;
+		}
+		return next;
+	}, {});
 
-	const selectedIds = Object.entries(rowSelection)
-		.filter(([, selected]) => selected)
-		.map(([id]) => id);
+	const selectedIds = Object.entries(visibleRowSelection).reduce<string[]>(
+		(acc, [id, selected]) => {
+			if (selected) {
+				acc.push(id);
+			}
+			return acc;
+		},
+		[],
+	);
 	const selectedCount = selectedIds.length;
 	const selectAllLabel = labels.selectAll ?? "Select all rows";
 	const formatSelectRow =
@@ -132,7 +132,7 @@ export function CrudTable<TEntry, TAdd>({
 		setRowSelection({});
 	};
 
-	const table = useCrudGrid<TEntry, TAdd>({
+	const table = useCrudGrid<TEntry>({
 		columns,
 		deleteLabelFor,
 		editing,
@@ -143,7 +143,7 @@ export function CrudTable<TEntry, TAdd>({
 		pageSize,
 		paginated,
 		resizable,
-		rowSelection,
+		rowSelection: visibleRowSelection,
 		selectAllLabel,
 		setRowSelection,
 		sortable,

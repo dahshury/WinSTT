@@ -6,8 +6,11 @@
 
 use std::sync::Arc;
 
+use tauri::AppHandle;
+
 use crate::winstt::llm::{self, ThinkingEffort as LlmEffort};
 use crate::winstt::managers::LlmManager;
+use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::{LlmProvider, WinsttSettings};
 
 use super::convert::openrouter_options;
@@ -23,6 +26,7 @@ use super::convert::openrouter_options;
 ///   - OpenRouter → OpenAI-compatible structured-output chat with fallback model.
 ///   - Ollama → the all-Rust streaming `/api/chat` path.
 pub(super) async fn run_transform_provider(
+    app: &AppHandle,
     mgr: &Arc<LlmManager>,
     settings: &WinsttSettings,
     system_prompt: &str,
@@ -44,10 +48,12 @@ pub(super) async fn run_transform_provider(
                 .base
                 .openrouter_fallback_model
                 .clone();
+            let request_id = mgr.next_request_id();
             // OpenRouter's structured-output path already returns the fallback
             // text on a total failure (never throws across the boundary), so the
             // pipeline can paste-replace with the original on a dead provider.
             Ok(run_openrouter_with_fallback(
+                app,
                 mgr,
                 &api_key,
                 &selection,
@@ -55,6 +61,7 @@ pub(super) async fn run_transform_provider(
                 system_prompt,
                 user_prompt,
                 text,
+                &request_id,
                 openrouter_options(&settings.llm.transforms.base),
             )
             .await)
@@ -62,16 +69,33 @@ pub(super) async fn run_transform_provider(
         LlmProvider::Ollama => {
             let endpoint = settings.llm.endpoint.clone();
             let request_id = mgr.next_request_id();
-            mgr.ollama_transform(
-                &endpoint,
-                model,
-                system_prompt,
-                user_prompt,
-                text,
-                effort,
-                &request_id,
-            )
-            .await
+            match mgr
+                .ollama_transform(
+                    &endpoint,
+                    model,
+                    system_prompt,
+                    user_prompt,
+                    text,
+                    effort,
+                    &request_id,
+                )
+                .await
+            {
+                Ok(answer) => Ok(answer),
+                Err(err) => {
+                    record_transform_issue(
+                        app,
+                        "transform",
+                        "LLM transform failed",
+                        &err,
+                        "ollama",
+                        model,
+                        &request_id,
+                        &[("endpoint", endpoint.as_str())],
+                    );
+                    Err(err)
+                }
+            }
         }
     }
 }
@@ -79,8 +103,12 @@ pub(super) async fn run_transform_provider(
 /// Try the primary OpenRouter selection; on failure (and when a fallback is
 /// configured), retry with the fallback model. On total failure, return the
 /// original text. Mirrors `runOpenRouterWithFallback` (and llm.rs's copy).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "fallback routing mirrors the OpenRouter request surface and fallback policy"
+)]
 async fn run_openrouter_with_fallback(
+    app: &AppHandle,
     mgr: &Arc<LlmManager>,
     api_key: &str,
     primary: &str,
@@ -88,6 +116,7 @@ async fn run_openrouter_with_fallback(
     system_prompt: &str,
     user_prompt: &str,
     text: &str,
+    request_id: &str,
     options: llm::OpenRouterRequestOptions,
 ) -> String {
     match mgr
@@ -98,31 +127,97 @@ async fn run_openrouter_with_fallback(
             user_prompt,
             text,
             options.clone(),
-            None,
+            Some(request_id),
         )
         .await
     {
         Ok(answer) => answer,
-        Err(_primary_err) if !fallback.is_empty() => mgr
-            .openrouter_chat(
+        Err(primary_err) if primary_err == llm::OPENROUTER_CANCELLED => text.to_string(),
+        Err(primary_err) if !fallback.is_empty() => {
+            record_transform_issue(
+                app,
+                "openrouter_primary",
+                "OpenRouter transform primary model failed; fallback will be tried",
+                &primary_err,
+                "openrouter",
+                primary,
+                request_id,
+                &[("fallbackModel", fallback)],
+            );
+            mgr.openrouter_chat(
                 api_key,
                 fallback,
                 system_prompt,
                 user_prompt,
                 text,
                 options,
-                None,
+                Some(request_id),
             )
             .await
-            .unwrap_or_else(|_| text.to_string()),
-        Err(_) => text.to_string(),
+            .unwrap_or_else(|fallback_err| {
+                record_transform_issue(
+                    app,
+                    "openrouter_fallback",
+                    "OpenRouter transform fallback model failed; original text was kept",
+                    &fallback_err,
+                    "openrouter",
+                    fallback,
+                    request_id,
+                    &[("primaryModel", primary)],
+                );
+                text.to_string()
+            })
+        }
+        Err(primary_err) => {
+            record_transform_issue(
+                app,
+                "openrouter_request",
+                "OpenRouter transform failed; original text was kept",
+                &primary_err,
+                "openrouter",
+                primary,
+                request_id,
+                &[],
+            );
+            text.to_string()
+        }
     }
+}
+
+fn record_transform_issue(
+    app: &AppHandle,
+    operation: &str,
+    summary: &str,
+    detail: &str,
+    provider: &str,
+    model: &str,
+    request_id: &str,
+    extra_context: &[(&str, &str)],
+) {
+    let compact = llm::compact_error_for_log(detail);
+    let mut issue = IssueBuilder::new("llm", operation, summary)
+        .detail(compact)
+        .provider(provider.to_string())
+        .request_id(request_id.to_string())
+        .context("feature", "transforms");
+    if !model.trim().is_empty() {
+        issue = issue.model_id(model.to_string());
+    }
+    for (key, value) in extra_context {
+        if !value.trim().is_empty() {
+            issue = issue.context(*key, (*value).to_string());
+        }
+    }
+    issue.record(Some(app));
 }
 
 /// Preview-specific OpenRouter routing. Unlike the runtime transform path, the
 /// playground must surface provider failures instead of making them look like
 /// "the model decided not to change anything".
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "preview fallback routing mirrors the OpenRouter request surface and fallback policy"
+)]
 pub(super) async fn run_openrouter_preview_with_fallback(
     mgr: &Arc<LlmManager>,
     api_key: &str,

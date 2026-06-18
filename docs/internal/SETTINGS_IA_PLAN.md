@@ -126,7 +126,7 @@ control JSX (+ its imports/helpers) where they don't.
 - Add new `settings.tab*` i18n labels (10 tabs) across all 20 locales.
 - Update `settings-search` keywords.
 - Delete obsolete panels (General, Audio, Quality, Dictionary, Snippets standalone).
-- Run gates: `eslint`, `tsc`, `check:i18n`, settings tests. Fix integration issues.
+- Run gates: `eslint`, `tsgo`, `check:i18n`, settings tests. Fix integration issues.
 - **Manual smoke test required** (agents can't run the app): open each tab, toggle a
   control per section, confirm persistence + no console errors.
 

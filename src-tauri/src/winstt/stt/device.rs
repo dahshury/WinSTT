@@ -102,9 +102,7 @@ pub fn providers_for_accelerator(primary: Accelerator) -> Vec<Accelerator> {
 /// Best-effort logical CPU count for `with_intra_threads` / `pick_intra_op_threads`.
 /// Falls back to 4 when the platform can't report it.
 pub(crate) fn num_cpus_best_effort() -> usize {
-    std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
+    std::thread::available_parallelism().map_or(4, |n| n.get())
 }
 
 /// Map our `Accelerator` list to ort `ExecutionProviderDispatch`es. CPU is always appended as

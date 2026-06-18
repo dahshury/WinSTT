@@ -6,7 +6,10 @@
 // `crate::winstt::stt::gigaam_v3_consts` window/filterbank tables. Lifted verbatim out of the old
 // monolithic `families.rs` (was an inline `mod frontend`).
 
-#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
+#![expect(
+    dead_code,
+    reason = "staged STT frontend surface is defined ahead of call sites and wiring"
+)]
 
 use ndarray::Array2;
 
@@ -17,6 +20,13 @@ pub const HOP: usize = 160;
 pub const WIN: usize = 400;
 pub const PRE_EMPHASIS: f32 = 0.97;
 pub const F_MIN: f32 = 20.0;
+
+fn array2_from_shape_vec(shape: (usize, usize), values: Vec<f32>, context: &str) -> Array2<f32> {
+    match Array2::from_shape_vec(shape, values) {
+        Ok(array) => array,
+        Err(err) => unreachable!("{context}: shape and flat data length diverged: {err}"),
+    }
+}
 
 /// HTK triangular mel filterbank `(n_fft/2+1, n_mels)`. Port of `_build_mel_filterbank`.
 pub fn build_mel_filterbank() -> Array2<f32> {
@@ -95,8 +105,7 @@ pub fn compute_fbank(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32> {
                 *slot = acc.max(eps).ln();
             }
         });
-    Array2::from_shape_vec((num_frames, NUM_MELS), out_flat)
-        .expect("fbank shape (num_frames, NUM_MELS) matches out_flat len")
+    array2_from_shape_vec((num_frames, NUM_MELS), out_flat, "fbank")
 }
 
 /// Real-input power spectrum |X[k]|² for the first `n_freqs` bins, via a cached forward-FFT plan
@@ -221,8 +230,11 @@ fn granite_features(samples: &[f32], keep_mel_frames: Option<usize>) -> Array2<f
             .copy_from_slice(&logmel[src + N_MELS..src + 2 * N_MELS]);
     }
 
-    Array2::from_shape_vec((stacked_frames, 2 * N_MELS), stacked)
-        .expect("granite stacked feature shape matches flat len")
+    array2_from_shape_vec(
+        (stacked_frames, 2 * N_MELS),
+        stacked,
+        "granite stacked features",
+    )
 }
 
 fn reflect_index(mut idx: isize, len: usize) -> usize {
@@ -432,8 +444,7 @@ pub fn compute_kaldi_fbank(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32>
                 *slot = acc.max(eps).ln();
             }
         });
-    Array2::from_shape_vec((num_frames, KALDI_N_MELS), out_flat)
-        .expect("kaldi fbank shape (num_frames, KALDI_N_MELS) matches out_flat len")
+    array2_from_shape_vec((num_frames, KALDI_N_MELS), out_flat, "kaldi fbank")
 }
 
 /// Symmetric (mirror) padding of a 1-D signal: `np.pad(x, (pad_left, pad_right), mode="symmetric")`.
@@ -512,8 +523,7 @@ pub fn gigaam_v3_features(samples: &[f32]) -> Array2<f32> {
                 *slot = acc.clamp(GIGAAM_V3_CLAMP_MIN, GIGAAM_V3_CLAMP_MAX).ln();
             }
         });
-    Array2::from_shape_vec((num_frames, GIGAAM_V3_N_MELS), out_flat)
-        .expect("gigaam v3 fbank shape (num_frames, GIGAAM_V3_N_MELS) matches out_flat len")
+    array2_from_shape_vec((num_frames, GIGAAM_V3_N_MELS), out_flat, "gigaam v3 fbank")
 }
 
 // ── NeMo 128-mel log-mel featurizer (NemoPreprocessorNumpy) ───────────────────────────
@@ -638,8 +648,7 @@ pub fn nemo_features_with_normalization(
                 *slot = (acc + NEMO_LOG_GUARD).ln();
             }
         });
-    let mut log_mel = Array2::from_shape_vec((num_frames, n_mels), out_flat)
-        .expect("nemo_features log-mel shape (num_frames, n_mels) matches out_flat len");
+    let mut log_mel = array2_from_shape_vec((num_frames, n_mels), out_flat, "nemo log-mel");
     // 5. Optional per-feature (per mel bin) normalization over time:
     //    (x-mean)/(sqrt(unbiased var)+1e-5). Offline NeMo exports use this path; sherpa streaming
     //    Nemotron/FastConformer exports leave normalize_type empty and expect raw log-mel frames.

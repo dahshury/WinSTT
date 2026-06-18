@@ -49,7 +49,6 @@ function PerfBar({ icon, label, score }: PerfBarProps) {
 			<div
 				aria-label={`${label} ${pct}%`}
 				className="flex items-center gap-1.5"
-				role="img"
 			>
 				<HugeiconsIcon
 					aria-hidden="true"

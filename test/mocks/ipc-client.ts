@@ -49,6 +49,7 @@
  * through the fake exactly as through the real module.
  */
 
+import { commands } from "@/bindings";
 import { IPC } from "@/shared/api/ipc-channels";
 import { decodeSettingsPayload } from "@/shared/api/settings-codec";
 
@@ -112,6 +113,27 @@ async function invokeSecureOrDefault<T>(
 ): Promise<T> {
 	try {
 		const value = await invokeSecure<T | undefined>(channel, payload);
+		return value === undefined ? resolveFallback(fallback) : value;
+	} catch {
+		return resolveFallback(fallback);
+	}
+}
+
+function unwrapCommandResult<T>(
+	result: { status: "ok"; data: T } | { status: "error"; error: unknown },
+): T {
+	if (result.status === "ok") {
+		return result.data;
+	}
+	throw result.error;
+}
+
+async function commandOrDefault<T>(
+	thunk: () => Promise<T>,
+	fallback: FallbackValue<T>,
+): Promise<T> {
+	try {
+		const value = await thunk();
 		return value === undefined ? resolveFallback(fallback) : value;
 	} catch {
 		return resolveFallback(fallback);
@@ -507,12 +529,6 @@ export function ipcClientMock(): Record<string, unknown> {
 			onCast(IPC.TRANSFORM_HISTORY_DELETED, cb),
 
 		// File transcription
-		fileTranscribe: (filePath: string) =>
-			invokeOrDefault<{ requestId: string }>(
-				IPC.FILE_TRANSCRIBE,
-				{ requestId: "" },
-				{ filePath },
-			),
 		onFileTranscriptionProgress: (cb: (d: unknown) => void) =>
 			onCast(IPC.FILE_TRANSCRIPTION_PROGRESS, cb),
 		onFileTranscriptionComplete: (cb: (d: unknown) => void) =>
@@ -609,10 +625,10 @@ export function ipcClientMock(): Record<string, unknown> {
 				{ model },
 			),
 		searchOllamaLibrary: (query: string, page = 0) =>
-			invokeOrDefault<unknown>(
-				IPC.LLM_SEARCH_OLLAMA_LIBRARY,
+			commandOrDefault<unknown>(
+				async () =>
+					unwrapCommandResult(await commands.ollamaSearchLibrary(query, page)),
 				{ hits: [], hasMore: false, page, query },
-				{ query, page },
 			),
 		fetchOllamaLibraryTags: (model: string) =>
 			invokeOrDefault<unknown>(
@@ -629,7 +645,10 @@ export function ipcClientMock(): Record<string, unknown> {
 		getLlmWarmupStatus: () =>
 			invokeOrDefault<unknown>(IPC.LLM_GET_WARMUP_STATUS, null),
 		retryLlmWarmup: () =>
-			invokeOrDefault<unknown>(IPC.LLM_GET_WARMUP_STATUS, null),
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.llmRetryWarmup()),
+				null,
+			),
 		onLlmWarmupStatus: (cb: (status: unknown) => void) =>
 			onCast(IPC.LLM_WARMUP_STATUS, cb),
 		onLlmReasoningDelta: (cb: (payload: { delta: string }) => void) =>
@@ -761,11 +780,17 @@ export function ipcClientMock(): Record<string, unknown> {
 				payload,
 			),
 		ttsSpeakSelection: () =>
-			invokeOrDefault<unknown>(IPC.TTS_SPEAK_SELECTION, {
-				requestId: "",
-				text: "",
-				source: "empty",
-			}),
+			commandOrDefault<unknown>(
+				async () =>
+					unwrapCommandResult(
+						await commands.ttsSpeakSelection(null, null, null, null),
+					),
+				{
+					requestId: "",
+					text: "",
+					source: "empty",
+				},
+			),
 		ttsCancel: (requestId?: string) => send(IPC.TTS_CANCEL, { requestId }),
 		ttsRequestPlaybackPause: (reason = "media-session") =>
 			send(IPC.TTS_REQUEST_PLAYBACK_PAUSE, { reason }),
@@ -816,16 +841,18 @@ export function ipcClientMock(): Record<string, unknown> {
 				error: "IPC unavailable",
 			}),
 		diagSaveBundle: () =>
-			invokeOrDefault<unknown>(IPC.DIAG_SAVE_BUNDLE, {
+			commandOrDefault<unknown>(commands.diagSaveBundle, {
 				ok: false,
 				error: "IPC unavailable",
 			}),
 		webviewDiagLog: (label: string, level: string, message: string) =>
-			send(IPC.DIAG_WEBVIEW_LOG, { label, level, message }),
-		aboutGetLicense: () => invokeOrDefault<string>(IPC.ABOUT_GET_LICENSE, ""),
-		aboutGetNotices: () => invokeOrDefault<string>(IPC.ABOUT_GET_NOTICES, ""),
+			void commands.winsttDiag(label, level, message).catch(noop),
+		aboutGetLicense: () =>
+			commandOrDefault<string>(commands.aboutGetLicense, ""),
+		aboutGetNotices: () =>
+			commandOrDefault<string>(commands.aboutGetNotices, ""),
 		aboutGetAppInfo: () =>
-			invokeOrDefault<unknown>(IPC.ABOUT_GET_APP_INFO, {
+			commandOrDefault<unknown>(commands.aboutGetAppInfo, {
 				copyright: "",
 				frameworkVersion: "",
 				webview2Version: "",
@@ -834,7 +861,7 @@ export function ipcClientMock(): Record<string, unknown> {
 
 		// ── Transcript / history extras + overlay / abort (Tauri-port additions) ──
 		copyLastTranscript: () =>
-			invokeOrDefault<boolean>(IPC.TRANSCRIPT_COPY_LAST, false),
+			commandOrDefault<boolean>(commands.copyLastTranscript, false),
 		historyListPage: (options: { limit: number; offset: number }) =>
 			invokeOrDefault<unknown>(
 				IPC.HISTORY_LIST,
@@ -891,27 +918,27 @@ export function ipcClientMock(): Record<string, unknown> {
 		overlaySetIgnoreMouse: (ignore: boolean) =>
 			send(IPC.OVERLAY_SET_IGNORE_MOUSE, { ignore }),
 		wakewordModelStatus: () =>
-			invokeOrDefault<unknown>(IPC.WAKEWORD_GET_MODEL_STATUS, {
+			commandOrDefault<unknown>(commands.wakewordModelStatus, {
 				available: false,
 				downloading: false,
 			}),
 		wakewordStartModelDownload: () =>
-			invokeOrDefault<unknown>(IPC.WAKEWORD_START_MODEL_DOWNLOAD, {
+			commandOrDefault<unknown>(commands.wakewordStartModelDownload, {
 				available: false,
 				downloading: false,
 			}),
 		wakewordPauseModelDownload: () =>
-			invokeOrDefault<unknown>(IPC.WAKEWORD_PAUSE_MODEL_DOWNLOAD, {
+			commandOrDefault<unknown>(commands.wakewordPauseModelDownload, {
 				available: false,
 				downloading: false,
 			}),
 		wakewordResumeModelDownload: () =>
-			invokeOrDefault<unknown>(IPC.WAKEWORD_RESUME_MODEL_DOWNLOAD, {
+			commandOrDefault<unknown>(commands.wakewordResumeModelDownload, {
 				available: false,
 				downloading: false,
 			}),
 		wakewordCancelModelDownload: () =>
-			invokeOrDefault<unknown>(IPC.WAKEWORD_CANCEL_MODEL_DOWNLOAD, {
+			commandOrDefault<unknown>(commands.wakewordCancelModelDownload, {
 				available: false,
 				downloading: false,
 			}),

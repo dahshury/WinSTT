@@ -190,7 +190,10 @@ impl Transcriber for CanaryEngine {
             let (input_len, input_ids_data): (usize, Vec<i64>) = if mem_len == 0 {
                 (batch_tokens.len(), batch_tokens.clone())
             } else {
-                (1, vec![*batch_tokens.last().unwrap()])
+                let last = batch_tokens.last().copied().ok_or_else(|| {
+                    SttError::Inference("canary decoder token history is empty".into())
+                })?;
+                (1, vec![last])
             };
             let input_ids = tensor_i64((1, input_len), input_ids_data)?;
 

@@ -300,8 +300,7 @@ fn trim_modifier_piece(raw: &str) -> &str {
 fn first_sentence(raw: &str) -> &str {
     raw.split(['.', '?', '!'])
         .next()
-        .map(str::trim)
-        .unwrap_or(raw.trim())
+        .map_or(raw.trim(), str::trim)
 }
 
 fn normalize_modifier_prompt(raw: &str) -> Option<String> {

@@ -7,7 +7,6 @@ use super::{
     is_degenerate_decode_error, LoadedEngine, LoadingGuard, ModelStateEvent, TranscriptionManager,
     WarmingGuard,
 };
-use crate::settings::{get_settings, ModelUnloadTimeout};
 use crate::winstt::stt::BackendRoute;
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -65,6 +64,7 @@ impl TranscriptionManager {
             "Model unloaded manually (took {}ms)",
             unload_duration.as_millis()
         );
+        crate::log_model_duration("stt unload", unload_start);
         Ok(())
     }
 
@@ -74,10 +74,7 @@ impl TranscriptionManager {
             self.touch_activity();
             return;
         }
-        let settings = get_settings(&self.app_handle);
-        if settings.model_unload_timeout == ModelUnloadTimeout::Immediately
-            && self.is_model_loaded()
-        {
+        if self.idle_unload_timeout_secs() == 0 && self.is_model_loaded() {
             info!("Immediately unloading model after {}", context);
             if let Err(e) = self.unload_model() {
                 warn!("Failed to immediately unload model: {}", e);
@@ -118,11 +115,31 @@ impl TranscriptionManager {
             // leaves the previous engine resident (re-emitting loading_completed for it). Wrap in
             // catch_unwind so a build panic can't escape and abort the thread before the guard's
             // Drop runs (it would still run on unwind, but this keeps the log clean + explicit).
-            let _ = catch_unwind(AssertUnwindSafe(|| {
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
                 if let Err(e) = self_clone.dispatch_load(&desired, None) {
                     error!("Failed to load model '{}': {}", desired, e);
+                    crate::winstt::observability::IssueBuilder::new(
+                        "stt",
+                        "model_load",
+                        "STT model failed to load",
+                    )
+                    .detail(e.to_string())
+                    .model_id(desired.clone())
+                    .record(Some(&self_clone.app_handle));
                 }
             }));
+            if outcome.is_err() {
+                crate::winstt::observability::IssueBuilder::new(
+                    "stt",
+                    "model_load",
+                    "STT model load panicked",
+                )
+                .detail(format!("model '{desired}' load panicked"))
+                .kind("panic")
+                .severity("error")
+                .model_id(desired)
+                .record(Some(&self_clone.app_handle));
+            }
         });
     }
 
@@ -292,6 +309,7 @@ impl TranscriptionManager {
     /// WinSTT ort/DirectML engine pays cold-JIT, so we warm it best-effort; a warmup failure must
     /// never break dictation.
     pub fn warmup(&self) {
+        let warmup_started = std::time::Instant::now();
         // Wait out any in-flight LOAD (we must not warm a half-built engine), but do NOT hold
         // `is_loading` for the warm decode — that was the bug: a real dictation that raced in
         // WAITED on transcribe()'s loading condvar even though the engine was fully loaded and
@@ -353,8 +371,18 @@ impl TranscriptionManager {
         drop(engine_guard);
 
         if let Err(err) = warmup_result {
+            crate::log_model_duration(&format!("stt warmup failed '{model_id}'"), warmup_started);
             let degenerate = is_degenerate_decode_error(&err);
             warn!("[stt] engine warmup failed for '{model_id}': {err}");
+            crate::winstt::observability::IssueBuilder::new(
+                "stt",
+                "model_warmup",
+                "STT model warmup failed",
+            )
+            .detail(err.to_string())
+            .model_id(model_id.clone())
+            .user_visible(false)
+            .record(Some(&self.app_handle));
             if degenerate {
                 warn!(
                     "[stt] recycling '{model_id}' after DirectML degenerate decode during warmup"
@@ -364,6 +392,15 @@ impl TranscriptionManager {
                     error!(
                         "[stt] CPU fallback reload failed for '{model_id}' after degenerate warmup: {reload_err}"
                     );
+                    crate::winstt::observability::IssueBuilder::new(
+                        "stt",
+                        "model_warmup_recovery",
+                        "STT warmup recovery failed",
+                    )
+                    .detail(reload_err.to_string())
+                    .model_id(model_id.clone())
+                    .severity("error")
+                    .record(Some(&self.app_handle));
                 }
             }
             return;
@@ -372,6 +409,7 @@ impl TranscriptionManager {
         self.mark_model_warmed_if_current(&model_id);
         self.touch_activity();
         log::info!("[stt] engine warmup complete for '{model_id}'");
+        crate::log_model_duration(&format!("stt warmup '{model_id}'"), warmup_started);
     }
 
     /// Load a WinSTT-catalog model through the unified ort-ONNX engine (the proven STT spike
@@ -406,6 +444,15 @@ impl TranscriptionManager {
                     error: Some(msg.to_string()),
                 },
             );
+            crate::winstt::observability::IssueBuilder::new(
+                "stt",
+                "model_load",
+                "STT model failed to load",
+            )
+            .detail(msg.to_string())
+            .model_id(model_id.to_string())
+            .context("modelName", model_name.to_string())
+            .record(Some(&self.app_handle));
         };
 
         // emit loading_started (parity with the legacy path's event surface) — BEFORE the resolve,
@@ -422,13 +469,21 @@ impl TranscriptionManager {
 
         // PHASE 1 — offline resolve (no ORT session, leaves the resident engine untouched). On
         // failure the old engine is still resident; emit loading_failed with the best-effort name.
+        let resolve_start = std::time::Instant::now();
         let spec =
             match self
                 .backend
                 .resolve_catalog(&self.app_handle, model_id, quantization_override)
             {
-                Ok(spec) => spec,
+                Ok(spec) => {
+                    crate::log_model_duration(&format!("stt resolve '{model_id}'"), resolve_start);
+                    spec
+                }
                 Err(e) => {
+                    crate::log_model_duration(
+                        &format!("stt resolve failed '{model_id}'"),
+                        resolve_start,
+                    );
                     let msg = e.to_string();
                     emit_failed(&msg, &display_name);
                     return Err(e);
@@ -441,13 +496,23 @@ impl TranscriptionManager {
         // live ort sessions). If resolve had failed we'd have returned above with the old engine
         // still resident.
         if self.is_model_loaded() {
+            let unload_previous_start = std::time::Instant::now();
             let _ = self.unload_model();
+            crate::log_model_duration(
+                &format!("stt unload previous before '{model_id}'"),
+                unload_previous_start,
+            );
         }
 
         // PHASE 2 — build the engine from the resolved spec.
+        let build_start = std::time::Instant::now();
         let (engine, display_name) = match self.backend.build_resolved(spec) {
-            Ok(built) => built,
+            Ok(built) => {
+                crate::log_model_duration(&format!("stt build '{model_id}'"), build_start);
+                built
+            }
             Err(e) => {
+                crate::log_model_duration(&format!("stt build failed '{model_id}'"), build_start);
                 let msg = e.to_string();
                 emit_failed(&msg, &display_name);
                 return Err(e);
@@ -479,6 +544,7 @@ impl TranscriptionManager {
             model_id,
             load_start.elapsed().as_millis()
         );
+        crate::log_model_duration(&format!("stt load total '{model_id}'"), load_start);
         Ok(())
     }
 }

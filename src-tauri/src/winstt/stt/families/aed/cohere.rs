@@ -252,7 +252,7 @@ impl Transcriber for CohereEngine {
         // coverage proves the fast path.
         let mut state = self.empty_state()?;
         let mut generated: Vec<i64> = Vec::new();
-        let mut next_input: Vec<i64> = prompt.clone();
+        let mut next_input: Vec<i64> = prompt;
         let mut attn_len = prompt_len;
         let mut pos_start = 0i64;
 

@@ -158,7 +158,9 @@ describe("ConnectionIndicator", () => {
 		useConnectionStore.setState({
 			connectionStatus: "connected",
 			serverStatus: "running",
-			gpuInfo: [{ name: "NVIDIA GeForce RTX 4090", available: true }],
+			gpuInfo: [
+				{ name: "NVIDIA GeForce RTX 4090", total_vram_bytes: 24 * GB },
+			],
 			runtimeInfo: {
 				device: "cuda",
 				providers: ["CUDAExecutionProvider", "CPUExecutionProvider"],
@@ -179,7 +181,9 @@ describe("ConnectionIndicator", () => {
 		useConnectionStore.setState({
 			connectionStatus: "connected",
 			serverStatus: "running",
-			gpuInfo: [{ name: "NVIDIA GeForce RTX 4090", available: true }],
+			gpuInfo: [
+				{ name: "NVIDIA GeForce RTX 4090", total_vram_bytes: 24 * GB },
+			],
 			runtimeInfo: {
 				device: "cuda",
 				providers: ["CPUExecutionProvider"],
@@ -202,7 +206,9 @@ describe("ConnectionIndicator", () => {
 		useConnectionStore.setState({
 			connectionStatus: "connected",
 			serverStatus: "idle",
-			gpuInfo: [{ name: "NVIDIA GeForce RTX 4090", available: true }],
+			gpuInfo: [
+				{ name: "NVIDIA GeForce RTX 4090", total_vram_bytes: 24 * GB },
+			],
 		});
 		renderIt();
 		const out = screen.getByRole("status");
@@ -214,7 +220,9 @@ describe("ConnectionIndicator", () => {
 		useConnectionStore.setState({
 			connectionStatus: "connected",
 			serverStatus: "running",
-			gpuInfo: [{ name: "NVIDIA GeForce RTX 4090", available: true }],
+			gpuInfo: [
+				{ name: "NVIDIA GeForce RTX 4090", total_vram_bytes: 24 * GB },
+			],
 			runtimeInfo: {
 				device: "cuda",
 				providers: ["CUDAExecutionProvider", "CPUExecutionProvider"],
@@ -237,7 +245,9 @@ describe("ConnectionIndicator", () => {
 		useConnectionStore.setState({
 			connectionStatus: "connected",
 			serverStatus: "running",
-			gpuInfo: [{ name: "NVIDIA GeForce RTX 4090", available: true }],
+			gpuInfo: [
+				{ name: "NVIDIA GeForce RTX 4090", total_vram_bytes: 24 * GB },
+			],
 			runtimeInfo: {
 				device: "cpu",
 				providers: ["CPUExecutionProvider"],

@@ -586,7 +586,10 @@ fn draw_rounded_bar(data: &mut [u8], x0: f64, cy: f64, width: f64, height: f64, 
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scanline renderer passes tightly coupled geometry scalars in the hot path"
+)]
 fn paint_bar_scanline(
     data: &mut [u8],
     x0: f64,

@@ -30,14 +30,17 @@
 // resample live in `decode_audio_to_pcm` below; the queue/lifecycle/pause-resume
 // control logic surrounds it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::managers::transcription::TranscriptionManager;
+use crate::winstt::observability::IssueBuilder;
+use crate::winstt::settings_schema::{FileSaveLocation, FileTranscriptionFormat};
 use crate::winstt::sync_ext::MutexExt;
 
 /// Auto-clear delay: once every row is terminal the queue clears itself after
@@ -193,8 +196,7 @@ impl FileTranscribeManager {
                 let name = if file_name.is_empty() {
                     file_path
                         .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| id.clone())
+                        .map_or_else(|| id.clone(), |s| s.to_string_lossy().to_string())
                 } else {
                     file_name
                 };
@@ -498,17 +500,30 @@ impl FileTranscribeManager {
         let audio = match decode_audio_to_pcm(&item.file_path) {
             Ok(a) => a,
             Err(e) => {
-                self.finish(&item.id, QueueStatus::Error, None, Some(&e));
+                self.finish(&item.id, QueueStatus::Error, None, None, Some(&e));
                 return;
             }
         };
+        let duration_secs = audio.len() as f64 / TARGET_SAMPLE_RATE as f64;
 
         // Mid-file progress tick so the bar moves before the (blocking) transcribe.
         self.tick_progress(&item.id, 0.5, "transcribing");
 
         match self.transcription.transcribe(audio) {
-            Ok(text) => self.finish(&item.id, QueueStatus::Complete, Some(&text), None),
-            Err(e) => self.finish(&item.id, QueueStatus::Error, None, Some(&e.to_string())),
+            Ok(text) => self.finish(
+                &item.id,
+                QueueStatus::Complete,
+                Some(&text),
+                Some(duration_secs),
+                None,
+            ),
+            Err(e) => self.finish(
+                &item.id,
+                QueueStatus::Error,
+                None,
+                None,
+                Some(&e.to_string()),
+            ),
         }
     }
 
@@ -544,10 +559,35 @@ impl FileTranscribeManager {
     fn finish(
         self: &Arc<Self>,
         id: &str,
-        status: QueueStatus,
+        mut status: QueueStatus,
         text: Option<&str>,
+        duration_secs: Option<f64>,
         error: Option<&str>,
     ) {
+        let mut error_message = error.map(str::to_string);
+        if status == QueueStatus::Complete {
+            if let Some(text) = text {
+                let output_target = {
+                    let st = self.lock_state();
+                    st.items
+                        .iter()
+                        .find(|it| it.id == id && it.status != QueueStatus::Canceled)
+                        .map(|it| (it.file_path.clone(), it.file_name.clone()))
+                };
+                if let Some((source_path, file_name)) = output_target {
+                    if let Err(e) = self.write_transcript_file(
+                        &source_path,
+                        &file_name,
+                        text,
+                        duration_secs.unwrap_or(0.0),
+                    ) {
+                        status = QueueStatus::Error;
+                        error_message = Some(e);
+                    }
+                }
+            }
+        }
+        let mut observed_error: Option<(String, String, String)> = None;
         {
             let mut st = self.lock_state();
             if let Some(pos) = st.items.iter().position(|it| it.id == id) {
@@ -566,15 +606,32 @@ impl FileTranscribeManager {
                         }
                         QueueStatus::Error => {
                             it.stage = "error".into();
-                            it.message = error
-                                .map(str::to_string)
+                            it.message = error_message
+                                .clone()
                                 .unwrap_or_else(|| "Transcription failed".into());
+                            observed_error = Some((
+                                it.file_name.clone(),
+                                it.file_path.display().to_string(),
+                                it.message.clone(),
+                            ));
                         }
                         _ => {}
                     }
                 }
             }
             st.active = None;
+        }
+        if let Some((file_name, path, detail)) = observed_error {
+            IssueBuilder::new(
+                "file_transcribe",
+                "transcription",
+                "File transcription failed",
+            )
+            .detail(detail)
+            .request_id(id.to_string())
+            .context("fileName", file_name)
+            .context("path", path)
+            .record(Some(&self.app));
         }
         self.emit_queue();
         // Wake the pump for the next queued row.
@@ -606,10 +663,7 @@ impl FileTranscribeManager {
     /// the detached model-picker disables selection while busy.
     fn broadcast_active(&self, active: bool) {
         {
-            let mut last = self
-                .last_broadcast_active
-                .lock()
-                .expect("broadcast flag poisoned");
+            let mut last = self.last_broadcast_active.lock_recover();
             if *last == Some(active) {
                 return;
             }
@@ -649,6 +703,67 @@ impl FileTranscribeManager {
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
+    fn write_transcript_file(
+        &self,
+        source_path: &Path,
+        file_name: &str,
+        text: &str,
+        duration_secs: f64,
+    ) -> Result<PathBuf, String> {
+        let settings = crate::winstt::commands::settings::read_settings_raw(&self.app);
+        let format = settings.general.file_transcription_format;
+        let output_path = self.resolve_transcript_output_path(
+            source_path,
+            file_name,
+            format,
+            settings.general.file_transcription_save_location,
+        )?;
+        let body = format_transcript(format, text, duration_secs);
+        std::fs::write(&output_path, body)
+            .map_err(|e| format!("Failed to write {}: {e}", output_path.display()))?;
+        Ok(output_path)
+    }
+
+    fn resolve_transcript_output_path(
+        &self,
+        source_path: &Path,
+        file_name: &str,
+        format: FileTranscriptionFormat,
+        save_location: FileSaveLocation,
+    ) -> Result<PathBuf, String> {
+        match save_location {
+            FileSaveLocation::Auto => Ok(auto_transcript_output_path(source_path, format)),
+            FileSaveLocation::Ask => self.pick_transcript_output_path(file_name, format),
+        }
+    }
+
+    fn pick_transcript_output_path(
+        &self,
+        file_name: &str,
+        format: FileTranscriptionFormat,
+    ) -> Result<PathBuf, String> {
+        let extension = transcript_extension(format);
+        let default_name = format!("{file_name}.{extension}");
+        let Some(path) = self
+            .app
+            .dialog()
+            .file()
+            .set_title("Save Transcript")
+            .set_file_name(default_name)
+            .add_filter(transcript_filter_name(format), &[extension])
+            .blocking_save_file()
+        else {
+            return Err("Save canceled".into());
+        };
+        let mut path = path
+            .into_path()
+            .map_err(|_| "Save destination is not a filesystem path".to_string())?;
+        if path.extension().and_then(|ext| ext.to_str()).is_none() {
+            path.set_extension(extension);
+        }
+        Ok(path)
+    }
+
     fn write_clipboard(&self, text: &str) -> Result<(), String> {
         use tauri_plugin_clipboard_manager::ClipboardExt;
         self.app
@@ -667,6 +782,51 @@ impl FileTranscribeManager {
 }
 
 // ── Event payloads (renderer-shape, byte-identical to WinSTT the reference IPC) ──
+
+fn transcript_extension(format: FileTranscriptionFormat) -> &'static str {
+    match format {
+        FileTranscriptionFormat::Txt => "txt",
+        FileTranscriptionFormat::Srt => "srt",
+    }
+}
+
+fn transcript_filter_name(format: FileTranscriptionFormat) -> &'static str {
+    match format {
+        FileTranscriptionFormat::Txt => "Text",
+        FileTranscriptionFormat::Srt => "SubRip subtitles",
+    }
+}
+
+fn auto_transcript_output_path(source_path: &Path, format: FileTranscriptionFormat) -> PathBuf {
+    let mut output = source_path.as_os_str().to_os_string();
+    output.push(format!(".{}", transcript_extension(format)));
+    PathBuf::from(output)
+}
+
+fn format_transcript(format: FileTranscriptionFormat, text: &str, duration_secs: f64) -> String {
+    match format {
+        FileTranscriptionFormat::Txt => {
+            let mut body = text.trim_end().to_string();
+            body.push('\n');
+            body
+        }
+        FileTranscriptionFormat::Srt => {
+            let end = format_srt_timestamp(duration_secs.max(0.001));
+            format!("1\n00:00:00,000 --> {end}\n{}\n", text.trim())
+        }
+    }
+}
+
+fn format_srt_timestamp(seconds: f64) -> String {
+    let total_ms = (seconds * 1000.0).round().max(1.0) as u64;
+    let ms = total_ms % 1000;
+    let total_seconds = total_ms / 1000;
+    let s = total_seconds % 60;
+    let total_minutes = total_seconds / 60;
+    let m = total_minutes % 60;
+    let h = total_minutes / 60;
+    format!("{h:02}:{m:02}:{s:02},{ms:03}")
+}
 
 /// `file:queue-update` payload.
 #[derive(Clone, Debug, Serialize)]
@@ -806,11 +966,11 @@ fn decode_audio_to_pcm(path: &std::path::Path) -> Result<Vec<f32>, String> {
                     source_rate = Some(rate);
                     if rate as usize != TARGET_SAMPLE_RATE {
                         let frame_dur = std::time::Duration::from_millis(RESAMPLE_FRAME_MS);
-                        resampler = Some(FrameResampler::new(
+                        resampler = Some(FrameResampler::try_new(
                             rate as usize,
                             TARGET_SAMPLE_RATE,
                             frame_dur,
-                        ));
+                        )?);
                     }
                 } else if source_rate != Some(spec.rate()) {
                     return Err("audio stream changed sample rate mid-file".to_string());
@@ -913,8 +1073,7 @@ fn decoded_audio_limit_error() -> String {
 fn now_millis() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_millis())
 }
 
 #[cfg(test)]

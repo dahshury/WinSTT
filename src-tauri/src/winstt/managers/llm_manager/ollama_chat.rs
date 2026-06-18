@@ -42,7 +42,10 @@ impl LlmManager {
     /// Compose the dictation cleanup over Ollama. `system_prompt` is built by the
     /// caller via `winstt::llm::build_dictation_system_prompt` (so context + vocab
     /// are folded in once). Streams reasoning deltas + returns the final answer.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "dictation request mirrors Ollama chat inputs plus optional reasoning streaming"
+    )]
     pub async fn ollama_dictation(
         &self,
         endpoint: &str,
@@ -87,7 +90,10 @@ impl LlmManager {
 
     /// Run a transform-on-selection over Ollama (system prompt is the transform's
     /// own preset body; no context/vocab folding).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "transform request mirrors Ollama chat inputs plus optional reasoning streaming"
+    )]
     pub async fn ollama_transform(
         &self,
         endpoint: &str,

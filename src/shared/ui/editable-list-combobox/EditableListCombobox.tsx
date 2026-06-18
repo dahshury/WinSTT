@@ -394,16 +394,19 @@ function EntryEditor({
 
 /** Eats pointer/keyboard events so a row's inline buttons don't bubble up to
  *  the combobox (dismiss / re-focus). Mirrors CreatableCombobox / SearchableSelect. */
+function swallowEvent(e: { stopPropagation: () => void }): void {
+	e.stopPropagation();
+}
+
 function StopBubble({ children }: { children: ReactNode }) {
-	const swallow = (e: { stopPropagation: () => void }) => e.stopPropagation();
 	return (
 		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: role="toolbar" is interactive per WAI-ARIA; this shim only stops events from bubbling to the combobox so the inner buttons can fire without dismissing/refocusing it.
 		<div
 			className="flex shrink-0 items-center gap-0.5"
-			onClick={swallow}
-			onKeyDown={swallow}
-			onMouseDown={swallow}
-			onPointerDown={swallow}
+			onClick={swallowEvent}
+			onKeyDown={swallowEvent}
+			onMouseDown={swallowEvent}
+			onPointerDown={swallowEvent}
 			role="toolbar"
 			tabIndex={-1}
 		>

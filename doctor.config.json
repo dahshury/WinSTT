@@ -1,0 +1,6 @@
+{
+	"$schema": "https://react.doctor/schema/config.json",
+	"rules": {
+		"react-doctor/public-debug-artifact": "off"
+	}
+}

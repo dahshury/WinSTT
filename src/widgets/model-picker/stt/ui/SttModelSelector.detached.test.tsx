@@ -61,8 +61,11 @@ describe("SttModelSelector detached-open mode", () => {
 			'[data-slot="stt-model-selector-trigger"]',
 		);
 		expect(trigger).not.toBeNull();
+		if (trigger === null) {
+			throw new Error("Expected STT model selector trigger");
+		}
 
-		fireEvent.click(trigger as Element);
+		fireEvent.click(trigger);
 
 		// The click routes to the detached-window opener with the trigger's rect…
 		expect(onOpenDetached).toHaveBeenCalledTimes(1);

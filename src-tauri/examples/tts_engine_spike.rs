@@ -28,8 +28,7 @@ const DEFAULT_SENTENCE: &str = "The quick brown fox jumps over the lazy dog.";
 
 fn cache_root() -> PathBuf {
     std::env::var("WINSTT_TTS_CACHE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("<repo>/.tts-cache"))
+        .map_or_else(|_| PathBuf::from("<repo>/.tts-cache"), PathBuf::from)
 }
 
 fn ensure_espeak() {
@@ -221,7 +220,7 @@ fn run_chatterbox(text: &str) {
 fn main() {
     ensure_espeak();
     let args: Vec<String> = std::env::args().collect();
-    let engine = args.get(1).map(|s| s.as_str()).unwrap_or("kitten");
+    let engine = args.get(1).map_or("kitten", |s| s.as_str());
     match engine {
         "kitten" => {
             let voice = args

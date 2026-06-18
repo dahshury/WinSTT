@@ -519,7 +519,7 @@ pub fn winstt_updater_install(
     let version = pending.update.version.clone();
     match pending.update.install(&pending.bytes) {
         Ok(()) => {
-            let app_to_restart = app.clone();
+            let app_to_restart = app;
             std::thread::spawn(move || app_to_restart.restart());
             Ok(UpdaterCommandResult {
                 reason: None,

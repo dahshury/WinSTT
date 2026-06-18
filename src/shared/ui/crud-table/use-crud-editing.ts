@@ -47,7 +47,8 @@ export function useCrudEditing<TEntry, TAdd>({
 		if (editErrors[name]) {
 			setEditValues(next);
 			setEditErrors((prev) => {
-				const { [name]: _omit, ...rest } = prev;
+				const rest = { ...prev };
+				delete rest[name];
 				return rest;
 			});
 		}

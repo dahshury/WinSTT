@@ -12,6 +12,74 @@ use super::{
 use crate::winstt::stt::{NativeStreamUpdate, SttResult};
 use crate::winstt::sync_ext::MutexExt;
 use log::{debug, info, warn};
+use std::sync::mpsc::{self, Sender};
+use std::time::{Duration, Instant};
+
+const NATIVE_STREAM_FINAL_WATCHDOG_THRESHOLDS_MS: [u64; 3] = [10_000, 30_000, 60_000];
+
+fn samples_to_ms(samples: usize) -> u64 {
+    ((samples as u128 * 1000) / NATIVE_STREAM_SAMPLE_RATE as u128) as u64
+}
+
+struct NativeStreamFinalizeWatchdog {
+    stop: Sender<()>,
+}
+
+impl NativeStreamFinalizeWatchdog {
+    fn start(
+        app_handle: tauri::AppHandle,
+        model_id: Option<String>,
+        tail_samples: usize,
+        fed_tail_samples: usize,
+        started: Instant,
+    ) -> Self {
+        let (stop, stop_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut previous = Duration::from_millis(0);
+            for threshold_ms in NATIVE_STREAM_FINAL_WATCHDOG_THRESHOLDS_MS {
+                let threshold = Duration::from_millis(threshold_ms);
+                match stop_rx.recv_timeout(threshold.saturating_sub(previous)) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                previous = threshold;
+
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                warn!(
+                    "[realtime-final] native stream finalize still running after {elapsed_ms}ms tail_ms={} fed_tail_ms={}",
+                    samples_to_ms(tail_samples),
+                    samples_to_ms(fed_tail_samples)
+                );
+                let mut issue = crate::winstt::observability::IssueBuilder::new(
+                    "stt",
+                    "native_stream_finalize_watchdog",
+                    "STT native stream finalization is still running",
+                )
+                .detail(format!("still running after {elapsed_ms}ms"))
+                .kind("timeout")
+                .severity("warn")
+                .duration_ms(elapsed_ms)
+                .user_visible(false)
+                .context("thresholdMs", threshold_ms.to_string())
+                .context("tailSamples", tail_samples.to_string())
+                .context("tailMs", samples_to_ms(tail_samples).to_string())
+                .context("fedTailSamples", fed_tail_samples.to_string())
+                .context("fedTailMs", samples_to_ms(fed_tail_samples).to_string());
+                if let Some(model_id) = &model_id {
+                    issue = issue.model_id(model_id.clone());
+                }
+                issue.record(Some(&app_handle));
+            }
+        });
+        Self { stop }
+    }
+}
+
+impl Drop for NativeStreamFinalizeWatchdog {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+    }
+}
 
 impl TranscriptionManager {
     /// Realtime live-preview decode: ONE raw pass for the live transcription overlay.
@@ -152,8 +220,15 @@ impl TranscriptionManager {
     /// release, final paste should wait for the engine's own end-of-stream callback instead of
     /// guessing a fixed microphone hold-open duration.
     fn finalize_native_stream_text(&self, tail: &[f32]) -> Option<String> {
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let final_tail = native_stream_final_tail_with_silence(tail);
+        let _watchdog = NativeStreamFinalizeWatchdog::start(
+            self.app_handle.clone(),
+            self.get_current_model(),
+            tail.len(),
+            final_tail.len(),
+            started,
+        );
         info!(
             "[realtime-final] native stream finalizing captured_tail_samples={} silence_pad_ms={} fed_tail_samples={} fed_tail_ms={}",
             tail.len(),
@@ -461,7 +536,7 @@ impl TranscriptionManager {
         // where `touch_activity` normally runs).
         self.touch_activity();
         // Same cleanup the WinSTT `decode` path applies, so reuse == a fresh decode would produce.
-        let ws = crate::winstt::commands::settings::read_settings(&self.app_handle);
+        let ws = crate::winstt::commands::settings::read_settings_raw(&self.app_handle);
         Some(crate::winstt::stt::backend::winstt_postprocess(
             &raw_text, &ws,
         ))

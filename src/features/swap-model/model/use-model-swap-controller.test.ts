@@ -8,6 +8,7 @@ import {
 } from "./use-model-swap-controller";
 
 const t = __testables;
+const AUTO_QUANTIZATION = "auto" as OnnxQuantization;
 
 // Some helpers depend on imported sideeffect modules (ipc-client, picker,
 // cloud-stt-provider). We stub the global symbol surface they reach for so
@@ -223,14 +224,18 @@ describe("resolveTargetQuant", () => {
 		// canary on "auto" loads int8 on the server; the cache check must target
 		// int8, not the user's nominal selection.
 		const state = { id: "m", effective_quantization: "int8" } as never;
-		expect(t.resolveTargetQuant(undefined, "auto", state)).toBe("int8");
+		expect(t.resolveTargetQuant(undefined, AUTO_QUANTIZATION, state)).toBe(
+			"int8",
+		);
 	});
 
 	test("honors a concrete pick (incl fp32) over the auto-effective precision", () => {
 		const state = { id: "m", effective_quantization: "int8" } as never;
-		expect(t.resolveTargetQuant("fp16", "auto", state)).toBe("fp16");
+		expect(t.resolveTargetQuant("fp16", AUTO_QUANTIZATION, state)).toBe(
+			"fp16",
+		);
 		// "" is EXPLICIT fp32 now — a concrete pick, not re-resolved to int8.
-		expect(t.resolveTargetQuant("", "auto", state)).toBe("");
+		expect(t.resolveTargetQuant("", AUTO_QUANTIZATION, state)).toBe("");
 	});
 });
 
@@ -241,9 +246,15 @@ describe("isSwapBlockedByDownload", () => {
 		// Row select on auto → quantization undefined, currentQuantization "auto" →
 		// effective int8. int8 is downloading, so switching to it must be refused.
 		const dl = (id: string, q: string) => id === "m" && q === "int8";
-		expect(t.isSwapBlockedByDownload("m", undefined, "auto", states, dl)).toBe(
-			true,
-		);
+		expect(
+			t.isSwapBlockedByDownload(
+				"m",
+				undefined,
+				AUTO_QUANTIZATION,
+				states,
+				dl,
+			),
+		).toBe(true);
 	});
 
 	test("allows switching to a cached precision while a DIFFERENT precision downloads", () => {
@@ -869,7 +880,7 @@ describe("runProceedWithSelection", () => {
 			},
 		} as never;
 		t.runProceedWithSelection({
-			currentQuantization: "auto",
+			currentQuantization: AUTO_QUANTIZATION,
 			issueSwap: issueSwap as never,
 			kind: "main",
 			previous: "prev",

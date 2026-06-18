@@ -2,7 +2,6 @@ import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import {
 	Fragment,
 	type ReactElement,
-	useCallback,
 	useEffect,
 	useRef,
 	useState,
@@ -140,7 +139,7 @@ export function RowTranscript({
 		[],
 	);
 
-	const copyFromLongPress = useCallback(() => {
+	const copyFromLongPress = () => {
 		if (!displayText) {
 			return;
 		}
@@ -154,7 +153,7 @@ export function RowTranscript({
 			() => setCopied(false),
 			COPY_FEEDBACK_MS,
 		);
-	}, [displayText]);
+	};
 
 	const longPress = useLongPress(copyFromLongPress, {
 		disabled: displayText.length === 0,
@@ -171,31 +170,23 @@ export function RowTranscript({
 	// would leave the observer bound to the detached node and flip-flop. Each
 	// transition measures the actually-attached node, so it converges.
 	const observerRef = useRef<ResizeObserver | null>(null);
-	const measureRef = useCallback(
-		(node: HTMLParagraphElement | null) => {
-			observerRef.current?.disconnect();
-			observerRef.current = null;
-			if (!node || showWords) {
-				setClamped(false);
-				return;
-			}
-			// line-clamp keeps clientHeight at the 4-line cap while scrollHeight
-			// grows with the full content — the gap is the truncation signal.
-			const measure = () =>
-				setClamped(node.scrollHeight - node.clientHeight > 1);
-			measure();
-			if (typeof ResizeObserver !== "undefined") {
-				const observer = new ResizeObserver(measure);
-				observer.observe(node);
-				observerRef.current = observer;
-			}
-		},
-		// `displayText` is a dep so swapping original↔AI re-measures: the ref
-		// identity changes, React re-runs it on the same node, and the new text's
-		// overflow is re-evaluated (a short AI text may not clamp while its longer
-		// original does, or vice versa).
-		[displayText, showWords],
-	);
+	const measureRef = (node: HTMLParagraphElement | null) => {
+		observerRef.current?.disconnect();
+		observerRef.current = null;
+		if (!node || showWords) {
+			setClamped(false);
+			return;
+		}
+		// line-clamp keeps clientHeight at the 4-line cap while scrollHeight
+		// grows with the full content — the gap is the truncation signal.
+		const measure = () => setClamped(node.scrollHeight - node.clientHeight > 1);
+		measure();
+		if (typeof ResizeObserver !== "undefined") {
+			const observer = new ResizeObserver(measure);
+			observer.observe(node);
+			observerRef.current = observer;
+		}
+	};
 
 	const paragraph = (
 		<p

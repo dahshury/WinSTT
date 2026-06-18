@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "scripts": {
-    "studio": "remotion studio src/index.tsx",
-    "render": "remotion render src/index.tsx",
-    "render:all": "node scripts/render-all.mjs"
+	"scripts": {
+		"studio": "remotion studio src/index.tsx",
+		"render": "remotion render src/index.tsx",
+		"render:all": "node scripts/render-all.mjs",
+		"types:check": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.469",
@@ -19,6 +20,7 @@
     "@types/node": "^24.9.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "typescript": "~5.9.0"
-  }
+		"@typescript/native-preview": "^7.0.0-dev.20260615.1",
+		"typescript": "~5.9.0"
+	}
 }

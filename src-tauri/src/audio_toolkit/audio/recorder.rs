@@ -1,5 +1,4 @@
 use std::{
-    io::Error,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Condvar, Mutex,
@@ -118,8 +117,8 @@ pub struct AudioRecorder {
 }
 
 impl AudioRecorder {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(AudioRecorder {
+    pub fn new() -> Self {
+        AudioRecorder {
             device: None,
             cmd_tx: None,
             worker_handle: None,
@@ -133,7 +132,7 @@ impl AudioRecorder {
                 Mutex::new(RealtimeAudioProgress::default()),
                 Condvar::new(),
             )),
-        })
+        }
     }
 
     /// Enable/disable the realtime `live_audio` mirror at runtime. When `false`, run_consumer
@@ -184,7 +183,7 @@ impl AudioRecorder {
         self
     }
 
-    pub fn open(&mut self, device: Option<Device>) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn open(&mut self, device: Option<Device>) -> Result<(), AudioRecorderError> {
         if self.worker_handle.is_some() {
             return Ok(()); // already open
         }
@@ -198,7 +197,7 @@ impl AudioRecorder {
             Some(dev) => dev,
             None => host
                 .default_input_device()
-                .ok_or_else(|| Error::new(std::io::ErrorKind::NotFound, "No input device found"))?,
+                .ok_or_else(|| AudioDeviceError::NoInputDevice("No input device found".into()))?,
         };
 
         let thread_device = device.clone();
@@ -320,38 +319,39 @@ impl AudioRecorder {
             }
             Ok(Err(error_message)) => {
                 let _ = worker.join();
-                let kind = if is_microphone_access_denied(&error_message) {
-                    std::io::ErrorKind::PermissionDenied
-                } else {
-                    std::io::ErrorKind::Other
-                };
-                Err(Box::new(Error::new(kind, error_message)))
+                Err(AudioDeviceError::classify(&error_message).into())
             }
             Err(recv_error) => {
                 let _ = worker.join();
-                Err(Box::new(Error::other(format!(
+                Err(AudioRecorderError::ResponseChannel(format!(
                     "Failed to initialize microphone worker: {recv_error}"
-                ))))
+                )))
             }
         }
     }
 
-    pub fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn start(&self) -> Result<(), AudioRecorderError> {
         if let Some(tx) = &self.cmd_tx {
-            tx.send(Cmd::Start)?;
+            tx.send(Cmd::Start)
+                .map_err(|err| AudioRecorderError::CommandChannel(err.to_string()))?;
         }
         Ok(())
     }
 
-    pub fn stop(&self) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    pub fn stop(&self) -> Result<Vec<f32>, AudioRecorderError> {
         let (resp_tx, resp_rx) = mpsc::channel();
         if let Some(tx) = &self.cmd_tx {
-            tx.send(Cmd::Stop(resp_tx))?;
+            tx.send(Cmd::Stop(resp_tx))
+                .map_err(|err| AudioRecorderError::CommandChannel(err.to_string()))?;
+        } else {
+            return Ok(Vec::new());
         }
-        Ok(resp_rx.recv()?) // wait for the samples
+        resp_rx
+            .recv()
+            .map_err(|err| AudioRecorderError::ResponseChannel(err.to_string()))
     }
 
-    pub fn close(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn close(&mut self) -> Result<(), AudioRecorderError> {
         if let Some(tx) = self.cmd_tx.take() {
             let _ = tx.send(Cmd::Shutdown);
         }
@@ -436,14 +436,14 @@ impl AudioRecorder {
         )
     }
 
-    fn get_preferred_config(
-        device: &cpal::Device,
-    ) -> Result<cpal::SupportedStreamConfig, Box<dyn std::error::Error>> {
+    fn get_preferred_config(device: &cpal::Device) -> Result<cpal::SupportedStreamConfig, String> {
         // Use the device's native/default sample rate and let the FrameResampler
         // in run_consumer() downsample to 16kHz. This avoids forcing hardware into
         // a non-native rate which can cause issues on some devices (Bluetooth
         // codecs, certain ALSA drivers, etc.).
-        let default_config = device.default_input_config()?;
+        let default_config = device
+            .default_input_config()
+            .map_err(|err| format!("failed to read default input config: {err}"))?;
         let target_rate = default_config.sample_rate();
 
         // Try to find the best sample format at the device's default rate
@@ -492,6 +492,12 @@ impl AudioRecorder {
     }
 }
 
+impl Default for AudioRecorder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Typed taxonomy for the failure modes the recorder can surface while opening a
 /// cpal input stream. Previously these distinctions only existed as Display
 /// substrings parsed back out at the call sites; this enum makes the taxonomy a
@@ -516,6 +522,18 @@ pub enum AudioDeviceError {
     /// Building / starting the cpal input stream failed for some other reason.
     #[error("failed to build input stream: {0}")]
     BuildStream(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AudioRecorderError {
+    #[error(transparent)]
+    Device(#[from] AudioDeviceError),
+
+    #[error("recorder command channel closed: {0}")]
+    CommandChannel(String),
+
+    #[error("recorder response channel closed: {0}")]
+    ResponseChannel(String),
 }
 
 impl AudioDeviceError {
@@ -556,7 +574,7 @@ pub fn is_no_input_device_error(error_message: &str) -> bool {
 }
 
 #[cfg(test)]
-#[allow(
+#[expect(
     clippy::items_after_test_module,
     reason = "run_consumer is defined below the tests; keeping it in place avoids a risky reorder"
 )]
@@ -695,11 +713,17 @@ fn run_consumer(
     realtime_audio_signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
     stop_flag: Arc<AtomicBool>,
 ) {
-    let mut frame_resampler = FrameResampler::new(
+    let mut frame_resampler = match FrameResampler::try_new(
         in_sample_rate as usize,
         constants::WHISPER_SAMPLE_RATE as usize,
         Duration::from_millis(30),
-    );
+    ) {
+        Ok(resampler) => resampler,
+        Err(err) => {
+            log::error!("Failed to initialize frame resampler: {err}");
+            return;
+        }
+    };
 
     let mut processed_samples = Vec::<f32>::new();
     let mut recording = false;

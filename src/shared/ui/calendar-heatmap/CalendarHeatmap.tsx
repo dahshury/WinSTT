@@ -17,7 +17,7 @@ import {
 	MonthGrid,
 	PickerGrid,
 	PresetList,
-	renderTimeFields,
+	TimeFields,
 } from "./components";
 import { calendarReducer } from "./reducer";
 import type {
@@ -287,7 +287,13 @@ export function CalendarHeatmap({
 	const anyPickerOpen = viewModes.some((v) => v !== "days");
 	const timeBlock =
 		!anyPickerOpen && withTime
-			? renderTimeFields(mode, currentSelected, handleTimeChange)
+			? (
+					<TimeFields
+						makeHandler={handleTimeChange}
+						mode={mode}
+						selected={currentSelected}
+					/>
+				)
 			: null;
 
 	return (

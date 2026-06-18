@@ -12,14 +12,53 @@
 //    you can do for your country."
 
 use std::collections::BTreeMap;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
+use log::{LevelFilter, Metadata, Record};
 use winstt_app_lib::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
 use winstt_app_lib::winstt::stt::{
     Accelerator, EngineConfig, EngineKind, Quantization, ResolvedModel, SttError,
     TranscribeOptions, Transcriber, WhisperEngine,
 };
+
+struct SpikeLogger;
+
+static SPIKE_LOGGER: SpikeLogger = SpikeLogger;
+
+impl log::Log for SpikeLogger {
+    fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+        metadata.level() <= log::max_level()
+    }
+
+    fn log(&self, record: &Record<'_>) {
+        if self.enabled(record.metadata()) {
+            eprintln!("[{}] {}", record.level(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn init_spike_logger() {
+    let level = std::env::var("SPIKE_LOG")
+        .or_else(|_| std::env::var("RUST_LOG"))
+        .ok()
+        .and_then(|level| match level.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(LevelFilter::Off),
+            "error" => Some(LevelFilter::Error),
+            "warn" | "warning" => Some(LevelFilter::Warn),
+            "info" => Some(LevelFilter::Info),
+            "debug" => Some(LevelFilter::Debug),
+            "trace" => Some(LevelFilter::Trace),
+            _ => None,
+        })
+        .unwrap_or(LevelFilter::Warn);
+    if log::set_logger(&SPIKE_LOGGER).is_ok() {
+        log::set_max_level(level);
+    }
+}
 
 /// Default snapshot: the whisper-tiny.en hf-hub cache dir on this machine.
 /// Derived from `HF_HOME`/`HF_HUB_CACHE` (or `$HOME/.cache/huggingface/hub`)
@@ -90,10 +129,10 @@ fn audio_path() -> PathBuf {
         cwd
     } else {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        manifest_dir
-            .parent()
-            .map(|repo| repo.join("tools/bench/audio/jfk_short_3s.f32"))
-            .unwrap_or_else(|| manifest_dir.join("jfk_short_3s.f32"))
+        manifest_dir.parent().map_or_else(
+            || manifest_dir.join("jfk_short_3s.f32"),
+            |repo| repo.join("tools/bench/audio/jfk_short_3s.f32"),
+        )
     }
 }
 
@@ -112,6 +151,65 @@ fn load_audio() -> Vec<f32> {
         }
     }
     audio
+}
+
+fn resolved_from_snapshot_dir(
+    dir: PathBuf,
+    kind: EngineKind,
+    effective_quant: Quantization,
+) -> Result<ResolvedModel, String> {
+    fn quantized_path(dir: &std::path::Path, stem: &str, effective_quant: Quantization) -> PathBuf {
+        match effective_quant {
+            Quantization::Default => dir.join(format!("{stem}.onnx")),
+            quant => dir.join(format!("{stem}.{}.onnx", quant.suffix())),
+        }
+    }
+
+    fn insert_existing(
+        files: &mut BTreeMap<String, PathBuf>,
+        key: &str,
+        path: PathBuf,
+    ) -> Result<(), String> {
+        if !path.exists() {
+            return Err(format!(
+                "snapshot file for key '{key}' not found: {}",
+                path.display()
+            ));
+        }
+        files.insert(key.to_string(), path);
+        Ok(())
+    }
+
+    let mut files = BTreeMap::new();
+    match kind {
+        EngineKind::NemoRnnt | EngineKind::NemoTdt => {
+            insert_existing(
+                &mut files,
+                "encoder",
+                quantized_path(&dir, "encoder-model", effective_quant),
+            )?;
+            insert_existing(
+                &mut files,
+                "decoder_joint",
+                quantized_path(&dir, "decoder_joint-model", effective_quant),
+            )?;
+            insert_existing(&mut files, "vocab", dir.join("vocab.txt"))?;
+            let config = dir.join("config.json");
+            if config.exists() {
+                files.insert("config".to_string(), config);
+            }
+        }
+        _ => {
+            return Err(format!(
+                "SPIKE_SNAPSHOT_DIR override is not wired for {kind:?}; use the resolver path"
+            ));
+        }
+    }
+
+    Ok(ResolvedModel {
+        files,
+        effective_quantization: effective_quant,
+    })
 }
 
 /// Catalog `Family` → the policy slug the engine helpers key on.
@@ -173,19 +271,31 @@ fn run_catalog_mode(cat_id: &str) {
         _ => Quantization::Default,
     };
     eprintln!("quant      : {effective_quant:?} (SPIKE_QUANT env)");
-    let req = ResolveRequest {
-        model_id: entry.onnx_model_name.to_string(),
-        kind,
-        effective_quant,
-        local_dir: None,
-        local_files_only,
-    };
-    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    let resolved = match rt.block_on(resolver::resolve(&req)) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("RESOLVE FAILED: {e}");
-            std::process::exit(4);
+    let resolved = if let Ok(snapshot_dir) = std::env::var("SPIKE_SNAPSHOT_DIR") {
+        let snapshot_dir = PathBuf::from(snapshot_dir);
+        eprintln!("snapshot  : {}", snapshot_dir.display());
+        match resolved_from_snapshot_dir(snapshot_dir, kind, effective_quant) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("SNAPSHOT RESOLVE FAILED: {e}");
+                std::process::exit(4);
+            }
+        }
+    } else {
+        let req = ResolveRequest {
+            model_id: entry.onnx_model_name.to_string(),
+            kind,
+            effective_quant,
+            local_dir: None,
+            local_files_only,
+        };
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        match rt.block_on(resolver::resolve(&req)) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("RESOLVE FAILED: {e}");
+                std::process::exit(4);
+            }
         }
     };
     let mut keys: Vec<&String> = resolved.files.keys().collect();
@@ -204,6 +314,7 @@ fn run_catalog_mode(cat_id: &str) {
         providers: providers_from_env(),
         whisper_fp16_workaround,
     };
+    let build_started = Instant::now();
     let mut engine = match build_engine(cfg) {
         Ok(e) => e,
         Err(e) => {
@@ -211,6 +322,11 @@ fn run_catalog_mode(cat_id: &str) {
             std::process::exit(5);
         }
     };
+    eprintln!(
+        "engine    : built in {} ms active_providers={:?}",
+        build_started.elapsed().as_millis(),
+        engine.active_providers()
+    );
     let audio = load_audio();
     eprintln!(
         "audio      : {} samples ({:.2}s)",
@@ -226,17 +342,38 @@ fn run_catalog_mode(cat_id: &str) {
     if segment {
         eprintln!("segment   : vad max_chunk_s={segment_max_s:.1}");
     }
-    let segment_prior = std::env::var("SPIKE_SEGMENT_PRIOR")
-        .map(|s| {
+    let segment_prior = std::env::var("SPIKE_SEGMENT_PRIOR").map_or_else(
+        |_| kind.needs_past_context(),
+        |s| {
             !matches!(
                 s.trim().to_ascii_lowercase().as_str(),
                 "0" | "false" | "off"
             )
-        })
-        .unwrap_or_else(|_| kind.needs_past_context());
+        },
+    );
     if segment {
         eprintln!("prior     : {segment_prior}");
     }
+    let profile_only = std::env::var("SPIKE_PROFILE_ONLY").is_ok();
+    let mut segment_vad = if segment {
+        let vad_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("models")
+            .join("silero_vad_v4.onnx");
+        let started = Instant::now();
+        match SileroVad::new(&vad_path, VAD_SPEECH_THRESHOLD) {
+            Ok(vad) => {
+                eprintln!("vad        : built in {} ms", started.elapsed().as_millis());
+                Some(vad)
+            }
+            Err(e) => {
+                eprintln!("VAD LOAD FAILED {}: {e}", vad_path.display());
+                std::process::exit(5);
+            }
+        }
+    } else {
+        None
+    };
     // cold pass (DML compiles kernels on first inference), then warm passes (steady-state).
     for pass in 0..spike_passes(2) {
         let label = match pass {
@@ -246,34 +383,40 @@ fn run_catalog_mode(cat_id: &str) {
         };
         let t = Instant::now();
         let opts = TranscribeOptions::default();
+        eprintln!("pass_start : pass={pass} label={label}");
         let text = if segment {
-            let vad_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("resources")
-                .join("models")
-                .join("silero_vad_v4.onnx");
-            match SileroVad::new(&vad_path, VAD_SPEECH_THRESHOLD) {
-                Ok(mut vad) => winstt_app_lib::winstt::stt::vad_segment::vad_segment_decode(
+            match segment_vad.as_mut() {
+                Some(vad) => winstt_app_lib::winstt::stt::vad_segment::vad_segment_decode(
                     engine.as_mut(),
                     &audio,
                     segment_max_s,
                     segment_prior,
-                    &mut vad,
+                    vad,
                     &opts,
+                    &format!("stt-spike-{pass}"),
                 ),
-                Err(e) => Err(SttError::Inference(format!(
-                    "segmentation VAD load {}: {e}",
-                    vad_path.display()
-                ))),
+                None => Err(SttError::Inference("segmentation VAD was not built".into())),
             }
         } else {
             engine.transcribe(&audio, &opts).map(|out| out.text)
         };
         match text {
-            Ok(text) => println!(
-                "\n=== CATALOG TRANSCRIPT ({cat_id}, {label} {:?}) ===\n{}\n==================",
-                t.elapsed(),
-                text
-            ),
+            Ok(text) => {
+                let elapsed = t.elapsed();
+                println!(
+                    "PROFILE pass={pass} label={label} elapsed_ms={} audio_ms={} chars={} words={}",
+                    elapsed.as_millis(),
+                    audio.len() * 1000 / 16_000,
+                    text.chars().count(),
+                    text.split_whitespace().count()
+                );
+                let _ = io::stdout().flush();
+                if !profile_only {
+                    println!(
+                        "\n=== CATALOG TRANSCRIPT ({cat_id}, {label} {elapsed:?}) ===\n{text}\n=================="
+                    );
+                }
+            }
             Err(e) => {
                 eprintln!("TRANSCRIBE FAILED: {e}");
                 std::process::exit(6);
@@ -286,7 +429,7 @@ fn real_main() {
     let args: Vec<String> = std::env::args().collect();
 
     // Catalog mode: `stt_spike --catalog <catalog_id>` (verifies the resolver→engine path).
-    if args.get(1).map(|s| s == "--catalog").unwrap_or(false) {
+    if args.get(1).is_some_and(|s| s == "--catalog") {
         let cat_id = args
             .get(2)
             .cloned()
@@ -353,7 +496,7 @@ fn real_main() {
     }
 
     let cfg = EngineConfig {
-        model_name: snap.clone(),
+        model_name: snap,
         family: "whisper".into(),
         kind: EngineKind::WhisperHf,
         resolved: ResolvedModel {
@@ -406,6 +549,7 @@ fn real_main() {
 }
 
 fn main() {
+    init_spike_logger();
     let handle = std::thread::Builder::new()
         .name("stt-spike-large-stack".to_string())
         .stack_size(64 * 1024 * 1024)

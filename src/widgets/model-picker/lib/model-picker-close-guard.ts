@@ -36,7 +36,7 @@ export function nodeRoleIsPopup(node: HTMLElement): boolean {
 }
 
 export function nodeSlotIsPopup(node: HTMLElement): boolean {
-	const slot = node.dataset?.slot;
+	const slot = node.dataset?.["slot"];
 	return slot !== undefined && (POPUP_SLOTS as ReadonlySet<string>).has(slot);
 }
 
@@ -72,7 +72,7 @@ function eventTargetFromDetails(eventDetails: unknown): EventTarget | null {
 	if (!isRecord(eventDetails)) {
 		return null;
 	}
-	const event = eventDetails.event;
+	const event = eventDetails["event"];
 	return event instanceof Event ? event.target : null;
 }
 

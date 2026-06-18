@@ -22,7 +22,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter, Manager};
 use tokio_util::sync::CancellationToken;
@@ -91,6 +91,7 @@ pub struct TtsManager {
     /// Local-model idle tracking shared with the global model unload timeout.
     active_reads: AtomicU32,
     last_used_ms: AtomicU64,
+    idle_unload_secs: AtomicU64,
     idle_watcher_started: AtomicBool,
     /// Coalesces TTS engine warmups by engine fingerprint and remembers resident warm sessions.
     lifecycle: ModelSwapCoordinator,
@@ -106,9 +107,23 @@ fn now_ms() -> u64 {
 }
 
 const OPENROUTER_PREVIEW_TEXT: &str = "This is a WinSTT voice preview.";
+const TTS_IDLE_UNLOAD_NEVER_SECS: u64 = u64::MAX;
 
+#[cfg(test)]
 fn tts_idle_unload_duration(timeout: crate::settings::ModelUnloadTimeout) -> Option<Duration> {
-    timeout.to_seconds().map(Duration::from_secs)
+    tts_idle_unload_duration_from_secs(encode_tts_idle_unload_timeout(timeout))
+}
+
+fn encode_tts_idle_unload_timeout(timeout: crate::settings::ModelUnloadTimeout) -> u64 {
+    timeout.to_seconds().unwrap_or(TTS_IDLE_UNLOAD_NEVER_SECS)
+}
+
+fn tts_idle_unload_duration_from_secs(seconds: u64) -> Option<Duration> {
+    if seconds == TTS_IDLE_UNLOAD_NEVER_SECS {
+        None
+    } else {
+        Some(Duration::from_secs(seconds))
+    }
 }
 
 fn tts_engine_key(source: TtsSource, fingerprint: &str) -> String {
@@ -154,14 +169,7 @@ impl Drop for ActiveTtsUseGuard<'_> {
     fn drop(&mut self) {
         self.manager.active_reads.fetch_sub(1, Ordering::AcqRel);
         self.manager.mark_model_used();
-        if matches!(self.source, TtsSource::Local)
-            && read_settings_raw(&self.manager.app)
-                .core
-                .model_unload_timeout
-                == crate::settings::ModelUnloadTimeout::Immediately
-        {
-            // RAW read (M7): only `model_unload_timeout` is needed here; avoid the
-            // secret decryption + reader-backfill write that `get_settings` performs.
+        if matches!(self.source, TtsSource::Local) && self.manager.idle_unload_is_immediate() {
             self.manager.unload_active_local_model("immediate timeout");
         }
     }
@@ -173,6 +181,11 @@ impl TtsManager {
         // settings (source + voice + key) via `ensure_engine`.
         let engine: Arc<dyn TtsEngine> =
             Arc::new(KokoroLocalEngine::new(LocalTtsConfig::default()));
+        let idle_unload_secs = encode_tts_idle_unload_timeout(
+            crate::winstt::commands::settings::core_timeout_from_winstt(
+                read_settings_raw(app).global.model_unload_timeout,
+            ),
+        );
         Self {
             app: app.clone(),
             active: Mutex::new(ActiveEngine {
@@ -186,6 +199,7 @@ impl TtsManager {
             current_speed: AtomicU32::new(1.0_f32.to_bits()),
             active_reads: AtomicU32::new(0),
             last_used_ms: AtomicU64::new(now_ms()),
+            idle_unload_secs: AtomicU64::new(idle_unload_secs),
             idle_watcher_started: AtomicBool::new(false),
             lifecycle: ModelSwapCoordinator::new(),
             http: reqwest::Client::new(),
@@ -216,13 +230,7 @@ impl TtsManager {
         let manager = Arc::clone(self);
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_secs(5));
-            // RAW read (M7): this fires every 5s on a background thread and only needs
-            // `model_unload_timeout`. The secret-opening `get_settings` would decrypt
-            // every DPAPI envelope (reg.exe spawns) AND could trigger the reader-backfill
-            // settings WRITE here — exactly the H2 write path we must not enter from a
-            // hot background tick. The raw reader never opens secrets and never writes.
-            let timeout = read_settings_raw(&manager.app).core.model_unload_timeout;
-            let Some(max_idle) = tts_idle_unload_duration(timeout) else {
+            let Some(max_idle) = manager.cached_idle_unload_duration() else {
                 continue;
             };
             if max_idle.is_zero() || manager.active_reads.load(Ordering::Acquire) != 0 {
@@ -241,10 +249,27 @@ impl TtsManager {
         self.last_used_ms.store(now_ms(), Ordering::Release);
     }
 
+    fn cached_idle_unload_duration(&self) -> Option<Duration> {
+        tts_idle_unload_duration_from_secs(self.idle_unload_secs.load(Ordering::Acquire))
+    }
+
+    fn idle_unload_is_immediate(&self) -> bool {
+        self.idle_unload_secs.load(Ordering::Acquire) == 0
+    }
+
+    pub fn update_idle_unload_timeout(&self, timeout: crate::settings::ModelUnloadTimeout) {
+        self.idle_unload_secs
+            .store(encode_tts_idle_unload_timeout(timeout), Ordering::Release);
+        if timeout == crate::settings::ModelUnloadTimeout::Immediately {
+            self.unload_active_local_model("immediate timeout");
+        }
+    }
+
     fn unload_active_local_model(&self, reason: &str) {
         if self.active_reads.load(Ordering::Acquire) != 0 {
             return;
         }
+        let started = Instant::now();
         let (engine, warm_key) = {
             let Ok(active) = self.active.lock() else {
                 return;
@@ -261,12 +286,14 @@ impl TtsManager {
         self.lifecycle.clear_warm(&warm_key);
         self.mark_model_used();
         log::info!("[tts] local model session dropped ({reason})");
+        crate::log_model_duration(&format!("tts unload active local ({reason})"), started);
     }
 
     /// User-requested model removal must drop local TTS sessions even if a read was
     /// active; the normal idle path intentionally waits for active reads.
     pub fn unload_active_local_model_for_cleanup(&self, reason: &str) {
         self.cancel_all();
+        let started = Instant::now();
         let (engine, warm_key) = {
             let Ok(active) = self.active.lock() else {
                 return;
@@ -283,6 +310,7 @@ impl TtsManager {
         self.lifecycle.clear_warm(&warm_key);
         self.mark_model_used();
         log::info!("[tts] local model session dropped ({reason})");
+        crate::log_model_duration(&format!("tts unload active local ({reason})"), started);
     }
 
     // â”€â”€ settings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -290,15 +318,24 @@ impl TtsManager {
     /// True when TTS is enabled in settings. The the reference `handleSpeak` throws
     /// `"TTS is disabled in settings"` when this is false.
     pub fn is_enabled(&self) -> bool {
-        read_settings(&self.app).tts.enabled
+        read_settings_raw(&self.app).tts.enabled
     }
 
     /// True when synthesis should be served by ElevenLabs cloud (not Kokoro).
     pub fn is_cloud_source(&self) -> bool {
         matches!(
-            read_settings(&self.app).tts.source,
+            read_settings_raw(&self.app).tts.source,
             SettingsTtsSource::Cloud
         )
+    }
+
+    fn read_tts_runtime_settings(&self) -> WinsttSettings {
+        let settings = read_settings_raw(&self.app);
+        if matches!(settings.tts.source, SettingsTtsSource::Cloud) {
+            read_settings(&self.app)
+        } else {
+            settings
+        }
     }
 
     /// Resolve the local Kokoro config from settings (voice / lang / speed +
@@ -306,36 +343,19 @@ impl TtsManager {
     /// `project_tts_device_follows_model_device`). `model.device` is `Auto`
     /// (DirectML with CPU fallback) or `Cpu`. Kokoro now lives under its catalog
     /// id's per-model cache dir (`tts/kokoro-82m/`), same as the other engines.
-    fn local_config(&self) -> LocalTtsConfig {
-        let s = read_settings(&self.app);
-        let device = match s.model.device {
+    fn local_config_from(&self, settings: &WinsttSettings) -> LocalTtsConfig {
+        let device = match settings.model.device {
             DeviceType::Cpu => TtsDevice::Cpu,
             DeviceType::Auto => TtsDevice::Auto,
         };
         LocalTtsConfig {
-            cache_dir: self.model_cache_dir(&s.tts.model),
-            voice: s.tts.voice,
-            lang: s.tts.lang,
-            speed: s.tts.speed as f32,
+            cache_dir: self.model_cache_dir(&settings.tts.model),
+            voice: settings.tts.voice.clone(),
+            lang: settings.tts.lang.clone(),
+            speed: settings.tts.speed as f32,
             device,
             ..LocalTtsConfig::default()
         }
-    }
-
-    /// Resolve cloud (ElevenLabs) inputs from settings: the shared
-    /// `integrations.elevenlabs.apiKey` + `tts.cloud.*` tuning.
-    fn cloud_config(&self) -> (String, String, CloudVoiceSettings) {
-        let s = read_settings(&self.app);
-        let key = s.integrations.elevenlabs.api_key;
-        let model = s.tts.cloud.model;
-        let settings = CloudVoiceSettings {
-            stability: s.tts.cloud.stability as f32,
-            similarity: s.tts.cloud.similarity as f32,
-            style: s.tts.cloud.style as f32,
-            speaker_boost: s.tts.cloud.speaker_boost,
-            speed: s.tts.cloud.speed as f32,
-        };
-        (key, model, settings)
     }
 
     /// Resolve OpenRouter cloud-TTS inputs: the SHARED `llm.openrouterApiKey` +
@@ -348,30 +368,29 @@ impl TtsManager {
     /// Fingerprint the engine-relevant settings so `ensure_engine` rebuilds only
     /// when the source / key / model / device actually changes (voice/lang/speed
     /// are passed per-call to the engine, so they don't force a rebuild).
-    fn engine_fingerprint(&self) -> (TtsSource, String) {
-        let s = read_settings(&self.app);
-        let device_tag = match s.model.device {
+    fn engine_fingerprint_from(settings: &WinsttSettings) -> (TtsSource, String) {
+        let device_tag = match settings.model.device {
             DeviceType::Cpu => "cpu",
             DeviceType::Auto => "auto",
         };
-        match s.tts.source {
+        match settings.tts.source {
             SettingsTtsSource::Local => (
                 TtsSource::Local,
-                format!("local|{}|{device_tag}", s.tts.model),
+                format!("local|{}|{device_tag}", settings.tts.model),
             ),
-            SettingsTtsSource::Cloud => match effective_cloud_provider(&s) {
+            SettingsTtsSource::Cloud => match effective_cloud_provider(settings) {
                 TtsCloudProvider::Elevenlabs => (
                     TtsSource::Cloud,
                     format!(
                         "cloud|elevenlabs|{}|{}",
-                        s.integrations.elevenlabs.api_key, s.tts.cloud.model
+                        settings.integrations.elevenlabs.api_key, settings.tts.cloud.model
                     ),
                 ),
                 TtsCloudProvider::Openrouter => (
                     TtsSource::Cloud,
                     format!(
                         "cloud|openrouter|{}|{}",
-                        s.llm.openrouter_api_key, s.tts.cloud.openrouter_model
+                        settings.llm.openrouter_api_key, settings.tts.cloud.openrouter_model
                     ),
                 ),
             },
@@ -390,8 +409,8 @@ impl TtsManager {
     /// Build the local engine for the selected `tts.model` catalog id. Kokoro keeps
     /// its existing cache layout (`local_config`); the new ONNX engines load from
     /// their per-model cache dir (populated by the TTS download manager).
-    fn build_local_engine(&self) -> Arc<dyn TtsEngine> {
-        let model_id = read_settings(&self.app).tts.model;
+    fn build_local_engine_for(&self, settings: &WinsttSettings) -> Arc<dyn TtsEngine> {
+        let model_id = settings.tts.model.clone();
         match catalog::find(&model_id).map(|e| e.engine) {
             Some(TtsEngineId::Kitten) => Arc::new(KittenLocalEngine::new(
                 self.model_cache_dir(&model_id),
@@ -410,23 +429,25 @@ impl TtsManager {
                 Arc::new(ChatterboxLocalEngine::new(self.model_cache_dir(&model_id)))
             }
             // Kokoro (and any unknown id) â†’ the existing Kokoro engine + cache.
-            _ => Arc::new(KokoroLocalEngine::new(self.local_config())),
+            _ => Arc::new(KokoroLocalEngine::new(self.local_config_from(settings))),
         }
     }
 
-    fn selected_local_engine_needs_espeak(&self) -> bool {
-        let model_id = read_settings(&self.app).tts.model;
-        let engine = catalog::find(&model_id)
-            .map(|e| e.engine)
-            .unwrap_or(TtsEngineId::Kokoro);
+    fn selected_local_engine_needs_espeak_for(settings: &WinsttSettings) -> bool {
+        let model_id = &settings.tts.model;
+        let engine = catalog::find(model_id).map_or(TtsEngineId::Kokoro, |e| e.engine);
         matches!(
             engine,
             TtsEngineId::Kokoro | TtsEngineId::Kitten | TtsEngineId::Piper
         )
     }
 
-    fn ensure_espeak_runtime_for_selected_model(&self, emit_install_events: bool) -> TtsResult<()> {
-        if !self.selected_local_engine_needs_espeak() || espeak_runtime_available() {
+    fn ensure_espeak_runtime_for_settings(
+        &self,
+        settings: &WinsttSettings,
+        emit_install_events: bool,
+    ) -> TtsResult<()> {
+        if !Self::selected_local_engine_needs_espeak_for(settings) || espeak_runtime_available() {
             return Ok(());
         }
         if emit_install_events {
@@ -482,8 +503,8 @@ impl TtsManager {
     /// Ensure the selected local model's assets are on disk, downloading via the
     /// TTS download manager (emitting progress) if missing. Kokoro self-downloads
     /// inside its own engine, so it is skipped here.
-    fn ensure_local_model_assets(&self) -> TtsResult<()> {
-        let model_id = read_settings(&self.app).tts.model;
+    fn ensure_local_model_assets_for(&self, settings: &WinsttSettings) -> TtsResult<()> {
+        let model_id = settings.tts.model.clone();
         let Some(entry) = catalog::find(&model_id) else {
             return Ok(());
         };
@@ -507,28 +528,40 @@ impl TtsManager {
 
     /// Lazily (re)build the active engine to match the current settings. Returns
     /// the engine + its source. Cheap when nothing changed (fingerprint match).
-    fn ensure_engine(&self) -> (TtsSource, Arc<dyn TtsEngine>, String) {
-        let (source, fingerprint) = self.engine_fingerprint();
+    fn ensure_engine_for(
+        &self,
+        settings: &WinsttSettings,
+    ) -> (TtsSource, Arc<dyn TtsEngine>, String) {
+        let (source, fingerprint) = Self::engine_fingerprint_from(settings);
         let mut a = self.active.lock_recover();
         let mut outgoing: Option<Arc<dyn TtsEngine>> = None;
+        let mut swap_started: Option<Instant> = None;
         if a.fingerprint != fingerprint || a.source != source {
+            swap_started = Some(Instant::now());
             let old_fp = a.fingerprint.clone();
             let old_source = a.source;
             self.lifecycle
                 .clear_warm(&tts_engine_key(old_source, &old_fp));
             let engine: Arc<dyn TtsEngine> = match source {
-                TtsSource::Local => self.build_local_engine(),
+                TtsSource::Local => self.build_local_engine_for(settings),
                 TtsSource::Cloud => {
-                    let provider = effective_cloud_provider(&read_settings(&self.app));
+                    let provider = effective_cloud_provider(settings);
                     match provider {
-                        TtsCloudProvider::Elevenlabs => {
-                            let (key, model, settings) = self.cloud_config();
-                            Arc::new(ElevenLabsEngine::new(key, model, settings))
-                        }
-                        TtsCloudProvider::Openrouter => {
-                            let (key, model) = self.openrouter_tts_config();
-                            Arc::new(OpenRouterTtsEngine::new(key, model))
-                        }
+                        TtsCloudProvider::Elevenlabs => Arc::new(ElevenLabsEngine::new(
+                            settings.integrations.elevenlabs.api_key.clone(),
+                            settings.tts.cloud.model.clone(),
+                            CloudVoiceSettings {
+                                stability: settings.tts.cloud.stability as f32,
+                                similarity: settings.tts.cloud.similarity as f32,
+                                style: settings.tts.cloud.style as f32,
+                                speaker_boost: settings.tts.cloud.speaker_boost,
+                                speed: settings.tts.cloud.speed as f32,
+                            },
+                        )),
+                        TtsCloudProvider::Openrouter => Arc::new(OpenRouterTtsEngine::new(
+                            settings.llm.openrouter_api_key.clone(),
+                            settings.tts.cloud.openrouter_model.clone(),
+                        )),
                     }
                 }
             };
@@ -558,15 +591,15 @@ impl TtsManager {
             // instead of pinning the previous model's memory.
             old.shutdown();
             log::info!("[tts] previous engine session dropped (unloaded)");
+            if let Some(started) = swap_started {
+                crate::log_model_duration("tts engine swap", started);
+            }
         }
         result
     }
 
     pub fn source(&self) -> TtsSource {
-        self.active
-            .lock()
-            .map(|a| a.source)
-            .unwrap_or(TtsSource::Local)
+        self.active.lock().map_or(TtsSource::Local, |a| a.source)
     }
 
     // â”€â”€ voice catalogs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -580,7 +613,7 @@ impl TtsManager {
     /// (mirrors the reference `handleListVoices`, which returns `{ voices, languages }`).
     pub fn list_voices_catalog(&self, model_id: Option<String>) -> VoiceCatalogPayload {
         // Pick the voice set for the requested (or currently-selected) local model.
-        let model_id = model_id.unwrap_or_else(|| read_settings(&self.app).tts.model);
+        let model_id = model_id.unwrap_or_else(|| read_settings_raw(&self.app).tts.model);
         let selected_engine = catalog::find(&model_id).map(|e| e.engine);
         let voices_src: Vec<VoiceInfo> = match selected_engine {
             Some(TtsEngineId::Kitten) => KITTEN_VOICES.to_vec(),
@@ -733,8 +766,9 @@ impl TtsManager {
     /// totalBytes, unavailable? }`). Cloud has no local engine, so it reports
     /// `alreadyInstalled: true` with no components.
     pub async fn download_estimate(&self) -> DownloadEstimatePayload {
+        let settings = read_settings_raw(&self.app);
         // Cloud source has nothing local to install â€” never gate it on disk files.
-        if self.is_cloud_source() {
+        if matches!(settings.tts.source, SettingsTtsSource::Cloud) {
             return DownloadEstimatePayload {
                 already_installed: true,
                 components: Vec::new(),
@@ -745,7 +779,7 @@ impl TtsManager {
         // Estimate from the TTS catalog (per-model HF download size), the espeak
         // runtime pack (when the selected engine needs it), and the download
         // manager's on-disk cache state for the SELECTED model.
-        let model_id = read_settings(&self.app).tts.model;
+        let model_id = settings.tts.model;
         let Some(entry) = catalog::find(&model_id) else {
             return DownloadEstimatePayload {
                 already_installed: false,
@@ -757,7 +791,7 @@ impl TtsManager {
         let quant = entry.default_quant();
         let dl = self.app.state::<Arc<TtsDownloadManager>>();
         let installed = dl.is_present(&model_id, quant);
-        let total = entry.quant(quant).map(|q| q.size_bytes).unwrap_or(0);
+        let total = entry.quant(quant).map_or(0, |q| q.size_bytes);
         let mut components = Vec::new();
         let mut unavailable = false;
         if matches!(
@@ -765,7 +799,7 @@ impl TtsManager {
             TtsEngineId::Kokoro | TtsEngineId::Kitten | TtsEngineId::Piper
         ) {
             let runtime_installed = espeak_runtime_available();
-            let runtime_bytes = espeak_runtime_pack().map(|p| p.size_bytes).unwrap_or(0);
+            let runtime_bytes = espeak_runtime_pack().map_or(0, |p| p.size_bytes);
             unavailable = !runtime_installed && espeak_runtime_pack().is_none();
             components.push(DownloadComponent {
                 id: ESPEAK_RUNTIME_COMPONENT_ID.to_string(),
@@ -797,8 +831,10 @@ impl TtsManager {
     /// check). Cloud is a no-op warm-up (key check only). The command runs this
     /// via `spawn_blocking`.
     pub fn warm_up(&self) -> TtsResult<()> {
+        let warm_started = Instant::now();
         loop {
-            let (target_source, target_fingerprint) = self.engine_fingerprint();
+            let settings = self.read_tts_runtime_settings();
+            let (target_source, target_fingerprint) = Self::engine_fingerprint_from(&settings);
             let target_key = tts_engine_key(target_source, &target_fingerprint);
             if self.lifecycle.is_warm(&target_key) {
                 log::debug!("[tts] warm-up skipped â€” engine '{target_key}' is already warm");
@@ -814,9 +850,9 @@ impl TtsManager {
 
             // Cloud has no local graph to warm; `warm_up` just checks the key.
             if matches!(target_source, TtsSource::Local) {
-                self.ensure_espeak_runtime_for_selected_model(true)?;
+                self.ensure_espeak_runtime_for_settings(&settings, true)?;
             }
-            let (source, engine, engine_key) = self.ensure_engine();
+            let (source, engine, engine_key) = self.ensure_engine_for(&settings);
             if engine_key != target_key {
                 // Settings changed while the warm claim was being prepared. Drop the claim and
                 // restart against the new fingerprint instead of warming a stale engine.
@@ -831,7 +867,7 @@ impl TtsManager {
                     "tts:install-status",
                     serde_json::json!({ "phase": "model" }),
                 );
-                if let Err(e) = self.ensure_local_model_assets() {
+                if let Err(e) = self.ensure_local_model_assets_for(&settings) {
                     self.emit_event(
                         "tts:install-failed",
                         serde_json::json!({ "reason": e.to_string(), "category": "NETWORK" }),
@@ -862,6 +898,7 @@ impl TtsManager {
             match engine.warm_up() {
                 Ok(()) => {
                     self.lifecycle.mark_warm(engine_key);
+                    crate::log_model_duration("tts warm-up", warm_started);
                     if matches!(source, TtsSource::Local) {
                         self.emit_event(
                             "tts:install-status",
@@ -871,6 +908,7 @@ impl TtsManager {
                     return Ok(());
                 }
                 Err(e) => {
+                    crate::log_model_duration("tts warm-up failed", warm_started);
                     if matches!(source, TtsSource::Local) {
                         self.emit_event(
                             "tts:install-failed",
@@ -932,17 +970,39 @@ impl TtsManager {
 
     pub fn fail_request(&self, request_id: &str, reason: &str) {
         self.drop_request(request_id);
+        self.record_failure(
+            "synthesis",
+            "TTS synthesis failed",
+            request_id,
+            reason,
+            None,
+            None,
+        );
         self.emit_event(
             "tts:failed",
             serde_json::json!({ "requestId": request_id, "reason": reason }),
         );
     }
 
-    fn selected_cloud_provider(&self) -> CloudSttProvider {
-        match effective_cloud_provider(&read_settings(&self.app)) {
-            TtsCloudProvider::Elevenlabs => CloudSttProvider::ElevenLabs,
-            TtsCloudProvider::Openrouter => CloudSttProvider::OpenRouter,
+    fn record_failure(
+        &self,
+        operation: &str,
+        summary: &str,
+        request_id: &str,
+        reason: &str,
+        source: Option<&str>,
+        duration_ms: Option<u64>,
+    ) {
+        let mut issue = crate::winstt::observability::IssueBuilder::new("tts", operation, summary)
+            .detail(reason.to_string())
+            .request_id(request_id.to_string());
+        if let Some(source) = source {
+            issue = issue.context("source", source.to_string());
         }
+        if let Some(duration_ms) = duration_ms {
+            issue = issue.duration_ms(duration_ms);
+        }
+        issue.record(Some(&self.app));
     }
 
     fn emit_cloud_tts_failure(&self, provider: CloudSttProvider, context: &str, err: &TtsError) {
@@ -989,10 +1049,19 @@ impl TtsManager {
         // Register a shared cancel flag BEFORE `tts:started` so a cancel arriving
         // immediately after start flips THIS read's flag (and `cancel_all` lists it).
         let cancel = self.cancel_flag(request_id);
+        let settings = self.read_tts_runtime_settings();
 
         // Enabled-gate (the reference throws `ValidationError("TTS is disabled â€¦")`).
-        if !self.is_enabled() {
+        if !settings.tts.enabled {
             self.drop_request(request_id);
+            self.record_failure(
+                "synthesis",
+                "TTS request could not start",
+                request_id,
+                "TTS is disabled in settings",
+                None,
+                None,
+            );
             self.emit_event(
                 "tts:started",
                 serde_json::json!({ "requestId": request_id }),
@@ -1010,9 +1079,17 @@ impl TtsManager {
             serde_json::json!({ "requestId": request_id }),
         );
 
-        if !self.is_cloud_source() {
-            if let Err(e) = self.ensure_espeak_runtime_for_selected_model(true) {
+        if !matches!(settings.tts.source, SettingsTtsSource::Cloud) {
+            if let Err(e) = self.ensure_espeak_runtime_for_settings(&settings, true) {
                 self.drop_request(request_id);
+                self.record_failure(
+                    "engine_runtime",
+                    "TTS engine runtime setup failed",
+                    request_id,
+                    &e.to_string(),
+                    Some("local"),
+                    Some(started.elapsed().as_millis() as u64),
+                );
                 self.emit_event(
                     "tts:failed",
                     serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
@@ -1021,12 +1098,28 @@ impl TtsManager {
             }
         }
 
-        let (source, engine, engine_key) = self.ensure_engine();
+        let (source, engine, engine_key) = self.ensure_engine_for(&settings);
+        let cloud_failure_provider = if matches!(source, TtsSource::Cloud) {
+            Some(match effective_cloud_provider(&settings) {
+                TtsCloudProvider::Elevenlabs => CloudSttProvider::ElevenLabs,
+                TtsCloudProvider::Openrouter => CloudSttProvider::OpenRouter,
+            })
+        } else {
+            None
+        };
         // Auto-download the selected local model's assets (with progress) before
         // synthesizing â€” mirrors the STT first-use download. Kokoro self-downloads.
         if matches!(source, TtsSource::Local) {
-            if let Err(e) = self.ensure_local_model_assets() {
+            if let Err(e) = self.ensure_local_model_assets_for(&settings) {
                 self.drop_request(request_id);
+                self.record_failure(
+                    "model_download",
+                    "TTS local model assets could not be prepared",
+                    request_id,
+                    &e.to_string(),
+                    Some("local"),
+                    Some(started.elapsed().as_millis() as u64),
+                );
                 self.emit_event(
                     "tts:failed",
                     serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
@@ -1036,25 +1129,24 @@ impl TtsManager {
         }
         // Fill voice/lang from settings when the caller omitted them (the renderer's
         // `ttsSpeak` passes them, but the hotkey path may not).
-        let s = read_settings(&self.app);
         let (eff_voice, eff_lang) = match source {
             TtsSource::Local => (
                 if voice.is_empty() {
-                    s.tts.voice.clone()
+                    settings.tts.voice.clone()
                 } else {
                     voice.to_string()
                 },
                 if lang.is_empty() {
-                    s.tts.lang.clone()
+                    settings.tts.lang.clone()
                 } else {
                     lang.to_string()
                 },
             ),
             TtsSource::Cloud => (
                 if voice.is_empty() {
-                    match effective_cloud_provider(&s) {
-                        TtsCloudProvider::Elevenlabs => s.tts.cloud.voice.clone(),
-                        TtsCloudProvider::Openrouter => s.tts.cloud.openrouter_voice.clone(),
+                    match effective_cloud_provider(&settings) {
+                        TtsCloudProvider::Elevenlabs => settings.tts.cloud.voice.clone(),
+                        TtsCloudProvider::Openrouter => settings.tts.cloud.openrouter_voice.clone(),
                     }
                 } else {
                     voice.to_string()
@@ -1070,8 +1162,16 @@ impl TtsManager {
         // rather than silently producing nothing (the prior "voice doesn't respond").
         if matches!(source, TtsSource::Local) {
             let dl = self.app.state::<Arc<TtsDownloadManager>>();
-            if let Err(e) = dl.ensure_voice(&s.tts.model, &eff_voice) {
+            if let Err(e) = dl.ensure_voice(&settings.tts.model, &eff_voice) {
                 self.drop_request(request_id);
+                self.record_failure(
+                    "voice_download",
+                    "TTS voice download failed",
+                    request_id,
+                    &format!("voice download failed: {e}"),
+                    Some("local"),
+                    Some(started.elapsed().as_millis() as u64),
+                );
                 self.emit_event(
                     "tts:failed",
                     serde_json::json!({ "requestId": request_id, "reason": format!("voice download failed: {e}") }),
@@ -1086,6 +1186,17 @@ impl TtsManager {
             Ok(g) => g,
             Err(_) => {
                 self.drop_request(request_id);
+                self.record_failure(
+                    "synthesis",
+                    "TTS synthesis lock failed",
+                    request_id,
+                    "tts synth lock poisoned",
+                    Some(match source {
+                        TtsSource::Local => "local",
+                        TtsSource::Cloud => "cloud",
+                    }),
+                    Some(started.elapsed().as_millis() as u64),
+                );
                 self.emit_event(
                     "tts:failed",
                     serde_json::json!({ "requestId": request_id, "reason": "tts synth lock poisoned" }),
@@ -1134,9 +1245,21 @@ impl TtsManager {
                 serde_json::json!({ "requestId": request_id, "cancelled": true, "elapsedMs": elapsed_ms }),
             ),
             Err(e) => {
-                if matches!(source, TtsSource::Cloud) {
-                    self.emit_cloud_tts_failure(self.selected_cloud_provider(), "Cloud TTS", e);
+                let source_label = match source {
+                    TtsSource::Local => "local",
+                    TtsSource::Cloud => "cloud",
+                };
+                if let Some(provider) = cloud_failure_provider {
+                    self.emit_cloud_tts_failure(provider, "Cloud TTS", e);
                 }
+                self.record_failure(
+                    "synthesis",
+                    "TTS synthesis failed",
+                    request_id,
+                    &e.to_string(),
+                    Some(source_label),
+                    Some(elapsed_ms),
+                );
                 self.emit_event(
                     "tts:failed",
                     serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
@@ -1195,6 +1318,14 @@ impl TtsManager {
                     "OpenRouter TTS preview",
                     &e,
                 );
+                self.record_failure(
+                    "openrouter_preview",
+                    "OpenRouter TTS preview failed",
+                    request_id,
+                    &e.to_string(),
+                    Some("cloud"),
+                    Some(elapsed_ms),
+                );
                 self.emit_event(
                     "tts:failed",
                     serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
@@ -1241,10 +1372,20 @@ impl TtsManager {
                 "tts:completed",
                 serde_json::json!({ "requestId": request_id, "cancelled": was_cancelled, "elapsedMs": elapsed_ms }),
             ),
-            Err(e) => self.emit_event(
-                "tts:failed",
-                serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
-            ),
+            Err(e) => {
+                self.record_failure(
+                    "cloud_preview",
+                    "TTS cloud preview clip failed",
+                    request_id,
+                    &e.to_string(),
+                    Some("cloud"),
+                    Some(elapsed_ms),
+                );
+                self.emit_event(
+                    "tts:failed",
+                    serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
+                );
+            }
         }
     }
 

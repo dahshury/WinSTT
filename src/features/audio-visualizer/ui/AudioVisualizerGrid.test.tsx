@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
 import {
-	AudioVisualizerGrid,
 	isCoordinateHighlighted,
 	isSpeakingCellHighlighted,
 	resolveTransitionDuration,
+} from "./AudioVisualizerGrid.helpers";
+import {
+	AudioVisualizerGrid,
 } from "./AudioVisualizerGrid";
 
 describe("AudioVisualizerGrid", () => {

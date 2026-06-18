@@ -132,8 +132,7 @@ impl WakeWordDetector {
         self.keywords
             .iter()
             .position(|k| normalize_keyword_label(k) == needle)
-            .map(|p| p as i32)
-            .unwrap_or(-1)
+            .map_or(-1, |p| p as i32)
     }
 
     fn display_word_for_label(&self, label: &str, index: i32) -> String {

@@ -423,11 +423,15 @@ function TimeField({
 	);
 }
 
-function renderTimeFields(
-	mode: CalendarMode,
-	selected: Date | DateRange | null,
-	makeHandler: (which: "from" | "to" | "single") => (next: Date) => void,
-): ReactNode {
+function TimeFields({
+	makeHandler,
+	mode,
+	selected,
+}: {
+	makeHandler: (which: "from" | "to" | "single") => (next: Date) => void;
+	mode: CalendarMode;
+	selected: Date | DateRange | null;
+}): ReactNode {
 	if (mode === "single") {
 		const value = isDateValue(selected) ? selected : null;
 		return (
@@ -468,5 +472,5 @@ export {
 	type MonthGridProps,
 	PickerGrid,
 	PresetList,
-	renderTimeFields,
+	TimeFields,
 };

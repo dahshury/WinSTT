@@ -114,7 +114,7 @@ beforeEach(() => {
 	useConnectionStore.setState({
 		connectionStatus: "connected",
 		serverStatus: "running",
-		gpuInfo: null,
+		gpuInfo: [],
 		runtimeInfo: null,
 	});
 	useModelSwapStore.setState({ activeMain: null, activeRealtime: null });

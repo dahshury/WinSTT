@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * State + controls for the on-device encoder dictionary model (the non-LLM fallback).
@@ -67,6 +67,18 @@ function applyStatus(p: StatusPayload) {
 	};
 }
 
+function cancelEncoderDownload(): void {
+	invoke("encoder_dict_download_cancel").catch(() => {});
+}
+
+function preloadEncoderModel(): void {
+	invoke("encoder_dict_preload").catch(() => {});
+}
+
+function unloadEncoderModel(): void {
+	invoke("encoder_dict_unload").catch(() => {});
+}
+
 export function useEncoderModel(): EncoderModel {
 	const [s, setS] = useState(INITIAL);
 
@@ -115,22 +127,19 @@ export function useEncoderModel(): EncoderModel {
 		};
 	}, []);
 
-	const start = useCallback(() => {
+	const start = () => {
 		setS((prev) => ({ ...prev, state: "downloading" }));
 		invoke("encoder_dict_download_start").catch(() => {});
-	}, []);
-	const pause = useCallback(() => {
+	};
+	const pause = () => {
 		setS((prev) => ({ ...prev, state: "paused" }));
 		invoke("encoder_dict_download_pause").catch(() => {});
-	}, []);
-	const resume = useCallback(() => {
+	};
+	const resume = () => {
 		setS((prev) => ({ ...prev, state: "downloading" }));
 		invoke("encoder_dict_download_resume").catch(() => {});
-	}, []);
-	const cancel = useCallback(() => {
-		invoke("encoder_dict_download_cancel").catch(() => {});
-	}, []);
-	const remove = useCallback(() => {
+	};
+	const remove = () => {
 		// Optimistically drop to "absent" so the card reflects the off-switch
 		// immediately; the backend `download-complete` event confirms it.
 		setS({
@@ -141,13 +150,16 @@ export function useEncoderModel(): EncoderModel {
 			speedBps: 0,
 		});
 		invoke("encoder_dict_remove").catch(() => {});
-	}, []);
-	const preload = useCallback(() => {
-		invoke("encoder_dict_preload").catch(() => {});
-	}, []);
-	const unload = useCallback(() => {
-		invoke("encoder_dict_unload").catch(() => {});
-	}, []);
+	};
 
-	return { ...s, start, pause, resume, cancel, remove, preload, unload };
+	return {
+		...s,
+		start,
+		pause,
+		resume,
+		cancel: cancelEncoderDownload,
+		remove,
+		preload: preloadEncoderModel,
+		unload: unloadEncoderModel,
+	};
 }

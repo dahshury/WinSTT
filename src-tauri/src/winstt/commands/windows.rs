@@ -48,6 +48,7 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
 
+use crate::winstt::observability::IssueBuilder;
 use crate::winstt::sync_ext::MutexExt;
 
 mod placement;
@@ -311,9 +312,14 @@ fn is_window_operation_allowed(caller: &str, operation: WindowOperation, target:
     match operation {
         WindowOperation::Open => match target {
             // Main app surfaces that legitimately open secondary work surfaces.
-            "settings" => matches!(caller, "main" | "tray-menu"),
+            // `onboarding` is allowed too: its final overview step deep-links into
+            // Settings so the user can configure a capability right away.
+            "settings" => matches!(caller, "main" | "tray-menu" | "onboarding"),
             "history" | "onboarding" => caller == "main",
-            "model-picker" => matches!(caller, "main" | "settings"),
+            // `onboarding` opens the SAME detached picker the settings Main-model
+            // selector uses, so the wizard's model choice goes through the one
+            // canonical swap/reload + download-gating path instead of a bespoke one.
+            "model-picker" => matches!(caller, "main" | "settings" | "onboarding"),
             "device-picker" => caller == "tray-menu",
             #[cfg(any(debug_assertions, feature = "context-playground"))]
             "context-playground" => caller == "tray-menu",
@@ -550,8 +556,7 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
         "[webview-built:{label}] url={}",
         window
             .url()
-            .map(|u| u.to_string())
-            .unwrap_or_else(|_| "<none>".into())
+            .map_or_else(|_| "<none>".into(), |u| u.to_string())
     );
 
     if spec.label == "model-picker" || spec.label == "device-picker" {
@@ -683,11 +688,32 @@ pub(crate) fn set_main_modal(app: &AppHandle, modal_active: bool) {
 /// winstt.log where we can see them. Diagnostic; harmless to keep.
 #[tauri::command]
 #[specta::specta]
-pub fn winstt_diag(label: String, level: String, message: String) {
+pub fn winstt_diag(app: AppHandle, label: String, level: String, message: String) {
     match level.as_str() {
         "error" => log::error!("[webview:{label}] {message}"),
         "warn" => log::warn!("[webview:{label}] {message}"),
         _ => log::debug!("[webview:{label}] {message}"),
+    }
+    let startup_probe_timeout = message.contains("startup probes exceeded");
+    if level == "error" || startup_probe_timeout {
+        let mut issue = IssueBuilder::new(
+            "renderer",
+            "webview_diag",
+            if startup_probe_timeout {
+                "Renderer startup probes exceeded the readiness timeout"
+            } else {
+                "Renderer reported a webview error"
+            },
+        )
+        .detail(message)
+        .severity(if level == "error" { "error" } else { "warn" })
+        .user_visible(false)
+        .context("label", label)
+        .context("level", level);
+        if startup_probe_timeout {
+            issue = issue.kind("timeout").context("phase", "startup");
+        }
+        issue.record(Some(&app));
     }
 }
 
@@ -709,7 +735,10 @@ pub fn settings_window_ready(_app: AppHandle) -> Result<(), String> {
 /// absent and we center + show.
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Tauri IPC command exposes optional window geometry as generated binding parameters"
+)]
 pub fn open_window(
     app: AppHandle,
     webview: tauri::WebviewWindow,
@@ -729,6 +758,19 @@ pub fn open_window(
     let close_tray_after_context_open =
         label == "context-playground" && webview.label() == "tray-menu";
     authorize_window_operation(&webview, WindowOperation::Open, label)?;
+    // While the first-run wizard is up, only the wizard itself may open Settings —
+    // its final overview step deep-links into specific sections. Every other caller
+    // (the system-tray menu in particular) is blocked so onboarding can't be
+    // bypassed into Settings. Silent no-op so a stray tray click just does nothing.
+    if label == "settings"
+        && webview.label() != "onboarding"
+        && crate::winstt::commands::onboarding::is_onboarding_in_progress(&app)
+    {
+        return Ok(());
+    }
+    if label == "onboarding" {
+        crate::bootstrap::state::deactivate_runtime_for_onboarding(&app);
+    }
 
     let window = ensure_window(&app, label)
         .inspect_err(|e| log::error!("open_window('{name}') ensure_window failed: {e}"))?;
@@ -802,7 +844,7 @@ pub fn open_window(
 
     #[cfg(any(debug_assertions, feature = "context-playground"))]
     if close_tray_after_context_open {
-        let _ = crate::winstt::commands::tray_menu::hide_tray_menu(app.clone());
+        let _ = crate::winstt::commands::tray_menu::hide_tray_menu(app);
     }
 
     Ok(())
@@ -949,7 +991,7 @@ pub fn resize_window(
             // re-anchor in tray-menu-window.ts. Only fires when the size ACTUALLY
             // changed, so a steady-state ResizeObserver storm no longer re-anchors.
             if label == "tray-menu" {
-                let _ = crate::winstt::commands::tray_menu::reanchor_tray_menu(app.clone());
+                let _ = crate::winstt::commands::tray_menu::reanchor_tray_menu(app);
             }
         }
     }
@@ -1034,8 +1076,11 @@ mod tests {
             &[
                 ("main", WindowOperation::Open, "settings"),
                 ("tray-menu", WindowOperation::Open, "settings"),
+                // The onboarding overview step deep-links into Settings sections.
+                ("onboarding", WindowOperation::Open, "settings"),
                 ("main", WindowOperation::Open, "model-picker"),
                 ("settings", WindowOperation::Open, "model-picker"),
+                ("onboarding", WindowOperation::Open, "model-picker"),
                 ("tray-menu", WindowOperation::Open, "device-picker"),
                 #[cfg(any(debug_assertions, feature = "context-playground"))]
                 ("tray-menu", WindowOperation::Open, "context-playground"),

@@ -170,7 +170,6 @@ export function EndpointFeatureIcons({
 
 export function ModelFeatureIcons({
 	model,
-	maxIcons = 4,
 	showLabels = false,
 	size = "sm",
 	flat = false,

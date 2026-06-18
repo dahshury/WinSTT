@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import {
 	onAudioLevel,
 	onFullSentence,
@@ -51,25 +51,32 @@ export function useVisualizerSync(): void {
 	const animateRef = useRef<() => void>(() => {
 		// noop placeholder, replaced on every render below
 	});
-	animateRef.current = () => {
-		if (!activeRef.current) {
-			return;
-		}
+	// Keep the latest animate fn in the ref without writing `.current` during
+	// render (the React Compiler forbids that). A layout effect runs before any
+	// rAF the subscription effects schedule, so `animateRef.current` is fresh
+	// before the first frame ticks. It closes over the stable store setters and
+	// refs, so it never goes stale between renders.
+	useLayoutEffect(() => {
+		animateRef.current = () => {
+			if (!activeRef.current) {
+				return;
+			}
 
-		setAudioLevel(rawLevelRef.current);
+			setAudioLevel(rawLevelRef.current);
 
-		let pulse = pulseRef.current;
-		if (sentenceFiredRef.current) {
-			pulse = 1;
-			sentenceFiredRef.current = false;
-		} else {
-			pulse = Math.max(0, pulse - PULSE_DECAY);
-		}
-		pulseRef.current = pulse;
-		setSentencePulse(pulse);
+			let pulse = pulseRef.current;
+			if (sentenceFiredRef.current) {
+				pulse = 1;
+				sentenceFiredRef.current = false;
+			} else {
+				pulse = Math.max(0, pulse - PULSE_DECAY);
+			}
+			pulseRef.current = pulse;
+			setSentencePulse(pulse);
 
-		rafRef.current = requestAnimationFrame(() => animateRef.current());
-	};
+			rafRef.current = requestAnimationFrame(() => animateRef.current());
+		};
+	}, [setAudioLevel, setSentencePulse]);
 
 	useEffect(() => {
 		// Cancel any in-flight frame before scheduling a new one. Without

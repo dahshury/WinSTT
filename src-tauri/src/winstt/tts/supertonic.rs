@@ -459,7 +459,11 @@ impl SupertonicEngine {
             *guard = Some(self.load()?);
             self.ready.store(true, Ordering::Release);
         }
-        let loaded = guard.as_mut().expect("just initialized");
+        let Some(loaded) = guard.as_mut() else {
+            return Err(SupertonicError::Session(
+                "supertonic session was not initialized".into(),
+            ));
+        };
         let preprocessed = preprocess_text(trimmed, lang);
         let ids = tokenize_with_indexer(&preprocessed, &loaded.unicode_indexer);
         if ids.is_empty() {

@@ -37,7 +37,6 @@ export function DesktopShowcaseCard({
     <figure className="shot shot--thumb not-prose">
       <div
         className="shot-frame showcase-frame"
-        role="img"
         aria-label={tag ? `${label} — ${tag}` : label}
       >
         <div className="shot-bar" aria-hidden="true">

@@ -1,4 +1,3 @@
-import { useCallback } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
 	soundLibraryAdd,
@@ -165,99 +164,83 @@ export function useSoundLibrary({
 		deriveLibrary(general, defaultName);
 	const isFull = library.length >= MAX_CUSTOM_SOUNDS;
 
-	const handleError = useCallback(
-		(message: string) => {
-			if (onError) {
-				onError(message);
-			}
-		},
-		[onError],
-	);
+	const handleError = (message: string) => {
+		if (onError) {
+			onError(message);
+		}
+	};
 
-	const select = useCallback(
-		(item: SoundLibraryItem) => {
-			update({ recordingSoundPath: item.path });
-		},
-		[update],
-	);
+	const select = (item: SoundLibraryItem) => {
+		update({ recordingSoundPath: item.path });
+	};
 
-	const addFromPath = useCallback(
-		async (
-			sourcePath: string,
-			displayName?: string,
-		): Promise<SoundLibraryItem | null> => {
-			if (library.length >= MAX_CUSTOM_SOUNDS) {
-				handleError(limitMessage ?? DEFAULT_LIMIT_MESSAGE);
-				return null;
-			}
-			const outcome = readAddResult(
-				await soundLibraryAdd(sourcePath, displayName),
-			);
-			if ("error" in outcome) {
-				handleError(outcome.error);
-				return null;
-			}
-			const { entry } = outcome;
-			update({
-				recordingSoundLibrary: [...library, entry],
-				recordingSoundPath: entry.path,
-			});
-			return entryToItem(entry);
-		},
-		[handleError, library, limitMessage, update],
-	);
+	const addFromPath = async (
+		sourcePath: string,
+		displayName?: string,
+	): Promise<SoundLibraryItem | null> => {
+		if (library.length >= MAX_CUSTOM_SOUNDS) {
+			handleError(limitMessage ?? DEFAULT_LIMIT_MESSAGE);
+			return null;
+		}
+		const outcome = readAddResult(
+			await soundLibraryAdd(sourcePath, displayName),
+		);
+		if ("error" in outcome) {
+			handleError(outcome.error);
+			return null;
+		}
+		const { entry } = outcome;
+		update({
+			recordingSoundLibrary: [...library, entry],
+			recordingSoundPath: entry.path,
+		});
+		return entryToItem(entry);
+	};
 
-	const addFromBrowse =
-		useCallback(async (): Promise<SoundLibraryItem | null> => {
-			if (library.length >= MAX_CUSTOM_SOUNDS) {
-				handleError(limitMessage ?? DEFAULT_LIMIT_MESSAGE);
-				return null;
-			}
-			const result = await soundLibraryPickAndAdd();
-			if (result.cancelled) {
-				return null;
-			}
-			const outcome = readAddResult(result);
-			if ("error" in outcome) {
-				handleError(outcome.error);
-				return null;
-			}
-			const { entry } = outcome;
-			update({
-				recordingSoundLibrary: [...library, entry],
-				recordingSoundPath: entry.path,
-			});
-			return entryToItem(entry);
-		}, [handleError, library, limitMessage, update]);
+	const addFromBrowse = async (): Promise<SoundLibraryItem | null> => {
+		if (library.length >= MAX_CUSTOM_SOUNDS) {
+			handleError(limitMessage ?? DEFAULT_LIMIT_MESSAGE);
+			return null;
+		}
+		const result = await soundLibraryPickAndAdd();
+		if (result.cancelled) {
+			return null;
+		}
+		const outcome = readAddResult(result);
+		if ("error" in outcome) {
+			handleError(outcome.error);
+			return null;
+		}
+		const { entry } = outcome;
+		update({
+			recordingSoundLibrary: [...library, entry],
+			recordingSoundPath: entry.path,
+		});
+		return entryToItem(entry);
+	};
 
-	const remove = useCallback(
-		async (item: SoundLibraryItem): Promise<void> => {
-			if (item.isDefault) {
-				return;
-			}
-			// Pre-compute the patch so we both unlink the file AND collapse the
-			// active path back to default in a single store update if necessary.
-			update(removalPatch(library, activePath, item));
-			const result = await soundLibraryRemove(item.path);
-			// File unlink may fail — the store is already updated, but surface
-			// the error so the user knows the file is still on disk.
-			const message = removeErrorMessage(result);
-			if (message) {
-				handleError(message);
-			}
-		},
-		[activePath, handleError, library, update],
-	);
+	const remove = async (item: SoundLibraryItem): Promise<void> => {
+		if (item.isDefault) {
+			return;
+		}
+		// Pre-compute the patch so we both unlink the file AND collapse the
+		// active path back to default in a single store update if necessary.
+		update(removalPatch(library, activePath, item));
+		const result = await soundLibraryRemove(item.path);
+		// File unlink may fail — the store is already updated, but surface
+		// the error so the user knows the file is still on disk.
+		const message = removeErrorMessage(result);
+		if (message) {
+			handleError(message);
+		}
+	};
 
-	const rename = useCallback(
-		(id: string, newName: string) => {
-			const nextLibrary = renamePatch(library, id, newName);
-			if (nextLibrary) {
-				update({ recordingSoundLibrary: nextLibrary });
-			}
-		},
-		[library, update],
-	);
+	const rename = (id: string, newName: string) => {
+		const nextLibrary = renamePatch(library, id, newName);
+		if (nextLibrary) {
+			update({ recordingSoundLibrary: nextLibrary });
+		}
+	};
 
 	return {
 		items,

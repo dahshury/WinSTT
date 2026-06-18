@@ -29,13 +29,13 @@ function migrateLegacyGlobalSettings(payload: unknown): unknown {
 	if (!root) {
 		return payload;
 	}
-	const model = objectRecord(root.model);
-	const legacyTimeout = model?.modelUnloadTimeout;
+	const model = objectRecord(root["model"]);
+	const legacyTimeout = model?.["modelUnloadTimeout"];
 	if (legacyTimeout === undefined) {
 		return payload;
 	}
-	const global = objectRecord(root.global);
-	if (global?.modelUnloadTimeout !== undefined) {
+	const global = objectRecord(root["global"]);
+	if (global?.["modelUnloadTimeout"] !== undefined) {
 		return payload;
 	}
 	return {
@@ -57,8 +57,8 @@ function migrateOpenaiSttModel(payload: unknown): unknown {
 	if (!root) {
 		return payload;
 	}
-	const model = objectRecord(root.model);
-	const id = model?.model;
+	const model = objectRecord(root["model"]);
+	const id = model?.["model"];
 	if (typeof id !== "string" || !id.startsWith("openai:")) {
 		return payload;
 	}
@@ -76,7 +76,7 @@ const appSettingsBaseSchema = z.object({
 	audio: audioSettingsSchema.prefault({}),
 	general: generalSettingsSchema.prefault({}),
 	hotkey: hotkeySettingsSchema.prefault({}),
-	// `.catch([])` is the migration safety net: any persisted entry from the
+	// `.catch([])` is the migration safety net for persisted entries from the
 	// pre-v10 shape (find/replace/caseSensitive/wholeWord) will fail the new
 	// `term`-only parser and bring the whole array with it. The catch maps
 	// the failure to an empty array, matching the agreed-upon wipe semantics.

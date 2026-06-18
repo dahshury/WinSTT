@@ -179,7 +179,7 @@ export function DynamicIslandProvider({
 	);
 }
 
-export function useDynamicIslandSize(): ContextValue {
+function useDynamicIslandSize(): ContextValue {
 	const ctx = use(DynamicIslandContext);
 	if (!ctx) {
 		throw new Error(
@@ -224,6 +224,7 @@ export interface DynamicIslandProps extends Omit<HTMLMotionProps<"div">, "id"> {
 	 */
 	flatTop?: boolean;
 	id: string;
+	size?: SizePresets;
 }
 
 /**
@@ -252,38 +253,24 @@ function useFitContentHeight(
 			return;
 		}
 		const measure = () => setContentHeight(el.offsetHeight);
-		measure();
+		const frame = requestAnimationFrame(measure);
 		// Guarded for the test env / any webview without ResizeObserver — the
-		// one-shot `measure()` above still seeds an initial height there.
+		// one-shot scheduled measure above still seeds an initial height there.
 		if (typeof ResizeObserver === "undefined") {
-			return;
+			return () => cancelAnimationFrame(frame);
 		}
 		const ro = new ResizeObserver(measure);
 		ro.observe(el);
-		return () => ro.disconnect();
+		return () => {
+			cancelAnimationFrame(frame);
+			ro.disconnect();
+		};
 	}, [fitContent]);
-	// Freeze the last on-screen height so the close tween animates from the real
-	// size instead of collapsing to 0 when the content unmounts (mirrors
-	// `lastVisiblePreset`). A measured 0 means "content gone / not yet measured",
-	// so it never overwrites the frozen value.
-	const [lastVisibleHeight, setLastVisibleHeight] = useState<number | null>(
-		null,
-	);
 	const measuredHeight =
 		contentHeight && contentHeight > 0 ? contentHeight : null;
-	if (
-		isVisible &&
-		measuredHeight !== null &&
-		measuredHeight !== lastVisibleHeight
-	) {
-		setLastVisibleHeight(measuredHeight);
-	}
-	// While visible, prefer the fresh measurement but fall back to the frozen
-	// height during the first frame after a re-open (before ResizeObserver
-	// re-measures) so the island never flashes collapsed.
-	const sizingHeight = isVisible
-		? (measuredHeight ?? lastVisibleHeight)
-		: lastVisibleHeight;
+	// Keep the latest measured height through the close render; cleanup never
+	// clears contentHeight, so the shell can tween from its real last size.
+	const sizingHeight = isVisible ? measuredHeight : contentHeight;
 	return { contentRef, sizingHeight };
 }
 
@@ -301,10 +288,11 @@ export function DynamicIsland({
 	style,
 	flatTop = false,
 	fitContent = false,
+	size,
 	...rest
 }: DynamicIslandProps) {
 	const { state, presets: p } = useDynamicIslandSize();
-	const preset = p[state.size];
+	const preset = p[size ?? state.size];
 	// In fitContent mode, the preset's height is ignored — visibility is
 	// gated on width alone so the `empty` preset (0×0) still collapses the
 	// shell out of view.
@@ -363,10 +351,10 @@ export function DynamicIsland({
 		// the text never stretches. Omitted until first measured so the very
 		// first paint sizes to the intrinsic (auto) height with no jump.
 		if (sizingHeight !== null) {
-			animateTarget.height = sizingHeight;
+			animateTarget["height"] = sizingHeight;
 		}
 	} else {
-		animateTarget.height = sizingPreset.height;
+		animateTarget["height"] = sizingPreset.height;
 	}
 
 	const transition = {

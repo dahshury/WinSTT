@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::Emitter;
 
@@ -17,15 +17,14 @@ use crate::winstt::commands::ollama_pull::{
     clear_warmup_status as clear_last_warmup_status, set_warmup_status, LlmWarmupModelStatus,
     LlmWarmupOutcome, LlmWarmupStatus,
 };
-use crate::winstt::commands::settings::{enabled_ollama_models, read_settings};
+use crate::winstt::commands::settings::{enabled_ollama_models, read_settings_raw};
 use crate::winstt::llm::validate_loopback_ollama_endpoint;
 use crate::winstt::ollama_client::OllamaLoadResult;
 
 fn warmup_timestamp() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as f64)
-        .unwrap_or(0.0)
+        .map_or(0.0, |duration| duration.as_millis() as f64)
 }
 
 fn llm_model_key(endpoint: &str, model: &str) -> String {
@@ -69,18 +68,11 @@ impl LlmManager {
                 // policy (2m/15m/…) counts down from the LAST REAL USE on its
                 // own — a periodic re-warm would reset that countdown forever
                 // and the model would never unload, violating the setting.
-                if !booted || mgr.keep_alive_refresh_enabled() {
+                if !booted || mgr.ollama_keep_alive_refresh_enabled() {
                     booted = mgr.warm_enabled_models().await || booted;
                 }
             }
         });
-    }
-
-    /// True iff the shared model-lifetime policy is "never unload" — the only
-    /// policy under which the periodic keep-alive refresh should run.
-    fn keep_alive_refresh_enabled(&self) -> bool {
-        read_settings(&self.app).global.model_unload_timeout
-            == crate::winstt::settings_schema::ModelUnloadTimeout::Never
     }
 
     /// Run one warmup pass over the enabled Ollama models. Returns `true` when
@@ -92,7 +84,7 @@ impl LlmManager {
             return false;
         };
 
-        let settings = read_settings(&self.app);
+        let settings = read_settings_raw(&self.app);
         let endpoint = settings.llm.endpoint.clone();
         let models = enabled_ollama_models(&settings);
         if models.is_empty() {
@@ -222,9 +214,11 @@ impl LlmManager {
     }
 
     async fn unload_ollama_model(&self, endpoint: &str, model: &str) {
+        let started = Instant::now();
         self.ollama
             .unload_model(endpoint, model, OLLAMA_EVICT_TIMEOUT)
             .await;
+        crate::log_model_duration(&format!("ollama unload '{model}'"), started);
     }
 
     pub(super) fn mark_ollama_model_warm(&self, endpoint: &str, model: &str) {
@@ -266,6 +260,7 @@ impl LlmManager {
             };
         };
 
+        let started = Instant::now();
         match self
             .ollama
             .warmup_model(endpoint, model, keep_alive, OLLAMA_WARMUP_TIMEOUT)
@@ -274,26 +269,33 @@ impl LlmManager {
             OllamaLoadResult::Ok => {
                 self.lifecycle.mark_warm(model_key);
                 log::debug!("[llm] Ollama warm-up OK: {model}");
+                crate::log_model_duration(&format!("ollama warmup '{model}'"), started);
                 LlmWarmupModelStatus {
                     model: model.to_string(),
                     outcome: LlmWarmupOutcome::Ok,
                     error_body: None,
                 }
             }
-            OllamaLoadResult::Transport(err) => LlmWarmupModelStatus {
-                model: model.to_string(),
-                outcome: LlmWarmupOutcome::Unreachable,
-                error_body: Some(err),
-            },
-            OllamaLoadResult::Http { status, body } => LlmWarmupModelStatus {
-                model: model.to_string(),
-                outcome: if status == 404 {
-                    LlmWarmupOutcome::ModelNotFound
-                } else {
-                    LlmWarmupOutcome::LoadFailed
-                },
-                error_body: if body.is_empty() { None } else { Some(body) },
-            },
+            OllamaLoadResult::Transport(err) => {
+                crate::log_model_duration(&format!("ollama warmup unreachable '{model}'"), started);
+                LlmWarmupModelStatus {
+                    model: model.to_string(),
+                    outcome: LlmWarmupOutcome::Unreachable,
+                    error_body: Some(err),
+                }
+            }
+            OllamaLoadResult::Http { status, body } => {
+                crate::log_model_duration(&format!("ollama warmup failed '{model}'"), started);
+                LlmWarmupModelStatus {
+                    model: model.to_string(),
+                    outcome: if status == 404 {
+                        LlmWarmupOutcome::ModelNotFound
+                    } else {
+                        LlmWarmupOutcome::LoadFailed
+                    },
+                    error_body: if body.is_empty() { None } else { Some(body) },
+                }
+            }
         }
     }
 

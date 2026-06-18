@@ -9,10 +9,12 @@ import {
 	ThinkingIndicator,
 } from "@/shared/ui/thinking-indicator";
 import {
+	CancelButton,
+} from "./overlay-shell";
+import {
 	breatheVariants,
 	BUBBLE_SHADOW,
 	bubbleVariants,
-	CancelButton,
 	CHIP_SHADOW,
 	chipVariants,
 	GLASS_SURFACE,
@@ -20,7 +22,7 @@ import {
 	TRANSCRIBING_WORDS,
 	TRANSFORMING_WORDS,
 	UPLOADING_WORDS,
-} from "./overlay-shell";
+} from "./overlay-shell.shared";
 
 interface FloatingPillProps {
 	flags: {
@@ -42,17 +44,21 @@ interface FloatingPillProps {
 
 interface FloatingMorphSurfaceProps {
 	heightPx: number;
-	isPreviewActive: boolean;
-	isProcessing: boolean;
-	isSpeaking: boolean;
-	isThinking: boolean;
 	processingKind?: "dictation" | "transform";
 	processingStartedAt: number | null;
 	processingText: string;
 	processingWords: readonly string[] | undefined;
 	showCancelButton?: boolean;
-	stickyShow: boolean;
+	state: FloatingMorphSurfaceState;
 	zoom: number;
+}
+
+interface FloatingMorphSurfaceState {
+	isPreviewActive: boolean;
+	isProcessing: boolean;
+	isSpeaking: boolean;
+	isThinking: boolean;
+	stickyShow: boolean;
 }
 
 function useMeasuredMorphSize(active: boolean): {
@@ -67,7 +73,6 @@ function useMeasuredMorphSize(active: boolean): {
 
 	useLayoutEffect(() => {
 		if (!active) {
-			setSize(null);
 			return;
 		}
 		const element = ref.current;
@@ -98,23 +103,21 @@ function useMeasuredMorphSize(active: boolean): {
 		return () => observer.disconnect();
 	}, [active]);
 
-	return { ref, size };
+	return { ref, size: active ? size : null };
 }
 
 function FloatingMorphSurface({
 	heightPx,
-	isPreviewActive,
-	isProcessing,
-	isSpeaking,
-	isThinking,
 	processingKind = "dictation",
 	processingStartedAt,
 	processingText,
 	processingWords,
 	showCancelButton = true,
-	stickyShow,
+	state,
 	zoom,
 }: FloatingMorphSurfaceProps) {
+	const { isPreviewActive, isProcessing, isSpeaking, isThinking, stickyShow } =
+		state;
 	const chipWidth = Math.round(heightPx * 2.5 + 20);
 	const chipHeight = heightPx + 8;
 	const { ref: previewRef, size: previewSize } =
@@ -309,14 +312,16 @@ function FloatingBottomPill({
 					</AnimatePresence>
 					<FloatingMorphSurface
 						heightPx={heightPx}
-						isPreviewActive={isPreviewActive}
-						isProcessing={isProcessing}
-						isSpeaking={isSpeaking}
-						isThinking={isThinking}
 						processingStartedAt={processingStartedAt}
 						processingText={processingText}
 						processingWords={processingWords}
-						stickyShow={stickyShow}
+						state={{
+							isPreviewActive,
+							isProcessing,
+							isSpeaking,
+							isThinking,
+							stickyShow,
+						}}
 						zoom={zoom}
 					/>
 				</div>
@@ -341,16 +346,18 @@ function FloatingTransformPill({
 			<div className="flex h-screen w-screen items-end justify-center overflow-hidden pb-3">
 				<FloatingMorphSurface
 					heightPx={heightPx}
-					isPreviewActive={false}
-					isProcessing
-					isSpeaking={false}
-					isThinking
 					processingKind="transform"
 					processingStartedAt={transformStartedAt}
 					processingText={thinkingText}
 					processingWords={TRANSFORMING_WORDS}
 					showCancelButton={false}
-					stickyShow
+					state={{
+						isPreviewActive: false,
+						isProcessing: true,
+						isSpeaking: false,
+						isThinking: true,
+						stickyShow: true,
+					}}
 					zoom={zoom}
 				/>
 			</div>

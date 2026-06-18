@@ -169,7 +169,7 @@ export function useCloudKeyAutoRevert(
 		}
 		timerRef.current = window.setTimeout(() => {
 			timerRef.current = null;
-			// Closed-over values are the latest: any change reset this timer with a
+			// Closed-over values stay current because every change resets this timer with a
 			// fresh closure, so when it fires nothing newer is pending.
 			const next: KeySnapshot = {
 				elevenlabs: elevenlabsKey,

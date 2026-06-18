@@ -618,8 +618,7 @@ impl NativeZipformerStreamingEngine {
         let enc_name = self
             .encoder_output_names
             .first()
-            .map(String::as_str)
-            .unwrap_or("encoder_out");
+            .map_or("encoder_out", String::as_str);
         let enc = out_to_f32(&outputs[enc_name])?;
         drop(outputs);
         let enc3 = enc

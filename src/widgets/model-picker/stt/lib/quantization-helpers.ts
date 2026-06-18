@@ -88,15 +88,19 @@ export function getQuantizationOptions(model: ModelInfo): QuantizationOption[] {
 	// is NOT a badge: the recommended precision is instead a MARK on whichever
 	// concrete badge the backend's RAM/VRAM-aware resolver picks (the model
 	// state's `effective_quantization`), and clicking the card BODY selects it.
-	return ONNX_QUANTIZATIONS.filter((value) => available.has(value))
-		.map((value) => ({
-			value,
-			label: QUANTIZATION_LABELS[value].label,
-			tooltip: QUANTIZATION_LABELS[value].tooltip,
-		}))
-		.sort(
-			(a, b) => QUANTIZATION_WEIGHT[b.value] - QUANTIZATION_WEIGHT[a.value],
-		);
+	return ONNX_QUANTIZATIONS.flatMap((value) =>
+		available.has(value)
+			? [
+					{
+						value,
+						label: QUANTIZATION_LABELS[value].label,
+						tooltip: QUANTIZATION_LABELS[value].tooltip,
+					},
+				]
+			: [],
+	).sort(
+		(a, b) => QUANTIZATION_WEIGHT[b.value] - QUANTIZATION_WEIGHT[a.value],
+	);
 }
 
 /**

@@ -36,7 +36,7 @@ if (!container) {
 // the beacon in the render body flooded winstt.log with identical "render reached" lines.
 let settingsBeaconSent = false;
 
-function SettingsBootstrap() {
+export function SettingsBootstrap() {
 	const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
 	useSyncSettings(); // settingsLoad() -> backend hydration gate + write-back on change
 	useSyncActiveModel(); // active-model reconcile for the model tab
@@ -54,10 +54,12 @@ function SettingsBootstrap() {
 			cancelled = true;
 		};
 	}, [setGpuInfo]);
-	if (!settingsBeaconSent) {
-		settingsBeaconSent = true;
-		diagBeacon("settings", "SettingsBootstrap render reached");
-	}
+	useEffect(() => {
+		if (!settingsBeaconSent) {
+			settingsBeaconSent = true;
+			diagBeacon("settings", "SettingsBootstrap render reached");
+		}
+	}, []);
 	return <SettingsPage />;
 }
 

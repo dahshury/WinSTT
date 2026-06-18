@@ -22,7 +22,7 @@
 // `None` (the client mirror covers the UI); the wiring + payload types are real.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -34,7 +34,7 @@ use crate::winstt::managers::DownloadManager;
 use crate::winstt::stt::cache_probe::{CacheState, ProbeModel};
 
 use super::catalog_data::{self, ModelCacheInfo, ModelsWithState, SystemInfoEntry};
-use super::settings::read_settings;
+use super::settings::read_settings_raw;
 use super::stt::picker_accelerator;
 
 /// Active-runtime snapshot — byte-identical to the renderer's `RuntimeInfoPayload` (ipc-client.ts):
@@ -120,7 +120,7 @@ pub fn runtime_info_snapshot(
 ) -> RuntimeInfoPayload {
     let accel = picker_accelerator(app);
     let (device, is_gpu, providers) = accel_runtime(accel);
-    let settings = read_settings(app);
+    let settings = read_settings_raw(app);
     let loaded = transcription.get_current_model();
     let model = loaded.or_else(|| {
         let m = settings.model.model.clone();
@@ -131,7 +131,7 @@ pub fn runtime_info_snapshot(
         }
     });
     let realtime_model = {
-        let rt = settings.model.realtime_model.clone();
+        let rt = settings.model.realtime_model;
         if rt.is_empty() {
             None
         } else {
@@ -330,6 +330,8 @@ fn enumerate_gpus() -> Vec<GpuInfoEntry> {
             CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
         };
         let mut gpus = Vec::new();
+        // SAFETY: DXGI factory and adapter interfaces are used only inside this enumeration
+        // block, and each fallible COM call is checked before its result is read.
         unsafe {
             let factory: IDXGIFactory1 = match CreateDXGIFactory1() {
                 Ok(f) => f,
@@ -383,17 +385,20 @@ fn enumerate_gpus() -> Vec<GpuInfoEntry> {
 /// budget. DXGI exposes only the static dedicated cap (not live free VRAM), which is the right
 /// "can this model fit" upper bound for the auto choice.
 pub(crate) fn detected_max_vram_bytes() -> u64 {
-    enumerate_gpus()
-        .iter()
-        .map(|g| g.total_vram_bytes)
-        .max()
-        .unwrap_or(0)
+    static MAX_VRAM_BYTES: OnceLock<u64> = OnceLock::new();
+    *MAX_VRAM_BYTES.get_or_init(|| {
+        enumerate_gpus()
+            .iter()
+            .map(|g| g.total_vram_bytes)
+            .max()
+            .unwrap_or(0)
+    })
 }
 
 /// Whether the persisted device intent is GPU (helper reused by the runtime chip + tests).
 pub fn persisted_device_is_gpu(app: &AppHandle) -> bool {
     !matches!(
-        crate::winstt::stt::resolve_accelerator(read_settings(app).model.device),
+        crate::winstt::stt::resolve_accelerator(read_settings_raw(app).model.device),
         crate::winstt::stt::Accelerator::Cpu
     )
 }

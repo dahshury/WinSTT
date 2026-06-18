@@ -30,7 +30,11 @@ import {
 	useResetOnOverlayShow,
 	useTransparentBody,
 } from "./overlay-hit-regions";
-import { ICON_PRESET_PX, PRESET_HEIGHT_PX, toPreset } from "./overlay-shell";
+import {
+	ICON_PRESET_PX,
+	PRESET_HEIGHT_PX,
+	toPreset,
+} from "./overlay-shell.shared";
 import { TtsIslandLayer, useTtsIslandBridge } from "./TtsIsland";
 import { TtsPlaybackMount } from "./TtsPlaybackMount";
 

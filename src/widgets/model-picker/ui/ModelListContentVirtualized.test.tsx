@@ -304,7 +304,7 @@ describe("InlineModelMeta", () => {
 				input_modalities: ["audio"],
 				output_modalities: ["transcription"],
 			},
-			context_length: undefined,
+			context_length: asInvalid<never>(undefined),
 			endpoints: [
 				makeEndpoint({ provider_name: "A", tag: "a" }),
 				makeEndpoint({ provider_name: "B", tag: "b" }),
@@ -386,7 +386,7 @@ describe("InlineModelMeta", () => {
 					input_modalities: ["audio"],
 					output_modalities: ["transcription"],
 				},
-				context_length: undefined,
+				context_length: asInvalid<never>(undefined),
 				endpoints: [],
 				id: testCase.id,
 				name: testCase.name,
@@ -444,7 +444,7 @@ describe("InlineModelMeta", () => {
 
 	test("renders model-level OpenRouter capability badges without endpoints", () => {
 		const m = makeModel({
-			context_length: undefined,
+			context_length: asInvalid<never>(undefined),
 			endpoints: [],
 			supported_parameters: ["structured_outputs"],
 			variant: "thinking",
@@ -476,7 +476,7 @@ describe("InlineModelMeta", () => {
 			}),
 		];
 		const m = makeModel({
-			context_length: undefined,
+			context_length: asInvalid<never>(undefined),
 			endpoints,
 			supported_parameters: ["structured_outputs"],
 		});
@@ -1449,17 +1449,21 @@ describe("VirtualizedRow", () => {
 			isOpen: true,
 			index: 1,
 		};
-		let selected: {
+		type SelectedModel = {
 			modelId: string | undefined;
 			providerSlug?: string;
-		} | null = null;
+		};
+		let selected: SelectedModel | null = null;
 		render(
 			<TooltipProvider.Provider>
 				<Combobox.Root items={[m.id]}>
 					<VirtualizedRow
 						item={item}
 						onSelectModel={(modelId, providerSlug) => {
-							selected = { modelId, providerSlug };
+							selected =
+								providerSlug === undefined
+									? { modelId }
+									: { modelId, providerSlug };
 						}}
 						onToggleModelExpanded={() => undefined}
 						parsedModelId={undefined}
@@ -1471,7 +1475,7 @@ describe("VirtualizedRow", () => {
 
 		fireEvent.click(screen.getByText("Together AI"));
 
-		expect(selected).toEqual({
+		expect(selected as unknown as SelectedModel).toEqual({
 			modelId: "openai/vr3",
 			providerSlug: "together",
 		});

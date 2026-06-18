@@ -25,6 +25,9 @@
 
   /* Surface scale — blue-tinted oklch, same hue as the app */
   --surface-0: oklch(7.5% 0.015 265);
+  /* Nav bar — a touch darker than the page (surface-0) so the top bar reads as
+     a distinct band rather than blending into the background. */
+  --surface-nav: oklch(5.5% 0.015 265);
   --surface-1: oklch(9.5% 0.015 265);
   --surface-2: oklch(12% 0.015 265);
   --surface-3: oklch(16% 0.015 265);
@@ -68,6 +71,13 @@
   --color-fd-accent: var(--surface-3);
   --color-fd-accent-foreground: var(--fg-strong);
   --color-fd-ring: oklch(70% 0.18 260);
+}
+
+/* Landing-page top bar: override fumadocs' `bg-fd-background/80` (which equals
+   the page surface) with a slightly darker surface so the nav stands apart from
+   the background. Keeps the backdrop blur from the original utility. */
+#nd-nav > div {
+  background-color: var(--surface-nav);
 }
 
 #nd-sidebar [data-active="true"],

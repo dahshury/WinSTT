@@ -60,15 +60,19 @@ export function deriveActiveState(
  * Derives an {@link AgentState} from the visualizer store.
  */
 export function useAgentState(): AgentState {
-	const isRecording = useVisualizerStore((s) => s.isRecording);
-	const isSpeaking = useVisualizerStore((s) => s.isSpeaking);
-	const audioLevel = useVisualizerStore((s) => s.audioLevel);
 	const recordingMode = useSettingsStore(
 		(s) => s.settings.general?.recordingMode ?? "ptt",
 	);
 
-	if (!isRecording && audioLevel < AUDIBLE_LEVEL_THRESHOLD) {
-		return "disconnected";
-	}
-	return deriveActiveState(isRecording, isSpeaking, audioLevel, recordingMode);
+	return useVisualizerStore((s) => {
+		if (!s.isRecording && s.audioLevel < AUDIBLE_LEVEL_THRESHOLD) {
+			return "disconnected";
+		}
+		return deriveActiveState(
+			s.isRecording,
+			s.isSpeaking,
+			s.audioLevel,
+			recordingMode,
+		);
+	});
 }

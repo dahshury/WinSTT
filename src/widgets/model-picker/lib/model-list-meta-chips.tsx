@@ -14,7 +14,6 @@ import type {
 	OpenRouterPricing,
 } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { FeatureSourceIcons } from "../ui/EndpointFeatureIcons";
 import { ModelModalityIcons } from "../ui/ModelModalityIcons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
@@ -23,46 +22,23 @@ import {
 	hasDisplayableFeatures,
 } from "./endpoint-feature-icons-test-helpers";
 import {
-	getFeaturedEndpoint,
 	getPricingClassName,
 	getPricingLabel,
+} from "./model-list-content-virtualized-utils/class-names";
+import {
+	getFeaturedEndpoint,
+} from "./model-list-content-virtualized-utils/header";
+import {
 	isPositiveNumber,
-	resolveMakerIconSrc,
 	shouldRenderInlineMeta,
-} from "./model-list-content-virtualized-utils";
+} from "./model-list-content-virtualized-utils/items";
 import {
 	formatContextLength,
 	getPricingTier,
 	type getVariantClasses,
 	getVariantIcon,
 } from "./model-selector-display-utils";
-import { formatMaker } from "./model-selector-utils";
 import { MODEL_VARIANT_INFO } from "./model-variant-utils";
-
-export function MakerIcon({ maker }: { maker: string | undefined }) {
-	const level = Math.min(useSurface() + 1, 8);
-	const providerIcon = resolveMakerIconSrc(maker);
-	if (!providerIcon) {
-		return null;
-	}
-	return (
-		<span
-			className={cn(
-				"flex size-4 shrink-0 items-center justify-center overflow-hidden rounded border border-border/50 p-0.5",
-				surfaceBg(level),
-			)}
-		>
-			<img
-				alt={`${formatMaker(maker)} icon`}
-				className="size-full object-contain"
-				height={16}
-				loading="lazy"
-				src={providerIcon}
-				width={16}
-			/>
-		</span>
-	);
-}
 
 function ContextChip({
 	contextLength,

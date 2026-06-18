@@ -13,7 +13,80 @@ use crate::winstt::stt::BackendRoute;
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::mpsc::{self, Sender};
+use std::time::{Duration, Instant};
 use tauri::Emitter;
+
+const SLOW_TRANSCRIPTION_MS: u128 = 30_000;
+const TRANSCRIPTION_WATCHDOG_THRESHOLDS_MS: [u64; 4] = [10_000, 30_000, 60_000, 120_000];
+const TRANSCRIPTION_SAMPLE_RATE: usize = 16_000;
+
+fn samples_to_ms(samples: usize) -> u64 {
+    ((samples as u128 * 1000) / TRANSCRIPTION_SAMPLE_RATE as u128) as u64
+}
+
+struct TranscriptionWatchdog {
+    stop: Sender<()>,
+}
+
+impl TranscriptionWatchdog {
+    fn start(
+        app_handle: tauri::AppHandle,
+        request_id: String,
+        model_id: String,
+        raw_samples: usize,
+        local_samples: usize,
+        started: Instant,
+    ) -> Self {
+        let (stop, stop_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut previous = Duration::from_millis(0);
+            for threshold_ms in TRANSCRIPTION_WATCHDOG_THRESHOLDS_MS {
+                let threshold = Duration::from_millis(threshold_ms);
+                match stop_rx.recv_timeout(threshold.saturating_sub(previous)) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                previous = threshold;
+
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                warn!(
+                    "[stt][{request_id}] transcription still running after {elapsed_ms}ms model='{model_id}' raw_audio_ms={} local_audio_ms={}",
+                    samples_to_ms(raw_samples),
+                    samples_to_ms(local_samples)
+                );
+                crate::winstt::observability::IssueBuilder::new(
+                    "stt",
+                    "transcription_watchdog",
+                    "STT transcription is still running",
+                )
+                .detail(format!("still running after {elapsed_ms}ms"))
+                .kind("timeout")
+                .severity("warn")
+                .model_id(model_id.clone())
+                .request_id(request_id.clone())
+                .duration_ms(elapsed_ms)
+                .user_visible(false)
+                .context("thresholdMs", threshold_ms.to_string())
+                .context("rawSamples", raw_samples.to_string())
+                .context("rawAudioMs", samples_to_ms(raw_samples).to_string())
+                .context("localFinalDecodeSamples", local_samples.to_string())
+                .context(
+                    "localFinalDecodeAudioMs",
+                    samples_to_ms(local_samples).to_string(),
+                )
+                .record(Some(&app_handle));
+            }
+        });
+        Self { stop }
+    }
+}
+
+impl Drop for TranscriptionWatchdog {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+    }
+}
 
 impl TranscriptionManager {
     pub fn get_current_model(&self) -> Option<String> {
@@ -99,6 +172,16 @@ impl TranscriptionManager {
                     error!(
                         "[stt][{request_id}] cloud transcription failed for model '{desired}': {e}"
                     );
+                    crate::winstt::observability::IssueBuilder::new(
+                        "stt",
+                        "cloud_transcription",
+                        "Cloud STT transcription failed",
+                    )
+                    .detail(e.to_string())
+                    .model_id(desired.to_string())
+                    .request_id(request_id.clone())
+                    .duration_ms(st.elapsed().as_millis() as u64)
+                    .record(Some(&self.app_handle));
                     return Err(e);
                 }
             };
@@ -106,8 +189,19 @@ impl TranscriptionManager {
             return Ok(filtered);
         }
 
-        self.load_model_blocking(desired)
-            .map_err(|e| anyhow::anyhow!("failed to load model '{desired}': {e}"))?;
+        self.load_model_blocking(desired).map_err(|e| {
+            crate::winstt::observability::IssueBuilder::new(
+                "stt",
+                "model_load_for_transcription",
+                "STT model could not be prepared for transcription",
+            )
+            .detail(e.to_string())
+            .model_id(desired.to_string())
+            .request_id(request_id.clone())
+            .duration_ms(st.elapsed().as_millis() as u64)
+            .record(Some(&self.app_handle));
+            anyhow::anyhow!("failed to load model '{desired}': {e}")
+        })?;
 
         let local_audio = local_final_decode_audio_with_silence(&audio);
         debug!(
@@ -137,6 +231,16 @@ impl TranscriptionManager {
                 error!(
                     "[stt][{request_id}] no loaded transcription engine for selected model '{desired}'"
                 );
+                crate::winstt::observability::IssueBuilder::new(
+                    "stt",
+                    "transcription",
+                    "No STT engine was loaded for transcription",
+                )
+                .detail("engine state was empty after model load wait")
+                .model_id(desired.to_string())
+                .request_id(request_id.clone())
+                .severity("error")
+                .record(Some(&self.app_handle));
                 return Err(anyhow::anyhow!("Model is not loaded for transcription."));
             }
         }
@@ -161,6 +265,16 @@ impl TranscriptionManager {
                     error!(
                         "[stt][{request_id}] engine unavailable after load wait for selected model '{desired}'"
                     );
+                    crate::winstt::observability::IssueBuilder::new(
+                        "stt",
+                        "transcription",
+                        "STT engine became unavailable before transcription",
+                    )
+                    .detail("engine mutex was empty after load wait")
+                    .model_id(desired.to_string())
+                    .request_id(request_id.clone())
+                    .severity("error")
+                    .record(Some(&self.app_handle));
                     return Err(anyhow::anyhow!(
                         "Model failed to load after auto-load attempt. Please check your model settings."
                     ));
@@ -170,11 +284,22 @@ impl TranscriptionManager {
             // Release the lock before transcribing — no mutex held during the engine call
             drop(engine_guard);
 
+            let _watchdog = TranscriptionWatchdog::start(
+                app_handle.clone(),
+                request_id.clone(),
+                desired.to_string(),
+                audio.len(),
+                local_audio.len(),
+                st,
+            );
             let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
                 match &mut engine {
-                    LoadedEngine::Winstt(winstt_engine) => {
-                        backend.decode(&app_handle, winstt_engine.as_mut(), &local_audio)
-                    }
+                    LoadedEngine::Winstt(winstt_engine) => backend.decode(
+                        &app_handle,
+                        winstt_engine.as_mut(),
+                        &local_audio,
+                        &request_id,
+                    ),
                 }
             }));
             match transcribe_result {
@@ -197,6 +322,17 @@ impl TranscriptionManager {
                             }
                             self.clear_warmed_model();
                             let detail = e.to_string();
+                            crate::winstt::observability::IssueBuilder::new(
+                                "stt",
+                                "transcription",
+                                "STT transcription failed and the engine was unloaded",
+                            )
+                            .detail(detail.clone())
+                            .model_id(desired.to_string())
+                            .request_id(request_id.clone())
+                            .duration_ms(st.elapsed().as_millis() as u64)
+                            .severity("error")
+                            .record(Some(&self.app_handle));
                             let _ = self.app_handle.emit(
                                 crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
                                 ModelStateEvent {
@@ -216,6 +352,16 @@ impl TranscriptionManager {
                         error!(
                             "[stt][{request_id}] transcription failed for model '{desired}': {e}"
                         );
+                        crate::winstt::observability::IssueBuilder::new(
+                            "stt",
+                            "transcription",
+                            "STT transcription failed",
+                        )
+                        .detail(e.to_string())
+                        .model_id(desired.to_string())
+                        .request_id(request_id.clone())
+                        .duration_ms(st.elapsed().as_millis() as u64)
+                        .record(Some(&self.app_handle));
                         e
                     })?
                 }
@@ -233,6 +379,18 @@ impl TranscriptionManager {
                         "[stt][{request_id}] transcription engine panicked for model '{desired}': {}. Model has been unloaded.",
                         panic_msg
                     );
+                    crate::winstt::observability::IssueBuilder::new(
+                        "stt",
+                        "transcription",
+                        "STT transcription engine panicked",
+                    )
+                    .detail(panic_msg.clone())
+                    .kind("panic")
+                    .severity("error")
+                    .model_id(desired.to_string())
+                    .request_id(request_id.clone())
+                    .duration_ms(st.elapsed().as_millis() as u64)
+                    .record(Some(&self.app_handle));
                     engine.shutdown();
 
                     // Clear the model ID so it will be reloaded on next attempt
@@ -272,6 +430,23 @@ impl TranscriptionManager {
             output_chars,
             output_chars == 0
         );
+        let elapsed_ms = (et - st).as_millis();
+        if elapsed_ms >= SLOW_TRANSCRIPTION_MS {
+            crate::winstt::observability::IssueBuilder::new(
+                "stt",
+                "transcription",
+                "STT transcription was slow",
+            )
+            .detail(format!("completed in {elapsed_ms}ms"))
+            .kind("timeout")
+            .severity("warn")
+            .model_id(desired.to_string())
+            .request_id(request_id)
+            .duration_ms(elapsed_ms as u64)
+            .remediation("Use a smaller or quantized model, shorten the dictation, or switch execution device.")
+            .user_visible(false)
+            .record(Some(&self.app_handle));
+        }
 
         self.maybe_unload_immediately("transcription");
 

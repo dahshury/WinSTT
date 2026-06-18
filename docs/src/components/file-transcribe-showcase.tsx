@@ -31,6 +31,13 @@ const DROP_AT = 0.16; // cursor reaches the box / files drop in
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 const ease = (n: number) => 1 - (1 - n) * (1 - n); // easeOutQuad
 
+function initialLoopProgress(): number {
+  const reduce =
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  return reduce ? 0.95 : 0;
+}
+
 function FileGlyph({ color }: { color: string }) {
   return (
     <svg
@@ -198,14 +205,13 @@ function QueueRowView({ f, st }: { f: ShowFile; st: RowState }) {
 export function ShowcaseFileTranscribe() {
   // Single looping clock (0→1). Falls back to a static "done" frame for
   // reduced-motion. Loop ≈ 7s.
-  const [t, setT] = useState(0);
+  const [t, setT] = useState(initialLoopProgress);
 
   useEffect(() => {
     const reduce =
       typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     if (reduce) {
-      setT(0.95);
       return;
     }
     let frame = 0;
@@ -217,7 +223,8 @@ export function ShowcaseFileTranscribe() {
   }, []);
 
   const dropped = t >= DROP_AT;
-  const states = FILES.map((f) => rowState(f, t, dropped));
+  const rows = FILES.map((file) => ({ file, state: rowState(file, t, dropped) }));
+  const states = rows.map((r) => r.state);
   const done = states.filter((s) => s.status === "complete").length;
   const anyActive = states.some((s) => s.status === "transcribing");
   const header = anyActive
@@ -237,7 +244,7 @@ export function ShowcaseFileTranscribe() {
 
   return (
     <figure className="shot not-prose my-7">
-      <div className="shot-frame showcase-frame" role="img" aria-label="WinSTT transcribing dropped files">
+      <div className="shot-frame showcase-frame" aria-label="WinSTT transcribing dropped files">
         <div className="shot-bar" aria-hidden="true">
           <span className="shot-dot shot-dot--r" />
           <span className="shot-dot shot-dot--y" />
@@ -278,8 +285,8 @@ export function ShowcaseFileTranscribe() {
             {/* Rows (after drop) OR the empty drop prompt (before) */}
             {dropped ? (
               <div className="ftx-rows">
-                {FILES.map((f, i) => (
-                  <QueueRowView f={f} key={f.name} st={states[i]} />
+                {rows.map(({ file, state }) => (
+                  <QueueRowView f={file} key={file.name} st={state} />
                 ))}
               </div>
             ) : (

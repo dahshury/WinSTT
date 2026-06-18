@@ -16,11 +16,13 @@ export function normalizeSttLanguageCode(language: string): string {
 
 function uniqueNormalizedLanguages(languages: readonly string[]): string[] {
 	const normalized: string[] = [];
+	const seen = new Set<string>();
 	for (const raw of languages) {
 		const language = normalizeSttLanguageCode(raw);
-		if (language.length === 0 || normalized.includes(language)) {
+		if (language.length === 0 || seen.has(language)) {
 			continue;
 		}
+		seen.add(language);
 		normalized.push(language);
 	}
 	return normalized;

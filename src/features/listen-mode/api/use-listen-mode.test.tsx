@@ -251,6 +251,11 @@ beforeEach(() => {
 				...initialSettings.model,
 				realtimeModel: STREAMING_MODEL_ID,
 			},
+			general: {
+				...initialSettings.general,
+				onboarded: true,
+				onboardedAt: 1,
+			},
 		},
 	});
 	useConnectionStore.setState({ connectionStatus: "disconnected" });
@@ -325,6 +330,8 @@ function setRecordingMode(
 			},
 			general: {
 				...initialSettings.general,
+				onboarded: true,
+				onboardedAt: 1,
 				recordingMode,
 				loopbackDeviceIndex: 3,
 			},
@@ -608,6 +615,8 @@ describe("useListenMode", () => {
 				},
 				general: {
 					...initialSettings.general,
+					onboarded: true,
+					onboardedAt: 1,
 					recordingMode: "listen",
 					outputDeviceId: "",
 				},
@@ -632,6 +641,8 @@ describe("useListenMode", () => {
 				},
 				general: {
 					...initialSettings.general,
+					onboarded: true,
+					onboardedAt: 1,
 					recordingMode: "listen",
 					outputDeviceId: "headset-sink",
 				},

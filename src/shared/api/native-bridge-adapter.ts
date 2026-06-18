@@ -26,6 +26,7 @@
 
 import { listen as tauriListen } from "@tauri-apps/api/event";
 import { commands, type UpdaterCommandResult } from "@/bindings";
+import { emitFileDragDropEvent } from "./file-drag-drop";
 import { IPC } from "./ipc-channels";
 
 // Exhaustiveness guard for discriminated-union switches. Reaching it is a
@@ -44,10 +45,10 @@ function assertNever(x: never): never {
 // per the adapter's typed-IPC invariant — there is no untyped `invoke(string)`
 // here. The remaining string transport is event LISTENING (`evt.listen`).
 const evt = {
-	listen: tauriListen as unknown as (
+	listen: (
 		event: string,
 		handler: (e: { payload: unknown }) => void,
-	) => Promise<() => void>,
+	) => tauriListen<unknown>(event, handler),
 };
 
 // ── Route kinds ───────────────────────────────────────────────────────────────
@@ -721,6 +722,13 @@ async function wireDragDrop(): Promise<void> {
 			if (payload.type === "enter" || payload.type === "drop") {
 				rememberDropPaths(payload.paths);
 			}
+			emitFileDragDropEvent({
+				type: payload.type,
+				paths:
+					payload.type === "enter" || payload.type === "drop"
+						? [...payload.paths]
+						: [],
+			});
 		});
 	} catch {
 		// Not in a Tauri window context — drag-drop bridge unavailable.

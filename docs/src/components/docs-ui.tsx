@@ -40,7 +40,13 @@ import {
   WandSparkles,
   Waypoints,
 } from "lucide-react";
-import type { CSSProperties, ElementType, ReactNode } from "react";
+import {
+  isValidElement,
+  type CSSProperties,
+  type ElementType,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { withBasePath } from "@/lib/site";
 
 // Curated icon registry so MDX can pass `icon="mic"` instead of a JSX element.
@@ -73,7 +79,7 @@ const ICONS: Record<string, LucideIcon> = {
   quality: Gauge,
 };
 
-function renderIcon(icon: ReactNode | undefined): ReactNode {
+function RenderIcon({ icon }: { icon: ReactNode | undefined }) {
   if (icon == null) return null;
   if (typeof icon === "string") {
     const I = ICONS[icon] ?? Sparkles;
@@ -467,7 +473,9 @@ export function BentoCell({
       }
     >
       {icon ? (
-        <span className="feature-icon bento-icon">{renderIcon(icon)}</span>
+        <span className="feature-icon bento-icon">
+          <RenderIcon icon={icon} />
+        </span>
       ) : null}
       <h3 className="bento-title">{title}</h3>
       {children ? <div className="bento-body">{children}</div> : null}
@@ -496,35 +504,81 @@ export interface ModelTableProps {
   caption?: ReactNode;
 }
 
+const EMPTY_NUMERIC_COLUMNS: number[] = [];
+
+function nodeKey(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "empty";
+  if (
+    typeof node === "string" ||
+    typeof node === "number" ||
+    typeof node === "bigint"
+  ) {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(nodeKey).join("");
+  }
+  if (isValidElement(node)) {
+    const element = node as ReactElement<{ children?: ReactNode }>;
+    if (element.key != null) return String(element.key);
+    return nodeKey(element.props.children);
+  }
+  return String(node);
+}
+
+function keyedNodes<T extends ReactNode>(
+  nodes: readonly T[],
+): { key: string; node: T }[] {
+  const seen = new Map<string, number>();
+  return nodes.map((node) => {
+    const base = nodeKey(node);
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return { key: count === 0 ? base : `${base}-${count + 1}`, node };
+  });
+}
+
+function keyedRows(rows: readonly ReactNode[][]): {
+  key: string;
+  row: ReactNode[];
+}[] {
+  const seen = new Map<string, number>();
+  return rows.map((row) => {
+    const base = row.map(nodeKey).join("|");
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return { key: count === 0 ? base : `${base}-${count + 1}`, row };
+  });
+}
+
 export function ModelTable({
   head,
   rows,
-  numeric = [],
+  numeric = EMPTY_NUMERIC_COLUMNS,
   dense,
   caption,
 }: ModelTableProps) {
   const num = new Set(numeric);
+  const headerCells = keyedNodes(head);
+  const tableRows = keyedRows(rows);
   return (
     <div className="mtable-wrap not-prose">
       <table className={`mtable ${dense ? "mtable--dense" : ""}`}>
         {caption ? <caption className="mtable-cap">{caption}</caption> : null}
         <thead>
           <tr>
-            {head.map((h, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: static, never-reordered header cells
-              <th key={i} className={num.has(i) ? "is-num" : ""}>
-                {h}
+            {headerCells.map(({ key, node }, i) => (
+              <th key={key} className={num.has(i) ? "is-num" : ""}>
+                {node}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, ri) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: static, never-reordered rows
-            <tr key={ri}>
-              {row.map((cell, ci) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: static, never-reordered cells
-                <td key={ci} className={num.has(ci) ? "is-num" : ""}>
+          {tableRows.map(({ key, row }) => (
+            <tr key={key}>
+              {keyedNodes(row).map(({ key: cellKey, node: cell }, ci) => (
+                <td key={cellKey} className={num.has(ci) ? "is-num" : ""}>
                   {cell}
                 </td>
               ))}
@@ -550,8 +604,7 @@ export function Combo({ keys }: { keys: string }) {
   return (
     <span className="combo">
       {parts.map((p, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: fixed key sequence
-        <span key={i} className="combo-part">
+        <span key={p} className="combo-part">
           {i > 0 ? (
             <span className="combo-plus" aria-hidden="true">
               +
@@ -571,9 +624,8 @@ export interface ShortcutLegendProps {
 export function ShortcutLegend({ rows }: ShortcutLegendProps) {
   return (
     <div className="legend not-prose">
-      {rows.map((r, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: static, never-reordered rows
-        <div className="legend-row" key={i}>
+      {rows.map((r) => (
+        <div className="legend-row" key={`${nodeKey(r.action)}-${r.keys}`}>
           <div className="legend-keys">
             <Combo keys={r.keys} />
           </div>

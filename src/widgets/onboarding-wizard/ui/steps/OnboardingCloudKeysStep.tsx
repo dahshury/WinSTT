@@ -2,14 +2,18 @@ import { Button as BaseButton } from "@base-ui/react/button";
 import { ArrowUpRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { AnimatePresence, m } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import { useCredentialStatus } from "@/entities/cloud-stt-credential";
 import { useSettingsStore } from "@/entities/setting";
 import { CloudModelSelect } from "@/features/select-cloud-stt-model";
-import { verifyCredential } from "@/features/verify-credentials";
-import type { IntegrationCloudProvider } from "@/shared/api/models";
+import {
+	type VerifyResponse,
+	verifyCredential,
+	verifyCredentialCommand,
+} from "@/features/verify-credentials";
+import type { CloudSttProvider } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
@@ -20,9 +24,10 @@ import { useOnboardingWizardStore } from "../../model/wizard-store";
 
 interface ProviderMeta {
 	caption: string;
-	// Onboarding collects only the integrations-backed STT keys (OpenAI /
-	// ElevenLabs); OpenRouter is configured later via its shared LLM key.
-	id: IntegrationCloudProvider;
+	// Both selectable cloud STT providers. ElevenLabs stores its key in
+	// `integrations.elevenlabs`; OpenRouter reuses the single shared LLM key
+	// (`llm.openrouterApiKey`) and is verified via the same probe command.
+	id: CloudSttProvider;
 	keyPlaceholder: string;
 	keyUrl: string;
 	label: string;
@@ -36,13 +41,32 @@ const PROVIDERS: readonly ProviderMeta[] = [
 		keyUrl: "https://elevenlabs.io/app/settings/api-keys",
 		keyPlaceholder: "Paste your ElevenLabs API key",
 	},
+	{
+		id: "openrouter",
+		label: "OpenRouter",
+		caption: "One key — cloud transcription models + LLM cleanup.",
+		keyUrl: "https://openrouter.ai/keys",
+		keyPlaceholder: "sk-or-v1-…",
+	},
 ];
 
-const PROVIDER_OPTIONS: readonly SwitcherOption<IntegrationCloudProvider>[] =
+const PROVIDER_OPTIONS: readonly SwitcherOption<CloudSttProvider>[] =
 	PROVIDERS.map((p) => ({
 		value: p.id,
 		label: p.label,
 	}));
+
+/** Map a verify-credentials probe response to an onboarding status-pill entry. */
+function statusFromVerify(response: VerifyResponse): {
+	lastError?: string;
+	status: string;
+} {
+	if (response.ok) {
+		return { status: "verified" };
+	}
+	const status = response.code === "network" ? "offline" : "invalid";
+	return { status, ...(response.message ? { lastError: response.message } : {}) };
+}
 
 const VERIFY_BUTTON_MOTION_PROPS = {
 	whileHover: { y: -1 },
@@ -62,11 +86,7 @@ const MotionBaseButton = m.create(BaseButton);
  */
 export function OnboardingCloudKeysStep() {
 	const t = useTranslations("onboarding");
-	const [provider, setProvider] =
-		useState<IntegrationCloudProvider>("elevenlabs");
-	const apiKey = useSettingsStore(
-		(s) => s.settings.integrations[provider].apiKey,
-	);
+	const [provider, setProvider] = useState<CloudSttProvider>("elevenlabs");
 	const activeModel = useSettingsStore((s) => s.settings.model.model);
 	const integrations = useSettingsStore((s) => s.settings.integrations);
 	// OpenRouter STT reuses the single LLM key (no integrations entry).
@@ -74,9 +94,31 @@ export function OnboardingCloudKeysStep() {
 		(s) => s.settings.llm.openrouterApiKey,
 	);
 	const updateIntegrations = useSettingsStore((s) => s.updateIntegrations);
+	const updateLlmSettings = useSettingsStore((s) => s.updateLlmSettings);
 	const updateModelSettings = useSettingsStore((s) => s.updateModelSettings);
-	const status = useCredentialStatus(provider);
+	// ElevenLabs status lives in the shared credential store; OpenRouter has no
+	// integrations row, so its probe status is tracked locally (same pattern the
+	// Integrations settings panel uses for the shared LLM key).
+	const elevenlabsStatus = useCredentialStatus("elevenlabs");
+	const [openrouterStatus, setOpenrouterStatus] = useState<{
+		lastError?: string;
+		status: string;
+	}>({ status: "idle" });
+	const openrouterReqIdRef = useRef(0);
 	const setCloudSttReady = useOnboardingWizardStore((s) => s.setCloudSttReady);
+
+	// Invalidate any in-flight OpenRouter probe on unmount so its resolution
+	// can't write a stale status pill back into a remounted instance.
+	useEffect(
+		() => () => {
+			openrouterReqIdRef.current++;
+		},
+		[],
+	);
+
+	const isOpenrouter = provider === "openrouter";
+	const apiKey = isOpenrouter ? openrouterKey : integrations[provider].apiKey;
+	const status = isOpenrouter ? openrouterStatus : elevenlabsStatus;
 
 	const hasKey = apiKey.trim().length > 0;
 	const meta = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
@@ -92,7 +134,43 @@ export function OnboardingCloudKeysStep() {
 		setCloudSttReady(activeProviderHasKey);
 	}, [activeProviderHasKey, setCloudSttReady]);
 
+	const handleKeyChange = (value: string) => {
+		if (provider === "openrouter") {
+			updateLlmSettings({ openrouterApiKey: value });
+			setOpenrouterStatus({ status: "idle" });
+			return;
+		}
+		updateIntegrations({
+			[provider]: { apiKey: value, verified: null, lastVerifiedAt: null },
+		});
+	};
+
+	const verifyOpenrouter = (key: string) => {
+		if (key.trim().length === 0) {
+			setOpenrouterStatus({ status: "idle" });
+			return;
+		}
+		const reqId = ++openrouterReqIdRef.current;
+		setOpenrouterStatus({ status: "verifying" });
+		verifyCredentialCommand("openrouter", key)
+			.then((response) => {
+				if (reqId === openrouterReqIdRef.current) {
+					setOpenrouterStatus(statusFromVerify(response));
+				}
+			})
+			.catch((err: unknown) => {
+				if (reqId === openrouterReqIdRef.current) {
+					const message = err instanceof Error ? err.message : String(err);
+					setOpenrouterStatus({ status: "offline", lastError: message });
+				}
+			});
+	};
+
 	const handleVerify = () => {
+		if (provider === "openrouter") {
+			verifyOpenrouter(apiKey);
+			return;
+		}
 		verifyCredential(provider, apiKey).catch(() => undefined);
 	};
 
@@ -112,7 +190,7 @@ export function OnboardingCloudKeysStep() {
 				layout="stacked"
 			>
 				<ElevatedSurface>
-					<Switcher<IntegrationCloudProvider>
+					<Switcher<CloudSttProvider>
 						fullWidth
 						onChange={setProvider}
 						options={PROVIDER_OPTIONS}
@@ -141,15 +219,7 @@ export function OnboardingCloudKeysStep() {
 					<ElevatedSurface inline>
 						<PasswordField
 							id="onboarding-api-key"
-							onChange={(e) =>
-								updateIntegrations({
-									[provider]: {
-										apiKey: e.target.value,
-										verified: null,
-										lastVerifiedAt: null,
-									},
-								})
-							}
+							onChange={(e) => handleKeyChange(e.target.value)}
 							placeholder={meta?.keyPlaceholder ?? ""}
 							value={apiKey}
 						/>
@@ -164,8 +234,8 @@ export function OnboardingCloudKeysStep() {
 						</AnimatePresence>
 						<MotionBaseButton
 							className={cn(
-								"inline-flex h-7 items-center justify-center rounded-sm bg-surface-3 px-3 font-medium text-body-sm text-foreground-secondary outline-none ring-1 ring-divider-strong transition-[background-color,color] duration-150",
-								"hover:bg-surface-4 hover:text-foreground",
+								"inline-flex h-7 items-center justify-center rounded-sm bg-surface-4 px-3 font-medium text-body-sm text-foreground-secondary outline-none ring-1 ring-divider-strong transition-[background-color,color] duration-150",
+								"hover:bg-surface-5 hover:text-foreground",
 								"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
 								"disabled:cursor-not-allowed disabled:opacity-40",
 							)}
@@ -188,6 +258,7 @@ export function OnboardingCloudKeysStep() {
 				layout="stacked"
 			>
 				<CloudModelSelect
+					emptyState="disabled"
 					onSelect={handleModelSelect}
 					selectedId={activeProviderHasKey ? activeModel : ""}
 				/>
@@ -212,7 +283,7 @@ function StatusPill({ status, apiKey }: StatusPillProps) {
 	if (status.status === "verifying") {
 		return (
 			<m.span
-				className="inline-flex items-center gap-1.5 rounded-sm bg-surface-3 px-1.5 py-0.5 text-2xs text-foreground-muted ring-1 ring-divider"
+				className="inline-flex items-center gap-1.5 rounded-sm bg-surface-4 px-1.5 py-0.5 text-2xs text-foreground-muted ring-1 ring-divider"
 				{...motionProps}
 			>
 				<Spinner className="size-2.5 border" />
@@ -225,7 +296,7 @@ function StatusPill({ status, apiKey }: StatusPillProps) {
 	if (apiKey.trim().length === 0) {
 		return (
 			<m.span
-				className="inline-flex items-center rounded-sm bg-surface-3 px-1.5 py-0.5 font-medium text-2xs text-foreground-muted uppercase tracking-wider ring-1 ring-divider"
+				className="inline-flex items-center rounded-sm bg-surface-4 px-1.5 py-0.5 font-medium text-2xs text-foreground-muted uppercase tracking-wider ring-1 ring-divider"
 				{...motionProps}
 			>
 				{t("statusNoKey")}

@@ -272,13 +272,13 @@ describe("useSettingsStore mutators", () => {
 			state: Record<string, unknown>;
 		};
 		// `settings` MUST be present in the persisted state.
-		expect(parsed.state.settings).toBeDefined();
+		expect(parsed.state["settings"]).toBeDefined();
 		// `isLoaded` MUST NOT be persisted — partialize is `(s) => ({ settings: s.settings })`.
 		// A mutant `(s) => undefined` would store `{ state: undefined }`;
 		// a mutant `{}` would store `{ state: {} }`. Either way `settings` would be
 		// missing or undefined.
 		expect(
-			(parsed.state.settings as Record<string, unknown>).general,
+			(parsed.state["settings"] as Record<string, unknown>)["general"],
 		).toBeDefined();
 		expect("isLoaded" in parsed.state).toBe(false);
 	});

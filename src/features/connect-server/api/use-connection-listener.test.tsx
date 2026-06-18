@@ -34,7 +34,7 @@ function makeApi(invokeImpl?: (channel: string) => unknown) {
 beforeEach(() => {
 	useConnectionStore.setState({
 		connectionStatus: "disconnected",
-		gpuInfo: null,
+		gpuInfo: [],
 		serverStatus: "idle",
 	});
 });

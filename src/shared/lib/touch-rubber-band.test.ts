@@ -61,7 +61,7 @@ describe("installTouchRubberBand", () => {
 	test("skips scroll areas that are managed by the local ScrollArea behavior", () => {
 		installTouchRubberBand();
 		const scroller = document.createElement("div");
-		scroller.dataset.rubberBandManaged = "local";
+		scroller.dataset["rubberBandManaged"] = "local";
 		scroller.style.overflowY = "auto";
 		const content = document.createElement("div");
 		scroller.append(content);

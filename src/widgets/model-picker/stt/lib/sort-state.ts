@@ -85,5 +85,5 @@ export function sortSttModels(
 	models: readonly ModelInfo[],
 	key: SttSortKey,
 ): ModelInfo[] {
-	return [...models].sort(COMPARATORS[key]);
+	return models.toSorted(COMPARATORS[key]);
 }

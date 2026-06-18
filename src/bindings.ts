@@ -10,7 +10,7 @@ async changeBinding(id: string, binding: string) : Promise<Result<BindingRespons
     return { status: "ok", data: await TAURI_INVOKE("change_binding", { id, binding }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
@@ -18,7 +18,7 @@ async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     return { status: "ok", data: await TAURI_INVOKE("reset_binding", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async getAvailableTypingTools() : Promise<string[]> {
@@ -29,7 +29,7 @@ async setPostProcessProvider(providerId: string) : Promise<Result<null, string>>
     return { status: "ok", data: await TAURI_INVOKE("set_post_process_provider", { providerId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async fetchPostProcessModels(providerId: string) : Promise<Result<string[], string>> {
@@ -37,7 +37,7 @@ async fetchPostProcessModels(providerId: string) : Promise<Result<string[], stri
     return { status: "ok", data: await TAURI_INVOKE("fetch_post_process_models", { providerId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async addPostProcessPrompt(name: string, prompt: string) : Promise<Result<LLMPrompt, string>> {
@@ -45,7 +45,7 @@ async addPostProcessPrompt(name: string, prompt: string) : Promise<Result<LLMPro
     return { status: "ok", data: await TAURI_INVOKE("add_post_process_prompt", { name, prompt }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async updatePostProcessPrompt(id: string, name: string, prompt: string) : Promise<Result<null, string>> {
@@ -53,7 +53,7 @@ async updatePostProcessPrompt(id: string, name: string, prompt: string) : Promis
     return { status: "ok", data: await TAURI_INVOKE("update_post_process_prompt", { id, name, prompt }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async deletePostProcessPrompt(id: string) : Promise<Result<null, string>> {
@@ -61,7 +61,7 @@ async deletePostProcessPrompt(id: string) : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("delete_post_process_prompt", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async setPostProcessSelectedPrompt(id: string) : Promise<Result<null, string>> {
@@ -69,7 +69,7 @@ async setPostProcessSelectedPrompt(id: string) : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("set_post_process_selected_prompt", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -81,7 +81,7 @@ async suspendBinding(id: string) : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("suspend_binding", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -92,7 +92,7 @@ async resumeBinding(id: string) : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("resume_binding", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -106,7 +106,7 @@ async changeWhisperGpuDevice(device: number) : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("change_whisper_gpu_device", { device }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -122,7 +122,7 @@ async getAvailableAccelerators() : Promise<Result<AvailableAccelerators, string>
     return { status: "ok", data: await TAURI_INVOKE("get_available_accelerators") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async triggerUpdateCheck() : Promise<Result<null, string>> {
@@ -130,7 +130,7 @@ async triggerUpdateCheck() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("trigger_update_check") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async showMainWindowCommand() : Promise<Result<null, string>> {
@@ -138,7 +138,7 @@ async showMainWindowCommand() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("show_main_window_command") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async quitApp() : Promise<void> {
@@ -165,7 +165,7 @@ async getAppDirPath() : Promise<Result<string, string>> {
     return { status: "ok", data: await TAURI_INVOKE("get_app_dir_path") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async getLogDirPath() : Promise<Result<string, string>> {
@@ -173,7 +173,7 @@ async getLogDirPath() : Promise<Result<string, string>> {
     return { status: "ok", data: await TAURI_INVOKE("get_log_dir_path") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async setLogLevel(level: LogLevel) : Promise<Result<null, string>> {
@@ -181,7 +181,7 @@ async setLogLevel(level: LogLevel) : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("set_log_level", { level }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async openRecordingsFolder() : Promise<Result<null, string>> {
@@ -189,7 +189,7 @@ async openRecordingsFolder() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("open_recordings_folder") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async openLogDir() : Promise<Result<null, string>> {
@@ -197,7 +197,7 @@ async openLogDir() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("open_log_dir") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async openAppDataDir() : Promise<Result<null, string>> {
@@ -205,7 +205,7 @@ async openAppDataDir() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("open_app_data_dir") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async removeApplicationData(deleteOllamaModels: boolean) : Promise<Result<RemoveApplicationDataResult, string>> {
@@ -213,7 +213,7 @@ async removeApplicationData(deleteOllamaModels: boolean) : Promise<Result<Remove
     return { status: "ok", data: await TAURI_INVOKE("remove_application_data", { deleteOllamaModels }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async removeDownloadedModels(deleteOllamaModels: boolean) : Promise<Result<RemoveDownloadedModelsResult, string>> {
@@ -221,7 +221,7 @@ async removeDownloadedModels(deleteOllamaModels: boolean) : Promise<Result<Remov
     return { status: "ok", data: await TAURI_INVOKE("remove_downloaded_models", { deleteOllamaModels }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -240,7 +240,7 @@ async initializeEnigo() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("initialize_enigo") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -253,7 +253,7 @@ async initializeShortcuts() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("initialize_shortcuts") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async getWindowsMicrophonePermissionStatus() : Promise<WindowsMicrophonePermissionStatus> {
@@ -264,7 +264,7 @@ async openMicrophonePrivacySettings() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("open_microphone_privacy_settings") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async getAvailableMicrophones() : Promise<Result<AudioDevice[], string>> {
@@ -272,7 +272,7 @@ async getAvailableMicrophones() : Promise<Result<AudioDevice[], string>> {
     return { status: "ok", data: await TAURI_INVOKE("get_available_microphones") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async setSelectedMicrophone(deviceName: string) : Promise<Result<null, string>> {
@@ -280,7 +280,7 @@ async setSelectedMicrophone(deviceName: string) : Promise<Result<null, string>> 
     return { status: "ok", data: await TAURI_INVOKE("set_selected_microphone", { deviceName }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async getSelectedMicrophone() : Promise<Result<string, string>> {
@@ -288,7 +288,7 @@ async getSelectedMicrophone() : Promise<Result<string, string>> {
     return { status: "ok", data: await TAURI_INVOKE("get_selected_microphone") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async getAvailableOutputDevices() : Promise<Result<AudioDevice[], string>> {
@@ -296,7 +296,7 @@ async getAvailableOutputDevices() : Promise<Result<AudioDevice[], string>> {
     return { status: "ok", data: await TAURI_INVOKE("get_available_output_devices") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async setSelectedOutputDevice(deviceName: string) : Promise<Result<null, string>> {
@@ -304,7 +304,7 @@ async setSelectedOutputDevice(deviceName: string) : Promise<Result<null, string>
     return { status: "ok", data: await TAURI_INVOKE("set_selected_output_device", { deviceName }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async getSelectedOutputDevice() : Promise<Result<string, string>> {
@@ -312,7 +312,7 @@ async getSelectedOutputDevice() : Promise<Result<string, string>> {
     return { status: "ok", data: await TAURI_INVOKE("get_selected_output_device") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async playTestSound(soundType: string) : Promise<void> {
@@ -326,7 +326,7 @@ async setClamshellMicrophone(deviceName: string) : Promise<Result<null, string>>
     return { status: "ok", data: await TAURI_INVOKE("set_clamshell_microphone", { deviceName }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async getClamshellMicrophone() : Promise<Result<string, string>> {
@@ -334,7 +334,7 @@ async getClamshellMicrophone() : Promise<Result<string, string>> {
     return { status: "ok", data: await TAURI_INVOKE("get_clamshell_microphone") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async isRecording() : Promise<boolean> {
@@ -348,7 +348,7 @@ async isLaptop() : Promise<Result<boolean, string>> {
     return { status: "ok", data: await TAURI_INVOKE("is_laptop") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -376,7 +376,7 @@ async winsttSetSettings(settings: PartialWinsttSettings) : Promise<Result<SetSet
     return { status: "ok", data: await TAURI_INVOKE("winstt_set_settings", { settings }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -389,7 +389,7 @@ async settingsExportFull() : Promise<Result<SettingsExportResult, string>> {
     return { status: "ok", data: await TAURI_INVOKE("settings_export_full") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -403,7 +403,7 @@ async settingsImportFull() : Promise<Result<SettingsImportResult, string>> {
     return { status: "ok", data: await TAURI_INVOKE("settings_import_full") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -446,7 +446,7 @@ async setCustomModel(path: string) : Promise<Result<CatalogModelInfo, string>> {
     return { status: "ok", data: await TAURI_INVOKE("set_custom_model", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -462,7 +462,7 @@ async ttsSpeak(text: string, voice: string | null, lang: string | null, speed: n
     return { status: "ok", data: await TAURI_INVOKE("tts_speak", { text, voice, lang, speed }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -476,7 +476,7 @@ async ttsSpeakSelection(text: string | null, voice: string | null, lang: string 
     return { status: "ok", data: await TAURI_INVOKE("tts_speak_selection", { text, voice, lang, speed }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -504,7 +504,7 @@ async ttsInit() : Promise<Result<TtsInitResult, string>> {
     return { status: "ok", data: await TAURI_INVOKE("tts_init") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -524,7 +524,7 @@ async ttsListCloudVoices() : Promise<Result<CloudVoiceCatalogPayload, string>> {
     return { status: "ok", data: await TAURI_INVOKE("tts_list_cloud_voices") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -537,7 +537,7 @@ async ttsCloudSubscription() : Promise<Result<CloudSubscriptionPayload, string>>
     return { status: "ok", data: await TAURI_INVOKE("tts_cloud_subscription") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -551,7 +551,7 @@ async ttsDownloadEstimate() : Promise<Result<DownloadEstimatePayload, string>> {
     return { status: "ok", data: await TAURI_INVOKE("tts_download_estimate") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -576,7 +576,7 @@ async ttsInstallResume() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("tts_install_resume") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -600,7 +600,7 @@ async ttsPreviewCloud(previewUrl: string) : Promise<Result<SpeakResult, string>>
     return { status: "ok", data: await TAURI_INVOKE("tts_preview_cloud", { previewUrl }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -613,7 +613,7 @@ async ttsPreviewOpenrouter(model: string, voice: string, speed: number | null) :
     return { status: "ok", data: await TAURI_INVOKE("tts_preview_openrouter", { model, voice, speed }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -661,7 +661,7 @@ async ttsDeleteModel(modelId: string, quantization: string) : Promise<Result<nul
     return { status: "ok", data: await TAURI_INVOKE("tts_delete_model", { modelId, quantization }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -674,7 +674,7 @@ async processText(text: string, context: string) : Promise<Result<string, string
     return { status: "ok", data: await TAURI_INVOKE("process_text", { text, context }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -685,7 +685,7 @@ async processTransform(text: string, transformId: string) : Promise<Result<strin
     return { status: "ok", data: await TAURI_INVOKE("process_transform", { text, transformId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -700,7 +700,7 @@ async ollamaRefreshModels() : Promise<Result<OllamaScanResultPayload, string>> {
     return { status: "ok", data: await TAURI_INVOKE("ollama_refresh_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -715,7 +715,7 @@ async openrouterRefreshModels() : Promise<Result<OpenRouterScanResultPayload, st
     return { status: "ok", data: await TAURI_INVOKE("openrouter_refresh_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -729,7 +729,7 @@ async openrouterRefreshSttModels() : Promise<Result<OpenRouterSttScanResultPaylo
     return { status: "ok", data: await TAURI_INVOKE("openrouter_refresh_stt_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -743,7 +743,7 @@ async openrouterRefreshTtsModels() : Promise<Result<OpenRouterTtsScanResultPaylo
     return { status: "ok", data: await TAURI_INVOKE("openrouter_refresh_tts_models") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -756,7 +756,7 @@ async ollamaDetect() : Promise<Result<OllamaDetectResultPayload, string>> {
     return { status: "ok", data: await TAURI_INVOKE("ollama_detect") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -768,7 +768,7 @@ async ollamaStart() : Promise<Result<OllamaStartResultPayload, string>> {
     return { status: "ok", data: await TAURI_INVOKE("ollama_start") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -781,7 +781,7 @@ async ollamaPull(model: string) : Promise<Result<OllamaPullResultPayload, string
     return { status: "ok", data: await TAURI_INVOKE("ollama_pull", { model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -793,7 +793,7 @@ async ollamaDelete(model: string) : Promise<Result<OllamaDeleteResultPayload, st
     return { status: "ok", data: await TAURI_INVOKE("ollama_delete", { model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -808,7 +808,7 @@ async verifyCredential(provider: string, apiKey: string) : Promise<Result<Verify
     return { status: "ok", data: await TAURI_INVOKE("verify_credential", { provider, apiKey }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -820,7 +820,7 @@ async verifyCloudSttCredential(provider: string, apiKey: string) : Promise<Resul
     return { status: "ok", data: await TAURI_INVOKE("verify_cloud_stt_credential", { provider, apiKey }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -837,7 +837,7 @@ async wakewordSetModel(name: string, sensitivity: number, timeoutSeconds: number
     return { status: "ok", data: await TAURI_INVOKE("wakeword_set_model", { name, sensitivity, timeoutSeconds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -876,7 +876,7 @@ async startListen(deviceIndex: number, modelId: string) : Promise<Result<null, s
     return { status: "ok", data: await TAURI_INVOKE("start_listen", { deviceIndex, modelId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -899,7 +899,7 @@ async alignWords(entryId: string) : Promise<Result<WordResultPayload[], string>>
     return { status: "ok", data: await TAURI_INVOKE("align_words", { entryId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1020,7 +1020,7 @@ async sttPredownloadQuant(modelId: string, quantization: string) : Promise<Resul
     return { status: "ok", data: await TAURI_INVOKE("stt_predownload_quant", { modelId, quantization }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1032,7 +1032,7 @@ async downloadPauseQuant(modelId: string, quantization: string) : Promise<Result
     return { status: "ok", data: await TAURI_INVOKE("download_pause_quant", { modelId, quantization }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1043,7 +1043,7 @@ async downloadResumeQuant(modelId: string, quantization: string) : Promise<Resul
     return { status: "ok", data: await TAURI_INVOKE("download_resume_quant", { modelId, quantization }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1055,7 +1055,7 @@ async downloadCancelQuant(modelId: string, quantization: string) : Promise<Resul
     return { status: "ok", data: await TAURI_INVOKE("download_cancel_quant", { modelId, quantization }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1070,7 +1070,7 @@ async deleteModelQuantization(modelId: string, quantization: string) : Promise<R
     return { status: "ok", data: await TAURI_INVOKE("delete_model_quantization", { modelId, quantization }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1085,7 +1085,7 @@ async deleteModelCache(modelId: string) : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("delete_model_cache", { modelId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async encoderDictStatus() : Promise<EncoderDownloadStatus> {
@@ -1096,7 +1096,7 @@ async encoderDictDownloadStart() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("encoder_dict_download_start") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async encoderDictDownloadPause() : Promise<Result<null, string>> {
@@ -1104,7 +1104,7 @@ async encoderDictDownloadPause() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("encoder_dict_download_pause") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async encoderDictDownloadResume() : Promise<Result<null, string>> {
@@ -1112,7 +1112,7 @@ async encoderDictDownloadResume() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("encoder_dict_download_resume") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async encoderDictDownloadCancel() : Promise<Result<null, string>> {
@@ -1120,7 +1120,7 @@ async encoderDictDownloadCancel() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("encoder_dict_download_cancel") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1132,7 +1132,7 @@ async encoderDictRemove() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("encoder_dict_remove") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1144,7 +1144,7 @@ async encoderDictPreload() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("encoder_dict_preload") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1156,7 +1156,7 @@ async encoderDictUnload() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("encoder_dict_unload") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1193,7 +1193,7 @@ async sttListModelsWithState() : Promise<Result<ModelsWithState, null>> {
     return { status: "ok", data: await TAURI_INVOKE("stt_list_models_with_state") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1369,7 +1369,7 @@ async ollamaRefreshLibrary() : Promise<Result<OllamaLibraryCatalogResult, string
     return { status: "ok", data: await TAURI_INVOKE("ollama_refresh_library") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1380,7 +1380,7 @@ async ollamaRefreshTags(model: string) : Promise<Result<OllamaLibraryTagsResult,
     return { status: "ok", data: await TAURI_INVOKE("ollama_refresh_tags", { model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1392,7 +1392,7 @@ async ollamaSearchLibrary(query: string, page: number | null) : Promise<Result<O
     return { status: "ok", data: await TAURI_INVOKE("ollama_search_library", { query, page }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1404,7 +1404,7 @@ async ollamaCancelPull(model: string) : Promise<Result<CancelPullResult, string>
     return { status: "ok", data: await TAURI_INVOKE("ollama_cancel_pull", { model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1416,7 +1416,7 @@ async llmWarmupStatus() : Promise<Result<LlmWarmupStatus | null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("llm_warmup_status") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1429,7 +1429,7 @@ async llmRetryWarmup() : Promise<Result<LlmWarmupStatus | null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("llm_retry_warmup") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1445,7 +1445,7 @@ async verifyIntegrationCredential(provider: string, apiKey: string) : Promise<Re
     return { status: "ok", data: await TAURI_INVOKE("verify_integration_credential", { provider, apiKey }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1489,7 +1489,7 @@ async historyList(offset: number, limit: number) : Promise<Result<PaginatedHisto
     return { status: "ok", data: await TAURI_INVOKE("history_list", { offset, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1500,7 +1500,7 @@ async historyRecent(value: number | null) : Promise<Result<HistoryRow[], string>
     return { status: "ok", data: await TAURI_INVOKE("history_recent", { value }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1513,7 +1513,7 @@ async historyAdd(text: string | null, postProcessedText: string | null, postProc
     return { status: "ok", data: await TAURI_INVOKE("history_add", { text, postProcessedText, postProcessPrompt, postProcessRequested }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1525,7 +1525,7 @@ async historyToggle(id: number) : Promise<Result<ToggleResult, string>> {
     return { status: "ok", data: await TAURI_INVOKE("history_toggle", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1538,7 +1538,7 @@ async historyDeleteRow(id: number) : Promise<Result<DeletedResult, string>> {
     return { status: "ok", data: await TAURI_INVOKE("history_delete_row", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1549,7 +1549,7 @@ async historyLoadAudioByRow(id: number) : Promise<Result<string | null, string>>
     return { status: "ok", data: await TAURI_INVOKE("history_load_audio_by_row", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1562,7 +1562,7 @@ async historyGetAll() : Promise<Result<TranscriptionHistoryEntry[], string>> {
     return { status: "ok", data: await TAURI_INVOKE("history_get_all") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1573,7 +1573,7 @@ async historyClear() : Promise<Result<ClearResult, string>> {
     return { status: "ok", data: await TAURI_INVOKE("history_clear") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1584,7 +1584,7 @@ async historyDelete(id: string) : Promise<Result<DeletedResult, string>> {
     return { status: "ok", data: await TAURI_INVOKE("history_delete", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1595,7 +1595,7 @@ async historyLoadAudio(id: string) : Promise<Result<string | null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("history_load_audio", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1607,7 +1607,7 @@ async transformHistoryGetAll() : Promise<Result<TransformHistoryEntry[], string>
     return { status: "ok", data: await TAURI_INVOKE("transform_history_get_all") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1620,7 +1620,7 @@ async transformHistoryClear() : Promise<Result<ClearResult, string>> {
     return { status: "ok", data: await TAURI_INVOKE("transform_history_clear") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1631,7 +1631,7 @@ async transformHistoryDelete(id: string) : Promise<Result<DeletedResult, string>
     return { status: "ok", data: await TAURI_INVOKE("transform_history_delete", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1668,6 +1668,14 @@ async diagOpenLogsFolder() : Promise<DiagOpenLogsFolderResult> {
  */
 async diagSaveBundle() : Promise<DiagSaveBundleResult> {
     return await TAURI_INVOKE("diag_save_bundle");
+},
+/**
+ * `diag_observability_timeline` - recent operational issues recorded by the
+ * backend. Used by Settings > About so the user can see what failed without
+ * reading raw logs.
+ */
+async diagObservabilityTimeline(limit: number | null) : Promise<ObservabilityIssue[]> {
+    return await TAURI_INVOKE("diag_observability_timeline", { limit });
 },
 /**
  * `sound_library_add` is retained for older renderer code but intentionally
@@ -1713,7 +1721,7 @@ async applyTransform() : Promise<Result<TransformApplyResult, string>> {
     return { status: "ok", data: await TAURI_INVOKE("apply_transform") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1730,7 +1738,7 @@ async applyTransformPreview(text: string, feature: string, config: LlmPreviewCon
     return { status: "ok", data: await TAURI_INVOKE("apply_transform_preview", { text, feature, config }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1745,7 +1753,7 @@ async confirmPaste(text: string) : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("confirm_paste", { text }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1757,7 +1765,7 @@ async cancelPreview() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("cancel_preview") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1770,7 +1778,7 @@ async setOverlayHitRegions(rects: OverlayHitRect[]) : Promise<Result<null, strin
     return { status: "ok", data: await TAURI_INVOKE("set_overlay_hit_regions", { rects }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1826,7 +1834,7 @@ async settingsWindowReady() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("settings_window_ready") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1842,7 +1850,7 @@ async openWindow(name: string, x: number | null, y: number | null, width: number
     return { status: "ok", data: await TAURI_INVOKE("open_window", { name, x, y, width, height, pickerKind, pickerFeature, pickerTarget }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1855,7 +1863,7 @@ async closeWindow(name: string) : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("close_window", { name }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1872,7 +1880,7 @@ async closeSelfWindow() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("close_self_window") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1889,7 +1897,7 @@ async resizeWindow(name: string, width: number, height: number) : Promise<Result
     return { status: "ok", data: await TAURI_INVOKE("resize_window", { name, width, height }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1901,7 +1909,7 @@ async anchorWindow(name: string, x: number, y: number) : Promise<Result<null, st
     return { status: "ok", data: await TAURI_INVOKE("anchor_window", { name, x, y }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1913,7 +1921,26 @@ async onboardingFinish(args: OnboardingFinishArgs) : Promise<Result<null, string
     return { status: "ok", data: await TAURI_INVOKE("onboarding_finish", { args }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
+}
+},
+/**
+ * `onboarding_enable_dictation` — light up the real dictation runtime DURING the
+ * wizard so the recording-mode step can offer a live "press the hotkey and speak"
+ * demo. By this point the user has chosen a model (local pick or cloud keys) and
+ * tested their mic, so this is a deliberate, user-reached enable — not the boot
+ * auto-warmup the model-free gate exists to suppress. Lifts the gate and activates
+ * the runtime (loads + warms the configured model, arms the global hotkey, inits
+ * the paste pipeline). Idempotent: once the gate is down, re-entering the step
+ * no-ops. `onboarding_finish` still runs its own activation, which is then a cheap
+ * no-op because everything is already live.
+ */
+async onboardingEnableDictation() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("onboarding_enable_dictation") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
 }
 },
 /**
@@ -1926,7 +1953,7 @@ async showTrayMenu(x: number | null, y: number | null) : Promise<Result<null, st
     return { status: "ok", data: await TAURI_INVOKE("show_tray_menu", { x, y }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1941,7 +1968,7 @@ async reanchorTrayMenu() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("reanchor_tray_menu") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1953,7 +1980,7 @@ async hideTrayMenu() : Promise<Result<null, string>> {
     return { status: "ok", data: await TAURI_INVOKE("hide_tray_menu") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -1985,7 +2012,7 @@ async openCustomModelsFolder() : Promise<Result<string, string>> {
     return { status: "ok", data: await TAURI_INVOKE("open_custom_models_folder") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 /**
@@ -2001,7 +2028,7 @@ async winsttUpdaterCheckAndDownload(includePrereleaseUpdates: boolean | null) : 
     return { status: "ok", data: await TAURI_INVOKE("winstt_updater_check_and_download", { includePrereleaseUpdates }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 },
 async winsttUpdaterClearStatusHistory() : Promise<ClearUpdaterHistoryResult> {
@@ -2015,7 +2042,7 @@ async winsttUpdaterInstall() : Promise<Result<UpdaterCommandResult, string>> {
     return { status: "ok", data: await TAURI_INVOKE("winstt_updater_install") };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
+    else return __commandError__(e);
 }
 }
 }
@@ -2770,6 +2797,7 @@ export type ModelUnloadTimeoutLegacy = "never" | "immediately" | "min_2" | "min_
  * The full `fetchModelsWithState` payload: `{ models, states, system_info }`.
  */
 export type ModelsWithState = { models: CatalogModelInfo[]; states: ModelStateEntry[]; system_info: SystemInfoEntry }
+export type ObservabilityIssue = { id: number; timestampMs: number; severity: string; area: string; operation: string; kind: string; summary: string; detail?: string | null; modelId?: string | null; provider?: string | null; requestId?: string | null; durationMs?: number | null; remediation?: string | null; userVisible: boolean; context?: Partial<{ [key in string]: string }> }
 /**
  * `OllamaDeleteResult` — `{ success, model, error? }`.
  */
@@ -3300,10 +3328,7 @@ export type WordResultPayload = { text: string; start: number; end: number }
 
 /** tauri-specta globals **/
 
-import {
-	invoke as TAURI_INVOKE,
-	Channel as TAURI_CHANNEL,
-} from "@tauri-apps/api/core";
+import { invoke as TAURI_INVOKE } from "@tauri-apps/api/core";
 import * as TAURI_API_EVENT from "@tauri-apps/api/event";
 import { type WebviewWindow as __WebviewWindow__ } from "@tauri-apps/api/webviewWindow";
 
@@ -3323,37 +3348,54 @@ export type Result<T, E> =
 	| { status: "ok"; data: T }
 	| { status: "error"; error: E };
 
-function __makeEvents__<T extends Record<string, any>>(
-	mappings: Record<keyof T, string>,
-) {
-	return new Proxy(
-		{} as unknown as {
-			[K in keyof T]: __EventObj__<T[K]> & {
-				(handle: __WebviewWindow__): __EventObj__<T[K]>;
-			};
-		},
-		{
-			get: (_, event) => {
-				const name = mappings[event as keyof T];
+function __commandError__<E>(error: unknown): { status: "error"; error: E } {
+	return { status: "error", error: error as E };
+}
 
-				return new Proxy((() => {}) as any, {
-					apply: (_, __, [window]: [__WebviewWindow__]) => ({
-						listen: (arg: any) => window.listen(name, arg),
-						once: (arg: any) => window.once(name, arg),
-						emit: (arg: any) => window.emit(name, arg),
-					}),
-					get: (_, command: keyof __EventObj__<any>) => {
-						switch (command) {
-							case "listen":
-								return (arg: any) => TAURI_API_EVENT.listen(name, arg);
-							case "once":
-								return (arg: any) => TAURI_API_EVENT.once(name, arg);
-							case "emit":
-								return (arg: any) => TAURI_API_EVENT.emit(name, arg);
-						}
-					},
-				});
-			},
-		},
-	);
+type __EventAccessor__<T> = __EventObj__<T> & {
+	(handle: __WebviewWindow__): __EventObj__<T>;
+};
+
+type __EventMap__<T extends object> = {
+	[K in keyof T]: __EventAccessor__<T[K]>;
+};
+
+function __makeWindowEventObj__<T>(
+	name: string,
+	window: __WebviewWindow__,
+): __EventObj__<T> {
+	return {
+		listen: (cb) => window.listen<T>(name, cb),
+		once: (cb) => window.once<T>(name, cb),
+		emit: ((payload?: T) =>
+			window.emit(name, payload)) as __EventObj__<T>["emit"],
+	};
+}
+
+function __makeGlobalEventObj__<T>(name: string): __EventObj__<T> {
+	return {
+		listen: (cb) => TAURI_API_EVENT.listen<T>(name, cb),
+		once: (cb) => TAURI_API_EVENT.once<T>(name, cb),
+		emit: ((payload?: T) =>
+			TAURI_API_EVENT.emit(name, payload)) as __EventObj__<T>["emit"],
+	};
+}
+
+function __makeEventAccessor__<T>(name: string): __EventAccessor__<T> {
+	const eventObj = __makeGlobalEventObj__<T>(name);
+	const accessor = ((window: __WebviewWindow__) =>
+		__makeWindowEventObj__<T>(name, window)) as __EventAccessor__<T>;
+	accessor.listen = eventObj.listen;
+	accessor.once = eventObj.once;
+	accessor.emit = eventObj.emit;
+	return accessor;
+}
+
+function __makeEvents__<T extends object>(
+	mappings: Record<keyof T, string>,
+): __EventMap__<T> {
+	return new Proxy({} as __EventMap__<T>, {
+		get: (_, event: string | symbol) =>
+			__makeEventAccessor__<T[keyof T]>(mappings[event as keyof T]),
+	});
 }

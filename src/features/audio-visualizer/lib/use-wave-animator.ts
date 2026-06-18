@@ -1,5 +1,5 @@
 import type { ValueAnimationTransition } from "motion/react";
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { useVisualizerStore } from "../model/visualizer-store";
 import type { Uniforms } from "../ui/ReactShaderToy";
 import type { AgentState } from "./audio-visualizer";
@@ -48,19 +48,19 @@ export function useWaveAnimator(
 	const audioLevel = useVisualizerStore((s) => s.audioLevel);
 
 	// @crap-exclude rAF callback — covered via E2E (state-driven animation transitions)
-	useEffect(() => {
+	useLayoutEffect(() => {
 		switch (state) {
 			case "disconnected":
-				if (uniformsRef.current?.uSpeed) {
-					uniformsRef.current.uSpeed = { type: "1f", value: DEFAULT_SPEED };
+				if (uniformsRef.current?.["uSpeed"]) {
+					uniformsRef.current["uSpeed"] = { type: "1f", value: DEFAULT_SPEED };
 				}
 				animateAmplitude(0, DEFAULT_TRANSITION);
 				animateFrequency(0, DEFAULT_TRANSITION);
 				animateOpacity(1.0, DEFAULT_TRANSITION);
 				return;
 			case "listening":
-				if (uniformsRef.current?.uSpeed) {
-					uniformsRef.current.uSpeed = { type: "1f", value: DEFAULT_SPEED };
+				if (uniformsRef.current?.["uSpeed"]) {
+					uniformsRef.current["uSpeed"] = { type: "1f", value: DEFAULT_SPEED };
 				}
 				animateAmplitude(DEFAULT_AMPLITUDE, DEFAULT_TRANSITION);
 				animateFrequency(DEFAULT_FREQUENCY, DEFAULT_TRANSITION);
@@ -73,8 +73,8 @@ export function useWaveAnimator(
 			case "thinking":
 			case "connecting":
 			case "initializing":
-				if (uniformsRef.current?.uSpeed) {
-					uniformsRef.current.uSpeed = { type: "1f", value: DEFAULT_SPEED * 4 };
+				if (uniformsRef.current?.["uSpeed"]) {
+					uniformsRef.current["uSpeed"] = { type: "1f", value: DEFAULT_SPEED * 4 };
 				}
 				animateAmplitude(DEFAULT_AMPLITUDE / 4, DEFAULT_TRANSITION);
 				animateFrequency(DEFAULT_FREQUENCY * 4, DEFAULT_TRANSITION);
@@ -85,8 +85,8 @@ export function useWaveAnimator(
 				});
 				return;
 			default:
-				if (uniformsRef.current?.uSpeed) {
-					uniformsRef.current.uSpeed = { type: "1f", value: DEFAULT_SPEED * 2 };
+				if (uniformsRef.current?.["uSpeed"]) {
+					uniformsRef.current["uSpeed"] = { type: "1f", value: DEFAULT_SPEED * 2 };
 				}
 				animateAmplitude(DEFAULT_AMPLITUDE, DEFAULT_TRANSITION);
 				animateFrequency(DEFAULT_FREQUENCY, DEFAULT_TRANSITION);
@@ -95,7 +95,7 @@ export function useWaveAnimator(
 		}
 	}, [state, uniformsRef, animateAmplitude, animateFrequency, animateOpacity]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (state === "speaking") {
 			const perceptual = Math.sqrt(Math.max(0, audioLevel));
 			const amplitude = Math.min(

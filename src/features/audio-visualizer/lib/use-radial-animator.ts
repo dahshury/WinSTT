@@ -50,6 +50,8 @@ function generateEmptySequence(): number[][] {
 	return [[]];
 }
 
+const sequenceCache = new Map<string, number[][]>();
+
 // Dispatch table replaces an if/else chain so buildSequence stays at CC=1.
 const SEQUENCE_BUILDERS: Record<AgentState, (columns: number) => number[][]> = {
 	speaking: generateSpeakingSequence,
@@ -61,7 +63,14 @@ const SEQUENCE_BUILDERS: Record<AgentState, (columns: number) => number[][]> = {
 };
 
 function buildSequence(state: AgentState, barCount: number): number[][] {
-	return SEQUENCE_BUILDERS[state](barCount);
+	const key = `${state}:${barCount}`;
+	const cached = sequenceCache.get(key);
+	if (cached) {
+		return cached;
+	}
+	const sequence = SEQUENCE_BUILDERS[state](barCount);
+	sequenceCache.set(key, sequence);
+	return sequence;
 }
 
 /** Test-only re-exports of internal helpers (kept out of the public barrel). */

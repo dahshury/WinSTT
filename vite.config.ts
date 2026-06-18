@@ -13,7 +13,7 @@ import {
 } from "./tools/winstt-dev-settings-store";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
-const host = process.env.TAURI_DEV_HOST;
+const host = process.env["TAURI_DEV_HOST"];
 const devServerHost = host || "127.0.0.1";
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -72,7 +72,7 @@ function winsttDevSettingsBridge() {
 						}
 						if (req.method === "POST" || req.method === "PATCH") {
 							const body = await readJsonBody(req);
-							const patch = isRecord(body) ? body.settings : undefined;
+							const patch = isRecord(body) ? body["settings"] : undefined;
 							sendJson(res, 200, { settings: await writeDevSettings(patch) });
 							return;
 						}
@@ -102,11 +102,11 @@ export default defineConfig(({ command }) => {
 	const isProdBuild = command === "build";
 	const isAnalyzeBuild =
 		isProdBuild &&
-		(process.env.ANALYZE === "1" || process.env.VITE_ANALYZE === "1");
+		(process.env["ANALYZE"] === "1" || process.env["VITE_ANALYZE"] === "1");
 	const includeContextPlayground =
 		!isProdBuild ||
-		process.env.CONTEXT_PLAYGROUND === "1" ||
-		process.env.VITE_CONTEXT_PLAYGROUND === "1";
+		process.env["CONTEXT_PLAYGROUND"] === "1" ||
+		process.env["VITE_CONTEXT_PLAYGROUND"] === "1";
 	return {
 		root: rootDir,
 		base: "./",
@@ -153,7 +153,6 @@ export default defineConfig(({ command }) => {
 				"tailwind-merge",
 				"clsx",
 				"class-variance-authority",
-				"fuse.js",
 				"double-metaphone",
 				"@hugeicons/react",
 				"@hugeicons/core-free-icons",
@@ -220,6 +219,7 @@ export default defineConfig(({ command }) => {
 								return "vendor-zustand";
 							}
 						}
+						return undefined;
 					},
 				},
 			},
@@ -229,13 +229,18 @@ export default defineConfig(({ command }) => {
 			port: 1420,
 			strictPort: true,
 			host: devServerHost,
-			hmr: host
+			// Omit `hmr` entirely when there's no TAURI_DEV_HOST — under
+			// `exactOptionalPropertyTypes` an explicit `hmr: undefined` is rejected,
+			// so spread the key in conditionally instead.
+			...(host
 				? {
-						protocol: "ws",
-						host,
-						port: 1421,
+						hmr: {
+							protocol: "ws",
+							host,
+							port: 1421,
+						},
 					}
-				: undefined,
+				: {}),
 			watch: {
 				// Tell Vite to ignore watching `src-tauri`.
 				ignored: ["**/src-tauri/**"],

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import {
 	type CloudTtsVoice,
@@ -75,8 +75,8 @@ function buildCloudVoiceGroups(
 		});
 		byLang.set(lang, opts);
 	}
-	return [...byLang.entries()]
-		.sort(([a], [b]) => {
+	return Array.from(byLang.entries())
+		.toSorted(([a], [b]) => {
 			// "Other" always sorts last so the named languages lead.
 			if (a === OTHER_GROUP) {
 				return b === OTHER_GROUP ? 0 : 1;
@@ -92,6 +92,65 @@ function buildCloudVoiceGroups(
 			badge: languageBadge(code),
 			options: opts.toSorted((x, y) => x.label.localeCompare(y.label)),
 		}));
+}
+
+// One snapshot of the cloud-voice fetch state. Folded the four formerly-separate
+// `useState` slices into a single reducer so the post-fetch update applies catalog
+// + tier + creditsExhausted in ONE dispatch (one render) instead of cascading
+// setState calls, while keeping the exact same observable transitions:
+// start → loading true, result → catalog/tier/credits, done → loading false.
+interface CloudVoicesState {
+	catalog: CloudTtsVoiceCatalog;
+	// ElevenLabs plan name (null = unknown / not yet fetched, or the key lacks
+	// user-read scope). A "free" tier hides cloned/professional voices.
+	tier: string | null;
+	// Monthly character quota spent (free OR paid) → cloud TTS disabled entirely.
+	creditsExhausted: boolean;
+	// True while the live `/v2/voices` fetch is in flight.
+	isLoading: boolean;
+}
+
+type CloudVoicesAction =
+	| { type: "fetch-start" }
+	| {
+			type: "fetch-result";
+			catalog: CloudTtsVoiceCatalog;
+			tier: string | null;
+			creditsExhausted: boolean;
+	  }
+	| { type: "fetch-done" };
+
+function cloudVoicesReducer(
+	state: CloudVoicesState,
+	action: CloudVoicesAction,
+): CloudVoicesState {
+	switch (action.type) {
+		case "fetch-start":
+			return { ...state, isLoading: true };
+		case "fetch-result":
+			return {
+				...state,
+				catalog: action.catalog,
+				tier: action.tier,
+				creditsExhausted: action.creditsExhausted,
+			};
+		case "fetch-done":
+			return { ...state, isLoading: false };
+		default:
+			return state;
+	}
+}
+
+// Seed from `enabled` so a key that's already verified at mount starts in the
+// loading state — the caller treats "loading" as optimistically cloud-capable,
+// which avoids a one-frame Cloud→Local flip before the catalog fetch resolves.
+function initCloudVoicesState(enabled: boolean): CloudVoicesState {
+	return {
+		catalog: { voices: [], error: null },
+		tier: null,
+		creditsExhausted: false,
+		isLoading: enabled,
+	};
 }
 
 /**
@@ -116,19 +175,11 @@ export function useCloudTtsVoices(enabled: boolean): UseCloudTtsVoices {
 	const cloudVoice = cloud.voice;
 	const update = useSettingsStore((s) => s.updateTtsSettings);
 
-	const [catalog, setCatalog] = useState<CloudTtsVoiceCatalog>({
-		voices: [],
-		error: null,
-	});
-	// ElevenLabs plan name (null = unknown / not yet fetched, or the key lacks
-	// user-read scope). A "free" tier hides cloned/professional voices.
-	const [tier, setTier] = useState<string | null>(null);
-	// Monthly character quota spent (free OR paid) → cloud TTS disabled entirely.
-	const [creditsExhausted, setCreditsExhausted] = useState(false);
-	// Seed from `enabled` so a key that's already verified at mount starts in the
-	// loading state — the caller treats "loading" as optimistically cloud-capable,
-	// which avoids a one-frame Cloud→Local flip before the catalog fetch resolves.
-	const [isLoading, setIsLoading] = useState(enabled);
+	const [{ catalog, tier, creditsExhausted, isLoading }, dispatch] = useReducer(
+		cloudVoicesReducer,
+		enabled,
+		initCloudVoicesState,
+	);
 
 	// Latest-value refs for the on-enable fetch. We only want the fetch to run
 	// when `enabled` flips, but the `.then()` callback needs the freshest
@@ -154,15 +205,18 @@ export function useCloudTtsVoices(enabled: boolean): UseCloudTtsVoices {
 			return;
 		}
 		let cancelled = false;
-		setIsLoading(true);
+		dispatch({ type: "fetch-start" });
 		Promise.all([ttsCloudListVoices(), ttsCloudSubscription()])
 			.then(([result, subscription]) => {
 				if (cancelled) {
 					return;
 				}
-				setCatalog(result);
-				setTier(subscription.tier);
-				setCreditsExhausted(subscription.creditsExhausted);
+				dispatch({
+					type: "fetch-result",
+					catalog: result,
+					tier: subscription.tier,
+					creditsExhausted: subscription.creditsExhausted,
+				});
 				// Steer the stale-voice fallback to a usable voice unless the plan is a
 				// CONFIRMED paid tier (free OR unknown both avoid premium voices).
 				const paid = subscription.tier !== null && subscription.tier !== "free";
@@ -185,7 +239,7 @@ export function useCloudTtsVoices(enabled: boolean): UseCloudTtsVoices {
 			})
 			.finally(() => {
 				if (!cancelled) {
-					setIsLoading(false);
+					dispatch({ type: "fetch-done" });
 				}
 			});
 		return () => {
@@ -202,7 +256,7 @@ export function useCloudTtsVoices(enabled: boolean): UseCloudTtsVoices {
 	const lockedVoiceIds: ReadonlySet<string> = new Set(
 		hasPaidPlan
 			? []
-			: catalog.voices.filter(needsSubscription).map((v) => v.id),
+			: catalog.voices.flatMap((v) => (needsSubscription(v) ? [v.id] : [])),
 	);
 
 	return {

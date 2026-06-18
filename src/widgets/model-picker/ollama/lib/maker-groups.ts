@@ -165,6 +165,45 @@ export function computeRecommendedVisible(
 	);
 }
 
+const installedSearchCorpusCache = new WeakMap<
+	OllamaModel,
+	{ corpus: string[]; description: string }
+>();
+const recommendedSearchCorpusCache = new WeakMap<
+	RecommendedOllamaModel,
+	string[]
+>();
+
+function installedSearchCorpus(
+	m: OllamaModel,
+	descriptionsByBase: ReadonlyMap<string, string>,
+): string[] {
+	const description = installedDescriptionForModel(m, descriptionsByBase) ?? "";
+	const cached = installedSearchCorpusCache.get(m);
+	if (cached && cached.description === description) {
+		return cached.corpus;
+	}
+	const family = getOllamaFamily(m);
+	const publisher = getOllamaPublisher(family);
+	const corpus = [
+		m.name,
+		formatOllamaDisplayName(m.name),
+		family,
+		publisher.label,
+		publisher.slug,
+		description,
+		m.details?.parameterSize ?? "",
+		m.details?.quantizationLevel ?? "",
+		m.details?.format ?? "",
+		m.details?.family ?? "",
+		...(m.details?.families ?? []),
+		...(m.capabilities ?? []),
+		String(m.contextLength ?? ""),
+	];
+	installedSearchCorpusCache.set(m, { corpus, description });
+	return corpus;
+}
+
 /** Fuzzy match against the model's full search corpus. We index the
  *  beautified display name, the publisher label, and the publisher slug too
  *  so users typing "google" surface their installed Gemma models, "meta"
@@ -175,24 +214,8 @@ export function matchesInstalledQuery(
 	query: string,
 	descriptionsByBase: ReadonlyMap<string, string> = EMPTY_DESCRIPTION_BY_BASE,
 ): boolean {
-	const family = getOllamaFamily(m);
-	const publisher = getOllamaPublisher(family);
 	return matchesFuzzySearch(
-		[
-			m.name,
-			formatOllamaDisplayName(m.name),
-			family,
-			publisher.label,
-			publisher.slug,
-			installedDescriptionForModel(m, descriptionsByBase) ?? "",
-			m.details?.parameterSize ?? "",
-			m.details?.quantizationLevel ?? "",
-			m.details?.format ?? "",
-			m.details?.family ?? "",
-			...(m.details?.families ?? []),
-			...(m.capabilities ?? []),
-			String(m.contextLength ?? ""),
-		],
+		installedSearchCorpus(m, descriptionsByBase),
 		query,
 	);
 }
@@ -201,19 +224,22 @@ function matchesRecommendedQuery(
 	m: RecommendedOllamaModel,
 	query: string,
 ): boolean {
+	const cached = recommendedSearchCorpusCache.get(m);
+	if (cached !== undefined) {
+		return matchesFuzzySearch(cached, query);
+	}
 	const family = (m.family ?? familySlugFromName(m.name)).toLowerCase();
 	const publisher = getOllamaPublisher(family);
-	return matchesFuzzySearch(
-		[
-			m.name,
-			m.displayName,
-			m.description,
-			family,
-			publisher.label,
-			publisher.slug,
-			formatOllamaDisplayName(m.name),
-			...(m.tags ?? []),
-		],
-		query,
-	);
+	const corpus = [
+		m.name,
+		m.displayName,
+		m.description,
+		family,
+		publisher.label,
+		publisher.slug,
+		formatOllamaDisplayName(m.name),
+		...(m.tags ?? []),
+	];
+	recommendedSearchCorpusCache.set(m, corpus);
+	return matchesFuzzySearch(corpus, query);
 }

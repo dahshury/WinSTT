@@ -4,7 +4,7 @@ import {
 	ArrowUpDownIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { flexRender, type Header, type RowData } from "@tanstack/react-table";
+import { flexRender, type Header } from "@tanstack/react-table";
 import { cn } from "@/shared/lib/cn";
 import { TableHead } from "@/shared/ui/table";
 import { useDataGrid } from "./data-grid-context";
@@ -18,7 +18,7 @@ import { useDataGrid } from "./data-grid-context";
 export function DataGridColumnHeader({
 	header,
 }: {
-	header: Header<RowData, unknown>;
+	header: Header<unknown, unknown>;
 }) {
 	const { labels, resizable, tableLayout } = useDataGrid();
 	const column = header.column;
@@ -82,16 +82,24 @@ export function DataGridColumnHeader({
 				content
 			)}
 			{resizable && column.getCanResize() ? (
-				<span
+				<button
+					aria-label="Resize column"
 					className={cn(
-						"absolute top-0 right-0 z-raised h-full w-1 cursor-col-resize touch-none select-none transition-colors duration-100",
+						"absolute top-0 right-0 z-raised m-0 h-full w-1 cursor-col-resize touch-none select-none border-0 transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/70",
 						column.getIsResizing()
 							? "bg-accent"
 							: "bg-transparent hover:bg-border",
 					)}
 					onDoubleClick={() => column.resetSize()}
+					onKeyDown={(event) => {
+						if (event.key === "Enter" || event.key === " ") {
+							event.preventDefault();
+							column.resetSize();
+						}
+					}}
 					onMouseDown={header.getResizeHandler()}
 					onTouchStart={header.getResizeHandler()}
+					type="button"
 				/>
 			) : null}
 		</TableHead>

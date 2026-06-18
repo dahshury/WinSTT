@@ -360,7 +360,10 @@ impl EncoderModelDownloader {
                                 crate::winstt::managers::download_manager::http_meta::parse_sibling_sizes(
                                     &body,
                                 );
-                            FILES.iter().filter_map(|(rp, _)| sizes.get(*rp).copied()).sum()
+                            FILES
+                                .iter()
+                                .filter_map(|(rp, _)| sizes.get(*rp).copied())
+                                .sum()
                         }
                         Err(_) => 0,
                     }
@@ -376,7 +379,7 @@ impl EncoderModelDownloader {
         for (_, fname) in FILES {
             let f = dir.join(fname);
             if f.is_file() {
-                completed += std::fs::metadata(&f).map(|m| m.len()).unwrap_or(0);
+                completed += std::fs::metadata(&f).map_or(0, |m| m.len());
             }
         }
 
@@ -421,7 +424,7 @@ impl EncoderModelDownloader {
                     let total = if known_total > 0 {
                         known_total
                     } else {
-                        self.progress.lock().map(|p| p.total).unwrap_or(0)
+                        self.progress.lock().map_or(0, |p| p.total)
                     };
                     // Include the in-progress file's partial bytes — emitting only `completed` (the
                     // fully-finished files) collapsed the bar to ~0% on every pause.

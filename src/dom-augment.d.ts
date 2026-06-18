@@ -3,8 +3,8 @@
 //
 // Chromium M114+ exposes per-context audio output-device routing: a `sinkId`
 // option on the `AudioContext` constructor and a `setSinkId()` method on the
-// instance. lib.dom hasn't adopted them, so historically call sites cast with
-// `… as unknown as AudioContextOptions`. Declaring the real shape here lets the
+// instance. lib.dom hasn't adopted them, so historically call sites used a
+// double assertion to `AudioContextOptions`. Declaring the real shape here lets the
 // compiler accept `new AudioContext({ sinkId })` and `ctx.setSinkId(...)`
 // directly — the runtime API is the source of truth, not a stale lib.
 //

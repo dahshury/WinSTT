@@ -1,6 +1,5 @@
 import { Mic01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useCallback } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
@@ -31,12 +30,12 @@ export function MainPage() {
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
 	const t = useTranslations("mainPage");
 	const th = useTranslations("hotkey");
-	const switchToPtt = useCallback(() => {
+	const switchToPtt = () => {
 		updateGeneral({ recordingMode: "ptt" });
 		if (general) {
 			void settingsSave({ general: { ...general, recordingMode: "ptt" } });
 		}
-	}, [general, updateGeneral]);
+	};
 	const pttActivation = useTouchActivation(switchToPtt);
 
 	return (

@@ -462,6 +462,34 @@ pub fn catalog_rows(accel: Accelerator) -> Vec<CatalogModelInfo> {
         .collect()
 }
 
+/// Re-anchor a `partial` cache fraction that was probed straight off disk to the catalog's KNOWN
+/// per-quant download size.
+///
+/// `cache_probe` sums only the bytes already on disk and has no way to learn a file's REMOTE size
+/// from the cache alone, so it reports a partial as `total == downloaded`. `cache_info_from` then
+/// renders that as a flat `(downloaded/downloaded).min(0.999)` = 99% for EVERY partial, however
+/// little is actually present — and that bogus 99% also seeds the live bar on resume (the renderer's
+/// `quantDownloadSeedFromCache`), so the user sees "99%" that jumps to "another percentage" the
+/// instant real progress events (measured against the true total) arrive.
+///
+/// When the catalog carries a credible size for this quant we use it as the denominator so the badge
+/// shows TRUE progress and matches what resume will show. No-op when a live in-flight handle already
+/// supplied a real total (`total > downloaded`, the overlay path), when the catalog has no size for
+/// the quant (off-catalog/custom repo), or when that size isn't larger than what's already on disk.
+fn reanchor_partial_to_catalog_size(info: &mut ModelCacheInfo, known_total: Option<u64>) {
+    if info.state != "partial" || info.total_bytes > info.downloaded_bytes {
+        return;
+    }
+    let Some(known_total) = known_total else {
+        return;
+    };
+    if known_total > info.downloaded_bytes {
+        info.total_bytes = known_total;
+        // Keep the 99% ceiling `cache_info_from` uses — 100% is reserved for a fully `cached` quant.
+        info.progress = (info.downloaded_bytes as f64 / known_total as f64).min(0.999);
+    }
+}
+
 /// Build one model's cache+fitness state. `cache_states` supplies any per-quant snapshots already
 /// known to the download manager (in-flight / verified on disk); absent precisions read not_cached.
 pub(crate) fn to_state_entry(
@@ -508,10 +536,14 @@ pub(crate) fn to_state_entry(
 
     let mut by_quant: BTreeMap<String, ModelCacheInfo> = BTreeMap::new();
     for q in &entry.available_quantizations {
-        let info = cache_states
+        let mut info = cache_states
             .get(q)
             .cloned()
             .unwrap_or_else(ModelCacheInfo::not_cached);
+        reanchor_partial_to_catalog_size(
+            &mut info,
+            entry.size_bytes_by_quantization.get(q).copied(),
+        );
         by_quant.insert(q.clone(), info);
     }
     // Overall = the EFFECTIVE precision's state (memory project_effective_quantization_bridge);
@@ -576,8 +608,7 @@ pub fn estimated_bytes_for(model_id: &str) -> u64 {
     raw_catalog()
         .iter()
         .find(|e| e.id == model_id)
-        .map(|e| estimate_runtime_bytes(e.param_count))
-        .unwrap_or(0)
+        .map_or(0, |e| estimate_runtime_bytes(e.param_count))
 }
 
 #[cfg(test)]
@@ -599,6 +630,67 @@ mod tests {
         assert_eq!(size_label(0), "");
         assert_eq!(size_label(1_000_000_000), "1B");
         assert_eq!(size_label(1_540_000_000), "1.54B");
+    }
+
+    fn partial_info(downloaded: u64, total: u64) -> ModelCacheInfo {
+        ModelCacheInfo {
+            state: "partial".into(),
+            downloaded_bytes: downloaded,
+            total_bytes: total,
+            progress: if total > 0 {
+                (downloaded as f64 / total as f64).min(0.999)
+            } else {
+                0.0
+            },
+        }
+    }
+
+    #[test]
+    fn reanchor_replaces_bogus_99_with_real_fraction() {
+        // Off-disk partial probe reports total == downloaded → cache_info_from rendered a flat 99%.
+        let mut info = partial_info(150_000_000, 150_000_000);
+        assert!(
+            (info.progress - 0.999).abs() < 1e-9,
+            "precondition: flat 99%"
+        );
+        reanchor_partial_to_catalog_size(&mut info, Some(663_048_980));
+        assert_eq!(info.total_bytes, 663_048_980);
+        assert!(
+            (info.progress - 150_000_000.0 / 663_048_980.0).abs() < 1e-6,
+            "progress re-anchored to the catalog total, not a flat 99%"
+        );
+    }
+
+    #[test]
+    fn reanchor_leaves_live_download_total_alone() {
+        // A live in-flight handle already supplied a real total (> downloaded) via the overlay; the
+        // live bar is authoritative, so the catalog size must NOT clobber it.
+        let mut info = partial_info(100_000_000, 663_048_980);
+        let before = info.progress;
+        reanchor_partial_to_catalog_size(&mut info, Some(999_999_999));
+        assert_eq!(info.total_bytes, 663_048_980, "live total preserved");
+        assert!(
+            (info.progress - before).abs() < 1e-12,
+            "live progress preserved"
+        );
+    }
+
+    #[test]
+    fn reanchor_noop_without_catalog_size_or_for_non_partial() {
+        // No catalog size (off-catalog/custom repo) → unfixable, leave the placeholder as-is.
+        let mut info = partial_info(150_000_000, 150_000_000);
+        reanchor_partial_to_catalog_size(&mut info, None);
+        assert_eq!(info.total_bytes, 150_000_000);
+        // Cached/not_cached are never touched.
+        let mut cached = ModelCacheInfo {
+            state: "cached".into(),
+            downloaded_bytes: 663_048_980,
+            total_bytes: 663_048_980,
+            progress: 1.0,
+        };
+        reanchor_partial_to_catalog_size(&mut cached, Some(700_000_000));
+        assert_eq!(cached.total_bytes, 663_048_980);
+        assert!((cached.progress - 1.0).abs() < 1e-12);
     }
 
     #[test]

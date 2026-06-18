@@ -2,6 +2,33 @@ const TOKEN_RE = /[a-z0-9]+/g;
 const VERSION_TOKEN_RE = /^(?:v|ver|version)(\d+[a-z]?)$/;
 const LETTER_NUMBER_RE = /^([a-z]+)(\d+[a-z]?)$/;
 const MIN_FUZZY_TOKEN_LENGTH = 4;
+const HAYSTACK_CACHE_MAX = 2048;
+const QUERY_CACHE_MAX = 128;
+
+interface PreparedSearchText {
+	compact: string;
+	normalized: string;
+	tokens: string[];
+}
+
+const haystackCache = new Map<string, PreparedSearchText>();
+const queryCache = new Map<string, PreparedSearchText>();
+
+function setBoundedCache(
+	cache: Map<string, PreparedSearchText>,
+	key: string,
+	value: PreparedSearchText,
+	maxEntries: number,
+): PreparedSearchText {
+	if (!cache.has(key) && cache.size >= maxEntries) {
+		const oldest = cache.keys().next().value;
+		if (oldest !== undefined) {
+			cache.delete(oldest);
+		}
+	}
+	cache.set(key, value);
+	return value;
+}
 
 function normalizeSearchText(value: string): string {
 	return value
@@ -71,6 +98,42 @@ function buildQueryTokens(text: string): string[] {
 
 function compact(text: string): string {
 	return rawTokens(text).join("");
+}
+
+function prepareHaystack(text: string): PreparedSearchText {
+	const cached = haystackCache.get(text);
+	if (cached !== undefined) {
+		return cached;
+	}
+	const normalized = normalizeSearchText(text);
+	return setBoundedCache(
+		haystackCache,
+		text,
+		{
+			normalized,
+			compact: compact(normalized),
+			tokens: buildHaystackTokens(normalized),
+		},
+		HAYSTACK_CACHE_MAX,
+	);
+}
+
+function prepareQuery(text: string): PreparedSearchText {
+	const cached = queryCache.get(text);
+	if (cached !== undefined) {
+		return cached;
+	}
+	const normalized = normalizeSearchText(text.trim());
+	return setBoundedCache(
+		queryCache,
+		text,
+		{
+			normalized,
+			compact: compact(normalized),
+			tokens: buildQueryTokens(normalized),
+		},
+		QUERY_CACHE_MAX,
+	);
 }
 
 function tokenHasLiteralMatch(
@@ -179,20 +242,21 @@ export function matchesFuzzySearch(
 	haystack: string | readonly string[],
 	query: string,
 ): boolean {
-	const q = normalizeSearchText(query.trim());
-	if (q.length === 0) {
+	const q = prepareQuery(query);
+	if (q.normalized.length === 0) {
 		return true;
 	}
-	const hay = normalizeSearchText(
+	const hay = prepareHaystack(
 		typeof haystack === "string" ? haystack : haystack.join(" "),
 	);
-	if (hay.includes(q) || compact(hay).includes(compact(q))) {
+	if (
+		hay.normalized.includes(q.normalized) ||
+		hay.compact.includes(q.compact)
+	) {
 		return true;
 	}
-	const queryTokens = buildQueryTokens(q);
-	if (queryTokens.length === 0) {
+	if (q.tokens.length === 0) {
 		return false;
 	}
-	const haystackTokens = buildHaystackTokens(hay);
-	return queryTokens.every((token) => tokenMatches(token, haystackTokens));
+	return q.tokens.every((token) => tokenMatches(token, hay.tokens));
 }

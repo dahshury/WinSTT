@@ -20,8 +20,8 @@ pub fn is_encrypted(value: &str) -> bool {
 /// Empty input returns `""`: an empty key and an empty envelope both mean "unset".
 /// A value already wrapped is returned unchanged so re-saving the settings tree
 /// does not double-seal an encrypted value.
-pub fn encrypt_secret(plain: &str) -> String {
-    try_encrypt_secret(plain).unwrap_or_else(|err| panic!("{err}"))
+pub fn encrypt_secret(plain: &str) -> Result<String, String> {
+    try_encrypt_secret(plain)
 }
 
 pub fn try_encrypt_secret(plain: &str) -> Result<String, String> {
@@ -44,8 +44,8 @@ pub fn try_encrypt_secret(plain: &str) -> Result<String, String> {
 /// Corrupt envelopes and OS storage failures are explicit failures; returning an
 /// empty string here would hide data loss and can trick callers into persisting a
 /// cleared API key.
-pub fn decrypt_secret(stored: &str) -> String {
-    try_decrypt_secret(stored).unwrap_or_else(|err| panic!("{err}"))
+pub fn decrypt_secret(stored: &str) -> Result<String, String> {
+    try_decrypt_secret(stored)
 }
 
 pub fn try_decrypt_secret(stored: &str) -> Result<String, String> {
@@ -247,25 +247,28 @@ mod tests {
 
     #[test]
     fn empty_seals_to_empty() {
-        assert_eq!(encrypt_secret(""), "");
+        assert_eq!(encrypt_secret("").as_deref(), Ok(""));
     }
 
     #[test]
     fn empty_decrypts_to_empty() {
-        assert_eq!(decrypt_secret(""), "");
+        assert_eq!(decrypt_secret("").as_deref(), Ok(""));
     }
 
     #[test]
     fn legacy_plaintext_passes_through_on_read() {
         let legacy = "sk-or-v1-legacy-plaintext";
         assert!(!is_encrypted(legacy));
-        assert_eq!(decrypt_secret(legacy), legacy);
+        assert_eq!(decrypt_secret(legacy).as_deref(), Ok(legacy));
     }
 
     #[test]
     fn idempotent_seal() {
         let already_sealed = "enc:v1:feedface";
-        assert_eq!(encrypt_secret(already_sealed), already_sealed);
+        assert_eq!(
+            encrypt_secret(already_sealed).as_deref(),
+            Ok(already_sealed)
+        );
     }
 
     #[test]
@@ -295,7 +298,7 @@ mod tests {
     #[test]
     fn round_trips_a_real_key_with_dpapi() {
         let plain = "sk-or-v1-0123456789abcdef";
-        let sealed = encrypt_secret(plain);
+        let sealed = encrypt_secret(plain).expect("seal with DPAPI");
 
         assert!(is_encrypted(&sealed));
         assert_ne!(sealed, plain, "must not be plaintext on disk");
@@ -305,17 +308,17 @@ mod tests {
         );
         assert_ne!(
             sealed,
-            encrypt_secret(plain),
+            encrypt_secret(plain).expect("seal with DPAPI"),
             "DPAPI should include per-seal randomness"
         );
-        assert_eq!(decrypt_secret(&sealed), plain);
+        assert_eq!(decrypt_secret(&sealed).as_deref(), Ok(plain));
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn unicode_secret_round_trips_with_dpapi() {
         let plain = "cle-\u{00e9}-secret-\u{1f511}";
-        let sealed = encrypt_secret(plain);
-        assert_eq!(decrypt_secret(&sealed), plain);
+        let sealed = encrypt_secret(plain).expect("seal with DPAPI");
+        assert_eq!(decrypt_secret(&sealed).as_deref(), Ok(plain));
     }
 }

@@ -19,7 +19,6 @@ export function AutoSubmitDemo({ caption }: { caption?: ReactNode }) {
     <figure className="as-fig not-prose">
       <div
         className="as-card"
-        role="img"
         aria-label="Auto-submit after paste — a dictated message streams into a chat field, then WinSTT presses Enter and the message sends on its own."
       >
         <div className="as-chat" aria-hidden="true">

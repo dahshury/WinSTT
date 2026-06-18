@@ -1,12 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { audioRefreshDevices } from "@/shared/api/ipc-client";
 
 const DEVICECHANGE_DEBOUNCE_MS = 200;
 
 export function useAudioDeviceMonitor(): void {
-	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
 	useEffect(() => {
+		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
 		const refreshSafely = () => {
 			audioRefreshDevices().catch(() => undefined);
 		};
@@ -20,11 +20,11 @@ export function useAudioDeviceMonitor(): void {
 		}
 
 		const handleDeviceChange = () => {
-			if (debounceRef.current) {
-				clearTimeout(debounceRef.current);
+			if (debounceTimer) {
+				clearTimeout(debounceTimer);
 			}
-			debounceRef.current = setTimeout(() => {
-				debounceRef.current = null;
+			debounceTimer = setTimeout(() => {
+				debounceTimer = null;
 				refreshSafely();
 			}, DEVICECHANGE_DEBOUNCE_MS);
 		};
@@ -32,9 +32,9 @@ export function useAudioDeviceMonitor(): void {
 		mediaDevices.addEventListener("devicechange", handleDeviceChange);
 		return () => {
 			mediaDevices.removeEventListener("devicechange", handleDeviceChange);
-			if (debounceRef.current) {
-				clearTimeout(debounceRef.current);
-				debounceRef.current = null;
+			if (debounceTimer) {
+				clearTimeout(debounceTimer);
+				debounceTimer = null;
 			}
 		};
 	}, []);

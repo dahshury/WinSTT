@@ -13,8 +13,8 @@ export {
 } from "./lib/model-exclusion";
 export {
 	OllamaModelSelector,
-	type OllamaModelSelectorProps,
 } from "./ollama/ui/OllamaModelSelector";
+export type { OllamaModelSelectorProps } from "./ollama/ui/ollama-selector-types";
 export {
 	resolveEffectiveQuant,
 	resolveQuantCache,

@@ -23,6 +23,10 @@ interface OllamaDialogProps extends DialogProps {
 	onStarted: () => void;
 }
 
+function openSignup(): void {
+	window.open("https://openrouter.ai/keys", "_blank");
+}
+
 function OllamaStartErrorBanner({ message }: { message: string | null }) {
 	if (!message) {
 		return null;
@@ -206,7 +210,6 @@ export function ApiKeyDialog({
 		return () => window.clearTimeout(id);
 	}, [isOpen]);
 
-	const openSignup = () => window.open("https://openrouter.ai/keys", "_blank");
 	const submit = () => {
 		const trimmed = (inputRef.current?.value ?? "").trim();
 		if (!trimmed) {

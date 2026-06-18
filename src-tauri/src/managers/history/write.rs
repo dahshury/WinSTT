@@ -17,7 +17,10 @@ use super::{HistoryEntry, HistoryManager, HistoryUpdatePayload, TransformHistory
 impl HistoryManager {
     /// Save a new history entry to the database.
     /// The WAV file should already have been written to the recordings directory.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "history entry persistence mirrors the row fields written to SQLite"
+    )]
     pub fn save_entry(
         &self,
         file_name: String,
@@ -149,7 +152,10 @@ impl HistoryManager {
     }
 
     /// Update an existing history entry with new transcription results (used by retry).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "history update persistence mirrors the row fields written to SQLite"
+    )]
     pub fn update_transcription(
         &self,
         id: i64,

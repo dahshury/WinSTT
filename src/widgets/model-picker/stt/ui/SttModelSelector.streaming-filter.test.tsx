@@ -6,9 +6,10 @@ import { SttModelSelector } from "./SttModelSelector";
 function model(
 	overrides: Partial<ModelInfo> & Pick<ModelInfo, "id">,
 ): ModelInfo {
+	const { id, ...modelOverrides } = overrides;
 	return {
-		id: overrides.id,
-		displayName: overrides.displayName ?? overrides.id,
+		id,
+		displayName: modelOverrides.displayName ?? id,
 		family: "custom",
 		backend: "onnx_asr",
 		languages: ["en"],
@@ -27,7 +28,7 @@ function model(
 		localPath: null,
 		speedScore: 0.5,
 		accuracyScore: 0.5,
-		...overrides,
+		...modelOverrides,
 	} as ModelInfo;
 }
 
