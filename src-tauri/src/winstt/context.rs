@@ -37,12 +37,14 @@ use crate::helpers::regex::static_regex;
 use crate::winstt::settings_schema::ContextAppMode;
 
 mod policy;
+mod prompt_sections;
 mod snapshot;
 mod surface;
 
 #[cfg(test)]
 use policy::extract_host;
 pub use policy::{is_allowed_by_list, is_denied_by_list, redact_sensitive_fields};
+use prompt_sections::{json_serialize_context, json_trim_or_empty, JsonPromptSection};
 pub use snapshot::{
     empty_context, parse_snapshot, ContextMode, ContextReader, WindowContextSnapshot,
     MAX_BUFFER_BYTES, READ_TIMEOUT_MS,
@@ -2633,104 +2635,6 @@ fn json_reconstruct_ai_chat_blob(blob: &str) -> Option<String> {
         return None;
     }
     Some(json_dedupe_consecutive(turns).join("\n"))
-}
-
-enum JsonPromptValue {
-    Bool(bool),
-    Text(String),
-}
-
-struct JsonPromptSection {
-    key: &'static str,
-    value: JsonPromptValue,
-}
-
-impl JsonPromptSection {
-    fn text(key: &'static str, value: impl Into<String>) -> Self {
-        Self {
-            key,
-            value: JsonPromptValue::Text(value.into()),
-        }
-    }
-
-    fn bool(key: &'static str, value: bool) -> Self {
-        Self {
-            key,
-            value: JsonPromptValue::Bool(value),
-        }
-    }
-
-    fn has_value(&self) -> bool {
-        match &self.value {
-            JsonPromptValue::Bool(value) => *value,
-            JsonPromptValue::Text(value) => !value.is_empty(),
-        }
-    }
-}
-
-fn json_serialize_context(sections: Vec<JsonPromptSection>) -> String {
-    // PRIVACY-CRITICAL final gate: scrub OTP / verification / single-use secret
-    // codes from EVERY assembled text section, no matter which formatter branch
-    // produced it (window-dump, pruned-tree reroute, flat beforeCaret, etc.).
-    // Bool sections (e.g. `ide`) and metadata are left untouched. This runs after
-    // assembly and before serialization so it is impossible to bypass.
-    let sections = sections
-        .into_iter()
-        .map(|mut section| {
-            if let JsonPromptValue::Text(value) = &section.value {
-                if json_section_carries_content(section.key) {
-                    section.value = JsonPromptValue::Text(json_scrub_secret_codes(value));
-                }
-            }
-            section
-        })
-        .filter(JsonPromptSection::has_value)
-        .collect::<Vec<_>>();
-    if sections.is_empty() {
-        return String::new();
-    }
-
-    let mut out = String::from("{\n");
-    for (index, section) in sections.iter().enumerate() {
-        let key = serde_json::to_string(section.key).unwrap_or_else(|_| "\"\"".to_string());
-        let value = match &section.value {
-            JsonPromptValue::Bool(value) => value.to_string(),
-            JsonPromptValue::Text(value) => {
-                serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
-            }
-        };
-        out.push_str("  ");
-        out.push_str(&key);
-        out.push_str(": ");
-        out.push_str(&value);
-        if index + 1 < sections.len() {
-            out.push(',');
-        }
-        out.push('\n');
-    }
-    out.push('}');
-    out
-}
-
-/// True for the prompt sections that carry CAPTURED page/field content (and so
-/// could contain a leaked secret code). The lightweight metadata sections
-/// (`app` / `url` / `window` / `field` / `note`) are excluded so a window title
-/// that happens to contain digits is never mangled.
-fn json_section_carries_content(key: &str) -> bool {
-    matches!(
-        key,
-        "selection"
-            | "beforeCaret"
-            | "afterCaret"
-            | "fieldText"
-            | "screen"
-            | "screenOcr"
-            | "clipboard"
-    )
-}
-
-fn json_trim_or_empty(raw: Option<&str>) -> String {
-    raw.unwrap_or("").trim().to_string()
 }
 
 fn json_build_metadata_sections(snapshot: &WindowContextSnapshot) -> Vec<JsonPromptSection> {
