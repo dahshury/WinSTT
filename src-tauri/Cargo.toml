@@ -81,7 +81,7 @@ rubato = "0.16.2"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 hound = "3.5.1"
 log = "0.4.25"
-env_filter = "0.1.0"
+env_filter = "2.0.0"
 tokio = "1.43.0"
 # Awaitable, latching cancellation for racing in-flight reqwest/genai futures
 # (cloud LLM/STT/TTS abort). Already in the tree transitively; `rt` gates the
