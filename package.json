@@ -102,7 +102,7 @@
 		"eslint": "^9.39.4",
 		"eslint-plugin-i18next": "^6.1.4",
 		"fast-check": "^4.8.0",
-		"knip": "^5.88.1",
+		"knip": "^6.23.0",
 		"prettier": "^3.8.4",
 		"rollup-plugin-visualizer": "^6.0.11",
 		"typescript": "~5.9.3",
