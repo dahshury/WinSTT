@@ -1,12 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
-	colorForSpeaker,
-	dominantSpeaker,
-	SpeakerTextChunks,
-	speakerCount,
 	type TranscriptionItem,
-	splitTextBySpeaker,
 	useTranscriptionStore,
 } from "@/entities/transcription";
 import { ScrollArea } from "@/shared/ui/scroll-area";
@@ -44,31 +39,6 @@ function fadeBetween(
 
 function timeFade(timestamp: number, now: number): number {
 	return fadeBetween(timestamp, now, FADE_AFTER_MS, GONE_AFTER_MS);
-}
-
-function OverlayLineText({ item }: { item: TranscriptionItem }) {
-	const segments = item.speakerSegments;
-	const distinctSpeakers = speakerCount(segments);
-	// `dir="auto"` on the text wrapper lets the bidi algorithm pick base
-	// direction from the transcription itself — keeping it off the parent <p>
-	// so an LTR "Speaker N:" prefix doesn't force the Arabic text the wrong way.
-	if (!segments || segments.length === 0) {
-		return <span dir="auto">{item.text}</span>;
-	}
-	if (distinctSpeakers <= 1) {
-		const color = colorForSpeaker(segments[0]?.speaker ?? -1);
-		return (
-			<span dir="auto" style={{ color }}>
-				{item.text}
-			</span>
-		);
-	}
-	const chunks = splitTextBySpeaker(item.text, segments);
-	return (
-		<span dir="auto">
-			<SpeakerTextChunks chunks={chunks} itemId={item.id} />
-		</span>
-	);
 }
 
 export function SubtitleOverlay() {
@@ -198,26 +168,17 @@ export function SubtitleOverlay() {
 				    at the top and made it unreachable, so older lines never
 				    scrolled away and `scrollTop = scrollHeight` was a no-op. */}
 				<div className="flex min-h-full flex-col justify-end gap-2 px-6 pt-14 pb-4">
-					{listenItems.map((item) => {
-						const spk = dominantSpeaker(item.speakerSegments);
-						const color = spk >= 0 ? colorForSpeaker(spk) : undefined;
-						return (
-							<p
-								className="font-sans text-foreground text-title leading-snug"
-								data-subtitle-line="true"
-								key={item.id}
-								style={{
-									...(color ? { color } : {}),
-									textShadow: SUBTITLE_TEXT_SHADOW,
-								}}
-							>
-								{spk >= 0 ? (
-									<span className="font-semibold">{`Speaker ${spk + 1}: `}</span>
-								) : null}
-								<OverlayLineText item={item} />
-							</p>
-						);
-					})}
+					{listenItems.map((item) => (
+						<p
+							className="font-sans text-foreground text-title leading-snug"
+							data-subtitle-line="true"
+							dir="auto"
+							key={item.id}
+							style={{ textShadow: SUBTITLE_TEXT_SHADOW }}
+						>
+							{item.text}
+						</p>
+					))}
 					{liveText ? (
 						<p
 							className="font-sans text-foreground/75 text-title leading-snug"

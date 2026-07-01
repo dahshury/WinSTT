@@ -1,9 +1,5 @@
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import {
-	invokeReload,
-	isCloudModel,
-	isQuantizationChanging,
-} from "./apply-swap";
+import { isCloudModel, isQuantizationChanging } from "./apply-swap";
 import { reportSwapGateError } from "./download-gate";
 import type {
 	GetModelFn,
@@ -32,18 +28,11 @@ export function dispatchChange(args: HandleChangeArgs): void {
 	// and on-disk model caching, neither of which apply to a cloud
 	// transcriber. Issue the swap directly so the server's unload-first
 	// pipeline runs and frees the previous local model's memory.
-	const branches = isCloudModel(args.value)
-		? [
-				() =>
-					args.issueSwap(
-						args.kind,
-						args.value,
-						args.currentModel,
-						args.quantization,
-					),
-			]
-		: [() => dispatchGate(args)];
-	branches.forEach(invokeReload);
+	if (isCloudModel(args.value)) {
+		args.issueSwap(args.kind, args.value, args.currentModel, args.quantization);
+		return;
+	}
+	dispatchGate(args);
 }
 
 export function dispatchGate(args: HandleChangeArgs): void {
@@ -57,10 +46,11 @@ export function dispatchGate(args: HandleChangeArgs): void {
 		.catch(reportSwapGateError);
 }
 
-export function runHandleMainChange(args: HandleChangeArgs): void {
+export function runHandleChange(args: HandleChangeArgs): void {
 	// True no-op: same model + same quant. Skip the gate so we don't trigger
 	// the assessment round-trip and the begin/clear chrome for a setting that
-	// didn't change.
+	// didn't change. (Same logic for both main and realtime — args.kind carries
+	// the distinction downstream.)
 	if (
 		args.value === args.currentModel &&
 		!isQuantizationChanging(args.quantization, args.currentQuantization)
@@ -76,17 +66,6 @@ export function runHandleMainChange(args: HandleChangeArgs): void {
 	dispatchChange(args);
 }
 
-export function runHandleRealtimeChange(args: HandleChangeArgs): void {
-	// Mirror runHandleMainChange — same no-op short-circuit, same gate.
-	if (
-		args.value === args.currentModel &&
-		!isQuantizationChanging(args.quantization, args.currentQuantization)
-	) {
-		return;
-	}
-	dispatchChange(args);
-}
-
 export function runConfirmPendingDownload(
 	pendingDownload: PendingDownload | null,
 	issueSwap: (
@@ -96,11 +75,10 @@ export function runConfirmPendingDownload(
 		quantization?: OnnxQuantization,
 	) => void,
 ): void {
-	const present = pendingDownload === null ? [] : [pendingDownload];
-	const toInvoker = toIssueSwapInvoker(issueSwap);
-	for (const pd of present) {
-		invokeReload(toInvoker(pd));
+	if (pendingDownload === null) {
+		return;
 	}
+	toIssueSwapInvoker(issueSwap)(pendingDownload)();
 }
 
 export function toIssueSwapInvoker(
@@ -122,10 +100,10 @@ export function handleDownloadCompleteEvent(
 		React.SetStateAction<PendingDownload | null>
 	>,
 ): void {
-	const handlers = cancelled
-		? []
-		: [() => closePendingDownloadFor(model, setPendingDownload)];
-	handlers.forEach(invokeReload);
+	if (cancelled) {
+		return;
+	}
+	closePendingDownloadFor(model, setPendingDownload);
 }
 
 export function closePendingDownloadFor(
@@ -204,6 +182,8 @@ export function rollbackRealtime(
 	update: UpdateModelFn,
 ): void {
 	const prev = prevRealtimeModelRef.current;
-	const patches = prev === null ? [] : [{ realtimeModel: prev }];
-	patches.forEach(update);
+	if (prev === null) {
+		return;
+	}
+	update({ realtimeModel: prev });
 }

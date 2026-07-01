@@ -2,14 +2,11 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AllowedParameter } from "@/shared/api/models";
 import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
 import {
-	AUDIO_PARAM_MAP,
 	diarizationNeedsPush,
 	readDiarizationEnabled,
 	type SyncDeps,
 	sendIfChanged,
 	shouldSendParam,
-	syncAudioEntries,
-	syncAudioParams,
 	syncDiarizationParams,
 	syncModelParams,
 	syncQualityParams,
@@ -35,12 +32,6 @@ function settingsWith(overrides: Partial<AppSettings>): AppSettings {
 
 beforeEach(() => {
 	// No global state.
-});
-
-describe("AUDIO_PARAM_MAP", () => {
-	test("does not expose audio settings through no-op STT parameters", () => {
-		expect(AUDIO_PARAM_MAP).toEqual({});
-	});
 });
 
 describe("shouldSendParam", () => {
@@ -74,76 +65,6 @@ describe("sendIfChanged", () => {
 		const { deps, calls } = makeDeps();
 		sendIfChanged(deps, null, undefined, "silence_timing", true);
 		expect(calls).toEqual([]);
-	});
-});
-
-describe("syncAudioEntries", () => {
-	test("does not push unsupported audio entries", () => {
-		const { deps, calls } = makeDeps();
-		syncAudioEntries(
-			deps,
-			{
-				sileroSensitivity: 0.5,
-				postSpeechSilenceDuration: 0.7,
-				wakeWordActivationDelay: 0.1,
-				inputDeviceIndex: 1,
-			} as never,
-			undefined,
-			true,
-		);
-		expect(calls).toEqual([]);
-	});
-
-	test("incremental mode remains a no-op for unsupported audio entries", () => {
-		const { deps, calls } = makeDeps();
-		syncAudioEntries(
-			deps,
-			{
-				sileroSensitivity: 0.5,
-				postSpeechSilenceDuration: 0.7,
-			} as never,
-			{
-				sileroSensitivity: 0.5,
-				postSpeechSilenceDuration: 0.5,
-			} as never,
-			false,
-		);
-		expect(calls).toEqual([]);
-	});
-});
-
-describe("syncAudioParams", () => {
-	test("returns early when audio section is missing", () => {
-		const { deps, calls } = makeDeps();
-		syncAudioParams(deps, settingsWith({}), undefined);
-		expect(calls).toEqual([]);
-	});
-
-	test("does not send VAD settings through no-op STT parameters", () => {
-		const { deps, calls } = makeDeps();
-		syncAudioParams(
-			deps,
-			settingsWith({
-				audio: { sileroSensitivity: 0.42 } as never,
-			}),
-			undefined,
-		);
-		expect(calls).toEqual([]);
-	});
-
-	test("does not translate microphoneRelease into legacy backend parameters", () => {
-		const { deps, calls } = makeDeps();
-		syncAudioParams(
-			deps,
-			settingsWith({
-				audio: { microphoneRelease: "min1" } as never,
-			}),
-			undefined,
-		);
-		const params = calls.map((c) => c.args[0]);
-		expect(params).not.toContain("always_on_microphone");
-		expect(params).not.toContain("lazy_stream_close");
-		expect(params).not.toContain("lazy_close_timeout_seconds");
 	});
 });
 

@@ -342,6 +342,8 @@ function useModelSettingsPanelRender() {
 				catalogLoaded={catalogLoaded}
 				catalogModels={catalogModels}
 				currentQuantization={currentQuantization}
+				disabled={!realtimeEnabled}
+				disabledTooltip={t("realtimeDisabledTooltip")}
 				downloadProgress={realtimeDownloadProgress}
 				getFitAssessment={getFitAssessment}
 				handleRealtimeModelChange={handleRealtimePick}

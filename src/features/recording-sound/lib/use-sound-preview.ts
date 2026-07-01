@@ -19,7 +19,8 @@ async function decode(
 ): Promise<AudioBuffer | null> {
 	try {
 		return await ctx.decodeAudioData(toArrayBuffer(bytes));
-	} catch {
+	} catch (error) {
+		console.warn("[sound-preview] decodeAudioData failed:", error);
 		return null;
 	}
 }

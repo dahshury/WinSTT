@@ -252,6 +252,20 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
                 g("preprocessor_config", "preprocessor_config.json".into()),
             ]
         }
+        EngineKind::Qwen3Asr => vec![
+            // andrewleech/qwen3-asr-*-onnx ships at the repo ROOT. The quant suffix (`?int4`) uses
+            // the `.` separator (`encoder.int4.onnx`, `decoder_weights.int4.data`); `embed_tokens.bin`
+            // is a single fp16 table shared across precisions, so it carries NO suffix.
+            g("encoder", format!("encoder{s}.onnx")),
+            g("decoder_init", format!("decoder_init{s}.onnx")),
+            g("decoder_step", format!("decoder_step{s}.onnx")),
+            // Shared external-data blob for BOTH decoder graphs. Not a `<stem>.onnx_data` sidecar, so
+            // the automatic sidecar sweep won't find it — it MUST be an explicit logical-key file.
+            g("decoder_weights", format!("decoder_weights{s}.data")),
+            g("embed_tokens", "embed_tokens.bin".into()),
+            g("tokenizer", "tokenizer.json".into()),
+            g("tokenizer_config", "tokenizer_config.json".into()),
+        ],
         EngineKind::NemoCtc => vec![
             g("model", format!("model{s}.onnx")),
             g("vocab", "vocab.txt".into()),

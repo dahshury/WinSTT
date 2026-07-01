@@ -16,13 +16,12 @@ use std::time::Instant;
 use winstt_app_lib::winstt::tts::chatterbox::{
     ChatterboxConfig, ChatterboxEngine, CHATTERBOX_SAMPLE_RATE,
 };
-use winstt_app_lib::winstt::tts::kitten::{
-    KittenConfig, KittenDevice, KittenEngine, KITTEN_SAMPLE_RATE,
-};
+use winstt_app_lib::winstt::tts::kitten::{KittenConfig, KittenEngine, KITTEN_SAMPLE_RATE};
 use winstt_app_lib::winstt::tts::piper::{PiperConfig, PiperEngine};
 use winstt_app_lib::winstt::tts::supertonic::{
     SupertonicConfig, SupertonicEngine, SUPERTONIC_SAMPLE_RATE,
 };
+use winstt_app_lib::winstt::tts::TtsDevice;
 
 const DEFAULT_SENTENCE: &str = "The quick brown fox jumps over the lazy dog.";
 
@@ -126,7 +125,7 @@ fn report(
 fn run_kitten(voice: &str, text: &str) {
     let cfg = KittenConfig {
         cache_dir: cache_root().join("kitten"),
-        device: KittenDevice::Cpu,
+        device: TtsDevice::Cpu,
         ..Default::default()
     };
     let engine = KittenEngine::new(cfg);

@@ -1,12 +1,13 @@
 import type { FitAssessmentEntry } from "@/shared/api/ipc-client";
-import type {
-	useCatalogStore,
-	useModelStateStore,
-} from "@/entities/model-catalog";
 import type { useSettingsStore } from "@/entities/setting";
-import type { useTranslations } from "use-intl";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
+export type {
+	CatalogModels,
+	ModelStatesById as StatesById,
+	ModelSystemInfo as SystemInfo,
+} from "@/entities/model-catalog";
 
-export type TFn = ReturnType<typeof useTranslations>;
+export type TFn = TranslateFn;
 
 export type SettingsStoreState = ReturnType<typeof useSettingsStore.getState>;
 export type GlobalSettings = SettingsStoreState["settings"]["global"];
@@ -23,15 +24,6 @@ export type LanguageControlMode =
 	| "single"
 	| "auto"
 	| "candidate-auto";
-export type CatalogModels = ReturnType<
-	typeof useCatalogStore.getState
->["models"];
-export type StatesById = ReturnType<
-	typeof useModelStateStore.getState
->["statesById"];
-export type SystemInfo = ReturnType<
-	typeof useModelStateStore.getState
->["systemInfo"];
 export type GetFitAssessment = (modelId: string) => FitAssessmentEntry | null;
 
 export type TtsSettings = SettingsStoreState["settings"]["tts"];

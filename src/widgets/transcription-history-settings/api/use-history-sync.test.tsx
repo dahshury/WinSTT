@@ -179,6 +179,57 @@ describe("useTranscriptionHistorySync", () => {
 		).toEqual(["transform-b"]);
 	});
 
+	test("skips the get-all refetch when the store is already hydrated", async () => {
+		// Mounted at the window root, the hook must NOT refetch on a remount — a
+		// refetch swaps in a fresh array and busts the History stats caches. With
+		// both stores already loaded, hydration is skipped and existing entries are
+		// left untouched even though the backend would return different rows.
+		const reads: string[] = [];
+		invokeImpl = (cmd) => {
+			if (
+				matchesHistoryRead(cmd, IPC.HISTORY_GET_ALL, "history_get_all") ||
+				matchesHistoryRead(
+					cmd,
+					IPC.TRANSFORM_HISTORY_GET_ALL,
+					"transform_history_get_all",
+				)
+			) {
+				reads.push(cmd);
+			}
+			return Promise.resolve([
+				{
+					id: "fresh",
+					timestamp: 9,
+					text: "x",
+					wordCount: 1,
+					durationMs: 1000,
+				},
+			]);
+		};
+		useTranscriptionHistoryStore.setState({
+			entries: [
+				{
+					id: "kept",
+					timestamp: 1,
+					text: "hi",
+					wordCount: 1,
+					durationMs: 1000,
+				},
+			],
+			isLoaded: true,
+			transformEntries: [],
+			transformsLoaded: true,
+		});
+		renderHook(() => useTranscriptionHistorySync());
+		// Still subscribes for live updates even when hydration is skipped.
+		expect(listeners.has(IPC.HISTORY_ADDED)).toBe(true);
+		await Promise.resolve();
+		expect(reads).toEqual([]);
+		expect(
+			useTranscriptionHistoryStore.getState().entries.map((e) => e.id),
+		).toEqual(["kept"]);
+	});
+
 	test("unmount removes the history:added listener", () => {
 		const { unmount } = renderHook(() => useTranscriptionHistorySync());
 		unmount();

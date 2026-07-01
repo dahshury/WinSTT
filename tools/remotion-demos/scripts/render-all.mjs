@@ -26,7 +26,6 @@ const ids = [
   "viz-aura",
   "overlay-floating",
   "overlay-island",
-  "quick-start-flow",
   "dictation-loop",
   "model-picker-flow",
   "audio-vad-flow",

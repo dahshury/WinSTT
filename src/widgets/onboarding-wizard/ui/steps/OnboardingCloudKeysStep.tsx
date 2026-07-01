@@ -15,6 +15,8 @@ import {
 } from "@/features/verify-credentials";
 import type { CloudSttProvider } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
+import { brandLogoFor } from "@/shared/ui/brand-logo";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Spinner } from "@/shared/ui/spinner";
@@ -54,6 +56,7 @@ const PROVIDER_OPTIONS: readonly SwitcherOption<CloudSttProvider>[] =
 	PROVIDERS.map((p) => ({
 		value: p.id,
 		label: p.label,
+		iconNode: brandLogoFor(p.id),
 	}));
 
 /** Map a verify-credentials probe response to an onboarding status-pill entry. */
@@ -174,7 +177,10 @@ export function OnboardingCloudKeysStep() {
 			verifyOpenrouter(apiKey);
 			return;
 		}
-		verifyCredential(provider, apiKey).catch(() => undefined);
+		fireAndForget(
+			verifyCredential(provider, apiKey),
+			"onboarding.cloudKeys.verifyCredential",
+		);
 	};
 
 	const handleModelSelect = (modelId: string) => {
@@ -192,19 +198,18 @@ export function OnboardingCloudKeysStep() {
 				label={t("provider")}
 				layout="stacked"
 			>
-				<ElevatedSurface>
-					<Switcher<CloudSttProvider>
-						fullWidth
-						onChange={setProvider}
-						options={PROVIDER_OPTIONS}
-						value={provider}
-					/>
-				</ElevatedSurface>
+				<Switcher<CloudSttProvider>
+					fullWidth
+					onChange={setProvider}
+					options={PROVIDER_OPTIONS}
+					value={provider}
+				/>
 			</FormControl>
 
 			<FormControl
 				caption={t("apiKeyCaption")}
 				label={t("apiKeyLabel", { provider: meta?.label ?? "API" })}
+				labelIcon={brandLogoFor(meta?.id)}
 				labelTrailing={
 					<a
 						className="inline-flex items-center gap-1 font-mono text-foreground-muted text-xs-tight uppercase tracking-[0.14em] underline-offset-4 transition-colors hover:text-foreground-secondary hover:underline"

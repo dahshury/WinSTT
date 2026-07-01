@@ -1,6 +1,11 @@
-import { commands, type OnboardingFinishArgs } from "@/bindings";
+import {
+	commands,
+	type MicrophoneLevelMonitorTarget,
+	type OnboardingFinishArgs,
+} from "@/bindings";
+import { isPlainRecord } from "@/shared/lib/is-record";
+import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
 import { IPC } from "./ipc-channels";
-import type { MicrophoneLevelMonitorTarget } from "./ipc/stt-audio";
 
 export const noop = () => {
 	/* outside a bridge context */
@@ -67,16 +72,6 @@ export function hasNativeBridge(): boolean {
 	return typeof window !== "undefined" && window.nativeBridge != null;
 }
 
-function hasTauriRuntime(): boolean {
-	if (typeof window === "undefined") {
-		return false;
-	}
-	const maybeWindow = window as Window & {
-		__TAURI_INTERNALS__?: unknown;
-	};
-	return maybeWindow.__TAURI_INTERNALS__ != null;
-}
-
 function canUseDevSettingsBridge(): boolean {
 	return (
 		typeof window !== "undefined" &&
@@ -111,6 +106,7 @@ function isObjectArg(arg: unknown): arg is object {
  * handles it natively — guarding on it keeps `isObjectArg` clean.
  */
 function jsonRoundTripArg(arg: unknown): unknown {
+	// eslint-disable-next-line react-doctor/no-json-parse-stringify-clone -- intentional lossy strip: this is the fallback AFTER structuredClone already threw on this payload; the JSON round-trip drops the non-cloneable garbage (functions/Proxies/prototypes) that structuredClone cannot, so structuredClone here would just re-throw.
 	return isObjectArg(arg) ? JSON.parse(JSON.stringify(arg)) : arg;
 }
 
@@ -162,10 +158,7 @@ function toCloneableArgs(channel: string, args: unknown[]): unknown[] {
  */
 function firstObjArg(args: unknown[]): Record<string, unknown> {
 	const first = args[0];
-	if (first !== null && typeof first === "object" && !Array.isArray(first)) {
-		return first as Record<string, unknown>;
-	}
-	return {};
+	return isPlainRecord(first) ? first : {};
 }
 
 function stringCommandArg(
@@ -188,17 +181,14 @@ async function readDevSettingsBridgeJson(
 	}
 	if (!response.ok) {
 		const message =
-			body !== null &&
-			typeof body === "object" &&
+			isPlainRecord(body) &&
 			"error" in body &&
-			typeof body.error === "string"
-				? body.error
+			typeof body["error"] === "string"
+				? body["error"]
 				: `HTTP ${response.status}`;
 		throw new Error(message);
 	}
-	return body !== null && typeof body === "object"
-		? (body as Record<string, unknown>)
-		: {};
+	return isPlainRecord(body) ? body : {};
 }
 
 async function devSettingsLoad(): Promise<unknown> {

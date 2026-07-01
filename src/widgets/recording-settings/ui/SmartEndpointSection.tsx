@@ -4,7 +4,6 @@ import {
 	SettingField,
 	SettingSection,
 } from "@/entities/setting";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Toggle } from "@/shared/ui/toggle";
 import type {
@@ -54,18 +53,16 @@ export function SmartEndpointSection({
 					}
 					tooltip={t("detectionSpeedTooltip")}
 				>
-					<ElevatedSurface className="w-fit" inline>
-						<NumberStepper
-							max={3.0}
-							min={0.5}
-							onChange={(v) => update({ smartEndpointSpeed: v })}
-							step={0.1}
-							value={
-								q?.smartEndpointSpeed ??
-								DEFAULT_SETTINGS.quality.smartEndpointSpeed
-							}
-						/>
-					</ElevatedSurface>
+					<NumberStepper
+						max={3.0}
+						min={0.5}
+						onChange={(v) => update({ smartEndpointSpeed: v })}
+						step={0.1}
+						value={
+							q?.smartEndpointSpeed ??
+							DEFAULT_SETTINGS.quality.smartEndpointSpeed
+						}
+					/>
 				</SettingField>
 			</div>
 		</SettingSection>

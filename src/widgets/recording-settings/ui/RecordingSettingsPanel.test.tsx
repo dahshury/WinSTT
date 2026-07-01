@@ -66,9 +66,8 @@ mock.module("@/shared/api/ipc-client", () => ({
 }));
 
 const { IntlProvider } = await import("@/app/providers/IntlProvider");
-const { DEFAULT_SETTINGS, useSettingsStore } = await import(
-	"@/entities/setting"
-);
+const { DEFAULT_SETTINGS, useSettingsStore } =
+	await import("@/entities/setting");
 const { RecordingSettingsPanel } = await import("./RecordingSettingsPanel");
 
 let rendered: RenderResult | null = null;

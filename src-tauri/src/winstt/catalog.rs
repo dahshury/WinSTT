@@ -5,10 +5,9 @@
 //     _INT8_PREFERRED_FAMILIES, _override_dml_to_cpu_for_incompatible_family)
 //   + server/src/stt_server/control_handler.py (_effective_quant_for — the picker badge bridge)
 //
-// This module is DETERMINISTIC DATA + pure resolution logic. It is the Rust port of WinSTT's
+// This module is data + pure resolution logic. It is the Rust port of WinSTT's
 // STT model catalog and the per-family precision/EP policy that the picker badge and the ort
-// loader must AGREE on. There is no ML here — only a const table and string-state arithmetic —
-// so it is written as REAL code with `#[cfg(test)]` unit tests (per slice rules).
+// loader must AGREE on. There is no ML here — only a const table and string-state arithmetic.
 //
 // INVARIANTS (carried verbatim from WinSTT memory + server source):
 //   * `DML_INCOMPATIBLE_FAMILIES` MUST EQUAL `INT8_PREFERRED_FAMILIES`
@@ -22,13 +21,13 @@
 //   * Canary/Cohere `<|startofcontext|>` prompt slot is UNTRAINED — no initial-prompt bias for
 //     them (handled in the engine slice, NOT here — noted for cross-reference).
 //
-// The const `STT_CATALOG` below has exactly 71 entries (whisper 15, moonshine 10, granite 2,
-// nemo 34, kaldi 4, gigaam 2, cohere 1, sense_voice 1, t-one 1, dolphin 1). Every entry is
+// The const `STT_CATALOG` below has exactly 73 entries (whisper 15, moonshine 10, granite 2,
+// nemo 34, kaldi 4, gigaam 2, cohere 1, sense_voice 1, t-one 1, dolphin 1, qwen3 2). Every entry is
 // preview-capable in WinSTT today; native streaming and final-reuse policy are derived from
 // `EngineKind`, not this legacy field.
 //
 // This module is split into two siblings behind a stable re-export surface:
-//   * `data`   — the `ModelEntry` row shape + the verbatim 71-row `STT_CATALOG` const.
+//   * `data`   — the `ModelEntry` row shape + the verbatim 73-row `STT_CATALOG` const.
 //   * `policy` — `Family`/`Accelerator` + the deterministic precision/EP resolution policy.
 // Every previously public path (`crate::winstt::catalog::X`) is preserved via the globs below.
 
@@ -45,11 +44,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_total_count_is_71() {
+    fn catalog_total_count_is_73() {
         assert_eq!(
             STT_CATALOG.len(),
-            71,
-            "catalog.json ships exactly 71 STT models"
+            73,
+            "catalog.json ships exactly 73 STT models"
         );
     }
 
@@ -66,13 +65,14 @@ mod tests {
         assert_eq!(count(Family::SenseVoice), 1, "sense_voice count");
         assert_eq!(count(Family::TOne), 1, "t-one count");
         assert_eq!(count(Family::Dolphin), 1, "dolphin count");
+        assert_eq!(count(Family::Qwen3), 2, "qwen3 count");
         assert_eq!(
             count(Family::Custom),
             0,
             "custom never appears in the shipped catalog"
         );
-        // The nine family counts must sum to the catalog total.
-        let summed = 15 + 10 + 34 + 4 + 2 + 1 + 2 + 1 + 1 + 1;
+        // The family counts must sum to the catalog total.
+        let summed = 15 + 10 + 34 + 4 + 2 + 1 + 2 + 1 + 1 + 1 + 2;
         assert_eq!(summed, STT_CATALOG.len());
     }
 
@@ -221,6 +221,7 @@ mod tests {
             Family::Kaldi,
             Family::TOne,
             Family::Dolphin,
+            Family::Qwen3,
             Family::Custom,
         ] {
             assert_eq!(
@@ -269,6 +270,7 @@ mod tests {
             Family::Kaldi,
             Family::TOne,
             Family::Dolphin,
+            Family::Qwen3,
             Family::Custom,
         ] {
             assert_eq!(Family::from_str(f.as_str()), f, "roundtrip {:?}", f);
@@ -330,7 +332,7 @@ mod tests {
         );
         // Granite publishes fp16w rather than fp16, so CUDA auto should still avoid the 15GB fp32
         // tier and choose the float16-weights export.
-        let granite = find("granite-speech-4.1-2b").unwrap();
+        let granite = find("granite-speech-4.1-2b-plus").unwrap();
         assert_eq!(
             resolve_quantization(
                 "auto",

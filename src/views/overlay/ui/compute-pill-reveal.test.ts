@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { computePillReveal, computeStickyPillReveal } from "./OverlayPage";
+import {
+	computePillReveal,
+	computeStickyPillReveal,
+} from "../lib/overlay-reveal";
 
 // `computePillReveal` is the gate that decides WHEN the overlay pill
 // (floating-bottom chip/bubble OR dynamic island) becomes visible during a
@@ -13,12 +16,10 @@ import { computePillReveal, computeStickyPillReveal } from "./OverlayPage";
 const BASE = {
 	isRecordingActive: false,
 	isSpeaking: false,
-	hasText: false,
-	isThinking: false,
 };
 
 describe("computePillReveal", () => {
-	test("recording armed but silent (no speech, no words) → hidden (the 'pops before I speak' bug)", () => {
+	test("recording armed but silent (no speech) → hidden (the 'pops before I speak' bug)", () => {
 		expect(computePillReveal({ ...BASE, isRecordingActive: true })).toBe(false);
 	});
 
@@ -26,26 +27,6 @@ describe("computePillReveal", () => {
 		expect(
 			computePillReveal({ ...BASE, isRecordingActive: true, isSpeaking: true }),
 		).toBe(true);
-	});
-
-	test("recording + transcribed words without VAD stays hidden", () => {
-		expect(
-			computePillReveal({ ...BASE, isRecordingActive: true, hasText: true }),
-		).toBe(false);
-	});
-
-	test("LLM thinking without a sticky VAD reveal stays hidden", () => {
-		expect(computePillReveal({ ...BASE, isThinking: true })).toBe(false);
-	});
-
-	test("final STT decode without a sticky VAD reveal stays hidden", () => {
-		expect(
-			computePillReveal({
-				...BASE,
-				isRecordingActive: true,
-				isTranscribing: true,
-			}),
-		).toBe(false);
 	});
 
 	test("idle (nothing happening) → hidden", () => {
@@ -56,14 +37,6 @@ describe("computePillReveal", () => {
 		// A prior session may leave `isSpeaking=true` behind; it must not flash the
 		// pill before the next recording_start re-arms `isRecordingActive`.
 		expect(computePillReveal({ ...BASE, isSpeaking: true })).toBe(false);
-	});
-
-	test("stale text without an armed recording → hidden (between-session guard)", () => {
-		expect(computePillReveal({ ...BASE, hasText: true })).toBe(false);
-	});
-
-	test("stale transcribing without an armed recording stays hidden", () => {
-		expect(computePillReveal({ ...BASE, isTranscribing: true })).toBe(false);
 	});
 });
 

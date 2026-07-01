@@ -3,8 +3,8 @@ use crate::audio_toolkit::{
     SileroVad,
 };
 use crate::helpers::clamshell;
-use crate::winstt::commands::settings::read_settings_raw;
 use crate::winstt::settings_schema::{MicrophoneRelease, RecordingMode, WinsttSettings};
+use crate::winstt::settings_store::read_settings_raw;
 use crate::winstt::sync_ext::MutexExt;
 use log::{debug, error, info, warn};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -97,6 +97,17 @@ fn schedule_toggle_silence_stop(
     });
 }
 
+/// Logs a `set_mute` COM/HRESULT failure at most once per process so a system where
+/// muting never works is diagnosable without flooding the log on every dictation.
+#[cfg(target_os = "windows")]
+fn warn_set_mute_failed_once(step: &str, err: &windows::core::Error) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static LOGGED: AtomicBool = AtomicBool::new(false);
+    if !LOGGED.swap(true, Ordering::Relaxed) {
+        warn!("[audio] set_mute failed at {step}: {err} (muting unavailable on this system; subsequent failures suppressed)");
+    }
+}
+
 fn set_mute(mute: bool) {
     // Expected behavior:
     // - Windows: works on most systems using standard audio drivers.
@@ -118,26 +129,39 @@ fn set_mute(mute: bool) {
                 System::Com::{CoCreateInstance, CLSCTX_ALL},
             };
 
+            // Surface persistent COM/HRESULT failures once (rate-limited) so a system
+            // where muting never works is diagnosable, without spamming the log on every
+            // dictation. Behavior is unchanged: we still fail soft and return.
             macro_rules! unwrap_or_return {
-                ($expr:expr) => {
+                ($expr:expr, $what:expr) => {
                     match $expr {
                         Ok(val) => val,
-                        Err(_) => return,
+                        Err(err) => {
+                            warn_set_mute_failed_once($what, &err);
+                            return;
+                        }
                     }
                 };
             }
 
             let _com = crate::windows_com::ComApartment::init_multithreaded();
 
-            let all_devices: IMMDeviceEnumerator =
-                unwrap_or_return!(CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL));
-            let default_device =
-                unwrap_or_return!(all_devices.GetDefaultAudioEndpoint(eRender, eMultimedia));
+            let all_devices: IMMDeviceEnumerator = unwrap_or_return!(
+                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL),
+                "CoCreateInstance(MMDeviceEnumerator)"
+            );
+            let default_device = unwrap_or_return!(
+                all_devices.GetDefaultAudioEndpoint(eRender, eMultimedia),
+                "GetDefaultAudioEndpoint"
+            );
             let volume_interface = unwrap_or_return!(
-                default_device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
+                default_device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None),
+                "IAudioEndpointVolume::Activate"
             );
 
-            let _ = volume_interface.SetMute(mute, std::ptr::null());
+            if let Err(err) = volume_interface.SetMute(mute, std::ptr::null()) {
+                warn_set_mute_failed_once("IAudioEndpointVolume::SetMute", &err);
+            }
         }
     }
 
@@ -248,6 +272,16 @@ fn create_audio_recorder(
                         );
                     }
                 }
+            }
+        })
+        .with_capture_live_callback({
+            // Fires once per recording on the FIRST captured frame — the mic is confirmed
+            // open and delivering audio. Surfaced as `stt:capture-active` so the renderer's
+            // hotkey badge flips from "opening mic…" to a real recording state instead of
+            // lighting up on the keypress (before WASAPI has opened an asleep device).
+            let app_handle = app_handle.clone();
+            move || {
+                crate::winstt::commands::dictation::SttEvents::capture_active(&app_handle);
             }
         })
         .with_chunk_callback({
@@ -409,24 +443,18 @@ impl AudioRecordingManager {
                 .or_else(|| (!devices.is_empty()).then_some(0usize))
         }
 
+        // Device selection is canonical in the WinSTT store (`settings.audio.*`),
+        // which holds device INDICES. The legacy `AppSettings` name-based mirror
+        // (`selected_microphone` / `clamshell_microphone`) was removed; `None`
+        // index means "system default".
         let settings = read_settings_raw(&self.app_handle);
-        let legacy_settings = &settings.core;
         let use_clamshell_mic = clamshell::is_clamshell().unwrap_or(false)
-            && (settings.audio.clamshell_microphone.is_some()
-                || legacy_settings.clamshell_microphone.is_some());
+            && settings.audio.clamshell_microphone.is_some();
 
         let selected_index = if use_clamshell_mic {
             settings.audio.clamshell_microphone
         } else {
             settings.audio.input_device_index
-        };
-
-        let device_name: Option<&String> = if selected_index.is_some() {
-            None
-        } else if use_clamshell_mic {
-            legacy_settings.clamshell_microphone.as_ref()
-        } else {
-            legacy_settings.selected_microphone.as_ref()
         };
 
         match list_input_devices() {
@@ -449,16 +477,6 @@ impl AudioRecordingManager {
                             index,
                             &format!("device #{index} is no longer available"),
                             None,
-                        );
-                    }
-                    found.or_else(|| choose_default_device(&devices))
-                } else if let Some(name) = device_name {
-                    // Explicit by-name selection ALWAYS wins — even if it looks virtual,
-                    // the user picked it deliberately.
-                    let found = devices.iter().position(|d| d.name == *name);
-                    if found.is_none() {
-                        warn!(
-                            "[audio] selected microphone '{name}' is unavailable; falling back to default input"
                         );
                     }
                     found.or_else(|| choose_default_device(&devices))
@@ -906,9 +924,8 @@ impl AudioRecordingManager {
                 }
             }
             RecordingState::Stopping => {
-                // A normal stop is already draining the release tail. Session cancellation
-                // suppresses the eventual paste; interrupting the drain here can drop the same
-                // trailing audio this path is meant to preserve.
+                // A normal stop is already finalizing the captured buffer. Session
+                // cancellation suppresses the eventual paste without racing a second stop.
             }
             RecordingState::Idle => {}
         }

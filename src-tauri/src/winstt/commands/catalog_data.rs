@@ -616,11 +616,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_parses_71_rows() {
+    fn catalog_parses_73_rows() {
         assert_eq!(
             raw_catalog().len(),
-            71,
-            "embedded catalog must carry all 71 shipped models"
+            73,
+            "embedded catalog must carry all 73 shipped models"
         );
     }
 

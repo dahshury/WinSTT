@@ -47,8 +47,7 @@ import {
 	rollbackMain,
 	rollbackRealtime,
 	runConfirmPendingDownload,
-	runHandleMainChange,
-	runHandleRealtimeChange,
+	runHandleChange,
 	toIssueSwapInvoker,
 } from "./dispatch-and-events";
 import type {
@@ -91,7 +90,7 @@ export function useModelSwapController(
 	// Injected (FSD: a feature can't import the file-transcription feature) so
 	// the controller refuses to swap the shared STT model while the file queue
 	// is busy — the swap would shut down and reload the very transcriber the
-	// queue is mid-stream on. The the reference main process enforces the same block
+	// queue is mid-stream on. The Rust backend enforces the same block
 	// as a safety net; this keeps the renderer from even issuing the request.
 	// Defaults to "not busy" for callers/tests that don't wire it.
 	isFileQueueBusy: () => boolean = () => false,
@@ -202,7 +201,7 @@ export function useModelSwapController(
 		) {
 			return;
 		}
-		runHandleMainChange({
+		runHandleChange({
 			value: v,
 			quantization,
 			currentModel: currentMainModel,
@@ -232,7 +231,7 @@ export function useModelSwapController(
 		) {
 			return;
 		}
-		runHandleRealtimeChange({
+		runHandleChange({
 			value: v,
 			quantization,
 			currentModel: currentRealtimeModel,
@@ -355,8 +354,7 @@ export const __testables = {
 	rollbackRealtime,
 	runConfirmPendingDownload,
 	runGateWithAssessment,
-	runHandleMainChange,
-	runHandleRealtimeChange,
+	runHandleChange,
 	runIssueSwap,
 	runProceedWithSelection,
 	shouldReloadForHotSwap,

@@ -3,12 +3,7 @@ import type {
 	LiveResourcesEntry,
 	ModelStateEntry,
 } from "@/shared/api/ipc-client";
-import {
-	assessDictationFitClient,
-	assessOllamaFitClient,
-	loadedDictationFootprint,
-	TEST_ONLY,
-} from "./fit-assessor";
+import { assessDictationFitClient, TEST_ONLY } from "./fit-assessor";
 
 const GB = 1024 ** 3;
 
@@ -184,121 +179,6 @@ describe("assessDictationFitClient", () => {
 		});
 		expect(result.target).toBe("cpu");
 		expect(result.reasons).toContain("no_gpu_available");
-	});
-});
-
-describe("assessOllamaFitClient", () => {
-	test("zero size returns ok", () => {
-		const result = assessOllamaFitClient(0, {
-			statesById: {},
-			loaded: {
-				mainId: null,
-				mainQuant: "",
-				realtimeId: null,
-				realtimeQuant: "",
-			},
-			live: liveOf(),
-		});
-		expect(result.severity).toBe("ok");
-	});
-
-	test("fits on a roomy GPU", () => {
-		const result = assessOllamaFitClient(1 * GB, {
-			statesById: {},
-			loaded: {
-				mainId: null,
-				mainQuant: "",
-				realtimeId: null,
-				realtimeQuant: "",
-			},
-			live: liveOf({ gpus: [gpuOf({ total: 24 * GB, free: 24 * GB })] }),
-		});
-		expect(result.target).toBe("gpu");
-		expect(result.severity).toBe("ok");
-	});
-
-	test("critical when exceeds VRAM", () => {
-		const result = assessOllamaFitClient(8 * GB, {
-			statesById: {},
-			loaded: {
-				mainId: null,
-				mainQuant: "",
-				realtimeId: null,
-				realtimeQuant: "",
-			},
-			live: liveOf({ gpus: [gpuOf({ total: 4 * GB, free: 4 * GB })] }),
-		});
-		expect(result.severity).toBe("critical");
-		expect(result.reasons).toContain("exceeds_vram");
-	});
-
-	test("flags STT GPU coexistence", () => {
-		const result = assessOllamaFitClient(1 * GB, {
-			statesById: {
-				tiny: entryOf({ id: "tiny", estimated_bytes: 500_000_000 }),
-			},
-			loaded: {
-				mainId: "tiny",
-				mainQuant: "",
-				realtimeId: null,
-				realtimeQuant: "",
-			},
-			live: liveOf({ gpus: [gpuOf({ total: 24 * GB, free: 20 * GB })] }),
-		});
-		expect(result.reasons).toContain("stt_already_uses_gpu");
-	});
-
-	test("CPU path subtracts dictation model from RAM budget", () => {
-		const result = assessOllamaFitClient(5 * GB, {
-			statesById: {
-				large: entryOf({ id: "large", estimated_bytes: 3 * GB }),
-			},
-			loaded: {
-				mainId: "large",
-				mainQuant: "",
-				realtimeId: null,
-				realtimeQuant: "",
-			},
-			live: liveOf({ ram_total_bytes: 16 * GB, ram_available_bytes: 16 * GB }),
-		});
-		expect(result.reasons).toContain("stt_already_uses_ram");
-	});
-});
-
-describe("loadedDictationFootprint", () => {
-	test("sums main + realtime, scaled by quantization", () => {
-		const states = {
-			a: entryOf({ id: "a", estimated_bytes: 1 * GB }),
-			b: entryOf({ id: "b", estimated_bytes: 1 * GB }),
-		};
-		const total = loadedDictationFootprint(
-			states,
-			{ mainId: "a", mainQuant: "", realtimeId: "b", realtimeQuant: "" },
-			null,
-		);
-		// Both at default factor → 2x base estimate (×4/1.2 each)
-		expect(total).toBeGreaterThan(0);
-	});
-
-	test("excluded id is not counted", () => {
-		const states = {
-			a: entryOf({ id: "a", estimated_bytes: 1 * GB }),
-		};
-		const total = loadedDictationFootprint(
-			states,
-			{ mainId: "a", mainQuant: "", realtimeId: null, realtimeQuant: "" },
-			"a",
-		);
-		expect(total).toBe(0);
-	});
-
-	test("missing entries are skipped", () => {
-		const total = loadedDictationFootprint(
-			{},
-			{ mainId: "ghost", mainQuant: "", realtimeId: null, realtimeQuant: "" },
-			null,
-		);
-		expect(total).toBe(0);
 	});
 });
 

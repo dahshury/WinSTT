@@ -29,12 +29,6 @@ export interface SyncDeps {
 	sttSetParameter: <V>(param: AllowedParameter, value: V) => void;
 }
 
-/**
- * Audio settings are applied through `settingsSave` and backend-owned readers/bridges.
- * Keep this empty until a Rust `winstt_set_parameter` branch actually consumes a key.
- */
-export const AUDIO_PARAM_MAP: Record<string, AllowedParameter> = {};
-
 // NOTE: `global.modelUnloadTimeout` is NOT pushed here via `set_parameter`. It is
 // persisted canonically via `winstt_set_settings` (the `settingsSave` debounced write);
 // the backend's on-save handler (`apply_model_runtime_settings` →
@@ -65,32 +59,6 @@ export function sendIfChanged<V>(
 	if (shouldSendParam(value, prevValue, isInitial)) {
 		deps.sttSetParameter(param, value);
 	}
-}
-
-/** Push every (camelKey, snakeKey) pair from the audio map onto the server. */
-export function syncAudioEntries(
-	deps: SyncDeps,
-	audio: NonNullable<AppSettings["audio"]>,
-	prevAudio: AppSettings["audio"] | undefined,
-	isInitial: boolean,
-): void {
-	for (const [camelKey, snakeKey] of Object.entries(AUDIO_PARAM_MAP)) {
-		const key = camelKey as keyof typeof audio;
-		sendIfChanged(deps, audio[key], prevAudio?.[key], snakeKey, isInitial);
-	}
-}
-
-export function syncAudioParams(
-	deps: SyncDeps,
-	settings: AppSettings,
-	prev: AppSettings | undefined,
-): void {
-	const audio = settings.audio;
-	if (!audio) {
-		return;
-	}
-	const isInitial = !prev;
-	syncAudioEntries(deps, audio, prev?.audio, isInitial);
 }
 
 export function syncModelParams(
@@ -137,11 +105,10 @@ export function syncModelParams(
 /**
  * Push the static (non-context, non-dictionary) initial prompt prefixes
  * to the server. The composed prompt that includes the dictionary +
- * volatile context tail is pushed separately by the reference's
- * ``installInitialPromptSync`` whenever those upstream inputs change;
- * this handler only fires on edits to the user-typed static prefix in
+ * volatile context tail is pushed separately whenever those upstream inputs
+ * change; this handler only fires on edits to the user-typed static prefix in
  * the Settings UI. Both produce ``set_parameter("initial_prompt", ...)``
- * frames the server's facade treats identically.
+ * frames the backend treats identically.
  */
 function syncInitialPromptStatics(
 	deps: SyncDeps,
@@ -231,8 +198,8 @@ function maybeSyncSilenceTiming(
  * This is the CANONICAL, server-ready-gated push for the flag. The
  * `usePushToTalk` mount effect also pushes it, but that effect fires once at
  * mount and races the WS handshake + recorder-ready gate — on a cold start the
- * server isn't ready yet, so the push is dropped (reference main drops it as
- * "not connected", or the Python control handler drops it as "not pre-ready")
+ * server isn't ready yet, so the push is dropped (the backend drops it as
+ * "not connected" / "not pre-ready")
  * and is never retried (its deps are [recordingMode, manualToggleStop], neither
  * of which changes after connect). Without this canonical push the server keeps
  * its default `silence_endpoint_enabled = True`, and PTT recordings auto-stop on
@@ -277,7 +244,7 @@ export function syncQualityParams(
 	syncQualityFields(deps, settings.quality, prev?.quality, !prev);
 }
 
-/** Extract the diarization flag from settings, defaulting to false (CC 1). */
+/** Extract the diarization flag from settings, defaulting to false. */
 export function readDiarizationEnabled(s: AppSettings): boolean {
 	return s.general?.speakerDiarization ?? false;
 }
@@ -285,7 +252,7 @@ export function readDiarizationEnabled(s: AppSettings): boolean {
 /**
  * True when the diarization toggle command should be sent: always on initial
  * connect (so a server started without the diarizer builds it now) or on an
- * actual flip of the persisted value (CC 1 — single boolean expression).
+ * actual flip of the persisted value.
  */
 export function diarizationNeedsPush(
 	enabled: boolean,
@@ -319,7 +286,6 @@ export function syncToServer(
 	settings: AppSettings,
 	prev?: AppSettings,
 ): void {
-	syncAudioParams(deps, settings, prev);
 	syncModelParams(deps, settings, prev);
 	syncQualityParams(deps, settings, prev);
 	syncDiarizationParams(deps, settings, prev);

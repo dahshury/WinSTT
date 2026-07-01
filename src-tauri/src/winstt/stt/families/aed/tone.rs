@@ -184,7 +184,7 @@ impl ToneEngine {
 
         // Resolve the actual input names (graph declares them `signal` / `state`, but read them
         // so a re-export with different names still wires up).
-        let in_names = session_input_names(&session);
+        let in_names = node_input_names(&session);
         let signal_input = in_names
             .iter()
             .find(|n| n.eq_ignore_ascii_case("signal"))

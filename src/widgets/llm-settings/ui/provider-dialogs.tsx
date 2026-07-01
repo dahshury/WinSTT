@@ -1,5 +1,4 @@
 import { useEffect, useReducer, useRef, useState } from "react";
-import type { useTranslations } from "use-intl";
 import { detectOllama, startOllama } from "@/shared/api/ipc-client";
 import {
 	DialogActionButton,
@@ -13,8 +12,8 @@ import { getOllamaDialogTexts } from "../lib/llm-settings-panel-test-helpers";
 import type { TranslateFn } from "./types";
 
 interface DialogProps {
-	t: ReturnType<typeof useTranslations>;
-	tc: ReturnType<typeof useTranslations>;
+	t: TranslateFn;
+	tc: TranslateFn;
 }
 
 interface OllamaDialogProps extends DialogProps {

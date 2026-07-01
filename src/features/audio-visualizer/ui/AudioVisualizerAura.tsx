@@ -179,7 +179,12 @@ export interface AudioVisualizerAuraProps {
 const DEFAULT_AURA_BLUR = 0.2;
 const DEFAULT_AURA_BLOOM = 0.0;
 
-const DEFAULT_FALLBACK_COLOR: [number, number, number] = [0, 0.7, 1];
+// Brand waveform token in normalized sRGB, matching DEFAULT_VISUALIZER_COLOR.
+const DEFAULT_FALLBACK_COLOR: [number, number, number] = [
+	0x53 / 255,
+	0xa9 / 255,
+	0xed / 255,
+];
 const DEVICE_PIXEL_RATIO = globalThis.devicePixelRatio ?? 1;
 
 export function AudioVisualizerAura({

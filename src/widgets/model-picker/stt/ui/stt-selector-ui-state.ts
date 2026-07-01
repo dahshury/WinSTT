@@ -22,6 +22,10 @@ export interface SttSelectorUiState {
 	/** Controlled-open flag — kept so we can intercept friendly outside-press
 	 *  clicks (filter Popover etc.) without collapsing the picker. */
 	open: boolean;
+	/** The text-search query, owned here (not inside `ModelPicker`) so the list
+	 *  can make a search span ALL authors — a query overrides the active rail, so
+	 *  e.g. "whisper" finds Whisper models even while the NeMo rail is selected. */
+	search: string;
 	/** Active global sort, or ``null`` for the default maker grouping. When set,
 	 *  the list flattens every maker group into one sorted column. */
 	sort: SttSortValue;
@@ -39,7 +43,8 @@ export type SttSelectorUiAction =
 	| { type: "ensureBundleExpanded"; baseId: string }
 	| { type: "setFilters"; filters: SttFilterState }
 	| { type: "setSort"; sort: SttSortValue }
-	| { type: "setOpen"; open: boolean };
+	| { type: "setOpen"; open: boolean }
+	| { type: "setSearch"; search: string };
 
 function cloneFilterState(filters: SttFilterState): SttFilterState {
 	return { ...filters, languages: [...filters.languages] };
@@ -61,6 +66,7 @@ export function createInitialUiState(
 		filters: cloneFilterState(persisted?.filters ?? EMPTY_FILTER_STATE),
 		sort: persisted?.sort ?? null,
 		open: false,
+		search: "",
 	};
 }
 
@@ -111,6 +117,11 @@ export function sttSelectorUiReducer(
 				return state;
 			}
 			return { ...state, open: action.open };
+		case "setSearch":
+			if (state.search === action.search) {
+				return state;
+			}
+			return { ...state, search: action.search };
 		default:
 			return state;
 	}

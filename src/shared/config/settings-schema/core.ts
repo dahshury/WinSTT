@@ -18,7 +18,7 @@ export const modelSettingsSchema = z.object({
 	// on a partial-save decode produced the "large v2 in the main window
 	// but vosk-russian in the picker" desync (different fallbacks across
 	// surfaces). "tiny" exists in every catalog flavor and matches the
-	// CLI default the reference spawn passes (`--model tiny`).
+	// CLI default the backend spawn passes (`--model tiny`).
 	model: z.string().default("tiny"),
 	realtimeModel: z.string().default("tiny"),
 	language: z.string().default("en"),

@@ -11,7 +11,6 @@ import {
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { domAnimation, LazyMotion, m, useReducedMotion } from "motion/react";
 import { useTranslations } from "use-intl";
-import { openSettingsToSection } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
 
 const CARD_SPRING = {
@@ -30,17 +29,23 @@ interface Ability {
 	title: string;
 }
 
+interface OnboardingOverviewStepProps {
+	onOpenSettingsSection: (section: string) => void | Promise<void>;
+}
+
 /**
  * Final onboarding step — a standalone "what else WinSTT can do" overview, lifted
  * out of the Overlay & visuals step so the capability tour isn't buried inside an
  * unrelated settings page. It's pure orientation: every item ships a sensible
  * default and a home in Settings, so nothing here needs configuring to finish.
  *
- * Each card is a deep-link: clicking it opens the Settings window already scrolled
- * to that capability's section (`openSettingsToSection`), so a user who wants to
- * tweak something can do it right now without hunting for the tab afterwards.
+ * Each card is a deep-link: clicking it completes onboarding, closes the wizard,
+ * and opens Settings on that capability's section, so a user who wants to tweak
+ * something can do it right now without hunting for the tab afterwards.
  */
-export function OnboardingOverviewStep() {
+export function OnboardingOverviewStep({
+	onOpenSettingsSection,
+}: OnboardingOverviewStepProps) {
 	const tLlm = useTranslations("llm");
 	const tTts = useTranslations("tts");
 	const tHistory = useTranslations("history");
@@ -107,7 +112,10 @@ export function OnboardingOverviewStep() {
 									: { ...CARD_SPRING, delay: 0.03 * index }
 							}
 						>
-							<AbilityLink ability={ability} />
+							<AbilityLink
+								ability={ability}
+								onOpenSettingsSection={onOpenSettingsSection}
+							/>
 						</m.li>
 					))}
 				</ul>
@@ -116,7 +124,13 @@ export function OnboardingOverviewStep() {
 	);
 }
 
-function AbilityLink({ ability }: { ability: Ability }) {
+function AbilityLink({
+	ability,
+	onOpenSettingsSection,
+}: {
+	ability: Ability;
+	onOpenSettingsSection: (section: string) => void | Promise<void>;
+}) {
 	return (
 		<MotionBaseButton
 			aria-label={`Configure ${ability.title} in Settings`}
@@ -125,7 +139,7 @@ function AbilityLink({ ability }: { ability: Ability }) {
 				"hover:bg-surface-5 hover:ring-border-hover",
 				"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
 			)}
-			onClick={() => openSettingsToSection(ability.section)}
+			onClick={() => void onOpenSettingsSection(ability.section)}
 			transition={{ type: "spring", stiffness: 420, damping: 32, mass: 0.65 }}
 			type="button"
 			whileHover={{ y: -1 }}

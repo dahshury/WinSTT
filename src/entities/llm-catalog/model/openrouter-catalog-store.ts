@@ -1,8 +1,13 @@
 import { create } from "zustand";
 import {
+	makeScanErrorState,
+	makeScanSuccessState,
+} from "@/entities/openrouter-catalog/@x/llm-catalog";
+import {
 	fetchOpenRouterModels,
 	type OpenRouterModel,
 } from "@/shared/api/ipc-client";
+import { isRecord } from "@/shared/lib/is-record";
 
 const OPENROUTER_CATALOG_CACHE_DB = "winstt-openrouter-catalog";
 const OPENROUTER_CATALOG_CACHE_STORE = "catalogs";
@@ -30,33 +35,6 @@ interface OpenRouterCatalogState {
 	 * with a loading state.
 	 */
 	warmModels: () => Promise<void>;
-}
-
-function makeScanErrorState(err: unknown) {
-	return {
-		error: String(err),
-		isReachable: false as const,
-		isScanning: false as const,
-		isLoaded: true as const,
-	};
-}
-
-function makeScanSuccessState(result: {
-	models: OpenRouterModel[];
-	reachable: boolean;
-	error?: string;
-}) {
-	return {
-		models: result.models,
-		isReachable: result.reachable,
-		error: result.error ?? null,
-		isLoaded: true as const,
-		isScanning: false as const,
-	};
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 function isOpenRouterModel(value: unknown): value is OpenRouterModel {

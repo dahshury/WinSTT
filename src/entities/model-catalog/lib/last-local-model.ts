@@ -1,48 +1,29 @@
 import type { ModelStateEntry } from "@/shared/api/ipc-client";
+import {
+	isStringArray,
+	readPersistedSelectorState,
+	writePersistedSelectorState,
+} from "@/shared/lib/persisted-selector-state";
 import type { ModelInfo } from "../model/catalog-store";
 import { pickCachedSttModel } from "./model-options";
 
 /**
- * Persistence for "the last local STT model the user had selected", so flipping
- * the source switch Cloud→Local restores that choice instead of resetting to the
- * smallest catalog model. Mirrors the localStorage pattern the favourites use.
- *
- * Only LOCAL ids belong here — the caller records whenever a local model is the
- * active selection (see ModelSettingsPanel), and {@link resolveLocalDefault}
- * reads it back when the user returns to Local. Cloud ids must never be stored,
- * or the restore would put a cloud id where a local one is expected.
+ * Persistence for local STT selections. Only local ids belong here; cloud ids
+ * would restore into a local-model slot.
  */
-const STORAGE_KEY = "winstt:last-local-stt-model";
 const HISTORY_STORAGE_KEY = "winstt:last-local-stt-model-history";
 const MAX_HISTORY = 8;
 
 function readHistory(): string[] {
-	try {
-		const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
-		if (!raw) {
-			const last = localStorage.getItem(STORAGE_KEY);
-			return last ? [last] : [];
-		}
-		const parsed: unknown = JSON.parse(raw);
-		return Array.isArray(parsed)
-			? parsed.filter(
-					(item): item is string => typeof item === "string" && item.length > 0,
-				)
-			: [];
-	} catch {
-		return [];
-	}
+	return readPersistedSelectorState(
+		HISTORY_STORAGE_KEY,
+		isStringArray,
+		[],
+	).filter((item) => item.length > 0);
 }
 
 function writeHistory(ids: readonly string[]): void {
-	try {
-		localStorage.setItem(
-			HISTORY_STORAGE_KEY,
-			JSON.stringify(ids.slice(0, MAX_HISTORY)),
-		);
-	} catch {
-		// no-op: persistence is best-effort
-	}
+	writePersistedSelectorState(HISTORY_STORAGE_KEY, ids.slice(0, MAX_HISTORY));
 }
 
 /** Remember a locally-selected model id. Callers pass only local (non-cloud)
@@ -52,22 +33,8 @@ export function recordLastLocalSttModel(modelId: string): void {
 	if (!modelId) {
 		return;
 	}
-	try {
-		localStorage.setItem(STORAGE_KEY, modelId);
-		const next = [modelId, ...readHistory().filter((id) => id !== modelId)];
-		writeHistory(next);
-	} catch {
-		// no-op: persistence is best-effort
-	}
-}
-
-/** The last remembered local model id, or null when none was stored. */
-export function readLastLocalSttModel(): string | null {
-	try {
-		return localStorage.getItem(STORAGE_KEY);
-	} catch {
-		return null;
-	}
+	const next = [modelId, ...readHistory().filter((id) => id !== modelId)];
+	writeHistory(next);
 }
 
 /** Most-recent-first local model history. The first entry mirrors
@@ -86,7 +53,7 @@ export function resolveLocalDefault(
 	models: readonly ModelInfo[],
 	statesById: Record<string, ModelStateEntry>,
 ): string | null {
-	const last = readLastLocalSttModel();
+	const last = readHistory()[0] ?? null;
 	if (
 		last &&
 		statesById[last]?.cache.state === "cached" &&

@@ -43,7 +43,7 @@ const features = [
         <line x1="12" x2="12" y1="22.08" y2="12" />
       </>,
     ),
-    title: "40+ AI Models",
+    title: "70+ AI Models",
     description:
       "OpenAI Whisper, NVIDIA NeMo (Parakeet & Canary), Moonshine, Cohere, GigaAM, Vosk. Switch models from the UI - no restart.",
     href: "/docs/models",
@@ -161,11 +161,11 @@ export function HomeFeatures() {
       <div className="mb-10 text-center">
         <h2
           className="mb-2 font-bold text-2xl tracking-tight"
-          style={{ color: "oklch(94% 0.015 265 /0.9)" }}
+          style={{ color: "color-mix(in oklab, var(--fg-strong) 90%, transparent)" }}
         >
           Everything you need
         </h2>
-        <p className="text-sm" style={{ color: "oklch(94% 0.015 265 /0.35)" }}>
+        <p className="text-sm" style={{ color: "color-mix(in oklab, var(--fg-strong) 35%, transparent)" }}>
           A complete speech-to-text toolkit, running locally on your desktop
         </p>
       </div>
@@ -183,7 +183,7 @@ export function HomeFeatures() {
             <div
               className="feature-icon mb-3 inline-flex rounded-lg p-2.5 transition-all duration-300"
               style={{
-                background: "oklch(62% 0.19 260 /0.08)",
+                background: "color-mix(in oklab, var(--brand-accent) 8%, transparent)",
                 color: "var(--brand-accent)",
               }}
             >
@@ -191,13 +191,13 @@ export function HomeFeatures() {
             </div>
             <h3
               className="mb-1.5 font-semibold text-[13.5px] transition-colors duration-200"
-              style={{ color: "oklch(94% 0.015 265 /0.9)" }}
+              style={{ color: "color-mix(in oklab, var(--fg-strong) 90%, transparent)" }}
             >
               {feature.title}
             </h3>
             <p
               className="text-[13px] leading-relaxed"
-              style={{ color: "oklch(94% 0.015 265 /0.4)" }}
+              style={{ color: "color-mix(in oklab, var(--fg-strong) 40%, transparent)" }}
             >
               {feature.description}
             </p>

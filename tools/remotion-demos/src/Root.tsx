@@ -13,7 +13,6 @@ import {
   ModelPickerFlow,
   OverlayDemo,
   QualityPipeline,
-  QuickStartFlow,
   RecordingModeDemo,
   ReplaceDemo,
   TranscribeFileDemo,
@@ -64,7 +63,6 @@ const demos: Demo[] = [
     width: STRIP_W,
     height: STRIP_H
   },
-  { id: "quick-start-flow", component: QuickStartFlow, durationInFrames: 210 },
   { id: "dictation-loop", component: DictationLoop, durationInFrames: 210 },
   { id: "model-picker-flow", component: ModelPickerFlow, durationInFrames: 210 },
   { id: "audio-vad-flow", component: AudioVadFlow, durationInFrames: 210 },

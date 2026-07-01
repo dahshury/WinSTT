@@ -143,26 +143,3 @@ impl ShortcutAction for ReadAloudAction {
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
-
-// Test Action
-pub(super) struct TestAction;
-
-impl ShortcutAction for TestAction {
-    fn start(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str) {
-        log::info!(
-            "Shortcut ID '{}': Started - {} (App: {})", // Changed "Pressed" to "Started" for consistency
-            binding_id,
-            shortcut_str,
-            app.package_info().name
-        );
-    }
-
-    fn stop(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str) {
-        log::info!(
-            "Shortcut ID '{}': Stopped - {} (App: {})", // Changed "Released" to "Stopped" for consistency
-            binding_id,
-            shortcut_str,
-            app.package_info().name
-        );
-    }
-}

@@ -50,15 +50,11 @@ export function getVariantIcon(
 export function getVariantClasses(variant: ModelVariant): {
 	bg: string;
 	text: string;
-	border: string;
-	gradient: string;
 } {
 	const info = MODEL_VARIANT_INFO[variant];
 	return {
 		bg: info.bgClass,
 		text: info.textClass,
-		border: info.borderClass,
-		gradient: info.gradientClass,
 	};
 }
 
@@ -85,28 +81,24 @@ function parsePricingValue(raw: string | number | undefined): number {
 interface PricingTierResult {
 	className: string;
 	label: string;
-	tier: "free" | "low" | "medium" | "high";
+	tier: "free" | "paid";
 }
 
-// fluidfunctionalism: pricing is a MAGNITUDE, not four competing hues. Free is a
-// genuine "cheap" signal → muted emerald; every paid tier collapses to one
+// fluidfunctionalism: pricing is a MAGNITUDE, not competing hues. Free is a
+// genuine "cheap" signal → muted emerald; every paid model collapses to one
 // neutral muted scale (the actual $/M numbers in the label carry the precise
-// magnitude, so a low/medium/high colour ramp is redundant noise).
+// magnitude, so a low/medium/high colour ramp is redundant noise — there is no
+// downstream branch on the distinction).
 const FREE_PRICING_RESULT: PricingTierResult = {
 	label: "Free",
 	tier: "free",
 	className: "text-model-free/80",
 };
 
-function classifyAvgCost(avgCost: number): Omit<PricingTierResult, "label"> {
-	if (avgCost < 1) {
-		return { tier: "low", className: "text-foreground-muted" };
-	}
-	if (avgCost < 10) {
-		return { tier: "medium", className: "text-foreground-muted" };
-	}
-	return { tier: "high", className: "text-foreground-muted" };
-}
+const PAID_PRICING_RESULT: Omit<PricingTierResult, "label"> = {
+	tier: "paid",
+	className: "text-foreground-muted",
+};
 
 export function getPricingTier(
 	pricing: OpenRouterPricing | undefined,
@@ -122,8 +114,7 @@ export function getPricingTier(
 	}
 
 	const priceLabel = `${formatCurrency(promptPerMillion)}/${formatCurrency(completionPerMillion)}`;
-	const avgCost = (promptPerMillion + completionPerMillion) / 2;
-	return { label: priceLabel, ...classifyAvgCost(avgCost) };
+	return { label: priceLabel, ...PAID_PRICING_RESULT };
 }
 
 export function getUniqueEndpoints(

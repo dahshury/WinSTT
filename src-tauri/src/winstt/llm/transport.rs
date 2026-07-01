@@ -205,7 +205,7 @@ pub fn validate_loopback_ollama_endpoint(endpoint: &str) -> Result<String, Strin
         return Err("Ollama endpoint is required".to_string());
     }
 
-    let url = reqwest::Url::parse(&normalized)
+    let mut url = reqwest::Url::parse(&normalized)
         .map_err(|_| "Ollama endpoint must be a valid http:// or https:// URL".to_string())?;
     match url.scheme() {
         "http" | "https" => {}
@@ -219,6 +219,16 @@ pub fn validate_loopback_ollama_endpoint(endpoint: &str) -> Result<String, Strin
     };
     if !is_loopback_ollama_host(host) {
         return Err("Ollama endpoint must point to localhost or a loopback IP".to_string());
+    }
+    // Pin `localhost` to the IPv4 loopback. The system resolver hands reqwest
+    // `::1` (IPv6) first, but Ollama binds `127.0.0.1` only by default — so the
+    // IPv6 attempt is refused and the daemon LOOKS unreachable. That false
+    // "down" makes the reachability probe fail and WinSTT auto-spawns a
+    // redundant `ollama serve` (flashing console windows on every warmup/toggle)
+    // and the catalog refresh errors out. Hitting 127.0.0.1 directly avoids the
+    // dead IPv6 round-trip entirely.
+    if host.eq_ignore_ascii_case("localhost") && url.set_host(Some("127.0.0.1")).is_ok() {
+        return Ok(url.as_str().trim_end_matches('/').to_string());
     }
     Ok(normalized)
 }
@@ -366,12 +376,23 @@ mod tests {
     }
 
     #[test]
-    fn loopback_endpoint_validation_allows_localhost_and_loopback_ips() {
+    fn loopback_endpoint_validation_pins_localhost_to_ipv4() {
+        // `localhost` is rewritten to 127.0.0.1 so requests never attempt the
+        // IPv6 `::1` that Ollama's default IPv4-only bind refuses (which would
+        // look like an unreachable daemon and trigger a redundant `ollama serve`).
         assert_eq!(
             validate_loopback_ollama_endpoint("http://localhost:11434/api").unwrap(),
-            "http://localhost:11434"
+            "http://127.0.0.1:11434"
         );
-        assert!(validate_loopback_ollama_endpoint("http://127.0.0.1:11434").is_ok());
+        assert_eq!(
+            build_loopback_ollama_api_url("http://localhost:11434", "/api/version").unwrap(),
+            "http://127.0.0.1:11434/api/version"
+        );
+        // Explicit loopback IPs are passed through untouched.
+        assert_eq!(
+            validate_loopback_ollama_endpoint("http://127.0.0.1:11434").unwrap(),
+            "http://127.0.0.1:11434"
+        );
         assert!(validate_loopback_ollama_endpoint("http://[::1]:11434").is_ok());
     }
 
@@ -391,9 +412,10 @@ mod tests {
 
     #[test]
     fn loopback_api_url_appends_path_after_validation() {
+        // Path is appended AND localhost is pinned to IPv4 in one pass.
         assert_eq!(
             build_loopback_ollama_api_url("http://localhost:11434/v1/", "api/tags").unwrap(),
-            "http://localhost:11434/api/tags"
+            "http://127.0.0.1:11434/api/tags"
         );
     }
 }

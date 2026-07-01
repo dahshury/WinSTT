@@ -1,5 +1,8 @@
 import { useModelSwapStore } from "@/entities/model-catalog";
 import {
+	aggregateDownloadEntries,
+	collectDownloadEntries,
+	type DownloadEntry,
 	type QuantDownloadState,
 	type SttDownloadOwner,
 	useDownloadStore,
@@ -36,60 +39,24 @@ export interface SwapProgressSnapshot {
 	realtimeSwapping: boolean;
 }
 
-interface DownloadEntry {
-	modelId: string;
-	percent: number | null;
-}
-
 interface SingletonDownload {
 	active: boolean;
 	modelId: string | null;
 	percent: number | null;
 }
 
-function pickPrimary(entries: readonly DownloadEntry[]): DownloadEntry {
-	let best = entries[0];
-	if (best === undefined) {
-		throw new Error("pickPrimary called with no entries");
-	}
-	for (let i = 1; i < entries.length; i += 1) {
-		const candidate = entries[i];
-		if (candidate === undefined) {
-			continue;
-		}
-		const bestPct = best.percent ?? -1;
-		const candidatePct = candidate.percent ?? -1;
-		if (candidatePct > bestPct) {
-			best = candidate;
-		}
-	}
-	return best;
-}
-
-function averageKnownPercent(entries: readonly DownloadEntry[]): number | null {
-	const numericPercents = entries
-		.map((entry) => entry.percent)
-		.filter((percent): percent is number => typeof percent === "number");
-	if (numericPercents.length === 0) {
-		return null;
-	}
-	return Math.round(
-		numericPercents.reduce((a, b) => a + b, 0) / numericPercents.length,
-	);
-}
-
 function aggregateEntries(
 	entries: readonly DownloadEntry[],
 ): DownloadProgressPropShape | null {
-	if (entries.length === 0) {
+	const aggregate = aggregateDownloadEntries(entries);
+	if (aggregate === null) {
 		return null;
 	}
-	const primary = pickPrimary(entries);
 	return {
-		count: entries.length,
-		averagePercent: averageKnownPercent(entries),
-		modelId: primary.modelId,
-		percent: primary.percent,
+		count: aggregate.count,
+		averagePercent: aggregate.averagePercent,
+		modelId: aggregate.primary.modelId,
+		percent: aggregate.primary.percent,
 	};
 }
 
@@ -131,31 +98,16 @@ function collectEntries(
 	realtimeSwapTarget: string | null,
 	owner?: SttDownloadOwner,
 ): DownloadEntry[] {
-	const entries: DownloadEntry[] = [];
-	if (
-		singleton.active &&
-		singleton.modelId !== null &&
-		(owner === undefined ||
-			singletonOwner(singleton, mainSwapTarget, realtimeSwapTarget) === owner)
-	) {
-		entries.push({ modelId: singleton.modelId, percent: singleton.percent });
-	}
-	for (const key in quantDownloads) {
-		if (!Object.hasOwn(quantDownloads, key)) {
-			continue;
-		}
-		const entry = quantDownloads[key];
-		if (entry === undefined || entry.paused) {
-			continue;
-		}
-		if (
+	return collectDownloadEntries(quantDownloads, singleton, {
+		includeSingleton:
 			owner === undefined ||
-			quantOwner(entry, mainSwapTarget, realtimeSwapTarget) === owner
-		) {
-			entries.push({ modelId: entry.modelId, percent: entry.progress });
-		}
-	}
-	return entries;
+			singletonOwner(singleton, mainSwapTarget, realtimeSwapTarget) === owner,
+		includeQuant:
+			owner === undefined
+				? undefined
+				: (entry) =>
+						quantOwner(entry, mainSwapTarget, realtimeSwapTarget) === owner,
+	});
 }
 
 /**

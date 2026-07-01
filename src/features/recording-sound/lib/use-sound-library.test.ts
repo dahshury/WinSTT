@@ -112,8 +112,6 @@ describe("useSoundLibrary", () => {
 		expect(result.current.items.map((i) => i.name)).toEqual([
 			"Default",
 			"Marimba",
-			"UI Earcon 1",
-			"UI Earcon 4",
 			"Alpha",
 		]);
 		expect(result.current.defaultEntry.isDefault).toBe(true);
@@ -130,14 +128,12 @@ describe("useSoundLibrary", () => {
 	});
 
 	test("activeItem resolves to a bundled item whose builtin token matches activePath", () => {
-		setLibrary([], "builtin:recording_sound_ui_earcon_4.wav");
+		setLibrary([], "builtin:marimba_start.wav");
 		const { result } = renderHook(() =>
 			useSoundLibrary({ defaultName: "Default" }),
 		);
-		expect(result.current.activeItem.name).toBe("UI Earcon 4");
-		expect(result.current.activeItem.path).toBe(
-			"builtin:recording_sound_ui_earcon_4.wav",
-		);
+		expect(result.current.activeItem.name).toBe("Marimba");
+		expect(result.current.activeItem.path).toBe("builtin:marimba_start.wav");
 	});
 
 	describe("addFromPath", () => {
@@ -304,7 +300,7 @@ describe("useSoundLibrary", () => {
 			await act(async () => {
 				await result.current.remove(result.current.defaultEntry);
 				const builtIn = result.current.items.find(
-					(i) => i.path === "builtin:recording_sound_ui_earcon_1.wav",
+					(i) => i.path === "builtin:marimba_start.wav",
 				);
 				if (builtIn) {
 					await result.current.remove(builtIn);
@@ -405,7 +401,7 @@ describe("useSoundLibrary", () => {
 			).toBe("/a.wav");
 			act(() => {
 				const builtIn = result.current.items.find(
-					(i) => i.path === "builtin:recording_sound_ui_earcon_1.wav",
+					(i) => i.path === "builtin:marimba_start.wav",
 				);
 				if (builtIn) {
 					result.current.select(builtIn);
@@ -413,7 +409,7 @@ describe("useSoundLibrary", () => {
 			});
 			expect(
 				useSettingsStore.getState().settings.general.recordingSoundPath,
-			).toBe("builtin:recording_sound_ui_earcon_1.wav");
+			).toBe("builtin:marimba_start.wav");
 			act(() => result.current.select(result.current.defaultEntry));
 			expect(
 				useSettingsStore.getState().settings.general.recordingSoundPath,

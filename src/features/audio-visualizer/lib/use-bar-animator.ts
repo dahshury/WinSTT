@@ -11,7 +11,13 @@ function generateConnectingSequence(columns: number): number[][] {
 
 function generateListeningSequence(columns: number): number[][] {
 	const center = Math.floor(columns / 2);
-	return [[center], [-1]];
+	// STATIC, single frame — no blink. A 1-frame sequence makes the sequence
+	// animator skip its rAF loop entirely (see use-sequence-animator), so the
+	// center bar rests steadily lit while recording-but-silent instead of pulsing
+	// on/off "from the middle". Real speech switches the state to "speaking", which
+	// drives the bars from the live volume bands. Returning only the center frame
+	// (not `[[center], [-1]]`) is what removes the idle blink.
+	return [[center]];
 }
 
 function generateSpeakingSequence(columns: number): number[][] {

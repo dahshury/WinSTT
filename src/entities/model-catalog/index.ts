@@ -1,3 +1,6 @@
+import type { useCatalogStore } from "./model/catalog-store";
+import type { useModelStateStore } from "./model/model-state-store";
+
 export {
 	readLastLocalSttModelHistory,
 	recordLastLocalSttModel,
@@ -11,6 +14,7 @@ export {
 	type ModelAssistanceReason,
 } from "./lib/model-assistance";
 export { modelHasNativeBasicFormatting } from "./lib/model-formatting";
+export { resolveEffectiveQuant, resolveQuantCache } from "./lib/quant-cache";
 export {
 	isSelectableRealtimeModel,
 	isVisibleSttModel,
@@ -31,3 +35,13 @@ export {
 	_resetOptimisticSwapForTests,
 	useModelSwapStore,
 } from "./model/model-swap-store";
+
+export type CatalogModels = ReturnType<
+	typeof useCatalogStore.getState
+>["models"];
+export type ModelStatesById = ReturnType<
+	typeof useModelStateStore.getState
+>["statesById"];
+export type ModelSystemInfo = ReturnType<
+	typeof useModelStateStore.getState
+>["systemInfo"];

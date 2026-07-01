@@ -4,28 +4,8 @@ import type {
 	ContextPlaygroundPush,
 	ContextPlaygroundWaitReason,
 } from "@/shared/api/context-debug-types";
-import { IPC } from "@/shared/api/ipc-channels";
-import {
-	contextPlaygroundArmDeep,
-	contextPlaygroundSetLive,
-	ipcOn,
-	windowCloseNamed,
-} from "@/shared/api/ipc-client";
 import { useEscapeToClose } from "@/shared/lib/window-effects";
 
-/**
- * State controller for the context-awareness playground (debug view).
- *
- * Subscribes to the `CONTEXT_PLAYGROUND_REPORT` push channel and mirrors the
- * reference main poll loop:
- *   - `report` is the last EXTERNAL-field capture (kept, never clobbered by a
- *     "waiting" heartbeat).
- *   - `waiting` is the reason the loop currently can't capture (the playground
- *     itself holds focus, or live mode is off).
- *
- * On mount it enables live polling, which both flips the backend loop on and
- * signals that the renderer is ready so a capture lands promptly.
- */
 export interface ContextPlaygroundController {
 	armDeep: () => void;
 	deepArmed: boolean;
@@ -35,9 +15,18 @@ export interface ContextPlaygroundController {
 	waiting: ContextPlaygroundWaitReason | null;
 }
 
+async function setContextPlaygroundLive(live: boolean): Promise<void> {
+	const { contextPlaygroundSetLive } = await import("@/shared/api/ipc-client");
+	contextPlaygroundSetLive(live);
+}
+
 function closeContextPlayground(): void {
-	contextPlaygroundSetLive(false);
-	windowCloseNamed("context-playground");
+	void import("@/shared/api/ipc-client").then(
+		({ contextPlaygroundSetLive, windowCloseNamed }) => {
+			contextPlaygroundSetLive(false);
+			windowCloseNamed("context-playground");
+		},
+	);
 }
 
 export function useContextPlayground(): ContextPlaygroundController {
@@ -50,20 +39,33 @@ export function useContextPlayground(): ContextPlaygroundController {
 	useEscapeToClose(closeContextPlayground);
 
 	useEffect(() => {
-		const unsubscribe = ipcOn(IPC.CONTEXT_PLAYGROUND_REPORT, (payload) => {
-			const push = payload as ContextPlaygroundPush;
-			if (push.kind === "report") {
-				setReport(push.report);
-				setWaiting(null);
-				// A capture landed — if a deep capture was armed, it has now fired.
-				setDeepArmed(false);
-			} else {
-				setWaiting(push.reason);
+		let cancelled = false;
+		let unsubscribe = () => {};
+		void Promise.all([
+			// eslint-disable-next-line react-hooks-js/todo -- dynamic import is intentional code-splitting; compiler cannot lower it but behavior is correct
+			import("@/shared/api/ipc-channels"),
+			// eslint-disable-next-line react-hooks-js/todo -- dynamic import is intentional code-splitting; compiler cannot lower it but behavior is correct
+			import("@/shared/api/ipc-client"),
+		]).then(([{ IPC }, { contextPlaygroundSetLive, ipcOn }]) => {
+			if (cancelled) {
+				contextPlaygroundSetLive(false);
+				return;
 			}
+			unsubscribe = ipcOn(IPC.CONTEXT_PLAYGROUND_REPORT, (payload) => {
+				const push = payload as ContextPlaygroundPush;
+				if (push.kind === "report") {
+					setReport(push.report);
+					setWaiting(null);
+					setDeepArmed(false);
+				} else {
+					setWaiting(push.reason);
+				}
+			});
+			contextPlaygroundSetLive(true);
 		});
-		contextPlaygroundSetLive(true);
 		return () => {
-			contextPlaygroundSetLive(false);
+			cancelled = true;
+			void setContextPlaygroundLive(false);
 			unsubscribe();
 		};
 	}, []);
@@ -71,12 +73,15 @@ export function useContextPlayground(): ContextPlaygroundController {
 	const toggleLive = () => {
 		const next = !live;
 		setLive(next);
-		contextPlaygroundSetLive(next);
+		void setContextPlaygroundLive(next);
 	};
 
 	const armDeep = () => {
 		setDeepArmed(true);
-		contextPlaygroundArmDeep();
+		// eslint-disable-next-line react-hooks-js/todo -- dynamic import is intentional code-splitting; compiler cannot lower it but behavior is correct
+		void import("@/shared/api/ipc-client").then(
+			({ contextPlaygroundArmDeep }) => contextPlaygroundArmDeep(),
+		);
 	};
 
 	return { armDeep, deepArmed, live, report, toggleLive, waiting };

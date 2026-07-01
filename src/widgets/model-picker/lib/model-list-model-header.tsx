@@ -24,7 +24,7 @@ import { computeModelHeaderState } from "./model-list-content-virtualized-utils/
 import { resolveMakerIconSrc } from "./model-list-content-virtualized-utils/items";
 import { InlineModelMeta, ModelDescription } from "./model-list-meta-chips";
 import { formatModelName } from "./model-selector-utils";
-import { publicAsset } from "./public-asset";
+import { publicAsset } from "@/shared/lib/public-asset";
 
 function ProvidersExpandButton({
 	modelId,

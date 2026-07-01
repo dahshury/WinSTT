@@ -7,20 +7,17 @@ import {
 	PictureInPictureOnIcon,
 	RadialIcon,
 } from "@hugeicons/core-free-icons";
-import type { useTranslations } from "use-intl";
-import type { useSettingsStore } from "@/entities/setting";
+import type {
+	GeneralSettings,
+	GeneralT,
+	UpdateGeneralFn as UpdateFn,
+} from "@/entities/setting";
 import {
 	isVisualizerType,
 	type VisualizerType,
 } from "@/features/audio-visualizer";
 import { isLocale, type Locale } from "@/shared/i18n";
 import type { SwitcherOption } from "@/shared/ui/switcher";
-
-type GeneralT = ReturnType<typeof useTranslations<"general">>;
-type GeneralSettings = NonNullable<
-	ReturnType<typeof useSettingsStore.getState>["settings"]["general"]
->;
-type UpdateFn = (patch: Partial<GeneralSettings>) => void;
 
 type VisualizerSizePreset = "xs" | "sm" | "md" | "lg" | "xl";
 

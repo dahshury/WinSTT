@@ -15,29 +15,18 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
 use crate::winstt::downloads::{
-    transfer_url_blocking, TransferControl, TransferOutcome, TransferProgress, TransferRequest,
+    transfer_url_blocking, PauseCancelFlags, TransferOutcome, TransferProgress, TransferRequest,
 };
 use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::tts::catalog::{self, TtsEngineId, TtsModelEntry};
 use crate::winstt::tts::local_engines::{piper_voice_def, PIPER_DEFAULT_VOICE};
 use crate::winstt::tts::voice_by_id;
-
-/// The Kitten ONNX graph filename for a catalog id. Both nano models ship the same
-/// `voices.npz` + `config.json`; only the graph file name differs per version.
-fn kitten_model_file(model_id: &str) -> &'static str {
-    match model_id {
-        "kitten-nano-0.2" => "kitten_tts_nano_v0_2.onnx",
-        // nano-0.1 (and any future default) uses the v0.1 graph.
-        _ => "kitten_tts_nano_v0_1.onnx",
-    }
-}
 
 fn catalog_model_id(model_id: &str) -> Option<&'static str> {
     catalog::find(model_id).map(|entry| entry.id)
@@ -45,23 +34,6 @@ fn catalog_model_id(model_id: &str) -> Option<&'static str> {
 
 fn kokoro_voice_id(voice_id: &str) -> Option<&'static str> {
     voice_by_id(voice_id).map(|voice| voice.id)
-}
-
-/// Per-(model,quant) cooperative download flags.
-#[derive(Default)]
-struct Flags {
-    cancel: AtomicBool,
-    pause: AtomicBool,
-}
-
-impl TransferControl for Flags {
-    fn should_cancel(&self) -> bool {
-        self.cancel.load(Ordering::Acquire)
-    }
-
-    fn should_pause(&self) -> bool {
-        self.pause.load(Ordering::Acquire)
-    }
 }
 
 /// Per-quant cache state (mirrors the STT `CacheState` strings the picker reads).
@@ -92,7 +64,7 @@ pub struct TtsCacheInfo {
 pub struct TtsDownloadManager {
     app: AppHandle,
     client: reqwest::Client,
-    inflight: Mutex<HashMap<String, Arc<Flags>>>,
+    inflight: Mutex<HashMap<String, Arc<PauseCancelFlags>>>,
 }
 
 impl TtsDownloadManager {
@@ -100,7 +72,7 @@ impl TtsDownloadManager {
         let client = reqwest::Client::builder()
             .user_agent("WinSTT/0.1")
             .build()
-            .unwrap_or_default();
+            .expect("reqwest TLS init");
         let manager = Self {
             app: app.clone(),
             client,
@@ -173,10 +145,7 @@ impl TtsDownloadManager {
 
     /// `%LOCALAPPDATA%/winstt/tts/<model-id>/`.
     pub fn model_cache_dir(&self, model_id: &str) -> PathBuf {
-        crate::portable::app_data_dir(&self.app)
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("tts")
-            .join(model_id)
+        crate::winstt::tts::cache_dir(&self.app, model_id)
     }
 
     fn cleanup_legacy_supertonic_cache(&self) {
@@ -211,7 +180,7 @@ impl TtsDownloadManager {
                 // The graph filename differs per Kitten model (v0.1 vs v0.2); the
                 // voices.npz + config.json names are shared. Read the graph name from
                 // the catalog id so the right model file is fetched from its repo.
-                let graph = kitten_model_file(entry.id);
+                let graph = catalog::kitten_model_file(entry.id);
                 vec![
                     (graph.to_string(), graph.to_string()),
                     ("voices.npz".into(), "voices.npz".into()),
@@ -369,7 +338,7 @@ impl TtsDownloadManager {
             .lock_recover()
             .get(&Self::key(model_id, quant))
         {
-            f.pause.store(true, Ordering::Release);
+            f.pause();
         }
     }
     pub fn cancel(&self, model_id: &str, quant: &str) {
@@ -378,7 +347,7 @@ impl TtsDownloadManager {
             .lock_recover()
             .get(&Self::key(model_id, quant))
         {
-            f.cancel.store(true, Ordering::Release);
+            f.cancel();
         }
     }
 
@@ -390,7 +359,7 @@ impl TtsDownloadManager {
             if g.contains_key(&key) {
                 return; // already running
             }
-            g.insert(key, Arc::new(Flags::default()));
+            g.insert(key, Arc::new(PauseCancelFlags::default()));
         }
         let this = self.clone();
         let model_id = model_id.to_string();
@@ -467,9 +436,9 @@ impl TtsDownloadManager {
             .inflight
             .lock_recover()
             .entry(Self::key(model_id, quant))
-            .or_insert_with(|| Arc::new(Flags::default()))
+            .or_insert_with(|| Arc::new(PauseCancelFlags::default()))
             .clone();
-        flags.pause.store(false, Ordering::Release);
+        flags.resume();
 
         for (index, (url, target)) in manifest.iter().enumerate() {
             if target.exists() {
@@ -539,7 +508,7 @@ impl TtsDownloadManager {
                     "https://huggingface.co/{}/resolve/main/voices/{voice_id}.bin",
                     entry.hf_repo
                 );
-                let flags = Flags::default();
+                let flags = PauseCancelFlags::default();
                 self.download_one(&url, &target, &flags, None, &mut |_, _| {})
             }
             TtsEngineId::Piper => {
@@ -549,7 +518,7 @@ impl TtsDownloadManager {
                     return Ok(());
                 };
                 let dir = self.model_cache_dir(model_id);
-                let flags = Flags::default();
+                let flags = PauseCancelFlags::default();
                 for ext in ["onnx", "onnx.json"] {
                     let target = dir.join(format!("{}.{ext}", def.stem));
                     if target.exists() {
@@ -577,7 +546,7 @@ impl TtsDownloadManager {
         &self,
         url: &str,
         target: &std::path::Path,
-        flags: &Flags,
+        flags: &PauseCancelFlags,
         known_total_bytes: Option<u64>,
         on_bytes: &mut dyn FnMut(u64, Option<u64>),
     ) -> Result<(), TtsDownloadErr> {

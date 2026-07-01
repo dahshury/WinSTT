@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 
 /**
  * State + controls for the on-device encoder dictionary model (the non-LLM fallback).
@@ -68,19 +69,34 @@ function applyStatus(p: StatusPayload) {
 }
 
 function cancelEncoderDownload(): void {
-	invoke("encoder_dict_download_cancel").catch(() => {});
+	fireAndForget(
+		invoke("encoder_dict_download_cancel"),
+		"encoder_dict_download_cancel",
+	);
 }
 
 function preloadEncoderModel(): void {
-	invoke("encoder_dict_preload").catch(() => {});
+	fireAndForget(invoke("encoder_dict_preload"), "encoder_dict_preload");
 }
 
 function unloadEncoderModel(): void {
-	invoke("encoder_dict_unload").catch(() => {});
+	fireAndForget(invoke("encoder_dict_unload"), "encoder_dict_unload");
 }
 
 export function useEncoderModel(): EncoderModel {
 	const [s, setS] = useState(INITIAL);
+
+	// Re-query the backend so an optimistic UI state (start → "downloading",
+	// remove → "absent") self-corrects when the underlying invoke actually
+	// failed. Without this, a rejected start/remove leaves the card showing a
+	// state the backend never entered.
+	const reconcileFromBackend = () => {
+		invoke<StatusPayload>("encoder_dict_status")
+			.then((status) => setS(applyStatus(status)))
+			.catch((error) => {
+				console.error("[encoder-dict] status reconcile failed:", error);
+			});
+	};
 
 	useEffect(() => {
 		let active = true;
@@ -90,7 +106,8 @@ export function useEncoderModel(): EncoderModel {
 					setS(applyStatus(status));
 				}
 			})
-			.catch(() => {
+			.catch((error) => {
+				console.error("[encoder-dict] initial status query failed:", error);
 				if (active) {
 					setS((prev) => ({ ...prev, state: "absent" }));
 				}
@@ -129,15 +146,26 @@ export function useEncoderModel(): EncoderModel {
 
 	const start = () => {
 		setS((prev) => ({ ...prev, state: "downloading" }));
-		invoke("encoder_dict_download_start").catch(() => {});
+		invoke("encoder_dict_download_start").catch((error) => {
+			// The optimistic "downloading" state above is wrong if the start
+			// invoke rejected — surface it and reconcile with the real status.
+			console.error("[encoder-dict] download start failed:", error);
+			reconcileFromBackend();
+		});
 	};
 	const pause = () => {
 		setS((prev) => ({ ...prev, state: "paused" }));
-		invoke("encoder_dict_download_pause").catch(() => {});
+		fireAndForget(
+			invoke("encoder_dict_download_pause"),
+			"encoder_dict_download_pause",
+		);
 	};
 	const resume = () => {
 		setS((prev) => ({ ...prev, state: "downloading" }));
-		invoke("encoder_dict_download_resume").catch(() => {});
+		fireAndForget(
+			invoke("encoder_dict_download_resume"),
+			"encoder_dict_download_resume",
+		);
 	};
 	const remove = () => {
 		// Optimistically drop to "absent" so the card reflects the off-switch
@@ -149,7 +177,12 @@ export function useEncoderModel(): EncoderModel {
 			totalBytes: 0,
 			speedBps: 0,
 		});
-		invoke("encoder_dict_remove").catch(() => {});
+		invoke("encoder_dict_remove").catch((error) => {
+			// The optimistic "absent" state above is wrong if remove rejected —
+			// surface it and reconcile with the real on-disk status.
+			console.error("[encoder-dict] remove failed:", error);
+			reconcileFromBackend();
+		});
 	};
 
 	return {

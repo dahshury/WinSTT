@@ -372,7 +372,16 @@ fn capture_mode(context: &ContextManager, mode: ContextMode, label: &str) -> Con
     let start = std::time::Instant::now();
     let snapshot = ContextReader::read(context, mode);
     let duration_ms = start.elapsed().as_millis() as u64;
-    let ok = !snapshot.focused_text.trim().is_empty()
+    ContextModeResult {
+        duration_ms,
+        mode: label.to_string(),
+        ok: snapshot_has_content(&snapshot),
+        snapshot: to_view(&snapshot),
+    }
+}
+
+fn snapshot_has_content(snapshot: &WindowContextSnapshot) -> bool {
+    !snapshot.focused_text.trim().is_empty()
         || snapshot
             .text_before
             .as_deref()
@@ -380,13 +389,7 @@ fn capture_mode(context: &ContextManager, mode: ContextMode, label: &str) -> Con
         || snapshot
             .ax_html
             .as_deref()
-            .is_some_and(|s| !s.trim().is_empty());
-    ContextModeResult {
-        duration_ms,
-        mode: label.to_string(),
-        ok,
-        snapshot: to_view(&snapshot),
-    }
+            .is_some_and(|s| !s.trim().is_empty())
 }
 
 /// Capture one mode against a specific top-level HWND. Used by non-interrupting
@@ -400,19 +403,10 @@ fn capture_mode_hwnd(
     let start = std::time::Instant::now();
     let snapshot = context.read_hwnd(mode, hwnd);
     let duration_ms = start.elapsed().as_millis() as u64;
-    let ok = !snapshot.focused_text.trim().is_empty()
-        || snapshot
-            .text_before
-            .as_deref()
-            .is_some_and(|s| !s.trim().is_empty())
-        || snapshot
-            .ax_html
-            .as_deref()
-            .is_some_and(|s| !s.trim().is_empty());
     ContextModeResult {
         duration_ms,
         mode: label.to_string(),
-        ok,
+        ok: snapshot_has_content(&snapshot),
         snapshot: to_view(&snapshot),
     }
 }

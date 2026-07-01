@@ -1,137 +1,100 @@
-import {
-	BookOpenTextIcon,
-	PencilEdit01Icon,
-	SparklesIcon,
-	TextIcon,
-} from "@hugeicons/core-free-icons";
+import { PencilEdit01Icon, SparklesIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import type { ColumnDef } from "@tanstack/react-table";
 import { useTranslations } from "use-intl";
-import {
-	addDictionaryEntrySchema,
-	type DictionaryEntry,
-} from "@/shared/config/settings-schema";
+import type { DictionaryEntry } from "@/shared/config/settings-schema";
+import { generateId } from "@/shared/lib/generate-id";
 import { Badge } from "@/shared/ui/badge";
-import { CrudTable } from "@/shared/ui/crud-table";
-import { dictionaryContainsTerm } from "../lib/dictionary-terms";
+import {
+	EditableRecordsGrid,
+	getDataGridSelectColumn,
+	getFilterFn,
+} from "@/shared/ui/data-grid";
+import { normalizeDictionaryTerm } from "../lib/dictionary-terms";
+
+const EDITABLE_COLUMNS = ["term"] as const;
+
+const isBlankDictionaryEntry = (entry: DictionaryEntry): boolean =>
+	entry.term.trim() === "";
+
+const newDictionaryEntry = (): DictionaryEntry => ({
+	id: generateId(),
+	term: "",
+});
+
+const acceptDictionaryData = (newData: readonly DictionaryEntry[]) => {
+	const seen = new Set<string>();
+	for (const row of newData) {
+		const key = normalizeDictionaryTerm(row.term);
+		if (!key) continue;
+		if (seen.has(key)) return false;
+		seen.add(key);
+	}
+	return true;
+};
 
 export interface DictionaryTableProps {
 	entries: DictionaryEntry[];
-	onAdd: (entry: Omit<DictionaryEntry, "id">) => void;
-	onClearAll?: () => void;
-	onRemove: (id: string) => void;
-	onRemoveMany?: (ids: string[]) => void;
-	onUpdate?: (id: string, entry: Omit<DictionaryEntry, "id">) => void;
+	onChange: (entries: DictionaryEntry[]) => void;
 }
 
-export function DictionaryTable({
-	entries,
-	onAdd,
-	onRemove,
-	onRemoveMany,
-	onClearAll,
-	onUpdate,
-}: DictionaryTableProps) {
+export function DictionaryTable({ entries, onChange }: DictionaryTableProps) {
 	const t = useTranslations("dictionary");
-	const tc = useTranslations("common");
-	const addSchema = addDictionaryEntrySchema.superRefine((entry, ctx) => {
-		if (dictionaryContainsTerm(entries, entry.term)) {
-			ctx.addIssue({
-				code: "custom",
-				message: "Already added",
-				path: ["term"],
-			});
-		}
-	});
-	const updateSchema = (current: DictionaryEntry) =>
-		addDictionaryEntrySchema.superRefine((entry, ctx) => {
-			if (
-				dictionaryContainsTerm(
-					entries.filter((e) => e.id !== current.id),
-					entry.term,
-				)
-			) {
-				ctx.addIssue({
-					code: "custom",
-					message: "Already added",
-					path: ["term"],
-				});
-			}
-		});
+
+	const filterFn = getFilterFn<DictionaryEntry>();
+	const columns: ColumnDef<DictionaryEntry>[] = [
+		getDataGridSelectColumn<DictionaryEntry>(),
+		{
+			accessorKey: "term",
+			filterFn,
+			header: t("term"),
+			id: "term",
+			meta: { cell: { variant: "short-text" }, label: t("term") },
+			minSize: 220,
+		},
+		{
+			// Function header → the grid renders this column via its own `cell`
+			// (read-only), bypassing the editable cell-variant router.
+			accessorFn: (row) =>
+				row.autoAdded ? t("sourceAuto") : t("sourceManual"),
+			cell: ({ row }) =>
+				row.original.autoAdded ? (
+					<Badge
+						className="border-accent/30 bg-accent/12 text-accent"
+						variant="outline"
+					>
+						<HugeiconsIcon aria-hidden="true" icon={SparklesIcon} size={11} />
+						{t("sourceAuto")}
+					</Badge>
+				) : (
+					<Badge variant="outline">
+						<HugeiconsIcon
+							aria-hidden="true"
+							icon={PencilEdit01Icon}
+							size={11}
+						/>
+						{t("sourceManual")}
+					</Badge>
+				),
+			enableResizing: false,
+			enableSorting: false,
+			header: () => <span>{t("source")}</span>,
+			id: "source",
+			meta: { label: t("source") },
+			size: 130,
+		},
+	];
 
 	return (
-		<CrudTable
-			addFormLayout="joined"
-			columnControls
-			columns={[
-				{
-					cellClassName: "text-foreground",
-					editFieldName: "term",
-					header: t("term"),
-					render: (e) => e.term,
-				},
-				{
-					accessor: (e) =>
-						e.autoAdded === true ? t("sourceAuto") : t("sourceManual"),
-					header: t("source"),
-					render: (e) =>
-						e.autoAdded === true ? (
-							<Badge
-								className="border-accent/30 bg-accent/12 text-accent"
-								variant="outline"
-							>
-								<HugeiconsIcon
-									aria-hidden="true"
-									icon={SparklesIcon}
-									size={11}
-								/>
-								{t("sourceAuto")}
-							</Badge>
-						) : (
-							<Badge variant="outline">
-								<HugeiconsIcon
-									aria-hidden="true"
-									icon={PencilEdit01Icon}
-									size={11}
-								/>
-								{t("sourceManual")}
-							</Badge>
-						),
-					width: "w-28",
-				},
-			]}
-			deleteLabelFor={(e) => e.term}
-			emptyIcon={BookOpenTextIcon}
-			entries={entries}
-			fields={[
-				{
-					icon: TextIcon,
-					label: t("term"),
-					name: "term",
-					placeholder: t("termPlaceholder"),
-				},
-			]}
-			getId={(e) => e.id}
-			labels={{
-				add: tc("add"),
-				cancel: tc("cancel"),
-				clearDescription: t("clearDescription"),
-				clearTitle: t("clearTitle"),
-				delete: tc("delete"),
-				deleteAll: tc("deleteAll"),
-				edit: tc("edit"),
-				emptyState: t("emptyState"),
-				save: tc("save"),
-			}}
-			onAdd={onAdd}
-			onRemove={onRemove}
-			{...(onRemoveMany ? { onRemoveMany } : {})}
-			pageSize={5}
-			paginated
-			schema={addSchema}
-			searchable
-			sortable
-			{...(onClearAll ? { onClearAll } : {})}
-			{...(onUpdate ? { onUpdate, updateSchema } : {})}
+		<EditableRecordsGrid
+			acceptData={acceptDictionaryData}
+			columns={columns}
+			createRow={newDictionaryEntry}
+			data={entries}
+			editableColumnIds={EDITABLE_COLUMNS}
+			focusColumnId="term"
+			isEmptyRow={isBlankDictionaryEntry}
+			onChange={onChange}
 		/>
 	);
 }

@@ -13,17 +13,6 @@ pub enum IdeKind {
     JetBrains,
 }
 
-/// Per-IDE capability profile.
-///
-/// - `variable_recognition`: backtick-wrap spoken code symbols.
-/// - `file_tagging`: the "@file" chat affordance, limited to Cursor + Windsurf.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IdeProfile {
-    pub kind: IdeKind,
-    pub variable_recognition: bool,
-    pub file_tagging: bool,
-}
-
 /// Classify the foreground app's executable into an `IdeKind`, or `None` when
 /// it is not a recognized editor.
 pub fn ide_kind_from_exe(app_exe: Option<&str>) -> Option<IdeKind> {
@@ -61,39 +50,9 @@ pub fn ide_kind_from_exe(app_exe: Option<&str>) -> Option<IdeKind> {
     None
 }
 
-/// Resolve the per-IDE capability profile for the foreground app.
-pub fn ide_profile(snapshot: &WindowContextSnapshot) -> Option<IdeProfile> {
-    let kind = ide_kind_from_exe(snapshot.app_exe.as_deref())?;
-    let file_tagging = matches!(kind, IdeKind::Cursor | IdeKind::Windsurf);
-    Some(IdeProfile {
-        kind,
-        variable_recognition: true,
-        file_tagging,
-    })
-}
-
 /// True when the foreground app is a recognized IDE / code editor.
 pub fn is_ide_context(snapshot: &WindowContextSnapshot) -> bool {
     ide_kind_from_exe(snapshot.app_exe.as_deref()).is_some()
-}
-
-/// True when the focused control is an IDE's integrated terminal.
-pub fn is_ide_terminal(snapshot: &WindowContextSnapshot) -> bool {
-    is_ide_context(snapshot) && looks_like_terminal(snapshot)
-}
-
-/// True when the focused surface looks like an AI coding CLI running in a
-/// terminal. Conservative: requires a terminal-shaped focus and CLI marker.
-pub fn is_ai_coding_cli(snapshot: &WindowContextSnapshot) -> bool {
-    if !looks_like_terminal(snapshot) {
-        return false;
-    }
-    let haystack = format!(
-        "{} {}",
-        snapshot.window_title.to_lowercase(),
-        snapshot.element_name.to_lowercase()
-    );
-    contains_word(&haystack, "claude") || contains_word(&haystack, "codex")
 }
 
 /// True when the focused control looks like a terminal/console.

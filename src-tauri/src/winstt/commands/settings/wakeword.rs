@@ -5,8 +5,8 @@
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::persistence::read_settings_raw;
 use crate::winstt::settings_schema::{RecordingMode, WinsttSettings};
+use crate::winstt::settings_store::read_settings_raw;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WakewordRuntimeTransition {

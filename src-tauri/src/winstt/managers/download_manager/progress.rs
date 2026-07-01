@@ -72,6 +72,55 @@ impl ProgressAgg {
     }
 }
 
+/// Emit one coalesced model-level `stt:model-download-progress` event from an aggregate snapshot.
+///
+/// The SINGLE place the elapsed/speed/eta/progress arithmetic and the event payload live — shared by
+/// the live `FileReporter::emit` (per hf-hub progress event) and `DownloadManager::emit_agg` (the
+/// post-transfer settle). `quantization` serializes identically whether the caller holds a bare
+/// `String` or an `Option<&str>` that is always `Some` here.
+pub(super) fn emit_model_progress(
+    app: &AppHandle,
+    model: &str,
+    quantization: &str,
+    agg: &ProgressAgg,
+    start: Instant,
+) {
+    let (downloaded, total) = agg.totals();
+    let progress = if total > 0 {
+        (downloaded as f64 / total as f64).min(1.0)
+    } else {
+        0.0
+    };
+    let elapsed = start.elapsed().as_secs_f64().max(0.001);
+    let speed = (downloaded as f64 / elapsed) as u64;
+    let eta = if speed > 0 && total > downloaded {
+        (total - downloaded) / speed
+    } else {
+        0
+    };
+    // Diagnostic: log only the cases that matter (a 0 denominator — the xet
+    // "stuck at 0%" symptom this seeds Start.total_bytes to prevent — or a
+    // finished file), so a live download doesn't spam ~10 lines/sec.
+    if total == 0 || downloaded >= total {
+        log::debug!(
+            "[stt-download] progress {model}@{quantization} {downloaded}/{total} ({:.0}%)",
+            progress * 100.0,
+        );
+    }
+    let _ = app.emit(
+        "stt:model-download-progress",
+        json!({
+            "model": model,
+            "quantization": quantization,
+            "progress": progress,
+            "downloadedBytes": downloaded,
+            "totalBytes": total,
+            "speedBps": speed,
+            "etaSeconds": eta,
+        }),
+    );
+}
+
 /// hf-hub `ProgressHandler` for ONE file fetch — routes byte deltas into the shared aggregate AND
 /// emits a live coalesced `stt:model-download-progress` so the picker's bar fills in real time.
 pub(super) struct FileReporter {
@@ -89,41 +138,12 @@ pub(super) struct FileReporter {
 impl FileReporter {
     /// Emit the aggregate model-level progress (downloaded/total across every planned file).
     fn emit(&self) {
-        let (downloaded, total) = self.agg.totals();
-        let progress = if total > 0 {
-            (downloaded as f64 / total as f64).min(1.0)
-        } else {
-            0.0
-        };
-        let elapsed = self.start.elapsed().as_secs_f64().max(0.001);
-        let speed = (downloaded as f64 / elapsed) as u64;
-        let eta = if speed > 0 && total > downloaded {
-            (total - downloaded) / speed
-        } else {
-            0
-        };
-        // Diagnostic: log only the cases that matter (a 0 denominator — the xet
-        // "stuck at 0%" symptom this seeds Start.total_bytes to prevent — or a
-        // finished file), so a live download doesn't spam ~10 lines/sec.
-        if total == 0 || downloaded >= total {
-            log::debug!(
-                "[stt-download] progress {}@{} {downloaded}/{total} ({:.0}%)",
-                self.model,
-                self.quantization,
-                progress * 100.0,
-            );
-        }
-        let _ = self.app.emit(
-            "stt:model-download-progress",
-            json!({
-                "model": self.model,
-                "quantization": self.quantization,
-                "progress": progress,
-                "downloadedBytes": downloaded,
-                "totalBytes": total,
-                "speedBps": speed,
-                "etaSeconds": eta,
-            }),
+        emit_model_progress(
+            &self.app,
+            &self.model,
+            &self.quantization,
+            &self.agg,
+            self.start,
         );
     }
 }

@@ -15,7 +15,13 @@ import {
 	PlugSocketIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, type ReactNode } from "react";
+import {
+	lazy,
+	Suspense,
+	useDeferredValue,
+	useEffect,
+	type ReactNode,
+} from "react";
 import { useTranslations } from "use-intl";
 import {
 	subscribePendingSettingsSection,
@@ -36,29 +42,134 @@ import { Elevated, SurfaceProvider } from "@/shared/lib/surface";
 import { useTouchActivation } from "@/shared/lib/use-touch-activation";
 import { useEscapeToClose } from "@/shared/lib/window-effects";
 import { ScrollArea } from "@/shared/ui/scroll-area";
-import { AboutSettingsPanel } from "@/widgets/about-settings";
-import { AppearanceSettingsPanel } from "@/widgets/appearance-settings";
-import {
-	DictionarySettingsPanel,
-	EncoderModelCard,
-	useEncoderModel,
-} from "@/widgets/dictionary-settings";
-import { IntegrationsSettingsPanel } from "@/widgets/integrations-settings";
-import { LlmSettingsPanel } from "@/widgets/llm-settings";
-import { ModelSettingsPanel } from "@/widgets/model-settings";
-import { OllamaModelManagerDialog } from "@/widgets/ollama-model-manager";
-import {
-	OutputSettingsPanel,
-	PlaybackSettingsPanel,
-} from "@/widgets/output-settings";
-import { ProcessingExtrasPanel } from "@/widgets/processing-extras";
-import { RecordingSettingsPanel } from "@/widgets/recording-settings";
-import { ShortcutsSettingsPanel } from "@/widgets/shortcuts-settings";
-import { SnippetsSettingsPanel } from "@/widgets/snippets-settings";
-import { TranscriptionHistoryPanel } from "@/widgets/transcription-history-settings";
-import { TtsModelPickerHost, TtsModelSection } from "@/widgets/tts-settings";
+import { useEncoderModel } from "@/widgets/dictionary-settings";
 import { useSettingsSearchKeywords } from "../lib/settings-search";
 import { SettingsSidebar, type SidebarLink } from "./SettingsSidebar";
+
+// Import thunks for every lazily-loaded panel module. Declared once so the
+// prefetcher can warm the EXACT same dynamic-import chunks that the lazy()
+// factories below await. A dynamic import is memoized by module specifier, so
+// prefetching a module (on idle, or on tab hover) means the chunk is already in
+// the module cache when the tab is clicked — the panel renders immediately
+// instead of waiting on a fetch + parse round-trip. The window still opens fast
+// because nothing here is imported at module-eval time; prefetch only runs after
+// the window is ready (idle) or when the user signals intent (hover/focus).
+const loadRecording = () => import("@/widgets/recording-settings");
+const loadModel = () => import("@/widgets/model-settings");
+const loadShortcuts = () => import("@/widgets/shortcuts-settings");
+const loadAppearance = () => import("@/widgets/appearance-settings");
+const loadHistory = () => import("@/widgets/transcription-history-settings");
+const loadIntegrations = () => import("@/widgets/integrations-settings");
+const loadAbout = () => import("@/widgets/about-settings");
+const loadTts = () => import("@/widgets/tts-settings");
+const loadOllamaManager = () => import("@/widgets/ollama-model-manager");
+const loadDictionary = () => import("@/widgets/dictionary-settings");
+const loadSnippets = () => import("@/widgets/snippets-settings");
+const loadLlm = () => import("@/widgets/llm-settings");
+const loadProcessingExtras = () => import("@/widgets/processing-extras");
+const loadOutput = () => import("@/widgets/output-settings");
+
+// Per-tab module loaders. Hovering/focusing a sidebar tab warms its chunk(s),
+// and the idle prefetch walks every entry so any tab is instant once warm.
+const TAB_LOADERS: Record<string, Array<() => Promise<unknown>>> = {
+	recording: [loadRecording],
+	model: [loadModel],
+	processing: [loadLlm, loadProcessingExtras],
+	vocabulary: [loadDictionary, loadSnippets],
+	output: [loadOutput],
+	readAloud: [loadTts],
+	shortcuts: [loadShortcuts],
+	appearance: [loadAppearance],
+	history: [loadHistory],
+	integrations: [loadIntegrations],
+	about: [loadAbout],
+};
+
+function prefetchSettingsTab(tab: string): void {
+	for (const load of TAB_LOADERS[tab] ?? []) {
+		void load();
+	}
+}
+
+// Warm every panel chunk (plus the modal hosts that aren't tied to a tab) once
+// the window is idle, so the first click on ANY tab is instant.
+function prefetchAllSettingsPanels(): void {
+	for (const tab of Object.keys(TAB_LOADERS)) {
+		prefetchSettingsTab(tab);
+	}
+	void loadOllamaManager();
+}
+
+const RecordingSettingsPanel = lazy(async () => ({
+	default: (await loadRecording()).RecordingSettingsPanel,
+}));
+const ModelSettingsPanel = lazy(async () => ({
+	default: (await loadModel()).ModelSettingsPanel,
+}));
+const ShortcutsSettingsPanel = lazy(async () => ({
+	default: (await loadShortcuts()).ShortcutsSettingsPanel,
+}));
+const AppearanceSettingsPanel = lazy(async () => ({
+	default: (await loadAppearance()).AppearanceSettingsPanel,
+}));
+const TranscriptionHistoryPanel = lazy(async () => ({
+	default: (await loadHistory()).TranscriptionHistoryPanel,
+}));
+const IntegrationsSettingsPanel = lazy(async () => ({
+	default: (await loadIntegrations()).IntegrationsSettingsPanel,
+}));
+const AboutSettingsPanel = lazy(async () => ({
+	default: (await loadAbout()).AboutSettingsPanel,
+}));
+const TtsModelSection = lazy(async () => ({
+	default: (await loadTts()).TtsModelSection,
+}));
+const TtsModelPickerHost = lazy(async () => ({
+	default: (await loadTts()).TtsModelPickerHost,
+}));
+const OllamaModelManagerDialog = lazy(async () => ({
+	default: (await loadOllamaManager()).OllamaModelManagerDialog,
+}));
+const DictionarySettingsPanel = lazy(async () => ({
+	default: (await loadDictionary()).DictionarySettingsPanel,
+}));
+const EncoderModelCard = lazy(async () => ({
+	default: (await loadDictionary()).EncoderModelCard,
+}));
+const SnippetsSettingsPanel = lazy(async () => ({
+	default: (await loadSnippets()).SnippetsSettingsPanel,
+}));
+
+const ProcessingTab = lazy(async () => {
+	const [{ LlmSettingsPanel }, { ProcessingExtrasPanel }] = await Promise.all([
+		loadLlm(),
+		loadProcessingExtras(),
+	]);
+	return {
+		default: function ProcessingTab() {
+			return (
+				<>
+					<LlmSettingsPanel />
+					<ProcessingExtrasPanel />
+				</>
+			);
+		},
+	};
+});
+
+const OutputTab = lazy(async () => {
+	const { OutputSettingsPanel, PlaybackSettingsPanel } = await loadOutput();
+	return {
+		default: function OutputTab() {
+			return (
+				<>
+					<OutputSettingsPanel />
+					<PlaybackSettingsPanel />
+				</>
+			);
+		},
+	};
+});
 
 // Composes the Dictionary + Snippets ("vocabulary") tab. The dictionary works with OR without LLM
 // cleanup: the LLM owns it when cleanup is on, otherwise the on-device encoder model does (when the
@@ -120,21 +231,11 @@ function SettingsPanelContent({ tab }: { tab: string }): ReactNode {
 		case "model":
 			return <ModelSettingsPanel />;
 		case "processing":
-			return (
-				<>
-					<LlmSettingsPanel />
-					<ProcessingExtrasPanel />
-				</>
-			);
+			return <ProcessingTab />;
 		case "vocabulary":
 			return <VocabularyTab />;
 		case "output":
-			return (
-				<>
-					<OutputSettingsPanel />
-					<PlaybackSettingsPanel />
-				</>
-			);
+			return <OutputTab />;
 		case "readAloud":
 			return <TtsModelSection />;
 		case "shortcuts":
@@ -170,13 +271,18 @@ function LlmModelPickerHost() {
 			? s.settings.llm.transforms.model
 			: s.settings.llm.dictation.model,
 	);
+	if (!open) {
+		return null;
+	}
 	return (
-		<OllamaModelManagerDialog
-			currentModel={currentModel}
-			isOpen={open}
-			onClose={close}
-			onModelInstalled={commitInstalled}
-		/>
+		<Suspense fallback={null}>
+			<OllamaModelManagerDialog
+				currentModel={currentModel}
+				isOpen={open}
+				onClose={close}
+				onModelInstalled={commitInstalled}
+			/>
+		</Suspense>
 	);
 }
 
@@ -185,6 +291,16 @@ function SettingsReadySignal() {
 		settingsWindowReady();
 	}, []);
 	return null;
+}
+
+function SettingsPanelFallback() {
+	return (
+		<div
+			aria-hidden="true"
+			className="min-h-[320px]"
+			data-slot="settings-panel-fallback"
+		/>
+	);
 }
 
 function SettingsHydrationPanel({
@@ -242,8 +358,29 @@ export function SettingsPage() {
 	// ModelSettingsPanel) can navigate the sidebar by calling setActiveTab.
 	const activeTab = useSettingsTabStore((s) => s.activeTab);
 	const setActiveTab = useSettingsTabStore((s) => s.setActiveTab);
+	// Drive the panel content from a deferred copy of the active tab. When a tab
+	// is clicked, the deferred value lags by a render, so React keeps the current
+	// panel on screen while the next one's (prefetched, microtask-fast) chunk
+	// resolves — no blank fallback flash on the swap.
+	const contentTab = useDeferredValue(activeTab);
 	const closeActivation = useTouchActivation(windowCloseSelf);
 	useEscapeToClose(windowCloseSelf);
+
+	// Once the window can render, warm every panel chunk in the background so the
+	// first click on any tab is instant. Deferred to idle so it never competes
+	// with the initial paint of the default tab.
+	useEffect(() => {
+		if (!canRenderSettings) {
+			return;
+		}
+		const ric = window.requestIdleCallback;
+		if (typeof ric === "function") {
+			const handle = ric(() => prefetchAllSettingsPanels(), { timeout: 2000 });
+			return () => window.cancelIdleCallback?.(handle);
+		}
+		const handle = window.setTimeout(prefetchAllSettingsPanels, 200);
+		return () => window.clearTimeout(handle);
+	}, [canRenderSettings]);
 
 	// Honor a cross-window deep-link request (e.g. an onboarding "configure this"
 	// link). A freshly-opened window picks up the pending section on mount; an
@@ -349,7 +486,7 @@ export function SettingsPage() {
 					orientation="vertical"
 					value={activeTab}
 				>
-					<SettingsSidebar links={links} />
+					<SettingsSidebar links={links} onPrefetch={prefetchSettingsTab} />
 					{/* Content card — rounded, bordered, and elevated above the shared
 						    settings background. */}
 					<div className="settings-content-frame relative min-w-0 flex-1 py-2 pe-2">
@@ -396,9 +533,14 @@ export function SettingsPage() {
 								verticalScrollbarClassName="mb-3 me-1"
 								viewportClassName="px-6 pt-6 pb-6"
 							>
-								<Tabs.Panel value={activeTab}>
+								{/* The panel is focusable (tabIndex 0) for a11y; its content is
+									    individually focusable, so suppress the UA focus ring that would
+									    otherwise draw a bright rectangle around the whole tab. */}
+								<Tabs.Panel className="outline-none" value={activeTab}>
 									{canRenderSettings ? (
-										<SettingsPanelContent tab={activeTab} />
+										<Suspense fallback={<SettingsPanelFallback />}>
+											<SettingsPanelContent tab={contentTab} />
+										</Suspense>
 									) : (
 										<SettingsHydrationPanel
 											error={hydrationError}
@@ -412,7 +554,11 @@ export function SettingsPage() {
 				</Tabs.Root>
 				{shouldSignalReady ? <SettingsReadySignal /> : null}
 				{canRenderSettings ? <LlmModelPickerHost /> : null}
-				{canRenderSettings ? <TtsModelPickerHost /> : null}
+				{canRenderSettings ? (
+					<Suspense fallback={null}>
+						<TtsModelPickerHost />
+					</Suspense>
+				) : null}
 			</div>
 		</SurfaceProvider>
 	);

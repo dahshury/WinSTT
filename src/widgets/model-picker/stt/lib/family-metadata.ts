@@ -97,6 +97,12 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		// logo `<img>` uses object-contain (not cover) to show it whole.
 		logoSrc: "/provider-icons/dataoceanai.png",
 	},
+	qwen3: {
+		icon: AiChipIcon,
+		label: "Qwen3-ASR",
+		chip: "bg-model-family-qwen3/15 text-model-family-qwen3",
+		logoSrc: "/provider-icons/qwen.svg",
+	},
 	custom: {
 		icon: FolderLibraryIcon,
 		label: "Custom",
@@ -122,6 +128,7 @@ const FAMILY_AUTHOR: Record<FamilyKey, string> = {
 	cohere: "Cohere",
 	sense_voice: "FunAudioLLM",
 	dolphin: "DataoceanAI",
+	qwen3: "Alibaba Qwen",
 	custom: "Your Models",
 };
 
@@ -133,22 +140,31 @@ export function getAuthorLabel(family: FamilyKey): string {
  * Extra synonyms that should also match the family in search — covers common
  * brand nicknames (e.g. "tinkoff" for T-Tech, "sber" for Sber Salute, "vosk"
  * for Kaldi/Alpha Cephei) so users can type whatever brand they know.
+ *
+ * MUST be FAMILY-wide terms only — the author/org or the toolkit/architecture
+ * name. NEVER put the name of a SPECIFIC model here (e.g. "parakeet", "canary",
+ * "breeze"): the corpus is built per-model, so a model name added here taints
+ * EVERY sibling in the family, making a search for one model surface all the
+ * others. A specific model's own name already lives in its `displayName`/`id`,
+ * so it stays searchable without an alias. Likewise avoid generic capability
+ * words ("streaming", "multilingual", "transcribe") — they over-match and the
+ * dedicated language / streaming fields already carry that signal.
  */
 const FAMILY_SEARCH_ALIASES: Record<FamilyKey, string[]> = {
-	whisper: ["openai", "open ai", "breeze", "mediatek"],
+	whisper: ["openai", "open ai"],
 	"lite-whisper": [
 		"efficient-speech",
 		"efficient speech",
 		"lite",
 		"litewhisper",
 	],
-	nemo: ["nvidia", "parakeet", "canary"],
+	nemo: ["nvidia", "nemo"],
 	granite: ["ibm", "granite speech", "granite-speech"],
 	gigaam: ["sber", "salute", "sberbank", "sberdevices", "salutedevices"],
 	kaldi: ["alpha cephei", "alphacephei", "vosk"],
 	"t-one": ["t-tech", "t tech", "t-bank", "tinkoff", "tbank"],
-	moonshine: ["useful sensors", "useful-sensors", "moon", "streaming"],
-	cohere: ["cohere ai", "command", "transcribe"],
+	moonshine: ["useful sensors", "useful-sensors", "moon"],
+	cohere: ["cohere ai"],
 	sense_voice: [
 		"sensevoice",
 		"sense-voice",
@@ -158,14 +174,8 @@ const FAMILY_SEARCH_ALIASES: Record<FamilyKey, string[]> = {
 		"alibaba",
 		"damo",
 	],
-	dolphin: [
-		"dataocean",
-		"dataoceanai",
-		"tsinghua",
-		"eastern",
-		"asian",
-		"multilingual",
-	],
+	dolphin: ["dataocean", "dataoceanai", "tsinghua"],
+	qwen3: ["alibaba", "tongyi", "dashscope", "qwen"],
 	custom: ["custom", "user", "local", "byo", "bring your own"],
 };
 

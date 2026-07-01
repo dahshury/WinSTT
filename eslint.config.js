@@ -8,7 +8,31 @@ const testSourceFiles = [
 	"src/**/*test-helpers*.{ts,tsx}",
 ];
 
+// react-doctor runs as a SEPARATE linter (`npx react-doctor`) with its own
+// `react-doctor/*` and `react-hooks-js/*` plugins. Source carries inline
+// `eslint-disable react-doctor/… | react-hooks-js/…` directives for that pass.
+// Those plugins are not loaded in THIS ESLint, so each directive would otherwise be
+// flagged "Definition for rule not found". Register them as no-op plugins (the Proxy
+// resolves any rule name to an empty rule) so the directives resolve here without
+// affecting what this ESLint actually checks; the real enforcement stays in react-doctor.
+const noopRule = { create: () => ({}) };
+const reactDoctorCompatPlugin = {
+	rules: new Proxy({}, { get: () => noopRule, has: () => true }),
+};
+
 export default [
+	{
+		files: ["src/**/*.{ts,tsx}"],
+		plugins: {
+			"react-doctor": reactDoctorCompatPlugin,
+			"react-hooks-js": reactDoctorCompatPlugin,
+		},
+		// The compat plugins above are no-ops in THIS ESLint, so it would otherwise
+		// flag every react-doctor directive as an "unused disable directive". Those
+		// directives ARE used — by react-doctor's separate pass — so don't report them
+		// as unused here.
+		linterOptions: { reportUnusedDisableDirectives: "off" },
+	},
 	{
 		files: typeCheckedSourceFiles,
 		languageOptions: {

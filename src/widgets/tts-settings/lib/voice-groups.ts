@@ -1,6 +1,6 @@
-import type { useTranslations } from "use-intl";
 import { DEFAULT_SETTINGS } from "@/entities/setting";
 import type { TtsVoiceCatalog } from "@/shared/api/ipc-client";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import {
 	SUPERTONIC_TTS_MODEL_ID,
 	ttsSpeedRange,
@@ -126,7 +126,7 @@ function fileBaseName(p: string): string {
 // selection is one unified control across every model.
 export function buildCloningVoiceGroups(
 	currentVoice: string,
-	t: ReturnType<typeof useTranslations>,
+	t: TranslateFn,
 ): SelectOptionGroup[] {
 	const opts: SelectOption[] = [{ id: "default", label: t("defaultVoice") }];
 	if (

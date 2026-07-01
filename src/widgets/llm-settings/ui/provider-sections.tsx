@@ -5,8 +5,8 @@ import {
 	ReasoningEffortDropdown,
 } from "@/widgets/model-picker";
 import type { OpenRouterModel } from "@/shared/api/models";
-import { IPC } from "@/shared/api/ipc-channels";
-import { ipcSend } from "@/shared/api/ipc-client";
+import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import {
 	ollamaLlmSelectorUiStorageKey,
 	openRouterLlmSelectorUiStorageKey,
@@ -38,11 +38,7 @@ function openDetachedLlmPicker(
 				pickerTarget: "fallback" | "primary";
 		  },
 ): void {
-	ipcSend(IPC.MODEL_PICKER_OPEN, {
-		x: rect.x,
-		y: rect.y,
-		width: rect.width,
-		height: rect.height,
+	openModelPickerAtRect(rect, {
 		pickerKind: payload.pickerKind,
 		pickerFeature: payload.feature,
 		...("pickerTarget" in payload
@@ -186,7 +182,10 @@ function OllamaSection(props: OllamaSectionProps) {
 					models={ollamaModels}
 					onChange={setModel}
 					onDelete={(name) => {
-						pullBundle.deleteModel(name).catch(() => undefined);
+						fireAndForget(
+							pullBundle.deleteModel(name),
+							"provider-sections.deleteModel",
+						);
 					}}
 					onDiscardPull={pullBundle.discardPausedPull}
 					onOpen={scanOllama}
@@ -200,10 +199,16 @@ function OllamaSection(props: OllamaSectionProps) {
 							: undefined
 					}
 					onPull={(name) => {
-						pullBundle.pullModel(name).catch(() => undefined);
+						fireAndForget(
+							pullBundle.pullModel(name),
+							"provider-sections.pullModel",
+						);
 					}}
 					onResumePull={(name) => {
-						pullBundle.resumePull(name).catch(() => undefined);
+						fireAndForget(
+							pullBundle.resumePull(name),
+							"provider-sections.resumePull",
+						);
 					}}
 					onStopPull={pullBundle.cancelPull}
 					pausedPulls={pullBundle.pausedPulls}
@@ -365,7 +370,7 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 
 /**
  * Apple Intelligence has no per-feature config — it's a single on-device
- * model with no endpoint, no API key, no model picker. Render a stub
+ * model with no endpoint, no API key, no model picker. Render a static
  * panel explaining that and rely on the WarmupStatusBanner below to
  * surface availability/load failures (which the IPC layer reports via
  * the same channel as the other providers).

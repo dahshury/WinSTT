@@ -7,12 +7,15 @@ import {
 	SurfaceProvider,
 	surfaceBg,
 	surfaceClasses,
-	useSurface,
 } from "@/shared/lib/surface";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { ScrollArea } from "@/shared/ui/scroll-area";
-import type { SelectOption } from "@/shared/ui/select";
+import {
+	OptionBadge,
+	type SelectOption,
+	usePopupSurfaceLevels,
+} from "@/shared/ui/select";
 import { Tooltip } from "@/shared/ui/tooltip";
 import "@/shared/ui/searchable-select/searchable-select.css";
 
@@ -31,14 +34,6 @@ export interface LanguageMultiComboboxProps {
 	/** aria-label for a chip's remove button, e.g. "Remove English". */
 	removeLabel: (language: string) => string;
 	value: readonly string[];
-}
-
-function Badge({ text }: { text: string }) {
-	return (
-		<span className="pointer-events-none inline-flex h-4 min-w-[22px] shrink-0 items-center justify-center rounded-xs border border-border bg-surface-1 px-1 font-mono font-semibold text-[10px] text-foreground-secondary uppercase tracking-wider">
-			{text}
-		</span>
-	);
 }
 
 function SelectedChip({
@@ -136,10 +131,11 @@ export function LanguageMultiCombobox({
 		}
 	});
 
-	const substrate = useSurface();
-	const inputLevel = Math.min(substrate + 1, 8);
-	const popupLevel = Math.min(substrate + 2, 8);
-	const popupShadow = Math.max(popupLevel, 6);
+	const {
+		triggerLevel: inputLevel,
+		popupLevel,
+		popupShadow,
+	} = usePopupSurfaceLevels({ selfElevate: false });
 	const popupBg = surfaceBg(popupLevel);
 	const closedDisplay = summarizeSelection(
 		selectedLabels,
@@ -220,7 +216,7 @@ export function LanguageMultiCombobox({
 						sideOffset={4}
 					>
 						<Combobox.Popup
-							className={`searchable-select-popup relative w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-hidden rounded-sm ${surfaceClasses(popupLevel, popupShadow)}`}
+							className={`searchable-select-popup relative w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-hidden rounded-lg ${surfaceClasses(popupLevel, popupShadow)}`}
 						>
 							<ScrollArea
 								rubberBandOnTouch
@@ -271,11 +267,14 @@ export function LanguageMultiCombobox({
 											return (
 												<CheckboxItem
 													checked={checked}
+													className="py-2"
 													index={index}
 													key={option.id}
 													label={option.label}
 													leading={
-														option.badge ? <Badge text={option.badge} /> : null
+														option.badge ? (
+															<OptionBadge text={option.badge} />
+														) : null
 													}
 													onToggle={() => toggleOption(option.id)}
 												/>

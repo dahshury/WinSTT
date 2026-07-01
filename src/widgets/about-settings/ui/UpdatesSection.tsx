@@ -16,11 +16,11 @@ import {
 	updaterQuitAndInstall,
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
-import { formatBytes } from "@/shared/lib/format-bytes";
+import { formatBytes, formatBytesPerSecond } from "@/shared/lib/format-bytes";
 import { Button } from "@/shared/ui/button";
-import { ButtonGroup } from "@/shared/ui/button-group";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import { IconButton } from "@/shared/ui/icon-button";
 import { Toggle } from "@/shared/ui/toggle";
 import type { AboutT } from "./types";
 
@@ -66,13 +66,78 @@ function formatDownloadStats(entry: UpdaterStatusEntry): string | undefined {
 		return;
 	}
 	const tally = `${fmt(transferred)} / ${fmt(total)}`;
-	if (typeof bps !== "number" || bps <= 0) {
-		return tally;
-	}
-	return `${tally} · ${fmt(bps)}/s`;
+	const speed = formatBytesPerSecond(bps, { minUnit: "B" });
+	return speed ? `${tally} · ${speed}` : tally;
 }
 
-interface UpdatesStatusActionGroupProps {
+type StatusTone = "accent" | "success" | "error" | "muted";
+
+/** Tone → text-color utility; the dot and (active/error) status spine read it
+ *  via `currentColor`. Grayscale by default — the "good / up-to-date" state is a
+ *  calm neutral dot, NOT a green LED — with colour reserved for in-flight work
+ *  (accent) and failures (error). */
+const TONE_TEXT: Record<StatusTone, string> = {
+	accent: "text-accent",
+	success: "text-foreground-secondary",
+	error: "text-error",
+	muted: "text-foreground-dim",
+};
+
+/** Map updater state → an at-a-glance tone. `checking` (a transient local flag)
+ *  wins over the persisted entry so the indicator goes live the instant the user
+ *  hits refresh. Grayscale at rest; accent only while work is in flight. */
+function statusTone(
+	status: UpdaterStatusEntry["status"] | null,
+	checking: boolean,
+): StatusTone {
+	if (checking) {
+		return "accent";
+	}
+	switch (status) {
+		case "checking":
+		case "available":
+		case "downloading":
+			return "accent";
+		case "downloaded":
+		case "not-available":
+			return "success";
+		case "error":
+			return "error";
+		default:
+			return "muted";
+	}
+}
+
+/** A small, flat status dot — no glow, no pulse. Activity is carried by the
+ *  spinning refresh icon, so the dot stays a quiet at-a-glance colour cue
+ *  (neutral at rest, accent while checking, red on error). */
+function StatusDot({ tone }: { tone: StatusTone }) {
+	return (
+		<span
+			aria-hidden="true"
+			className={cn(
+				"inline-flex size-1.5 shrink-0 rounded-full bg-current",
+				TONE_TEXT[tone],
+			)}
+		/>
+	);
+}
+
+/** Stacked "VERSION / 1.2.3" identity block anchoring the left of the bar. */
+function VersionBlock({ t, version }: { t: AboutT; version: string }) {
+	return (
+		<div className="flex shrink-0 flex-col gap-1">
+			<span className="font-medium text-2xs text-foreground-muted uppercase leading-none tracking-[0.16em]">
+				{t("appVersion")}
+			</span>
+			<span className="font-mono font-semibold text-body text-foreground leading-none tabular-nums">
+				{version || "—"}
+			</span>
+		</div>
+	);
+}
+
+interface UpdateStatusBarProps {
 	checking: boolean;
 	isDownloaded: boolean;
 	isDownloading: boolean;
@@ -84,18 +149,13 @@ interface UpdatesStatusActionGroupProps {
 	version: string;
 }
 
-function VersionSegment({ t, version }: { t: AboutT; version: string }) {
-	return (
-		<div className="flex h-8 min-w-36 shrink-0 items-center gap-2 px-3 text-body">
-			<span className="text-foreground-muted">{t("appVersion")}</span>
-			<span className="min-w-0 truncate font-mono text-foreground tabular-nums">
-				{version || "-"}
-			</span>
-		</div>
-	);
-}
-
-function UpdatesStatusActionGroup({
+/**
+ * Compact "release console": an elevated bar with a light-catching top sheen,
+ * the current version, a live status line with a small flat status dot, and a
+ * single trailing action — a quiet refresh icon-button normally, an accent
+ * "restart to install" CTA once an update is staged.
+ */
+function UpdateStatusBar({
 	checking,
 	isDownloaded,
 	isDownloading,
@@ -105,61 +165,69 @@ function UpdatesStatusActionGroup({
 	statusLabel,
 	t,
 	version,
-}: UpdatesStatusActionGroupProps) {
-	if (isDownloaded) {
-		// Once downloaded, the only meaningful action is "restart now". The
-		// accent text signals it's the recommended next step while staying inside
-		// the joined status/action control.
-		return (
-			<ButtonGroup aria-label={t("updatesTitle")} className="w-full" connected>
-				<VersionSegment t={t} version={version} />
-				<Button
-					aria-live="polite"
-					className="h-8 min-w-0 flex-1 gap-2 px-3 font-medium text-accent text-body leading-normal transition-colors hover:bg-foreground/10"
-					onClick={onRestart}
-				>
-					<HugeiconsIcon aria-hidden="true" icon={RefreshIcon} size={14} />
-					<span className="min-w-0 truncate">
-						{t("updatesRestartToInstall")}
-					</span>
-				</Button>
-			</ButtonGroup>
-		);
-	}
+}: UpdateStatusBarProps) {
+	const tone = statusTone(status, checking);
 	const disabled = checking || isDownloading;
-	const actionLabel = (() => {
-		if (isDownloading) {
-			return t("updatesDownloading");
-		}
-		if (checking) {
-			return t("updatesChecking");
-		}
-		if (status && status !== "idle") {
-			return statusLabel;
-		}
-		return t("updatesCheckNow");
-	})();
+
 	return (
-		<ButtonGroup aria-label={t("updatesTitle")} className="w-full" connected>
-			<VersionSegment t={t} version={version} />
-			<Button
-				aria-live="polite"
-				className="h-8 min-w-0 flex-1 gap-2 px-3 text-body text-foreground leading-normal transition-colors hover:bg-foreground/10 disabled:hover:bg-transparent"
-				disabled={disabled}
-				onClick={onCheck}
+		<ElevatedSurface className="overflow-hidden" inline>
+			<div
+				aria-label={t("updatesTitle")}
+				className="relative flex items-center gap-3 py-2.5 pr-2 pl-4"
+				role="toolbar"
 			>
-				<HugeiconsIcon
+				{/* light-catching bevel along the top edge */}
+				<span
 					aria-hidden="true"
-					className={cn(
-						"shrink-0 text-foreground-muted",
-						disabled && "animate-spin",
-					)}
-					icon={RefreshIcon}
-					size={14}
+					className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-foreground/15 to-transparent"
 				/>
-				<span className="min-w-0 truncate">{actionLabel}</span>
-			</Button>
-		</ButtonGroup>
+				<VersionBlock t={t} version={version} />
+				<span
+					aria-hidden="true"
+					className="h-7 w-px shrink-0 bg-divider-strong"
+				/>
+				<div className="flex min-w-0 flex-1 items-center gap-2">
+					<StatusDot tone={tone} />
+					<span
+						aria-live="polite"
+						className="min-w-0 truncate text-body text-foreground-secondary"
+						title={statusLabel}
+					>
+						{statusLabel}
+					</span>
+				</div>
+				{isDownloaded ? (
+					<Button
+						className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-accent px-3 font-medium text-body text-on-accent shadow-action-accent transition-[background-color,box-shadow] hover:bg-accent-hover hover:shadow-action-accent-hover"
+						onClick={onRestart}
+					>
+						<HugeiconsIcon aria-hidden="true" icon={RefreshIcon} size={14} />
+						<span className="truncate">{t("updatesRestartToInstall")}</span>
+					</Button>
+				) : (
+					<IconButton
+						aria-label={t("updatesCheckNow")}
+						className="group size-8 rounded-md"
+						disabled={disabled}
+						icon={
+							<HugeiconsIcon
+								aria-hidden="true"
+								className={cn(
+									"transition-transform duration-300 ease-out",
+									disabled
+										? "animate-spin"
+										: "group-hover:-rotate-180 group-active:rotate-0",
+								)}
+								icon={RefreshIcon}
+								size={15}
+							/>
+						}
+						onClick={onCheck}
+						tooltip={t("updatesCheckNow")}
+					/>
+				)}
+			</div>
+		</ElevatedSurface>
 	);
 }
 
@@ -261,6 +329,11 @@ export function UpdatesSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 		isDownloading && typeof latestStatus?.percent === "number"
 			? latestStatus.percent
 			: null;
+	// The local `checking` flag flips the instant the user hits refresh, before
+	// any backend event lands — surface that immediately so the line never lags.
+	const statusLabel = checking
+		? t("updatesStatusChecking")
+		: formatStatus(latestStatus, t);
 
 	return (
 		<SettingSection
@@ -269,19 +342,14 @@ export function UpdatesSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 			title={APP_NAME}
 		>
 			<div className="flex flex-col gap-3">
-				{info.copyright ? (
-					<span className="text-body text-foreground-muted">
-						{info.copyright}
-					</span>
-				) : null}
-				<UpdatesStatusActionGroup
+				<UpdateStatusBar
 					checking={checking}
 					isDownloaded={isDownloaded}
 					isDownloading={isDownloading}
 					onCheck={handleCheck}
 					onRestart={handleRestart}
 					status={latestStatus?.status ?? null}
-					statusLabel={formatStatus(latestStatus, t)}
+					statusLabel={statusLabel}
 					t={t}
 					version={info.version}
 				/>
@@ -325,6 +393,11 @@ export function UpdatesSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 							variant="active"
 						/>
 					</ElevatedSurface>
+				) : null}
+				{info.copyright ? (
+					<span className="px-0.5 text-[11px] text-foreground-dim leading-relaxed">
+						{info.copyright}
+					</span>
 				) : null}
 			</div>
 		</SettingSection>

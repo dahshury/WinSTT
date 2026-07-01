@@ -25,11 +25,13 @@ describe("RECORDING_MODE_COLOR_HEX", () => {
 		expect(new Set(values).size).toBe(MODES.length);
 	});
 
-	test("documented per-mode hex values are pinned (tray/visualizer/switcher must agree)", () => {
-		expect(RECORDING_MODE_COLOR_HEX.ptt).toBe("#3b82f6");
-		expect(RECORDING_MODE_COLOR_HEX.toggle).toBe("#facc15");
-		expect(RECORDING_MODE_COLOR_HEX.listen).toBe("#22c55e");
-		expect(RECORDING_MODE_COLOR_HEX.wakeword).toBe("#f97316");
+	test("per-mode hex mirrors the brand recording-mode tokens (sRGB of the globals.css OKLch)", () => {
+		// accent / warning / success / wakeword tokens — see globals.css and the
+		// drift guard in recording-mode-color.brand-sync.test.ts.
+		expect(RECORDING_MODE_COLOR_HEX.ptt).toBe("#3a81f6");
+		expect(RECORDING_MODE_COLOR_HEX.toggle).toBe("#e8b700");
+		expect(RECORDING_MODE_COLOR_HEX.listen).toBe("#2eb45c");
+		expect(RECORDING_MODE_COLOR_HEX.wakeword).toBe("#f16a00");
 	});
 });
 

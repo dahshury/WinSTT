@@ -2,12 +2,19 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { type AboutAppInfo, aboutGetAppInfo } from "@/shared/api/ipc-client";
-import { EMPTY_APP_INFO } from "./AppInfoSection";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { ResetSection } from "./ResetSection";
 import { SettingsTransferSection } from "./SettingsTransferSection";
 import { StartupSection } from "./StartupSection";
 import { UpdatesSection } from "./UpdatesSection";
+
+// Fallback app metadata shown while the real values are fetched from the
+// backend; the app name / version / copyright are rendered inline by
+// UpdatesSection once the real values arrive.
+const EMPTY_APP_INFO: AboutAppInfo = {
+	copyright: "",
+	version: "",
+};
 
 export function AboutSettingsPanel() {
 	const t = useTranslations("about");

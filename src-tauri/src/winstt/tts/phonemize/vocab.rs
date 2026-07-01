@@ -7,10 +7,8 @@ use std::sync::OnceLock;
 
 /// The (char, id) pairs from Kokoro v1.0 `config.json` "vocab". Order is
 /// irrelevant (lookup is by char); kept grouped as in the source for review.
-/// SPIKE: a handful of rare glyphs in the JSON came through as the wrong
-/// unicode escape in some renderings (the curly quotes at 14/15). The values
-/// below use the canonical code points; verify against the shipped
-/// config.json bytes during the compile loop (`// SPIKE:` markers inline).
+/// A handful of rare glyphs (the curly quotes at 14/15) can render with the
+/// wrong unicode escape; the values below use the canonical code points.
 #[rustfmt::skip]
 pub(super) const VOCAB_PAIRS: &[(char, i64)] = &[
     // punctuation / structural
@@ -19,7 +17,7 @@ pub(super) const VOCAB_PAIRS: &[(char, i64)] = &[
     ('\u{2026}', 10),  // … ellipsis
     ('"', 11),
     ('(', 12), (')', 13),
-    ('\u{201C}', 14),  // " left double quote  // SPIKE: confirm 14/15 ordering vs config.json
+    ('\u{201C}', 14),  // " left double quote
     ('\u{201D}', 15),  // " right double quote
     (' ', 16),
     ('\u{0303}', 17),  // ◌̃ combining tilde (nasalization)

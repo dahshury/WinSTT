@@ -1,6 +1,12 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
-import { act, fireEvent, render } from "@testing-library/react";
+import {
+	act,
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+} from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 
 // ---------------------------------------------------------------------------
@@ -37,10 +43,14 @@ const helpers = helpersModule;
 // Sibling suites populate it and bun:test never isolates module state, so a
 // leaked non-empty list makes the "no models installed" empty-state test fail
 // purely on file order. Reset to empty before every test in this file.
-const { useLlmCatalogStore } = await import(
-	"@/entities/llm-catalog/model/llm-catalog-store"
-);
+const { useLlmCatalogStore } =
+	await import("@/entities/llm-catalog/model/llm-catalog-store");
 beforeEach(() => {
+	useLlmCatalogStore.setState({ models: [] });
+});
+
+afterEach(() => {
+	cleanup();
 	useLlmCatalogStore.setState({ models: [] });
 });
 
@@ -106,9 +116,8 @@ describe("OllamaModelManagerDialog", () => {
 
 	test("handleSelect calls onModelInstalled and onClose when model is clicked", async () => {
 		// Seed the zustand store with one model so InstalledRow renders
-		const { useLlmCatalogStore } = await import(
-			"@/entities/llm-catalog/model/llm-catalog-store"
-		);
+		const { useLlmCatalogStore } =
+			await import("@/entities/llm-catalog/model/llm-catalog-store");
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -117,24 +126,15 @@ describe("OllamaModelManagerDialog", () => {
 			currentModel: "llama3.2:1b",
 		});
 
-		// Click the row button (not the delete button) to select the model
-		const rowBtn = document.querySelector(
-			"button[data-current]",
-		) as HTMLButtonElement;
-		expect(rowBtn).not.toBeNull();
-		fireEvent.click(rowBtn);
+		fireEvent.click(screen.getByRole("button", { name: /gemma3:4b/ }));
 
 		expect(onModelInstalled).toHaveBeenCalledWith("gemma3:4b");
 		expect(onClose).toHaveBeenCalled();
-
-		// Reset store
-		useLlmCatalogStore.setState({ models: [] });
 	});
 
 	test("handleSelect with no onModelInstalled still calls onClose", async () => {
-		const { useLlmCatalogStore } = await import(
-			"@/entities/llm-catalog/model/llm-catalog-store"
-		);
+		const { useLlmCatalogStore } =
+			await import("@/entities/llm-catalog/model/llm-catalog-store");
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -151,21 +151,14 @@ describe("OllamaModelManagerDialog", () => {
 			</IntlProvider>,
 		);
 
-		const rowBtn = document.querySelector(
-			"button[data-current]",
-		) as HTMLButtonElement;
-		expect(rowBtn).not.toBeNull();
-		fireEvent.click(rowBtn);
+		fireEvent.click(screen.getByRole("button", { name: /gemma3:4b/ }));
 
 		expect(onClose).toHaveBeenCalled();
-
-		useLlmCatalogStore.setState({ models: [] });
 	});
 
 	test("ask-delete flow sets pending-delete (shows ConfirmDialog title)", async () => {
-		const { useLlmCatalogStore } = await import(
-			"@/entities/llm-catalog/model/llm-catalog-store"
-		);
+		const { useLlmCatalogStore } =
+			await import("@/entities/llm-catalog/model/llm-catalog-store");
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -185,14 +178,11 @@ describe("OllamaModelManagerDialog", () => {
 		// ConfirmDialog should open (pendingDelete is set → open={true})
 		// English translation of deleteConfirmTitle is "Remove model?"
 		expect(document.body.textContent).toContain("Remove model?");
-
-		useLlmCatalogStore.setState({ models: [] });
 	});
 
 	test("handleConfirmDelete calls deleteModel and clears state", async () => {
-		const { useLlmCatalogStore } = await import(
-			"@/entities/llm-catalog/model/llm-catalog-store"
-		);
+		const { useLlmCatalogStore } =
+			await import("@/entities/llm-catalog/model/llm-catalog-store");
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -220,14 +210,11 @@ describe("OllamaModelManagerDialog", () => {
 		});
 
 		expect(deleteModelMock).toHaveBeenCalledWith("gemma3:4b");
-
-		useLlmCatalogStore.setState({ models: [] });
 	});
 
 	test("cancelling delete dialog clears pendingDelete", async () => {
-		const { useLlmCatalogStore } = await import(
-			"@/entities/llm-catalog/model/llm-catalog-store"
-		);
+		const { useLlmCatalogStore } =
+			await import("@/entities/llm-catalog/model/llm-catalog-store");
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -255,8 +242,6 @@ describe("OllamaModelManagerDialog", () => {
 
 		// ConfirmDialog should close (pendingDelete cleared → open=false)
 		expect(document.body.textContent).not.toContain("Remove model?");
-
-		useLlmCatalogStore.setState({ models: [] });
 	});
 
 	test("handleConfirmDelete is a no-op when pendingDelete is null", async () => {

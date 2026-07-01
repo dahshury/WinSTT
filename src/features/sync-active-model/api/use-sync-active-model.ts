@@ -1,10 +1,25 @@
 import { useEffect, useRef } from "react";
+import { providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
-import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
-import { useSettingsStore } from "@/entities/setting";
+import {
+	type ModelInfo,
+	useCatalogStore,
+	useModelSwapStore,
+} from "@/entities/model-catalog";
+import { type ModelPatch, useSettingsStore } from "@/entities/setting";
+import {
+	type ModelSwapKind,
+	onModelSwapCompleted,
+} from "@/shared/api/ipc-client";
 import type { TranscriberBackend } from "@/shared/api/schema.zod";
 import { recentIpcLoadAt } from "@/shared/lib/ipc-load-timing";
 import { recentSwapFailedAt } from "@/shared/lib/swap-failure-timing";
+
+// Cloud transcribers (``provider:model``) aren't catalog entries, so they carry
+// no backend; the server routes them by the ``provider:`` prefix. The typed
+// ``ModelPatch`` still requires a backend whenever ``model`` is set, so persist
+// a benign valid value (mirrors ``CLOUD_MODEL_BACKEND`` in apply-swap.ts).
+const CLOUD_MODEL_BACKEND: TranscriberBackend = "onnx_asr";
 
 // How long after an IPC settingsLoad we consider a settings.model transition
 // as "load-induced" (not a user pick). Crash + state-revert investigation
@@ -167,6 +182,79 @@ export function shouldOpenImplicitSwap(inputs: ImplicitSwapInputs): boolean {
 	return settingsModel !== runtimeModel;
 }
 
+/**
+ * Build the ``ModelPatch`` that adopts a just-completed swap's model into
+ * settings, or ``null`` when nothing should change.
+ *
+ * This is the fix for the "all surfaces stuck on the previous model after a
+ * detached-picker swap" bug. The detached picker window commits the pick on
+ * its OWN stores and closes the instant the swap starts — so its debounced
+ * ``settings:changed`` broadcast is raced/lost and the other windows never
+ * learn the new ``settings.model``. They DO receive the global
+ * ``model-swap-completed`` event (``app.emit`` reaches every window) which
+ * carries the authoritative loaded model ``name`` — but the runtime-info
+ * reconciler below can't act on it: it reads ``activeMain`` via ``getState()``
+ * (not a dependency) precisely so it never re-fires on the ``true → false``
+ * clear transition, so the adoption that should flip the picker to the new
+ * model never runs. Driving the adoption straight off the completion event
+ * makes every window converge on the loaded model deterministically.
+ *
+ * - No-op when the slot already shows ``name`` (the initiating window).
+ * - No-op for an empty ``name`` (e.g. a realtime clear — handled by the
+ *   normal broadcast path; we never write a bare ``{ model }`` couple).
+ * - Main picks resolve their paired ``backend`` from the catalog (cloud ids
+ *   have no entry → the benign cloud backend); a genuinely-unknown local id
+ *   yields ``null`` rather than an inconsistent ``{ model }``-without-backend.
+ */
+export function resolveSwapCompletedPatch(
+	kind: ModelSwapKind,
+	name: string,
+	settingsModel: string | null,
+	settingsRealtimeModel: string | null,
+	catalogModels: readonly ModelInfo[],
+): ModelPatch | null {
+	if (!name) {
+		return null;
+	}
+	if (kind === "realtime") {
+		return name === settingsRealtimeModel ? null : { realtimeModel: name };
+	}
+	if (name === settingsModel) {
+		return null;
+	}
+	const catalogEntry = catalogModels.find((m) => m.id === name);
+	if (catalogEntry?.backend) {
+		return {
+			model: name,
+			backend: catalogEntry.backend as TranscriberBackend,
+		};
+	}
+	if (providerOf(name) !== null) {
+		return { model: name, backend: CLOUD_MODEL_BACKEND };
+	}
+	return null;
+}
+
+/**
+ * Side-effecting half of the completion adoption: read the live settings +
+ * catalog stores, compute the patch via {@link resolveSwapCompletedPatch}, and
+ * commit it. Split out from the subscription so it can be unit-tested directly
+ * (no renderer/IPC machinery) and so the effect stays a one-line forwarder.
+ */
+export function adoptCompletedSwap(kind: ModelSwapKind, name: string): void {
+	const store = useSettingsStore.getState();
+	const patch = resolveSwapCompletedPatch(
+		kind,
+		name,
+		store.settings.model?.model ?? null,
+		store.settings.model?.realtimeModel ?? null,
+		useCatalogStore.getState().models,
+	);
+	if (patch !== null) {
+		store.updateModelSettings(patch);
+	}
+}
+
 export function useSyncActiveModel(): void {
 	const serverStatus = useConnectionStore((s) => s.serverStatus);
 	const runtimeModel = useConnectionStore((s) => s.runtimeInfo?.model ?? null);
@@ -265,4 +353,17 @@ export function useSyncActiveModel(): void {
 		settingsModel,
 		updateModelSettings,
 	]);
+
+	// Authoritative post-swap adoption. ``model-swap-completed`` is broadcast to
+	// EVERY window with the loaded model ``name``; adopt it into settings so all
+	// surfaces (footer chip, settings trigger, detached picker) converge on the
+	// new model even when the initiating detached picker closed before its
+	// ``settings:changed`` broadcast landed. ``adoptCompletedSwap`` reads stores
+	// via ``getState()`` so the subscription is install-once (no stale-closure
+	// deps). See ``resolveSwapCompletedPatch`` for the full rationale.
+	useEffect(
+		() =>
+			onModelSwapCompleted(({ kind, name }) => adoptCompletedSwap(kind, name)),
+		[],
+	);
 }

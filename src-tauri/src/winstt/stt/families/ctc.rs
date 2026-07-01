@@ -147,7 +147,7 @@ impl SenseVoiceEngine {
         let meta = read_custom_metadata(&session)?;
         let meta = SvMeta::from_map(&meta)?;
         let vocab = Vocab::load(vocab_path, meta.is_nano, false)?;
-        let input_names: Vec<String> = session_input_names(&session);
+        let input_names: Vec<String> = node_input_names(&session);
 
         Ok(SenseVoiceEngine {
             session,
@@ -332,8 +332,8 @@ impl CtcEngine {
 
         // Resolve I/O by name/rank. Dolphin: input `x`/`x_len`, output 3-D logprobs (`lob_probs`);
         // NeMo/GigaAM: input `audio_signal`/`length` or `features`/`feature_lengths`, output `logprobs`.
-        let inputs = session_input_names(&session);
-        let outputs = session_output_names(&session);
+        let inputs = node_input_names(&session);
+        let outputs = node_output_names(&session);
         let (feat_input, len_input) = pick_feat_len_inputs(&inputs);
         let logits_output = pick_logits_output(&session, &outputs);
 

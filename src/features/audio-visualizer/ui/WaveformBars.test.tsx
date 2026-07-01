@@ -331,7 +331,7 @@ describe("drawWavePath", () => {
 describe("drawFilledRegion", () => {
 	test("calls beginPath, closePath, and fill", () => {
 		const { ctx, calls } = makeCanvasCtx();
-		drawFilledRegion(ctx, 100, 60, 0, 0.1, 0.05, "88, 166, 255");
+		drawFilledRegion(ctx, 100, 60, 0, 0.1, 0.05, "58, 129, 246");
 		expect(calls).toContain("beginPath");
 		expect(calls).toContain("closePath");
 		expect(calls).toContain("fill");

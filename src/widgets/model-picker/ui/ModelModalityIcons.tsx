@@ -2,7 +2,6 @@
 
 import {
 	File01Icon,
-	GridIcon,
 	Image01Icon,
 	Mic01Icon,
 	TextIcon,
@@ -20,15 +19,14 @@ interface ModalityIconConfig {
 	icon: ReactNode;
 	iconSm: ReactNode;
 	label: string;
-	shortLabel: string;
 	textClass: string;
 }
 
 /**
  * Per-modality chip definitions, keyed by the lowercased modality string
- * returned by OpenRouter (e.g. `text`, `image`, `audio`, `video`, `file`,
- * `embeddings`). The chips reuse the same styling cadence as
- * `EndpointFeatureIcons` so embedding rows and chat rows feel coherent.
+ * returned by OpenRouter (e.g. `text`, `image`, `audio`, `video`, `file`).
+ * The chips reuse the same styling cadence as `EndpointFeatureIcons` so the
+ * meta row feels coherent.
  */
 // fluidfunctionalism: modality glyphs are NEUTRAL. The icon SHAPE (and its
 // tooltip) carries the meaning — text/image/audio/video/file each read at a
@@ -45,7 +43,6 @@ const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 		icon: <HugeiconsIcon className="size-3" icon={TextIcon} />,
 		iconSm: <HugeiconsIcon className="size-2.5" icon={TextIcon} />,
 		label: "Text",
-		shortLabel: "TXT",
 		description: "Accepts plain text as input.",
 		...NEUTRAL_GLYPH_CHROME,
 	},
@@ -53,7 +50,6 @@ const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 		icon: <HugeiconsIcon className="size-3" icon={Image01Icon} />,
 		iconSm: <HugeiconsIcon className="size-2.5" icon={Image01Icon} />,
 		label: "Image",
-		shortLabel: "IMG",
 		description: "Accepts images as input (vision / multimodal).",
 		...NEUTRAL_GLYPH_CHROME,
 	},
@@ -61,7 +57,6 @@ const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 		icon: <HugeiconsIcon className="size-3" icon={Mic01Icon} />,
 		iconSm: <HugeiconsIcon className="size-2.5" icon={Mic01Icon} />,
 		label: "Audio",
-		shortLabel: "AUD",
 		description: "Accepts audio as input.",
 		...NEUTRAL_GLYPH_CHROME,
 	},
@@ -69,7 +64,6 @@ const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 		icon: <HugeiconsIcon className="size-3" icon={Video01Icon} />,
 		iconSm: <HugeiconsIcon className="size-2.5" icon={Video01Icon} />,
 		label: "Video",
-		shortLabel: "VID",
 		description: "Accepts video frames as input.",
 		...NEUTRAL_GLYPH_CHROME,
 	},
@@ -77,16 +71,7 @@ const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 		icon: <HugeiconsIcon className="size-3" icon={File01Icon} />,
 		iconSm: <HugeiconsIcon className="size-2.5" icon={File01Icon} />,
 		label: "File",
-		shortLabel: "FILE",
 		description: "Accepts file attachments (PDF, docs, …) as input.",
-		...NEUTRAL_GLYPH_CHROME,
-	},
-	embeddings: {
-		icon: <HugeiconsIcon className="size-3" icon={GridIcon} />,
-		iconSm: <HugeiconsIcon className="size-2.5" icon={GridIcon} />,
-		label: "Embeddings",
-		shortLabel: "EMB",
-		description: "Produces dense vector embeddings as output.",
 		...NEUTRAL_GLYPH_CHROME,
 	},
 };

@@ -2,7 +2,7 @@
 
 import { Button as BaseButton } from "@base-ui/react/button";
 import { Combobox } from "@base-ui/react/combobox";
-import { StarIcon, Tick01Icon } from "@hugeicons/core-free-icons";
+import { StarIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef } from "react";
 import { cn } from "@/shared/lib/cn";
@@ -11,19 +11,7 @@ import {
 	getFavoriteTooltipText,
 	handleFavoriteButtonClick,
 } from "./author-filter-submenu-utils";
-
-interface SelectedTickProps {
-	isSelected: boolean;
-}
-
-function SelectedTick({ isSelected }: SelectedTickProps) {
-	if (!isSelected) {
-		return null;
-	}
-	return (
-		<HugeiconsIcon className="ms-2 size-4 text-accent" icon={Tick01Icon} />
-	);
-}
+import { SelectedTick } from "./filter-submenu-shared";
 
 interface CountBadgeProps {
 	count: number;
@@ -98,12 +86,12 @@ export function AuthorComboboxItem({
 }: AuthorComboboxItemProps) {
 	return (
 		<Combobox.Item
-			className="flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-body outline-none data-[highlighted]:bg-surface-hover"
+			className="flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-body outline-none data-[highlighted]:bg-surface-hover"
 			key={provider}
 			value={provider}
 		>
 			<span className="flex-1">{provider}</span>
-			<SelectedTick isSelected={isSelected} />
+			<SelectedTick visible={isSelected} />
 			<span className="text-2xs text-foreground-muted">({count})</span>
 			<FavoriteToggleButton
 				isFavorite={isFavorite}

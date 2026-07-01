@@ -12,7 +12,6 @@ import {
   Label,
   MiniFooter,
   MODE,
-  MockCursor,
   Pill,
   ProgressSteps,
   RadialMeter,
@@ -950,31 +949,6 @@ export function OverlayDemo({ kind }: { kind: "floating" | "island" }) {
             </div>
           </div>
         )}
-      </div>
-    </Stage>
-  );
-}
-
-export function QuickStartFlow() {
-  const frame = useCurrentFrame();
-  return (
-    <Stage label="Quick start">
-      <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 44, alignItems: "center" }}>
-        <SettingsPanel title="First run" width={420}>
-          <SettingRowMini label="Installer" value="Portable EXE, no Python" active={frame > 10} />
-          <SettingRowMini label="Onboarding" value="Local model + mic test" active={frame > 46} />
-          <SettingRowMini label="Model" value="tiny ready, upgrades optional" active={frame > 84} />
-          <SettingRowMini label="Hotkey" value="Hold LCtrl+LMeta and speak" active={frame > 122} />
-        </SettingsPanel>
-        <Card style={{ width: 720, padding: 32, background: C.surface1 }} glow>
-          <PanelTitle eyebrow="Two minute path" title="From download to pasted text" />
-          <div style={{ marginTop: 48, display: "flex", justifyContent: "center" }}>
-            <ProgressSteps steps={["Install", "Onboard", "Pick model", "Dictate"]} />
-          </div>
-          <div style={{ marginTop: 62, display: "flex", justifyContent: "center", opacity: hold(frame, 132, 148, 999, 999) }}>
-            <TranscriptLine text="Your first sentence lands at the cursor." from={148} duration={42} />
-          </div>
-        </Card>
       </div>
     </Stage>
   );

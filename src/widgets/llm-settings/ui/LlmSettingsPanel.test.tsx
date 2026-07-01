@@ -1,14 +1,13 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { asInvalid } from "@test/lib/cast";
 import { render, screen } from "@testing-library/react";
-import type { useTranslations } from "use-intl";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import * as helpers from "../lib/llm-settings-panel-test-helpers";
 import type { FeatureToggleDeps } from "../lib/llm-settings-panel-test-helpers";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 
-type TranslateFn = ReturnType<typeof useTranslations>;
 // `readLlmSnapshot` accepts a forgiving partial input at runtime (it re-defaults
 // missing fields), but its TS signature is the strict shape. Derive the param
 // type to feed partial fixtures via a Partial<> cast at the boundary.
@@ -564,6 +563,24 @@ describe("LlmSettingsPanel helpers — tryEnableOllamaForFeature", () => {
 		await helpers.tryEnableOllamaForFeature(deps);
 		expect(deps.scanOllama).toHaveBeenCalledTimes(1);
 		expect(deps.apply).toHaveBeenCalledWith({ enabled: true });
+	});
+
+	test("enables a configured model on first toggle before the catalog scan resolves", async () => {
+		// Real first-toggle state: the catalog hasn't been scanned yet, so its
+		// snapshot is genuinely empty (NOT pre-populated). The configured model is
+		// installed in Ollama, but the un-awaited scan hasn't surfaced it here. The
+		// toggle must still commit `enabled: true` (kick off the scan, trust the
+		// configured model) — not bounce to the picker and leave post-processing
+		// off (the "VRAM never changes / Ollama never loads" report).
+		const deps = makeDeps({
+			ollamaLoaded: false,
+			ollamaModels: [],
+			currentOllamaModel: "gemma3:4b",
+		});
+		await helpers.tryEnableOllamaForFeature(deps);
+		expect(deps.scanOllama).toHaveBeenCalledTimes(1);
+		expect(deps.apply).toHaveBeenCalledWith({ enabled: true });
+		expect(deps.setShowModelPicker).not.toHaveBeenCalled();
 	});
 });
 

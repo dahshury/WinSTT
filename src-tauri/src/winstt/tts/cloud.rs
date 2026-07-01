@@ -51,7 +51,7 @@ pub const ELEVENLABS_SUBSCRIPTION_URL: &str = "https://api.elevenlabs.io/v1/user
 pub const CLOUD_OUTPUT_FORMAT: &str = "mp3_44100_128";
 
 /// Build the JSON request body for `POST /v1/text-to-speech/{voice_id}`.
-/// REAL CODE â€” unit-tested. Field names are ElevenLabs' on-wire snake_case.
+/// Field names are ElevenLabs' on-wire snake_case.
 pub fn build_cloud_body(req: &CloudSynthesisRequest) -> serde_json::Value {
     serde_json::json!({
         "text": req.text,
@@ -74,7 +74,7 @@ pub fn build_cloud_url(voice_id: &str) -> String {
 /// Classify an ElevenLabs HTTP status + optional `detail.status` body field into
 /// a human-readable reason. Mirrors `tts-cloud.ts` HTTP_STATUS_MESSAGE +
 /// memory `project_elevenlabs_scoped_key_verify` (a scoped key missing
-/// `voices_read` is NOT an invalid key). REAL CODE â€” tested.
+/// `voices_read` is NOT an invalid key).
 pub fn classify_cloud_status(status: u16, detail_status: Option<&str>) -> String {
     let detail = detail_status.unwrap_or_default().to_ascii_lowercase();
     let detail = detail.as_str();
@@ -196,7 +196,7 @@ pub struct CloudVoice {
     pub preview_url: Option<String>,
 }
 
-/// Parse a `/v2/voices` JSON body into `CloudVoice`s. REAL CODE â€” tested.
+/// Parse a `/v2/voices` JSON body into `CloudVoice`s.
 pub fn parse_cloud_voices(body: &str) -> Vec<CloudVoice> {
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -435,7 +435,7 @@ impl ElevenLabsEngine {
         }))
     }
 
-    /// One-shot ElevenLabs convert â†’ mp3 bytes. Async so it can be raced against a
+    /// One-shot ElevenLabs convert -> mp3 bytes. Async so it can be raced against a
     /// cancel signal: dropping this future aborts the in-flight reqwest POST.
     async fn fetch_mp3(&self, req: &CloudSynthesisRequest, voice: &str) -> TtsResult<Vec<u8>> {
         let resp = self
@@ -481,7 +481,7 @@ impl TtsEngine for ElevenLabsEngine {
     }
 
     /// Cloud override of the default wrapper: race the in-flight POST against the
-    /// sink's cancel flag (flipped by `tts_cancel` / `cancel_all` â€” the TTS island
+    /// sink's cancel flag (flipped by `tts_cancel` / `cancel_all` -- the TTS island
     /// X or the dictation overlay X). On cancel the request future is dropped,
     /// which aborts the ElevenLabs HTTP call mid-flight instead of only stopping
     /// the next sentence.

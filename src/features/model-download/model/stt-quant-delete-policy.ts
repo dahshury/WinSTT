@@ -1,20 +1,19 @@
-import {
-	resolveEffectiveQuant,
-	resolveQuantCache,
-} from "@/widgets/model-picker/stt/lib/cache-helpers";
-import type { ModelInfo } from "@/entities/model-catalog";
+import type {
+	ModelInfo,
+	ModelStatesById as StatesById,
+} from "@/entities/model-catalog";
+import type { ModelStateEntry } from "@/shared/api/ipc-client";
 import {
 	isSelectableRealtimeModel,
 	isVisibleSttModel,
 	modelsHaveLanguageOverlap,
+	resolveEffectiveQuant,
+	resolveQuantCache,
 } from "@/entities/model-catalog";
-import type { ModelStateEntry } from "@/shared/api/ipc-client";
 import {
 	ONNX_QUANTIZATIONS,
 	type OnnxQuantization,
 } from "@/shared/config/defaults";
-
-type StatesById = Record<string, ModelStateEntry>;
 
 export interface SttSwitchTarget {
 	modelId: string;

@@ -48,11 +48,11 @@ export const generalSettingsSchema = z.object({
 	manualToggleStop: z.boolean().default(false),
 	// Global shortcut that re-pastes the most recent dictation transcription
 	// into the focused window on demand. Registered as an EXCLUSIVE system-
-	// wide shortcut (the reference globalShortcut) — it is swallowed app-wide so
+	// wide global shortcut — it is swallowed app-wide so
 	// pressing it ONLY triggers our re-paste and never also fires the focused
 	// app's native binding (e.g. paste-without-formatting). Stored in the same
 	// uiohook-style accelerator format the HotkeyRecorder produces; the main
-	// process converts it to the reference accelerator at registration time.
+	// process converts it to the native accelerator at registration time.
 	// Must be non-empty: an empty string from corrupt settings would leave
 	// the feature silently disabled; instead `.catch()` rehydrates to the
 	// canonical default so the binding is always present.
@@ -327,7 +327,7 @@ export const generalSettingsSchema = z.object({
 	// Threshold for the server-side deterministic fuzzy corrector that
 	// runs BEFORE the LLM modifier pipeline. Lower = stricter (fewer
 	// false positives, more genuine near-misses left for the LLM to fix).
-	// 0.18 is the reference default. `.catch(0.18)`
+	// 0.18 is the default. `.catch(0.18)`
 	// keeps an older persisted value (or a corrupt entry) from wiping the
 	// whole `general` section on upgrade.
 	wordCorrectionThreshold: z.number().min(0).max(1).default(0.18).catch(0.18),

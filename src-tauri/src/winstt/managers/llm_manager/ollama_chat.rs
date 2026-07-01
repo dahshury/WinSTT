@@ -12,6 +12,16 @@ use crate::winstt::llm::{
 };
 use crate::winstt::ollama_client::{OllamaCapabilities, OllamaModelInfo, PullOutcome};
 
+/// Classify a chat error as "the model failed to LOAD" — the Ollama runner
+/// crashed (`HTTP 5xx` / process `terminated`, e.g. it doesn't fit in VRAM) or
+/// the stream `stalled` with no output. Such a failure will recur on the very
+/// next call, so the caller marks the model crashed and the following dictation
+/// skips it (fails soft INSTANTLY instead of paying the ~16-28s crash again). A
+/// user cancellation or a transient transport blip is NOT a load crash.
+fn ollama_err_is_load_crash(err: &str) -> bool {
+    err.contains("HTTP 5") || err.contains("terminated") || err.contains("stalled")
+}
+
 fn ensure_ollama_stream_has_content(state: &llm::OllamaStreamState) -> Result<(), String> {
     if !state.content.trim().is_empty() {
         return Ok(());
@@ -58,6 +68,18 @@ impl LlmManager {
         request_id: &str,
     ) -> Result<LlmChatOutput, String> {
         self.track_cancel(request_id);
+        // The model crashed loading within the backoff window (doesn't fit in
+        // VRAM) — don't re-trigger a guaranteed ~16-28s crash; fail soft to the
+        // original text INSTANTLY. Retries on its own after the window expires.
+        if self.ollama_model_recently_crashed(endpoint, model) {
+            self.clear_cancel(request_id);
+            log::warn!(
+                "[llm] dictation post-process skipped — '{model}' recently crashed loading (won't fit in VRAM); keeping original text instantly"
+            );
+            return Err(format!(
+                "Ollama model '{model}' recently failed to load; skipped to avoid a repeat crash"
+            ));
+        }
         let caps = self
             .ollama_capabilities(endpoint, model)
             .await
@@ -82,8 +104,12 @@ impl LlmManager {
                 enable_dictionary_suggestions,
             )
             .await;
-        if result.is_ok() {
-            self.mark_ollama_model_warm(endpoint, model);
+        match &result {
+            Ok(_) => self.mark_ollama_model_warm(endpoint, model),
+            Err(e) if ollama_err_is_load_crash(e) => {
+                self.mark_ollama_model_crashed(endpoint, model);
+            }
+            Err(_) => {}
         }
         result
     }
@@ -105,6 +131,15 @@ impl LlmManager {
         request_id: &str,
     ) -> Result<String, String> {
         self.track_cancel(request_id);
+        if self.ollama_model_recently_crashed(endpoint, model) {
+            self.clear_cancel(request_id);
+            log::warn!(
+                "[llm] transform skipped — '{model}' recently crashed loading (won't fit in VRAM); keeping original text instantly"
+            );
+            return Err(format!(
+                "Ollama model '{model}' recently failed to load; skipped to avoid a repeat crash"
+            ));
+        }
         let caps = self
             .ollama_capabilities(endpoint, model)
             .await
@@ -122,8 +157,12 @@ impl LlmManager {
             .stream_ollama_chat(endpoint, body, text, request_id, false)
             .await
             .map(|out| out.text);
-        if result.is_ok() {
-            self.mark_ollama_model_warm(endpoint, model);
+        match &result {
+            Ok(_) => self.mark_ollama_model_warm(endpoint, model),
+            Err(e) if ollama_err_is_load_crash(e) => {
+                self.mark_ollama_model_crashed(endpoint, model);
+            }
+            Err(_) => {}
         }
         result
     }
@@ -305,6 +344,26 @@ mod tests {
         assert!(err.contains("Ollama returned no content"));
         assert!(err.contains("done_reason=stop"));
         assert!(err.contains("thinking_chars=14"));
+    }
+
+    #[test]
+    fn load_crash_errors_are_classified_for_skip_marking() {
+        // Runner crash (VRAM overflow) and stall → mark the model so the next
+        // dictation skips it instantly.
+        assert!(ollama_err_is_load_crash(
+            "Ollama HTTP 500: {\"error\":\"llama-server process has terminated: exit status 0xc0000409\"}"
+        ));
+        assert!(ollama_err_is_load_crash("Ollama chat stalled after 30s"));
+        assert!(ollama_err_is_load_crash("Ollama HTTP 503: busy"));
+        // A user cancellation or a transient transport blip is NOT a load crash
+        // (don't poison the backoff for those).
+        assert!(!ollama_err_is_load_crash("Ollama chat cancelled"));
+        assert!(!ollama_err_is_load_crash(
+            "Ollama POST failed: connection refused"
+        ));
+        assert!(!ollama_err_is_load_crash(
+            "Ollama HTTP 404: model not found"
+        ));
     }
 
     #[test]

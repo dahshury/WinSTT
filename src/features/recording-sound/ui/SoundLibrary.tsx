@@ -1,7 +1,7 @@
 import { RadioGroup } from "@base-ui/react/radio-group";
 import type { ReactNode } from "react";
 import { useRef, useState } from "react";
-import type { useTranslations } from "use-intl";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import { cn } from "@/shared/lib/cn";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
@@ -18,11 +18,9 @@ import { SoundLibraryEmptyState } from "./SoundLibraryEmptyState";
 import { SoundLibraryHighlight } from "./SoundLibraryHighlight";
 import { SoundLibraryRow } from "./SoundLibraryRow";
 
-type TranslatorFn = ReturnType<typeof useTranslations>;
-
 interface SoundLibraryProps {
-	t: TranslatorFn;
-	tCommon: TranslatorFn;
+	t: TranslateFn;
+	tCommon: TranslateFn;
 }
 
 export function SoundLibrary({ t, tCommon }: SoundLibraryProps): ReactNode {

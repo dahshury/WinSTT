@@ -442,9 +442,9 @@ a.bento-cell:active {
   font-size: 0.8em;
   font-weight: 500;
   line-height: 1.5;
-  color: oklch(76% 0.14 260 / 0.95);
+  color: color-mix(in oklab, var(--brand-accent-hover) 95%, transparent);
   background: var(--brand-accent-soft);
-  border: 1px solid oklch(62% 0.19 260 / 0.22);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 22%, transparent);
   border-radius: 6px;
   box-shadow: 0 1px 0 0 oklch(0% 0 0 / 0.35);
 }
@@ -546,7 +546,7 @@ a.bento-cell:active {
   height: 32px;
   border-radius: 50%;
   background: var(--brand-accent-soft);
-  border: 1px solid oklch(62% 0.19 260 / 0.3);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 30%, transparent);
   display: grid;
   place-items: center;
 }
@@ -651,9 +651,9 @@ a.bento-cell:active {
   border-radius: 5px;
 }
 .pill--warn {
-  color: oklch(80% 0.13 75);
-  background: oklch(80% 0.13 75 / 0.12);
-  border: 1px solid oklch(80% 0.13 75 / 0.3);
+  color: var(--brand-warning);
+  background: color-mix(in oklab, var(--brand-warning) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--brand-warning) 30%, transparent);
 }
 
 /* ── Callout ────────────────────────────────────────────────────── */
@@ -695,16 +695,16 @@ a.bento-cell:active {
   color: var(--brand-accent);
 }
 .callout--warn {
-  border-inline-start-color: oklch(80% 0.13 75);
+  border-inline-start-color: var(--brand-warning);
 }
 .callout--warn .callout-icon {
-  color: oklch(80% 0.13 75);
+  color: var(--brand-warning);
 }
 .callout--error {
-  border-inline-start-color: oklch(63% 0.2 25);
+  border-inline-start-color: var(--brand-error);
 }
 .callout--error .callout-icon {
-  color: oklch(63% 0.2 25);
+  color: var(--brand-error);
 }
 .callout--restart {
   border-inline-start-color: var(--brand-teal);
@@ -806,7 +806,7 @@ a.bento-cell:active {
   background:
     radial-gradient(
       130% 90% at 50% -10%,
-      oklch(62% 0.19 260 / 0.07),
+      color-mix(in oklab, var(--brand-accent) 7%, transparent),
       transparent 60%
     ),
     var(--surface-0);
@@ -979,8 +979,8 @@ a.bento-cell:active {
   gap: 7px;
   padding: 6px 10px;
   border-radius: 999px;
-  background: oklch(11% 0.015 265 / 0.94);
-  border: 1px solid oklch(62% 0.19 260 / 0.32);
+  background: color-mix(in oklab, var(--surface-0) 94%, transparent);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 32%, transparent);
   box-shadow:
     0 10px 26px -10px oklch(0% 0 0 / 0.85),
     0 0 24px -6px var(--brand-accent-glow);
@@ -991,8 +991,8 @@ a.bento-cell:active {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #ef4444;
-  box-shadow: 0 0 7px #ef4444;
+  background: var(--brand-error);
+  box-shadow: 0 0 7px var(--brand-error);
 }
 .sc-pill-wave {
   flex: none;
@@ -1014,8 +1014,8 @@ a.bento-cell:active {
   font-size: 8px;
   padding: 2px 5px;
   border-radius: 5px;
-  background: oklch(62% 0.19 260 / 0.16);
-  color: oklch(78% 0.13 260);
+  background: color-mix(in oklab, var(--brand-accent) 16%, transparent);
+  color: var(--brand-accent-hover);
 }
 .sc-tag {
   position: absolute;
@@ -1031,8 +1031,8 @@ a.bento-cell:active {
 }
 .sc-tag--accent {
   background: var(--brand-accent-soft);
-  color: oklch(80% 0.12 260);
-  border: 1px solid oklch(62% 0.19 260 / 0.25);
+  color: var(--brand-accent-hover);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 25%, transparent);
 }
 /* The chunk just pasted at the cursor — a soft accent flash so the words
    read as "landing" in the document as you speak. */
@@ -1041,7 +1041,7 @@ a.bento-cell:active {
   padding: 0 2px;
   margin: 0 -1px;
   color: var(--fg-strong);
-  background: oklch(62% 0.19 260 / 0.18);
+  background: color-mix(in oklab, var(--brand-accent) 18%, transparent);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
@@ -1056,10 +1056,10 @@ a.bento-cell:active {
 @keyframes sc-paste-flash {
   0%,
   100% {
-    background: oklch(62% 0.19 260 / 0.12);
+    background: color-mix(in oklab, var(--brand-accent) 12%, transparent);
   }
   45% {
-    background: oklch(62% 0.19 260 / 0.42);
+    background: color-mix(in oklab, var(--brand-accent) 42%, transparent);
   }
 }
 
@@ -1075,8 +1075,8 @@ a.bento-cell:active {
   padding: 5px 9px;
   border-radius: 8px;
   background: var(--surface-1);
-  border: 1px solid oklch(62% 0.19 260 / 0.45);
-  box-shadow: 0 0 0 3px oklch(62% 0.19 260 / 0.1);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 45%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand-accent) 10%, transparent);
   font-size: 10px;
   color: var(--fg-muted);
 }
@@ -1120,8 +1120,8 @@ a.bento-cell:active {
   overflow: hidden;
 }
 .sc-row--on {
-  border-color: oklch(62% 0.19 260 / 0.45);
-  background: oklch(62% 0.19 260 / 0.08);
+  border-color: color-mix(in oklab, var(--brand-accent) 45%, transparent);
+  background: color-mix(in oklab, var(--brand-accent) 8%, transparent);
   box-shadow: inset 2px 0 0 var(--brand-accent);
 }
 .sc-maker {
@@ -1175,8 +1175,8 @@ a.bento-cell:active {
   color: var(--fg-muted);
 }
 .sc-quant--on {
-  background: oklch(62% 0.19 260 / 0.2);
-  color: oklch(80% 0.12 260);
+  background: color-mix(in oklab, var(--brand-accent) 20%, transparent);
+  color: var(--brand-accent-hover);
 }
 
 /* ── 3. LLM clean-up diff ───────────────────────────────────────── */
@@ -1201,16 +1201,16 @@ a.bento-cell:active {
   color: var(--fg-secondary);
 }
 .sc-chip--accent {
-  background: oklch(62% 0.19 260 / 0.14);
-  color: oklch(80% 0.12 260);
-  border: 1px solid oklch(62% 0.19 260 / 0.22);
+  background: color-mix(in oklab, var(--brand-accent) 14%, transparent);
+  color: var(--brand-accent-hover);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 22%, transparent);
 }
 /* Modifier chip — a second, teal-tinted lever next to the accent tone chip,
    so the header reads as "tone + modifier", not a single preset. */
 .sc-chip--mod {
-  background: oklch(71% 0.13 245 / 0.14);
+  background: color-mix(in oklab, var(--brand-teal) 14%, transparent);
   color: var(--brand-teal);
-  border: 1px solid oklch(71% 0.13 245 / 0.24);
+  border: 1px solid color-mix(in oklab, var(--brand-teal) 24%, transparent);
 }
 .sc-diff {
   position: relative;
@@ -1239,18 +1239,18 @@ a.bento-cell:active {
   color: var(--brand-success);
 }
 .sc-diff--clean {
-  border-color: oklch(68% 0.17 150 / 0.32);
-  background: oklch(22% 0.06 155 / 0.2);
+  border-color: color-mix(in oklab, var(--brand-success) 32%, transparent);
+  background: color-mix(in oklab, var(--brand-success) 20%, transparent);
 }
 .sc-del {
-  color: oklch(70% 0.16 25);
+  color: var(--brand-error);
   text-decoration: line-through;
-  text-decoration-color: oklch(70% 0.16 25 / 0.7);
+  text-decoration-color: color-mix(in oklab, var(--brand-error) 70%, transparent);
   opacity: 0.82;
 }
 .sc-add {
-  color: oklch(82% 0.13 150);
-  background: oklch(68% 0.17 150 / 0.16);
+  color: var(--brand-success);
+  background: color-mix(in oklab, var(--brand-success) 16%, transparent);
   border-radius: 3px;
   padding: 0 2px;
 }
@@ -1287,7 +1287,7 @@ a.bento-cell:active {
   border-radius: 3px;
   padding: 1px 1px;
   color: var(--fg-strong);
-  background: oklch(71% 0.13 245 / 0.24);
+  background: color-mix(in oklab, var(--brand-teal) 24%, transparent);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
@@ -1295,7 +1295,7 @@ a.bento-cell:active {
   border-radius: 2px;
   padding: 0 1px;
   color: var(--fg-strong);
-  background: oklch(71% 0.13 245 / 0.55);
+  background: color-mix(in oklab, var(--brand-teal) 55%, transparent);
 }
 .sc-speak-bar {
   flex: none;
@@ -1305,7 +1305,7 @@ a.bento-cell:active {
   padding: 6px 9px;
   border-radius: 8px;
   background: var(--surface-1);
-  border: 1px solid oklch(71% 0.13 245 / 0.32);
+  border: 1px solid color-mix(in oklab, var(--brand-teal) 32%, transparent);
 }
 .sc-speak-ico {
   flex: none;
@@ -1337,7 +1337,7 @@ a.bento-cell:active {
   color: var(--fg-muted);
 }
 .sc-lang--on {
-  background: oklch(71% 0.13 245 / 0.18);
+  background: color-mix(in oklab, var(--brand-teal) 18%, transparent);
   color: var(--brand-teal);
 }
 .sc-speed {
@@ -1357,10 +1357,10 @@ a.bento-cell:active {
 @keyframes sc-speak-now {
   0%,
   100% {
-    background: oklch(71% 0.13 245 / 0.38);
+    background: color-mix(in oklab, var(--brand-teal) 38%, transparent);
   }
   50% {
-    background: oklch(71% 0.13 245 / 0.72);
+    background: color-mix(in oklab, var(--brand-teal) 72%, transparent);
   }
 }
 
@@ -1549,13 +1549,13 @@ a.bento-cell:active {
 }
 .showcase-bar-tag--accent {
   background: var(--brand-accent-soft);
-  color: oklch(80% 0.12 260);
-  border: 1px solid oklch(62% 0.19 260 / 0.25);
+  color: var(--brand-accent-hover);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 25%, transparent);
 }
 .showcase-bar-tag--teal {
-  background: oklch(72% 0.12 195 / 0.14);
-  color: oklch(82% 0.1 195);
-  border: 1px solid oklch(72% 0.12 195 / 0.3);
+  background: color-mix(in oklab, var(--brand-teal) 14%, transparent);
+  color: var(--brand-teal-hover);
+  border: 1px solid color-mix(in oklab, var(--brand-teal) 30%, transparent);
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -1633,7 +1633,7 @@ a.bento-cell:active {
   gap: 8px;
   padding: 6px 11px;
   border-radius: 999px;
-  background: oklch(11% 0.015 265 / 0.85);
+  background: color-mix(in oklab, var(--surface-0) 85%, transparent);
   border: 1px solid color-mix(in oklab, var(--mode) 40%, transparent);
 }
 .md-rec-dot {
@@ -1641,8 +1641,8 @@ a.bento-cell:active {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #ef4444;
-  box-shadow: 0 0 7px #ef4444;
+  background: var(--brand-error);
+  box-shadow: 0 0 7px var(--brand-error);
 }
 .md-rec-bars {
   flex: none;
@@ -1883,12 +1883,12 @@ a.bento-cell:active {
   border-radius: 4px;
 }
 .md-spk-tag--1 {
-  color: var(--brand-teal);
-  background: oklch(71% 0.13 245 / 0.16);
+  color: var(--brand-speaker-1);
+  background: color-mix(in oklab, var(--brand-speaker-1) 16%, transparent);
 }
 .md-spk-tag--2 {
-  color: #f0883e;
-  background: oklch(72% 0.15 55 / 0.16);
+  color: var(--brand-speaker-2);
+  background: color-mix(in oklab, var(--brand-speaker-2) 16%, transparent);
 }
 .md-feed-text {
   min-width: 0;
@@ -2498,8 +2498,8 @@ a.bento-cell:active {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #ef4444;
-  box-shadow: 0 0 6px #ef4444;
+  background: var(--brand-error);
+  box-shadow: 0 0 6px var(--brand-error);
 }
 .as-mic-bars {
   width: 22px;
@@ -2701,13 +2701,13 @@ a.bento-cell:active {
 }
 .ins-tag--accent {
   background: var(--brand-accent-soft);
-  color: oklch(80% 0.12 260);
-  border: 1px solid oklch(62% 0.19 260 / 0.25);
+  color: var(--brand-accent-hover);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 25%, transparent);
 }
 .ins-tag--teal {
-  background: oklch(72% 0.12 195 / 0.14);
-  color: oklch(82% 0.1 195);
-  border: 1px solid oklch(72% 0.12 195 / 0.3);
+  background: color-mix(in oklab, var(--brand-teal) 14%, transparent);
+  color: var(--brand-teal-hover);
+  border: 1px solid color-mix(in oklab, var(--brand-teal) 30%, transparent);
 }
 
 /* Shared little cursor glyph. */
@@ -2748,8 +2748,8 @@ a.bento-cell:active {
   white-space: nowrap;
 }
 .ins-chip--folder {
-  border-color: oklch(62% 0.19 260 / 0.4);
-  background: oklch(62% 0.19 260 / 0.08);
+  border-color: color-mix(in oklab, var(--brand-accent) 40%, transparent);
+  background: color-mix(in oklab, var(--brand-accent) 8%, transparent);
   color: var(--fg-strong);
 }
 .ins-chip-ico {
@@ -2850,9 +2850,9 @@ a.bento-cell:active {
   border: 1px solid transparent;
 }
 .ins-file--app {
-  border-color: oklch(62% 0.19 260 / 0.5);
-  background: oklch(62% 0.19 260 / 0.1);
-  box-shadow: 0 0 0 3px oklch(62% 0.19 260 / 0.08);
+  border-color: color-mix(in oklab, var(--brand-accent) 50%, transparent);
+  background: color-mix(in oklab, var(--brand-accent) 10%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand-accent) 8%, transparent);
 }
 .ins-file-ico {
   display: inline-flex;
@@ -2891,8 +2891,8 @@ a.bento-cell:active {
   gap: 3px;
   padding: 2px 6px 2px 4px;
   border-radius: 999px;
-  background: oklch(11% 0.015 265 / 0.95);
-  border: 1px solid oklch(62% 0.19 260 / 0.4);
+  background: color-mix(in oklab, var(--surface-0) 95%, transparent);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 40%, transparent);
   box-shadow: 0 6px 16px -8px oklch(0% 0 0 / 0.9);
   font-size: 8px;
   color: var(--fg-secondary);
@@ -2929,7 +2929,7 @@ a.bento-cell:active {
   width: 34px;
   height: 34px;
   border-radius: 9px;
-  background: oklch(62% 0.19 260 / 0.12);
+  background: color-mix(in oklab, var(--brand-accent) 12%, transparent);
   color: var(--brand-accent);
 }
 .ins-setup-logo svg {
@@ -2962,7 +2962,7 @@ a.bento-cell:active {
   width: 68%;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--brand-accent), oklch(70% 0.16 260));
+  background: linear-gradient(90deg, var(--brand-accent), var(--brand-accent-hover));
 }
 .ins-checks {
   list-style: none;
@@ -2987,8 +2987,8 @@ a.bento-cell:active {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: oklch(72% 0.12 150 / 0.16);
-  color: oklch(80% 0.13 150);
+  background: color-mix(in oklab, var(--brand-success) 16%, transparent);
+  color: var(--brand-success);
 }
 .ins-check svg {
   width: 9px;
@@ -3110,8 +3110,8 @@ a.bento-cell:active {
   border-radius: 2px;
   background: linear-gradient(
     90deg,
-    oklch(62% 0.19 260 / 0.45),
-    oklch(62% 0.19 260 / 0.16)
+    color-mix(in oklab, var(--brand-accent) 45%, transparent),
+    color-mix(in oklab, var(--brand-accent) 16%, transparent)
   );
   background-size: 220% 100%;
   background-position: 100% 0;
@@ -3124,8 +3124,8 @@ a.bento-cell:active {
 .qs-node:nth-last-child(2)::after {
   background: linear-gradient(
     90deg,
-    oklch(62% 0.19 260 / 0.35),
-    oklch(71% 0.13 195 / 0.4)
+    color-mix(in oklab, var(--brand-accent) 35%, transparent),
+    color-mix(in oklab, var(--brand-teal) 40%, transparent)
   );
   background-size: 220% 100%;
   background-position: 100% 0;
@@ -3142,19 +3142,19 @@ a.bento-cell:active {
   height: 46px;
   border-radius: 13px;
   color: var(--brand-accent);
-  background: oklch(62% 0.19 260 / 0.12);
-  border: 1px solid oklch(62% 0.19 260 / 0.32);
+  background: color-mix(in oklab, var(--brand-accent) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 32%, transparent);
   box-shadow:
-    0 0 0 4px oklch(62% 0.19 260 / 0.06),
-    0 10px 22px -14px oklch(62% 0.19 260 / 0.6);
+    0 0 0 4px color-mix(in oklab, var(--brand-accent) 6%, transparent),
+    0 10px 22px -14px color-mix(in oklab, var(--brand-accent) 60%, transparent);
 }
 .qs-node--done .qs-badge {
-  color: oklch(80% 0.11 195);
-  background: oklch(71% 0.13 195 / 0.14);
-  border-color: oklch(71% 0.13 195 / 0.4);
+  color: var(--brand-teal-hover);
+  background: color-mix(in oklab, var(--brand-teal) 14%, transparent);
+  border-color: color-mix(in oklab, var(--brand-teal) 40%, transparent);
   box-shadow:
-    0 0 0 4px oklch(71% 0.13 195 / 0.07),
-    0 10px 22px -14px oklch(71% 0.13 195 / 0.6);
+    0 0 0 4px color-mix(in oklab, var(--brand-teal) 7%, transparent),
+    0 10px 22px -14px color-mix(in oklab, var(--brand-teal) 60%, transparent);
 }
 .qs-ico {
   display: inline-flex;
@@ -3183,8 +3183,8 @@ a.bento-cell:active {
   border: 1px solid var(--border);
 }
 .qs-node--done .qs-num {
-  background: oklch(71% 0.13 195 / 0.22);
-  border-color: oklch(71% 0.13 195 / 0.4);
+  background: color-mix(in oklab, var(--brand-teal) 22%, transparent);
+  border-color: color-mix(in oklab, var(--brand-teal) 40%, transparent);
 }
 
 .qs-text {
@@ -3230,15 +3230,15 @@ a.bento-cell:active {
     height: calc(100% + 14px - 46px);
     background: linear-gradient(
       180deg,
-      oklch(62% 0.19 260 / 0.45),
-      oklch(62% 0.19 260 / 0.16)
+      color-mix(in oklab, var(--brand-accent) 45%, transparent),
+      color-mix(in oklab, var(--brand-accent) 16%, transparent)
     );
   }
   .qs-node:nth-last-child(2)::after {
     background: linear-gradient(
       180deg,
-      oklch(62% 0.19 260 / 0.35),
-      oklch(71% 0.13 195 / 0.4)
+      color-mix(in oklab, var(--brand-accent) 35%, transparent),
+      color-mix(in oklab, var(--brand-teal) 40%, transparent)
     );
   }
   .qs-badge {
@@ -3292,13 +3292,13 @@ a.bento-cell:active {
   0%,
   100% {
     box-shadow:
-      0 0 0 4px oklch(71% 0.13 195 / 0.07),
-      0 10px 22px -14px oklch(71% 0.13 195 / 0.6);
+      0 0 0 4px color-mix(in oklab, var(--brand-teal) 7%, transparent),
+      0 10px 22px -14px color-mix(in oklab, var(--brand-teal) 60%, transparent);
   }
   50% {
     box-shadow:
-      0 0 0 5px oklch(71% 0.13 195 / 0.14),
-      0 12px 26px -12px oklch(71% 0.13 195 / 0.7);
+      0 0 0 5px color-mix(in oklab, var(--brand-teal) 14%, transparent),
+      0 12px 26px -12px color-mix(in oklab, var(--brand-teal) 70%, transparent);
   }
 }
 
@@ -3324,8 +3324,8 @@ a.bento-cell:active {
   transition: border-color 0.3s var(--docs-ease);
 }
 .ftx-box--open {
-  border: 1.5px dashed oklch(62% 0.19 260 / 0.55);
-  box-shadow: 0 0 0 4px oklch(62% 0.19 260 / 0.06);
+  border: 1.5px dashed color-mix(in oklab, var(--brand-accent) 55%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--brand-accent) 6%, transparent);
 }
 .ftx-box--filled {
   border: 1px solid var(--border);
@@ -3409,7 +3409,7 @@ a.bento-cell:active {
   flex: none;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: oklch(82% 0.13 150);
+  color: var(--brand-success);
 }
 .ftx-track {
   position: absolute;
@@ -3417,7 +3417,7 @@ a.bento-cell:active {
   bottom: 0;
   height: 2px;
   overflow: hidden;
-  background: oklch(94% 0.015 265 / 0.1);
+  background: color-mix(in oklab, var(--fg-strong) 10%, transparent);
 }
 .ftx-fill {
   display: block;
@@ -3467,8 +3467,8 @@ a.bento-cell:active {
   width: 44px;
   height: 30px;
   border-radius: 6px;
-  border: 1px solid oklch(62% 0.19 260 / 0.4);
-  background: oklch(13% 0.02 265 / 0.96);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 40%, transparent);
+  background: color-mix(in oklab, var(--surface-0) 96%, transparent);
   box-shadow: 0 8px 18px -8px oklch(0% 0 0 / 0.8);
 }
 .ftx-drag-file--1 {
@@ -3539,8 +3539,8 @@ a.bento-cell:active {
   height: 15px;
   border-radius: 50%;
   background: var(--brand-accent-soft);
-  border: 1px solid oklch(62% 0.19 260 / 0.3);
-  color: oklch(80% 0.12 260);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 30%, transparent);
+  color: var(--brand-accent-hover);
   font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 600;
@@ -3579,8 +3579,8 @@ a.bento-cell:active {
 .tts-sel {
   border-radius: 3px;
   padding: 1px 2px;
-  background: oklch(62% 0.19 260 / 0.32);
-  box-shadow: 0 0 0 1px oklch(62% 0.19 260 / 0.45);
+  background: color-mix(in oklab, var(--brand-accent) 32%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--brand-accent) 45%, transparent);
   color: var(--fg-strong);
 }
 /* Step 2 — the on-device synth card */
@@ -3605,7 +3605,7 @@ a.bento-cell:active {
   border-radius: 11px;
   background: var(--brand-accent-soft);
   color: var(--brand-accent);
-  border: 1px solid oklch(62% 0.19 260 / 0.25);
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 25%, transparent);
 }
 .tts-synth-name {
   font-size: 12.5px;
@@ -3626,9 +3626,9 @@ a.bento-cell:active {
   width: 40px;
   height: 40px;
   border-radius: 11px;
-  background: oklch(71% 0.13 245 / 0.12);
+  background: color-mix(in oklab, var(--brand-teal) 12%, transparent);
   color: var(--brand-teal);
-  border: 1px solid oklch(71% 0.13 245 / 0.28);
+  border: 1px solid color-mix(in oklab, var(--brand-teal) 28%, transparent);
 }
 .tts-out-wave {
   width: 70%;

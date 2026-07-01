@@ -232,8 +232,9 @@ export function InputGroupText({
 	);
 }
 
-export interface InputGroupButtonProps
-	extends ComponentPropsWithRef<typeof BaseButton> {
+export interface InputGroupButtonProps extends ComponentPropsWithRef<
+	typeof BaseButton
+> {
 	children: ReactNode;
 	tone?: "default" | "danger" | "ghost" | "surface";
 }

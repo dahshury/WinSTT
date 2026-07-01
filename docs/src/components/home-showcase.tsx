@@ -15,11 +15,18 @@ export function HomeShowcase() {
       <div className="mb-8 text-center">
         <h2
           className="mb-2 font-bold text-2xl tracking-tight"
-          style={{ color: "oklch(94% 0.015 265 /0.9)" }}
+          style={{
+            color: "color-mix(in oklab, var(--fg-strong) 90%, transparent)",
+          }}
         >
           See it in action
         </h2>
-        <p className="text-sm" style={{ color: "oklch(94% 0.015 265 /0.35)" }}>
+        <p
+          className="text-sm"
+          style={{
+            color: "color-mix(in oklab, var(--fg-strong) 35%, transparent)",
+          }}
+        >
           A focused look at the features you reach for every day - each one
           running locally on your machine.
         </p>
@@ -35,7 +42,7 @@ export function HomeShowcase() {
         <ShowcaseCard
           label="Model picker"
           url="winstt.app/models"
-          caption="Browse 40+ speech models - maker, size, and quantization at a glance."
+          caption="Browse 70+ speech models - maker, size, and quantization at a glance."
         >
           <ShowcaseModelPicker />
         </ShowcaseCard>

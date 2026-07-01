@@ -2,17 +2,9 @@ import { describe, test } from "bun:test";
 import fc from "fast-check";
 import {
 	ApplicationError,
-	ConnectionError,
-	FileSystemError,
 	formatErrorForLog,
 	getErrorMessage,
-	getErrorStack,
-	IpcError,
 	isApplicationError,
-	NotFoundError,
-	ProcessSpawnError,
-	TimeoutError,
-	ValidationError,
 } from "./errors";
 
 // Arbitrary for JSON-safe context objects (avoid functions, undefined,
@@ -40,25 +32,11 @@ describe("ApplicationError property tests", () => {
 		);
 	});
 
-	test("isApplicationError is exhaustive across all subclasses", () => {
+	test("isApplicationError returns true for ApplicationError instances", () => {
 		fc.assert(
-			fc.property(fc.integer({ min: 0, max: 7 }), fc.string(), (kind, msg) => {
-				const errors: Error[] = [
-					new ApplicationError(msg),
-					new ValidationError(msg, "field"),
-					new NotFoundError("Resource", "id"),
-					new ConnectionError(msg, "ep", true),
-					new TimeoutError(100, "op"),
-					new IpcError(msg, "ch", "invoke"),
-					new FileSystemError(msg, "/x", "read"),
-					new ProcessSpawnError(msg, "cmd", 1),
-				];
-				const idx = kind % errors.length;
-				const target = errors[idx];
-				if (target === undefined) {
-					return false;
-				}
-				return isApplicationError(target) === true;
+			fc.property(fc.string(), contextArb, (msg, ctx) => {
+				const err = new ApplicationError(msg, ctx);
+				return isApplicationError(err) === true;
 			}),
 			{ numRuns: 250 },
 		);
@@ -130,30 +108,6 @@ describe("getErrorMessage property tests", () => {
 				return typeof out === "string";
 			}),
 			{ numRuns: 300 },
-		);
-	});
-});
-
-describe("getErrorStack property tests", () => {
-	test("returns string for Error instances, undefined otherwise", () => {
-		fc.assert(
-			fc.property(
-				fc.oneof(
-					fc.string().map((s) => new Error(s)),
-					fc.string(),
-					fc.integer(),
-					fc.constant(null),
-					fc.object(),
-				),
-				(value) => {
-					const out = getErrorStack(value);
-					if (value instanceof Error) {
-						return typeof out === "string" || out === undefined;
-					}
-					return out === undefined;
-				},
-			),
-			{ numRuns: 200 },
 		);
 	});
 });

@@ -10,15 +10,13 @@ use ort::session::Session;
 use ort::value::Tensor;
 
 use super::frontend;
+use super::streaming::{self, StreamCursor};
 use super::support::*;
 use crate::winstt::stt::{
     EngineConfig, EngineKind, NativeStreamUpdate, SttError, SttResult, TranscribeOptions,
     Transcriber, Transcription,
 };
 
-const SAMPLE_RATE: usize = 16_000;
-const FINAL_SILENCE_PAD_MS: usize = 2_000;
-const STREAM_FEATURE_PRE_CONTEXT_FRAMES: usize = 3;
 const MAX_SYMBOLS_PER_FRAME: usize = 10;
 
 type DecoderState = (ArrayD<f32>, ArrayD<f32>);
@@ -33,7 +31,7 @@ pub struct NativeNemoStreamingEngine {
     providers: Vec<String>,
     mel_fb: Array2<f32>,
     feature_dim: usize,
-    normalize_type: String,
+    normalize_type: frontend::NemoNorm,
     window_size: usize,
     chunk_shift: usize,
     vocab_size: usize,
@@ -48,16 +46,11 @@ pub struct NativeNemoStreamingEngine {
 }
 
 struct NemoStreamState {
-    pcm: Vec<f32>,
-    base_frame: usize,
-    next_chunk_frame: usize,
+    cursor: StreamCursor,
     cache_last_channel: ArrayD<f32>,
     cache_last_time: ArrayD<f32>,
     cache_last_channel_len: ArrayD<i64>,
     decoder_state: DecoderState,
-    tokens: Vec<i64>,
-    frame_offset: usize,
-    num_trailing_blanks: usize,
 }
 
 impl NativeNemoStreamingEngine {
@@ -68,26 +61,24 @@ impl NativeNemoStreamingEngine {
 
         let metadata = read_custom_metadata(&encoder)?;
         let feature_dim = feat_dim_of(&encoder, "audio_signal");
-        let window_size = meta_usize(&metadata, "window_size")?;
-        let chunk_shift = meta_usize(&metadata, "chunk_shift")?;
-        let vocab_size = meta_usize(&metadata, "vocab_size")? + 1;
+        let window_size = streaming::meta_usize(&metadata, "window_size", "NeMo streaming")?;
+        let chunk_shift = streaming::meta_usize(&metadata, "chunk_shift", "NeMo streaming")?;
+        let vocab_size = streaming::meta_usize(&metadata, "vocab_size", "NeMo streaming")? + 1;
         let blank_id = vocab_size.saturating_sub(1) as i64;
-        let normalize_type = metadata
-            .get("normalize_type")
-            .map_or("", |s| if s == "NA" { "" } else { s.as_str() })
-            .to_string();
+        let normalize_type =
+            frontend::NemoNorm::from_metadata(metadata.get("normalize_type").map(String::as_str));
 
         let cache_last_channel_shape = vec![
             1,
-            meta_usize(&metadata, "cache_last_channel_dim1")?,
-            meta_usize(&metadata, "cache_last_channel_dim2")?,
-            meta_usize(&metadata, "cache_last_channel_dim3")?,
+            streaming::meta_usize(&metadata, "cache_last_channel_dim1", "NeMo streaming")?,
+            streaming::meta_usize(&metadata, "cache_last_channel_dim2", "NeMo streaming")?,
+            streaming::meta_usize(&metadata, "cache_last_channel_dim3", "NeMo streaming")?,
         ];
         let cache_last_time_shape = vec![
             1,
-            meta_usize(&metadata, "cache_last_time_dim1")?,
-            meta_usize(&metadata, "cache_last_time_dim2")?,
-            meta_usize(&metadata, "cache_last_time_dim3")?,
+            streaming::meta_usize(&metadata, "cache_last_time_dim1", "NeMo streaming")?,
+            streaming::meta_usize(&metadata, "cache_last_time_dim2", "NeMo streaming")?,
+            streaming::meta_usize(&metadata, "cache_last_time_dim3", "NeMo streaming")?,
         ];
 
         let decoder_input_names = node_input_names(&decoder);
@@ -148,9 +139,7 @@ impl NativeNemoStreamingEngine {
 
     fn fresh_stream_state(&self) -> NemoStreamState {
         NemoStreamState {
-            pcm: Vec::new(),
-            base_frame: 0,
-            next_chunk_frame: 0,
+            cursor: StreamCursor::new(),
             cache_last_channel: ArrayD::<f32>::zeros(IxDyn(&self.cache_last_channel_shape)),
             cache_last_time: ArrayD::<f32>::zeros(IxDyn(&self.cache_last_time_shape)),
             cache_last_channel_len: ArrayD::<i64>::zeros(IxDyn(&[1])),
@@ -158,63 +147,34 @@ impl NativeNemoStreamingEngine {
                 ArrayD::<f32>::zeros(IxDyn(&self.decoder_state_shape_0)),
                 ArrayD::<f32>::zeros(IxDyn(&self.decoder_state_shape_1)),
             ),
-            tokens: Vec::new(),
-            frame_offset: 0,
-            num_trailing_blanks: 0,
         }
     }
 
     fn process_available_chunks(&mut self, finalize: bool) -> SttResult<bool> {
         let features = frontend::nemo_features_with_normalization(
-            &self.stream.pcm,
+            &self.stream.cursor.pcm,
             &self.mel_fb,
-            &self.normalize_type,
+            self.normalize_type,
         );
         let mut processed_any = false;
         loop {
-            let rel_start = self
-                .stream
-                .next_chunk_frame
-                .saturating_sub(self.stream.base_frame);
-            let required_frames = rel_start + self.window_size;
-            let ready = if finalize {
-                required_frames <= features.nrows()
-            } else {
-                // Matches the official streaming RNN-T readiness rule:
-                // num_processed_frames + ChunkSize() < NumFramesReady().
-                required_frames < features.nrows()
-            };
-            if !ready {
+            // Readiness follows the official streaming RNN-T rule:
+            // num_processed_frames + ChunkSize() < NumFramesReady() (`<=` on finalize).
+            let rel_start = self.stream.cursor.rel_start();
+            if !streaming::chunk_ready(rel_start, self.window_size, features.nrows(), finalize) {
                 break;
             }
             let chunk = features
                 .slice(s![rel_start..rel_start + self.window_size, ..])
                 .to_owned();
             self.run_feature_chunk(&chunk)?;
-            self.stream.next_chunk_frame += self.chunk_shift;
+            self.stream.cursor.next_chunk_frame += self.chunk_shift;
             processed_any = true;
         }
         if processed_any {
-            self.trim_stream_pcm();
+            self.stream.cursor.trim_pcm(frontend::NEMO_HOP);
         }
         Ok(processed_any)
-    }
-
-    fn trim_stream_pcm(&mut self) {
-        let keep_from_frame = self
-            .stream
-            .next_chunk_frame
-            .saturating_sub(STREAM_FEATURE_PRE_CONTEXT_FRAMES);
-        if keep_from_frame <= self.stream.base_frame {
-            return;
-        }
-        let drop_frames = keep_from_frame - self.stream.base_frame;
-        let drop_samples = (drop_frames * frontend::NEMO_HOP).min(self.stream.pcm.len());
-        if drop_samples == 0 {
-            return;
-        }
-        self.stream.pcm.drain(..drop_samples);
-        self.stream.base_frame += drop_samples / frontend::NEMO_HOP;
     }
 
     fn run_feature_chunk(&mut self, chunk: &Array2<f32>) -> SttResult<()> {
@@ -270,7 +230,13 @@ impl NativeNemoStreamingEngine {
     }
 
     fn decode_encoder_out(&mut self, encoder_out: &Array2<f32>) -> SttResult<()> {
-        let last = self.stream.tokens.last().copied().unwrap_or(self.blank_id);
+        let last = self
+            .stream
+            .cursor
+            .tokens
+            .last()
+            .copied()
+            .unwrap_or(self.blank_id);
         let state = self.stream.decoder_state.clone();
         let (mut decoder_out, mut next_state) = self.run_decoder(last, &state)?;
         let mut emitted = false;
@@ -282,12 +248,12 @@ impl NativeNemoStreamingEngine {
                 let (best, _) = argmax_1d(&logits);
                 let token = best as i64;
                 if token == self.blank_id {
-                    self.stream.num_trailing_blanks += 1;
+                    self.stream.cursor.num_trailing_blanks += 1;
                     break;
                 }
                 emitted = true;
-                self.stream.tokens.push(token);
-                self.stream.num_trailing_blanks = 0;
+                self.stream.cursor.tokens.push(token);
+                self.stream.cursor.num_trailing_blanks = 0;
                 let (new_decoder_out, new_next_state) = self.run_decoder(token, &next_state)?;
                 decoder_out = new_decoder_out;
                 next_state = new_next_state;
@@ -297,7 +263,7 @@ impl NativeNemoStreamingEngine {
         if emitted {
             self.stream.decoder_state = next_state;
         }
-        self.stream.frame_offset += encoder_out.nrows();
+        self.stream.cursor.frame_offset += encoder_out.nrows();
         Ok(())
     }
 
@@ -359,28 +325,17 @@ impl NativeNemoStreamingEngine {
     }
 
     fn current_text(&self) -> String {
-        let syms: Vec<&str> = self
-            .stream
-            .tokens
-            .iter()
-            .filter_map(|&id| {
-                if id == self.blank_id {
-                    None
-                } else {
-                    self.vocab.get(id)
-                }
-            })
-            .collect();
-        join_and_normalize(&syms, self.vocab.lowercase_decoded)
+        let blank_id = self.blank_id;
+        self.stream
+            .cursor
+            .decode_text(&self.vocab, |id, _sym| id != blank_id)
     }
 }
 
 impl NemoStreamState {
     fn empty() -> Self {
         Self {
-            pcm: Vec::new(),
-            base_frame: 0,
-            next_chunk_frame: 0,
+            cursor: StreamCursor::new(),
             cache_last_channel: ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1, 1])),
             cache_last_time: ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1, 1])),
             cache_last_channel_len: ArrayD::<i64>::zeros(IxDyn(&[1])),
@@ -388,22 +343,8 @@ impl NemoStreamState {
                 ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1])),
                 ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1])),
             ),
-            tokens: Vec::new(),
-            frame_offset: 0,
-            num_trailing_blanks: 0,
         }
     }
-}
-
-fn meta_usize(meta: &std::collections::BTreeMap<String, String>, key: &str) -> SttResult<usize> {
-    meta.get(key)
-        .ok_or_else(|| SttError::SessionCreate(format!("missing NeMo streaming metadata {key}")))?
-        .parse::<usize>()
-        .map_err(|e| SttError::SessionCreate(format!("parse metadata {key}: {e}")))
-}
-
-fn final_silence_pad() -> Vec<f32> {
-    vec![0.0; SAMPLE_RATE * FINAL_SILENCE_PAD_MS / 1000]
 }
 
 impl Transcriber for NativeNemoStreamingEngine {
@@ -426,7 +367,7 @@ impl Transcriber for NativeNemoStreamingEngine {
     fn transcribe(&mut self, audio: &[f32], _opts: &TranscribeOptions) -> SttResult<Transcription> {
         self.stream_reset();
         self.stream_accept(audio)?;
-        self.stream_accept(&final_silence_pad())?;
+        self.stream_accept(&streaming::final_silence_pad())?;
         let text = self.stream_finalize()?;
         Ok(Transcription {
             text,
@@ -440,14 +381,17 @@ impl Transcriber for NativeNemoStreamingEngine {
 
     fn stream_accept(&mut self, pcm: &[f32]) -> SttResult<NativeStreamUpdate> {
         if !pcm.is_empty() {
-            self.stream.pcm.extend_from_slice(pcm);
+            self.stream.cursor.pcm.extend_from_slice(pcm);
             self.process_available_chunks(false)?;
         }
         Ok(NativeStreamUpdate::interim(self.current_text()))
     }
 
     fn stream_finalize(&mut self) -> SttResult<String> {
-        self.stream.pcm.extend_from_slice(&final_silence_pad());
+        self.stream
+            .cursor
+            .pcm
+            .extend_from_slice(&streaming::final_silence_pad());
         self.process_available_chunks(true)?;
         Ok(self.current_text())
     }
@@ -461,7 +405,8 @@ impl Transcriber for NativeNemoStreamingEngine {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{meta_usize, NativeNemoStreamingEngine};
+    use super::streaming::meta_usize;
+    use super::NativeNemoStreamingEngine;
     use crate::winstt::stt::{EngineConfig, EngineKind, Quantization, ResolvedModel};
 
     #[test]
@@ -490,6 +435,6 @@ mod tests {
     #[test]
     fn metadata_parser_reports_missing_keys() {
         let meta = BTreeMap::new();
-        assert!(meta_usize(&meta, "window_size").is_err());
+        assert!(meta_usize(&meta, "window_size", "NeMo streaming").is_err());
     }
 }

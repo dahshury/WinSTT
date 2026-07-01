@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { DEFAULT_SETTINGS, SettingField } from "@/entities/setting";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Slider } from "@/shared/ui/slider";
 import { Switcher } from "@/shared/ui/switcher";
 import {
@@ -56,17 +55,15 @@ function VizSliderControl({
 			tooltip={t(tooltipKey)}
 			value={value}
 		>
-			<ElevatedSurface inline>
-				<Slider
-					aria-label={label}
-					max={max}
-					min={min}
-					onChange={onChange}
-					step={step}
-					value={value}
-					{...(formatValue ? { formatValue } : {})}
-				/>
-			</ElevatedSurface>
+			<Slider
+				aria-label={label}
+				max={max}
+				min={min}
+				onChange={onChange}
+				step={step}
+				value={value}
+				{...(formatValue ? { formatValue } : {})}
+			/>
 		</SettingField>
 	);
 }
@@ -95,16 +92,14 @@ function VisualizerBarCountControl({
 			}
 			tooltip={t("visualizerBarCountTooltip")}
 		>
-			<ElevatedSurface inline>
-				<Slider
-					aria-label={t("visualizerBarCount")}
-					max={21}
-					min={3}
-					onChange={(v) => update({ visualizerBarCount: v })}
-					step={2}
-					value={value}
-				/>
-			</ElevatedSurface>
+			<Slider
+				aria-label={t("visualizerBarCount")}
+				max={21}
+				min={3}
+				onChange={(v) => update({ visualizerBarCount: v })}
+				step={2}
+				value={value}
+			/>
 		</SettingField>
 	);
 }
@@ -260,14 +255,12 @@ function VisualizerAuraShapeControl({
 			}
 			tooltip={t("visualizerAuraShapeTooltip")}
 		>
-			<ElevatedSurface>
-				<Switcher
-					fullWidth
-					onChange={(v) => pickAuraShape(v, update)}
-					options={options}
-					value={value}
-				/>
-			</ElevatedSurface>
+			<Switcher
+				fullWidth
+				onChange={(v) => pickAuraShape(v, update)}
+				options={options}
+				value={value}
+			/>
 		</SettingField>
 	);
 }

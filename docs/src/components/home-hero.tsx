@@ -65,7 +65,7 @@ export function HomeHero() {
         className="pointer-events-none absolute top-0 left-1/2 h-[500px] w-[800px] -translate-x-1/2 rounded-full blur-3xl"
         style={{
           background:
-            "radial-gradient(ellipse, oklch(62% 0.19 260 /0.06) 0%, transparent 70%)",
+            "radial-gradient(ellipse, color-mix(in oklab, var(--brand-accent) 6%, transparent) 0%, transparent 70%)",
         }}
       />
       <div className="relative mb-10">
@@ -85,9 +85,9 @@ export function HomeHero() {
         rel="noopener noreferrer"
         className="mb-4 inline-flex items-center gap-1.5 rounded-full px-3 py-1 transition-all hover:brightness-110"
         style={{
-          background: "oklch(62% 0.19 260 / 0.1)",
-          border: "1px solid oklch(62% 0.19 260 / 0.28)",
-          color: "oklch(82% 0.13 260)",
+          background: "color-mix(in oklab, var(--brand-accent) 10%, transparent)",
+          border: "1px solid color-mix(in oklab, var(--brand-accent) 28%, transparent)",
+          color: "var(--brand-accent-hover)",
           fontSize: "12px",
           fontWeight: 600,
           letterSpacing: "0.03em",
@@ -100,19 +100,19 @@ export function HomeHero() {
       <h1 className="mb-4 font-bold text-5xl tracking-tight">WinSTT</h1>
       <p
         className="max-w-xl text-justify text-lg leading-relaxed hyphens-auto"
-        style={{ color: "oklch(94% 0.015 265 /0.55)" }}
+        style={{ color: "color-mix(in oklab, var(--fg-strong) 55%, transparent)" }}
       >
         A complete local voice toolkit for macOS, Linux, and Windows.
         Speech-to-text, text-to-speech, wake-word detection, and LLM-powered
-        text processing - powered by Whisper, NeMo, and 40+ AI models,
+        text processing - powered by Whisper, NeMo, and 70+ AI models,
         completely offline and entirely on your hardware. Free forever, source
         on GitHub.
       </p>
       <div
         className="mt-6 inline-flex flex-col items-stretch overflow-hidden rounded-2xl sm:flex-row sm:rounded-full"
         style={{
-          background: "oklch(68% 0.17 150 / 0.08)",
-          border: "1px solid oklch(68% 0.17 150 / 0.18)",
+          background: "color-mix(in oklab, var(--brand-success) 8%, transparent)",
+          border: "1px solid color-mix(in oklab, var(--brand-success) 18%, transparent)",
         }}
         aria-label="Privacy guarantees"
       >
@@ -123,10 +123,10 @@ export function HomeHero() {
               index > 0 ? " border-t sm:border-t-0 sm:border-l" : ""
             }`}
             style={{
-              color: "oklch(82% 0.12 150 / 0.9)",
+              color: "color-mix(in oklab, var(--brand-success) 90%, transparent)",
               fontSize: "12px",
               fontWeight: 500,
-              borderColor: "oklch(68% 0.17 150 / 0.18)",
+              borderColor: "color-mix(in oklab, var(--brand-success) 18%, transparent)",
             }}
           >
             {badge.icon}
@@ -139,9 +139,8 @@ export function HomeHero() {
         className="mt-8 inline-flex flex-col items-stretch overflow-hidden rounded-lg sm:flex-row"
         style={{
           gap: "1px",
-          background: "oklch(94% 0.015 265 /0.12)",
-          border: "1px solid oklch(94% 0.015 265 /0.12)",
-          boxShadow: "0 0 28px oklch(62% 0.19 260 / 0.2)",
+          background: "color-mix(in oklab, var(--fg-strong) 12%, transparent)",
+          border: "1px solid color-mix(in oklab, var(--fg-strong) 12%, transparent)",
         }}
       >
         <a
@@ -167,7 +166,7 @@ export function HomeHero() {
           className="inline-flex items-center justify-center gap-2 px-5 py-2.5 font-medium text-sm transition-all hover:brightness-150"
           style={{
             background: "var(--surface-1)",
-            color: "oklch(94% 0.015 265 /0.7)",
+            color: "color-mix(in oklab, var(--fg-strong) 70%, transparent)",
           }}
         >
           Documentation
@@ -183,7 +182,7 @@ export function HomeHero() {
           className="inline-flex items-center justify-center gap-2 px-5 py-2.5 font-medium text-sm transition-all hover:brightness-150"
           style={{
             background: "var(--surface-1)",
-            color: "oklch(94% 0.015 265 /0.7)",
+            color: "color-mix(in oklab, var(--fg-strong) 70%, transparent)",
           }}
         >
           {githubIcon}

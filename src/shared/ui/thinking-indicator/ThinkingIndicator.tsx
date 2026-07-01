@@ -266,8 +266,7 @@ function tailOf(text: string, max: number): string {
 	return text.slice(-max);
 }
 
-export interface ThinkingIndicatorProps
-	extends ComponentPropsWithoutRef<"output"> {
+export interface ThinkingIndicatorProps extends ComponentPropsWithoutRef<"output"> {
 	/**
 	 * Let the streamed-reasoning band fill its container's width (`w-full`)
 	 * instead of using its intrinsic `clamp(220px,32vw,420px)`. Set when the

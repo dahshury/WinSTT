@@ -113,6 +113,25 @@ function stripSecrets(settings: AppSettingsOutput): AppSettingsOutput {
 	};
 }
 
+/**
+ * Shallow-merge `patch` into a single top-level section of the settings tree,
+ * returning the next `settings` slice. Collapses the otherwise-identical
+ * `update<Section>Settings` callbacks (quality/audio/global/hotkey/llm/tts) to
+ * one-liners. Sections that need extra work — `general`/`llm.dictation`
+ * (normalize), `model` (union-erase), `dictionary`/`snippets` (wholesale
+ * replace) — keep their bespoke callbacks.
+ */
+function patchSection<K extends keyof AppSettingsOutput>(
+	settings: AppSettingsOutput,
+	key: K,
+	patch: Partial<AppSettingsOutput[K]>,
+): AppSettingsOutput {
+	return {
+		...settings,
+		[key]: { ...settings[key], ...patch },
+	};
+}
+
 interface SettingsState {
 	isLoaded: boolean;
 	resetSettings: () => void;
@@ -178,17 +197,11 @@ export const useSettingsStore = create<SettingsState>()(
 			},
 			updateQualitySettings: (patch) =>
 				set((state) => ({
-					settings: {
-						...state.settings,
-						quality: { ...state.settings.quality, ...patch },
-					},
+					settings: patchSection(state.settings, "quality", patch),
 				})),
 			updateAudioSettings: (patch) =>
 				set((state) => ({
-					settings: {
-						...state.settings,
-						audio: { ...state.settings.audio, ...patch },
-					},
+					settings: patchSection(state.settings, "audio", patch),
 				})),
 			updateGeneralSettings: (patch) =>
 				set((state) => {
@@ -200,24 +213,15 @@ export const useSettingsStore = create<SettingsState>()(
 				}),
 			updateGlobalSettings: (patch) =>
 				set((state) => ({
-					settings: {
-						...state.settings,
-						global: { ...state.settings.global, ...patch },
-					},
+					settings: patchSection(state.settings, "global", patch),
 				})),
 			updateHotkeySettings: (patch) =>
 				set((state) => ({
-					settings: {
-						...state.settings,
-						hotkey: { ...state.settings.hotkey, ...patch },
-					},
+					settings: patchSection(state.settings, "hotkey", patch),
 				})),
 			updateLlmSettings: (patch) =>
 				set((state) => ({
-					settings: {
-						...state.settings,
-						llm: { ...state.settings.llm, ...patch },
-					},
+					settings: patchSection(state.settings, "llm", patch),
 				})),
 			updateLlmDictation: (patch) =>
 				set((state) => {
@@ -250,10 +254,7 @@ export const useSettingsStore = create<SettingsState>()(
 				})),
 			updateTtsSettings: (patch) =>
 				set((state) => ({
-					settings: {
-						...state.settings,
-						tts: { ...state.settings.tts, ...patch },
-					},
+					settings: patchSection(state.settings, "tts", patch),
 				})),
 			updateIntegrations: (patch) =>
 				set((state) => ({

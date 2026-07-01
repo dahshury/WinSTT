@@ -169,32 +169,71 @@ pub fn get_available_microphones() -> Result<Vec<AudioDevice>, String> {
     Ok(result)
 }
 
+/// Resolve a cpal input-device NAME (as shown in the picker) to its persisted
+/// device index. Returns `Ok(None)` for the sentinel `"default"` or when the
+/// device can't be found (treated as "system default"). The renderer's device
+/// list comes from `get_available_devices` (cpal), so the name round-trips.
+fn input_device_name_to_index(device_name: &str) -> Option<i64> {
+    if device_name == "default" {
+        return None;
+    }
+    list_input_devices()
+        .ok()?
+        .into_iter()
+        .find(|d| d.name == device_name)
+        .and_then(|d| d.index.parse::<i64>().ok())
+}
+
+/// Resolve a persisted input-device index back to its current cpal NAME, or the
+/// `"default"` sentinel when unset / no longer present.
+fn input_device_index_to_name(index: Option<i64>) -> String {
+    let Some(index) = index else {
+        return "default".to_string();
+    };
+    list_input_devices()
+        .ok()
+        .and_then(|devices| {
+            devices
+                .into_iter()
+                .find(|d| d.index.parse::<i64>().ok() == Some(index))
+                .map(|d| d.name)
+        })
+        .unwrap_or_else(|| "default".to_string())
+}
+
+/// Persist the WinSTT-store `audio` section with a mutated copy, routing through
+/// `apply_settings_patch` so its runtime side-effects (recorder device reapply)
+/// fire exactly as a renderer-driven save would.
+fn write_audio_settings(
+    app: &AppHandle,
+    mutate: impl FnOnce(&mut crate::winstt::settings_schema::AudioSettings),
+) -> Result<(), String> {
+    let mut audio = crate::winstt::commands::settings::read_settings_raw(app).audio;
+    mutate(&mut audio);
+    crate::winstt::commands::settings::apply_settings_patch(
+        app,
+        crate::winstt::commands::settings::PartialWinsttSettings {
+            audio: Some(audio),
+            ..Default::default()
+        },
+    )
+    .map(|_| ())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn set_selected_microphone(app: AppHandle, device_name: String) -> Result<(), String> {
-    let mut settings = get_settings(&app);
-    settings.selected_microphone = if device_name == "default" {
-        None
-    } else {
-        Some(device_name)
-    };
-    write_settings(&app, settings);
-
-    // Update the audio manager to use the new device
-    let rm = app.state::<Arc<AudioRecordingManager>>();
-    rm.update_selected_device()
-        .map_err(|e| format!("Failed to update selected device: {}", e))?;
-
-    Ok(())
+    let index = input_device_name_to_index(&device_name);
+    write_audio_settings(&app, |audio| audio.input_device_index = index)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn get_selected_microphone(app: AppHandle) -> Result<String, String> {
-    let settings = get_settings(&app);
-    Ok(settings
-        .selected_microphone
-        .unwrap_or_else(|| "default".to_string()))
+    let index = crate::winstt::commands::settings::read_settings_raw(&app)
+        .audio
+        .input_device_index;
+    Ok(input_device_index_to_name(index))
 }
 
 #[tauri::command]
@@ -267,23 +306,17 @@ pub async fn play_test_sound(app: AppHandle, sound_type: String) {
 #[tauri::command]
 #[specta::specta]
 pub fn set_clamshell_microphone(app: AppHandle, device_name: String) -> Result<(), String> {
-    let mut settings = get_settings(&app);
-    settings.clamshell_microphone = if device_name == "default" {
-        None
-    } else {
-        Some(device_name)
-    };
-    write_settings(&app, settings);
-    Ok(())
+    let index = input_device_name_to_index(&device_name);
+    write_audio_settings(&app, |audio| audio.clamshell_microphone = index)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn get_clamshell_microphone(app: AppHandle) -> Result<String, String> {
-    let settings = get_settings(&app);
-    Ok(settings
-        .clamshell_microphone
-        .unwrap_or_else(|| "default".to_string()))
+    let index = crate::winstt::commands::settings::read_settings_raw(&app)
+        .audio
+        .clamshell_microphone;
+    Ok(input_device_index_to_name(index))
 }
 
 #[tauri::command]

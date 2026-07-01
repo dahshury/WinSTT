@@ -47,7 +47,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::winstt::catalog;
 use crate::winstt::downloads::{
-    transfer_url_blocking, TransferControl, TransferOutcome, TransferRequest,
+    transfer_url_blocking, PauseCancelFlags, TransferControl, TransferOutcome, TransferRequest,
 };
 use crate::winstt::stt::cache_probe::{self, CacheState, ProbeModel};
 use crate::winstt::stt::resolver;
@@ -74,8 +74,9 @@ use progress::*;
 /// `agg`/`start` live on the handle (not as `run_quant_download` locals) so the progress total and
 /// speed/ETA carry across the pause→resume re-run instead of resetting to 0%.
 struct DownloadHandle {
-    paused: AtomicBool,
-    cancelled: AtomicBool,
+    /// The hot pause/cancel flags polled by `transfer_url` (shared `PauseCancelFlags`); the handle
+    /// embeds it and forwards `TransferControl` to it.
+    flags: PauseCancelFlags,
     parked: AtomicBool,
     agg: Arc<ProgressAgg>,
     partial_path: Mutex<Option<std::path::PathBuf>>,
@@ -85,8 +86,7 @@ struct DownloadHandle {
 impl DownloadHandle {
     fn new() -> Self {
         Self {
-            paused: AtomicBool::new(false),
-            cancelled: AtomicBool::new(false),
+            flags: PauseCancelFlags::default(),
             parked: AtomicBool::new(false),
             agg: Arc::new(ProgressAgg::new()),
             partial_path: Mutex::new(None),
@@ -97,11 +97,11 @@ impl DownloadHandle {
 
 impl TransferControl for DownloadHandle {
     fn should_cancel(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.flags.is_cancelled()
     }
 
     fn should_pause(&self) -> bool {
-        self.paused.load(Ordering::Acquire)
+        self.flags.is_paused()
     }
 }
 
@@ -275,8 +275,7 @@ impl DownloadManager {
             let mut map = self.inflight.lock_recover();
             match map.get(&k) {
                 Some(h) => {
-                    h.paused.store(false, Ordering::Release);
-                    h.cancelled.store(false, Ordering::Release);
+                    h.flags.reset();
                     // `swap(false)`: claim the slot iff it WAS parked (enqueue exactly once); an
                     // active job stays active (parked already false) and is not re-enqueued.
                     let was_parked = h.parked.swap(false, Ordering::AcqRel);
@@ -408,7 +407,7 @@ impl DownloadManager {
             let map = self.inflight.lock_recover();
             match map.get(&key(model, quantization)) {
                 Some(h) => {
-                    h.paused.store(true, Ordering::Release);
+                    h.flags.pause();
                     true
                 }
                 None => false,
@@ -438,8 +437,8 @@ impl DownloadManager {
             let mut map = self.inflight.lock_recover();
             match map.get(&k) {
                 Some(h) => {
-                    h.cancelled.store(true, Ordering::Release);
-                    h.paused.store(false, Ordering::Release);
+                    h.flags.cancel();
+                    h.flags.resume();
                     if h.parked.load(Ordering::Acquire) {
                         if let Ok(mut partial_path) = h.partial_path.lock() {
                             if let Some(path) = partial_path.take() {
@@ -467,7 +466,7 @@ impl DownloadManager {
     /// going instead of stranding the job.
     fn try_park(&self, handle: &DownloadHandle) -> bool {
         let _guard = self.inflight.lock_recover();
-        if handle.paused.load(Ordering::Acquire) && !handle.cancelled.load(Ordering::Acquire) {
+        if handle.flags.is_paused() && !handle.flags.is_cancelled() {
             handle.parked.store(true, Ordering::Release);
             true
         } else {
@@ -522,7 +521,7 @@ impl DownloadManager {
             let mut map = self.inflight.lock_recover();
             map.retain(|k, h| {
                 if k.starts_with(&prefix) {
-                    h.cancelled.store(true, Ordering::Release);
+                    h.flags.cancel();
                     if h.parked.load(Ordering::Acquire) {
                         if let Some(q) = k.strip_prefix(&prefix) {
                             parked_removed.push(q.to_string());
@@ -566,16 +565,6 @@ impl DownloadManager {
         if let Ok(mut memo) = self.scan_memo.lock() {
             *memo = Some((Instant::now(), probed.clone()));
         }
-        self.overlay_inflight(models, &probed)
-    }
-
-    /// Blocking shim retained for any non-async caller (signature-stable). Prefer
-    /// `cache_snapshot_async` — this one blocks the calling thread on the probe.
-    pub fn cache_snapshot(
-        &self,
-        models: &[ProbeModel],
-    ) -> BTreeMap<String, BTreeMap<String, (CacheState, u64, u64)>> {
-        let probed = tauri::async_runtime::block_on(cache_probe::probe_cache(models));
         self.overlay_inflight(models, &probed)
     }
 
@@ -634,7 +623,7 @@ impl DownloadManager {
         // a queued-then-cancelled download still finishes-cancelled instead of transferring. The
         // fixed N-worker pool (not a semaphore) is what now bounds concurrency to N, so there's no
         // permit to acquire here — the worker itself IS the slot.
-        if handle.cancelled.load(Ordering::Acquire) {
+        if handle.flags.is_cancelled() {
             self.finish_quant(&model, &quantization, true);
             return;
         }
@@ -689,12 +678,16 @@ impl DownloadManager {
         let http = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(30))
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .expect("reqwest TLS init");
+        // A total request timeout is safe here (unlike the streaming `http` client) because this
+        // client only issues the tiny HEAD probe — without it a stalled HEAD hangs before the first
+        // chunk, leaving the badge frozen at the optimistic 0% seed forever.
         let http_head = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .expect("reqwest TLS init");
 
         // Seed the progress denominator with the WHOLE plan's byte total UP FRONT, fetched in one
         // `?blobs=true` API call (the only single request that returns a `size` for BOTH LFS and
@@ -722,7 +715,7 @@ impl DownloadManager {
             // One attempt loop per file. A mid-file PAUSE either parks (releases this worker slot;
             // `return`) or, if a resume raced in first, re-loops to resume the same file in place.
             'file: loop {
-                if handle.cancelled.load(Ordering::Acquire) {
+                if handle.flags.is_cancelled() {
                     self.finish_quant(&model, &quantization, true);
                     return;
                 }
@@ -772,7 +765,7 @@ impl DownloadManager {
                         // layouts our plain-HTTP path can't). Mid-file cancel is lost here, but the
                         // bytes are guaranteed to land. Keep the FileReporter so the fallback still
                         // reports progress (with the Start-total seed fix).
-                        if handle.cancelled.load(Ordering::Acquire) {
+                        if handle.flags.is_cancelled() {
                             self.finish_quant(&model, &quantization, true);
                             return;
                         }
@@ -795,7 +788,7 @@ impl DownloadManager {
                                 break 'file;
                             }
                             Err(e) => {
-                                if handle.cancelled.load(Ordering::Acquire) {
+                                if handle.flags.is_cancelled() {
                                     self.finish_quant(&model, &quantization, true);
                                     return;
                                 }
@@ -992,15 +985,7 @@ impl DownloadManager {
 
     /// Emit a coalesced model-level progress event from the aggregate.
     fn emit_agg(&self, model: &str, quantization: &str, agg: &ProgressAgg, start: Instant) {
-        let (downloaded, total) = agg.totals();
-        let elapsed = start.elapsed().as_secs_f64().max(0.001);
-        let speed = (downloaded as f64 / elapsed) as u64;
-        let eta = if speed > 0 && total > downloaded {
-            (total - downloaded) / speed
-        } else {
-            0
-        };
-        self.emit_progress(model, Some(quantization), downloaded, total, speed, eta);
+        emit_model_progress(&self.app, model, quantization, agg, start);
     }
 
     fn finish_quant(&self, model: &str, quantization: &str, cancelled: bool) {

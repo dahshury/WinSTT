@@ -44,17 +44,17 @@ describe("TONE_TEXT", () => {
 });
 
 describe("resolveTone", () => {
-	test("disconnected → 'muted' regardless of pressed state", () => {
-		// !isConnected is checked first, so isPressed cannot override it.
+	test("disconnected → 'muted' regardless of armed state", () => {
+		// !isConnected is checked first, so the armed flag cannot override it.
 		expect(resolveTone(false, false)).toBe("muted");
 		expect(resolveTone(false, true)).toBe("muted");
 	});
 
-	test("connected + pressed → 'active'", () => {
+	test("connected + armed → 'active'", () => {
 		expect(resolveTone(true, true)).toBe("active");
 	});
 
-	test("connected + not pressed → 'default'", () => {
+	test("connected + not armed → 'default'", () => {
 		expect(resolveTone(true, false)).toBe("default");
 	});
 

@@ -128,7 +128,7 @@ export function DevicePickerWindow() {
 							<BaseButton
 								aria-pressed={active}
 								className={cn(
-									"relative z-raised flex w-full cursor-default select-none items-center gap-2 rounded-xs px-3 py-2 text-left text-body leading-normal outline-none",
+									"relative z-raised flex w-full cursor-pointer select-none items-center gap-2 rounded-xs px-3 py-2 text-left text-body leading-normal outline-none",
 									active ? "font-medium text-foreground" : "text-foreground",
 								)}
 								data-menu-option={opt.id}

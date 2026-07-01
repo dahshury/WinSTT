@@ -22,23 +22,32 @@ function pathJoinFor(os: NodeJS.Platform): (...paths: string[]) => string {
 export function resolveWinsttAppDataDir(
 	env: NodeJS.ProcessEnv = process.env,
 	homeDir = homedir(),
-	os = platform()
+	os = platform(),
 ): string {
 	const join = pathJoinFor(os);
 	if (env["WINSTT_APP_DATA_DIR"]) {
 		return env["WINSTT_APP_DATA_DIR"];
 	}
 	if (os === "win32") {
-		return join(env["APPDATA"] ?? join(homeDir, "AppData", "Roaming"), APP_IDENTIFIER);
+		return join(
+			env["APPDATA"] ?? join(homeDir, "AppData", "Roaming"),
+			APP_IDENTIFIER,
+		);
 	}
 	if (os === "darwin") {
 		return join(homeDir, "Library", "Application Support", APP_IDENTIFIER);
 	}
-	return join(env["XDG_DATA_HOME"] ?? join(homeDir, ".local", "share"), APP_IDENTIFIER);
+	return join(
+		env["XDG_DATA_HOME"] ?? join(homeDir, ".local", "share"),
+		APP_IDENTIFIER,
+	);
 }
 
 export function resolveWinsttSettingsPath(): string {
-	return pathJoinFor(platform())(resolveWinsttAppDataDir(), WINSTT_SETTINGS_FILE);
+	return pathJoinFor(platform())(
+		resolveWinsttAppDataDir(),
+		WINSTT_SETTINGS_FILE,
+	);
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -46,7 +55,7 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 function cloneRecord(value: JsonRecord): JsonRecord {
-	return JSON.parse(JSON.stringify(value)) as JsonRecord;
+	return structuredClone(value);
 }
 
 async function readStoreFile(path: string): Promise<JsonRecord> {
@@ -55,7 +64,12 @@ async function readStoreFile(path: string): Promise<JsonRecord> {
 		const parsed = JSON.parse(raw) as unknown;
 		return isRecord(parsed) ? parsed : {};
 	} catch (err) {
-		if (typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT") {
+		if (
+			typeof err === "object" &&
+			err !== null &&
+			"code" in err &&
+			err.code === "ENOENT"
+		) {
 			return {};
 		}
 		throw err;
@@ -85,7 +99,11 @@ function getAtPath(root: JsonRecord, path: readonly string[]): unknown {
 	return cursor;
 }
 
-function setAtPath(root: JsonRecord, path: readonly string[], value: unknown): void {
+function setAtPath(
+	root: JsonRecord,
+	path: readonly string[],
+	value: unknown,
+): void {
 	let cursor: JsonRecord = root;
 	for (const part of path.slice(0, -1)) {
 		const next = cursor[part];

@@ -9,6 +9,30 @@ use crate::winstt::llm::{
     OllamaStreamState, OLLAMA_NUM_CTX,
 };
 
+/// How often the chat-stream loop wakes to poll cancellation when no token has
+/// arrived — so the user's Esc / Stop aborts a STALLED generation within a
+/// couple seconds instead of only when the next token streams in.
+const CHAT_STREAM_CANCEL_POLL: Duration = Duration::from_secs(2);
+/// Abort the chat if NO token arrives for this long (the model is wedged or the
+/// GPU is so starved that it produces nothing — e.g. an Ollama model that does
+/// not fit in VRAM alongside a resident STT model). Resets on every token. A
+/// healthy first token lands in <5s even on a cold load, so 30s of total silence
+/// means it is not coming.
+const CHAT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Hard ceiling on a single post-process generation regardless of token flow —
+/// bounds a runaway generation (a small model that never emits a stop token and
+/// streams up to `num_predict`) that the idle timeout can't catch because tokens
+/// keep trickling. Dictation cleanup completes in seconds on a healthy GPU; this
+/// only fires on a degenerate stall, where we fail soft to the original text.
+const CHAT_STREAM_TOTAL_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Abort the chat stream when it has been silent too long (`idle_for`, no token)
+/// OR has run past the hard ceiling (`running_for`). Pure so the threshold logic
+/// is unit-testable without standing up a stalling HTTP stream.
+fn chat_stream_should_abort(idle_for: Duration, running_for: Duration) -> bool {
+    idle_for >= CHAT_STREAM_IDLE_TIMEOUT || running_for >= CHAT_STREAM_TOTAL_TIMEOUT
+}
+
 /// Direct Ollama HTTP client for WinSTT's app-specific API contract.
 pub struct OllamaClient {
     http: reqwest::Client,
@@ -101,8 +125,12 @@ impl OllamaClient {
             .timeout(timeout)
             .send()
             .await;
-        if let Err(err) = result {
-            log::debug!("[llm] Ollama evict failed for {model}: {err}");
+        match result {
+            Ok(resp) => log::info!(
+                "[llm] Ollama evict '{model}': HTTP {} (keep_alive=0)",
+                resp.status().as_u16()
+            ),
+            Err(err) => log::warn!("[llm] Ollama evict failed for '{model}': {err}"),
         }
     }
 
@@ -176,21 +204,52 @@ impl OllamaClient {
         let mut buf = String::new();
         let mut stream = resp.bytes_stream();
         let mut cancelled = false;
-        while let Some(chunk) = stream.next().await {
-            if is_cancelled() {
-                cancelled = true;
-                break;
-            }
-            let bytes = chunk.map_err(|e| e.to_string())?;
-            buf.push_str(&String::from_utf8_lossy(&bytes));
-            while let Some(nl) = buf.find('\n') {
-                let line: String = buf.drain(..=nl).collect();
-                if let Some(c) = parse_chat_stream_line(&line) {
-                    let deltas = state.apply_chunk(&c);
-                    if let Some(t) = deltas.thinking {
-                        on_thinking_delta(&t);
+        let mut stalled = false;
+        // The original loop blocked on `stream.next()` forever and only checked
+        // cancellation when a token arrived. If the model produced NOTHING (GPU
+        // starved / runner wedged), post-processing hung indefinitely and the
+        // user's only escape was a manual cancel — meanwhile Ollama kept the
+        // generation alive on the GPU. Bound it: poll on a short tick so cancel
+        // is responsive even with no tokens, abort after an idle gap (no token)
+        // or a hard total ceiling. On any of these we drop the stream (closing
+        // the connection so Ollama stops generating) and fail soft to the
+        // original transcription.
+        let started = tokio::time::Instant::now();
+        let mut last_token = started;
+        loop {
+            match tokio::time::timeout(CHAT_STREAM_CANCEL_POLL, stream.next()).await {
+                Ok(Some(chunk)) => {
+                    if is_cancelled() {
+                        cancelled = true;
+                        break;
+                    }
+                    last_token = tokio::time::Instant::now();
+                    let bytes = chunk.map_err(|e| e.to_string())?;
+                    buf.push_str(&String::from_utf8_lossy(&bytes));
+                    while let Some(nl) = buf.find('\n') {
+                        let line: String = buf.drain(..=nl).collect();
+                        if let Some(c) = parse_chat_stream_line(&line) {
+                            let deltas = state.apply_chunk(&c);
+                            if let Some(t) = deltas.thinking {
+                                on_thinking_delta(&t);
+                            }
+                        }
                     }
                 }
+                Ok(None) => break,
+                Err(_) => {
+                    // Poll tick elapsed with no token — check cancellation.
+                    if is_cancelled() {
+                        cancelled = true;
+                        break;
+                    }
+                }
+            }
+            let now = tokio::time::Instant::now();
+            if chat_stream_should_abort(now.duration_since(last_token), now.duration_since(started))
+            {
+                stalled = true;
+                break;
             }
         }
         // A cancelled stream holds only a partial response — for a structured
@@ -200,6 +259,13 @@ impl OllamaClient {
         // cancellation as an error so the caller fails soft to the original text.
         if cancelled {
             return Err("Ollama chat cancelled".to_string());
+        }
+        if stalled {
+            let idle = started.elapsed().as_secs();
+            log::warn!(
+                "[llm] Ollama chat stalled after {idle}s (no/slow output — model wedged or GPU starved); aborting, will fall back to original text"
+            );
+            return Err(format!("Ollama chat stalled after {idle}s"));
         }
         if let Some(c) = parse_chat_stream_line(&buf) {
             state.apply_chunk(&c);
@@ -450,7 +516,6 @@ pub enum PullOutcome {
 pub struct OllamaCapabilities {
     pub capabilities: Vec<String>,
     pub supports_thinking: bool,
-    pub supports_tools: bool,
     pub context_length: Option<u64>,
 }
 
@@ -541,7 +606,6 @@ fn parse_ollama_show(json: &serde_json::Value) -> OllamaCapabilities {
         })
         .unwrap_or_default();
     let supports_thinking = capabilities.iter().any(|v| v == "thinking");
-    let supports_tools = capabilities.iter().any(|v| v == "tools");
     let context_length = json
         .get("model_info")
         .and_then(|mi| mi.as_object())
@@ -553,7 +617,6 @@ fn parse_ollama_show(json: &serde_json::Value) -> OllamaCapabilities {
     OllamaCapabilities {
         capabilities,
         supports_thinking,
-        supports_tools,
         context_length,
     }
 }
@@ -684,7 +747,6 @@ mod tests {
         });
         let caps = parse_ollama_show(&json);
         assert!(caps.supports_thinking);
-        assert!(caps.supports_tools);
         assert_eq!(
             caps.capabilities,
             vec![
@@ -701,7 +763,6 @@ mod tests {
         let json = serde_json::json!({ "capabilities": ["completion"] });
         let caps = parse_ollama_show(&json);
         assert!(!caps.supports_thinking);
-        assert!(!caps.supports_tools);
         assert_eq!(caps.capabilities, vec!["completion".to_string()]);
         assert_eq!(caps.context_length, None);
     }
@@ -806,5 +867,34 @@ mod tests {
         let success = serde_json::json!({ "status": "success" }).to_string();
         let (_, payload) = parse_pull_line("m", &success, &mut layers).unwrap();
         assert_eq!(payload.get("percent").and_then(|p| p.as_f64()), Some(100.0));
+    }
+
+    #[test]
+    fn chat_stream_aborts_on_idle_or_total_timeout() {
+        // Healthy generation: tokens flowing (tiny idle), short total → keep going.
+        assert!(!chat_stream_should_abort(
+            Duration::from_secs(0),
+            Duration::from_secs(2)
+        ));
+        assert!(!chat_stream_should_abort(
+            Duration::from_secs(5),
+            Duration::from_secs(20)
+        ));
+        // Stuck: no token for the idle window (model wedged / GPU starved).
+        assert!(chat_stream_should_abort(
+            CHAT_STREAM_IDLE_TIMEOUT,
+            Duration::from_secs(31)
+        ));
+        // Runaway-but-streaming: tokens keep trickling (idle stays low) but the
+        // generation blows past the hard ceiling — the total timeout catches it.
+        assert!(chat_stream_should_abort(
+            Duration::from_secs(1),
+            CHAT_STREAM_TOTAL_TIMEOUT
+        ));
+        // Just under both thresholds → still running.
+        assert!(!chat_stream_should_abort(
+            CHAT_STREAM_IDLE_TIMEOUT - Duration::from_millis(1),
+            CHAT_STREAM_TOTAL_TIMEOUT - Duration::from_millis(1)
+        ));
     }
 }

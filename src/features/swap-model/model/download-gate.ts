@@ -1,10 +1,7 @@
-// Deep-import the lightweight cache helpers (not the `@/widgets/model-picker` barrel) so this
-// main-window-reachable feature doesn't drag the whole model-picker UI into the
-// main entry chunk via the barrel re-export.
 import {
 	resolveEffectiveQuant,
 	resolveQuantCache,
-} from "@/widgets/model-picker/stt/lib/cache-helpers";
+} from "@/entities/model-catalog";
 import {
 	assessDictationFitClient,
 	useSystemResourcesStore,
@@ -14,7 +11,7 @@ import {
 	ONNX_QUANTIZATIONS,
 	type OnnxQuantization,
 } from "@/shared/config/defaults";
-import { invokeReload, isCloudModel } from "./apply-swap";
+import { isCloudModel } from "./apply-swap";
 import type {
 	DeviceValue,
 	GateArgs,
@@ -126,18 +123,11 @@ export function runProceedWithSelection(args: ProceedArgs): void {
 		args.currentQuantization,
 		state,
 	);
-	const branches = needsDownloadPrompt(state, targetQuant)
-		? [() => promptDownload(args)]
-		: [
-				() =>
-					args.issueSwap(
-						args.kind,
-						args.value,
-						args.previous,
-						args.quantization,
-					),
-			];
-	branches.forEach(invokeReload);
+	if (needsDownloadPrompt(state, targetQuant)) {
+		promptDownload(args);
+		return;
+	}
+	args.issueSwap(args.kind, args.value, args.previous, args.quantization);
 }
 
 export function promptDownload(args: ProceedArgs): void {
@@ -225,13 +215,11 @@ export async function runGateWithAssessment(args: GateArgs): Promise<void> {
 	);
 	const assessment =
 		serverAssessment ?? clientGateAssessment(args, targetQuant);
-	const branches = isCriticalAssessment(assessment)
-		? [() => surfaceFitWarning(args, assessment, candidateName)]
-		: [
-				() =>
-					args.proceed(args.kind, args.value, args.previous, args.quantization),
-			];
-	branches.forEach(invokeReload);
+	if (isCriticalAssessment(assessment)) {
+		surfaceFitWarning(args, assessment, candidateName);
+		return;
+	}
+	args.proceed(args.kind, args.value, args.previous, args.quantization);
 }
 
 export function surfaceFitWarning(

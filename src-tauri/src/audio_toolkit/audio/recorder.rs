@@ -86,6 +86,12 @@ pub struct AudioRecorder {
     worker_handle: Option<std::thread::JoinHandle<()>>,
     vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    /// Fired EXACTLY ONCE per recording, the instant the FIRST raw audio chunk is captured
+    /// after a `Cmd::Start` — i.e. the proof the OS actually opened the mic and it is
+    /// delivering frames (not merely that `stream.play()` returned). Lets the app surface a
+    /// real "recording is live" signal (`stt:capture-active`) instead of lighting the UI on
+    /// the keypress, before WASAPI has finished opening an asleep device. None = no-op.
+    capture_live_cb: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
     /// Raw-16k mono tap fired on EVERY resampled frame (independent of `recording`), so the
     /// wakeword detector can listen while idle. None = no-op (free when no wakeword armed).
     #[expect(
@@ -100,8 +106,8 @@ pub struct AudioRecorder {
     speech_cb: Option<Arc<dyn Fn(bool) + Send + Sync + 'static>>,
     /// Live snapshot MIRROR of `processed_samples` (the in-flight 16 kHz recording buffer),
     /// kept in sync TAIL-ONLY by run_consumer so the realtime worker can read a growing window
-    /// of the current recording WITHOUT touching the wakeword `chunk_cb` slot (single, taken) or
-    /// the batch Cmd::Stop drain. Cleared on Cmd::Start, mem::take'd-equivalent on Stop (the
+    /// of the current recording WITHOUT touching the wakeword `chunk_cb` slot (single, taken).
+    /// Cleared on Cmd::Start, mem::take'd-equivalent on Stop (the
     /// mirror keeps the last recording until the next Start clears it). Always allocated so
     /// `snapshot_recorded` can clone it; `None` is never used at runtime but keeps run_consumer
     /// agnostic. See project memory: realtime streaming port.
@@ -124,6 +130,7 @@ impl AudioRecorder {
             worker_handle: None,
             vad: None,
             level_cb: None,
+            capture_live_cb: None,
             chunk_cb: None,
             speech_cb: None,
             live_audio: Arc::new(Mutex::new(Vec::new())),
@@ -153,6 +160,17 @@ impl AudioRecorder {
         F: Fn(Vec<f32>) + Send + Sync + 'static,
     {
         self.level_cb = Some(Arc::new(cb));
+        self
+    }
+
+    /// Register a callback fired ONCE per recording on the first captured frame after start
+    /// (see `capture_live_cb`). Used to emit `stt:capture-active` so the UI reflects the mic
+    /// actually being live rather than the moment the hotkey was pressed.
+    pub fn with_capture_live_callback<F>(mut self, cb: F) -> Self
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.capture_live_cb = Some(Arc::new(cb));
         self
     }
 
@@ -204,6 +222,7 @@ impl AudioRecorder {
         let vad = self.vad.clone();
         // Move the optional level callback into the worker thread
         let level_cb = self.level_cb.clone();
+        let capture_live_cb = self.capture_live_cb.clone();
         let chunk_cb = self.chunk_cb.clone();
         let speech_cb = self.speech_cb.clone();
         // Clone the live-audio mirror handle so the realtime worker (via snapshot_recorded)
@@ -294,6 +313,7 @@ impl AudioRecorder {
                         sample_rx,
                         cmd_rx,
                         level_cb,
+                        capture_live_cb,
                         chunk_cb,
                         speech_cb,
                         live_audio,
@@ -701,6 +721,8 @@ fn run_consumer(
     sample_rx: mpsc::Receiver<AudioChunk>,
     cmd_rx: mpsc::Receiver<Cmd>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    // Fired once per recording on the first captured frame after Cmd::Start (mic confirmed live).
+    capture_live_cb: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
     chunk_cb: Option<Arc<dyn Fn(&[f32]) + Send + Sync + 'static>>,
     // Smoothed-VAD speech-transition callback (true=onset, false=offset). `None` = no-op.
     speech_cb: Option<Arc<dyn Fn(bool) + Send + Sync + 'static>>,
@@ -727,6 +749,9 @@ fn run_consumer(
 
     let mut processed_samples = Vec::<f32>::new();
     let mut recording = false;
+    // Armed on Cmd::Start, disarmed by the first captured frame of that recording so
+    // `capture_live_cb` fires exactly once per recording (the mic-is-live signal).
+    let mut awaiting_first_capture = false;
     // Last surfaced SMOOTHED-VAD speech state, so we fire `speech_cb` only on
     // transitions (not every frame). Reset to `false` on each Cmd::Start.
     let mut vad_speaking = false;
@@ -799,71 +824,86 @@ fn run_consumer(
         }
     }
 
-    while let Ok(chunk) = sample_rx.recv() {
-        let raw = match chunk {
-            AudioChunk::Samples(s) => s,
-            AudioChunk::EndOfStream => continue,
+    loop {
+        let maybe_raw = match sample_rx.recv_timeout(Duration::from_millis(5)) {
+            Ok(AudioChunk::Samples(s)) => Some(s),
+            Ok(AudioChunk::EndOfStream) | Err(mpsc::RecvTimeoutError::Timeout) => None,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
 
-        // ---------- spectrum processing ---------------------------------- //
-        if let Some(buckets) = visualizer.feed(&raw) {
-            if let Some(cb) = &level_cb {
-                cb(buckets);
-            }
-        }
-
-        // ---------- existing pipeline ------------------------------------ //
-        frame_resampler.push(&raw, &mut |frame: &[f32]| {
-            // Wakeword tap: fire on EVERY 16k frame regardless of `recording` so the detector
-            // listens while idle. No-op (free) unless a wakeword is armed.
-            if let Some(cb) = &chunk_cb {
-                cb(frame);
-            }
-            let is_speech = handle_frame(frame, recording, &vad, &mut processed_samples);
-            // Surface SMOOTHED-VAD speech boundaries (real Silero state, ~one onset
-            // window after the user starts/stops talking) so the renderer's
-            // `isSpeaking` reflects ACTUAL speech — driving the overlay-pill reveal
-            // and the breathing glow. Fire only on transitions, only while recording.
-            //
-            // ENERGY BACKSTOP for the SIGNAL (not the recording): Silero at threshold 0.3
-            // reports "speech" even on near-silent frames on some mics, which flashed the
-            // pill on silence. Require real frame energy to BEGIN signaling speech; once
-            // signaling, follow the VAD's hangover so a brief quiet dip mid-word doesn't
-            // toggle it off and re-fire on the next loud frame.
-            let new_speaking = if vad_speaking {
-                is_speech
-            } else {
-                is_speech && frame_ac_energy(frame) >= SPEECH_SIGNAL_AC_FLOOR
-            };
-            if recording && new_speaking != vad_speaking {
-                vad_speaking = new_speaking;
-                if let Some(cb) = &speech_cb {
-                    cb(vad_speaking);
+        if let Some(raw) = maybe_raw {
+            // ---------- mic-is-live signal ----------------------------------- //
+            // A raw chunk arriving while `recording` is set means the OS finished opening
+            // the device and it is actually delivering audio (vs. `stream.play()` merely
+            // having returned). Fire once per recording so the UI can switch from
+            // "opening mic…" to a real recording state. See managers::audio.
+            if recording && awaiting_first_capture {
+                awaiting_first_capture = false;
+                if let Some(cb) = &capture_live_cb {
+                    cb();
                 }
             }
-        });
 
-        // ---------- realtime live-audio mirror (tail-sync) --------------- //
-        // Mirror only the NEW tail of `processed_samples` into the shared buffer so the realtime
-        // worker can read a growing window of the active recording. O(new samples), NOT a full
-        // clone per chunk. Gated on `recording` so the idle wakeword path never grows it, AND on
-        // `realtime_enabled` so we skip the second copy entirely when the live preview is off
-        // (the common dictation case). The batch path (Cmd::Stop drain + mem::take below) is
-        // byte-identical — this only reads `processed_samples`.
-        if recording && realtime_enabled.load(Ordering::Relaxed) {
-            if let Some(mirror) = &live_audio {
-                let new_len = {
-                    let mut m = mirror.lock_recover();
-                    let mirrored = m.len();
-                    if processed_samples.len() > mirrored {
-                        m.extend_from_slice(&processed_samples[mirrored..]);
-                        Some(m.len())
-                    } else {
-                        None
-                    }
+            // ---------- spectrum processing ---------------------------------- //
+            if let Some(buckets) = visualizer.feed(&raw) {
+                if let Some(cb) = &level_cb {
+                    cb(buckets);
+                }
+            }
+
+            // ---------- existing pipeline ------------------------------------ //
+            frame_resampler.push(&raw, &mut |frame: &[f32]| {
+                // Wakeword tap: fire on EVERY 16k frame regardless of `recording` so the detector
+                // listens while idle. No-op (free) unless a wakeword is armed.
+                if let Some(cb) = &chunk_cb {
+                    cb(frame);
+                }
+                let is_speech = handle_frame(frame, recording, &vad, &mut processed_samples);
+                // Surface SMOOTHED-VAD speech boundaries (real Silero state, ~one onset
+                // window after the user starts/stops talking) so the renderer's
+                // `isSpeaking` reflects ACTUAL speech — driving the overlay-pill reveal
+                // and the breathing glow. Fire only on transitions, only while recording.
+                //
+                // ENERGY BACKSTOP for the SIGNAL (not the recording): Silero at threshold 0.3
+                // reports "speech" even on near-silent frames on some mics, which flashed the
+                // pill on silence. Require real frame energy to BEGIN signaling speech; once
+                // signaling, follow the VAD's hangover so a brief quiet dip mid-word doesn't
+                // toggle it off and re-fire on the next loud frame.
+                let new_speaking = if vad_speaking {
+                    is_speech
+                } else {
+                    is_speech && frame_ac_energy(frame) >= SPEECH_SIGNAL_AC_FLOOR
                 };
-                if let Some(new_len) = new_len {
-                    publish_realtime_audio_progress(&realtime_audio_signal, new_len);
+                if recording && new_speaking != vad_speaking {
+                    vad_speaking = new_speaking;
+                    if let Some(cb) = &speech_cb {
+                        cb(vad_speaking);
+                    }
+                }
+            });
+
+            // ---------- realtime live-audio mirror (tail-sync) --------------- //
+            // Mirror only the NEW tail of `processed_samples` into the shared buffer so the realtime
+            // worker can read a growing window of the active recording. O(new samples), NOT a full
+            // clone per chunk. Gated on `recording` so the idle wakeword path never grows it, AND on
+            // `realtime_enabled` so we skip the second copy entirely when the live preview is off
+            // (the common dictation case). The batch path still mem::take's `processed_samples`;
+            // this only reads it.
+            if recording && realtime_enabled.load(Ordering::Relaxed) {
+                if let Some(mirror) = &live_audio {
+                    let new_len = {
+                        let mut m = mirror.lock_recover();
+                        let mirrored = m.len();
+                        if processed_samples.len() > mirrored {
+                            m.extend_from_slice(&processed_samples[mirrored..]);
+                            Some(m.len())
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(new_len) = new_len {
+                        publish_realtime_audio_progress(&realtime_audio_signal, new_len);
+                    }
                 }
             }
         }
@@ -881,6 +921,8 @@ fn run_consumer(
                     }
                     publish_realtime_audio_progress(&realtime_audio_signal, 0);
                     recording = true;
+                    // Arm the once-per-recording "mic is live" signal for this take.
+                    awaiting_first_capture = true;
                     // Fresh utterance: the next real speech onset re-fires speech_cb(true).
                     vad_speaking = false;
                     visualizer.reset();
@@ -889,6 +931,13 @@ fn run_consumer(
                     }
                 }
                 Cmd::Stop(reply_tx) => {
+                    while let Ok(chunk) = sample_rx.try_recv() {
+                        if let AudioChunk::Samples(remaining) = chunk {
+                            frame_resampler.push(&remaining, &mut |frame: &[f32]| {
+                                let _ = handle_frame(frame, true, &vad, &mut processed_samples);
+                            });
+                        }
+                    }
                     recording = false;
                     // Surface a final speech-off if we ended mid-utterance so any consumer's
                     // `isSpeaking` clears even when the user released PTT while still talking.
@@ -898,29 +947,6 @@ fn run_consumer(
                             cb(false);
                         }
                     }
-                    stop_flag.store(true, Ordering::Relaxed);
-
-                    // Drain all remaining audio until the producer confirms end-of-stream.
-                    // The cpal callback sees the stop flag, sends EndOfStream, and goes
-                    // silent — guaranteeing every captured sample is in the channel
-                    // ahead of the sentinel.
-                    loop {
-                        match sample_rx.recv_timeout(Duration::from_secs(2)) {
-                            Ok(AudioChunk::Samples(remaining)) => {
-                                frame_resampler.push(&remaining, &mut |frame: &[f32]| {
-                                    // Drain to the batch buffer; speech transitions aren't
-                                    // surfaced past release (we already emitted the final off).
-                                    let _ = handle_frame(frame, true, &vad, &mut processed_samples);
-                                });
-                            }
-                            Ok(AudioChunk::EndOfStream) => break,
-                            Err(_) => {
-                                log::warn!("Timed out waiting for EndOfStream from audio callback");
-                                break;
-                            }
-                        }
-                    }
-
                     frame_resampler.finish(&mut |frame: &[f32]| {
                         let _ = handle_frame(frame, true, &vad, &mut processed_samples);
                     });
@@ -936,10 +962,6 @@ fn run_consumer(
                         mirror.lock_recover().clear();
                     }
                     publish_realtime_audio_progress(&realtime_audio_signal, 0);
-
-                    // Resume the audio callback so the consumer loop can continue
-                    // receiving chunks (important for always-on microphone mode).
-                    stop_flag.store(false, Ordering::Relaxed);
                 }
                 Cmd::Shutdown => {
                     stop_flag.store(true, Ordering::Relaxed);

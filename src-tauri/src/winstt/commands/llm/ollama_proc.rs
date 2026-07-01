@@ -4,6 +4,7 @@
 // there to keep the `winstt::commands::llm::*` paths the manager calls.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use tauri::{AppHandle, Emitter};
 
@@ -12,6 +13,12 @@ use crate::command_auth;
 
 const OLLAMA_MODEL_MANAGEMENT_ALLOWED_WINDOWS: &[&str] =
     &["settings", "model-picker", "onboarding"];
+
+/// PID of the `ollama serve` process WinSTT auto-started this session, or `0`
+/// when WinSTT did NOT start Ollama (the user's own server / Ollama desktop app
+/// is running). Recorded so a graceful exit can stop ONLY a server WinSTT
+/// launched — we never kill a server the user owns. See `stop_winstt_spawned_ollama`.
+static WINSTT_SPAWNED_OLLAMA_PID: AtomicU32 = AtomicU32::new(0);
 
 // ── Ollama executable detection + spawn (mirrors detectOllama / startOllama) ──
 
@@ -189,14 +196,63 @@ pub(crate) fn spawn_ollama_serve(exec_path: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW | DETACHED_PROCESS so the serve survives + stays hidden.
+        // CREATE_NO_WINDOW ONLY — and deliberately NOT DETACHED_PROCESS. WinSTT is
+        // a GUI-subsystem process with no console, so CREATE_NO_WINDOW gives the
+        // spawned `ollama serve` a fresh HIDDEN console; the model-runner
+        // subprocesses Ollama then spawns inherit that windowless console and stay
+        // hidden too. DETACHED_PROCESS gives the serve NO console at all, so each
+        // runner allocated its own NEW console WINDOW — the terminals that flashed
+        // on every model load/unload (warmup, toggle, boot-with-toggle-on). Survival
+        // across our exit isn't needed: `stop_winstt_spawned_ollama` kills this tree
+        // on graceful exit, and a child outlives the parent on Windows regardless.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+        cmd.creation_flags(CREATE_NO_WINDOW);
     }
     cmd.spawn()
-        .map(|_child| ())
+        .map(|child| {
+            // Detached: we intentionally don't retain/await the child, but record
+            // its PID so a graceful exit can stop the tree WE started (and only it).
+            let pid = child.id();
+            WINSTT_SPAWNED_OLLAMA_PID.store(pid, Ordering::Release);
+            crate::winstt::model_watchdog::track_spawned_ollama_pid(pid);
+        })
         .map_err(|e| format!("Failed to start Ollama: {e}"))
+}
+
+/// Stop the `ollama serve` process tree WinSTT auto-started this session. No-op
+/// when WinSTT did not start Ollama (the user owns it) — WinSTT never kills a
+/// server it did not launch. Best-effort and bounded; the model is unloaded
+/// separately (keep_alive:0) so VRAM is already freed before this runs. Called
+/// on graceful app exit.
+pub(crate) fn stop_winstt_spawned_ollama() {
+    let pid = WINSTT_SPAWNED_OLLAMA_PID.swap(0, Ordering::AcqRel);
+    crate::winstt::model_watchdog::clear_spawned_ollama_pid();
+    if pid == 0 {
+        return;
+    }
+    log::info!("[llm] stopping WinSTT-spawned Ollama server (pid {pid}) on exit");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // /T kills the whole tree (`ollama serve` -> the `llama-server` child that
+        // holds the model in VRAM); /F forces it. Ignore failure: the process may
+        // already be gone, or the user may have closed Ollama out from under us.
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        // SIGTERM lets `ollama serve` shut its model runners down cleanly.
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status();
+    }
 }
 
 /// Mirror of `VALID_PULL_NAME_RE` in llm.ts.

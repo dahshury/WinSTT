@@ -16,8 +16,8 @@ import {
 } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useDownloadStore } from "@/features/model-download";
-import { type ModelStateEntry, ipcSend } from "@/shared/api/ipc-client";
-import { IPC } from "@/shared/api/ipc-channels";
+import type { ModelStateEntry } from "@/shared/api/ipc-client";
+import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
@@ -33,15 +33,6 @@ import { useOnboardingWizardStore } from "../../model/wizard-store";
  * Crucially, picking there drives the real engine swap, so the chosen model is
  * actually loaded (not just persisted) by the time the wizard finishes.
  */
-function openDetachedPicker(rect: DOMRect): void {
-	ipcSend(IPC.MODEL_PICKER_OPEN, {
-		x: rect.x,
-		y: rect.y,
-		width: rect.width,
-		height: rect.height,
-	});
-}
-
 /** Selection is owned by the detached picker window, so the in-window `onChange`
  *  is never invoked in this (detached) mode — the prop is still required by the
  *  selector's contract. */
@@ -120,7 +111,7 @@ export function OnboardingSttModelStep() {
 						kind="main"
 						models={catalogModels}
 						onChange={noopChange}
-						onOpenDetached={openDetachedPicker}
+						onOpenDetached={openModelPickerAtRect}
 						placeholder="Select a speech model"
 						prefilter={isVisibleSttModel}
 						statesById={statesById}

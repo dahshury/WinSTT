@@ -59,7 +59,7 @@ export function useVadCalibration(): void {
 
 /**
  * True when the device-switch effect should advance: the device is known and
- * differs from the last value we applied this hook lifetime (CC 1).
+ * differs from the last value we applied this hook lifetime.
  */
 function shouldRunDeviceSwitch(
 	deviceName: string | null,

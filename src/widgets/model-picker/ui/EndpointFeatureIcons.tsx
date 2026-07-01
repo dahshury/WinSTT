@@ -11,7 +11,7 @@ import {
 	getChipIcon,
 	getChipLabelClass,
 	getChipSizeClass,
-} from "../lib/endpoint-feature-icons-test-helpers";
+} from "../lib/endpoint-feature-icons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./Tooltip";
 
 interface EndpointFeatureIconsProps {

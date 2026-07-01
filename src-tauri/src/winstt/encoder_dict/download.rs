@@ -7,7 +7,6 @@
 //! broadcast to all windows via `encoder-dict:download-*` events; a window that (re)opens the tab
 //! seeds itself with [`status`].
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -15,7 +14,7 @@ use serde::Serialize;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
-use crate::winstt::downloads::{transfer_url, TransferControl, TransferOutcome, TransferRequest};
+use crate::winstt::downloads::{transfer_url, PauseCancelFlags, TransferOutcome, TransferRequest};
 
 use super::{model_dir, MODEL_FILENAME, TOKENIZER_FILENAME};
 
@@ -40,21 +39,6 @@ enum Phase {
     Paused,
 }
 
-/// Pause/cancel signals for the active transfer.
-struct Control {
-    paused: AtomicBool,
-    cancelled: AtomicBool,
-}
-
-impl TransferControl for Control {
-    fn should_cancel(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
-    }
-    fn should_pause(&self) -> bool {
-        self.paused.load(Ordering::Acquire)
-    }
-}
-
 /// Current download status for the UI (mirrors the `encoder-dict:download-progress` payload).
 #[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -76,7 +60,7 @@ struct Inner {
 /// Singleton manager, registered as Tauri state.
 pub struct EncoderModelDownloader {
     app: AppHandle,
-    control: Arc<Control>,
+    control: Arc<PauseCancelFlags>,
     phase: Mutex<Phase>,
     progress: Mutex<Inner>,
     /// When the (most recent) download began — drives the speed/ETA readout. Preserved across
@@ -88,10 +72,7 @@ impl EncoderModelDownloader {
     pub fn new(app: &AppHandle) -> Self {
         Self {
             app: app.clone(),
-            control: Arc::new(Control {
-                paused: AtomicBool::new(false),
-                cancelled: AtomicBool::new(false),
-            }),
+            control: Arc::new(PauseCancelFlags::default()),
             phase: Mutex::new(Phase::Idle),
             progress: Mutex::new(Inner::default()),
             started_at: Mutex::new(None),
@@ -263,8 +244,7 @@ impl EncoderModelDownloader {
         if matches!(self.phase(), Phase::Downloading) {
             return;
         }
-        self.control.paused.store(false, Ordering::Release);
-        self.control.cancelled.store(false, Ordering::Release);
+        self.control.reset();
         self.set_phase(Phase::Downloading);
         let this = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
@@ -274,12 +254,12 @@ impl EncoderModelDownloader {
 
     pub fn pause(&self) {
         if matches!(self.phase(), Phase::Downloading) {
-            self.control.paused.store(true, Ordering::Release);
+            self.control.pause();
         }
     }
 
     pub fn cancel(&self) {
-        self.control.cancelled.store(true, Ordering::Release);
+        self.control.cancel();
         // If parked (paused, no worker running), settle synchronously.
         if matches!(self.phase(), Phase::Paused) {
             self.cleanup_partials();
@@ -292,7 +272,7 @@ impl EncoderModelDownloader {
     /// Delete the downloaded model + any partials and drop the loaded engine — used when the user
     /// turns the on-device dictionary off. Cancels any in-flight transfer first.
     pub fn remove(&self) {
-        self.control.cancelled.store(true, Ordering::Release);
+        self.control.cancel();
         if let Some(dir) = model_dir(&self.app) {
             for (_, fname) in FILES {
                 let _ = std::fs::remove_file(dir.join(fname));
@@ -336,7 +316,7 @@ impl EncoderModelDownloader {
         }
         let client = reqwest::Client::builder()
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .expect("reqwest TLS init");
 
         // Start the speed/ETA clock once (preserved across pause→resume).
         {
@@ -455,7 +435,7 @@ impl EncoderModelDownloader {
         self.emit_complete(true, false);
         // Warm the just-downloaded model in the background if the feature is on, so the first
         // dictation right after the download lands fast instead of cold-loading mid-utterance.
-        let settings = crate::winstt::commands::settings::read_settings(&self.app);
+        let settings = crate::winstt::settings_store::read_settings(&self.app);
         if settings.general.encoder_dictionary_enabled {
             super::preload_async(&self.app);
         }

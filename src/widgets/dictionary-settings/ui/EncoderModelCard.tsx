@@ -1,8 +1,9 @@
-import { Delete02Icon } from "@hugeicons/core-free-icons";
+import { AlertCircleIcon, Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
+import { formatBytes, formatBytesPerSecond } from "@/shared/lib/format-bytes";
 import {
 	Elevated,
 	surfaceBg,
@@ -14,14 +15,11 @@ import { DownloadActions, DownloadProgressBar } from "@/shared/ui/download";
 import { Toggle } from "@/shared/ui/toggle";
 import type { EncoderModel } from "../lib/use-encoder-model";
 
+/** Whole-MB size, base-1024 (consistent with the shared `formatBytes`). The
+ *  default `minUnit:"MB"` keeps the encoder's MB-only caption, while fixing the
+ *  former base-1000 drift that under-reported the ~310 MB download. */
 function mb(bytes: number): string {
-	return `${Math.round(bytes / 1_000_000)} MB`;
-}
-
-function speed(bps: number): string {
-	return bps >= 1_000_000
-		? `${(bps / 1_000_000).toFixed(1)} MB/s`
-		: `${Math.round(bps / 1000)} KB/s`;
+	return formatBytes(bytes, { mbDecimals: 0 }) ?? "0 MB";
 }
 
 /** Surfaced neutral button (destructive on hover) for deleting the downloaded model. Rendered inside
@@ -88,7 +86,13 @@ export function EncoderModelCard({
 				? mb(m.downloadedBytes)
 				: null;
 	const speedLabel =
-		m.state === "downloading" && m.speedBps > 0 ? speed(m.speedBps) : null;
+		m.state === "downloading" && m.speedBps > 0
+			? formatBytesPerSecond(m.speedBps, {
+					minUnit: "KB",
+					kbDecimals: 0,
+					mbDecimals: 1,
+				})
+			: null;
 
 	const downloadActions = (
 		<DownloadActions
@@ -185,6 +189,17 @@ export function EncoderModelCard({
 					onCheckedChange={onToggle}
 				/>
 			</div>
+			{enabled ? (
+				<div className="flex items-start gap-1.5 text-warning text-xs leading-5">
+					<HugeiconsIcon
+						className="mt-px shrink-0"
+						icon={AlertCircleIcon}
+						size={13}
+						aria-hidden="true"
+					/>
+					<span>{t("encoderLatencyWarning")}</span>
+				</div>
+			) : null}
 			{body}
 		</Elevated>
 	);

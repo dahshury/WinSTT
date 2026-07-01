@@ -3,7 +3,6 @@ import {
 	Delete02Icon,
 	PackageRemoveIcon,
 } from "@hugeicons/core-free-icons";
-import type { IconSvgElement } from "@hugeicons/react";
 import { type ReactNode, useReducer } from "react";
 import { useTranslations } from "use-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
@@ -13,51 +12,8 @@ import {
 } from "@/shared/api/ipc-client";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { Toggle } from "@/shared/ui/toggle";
-import { AboutActionButton } from "./AboutActionButton";
-
-// Reset actions share the fixed-width About action button; the destructive row
-// keeps its error tone without leaving the standard elevated control surface.
-interface ResetActionRowProps {
-	buttonLabel: string;
-	/** Render the trailing button with the dim-error destructive treatment. */
-	destructive?: boolean;
-	icon: IconSvgElement;
-	onClick: () => void;
-	summary: string;
-	title: string;
-}
-
-/** One flat row in the Reset/Removal section — title + summary on the left, a
- *  compact standard button on the right. Mirrors the FormControl "row" rhythm
- *  (`gap-4 py-3`) so it divides cleanly alongside the other settings rows. */
-function ResetActionRow({
-	buttonLabel,
-	destructive = false,
-	icon,
-	onClick,
-	summary,
-	title,
-}: ResetActionRowProps) {
-	return (
-		<div className="flex items-center gap-4 py-3">
-			<div className="flex min-w-0 flex-1 flex-col gap-1">
-				<span className="font-medium text-body text-foreground leading-tight">
-					{title}
-				</span>
-				<span className="text-body-sm text-foreground-muted leading-snug">
-					{summary}
-				</span>
-			</div>
-			<AboutActionButton
-				icon={icon}
-				onClick={onClick}
-				variant={destructive ? "danger" : "neutral"}
-			>
-				{buttonLabel}
-			</AboutActionButton>
-		</div>
-	);
-}
+import { AboutActionRow } from "./AboutActionRow";
+import { AppDataUsageBreakdown } from "./AppDataUsageBreakdown";
 
 interface ResetSectionState {
 	cleanupError: string;
@@ -87,6 +43,32 @@ const INITIAL_RESET_SECTION_STATE: ResetSectionState = {
 	removeModelsConfirmOpen: false,
 	resetConfirmOpen: false,
 };
+
+function OllamaCleanupToggle({
+	checked,
+	description,
+	onCheckedChange,
+	title,
+}: {
+	checked: boolean;
+	description: string;
+	onCheckedChange: (checked: boolean) => void;
+	title: string;
+}) {
+	return (
+		<div className="flex items-start justify-between gap-4 rounded-md border border-divider bg-foreground/5 p-3">
+			<div className="flex min-w-0 flex-col gap-1">
+				<span className="font-medium text-body text-foreground">{title}</span>
+				<span className="text-body text-foreground-muted">{description}</span>
+			</div>
+			<Toggle
+				aria-label={title}
+				checked={checked}
+				onCheckedChange={onCheckedChange}
+			/>
+		</div>
+	);
+}
 
 function resetSectionReducer(
 	state: ResetSectionState,
@@ -193,26 +175,17 @@ export function ResetSection(): ReactNode {
 						<p className="font-medium text-error">
 							{ts("permanentActionWarning")}
 						</p>
-						<div className="flex items-start justify-between gap-4 rounded-md border border-divider bg-foreground/5 p-3">
-							<div className="flex min-w-0 flex-col gap-1">
-								<span className="font-medium text-body text-foreground">
-									{ts("removeApplicationDataOllama")}
-								</span>
-								<span className="text-body text-foreground-muted">
-									{ts("removeApplicationDataOllamaDescription")}
-								</span>
-							</div>
-							<Toggle
-								aria-label={ts("removeApplicationDataOllama")}
-								checked={deleteOllamaModelsWithModelCleanup}
-								onCheckedChange={(checked) =>
-									dispatch({
-										type: "deleteOllamaModelsWithModelCleanupChanged",
-										checked,
-									})
-								}
-							/>
-						</div>
+						<OllamaCleanupToggle
+							checked={deleteOllamaModelsWithModelCleanup}
+							description={ts("removeApplicationDataOllamaDescription")}
+							onCheckedChange={(checked) =>
+								dispatch({
+									type: "deleteOllamaModelsWithModelCleanupChanged",
+									checked,
+								})
+							}
+							title={ts("removeApplicationDataOllama")}
+						/>
 						{modelCleanupError ? (
 							<p className="whitespace-pre-line text-body text-error">
 								{modelCleanupError}
@@ -236,23 +209,14 @@ export function ResetSection(): ReactNode {
 						<p className="font-medium text-error">
 							{ts("permanentActionWarning")}
 						</p>
-						<div className="flex items-start justify-between gap-4 rounded-md border border-divider bg-foreground/5 p-3">
-							<div className="flex min-w-0 flex-col gap-1">
-								<span className="font-medium text-body text-foreground">
-									{ts("removeApplicationDataOllama")}
-								</span>
-								<span className="text-body text-foreground-muted">
-									{ts("removeApplicationDataOllamaDescription")}
-								</span>
-							</div>
-							<Toggle
-								aria-label={ts("removeApplicationDataOllama")}
-								checked={deleteOllamaModels}
-								onCheckedChange={(checked) =>
-									dispatch({ type: "deleteOllamaModelsChanged", checked })
-								}
-							/>
-						</div>
+						<OllamaCleanupToggle
+							checked={deleteOllamaModels}
+							description={ts("removeApplicationDataOllamaDescription")}
+							onCheckedChange={(checked) =>
+								dispatch({ type: "deleteOllamaModelsChanged", checked })
+							}
+							title={ts("removeApplicationDataOllama")}
+						/>
 						{cleanupError ? (
 							<p className="text-body text-error">{cleanupError}</p>
 						) : null}
@@ -266,21 +230,13 @@ export function ResetSection(): ReactNode {
 				title={ts("removeApplicationDataTitle")}
 			/>
 			<SettingSection
-				description={ts("resetAndRemovalDescription")}
+				description={ts("applicationDataDescription")}
 				divided
-				icon={ArrowTurnBackwardIcon}
-				title={ts("resetAndRemovalTitle")}
+				icon={Delete02Icon}
+				title={ts("applicationDataTitle")}
 			>
-				<ResetActionRow
-					buttonLabel={ts("resetDefaults")}
-					icon={ArrowTurnBackwardIcon}
-					onClick={() =>
-						dispatch({ type: "resetConfirmOpenChanged", open: true })
-					}
-					summary={ts("resetDefaultsSummary")}
-					title={ts("resetDefaults")}
-				/>
-				<ResetActionRow
+				<AppDataUsageBreakdown />
+				<AboutActionRow
 					buttonLabel={ts("removeDownloadedModelsButton")}
 					icon={PackageRemoveIcon}
 					onClick={() => {
@@ -290,7 +246,7 @@ export function ResetSection(): ReactNode {
 					summary={ts("removeDownloadedModelsSummary")}
 					title={ts("removeDownloadedModelsButton")}
 				/>
-				<ResetActionRow
+				<AboutActionRow
 					buttonLabel={ts("removeApplicationDataButton")}
 					destructive
 					icon={Delete02Icon}
@@ -300,6 +256,21 @@ export function ResetSection(): ReactNode {
 					}}
 					summary={ts("removeApplicationDataSummary")}
 					title={ts("removeApplicationDataButton")}
+				/>
+			</SettingSection>
+			<SettingSection
+				description={ts("resetDefaultsSummary")}
+				icon={ArrowTurnBackwardIcon}
+				title={ts("resetDefaultsTitle")}
+			>
+				<AboutActionRow
+					buttonLabel={ts("resetDefaults")}
+					icon={ArrowTurnBackwardIcon}
+					onClick={() =>
+						dispatch({ type: "resetConfirmOpenChanged", open: true })
+					}
+					summary={ts("resetDefaultsSummary")}
+					title={ts("resetDefaults")}
 				/>
 			</SettingSection>
 		</>

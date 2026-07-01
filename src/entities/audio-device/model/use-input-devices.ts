@@ -4,6 +4,7 @@ import {
 	audioRefreshDevices,
 	onAudioDevicesChanged,
 } from "@/shared/api/ipc-client";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import type { AudioDevice } from "./audio-device";
 
 interface UseInputDevicesResult {
@@ -110,10 +111,10 @@ export function useInputDevices(): UseInputDevicesResult {
 	useEffect(() => {
 		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 		const loadSafely = () => {
-			loadInputDeviceCache().catch(() => undefined);
+			fireAndForget(loadInputDeviceCache(), "inputDevices.loadCache");
 		};
 		const refreshSafely = () => {
-			refreshInputDeviceCache().catch(() => undefined);
+			fireAndForget(refreshInputDeviceCache(), "inputDevices.refreshCache");
 		};
 		loadSafely();
 		const mediaDevices =

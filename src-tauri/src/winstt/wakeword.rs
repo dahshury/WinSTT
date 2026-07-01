@@ -176,7 +176,7 @@ fn path_string_lossy(path: &Path) -> String {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 6. Tests — only the DETERMINISTIC, pure-logic surface (no ML, no FFI).
+// 6. Tests — only the deterministic, pure-logic surface (no ML, no FFI).
 // ═════════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]

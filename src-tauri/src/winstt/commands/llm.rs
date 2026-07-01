@@ -66,6 +66,7 @@ pub use payloads::{
 // both re-exports that path AND brings them into scope for the commands below.
 pub(crate) use ollama_proc::{
     authorize_ollama_model_management_label, detect_ollama_executable, spawn_ollama_serve,
+    stop_winstt_spawned_ollama,
 };
 
 struct LlmCommandProcessingGuard {
@@ -128,6 +129,35 @@ fn record_llm_issue(
         }
     }
     issue.record(Some(app));
+}
+
+/// Records an OpenRouter catalog-scan failure as a user-visible `cloud`/`openrouter`
+/// issue, deriving the detail from `error` (falling back to `default_detail` when the
+/// scan reported unreachable without a message). Shared by the three
+/// `openrouter_refresh_*_models` commands, which differ only in `operation`,
+/// `summary`, `default_detail`, and `feature`.
+fn record_openrouter_scan_failure(
+    app: &AppHandle,
+    operation: &str,
+    summary: &str,
+    default_detail: &str,
+    feature: &str,
+    error: Option<&str>,
+) {
+    let detail = error.unwrap_or(default_detail);
+    record_llm_issue(
+        app,
+        "cloud",
+        operation,
+        summary,
+        detail,
+        "openrouter",
+        "",
+        "",
+        feature,
+        true,
+        &[],
+    );
 }
 
 impl Drop for LlmCommandProcessingGuard {
@@ -738,22 +768,13 @@ pub async fn openrouter_refresh_models(
     let mgr = llm_manager.inner().clone();
     let scan = mgr.scan_openrouter_enriched(&api_key).await;
     if !scan.reachable || scan.error.is_some() {
-        let detail = scan
-            .error
-            .as_deref()
-            .unwrap_or("OpenRouter catalog was unreachable");
-        record_llm_issue(
+        record_openrouter_scan_failure(
             &app,
-            "cloud",
             "openrouter_catalog_refresh",
             "OpenRouter model catalog refresh failed",
-            detail,
-            "openrouter",
-            "",
-            "",
+            "OpenRouter catalog was unreachable",
             "catalog",
-            true,
-            &[],
+            scan.error.as_deref(),
         );
     }
     Ok(OpenRouterScanResultPayload {
@@ -778,22 +799,13 @@ pub async fn openrouter_refresh_stt_models(
     let mgr = llm_manager.inner().clone();
     let scan = mgr.scan_openrouter_transcription_enriched(&api_key).await;
     if !scan.reachable || scan.error.is_some() {
-        let detail = scan
-            .error
-            .as_deref()
-            .unwrap_or("OpenRouter STT catalog was unreachable");
-        record_llm_issue(
+        record_openrouter_scan_failure(
             &app,
-            "cloud",
             "openrouter_stt_catalog_refresh",
             "OpenRouter STT model catalog refresh failed",
-            detail,
-            "openrouter",
-            "",
-            "",
+            "OpenRouter STT catalog was unreachable",
             "stt_catalog",
-            true,
-            &[],
+            scan.error.as_deref(),
         );
     }
     Ok(OpenRouterSttScanResultPayload {
@@ -835,22 +847,13 @@ pub async fn openrouter_refresh_tts_models(
     let mgr = llm_manager.inner().clone();
     let scan = mgr.scan_openrouter_speech(&api_key).await;
     if !scan.reachable || scan.error.is_some() {
-        let detail = scan
-            .error
-            .as_deref()
-            .unwrap_or("OpenRouter TTS catalog was unreachable");
-        record_llm_issue(
+        record_openrouter_scan_failure(
             &app,
-            "cloud",
             "openrouter_tts_catalog_refresh",
             "OpenRouter TTS model catalog refresh failed",
-            detail,
-            "openrouter",
-            "",
-            "",
+            "OpenRouter TTS catalog was unreachable",
             "tts_catalog",
-            true,
-            &[],
+            scan.error.as_deref(),
         );
     }
     Ok(OpenRouterTtsScanResultPayload {

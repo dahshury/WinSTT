@@ -7,6 +7,12 @@ import { Tooltip } from "@/shared/ui/tooltip";
 import { Toggle } from "@/shared/ui/toggle";
 
 export interface SettingSubsectionProps {
+	/** When true the subsection is mid-transition (e.g. the model is warming into
+	 *  VRAM after enabling): the toggle stays visually ON but its interaction is
+	 *  blocked, and the body dims + goes non-interactive — exactly like the
+	 *  toggle-off state — until the work completes. Distinct from
+	 *  `toggleDisabled`, which greys an *unavailable* feature. */
+	busy?: boolean;
 	/** Help text shown in an info-icon tooltip next to the title. */
 	caption?: string;
 	children: ReactNode;
@@ -40,14 +46,18 @@ export function SettingSubsection({
 	onToggle,
 	toggleDisabled,
 	toggleDisabledTooltip,
+	busy = false,
 }: SettingSubsectionProps) {
 	const hasToggle = onToggle !== undefined;
-	const isDisabled = hasToggle && !toggled;
+	// Body is inert when the toggle is off OR while a transition is in flight
+	// (`busy`) — the user enabled it, but the controls shouldn't be touched until
+	// the model finishes loading.
+	const isDisabled = (hasToggle && !toggled) || busy;
 	const toggle = hasToggle ? (
 		<Toggle
 			aria-label={`Toggle ${title}`}
 			checked={toggled ?? false}
-			disabled={toggleDisabled}
+			disabled={toggleDisabled || busy}
 			onCheckedChange={onToggle}
 		/>
 	) : null;

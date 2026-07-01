@@ -50,12 +50,12 @@ macOS Apple Silicon, Linux x64, and Windows x64.
       </Tab>
       <Tab value="macOS">
         ```bash
-        shasum -a 256 WinSTT_0.1.3-alpha.2_aarch64.dmg
+        shasum -a 256 WinSTT_0.1.3-alpha.3_aarch64.dmg
         ```
       </Tab>
       <Tab value="Linux">
         ```bash
-        sha256sum WinSTT_0.1.3-alpha.2_amd64.AppImage
+        sha256sum WinSTT_0.1.3-alpha.3_amd64.AppImage
         ```
       </Tab>
     </Tabs>
@@ -65,7 +65,7 @@ macOS Apple Silicon, Linux x64, and Windows x64.
     GitHub's release metadata. With the GitHub CLI:
 
     ```bash
-    gh release view v0.1.3-alpha.2 \
+    gh release view v0.1.3-alpha.3 \
       --repo dahshury/WinSTT \
       --json assets \
       --jq '.assets[] | {name, digest}'

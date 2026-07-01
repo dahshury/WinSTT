@@ -20,8 +20,9 @@ export const Route = createFileRoute("/og/docs/$")({
           title: page.data.title,
           description: page.data.description,
           site: "WinSTT Docs",
+          // satori/resvg can't resolve CSS var()/color-mix — use exact brand-token oklch literals (accent / accent-hover)
           primaryColor: "oklch(62% 0.19 260 / 0.3)",
-          primaryTextColor: "oklch(70% 0.18 260)",
+          primaryTextColor: "oklch(70% 0.155 255)",
         });
       },
     },

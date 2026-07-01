@@ -13,29 +13,23 @@ import {
 } from "@/entities/model-catalog";
 import {
 	DEFAULT_SETTINGS,
+	type GeneralSettings,
+	type GeneralT,
+	type QualitySettings,
 	SettingField,
 	SettingSection,
+	type UpdateQualityFn,
 	useSettingsStore,
 } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
 import { Badge } from "@/shared/ui/badge";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { OptInDialog } from "@/shared/ui/opt-in-dialog";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
 import { ContextAllowedAppsSection } from "./ContextAllowedAppsSection";
 import { ContextDenyListSection } from "./ContextDenyListSection";
 
-type GeneralSettings = NonNullable<
-	ReturnType<typeof useSettingsStore.getState>["settings"]["general"]
->;
-type QualitySettings = NonNullable<
-	ReturnType<typeof useSettingsStore.getState>["settings"]["quality"]
->;
-type UpdateQualityFn = (patch: Partial<QualitySettings>) => void;
-
-type GeneralT = ReturnType<typeof useTranslations<"general">>;
 type LlmT = ReturnType<typeof useTranslations<"llm">>;
 type ContextAppMode = NonNullable<GeneralSettings["contextAppMode"]>;
 type FormattingOptionKey =
@@ -113,11 +107,11 @@ function formattingAtDefault(quality: QualitySettings): boolean {
 const CONTEXT_APP_MODE_OPTIONS: readonly SwitcherOption<ContextAppMode>[] = [
 	{
 		value: "all-except-denied",
-		label: "All apps except blocked",
+		label: "Black list",
 	},
 	{
 		value: "selected-only",
-		label: "Selected apps only",
+		label: "Allow list",
 	},
 ];
 
@@ -150,50 +144,65 @@ function ContextAwarenessSection({
 	const contextAppMode =
 		general?.contextAppMode ?? DEFAULT_SETTINGS.general.contextAppMode;
 	const hasAllowedApps = (general?.contextAllowList?.length ?? 0) > 0;
-	// Selected-only mode with an empty allow-list captures nothing, so the
-	// "on + selected-only + no apps" combination is a dead state. We make it
-	// unreachable by gating the toggle's visible on-state on having ≥1 app:
-	// the toggle reads off until an app is chosen, then lights up on its own.
+	// "Allow list" (selected-only) mode captures nothing until the user picks an
+	// app, so in that mode context awareness is genuinely on ONLY when the list
+	// is non-empty. Rather than just faking the toggle's look (which left the
+	// stored flag — and the backend — still "on", capturing window titles), we
+	// keep the persisted `contextAwareness` honest: every mutation below sets it
+	// to its true effective value. `selectedOnlyWithoutApps` is the dead state.
 	const selectedOnlyWithoutApps =
 		contextAppMode === "selected-only" && !hasAllowedApps;
 	const effectiveEnabled = !disabled && enabled && !selectedOnlyWithoutApps;
-	// Toggle ON ⇒ ask for consent the first time (the dialog's confirm path is
-	// what flips the stored value); once consented, the only thing left to do in
-	// selected-only mode is pick apps, so surface the picker instead of leaving a
-	// dead toggle. Toggle OFF ⇒ persist immediately (no consent needed).
+	// The scope + app-list config stays reachable whenever the feature is on OR
+	// we're in Allow-list mode (so the user can always get to the allow-list to
+	// add an app and switch it back on). It greys out only when the feature is
+	// fully off in Black-list mode.
+	const configInteractive =
+		!disabled && (enabled || contextAppMode === "selected-only");
+	// Toggle ON ⇒ consent the first time, then the dialog's confirm path enables.
+	// In the Allow-list dead state, "on" can't take effect with no apps, so we
+	// surface the picker instead and let the first app flip the stored flag.
+	// Toggle OFF ⇒ disable immediately.
 	const handleToggle = (next: boolean): void => {
 		if (disabled) {
 			return;
 		}
-		if (next) {
-			if (!enabled) {
-				setDialogOpen(true);
-			} else if (selectedOnlyWithoutApps) {
-				requestAppsOpen();
-			}
+		if (!next) {
+			onCancel();
 			return;
 		}
-		onCancel();
+		if (!enabled) {
+			setDialogOpen(true);
+		} else if (selectedOnlyWithoutApps) {
+			requestAppsOpen();
+		}
 	};
-	// After consent, if we're in selected-only mode with no apps yet, open the
-	// picker so the freshly-on toggle doesn't sit visibly off with nothing to do.
+	// After consent: enable when the scope can actually capture (Black-list, or
+	// Allow-list that already has apps). In the Allow-list dead state we hold off
+	// enabling and open the picker — adding an app is what turns it on.
 	const handleConfirm = (): void => {
 		if (disabled) {
 			return;
 		}
-		onConfirm();
 		if (selectedOnlyWithoutApps) {
 			requestAppsOpen();
+			return;
 		}
+		onConfirm();
 	};
 	const handleScopeChange = (next: ContextAppMode): void => {
 		if (disabled) {
 			return;
 		}
-		updateGeneral({ contextAppMode: next });
 		if (next === "selected-only") {
+			// Allow-list mode is enabled iff ≥1 app is already selected; otherwise
+			// it stays off until the user picks one in the picker we open here.
+			updateGeneral({ contextAppMode: next, contextAwareness: hasAllowedApps });
 			requestAppsOpen();
+			return;
 		}
+		// Black-list mode always functions, so engaging it (re)enables the feature.
+		updateGeneral({ contextAppMode: next, contextAwareness: true });
 	};
 	return (
 		<SettingSection icon={EyeIcon} title={tg("contextAwarenessSection")}>
@@ -228,7 +237,7 @@ function ContextAwarenessSection({
 				<div
 					className={cn(
 						"transition-opacity duration-200 ease-out",
-						(disabled || !enabled) && "pointer-events-none opacity-40",
+						!configInteractive && "pointer-events-none opacity-40",
 					)}
 				>
 					<SettingField
@@ -246,14 +255,12 @@ function ContextAwarenessSection({
 						}
 						tooltip="Choose whether context awareness can read every app except blocked entries, or only apps you select."
 					>
-						<ElevatedSurface>
-							<Switcher
-								fullWidth
-								onChange={handleScopeChange}
-								options={CONTEXT_APP_MODE_OPTIONS}
-								value={contextAppMode}
-							/>
-						</ElevatedSurface>
+						<Switcher
+							fullWidth
+							onChange={handleScopeChange}
+							options={CONTEXT_APP_MODE_OPTIONS}
+							value={contextAppMode}
+						/>
 					</SettingField>
 					{contextAppMode === "selected-only" ? (
 						<ContextAllowedAppsSection
@@ -415,38 +422,40 @@ function DeterministicFormattingSection({
 				onReset={() => updateQuality(formattingDefaultsPatch())}
 				tooltip="Local formatting rules that run before any LLM cleanup."
 			>
-				<ElevatedSurface>
-					<CheckboxGroup checkedIndices={checkedIndices} className="w-full">
-						{FORMATTING_OPTIONS.map((option, index) => {
-							const checked =
-								option.key === "formatBasicPunctuationCasing"
-									? basicEnabled
-									: !disabled &&
-										formattingOptionKeys(option).every((key) => quality[key]);
-							const optionDisabled =
-								disabled ||
-								(option.key === "formatBasicPunctuationCasing" &&
-									nativeBasicFormatting);
-							const tooltip =
-								optionDisabled && disabledTooltip
-									? disabledTooltip
-									: optionDisabled && basicDisabledReason
-										? `${basicDisabledReason}, so WinSTT skips this deterministic pass.`
-										: option.tooltip;
-							return (
-								<CheckboxItem
-									checked={checked}
-									disabled={optionDisabled}
-									index={index}
-									key={option.key}
-									label={option.label}
-									onToggle={() => setOption(option, !checked)}
-									tooltip={tooltip}
-								/>
-							);
-						})}
-					</CheckboxGroup>
-				</ElevatedSurface>
+				<CheckboxGroup
+					checkedIndices={checkedIndices}
+					className="w-full"
+					framed
+				>
+					{FORMATTING_OPTIONS.map((option, index) => {
+						const checked =
+							option.key === "formatBasicPunctuationCasing"
+								? basicEnabled
+								: !disabled &&
+									formattingOptionKeys(option).every((key) => quality[key]);
+						const optionDisabled =
+							disabled ||
+							(option.key === "formatBasicPunctuationCasing" &&
+								nativeBasicFormatting);
+						const tooltip =
+							optionDisabled && disabledTooltip
+								? disabledTooltip
+								: optionDisabled && basicDisabledReason
+									? `${basicDisabledReason}, so WinSTT skips this deterministic pass.`
+									: option.tooltip;
+						return (
+							<CheckboxItem
+								checked={checked}
+								disabled={optionDisabled}
+								index={index}
+								key={option.key}
+								label={option.label}
+								onToggle={() => setOption(option, !checked)}
+								tooltip={tooltip}
+							/>
+						);
+					})}
+				</CheckboxGroup>
 			</SettingField>
 		</SettingSection>
 	);

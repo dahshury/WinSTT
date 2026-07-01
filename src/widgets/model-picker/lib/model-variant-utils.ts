@@ -25,11 +25,6 @@ export type ModelVariant = (typeof MODEL_VARIANTS)[number];
 
 export interface ModelVariantInfo {
 	bgClass: string;
-	borderClass: string;
-	description: string;
-	gradientClass: string;
-	icon?: string;
-	id: ModelVariant;
 	label: string;
 	textClass: string;
 }
@@ -44,60 +39,21 @@ export interface ModelVariantInfo {
 const NEUTRAL_VARIANT_CHROME = {
 	bgClass: "bg-foreground/[0.04]",
 	textClass: "text-foreground-muted",
-	borderClass: "border-border/60",
-	gradientClass: "from-foreground/[0.06] via-transparent to-transparent",
 } as const;
 
 const FREE_VARIANT_CHROME = {
 	bgClass: "bg-model-free/[0.08]",
 	textClass: "text-model-free/80",
-	borderClass: "border-model-free/20",
-	gradientClass: "from-model-free/[0.06] via-transparent to-transparent",
 } as const;
 
 export const MODEL_VARIANT_INFO: Record<ModelVariant, ModelVariantInfo> = {
-	free: {
-		id: "free",
-		label: "Free",
-		description: "Free version with possible rate limits",
-		...FREE_VARIANT_CHROME,
-	},
-	extended: {
-		id: "extended",
-		label: "Extended",
-		description: "Extended context window version",
-		...NEUTRAL_VARIANT_CHROME,
-	},
-	exacto: {
-		id: "exacto",
-		label: "Exacto",
-		description: "High precision/accuracy version",
-		...NEUTRAL_VARIANT_CHROME,
-	},
-	nitro: {
-		id: "nitro",
-		label: "Nitro",
-		description: "Higher throughput routing",
-		...NEUTRAL_VARIANT_CHROME,
-	},
-	floor: {
-		id: "floor",
-		label: "Floor",
-		description: "Lowest price routing",
-		...NEUTRAL_VARIANT_CHROME,
-	},
-	thinking: {
-		id: "thinking",
-		label: "Thinking",
-		description: "Reasoning/thinking enabled",
-		...NEUTRAL_VARIANT_CHROME,
-	},
-	online: {
-		id: "online",
-		label: "Online",
-		description: "Real-time/online capable",
-		...NEUTRAL_VARIANT_CHROME,
-	},
+	free: { label: "Free", ...FREE_VARIANT_CHROME },
+	extended: { label: "Extended", ...NEUTRAL_VARIANT_CHROME },
+	exacto: { label: "Exacto", ...NEUTRAL_VARIANT_CHROME },
+	nitro: { label: "Nitro", ...NEUTRAL_VARIANT_CHROME },
+	floor: { label: "Floor", ...NEUTRAL_VARIANT_CHROME },
+	thinking: { label: "Thinking", ...NEUTRAL_VARIANT_CHROME },
+	online: { label: "Online", ...NEUTRAL_VARIANT_CHROME },
 };
 
 export function hasVariant(modelId: string, variant: ModelVariant): boolean {

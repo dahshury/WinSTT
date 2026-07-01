@@ -12,7 +12,6 @@ import {
 	SettingField,
 	SettingSection,
 } from "@/entities/setting";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import type {
 	AudioSettings,
@@ -60,22 +59,21 @@ export function AdvancedSection({
 					}
 					tooltip={t("microphoneReleaseTooltip")}
 				>
-					<ElevatedSurface className="w-52" inline>
-						<Select
-							onChange={(v) =>
-								update({
-									microphoneRelease: v as
-										| "always"
-										| "immediate"
-										| "sec30"
-										| "min1"
-										| "min5",
-								})
-							}
-							options={microphoneReleaseOptions}
-							value={microphoneRelease}
-						/>
-					</ElevatedSurface>
+					<Select
+						className="w-52"
+						onChange={(v) =>
+							update({
+								microphoneRelease: v as
+									| "always"
+									| "immediate"
+									| "sec30"
+									| "min1"
+									| "min5",
+							})
+						}
+						options={microphoneReleaseOptions}
+						value={microphoneRelease}
+					/>
 				</SettingField>
 			</div>
 		</SettingSection>

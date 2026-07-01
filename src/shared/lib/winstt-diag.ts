@@ -3,7 +3,8 @@
  * so their console errors do not naturally reach Rust logs. This mirrors errors
  * through the app IPC diagnostics channel.
  */
-import { webviewDiagLog } from "@/shared/api/ipc-client";
+
+import { hasTauriRuntime } from "./tauri-runtime";
 
 const BENIGN_ERROR_MESSAGES = new Set([
 	"ResizeObserver loop completed with undelivered notifications.",
@@ -27,7 +28,12 @@ function report(
 	level: "info" | "warn" | "error",
 	message: string,
 ): void {
-	webviewDiagLog(label, level, message);
+	if (!hasTauriRuntime()) {
+		return;
+	}
+	void import("@/shared/api/ipc-client").then(({ webviewDiagLog }) => {
+		webviewDiagLog(label, level, message);
+	});
 }
 
 /** One-line lifecycle marker, e.g. "entry start" or "react mounted". */

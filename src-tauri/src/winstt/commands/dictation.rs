@@ -24,7 +24,6 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::managers::audio::AudioRecordingManager;
 use crate::winstt::commands::settings::read_settings;
-use crate::winstt::managers::diarization_manager::DiarizationManager;
 use crate::TranscriptionCoordinator;
 use std::sync::Arc;
 
@@ -111,7 +110,7 @@ pub fn winstt_get_parameter(app: AppHandle, parameter: String) -> serde_json::Va
 /// 04_* VAD plumb-through (when the live recorder config is mutable in place) has
 /// exactly one site to wire; until then it is a structural no-op that never panics.
 fn apply_endpoint_flag(_rm: &AudioRecordingManager, _parameter: &str, _enabled: bool) {
-    // SPIKE (04_* VAD): forward to the live VAD/endpointing config on the recorder.
+    // Forward to the live VAD/endpointing config on the recorder.
     // The PTT race fix only requires that this CALL succeed synchronously before the
     // microphone is opened — which it does. The behavioural effect lands with VAD.
 }
@@ -179,8 +178,9 @@ fn set_microphone(app: &AppHandle, on: bool) {
 }
 
 /// Toggle listen-mode diarization at runtime (request_diarization_toggle). Emits the
-/// diarization-toggle lifecycle events the renderer listens for. Diarization wiring
-/// proper is WU-9 (05_* listen/diar); this only flips the manager flag + reports it.
+/// diarization-toggle lifecycle events the renderer listens for. The diarization
+/// runtime has been removed, so this only acknowledges the persisted preference back
+/// to the renderer (the toggle is a UI-only state until a real engine is wired).
 fn request_diarization_toggle(app: &AppHandle, enabled: bool) {
     // Payload shapes are byte-identical to WinSTT's DiarizationTogglePayload
     // (`{ enabled }`) and DiarizationToggleCompletedPayload (`{ enabled, message }`).
@@ -188,17 +188,14 @@ fn request_diarization_toggle(app: &AppHandle, enabled: bool) {
         "stt:diarization-toggle-started",
         serde_json::json!({ "enabled": enabled }),
     );
-    let applied = app
-        .try_state::<Arc<DiarizationManager>>()
-        .is_some_and(|dm| dm.set_enabled(enabled));
-    let message = if applied {
+    let message = if enabled {
         "Diarization enabled"
     } else {
         "Diarization disabled"
     };
     let _ = app.emit(
         "stt:diarization-toggle-completed",
-        serde_json::json!({ "enabled": applied, "message": message }),
+        serde_json::json!({ "enabled": enabled, "message": message }),
     );
 }
 
@@ -213,7 +210,7 @@ fn request_diarization_toggle(app: &AppHandle, enabled: bool) {
 #[specta::specta]
 pub fn set_winstt_model(app: AppHandle, kind: String, name: String, quantization: Option<String>) {
     if kind == "realtime" {
-        // SPIKE (04_*): realtime worker model rebuild — owned by the realtime slice.
+        // Realtime worker model rebuild — owned by the realtime slice.
         return;
     }
     // Drive the FULL swap lifecycle (started → load → completed/failed + runtime-info push) so the
@@ -252,6 +249,16 @@ impl SttEvents {
         // WinSTT's own protected process — is never attenuated.
         crate::tray::on_tray_recording_start(app);
         let _ = app.emit("stt:recording-start", ());
+    }
+
+    /// `stt:capture-active` — the mic is confirmed OPEN and delivering audio: the recorder
+    /// just captured its FIRST frame of this recording (fired once per take). The renderer's
+    /// hotkey badge uses this to switch from the "opening mic…" state to a live recording
+    /// indicator, so the pulse reflects real capture rather than the keypress (which fires
+    /// before WASAPI has finished opening an asleep device).
+    pub fn capture_active(app: &AppHandle) {
+        log::info!("[stt] emit stt:capture-active (mic live)");
+        let _ = app.emit("stt:capture-active", ());
     }
 
     /// `stt:recording-stop` — the recorder stopped (VAD silence or PTT release). The

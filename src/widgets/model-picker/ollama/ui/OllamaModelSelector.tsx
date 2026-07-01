@@ -17,15 +17,22 @@ import {
 	ALL_AUTHORS_RAIL_ID,
 	buildAllAuthorsRailItem,
 } from "../../core/group-rail-items";
-import { ModelPicker } from "../../core/ModelPicker";
+import { ModelPicker, type ModelPickerProps } from "../../core/ModelPicker";
 import { useFavoriteSet } from "../../core/use-favorite-set";
 import { useModelPickerCloseGuard } from "../../lib/model-picker-close-guard";
 import { resolveProviderIcon } from "../../lib/provider-icons";
 import {
 	readPersistedSelectorState,
 	writePersistedSelectorState,
-} from "../../lib/persisted-selector-state";
+} from "@/shared/lib/persisted-selector-state";
 import { getOllamaPublisherBySlug } from "../lib/family-helpers";
+import {
+	EMPTY_OLLAMA_FILTER_STATE,
+	filterInstalledOllamaModels,
+	filterRecommendedOllamaModels,
+	isOllamaFilterState,
+	type OllamaFilterState,
+} from "../lib/filter-state";
 import {
 	OLLAMA_SORT_KEYS,
 	type OllamaSortValue,
@@ -47,7 +54,7 @@ import {
 	matchesInstalledQuery,
 } from "../lib/maker-groups";
 import { dedupeInstalledOllamaModels } from "../lib/quant-shelf-helpers";
-import { OllamaSortMenu } from "./OllamaSortMenu";
+import { OllamaFiltersMenu } from "./OllamaFiltersMenu";
 import { ListBody } from "./OllamaModelRows";
 import { buildQuantShelfDeps } from "./OllamaQuantShelf.helpers";
 import { OllamaTrigger, OllamaTriggerButton } from "./OllamaTrigger";
@@ -66,6 +73,7 @@ const scheduledTypedTagFetches = new Set<string>();
 
 interface PersistedOllamaSelectorUiState {
 	activeRailId: string;
+	filters: OllamaFilterState;
 	query: string;
 	sortKey: OllamaSortValue;
 }
@@ -73,6 +81,7 @@ interface PersistedOllamaSelectorUiState {
 const DEFAULT_PERSISTED_OLLAMA_SELECTOR_UI_STATE: PersistedOllamaSelectorUiState =
 	{
 		activeRailId: ALL_AUTHORS_RAIL_ID,
+		filters: EMPTY_OLLAMA_FILTER_STATE,
 		query: "",
 		sortKey: null,
 	};
@@ -94,7 +103,11 @@ function isPersistedOllamaSelectorUiState(
 	return (
 		typeof candidate.activeRailId === "string" &&
 		typeof candidate.query === "string" &&
-		isOllamaSortValue(candidate.sortKey)
+		isOllamaSortValue(candidate.sortKey) &&
+		// `filters` was added after this key first shipped: accept its absence so a
+		// pre-filter persisted blob keeps the user's rail/query/sort (the missing
+		// filters are normalised to the empty state on read below).
+		(candidate.filters === undefined || isOllamaFilterState(candidate.filters))
 	);
 }
 
@@ -112,6 +125,7 @@ function requestTypedTagFetch(
 }
 
 type OllamaUiAction =
+	| { type: "filtersChanged"; filters: OllamaFilterState }
 	| { type: "queryChanged"; query: string }
 	| { type: "railSelected"; railId: string }
 	| { type: "sortChanged"; sort: OllamaSortValue };
@@ -121,6 +135,8 @@ function ollamaUiReducer(
 	action: OllamaUiAction,
 ): PersistedOllamaSelectorUiState {
 	switch (action.type) {
+		case "filtersChanged":
+			return { ...state, filters: action.filters };
 		case "queryChanged":
 			return { ...state, query: action.query };
 		case "railSelected":
@@ -231,7 +247,98 @@ function OllamaDetachedTrigger({
 	);
 }
 
-function OllamaModelSelectorPanel({
+interface OllamaModelPickerSurfaceProps {
+	body: ReactNode;
+	disabled: boolean;
+	filter: (model: OllamaModel, query: string) => boolean;
+	filters: OllamaFilterState;
+	handleFiltersChange: (next: OllamaFilterState) => void;
+	handleOpenChange: NonNullable<
+		ModelPickerProps<OllamaModel, OllamaModel | null>["onOpenChange"]
+	>;
+	handleSelect: (name: string) => void;
+	handleSortChange: (next: OllamaSortValue) => void;
+	inline: boolean;
+	isLoading: boolean;
+	isQueryPending: boolean;
+	items: readonly OllamaModel[];
+	onQueryChange: (next: string) => void;
+	open: boolean;
+	popupHeightClass: string;
+	popupWidthClass: string;
+	query: string;
+	selected: OllamaModel | undefined;
+	selectedItemKey: string | undefined;
+	setPopupNode: (node: HTMLElement | null) => void;
+	showHardwareFilter: boolean;
+	sidebarSlot: ReactNode;
+	sortKey: OllamaSortValue;
+	triggerNode: ReactNode;
+}
+
+function OllamaModelPickerSurface({
+	body,
+	disabled,
+	filter,
+	filters,
+	handleFiltersChange,
+	handleOpenChange,
+	handleSelect,
+	handleSortChange,
+	inline,
+	isLoading,
+	isQueryPending,
+	items,
+	onQueryChange,
+	open,
+	popupHeightClass,
+	popupWidthClass,
+	query,
+	selected,
+	selectedItemKey,
+	setPopupNode,
+	showHardwareFilter,
+	sidebarSlot,
+	sortKey,
+	triggerNode,
+}: OllamaModelPickerSurfaceProps) {
+	return (
+		<ModelPicker<OllamaModel, OllamaModel | null>
+			disabled={disabled}
+			filter={filter}
+			filtersMenuSlot={
+				<OllamaFiltersMenu
+					filters={filters}
+					onFiltersChange={handleFiltersChange}
+					onSortChange={handleSortChange}
+					showHardwareFilter={showHardwareFilter}
+					sort={sortKey}
+				/>
+			}
+			inline={inline}
+			inputValue={query}
+			isItemEqualToValue={(a, b) => a?.name === b?.name}
+			isLoading={isLoading || isQueryPending}
+			items={items}
+			itemToStringLabel={(m) => m?.name ?? ""}
+			list={selectorListSlot(body)}
+			onInputValueChange={onQueryChange}
+			onOpenChange={handleOpenChange}
+			onValueChange={(next) => forwardOllamaSelection(next, handleSelect)}
+			open={open}
+			popupHeightClass={popupHeightClass}
+			popupRef={setPopupNode}
+			popupWidthClass={popupWidthClass}
+			searchPlaceholder="Search models or enter an Ollama tag"
+			selectedItemKey={selectedItemKey}
+			sidebarSlot={sidebarSlot}
+			trigger={triggerNode}
+			value={selected ?? null}
+		/>
+	);
+}
+
+function useOllamaModelSelectorPanelState({
 	disabled = false,
 	inline = false,
 	isLoading = false,
@@ -257,15 +364,18 @@ function OllamaModelSelectorPanel({
 	value,
 }: OllamaModelSelectorProps) {
 	const selected = models.find((m) => m.name === value);
-	const [persistedUiState] = useState(() =>
-		readPersistedSelectorState(
+	const [persistedUiState] = useState(() => {
+		const read = readPersistedSelectorState(
 			uiStorageKey,
 			isPersistedOllamaSelectorUiState,
 			DEFAULT_PERSISTED_OLLAMA_SELECTOR_UI_STATE,
-		),
-	);
+		);
+		// Normalise the optional (newly-added) `filters` to the empty state so the
+		// reducer state always carries a concrete filter object.
+		return { ...read, filters: read.filters ?? EMPTY_OLLAMA_FILTER_STATE };
+	});
 	const [uiState, dispatchUi] = useReducer(ollamaUiReducer, persistedUiState);
-	const { activeRailId, query, sortKey } = uiState;
+	const { activeRailId, filters, query, sortKey } = uiState;
 	const [open, setOpen] = useState(false);
 	const externalOpen = onOpenDetached != null;
 	const effectiveOpen = inline ? true : open;
@@ -295,12 +405,19 @@ function OllamaModelSelectorPanel({
 		onDiscardPull
 	);
 
-	const installedFiltered =
+	const installedSearchFiltered =
 		shouldBuildList && listQuery.trim()
 			? dedupedModels.filter((m) =>
 					matchesInstalledQuery(m, listQuery, descriptionsByBase),
 				)
 			: dedupedModels;
+	// `installedOnly` is a no-op here (installed models are all downloaded);
+	// `fitsHardwareOnly` prunes the ones the host can't run.
+	const installedFiltered = filterInstalledOllamaModels(
+		installedSearchFiltered,
+		filters,
+		systemFit,
+	);
 
 	const sortedInstalled =
 		shouldBuildList && sortKey !== null
@@ -325,10 +442,16 @@ function OllamaModelSelectorPanel({
 	const isCatalogModel = (name: string) =>
 		isCatalogBackedModel(catalogNameSet, name);
 
-	const recommendedVisible = computeRecommendedVisible(
-		shouldBuildList ? recommendedModels : undefined,
-		installedNameSet,
-		listQuery,
+	// `installedOnly` empties the recommended list (those cards are by definition
+	// not installed); `fitsHardwareOnly` prunes the ones the host can't run.
+	const recommendedVisible = filterRecommendedOllamaModels(
+		computeRecommendedVisible(
+			shouldBuildList ? recommendedModels : undefined,
+			installedNameSet,
+			listQuery,
+		),
+		filters,
+		systemFit,
 	);
 	const favoriteRecommended = recommendedVisible.filter((m) =>
 		isFavorite(m.name),
@@ -427,7 +550,9 @@ function OllamaModelSelectorPanel({
 			onDelete={onDelete}
 			onToggleFavorite={toggleFavorite}
 			shelfDeps={shelfDeps}
-			showTypedModelCard={allAuthorsSelected && canPullModels}
+			showTypedModelCard={
+				allAuthorsSelected && canPullModels && !filters.installedOnly
+			}
 			sortedInstalled={sortedInstalled}
 			sortKey={sortKey}
 			typedModelInfo={typedModelInfo}
@@ -450,6 +575,9 @@ function OllamaModelSelectorPanel({
 	};
 	const handleSortChange = (next: OllamaSortValue) => {
 		dispatchUi({ type: "sortChanged", sort: next });
+	};
+	const handleFiltersChange = (next: OllamaFilterState) => {
+		dispatchUi({ type: "filtersChanged", filters: next });
 	};
 	const sidebarSlot =
 		shouldBuildList && railItems.length > 1 ? (
@@ -494,38 +622,39 @@ function OllamaModelSelectorPanel({
 		/>
 	);
 
-	return (
-		<ModelPicker<OllamaModel, OllamaModel | null>
-			disabled={disabled}
-			filter={filter}
-			filtersMenuSlot={
-				<OllamaSortMenu onSortChange={handleSortChange} sort={sortKey} />
-			}
-			inline={inline}
-			inputValue={query}
-			isItemEqualToValue={(a, b) => a?.name === b?.name}
-			isLoading={isLoading || isQueryPending}
-			items={shouldBuildList ? dedupedModels : []}
-			itemToStringLabel={(m) => m?.name ?? ""}
-			list={selectorListSlot(body)}
-			onInputValueChange={(next) =>
-				dispatchUi({ type: "queryChanged", query: next })
-			}
-			onOpenChange={handleOpenChange}
-			onValueChange={(next) => forwardOllamaSelection(next, handleSelect)}
-			open={externalOpen ? false : open}
-			popupHeightClass={popupHeightClass}
-			popupRef={(node) => {
-				openGuard.setPopupNode(node);
-			}}
-			popupWidthClass={popupWidthClass}
-			searchPlaceholder="Search models or enter an Ollama tag"
-			selectedItemKey={soleActivePullName ?? (value || undefined)}
-			sidebarSlot={sidebarSlot}
-			trigger={triggerNode}
-			value={selected ?? null}
-		/>
-	);
+	const surfaceProps: OllamaModelPickerSurfaceProps = {
+		body,
+		disabled,
+		filter,
+		filters,
+		handleFiltersChange,
+		handleOpenChange,
+		handleSelect,
+		handleSortChange,
+		inline,
+		isLoading,
+		isQueryPending,
+		items: shouldBuildList ? dedupedModels : [],
+		onQueryChange: (next) => dispatchUi({ type: "queryChanged", query: next }),
+		open: externalOpen ? false : open,
+		popupHeightClass,
+		popupWidthClass,
+		query,
+		selected,
+		selectedItemKey: soleActivePullName ?? (value || undefined),
+		setPopupNode: openGuard.setPopupNode,
+		showHardwareFilter: !!systemFit,
+		sidebarSlot,
+		sortKey,
+		triggerNode,
+	};
+
+	return surfaceProps;
+}
+
+function OllamaModelSelectorPanel(props: OllamaModelSelectorProps) {
+	const surfaceProps = useOllamaModelSelectorPanelState(props);
+	return <OllamaModelPickerSurface {...surfaceProps} />;
 }
 
 export function OllamaModelSelector(props: OllamaModelSelectorProps) {

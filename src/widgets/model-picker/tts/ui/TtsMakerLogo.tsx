@@ -1,6 +1,6 @@
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "@/shared/lib/cn";
-import { publicAsset } from "../../lib/public-asset";
+import { publicAsset } from "@/shared/lib/public-asset";
 import {
 	getEngineConfig,
 	getEngineLogoSrc,

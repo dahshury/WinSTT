@@ -4,8 +4,7 @@ import { CheckmarkCircle02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect } from "react";
 import { useTranslations } from "use-intl";
-import { cn } from "@/shared/lib/cn";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { ToastShell } from "@/shared/ui/toast";
 import { clearableProviderLabel } from "../model/cloud-revert-decision";
 import { useRevertNoticeStore } from "../model/revert-notice-store";
 
@@ -22,7 +21,6 @@ export function CloudKeyRevertNotice() {
 	const notices = useRevertNoticeStore((s) => s.notices);
 	const dismiss = useRevertNoticeStore((s) => s.dismiss);
 	const t = useTranslations("integrations");
-	const level = Math.min(useSurface() + 3, 8);
 
 	useEffect(() => {
 		if (notices.length === 0) {
@@ -43,13 +41,12 @@ export function CloudKeyRevertNotice() {
 	return (
 		<div className="pointer-events-none fixed right-4 bottom-4 z-toast flex w-[420px] max-w-[90vw] flex-col gap-2">
 			{notices.map((notice) => (
-				<output
-					aria-live="polite"
-					className={cn(
-						"pointer-events-auto block rounded-md border border-success/40 p-3 shadow-lg",
-						surfaceBg(level),
-					)}
+				<ToastShell
+					ariaLive="polite"
+					as="output"
+					className="pointer-events-auto block"
 					key={notice.id}
+					tone="success"
 				>
 					<div className="flex items-start gap-2">
 						<HugeiconsIcon
@@ -64,7 +61,7 @@ export function CloudKeyRevertNotice() {
 							})}
 						</span>
 					</div>
-				</output>
+				</ToastShell>
 			))}
 		</div>
 	);

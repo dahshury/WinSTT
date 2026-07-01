@@ -37,7 +37,7 @@ export async function verifyCredentialCommand(
 	};
 }
 
-/** Stable response when the API key is blank — never hits IPC (CC 1). */
+/** Stable response when the API key is blank — never hits IPC. */
 export function missingKeyResponse(): VerifyResponse {
 	return { ok: false, code: "key_missing", message: "No API key configured" };
 }
@@ -50,7 +50,7 @@ export function errorMessage(err: unknown): string {
 /**
  * Probe the provider's auth endpoint via the main process. Returns the raw
  * `VerifyResponse` or a synthetic `{ok:false, code:"network"}` for transport
- * failures (CC 2 — one `try/catch`).
+ * failures.
  */
 export async function invokeVerify(
 	provider: IntegrationCloudProvider,
@@ -74,7 +74,7 @@ function persistVerifiedSetting(
 	});
 }
 
-/** Apply the per-status side effects when verify succeeds (CC 1). */
+/** Apply the per-status side effects when verify succeeds. */
 function commitVerifiedResult(provider: IntegrationCloudProvider): void {
 	useCredentialStatusStore
 		.getState()
@@ -82,7 +82,7 @@ function commitVerifiedResult(provider: IntegrationCloudProvider): void {
 	persistVerifiedSetting(provider, true);
 }
 
-/** Apply the per-status side effects for an offline (network) result (CC 1). */
+/** Apply the per-status side effects for an offline (network) result. */
 function commitOfflineResult(
 	provider: IntegrationCloudProvider,
 	message: string | undefined,
@@ -92,7 +92,7 @@ function commitOfflineResult(
 		.setStatus(provider, { status: "offline", lastError: message });
 }
 
-/** Apply the per-status side effects when the key is invalid (CC 1). */
+/** Apply the per-status side effects when the key is invalid. */
 function commitInvalidResult(
 	provider: IntegrationCloudProvider,
 	message: string | undefined,
@@ -106,7 +106,7 @@ function commitInvalidResult(
 /**
  * Route a probe response into the appropriate state mutation. Centralised
  * so the entry point stays linear and the routing rule is testable in
- * isolation (CC 3 — three branches: ok / network / invalid).
+ * isolation (three branches: ok / network / invalid).
  */
 export function applyVerifyResponse(
 	provider: IntegrationCloudProvider,

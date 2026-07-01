@@ -58,7 +58,7 @@ function gpuFits(available: number, required: number): boolean {
 }
 
 /** Early-exit assessment for zero size or missing system info — caller has
- *  no enough data to flag a problem, so we report "fits" with undefined target. */
+ *  not enough data to flag a problem, so we report "fits" with undefined target. */
 function unknownAssessment(sizeBytes: number): OllamaFitAssessment {
 	return {
 		fits: true,
@@ -149,12 +149,4 @@ export function assessOllamaFit(
 		return unknownAssessment(sizeBytes);
 	}
 	return assessOnHost(requiredRuntimeBytes(sizeBytes), systemInfo);
-}
-
-/** Convenience predicate matching the STT selector's `isUncomfortable` shape. */
-export function isOllamaUncomfortable(
-	sizeBytes: number,
-	systemInfo: SystemInfoEntry | null,
-): boolean {
-	return !assessOllamaFit(sizeBytes, systemInfo).fits;
 }

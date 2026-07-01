@@ -33,9 +33,8 @@ use ort::session::{Session, SessionInputValue};
 use ort::value::{Tensor, TensorRef};
 
 use super::{
-    execution_providers, kv_sort_key, num_cpus_best_effort as num_cpus, provider_label,
-    Accelerator, EngineConfig, EngineKind, SttError, SttResult, TranscribeOptions, Transcriber,
-    Transcription,
+    configure_session, kv_sort_key, num_cpus_best_effort as num_cpus, provider_label, Accelerator,
+    EngineConfig, EngineKind, SttError, SttResult, TranscribeOptions, Transcriber, Transcription,
 };
 
 /// onnx-asr `_DEFAULT_MAX_LENGTH` — a safety cap on a runaway greedy decode. Moonshine's
@@ -45,6 +44,15 @@ const MAX_LENGTH: usize = 448;
 
 /// SentencePiece "underscore" — the visible substitute for an ASCII space in a token piece.
 const SP_SPACE: char = '\u{2581}';
+
+/// A host-side ORT tensor extracted from a decoder output: its (signed) shape + flat f32 data.
+/// Used for the decoder logits and every carried `past_key_values.*` KV-cache entry, replacing the
+/// bare `(Vec<i64>, Vec<f32>)` tuples (and the `type_complexity` lints they triggered).
+#[derive(Clone)]
+struct OwnedTensor {
+    shape: Vec<i64>,
+    data: Vec<f32>,
+}
 
 /// A loaded Moonshine engine (`EngineKind::Moonshine`). Holds the three ORT sessions, the parsed
 /// SentencePiece tokenizer, and the per-load capability flags / cached graph layout.
@@ -216,7 +224,7 @@ impl MoonshineEngine {
         // ── step 0: decoder_model.onnx (no past) seeds the KV cache ──
         let (logits0, state) =
             self.first_decode_step(&enc_shape_usize, enc_data, &tokens, enc_frames)?;
-        let mut next = argmax_last(&logits0.1, &logits0.0);
+        let mut next = argmax_last(&logits0.data, &logits0.shape);
         tokens.push(next);
         // Carried KV cache host-side: name → (shape, data). Seeded by step 0's present.* outputs.
         let mut state = state;
@@ -224,7 +232,7 @@ impl MoonshineEngine {
         while tokens.len() < MAX_LENGTH && next != eos {
             let (logits, new_state) =
                 self.past_decode_step(next, &state, enc_data, &enc_shape_usize, enc_frames)?;
-            next = argmax_last(&logits.1, &logits.0);
+            next = argmax_last(&logits.data, &logits.shape);
             // EOS-sticky: once we emitted eos we stop (loop guard), but keep the value consistent.
             tokens.push(next);
             state = new_state;
@@ -233,19 +241,15 @@ impl MoonshineEngine {
         Ok(tokens)
     }
 
-    /// Run `decoder_model.onnx` (step 0, no past). Returns `((logits_shape, logits_data), state)`
-    /// where `state` maps each `past_key_values.*` name → its (shape, data) carried-forward cache.
-    #[expect(
-        clippy::type_complexity,
-        reason = "logits tuple + KV-cache state map mirror the ONNX decoder I/O shape"
-    )]
+    /// Run `decoder_model.onnx` (step 0, no past). Returns `(logits, state)` where `state` maps
+    /// each `past_key_values.*` name → its carried-forward KV-cache `OwnedTensor`.
     fn first_decode_step(
         &mut self,
         enc_shape_usize: &[usize],
         enc_data: &[f32],
         prompt: &[i64],
         enc_frames: usize,
-    ) -> SttResult<((Vec<i64>, Vec<f32>), HashMap<String, (Vec<i64>, Vec<f32>)>)> {
+    ) -> SttResult<(OwnedTensor, HashMap<String, OwnedTensor>)> {
         let input_ids =
             Tensor::from_array(([1usize, prompt.len()], prompt.to_vec().into_boxed_slice()))
                 .map_err(|e| SttError::Inference(format!("decoder input_ids: {e}")))?;
@@ -282,11 +286,14 @@ impl MoonshineEngine {
             let (s, d) = v
                 .try_extract_tensor::<f32>()
                 .map_err(|e| SttError::Inference(format!("logits extract: {e}")))?;
-            (s.to_vec(), d.to_vec())
+            OwnedTensor {
+                shape: s.to_vec(),
+                data: d.to_vec(),
+            }
         };
 
         // present.{layer}.{decoder|encoder}.{key|value} → past_key_values.<same suffix>.
-        let mut state: HashMap<String, (Vec<i64>, Vec<f32>)> =
+        let mut state: HashMap<String, OwnedTensor> =
             HashMap::with_capacity(self.present_output_names.len());
         for present_name in &self.present_output_names {
             let v = outputs.get(present_name.as_str()).ok_or_else(|| {
@@ -296,7 +303,13 @@ impl MoonshineEngine {
                 .try_extract_tensor::<f32>()
                 .map_err(|e| SttError::Inference(format!("{present_name} extract: {e}")))?;
             let past_name = present_name.replacen("present.", "past_key_values.", 1);
-            state.insert(past_name, (s.to_vec(), d.to_vec()));
+            state.insert(
+                past_name,
+                OwnedTensor {
+                    shape: s.to_vec(),
+                    data: d.to_vec(),
+                },
+            );
         }
 
         Ok((logits, state))
@@ -304,19 +317,15 @@ impl MoonshineEngine {
 
     /// Run `decoder_with_past_model.onnx` for one autoregressive step. Feeds the last token + the
     /// full KV state; carries the new decoder-self-attn present.* back, KEEPS the static encoder
-    /// K/V from `state`. Returns `((logits_shape, logits_data), new_state)`.
-    #[expect(
-        clippy::type_complexity,
-        reason = "logits tuple + KV-cache state map mirror the ONNX decoder I/O shape"
-    )]
+    /// K/V from `state`. Returns `(logits, new_state)`.
     fn past_decode_step(
         &mut self,
         next_token: i64,
-        state: &HashMap<String, (Vec<i64>, Vec<f32>)>,
+        state: &HashMap<String, OwnedTensor>,
         enc_data: &[f32],
         enc_shape_usize: &[usize],
         enc_frames: usize,
-    ) -> SttResult<((Vec<i64>, Vec<f32>), HashMap<String, (Vec<i64>, Vec<f32>)>)> {
+    ) -> SttResult<(OwnedTensor, HashMap<String, OwnedTensor>)> {
         let input_ids = Tensor::from_array(([1usize, 1usize], vec![next_token].into_boxed_slice()))
             .map_err(|e| SttError::Inference(format!("past input_ids: {e}")))?;
 
@@ -345,11 +354,11 @@ impl MoonshineEngine {
         }
         // Build owned past_key_values.* tensors from the carried state.
         for name in &self.past_input_names {
-            let (shape, data) = state
+            let kv = state
                 .get(name)
                 .ok_or_else(|| SttError::Inference(format!("missing carried KV {name}")))?;
-            let usize_shape: Vec<usize> = shape.iter().map(|&x| x.max(0) as usize).collect();
-            let t = Tensor::from_array((usize_shape, data.clone().into_boxed_slice()))
+            let usize_shape: Vec<usize> = kv.shape.iter().map(|&x| x.max(0) as usize).collect();
+            let t = Tensor::from_array((usize_shape, kv.data.clone().into_boxed_slice()))
                 .map_err(|e| SttError::Inference(format!("past kv {name}: {e}")))?;
             named.push((Cow::Owned(name.clone()), SessionInputValue::from(t)));
         }
@@ -366,7 +375,10 @@ impl MoonshineEngine {
             let (s, d) = v
                 .try_extract_tensor::<f32>()
                 .map_err(|e| SttError::Inference(format!("past logits extract: {e}")))?;
-            (s.to_vec(), d.to_vec())
+            OwnedTensor {
+                shape: s.to_vec(),
+                data: d.to_vec(),
+            }
         };
 
         // Carry over: start from the previous state (keeps the static encoder K/V) and overwrite
@@ -380,7 +392,13 @@ impl MoonshineEngine {
                 .try_extract_tensor::<f32>()
                 .map_err(|e| SttError::Inference(format!("{present_name} extract: {e}")))?;
             let past_name = present_name.replacen("present.", "past_key_values.", 1);
-            new_state.insert(past_name, (s.to_vec(), d.to_vec()));
+            new_state.insert(
+                past_name,
+                OwnedTensor {
+                    shape: s.to_vec(),
+                    data: d.to_vec(),
+                },
+            );
         }
 
         Ok((logits, new_state))
@@ -603,14 +621,13 @@ impl MoonshineTokenizer {
 /// for this tiny model). Moonshine keeps full optimization (no fp16 EXTENDED downgrade — it isn't
 /// in INT8_PREFERRED / DML_INCOMPATIBLE and the default export is fp32).
 fn build_session(path: &Path, intra: usize) -> SttResult<Session> {
-    let mut builder = Session::builder()
-        .map_err(|e| SttError::SessionCreate(format!("session builder: {e}")))?
-        .with_execution_providers(execution_providers(&[Accelerator::Cpu]))
-        .map_err(|e| SttError::SessionCreate(format!("set providers: {e}")))?
-        .with_optimization_level(GraphOptimizationLevel::All)
-        .map_err(|e| SttError::SessionCreate(format!("opt level: {e}")))?
-        .with_intra_threads(intra)
-        .map_err(|e| SttError::SessionCreate(format!("intra threads: {e}")))?;
+    let mut builder = configure_session(
+        GraphOptimizationLevel::All,
+        Some(intra),
+        false,
+        Some(&[Accelerator::Cpu]),
+    )
+    .map_err(SttError::SessionCreate)?;
     builder
         .commit_from_file(path)
         .map_err(|e| SttError::SessionCreate(format!("commit {}: {e}", path.display())))
@@ -638,15 +655,7 @@ fn argmax_last(data: &[f32], shape: &[i64]) -> i64 {
     };
     let last_off = seq.saturating_sub(1) * vocab;
     let slice = &data[last_off..(last_off + vocab).min(data.len())];
-    let mut best = 0usize;
-    let mut best_v = f32::NEG_INFINITY;
-    for (i, &v) in slice.iter().enumerate() {
-        if v > best_v {
-            best_v = v;
-            best = i;
-        }
-    }
-    best as i64
+    super::families::argmax_1d(slice).0 as i64
 }
 
 #[cfg(test)]

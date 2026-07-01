@@ -13,17 +13,39 @@
    --color-foreground stack. */
 .dark,
 :root {
-  /* Brand tokens — read by inline styles via var(--brand-*) */
-  --brand-accent: oklch(62% 0.19 260);
-  --brand-accent-hover: oklch(70% 0.155 255);
+  /* ── Brand palette — the SINGLE source of truth for every docs color.
+     Each token mirrors a WinSTT app token (src/app/styles/globals.css). Every
+     color in the docs must be one of these tokens or a `color-mix(in oklab,
+     var(--token) N%, transparent)` alpha of one — NEVER a raw oklch()/hex/rgb
+     in a component or class. To add a shade, extend this list; do not inline a
+     literal. Neutral black/white shadow & highlight alphas are the only
+     exception (they are not brand colors). */
+  --brand-accent: oklch(62% 0.19 260); /* app --color-accent */
+  --brand-accent-hover: oklch(70% 0.155 255); /* app --color-accent-hover — also "accent text" on dark */
   --brand-accent-soft: oklch(62% 0.19 260 / 0.08);
-  --brand-accent-glow: oklch(62% 0.19 260 / 0.15);
-  --brand-accent-fg: oklch(7.5% 0.015 265);
-  --brand-teal: oklch(71% 0.13 245);
-  --brand-success: oklch(68% 0.17 150);
+  --brand-accent-glow: oklch(62% 0.19 260 / 0.12); /* aligned to app --color-accent-glow */
+  --brand-accent-fg: oklch(7.5% 0.015 265); /* dark text on a solid accent fill */
+  --brand-teal: oklch(71% 0.13 245); /* app --color-teal */
+  --brand-teal-hover: oklch(77% 0.1 245); /* app --color-teal-hover — "teal text" on dark */
+  --brand-success: oklch(68% 0.17 150); /* app --color-success */
   --brand-success-soft: oklch(68% 0.17 150 / 0.1);
+  --brand-warning: oklch(80% 0.17 90); /* app --color-warning */
+  --brand-error: oklch(59% 0.22 25); /* app --color-error */
 
-  /* Surface scale — blue-tinted oklch, same hue as the app */
+  /* Recording-mode accents — mirror app --color-recording-mode-* and the
+     visualizer bridge: ptt=accent, toggle=warning, listen=success, wakeword=orange. */
+  --brand-mode-ptt: var(--brand-accent);
+  --brand-mode-toggle: var(--brand-warning);
+  --brand-mode-listen: var(--brand-success);
+  --brand-mode-wakeword: oklch(68% 0.19 48);
+
+  /* Diarization speaker accents — mirror app --color-speaker-1 / --color-speaker-2. */
+  --brand-speaker-1: oklch(74.6% 0.16 232);
+  --brand-speaker-2: oklch(74.6% 0.16 58);
+
+  /* Surface scale — every value is an app palette token:
+     nav≈--color-overlay-surface(5.5%), 0=--color-surface(7.5%),
+     1=--color-surface-primary(9.5%), 2/3/4 = app --color-surface-2/3/4. */
   --surface-0: oklch(7.5% 0.015 265);
   /* Nav bar — a touch darker than the page (surface-0) so the top bar reads as
      a distinct band rather than blending into the background. */
@@ -33,7 +55,8 @@
   --surface-3: oklch(16% 0.015 265);
   --surface-4: oklch(20% 0.013 265);
 
-  /* Foreground scale — blue-tinted whites */
+  /* Foreground scale — blue-tinted whites, same hue/chroma family as the app
+     --color-foreground stack (--fg is the 86% intermediate used for body copy). */
   --fg-strong: oklch(94% 0.015 265);
   --fg: oklch(86% 0.02 263);
   --fg-secondary: oklch(73% 0.025 260);
@@ -63,14 +86,14 @@
   --color-fd-popover-foreground: var(--fg);
   --color-fd-card: var(--surface-1);
   --color-fd-card-foreground: var(--fg-strong);
-  --color-fd-border: oklch(19% 0.015 260 / 0.55);
+  --color-fd-border: color-mix(in oklab, var(--border) 55%, transparent);
   --color-fd-primary: var(--brand-accent);
   --color-fd-primary-foreground: var(--brand-accent-fg);
   --color-fd-secondary: var(--surface-2);
   --color-fd-secondary-foreground: var(--fg-strong);
   --color-fd-accent: var(--surface-3);
   --color-fd-accent-foreground: var(--fg-strong);
-  --color-fd-ring: oklch(70% 0.18 260);
+  --color-fd-ring: var(--brand-accent);
 }
 
 /* Landing-page top bar: override fumadocs' `bg-fd-background/80` (which equals
@@ -136,7 +159,7 @@ body::before {
 
 ::selection {
   color: var(--fg-strong);
-  background: oklch(62% 0.19 260 / 0.3);
+  background: color-mix(in oklab, var(--brand-accent) 30%, transparent);
 }
 
 [data-theme-toggle],
@@ -303,8 +326,8 @@ button[aria-label="Toggle Theme"] {
   padding: 1px;
   background: linear-gradient(
     135deg,
-    oklch(62% 0.19 260 / 0) 0%,
-    oklch(62% 0.19 260 / 0) 100%
+    color-mix(in oklab, var(--brand-accent) 0%, transparent) 0%,
+    color-mix(in oklab, var(--brand-accent) 0%, transparent) 100%
   );
   mask:
     linear-gradient(#fff 0 0) content-box,
@@ -315,20 +338,20 @@ button[aria-label="Toggle Theme"] {
 }
 
 .feature-card:hover {
-  border-color: oklch(62% 0.19 260 / 0.25) !important;
-  box-shadow: 0 0 30px -10px oklch(62% 0.19 260 / 0.18);
+  border-color: color-mix(in oklab, var(--brand-accent) 25%, transparent) !important;
+  box-shadow: 0 0 30px -10px color-mix(in oklab, var(--brand-accent) 18%, transparent);
 }
 
 .feature-card:hover::before {
   background: linear-gradient(
     135deg,
-    oklch(62% 0.19 260 / 0.28) 0%,
-    oklch(62% 0.19 260 / 0) 50%,
-    oklch(62% 0.19 260 / 0.14) 100%
+    color-mix(in oklab, var(--brand-accent) 28%, transparent) 0%,
+    color-mix(in oklab, var(--brand-accent) 0%, transparent) 50%,
+    color-mix(in oklab, var(--brand-accent) 14%, transparent) 100%
   );
 }
 
 .feature-card:hover .feature-icon {
-  background: oklch(62% 0.19 260 / 0.16) !important;
-  box-shadow: 0 0 20px oklch(62% 0.19 260 / 0.12);
+  background: color-mix(in oklab, var(--brand-accent) 16%, transparent) !important;
+  box-shadow: 0 0 20px color-mix(in oklab, var(--brand-accent) 12%, transparent);
 }

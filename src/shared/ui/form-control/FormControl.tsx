@@ -17,6 +17,11 @@ export interface FormControlProps {
 	controlTooltip?: ReactNode | undefined;
 	error?: string | undefined;
 	label?: string | undefined;
+	/**
+	 * Glyph rendered immediately before the label text (e.g. a provider brand
+	 * mark). Inherits the label's text color via `currentColor`.
+	 */
+	labelIcon?: ReactNode;
 	/** Element rendered inline next to the label (e.g. a toggle) */
 	labelAddon?: ReactNode;
 	/**
@@ -38,10 +43,12 @@ export interface FormControlProps {
 
 function Header({
 	label,
+	labelIcon,
 	labelTrailing,
 	tooltip,
 }: {
 	label?: string | undefined;
+	labelIcon?: ReactNode;
 	labelTrailing?: ReactNode;
 	tooltip?: string | undefined;
 }) {
@@ -50,6 +57,11 @@ function Header({
 	}
 	return (
 		<div className="flex items-center gap-1.5">
+			{labelIcon ? (
+				<span className="flex shrink-0 items-center text-foreground">
+					{labelIcon}
+				</span>
+			) : null}
 			<Field.Label className="font-medium text-body text-foreground leading-tight">
 				{label}
 			</Field.Label>
@@ -124,6 +136,7 @@ export function FormControl({
 	error,
 	tooltip,
 	disabled,
+	labelIcon,
 	labelAddon,
 	labelTrailing,
 	layout = "stacked",
@@ -155,6 +168,7 @@ export function FormControl({
 				<div className="flex min-w-0 flex-1 flex-col gap-1">
 					<Header
 						label={label}
+						labelIcon={labelIcon}
 						labelTrailing={labelTrailing}
 						tooltip={tooltip}
 					/>
@@ -192,6 +206,7 @@ export function FormControl({
 				<div className="flex min-w-0 flex-1 flex-col gap-1">
 					<Header
 						label={label}
+						labelIcon={labelIcon}
 						labelTrailing={labelTrailing}
 						tooltip={tooltip}
 					/>

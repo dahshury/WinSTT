@@ -1,12 +1,10 @@
 import { type DragEvent, useState } from "react";
-import type { useTranslations } from "use-intl";
 import { getFilePath } from "@/shared/api/ipc-client";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 
 const ACCEPTED_EXTENSIONS = ["wav", "mp3"];
 const MAX_DURATION_SECONDS = 3;
 const TRAILING_EXTENSION_RE = /\.[^.]+$/;
-
-type TranslatorFn = ReturnType<typeof useTranslations>;
 
 async function getAudioDuration(file: File): Promise<number> {
 	const buffer = await file.arrayBuffer();
@@ -26,7 +24,7 @@ function hasValidExtension(name: string): boolean {
 
 async function checkDuration(
 	file: File,
-	t: TranslatorFn,
+	t: TranslateFn,
 ): Promise<string | null> {
 	try {
 		const duration = await getAudioDuration(file);
@@ -37,7 +35,8 @@ async function checkDuration(
 			});
 		}
 		return null;
-	} catch {
+	} catch (error) {
+		console.warn("[sound-drop] decodeAudioData failed:", error);
 		return t("soundFileUnreadable");
 	}
 }
@@ -49,7 +48,7 @@ type DropValidation =
 /** Extension + duration acceptance checks. Returns an error string or null. */
 async function fileContentError(
 	file: File,
-	t: TranslatorFn,
+	t: TranslateFn,
 ): Promise<string | null> {
 	if (!hasValidExtension(file.name)) {
 		return t("soundFileDropError");
@@ -64,7 +63,7 @@ async function fileContentError(
  */
 async function validateDroppedFile(
 	file: File,
-	t: TranslatorFn,
+	t: TranslateFn,
 ): Promise<DropValidation> {
 	const contentError = await fileContentError(file, t);
 	if (contentError) {
@@ -83,7 +82,7 @@ async function validateDroppedFile(
 
 interface UseSoundDropOptions {
 	onAdd: (sourcePath: string, displayName?: string) => Promise<unknown>;
-	t: TranslatorFn;
+	t: TranslateFn;
 }
 
 interface UseSoundDropReturn {

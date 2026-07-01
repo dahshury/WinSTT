@@ -56,8 +56,8 @@ pub fn is_onboarding_active() -> bool {
 /// from `is_onboarding_active`, which the recording-mode demo lifts early to enable
 /// dictation — this stays true until `onboarding_finish` HIDES the window. Used to
 /// gate the main-window / settings entry points so the wizard can't be bypassed via
-/// the tray or a renderer command. Survives the dev `WINSTT_FORCE_ONBOARDING` case
-/// (which has `onboarded == true`) since it keys off the live window, not the flag.
+/// the tray or a renderer command. It keys off the live window instead of the
+/// persisted `onboarded` flag.
 /// `onboarding_finish` hides the wizard BEFORE it shows the main window, so the
 /// completion path is never blocked by this check.
 pub fn is_onboarding_in_progress(app: &AppHandle) -> bool {

@@ -17,7 +17,7 @@ const DEFAULT_ESCAPE_BLOCKING_LAYER_SELECTOR = [
 	'[role="menu"]',
 	'[role="listbox"]',
 	'[data-slot="model-filters-menu-content"]',
-	'[data-slot="ollama-sort-menu-content"]',
+	'[data-slot="ollama-filters-menu-content"]',
 	'[data-slot="stt-filters-menu-content"]',
 ].join(",");
 

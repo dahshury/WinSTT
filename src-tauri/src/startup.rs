@@ -211,8 +211,8 @@ fn force_process_exit_success() -> ! {
 
 fn spawn_exit_watchdog() {
     std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_millis(3000));
-        log::warn!("Graceful exit stalled past 3s - forcing process exit.");
+        std::thread::sleep(std::time::Duration::from_millis(8000));
+        log::warn!("Graceful exit stalled past 8s - forcing process exit.");
         force_process_exit_success();
     });
 }

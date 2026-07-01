@@ -32,7 +32,7 @@ export function resolvePublicAsset(
 
 /**
  * Resolve a `public/` asset referenced by an absolute `/foo.png` path so it
- * loads under both the dev server (http) and a packaged the reference build
+ * loads under both the dev server (http) and a packaged build
  * (`file://`).
  *
  * Why this is needed: `vite.config.ts` sets `base: "./"`, so Vite emits

@@ -8,6 +8,7 @@ import {
 	onDeviceSwitchFailed,
 	settingsSave,
 } from "@/shared/api/ipc-client";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 
 /**
  * Pure rule for whether a saved input-device index has gone stale and must
@@ -134,7 +135,7 @@ export function useDeviceSwitchFeedback(): void {
 			// its 300ms debounce — both on disk and via a `settings:changed`
 			// broadcast that cancels the panel's pending save.
 			settingsSave({ audio: useSettingsStore.getState().settings.audio });
-			refresh().catch(() => undefined);
+			fireAndForget(refresh(), "deviceSwitchFeedback.refresh");
 			showEphemeral(t("deviceSwitchFailed", { reason: errorMessage }));
 		});
 		return unsub;

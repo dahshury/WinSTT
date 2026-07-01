@@ -65,8 +65,8 @@ export function OllamaModelManagerDialog(props: OllamaModelManagerDialogProps) {
 		const target = pendingDelete;
 		actions.setPendingDelete(null);
 		actions.setDeletingName(target);
-		// React Compiler can't lower try/finally without a catch
-		// (BuildHIR::lowerStatement TODO), so we capture and rethrow.
+		// React Compiler cannot lower try/finally without a catch, so capture and
+		// rethrow after resetting dialog state.
 		let caught: unknown;
 		try {
 			await deleteModel(target);

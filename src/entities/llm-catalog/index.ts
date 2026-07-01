@@ -7,7 +7,7 @@ export {
 	type PresetLevel,
 	TONE_GROUP,
 } from "@/shared/lib/preset-prompts";
-export { assessOllamaFit } from "./lib/hardware-fit";
+export { assessOllamaFit, type OllamaFitAssessment } from "./lib/hardware-fit";
 export { RECOMMENDED_OLLAMA_MODELS } from "./lib/recommended-models";
 export {
 	type PausedPullState,

@@ -4,7 +4,7 @@ import type {
 	PaginatedHistory,
 	RecordingRetention,
 } from "../model/transcription-history";
-import { effectiveText, entryWordCount, formatEntryTimestamp } from "./format";
+import { effectiveText, formatEntryTimestamp } from "./format";
 
 // Touch the unused exported types so knip + tsc recognise them as part of the
 // entity's documented public surface (consumed by the renderer-side adapter +
@@ -56,29 +56,6 @@ describe("effectiveText", () => {
 			postProcessedText: "   ",
 		});
 		expect(effectiveText(entry)).toBe("raw");
-	});
-});
-
-describe("entryWordCount", () => {
-	test("counts whitespace-delimited tokens", () => {
-		expect(
-			entryWordCount(makeEntry({ transcriptionText: "one two three" })),
-		).toBe(3);
-	});
-
-	test("returns 0 for empty/whitespace-only text", () => {
-		expect(entryWordCount(makeEntry({ transcriptionText: "   " }))).toBe(0);
-	});
-
-	test("uses post-processed text when present", () => {
-		expect(
-			entryWordCount(
-				makeEntry({
-					transcriptionText: "one",
-					postProcessedText: "one two three four",
-				}),
-			),
-		).toBe(4);
 	});
 });
 

@@ -1,6 +1,5 @@
 import {
 	AlertCircleIcon,
-	Cancel01Icon,
 	DatabaseLockedIcon,
 	FileBlockIcon,
 	HardDriveIcon,
@@ -19,7 +18,13 @@ import {
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { truncate } from "@/shared/lib/truncate";
 import { Button } from "@/shared/ui/button";
+import {
+	ToastDismissButton,
+	ToastShell,
+	useAutoDismiss,
+} from "@/shared/ui/toast";
 import { useSwapNotifications } from "../model/swap-notifications-store";
 
 const AUTO_DISMISS_MS = 8000;
@@ -51,13 +56,6 @@ function categoryIcon(category: ModelSwapFailedCategory): IconSvgElement {
 	}
 }
 
-function truncate(text: string, max: number): string {
-	if (text.length <= max) {
-		return text;
-	}
-	return `${text.slice(0, max).trimEnd()}…`;
-}
-
 /**
  * Transient toast for model-swap failures. Mounts once at the layout
  * root and subscribes to ``onModelSwapFailed`` — every failure surface
@@ -79,9 +77,7 @@ export function SwapFailureToast() {
 	const show = useSwapNotifications((s) => s.show);
 	const clear = useSwapNotifications((s) => s.clear);
 	const t = useTranslations("swapFailure");
-	const base = useSurface();
-	const level = Math.min(base + 3, 8);
-	const detailsLevel = Math.min(base + 4, 8);
+	const detailsLevel = Math.min(useSurface() + 4, 8);
 
 	useEffect(() => {
 		const offFailed = onModelSwapFailed((payload) => {
@@ -105,13 +101,7 @@ export function SwapFailureToast() {
 		return () => offFailed();
 	}, [show]);
 
-	useEffect(() => {
-		if (!current) {
-			return;
-		}
-		const id = window.setTimeout(clear, AUTO_DISMISS_MS);
-		return () => window.clearTimeout(id);
-	}, [current, clear]);
+	useAutoDismiss(current, clear, AUTO_DISMISS_MS);
 
 	if (!current) {
 		return null;
@@ -123,13 +113,11 @@ export function SwapFailureToast() {
 	};
 
 	return (
-		<div
-			aria-live="assertive"
-			className={cn(
-				"fixed right-4 bottom-4 z-toast w-[420px] max-w-[90vw] rounded-md border border-error/40 p-3 shadow-lg",
-				surfaceBg(level),
-			)}
+		<ToastShell
+			ariaLive="assertive"
+			className="fixed right-4 bottom-4 z-toast w-[420px] max-w-[90vw]"
 			role="alert"
+			tone="error"
 		>
 			<div className="mb-1 flex items-start gap-2">
 				<HugeiconsIcon
@@ -146,13 +134,7 @@ export function SwapFailureToast() {
 						{current.reason}
 					</span>
 				</div>
-				<Button
-					aria-label={t("dismiss")}
-					className="rounded p-1 text-foreground-muted hover:bg-surface-tertiary hover:text-foreground"
-					onClick={clear}
-				>
-					<HugeiconsIcon icon={Cancel01Icon} size={12} />
-				</Button>
+				<ToastDismissButton label={t("dismiss")} onClick={clear} />
 			</div>
 			{current.detail ? (
 				<details className="mt-1 ml-6">
@@ -176,6 +158,6 @@ export function SwapFailureToast() {
 					{t("retry")}
 				</Button>
 			</div>
-		</div>
+		</ToastShell>
 	);
 }

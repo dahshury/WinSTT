@@ -4,17 +4,17 @@
 use std::collections::HashSet;
 use tauri::AppHandle;
 
-use super::persistence::read_settings;
 use super::{apply_settings_patch, PartialWinsttSettings};
 use crate::winstt::llm::{DictationSideEffects, LearnedSnippet, SuggestedModifierPreset};
 use crate::winstt::settings_schema::{CustomModifier, DictionaryEntry, SnippetEntry};
+use crate::winstt::settings_store::read_settings;
 
 fn normalize_dictionary_term(term: &str) -> String {
     term.trim().to_lowercase()
 }
 
-fn auto_dictionary_entry_id(term: &str, index: usize) -> String {
-    let slug = term
+fn slugify_or(value: &str, fallback: &str) -> String {
+    let slug = value
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() {
@@ -28,15 +28,23 @@ fn auto_dictionary_entry_id(term: &str, index: usize) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("-");
-    let slug = if slug.is_empty() {
-        "term".to_string()
+    if slug.is_empty() {
+        fallback.to_string()
     } else {
         slug
-    };
+    }
+}
+
+fn auto_learning_entry_id(kind: &str, value: &str, index: usize, fallback: &str) -> String {
+    let slug = slugify_or(value, fallback);
     format!(
-        "auto-dict-{}-{index}-{slug}",
+        "auto-{kind}-{}-{index}-{slug}",
         chrono::Utc::now().timestamp_millis()
     )
+}
+
+fn auto_dictionary_entry_id(term: &str, index: usize) -> String {
+    auto_learning_entry_id("dict", term, index, "term")
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -125,29 +133,7 @@ fn normalize_snippet_trigger(trigger: &str) -> String {
 }
 
 fn auto_snippet_entry_id(trigger: &str, index: usize) -> String {
-    let slug = trigger
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-    let slug = if slug.is_empty() {
-        "snippet".to_string()
-    } else {
-        slug
-    };
-    format!(
-        "auto-snippet-{}-{index}-{slug}",
-        chrono::Utc::now().timestamp_millis()
-    )
+    auto_learning_entry_id("snippet", trigger, index, "snippet")
 }
 
 fn append_auto_snippets(
@@ -192,29 +178,7 @@ fn normalize_modifier_identity(name: &str, prompt: &str) -> String {
 }
 
 fn auto_modifier_entry_id(name: &str, index: usize) -> String {
-    let slug = name
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-    let slug = if slug.is_empty() {
-        "modifier".to_string()
-    } else {
-        slug
-    };
-    format!(
-        "auto-modifier-{}-{index}-{slug}",
-        chrono::Utc::now().timestamp_millis()
-    )
+    auto_learning_entry_id("modifier", name, index, "modifier")
 }
 
 fn append_auto_modifier_presets(

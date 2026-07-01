@@ -1,4 +1,5 @@
 import type { IconSvgElement } from "@hugeicons/react";
+import type { ReactNode } from "react";
 import type { DemoName } from "@/shared/config/demo-preview";
 
 export interface SwitcherOption<T extends string = string> {
@@ -22,6 +23,10 @@ export interface SwitcherOption<T extends string = string> {
 	disabled?: boolean;
 	/** Optional leading icon shown before the label */
 	icon?: IconSvgElement;
+	/** Optional leading icon as an arbitrary node (e.g. a brand-logo SVG with
+	 *  `currentColor`). Takes precedence over `icon` when both are set — lets a
+	 *  provider toggle show its actual mark instead of a generic glyph. */
+	iconNode?: ReactNode;
 	label: string;
 	/** Optional click handler invoked when the badge is pressed. Makes the
 	 * badge render as a button instead of a presentational span. */

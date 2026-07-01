@@ -1,19 +1,12 @@
 import { ComputerIcon, VolumeHighIcon } from "@hugeicons/core-free-icons";
 import { useEffect, useState } from "react";
-import { z } from "zod";
 import { useSettingsStore } from "@/entities/setting";
 import { loopbackListDevices } from "@/shared/api/ipc-client";
 import type { SelectOption } from "@/shared/ui/select";
-
-const loopbackDeviceSchema = z.object({
-	index: z.number().int(),
-	name: z.string(),
-	defaultSampleRate: z.number(),
-	maxOutputChannels: z.number(),
-	isDefault: z.boolean().optional(),
-});
-
-type LoopbackDevice = z.infer<typeof loopbackDeviceSchema>;
+import {
+	type LoopbackDevice,
+	parseLoopbackDevices,
+} from "../lib/loopback-devices";
 
 /**
  * Fetches loopback audio devices via IPC when in "listen" recording mode,
@@ -23,17 +16,6 @@ interface UseLoopbackDevicesReturn {
 	currentId: string;
 	handleChange: (v: string) => void;
 	options: SelectOption[];
-}
-
-function parseDevices(devices: readonly unknown[]): LoopbackDevice[] {
-	const typed: LoopbackDevice[] = [];
-	for (const d of devices) {
-		const parsed = loopbackDeviceSchema.safeParse(d);
-		if (parsed.success) {
-			typed.push(parsed.data);
-		}
-	}
-	return typed;
 }
 
 function buildLoopbackOptions(typed: LoopbackDevice[]): {
@@ -86,7 +68,7 @@ export function applyDevicesResult(params: ApplyDevicesParams) {
 			console.warn("[useLoopbackDevices] Invalid devices response:", devices);
 			return;
 		}
-		const typed = parseDevices(devices);
+		const typed = parseLoopbackDevices(devices);
 		const { options: opts, defaultIndex: defIdx } = buildLoopbackOptions(typed);
 		params.setDefaultIndex(defIdx);
 		params.setOptions(opts);

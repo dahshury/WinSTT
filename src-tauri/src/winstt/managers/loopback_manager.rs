@@ -38,8 +38,8 @@ use crate::audio_toolkit::vad::{
     SileroVad, SmoothedVad, VadFrame, VoiceActivityDetector, VAD_FRAME_SAMPLES,
 };
 use crate::winstt::commands::dictation::SttEvents;
-use crate::winstt::commands::settings::read_settings_raw;
 use crate::winstt::loopback::{DeviceInfo, LoopbackCapture};
+use crate::winstt::settings_store::read_settings_raw;
 use crate::winstt::sync_ext::MutexExt;
 
 /// Silence (seconds) after speech that clears the current loopback live caption.

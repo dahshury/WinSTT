@@ -261,7 +261,7 @@ pub fn espeak_lang_for(lang: &str) -> &'static str {
 // In-process espeak-ng FFI backend (the FAST + PARITY path)
 // ---------------------------------------------------------------------------
 //
-// The the reference app does NOT shell out to an `espeak-ng` CLI — it loads the
+// The upstream reference app does NOT shell out to an `espeak-ng` CLI — it loads the
 // espeak-ng SHARED LIBRARY (`espeak-ng.dll`, shipped by the `espeakng_loader`
 // PyPI package) and calls `espeak_TextToPhonemes` IN-PROCESS via ctypes (see
 // `phonemizer/backend/espeak/{wrapper,api}.py` + `kokoro_onnx/tokenizer.py`).

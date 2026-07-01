@@ -30,9 +30,21 @@ use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
 use crate::command_auth;
-use crate::winstt::observability::{self, ObservabilityIssue};
+use crate::winstt::observability::{self, IssueBuilder, ObservabilityIssue};
 
 const LOGS_FOLDER_ALLOWED_WINDOWS: &[&str] = &["settings"];
+
+fn record_diag_failure(
+    app: &AppHandle,
+    operation: &'static str,
+    summary: &'static str,
+    detail: impl Into<String>,
+) {
+    IssueBuilder::new("diagnostics", operation, summary)
+        .detail(detail)
+        .user_visible(true)
+        .record(Some(app));
+}
 
 /// Result of `diag_save_bundle`. Field names mirror the renderer's
 /// `DiagSaveBundleResult` interface exactly; `ok` is always present, the rest are
@@ -140,17 +152,38 @@ pub fn diag_open_logs_folder(app: AppHandle, webview: WebviewWindow) -> DiagOpen
     let dir = match crate::portable::app_log_dir(&app) {
         Ok(dir) => dir,
         Err(err) => {
-            return DiagOpenLogsFolderResult::failed(format!("Failed to get log directory: {err}"));
+            let message = format!("Failed to get log directory: {err}");
+            record_diag_failure(
+                &app,
+                "open_logs_folder",
+                "Diagnostic log folder could not be resolved",
+                message.clone(),
+            );
+            return DiagOpenLogsFolderResult::failed(message);
         }
     };
 
     if let Err(err) = std::fs::create_dir_all(&dir) {
-        return DiagOpenLogsFolderResult::failed(format!("Failed to create log directory: {err}"));
+        let message = format!("Failed to create log directory: {err}");
+        record_diag_failure(
+            &app,
+            "open_logs_folder",
+            "Diagnostic log folder could not be created",
+            message.clone(),
+        );
+        return DiagOpenLogsFolderResult::failed(message);
     }
 
     let path = dir.to_string_lossy().into_owned();
     if let Err(err) = app.opener().open_path(path, None::<String>) {
-        return DiagOpenLogsFolderResult::failed(format!("Failed to open log directory: {err}"));
+        let message = format!("Failed to open log directory: {err}");
+        record_diag_failure(
+            &app,
+            "open_logs_folder",
+            "Diagnostic log folder could not be opened",
+            message.clone(),
+        );
+        return DiagOpenLogsFolderResult::failed(message);
     }
 
     DiagOpenLogsFolderResult::ok_with(dir)
@@ -170,7 +203,7 @@ fn default_bundle_filename() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    // Decompose the unix timestamp into a UTC civil date/time. The the reference build
+    // Decompose the unix timestamp into a UTC civil date/time. The reference build
     // used local time; UTC here keeps the filename deterministic without a
     // timezone dep — the value is cosmetic (uniqueness, not correctness).
     let (y, mo, d, h, mi, s) = unix_to_civil(now);
@@ -327,7 +360,18 @@ fn build_bundle(app: &AppHandle) -> DiagSaveBundleResult {
 #[tauri::command]
 #[specta::specta]
 pub async fn diag_save_bundle(app: AppHandle) -> DiagSaveBundleResult {
-    build_bundle(&app)
+    let result = build_bundle(&app);
+    if !result.ok && result.cancelled != Some(true) {
+        if let Some(error) = result.error.as_ref() {
+            record_diag_failure(
+                &app,
+                "save_bundle",
+                "Diagnostic bundle could not be saved",
+                error.clone(),
+            );
+        }
+    }
+    result
 }
 
 /// `diag_observability_timeline` - recent operational issues recorded by the

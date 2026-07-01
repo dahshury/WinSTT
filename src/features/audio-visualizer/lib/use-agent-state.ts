@@ -1,8 +1,7 @@
 import { useSettingsStore } from "@/entities/setting";
+import type { RecordingMode } from "@/shared/config/recording-mode-color";
 import { useVisualizerStore } from "../model/visualizer-store";
 import type { AgentState } from "./audio-visualizer";
-
-type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword";
 
 /** audioLevel above this counts as "speaking" even without a VAD signal (PTT mode). */
 const SPEAKING_LEVEL_THRESHOLD = 0.02;

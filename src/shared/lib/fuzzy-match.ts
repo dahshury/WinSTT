@@ -148,8 +148,7 @@ function jaroFormula(
 
 // Trivial Jaro values that don't require the two-phase match/transposition
 // scan. Returns the answer when one applies, otherwise `null` to signal "run
-// the full algorithm". Two short-circuits in one helper keeps `jaro`'s body at
-// CC ≤ 3 instead of stacking three early-return ifs there.
+// the full algorithm".
 function trivialJaro(a: string, b: string): number | null {
 	if (a === b) {
 		return 1;

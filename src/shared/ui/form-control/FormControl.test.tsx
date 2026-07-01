@@ -14,6 +14,25 @@ describe("FormControl", () => {
 		expect(screen.getByTestId("i")).toBeDefined();
 	});
 
+	test("renders labelIcon before the label text in the header", () => {
+		const { container } = render(
+			<FormControl
+				label="OpenRouter API Key"
+				labelIcon={<svg data-testid="brand-mark" role="img" />}
+			>
+				<input type="text" />
+			</FormControl>,
+		);
+		const icon = container.querySelector('[data-testid="brand-mark"]');
+		const label = screen.getByText("OpenRouter API Key");
+		expect(icon).not.toBeNull();
+		// The icon precedes the label in document order (leading glyph slot).
+		expect(
+			icon &&
+				label.compareDocumentPosition(icon) & Node.DOCUMENT_POSITION_PRECEDING,
+		).toBeTruthy();
+	});
+
 	test("renders inside a Field.Root wrapper that exposes label-for association", () => {
 		render(
 			<FormControl label="Name">

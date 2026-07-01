@@ -37,7 +37,6 @@
 //   * `wakeword`    — wakeword runtime state machine.
 
 mod learning;
-mod persistence;
 mod runtime;
 mod wakeword;
 
@@ -52,16 +51,17 @@ use crate::winstt::settings_schema::{
     Transform, TtsCloud, TtsSettings, WinsttSettings, SECRET_KEYS,
 };
 
-use self::persistence::{
+use self::runtime::{
+    apply_audio_runtime_settings, apply_autostart_setting, apply_encoder_dict_runtime_settings,
+    apply_history_retention_settings, apply_llm_runtime_settings, apply_model_runtime_settings,
+    apply_tts_runtime_settings,
+};
+use self::wakeword::apply_wakeword_runtime_settings;
+use crate::winstt::settings_store::{
     normalize_cross_field_settings, preserve_masked_secrets, read_settings_for_renderer,
     sanitize_settings_for_renderer, try_read_settings, try_seal_secrets, with_settings_write_lock,
     word_by_word_pasting_effective, write_settings_value,
 };
-use self::runtime::{
-    apply_audio_runtime_settings, apply_autostart_setting, apply_history_retention_settings,
-    apply_llm_runtime_settings, apply_model_runtime_settings, apply_tts_runtime_settings,
-};
-use self::wakeword::apply_wakeword_runtime_settings;
 
 // Re-export the cluster items that external (out-of-this-module) code reaches at
 // the historical `crate::winstt::commands::settings::X` paths, so no import site
@@ -71,8 +71,6 @@ use self::wakeword::apply_wakeword_runtime_settings;
 // `warm_llm_models_async`, `sync_wakeword_runtime_from_settings`) are intentionally
 // NOT re-exported here — re-exporting an unused path would trip `-D warnings`.
 pub(crate) use self::learning::auto_apply_dictation_learning;
-pub(crate) use self::persistence::read_settings_raw;
-pub use self::persistence::{read_settings, recording_mode, seed_defaults, write_core_settings};
 pub(crate) use self::runtime::{
     core_timeout_from_winstt, enabled_ollama_models, should_warm_tts, warm_tts_async,
 };
@@ -80,13 +78,20 @@ pub(crate) use self::wakeword::{
     disarm_wakeword_runtime_for_onboarding, rearm_wakeword_runtime_if_active,
     sync_wakeword_runtime_from_settings_in_background,
 };
-
-pub const WINSTT_SETTINGS_KEY: &str = "winstt_settings";
-pub(crate) const WINSTT_SETTINGS_FILE: &str = "winstt-settings.json";
-pub(crate) const SECRET_PRESENT_SENTINEL: &str = "__WINSTT_SECRET_PRESENT__";
+// The settings READ path + on-disk service now lives in the core
+// `crate::winstt::settings_store` module (managers depend on it DOWNWARD). These
+// re-exports keep the historical `crate::winstt::commands::settings::X` paths the
+// route-layer callers and a few legacy sites still use; the constants are also
+// re-exported here for the onboarding command + secret sentinel consumers.
+pub(crate) use crate::winstt::settings_store::read_settings_raw;
+pub use crate::winstt::settings_store::WINSTT_SETTINGS_KEY;
+pub use crate::winstt::settings_store::{
+    init_settings_store, read_settings, recording_mode, seed_defaults, write_core_settings,
+};
+pub(crate) use crate::winstt::settings_store::{SECRET_PRESENT_SENTINEL, WINSTT_SETTINGS_FILE};
 
 /// The `settings:changed` plain event — the post-save full masked snapshot every other
-/// window re-hydrates its Zustand store from. Byte-identical to WinSTT's the reference
+/// window re-hydrates its Zustand store from. Byte-identical to the reference
 /// IPC shape (`{ settings }`) so the reused renderer's `onSettingsChanged`
 /// listener (ipc-client.ts) needs no changes.
 pub(crate) const SETTINGS_CHANGED_EVENT: &str = "settings:changed";
@@ -248,6 +253,7 @@ pub fn apply_settings_patch(
     }
     apply_model_runtime_settings(app, &previous, &next);
     apply_tts_runtime_settings(app, &previous, &next);
+    apply_encoder_dict_runtime_settings(app, &previous, &next);
     apply_llm_runtime_settings(app, &previous, &next);
     apply_wakeword_runtime_settings(app, &previous, &next);
     apply_history_retention_settings(app, &previous, &next);
@@ -301,9 +307,27 @@ fn winstt_hotkeys_changed(prev: &WinsttSettings, next: &WinsttSettings) -> bool 
 /// the overlay being shown; in-app/both always render. Word-by-word paste also needs the
 /// realtime worker even when the visual preview is off.
 ///
-/// Public so the realtime worker (winstt::managers::realtime_manager) gates its decode
-/// loop on the SAME source of truth instead of duplicating the branch logic.
+/// Focus-AGNOSTIC capability gate: does ANY realtime surface exist for these settings? Used
+/// by config-time callers (restart-key diffing, tests). The realtime worker uses
+/// [`effective_realtime_with_focus`] instead, which additionally skips the model when the
+/// only surface is the in-app panel and no WinSTT window is focused to show it.
 pub fn effective_realtime(settings: &WinsttSettings) -> bool {
+    // `app_focused = true` ⇒ the in-app panel counts as a renderable surface, preserving the
+    // original focus-agnostic semantics for capability checks.
+    effective_realtime_with_focus(settings, true)
+}
+
+/// Focus-AWARE realtime gate used by the recording worker. The in-app live-transcription
+/// panel renders INSIDE the main WinSTT window, so it's only visible when one of our windows
+/// holds OS focus; when unfocused, running the realtime model purely to feed that invisible
+/// panel is wasted work. The pill overlay is a SEPARATE always-on-top window that stays
+/// visible regardless of focus, and word-by-word pasting types the text (no visible surface
+/// needed) — both keep running while unfocused.
+///   - none:    never (no surface renders).
+///   - in-app:  only when a WinSTT window is focused (the panel is otherwise invisible).
+///   - in-pill: only when the overlay is shown (focus-agnostic — the pill floats on top).
+///   - both:    overlay shown (pill visible) OR a window focused (in-app visible).
+pub fn effective_realtime_with_focus(settings: &WinsttSettings, app_focused: bool) -> bool {
     if word_by_word_pasting_effective(settings) {
         return true;
     }
@@ -311,8 +335,9 @@ pub fn effective_realtime(settings: &WinsttSettings) -> bool {
     let overlay = settings.general.show_recording_overlay;
     match settings.general.live_transcription_display {
         LiveTranscriptionDisplay::None => false,
-        LiveTranscriptionDisplay::InApp | LiveTranscriptionDisplay::Both => true,
+        LiveTranscriptionDisplay::InApp => app_focused,
         LiveTranscriptionDisplay::InPill => overlay,
+        LiveTranscriptionDisplay::Both => overlay || app_focused,
     }
 }
 
@@ -422,15 +447,17 @@ const MAX_DEVICE_SENSITIVITY_ENTRIES: usize = 128;
 const MAX_DEVICE_ID_LEN: usize = 512;
 const MAX_PATH_LEN: usize = 4096;
 const MAX_OUTPUT_TOKENS: i64 = 200_000;
-const BUILTIN_RECORDING_SOUND_FILES: &[&str] = &[
-    "marimba_start.wav",
-    "recording_sound_ui_earcon_1.wav",
-    "recording_sound_ui_earcon_4.wav",
-];
+const BUILTIN_RECORDING_SOUND_FILES: &[&str] = &["marimba_start.wav"];
 
 fn validate_model_settings(model: &ModelSettings) -> Result<(), String> {
     validate_model_id("model.model", &model.model, true)?;
-    validate_model_id("model.realtimeModel", &model.realtime_model, true)?;
+    // `realtimeModel` is OPTIONAL: `""` is the "no live-preview model" state.
+    // The renderer's swap logic clears it whenever the chosen main model has no
+    // native-streaming companion (see apply-swap.ts `realtimePatchForMainSwap`),
+    // `cleanup` clears it on quant deletion, and `runtime.rs` already maps empty
+    // → `None`. Requiring it non-empty rejected the WHOLE save when a user picked
+    // a non-streaming model (e.g. GigaAM RU), reverting their pick to the default.
+    validate_model_id("model.realtimeModel", &model.realtime_model, false)?;
     validate_short_text("model.language", &model.language, MAX_LANGUAGE_LEN, false)?;
     validate_collection_len(
         "model.languageCandidates",
@@ -1338,6 +1365,16 @@ mod tests {
     }
 
     #[test]
+    fn accepts_empty_realtime_model() {
+        // Regression: selecting a non-streaming main model (e.g. GigaAM RU)
+        // clears the realtime slot to "". The save must succeed rather than
+        // reverting the user's main-model pick (issue #35).
+        let mut settings = WinsttSettings::default();
+        settings.model.realtime_model = String::new();
+        assert!(validate_settings(&settings).is_ok());
+    }
+
+    #[test]
     fn rejects_unpublished_catalog_quantization() {
         let mut settings = WinsttSettings::default();
         settings.model.model = "tiny".into();
@@ -1507,6 +1544,57 @@ mod tests {
         settings.general.word_by_word_pasting = true;
         settings.llm.dictation.enabled = true;
         assert!(effective_realtime(&settings));
+    }
+
+    #[test]
+    fn in_app_preview_requires_focus_when_worker_gates_on_it() {
+        // The in-app panel lives inside the main window: invisible when unfocused, so the
+        // realtime worker must NOT run the model just to feed it. With focus it renders.
+        let mut settings = WinsttSettings::default();
+        settings.general.live_transcription_display = LiveTranscriptionDisplay::InApp;
+        settings.general.word_by_word_pasting = false;
+        assert!(effective_realtime_with_focus(&settings, true));
+        assert!(!effective_realtime_with_focus(&settings, false));
+        // Capability gate stays focus-agnostic (in-app is a possible surface).
+        assert!(effective_realtime(&settings));
+    }
+
+    #[test]
+    fn pill_overlay_runs_realtime_even_when_unfocused() {
+        // The pill is an always-on-top floating window the user watches while dictating into
+        // ANOTHER app — it must keep updating regardless of WinSTT focus.
+        let mut settings = WinsttSettings::default();
+        settings.general.live_transcription_display = LiveTranscriptionDisplay::InPill;
+        settings.general.show_recording_overlay = true;
+        settings.general.word_by_word_pasting = false;
+        assert!(effective_realtime_with_focus(&settings, false));
+        assert!(effective_realtime_with_focus(&settings, true));
+    }
+
+    #[test]
+    fn both_display_unfocused_follows_pill_visibility() {
+        // "both" = in-app + pill. Unfocused, the in-app half is hidden, so realtime is only
+        // worth running when the pill is actually visible (overlay shown).
+        let mut settings = WinsttSettings::default();
+        settings.general.live_transcription_display = LiveTranscriptionDisplay::Both;
+        settings.general.word_by_word_pasting = false;
+
+        settings.general.show_recording_overlay = true;
+        assert!(effective_realtime_with_focus(&settings, false));
+
+        settings.general.show_recording_overlay = false;
+        assert!(!effective_realtime_with_focus(&settings, false));
+        // Focused, the in-app half is visible even with the overlay off.
+        assert!(effective_realtime_with_focus(&settings, true));
+    }
+
+    #[test]
+    fn word_by_word_paste_runs_realtime_unfocused() {
+        // Pasting types the text — no visible surface needed, so focus is irrelevant.
+        let mut settings = WinsttSettings::default();
+        settings.general.live_transcription_display = LiveTranscriptionDisplay::None;
+        settings.general.word_by_word_pasting = true;
+        assert!(effective_realtime_with_focus(&settings, false));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { computeIslandSize } from "./OverlayPage";
+import { computeIslandSize } from "../lib/overlay-reveal";
 
 // `computeIslandSize` is the WIDTH state-machine that maps the renderer's
 // live state (recording armed, VAD speaking, LLM thinking, captioned text)

@@ -2,6 +2,7 @@
 
 import type { RefObject } from "react";
 import { useEffect, useRef } from "react";
+import { isRecord } from "@/shared/lib/is-record";
 import { extractCloseReason } from "./combobox-reasons";
 import { useModelSelectorClickTracking } from "./use-model-selector-click-tracking";
 
@@ -20,13 +21,13 @@ const POPUP_ROLES: ReadonlySet<string> = new Set([
  */
 export type FilterMenuPopupSlot =
 	| "model-filters-menu-content"
-	| "ollama-sort-menu-content"
+	| "ollama-filters-menu-content"
 	| "stt-filters-menu-content";
 
 const POPUP_SLOTS: ReadonlySet<FilterMenuPopupSlot> =
 	new Set<FilterMenuPopupSlot>([
 		"model-filters-menu-content",
-		"ollama-sort-menu-content",
+		"ollama-filters-menu-content",
 		"stt-filters-menu-content",
 	]);
 
@@ -62,10 +63,6 @@ export function isInsideMenuPopup(
 	return walkAncestors(target).some((node) =>
 		nodeMatchesPopupSelector(node, ownPopup),
 	);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 function eventTargetFromDetails(eventDetails: unknown): EventTarget | null {

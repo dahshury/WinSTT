@@ -17,16 +17,6 @@ const ADDITIONAL_BUILTIN_SOUNDS = [
 		name: "Marimba",
 		path: `${BUILTIN_SOUND_PREFIX}marimba_start.wav`,
 	},
-	{
-		id: "__winstt_builtin_ui_earcon_1__",
-		name: "UI Earcon 1",
-		path: `${BUILTIN_SOUND_PREFIX}recording_sound_ui_earcon_1.wav`,
-	},
-	{
-		id: "__winstt_builtin_ui_earcon_4__",
-		name: "UI Earcon 4",
-		path: `${BUILTIN_SOUND_PREFIX}recording_sound_ui_earcon_4.wav`,
-	},
 ] as const;
 
 /**

@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { create } from "zustand";
 import {
+	makeScanErrorState,
+	makeScanSuccessState,
+} from "@/entities/openrouter-catalog/@x/llm-catalog";
+import {
 	cancelOllamaModelPull,
 	deleteOllamaModel,
 	fetchOllamaModels,
@@ -11,6 +15,7 @@ import {
 	pullOllamaModel,
 } from "@/shared/api/ipc-client";
 import { OllamaPullProgressStatusSchema } from "@/shared/api/schema.zod";
+import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
 
 export type { OllamaModel };
 
@@ -62,12 +67,18 @@ const pausedPullStateSchema = z.object({
 
 const pausedPullsSchema = z.record(z.string(), pausedPullStateSchema);
 
-/** Load persisted paused pulls — renderer only (gated on `nativeBridge` so the
- *  bun:test environment, which has a localStorage but no bridge, starts clean). */
+/** Load persisted paused pulls. Gated on `hasTauriRuntime()` (the synchronously
+ *  injected `__TAURI_INTERNALS__`, present from the very first renderer module) —
+ *  NOT on `window.nativeBridge`, whose install is a separate side effect that can
+ *  race this module-load read. That race is exactly why a partial download's
+ *  saved percentage failed to show on reopen: the load ran before the bridge
+ *  installed and returned `{}`. `hasTauriRuntime()` removes the ordering
+ *  dependency entirely (and is still false under plain Vite / a browser preview,
+ *  so those start clean). */
 function loadPersistedPausedPulls(): Record<string, PausedPullState> {
 	if (
+		!hasTauriRuntime() ||
 		typeof window === "undefined" ||
-		window.nativeBridge == null ||
 		!window.localStorage
 	) {
 		return {};
@@ -89,8 +100,8 @@ function persistPausedPulls(
 	pausedPulls: Record<string, PausedPullState>,
 ): void {
 	if (
+		!hasTauriRuntime() ||
 		typeof window === "undefined" ||
-		window.nativeBridge == null ||
 		!window.localStorage
 	) {
 		return;
@@ -139,27 +150,45 @@ let queuedForcedScan = false;
 const isTerminalStatus = (status: OllamaPullProgress["status"]): boolean =>
 	status === "success" || status === "error" || status === "cancelled";
 
-function makeScanErrorState(err: unknown) {
-	return {
-		error: String(err),
-		isReachable: false as const,
-		isScanning: false as const,
-		isLoaded: true as const,
-	};
+/** The integer percent the UI actually renders (the badge + the trigger both do
+ *  `Math.round(percent)`), or -1 when the frame carries no percent. Used to drop
+ *  frames that wouldn't change anything on screen. */
+function displayedPullPercent(percent: number | undefined): number {
+	if (percent === undefined) {
+		return -1;
+	}
+	return Math.round(Math.max(0, Math.min(100, percent)));
 }
 
-function makeScanSuccessState(result: {
-	models: OllamaModel[];
-	reachable: boolean;
-	error?: string | null;
-}) {
-	return {
-		models: result.models,
-		isReachable: result.reachable,
-		error: result.error ?? null,
-		isLoaded: true as const,
-		isScanning: false as const,
-	};
+/**
+ * True when a progress frame would not change anything the UI shows, so the store
+ * can drop it WITHOUT notifying subscribers (no re-render).
+ *
+ * Why this matters: Ollama's `/api/pull` streams many NDJSON frames per second
+ * (one per chunk), and the INLINE model-picker re-renders its whole model list on
+ * every `pulls` change. Applying every frame pegged the main thread so the
+ * maker-rail tabs stopped responding to clicks mid-download. The picker only ever
+ * displays a pull's status + its rounded percent, so a same-status frame whose
+ * rounded percent is unchanged is a visual no-op. The first frame for a model,
+ * any status change, and every terminal frame are NEVER redundant — they always
+ * apply — so this collapses a download to ≤~100 re-renders (one per integer
+ * percent) instead of thousands, with no timers and no loss of displayed fidelity.
+ */
+function isRedundantProgressFrame(
+	previous: OllamaPullProgress | undefined,
+	next: OllamaPullProgress,
+): boolean {
+	if (
+		!previous ||
+		isTerminalStatus(next.status) ||
+		previous.status !== next.status
+	) {
+		return false;
+	}
+	return (
+		displayedPullPercent(previous.percent) ===
+		displayedPullPercent(next.percent)
+	);
 }
 
 interface PullSlices {
@@ -355,6 +384,12 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	setError: (error) => set({ error, isLoaded: true }),
 	setPullProgress: (progress) => {
 		const { pulls, pausedPulls } = get();
+		// Drop frames that wouldn't change anything on screen so a high-frequency
+		// pull doesn't re-render the full picker list on every NDJSON chunk (which
+		// froze the maker-rail tabs mid-download).
+		if (isRedundantProgressFrame(pulls[progress.model]?.progress, progress)) {
+			return;
+		}
 		set(nextPullSlices({ pulls, pausedPulls }, progress));
 	},
 	scanModels: async (opts) => {
@@ -444,7 +479,7 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	},
 }));
 
-// SSR/the reference guard — under bun:test, the bridge is mocked and nativeBridge
+// SSR/bridge guard — under bun:test, the bridge is mocked and nativeBridge
 // is undefined, so the body is skipped regardless of the conditional outcome.
 // Observable test behavior is identical with or without this branch, hence
 // every mutator on this if-statement is equivalent.

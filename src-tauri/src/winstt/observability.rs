@@ -137,6 +137,11 @@ impl IssueBuilder {
     pub fn record(self, app: Option<&AppHandle>) -> ObservabilityIssue {
         record_issue(app, self)
     }
+
+    #[cfg(test)]
+    pub(crate) fn build_for_test(self) -> ObservabilityIssue {
+        build_issue(self)
+    }
 }
 
 pub fn classify_error_kind(message: &str) -> &'static str {
@@ -279,8 +284,8 @@ fn severity_for_kind(kind: &str) -> &'static str {
     }
 }
 
-fn log_issue(issue: &ObservabilityIssue) {
-    let fields = serde_json::json!({
+fn issue_log_fields(issue: &ObservabilityIssue) -> serde_json::Value {
+    serde_json::json!({
         "id": issue.id,
         "area": issue.area,
         "operation": issue.operation,
@@ -290,7 +295,11 @@ fn log_issue(issue: &ObservabilityIssue) {
         "requestId": issue.request_id,
         "durationMs": issue.duration_ms,
         "context": issue.context,
-    });
+    })
+}
+
+fn log_issue(issue: &ObservabilityIssue) {
+    let fields = issue_log_fields(issue);
     match issue.severity.as_str() {
         "error" => log::error!(
             "[observability] issue={} summary=\"{}\" detail={} fields={}",
@@ -316,7 +325,7 @@ fn log_issue(issue: &ObservabilityIssue) {
     }
 }
 
-fn record_issue(_app: Option<&AppHandle>, input: IssueBuilder) -> ObservabilityIssue {
+fn build_issue(input: IssueBuilder) -> ObservabilityIssue {
     let detail_for_classification = input
         .detail
         .as_deref()
@@ -331,7 +340,7 @@ fn record_issue(_app: Option<&AppHandle>, input: IssueBuilder) -> ObservabilityI
     let remediation = input
         .remediation
         .or_else(|| remediation_for_kind(&kind).map(str::to_string));
-    let issue = ObservabilityIssue {
+    ObservabilityIssue {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         timestamp_ms: now_ms(),
         severity,
@@ -347,8 +356,11 @@ fn record_issue(_app: Option<&AppHandle>, input: IssueBuilder) -> ObservabilityI
         remediation,
         user_visible: input.user_visible,
         context: input.context,
-    };
+    }
+}
 
+fn record_issue(_app: Option<&AppHandle>, input: IssueBuilder) -> ObservabilityIssue {
+    let issue = build_issue(input);
     if let Ok(mut issues) = issue_store().lock() {
         while issues.len() >= MAX_ISSUES {
             issues.pop_front();
@@ -362,6 +374,27 @@ fn record_issue(_app: Option<&AppHandle>, input: IssueBuilder) -> ObservabilityI
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn clear_issues_for_tests() {
+        if let Ok(mut issues) = issue_store().lock() {
+            issues.clear();
+        }
+        NEXT_ID.store(1, Ordering::Relaxed);
+    }
+
+    fn with_clean_issue_store<R>(f: impl FnOnce() -> R) -> R {
+        let _guard = TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("observability test lock poisoned");
+        clear_issues_for_tests();
+        let result = f();
+        clear_issues_for_tests();
+        result
+    }
 
     #[test]
     fn classifies_common_failure_strings() {
@@ -376,5 +409,78 @@ mod tests {
         assert_eq!(classify_error_kind("connection refused"), "network");
         assert_eq!(classify_error_kind("no space left on device"), "disk_full");
         assert_eq!(classify_error_kind("thread panicked"), "panic");
+    }
+
+    #[test]
+    fn records_issue_with_inferred_severity_remediation_and_context() {
+        with_clean_issue_store(|| {
+            let issue = IssueBuilder::new("stt", "transcription", "decode failed")
+                .detail("CUDA_ERROR_OUT_OF_MEMORY while running decoder")
+                .model_id("nemo-canary-180m-flash")
+                .request_id("req-1")
+                .duration_ms(42)
+                .context("device", "directml")
+                .record(None);
+
+            assert_eq!(issue.kind, "out_of_memory");
+            assert_eq!(issue.severity, "error");
+            assert_eq!(issue.model_id.as_deref(), Some("nemo-canary-180m-flash"));
+            assert_eq!(issue.request_id.as_deref(), Some("req-1"));
+            assert_eq!(issue.duration_ms, Some(42));
+            assert_eq!(
+                issue.context.get("device").map(String::as_str),
+                Some("directml")
+            );
+            assert!(issue
+                .remediation
+                .as_deref()
+                .is_some_and(|text| text.contains("smaller or quantized model")));
+
+            let recent = recent_issues(Some(1));
+            assert_eq!(recent.len(), 1);
+            assert_eq!(recent[0].summary, "decode failed");
+        });
+    }
+
+    #[test]
+    fn recent_issues_are_bounded_and_newest_first() {
+        with_clean_issue_store(|| {
+            for i in 0..(MAX_ISSUES + 5) {
+                IssueBuilder::new("test", "bounded", format!("issue-{i}"))
+                    .severity("warn")
+                    .record(None);
+            }
+
+            let recent = recent_issues(None);
+            assert_eq!(recent.len(), MAX_ISSUES);
+            assert_eq!(
+                recent.first().map(|issue| issue.summary.as_str()),
+                Some("issue-204")
+            );
+            assert_eq!(
+                recent.last().map(|issue| issue.summary.as_str()),
+                Some("issue-5")
+            );
+        });
+    }
+
+    #[test]
+    fn log_fields_include_correlation_and_context() {
+        with_clean_issue_store(|| {
+            let issue = IssueBuilder::new("updater", "install", "install failed")
+                .detail("permission denied")
+                .provider("github")
+                .request_id("update-1")
+                .context("version", "1.2.3")
+                .record(None);
+
+            let fields = issue_log_fields(&issue);
+            assert_eq!(fields["area"], "updater");
+            assert_eq!(fields["operation"], "install");
+            assert_eq!(fields["kind"], "permission_denied");
+            assert_eq!(fields["provider"], "github");
+            assert_eq!(fields["requestId"], "update-1");
+            assert_eq!(fields["context"]["version"], "1.2.3");
+        });
     }
 }

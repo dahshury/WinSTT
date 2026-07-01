@@ -67,6 +67,49 @@ export function PreviewInfoPill({ text }: { text: string }) {
 	);
 }
 
+export function TranscriptTextarea({
+	ariaLabel,
+	className,
+	onSelectionChange,
+	onTextChange,
+	placeholder,
+	value,
+}: {
+	ariaLabel: string;
+	className?: string;
+	onSelectionChange: (start: number, end: number) => void;
+	onTextChange: (value: string, start: number, end: number) => void;
+	placeholder: string;
+	value: string;
+}) {
+	return (
+		<textarea
+			aria-label={ariaLabel}
+			className={cn(
+				"w-full resize-none rounded-md border border-border px-2.5 py-2 text-foreground text-sm leading-snug placeholder:text-foreground-subtle focus:outline-none focus:ring-1 focus:ring-accent/60",
+				className,
+			)}
+			dir="auto"
+			onChange={(event) => {
+				const {
+					selectionEnd,
+					selectionStart,
+					value: nextValue,
+				} = event.currentTarget;
+				onTextChange(nextValue, selectionStart, selectionEnd);
+			}}
+			onSelect={(event) =>
+				onSelectionChange(
+					event.currentTarget.selectionStart,
+					event.currentTarget.selectionEnd,
+				)
+			}
+			placeholder={placeholder}
+			value={value}
+		/>
+	);
+}
+
 /** A labelled, lifted section panel (the FF surface system) used for each half
  *  of the split enhance layout. */
 export function SectionPanel({

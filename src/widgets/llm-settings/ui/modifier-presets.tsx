@@ -68,7 +68,7 @@ import {
 	matchConfigurationId,
 	useLlmConfigurationsStore,
 } from "../model/configurations";
-import type { LlmSettingsPanelModel } from "./LlmSettingsPanel";
+import type { LlmSettingsPanelModel } from "../model/use-llm-settings-panel";
 import { seedDraftFromFeature } from "./modifier-presets-state";
 import type { TranslateFn } from "./types";
 
@@ -314,14 +314,13 @@ function CustomModifierRow({
 						// `inline` drops ElevatedSurface's p-1.5 gutter so the L/M/H
 						// control stays as short as the row (no row-height growth);
 						// w-64 keeps it compact instead of stretching the row.
-						<ElevatedSurface className="w-64" inline>
-							<Switcher
-								fullWidth
-								onChange={(v) => onLevelChange(modifier.id, v as PresetLevel)}
-								options={levelOpts}
-								value={modifier.level ?? DEFAULT_LEVEL}
-							/>
-						</ElevatedSurface>
+						<Switcher
+							className="w-64"
+							fullWidth
+							onChange={(v) => onLevelChange(modifier.id, v as PresetLevel)}
+							options={levelOpts}
+							value={modifier.level ?? DEFAULT_LEVEL}
+						/>
 					) : null}
 					<IconButton
 						aria-label={t("modifierEdit")}
@@ -612,14 +611,13 @@ function IndependentPresetList({
 					);
 				} else if (hasLevel) {
 					trailing = (
-						<ElevatedSurface className="w-64" inline>
-							<Switcher
-								fullWidth
-								onChange={(v) => handleLevel(v as PresetLevel)}
-								options={checked ? levelOpts : disabledLevelOpts}
-								value={displayedLevel}
-							/>
-						</ElevatedSurface>
+						<Switcher
+							className="w-64"
+							fullWidth
+							onChange={(v) => handleLevel(v as PresetLevel)}
+							options={checked ? levelOpts : disabledLevelOpts}
+							value={displayedLevel}
+						/>
 					);
 				}
 				return (
@@ -681,10 +679,10 @@ function IndependentPresetList({
 				group
 			)}
 			<Button
-				className="ml-3 flex items-center gap-1 self-start rounded-md border border-border border-dashed bg-transparent px-3 py-1.5 text-foreground-muted text-sm transition-colors hover:border-accent hover:text-accent"
+				className="ml-3 inline-flex shrink-0 items-center gap-1.5 self-start rounded-md bg-foreground/[0.06] px-2.5 py-1.5 font-medium text-body-sm text-foreground transition-colors duration-150 hover:bg-foreground/10 active:scale-[0.98]"
 				onClick={() => setDialogModifier(makeDraftModifier())}
 			>
-				<HugeiconsIcon icon={PlusSignIcon} size={14} />
+				<HugeiconsIcon icon={PlusSignIcon} size={12} />
 				{t("modifierAdd")}
 			</Button>
 			<ModifierDialog
@@ -830,21 +828,19 @@ export function FeaturePresetControls({
 					labelTrailing={configControl}
 					tooltip={t("toneTooltip")}
 				>
-					<ElevatedSurface>
-						<Switcher
-							fullWidth
-							onChange={(v) =>
-								update({
-									presets: setTone(
-										snapshot.presets,
-										v as (typeof TONE_GROUP)[number],
-									),
-								})
-							}
-							options={toneOpts}
-							value={activeTone}
-						/>
-					</ElevatedSurface>
+					<Switcher
+						fullWidth
+						onChange={(v) =>
+							update({
+								presets: setTone(
+									snapshot.presets,
+									v as (typeof TONE_GROUP)[number],
+								),
+							})
+						}
+						options={toneOpts}
+						value={activeTone}
+					/>
 				</FormControl>
 			</div>
 			<div className="col-span-2">

@@ -31,12 +31,32 @@ interface CreateOpenRouterCatalogStoreConfig<TModel> {
 	normalizeModels: (models: TModel[]) => TModel[];
 }
 
-function makeScanErrorState(err: unknown) {
+/**
+ * Shared scan-state reducers for every OpenRouter / Ollama catalog store
+ * (this factory plus the richer LLM stores). All catalogs land on the same
+ * `error/isReachable/isScanning/isLoaded` surface, so a failed scan and a
+ * successful scan map to identical partial state across the board.
+ */
+export function makeScanErrorState(err: unknown) {
 	return {
 		error: String(err),
 		isReachable: false as const,
 		isScanning: false as const,
 		isLoaded: true as const,
+	};
+}
+
+export function makeScanSuccessState<TModel>(result: {
+	models: TModel[];
+	reachable: boolean;
+	error?: string | null;
+}) {
+	return {
+		models: result.models,
+		isReachable: result.reachable,
+		error: result.error ?? null,
+		isLoaded: true as const,
+		isScanning: false as const,
 	};
 }
 

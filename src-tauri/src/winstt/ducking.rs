@@ -31,9 +31,9 @@
 //     Aloud reference-count one shared session-duck (first reason captures the
 //     snapshots; the last reason to release restores them).
 //
-// The reduction/clamp/state math is PURE and fully tested. The COM read/set is a
-// real Windows impl modeled on the existing session-volume path (the only
-// unverifiable bit is runtime COM behavior, which the compile loop confirms).
+// The reduction/clamp/state math is pure and fully tested. The COM read/set is a
+// real Windows impl modeled on the existing session-volume path; the only
+// unverifiable bit is runtime COM behavior.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -199,7 +199,7 @@ fn lock_session_state() -> std::sync::MutexGuard<'static, SessionDuckState> {
 // ───────────────────────── public duck/restore API ─────────────────────────
 
 fn settings_duck_reduction_pct(app: &tauri::AppHandle) -> u8 {
-    crate::winstt::commands::settings::read_settings_raw(app)
+    crate::winstt::settings_store::read_settings_raw(app)
         .general
         .system_audio_reduction_while_dictating
         .clamp(0, 100) as u8

@@ -18,11 +18,9 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use winstt_app_lib::winstt::tts::kokoro::{
-    KokoroConfig, KokoroDevice, KokoroEngine, KOKORO_SAMPLE_RATE,
-};
+use winstt_app_lib::winstt::tts::kokoro::{KokoroConfig, KokoroEngine, KOKORO_SAMPLE_RATE};
 use winstt_app_lib::winstt::tts::phonemize::{default_phonemizer, resolve_espeak_lib};
-use winstt_app_lib::winstt::tts::{voice_by_id, KOKORO_VOICE_CATALOG};
+use winstt_app_lib::winstt::tts::{voice_by_id, TtsDevice, KOKORO_VOICE_CATALOG};
 
 const DEFAULT_SENTENCE: &str = "The quick brown fox jumps over the lazy dog.";
 
@@ -45,15 +43,15 @@ fn kokoro_cache_dir() -> PathBuf {
     local.join("winstt/tts/kokoro-82m")
 }
 
-fn device_from_env() -> KokoroDevice {
+fn device_from_env() -> TtsDevice {
     match std::env::var("KOKORO_TTS_BENCH_DEVICE")
         .unwrap_or_default()
         .to_lowercase()
         .as_str()
     {
-        "dml" | "directml" => KokoroDevice::DirectMl,
-        "cpu" => KokoroDevice::Cpu,
-        _ => KokoroDevice::Cpu, // CPU default → comparable to the reference CPU path
+        "dml" | "directml" => TtsDevice::DirectMl,
+        "cpu" => TtsDevice::Cpu,
+        _ => TtsDevice::Cpu, // CPU default
     }
 }
 

@@ -292,7 +292,7 @@ export function ShowcaseModelPicker() {
           <path d="m21 21-4.3-4.3" />
         </svg>
         <span>Search transcription models</span>
-        <span className="sc-search-count">40+</span>
+        <span className="sc-search-count">70+</span>
       </div>
 
       <div className="sc-rows">
@@ -444,7 +444,7 @@ const MODES = [
   {
     key: "ptt",
     label: "Push-to-Talk",
-    color: "#3b82f6",
+    color: "var(--brand-mode-ptt)",
     sub: "Ctrl + Space",
     on: true,
     icon: (
@@ -458,7 +458,7 @@ const MODES = [
   {
     key: "toggle",
     label: "Toggle",
-    color: "#facc15",
+    color: "var(--brand-mode-toggle)",
     sub: "Tap on · tap off",
     icon: (
       <>
@@ -470,7 +470,7 @@ const MODES = [
   {
     key: "listen",
     label: "Listen",
-    color: "#22c55e",
+    color: "var(--brand-mode-listen)",
     sub: "Loopback capture",
     icon: (
       <>
@@ -481,7 +481,7 @@ const MODES = [
   {
     key: "wakeword",
     label: "Wake Word",
-    color: "#f97316",
+    color: "var(--brand-mode-wakeword)",
     sub: '"Hey WinSTT"',
     icon: (
       <>
@@ -578,8 +578,8 @@ function heatLevel(col: number, row: number): number {
 }
 const HEAT_BG = [
   "var(--surface-3)",
-  "oklch(71% 0.13 245 / 0.3)",
-  "oklch(71% 0.13 245 / 0.55)",
+  "color-mix(in oklab, var(--brand-teal) 30%, transparent)",
+  "color-mix(in oklab, var(--brand-teal) 55%, transparent)",
   "var(--brand-teal)",
 ];
 

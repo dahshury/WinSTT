@@ -11,7 +11,7 @@ import {
 import { formatProviderName } from "./openrouter-provider-utils";
 
 const ITEM_CLASS =
-	"flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-body outline-none data-[highlighted]:bg-surface-hover";
+	"flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-body outline-none data-[highlighted]:bg-surface-hover";
 
 function renderAllProviders(isSelected: boolean, label: string) {
 	return (

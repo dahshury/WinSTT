@@ -8,11 +8,6 @@
 // (`ctc`, `transducer`, `aed`) call these via `use super::support::*`. Most fns are `pub(super)`
 // so the leakage stays inside the `families/` module tree (it does not widen the crate API).
 
-#![expect(
-    dead_code,
-    reason = "staged STT support surface is defined ahead of call sites and wiring"
-)]
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -22,8 +17,8 @@ use ort::session::Session;
 use ort::value::Tensor;
 
 use super::super::{
-    num_cpus_best_effort, pick_intra_op_threads, vocab_is_uppercase, Accelerator, ResolvedModel,
-    SttError, SttResult,
+    configure_session, num_cpus_best_effort, pick_intra_op_threads, provider_label,
+    vocab_is_uppercase, Accelerator, ResolvedModel, SttError, SttResult,
 };
 
 /// fp16 element type. `ort` depends on `half` and impls `PrimitiveTensorElementType` for
@@ -49,43 +44,26 @@ pub(super) fn build_session(path: &Path, providers: &[Accelerator]) -> SttResult
         .is_some_and(|p| !matches!(p, Accelerator::Cpu));
     let threads = pick_intra_op_threads(is_gpu, num_cpus_best_effort());
 
-    let mut builder = Session::builder()
-        .map_err(|e| SttError::SessionCreate(format!("Session::builder: {e}")))?
-        .with_optimization_level(GraphOptimizationLevel::Level3)
-        .map_err(|e| SttError::SessionCreate(format!("opt level: {e}")))?
-        .with_intra_threads(threads)
-        .map_err(|e| SttError::SessionCreate(format!("intra threads: {e}")))?;
-
-    // DirectML session config (L1). ORT's DirectML EP is incompatible with the memory-pattern
-    // planner — it allocates/manages its own device memory, so EnableMemPattern must be OFF (the
-    // ORT DML docs require DisableMemPattern + ORT_SEQUENTIAL). Parallel execution is already
-    // OFF by default (the builder defaults to Sequential), so we only need to disable mem-pattern.
-    // It's also the right call for our DYNAMIC-length audio inputs (shapes vary every call → the
-    // memory pattern can't be reused and just adds planning overhead). CPU/CUDA keep the default
-    // (mem-pattern on) — validated separately.
-    if is_gpu {
-        builder = builder
-            .with_memory_pattern(false)
-            .map_err(|e| SttError::SessionCreate(format!("disable mem pattern (DML): {e}")))?;
-    }
-
-    builder = register_providers(builder, providers)?;
+    // Optimization level `ORT_ENABLE_ALL` (Level3) normally; intra-op threads via
+    // `pick_intra_op_threads` (CPU→physical, GPU→2). DirectML session config (L1): ORT's DirectML
+    // EP is incompatible with the memory-pattern planner — it allocates/manages its own device
+    // memory, so EnableMemPattern must be OFF (the ORT DML docs require DisableMemPattern +
+    // ORT_SEQUENTIAL). Parallel execution is already OFF by default (the builder defaults to
+    // Sequential), so we only need to disable mem-pattern. It's also the right call for our
+    // DYNAMIC-length audio inputs (shapes vary every call → the memory pattern can't be reused and
+    // just adds planning overhead). CPU/CUDA keep the default (mem-pattern on) — validated
+    // separately. EPs are the FINAL, already-policy-routed list from `EngineConfig.providers`.
+    let mut builder = configure_session(
+        GraphOptimizationLevel::Level3,
+        Some(threads),
+        is_gpu,
+        Some(providers),
+    )
+    .map_err(SttError::SessionCreate)?;
 
     builder
         .commit_from_file(path)
         .map_err(|e| SttError::SessionCreate(format!("commit_from_file {}: {e}", path.display())))
-}
-
-/// Register the execution providers onto a `SessionBuilder`. The provider list is the FINAL,
-/// already-policy-routed list from `EngineConfig.providers`; CPU is always appended last for
-/// per-op fallback by the shared helper (mirrors Python `[<gpu_ep>, CPUExecutionProvider]`).
-pub(super) fn register_providers(
-    builder: ort::session::builder::SessionBuilder,
-    providers: &[Accelerator],
-) -> SttResult<ort::session::builder::SessionBuilder> {
-    builder
-        .with_execution_providers(super::super::execution_providers(providers))
-        .map_err(|e| SttError::SessionCreate(format!("register EPs: {e}")))
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -153,7 +131,10 @@ pub(super) fn argmax_last_axis_2d(logits: ArrayView2<'_, f32>) -> Vec<i64> {
 }
 
 /// argmax over a flat 1-D logit slice (single decode step). Returns (index, value).
-pub(super) fn argmax_1d(v: &[f32]) -> (usize, f32) {
+///
+/// The one scalar linear-max scan for the STT engines — `families` use the `(index, value)` pair
+/// directly; `whisper`/`moonshine` wrap it for their last-position / 2-D shapes.
+pub(crate) fn argmax_1d(v: &[f32]) -> (usize, f32) {
     let mut best = 0usize;
     let mut best_v = f32::NEG_INFINITY;
     for (i, &x) in v.iter().enumerate() {
@@ -459,28 +440,7 @@ pub(crate) fn file<'a>(resolved: &'a ResolvedModel, key: &str) -> SttResult<&'a 
 }
 
 pub(super) fn providers_to_strings(providers: &[Accelerator]) -> Vec<String> {
-    providers
-        .iter()
-        .map(|a| {
-            match a {
-                Accelerator::Cpu => "CPUExecutionProvider",
-                Accelerator::Cuda => "CUDAExecutionProvider",
-                Accelerator::DirectMl => "DmlExecutionProvider",
-                Accelerator::CoreMl => "CoreMLExecutionProvider",
-                Accelerator::Rocm => "ROCMExecutionProvider",
-                Accelerator::OpenVino => "OpenVINOExecutionProvider",
-            }
-            .to_string()
-        })
-        .collect()
-}
-
-pub(super) fn session_input_names(session: &Session) -> Vec<String> {
-    node_input_names(session)
-}
-
-pub(super) fn session_output_names(session: &Session) -> Vec<String> {
-    node_output_names(session)
+    providers.iter().map(provider_label).collect()
 }
 
 /// Read the ONNX model's `custom_metadata_map` as a String→String map.
@@ -686,8 +646,8 @@ pub(super) type NamedInput = (
 
 /// A KV-cache tensor that is either f32 or f16 (matches the decoder's declared past dtype).
 ///
-/// Defined here in the shared layer (not with the AED engines) because the `push_past_kv` /
-/// `carry_present` helpers below operate on it; the `aed` engines re-use it via `super::support`.
+/// Defined here in the shared layer (not with the AED engines) because the `carry_present` helper
+/// below operates on it; the `aed` engines re-use it via `super::support`.
 pub(super) enum KvTensor {
     F32(ArrayD<f32>),
     F16(ArrayD<F16>),
@@ -721,44 +681,6 @@ pub(super) fn tensor_i32(shape: (usize, usize), data: Vec<i32>) -> SttResult<Ten
     let arr = ndarray::Array2::from_shape_vec(shape, data)
         .map_err(|e| SttError::Inference(format!("i32 array: {e}")))?;
     Tensor::from_array(arr).map_err(|e| SttError::Inference(format!("i32 tensor: {e}")))
-}
-
-pub(super) fn push_tensor<T>(inputs: &mut Vec<NamedInput>, name: &'static str, tensor: Tensor<T>)
-where
-    T: ort::value::PrimitiveTensorElementType + Clone + std::fmt::Debug + 'static,
-{
-    // `SessionInputValue: From<Value<T>>` (Tensor<T> = Value<TensorValueTypeMarker<T>>) → direct.
-    inputs.push((
-        std::borrow::Cow::Borrowed(name),
-        ort::session::SessionInputValue::from(tensor),
-    ));
-}
-
-/// Push the host past-KV arrays (dtype-matched) as named inputs (§6.5 fp16 carry).
-pub(super) fn push_past_kv(
-    inputs: &mut Vec<NamedInput>,
-    names: &[String],
-    state: &BTreeMap<String, KvTensor>,
-) -> SttResult<()> {
-    for name in names {
-        let kv = state
-            .get(name)
-            .ok_or_else(|| SttError::Inference(format!("missing KV state for {name}")))?;
-        let value: ort::session::SessionInputValue<'static> = match kv {
-            KvTensor::F32(a) => {
-                let t = Tensor::from_array(a.clone())
-                    .map_err(|e| SttError::Inference(format!("kv f32 {name}: {e}")))?;
-                ort::session::SessionInputValue::from(t)
-            }
-            KvTensor::F16(a) => {
-                let t = Tensor::from_array(a.clone())
-                    .map_err(|e| SttError::Inference(format!("kv f16 {name}: {e}")))?;
-                ort::session::SessionInputValue::from(t)
-            }
-        };
-        inputs.push((std::borrow::Cow::Owned(name.clone()), value));
-    }
-    Ok(())
 }
 
 /// Carry present.* outputs into the next step's past_key_values.* (dtype-preserving).

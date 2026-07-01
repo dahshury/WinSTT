@@ -5,6 +5,7 @@ import {
 	OpenRouterModelSelector,
 	SttModelSelector,
 } from "@/widgets/model-picker";
+import { TtsModelSelector } from "@/widgets/model-picker/tts";
 import { type KeyboardEvent, type ReactNode, useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { providerOf } from "@/entities/cloud-stt-provider";
@@ -15,11 +16,28 @@ import {
 	useOllamaLibraryStore,
 	useOpenRouterCatalogStore,
 } from "@/entities/llm-catalog";
-import { isVisibleSttModel } from "@/entities/model-catalog";
-import { useSettingsStore } from "@/entities/setting";
+import {
+	isSelectableRealtimeModel,
+	isVisibleSttModel,
+	type ModelInfo,
+	modelsHaveLanguageOverlap,
+	modelSupportsSelectedSourceLanguages,
+	type SourceLanguageSelection,
+} from "@/entities/model-catalog";
+import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
+import {
+	useTtsCatalogStore,
+	useTtsModelStateStore,
+} from "@/entities/tts-catalog";
 import { CloudModelSelect } from "@/features/select-cloud-stt-model";
+import {
+	resolveTtsModelSelectionPatch,
+	useTtsModelDownloads,
+} from "@/features/tts-model-picker";
+import { ttsDeleteModel } from "@/shared/api/ipc-client";
 import type { OllamaPullProgress } from "@/shared/api/models";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import {
 	ollamaLlmSelectorUiStorageKey,
 	openRouterLlmSelectorUiStorageKey,
@@ -35,6 +53,18 @@ import {
 	type SystemInfo,
 } from "../lib/picker-helpers";
 
+/** Realtime-slot wiring, supplied by the host for the `stt-realtime` mode. The
+ *  realtime select handler, download gating, main-model context, and source
+ *  languages are all owned by `ModelPickerWindow` (same controller the main
+ *  picker uses) so the detached realtime picker matches `RealtimeModelSection`. */
+interface RealtimePickerBundle {
+	value: string;
+	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
+	onDownloadAction: QuantActions["handleDownloadAction"];
+	mainModelInfo: ModelInfo | undefined;
+	sourceLanguageSelection: SourceLanguageSelection | undefined;
+}
+
 interface PickerBodyProps {
 	catalogLoaded: boolean;
 	catalogModels: CatalogModels;
@@ -49,6 +79,7 @@ interface PickerBodyProps {
 	onDownloadAction: QuantActions["handleDownloadAction"];
 	onDownloadSnapshot: QuantActions["handleDownloadSnapshot"];
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
+	realtime: RealtimePickerBundle;
 	statesById: StatesById;
 	systemInfo: SystemInfo;
 }
@@ -98,7 +129,7 @@ const handleKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
 	close();
 };
 
-function DetachedLlmPickerFrame({ children }: { children: ReactNode }) {
+function DetachedPickerFrame({ children }: { children: ReactNode }) {
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: backdrop only dismisses on a direct click (target===currentTarget); keyboard dismissal is the onKeyDownCapture Escape handler — interactive controls live in {children}
 		// biome-ignore lint/a11y/noStaticElementInteractions: backdrop surface, not itself an interaction target; the onClick is a click-outside dismiss, interactive controls live in {children}
@@ -135,10 +166,10 @@ function useLibrarySearchProps(): OllamaModelSelectorProps["librarySearch"] {
 		isLoading: libraryState.isLoading,
 		tagsByModel: libraryState.tagsByModel,
 		loadCatalog: () => {
-			libraryState.loadCatalog().catch(() => undefined);
+			fireAndForget(libraryState.loadCatalog(), "PickerBody.loadCatalog");
 		},
 		fetchTags: (model) => {
-			libraryState.fetchTags(model).catch(() => undefined);
+			fireAndForget(libraryState.fetchTags(model), "PickerBody.fetchTags");
 		},
 	};
 }
@@ -181,7 +212,7 @@ function DetachedOllamaPicker({
 	const librarySearch = useLibrarySearchProps();
 	useEffect(() => {
 		if (!isLoaded) {
-			scanModels().catch(() => undefined);
+			fireAndForget(scanModels(), "PickerBody.scanModels");
 		}
 	}, [isLoaded, scanModels]);
 	const setModel = (modelName: string) => {
@@ -210,24 +241,24 @@ function DetachedOllamaPicker({
 				models={models}
 				onChange={setModel}
 				onDelete={(name) => {
-					deleteModel(name).catch(() => undefined);
+					fireAndForget(deleteModel(name), "PickerBody.deleteModel");
 				}}
 				onDiscardPull={discardPausedPull}
 				onOpen={() => {
-					scanModels().catch(() => undefined);
+					fireAndForget(scanModels(), "PickerBody.scanModels");
 				}}
 				onPull={(name) => {
-					pullModel(name).catch(() => undefined);
+					fireAndForget(pullModel(name), "PickerBody.pullModel");
 				}}
 				onResumePull={(name) => {
-					resumePull(name).catch(() => undefined);
+					fireAndForget(resumePull(name), "PickerBody.resumePull");
 				}}
 				onStopPull={(name) => {
-					cancelPull(name).catch(() => undefined);
+					fireAndForget(cancelPull(name), "PickerBody.cancelPull");
 				}}
 				pausedPulls={pausedPulls}
 				popupHeightClass={PANEL_HEIGHT}
-				popupWidthClass="w-full"
+				popupWidthClass="w-full max-w-none"
 				pulls={pulls}
 				recommendedModels={RECOMMENDED_OLLAMA_MODELS}
 				swap={null}
@@ -256,7 +287,7 @@ function DetachedOpenRouterPicker({ mode }: { mode: DetachedOpenRouterMode }) {
 		);
 	useEffect(() => {
 		if (openrouterApiKey.trim().length > 0 && !isLoaded) {
-			warmModels().catch(() => undefined);
+			fireAndForget(warmModels(), "PickerBody.warmModels");
 		}
 	}, [isLoaded, openrouterApiKey, warmModels]);
 	const value =
@@ -304,7 +335,7 @@ function DetachedOpenRouterPicker({ mode }: { mode: DetachedOpenRouterMode }) {
 						: "Select a model"
 				}
 				popupHeightClass={PANEL_HEIGHT}
-				popupWidthClass="w-full"
+				popupWidthClass="w-full max-w-none"
 				uiStorageKey={openRouterLlmSelectorUiStorageKey(
 					mode.feature,
 					mode.target,
@@ -312,6 +343,82 @@ function DetachedOpenRouterPicker({ mode }: { mode: DetachedOpenRouterMode }) {
 				value={value}
 			/>
 		</div>
+	);
+}
+
+/** Realtime-slot pre-filter — ports `RealtimeModelSection`'s prefilter so the
+ *  detached realtime picker shows the same native-streaming, language-compatible
+ *  subset the inline settings picker did. */
+function realtimeModelPrefilter(
+	mainModelInfo: ModelInfo | undefined,
+	sourceLanguageSelection: SourceLanguageSelection | undefined,
+): (model: ModelInfo) => boolean {
+	return (model) =>
+		isSelectableRealtimeModel(model) &&
+		(mainModelInfo === undefined
+			? modelSupportsSelectedSourceLanguages(
+					model,
+					sourceLanguageSelection,
+					mainModelInfo,
+				)
+			: modelsHaveLanguageOverlap(mainModelInfo, model) &&
+				modelSupportsSelectedSourceLanguages(
+					model,
+					sourceLanguageSelection,
+					mainModelInfo,
+				));
+}
+
+/** Read-aloud (TTS) voice-model picker hosted in the detached window. Mirrors the
+ *  inline `TtsModelSection` selector: selecting a cached/uncached model writes
+ *  `settings.tts` (applying Supertonic defaults via the shared helper) and closes
+ *  the window; per-quant download/delete reuse the same TTS download wiring. The
+ *  TTS catalog + state stores self-hydrate on import (see `tts-catalog-store`). */
+function DetachedTtsPicker() {
+	const models = useTtsCatalogStore((s) => s.models);
+	const isLoaded = useTtsCatalogStore((s) => s.isLoaded);
+	const statesById = useTtsModelStateStore((s) => s.statesById);
+	const refresh = useTtsModelStateStore((s) => s.refresh);
+	const currentModel = useSettingsStore((s) => s.settings.tts?.model ?? "");
+	const currentSpeed = useSettingsStore(
+		(s) => s.settings.tts?.speed ?? DEFAULT_SETTINGS.tts.speed,
+	);
+	const updateTts = useSettingsStore((s) => s.updateTtsSettings);
+	const currentQuant = statesById[currentModel]?.effectiveQuantization ?? "";
+	const { getSnapshot, onDownloadAction } = useTtsModelDownloads();
+
+	// `refresh()` fetches BOTH the catalog model list and the per-model cache
+	// state in one round-trip. The detached window doesn't bootstrap the TTS
+	// catalog at startup (unlike STT), so populate it when this picker mounts —
+	// mirrors `TtsModelPickerHost`'s on-open refresh.
+	useEffect(() => {
+		refresh();
+	}, [refresh]);
+
+	const handleChange = (nextModel: string): void => {
+		updateTts(resolveTtsModelSelectionPatch(nextModel, models, currentSpeed));
+		close();
+	};
+
+	return (
+		<DetachedPickerFrame>
+			<div className="min-h-0 flex-1 [&>*]:size-full">
+				<TtsModelSelector
+					currentQuantization={currentQuant}
+					inline
+					isLoading={!isLoaded}
+					models={models}
+					onChange={handleChange}
+					onDeleteQuant={(modelId, quant) => ttsDeleteModel(modelId, quant)}
+					onDownloadAction={onDownloadAction}
+					onDownloadSnapshot={getSnapshot}
+					popupHeightClass={PANEL_HEIGHT}
+					popupWidthClass="w-full max-w-none"
+					statesById={statesById}
+					value={currentModel}
+				/>
+			</div>
+		</DetachedPickerFrame>
 	);
 }
 
@@ -337,6 +444,7 @@ export function PickerBody({
 	onDownloadAction,
 	onDownloadSnapshot,
 	onSelect,
+	realtime,
 	statesById,
 	systemInfo,
 }: PickerBodyProps) {
@@ -348,21 +456,58 @@ export function PickerBody({
 	// (the key-removal banner explains why), matching the Settings behaviour.
 	if (mode.kind === "llm-ollama") {
 		return (
-			<DetachedLlmPickerFrame>
+			<DetachedPickerFrame>
 				<DetachedOllamaPicker mode={mode} systemInfo={systemInfo} />
-			</DetachedLlmPickerFrame>
+			</DetachedPickerFrame>
 		);
 	}
 	if (mode.kind === "llm-openrouter") {
 		return (
-			<DetachedLlmPickerFrame>
+			<DetachedPickerFrame>
 				<DetachedOpenRouterPicker mode={mode} />
-			</DetachedLlmPickerFrame>
+			</DetachedPickerFrame>
+		);
+	}
+	if (mode.kind === "tts") {
+		return <DetachedTtsPicker />;
+	}
+	if (mode.kind === "stt-realtime") {
+		return (
+			<DetachedPickerFrame>
+				<div className="min-h-0 flex-1 [&>*]:size-full">
+					<SttModelSelector
+						currentQuantization={currentQuantization}
+						disabled={fileQueueBusy}
+						getFitAssessment={getFitAssessment}
+						inline
+						isLoading={!catalogLoaded}
+						kind="realtime"
+						models={catalogModels}
+						onChange={realtime.onSelect}
+						canDeleteQuant={canDeleteQuant}
+						onDeleteQuant={onDeleteQuant}
+						onDownloadAction={realtime.onDownloadAction}
+						onDownloadSnapshot={onDownloadSnapshot}
+						popupHeightClass={PANEL_HEIGHT}
+						popupWidthClass="w-full max-w-none"
+						prefilter={realtimeModelPrefilter(
+							realtime.mainModelInfo,
+							realtime.sourceLanguageSelection,
+						)}
+						statesById={statesById}
+						systemInfo={systemInfo}
+						value={realtime.value}
+					/>
+				</div>
+			</DetachedPickerFrame>
 		);
 	}
 
 	const isCloud = providerOf(currentModel) !== null;
-	const showCloud = isCloud && hasAnyCloudKey;
+	// `stt-cloud` mode forces the cloud sub-picker (opened from the Settings
+	// Local/Cloud toggle); plain `stt` mode derives it from the persisted model so
+	// the main trigger / footer chip browse whatever source is already active.
+	const showCloud = mode.kind === "stt-cloud" || (isCloud && hasAnyCloudKey);
 
 	return (
 		// Bottom-aligned so the short Cloud panel hugs the chip instead of
@@ -387,7 +532,7 @@ export function PickerBody({
 				<CloudModelSelect
 					defaultOpen
 					onSelect={onSelect}
-					selectedId={currentModel}
+					selectedId={isCloud ? currentModel : ""}
 				/>
 			) : (
 				<div className="min-h-0 flex-1 [&>*]:size-full">
@@ -405,6 +550,7 @@ export function PickerBody({
 						onDownloadAction={onDownloadAction}
 						onDownloadSnapshot={onDownloadSnapshot}
 						popupHeightClass={PANEL_HEIGHT}
+						popupWidthClass="w-full max-w-none"
 						prefilter={isVisibleSttModel}
 						statesById={statesById}
 						systemInfo={systemInfo}

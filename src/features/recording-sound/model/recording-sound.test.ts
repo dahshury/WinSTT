@@ -54,18 +54,6 @@ describe("builtInItems", () => {
 				name: "Marimba",
 				path: "builtin:marimba_start.wav",
 			},
-			{
-				id: "__winstt_builtin_ui_earcon_1__",
-				isDefault: true,
-				name: "UI Earcon 1",
-				path: "builtin:recording_sound_ui_earcon_1.wav",
-			},
-			{
-				id: "__winstt_builtin_ui_earcon_4__",
-				isDefault: true,
-				name: "UI Earcon 4",
-				path: "builtin:recording_sound_ui_earcon_4.wav",
-			},
 		]);
 	});
 });

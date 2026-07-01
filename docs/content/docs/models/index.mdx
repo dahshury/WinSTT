@@ -1,9 +1,9 @@
 ---
 title: Models
-description: Browse the full WinSTT speech-to-text catalog — 40+ on-device ONNX models across 8 families, with accuracy, speed, size, and language coverage so you can pick the right trade-off.
+description: Browse the full WinSTT speech-to-text catalog — 70+ on-device ONNX models across 11 families, with accuracy, speed, size, and language coverage so you can pick the right trade-off.
 ---
 
-WinSTT ships **40+ speech-to-text models** across eight families, all running on a single
+WinSTT ships **70+ speech-to-text models** across 11 families, all running on a single
 ONNX engine on your own hardware. Pick one in the [Model tab](/docs/settings/model) and the
 app downloads it in the background — nothing about your audio leaves the machine.
 
@@ -25,13 +25,13 @@ chose](/docs/install) and the **Device** setting, not by the model. Numerical pr
 chosen per-download via [quantization](/docs/models/compute-types).
 
 <StatGrid>
-  <Stat value="40+" label="models" />
-  <Stat value="8" label="families" />
+  <Stat value="73" label="models" />
+  <Stat value="11" label="families" />
   <Stat value="99" label="languages (Whisper)" />
   <Stat value="5.1" label="best WER (Cohere)" />
 </StatGrid>
 
-## The eight families
+## The 11 families
 
 Each row sums up one family: how many models it offers, the typical on-disk size at default
 precision, the languages it covers, and where it fits best. Lower **WER** (word error rate)
@@ -43,16 +43,18 @@ is more accurate; higher **RTFx** (real-time factor) is faster.
   rows={[
     ["Whisper", "12", "149 MB – 4.5 GB", "99 (multilingual + EN-only)", "The all-rounder — accuracy at every size, broadest language reach"],
     ["Lite-Whisper", "3", "~1.1 GB", "99", "Compressed Whisper Large v3 Turbo — large-model quality at smaller size"],
-    ["NeMo Parakeet", "3", "~2.5 GB", "English + 25-lang multilingual", "Fastest accurate English/European dictation (CTC / RNNT / TDT)"],
-    ["NeMo Canary", "3", "0.8 – 4 GB", "4 – 25 (en/de/es/fr +)", "High-accuracy multilingual with built-in language detection"],
+    ["NeMo", "34", "0.1 – 4 GB", "English, Russian, and 25-lang multilingual", "Fast offline Parakeet / Canary plus native streaming exports"],
     ["Moonshine", "10", "0.1 – 0.7 GB", "EN + per-language fine-tunes", "Lowest-latency real-time on CPU; tiny footprint"],
     ["Cohere", "1", "~5.1 GB", "14", "Maximum accuracy — #1 on the HF Open ASR leaderboard"],
+    ["Granite Speech", "2", "2.5 – 16 GB", "en · fr · de · es · pt", "IBM autoregressive and non-autoregressive speech models with strong punctuation"],
+    ["Qwen3-ASR", "2", "2.0 – 4.1 GB", "30", "Alibaba Qwen LLM-decoder ASR with auto language detection; int4-only downloads"],
     ["SenseVoice", "1", "159 MB", "5 (zh/en/ja/ko/yue)", "Fast East-Asian multilingual in a tiny int8 graph"],
+    ["Dolphin", "1", "104 MB", "15 Asian and Middle Eastern languages", "Compact multilingual CTC model for Eastern-language coverage"],
     ["GigaAM", "2", "~3.5 GB", "Russian", "Best-in-class Russian (CTC / RNNT)"],
-    ["Kaldi / Vosk", "2", "93 – 264 MB", "Russian", "Lightweight Russian on low-end hardware"],
+    ["Kaldi / Vosk / Zipformer", "4", "93 – 478 MB", "English + Russian", "Lightweight Vosk and Zipformer models for low-end hardware"],
     ["T-One", "1", "144 MB", "Russian", "Compact Russian streaming ASR"],
   ]}
-  caption="Sizes are the default (fp32 / int8) download; smaller quantizations are usually available. Family count totals 38 catalog entries plus user-dropped custom models."
+  caption="Sizes are representative downloads; smaller quantizations are usually available. The catalog totals 73 shipped entries plus user-dropped custom models."
 />
 
 ## A few standouts
@@ -67,6 +69,8 @@ is more accurate; higher **RTFx** (real-time factor) is faster.
     ["Parakeet TDT 0.6B v3", "627M", "5.9", "1100", "25", "2.5 GB"],
     ["Canary 1B v2", "978M", "5.6", "430", "25", "4.0 GB"],
     ["Cohere Transcribe", "2.0B", "5.1", "270", "14", "5.1 GB"],
+    ["Qwen3-ASR 0.6B", "600M", "—", "—", "30", "2.0 GB"],
+    ["Granite Speech 4.1 2B Plus", "2.0B", "—", "—", "5", "4.1 GB int8"],
     ["SenseVoice Small", "234M", "7.2", "850", "5", "159 MB"],
   ]}
   caption="WER is an averaged reference figure across benchmark sets; your numbers vary with audio, language, and quantization. RTFx is throughput relative to real time on GPU."
@@ -91,8 +95,9 @@ and **language**. Start from what matters most to you.
     smallest defaults; q4 / int8 quantizations shrink them further.
   </BentoCell>
   <BentoCell icon="languages" title="Specific language">
-    **Whisper** covers 99 languages; **Cohere** 14; **Canary / Parakeet v3** 25 European
-    languages; **GigaAM / Vosk / T-One** are Russian; **Moonshine** has per-language fine-tunes.
+    **Whisper** covers 99 languages; **Qwen3-ASR** 30; **Cohere** 14; **Canary /
+    Parakeet v3** 25 European languages; **GigaAM / Vosk / T-One** are Russian;
+    **Moonshine** has per-language fine-tunes.
   </BentoCell>
 </BentoGrid>
 
@@ -133,7 +138,7 @@ pause, resume, or delete each one independently. See
     NVIDIA's high-accuracy Conformer models for English, multilingual, and Russian.
   </Card>
   <Card title="Other models" href="/docs/models/other">
-    Moonshine, Cohere, SenseVoice, GigaAM, Vosk/Kaldi, and T-One.
+    Moonshine, Cohere, Granite, Qwen3-ASR, SenseVoice, Dolphin, GigaAM, Vosk/Kaldi, and T-One.
   </Card>
   <Card title="Compute & quantization" href="/docs/models/compute-types">
     What fp16, int8, q4, and q4f16 mean — and how to read the picker's badges.

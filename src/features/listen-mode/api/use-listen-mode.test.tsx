@@ -11,6 +11,7 @@ import { useConnectionStore } from "@/entities/connection";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import { IPC } from "@/shared/api/ipc-channels";
+import { parseLoopbackDevices } from "../lib/loopback-devices";
 import { useListenStore } from "../model/listen-store";
 import {
 	applyLoopbackTransition,
@@ -18,7 +19,6 @@ import {
 	resolveListenLoopbackDeviceIndex,
 	resolveOutputLoopbackDeviceIndex,
 	useListenMode,
-	validateDevices,
 } from "./use-listen-mode";
 
 const originalApi = window.nativeBridge;
@@ -340,7 +340,7 @@ function setRecordingMode(
 	});
 }
 
-describe("validateDevices", () => {
+describe("parseLoopbackDevices", () => {
 	test("returns valid devices from a raw array", () => {
 		const raw = [
 			{
@@ -356,7 +356,7 @@ describe("validateDevices", () => {
 				maxOutputChannels: 0,
 			},
 		];
-		const result = validateDevices(raw);
+		const result = parseLoopbackDevices(raw);
 		expect(result).toHaveLength(2);
 		expect(result[0]?.name).toBe("Speakers");
 	});
@@ -371,13 +371,13 @@ describe("validateDevices", () => {
 			},
 			{ index: "bad", name: 42 }, // invalid
 		];
-		const result = validateDevices(raw);
+		const result = parseLoopbackDevices(raw);
 		expect(result).toHaveLength(1);
 		expect(result[0]?.name).toBe("Valid");
 	});
 
 	test("returns empty array for empty input", () => {
-		expect(validateDevices([])).toEqual([]);
+		expect(parseLoopbackDevices([])).toEqual([]);
 	});
 });
 

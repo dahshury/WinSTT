@@ -1,4 +1,3 @@
-import { Button as BaseButton } from "@base-ui/react/button";
 import {
 	Cancel01Icon,
 	CloudDownloadIcon,
@@ -98,36 +97,42 @@ export function InstalledRow({
 	onDelete,
 }: InstalledRowProps) {
 	const rowBg = surfaceBg(Math.min(useSurface() + 1, 8));
+	const selectModel = () => onSelect(model.name);
 	return (
-		<BaseButton
+		<div
 			className={cn(
 				"flex w-full items-center gap-3 rounded-md border border-border px-3 py-2 text-left transition-colors hover:bg-surface-hover data-[current=true]:border-accent",
 				rowBg,
 			)}
 			data-current={current}
-			onClick={() => onSelect(model.name)}
-			type="button"
 		>
-			<HugeiconsIcon
-				className={current ? "text-accent" : "text-foreground-muted"}
-				icon={Tick02Icon}
-				size={16}
-			/>
-			<div className="min-w-0 flex-1">
-				<div className="truncate font-medium text-body text-foreground">
-					{model.name}
+			<button
+				aria-current={current ? "true" : undefined}
+				className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1"
+				onClick={selectModel}
+				type="button"
+			>
+				<HugeiconsIcon
+					className={current ? "text-accent" : "text-foreground-muted"}
+					icon={Tick02Icon}
+					size={16}
+				/>
+				<div className="min-w-0 flex-1">
+					<div className="truncate font-medium text-body text-foreground">
+						{model.name}
+					</div>
+					<div className="text-foreground-muted text-xs">
+						{t("modelSizeLabel", { size: formatGigabytes(model.size ?? 0) })}
+					</div>
 				</div>
-				<div className="text-foreground-muted text-xs">
-					{t("modelSizeLabel", { size: formatGigabytes(model.size ?? 0) })}
-				</div>
-			</div>
+			</button>
 			<DeleteButton
 				deleting={deleting}
 				modelName={model.name}
 				onDelete={onDelete}
 				t={t}
 			/>
-		</BaseButton>
+		</div>
 	);
 }
 

@@ -29,8 +29,9 @@ use tauri::AppHandle;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::{RealtimeStreamOutcome, TranscriptionManager};
 use crate::winstt::commands::dictation::SttEvents;
-use crate::winstt::commands::settings::{effective_realtime, read_settings_raw};
+use crate::winstt::commands::settings::effective_realtime_with_focus;
 use crate::winstt::realtime_stabilizer::RealtimeAccumulator;
+use crate::winstt::settings_store::read_settings_raw;
 use crate::winstt::stt::backend::fixed_realtime_language_from_model;
 
 /// 16 kHz mono — the rate every WinSTT engine + the recorder's FrameResampler target. The
@@ -42,6 +43,17 @@ const ENGINE_READY_PROBE_INTERVAL: Duration = Duration::from_millis(10);
 
 fn realtime_redecode_pause(configured: f64) -> Duration {
     Duration::from_secs_f64(configured.max(0.0))
+}
+
+/// True when one of OUR webview windows currently holds OS focus. The in-app live-
+/// transcription panel only renders inside a focused WinSTT window, so this drives the
+/// focus-aware realtime gate (see `effective_realtime_with_focus`). Cheap (a foreground-
+/// window compare per window) and only evaluated while a recording is in progress.
+fn any_window_focused(app: &AppHandle) -> bool {
+    use tauri::Manager;
+    app.webview_windows()
+        .values()
+        .any(|w| w.is_focused().unwrap_or(false))
 }
 
 #[derive(Debug, Default)]
@@ -353,7 +365,13 @@ impl RealtimeManager {
         // none of the fields it reads are secrets, so we must not trigger per-tick secret
         // decryption (reg.exe spawns) on the live path.
         let settings = read_settings_raw(&self.app);
-        if !effective_realtime(&settings) {
+        // The in-app preview panel lives inside the main WinSTT window, so it's only visible
+        // when one of our windows holds focus. During normal dictation the user is typing into
+        // ANOTHER app (WinSTT unfocused), so feeding the realtime model purely for that hidden
+        // panel is wasted work — gate it on focus. The pill overlay (in-pill/both with the
+        // overlay shown) and word-by-word pasting stay live regardless; see
+        // `effective_realtime_with_focus`.
+        if !effective_realtime_with_focus(&settings, any_window_focused(&self.app)) {
             // Realtime is off this tick → keep the recorder mirror disabled (free) and idle.
             self.audio.set_realtime_enabled(false);
             return TickAction::Sleep(Duration::from_millis(10));

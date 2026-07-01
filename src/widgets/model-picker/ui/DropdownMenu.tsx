@@ -93,7 +93,7 @@ export function DropdownMenuItem({ className, ...rest }: ItemProps) {
 	return (
 		<MenuPrimitive.Item
 			className={cn(
-				"flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-body outline-none data-[disabled]:pointer-events-none data-[highlighted]:text-foreground data-[disabled]:opacity-50",
+				"flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-body outline-none data-[disabled]:pointer-events-none data-[highlighted]:text-foreground data-[disabled]:opacity-50",
 				surfaceHighlightedBg(highlightLevel),
 				className,
 			)}
@@ -155,7 +155,7 @@ export function DropdownMenuSubTrigger({
 	return (
 		<MenuPrimitive.SubmenuTrigger
 			className={cn(
-				"flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-body outline-none",
+				"flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-body outline-none",
 				surfaceHighlightedBg(highlightLevel),
 				surfacePopupOpenBg(highlightLevel),
 				className,

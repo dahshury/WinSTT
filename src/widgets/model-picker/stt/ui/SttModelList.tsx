@@ -18,8 +18,9 @@ import type {
 import { openCustomModelsFolder } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { FavoritesGroupLabel } from "../../core/model-card/FavoritesGroupLabel";
-import { publicAsset } from "../../lib/public-asset";
+import { publicAsset } from "@/shared/lib/public-asset";
 import {
 	bundleVariants,
 	type FamilyKey,
@@ -275,10 +276,8 @@ function SortedGroup({
 // Fire-and-forget; the main process toasts on failure (rare — would
 // require the OS shell to reject opening %APPDATA%). We deliberately
 // don't await because the click handler doesn't need to block.
-// Biome's noVoid rule blocks `void promise` so chain a noop ``then``
-// to mark the dangling-promise as intentional.
 const handleOpenCustomModelsFolder = () => {
-	openCustomModelsFolder().catch(() => undefined);
+	fireAndForget(openCustomModelsFolder(), "openCustomModelsFolder");
 };
 
 function OpenCustomModelsFolderRow() {

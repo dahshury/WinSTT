@@ -30,12 +30,11 @@ pub fn change_whisper_gpu_device(app: AppHandle, device: i32) -> Result<(), Stri
     Ok(())
 }
 
-/// Return which accelerators and GPU devices are available for this build.
+/// Return which accelerators are compiled into this build.
 ///
-/// First-call cost is dominated by enumerating GPU devices through the
-/// whisper.cpp Metal/Vulkan backend, which loads dynamic libraries and
-/// probes hardware. Run it on the blocking pool so the webview thread
-/// stays responsive — see also the startup pre-warm in `lib.rs`.
+/// Returns static, compile-time capability lists — no hardware probe, and
+/// `gpu_devices` is always empty — so it is cheap; it stays on the blocking
+/// pool only to keep the Tauri command async.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_available_accelerators(

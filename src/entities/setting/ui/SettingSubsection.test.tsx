@@ -62,4 +62,23 @@ describe("SettingSubsection", () => {
 			.parentElement as HTMLElement;
 		expect(contentParent.className).toContain("pointer-events-none");
 	});
+
+	test("busy keeps the toggle ON but blocks interaction and inerts the body", () => {
+		const onToggle = mock(() => undefined);
+		render(
+			<SettingSubsection busy onToggle={onToggle} title="Dictation" toggled>
+				<div data-testid="content">x</div>
+			</SettingSubsection>,
+		);
+		const toggle = screen.getByRole("switch", { name: "Toggle Dictation" });
+		// Stays visually ON…
+		expect(toggle.getAttribute("aria-checked")).toBe("true");
+		// …but interaction is blocked.
+		fireEvent.click(toggle);
+		expect(onToggle).not.toHaveBeenCalled();
+		// …and the body is inert until the transition completes.
+		const contentParent = screen.getByTestId("content")
+			.parentElement as HTMLElement;
+		expect(contentParent.className).toContain("pointer-events-none");
+	});
 });

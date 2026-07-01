@@ -10,7 +10,7 @@
 use super::{providers_for_accelerator, Accelerator, EngineKind, Quantization};
 
 // ---------------------------------------------------------------------------
-// Pure-logic helpers (VERIFIED by hand + unit-tested). These are the safe
+// Pure-logic helpers. These are the safe
 // deterministic ports; everything ML stays a stub above.
 // ---------------------------------------------------------------------------
 
@@ -93,7 +93,7 @@ fn bytes_per_param(q: Quantization) -> f64 {
         Quantization::Default => 4.0,
         Quantization::Fp16 | Quantization::Fp16w => 2.0,
         Quantization::Int8 | Quantization::Uint8 => 1.2,
-        Quantization::Q4 | Quantization::Q4f16 | Quantization::Bnb4 => 0.75,
+        Quantization::Q4 | Quantization::Q4f16 | Quantization::Bnb4 | Quantization::Int4 => 0.75,
     }
 }
 
@@ -105,7 +105,7 @@ fn accuracy_weight(q: Quantization) -> u32 {
         Quantization::Fp16 | Quantization::Fp16w => 16,
         Quantization::Int8 | Quantization::Uint8 => 8,
         Quantization::Q4f16 => 6,
-        Quantization::Bnb4 | Quantization::Q4 => 4,
+        Quantization::Bnb4 | Quantization::Q4 | Quantization::Int4 => 4,
     }
 }
 
@@ -136,6 +136,7 @@ pub fn fit_aware_auto_quant(
         Quantization::Q4f16,
         Quantization::Bnb4,
         Quantization::Q4,
+        Quantization::Int4,
     ];
     for &q in ORDER {
         if !available.contains(&q) {

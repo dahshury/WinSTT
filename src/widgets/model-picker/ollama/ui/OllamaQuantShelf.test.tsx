@@ -49,4 +49,69 @@ describe("OllamaQuantShelf", () => {
 			"Encountered two children with the same key",
 		);
 	});
+
+	test("measures download progress against the quant's full size, not the per-layer percent", () => {
+		// Ollama streams layers sequentially; its aggregate `percent` is computed
+		// against a denominator that grows as each new layer is announced. Here the
+		// first layer (500 of a 1000-byte model) is complete, so Ollama reports
+		// percent=100 for that layer — but the WHOLE download is only 50% done. The
+		// badge must render 50% (completed / known full size), never 100%, so the bar
+		// doesn't sit pinned/"reset" when the next file starts.
+		render(
+			<OllamaQuantShelf
+				getFit={undefined}
+				installedNames={new Set()}
+				onDiscard={mock(() => undefined)}
+				onPull={mock(() => undefined)}
+				onResume={mock(() => undefined)}
+				onSelect={mock(() => undefined)}
+				onStop={mock(() => undefined)}
+				paramSize="135m"
+				pausedPulls={{}}
+				pulls={{
+					"smollm2:135m": {
+						model: "smollm2:135m",
+						status: "downloading",
+						completed: 500,
+						total: 500,
+						percent: 100,
+					},
+				}}
+				selectedName={undefined}
+				tags={[{ name: "smollm2:135m", sizeBytes: 1000 }]}
+			/>,
+		);
+
+		expect(screen.getByText("50%")).toBeDefined();
+		expect(screen.queryByText("100%")).toBeNull();
+	});
+
+	test("pins to 100% on the success frame even if the full size is slightly off", () => {
+		render(
+			<OllamaQuantShelf
+				getFit={undefined}
+				installedNames={new Set()}
+				onDiscard={mock(() => undefined)}
+				onPull={mock(() => undefined)}
+				onResume={mock(() => undefined)}
+				onSelect={mock(() => undefined)}
+				onStop={mock(() => undefined)}
+				paramSize="135m"
+				pausedPulls={{}}
+				pulls={{
+					"smollm2:135m": {
+						model: "smollm2:135m",
+						status: "success",
+						completed: 980,
+						total: 980,
+						percent: 100,
+					},
+				}}
+				selectedName={undefined}
+				tags={[{ name: "smollm2:135m", sizeBytes: 1000 }]}
+			/>,
+		);
+
+		expect(screen.getByText("100%")).toBeDefined();
+	});
 });

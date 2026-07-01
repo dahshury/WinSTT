@@ -5,7 +5,7 @@ import {
 	wakewordModelStatus,
 	type WakewordModelStatusPayload,
 } from "@/shared/api/ipc-client";
-import { formatBytes } from "@/shared/lib/format-bytes";
+import { formatBytes, formatBytesPerSecond } from "@/shared/lib/format-bytes";
 import { DialogActionButton } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
 import { DownloadActions, DownloadProgressBar } from "@/shared/ui/download";
@@ -49,11 +49,6 @@ function formatDownloadBytes(bytes: number | null | undefined): string | null {
 	return formatBytes(bytes, { minUnit: "B", mbDecimals: 1 });
 }
 
-function formatBytesPerSecond(bytes: number | null | undefined): string | null {
-	const formatted = formatDownloadBytes(bytes);
-	return formatted ? `${formatted}/s` : null;
-}
-
 function formatDuration(seconds: number | null | undefined): string | null {
 	if (seconds == null || !Number.isFinite(seconds) || seconds < 0) {
 		return null;
@@ -79,7 +74,10 @@ function wakewordDownloadStatsLabel(
 ): string {
 	const downloaded = formatDownloadBytes(status.downloadedBytes);
 	const total = formatDownloadBytes(status.totalBytes);
-	const speed = formatBytesPerSecond(status.speedBps);
+	const speed = formatBytesPerSecond(status.speedBps, {
+		minUnit: "B",
+		mbDecimals: 1,
+	});
 	const eta = formatDuration(status.etaSeconds);
 	const byteLabel =
 		downloaded && total

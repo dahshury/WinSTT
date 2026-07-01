@@ -162,25 +162,13 @@
 	--color-settings-sidebar-tab-hover-bg: oklch(100% 0 0 / 0.04);
 	--color-settings-sidebar-tab-hover-text: oklch(78% 0.02 265 / 0.9);
 	--color-settings-sidebar-tab-active-text: oklch(98% 0 0);
-	--color-settings-sidebar-tab-active-dome-top: oklch(40% 0.006 265);
-	--color-settings-sidebar-tab-active-dome-mid: oklch(32% 0.007 265);
-	--color-settings-sidebar-tab-active-dome-base: oklch(26.5% 0.008 265);
-	--color-settings-sidebar-tab-active-dome-bottom: oklch(25.5% 0.008 265);
-	--color-settings-sidebar-tab-active-gradient-top: oklch(28% 0.008 265);
-	--color-settings-sidebar-tab-active-gradient-bottom: oklch(24.5% 0.009 265);
-	--color-settings-sidebar-tab-active-edge: oklch(100% 0 0 / 0.14);
-	--color-settings-sidebar-tab-active-ring: oklch(64% 0.006 265 / 0.46);
-	--color-settings-sidebar-tab-active-shade: oklch(0% 0 0 / 0.3);
-	--color-settings-sidebar-tab-active-drop: oklch(0% 0 0 / 0.5);
-	--color-settings-sidebar-tab-active-drop-soft: oklch(0% 0 0 / 0.28);
-	--color-settings-sidebar-tab-active-hover-dome-top: oklch(42% 0.006 265);
-	--color-settings-sidebar-tab-active-hover-dome-mid: oklch(33% 0.007 265);
-	--color-settings-sidebar-tab-active-hover-dome-base: oklch(27.5% 0.008 265);
-	--color-settings-sidebar-tab-active-hover-dome-bottom: oklch(26.5% 0.008 265);
-	--color-settings-sidebar-tab-active-hover-gradient-top: oklch(29% 0.008 265);
-	--color-settings-sidebar-tab-active-hover-gradient-bottom: oklch(
-		25.5% 0.009 265
-	);
+	/* Selected pill is the exact elevated picker-trigger recipe (the Device/Select
+	   trigger): surface-5 fill, a `ring-1 ring-divider` outer hairline, and the
+	   matching `shadow-surface-5` (inset top gloss + drop shadows) — so it reads
+	   as the same raised plate. No hover change once active, like the selected
+	   sound row. */
+	--color-settings-sidebar-tab-active-bg: var(--color-surface-5);
+	--color-settings-sidebar-tab-active-ring: var(--color-divider);
 	--color-shimmer-text-muted: var(--color-foreground-secondary);
 	--color-shimmer-text-strong: var(--color-foreground);
 	--color-secret-reveal-edge: oklch(98% 0 0 / 0.16);
@@ -249,16 +237,6 @@
 	--color-recording-mode-listen: var(--color-success);
 	--color-recording-mode-wakeword: oklch(68% 0.19 48);
 
-	/* Diarization speaker palette. */
-	--color-speaker-1: oklch(74.6% 0.16 232);
-	--color-speaker-2: oklch(74.6% 0.16 58);
-	--color-speaker-3: oklch(76.5% 0.16 160);
-	--color-speaker-4: oklch(71.8% 0.2 350);
-	--color-speaker-5: var(--color-warning);
-	--color-speaker-6: oklch(70.2% 0.18 294);
-	--color-speaker-7: oklch(71.2% 0.19 13);
-	--color-speaker-8: oklch(77.7% 0.15 215);
-
 	/* STT/LLM/TTS catalog family accents. */
 	--color-model-family-whisper: oklch(74.6% 0.16 232);
 	--color-model-family-lite-whisper: oklch(77.7% 0.15 215);
@@ -271,6 +249,7 @@
 	--color-model-family-cohere: oklch(74.6% 0.16 58);
 	--color-model-family-sense-voice: oklch(74% 0.18 327);
 	--color-model-family-dolphin: var(--color-teal);
+	--color-model-family-qwen3: oklch(68% 0.2 300);
 	--color-model-family-custom: var(--color-foreground-muted);
 	--color-tts-engine-kokoro: var(--color-model-family-whisper);
 	--color-tts-engine-kitten: var(--color-model-family-t-one);
@@ -376,8 +355,6 @@
 	--animate-fade-in: fade-in 200ms ease-out;
 	--animate-slide-in: slide-in-right 200ms ease-out;
 	--animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
-	--animate-recording-pulse: recording-pulse 1s ease-in-out infinite;
-	--animate-recording-pulse-slow: recording-pulse 2s ease-in-out infinite;
 	/* Indeterminate accent bar that sweeps left → right across a container.
 	   Used by the STT model picker trigger to mark an in-flight model swap
 	   along the card's bottom edge — same accent vocabulary as the open-state
@@ -455,6 +432,39 @@
 }
 @utility z-noise-overlay {
 	z-index: var(--z-index-noise-overlay);
+}
+
+/* ── shadcn-compat color tokens for the vendored DiceUI data grid ──────
+   The data grid (src/shared/ui/data-grid) is vendored from tablecn.com /
+   DiceUI and references shadcn's semantic color names. Those names don't
+   exist in WinSTT's theme, so the grid was rendering with no fills (e.g. a
+   transparent sticky header that rows scrolled under). Map the shadcn names
+   onto WinSTT surface/foreground/accent tokens so the whole grid renders
+   in-theme without editing every vendored file. The grid is the ONLY
+   consumer of these tokens — nothing else in the app uses them. The
+   hand-written primitives/* wrappers already use the surface tokens directly;
+   this shim only covers the bulk grid internals. */
+@theme {
+	--color-background: var(--color-surface-2);
+	--color-muted: var(--color-surface-4);
+	--color-muted-foreground: var(--color-foreground-muted);
+	--color-primary: var(--color-accent);
+	--color-primary-foreground: var(--color-on-accent);
+	--color-input: var(--color-surface-5);
+	--color-ring: var(--color-accent);
+	--color-destructive: var(--color-error);
+}
+
+/* Bare `border` utilities (border, border-b, border-e, …) default to
+   `currentColor` in Tailwind v4. Inside the data grid that meant near-white
+   grid lines against the dark surfaces. Scope a sensible default border color
+   to the grid subtree; explicit `border-*` utilities still win (utilities
+   layer overrides the base layer regardless of selector specificity). */
+@layer base {
+	[data-slot="grid"],
+	[data-slot="grid"] * {
+		border-color: var(--color-border);
+	}
 }
 
 /* ── Legacy aliases for existing var() references in CSSProperties ── */
@@ -615,7 +625,7 @@
 	.settings-sidebar-icon-button {
 		width: 2rem;
 		height: 2rem;
-		border-radius: 0.8rem;
+		border-radius: var(--radius-lg);
 		color: var(--color-settings-sidebar-icon);
 	}
 
@@ -631,7 +641,7 @@
 	.settings-sidebar-search-input {
 		height: 2.5rem;
 		border-color: var(--color-settings-sidebar-search-border);
-		border-radius: 1rem;
+		border-radius: var(--radius-lg);
 		background: linear-gradient(
 			180deg,
 			var(--color-settings-sidebar-search-top),
@@ -672,6 +682,11 @@
 		height: 2.4rem;
 		min-height: 2.4rem;
 		border-radius: var(--radius-lg);
+		/* Resting background lives here (not as a `bg-transparent` utility on the
+		   element) so the hover/active fills below — same @layer, higher
+		   specificity — actually win the cascade. A utilities-layer class would
+		   override them regardless of specificity. */
+		background: transparent;
 		color: var(--color-settings-sidebar-tab-text);
 	}
 
@@ -680,48 +695,17 @@
 		color: var(--color-settings-sidebar-tab-hover-text);
 	}
 
-	/* Active row — a raised, beveled plate using the same rounded-lg corner
-	   language as the settings dropdown triggers. Sampled targets: body ≈
-	   #252529 (oklch 25.5%), top dome ≈ #39393d (oklch 34% via a broad,
-	   centered radial), with a crisp light hairline ring so the plate reads as
-	   lifted a step above the charcoal panel. */
+	/* Active row — the exact raised picker-trigger plate (Device/Select trigger):
+	   surface-5 fill, a `ring-1 ring-divider` outer hairline, and the matching
+	   `shadow-surface-5` (inset top gloss + drop shadows), with rounded-lg
+	   corners. The ring is listed before the surface shadow to mirror Tailwind's
+	   box-shadow layer order (ring shadow, then `--tw-shadow`). */
 	.settings-sidebar-tab[data-active] {
 		color: var(--color-settings-sidebar-tab-active-text);
-		background:
-			radial-gradient(
-				ellipse 96% 130% at 50% -24%,
-				var(--color-settings-sidebar-tab-active-dome-top),
-				var(--color-settings-sidebar-tab-active-dome-mid) 40%,
-				var(--color-settings-sidebar-tab-active-dome-base) 74%,
-				var(--color-settings-sidebar-tab-active-dome-bottom)
-			),
-			linear-gradient(
-				180deg,
-				var(--color-settings-sidebar-tab-active-gradient-top),
-				var(--color-settings-sidebar-tab-active-gradient-bottom)
-			);
+		background: var(--color-settings-sidebar-tab-active-bg);
 		box-shadow:
-			inset 0 1px 0 var(--color-settings-sidebar-tab-active-edge),
-			inset 0 0 0 1px var(--color-settings-sidebar-tab-active-ring),
-			inset 0 -2px 4px var(--color-settings-sidebar-tab-active-shade),
-			0 2px 6px var(--color-settings-sidebar-tab-active-drop),
-			0 16px 34px var(--color-settings-sidebar-tab-active-drop-soft);
-	}
-
-	.settings-sidebar-tab[data-active]:hover {
-		background:
-			radial-gradient(
-				ellipse 96% 130% at 50% -24%,
-				var(--color-settings-sidebar-tab-active-hover-dome-top),
-				var(--color-settings-sidebar-tab-active-hover-dome-mid) 40%,
-				var(--color-settings-sidebar-tab-active-hover-dome-base) 74%,
-				var(--color-settings-sidebar-tab-active-hover-dome-bottom)
-			),
-			linear-gradient(
-				180deg,
-				var(--color-settings-sidebar-tab-active-hover-gradient-top),
-				var(--color-settings-sidebar-tab-active-hover-gradient-bottom)
-			);
+			0 0 0 1px var(--color-settings-sidebar-tab-active-ring),
+			var(--shadow-surface-5);
 	}
 
 	.settings-sidebar-tab-icon {
@@ -796,16 +780,6 @@
 	}
 	50% {
 		box-shadow: 0 0 16px var(--color-accent-glow-strong);
-	}
-}
-
-@keyframes recording-pulse {
-	0%,
-	100% {
-		opacity: 1;
-	}
-	50% {
-		opacity: 0.5;
 	}
 }
 

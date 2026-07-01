@@ -144,8 +144,11 @@ mod tests {
             Some(("onnx-community".into(), "moonshine-base-ONNX".into()))
         );
         assert_eq!(
-            resolve_repo("granite-speech-4.1-2b"),
-            Some(("smcleod".into(), "ibm-granite-speech-4.1-2b-onnx".into()))
+            resolve_repo("granite-speech-4.1-2b-plus"),
+            Some((
+                "smcleod".into(),
+                "ibm-granite-speech-4.1-2b-plus-onnx".into()
+            ))
         );
         assert_eq!(
             resolve_repo("granite-speech-4.1-2b-nar"),
@@ -168,7 +171,7 @@ mod tests {
     #[test]
     fn granite_globs_use_precision_directories() {
         let ar = file_globs(
-            "granite-speech-4.1-2b",
+            "granite-speech-4.1-2b-plus",
             EngineKind::GraniteSpeechAr,
             Quantization::Int8,
         );
@@ -199,6 +202,46 @@ mod tests {
         assert!(nar
             .iter()
             .any(|f| f.key == "embed_tokens" && f.glob == "fp16w/embed_tokens.onnx"));
+    }
+
+    #[test]
+    fn qwen3_globs_root_files_and_int4_suffix() {
+        let g = file_globs("qwen3-asr-0.6b", EngineKind::Qwen3Asr, Quantization::Int4);
+        assert!(g
+            .iter()
+            .any(|f| f.key == "encoder" && f.glob == "encoder?int4.onnx"));
+        assert!(g
+            .iter()
+            .any(|f| f.key == "decoder_init" && f.glob == "decoder_init?int4.onnx"));
+        assert!(g
+            .iter()
+            .any(|f| f.key == "decoder_step" && f.glob == "decoder_step?int4.onnx"));
+        // The shared external-data blob must be an explicit file (not a stem sidecar).
+        assert!(g
+            .iter()
+            .any(|f| f.key == "decoder_weights" && f.glob == "decoder_weights?int4.data"));
+        // The fp16 embed table is shared across precisions → no quant suffix.
+        assert!(g
+            .iter()
+            .any(|f| f.key == "embed_tokens" && f.glob == "embed_tokens.bin"));
+        // `?int4` matches the `.int4` separator the export uses.
+        assert!(glob_match("encoder?int4.onnx", "encoder.int4.onnx"));
+        assert!(glob_match(
+            "decoder_weights?int4.data",
+            "decoder_weights.int4.data"
+        ));
+    }
+
+    #[test]
+    fn qwen3_alias_resolves_to_andrewleech() {
+        assert_eq!(
+            resolve_repo("qwen3-asr-0.6b"),
+            Some(("andrewleech".into(), "qwen3-asr-0.6b-onnx".into()))
+        );
+        assert_eq!(
+            resolve_repo("qwen3-asr-1.7b"),
+            Some(("andrewleech".into(), "qwen3-asr-1.7b-onnx".into()))
+        );
     }
 
     #[test]

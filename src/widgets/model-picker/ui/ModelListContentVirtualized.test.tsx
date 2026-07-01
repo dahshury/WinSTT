@@ -573,7 +573,7 @@ describe("getPricingBaseTextColor", () => {
 	test("non-free delegates to non-free helper", () => {
 		expect(
 			helpers.getPricingBaseTextColor(
-				{ tier: "low", label: "$0.1", className: "x" },
+				{ tier: "paid", label: "$0.1", className: "x" },
 				false,
 			),
 		).toBe("text-foreground-muted");
@@ -594,7 +594,7 @@ describe("getPricingExtraClass", () => {
 	test("returns className for non-free", () => {
 		expect(
 			helpers.getPricingExtraClass({
-				tier: "high",
+				tier: "paid",
 				label: "$10",
 				className: "rose-thing",
 			}),
@@ -614,7 +614,7 @@ describe("getPricingClassName", () => {
 
 	test("non-free includes tier className", () => {
 		const cls = helpers.getPricingClassName(
-			{ tier: "medium", label: "$1", className: "amber-class" },
+			{ tier: "paid", label: "$1", className: "amber-class" },
 			false,
 		);
 		expect(cls).toContain("amber-class");
@@ -634,7 +634,7 @@ describe("getPricingLabel", () => {
 
 	test("returns label for non-free", () => {
 		expect(
-			helpers.getPricingLabel({ tier: "low", label: "$0.1", className: "x" }),
+			helpers.getPricingLabel({ tier: "paid", label: "$0.1", className: "x" }),
 		).toBe("$0.1");
 	});
 });

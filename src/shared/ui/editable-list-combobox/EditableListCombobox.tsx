@@ -26,6 +26,11 @@ import {
 } from "@/shared/lib/surface";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { IconButton } from "@/shared/ui/icon-button";
+import {
+	StopBubble,
+	surfaceStep,
+	usePopupSurfaceLevels,
+} from "@/shared/ui/select";
 import "./editable-list-combobox.css";
 
 /**
@@ -89,7 +94,6 @@ interface EditableListComboboxProps {
 	summaryLabel: (count: number) => string;
 	value: readonly string[];
 }
-
 const trimNormalize = (raw: string): string => raw.trim();
 const identityLabel = (item: string): string => item;
 
@@ -160,11 +164,12 @@ export function EditableListCombobox({
 		onChange(value.map((v) => (v === oldEntry ? next : v)));
 	};
 
-	const substrate = useSurface();
-	const inputLevel = Math.min(substrate + 1, 8);
-	const popupLevel = Math.min(substrate + 2, 8);
-	const popupShadow = Math.max(popupLevel, 6);
-	const highlightLevel = Math.min(popupLevel + 1, 8);
+	const {
+		triggerLevel: inputLevel,
+		popupLevel,
+		popupShadow,
+	} = usePopupSurfaceLevels({ selfElevate: false });
+	const highlightLevel = surfaceStep(popupLevel);
 
 	return (
 		<div className={className ?? "w-full"}>
@@ -247,7 +252,7 @@ export function EditableListCombobox({
 								<Combobox.List className="outline-none">
 									{(item: string) => (
 										<Combobox.Item
-											className={`mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none ${surfaceHighlightedBg(highlightLevel)}`}
+											className={`mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none ${surfaceHighlightedBg(highlightLevel)}`}
 											key={item}
 											value={item}
 										>
@@ -294,7 +299,7 @@ function EntryRow({
 			<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[12px] text-foreground leading-none">
 				{entry}
 			</span>
-			<StopBubble>
+			<StopBubble className="flex shrink-0 items-center gap-0.5">
 				<IconButton
 					aria-label={editAriaLabel}
 					className="size-7"
@@ -374,7 +379,7 @@ function EntryEditor({
 				ref={inputRef}
 				value={draft}
 			/>
-			<StopBubble>
+			<StopBubble className="flex shrink-0 items-center gap-0.5">
 				<IconButton
 					aria-label={saveAriaLabel}
 					className="size-7 hover:bg-accent-dim hover:text-accent"
@@ -388,29 +393,6 @@ function EntryEditor({
 					onClick={onCancel}
 				/>
 			</StopBubble>
-		</div>
-	);
-}
-
-/** Eats pointer/keyboard events so a row's inline buttons don't bubble up to
- *  the combobox (dismiss / re-focus). Mirrors CreatableCombobox / SearchableSelect. */
-function swallowEvent(e: { stopPropagation: () => void }): void {
-	e.stopPropagation();
-}
-
-function StopBubble({ children }: { children: ReactNode }) {
-	return (
-		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: role="toolbar" is interactive per WAI-ARIA; this shim only stops events from bubbling to the combobox so the inner buttons can fire without dismissing/refocusing it.
-		<div
-			className="flex shrink-0 items-center gap-0.5"
-			onClick={swallowEvent}
-			onKeyDown={swallowEvent}
-			onMouseDown={swallowEvent}
-			onPointerDown={swallowEvent}
-			role="toolbar"
-			tabIndex={-1}
-		>
-			{children}
 		</div>
 	);
 }

@@ -12,15 +12,12 @@ use ort::session::{Session, SessionInputValue};
 use ort::value::Tensor;
 
 use super::frontend;
+use super::streaming::{self, StreamCursor};
 use super::support::*;
 use crate::winstt::stt::{
     EngineConfig, EngineKind, NativeStreamUpdate, SttError, SttResult, TranscribeOptions,
     Transcriber, Transcription,
 };
-
-const SAMPLE_RATE: usize = 16_000;
-const FINAL_SILENCE_PAD_MS: usize = 2_000;
-const STREAM_FEATURE_PRE_CONTEXT_FRAMES: usize = 3;
 
 pub struct NativeNemoCtcStreamingEngine {
     session: Session,
@@ -41,15 +38,10 @@ pub struct NativeNemoCtcStreamingEngine {
 }
 
 struct NemoCtcStreamState {
-    pcm: Vec<f32>,
-    base_frame: usize,
-    next_chunk_frame: usize,
+    cursor: StreamCursor,
     cache_last_channel: ArrayD<f32>,
     cache_last_time: ArrayD<f32>,
     cache_last_channel_len: ArrayD<i64>,
-    tokens: Vec<i64>,
-    frame_offset: usize,
-    num_trailing_blanks: usize,
 }
 
 impl NativeNemoCtcStreamingEngine {
@@ -57,21 +49,22 @@ impl NativeNemoCtcStreamingEngine {
         let session = build_session(file(&cfg.resolved, "model")?, &cfg.providers)?;
         let metadata = read_custom_metadata(&session)?;
         let feature_dim = feat_dim_of(&session, "audio_signal").clamp(1, 128);
-        let window_size = meta_usize(&metadata, "window_size")?;
-        let chunk_shift = meta_usize(&metadata, "chunk_shift")?;
-        let vocab_size = meta_usize(&metadata, "vocab_size").unwrap_or(0) + 1;
+        let window_size = streaming::meta_usize(&metadata, "window_size", "streaming")?;
+        let chunk_shift = streaming::meta_usize(&metadata, "chunk_shift", "streaming")?;
+        let vocab_size =
+            streaming::meta_usize(&metadata, "vocab_size", "streaming").unwrap_or(0) + 1;
         let blank_id = vocab_size.saturating_sub(1) as i64;
         let cache_last_channel_shape = vec![
             1,
-            meta_usize(&metadata, "cache_last_channel_dim1")?,
-            meta_usize(&metadata, "cache_last_channel_dim2")?,
-            meta_usize(&metadata, "cache_last_channel_dim3")?,
+            streaming::meta_usize(&metadata, "cache_last_channel_dim1", "streaming")?,
+            streaming::meta_usize(&metadata, "cache_last_channel_dim2", "streaming")?,
+            streaming::meta_usize(&metadata, "cache_last_channel_dim3", "streaming")?,
         ];
         let cache_last_time_shape = vec![
             1,
-            meta_usize(&metadata, "cache_last_time_dim1")?,
-            meta_usize(&metadata, "cache_last_time_dim2")?,
-            meta_usize(&metadata, "cache_last_time_dim3")?,
+            streaming::meta_usize(&metadata, "cache_last_time_dim1", "streaming")?,
+            streaming::meta_usize(&metadata, "cache_last_time_dim2", "streaming")?,
+            streaming::meta_usize(&metadata, "cache_last_time_dim3", "streaming")?,
         ];
 
         let input_names = node_input_names(&session);
@@ -120,34 +113,23 @@ impl NativeNemoCtcStreamingEngine {
 
     fn fresh_stream_state(&self) -> NemoCtcStreamState {
         NemoCtcStreamState {
-            pcm: Vec::new(),
-            base_frame: 0,
-            next_chunk_frame: 0,
+            cursor: StreamCursor::new(),
             cache_last_channel: ArrayD::<f32>::zeros(IxDyn(&self.cache_last_channel_shape)),
             cache_last_time: ArrayD::<f32>::zeros(IxDyn(&self.cache_last_time_shape)),
             cache_last_channel_len: ArrayD::<i64>::zeros(IxDyn(&[1])),
-            tokens: Vec::new(),
-            frame_offset: 0,
-            num_trailing_blanks: 0,
         }
     }
 
     fn process_available_chunks(&mut self, finalize: bool) -> SttResult<bool> {
-        let features =
-            frontend::nemo_features_with_normalization(&self.stream.pcm, &self.mel_fb, "");
+        let features = frontend::nemo_features_with_normalization(
+            &self.stream.cursor.pcm,
+            &self.mel_fb,
+            frontend::NemoNorm::None,
+        );
         let mut processed_any = false;
         loop {
-            let rel_start = self
-                .stream
-                .next_chunk_frame
-                .saturating_sub(self.stream.base_frame);
-            let required_frames = rel_start + self.window_size;
-            let ready = if finalize {
-                required_frames <= features.nrows()
-            } else {
-                required_frames < features.nrows()
-            };
-            if !ready {
+            let rel_start = self.stream.cursor.rel_start();
+            if !streaming::chunk_ready(rel_start, self.window_size, features.nrows(), finalize) {
                 break;
             }
             let chunk = features
@@ -155,30 +137,13 @@ impl NativeNemoCtcStreamingEngine {
                 .to_owned();
             let logits = self.run_chunk(&chunk)?;
             self.decode_ctc_logits(&logits);
-            self.stream.next_chunk_frame += self.chunk_shift;
+            self.stream.cursor.next_chunk_frame += self.chunk_shift;
             processed_any = true;
         }
         if processed_any {
-            self.trim_stream_pcm();
+            self.stream.cursor.trim_pcm(frontend::NEMO_HOP);
         }
         Ok(processed_any)
-    }
-
-    fn trim_stream_pcm(&mut self) {
-        let keep_from_frame = self
-            .stream
-            .next_chunk_frame
-            .saturating_sub(STREAM_FEATURE_PRE_CONTEXT_FRAMES);
-        if keep_from_frame <= self.stream.base_frame {
-            return;
-        }
-        let drop_frames = keep_from_frame - self.stream.base_frame;
-        let drop_samples = (drop_frames * frontend::NEMO_HOP).min(self.stream.pcm.len());
-        if drop_samples == 0 {
-            return;
-        }
-        self.stream.pcm.drain(..drop_samples);
-        self.stream.base_frame += drop_samples / frontend::NEMO_HOP;
     }
 
     fn run_chunk(&mut self, chunk: &Array2<f32>) -> SttResult<Array2<f32>> {
@@ -275,12 +240,12 @@ impl NativeNemoCtcStreamingEngine {
     }
 
     fn decode_ctc_logits(&mut self, logits: &Array2<f32>) {
-        let mut prev_id = if self.stream.tokens.is_empty() {
+        let mut prev_id = if self.stream.cursor.tokens.is_empty() {
             -1
-        } else if self.stream.num_trailing_blanks > 0 {
+        } else if self.stream.cursor.num_trailing_blanks > 0 {
             self.blank_id
         } else {
-            *self.stream.tokens.last().unwrap_or(&self.blank_id)
+            *self.stream.cursor.tokens.last().unwrap_or(&self.blank_id)
         };
 
         for row in logits.rows() {
@@ -288,42 +253,32 @@ impl NativeNemoCtcStreamingEngine {
             let (best, _) = argmax_1d(&row_buf);
             let y = best as i64;
             if y == self.blank_id {
-                self.stream.num_trailing_blanks += 1;
+                self.stream.cursor.num_trailing_blanks += 1;
             } else {
-                self.stream.num_trailing_blanks = 0;
+                self.stream.cursor.num_trailing_blanks = 0;
             }
             if y != self.blank_id && y != prev_id {
-                self.stream.tokens.push(y);
+                self.stream.cursor.tokens.push(y);
             }
             prev_id = y;
         }
-        self.stream.frame_offset += logits.nrows();
+        self.stream.cursor.frame_offset += logits.nrows();
     }
 
     fn current_text(&self) -> String {
-        let syms: Vec<&str> = self
-            .stream
-            .tokens
-            .iter()
-            .filter_map(|&id| self.vocab.get(id))
-            .filter(|s| !is_special_token(s))
-            .collect();
-        join_and_normalize(&syms, self.vocab.lowercase_decoded)
+        self.stream
+            .cursor
+            .decode_text(&self.vocab, |_id, sym| !is_special_token(sym))
     }
 }
 
 impl NemoCtcStreamState {
     fn empty() -> Self {
         Self {
-            pcm: Vec::new(),
-            base_frame: 0,
-            next_chunk_frame: 0,
+            cursor: StreamCursor::new(),
             cache_last_channel: ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1, 1])),
             cache_last_time: ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1, 1])),
             cache_last_channel_len: ArrayD::<i64>::zeros(IxDyn(&[1])),
-            tokens: Vec::new(),
-            frame_offset: 0,
-            num_trailing_blanks: 0,
         }
     }
 }
@@ -361,17 +316,17 @@ impl Transcriber for NativeNemoCtcStreamingEngine {
 
     fn stream_accept(&mut self, pcm: &[f32]) -> SttResult<NativeStreamUpdate> {
         if !pcm.is_empty() {
-            self.stream.pcm.extend_from_slice(pcm);
+            self.stream.cursor.pcm.extend_from_slice(pcm);
             self.process_available_chunks(false)?;
         }
         Ok(NativeStreamUpdate::interim(self.current_text()))
     }
 
     fn stream_finalize(&mut self) -> SttResult<String> {
-        self.stream.pcm.extend(std::iter::repeat_n(
-            0.0,
-            SAMPLE_RATE * FINAL_SILENCE_PAD_MS / 1000,
-        ));
+        self.stream
+            .cursor
+            .pcm
+            .extend_from_slice(&streaming::final_silence_pad());
         self.process_available_chunks(true)?;
         Ok(self.current_text())
     }
@@ -403,14 +358,9 @@ pub struct NativeZipformerStreamingEngine {
 }
 
 struct ZipformerStreamState {
-    pcm: Vec<f32>,
-    base_frame: usize,
-    next_chunk_frame: usize,
+    cursor: StreamCursor,
     f32_states: BTreeMap<String, ArrayD<f32>>,
     i64_states: BTreeMap<String, ArrayD<i64>>,
-    tokens: Vec<i64>,
-    frame_offset: usize,
-    num_trailing_blanks: usize,
 }
 
 impl NativeZipformerStreamingEngine {
@@ -421,8 +371,8 @@ impl NativeZipformerStreamingEngine {
 
         let encoder_meta = read_custom_metadata(&encoder)?;
         let decoder_meta = read_custom_metadata(&decoder)?;
-        let chunk_size = meta_usize(&encoder_meta, "T")?;
-        let chunk_shift = meta_usize(&encoder_meta, "decode_chunk_len")?;
+        let chunk_size = streaming::meta_usize(&encoder_meta, "T", "streaming")?;
+        let chunk_shift = streaming::meta_usize(&encoder_meta, "decode_chunk_len", "streaming")?;
         let context_size = decoder_meta
             .get("context_size")
             .and_then(|s| s.parse::<usize>().ok())
@@ -503,32 +453,18 @@ impl NativeZipformerStreamingEngine {
             }
         }
         Ok(ZipformerStreamState {
-            pcm: Vec::new(),
-            base_frame: 0,
-            next_chunk_frame: 0,
+            cursor: StreamCursor::new(),
             f32_states,
             i64_states,
-            tokens: Vec::new(),
-            frame_offset: 0,
-            num_trailing_blanks: 0,
         })
     }
 
     fn process_available_chunks(&mut self, finalize: bool) -> SttResult<bool> {
-        let features = frontend::compute_kaldi_fbank(&self.stream.pcm, &self.mel_fb);
+        let features = frontend::compute_kaldi_fbank(&self.stream.cursor.pcm, &self.mel_fb);
         let mut processed_any = false;
         loop {
-            let rel_start = self
-                .stream
-                .next_chunk_frame
-                .saturating_sub(self.stream.base_frame);
-            let required_frames = rel_start + self.chunk_size;
-            let ready = if finalize {
-                required_frames <= features.nrows()
-            } else {
-                required_frames < features.nrows()
-            };
-            if !ready {
+            let rel_start = self.stream.cursor.rel_start();
+            if !streaming::chunk_ready(rel_start, self.chunk_size, features.nrows(), finalize) {
                 break;
             }
             let chunk = features
@@ -536,30 +472,13 @@ impl NativeZipformerStreamingEngine {
                 .to_owned();
             let encoder_out = self.run_encoder(&chunk)?;
             self.decode_encoder_out(&encoder_out)?;
-            self.stream.next_chunk_frame += self.chunk_shift;
+            self.stream.cursor.next_chunk_frame += self.chunk_shift;
             processed_any = true;
         }
         if processed_any {
-            self.trim_stream_pcm();
+            self.stream.cursor.trim_pcm(frontend::KALDI_HOP);
         }
         Ok(processed_any)
-    }
-
-    fn trim_stream_pcm(&mut self) {
-        let keep_from_frame = self
-            .stream
-            .next_chunk_frame
-            .saturating_sub(STREAM_FEATURE_PRE_CONTEXT_FRAMES);
-        if keep_from_frame <= self.stream.base_frame {
-            return;
-        }
-        let drop_frames = keep_from_frame - self.stream.base_frame;
-        let drop_samples = (drop_frames * frontend::KALDI_HOP).min(self.stream.pcm.len());
-        if drop_samples == 0 {
-            return;
-        }
-        self.stream.pcm.drain(..drop_samples);
-        self.stream.base_frame += drop_samples / frontend::KALDI_HOP;
     }
 
     fn run_encoder(&mut self, chunk: &Array2<f32>) -> SttResult<Array2<f32>> {
@@ -640,20 +559,20 @@ impl NativeZipformerStreamingEngine {
             let (best, _) = argmax_1d(&logits[..take]);
             let token = best as i64;
             if token != self.blank_id && Some(token) != self.unk_id {
-                self.stream.tokens.push(token);
-                self.stream.num_trailing_blanks = 0;
+                self.stream.cursor.tokens.push(token);
+                self.stream.cursor.num_trailing_blanks = 0;
                 decoder_out = self.run_decoder()?;
             } else {
-                self.stream.num_trailing_blanks += 1;
+                self.stream.cursor.num_trailing_blanks += 1;
             }
         }
-        self.stream.frame_offset += encoder_out.nrows();
+        self.stream.cursor.frame_offset += encoder_out.nrows();
         Ok(())
     }
 
     fn run_decoder(&mut self) -> SttResult<ArrayD<f32>> {
         let mut ctx_full = vec![-1, self.blank_id];
-        ctx_full.extend_from_slice(&self.stream.tokens);
+        ctx_full.extend_from_slice(&self.stream.cursor.tokens);
         let ctx = &ctx_full[ctx_full.len().saturating_sub(self.context_size)..];
         let y_tensor = tensor_i64((1, ctx.len()), ctx.to_vec())?;
         let outputs = self
@@ -689,28 +608,18 @@ impl NativeZipformerStreamingEngine {
     }
 
     fn current_text(&self) -> String {
-        let syms: Vec<&str> = self
-            .stream
-            .tokens
-            .iter()
-            .filter_map(|&id| self.vocab.get(id))
-            .filter(|s| !is_special_token(s))
-            .collect();
-        join_and_normalize(&syms, self.vocab.lowercase_decoded)
+        self.stream
+            .cursor
+            .decode_text(&self.vocab, |_id, sym| !is_special_token(sym))
     }
 }
 
 impl ZipformerStreamState {
     fn empty() -> Self {
         Self {
-            pcm: Vec::new(),
-            base_frame: 0,
-            next_chunk_frame: 0,
+            cursor: StreamCursor::new(),
             f32_states: BTreeMap::new(),
             i64_states: BTreeMap::new(),
-            tokens: Vec::new(),
-            frame_offset: 0,
-            num_trailing_blanks: 0,
         }
     }
 }
@@ -748,17 +657,17 @@ impl Transcriber for NativeZipformerStreamingEngine {
 
     fn stream_accept(&mut self, pcm: &[f32]) -> SttResult<NativeStreamUpdate> {
         if !pcm.is_empty() {
-            self.stream.pcm.extend_from_slice(pcm);
+            self.stream.cursor.pcm.extend_from_slice(pcm);
             self.process_available_chunks(false)?;
         }
         Ok(NativeStreamUpdate::interim(self.current_text()))
     }
 
     fn stream_finalize(&mut self) -> SttResult<String> {
-        self.stream.pcm.extend(std::iter::repeat_n(
-            0.0,
-            SAMPLE_RATE * FINAL_SILENCE_PAD_MS / 1000,
-        ));
+        self.stream
+            .cursor
+            .pcm
+            .extend_from_slice(&streaming::final_silence_pad());
         self.process_available_chunks(true)?;
         Ok(self.current_text())
     }
@@ -768,13 +677,6 @@ impl Transcriber for NativeZipformerStreamingEngine {
             self.stream = state;
         }
     }
-}
-
-fn meta_usize(meta: &BTreeMap<String, String>, key: &str) -> SttResult<usize> {
-    meta.get(key)
-        .ok_or_else(|| SttError::SessionCreate(format!("missing streaming metadata {key}")))?
-        .parse::<usize>()
-        .map_err(|e| SttError::SessionCreate(format!("parse metadata {key}: {e}")))
 }
 
 #[cfg(test)]

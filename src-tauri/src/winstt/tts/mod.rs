@@ -42,7 +42,7 @@ pub use self::cloud::{
     CLOUD_OUTPUT_FORMAT, ELEVENLABS_SUBSCRIPTION_URL, ELEVENLABS_TTS_BASE, ELEVENLABS_VOICES_URL,
 };
 pub use self::download::{download_kokoro_assets, DownloadControl, DownloadError};
-pub use self::kokoro::{KokoroConfig, KokoroDevice, KokoroEngine, KOKORO_SAMPLE_RATE};
+pub use self::kokoro::{KokoroConfig, KokoroEngine, KOKORO_SAMPLE_RATE};
 pub use self::local::KokoroLocalEngine;
 pub use self::openrouter::OpenRouterTtsEngine;
 pub use self::service::{
@@ -50,10 +50,21 @@ pub use self::service::{
 };
 pub use self::splitter::{split_sentences, DEFAULT_MAX_SENTENCE_LEN};
 pub use self::types::{
-    clamp_cloud_speed, clamp_speed, ChunkSink, Format, Gender, LocalTtsConfig, SentenceAudio,
-    SynthesisChunk, TtsDevice, TtsEngine, TtsError, TtsResult, VoiceInfo, CLOUD_MAX_SPEED,
-    CLOUD_MIN_SPEED, MAX_SPEED, MAX_SYNTHESIS_CHARS, MIN_SPEED,
+    clamp_cloud_speed, clamp_speed, clamp_speed_to_range, ChunkSink, Format, Gender,
+    LocalTtsConfig, SentenceAudio, SynthesisChunk, TtsDevice, TtsEngine, TtsError, TtsResult,
+    VoiceInfo, CLOUD_MAX_SPEED, CLOUD_MIN_SPEED, MAX_SPEED, MAX_SYNTHESIS_CHARS, MIN_SPEED,
 };
 pub use self::voices::{
     voice_by_id, voices_for_language, KOKORO_VOICE_CATALOG, SUPPORTED_LANGUAGES,
 };
+
+/// Per-model TTS cache dir (`%LOCALAPPDATA%/winstt/tts/<model-id>/`). This is the
+/// single source of truth shared by the download manager (which fetches into it)
+/// and the engine builder (which loads from it) — they MUST agree, so both delegate
+/// here rather than duplicating the path layout.
+pub fn cache_dir(app: &tauri::AppHandle, model_id: &str) -> std::path::PathBuf {
+    crate::portable::app_data_dir(app)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("tts")
+        .join(model_id)
+}

@@ -200,17 +200,9 @@ pub(super) fn softmax_probability(logits: &[f32], token_id: usize) -> Option<f32
     Some((target - max).exp() / denom)
 }
 
-/// argmax over an f32 slice (greedy next-token). Empty → 0.
+/// argmax over an f32 slice (greedy next-token). Empty → 0. Wraps the shared scalar scan.
 pub(super) fn argmax(xs: &[f32]) -> usize {
-    let mut best = 0usize;
-    let mut best_v = f32::NEG_INFINITY;
-    for (i, &v) in xs.iter().enumerate() {
-        if v > best_v {
-            best_v = v;
-            best = i;
-        }
-    }
-    best
+    crate::winstt::stt::families::argmax_1d(xs).0
 }
 
 #[cfg(test)]

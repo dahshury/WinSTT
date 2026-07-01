@@ -10,6 +10,7 @@ import { CloudSttErrorToasts } from "@/features/show-cloud-stt-errors";
 import { SwapFailureToast } from "@/features/swap-notifications";
 import { TransformToast } from "@/features/transform-notifications";
 import { SurfaceProvider } from "@/shared/lib/surface";
+import { ErrorBoundary } from "../providers/ErrorBoundary";
 import { IntlProvider } from "../providers/IntlProvider";
 import { IpcProvider } from "../providers/IpcProvider";
 import { TitleBar } from "./TitleBar";
@@ -46,7 +47,9 @@ export function RootLayout({ children }: { children: ReactNode }) {
 									transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
 								>
 									{!listenSurfaceActive && <TitleBar />}
-									<main className="flex-1 overflow-hidden">{children}</main>
+									<main className="flex-1 overflow-hidden">
+										<ErrorBoundary>{children}</ErrorBoundary>
+									</main>
 									<TransformToast />
 									<SwapFailureToast />
 									<CloudSttErrorToasts />

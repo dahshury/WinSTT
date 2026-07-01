@@ -16,10 +16,9 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 
 use super::phonemize::EspeakLibPhonemizer;
+use super::provider::LazyOrtEngine;
 
 /// Piper PAD/BOS/EOS phoneme keys (const.py).
 const PIPER_PAD: &str = "_";
@@ -144,35 +143,28 @@ struct LoadedPiper {
 
 pub struct PiperEngine {
     config: PiperConfig,
-    inner: Mutex<Option<LoadedPiper>>,
+    inner: LazyOrtEngine<LoadedPiper>,
     phonemizer: Option<EspeakLibPhonemizer>,
-    ready: AtomicBool,
 }
 
 impl PiperEngine {
     pub fn new(config: PiperConfig) -> Self {
         Self {
             config,
-            inner: Mutex::new(None),
+            inner: LazyOrtEngine::new(),
             phonemizer: EspeakLibPhonemizer::discover(),
-            ready: AtomicBool::new(false),
         }
     }
 
     pub fn is_ready(&self) -> bool {
-        self.ready.load(Ordering::Acquire)
+        self.inner.is_ready()
     }
 
     pub fn warm_up(&self) -> PiperResult<()> {
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| PiperError::Session("piper lock poisoned".into()))?;
-        if guard.is_none() {
-            *guard = Some(self.load()?);
-            self.ready.store(true, Ordering::Release);
-        }
-        Ok(())
+        self.inner.warm_up(
+            || PiperError::Session("piper lock poisoned".into()),
+            || self.load(),
+        )
     }
 
     pub fn synthesize(&self, text: &str, speed: f32) -> PiperResult<(Vec<f32>, u32)> {
@@ -180,35 +172,27 @@ impl PiperEngine {
         if trimmed.is_empty() {
             return Ok((Vec::new(), 0));
         }
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| PiperError::Session("piper lock poisoned".into()))?;
-        if guard.is_none() {
-            *guard = Some(self.load()?);
-            self.ready.store(true, Ordering::Release);
-        }
-        let Some(loaded) = guard.as_mut() else {
-            return Err(PiperError::Session(
-                "piper session was not initialized".into(),
-            ));
-        };
+        self.inner.with_loaded(
+            || PiperError::Session("piper lock poisoned".into()),
+            || PiperError::Session("piper session was not initialized".into()),
+            || self.load(),
+            |loaded| {
+                let phonemizer = self.phonemizer.as_ref().ok_or_else(|| {
+                    PiperError::Phonemize("espeak-ng shared lib not found".into())
+                })?;
+                let phonemes = phonemizer
+                    .phonemize_voice(trimmed, &loaded.cfg.espeak_voice)
+                    .map_err(|e| PiperError::Phonemize(e.to_string()))?;
 
-        let phonemizer = self
-            .phonemizer
-            .as_ref()
-            .ok_or_else(|| PiperError::Phonemize("espeak-ng shared lib not found".into()))?;
-        let phonemes = phonemizer
-            .phonemize_voice(trimmed, &loaded.cfg.espeak_voice)
-            .map_err(|e| PiperError::Phonemize(e.to_string()))?;
-
-        let ids = phonemes_to_ids(&phonemes, &loaded.cfg.phoneme_id_map);
-        if ids.is_empty() {
-            return Ok((Vec::new(), loaded.cfg.sample_rate));
-        }
-        let sr = loaded.cfg.sample_rate;
-        let audio = self.run_inference(loaded, &ids, speed)?;
-        Ok((audio, sr))
+                let ids = phonemes_to_ids(&phonemes, &loaded.cfg.phoneme_id_map);
+                if ids.is_empty() {
+                    return Ok((Vec::new(), loaded.cfg.sample_rate));
+                }
+                let sr = loaded.cfg.sample_rate;
+                let audio = self.run_inference(loaded, &ids, speed)?;
+                Ok((audio, sr))
+            },
+        )
     }
 
     fn load(&self) -> PiperResult<LoadedPiper> {
@@ -228,16 +212,12 @@ impl PiperEngine {
     /// but DML benefit at this size is unproven — benchmark before enabling).
     fn build_session(&self) -> PiperResult<ort::session::Session> {
         let model_path = self.config.model_path();
-        let (session, _) = super::provider::build_session(
+        super::provider::cpu_session(
             &model_path,
-            super::types::TtsDevice::Cpu,
-            super::provider::TtsOrtProviderPolicy::CpuOnly {
-                reason: "Piper DirectML policy is not validated yet",
-            },
+            "Piper DirectML policy is not validated yet",
             "Piper",
         )
-        .map_err(PiperError::Session)?;
-        Ok(session)
+        .map_err(PiperError::Session)
     }
 
     fn run_inference(
@@ -293,10 +273,7 @@ impl PiperEngine {
     }
 
     pub fn shutdown(&self) {
-        if let Ok(mut guard) = self.inner.lock() {
-            *guard = None;
-        }
-        self.ready.store(false, Ordering::Release);
+        self.inner.shutdown();
     }
 }
 

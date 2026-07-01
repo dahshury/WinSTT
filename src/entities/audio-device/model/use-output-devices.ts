@@ -6,6 +6,7 @@ import {
 	onAudioDeviceChangeDetected,
 	onAudioOutputDevicesChanged,
 } from "@/shared/api/ipc-client";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 
 /**
  * One ``audiooutput`` device entry, denormalized from
@@ -223,15 +224,11 @@ function applyBackendOutputDevices(devices: AudioOutputDevice[]): void {
 }
 
 function loadBackendOutputDevices(): Promise<void> {
-	return audioGetOutputDevices()
-		.then(applyBackendOutputDevices)
-		.catch(() => undefined);
+	return audioGetOutputDevices().then(applyBackendOutputDevices);
 }
 
 function refreshBackendOutputDevices(): Promise<void> {
-	return audioRefreshOutputDevices()
-		.then(applyBackendOutputDevices)
-		.catch(() => undefined);
+	return audioRefreshOutputDevices().then(applyBackendOutputDevices);
 }
 
 function refreshOutputDevices(): Promise<void> {
@@ -316,7 +313,10 @@ export function useOutputDevices(): UseOutputDevicesResult {
 	useEffect(() => {
 		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 		const refreshBrowserSafely = () => {
-			refreshBrowserOutputDevices().catch(() => undefined);
+			fireAndForget(
+				refreshBrowserOutputDevices(),
+				"outputDevices.refreshBrowser",
+			);
 		};
 		const scheduleBrowserRefresh = () => {
 			if (debounceTimer) {
@@ -328,7 +328,7 @@ export function useOutputDevices(): UseOutputDevicesResult {
 			}, DEVICECHANGE_DEBOUNCE_MS);
 		};
 		// Initial load: backend (authoritative membership) + browser (sink ids).
-		loadBackendOutputDevices().catch(() => undefined);
+		fireAndForget(loadBackendOutputDevices(), "outputDevices.loadBackend");
 		refreshBrowserSafely();
 		// The generic backend devicechange ping also re-reads the browser sink map
 		// so deviceIds resolve as soon as the browser catches up.

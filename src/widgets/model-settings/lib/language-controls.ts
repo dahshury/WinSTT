@@ -38,33 +38,18 @@ export function normalizeLanguageCandidates(
 	options: readonly SelectOption[],
 	fallback: string,
 ): string[] {
-	const available = new Set(options.map((option) => option.id));
-	const seen = new Set<string>();
-	const normalized: string[] = [];
-	for (const raw of rawCandidates ?? []) {
-		const candidate = raw.trim();
-		if (
-			candidate.length === 0 ||
-			candidate === "auto" ||
-			!available.has(candidate)
-		) {
-			continue;
-		}
-		if (!seen.has(candidate)) {
-			seen.add(candidate);
-			normalized.push(candidate);
-		}
-	}
+	const normalized = normalizeLanguageCandidatesCore(rawCandidates, options);
 	if (normalized.length > 0) {
 		return normalized;
 	}
+	const available = new Set(options.map((option) => option.id));
 	if (available.has(fallback)) {
 		return [fallback];
 	}
 	return options[0]?.id ? [options[0].id] : [];
 }
 
-export function normalizeLanguageCandidatesAllowEmpty(
+function normalizeLanguageCandidatesCore(
 	rawCandidates: readonly string[] | undefined,
 	options: readonly SelectOption[],
 ): string[] {
@@ -86,6 +71,13 @@ export function normalizeLanguageCandidatesAllowEmpty(
 		}
 	}
 	return normalized;
+}
+
+export function normalizeLanguageCandidatesAllowEmpty(
+	rawCandidates: readonly string[] | undefined,
+	options: readonly SelectOption[],
+): string[] {
+	return normalizeLanguageCandidatesCore(rawCandidates, options);
 }
 
 export function deriveLanguageCandidates(

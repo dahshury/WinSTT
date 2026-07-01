@@ -16,21 +16,16 @@
 // used when none is supplied. EN-first: the `[en]` language tag is prepended; per-language CJK/he
 // frontends are deferred.
 
-#![expect(
-    dead_code,
-    reason = "staged TTS surface is defined ahead of call sites and wiring"
-)]
-
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 
 use ndarray::{Array1, Array2, Array3, ArrayD, IxDyn};
 use ort::session::{Session, SessionInputValue};
 use ort::value::Tensor;
 use tokenizers::Tokenizer;
+
+use super::provider::LazyOrtEngine;
 
 pub const CHATTERBOX_SAMPLE_RATE: u32 = 24_000;
 const NUM_LAYERS: usize = 30;
@@ -105,32 +100,25 @@ struct Loaded {
 
 pub struct ChatterboxEngine {
     config: ChatterboxConfig,
-    inner: Mutex<Option<Loaded>>,
-    ready: AtomicBool,
+    inner: LazyOrtEngine<Loaded>,
 }
 
 impl ChatterboxEngine {
     pub fn new(config: ChatterboxConfig) -> Self {
         Self {
             config,
-            inner: Mutex::new(None),
-            ready: AtomicBool::new(false),
+            inner: LazyOrtEngine::new(),
         }
     }
     pub fn is_ready(&self) -> bool {
-        self.ready.load(Ordering::Acquire)
+        self.inner.is_ready()
     }
 
     pub fn warm_up(&self) -> ChatterboxResult<()> {
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| ChatterboxError::Session("lock poisoned".into()))?;
-        if guard.is_none() {
-            *guard = Some(self.load()?);
-            self.ready.store(true, Ordering::Release);
-        }
-        Ok(())
+        self.inner.warm_up(
+            || ChatterboxError::Session("lock poisoned".into()),
+            || self.load(),
+        )
     }
 
     fn load(&self) -> ChatterboxResult<Loaded> {
@@ -177,84 +165,63 @@ impl ChatterboxEngine {
         if trimmed.is_empty() {
             return Ok(Vec::new());
         }
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| ChatterboxError::Session("lock poisoned".into()))?;
-        if guard.is_none() {
-            *guard = Some(self.load()?);
-            self.ready.store(true, Ordering::Release);
-        }
-        let Some(loaded) = guard.as_mut() else {
-            return Err(ChatterboxError::Session(
-                "chatterbox session was not initialized".into(),
-            ));
-        };
-
-        // --- text -> ids ([en] tag prefix; EN frontend) ---
-        let prompt = format!("[en]{trimmed}");
-        let enc = loaded
-            .tokenizer
-            .encode(prompt, true)
-            .map_err(|e| ChatterboxError::Tokenizer(e.to_string()))?;
-        let ids: Vec<i64> = enc.get_ids().iter().map(|&u| u as i64).collect();
-        let s = ids.len();
-        if s == 0 {
-            return Ok(Vec::new());
-        }
-        let position_ids: Vec<i64> = (0..s)
-            .map(|idx| {
-                if ids[idx] >= START_SPEECH_TOKEN {
-                    0
-                } else {
-                    idx as i64 - 1
+        self.inner.with_loaded(
+            || ChatterboxError::Session("lock poisoned".into()),
+            || ChatterboxError::Session("chatterbox session was not initialized".into()),
+            || self.load(),
+            |loaded| {
+                // --- text -> ids ([en] tag prefix; EN frontend) ---
+                let prompt = format!("[en]{trimmed}");
+                let enc = loaded
+                    .tokenizer
+                    .encode(prompt, true)
+                    .map_err(|e| ChatterboxError::Tokenizer(e.to_string()))?;
+                let ids: Vec<i64> = enc.get_ids().iter().map(|&u| u as i64).collect();
+                let s = ids.len();
+                if s == 0 {
+                    return Ok(Vec::new());
                 }
-            })
-            .collect();
+                let position_ids: Vec<i64> = (0..s)
+                    .map(|idx| {
+                        if ids[idx] >= START_SPEECH_TOKEN {
+                            0
+                        } else {
+                            idx as i64 - 1
+                        }
+                    })
+                    .collect();
 
-        // --- reference audio (24k mono f32) ---
-        let ref_path =
-            ref_wav.map_or_else(|| self.config.default_voice_path(), |p| p.to_path_buf());
-        let audio = load_wav_24k_mono(&ref_path)?;
-        if audio.is_empty() {
-            return Err(ChatterboxError::Audio("reference audio is empty".into()));
-        }
+                // --- reference audio (24k mono f32) ---
+                let ref_path =
+                    ref_wav.map_or_else(|| self.config.default_voice_path(), |p| p.to_path_buf());
+                let audio = load_wav_24k_mono(&ref_path)?;
+                if audio.is_empty() {
+                    return Err(ChatterboxError::Audio("reference audio is empty".into()));
+                }
 
-        let exaggeration = if exaggeration.is_finite() {
-            exaggeration.clamp(0.0, 1.0)
-        } else {
-            DEFAULT_EXAGGERATION
-        };
+                let exaggeration = if exaggeration.is_finite() {
+                    exaggeration.clamp(0.0, 1.0)
+                } else {
+                    DEFAULT_EXAGGERATION
+                };
 
-        run_pipeline(loaded, &ids, &position_ids, &audio, exaggeration)
+                run_pipeline(loaded, &ids, &position_ids, &audio, exaggeration)
+            },
+        )
     }
 
     pub fn shutdown(&self) {
-        if let Ok(mut g) = self.inner.lock() {
-            *g = None;
-        }
-        self.ready.store(false, Ordering::Release);
+        self.inner.shutdown();
     }
 }
 
 fn build_session(path: &Path) -> ChatterboxResult<Session> {
-    let (session, _) = super::provider::build_session(
+    super::provider::cpu_session(
         path,
-        super::types::TtsDevice::Cpu,
-        super::provider::TtsOrtProviderPolicy::CpuOnly {
-            reason: "Chatterbox DirectML policy is not validated yet",
-        },
+        "Chatterbox DirectML policy is not validated yet",
         "Chatterbox",
     )
-    .map_err(ChatterboxError::Session)?;
-    Ok(session)
-}
-
-fn in_names(s: &Session) -> Vec<String> {
-    s.inputs().iter().map(|o| o.name().to_string()).collect()
-}
-fn out_names(s: &Session) -> Vec<String> {
-    s.outputs().iter().map(|o| o.name().to_string()).collect()
+    .map_err(ChatterboxError::Session)
 }
 
 /// Extract a named f32 output as an owned dynamic array.
@@ -390,7 +357,7 @@ fn run_pipeline(
                 };
             }
         }
-        let next_token = argmax(&scores) as i64;
+        let next_token = crate::winstt::stt::families::argmax_1d(&scores).0 as i64;
         generate_tokens.push(next_token);
         if next_token == STOP_SPEECH_TOKEN {
             break;
@@ -499,18 +466,6 @@ fn run_embed(
     extract_f32(&out, "inputs_embeds")
 }
 
-fn argmax(scores: &[f32]) -> usize {
-    let mut best = 0usize;
-    let mut best_v = f32::NEG_INFINITY;
-    for (i, &v) in scores.iter().enumerate() {
-        if v > best_v {
-            best_v = v;
-            best = i;
-        }
-    }
-    best
-}
-
 /// Load a WAV as mono f32 @ 24 kHz (linear-resampled if needed). Reference clips
 /// for cloning are WAV; full symphonia decode + rubato can replace this later.
 fn load_wav_24k_mono(path: &Path) -> ChatterboxResult<Vec<f32>> {
@@ -558,12 +513,6 @@ fn load_wav_24k_mono(path: &Path) -> ChatterboxResult<Vec<f32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn argmax_picks_max() {
-        assert_eq!(argmax(&[0.1, 0.9, 0.3]), 1);
-        assert_eq!(argmax(&[-1.0, -2.0, -0.5]), 2);
-    }
 
     #[test]
     fn config_paths() {

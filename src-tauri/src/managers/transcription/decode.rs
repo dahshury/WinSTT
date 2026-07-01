@@ -5,7 +5,7 @@
 //! module root; all shared free helpers / types / consts live in [`super`].
 
 use super::{
-    dc_immune_rms, is_degenerate_decode_error, is_silent_recording,
+    dc_immune_rms, is_degenerate_decode_error, is_device_lost_error, is_silent_recording,
     local_final_decode_audio_with_silence, next_transcription_request_id, LoadedEngine,
     ModelStateEvent, TranscriptionManager, LOCAL_FINAL_DECODE_SILENCE_PAD_MS, SILENCE_AC_FLOOR,
 };
@@ -92,6 +92,46 @@ impl TranscriptionManager {
     pub fn get_current_model(&self) -> Option<String> {
         let current_model = self.lock_current_model();
         current_model.clone()
+    }
+
+    /// Drop a fatally-broken engine after a decode error that leaves the loaded session permanently
+    /// unusable (a degenerate DirectML decode, or a lost/suspended GPU device). Clears the resident
+    /// AND warmed model so the NEXT transcription rebuilds a fresh session (a new DirectML device)
+    /// instead of reusing the dead one, records the observability issue, and tells the renderer the
+    /// model unloaded. Returns the error to propagate to the caller. Shared by both fatal-decode
+    /// branches so they stay byte-for-byte consistent.
+    fn unload_engine_after_fatal_decode(
+        &self,
+        mut engine: LoadedEngine,
+        desired: &str,
+        request_id: &str,
+        summary: &'static str,
+        detail: String,
+        elapsed_ms: u64,
+    ) -> anyhow::Error {
+        engine.shutdown();
+        {
+            let mut current_model = self.lock_current_model();
+            *current_model = None;
+        }
+        self.clear_warmed_model();
+        crate::winstt::observability::IssueBuilder::new("stt", "transcription", summary)
+            .detail(detail.clone())
+            .model_id(desired.to_string())
+            .request_id(request_id)
+            .duration_ms(elapsed_ms)
+            .severity("error")
+            .record(Some(&self.app_handle));
+        let _ = self.app_handle.emit(
+            crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
+            ModelStateEvent {
+                event_type: "unloaded".to_string(),
+                model_id: None,
+                model_name: None,
+                error: Some(detail.clone()),
+            },
+        );
+        anyhow::anyhow!(detail)
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
@@ -305,6 +345,27 @@ impl TranscriptionManager {
             match transcribe_result {
                 Ok(inner_result) => {
                     if let Err(e) = &inner_result {
+                        // Two error classes leave the loaded engine permanently unusable, so the
+                        // engine is DROPPED (not put back) and the model cleared — the next
+                        // transcription rebuilds a fresh session. Device loss is checked FIRST and
+                        // kept separate from a degenerate decode: a transient GPU suspend/wake must
+                        // not be mistaken for a model-quality failure (which demotes DirectML → CPU).
+                        if is_device_lost_error(e) {
+                            error!(
+                                "[stt][{request_id}] transcription failed for model '{desired}': {e}"
+                            );
+                            warn!(
+                                "[stt][{request_id}] dropping engine for model '{desired}' after GPU device loss/suspension; next load rebuilds the DirectML device"
+                            );
+                            return Err(self.unload_engine_after_fatal_decode(
+                                engine,
+                                desired,
+                                &request_id,
+                                "STT transcription failed: the GPU device was lost and the engine was unloaded",
+                                e.to_string(),
+                                st.elapsed().as_millis() as u64,
+                            ));
+                        }
                         if is_degenerate_decode_error(e) {
                             error!(
                                 "[stt][{request_id}] transcription failed for model '{desired}': {e}"
@@ -312,37 +373,14 @@ impl TranscriptionManager {
                             warn!(
                                 "[stt][{request_id}] dropping corrupted engine for model '{desired}' after degenerate decode; next load will recycle DirectML unless repeated failures trigger CPU fallback"
                             );
-                            engine.shutdown();
-                            {
-                                let mut current_model = self
-                                    .current_model_id
-                                    .lock()
-                                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                *current_model = None;
-                            }
-                            self.clear_warmed_model();
-                            let detail = e.to_string();
-                            crate::winstt::observability::IssueBuilder::new(
-                                "stt",
-                                "transcription",
+                            return Err(self.unload_engine_after_fatal_decode(
+                                engine,
+                                desired,
+                                &request_id,
                                 "STT transcription failed and the engine was unloaded",
-                            )
-                            .detail(detail.clone())
-                            .model_id(desired.to_string())
-                            .request_id(request_id.clone())
-                            .duration_ms(st.elapsed().as_millis() as u64)
-                            .severity("error")
-                            .record(Some(&self.app_handle));
-                            let _ = self.app_handle.emit(
-                                crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
-                                ModelStateEvent {
-                                    event_type: "unloaded".to_string(),
-                                    model_id: None,
-                                    model_name: None,
-                                    error: Some(detail.clone()),
-                                },
-                            );
-                            return Err(anyhow::anyhow!(detail));
+                                e.to_string(),
+                                st.elapsed().as_millis() as u64,
+                            ));
                         }
                     }
                     // Success or normal error — put the engine back

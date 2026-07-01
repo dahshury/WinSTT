@@ -99,7 +99,7 @@ describe("AboutSettingsPanel", () => {
 			expect(
 				Boolean(
 					startupHeading.compareDocumentPosition(diagnosticsHeading) &
-						Node.DOCUMENT_POSITION_FOLLOWING,
+					Node.DOCUMENT_POSITION_FOLLOWING,
 				),
 			).toBe(true);
 		} finally {
@@ -108,7 +108,7 @@ describe("AboutSettingsPanel", () => {
 		}
 	});
 
-	test("renders the latest-version status as the single update button", async () => {
+	test("renders the latest-version status beside a single refresh button", async () => {
 		const nativeInvokeCalls: Array<{ args: unknown[]; channel: string }> = [];
 		const tauriWindow = window as unknown as Window & {
 			__TAURI_INTERNALS__: TauriInternals;
@@ -146,13 +146,16 @@ describe("AboutSettingsPanel", () => {
 			const updateToolbar = await screen.findByRole("toolbar", {
 				name: "Updates",
 			});
+			// The up-to-date status now reads as plain text; the only control is a
+			// single refresh icon-button labelled "Check now".
 			await waitFor(() => {
-				expect(
-					within(updateToolbar).getByRole("button", {
-						name: "You're on the latest version.",
-					}),
-				).toBeDefined();
+				expect(updateToolbar.textContent).toContain(
+					"You're on the latest version.",
+				);
 			});
+			expect(
+				within(updateToolbar).getByRole("button", { name: "Check now" }),
+			).toBeDefined();
 			expect(within(updateToolbar).getAllByRole("button")).toHaveLength(1);
 			expect(
 				nativeInvokeCalls.filter(

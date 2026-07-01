@@ -191,13 +191,11 @@ export interface DiarizationTogglePayload {
 	enabled: boolean;
 }
 
-export interface DiarizationToggleCompletedPayload
-	extends DiarizationTogglePayload {
+export interface DiarizationToggleCompletedPayload extends DiarizationTogglePayload {
 	message: string;
 }
 
-export interface DiarizationToggleFailedPayload
-	extends DiarizationTogglePayload {
+export interface DiarizationToggleFailedPayload extends DiarizationTogglePayload {
 	/** Reuses the model-swap category codes (same server classifier). */
 	category: ModelSwapFailedCategory;
 	detail: string;

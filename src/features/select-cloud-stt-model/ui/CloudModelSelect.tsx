@@ -1,7 +1,9 @@
 "use client";
 
 import { OpenRouterModelSelector } from "@/widgets/model-picker";
-import { useLayoutEffect } from "react";
+import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { type MouseEvent, useLayoutEffect } from "react";
 import { useTranslations } from "use-intl";
 import {
 	CLOUD_CATALOG,
@@ -18,12 +20,14 @@ import type {
 	OpenRouterModel,
 	OpenRouterSttModel,
 } from "@/shared/api/models";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { parseOpenrouterId } from "@/shared/lib/openrouter-picker-id";
+import { brandLogoFor } from "@/shared/ui/brand-logo";
 import { Button } from "@/shared/ui/button";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import type { SelectOption, SelectOptionGroup } from "@/shared/ui/select";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
+import { MODEL_TRIGGER_GLASS_CLASSES } from "@/shared/ui/switching-trigger";
 
 interface CloudModelSelectProps {
 	disabled?: boolean;
@@ -43,15 +47,55 @@ interface CloudModelSelectProps {
 	 *     makes no sense — the selector simply unlocks once a key lands.
 	 */
 	emptyState?: "configure-link" | "disabled";
+	/** When set, the trigger opens the detached cloud picker window (passing its
+	 *  on-screen rect) instead of rendering the inline combobox/picker — used by
+	 *  the Settings panel so the picker can extend beyond the settings window. */
+	onOpenDetached?: (rect: DOMRect) => void;
 	onSelect: (modelId: string) => void;
 	selectedId: string;
 }
 
-/** Short provider badge for the simple grouped picker fallback. */
-function providerBadge(provider: CloudSttProvider): string {
-	return provider === "openrouter"
-		? "OR"
-		: providerDisplayName(provider).slice(0, 4).toUpperCase();
+/** Glass-card trigger button for the detached cloud picker — mirrors the STT /
+ *  TTS detached triggers. Shows the selected cloud model's label (resolved by
+ *  the parent from the live option list) or the placeholder. */
+function CloudModelSelectTrigger({
+	disabled,
+	disabledTooltip,
+	label,
+	placeholder,
+	onActivate,
+}: {
+	disabled: boolean;
+	disabledTooltip: string | undefined;
+	label: string | undefined;
+	placeholder: string;
+	onActivate: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
+	return (
+		<Button
+			aria-expanded={false}
+			className={MODEL_TRIGGER_GLASS_CLASSES}
+			data-slot="cloud-model-selector-trigger"
+			disabled={disabled}
+			onClick={onActivate}
+			title={disabled ? disabledTooltip : undefined}
+			type="button"
+		>
+			<span
+				className={
+					label
+						? "flex min-w-0 flex-1 items-center truncate font-medium text-body text-foreground leading-tight tracking-tight"
+						: "flex min-w-0 flex-1 items-center font-medium text-body text-foreground-muted italic tracking-tight"
+				}
+			>
+				{label ?? placeholder}
+			</span>
+			<HugeiconsIcon
+				className="ms-2 size-4 shrink-0 text-foreground-muted"
+				icon={ArrowDown01Icon}
+			/>
+		</Button>
+	);
 }
 
 function scoreLabel(accuracyScore: number, speedScore: number): string {
@@ -132,6 +176,7 @@ export function CloudModelSelect({
 	onSelect,
 	defaultOpen = false,
 	emptyState = "configure-link",
+	onOpenDetached,
 }: CloudModelSelectProps) {
 	const t = useTranslations("integrations");
 	const integrations = useSettingsStore((s) => s.settings.integrations);
@@ -147,7 +192,7 @@ export function CloudModelSelect({
 	const openrouterConfigured = openrouterKey.trim().length > 0;
 	useLayoutEffect(() => {
 		if (!disabled && openrouterConfigured) {
-			scanOpenrouterModels().catch(() => undefined);
+			fireAndForget(scanOpenrouterModels(), "cloud-stt.scanOpenrouterModels");
 		}
 	}, [disabled, openrouterConfigured, scanOpenrouterModels]);
 
@@ -171,12 +216,14 @@ export function CloudModelSelect({
 					label: m.displayName,
 				}));
 
-	// One group per configured provider (header = provider name + badge); the
-	// flat list is kept only for the self-heal / valid-selection checks.
+	// One group per configured provider (header = brand logo + provider name);
+	// the flat list is kept only for the self-heal / valid-selection checks. The
+	// brand mark replaces the old short text code so each provider is recognizable
+	// at a glance, matching the Integrations tab and provider switcher.
 	const groups: SelectOptionGroup[] = availableProviders.map((provider) => ({
 		value: provider,
 		label: providerDisplayName(provider),
-		badge: providerBadge(provider),
+		icon: brandLogoFor(provider, { className: "size-3.5" }),
 		options: rowsFor(provider),
 	}));
 	const options: SelectOption[] = groups.flatMap((g) => [...g.options]);
@@ -222,15 +269,14 @@ export function CloudModelSelect({
 		if (emptyState === "disabled") {
 			return (
 				<div className="flex flex-col gap-2">
-					<ElevatedSurface inline>
-						<SearchableSelect
-							disabled
-							groups={[]}
-							onChange={() => undefined}
-							placeholder={t("cloudModels")}
-							value=""
-						/>
-					</ElevatedSurface>
+					<SearchableSelect
+						disabled
+						groups={[]}
+						onChange={() => undefined}
+						placeholder={t("cloudModels")}
+						value=""
+					/>
+
 					<span className="text-2xs text-foreground-muted">
 						{t("cloudHelper")}
 					</span>
@@ -252,10 +298,33 @@ export function CloudModelSelect({
 		);
 	}
 
+	// Detached-open mode (Settings panel): render a trigger button that opens the
+	// floating cloud picker window instead of the inline combobox/picker.
+	if (onOpenDetached) {
+		const selectedOption = options.find((o) => o.id === effectiveSelectedId);
+		return (
+			<div className="flex flex-col gap-2">
+				<CloudModelSelectTrigger
+					disabled={disabled}
+					disabledTooltip={disabledTooltip}
+					label={selectedOption?.label}
+					onActivate={(event) =>
+						onOpenDetached(event.currentTarget.getBoundingClientRect())
+					}
+					placeholder={t("cloudModels")}
+				/>
+				<span className="text-2xs text-foreground-muted">
+					{t("cloudHelper")}
+				</span>
+			</div>
+		);
+	}
+
 	const providerOptions: SwitcherOption<CloudSttProvider>[] =
 		availableProviders.map((provider) => ({
 			value: provider,
 			label: providerDisplayName(provider),
+			iconNode: brandLogoFor(provider),
 			...(disabled ? { disabled: true } : {}),
 			...(disabled && disabledTooltip ? { tooltip: disabledTooltip } : {}),
 		}));
@@ -281,14 +350,13 @@ export function CloudModelSelect({
 			}
 		>
 			{renderProviderToggle ? (
-				<ElevatedSurface className="w-60 max-w-full">
-					<Switcher
-						fullWidth
-						onChange={handleProviderChange}
-						options={providerOptions}
-						value={activeProvider}
-					/>
-				</ElevatedSurface>
+				<Switcher
+					className="w-60 max-w-full"
+					fullWidth
+					onChange={handleProviderChange}
+					options={providerOptions}
+					value={activeProvider}
+				/>
 			) : null}
 			{renderOpenrouterPicker ? (
 				<OpenRouterModelSelector
@@ -307,29 +375,34 @@ export function CloudModelSelect({
 					}}
 					onOpen={() => {
 						if (!disabled) {
-							scanOpenrouterModels().catch(() => undefined);
+							fireAndForget(
+								scanOpenrouterModels(),
+								"cloud-stt.scanOpenrouterModels",
+							);
 						}
 					}}
 					placeholder={t("cloudModels")}
-					popupWidthClass="w-[max(580px,var(--anchor-width))]"
+					popupWidthClass={
+						defaultOpen
+							? "w-full max-w-none"
+							: "w-[max(580px,var(--anchor-width))]"
+					}
 					uiStorageKey={OPENROUTER_STT_SELECTOR_UI_STORAGE_KEY}
 					value={stripOpenrouterSelectionPrefix(effectiveSelectedId)}
 				/>
 			) : (
-				<ElevatedSurface inline>
-					<SearchableSelect
-						defaultOpen={defaultOpen}
-						disabled={disabled}
-						groups={groups.filter((g) => g.value === activeProvider)}
-						onChange={(value) => {
-							if (!disabled) {
-								onSelect(value);
-							}
-						}}
-						placeholder={t("cloudModels")}
-						value={effectiveSelectedId}
-					/>
-				</ElevatedSurface>
+				<SearchableSelect
+					defaultOpen={defaultOpen}
+					disabled={disabled}
+					groups={groups.filter((g) => g.value === activeProvider)}
+					onChange={(value) => {
+						if (!disabled) {
+							onSelect(value);
+						}
+					}}
+					placeholder={t("cloudModels")}
+					value={effectiveSelectedId}
+				/>
 			)}
 			<span className="text-2xs text-foreground-muted">{t("cloudHelper")}</span>
 		</div>

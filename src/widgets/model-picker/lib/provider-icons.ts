@@ -1,5 +1,5 @@
 import { createProviderIconResolver } from "@/shared/lib/provider-icon-resolver";
-import { publicAsset } from "./public-asset";
+import { publicAsset } from "@/shared/lib/public-asset";
 
 const PROVIDER_NAME_ALIASES: Record<string, string> = {
 	meta: "meta-llama",
@@ -38,9 +38,6 @@ export function getProviderIconWithFallback(
 	provider: string | null | undefined,
 	fallback?: string,
 ): string {
-	// Resolve to a renderer-root-relative URL so the icon loads under file://
-	// in packaged builds (the absolute "/provider-icons/x.png" form only works
-	// against the dev server root). See public-asset.ts.
 	return publicAsset(
 		getProviderIcon(provider) || fallback || "/provider-icons/openrouter.svg",
 	);

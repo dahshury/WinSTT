@@ -1,7 +1,7 @@
 import { Cancel01Icon, PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { useTranslations } from "use-intl";
 import { ttsInstallPause, ttsInstallResume } from "@/shared/api/ipc-client";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import { Button } from "@/shared/ui/button";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import type { TtsDownloadProgress } from "../model/use-tts-download-progress";
@@ -12,7 +12,7 @@ export interface TtsInstallBannerProps {
 	installError: string | null;
 	onCancelInstall: () => void;
 	onRetry: () => void;
-	t: ReturnType<typeof useTranslations>;
+	t: TranslateFn;
 }
 
 export function TtsInstallBanner({

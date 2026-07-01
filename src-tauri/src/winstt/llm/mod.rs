@@ -11,10 +11,7 @@
 // COMPOSE/context prefix is an LLM-cleanup concern, not an STT initial prompt.
 // This module never feeds context into the transcriber.
 
-use std::collections::BTreeMap;
-
 mod answer;
-mod file_tagging;
 mod normalize;
 mod ollama_request;
 mod prompts;
@@ -22,7 +19,6 @@ mod side_effects;
 mod transport;
 
 pub use answer::*;
-pub use file_tagging::*;
 pub use normalize::*;
 pub use ollama_request::*;
 pub use prompts::*;
@@ -41,13 +37,4 @@ pub struct FeatureLlmConfig {
     pub thinking_effort: ThinkingEffort,
     pub presets: Vec<PresetEntry>,
     pub custom_modifiers: Vec<CustomModifier>,
-}
-
-/// The merged map a manager can hand around: provider → its default model.
-/// (Convenience helper used by the settings reconciliation in the PORT doc.)
-pub fn default_models_by_provider() -> BTreeMap<&'static str, &'static str> {
-    let mut m = BTreeMap::new();
-    m.insert("ollama", "");
-    m.insert("openrouter", "openrouter/auto");
-    m
 }

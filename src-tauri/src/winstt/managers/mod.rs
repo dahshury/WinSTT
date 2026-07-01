@@ -8,7 +8,7 @@
 // (llm, cloud_stt, context, catalog, settings_schema, tts, wakeword).
 //
 // DUAL-MANAGER BOUNDARY: `winstt/managers/` = WinSTT feature subsystems (cloud STT,
-// TTS, diarization, wakeword, LLM, realtime, context, file-transcribe, downloads);
+// TTS, wakeword, LLM, realtime, context, file-transcribe, downloads);
 // `crate::managers/` = the legacy pipeline core (audio, model, transcription,
 // history). The dependency edge is one-way — these feature managers reuse the core
 // (e.g. `loopback_manager` drives `crate::managers::transcription::TranscriptionManager`),
@@ -16,11 +16,11 @@
 
 pub mod cloud_stt_manager;
 pub mod context_manager;
-pub mod diarization_manager;
 pub mod file_transcribe_manager;
 pub mod llm_manager;
 pub mod loopback_manager;
 pub mod ollama_manager;
+pub mod transcode;
 pub mod tts_download_manager;
 pub mod tts_manager;
 pub mod wakeword_manager;
@@ -36,7 +36,6 @@ pub mod realtime_manager;
 
 pub use cloud_stt_manager::CloudSttManager;
 pub use context_manager::ContextManager;
-pub use diarization_manager::DiarizationManager;
 pub use download_manager::DownloadManager;
 pub use file_transcribe_manager::FileTranscribeManager;
 pub use llm_manager::LlmManager;

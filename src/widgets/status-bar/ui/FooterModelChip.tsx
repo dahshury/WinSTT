@@ -15,14 +15,8 @@ import {
 	variantDisplayName,
 } from "@/widgets/model-picker/stt/lib/family-helpers";
 import { formatModelName } from "@/widgets/model-picker/lib/model-selector-utils";
-import {
-	type CSSProperties,
-	type MouseEvent,
-	type ReactNode,
-	useEffect,
-	useRef,
-} from "react";
-import { useTranslations } from "use-intl";
+import { type CSSProperties, type ReactNode } from "react";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import {
 	providerDisplayName,
 	providerOf,
@@ -30,12 +24,14 @@ import {
 } from "@/entities/cloud-stt-provider";
 import { useCatalogStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
-import { IPC } from "@/shared/api/ipc-channels";
-import { ipcSend } from "@/shared/api/ipc-client";
 import type { OpenRouterSttModel } from "@/shared/api/models";
 import { createProviderIconResolver } from "@/shared/lib/provider-icon-resolver";
 import { surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Tooltip } from "@/shared/ui/tooltip";
+import {
+	MODEL_PICKER_TRIGGER_SLOT,
+	useModelPickerTrigger,
+} from "./footer-model-picker-trigger";
 import { FOOTER_TOOLTIP_DELAY } from "./FooterMenuChip";
 
 interface FooterModelChipProps {
@@ -86,7 +82,6 @@ function FooterModelGlyph({
  *  but clicking it opens the detached model-picker window — the only way
  *  the full picker can be shown without being clipped by the 420×150 main
  *  window. Sends its own viewport rect so the window anchors above it. */
-const CHIP_SLOT = '[data-slot="stt-model-selector-trigger"]';
 const OPENROUTER_SELECTION_PREFIX = "openrouter:";
 const resolveFooterProviderIcon = createProviderIconResolver({
 	meta: "meta-llama",
@@ -141,43 +136,13 @@ function FooterModelChip({
 }: FooterModelChipProps): ReactNode {
 	const substrate = useSurface();
 	const hoverLevel = Math.min(substrate + 2, 8);
-	// The picker is a separate always-on-top window; clicking back into THIS
-	// (main) window doesn't reliably blur it, so OS-focus alone can't dismiss
-	// it. Any pointer-down anywhere in the app that isn't the chip itself is
-	// "clicked outside the popup" → tell main to close. Main no-ops the
-	// message when the picker isn't shown, so the open flag is just a cheap
-	// guard to avoid sending on every idle click.
-	const openRef = useRef(false);
-	const openModelPicker = (e: MouseEvent<HTMLButtonElement>) => {
-		const r = e.currentTarget.getBoundingClientRect();
-		ipcSend(IPC.MODEL_PICKER_OPEN, {
-			x: r.x,
-			y: r.y,
-			width: r.width,
-			height: r.height,
-		});
-		openRef.current = true;
-	};
-	useEffect(() => {
-		const onPointerDown = (e: PointerEvent) => {
-			const target = e.target as HTMLElement | null;
-			if (target?.closest(CHIP_SLOT)) {
-				return; // the chip toggles itself via main
-			}
-			if (openRef.current) {
-				openRef.current = false;
-				ipcSend(IPC.MODEL_PICKER_CLOSE);
-			}
-		};
-		window.addEventListener("pointerdown", onPointerDown, true);
-		return () => window.removeEventListener("pointerdown", onPointerDown, true);
-	}, []);
+	const openModelPicker = useModelPickerTrigger();
 	return (
 		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
 			<BaseButton
 				aria-label={ariaLabel}
-				className={`flex max-w-full cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
-				data-slot="stt-model-selector-trigger"
+				className={`flex max-w-full cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-secondary outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
+				data-slot={MODEL_PICKER_TRIGGER_SLOT}
 				onClick={openModelPicker}
 				type="button"
 			>
@@ -196,9 +161,9 @@ function FooterModelChip({
 
 interface ActiveModelChipProps {
 	currentModel: string;
-	tIntegrations: ReturnType<typeof useTranslations>;
-	tModel: ReturnType<typeof useTranslations>;
-	tStatus: ReturnType<typeof useTranslations>;
+	tIntegrations: TranslateFn;
+	tModel: TranslateFn;
+	tStatus: TranslateFn;
 }
 
 /**

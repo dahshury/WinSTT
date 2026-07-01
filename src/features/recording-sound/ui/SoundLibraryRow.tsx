@@ -150,50 +150,35 @@ function RowMetaEditor({
 	);
 }
 
-interface RowMetaProps {
+interface RowNameProps {
 	active: boolean;
-	editing: boolean;
-	item: SoundLibraryItem;
-	onCommit: (next: string) => void;
-	onEditingChange: (editing: boolean) => void;
+	name: string;
 }
 
-function RowMeta({
-	active,
-	editing,
-	item,
-	onCommit,
-	onEditingChange,
-}: RowMetaProps): ReactNode {
-	if (editing) {
-		return (
-			<RowMetaEditor
-				initialName={item.name}
-				onCommit={onCommit}
-				onEditingChange={onEditingChange}
-			/>
-		);
-	}
-
+/**
+ * The sound's name label. Lives INSIDE `Radio.Root` so a click anywhere on the
+ * dot+name region still toggles selection — the interactive controls (play /
+ * rename / delete) are siblings of the radio, never descendants, so the radio
+ * has no focusable children (`nested-interactive` would flag that).
+ */
+function RowName({ active, name }: RowNameProps): ReactNode {
 	// Selection drives the same weight + tone shift the FF radio/checkbox labels
 	// use: muted by default, foreground + semibold when active.
 	return (
-		<div className="flex min-w-0 flex-1 items-center gap-2">
-			<span
-				className={cn(
-					"truncate text-body transition-[color,font-variation-settings] duration-150",
-					active ? "text-foreground" : "text-foreground-muted",
-				)}
-				style={{
-					fontVariationSettings: active
-						? fontWeights.semibold
-						: fontWeights.normal,
-				}}
-				title={item.name}
-			>
-				{item.name}
-			</span>
-		</div>
+		<span
+			className={cn(
+				"min-w-0 flex-1 truncate text-left text-body transition-[color,font-variation-settings] duration-150",
+				active ? "text-foreground" : "text-foreground-muted",
+			)}
+			style={{
+				fontVariationSettings: active
+					? fontWeights.semibold
+					: fontWeights.normal,
+			}}
+			title={name}
+		>
+			{name}
+		</span>
 	);
 }
 
@@ -249,34 +234,45 @@ export function SoundLibraryRow({
 		// behind the list (SoundLibraryHighlight). `z-raised` lifts the row's
 		// content above that pill; the hover wash is a plain CSS pill, suppressed
 		// while active so it never double-paints over the selected pill.
-		<Radio.Root
-			aria-label={item.name}
+		//
+		// The row is a plain container (NOT the radio): `Radio.Root` wraps only the
+		// dot + name (the selectable region), and the play/rename/delete controls
+		// are its SIBLINGS. A `role="radio"` element must not contain focusable
+		// descendants (`nested-interactive`), so the buttons cannot live inside it.
+		<div
 			className={cn(
-				"group relative z-raised block rounded-lg outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-accent",
+				"group relative z-raised flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-colors duration-150",
 				active ? "" : "hover:bg-foreground/[0.05]",
 			)}
 			data-sound-row={item.id}
-			value={item.id}
 		>
-			<div className="pointer-events-none relative flex w-full items-center gap-3 px-3 py-2.5">
+			<Radio.Root
+				aria-label={item.name}
+				className={cn(
+					"flex items-center gap-3 rounded-md outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-accent",
+					editing ? "shrink-0" : "min-w-0 flex-1",
+				)}
+				value={item.id}
+			>
 				<RowRadio />
-				<div className="pointer-events-auto">
-					<PlayButton
-						isPlaying={isPlaying}
-						labels={{ play: labels.play, pause: labels.pause }}
-						onClick={() => onTogglePreview(item)}
-					/>
-				</div>
-				<RowMeta
-					active={active}
-					editing={editing}
-					item={item}
+				{editing ? null : <RowName active={active} name={item.name} />}
+			</Radio.Root>
+			{editing ? (
+				<RowMetaEditor
+					initialName={item.name}
 					onCommit={(next) => onRename?.(item, next)}
 					onEditingChange={setEditing}
 				/>
+			) : null}
+			<PlayButton
+				isPlaying={isPlaying}
+				labels={{ play: labels.play, pause: labels.pause }}
+				onClick={() => onTogglePreview(item)}
+			/>
+			{canRename || canDelete ? (
 				<div
 					className={cn(
-						"pointer-events-auto flex shrink-0 items-center gap-0.5 transition-opacity duration-150",
+						"flex shrink-0 items-center gap-0.5 transition-opacity duration-150",
 						active
 							? "opacity-100"
 							: "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
@@ -299,7 +295,7 @@ export function SoundLibraryRow({
 						/>
 					) : null}
 				</div>
-			</div>
-		</Radio.Root>
+			) : null}
+		</div>
 	);
 }

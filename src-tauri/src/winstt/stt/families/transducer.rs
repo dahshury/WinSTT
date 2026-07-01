@@ -11,11 +11,6 @@
 // Lifted verbatim out of the old monolithic `families.rs`; depends only on the shared `support`
 // layer and the `frontend` featurizers, never on a peer engine.
 
-#![expect(
-    dead_code,
-    reason = "staged STT family surface is defined ahead of call sites and wiring"
-)]
-
 use std::time::{Duration, Instant};
 
 use ndarray::{Array1, Array2, ArrayD, Axis};
@@ -69,7 +64,6 @@ pub struct TransducerEngine {
     max_tokens_per_step: usize,
     context_size: usize,
     mel_fb: Array2<f32>,
-    use_kaldi_fbank: bool,
     model_name: String,
     providers: Vec<String>,
 }
@@ -125,7 +119,6 @@ impl TransducerEngine {
             max_tokens_per_step,
             context_size: 2,
             mel_fb,
-            use_kaldi_fbank: matches!(tkind, TransducerKind::KaldiStateless),
             model_name: cfg.model_name.clone(),
             providers: providers_to_strings(&cfg.providers),
         })

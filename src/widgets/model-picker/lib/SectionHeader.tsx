@@ -12,7 +12,7 @@ export function SectionHeader({
 	label: string;
 	sectionId: string;
 }) {
-	const subtitle = `Â· ${count === 1 ? "1 model" : `${count} models`}`;
+	const subtitle = `· ${count === 1 ? "1 model" : `${count} models`}`;
 	return sectionId === FAVORITES_SECTION_ID ? (
 		<GroupHeader
 			data-rail-section={sectionId}

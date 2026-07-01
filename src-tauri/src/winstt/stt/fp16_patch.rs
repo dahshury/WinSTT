@@ -33,10 +33,10 @@
 // carry weights/initializers/etc. as opaque `bytes`/repeated-message fields with their real tags so
 // re-encoding reproduces them. The fp16 decoder graph is tiny (external-weights), so this is cheap.
 //
-// SPIKE NOTES (marked inline): ONNX field NUMBERS below are from the stable onnx.proto3 spec and are
+// ONNX field NUMBERS below are from the stable onnx.proto3 spec and are
 // not expected to change, but they are the load-bearing constants — if the patched file is still
 // rejected by ORT after this round trip, re-verify the tags against the exact `onnx.proto` the
-// target export was produced with. The fp16 protobuf round-trip being ORT-accepted is GATE 1 item 1.
+// target export was produced with.
 
 use std::path::{Path, PathBuf};
 
@@ -67,7 +67,7 @@ pub fn should_skip_patch(model_path: &Path) -> bool {
 
 // ---------------------------------------------------------------------------
 // Minimal ONNX protobuf (onnx.proto3) — only the fields the two passes touch.
-// Field NUMBERS are the stable ONNX spec tags. // SPIKE: re-verify if ORT rejects the round trip.
+// Field NUMBERS are the stable ONNX spec tags. Re-verify if ORT rejects the round trip.
 // ---------------------------------------------------------------------------
 
 /// ONNX elem_type enum values we care about (TensorProto.DataType).
@@ -429,7 +429,7 @@ pub fn patch_whisper_decoder(model_path: &Path) -> SttResult<usize> {
 }
 
 /// Public entry the engine/loader calls: repair the fp16 decoder and return the (unchanged) path so
-/// it reads as a transform. Matches the `// SPIKE:` brief — the mechanism is real; the exact node
+/// it reads as a transform. The exact node
 /// offsets are discovered by walking the graph (no hardcoded offset is needed, the Python port
 /// proved the structural rule). Errors propagate so the loader can surface a real failure.
 pub fn patch_fp16_decoder(path: &Path) -> SttResult<PathBuf> {

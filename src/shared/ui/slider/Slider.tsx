@@ -7,7 +7,7 @@ type SliderVariant = "pips" | "scrubber";
 
 export interface SliderProps {
 	"aria-label"?: string;
-	className?: string;
+	className?: string | undefined;
 	disabled?: boolean;
 	formatValue?: (v: number) => string;
 	label?: string;
@@ -48,7 +48,9 @@ export function Slider({
 	value: rawValue,
 }: SliderProps) {
 	const value = clamp(rawValue, min, max);
-	const substrate = useSurface();
+	// Self-elevates +1 above the host panel; callers render a bare <Slider/>. The
+	// track sits at host+2 and the value fill at host+3, with the shadow on the track.
+	const substrate = Math.min(useSurface() + 1, 8);
 	const trackLevel = Math.min(substrate + 1, 8);
 	const valueLevel = Math.min(substrate + 2, 8);
 	const trackBgClass = surfaceBg(trackLevel);
@@ -88,7 +90,7 @@ export function Slider({
 			>
 				<BaseSlider.Track
 					className={cn(
-						"relative h-full overflow-hidden rounded-lg ring-1 ring-divider",
+						"relative h-full overflow-hidden rounded-lg shadow-elevated ring-1 ring-divider",
 						trackBgClass,
 					)}
 					data-slot="elastic-slider-track"

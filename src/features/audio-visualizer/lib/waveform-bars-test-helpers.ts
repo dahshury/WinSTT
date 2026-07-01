@@ -14,10 +14,10 @@ const STROKE_ALPHA_ACTIVE = 0.25;
 const STROKE_ALPHA_IDLE = 0.06;
 /** Fill peak alpha (active). */
 const FILL_ALPHA_ACTIVE = 0.04;
-/** RGB for active color (bright blue). */
-const ACCENT = "88, 166, 255";
-/** RGB for idle color (blue-tinted white). */
-const IDLE_COLOR = "160, 170, 190";
+/** RGB for active color — brand accent (globals.css --color-accent). */
+const ACCENT = "58, 129, 246";
+/** RGB for idle color — brand foreground-secondary (--color-foreground-secondary). */
+const IDLE_COLOR = "159, 168, 184";
 
 /** How quickly smoothedActivity interpolates toward its target (0-1 per frame). */
 const ACTIVITY_SMOOTHING = 0.06;
@@ -186,12 +186,12 @@ interface RenderParams {
 	targetAmp: number;
 }
 
-/** Pure amplitude contribution from VAD speech-detected flag (CC 1). */
+/** Pure amplitude contribution from VAD speech-detected flag. */
 function vadAmpBoost(isSpeaking: boolean): number {
 	return isSpeaking ? 0.04 : 0;
 }
 
-/** Active wave amplitude when at least one input signal is present (CC 1). */
+/** Active wave amplitude when at least one input signal is present. */
 function activeWaveAmp(
 	audioLevel: number,
 	isSpeaking: boolean,

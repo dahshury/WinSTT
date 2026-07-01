@@ -21,14 +21,65 @@ export function isQuantizationChanging(
 	return quantization !== undefined && quantization !== currentQuantization;
 }
 
+/** The default/auto precision sentinel. Always a valid selection for any model —
+ *  it ships with every catalog entry and the server re-resolves it per model
+ *  (e.g. NeMo / parakeet → int8). */
+const DEFAULT_QUANTIZATION: OnnxQuantization = "";
+
+/** True when ``info`` ships ``quantization`` (or it's the universal default). */
+function modelOffersQuantization(
+	info: NonNullable<ReturnType<GetModelFn>>,
+	quantization: OnnxQuantization,
+): boolean {
+	if (quantization === DEFAULT_QUANTIZATION) {
+		return true;
+	}
+	const available = info.availableQuantizations;
+	// A partial / cloud entry that carries no precision list → don't force a
+	// change (we can't prove the precision is unavailable).
+	return Array.isArray(available) ? available.includes(quantization) : true;
+}
+
+/** Resolve the precision to persist for the model being switched TO. A model
+ *  switch must NOT carry the previous model's precision onto a model that doesn't
+ *  offer it (e.g. tiny's ``q4`` onto parakeet, which only ships ``["", "int8"]`` —
+ *  the source of the rejected ``settings:save``). Returns ``undefined`` when no
+ *  ``onnxQuantization`` override is needed (the carried value is already valid):
+ *   - an explicit user pick wins (respect the newly selected precision);
+ *   - else keep the carried-over precision when the new model offers it;
+ *   - else fall back to the new model's default precision. */
+function resolveSwapQuantization(
+	info: NonNullable<ReturnType<GetModelFn>>,
+	quantization: OnnxQuantization | undefined,
+	quantizationChanging: boolean,
+	currentQuantization: OnnxQuantization,
+): OnnxQuantization | undefined {
+	if (quantizationChanging) {
+		return quantization;
+	}
+	return modelOffersQuantization(info, currentQuantization)
+		? undefined
+		: DEFAULT_QUANTIZATION;
+}
+
 export function buildMainSwapPatch(
 	value: string,
 	info: NonNullable<ReturnType<GetModelFn>>,
 	quantization: OnnxQuantization | undefined,
 	quantizationChanging: boolean,
+	currentQuantization: OnnxQuantization = DEFAULT_QUANTIZATION,
 ): UpdatePatch {
 	const patch: UpdatePatch = { model: value, backend: info.backend };
-	return applyQuantOverride(patch, quantization, quantizationChanging);
+	const resolved = resolveSwapQuantization(
+		info,
+		quantization,
+		quantizationChanging,
+		currentQuantization,
+	);
+	if (resolved !== undefined) {
+		Object.assign(patch, toQuantPatch(resolved));
+	}
+	return patch;
 }
 
 export function buildRealtimeSwapPatch(
@@ -142,6 +193,7 @@ function applyMainSwap(
 		info,
 		args.quantization,
 		quantizationChanging,
+		args.currentQuantization,
 	);
 	Object.assign(
 		patch,
@@ -235,14 +287,9 @@ export function maybeHotReload(
 	//   after persistence and reloads/unloads the resident engine with the new
 	//   quantization. Firing reload_main_model here can race ahead of that save
 	//   and rebuild the old quant.
-	const reloads = shouldReloadForHotSwap(quantizationChanging, modelChanging)
-		? [() => sttReloadModel(kind, value, quantization)]
-		: [];
-	reloads.forEach(invokeReload);
-}
-
-export function invokeReload(fn: () => void): void {
-	fn();
+	if (shouldReloadForHotSwap(quantizationChanging, modelChanging)) {
+		sttReloadModel(kind, value, quantization);
+	}
 }
 
 export function runIssueSwap(args: IssueSwapArgs): void {

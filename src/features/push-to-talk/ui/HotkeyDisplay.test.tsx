@@ -7,7 +7,7 @@ import { HotkeyDisplay } from "./HotkeyDisplay";
 
 beforeEach(() => {
 	useHotkeyStore.setState({
-		isPressed: false,
+		micPhase: "idle",
 		isActive: false,
 		accelerator: "LCtrl+LMeta",
 	});
@@ -15,7 +15,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	useHotkeyStore.setState({
-		isPressed: false,
+		micPhase: "idle",
 		isActive: false,
 		accelerator: "LCtrl+LMeta",
 	});
@@ -34,7 +34,7 @@ describe("resolveTone", () => {
 		expect(resolveTone(false, false)).toBe("muted");
 		expect(resolveTone(false, true)).toBe("muted");
 	});
-	test("returns 'active' when connected and pressed", () => {
+	test("returns 'active' when connected and armed (opening or live)", () => {
 		expect(resolveTone(true, true)).toBe("active");
 	});
 	test("returns 'default' when connected and idle", () => {
@@ -58,7 +58,7 @@ describe("HotkeyDisplay", () => {
 		expect(screen.getAllByText(/[+＋]/).length).toBeGreaterThan(0);
 	});
 
-	test("group exposes the idle tone when connected and not pressed", () => {
+	test("group exposes the idle tone when connected and idle", () => {
 		const { container } = renderIt(true);
 		const group = container.querySelector("kbd[data-tone]") as HTMLElement;
 		expect(group).not.toBeNull();
@@ -74,17 +74,56 @@ describe("HotkeyDisplay", () => {
 		expect(group.dataset["disconnected"]).toBe("true");
 	});
 
-	test("renders the recording pulse dot when isPressed AND connected", () => {
-		useHotkeyStore.setState({ isPressed: true });
-		const { container } = renderIt(true);
-		const pulse = container.querySelector(".animate-recording-pulse");
-		expect(pulse).not.toBeNull();
+	// The 3 states are conveyed by the badge rectangle's LIGHTNESS only — no dots,
+	// no motion. With the default surface substrate (1), the Elevated offset maps
+	// idle→bg-surface-2, opening→bg-surface-3, live→bg-surface-5 (lighter = more
+	// active). The badge div is the kbd's parent (Elevated renders a <div>).
+	function badgeOf(container: HTMLElement): HTMLElement {
+		const kbd = container.querySelector("kbd[data-tone]");
+		const badge = kbd?.parentElement;
+		if (!badge) {
+			throw new Error("badge (Elevated) not found");
+		}
+		return badge;
+	}
+
+	test("never renders a pulse dot in any phase (no blinking indicators)", () => {
+		for (const micPhase of ["idle", "opening", "live"] as const) {
+			useHotkeyStore.setState({ micPhase });
+			const { container, unmount } = renderIt(true);
+			expect(container.querySelector('[data-slot="pulse-dot"]')).toBeNull();
+			unmount();
+		}
 	});
 
-	test("does not render the pulse dot when not connected", () => {
-		useHotkeyStore.setState({ isPressed: true });
+	test("idle rests at the base surface lightness", () => {
+		const { container } = renderIt(true);
+		expect(badgeOf(container).className).toContain("bg-surface-2");
+	});
+
+	test("opening is one surface step lighter than idle", () => {
+		useHotkeyStore.setState({ micPhase: "opening" });
+		const { container } = renderIt(true);
+		expect(badgeOf(container).className).toContain("bg-surface-3");
+		const group = container.querySelector("kbd[data-tone]") as HTMLElement;
+		expect(group.dataset["tone"]).toBe("active");
+		expect(group.dataset["pressed"]).toBe("true");
+	});
+
+	test("live is the lightest (full-on) surface", () => {
+		useHotkeyStore.setState({ micPhase: "live" });
+		const { container } = renderIt(true);
+		expect(badgeOf(container).className).toContain("bg-surface-5");
+		const group = container.querySelector("kbd[data-tone]") as HTMLElement;
+		expect(group.dataset["tone"]).toBe("active");
+		expect(group.dataset["pressed"]).toBe("true");
+	});
+
+	test("disconnected stays at the idle lightness even while the phase is live", () => {
+		useHotkeyStore.setState({ micPhase: "live" });
 		const { container } = renderIt(false);
-		const pulse = container.querySelector(".animate-recording-pulse");
-		expect(pulse).toBeNull();
+		const badge = badgeOf(container);
+		expect(badge.className).toContain("bg-surface-2");
+		expect(badge.className).not.toContain("bg-surface-5");
 	});
 });

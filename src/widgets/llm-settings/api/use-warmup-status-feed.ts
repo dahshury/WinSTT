@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { getLlmWarmupStatus, onLlmWarmupStatus } from "@/shared/api/ipc-client";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { useWarmupStatusStore } from "../model/warmup-status-store";
 
 /**
@@ -15,11 +16,12 @@ export function useWarmupStatusFeed(): void {
 	const setStatus = useWarmupStatusStore((s) => s.setStatus);
 
 	useEffect(() => {
-		getLlmWarmupStatus()
-			.then((snapshot) => {
+		fireAndForget(
+			getLlmWarmupStatus().then((snapshot) => {
 				setStatus(snapshot);
-			})
-			.catch(() => undefined);
+			}),
+			"warmupStatusFeed.getLlmWarmupStatus",
+		);
 		const unsubscribe = onLlmWarmupStatus(setStatus);
 		return unsubscribe;
 	}, [setStatus]);

@@ -1,4 +1,4 @@
-import { Cancel01Icon, RefreshIcon } from "@hugeicons/core-free-icons";
+import { RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect } from "react";
 import { useTranslations } from "use-intl";
@@ -8,8 +8,15 @@ import {
 	onTransformFailed,
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { truncate } from "@/shared/lib/truncate";
 import { Button } from "@/shared/ui/button";
+import {
+	ToastDismissButton,
+	ToastShell,
+	useAutoDismiss,
+} from "@/shared/ui/toast";
 import {
 	type TransformNotification,
 	useTransformNotifications,
@@ -21,13 +28,6 @@ const PREVIEW_CHARS = 120;
 // named per-row prompts, so there's no transform-specific name to surface.
 const HEADLINE = "Text transformation";
 
-function truncate(text: string, max: number): string {
-	if (text.length <= max) {
-		return text;
-	}
-	return `${text.slice(0, max).trimEnd()}…`;
-}
-
 function resolveToastBody(notification: TransformNotification): string {
 	if (notification.kind === "applied") {
 		return notification.after
@@ -38,7 +38,7 @@ function resolveToastBody(notification: TransformNotification): string {
 }
 
 const handleRetry = () => {
-	applyTransform().catch(() => undefined);
+	fireAndForget(applyTransform(), "transform.retry");
 };
 
 /**
@@ -52,9 +52,7 @@ export function TransformToast() {
 	const current = useTransformNotifications((s) => s.current);
 	const show = useTransformNotifications((s) => s.show);
 	const clear = useTransformNotifications((s) => s.clear);
-	const base = useSurface();
-	const level = Math.min(base + 3, 8);
-	const detailsLevel = Math.min(base + 4, 8);
+	const detailsLevel = Math.min(useSurface() + 4, 8);
 
 	useEffect(() => {
 		const offApplied = onTransformApplied((payload) => {
@@ -75,13 +73,7 @@ export function TransformToast() {
 		};
 	}, [show]);
 
-	useEffect(() => {
-		if (!current) {
-			return;
-		}
-		const id = window.setTimeout(clear, AUTO_DISMISS_MS);
-		return () => window.clearTimeout(id);
-	}, [current, clear]);
+	useAutoDismiss(current, clear, AUTO_DISMISS_MS);
 
 	if (!current) {
 		return null;
@@ -93,12 +85,10 @@ export function TransformToast() {
 	const body = resolveToastBody(current);
 
 	return (
-		<output
-			aria-live="polite"
-			className={cn(
-				"fixed right-4 bottom-4 z-toast w-[360px] max-w-[90vw] rounded-md border border-border p-3 shadow-lg",
-				surfaceBg(level),
-			)}
+		<ToastShell
+			ariaLive="polite"
+			as="output"
+			className="fixed right-4 bottom-4 z-toast w-[360px] max-w-[90vw]"
 		>
 			<div className="mb-1 flex items-start gap-2">
 				<span
@@ -109,13 +99,7 @@ export function TransformToast() {
 				<span className="flex-1 font-medium text-body text-foreground">
 					{headline}
 				</span>
-				<Button
-					aria-label="Dismiss"
-					className="rounded p-1 text-foreground-muted hover:bg-surface-tertiary hover:text-foreground"
-					onClick={clear}
-				>
-					<HugeiconsIcon icon={Cancel01Icon} size={12} />
-				</Button>
+				<ToastDismissButton onClick={clear} />
 			</div>
 			<div className="whitespace-pre-wrap text-foreground-muted text-sm leading-relaxed">
 				{body}
@@ -134,6 +118,6 @@ export function TransformToast() {
 					</Button>
 				</div>
 			) : null}
-		</output>
+		</ToastShell>
 	);
 }

@@ -140,10 +140,7 @@ describe("useSoundPreview", () => {
 	test("toggle plays a bundled alternate via the builtin token branch", async () => {
 		const { result } = renderHook(() => useSoundPreview());
 		await act(async () => {
-			await result.current.toggle(
-				"builtin",
-				"builtin:recording_sound_ui_earcon_1.wav",
-			);
+			await result.current.toggle("builtin", "builtin:marimba_start.wav");
 		});
 		expect(result.current.playingId).toBe("builtin");
 		expect(invokes).toContain(IPC.SOUND_LIBRARY_READ_FILE);

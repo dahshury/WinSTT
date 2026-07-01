@@ -211,6 +211,29 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         ignore_cursor: false,
         background: None,
     },
+    // Model-footprint — a tiny NON-FOCUSABLE hover panel, sized to its content
+    // like the device picker and anchored above the footer GPU/CPU chip. It hosts
+    // the model-footprint breakdown that's too tall for the 420×150 main window.
+    // `ensure_window` builds it `focusable(false)` so hovering the chip never
+    // steals keyboard focus from the user's active app, and it's content-sized
+    // (not a full-screen backdrop) so it never blocks input elsewhere.
+    WindowSpec {
+        label: "model-footprint",
+        url: "windows/model-footprint.html",
+        title: "WinSTT — Model Footprint",
+        width: 280.0,
+        height: 420.0,
+        min_width: 1.0,
+        min_height: 1.0,
+        resizable: false,
+        decorations: false,
+        transparent: true,
+        always_on_top: true,
+        skip_taskbar: true,
+        shadow: false,
+        ignore_cursor: false,
+        background: None,
+    },
     // Onboarding — 720×620 framed/resizable, opaque, centered on the primary
     // display. Ported from onboarding-window.ts (ONBOARDING_WIDTH/HEIGHT +
     // minWidth 600 / minHeight 560 / resizable: true).
@@ -250,7 +273,7 @@ const WINDOW_SPECS: &[WindowSpec] = &[
     },
     // Context-playground — debug-only decorated/resizable window.
     // Ported from context-playground-window.ts (600×780, min 440×420).
-    // AUDIT #6: present in dev (debug_assertions) or with the `context-playground`
+    // Present in dev (debug_assertions) or with the `context-playground`
     // feature; dropped from `spec_for`/`open_window` in shipping builds. It is NOT
     // in POST_STARTUP_PREWARM_LABELS, so it is never prewarmed. Pairs with
     // `CONTEXT_PLAYGROUND_ENABLED` (= `import.meta.env.DEV`) in debug-flags.ts.
@@ -284,9 +307,10 @@ fn known_window_label(label: &str) -> Result<&'static str, String> {
         .ok_or_else(|| format!("unknown window '{label}'"))
 }
 
-/// Is this a transparent anchored popup (model-picker / device-picker)?
+/// Is this a transparent anchored popup (model-picker / device-picker /
+/// model-footprint)?
 fn is_picker(label: &str) -> bool {
-    label == "model-picker" || label == "device-picker"
+    label == "model-picker" || label == "device-picker" || label == "model-footprint"
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -321,6 +345,8 @@ fn is_window_operation_allowed(caller: &str, operation: WindowOperation, target:
             // canonical swap/reload + download-gating path instead of a bespoke one.
             "model-picker" => matches!(caller, "main" | "settings" | "onboarding"),
             "device-picker" => caller == "tray-menu",
+            // The footer GPU/CPU chip (main window) opens the footprint hover panel.
+            "model-footprint" => caller == "main",
             #[cfg(any(debug_assertions, feature = "context-playground"))]
             "context-playground" => caller == "tray-menu",
             // `tray-menu` is opened by the tray command, `overlay` by recording
@@ -332,6 +358,8 @@ fn is_window_operation_allowed(caller: &str, operation: WindowOperation, target:
             "settings" | "history" | "onboarding" => caller == target,
             "model-picker" => matches!(caller, "main" | "settings" | "model-picker"),
             "device-picker" => matches!(caller, "tray-menu" | "device-picker"),
+            // Closed from the main window (chip pointer-out) or by itself.
+            "model-footprint" => matches!(caller, "main" | "model-footprint"),
             "tray-menu" => caller == "tray-menu",
             #[cfg(any(debug_assertions, feature = "context-playground"))]
             "context-playground" => caller == "context-playground",
@@ -340,6 +368,8 @@ fn is_window_operation_allowed(caller: &str, operation: WindowOperation, target:
         WindowOperation::Resize => match target {
             "model-picker" => caller == "model-picker",
             "device-picker" => caller == "device-picker",
+            // The footprint window's ResizeObserver hugs its own window to content.
+            "model-footprint" => caller == "model-footprint",
             "tray-menu" => caller == "tray-menu",
             _ => false,
         },
@@ -427,6 +457,9 @@ static PICKER_STATE: Mutex<Option<HashMap<&'static str, PickerState>>> = Mutex::
 fn picker_default_size(label: &str) -> (f64, f64) {
     match label {
         "model-picker" => (600.0, 560.0),
+        // Seed footprint near its content size so the first frame isn't oversized
+        // before the renderer's ResizeObserver hugs the window to the breakdown.
+        "model-footprint" => (280.0, 420.0),
         _ => (320.0, 360.0),
     }
 }
@@ -493,6 +526,13 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
         // (bg-black) island. Pinning the default background to transparent keeps
         // focus repaints transparent on every transparent popup.
         builder = builder.background_color(tauri::webview::Color(0, 0, 0, 0));
+    }
+
+    // The footprint panel is a hover affordance: build it non-focusable so
+    // showing it on hover never pulls keyboard focus off the user's active app
+    // (every other window activates on show via `set_focus`).
+    if spec.label == "model-footprint" {
+        builder = builder.focusable(false);
     }
 
     // Make Settings a modal child owned by the main pill. On Windows `parent()`
@@ -601,7 +641,8 @@ static POST_STARTUP_PREWARM_SCHEDULED: AtomicBool = AtomicBool::new(false);
 /// already-loaded transparent webview, avoiding the first-use black rectangle.
 /// `tray-menu` has a custom off-screen lifecycle warmup. Lower-probability
 /// windows stay lazy.
-const POST_STARTUP_PREWARM_LABELS: &[&str] = &["overlay", "settings", "model-picker"];
+const POST_STARTUP_PREWARM_LABELS: &[&str] =
+    &["overlay", "settings", "model-picker", "model-footprint"];
 
 /// Pre-create hidden secondary windows after the main pill paints, so first
 /// interaction paths usually show an already-loaded webview. This keeps WebView2
@@ -779,7 +820,17 @@ pub fn open_window(
         if label == "model-picker" {
             let next_kind = picker_kind
                 .as_deref()
-                .filter(|kind| matches!(*kind, "llm-ollama" | "llm-openrouter" | "stt"))
+                .filter(|kind| {
+                    matches!(
+                        *kind,
+                        "llm-ollama"
+                            | "llm-openrouter"
+                            | "stt"
+                            | "stt-realtime"
+                            | "stt-cloud"
+                            | "tts"
+                    )
+                })
                 .unwrap_or("stt");
             let (default_width, default_height) = model_picker_size_for_kind(next_kind);
             with_picker_state(label, |s| {

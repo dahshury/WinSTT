@@ -24,8 +24,6 @@ import type {
 
 const WARNING_THRESHOLD = 0.8;
 const RAM_USABLE_FRACTION = 0.7;
-const OLLAMA_OVERHEAD_BYTES = 1_000_000_000;
-const OLLAMA_SIZE_HEADROOM_FACTOR = 1.2;
 
 const BYTES_PER_PARAM_BY_QUANT: Record<string, number> = {
 	"": 4,
@@ -95,7 +93,7 @@ function slotBytes(
 
 /** Sum of currently-loaded dictation footprints, excluding ``excludeId``
  * when the candidate is replacing an already-loaded slot. */
-export function loadedDictationFootprint(
+function loadedDictationFootprint(
 	statesById: Record<string, ModelStateEntry>,
 	loaded: LoadedSlots,
 	excludeId: string | null,
@@ -112,8 +110,15 @@ const BYTES_PER_PARAM_BASELINE = BYTES_PER_PARAM_BY_QUANT[""] ?? 4;
 
 /** Approximate a model's runtime bytes at ``quant`` from its catalog
  * ``estimated_bytes`` (which the server reports at int8/q4 baseline).
- * We scale linearly from that baseline by ratio of bytes-per-param. */
-function estimateForQuant(estimatedBytes: number, quant: string): number {
+ * We scale linearly from that baseline by ratio of bytes-per-param.
+ *
+ * Exported so the status-bar GPU/CPU breakdown can render the same
+ * per-quant runtime footprint the picker badges use (single source of
+ * truth for the bytes-per-param scaling). */
+export function estimateForQuant(
+	estimatedBytes: number,
+	quant: string,
+): number {
 	const factor = BYTES_PER_PARAM_BY_QUANT[quant];
 	if (factor === undefined) {
 		return estimatedBytes;
@@ -363,108 +368,6 @@ export function assessDictationFitClient(
 		candidateId,
 	);
 	return dispatchFit(target, required, loadedOther, ctx.live, reasons);
-}
-
-type OllamaCtx = Omit<AssessContext, "candidateQuant" | "requestedDevice">;
-
-function ollamaRequiredBytes(sizeBytes: number): number {
-	return (
-		Math.round(sizeBytes * OLLAMA_SIZE_HEADROOM_FACTOR) + OLLAMA_OVERHEAD_BYTES
-	);
-}
-
-function ollamaUnknownFootprint(): FitAssessmentEntry {
-	return {
-		severity: "ok",
-		target: "neither",
-		required_bytes: 0,
-		available_bytes: 0,
-		reasons: ["unknown_footprint"],
-	};
-}
-
-function ollamaGpuSeverity(required: number, available: number): FitSeverity {
-	if (required > available) {
-		return "critical";
-	}
-	return required > available * WARNING_THRESHOLD ? "warning" : "ok";
-}
-
-const OLLAMA_GPU_REASON_BY_SEVERITY: Record<FitSeverity, FitReason> = {
-	critical: "exceeds_vram",
-	warning: "tight_vram",
-	ok: "ok",
-};
-
-const OLLAMA_GPU_TARGET_BY_SEVERITY: Record<FitSeverity, FitTarget> = {
-	critical: "neither",
-	warning: "gpu",
-	ok: "gpu",
-};
-
-function assessOllamaGpu(
-	required: number,
-	loadedOther: number,
-	live: LiveResourcesEntry,
-): FitAssessmentEntry {
-	const { total, free } = largestGpu(live);
-	const available = gpuAvailableBytes(total, free);
-	const reasons: FitReason[] = [];
-	pushIfPositive(reasons, loadedOther, "stt_already_uses_gpu");
-	const severity = ollamaGpuSeverity(required, available);
-	reasons.push(OLLAMA_GPU_REASON_BY_SEVERITY[severity]);
-	return {
-		severity,
-		target: OLLAMA_GPU_TARGET_BY_SEVERITY[severity],
-		required_bytes: required,
-		available_bytes: available,
-		reasons,
-	};
-}
-
-const OLLAMA_CPU_TARGET_BY_SEVERITY: Record<FitSeverity, FitTarget> = {
-	critical: "neither",
-	warning: "cpu",
-	ok: "cpu",
-};
-
-function assessOllamaCpu(
-	required: number,
-	loadedOther: number,
-	live: LiveResourcesEntry,
-): FitAssessmentEntry {
-	const available = cpuBudgetBytes(live, loadedOther);
-	const reasons: FitReason[] = [];
-	pushIfPositive(reasons, loadedOther, "stt_already_uses_ram");
-	const severity = severityFor(required, available);
-	reasons.push(ramReasonFor(severity));
-	return {
-		severity,
-		target: OLLAMA_CPU_TARGET_BY_SEVERITY[severity],
-		required_bytes: required,
-		available_bytes: available,
-		reasons,
-	};
-}
-
-/** Client-side mirror of ``assess_ollama_fit``. */
-export function assessOllamaFitClient(
-	sizeBytes: number,
-	ctx: OllamaCtx,
-): FitAssessmentEntry {
-	if (sizeBytes <= 0) {
-		return ollamaUnknownFootprint();
-	}
-	const required = ollamaRequiredBytes(sizeBytes);
-	const loadedOther = loadedDictationFootprint(
-		ctx.statesById,
-		ctx.loaded,
-		null,
-	);
-	if (ctx.live.gpus.length > 0) {
-		return assessOllamaGpu(required, loadedOther, ctx.live);
-	}
-	return assessOllamaCpu(required, loadedOther, ctx.live);
 }
 
 export const TEST_ONLY = {

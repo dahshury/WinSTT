@@ -12,6 +12,7 @@ import {
 	nextTtsSpeedPreset,
 	ttsSpeedPresets,
 } from "@/shared/config/tts-speed";
+import { formatTime } from "@/shared/lib/format-time";
 import { Spinner } from "@/shared/ui/spinner";
 import {
 	DynamicIsland,
@@ -20,8 +21,10 @@ import {
 import {
 	discardTts,
 	getTtsLevel,
+	getTtsProgress,
 	pauseTts,
 	resumeTts,
+	seekTts,
 	type TtsPlaybackStatus,
 	useTtsPlaybackStore,
 } from "../model/tts-playback-store";
@@ -31,6 +34,8 @@ import {
 	OVERLAY_PANEL_CLOSE_MS,
 	useDelayedUnmount,
 } from "./overlay-shell.shared";
+import { TtsSeekBar } from "./TtsSeekBar";
+import { TtsVolumeControl } from "./TtsVolumeControl";
 
 /**
  * SVG glyph for a TTS pill control. `pause`/`play` are filled; `discard` is the
@@ -160,13 +165,35 @@ function SpeedButton({
 	);
 }
 
+// Formatted-time cache (adapted from the media-player reference): the labels
+// floor to whole seconds, so formatting is reused across frames and the label
+// nodes re-render at most once per second.
+const timeLabelCache = new Map<number, string>();
+function fmt(seconds: number): string {
+	const whole = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+	let label = timeLabelCache.get(whole);
+	if (label === undefined) {
+		// Cheap guard so a very long read can't grow the cache unbounded.
+		if (timeLabelCache.size > 256) {
+			timeLabelCache.clear();
+		}
+		label = formatTime(whole * 1000);
+		timeLabelCache.set(whole, label);
+	}
+	return label;
+}
+
 /**
- * Forced dynamic-island pill for a TTS read-aloud — a live visualiser of the
- * spoken audio (fed via the shared visualiser store by `useTtsIslandBridge`)
- * plus speed / pause-resume / discard controls. Fixed `compactMedium` footprint
- * so it stays compact ("doesn't grow much"). pause/resume/discard are local to
- * this window's queue; discard also cancels the server-side run; speed is routed
- * to the reader via IPC.
+ * Forced dynamic-island pill for a TTS read-aloud — a compact media player:
+ *   - Row 1: play / pause, a live visualiser of the spoken audio (fed via the
+ *     shared visualiser store by `useTtsIslandBridge`), speed, volume, and stop.
+ *   - Row 2: a seek bar flanked by elapsed / total time — revealed once playback
+ *     starts (`duration > 0`); `fitContent` animates the height growth.
+ *
+ * All controls are local to this window's queue (discard also cancels the
+ * server-side run; speed is routed to the reader via IPC). The island grows to
+ * the `long` width and self-sizes its height so it stays a single row during
+ * synthesis and only expands to two rows while audio plays.
  */
 function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 	const cloud = useSettingsStore((s) => s.settings.tts?.source) === "cloud";
@@ -179,48 +206,78 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 	// the engine actually plays, not a phantom faster rate. Cloud has its own
 	// provider clamp and isn't model-scoped here.
 	const speed = cloud ? rawSpeed : clampTtsSpeed(model, rawSpeed);
+	const currentTime = useTtsPlaybackStore((s) => s.currentTime);
+	const duration = useTtsPlaybackStore((s) => s.duration);
+	const bufferedEnd = useTtsPlaybackStore((s) => s.bufferedEnd);
 	const loading = status === "loading";
 	const paused = status === "paused";
+	const showSeek = !loading && duration > 0;
 	return (
 		<DynamicIsland
 			className="pointer-events-auto"
 			data-overlay-hit-region="true"
+			fitContent
 			flatTop
 			id="winstt-tts-island"
-			size="compactMedium"
+			size="long"
 		>
-			<div className="flex h-full items-center justify-between gap-2 px-4">
-				<div className="flex items-center">
-					{loading ? (
-						<div className="flex size-6 items-center justify-center text-overlay-foreground/70">
-							<Spinner
-								aria-label="Generating speech"
-								className="size-3 border-[1.5px]"
+			<div className="flex flex-col gap-2 px-4 py-3">
+				{/* Row 1 — transport */}
+				<div className="flex items-center gap-2.5">
+					<div className="flex shrink-0 items-center">
+						{loading ? (
+							<div className="flex size-[22px] items-center justify-center text-overlay-foreground/70">
+								<Spinner
+									aria-label="Generating speech"
+									className="size-3 border-[1.5px]"
+								/>
+							</div>
+						) : (
+							<IslandControlButton
+								kind={paused ? "play" : "pause"}
+								label={paused ? "Resume reading" : "Pause reading"}
+								onClick={paused ? resumeTts : pauseTts}
+								size={22}
 							/>
-						</div>
-					) : paused ? (
-						<div className="flex size-6 items-center justify-center text-overlay-foreground/60">
-							<IslandControlGlyph kind="pause" size={12} />
-						</div>
-					) : (
-						<AudioVisualizer size="icon" />
-					)}
-				</div>
-				<div className="pointer-events-auto flex items-center gap-2">
-					<SpeedButton cloud={cloud} model={model} speed={speed} />
-					{loading ? null : (
+						)}
+					</div>
+					<div className="flex min-w-0 flex-1 items-center justify-center">
+						{loading ? null : paused ? (
+							<div className="flex h-6 items-center justify-center text-overlay-foreground/55">
+								<IslandControlGlyph kind="pause" size={12} />
+							</div>
+						) : (
+							<AudioVisualizer size="icon" />
+						)}
+					</div>
+					<div className="flex shrink-0 items-center gap-2">
+						<SpeedButton cloud={cloud} model={model} speed={speed} />
+						<TtsVolumeControl />
 						<IslandControlButton
-							kind={paused ? "play" : "pause"}
-							label={paused ? "Resume reading" : "Pause reading"}
-							onClick={paused ? resumeTts : pauseTts}
+							kind="discard"
+							label={loading ? "Cancel speech generation" : "Stop reading"}
+							onClick={discardTts}
 						/>
-					)}
-					<IslandControlButton
-						kind="discard"
-						label={loading ? "Cancel speech generation" : "Stop reading"}
-						onClick={discardTts}
-					/>
+					</div>
 				</div>
+				{/* Row 2 — seek */}
+				{showSeek ? (
+					<div className="flex items-center gap-2 text-[10px] text-overlay-foreground/55">
+						<span className="w-8 shrink-0 text-right font-mono tabular-nums">
+							{fmt(currentTime)}
+						</span>
+						<TtsSeekBar
+							bufferedEnd={bufferedEnd}
+							className="flex-1"
+							currentTime={currentTime}
+							duration={duration}
+							onSeek={seekTts}
+						/>
+						<span className="w-8 shrink-0 font-mono tabular-nums">
+							{fmt(duration)}
+						</span>
+					</div>
+				) : null}
 			</div>
 		</DynamicIsland>
 	);
@@ -276,7 +333,7 @@ function TtsIslandLayer({
 						initial="closed"
 						variants={ttsPanelVariants}
 					>
-						<DynamicIslandProvider initialSize="compactMedium">
+						<DynamicIslandProvider initialSize="long">
 							<TtsIslandPill status={status} />
 						</DynamicIslandProvider>
 					</m.div>
@@ -295,6 +352,7 @@ function TtsIslandLayer({
  */
 function useTtsIslandBridge(sessionActive: boolean): void {
 	const status = useTtsPlaybackStore((s) => s.status);
+	const setProgress = useTtsPlaybackStore((s) => s.setProgress);
 	const setAudioLevel = useVisualizerStore((s) => s.setAudioLevel);
 	const rafRef = useRef(0);
 	const pausePlayback = useEffectEvent(() => {
@@ -314,13 +372,23 @@ function useTtsIslandBridge(sessionActive: boolean): void {
 			cancelAnimationFrame(rafRef.current);
 			return;
 		}
+		// One rAF feeds BOTH the visualiser level and the media-player progress
+		// (current / duration / buffered). While paused the position is frozen and
+		// kept correct by the last frame + optimistic `seekTts`, so we don't spin a
+		// loop at rest.
 		const tick = () => {
 			setAudioLevel(getTtsLevel());
+			const progress = getTtsProgress();
+			setProgress(
+				progress.currentTime,
+				progress.duration,
+				progress.bufferedEnd,
+			);
 			rafRef.current = requestAnimationFrame(tick);
 		};
 		rafRef.current = requestAnimationFrame(tick);
 		return () => cancelAnimationFrame(rafRef.current);
-	}, [status, sessionActive, setAudioLevel]);
+	}, [status, sessionActive, setAudioLevel, setProgress]);
 }
 
 export { TtsIslandLayer, useTtsIslandBridge };

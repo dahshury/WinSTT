@@ -315,13 +315,24 @@ describe("advanceSkipRefs", () => {
 		expect(result).toBe(false);
 	});
 
-	test("prioritizes loadedOnce over fromBroadcast", () => {
-		const refs = makeRefs(false, true, false);
+	test("first run skips AND consumes the origin flags it was set with", () => {
+		// The first post-hydration run is itself the IPC-load/broadcast that set
+		// these flags, so it must clear them — otherwise the leftover flag would
+		// skip the user's NEXT (first real) change. Regression guard for the
+		// "first toggle after boot never persists / model never unloads" bug.
+		const refs = makeRefs(false, true, true);
 		const result = advanceSkipRefs(refs);
 		expect(result).toBe(true);
-		// loadedOnce was the trigger, fromBroadcast should still be true
-		expect(refs.fromBroadcast.current).toBe(true);
 		expect(refs.loadedOnce.current).toBe(true);
+		expect(refs.fromBroadcast.current).toBe(false);
+		expect(refs.fromIpcLoad.current).toBe(false);
+	});
+
+	test("a genuine user change immediately after the first run is NOT skipped", () => {
+		// loadedOnce already consumed by the hydration run; no origin flags set
+		// (the change came from the user, not a load/broadcast) → do not skip.
+		const refs = makeRefs(true, false, false);
+		expect(advanceSkipRefs(refs)).toBe(false);
 	});
 });
 
@@ -497,6 +508,44 @@ describe("deriveIpcLoadUpdate", () => {
 
 		expect(result.merged.snippets).toEqual(localSnippets);
 		expect(result.nextFromIpcLoad).toBe(false);
+	});
+
+	test("does not resurrect a blank-only local collection over the empty backend", () => {
+		const loadBaseline = {
+			dictionary: [{ id: "blank-1", term: "" }],
+			snippets: [{ id: "blank-2", trigger: "", expansion: "" }],
+		} as never;
+		const loaded = {
+			dictionary: [],
+			snippets: [],
+		} as never;
+		const current = loadBaseline;
+
+		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
+
+		expect(result.merged.dictionary).toEqual([]);
+		expect(result.merged.snippets).toEqual([]);
+	});
+
+	test("migrates only the meaningful rows, dropping trailing blanks", () => {
+		const loadBaseline = {
+			dictionary: [],
+			snippets: [
+				{ id: "real-1", trigger: "/sig", expansion: "kind regards" },
+				{ id: "blank-1", trigger: "", expansion: "" },
+			],
+		} as never;
+		const loaded = {
+			dictionary: [],
+			snippets: [],
+		} as never;
+		const current = loadBaseline;
+
+		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
+
+		expect(result.merged.snippets).toEqual([
+			{ id: "real-1", trigger: "/sig", expansion: "kind regards" },
+		]);
 	});
 });
 

@@ -16,8 +16,7 @@ const entryTimestampFormatter = new Intl.DateTimeFormat(undefined, {
 /**
  * Pick the user-facing transcription text for a row. Prefers the post-LLM
  * cleaned version when LLM ran and produced different output; otherwise the
- * raw transcript. Matches the renderer-side widget's
- * `shouldKeepOriginalText` policy from `transcription-history.ts`.
+ * raw transcript.
  */
 export function effectiveText(entry: HistoryEntry): string {
 	const cleaned = entry.postProcessedText?.trim();
@@ -38,15 +37,4 @@ export function formatEntryTimestamp(entry: HistoryEntry): string {
 		return entry.title;
 	}
 	return entryTimestampFormatter.format(date);
-}
-
-/**
- * Approximate "word count" for the row's effective text. Whitespace-delimited
- * tokens, matching the legacy persisted store history's policy in
- * `transcription-history.ts`'s `countWords`.
- */
-export function entryWordCount(entry: HistoryEntry): number {
-	const text = effectiveText(entry);
-	const matches = text.match(/\S+/g);
-	return matches ? matches.length : 0;
 }

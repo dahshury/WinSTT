@@ -1,24 +1,12 @@
 "use client";
 
-import { Tick01Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { DropdownMenuItem } from "../ui/DropdownMenu";
+import { SelectedTick } from "./filter-submenu-shared";
 import { getVariantIcon } from "./filter-icons";
 import type { ModelVariant } from "./model-variant-utils";
 import { getVariantInfo } from "./variant-filter-submenu-utils";
 
-interface SelectedTickProps {
-	visible: boolean;
-}
-
-export function SelectedTick({ visible }: SelectedTickProps) {
-	if (!visible) {
-		return null;
-	}
-	return (
-		<HugeiconsIcon className="ms-2 size-4 text-accent" icon={Tick01Icon} />
-	);
-}
+export { SelectedTick } from "./filter-submenu-shared";
 
 interface VariantMenuItemProps {
 	count: number;

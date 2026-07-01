@@ -41,9 +41,8 @@ pub(crate) fn register_core_managers(app_handle: &AppHandle, managers: &CoreMana
 
 pub(crate) fn register_winstt_managers(app_handle: &AppHandle, managers: &CoreManagers) {
     use crate::winstt::managers::{
-        ollama_manager, CloudSttManager, ContextManager, DiarizationManager, DownloadManager,
-        FileTranscribeManager, LlmManager, LoopbackManager, RealtimeManager, TtsManager,
-        WakeWordManager, WordAligner,
+        ollama_manager, CloudSttManager, ContextManager, DownloadManager, FileTranscribeManager,
+        LlmManager, LoopbackManager, RealtimeManager, TtsManager, WakeWordManager, WordAligner,
     };
 
     app_handle.manage(Arc::new(LlmManager::new(app_handle)));
@@ -59,7 +58,6 @@ pub(crate) fn register_winstt_managers(app_handle: &AppHandle, managers: &CoreMa
     app_handle.manage(tts_manager);
 
     app_handle.manage(Arc::new(WakeWordManager::new(app_handle)));
-    app_handle.manage(Arc::new(DiarizationManager::new(app_handle)));
     app_handle.manage(Arc::new(LoopbackManager::new(
         app_handle,
         managers.transcription.clone(),
@@ -154,15 +152,9 @@ pub(crate) fn deactivate_runtime_for_onboarding(app_handle: &AppHandle) {
         audio.inner().stop_microphone_stream();
     }
 
-    if let (Some(loopback), Some(diarization)) = (
-        app_handle.try_state::<Arc<crate::winstt::managers::LoopbackManager>>(),
-        app_handle.try_state::<Arc<crate::winstt::managers::DiarizationManager>>(),
-    ) {
-        crate::winstt::commands::listen::stop_listen_runtime(
-            app_handle,
-            loopback.inner().as_ref(),
-            diarization.inner().as_ref(),
-        );
+    if let Some(loopback) = app_handle.try_state::<Arc<crate::winstt::managers::LoopbackManager>>()
+    {
+        crate::winstt::commands::listen::stop_listen_runtime(app_handle, loopback.inner().as_ref());
     }
 
     if let Some(transcription) =
@@ -212,6 +204,15 @@ pub(crate) fn schedule_winstt_background_warmups(app_handle: &AppHandle) {
     if crate::winstt::commands::settings::should_warm_tts(&settings) {
         crate::winstt::commands::settings::warm_tts_async(app_handle);
     }
+    // The encoder honors the shared `model_unload_timeout`: seed its policy and
+    // start the idle watcher (idempotent; no-ops while nothing is loaded) so the
+    // dictionary model unloads on the same schedule as STT/TTS/LLM.
+    crate::winstt::encoder_dict::update_idle_unload_timeout(
+        crate::winstt::commands::settings::core_timeout_from_winstt(
+            settings.global.model_unload_timeout,
+        ),
+    );
+    crate::winstt::encoder_dict::start_idle_watcher();
     // Preload + warm the on-device dictionary encoder when the feature is on and the model is
     // already downloaded, so the first non-LLM dictation doesn't pay the cold-load cost.
     if settings.general.encoder_dictionary_enabled

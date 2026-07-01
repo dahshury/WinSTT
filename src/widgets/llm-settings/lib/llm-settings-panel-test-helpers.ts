@@ -1,10 +1,8 @@
 import {
-	AiCloud02Icon,
 	AppleIcon,
 	BookOpen01Icon,
 	LockIcon,
 	PencilIcon,
-	ServerStack02Icon,
 	SignalFull02Icon,
 	SignalLow02Icon,
 	SignalMedium02Icon,
@@ -12,7 +10,8 @@ import {
 	WavingHand01Icon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
-import type { useTranslations } from "use-intl";
+import type { ReactNode } from "react";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import {
 	type BuiltinPresetEntry,
 	type CustomModifier,
@@ -25,6 +24,7 @@ import {
 import type { OllamaModel } from "@/shared/api/models";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { DEFAULT_TARGET_LANG } from "@/shared/lib/languages";
+import { brandLogoFor } from "@/shared/ui/brand-logo";
 
 type ToneKey = (typeof TONE_GROUP)[number];
 
@@ -34,8 +34,6 @@ const TONE_ICONS: Readonly<Record<ToneKey, IconSvgElement>> = {
 	friendly: WavingHand01Icon,
 	technical: BookOpen01Icon,
 };
-
-type TranslateFn = ReturnType<typeof useTranslations>;
 
 type LlmSettings = AppSettingsOutput["llm"];
 type LlmDictation = LlmSettings["dictation"];
@@ -435,6 +433,8 @@ export interface ProviderOption {
 	disabledTooltip?: string;
 	/** Leading icon shown before the provider name in the switcher. */
 	icon?: IconSvgElement;
+	/** Leading icon as a node (brand-logo SVG) — takes precedence over `icon`. */
+	iconNode?: ReactNode;
 	label: string;
 	/** Hover tooltip body for the whole option (e.g. the cloud-provider hint). */
 	tooltip?: string;
@@ -455,11 +455,15 @@ export function buildProviderOpts(
 	ctx: ProviderOptsContext = {},
 ): readonly ProviderOption[] {
 	const opts: ProviderOption[] = [
-		{ value: "ollama", label: t("providerOllama"), icon: ServerStack02Icon },
+		{
+			value: "ollama",
+			label: t("providerOllama"),
+			iconNode: brandLogoFor("ollama"),
+		},
 		{
 			value: "openrouter",
 			label: t("providerOpenRouter"),
-			icon: AiCloud02Icon,
+			iconNode: brandLogoFor("openrouter"),
 			// LOCK the cloud provider until a key is configured — full parity with
 			// the STT Source "Cloud" option (disabled + lock badge whose footer
 			// points the user at the key). A bare `tooltip` was insufficient: a
@@ -633,10 +637,21 @@ export interface FeatureToggleDeps {
 }
 
 function isCurrentOllamaModelInstalled(deps: FeatureToggleDeps): boolean {
-	const installed = deps.ollamaModels.some(
-		(m) => m.name === deps.currentOllamaModel,
-	);
-	return installed && deps.currentOllamaModel.length > 0;
+	if (deps.currentOllamaModel.length === 0) {
+		return false;
+	}
+	// The catalog scan (`maybeScanOllama`) is fired but NOT awaited right before
+	// this check, so on the first toggle after opening Settings `ollamaModels` is
+	// still the empty pre-scan snapshot — `isLoaded` is false. Treating that as
+	// "not installed" silently bounces the toggle (opens the picker / replaces the
+	// model) for a model that is actually installed, leaving `enabled` false: the
+	// LLM never runs and never warms into VRAM. When the catalog hasn't loaded
+	// yet, trust the already-configured model; a genuinely missing one surfaces as
+	// a ModelNotFound warmup status rather than a dead toggle.
+	if (!deps.ollamaLoaded) {
+		return true;
+	}
+	return deps.ollamaModels.some((m) => m.name === deps.currentOllamaModel);
 }
 
 function maybeScanOllama(deps: FeatureToggleDeps): void {

@@ -14,6 +14,7 @@ import {
 } from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Select } from "@/shared/ui/select";
@@ -113,7 +114,9 @@ export function OnboardingMicTestStep() {
 			if (rafId) {
 				cancelAnimationFrame(rafId);
 			}
-			ctx?.close().catch(() => undefined);
+			if (ctx) {
+				fireAndForget(ctx.close(), "onboarding.micTest.closeAudioContext");
+			}
 			if (stream) {
 				for (const t of stream.getTracks()) {
 					t.stop();

@@ -31,7 +31,9 @@ import {
 	deriveBroadcastUpdate,
 	deriveIpcLoadUpdate,
 	isModeChanged,
+	LOCAL_CACHE_COLLECTION_KEYS,
 	scheduleSave,
+	settingsSectionsEqual,
 	shouldSyncOnConnect,
 } from "../lib/sync-helpers";
 import { useSettingsHydrationStore } from "../model/settings-hydration-store";
@@ -240,7 +242,7 @@ export function useSyncSettings(): void {
 	}, [settings, isLoaded, hydrationStatus]);
 }
 
-/** Cancel any pending debounced save (called from effect-cleanup, CC 2). */
+/** Cancel any pending debounced save (called from effect-cleanup). */
 function cancelPendingSave(debounceRef: {
 	current: ReturnType<typeof setTimeout> | null;
 }): void {
@@ -256,7 +258,7 @@ function cancelPendingSave(debounceRef: {
  * session), send everything so the canonical disk snapshot is established.
  */
 export function sectionsDiffer(a: unknown, b: unknown): boolean {
-	return JSON.stringify(a) !== JSON.stringify(b);
+	return !settingsSectionsEqual(a, b);
 }
 
 export function collectChangedSections(
@@ -290,8 +292,6 @@ function patchIncludesRecordingModeChange(
 	const nextMode = patch.general?.recordingMode;
 	return nextMode != null && nextMode !== lastSaved?.general?.recordingMode;
 }
-
-const LOCAL_CACHE_COLLECTION_KEYS = ["dictionary", "snippets"] as const;
 
 function patchIncludesLocalCollectionMigration(
 	patch: Partial<AppSettings>,
@@ -344,7 +344,7 @@ export function performScheduledSave(
 /**
  * Cancel any pending debounced save AND immediately flush the latest settings
  * to persisted store. Used on window close / unmount so a fast-close doesn't
- * lose changes that hadn't been written yet (CC 2). Also advances
+ * lose changes that hadn't been written yet. Also advances
  * `lastSavedRef` so a later broadcast merge still sees the flushed state as
  * the saved baseline.
  */

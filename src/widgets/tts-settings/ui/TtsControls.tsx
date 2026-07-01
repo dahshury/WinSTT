@@ -1,6 +1,5 @@
-import type { useTranslations } from "use-intl";
 import { DEFAULT_SETTINGS, SettingField } from "@/entities/setting";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import {
 	SearchableSelect,
 	type SelectOptionGroup,
@@ -26,7 +25,7 @@ export interface TtsControlsProps {
 	speed: number;
 	speedMax?: number | undefined;
 	speedMin?: number | undefined;
-	t: ReturnType<typeof useTranslations>;
+	t: TranslateFn;
 	voice: string;
 	voiceDefault?: string | undefined;
 	voiceGroups: SelectOptionGroup[];
@@ -74,40 +73,39 @@ export function TtsControls({
 				onReset={() => onVoiceChange(voiceDefault)}
 				tooltip={voicePlaceholder}
 			>
-				<ElevatedSurface className="w-52" inline>
-					<SearchableSelect
-						groups={voiceGroups}
-						inputTrailing={
-							<TtsPreviewButton
-								activeRequestId={activeRequestId}
-								compact={true}
-								isLoading={isLoading}
-								isSpeaking={isSpeaking}
-								langForVoice={langForVoice}
-								previewVoice={previewVoice}
-								previewVoiceId={previewVoiceId}
-								t={t}
-								targetVoiceId={voice}
-							/>
-						}
-						onChange={onVoiceChange}
-						placeholder={t("noVoicesYet")}
-						renderItemTrailing={(option) => (
-							<TtsPreviewButton
-								activeRequestId={activeRequestId}
-								compact={true}
-								isLoading={isLoading}
-								isSpeaking={isSpeaking}
-								langForVoice={langForVoice}
-								previewVoice={previewVoice}
-								previewVoiceId={previewVoiceId}
-								t={t}
-								targetVoiceId={option.id}
-							/>
-						)}
-						value={voice}
-					/>
-				</ElevatedSurface>
+				<SearchableSelect
+					className="w-52"
+					groups={voiceGroups}
+					inputTrailing={
+						<TtsPreviewButton
+							activeRequestId={activeRequestId}
+							compact={true}
+							isLoading={isLoading}
+							isSpeaking={isSpeaking}
+							langForVoice={langForVoice}
+							previewVoice={previewVoice}
+							previewVoiceId={previewVoiceId}
+							t={t}
+							targetVoiceId={voice}
+						/>
+					}
+					onChange={onVoiceChange}
+					placeholder={t("noVoicesYet")}
+					renderItemTrailing={(option) => (
+						<TtsPreviewButton
+							activeRequestId={activeRequestId}
+							compact={true}
+							isLoading={isLoading}
+							isSpeaking={isSpeaking}
+							langForVoice={langForVoice}
+							previewVoice={previewVoice}
+							previewVoiceId={previewVoiceId}
+							t={t}
+							targetVoiceId={option.id}
+						/>
+					)}
+					value={voice}
+				/>
 			</SettingField>
 			{showLanguageSelect ? (
 				<SettingField
@@ -117,14 +115,13 @@ export function TtsControls({
 					onReset={() => onLanguageChange?.(languageDefault)}
 					tooltip={t("language")}
 				>
-					<ElevatedSurface className="w-52" inline>
-						<SearchableSelect
-							groups={languageSelectGroups}
-							onChange={(next) => onLanguageChange?.(next)}
-							placeholder={languagePlaceholder ?? t("language")}
-							value={language ?? languageDefault}
-						/>
-					</ElevatedSurface>
+					<SearchableSelect
+						className="w-52"
+						groups={languageSelectGroups}
+						onChange={(next) => onLanguageChange?.(next)}
+						placeholder={languagePlaceholder ?? t("language")}
+						value={language ?? languageDefault}
+					/>
 				</SettingField>
 			) : null}
 			<SettingField
@@ -133,17 +130,15 @@ export function TtsControls({
 				onReset={onSpeedReset}
 				tooltip={t("speedCaption")}
 			>
-				<ElevatedSurface inline>
-					<Slider
-						aria-label={t("speed")}
-						formatValue={(v) => `${v.toFixed(1)}×`}
-						max={speedMax}
-						min={speedMin}
-						onChange={onSpeedChange}
-						step={0.1}
-						value={speed}
-					/>
-				</ElevatedSurface>
+				<Slider
+					aria-label={t("speed")}
+					formatValue={(v) => `${v.toFixed(1)}×`}
+					max={speedMax}
+					min={speedMin}
+					onChange={onSpeedChange}
+					step={0.1}
+					value={speed}
+				/>
 			</SettingField>
 		</>
 	);

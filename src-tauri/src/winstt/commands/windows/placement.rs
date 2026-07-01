@@ -207,7 +207,9 @@ fn compute_transform_origin(anchor: PickerAnchor, panel: &PanelBounds) -> &'stat
 }
 
 pub(super) fn visible_picker_open_should_toggle(label: &str) -> bool {
-    label != "model-picker"
+    // model-footprint is hover-driven (re-open re-anchors, pointer-out closes), so
+    // a re-open must NOT toggle it shut like the click-driven device picker.
+    label != "model-picker" && label != "model-footprint"
 }
 
 /// Compute the on-screen popup rect (logical px) from the anchor + desired size,
@@ -271,7 +273,14 @@ fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pic
     let seq = MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
     let work = work_area_for_point(app, (anchor.screen_left, anchor.screen_top));
     let (work_x, work_y, work_w, work_h) = work;
-    let panel = compute_panel(anchor, (state.width, state.height), work, MODEL_MIN_HEIGHT);
+    // Match the picker to the width of the trigger combobox that opened it. The
+    // renderer-reported `state.width` (the mode's natural footprint) is the minimum
+    // floor, so a tiny trigger (the main-window footer chip) still yields a usable
+    // picker. `compute_x_axis` right-aligns the panel to the trigger's right edge, so
+    // when the panel width equals the trigger width it spans the button exactly.
+    let trigger_width = anchor.screen_right - anchor.screen_left;
+    let panel_width = trigger_width.max(state.width).min(work_w);
+    let panel = compute_panel(anchor, (panel_width, state.height), work, MODEL_MIN_HEIGHT);
 
     // The window fills the whole work area; the panel is positioned inside it.
     let _ = window.set_position(LogicalPosition::new(work_x, work_y));

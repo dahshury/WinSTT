@@ -4,7 +4,6 @@ import {
 	SettingField,
 	SettingSection,
 } from "@/entities/setting";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import type {
 	QualitySettings,
@@ -42,18 +41,16 @@ export function SentencePauseSection({
 					}
 					tooltip={t("endOfSentencePauseTooltip")}
 				>
-					<ElevatedSurface className="w-fit" inline>
-						<NumberStepper
-							max={5.0}
-							min={0.1}
-							onChange={(v) => update({ endOfSentenceDetectionPause: v })}
-							step={0.05}
-							value={
-								q?.endOfSentenceDetectionPause ??
-								DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause
-							}
-						/>
-					</ElevatedSurface>
+					<NumberStepper
+						max={5.0}
+						min={0.1}
+						onChange={(v) => update({ endOfSentenceDetectionPause: v })}
+						step={0.05}
+						value={
+							q?.endOfSentenceDetectionPause ??
+							DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause
+						}
+					/>
 				</SettingField>
 				<SettingField
 					isDefault={
@@ -71,18 +68,16 @@ export function SentencePauseSection({
 					}
 					tooltip={t("unknownSentencePauseTooltip")}
 				>
-					<ElevatedSurface className="w-fit" inline>
-						<NumberStepper
-							max={5.0}
-							min={0.1}
-							onChange={(v) => update({ unknownSentenceDetectionPause: v })}
-							step={0.05}
-							value={
-								q?.unknownSentenceDetectionPause ??
-								DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause
-							}
-						/>
-					</ElevatedSurface>
+					<NumberStepper
+						max={5.0}
+						min={0.1}
+						onChange={(v) => update({ unknownSentenceDetectionPause: v })}
+						step={0.05}
+						value={
+							q?.unknownSentenceDetectionPause ??
+							DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause
+						}
+					/>
 				</SettingField>
 				<SettingField
 					isDefault={
@@ -100,18 +95,16 @@ export function SentencePauseSection({
 					}
 					tooltip={t("midSentencePauseTooltip")}
 				>
-					<ElevatedSurface className="w-fit" inline>
-						<NumberStepper
-							max={10.0}
-							min={0.1}
-							onChange={(v) => update({ midSentenceDetectionPause: v })}
-							step={0.1}
-							value={
-								q?.midSentenceDetectionPause ??
-								DEFAULT_SETTINGS.quality.midSentenceDetectionPause
-							}
-						/>
-					</ElevatedSurface>
+					<NumberStepper
+						max={10.0}
+						min={0.1}
+						onChange={(v) => update({ midSentenceDetectionPause: v })}
+						step={0.1}
+						value={
+							q?.midSentenceDetectionPause ??
+							DEFAULT_SETTINGS.quality.midSentenceDetectionPause
+						}
+					/>
 				</SettingField>
 			</div>
 		</SettingSection>

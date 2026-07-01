@@ -53,8 +53,18 @@ pub fn handle_shortcut_event(
         match crate::winstt::commands::settings::recording_mode(app) {
             // PTT: press starts, release stops (the key hold IS the recording boundary).
             RecordingMode::Ptt => {
+                log::info!(
+                    "[shortcut] transcribe_hotkey_event mode=ptt state={} accelerator='{}'",
+                    if is_pressed { "pressed" } else { "released" },
+                    hotkey_string
+                );
                 if let Some(coordinator) = app.try_state::<crate::TranscriptionCoordinator>() {
                     coordinator.send_input("transcribe", "", is_pressed, true);
+                }
+                if is_pressed {
+                    super::ptt_release_watchdog::arm(app, hotkey_string);
+                } else {
+                    super::ptt_release_watchdog::disarm();
                 }
             }
             // TOGGLE: only the PRESS matters — the coordinator's Stage machine flips
@@ -98,7 +108,7 @@ pub fn handle_shortcut_event(
         return;
     }
 
-    // Remaining bindings (e.g. "test") use simple start/stop on press/release.
+    // Remaining bindings (e.g. "read_aloud") use simple start/stop on press/release.
     if is_pressed {
         action.start(app, binding_id, hotkey_string);
     } else {

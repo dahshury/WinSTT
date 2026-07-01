@@ -10,6 +10,7 @@
     "tray-menu",
     "model-picker",
     "device-picker",
+    "model-footprint",
     "onboarding",
     "history",
     "context-playground"

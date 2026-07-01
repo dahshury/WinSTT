@@ -1,6 +1,6 @@
 // The Transforms apply/preview pipeline + its renderer feedback events. WU-13
 // owns the `transforms:applied` / `transforms:failed` PLAIN events (matching
-// WinSTT's the reference IPC shape byte-for-byte so the reused
+// the reference IPC shape byte-for-byte so the reused
 // `features/transform-notifications` TransformToast listener works unchanged):
 //   • `transforms:applied` → { before, after, source }
 //   • `transforms:failed`  → { reason }

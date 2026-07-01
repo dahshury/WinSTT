@@ -1,12 +1,11 @@
 import type { ValueAnimationTransition } from "motion/react";
 
 /**
- * Spring presets matching the fluidfunctionalism Base UI component family
- * (the reference our CheckboxGroup, Switcher and Table are built from). These
- * use motion's perceptual spring (duration + bounce) rather than a physics
- * spring (stiffness / damping / mass), so the hover / merge motion lands with
- * the exact snap of the reference component instead of a slightly different
- * physically-tuned feel.
+ * Spring presets matching the Base UI component family our CheckboxGroup,
+ * Switcher and Table are built from. These use motion's perceptual spring
+ * (duration + bounce) rather than a physics spring (stiffness / damping / mass),
+ * so the hover / merge motion lands with the exact snap of those components
+ * instead of a slightly different physically-tuned feel.
  *
  * - fast — no overshoot; for the hover indicator gliding row-to-row.
  * - moderate — a touch of bounce; for the selected-background merge.

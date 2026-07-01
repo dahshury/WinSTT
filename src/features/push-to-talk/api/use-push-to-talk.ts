@@ -2,15 +2,15 @@ import { useEffect, useRef } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
 	hotkeyRegister,
+	onCaptureActive,
 	onHotkeyPressed,
 	onHotkeyReleased,
 	onRecordingStop,
 	onSttSessionAborted,
 	sttSetParameter,
 } from "@/shared/api/ipc-client";
+import type { RecordingMode } from "@/shared/config/recording-mode-color";
 import { useHotkeyStore } from "../model/hotkey-store";
-
-type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword";
 
 /** Modes driven entirely by the server (loopback / wake word) — the hotkey
  * must not touch `set_microphone`. */
@@ -46,7 +46,7 @@ export const __test_decidePressAction = decidePressAction;
 export const __test_shouldReleaseMicOnUp = shouldReleaseMicOnUp;
 
 export function usePushToTalk(): void {
-	const setPressed = useHotkeyStore((s) => s.setPressed);
+	const setMicPhase = useHotkeyStore((s) => s.setMicPhase);
 	const setActive = useHotkeyStore((s) => s.setActive);
 	const setAccelerator = useHotkeyStore((s) => s.setAccelerator);
 	const pushToTalkKey = useSettingsStore(
@@ -54,9 +54,6 @@ export function usePushToTalk(): void {
 	);
 	const recordingMode = useSettingsStore(
 		(s) => s.settings.general?.recordingMode ?? "ptt",
-	);
-	const manualToggleStop = useSettingsStore(
-		(s) => s.settings.general?.manualToggleStop ?? false,
 	);
 	const onboarded = useSettingsStore(
 		(s) => s.settings.general?.onboarded ?? false,
@@ -105,21 +102,6 @@ export function usePushToTalk(): void {
 		hotkeyRegister(pushToTalkKey);
 	}, [onboarded, pushToTalkKey, setAccelerator]);
 
-	// Sync silence endpoint based on recording mode — set once, not per keypress.
-	// PTT mode never uses the silence endpoint (Smart Endpoint doesn't apply
-	// here — the key release defines the boundary). Manual-toggle mode also
-	// disables it so the recording runs press-to-press without VAD stopping
-	// the user mid-pause.
-	useEffect(() => {
-		if (!onboarded) {
-			return;
-		}
-		const enabled =
-			recordingMode !== "ptt" &&
-			!(recordingMode === "toggle" && manualToggleStop);
-		sttSetParameter("silence_endpoint_enabled", enabled);
-	}, [onboarded, recordingMode, manualToggleStop]);
-
 	// Press handler — refs let us avoid re-subscribing when mode changes.
 	//
 	// SINGLE AUTHORITY: the BACKEND (shortcut/handler.rs) now dispatches the recorder for
@@ -139,7 +121,12 @@ export function usePushToTalk(): void {
 				if (decision === null) {
 					return;
 				}
-				setPressed(true);
+				// A press that STARTS a recording enters the "opening" phase — the mic is
+				// being opened but hasn't confirmed audio yet (backend `stt:capture-active`
+				// promotes it to "live"). A toggle press that STOPS recording goes straight
+				// back to idle. This is what keeps the badge from blinking "recording"
+				// before Windows has actually opened the device.
+				setMicPhase(decision.micOn ? "opening" : "idle");
 				if (decision.persistActive) {
 					isActiveRef.current = decision.micOn;
 					setActive(decision.micOn);
@@ -158,7 +145,21 @@ export function usePushToTalk(): void {
 				// NOTE: no `sttCallMethod("set_microphone", …)` here — the backend's
 				// handler.rs already routed this press into the coordinator.
 			}),
-		[setPressed, setActive],
+		[setMicPhase, setActive],
+	);
+
+	// Mic is confirmed open and delivering audio (backend emits `stt:capture-active`
+	// on the first captured frame). Promote the badge from "opening" to "live" so the
+	// recording indicator reflects real capture, not the keypress.
+	useEffect(
+		() =>
+			onCaptureActive(() => {
+				if (!onboardedRef.current) {
+					return;
+				}
+				setMicPhase("live");
+			}),
+		[setMicPhase],
 	);
 
 	// Release handler — UI state ONLY. The backend handler.rs stops the recorder on the PTT
@@ -173,20 +174,26 @@ export function usePushToTalk(): void {
 				if (SERVER_DRIVEN_MODES.has(mode)) {
 					return;
 				}
-				setPressed(false);
+				// Only PTT ends its recording on key-up; toggle keeps recording after the
+				// key lifts, so its badge must stay live until the recorder actually stops
+				// (`stt:recording-stop`). Mirrors `shouldReleaseMicOnUp`.
+				if (shouldReleaseMicOnUp(mode)) {
+					setMicPhase("idle");
+				}
 				// NOTE: no `set_microphone(false)` here — see press handler. The PTT-release
 				// decision (`shouldReleaseMicOnUp`) is now enforced backend-side in handler.rs.
 			}),
-		[setPressed],
+		[setMicPhase],
 	);
 
-	// Toggle-mode auto-reset is handled by the server; we still subscribe so the
-	// channel doesn't accumulate unbound listeners.
+	// The recorder stopped (PTT release, VAD silence in toggle/listen/wakeword, or a
+	// manual stop). Return the badge to idle — this is the authoritative "no longer
+	// recording" signal across every mode (and a safety net for PTT).
 	useEffect(() => {
 		return onRecordingStop(() => {
-			// no-op
+			setMicPhase("idle");
 		});
-	}, []);
+	}, [setMicPhase]);
 
 	// User-initiated cancel (overlay X button, Escape). The server
 	// already aborted the recorder + released the mic; mirror that into the
@@ -198,9 +205,9 @@ export function usePushToTalk(): void {
 			onSttSessionAborted(() => {
 				isActiveRef.current = false;
 				setActive(false);
-				setPressed(false);
+				setMicPhase("idle");
 			}),
-		[setActive, setPressed],
+		[setActive, setMicPhase],
 	);
 
 	// Reset toggle state on unmount.

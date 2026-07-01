@@ -1,16 +1,16 @@
 import type { AudioDevice } from "@/entities/audio-device";
 
-/** True when the device list hasn't enumerated yet (CC 1). */
+/** True when the device list hasn't enumerated yet. */
 function devicesEmpty(devices: readonly AudioDevice[]): boolean {
 	return devices.length === 0;
 }
 
-/** Name of the system-default device, or null when unknown (CC 1). */
+/** Name of the system-default device, or null when unknown. */
 function defaultDeviceName(defaultDevice: AudioDevice | null): string | null {
 	return defaultDevice?.name ?? null;
 }
 
-/** Name of the device whose index matches, or null when not found (CC 1). */
+/** Name of the device whose index matches, or null when not found. */
 function deviceNameByIndex(
 	devices: readonly AudioDevice[],
 	inputDeviceIndex: number,
@@ -40,7 +40,7 @@ export function resolveCurrentDeviceName(
 		: deviceNameByIndex(devices, inputDeviceIndex);
 }
 
-/** Read the persisted sensitivity for a device, or null when absent (CC 1). */
+/** Read the persisted sensitivity for a device, or null when absent. */
 function persistedSensitivityFor(
 	deviceName: string,
 	map: Readonly<Record<string, number>> | undefined,
@@ -48,7 +48,7 @@ function persistedSensitivityFor(
 	return map?.[deviceName] ?? null;
 }
 
-/** True when the persisted value should be applied as a change (CC 1). */
+/** True when the persisted value should be applied as a change. */
 function persistedDiffers(
 	persisted: number | null,
 	currentSensitivity: number | undefined,

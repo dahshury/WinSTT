@@ -257,7 +257,7 @@ export function ActivityHeatmap({
 					<span className="text-foreground-muted text-xs-tight">
 						{t("heatmapMetric")}
 					</span>
-					<div className="w-40">
+					<div className="w-fit min-w-40">
 						<Select
 							aria-label={t("heatmapMetric")}
 							onChange={(v) => setMetric(v as Metric)}
@@ -270,7 +270,7 @@ export function ActivityHeatmap({
 					<span className="text-foreground-muted text-xs-tight">
 						{t("heatmapCalendar")}
 					</span>
-					<div className="w-32">
+					<div className="w-fit min-w-32">
 						<Select
 							aria-label={t("heatmapCalendar")}
 							onChange={(v) => setCalendarSystem(v as CalendarSystemId)}

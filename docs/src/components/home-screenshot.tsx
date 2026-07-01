@@ -7,7 +7,7 @@ export function HomeScreenshot() {
         className="pointer-events-none absolute top-1/2 left-1/2 h-[400px] w-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl"
         style={{
           background:
-            "radial-gradient(ellipse, oklch(62% 0.19 260 /0.04) 0%, transparent 70%)",
+            "radial-gradient(ellipse, color-mix(in oklab, var(--brand-accent) 4%, transparent) 0%, transparent 70%)",
         }}
       />
       <img
@@ -23,14 +23,14 @@ export function HomeScreenshot() {
           objectFit: "cover",
           border: "1px solid var(--border)",
           boxShadow:
-            "0 0 0 1px hsla(0,0%,0%,0.6), 0 25px 70px -12px hsla(0,0%,0%,0.7), 0 0 60px oklch(62% 0.19 260 / 0.05)",
+            "0 0 0 1px oklch(0% 0 0 / 0.6), 0 25px 70px -12px oklch(0% 0 0 / 0.7), 0 0 60px color-mix(in oklab, var(--brand-accent) 5%, transparent)",
         }}
       />
       <p
         className="mt-4 text-center"
         style={{
           fontSize: "12px",
-          color: "oklch(94% 0.015 265 /0.25)",
+          color: "color-mix(in oklab, var(--fg-strong) 25%, transparent)",
           fontFamily: "var(--font-mono)",
           letterSpacing: "0.3px",
         }}

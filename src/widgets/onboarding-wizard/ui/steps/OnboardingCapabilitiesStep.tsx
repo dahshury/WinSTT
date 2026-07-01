@@ -11,14 +11,13 @@ import { domAnimation, LazyMotion, m, useReducedMotion } from "motion/react";
 import { useTranslations } from "use-intl";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "@/entities/setting";
+import type { RecordingMode } from "@/shared/config/recording-mode-color";
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
 import { OnboardingDictationDemo } from "./OnboardingDictationDemo";
-
-type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword";
 
 const CARD_SPRING = {
 	type: "spring",
@@ -97,14 +96,12 @@ export function OnboardingCapabilitiesStep() {
 						label={tGeneral("recordingMode")}
 						layout="stacked"
 					>
-						<ElevatedSurface>
-							<Switcher
-								fullWidth
-								onChange={updateRecordingMode}
-								options={recordingModeOptions}
-								value={recordingMode}
-							/>
-						</ElevatedSurface>
+						<Switcher
+							fullWidth
+							onChange={updateRecordingMode}
+							options={recordingModeOptions}
+							value={recordingMode}
+						/>
 					</FormControl>
 				</m.div>
 

@@ -3,16 +3,17 @@ import type {
 	PointerEvent as ReactPointerEvent,
 } from "react";
 import { useEffect, useRef } from "react";
+import {
+	type ActivePointer,
+	capturePointer,
+	clearTimeoutRef,
+	pointerAllowed,
+	pointerMovedPastTolerance,
+	TOUCH_POINTER_TYPES,
+} from "./pointer-gesture";
 
-const DEFAULT_POINTER_TYPES = ["touch", "pen"] as const;
 const DEFAULT_MOVE_TOLERANCE_PX = 12;
 const CLICK_SUPPRESS_MS = 450;
-
-interface ActivePointer {
-	id: number;
-	x: number;
-	y: number;
-}
 
 interface UseTouchActivationOptions {
 	disabled?: boolean;
@@ -29,22 +30,12 @@ interface UseTouchActivationResult {
 	onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
 }
 
-function clearSuppressionTimer(timerRef: {
-	current: ReturnType<typeof setTimeout> | null;
-}): void {
-	const pendingTimer = timerRef.current;
-	timerRef.current = null;
-	if (pendingTimer) {
-		clearTimeout(pendingTimer);
-	}
-}
-
 export function useTouchActivation(
 	onActivate: () => void,
 	{
 		disabled = false,
 		moveTolerance = DEFAULT_MOVE_TOLERANCE_PX,
-		pointerTypes = DEFAULT_POINTER_TYPES,
+		pointerTypes = TOUCH_POINTER_TYPES,
 	}: UseTouchActivationOptions = {},
 ): UseTouchActivationResult {
 	const activePointerRef = useRef<ActivePointer | null>(null);
@@ -58,7 +49,7 @@ export function useTouchActivation(
 
 	const suppressNextClick = () => {
 		suppressClickRef.current = true;
-		clearSuppressionTimer(suppressTimerRef);
+		clearTimeoutRef(suppressTimerRef);
 		suppressTimerRef.current = setTimeout(() => {
 			suppressClickRef.current = false;
 			suppressTimerRef.current = null;
@@ -72,24 +63,13 @@ export function useTouchActivation(
 		activePointerRef.current = null;
 	};
 
-	useEffect(() => () => clearSuppressionTimer(suppressTimerRef), []);
-
-	const pointerAllowed = (event: ReactPointerEvent<HTMLElement>) => {
-		if (disabled || event.pointerType === "mouse") {
-			return false;
-		}
-		return pointerTypes.includes(event.pointerType);
-	};
+	useEffect(() => () => clearTimeoutRef(suppressTimerRef), []);
 
 	const onPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
-		if (!pointerAllowed(event) || event.button !== 0) {
+		if (!pointerAllowed(event, disabled, pointerTypes) || event.button !== 0) {
 			return;
 		}
-		activePointerRef.current = {
-			id: event.pointerId,
-			x: event.clientX,
-			y: event.clientY,
-		};
+		activePointerRef.current = capturePointer(event);
 	};
 
 	const onPointerMove = (event: ReactPointerEvent<HTMLElement>) => {
@@ -97,9 +77,7 @@ export function useTouchActivation(
 		if (!activePointer || activePointer.id !== event.pointerId) {
 			return;
 		}
-		const dx = Math.abs(event.clientX - activePointer.x);
-		const dy = Math.abs(event.clientY - activePointer.y);
-		if (dx > moveTolerance || dy > moveTolerance) {
+		if (pointerMovedPastTolerance(activePointer, event, moveTolerance)) {
 			cancelTouchPointer();
 		}
 	};
@@ -121,7 +99,7 @@ export function useTouchActivation(
 			event.preventDefault();
 			event.stopPropagation();
 			suppressClickRef.current = false;
-			clearSuppressionTimer(suppressTimerRef);
+			clearTimeoutRef(suppressTimerRef);
 			return;
 		}
 		if (disabled) {

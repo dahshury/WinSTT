@@ -1,8 +1,8 @@
-import type { useTranslations } from "use-intl";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import type { OllamaPullProgress } from "@/shared/api/models";
 import { pullStatusToI18nKey } from "../lib/dialog-helpers";
 
-export type TranslateFn = ReturnType<typeof useTranslations>;
+export type { TranslateFn } from "@/shared/i18n/translation-types";
 
 export function localizePullStatus(
 	progress: OllamaPullProgress,

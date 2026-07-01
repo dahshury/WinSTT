@@ -13,6 +13,27 @@ pub fn read_wav_samples<P: AsRef<Path>>(file_path: P) -> Result<Vec<f32>> {
     Ok(samples)
 }
 
+/// Playback duration of a WAV file in milliseconds, read from the header alone.
+///
+/// Cheap: `hound` parses the RIFF/`fmt`/`data` headers on `open`, so `len()`
+/// (total interleaved samples, derived from the `data` chunk size) and `spec()`
+/// are available without streaming the audio body. Returns `None` when the file
+/// is missing/corrupt or carries a zero sample rate, so callers can fall back to
+/// "unknown" (0) rather than fail. Used to populate history `durationMs` from the
+/// saved recording, including for rows written before duration was tracked.
+pub fn wav_duration_ms<P: AsRef<Path>>(file_path: P) -> Option<u64> {
+    let reader = WavReader::open(file_path.as_ref()).ok()?;
+    let spec = reader.spec();
+    let channels = u64::from(spec.channels.max(1));
+    let sample_rate = u64::from(spec.sample_rate);
+    if sample_rate == 0 {
+        return None;
+    }
+    // `len()` counts interleaved samples across all channels; divide out channels
+    // to get frames, then scale frames→ms. Mono 16 kHz recordings make this exact.
+    Some(u64::from(reader.len()) * 1000 / (channels * sample_rate))
+}
+
 /// Verify a WAV file by reading it back and checking the sample count.
 pub fn verify_wav_file<P: AsRef<Path>>(file_path: P, expected_samples: usize) -> Result<()> {
     let reader = WavReader::open(file_path.as_ref())?;
@@ -89,5 +110,25 @@ mod tests {
         let missing = dir.path().join("does_not_exist.wav");
         assert!(read_wav_samples(&missing).is_err());
         assert!(verify_wav_file(&missing, 0).is_err());
+    }
+
+    #[test]
+    fn wav_duration_ms_matches_sample_count_at_16khz() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dur.wav");
+        // 16_000 mono samples @ 16 kHz == exactly 1000 ms.
+        save_wav_file(&path, &vec![0.0_f32; 16_000]).unwrap();
+        assert_eq!(wav_duration_ms(&path), Some(1000));
+
+        // 8_000 samples == half a second.
+        let half = dir.path().join("half.wav");
+        save_wav_file(&half, &vec![0.0_f32; 8_000]).unwrap();
+        assert_eq!(wav_duration_ms(&half), Some(500));
+    }
+
+    #[test]
+    fn wav_duration_ms_missing_file_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(wav_duration_ms(dir.path().join("nope.wav")), None);
     }
 }

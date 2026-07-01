@@ -1,5 +1,5 @@
 // ═════════════════════════════════════════════════════════════════════════════
-// 3. Keyword-content builder — DETERMINISTIC, fully unit-tested.
+// 3. Keyword-content builder.
 //
 //    sherpa-onnx KWS reads keywords (file OR inline buffer) where each line is the
 //    BPE-TOKENIZED phrase, optionally followed by per-keyword tuning and a `@label`:

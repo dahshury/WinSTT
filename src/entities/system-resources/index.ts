@@ -1,2 +1,2 @@
 export { useSystemResourcesStore } from "./model/system-resources-store";
-export { assessDictationFitClient } from "./lib/fit-assessor";
+export { assessDictationFitClient, estimateForQuant } from "./lib/fit-assessor";

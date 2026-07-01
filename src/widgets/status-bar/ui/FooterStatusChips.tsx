@@ -1,11 +1,13 @@
 import { Button as BaseButton } from "@base-ui/react/button";
-import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import type { DownloadAggregate } from "@/features/model-download";
-import { IPC } from "@/shared/api/ipc-channels";
-import { ipcSend } from "@/shared/api/ipc-client";
 import { surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import { Tooltip } from "@/shared/ui/tooltip";
+import {
+	MODEL_PICKER_TRIGGER_SLOT,
+	useModelPickerTrigger,
+} from "./footer-model-picker-trigger";
 import { FOOTER_TOOLTIP_DELAY } from "./FooterMenuChip";
 
 interface ModelSwapChipProps {
@@ -23,7 +25,7 @@ export function ModelSwapChip({
 		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
 			<span
 				aria-live="polite"
-				className="flex max-w-full cursor-default select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim"
+				className="flex max-w-full cursor-default select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-secondary"
 			>
 				<PulseDot className="size-1.5 text-accent" />
 				<span className="min-w-0 truncate">{label}</span>
@@ -63,31 +65,7 @@ export function FooterDownloadChip({
 }: FooterDownloadChipProps): ReactNode {
 	const substrate = useSurface();
 	const hoverLevel = Math.min(substrate + 2, 8);
-	const openRef = useRef(false);
-	const open = (e: MouseEvent<HTMLButtonElement>) => {
-		const r = e.currentTarget.getBoundingClientRect();
-		ipcSend(IPC.MODEL_PICKER_OPEN, {
-			x: r.x,
-			y: r.y,
-			width: r.width,
-			height: r.height,
-		});
-		openRef.current = true;
-	};
-	useEffect(() => {
-		const onPointerDown = (e: PointerEvent) => {
-			const target = e.target as HTMLElement | null;
-			if (target?.closest('[data-slot="stt-model-selector-trigger"]')) {
-				return;
-			}
-			if (openRef.current) {
-				openRef.current = false;
-				ipcSend(IPC.MODEL_PICKER_CLOSE);
-			}
-		};
-		window.addEventListener("pointerdown", onPointerDown, true);
-		return () => window.removeEventListener("pointerdown", onPointerDown, true);
-	}, []);
+	const open = useModelPickerTrigger();
 	const multi = aggregate.count >= 2;
 	const label = multi ? `${aggregate.count} downloads` : primaryModelName;
 	const reportedPercent = multi
@@ -98,8 +76,8 @@ export function FooterDownloadChip({
 			<BaseButton
 				aria-label={ariaLabel}
 				aria-live="polite"
-				className={`flex max-w-full cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
-				data-slot="stt-model-selector-trigger"
+				className={`flex max-w-full cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-secondary outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
+				data-slot={MODEL_PICKER_TRIGGER_SLOT}
 				onClick={open}
 				type="button"
 			>

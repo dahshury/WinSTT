@@ -25,6 +25,7 @@ mod canary;
 mod cohere;
 mod granite_ar;
 mod granite_nar;
+mod qwen3;
 mod tone;
 
 // `canary_prompt_tokens` / `COHERE_LANGUAGES` are consumed only by the `#[cfg(test)]` pure-logic
@@ -38,4 +39,5 @@ pub use cohere::CohereEngine;
 pub(super) use cohere::COHERE_LANGUAGES;
 pub(super) use granite_ar::GraniteArEngine;
 pub(super) use granite_nar::GraniteNarEngine;
+pub(super) use qwen3::Qwen3AsrEngine;
 pub use tone::ToneEngine;

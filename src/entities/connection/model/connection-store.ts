@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { RuntimeInfoPayload } from "@/shared/api/ipc/models";
 import type { GpuInfo, ServerStatus } from "@/shared/api/models";
 
 /**
@@ -15,13 +16,7 @@ type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
  * CUDA-capable machine reports ``is_gpu=false`` here even when the user's
  * config requested ``device=cuda``. Drives the bottom-left GPU/CPU chip.
  */
-export interface RuntimeInfo {
-	device: string;
-	is_gpu: boolean;
-	model: string | null;
-	providers: string[];
-	realtime_model: string | null;
-}
+export type RuntimeInfo = RuntimeInfoPayload;
 
 interface ConnectionState {
 	connectionStatus: ConnectionStatus;

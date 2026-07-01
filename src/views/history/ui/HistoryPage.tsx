@@ -21,11 +21,11 @@ import {
 	useHistoryViewStore,
 } from "@/entities/transcription-history";
 import {
-	clipboardWriteText,
 	onHistoryRowAdded,
 	onHistoryRowDeleted,
 	onHistoryRowToggled,
 } from "@/shared/api/ipc-client";
+import { COPY_FEEDBACK_MS, copyToClipboard } from "@/shared/lib/clipboard";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { useLongPress } from "@/shared/lib/use-long-press";
@@ -58,18 +58,6 @@ function subscribeBroadcasts(callbacks: {
 }
 
 const PAGE_SIZE = 25;
-const TOUCH_COPY_FEEDBACK_MS = 1600;
-
-function copyHistoryText(text: string): void {
-	const webClipboard = globalThis.navigator?.clipboard;
-	if (webClipboard?.writeText) {
-		webClipboard.writeText(text).catch(() => {
-			clipboardWriteText(text).catch(() => undefined);
-		});
-		return;
-	}
-	clipboardWriteText(text).catch(() => undefined);
-}
 
 function LongPressTranscript({ text }: { text: string }) {
 	const [copied, setCopied] = useState(false);
@@ -90,7 +78,7 @@ function LongPressTranscript({ text }: { text: string }) {
 		if (!text) {
 			return;
 		}
-		copyHistoryText(text);
+		copyToClipboard(text);
 		globalThis.navigator?.vibrate?.(10);
 		setCopied(true);
 		if (copyFeedbackTimerRef.current) {
@@ -98,7 +86,7 @@ function LongPressTranscript({ text }: { text: string }) {
 		}
 		copyFeedbackTimerRef.current = setTimeout(
 			() => setCopied(false),
-			TOUCH_COPY_FEEDBACK_MS,
+			COPY_FEEDBACK_MS,
 		);
 	};
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isPlainRecord } from "@/shared/lib/is-record";
 import { audioSettingsSchema } from "./audio";
 import {
 	dictionaryEntrySchema,
@@ -19,12 +20,10 @@ export * from "./llm";
 export * from "./tts";
 
 function objectRecord(value: unknown): Record<string, unknown> | null {
-	return typeof value === "object" && value !== null
-		? (value as Record<string, unknown>)
-		: null;
+	return isPlainRecord(value) ? value : null;
 }
 
-function migrateLegacyGlobalSettings(payload: unknown): unknown {
+export function migrateLegacyGlobalSettings(payload: unknown): unknown {
 	const root = objectRecord(payload);
 	if (!root) {
 		return payload;

@@ -5,14 +5,16 @@ import {
 	useTtsCatalogStore,
 	useTtsModelStateStore,
 } from "@/entities/tts-catalog";
-import { useTtsModelPickerStore } from "@/features/tts-model-picker";
+import {
+	useTtsModelDownloads,
+	useTtsModelPickerStore,
+} from "@/features/tts-model-picker";
 import {
 	onTtsModelDownloadCompleteCatalog,
 	ttsDeleteModel,
 } from "@/shared/api/ipc-client";
 import { Modal } from "@/shared/ui/modal";
 import { isTtsModelCached } from "../model/use-tts-install-gate";
-import { useTtsModelDownloads } from "../model/use-tts-model-downloads";
 
 // The inline picker fills its host; pin the modal body to the same footprint
 // the detached STT picker window uses so both surfaces read identically.

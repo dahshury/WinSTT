@@ -1,9 +1,7 @@
 /**
  * Debug-only feature flags.
  *
- * Single source of truth, importable from BOTH the renderer (`@/shared/...`)
- * and the reference main process (relative `../../src/shared/...`, the same way
- * `ipc-channels.ts` is consumed by the preload + handlers).
+ * Single source of truth, importable from the renderer (`@/shared/...`).
  *
  * These gate developer-only tooling that must NEVER ship visible to end users.
  * Flip a flag to `false` to remove the visible surface. Production builds also

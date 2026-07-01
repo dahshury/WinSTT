@@ -11,7 +11,6 @@ import { cn } from "@/shared/lib/cn";
 import { ALL_PRESET_KEYS } from "@/shared/lib/preset-prompts";
 import { buildTranscriptDiff } from "@/shared/lib/transcript-diff";
 import { Button } from "@/shared/ui/button";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { IconButton } from "@/shared/ui/icon-button";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { ThinkingIndicator } from "@/shared/ui/thinking-indicator";
@@ -33,6 +32,7 @@ import {
 	ModifierChip,
 	SectionPanel,
 	StaggerReveal,
+	TranscriptTextarea,
 } from "./preview-primitives";
 
 /** Bottom half of the enhance layout — the AI controls (source/scope, modifier
@@ -67,32 +67,27 @@ function EnhanceControls() {
 			useTranscriptPreviewStore.getState().finishProcessing(result ?? null);
 		} catch (error) {
 			console.error("[preview] LLM preview failed:", error);
-			useTranscriptPreviewStore.getState().finishProcessing(null);
+			useTranscriptPreviewStore.getState().failProcessing(String(error));
 		}
 	};
 
 	return (
 		<SectionPanel title={tp("enhanceControlsTitle")}>
 			<div className="flex flex-wrap items-center gap-2">
-				<ElevatedSurface>
-					<Switcher
-						onChange={(v) => store.setSource(v)}
-						options={sourceOptions}
-						value={store.source}
-					/>
-				</ElevatedSurface>
-				<ElevatedSurface
+				<Switcher
+					onChange={(v) => store.setSource(v)}
+					options={sourceOptions}
+					value={store.source}
+				/>
+				<Switcher
 					className={cn(
 						"transition-opacity",
 						!scopeEnabled && "pointer-events-none opacity-40",
 					)}
-				>
-					<Switcher
-						onChange={(v) => store.setScope(v)}
-						options={scopeOptions}
-						value={scopeEnabled ? store.scope : "whole"}
-					/>
-				</ElevatedSurface>
+					onChange={(v) => store.setScope(v)}
+					options={scopeOptions}
+					value={scopeEnabled ? store.scope : "whole"}
+				/>
 			</div>
 
 			<div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto">
@@ -150,23 +145,14 @@ function TranscriptTopPanel() {
 	const store = useTranscriptPreviewStore();
 	return (
 		<SectionPanel title={tp("transcriptLabel")}>
-			<textarea
-				aria-label={tp("transcriptLabel")}
-				className="max-h-44 min-h-[3rem] w-full resize-none rounded-md border border-border bg-surface-1 px-2.5 py-2 text-foreground text-sm leading-snug placeholder:text-foreground-subtle focus:outline-none focus:ring-1 focus:ring-accent/60"
-				dir="auto"
-				onChange={(e) => {
-					store.setText(e.currentTarget.value);
-					store.setSelection(
-						e.currentTarget.selectionStart,
-						e.currentTarget.selectionEnd,
-					);
+			<TranscriptTextarea
+				ariaLabel={tp("transcriptLabel")}
+				className="max-h-44 min-h-[3rem] bg-surface-1"
+				onSelectionChange={store.setSelection}
+				onTextChange={(value, start, end) => {
+					store.setText(value);
+					store.setSelection(start, end);
 				}}
-				onSelect={(e) =>
-					store.setSelection(
-						e.currentTarget.selectionStart,
-						e.currentTarget.selectionEnd,
-					)
-				}
 				placeholder={tp("placeholder")}
 				value={store.text}
 			/>
@@ -237,11 +223,22 @@ function DiffReviewTopPanel({
 	);
 }
 
+/** Top half (last run failed): a distinct error notice so a failure isn't
+ *  silently indistinguishable from a successful "no changes" run. */
+function EnhanceErrorTopPanel({ message }: { message: string }) {
+	const tp = useTranslations("preview");
+	return (
+		<SectionPanel title={tp("aiEdits")}>
+			<p className="text-error text-sm">{tp("enhanceError")}</p>
+			<p className="break-words text-foreground-muted text-xs">{message}</p>
+		</SectionPanel>
+	);
+}
+
 /** The split enhance layout: top = transcript/diff, bottom = AI controls. */
 export function EnhanceView() {
 	const tp = useTranslations("preview");
 	const store = useTranscriptPreviewStore();
-	const reviewing = store.candidate !== null && store.diffBase !== null;
 
 	return (
 		<div className="flex flex-col gap-2.5 px-1">
@@ -256,8 +253,11 @@ export function EnhanceView() {
 				</span>
 			</div>
 
-			{/* Top half — the transcript, or the AI-edit diff once a run completes. */}
-			{reviewing && store.candidate !== null && store.diffBase !== null ? (
+			{/* Top half — the transcript, the AI-edit diff once a run completes, or
+			    a failure notice when the last run errored. */}
+			{store.enhanceError !== null ? (
+				<EnhanceErrorTopPanel message={store.enhanceError} />
+			) : store.candidate !== null && store.diffBase !== null ? (
 				<DiffReviewTopPanel base={store.diffBase} candidate={store.candidate} />
 			) : (
 				<TranscriptTopPanel />

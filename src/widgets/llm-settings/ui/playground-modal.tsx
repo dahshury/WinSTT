@@ -10,7 +10,6 @@ import {
 	type CreatableComboboxItem,
 } from "@/shared/ui/creatable-combobox";
 import { DialogTitle } from "@/shared/ui/dialog";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { IconButton } from "@/shared/ui/icon-button";
 import { Modal } from "@/shared/ui/modal";
@@ -25,7 +24,7 @@ import {
 	savePlaygroundSession,
 	useLlmConfigurationsStore,
 } from "../model/configurations";
-import type { LlmSettingsPanelModel } from "./LlmSettingsPanel";
+import type { LlmSettingsPanelModel } from "../model/use-llm-settings-panel";
 import { FeaturePresetControls } from "./modifier-presets";
 import { seedDraftFromFeature } from "./modifier-presets-state";
 import { Playground } from "./Playground";
@@ -170,13 +169,11 @@ function PlaygroundModelPicker({
 		<div className="flex flex-col">
 			<div className="col-span-2">
 				<FormControl label={t("provider")} tooltip={t("providerTooltip")}>
-					<ElevatedSurface>
-						<Switcher
-							onChange={(v) => handleProvider(v as LlmProvider)}
-							options={providerOpts}
-							value={draft.provider}
-						/>
-					</ElevatedSurface>
+					<Switcher
+						onChange={(v) => handleProvider(v as LlmProvider)}
+						options={providerOpts}
+						value={draft.provider}
+					/>
 				</FormControl>
 			</div>
 			<ProviderSection

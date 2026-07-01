@@ -1,13 +1,5 @@
 import { create } from "zustand";
-
-interface LoopbackDevice {
-	defaultSampleRate: number;
-	id?: string;
-	index: number;
-	isDefault?: boolean;
-	maxOutputChannels: number;
-	name: string;
-}
+import type { LoopbackDevice } from "../lib/loopback-devices";
 
 interface ListenStore {
 	deviceName: string;

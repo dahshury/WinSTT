@@ -8,7 +8,6 @@ import {
 	StopWatchIcon,
 	TextFontIcon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
 import { VList } from "virtua";
@@ -19,20 +18,18 @@ import {
 	historyTagLabel,
 } from "@/entities/transcription-history";
 import { deleteTranscriptionHistoryEntry } from "@/shared/api/ipc-client";
-import { cn } from "@/shared/lib/cn";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import {
 	makerFromModelId,
 	resolveProviderIcon,
 } from "@/shared/lib/provider-icons";
-import {
-	SurfaceProvider,
-	surfaceBg,
-	surfaceClasses,
-	surfaceHoverBg,
-	useSurface,
-} from "@/shared/lib/surface";
-import { ButtonGroup } from "@/shared/ui/button-group";
 import { Badge } from "@/shared/ui/badge";
+import { ButtonGroup } from "@/shared/ui/button-group";
+import {
+	EntryCard,
+	type EntryCardMetaPart,
+	EntryCardShell,
+} from "@/shared/ui/entry-card-list";
 import {
 	formatDuration,
 	formatProcessingDuration,
@@ -127,11 +124,6 @@ function HistoryRow({
 	);
 	const transcriptDiff = getEntryTranscriptDiff(entry);
 	const hasOriginal = transcriptDiff !== null;
-	// Each entry is its own elevated card, one surface step above the list it sits
-	// in (FF surfaces: substrate flows through context, lift +1). The meta footer
-	// then recesses BACK to the list surface (`cardLevel - 1`) so it reads as a
-	// distinct ledge under the card body — the STT model card's recessed-shelf idea.
-	const cardLevel = Math.min(useSurface() + 1, 8);
 	// Per-row view toggle for LLM-processed entries; resets implicitly because
 	// each row is keyed by entry.id. Defaults to the AI-edited final text.
 	const [showOriginal, setShowOriginal] = useState(false);
@@ -153,15 +145,7 @@ function HistoryRow({
 	// labels keeps the strip on ONE line; the icon + hover title carry meaning.
 	// Optional parts (wpm, the LLM trio) drop out cleanly when absent. `logo`
 	// swaps the glyph for a maker brand mark (the model chip).
-	const meta: {
-		danger?: boolean;
-		icon: IconSvgElement;
-		key: string;
-		logo?: string | null;
-		title: string;
-		truncate?: boolean;
-		value: string;
-	}[] = [
+	const meta: EntryCardMetaPart[] = [
 		{
 			icon: Clock01Icon,
 			key: "time",
@@ -249,119 +233,49 @@ function HistoryRow({
 		});
 	}
 	return (
-		// Per-card padding wrapper: virtua measures the border-box (margins are
-		// NOT counted), so the inter-card gap lives here as padding, never as a
-		// margin on the card itself. Horizontal inset is deliberately omitted —
-		// the scroll container reserves a symmetric `scrollbar-gutter` on both
-		// edges, so the side gaps match (left == right) instead of the right
-		// being padding + the scrollbar's reserved width.
-		<div className="py-1">
-			<SurfaceProvider value={cardLevel}>
-				<div
-					className={cn(
-						"flex flex-col gap-2.5 overflow-hidden rounded-xl border border-border px-3.5 py-3",
-						surfaceClasses(cardLevel, Math.max(cardLevel - 1, 1)),
-						"transition-colors duration-150",
-						surfaceHoverBg(Math.min(cardLevel + 1, 8)),
-						"hover:border-border-hover",
-					)}
-				>
-					<div className="flex items-start gap-3">
-						{entry.audioFilePath ? (
-							<PlayButton
-								loading={playback.loading}
-								onToggle={handlePlaybackToggle}
-								playing={playback.playing}
+		<EntryCard footer={meta}>
+			<div className="flex items-start gap-3">
+				{entry.audioFilePath ? (
+					<PlayButton
+						loading={playback.loading}
+						onToggle={handlePlaybackToggle}
+						playing={playback.playing}
+					/>
+				) : null}
+				<RowTranscript
+					activeIndex={playback.activeIndex}
+					diff={transcriptDiff}
+					displayText={displayText}
+					viewFullLabel={viewFullLabel}
+					words={playback.words}
+				/>
+				<div className="flex shrink-0 flex-col items-end gap-2 self-start">
+					<div className="flex max-w-[8rem] flex-wrap justify-end gap-1">
+						{tagLabel ? <Badge variant="secondary">{tagLabel}</Badge> : null}
+						{sensitive ? (
+							<Badge variant="outline">{SENSITIVE_HISTORY_LABEL}</Badge>
+						) : null}
+					</div>
+					<ButtonGroup
+						aria-label={copyLabel}
+						className="shrink-0"
+						connected
+						orientation="vertical"
+					>
+						{hasOriginal ? (
+							<SwapButton
+								onToggle={() => setShowOriginal((prev) => !prev)}
+								showOriginal={showOriginal}
+								showOriginalLabel={viewOriginalLabel}
+								showProcessedLabel={viewProcessedLabel}
 							/>
 						) : null}
-						<RowTranscript
-							activeIndex={playback.activeIndex}
-							diff={transcriptDiff}
-							displayText={displayText}
-							viewFullLabel={viewFullLabel}
-							words={playback.words}
-						/>
-						<div className="flex shrink-0 flex-col items-end gap-2 self-start">
-							<div className="flex max-w-[8rem] flex-wrap justify-end gap-1">
-								{tagLabel ? (
-									<Badge variant="secondary">{tagLabel}</Badge>
-								) : null}
-								{sensitive ? (
-									<Badge variant="outline">{SENSITIVE_HISTORY_LABEL}</Badge>
-								) : null}
-							</div>
-							<ButtonGroup
-								aria-label={copyLabel}
-								className="shrink-0"
-								connected
-								orientation="vertical"
-							>
-								{hasOriginal ? (
-									<SwapButton
-										onToggle={() => setShowOriginal((prev) => !prev)}
-										showOriginal={showOriginal}
-										showOriginalLabel={viewOriginalLabel}
-										showProcessedLabel={viewProcessedLabel}
-									/>
-								) : null}
-								<CopyButton label={copyLabel} text={displayText} />
-								<DeleteButton entryId={entry.id} onDelete={onDeleteEntry} />
-							</ButtonGroup>
-						</div>
-					</div>
-					{/* Recessed meta shelf: full-bleed to the card's bottom + side edges
-					    (negative margins MUST match the card's px-3.5/py-3), split off by a
-					    hairline, and stepped DOWN one surface so it reads as a ledge. */}
-					<div
-						className={cn(
-							"-mx-3.5 -mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-divider border-t px-3.5 pt-2.5 pb-3 text-foreground-secondary text-xs-tight",
-							surfaceBg(Math.max(cardLevel - 1, 1)),
-						)}
-					>
-						{meta.map((part) => (
-							<span
-								className="inline-flex min-w-0 items-center gap-1 tabular-nums"
-								key={part.key}
-								title={part.title}
-							>
-								{part.logo ? (
-									<img
-										alt=""
-										aria-hidden="true"
-										className={cn(
-											"size-3.5 shrink-0 rounded-[3px] object-contain",
-											part.danger && "grayscale opacity-70",
-										)}
-										src={part.logo}
-									/>
-								) : (
-									<HugeiconsIcon
-										aria-hidden="true"
-										className={cn(
-											"size-3.5 shrink-0",
-											part.danger ? "text-error" : "text-foreground-muted",
-										)}
-										icon={part.icon}
-										strokeWidth={1.75}
-									/>
-								)}
-								<span
-									className={cn(
-										part.truncate
-											? "max-w-[10rem] truncate"
-											: "whitespace-nowrap",
-										part.danger &&
-											"text-error line-through decoration-2 decoration-error/80",
-									)}
-								>
-									{part.value}
-								</span>
-							</span>
-						))}
-					</div>
+						<CopyButton label={copyLabel} text={displayText} />
+						<DeleteButton entryId={entry.id} onDelete={onDeleteEntry} />
+					</ButtonGroup>
 				</div>
-			</SurfaceProvider>
-		</div>
+			</div>
+		</EntryCard>
 	);
 }
 
@@ -375,10 +289,6 @@ export function HistoryTable({
 	const outputDeviceId = useSettingsStore(
 		(s) => s.settings.general.outputDeviceId,
 	);
-	// Lift the table one surface step above the section it sits in so the card
-	// reads as its own surface, and re-provide that level so rows + the action
-	// button-group elevate from here (surfaces system — no flat tokens).
-	const level = Math.min(useSurface() + 1, 8);
 	// Most recent first; entries are stored chronologically by the main process.
 	const sorted = [...entries].reverse();
 	const copyLabel = t("copy");
@@ -388,7 +298,7 @@ export function HistoryTable({
 	const deleteEntry =
 		onDeleteEntry ??
 		((id: string) => {
-			deleteTranscriptionHistoryEntry(id).catch(() => undefined);
+			fireAndForget(deleteTranscriptionHistoryEntry(id), "history.deleteEntry");
 		});
 	const labels: MetaLabels = {
 		duration: t("colDuration"),
@@ -457,16 +367,5 @@ export function HistoryTable({
 		);
 	}
 
-	return (
-		<SurfaceProvider value={level}>
-			<div
-				className={cn(
-					"overflow-hidden rounded-xl border border-border",
-					surfaceBg(level),
-				)}
-			>
-				{body}
-			</div>
-		</SurfaceProvider>
-	);
+	return <EntryCardShell>{body}</EntryCardShell>;
 }

@@ -34,75 +34,37 @@ const OPENROUTER_PROVIDERS = [
 
 type OpenRouterProvider = (typeof OPENROUTER_PROVIDERS)[number];
 
-interface ProviderInfo {
-	description?: string;
-	id: OpenRouterProvider;
-	name: string;
-}
-
-const PROVIDER_INFO: Record<OpenRouterProvider, ProviderInfo> = {
-	anthropic: {
-		id: "anthropic",
-		name: "Anthropic",
-		description: "Official Anthropic API",
-	},
-	openai: { id: "openai", name: "OpenAI", description: "Official OpenAI API" },
-	google: { id: "google", name: "Google", description: "Google AI (Gemini)" },
-	azure: { id: "azure", name: "Azure", description: "Microsoft Azure OpenAI" },
-	deepinfra: {
-		id: "deepinfra",
-		name: "DeepInfra",
-		description: "Fast inference provider",
-	},
-	together: { id: "together", name: "Together", description: "Together AI" },
-	fireworks: {
-		id: "fireworks",
-		name: "Fireworks",
-		description: "Fireworks AI",
-	},
-	lepton: { id: "lepton", name: "Lepton", description: "Lepton AI" },
-	mancer: { id: "mancer", name: "Mancer", description: "Mancer AI" },
-	novita: { id: "novita", name: "Novita", description: "Novita AI" },
-	avian: { id: "avian", name: "Avian", description: "Avian AI" },
-	lambda: { id: "lambda", name: "Lambda", description: "Lambda Labs" },
-	mistral: { id: "mistral", name: "Mistral", description: "Mistral AI" },
-	perplexity: {
-		id: "perplexity",
-		name: "Perplexity",
-		description: "Perplexity AI",
-	},
-	replicate: { id: "replicate", name: "Replicate", description: "Replicate" },
-	cloudflare: {
-		id: "cloudflare",
-		name: "Cloudflare",
-		description: "Cloudflare Workers AI",
-	},
-	cohere: { id: "cohere", name: "Cohere", description: "Cohere AI" },
-	groq: { id: "groq", name: "Groq", description: "Groq (fast inference)" },
-	hyperbolic: {
-		id: "hyperbolic",
-		name: "Hyperbolic",
-		description: "Hyperbolic AI",
-	},
-	inflection: {
-		id: "inflection",
-		name: "Inflection",
-		description: "Inflection AI",
-	},
-	lynn: { id: "lynn", name: "Lynn", description: "Lynn AI" },
-	parasail: { id: "parasail", name: "Parasail", description: "Parasail AI" },
-	"sf-compute": {
-		id: "sf-compute",
-		name: "SF Compute",
-		description: "SF Compute",
-	},
-	xai: { id: "xai", name: "xAI", description: "xAI (Grok)" },
+const PROVIDER_NAMES: Record<OpenRouterProvider, string> = {
+	anthropic: "Anthropic",
+	openai: "OpenAI",
+	google: "Google",
+	azure: "Azure",
+	deepinfra: "DeepInfra",
+	together: "Together",
+	fireworks: "Fireworks",
+	lepton: "Lepton",
+	mancer: "Mancer",
+	novita: "Novita",
+	avian: "Avian",
+	lambda: "Lambda",
+	mistral: "Mistral",
+	perplexity: "Perplexity",
+	replicate: "Replicate",
+	cloudflare: "Cloudflare",
+	cohere: "Cohere",
+	groq: "Groq",
+	hyperbolic: "Hyperbolic",
+	inflection: "Inflection",
+	lynn: "Lynn",
+	parasail: "Parasail",
+	"sf-compute": "SF Compute",
+	xai: "xAI",
 };
 
 export function formatProviderName(provider: string): string {
-	const info = PROVIDER_INFO[provider as OpenRouterProvider];
-	if (info) {
-		return info.name;
+	const name = PROVIDER_NAMES[provider as OpenRouterProvider];
+	if (name) {
+		return name;
 	}
 	return provider
 		.split("-")
@@ -128,56 +90,14 @@ export const FILTERABLE_PARAMETERS = [
 
 export type FilterableParameter = (typeof FILTERABLE_PARAMETERS)[number];
 
-export interface ParameterInfo {
-	description: string;
-	id: FilterableParameter;
-	label: string;
-}
-
-export const PARAMETER_INFO: Record<FilterableParameter, ParameterInfo> = {
-	tools: {
-		id: "tools",
-		label: "Tools",
-		description: "Supports function/tool calling",
-	},
-	reasoning: {
-		id: "reasoning",
-		label: "Reasoning",
-		description: "Supports reasoning output",
-	},
-	include_reasoning: {
-		id: "include_reasoning",
-		label: "Include Reasoning",
-		description: "Can include reasoning in response",
-	},
-	parallel_tool_calls: {
-		id: "parallel_tool_calls",
-		label: "Parallel Tools",
-		description: "Supports parallel tool calls",
-	},
-	max_tokens: {
-		id: "max_tokens",
-		label: "Max Tokens",
-		description: "Supports max_tokens parameter",
-	},
-	response_format: {
-		id: "response_format",
-		label: "Response Format",
-		description: "Supports JSON response format",
-	},
-	verbosity: {
-		id: "verbosity",
-		label: "Verbosity",
-		description: "Controls verbosity/length of responses",
-	},
-	structured_outputs: {
-		id: "structured_outputs",
-		label: "Structured Outputs",
-		description: "Supports structured output schema",
-	},
-	web_search_options: {
-		id: "web_search_options",
-		label: "Web Search",
-		description: "Supports web search capabilities",
-	},
+export const PARAMETER_INFO: Record<FilterableParameter, { label: string }> = {
+	tools: { label: "Tools" },
+	reasoning: { label: "Reasoning" },
+	include_reasoning: { label: "Include Reasoning" },
+	parallel_tool_calls: { label: "Parallel Tools" },
+	max_tokens: { label: "Max Tokens" },
+	response_format: { label: "Response Format" },
+	verbosity: { label: "Verbosity" },
+	structured_outputs: { label: "Structured Outputs" },
+	web_search_options: { label: "Web Search" },
 };

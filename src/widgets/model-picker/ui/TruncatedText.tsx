@@ -8,8 +8,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./Tooltip";
 export interface TruncatedTextProps {
 	className?: string;
 	text: string;
-	/** Hover delay before the tooltip opens, in ms. */
-	tooltipDelay?: number;
 }
 
 function mergeRefs<T>(
@@ -32,11 +30,7 @@ function mergeRefs<T>(
  * ResizeObserver measurement of `scrollWidth > clientWidth`, so the popup
  * stays out of the way when nothing is hidden.
  */
-export function TruncatedText({
-	className,
-	text,
-	tooltipDelay = 1500,
-}: TruncatedTextProps) {
+export function TruncatedText({ className, text }: TruncatedTextProps) {
 	const ref = useRef<HTMLSpanElement | null>(null);
 	const [truncated, setTruncated] = useState(false);
 
@@ -55,7 +49,7 @@ export function TruncatedText({
 	}, []);
 
 	return (
-		<Tooltip delay={tooltipDelay} disabled={!truncated}>
+		<Tooltip disabled={!truncated}>
 			<TooltipTrigger
 				render={(props) => {
 					const { ref: triggerRef, ...rest } = props as typeof props & {

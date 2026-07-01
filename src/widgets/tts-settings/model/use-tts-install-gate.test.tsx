@@ -63,9 +63,8 @@ mock.module("@/shared/api/ipc-client", () => ({
 	onTtsModelDownloadComplete: onTtsModelDownloadCompleteSpy,
 }));
 
-const { DEFAULT_SETTINGS, useSettingsStore } = await import(
-	"@/entities/setting"
-);
+const { DEFAULT_SETTINGS, useSettingsStore } =
+	await import("@/entities/setting");
 const { useTtsModelStateStore } = await import("@/entities/tts-catalog");
 const { useTtsModelPickerStore } = await import("@/features/tts-model-picker");
 const {

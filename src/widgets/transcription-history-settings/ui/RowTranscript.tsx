@@ -9,19 +9,15 @@ import {
 import { useTranslations } from "use-intl";
 import type { WordTiming } from "@/shared/api/ipc-client";
 import { Z_INDEX } from "@/shared/config/z-index";
+import { COPY_FEEDBACK_MS, copyToClipboard } from "@/shared/lib/clipboard";
 import { cn } from "@/shared/lib/cn";
-import {
-	SurfaceProvider,
-	surfaceClasses,
-	useSurface,
-} from "@/shared/lib/surface";
+import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 import type { TranscriptDiffResult } from "@/shared/lib/transcript-diff";
 import { useLongPress } from "@/shared/lib/use-long-press";
 import {
 	type TranscriptDiffLabels,
 	TranscriptDiffView,
 } from "@/shared/ui/transcript-diff";
-import { COPY_FEEDBACK_MS, copyEntryText } from "../lib/copy-entry-text";
 
 /**
  * Reveals a row's complete transcript in a hover/focus popup — the same Base UI
@@ -60,7 +56,6 @@ function FullTranscriptHover({
 	const t = useTranslations("history");
 	const substrate = useSurface();
 	const popupLevel = Math.min(substrate + 2, 8);
-	const popupShadow = Math.max(popupLevel, 6);
 	return (
 		<TooltipPrimitive.Root>
 			<TooltipPrimitive.Trigger render={children} />
@@ -74,8 +69,8 @@ function FullTranscriptHover({
 						<TooltipPrimitive.Popup
 							aria-label={label}
 							className={cn(
-								"max-w-[min(42rem,calc(100vw-2rem))] origin-(--transform-origin) rounded-lg p-3 transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
-								surfaceClasses(popupLevel, popupShadow),
+								"max-w-[min(42rem,calc(100vw-2rem))] origin-(--transform-origin) rounded-xl p-3 shadow-elevated transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+								surfaceBg(popupLevel),
 							)}
 						>
 							<div
@@ -143,7 +138,7 @@ export function RowTranscript({
 		if (!displayText) {
 			return;
 		}
-		copyEntryText(displayText);
+		copyToClipboard(displayText);
 		globalThis.navigator?.vibrate?.(10);
 		setCopied(true);
 		if (copyFeedbackTimerRef.current) {

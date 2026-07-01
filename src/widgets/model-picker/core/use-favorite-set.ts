@@ -1,30 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
-function isStringArray(value: unknown): value is string[] {
-	return (
-		Array.isArray(value) && value.every((entry) => typeof entry === "string")
-	);
-}
+import {
+	isStringArray,
+	readPersistedSelectorState,
+	writePersistedSelectorState,
+} from "@/shared/lib/persisted-selector-state";
 
 /** Read the persisted favorites for `storageKey`, tolerating SSR (no `window`),
  *  a missing key, malformed JSON, and a non-string-array payload — any of which
  *  fall back to "no favorites yet". */
 function readStored(storageKey: string): string[] {
-	if (typeof window === "undefined") {
-		return [];
-	}
-	try {
-		const raw = window.localStorage.getItem(storageKey);
-		if (!raw) {
-			return [];
-		}
-		const parsed: unknown = JSON.parse(raw);
-		return isStringArray(parsed) ? parsed : [];
-	} catch {
-		return [];
-	}
+	return readPersistedSelectorState(storageKey, isStringArray, []);
 }
 
 export interface FavoriteSet {
@@ -52,15 +39,9 @@ export function useFavoriteSet(storageKey: string): FavoriteSet {
 	);
 
 	useEffect(() => {
-		if (typeof window === "undefined") {
-			return;
-		}
-		try {
-			window.localStorage.setItem(storageKey, JSON.stringify(favorites));
-		} catch {
-			// Ignore quota / disabled-storage errors — favorites are a nice-to-have,
-			// never load-bearing for selecting a model.
-		}
+		// Ignore quota / disabled-storage / SSR — favorites are a nice-to-have,
+		// never load-bearing for selecting a model.
+		writePersistedSelectorState(storageKey, favorites);
 	}, [storageKey, favorites]);
 
 	const favoritesSet = new Set(favorites);

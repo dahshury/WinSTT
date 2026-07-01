@@ -95,12 +95,6 @@ async resumeBinding(id: string) : Promise<Result<null, string>> {
     else return __commandError__(e);
 }
 },
-/**
- * Get the current keyboard implementation
- */
-async getKeyboardImplementation() : Promise<string> {
-    return await TAURI_INVOKE("get_keyboard_implementation");
-},
 async changeWhisperGpuDevice(device: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_whisper_gpu_device", { device }) };
@@ -110,12 +104,11 @@ async changeWhisperGpuDevice(device: number) : Promise<Result<null, string>> {
 }
 },
 /**
- * Return which accelerators and GPU devices are available for this build.
+ * Return which accelerators are compiled into this build.
  *
- * First-call cost is dominated by enumerating GPU devices through the
- * whisper.cpp Metal/Vulkan backend, which loads dynamic libraries and
- * probes hardware. Run it on the blocking pool so the webview thread
- * stays responsive — see also the startup pre-warm in `lib.rs`.
+ * Returns static, compile-time capability lists — no hardware probe, and
+ * `gpu_devices` is always empty — so it is cheap; it stays on the blocking
+ * pool only to keep the Tauri command async.
  */
 async getAvailableAccelerators() : Promise<Result<AvailableAccelerators, string>> {
     try {
@@ -203,6 +196,34 @@ async openLogDir() : Promise<Result<null, string>> {
 async openAppDataDir() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("open_app_data_dir") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * Per-category on-disk footprint of WinSTT's application data, so the About tab
+ * can preview what "remove application data" / "remove downloaded models" frees
+ * before the user commits. Read-only; allowed from the settings window only.
+ */
+async appDataUsage() : Promise<Result<AppDataUsageEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("app_data_usage") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * Remove ONE app-data category in-process (no app restart), unwiring any
+ * settings that referenced it so the next launch stays consistent. The
+ * `history` category is handled by the existing `history_clear` command (it
+ * deletes rows + their WAVs), so it is intentionally not accepted here.
+ * Returns the list of per-path failures (empty on full success).
+ */
+async removeAppDataCategory(key: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_app_data_category", { key }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return __commandError__(e);
@@ -437,7 +458,7 @@ async getLiveResources(forceRefresh: boolean | null) : Promise<LiveResources> {
 },
 /**
  * `set_custom_model` — register/scan a user-supplied ONNX model directory.
- * SPIKE: scan the directory for the family-shaped file set (encoder/decoder/...)
+ * Scan the directory for the family-shaped file set (encoder/decoder/...)
  * and add it as a `Family::Custom` catalog row; the resolver treats it like any
  * off-catalog repo. Returns the inferred catalog row on success.
  */
@@ -863,8 +884,7 @@ async wakewordCancelModelDownload() : Promise<WakeWordModelStatusPayload> {
 },
 /**
  * `start_listen` — begin loopback capture on `device_index` (the positional
- * ordinal from `loopback_list_devices`) and arm diarization when the persisted
- * `general.speaker_diarization` setting is on.
+ * ordinal from `loopback_list_devices`).
  *
  * Emits `stt:loopback-started { deviceName }` on success so the renderer's
  * `useListenMode` shows the active device name in the listen pill. The native
@@ -880,7 +900,7 @@ async startListen(deviceIndex: number, modelId: string) : Promise<Result<null, s
 }
 },
 /**
- * `stop_listen` — stop loopback capture + diarization. Emits
+ * `stop_listen` — stop loopback capture. Emits
  * `stt:loopback-stopped` so the renderer clears the listen pill. Idempotent
  * (mirrors the reference server, which only emits when capture was active — but
  * the renderer's `setListening(false)` is itself idempotent, so an extra emit on
@@ -2078,7 +2098,13 @@ frameworkVersion: string;
  * Embedded-WebView version (WebView2 on Windows).
  */
 webview2Version: string; copyright: string }
-export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; update_checks_enabled?: boolean; selected_model?: string; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPositionLegacy; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeoutLegacy; word_correction_threshold?: number; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKeyLegacy; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number }
+/**
+ * One row of the "remove application data" disk-usage preview: a category key
+ * (`stt` / `tts` / `dictionary` / `wakeword` / `history` / `logs` / `other`) and
+ * its on-disk size in bytes.
+ */
+export type AppDataUsageEntry = { key: string; bytes: number }
+export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; update_checks_enabled?: boolean; selected_model?: string; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPositionLegacy; debug_mode?: boolean; log_level?: LogLevel; model_unload_timeout?: ModelUnloadTimeoutLegacy; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKeyLegacy; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 /**
  * One audio input device in the WinSTT spec `AudioDevice` shape (camelCase).
@@ -2552,7 +2578,7 @@ modelUnloadTimeout?: ModelUnloadTimeout }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 /**
  * One GPU as the renderer's `GpuInfo` rows expect. `gpu_get_info` powers the device-picker /
- * quality settings GPU chip. SPIKE: enumerate adapters via DXGI; empty list = "no GPU detected".
+ * quality settings GPU chip. Enumerate adapters via DXGI; empty list = "no GPU detected".
  */
 export type GpuInfoEntry = { name: string; total_vram_bytes: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean;
@@ -2598,7 +2624,6 @@ export type HotkeySettings = {
 pushToTalkKey?: string }
 export type IntegrationsSettings = { elevenlabs?: ProviderIntegrationStatus }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
-export type KeyboardImplementation = "tauri"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 /**
  * One language `{ code, label }`.
@@ -3082,7 +3107,6 @@ export type SoundLibraryEntryResult = { id: string; name: string; path: string }
  * Result of `sound_library_remove` (matches `SoundLibraryRemoveResult`).
  */
 export type SoundLibraryRemoveResult = { ok: boolean; error?: string | null }
-export type SoundTheme = "marimba" | "pop" | "custom"
 /**
  * Result of a speak/preview start — the request id the renderer correlates the
  * `tts:chunk` stream + cancel against. Mirrors `TtsSpeakResult` in
@@ -3292,7 +3316,7 @@ export type WakeWordModelStatusPayload = { available: boolean; artifactLabel: st
  * One wake-word preset for the renderer dropdown.
  */
 export type WakeWordPresetPayload = { name: string; phrase: string }
-export type WhisperAcceleratorSetting = "auto" | "cpu" | "gpu"
+export type WhisperAcceleratorSetting = "auto" | "cpu"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 /**
  * The complete WinSTT settings tree, nested by the settings sections, ported

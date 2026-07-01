@@ -27,7 +27,7 @@ describe("hexToRgb", () => {
 	test("falls back to default for malformed input", () => {
 		const fallback = hexToRgb("not a hex");
 		expect(fallback).toHaveLength(3);
-		expect(fallback[0]).toBeCloseTo(0x1f / 255, 5);
+		expect(fallback[0]).toBeCloseTo(0x53 / 255, 5);
 	});
 
 	test("falls back to default for short hex (#fff)", () => {
@@ -45,20 +45,21 @@ describe("hexToRgb", () => {
 
 	test("DEFAULT_VISUALIZER_COLOR matches the hex used as fallback baseline", () => {
 		const [r, g, b] = hexToRgb(DEFAULT_VISUALIZER_COLOR);
-		expect(r).toBeCloseTo(0x1f / 255, 5);
-		expect(g).toBeCloseTo(0xd5 / 255, 5);
-		expect(b).toBeCloseTo(0xf9 / 255, 5);
+		expect(r).toBeCloseTo(0x53 / 255, 5);
+		expect(g).toBeCloseTo(0xa9 / 255, 5);
+		expect(b).toBeCloseTo(0xed / 255, 5);
 	});
 
-	test("DEFAULT_VISUALIZER_COLOR has the exact value '#1FD5F9' (string literal mutation guard)", () => {
+	test("DEFAULT_VISUALIZER_COLOR has the exact value '#53A9ED' (string literal mutation guard)", () => {
 		// Mutates the DEFAULT_COLOR literal at L1 — replacing it with "" or
 		// any non-hex string would either break exact equality OR (if cast through
-		// hexToRgb) yield the fallback rather than the parsed value.
-		expect(DEFAULT_VISUALIZER_COLOR).toBe("#1FD5F9");
+		// hexToRgb) yield the fallback rather than the parsed value. The value is
+		// the brand "teal" waveform token (globals.css --color-teal) in sRGB.
+		expect(DEFAULT_VISUALIZER_COLOR).toBe("#53A9ED");
 	});
 
 	test("fallback RGB components are in the [0,1] range, not [0, 255*255] (ArithmeticOperator mutation guard)", () => {
-		// Mutating `0xd5 / 255` to `0xd5 * 255` (or `0xf9 / 255` to `0xf9 * 255`)
+		// Mutating `0xa9 / 255` to `0xa9 * 255` (or `0xed / 255` to `0xed * 255`)
 		// would yield values in the tens of thousands.
 		const [r, g, b] = hexToRgb("not a hex");
 		expect(r).toBeGreaterThanOrEqual(0);
@@ -69,33 +70,33 @@ describe("hexToRgb", () => {
 		expect(b).toBeLessThanOrEqual(1);
 		// Tighter bound: each component must equal the canonical default with
 		// high precision, not just be in [0,1].
-		expect(r).toBeCloseTo(0x1f / 255, 8);
-		expect(g).toBeCloseTo(0xd5 / 255, 8);
-		expect(b).toBeCloseTo(0xf9 / 255, 8);
+		expect(r).toBeCloseTo(0x53 / 255, 8);
+		expect(g).toBeCloseTo(0xa9 / 255, 8);
+		expect(b).toBeCloseTo(0xed / 255, 8);
 	});
 
 	test("regex requires '^' anchor (rejects '#' embedded inside a longer string)", () => {
 		// Mutating /^#.../ to /#.../ removes the start-anchor, so the regex
 		// finds and matches the embedded "#FFFFFF" inside "X#FFFFFF". The valid
-		// match would parse to white (1,1,1) — distinct from the fallback cyan.
+		// match would parse to white (1,1,1) — distinct from the fallback teal.
 		const result = hexToRgb("X#FFFFFF");
-		// Must be fallback cyan (0x1f, 0xd5, 0xf9) — NOT white.
-		expect(result[0]).toBeCloseTo(0x1f / 255, 8);
-		expect(result[1]).toBeCloseTo(0xd5 / 255, 8);
-		expect(result[2]).toBeCloseTo(0xf9 / 255, 8);
+		// Must be fallback teal (0x53, 0xa9, 0xed) — NOT white.
+		expect(result[0]).toBeCloseTo(0x53 / 255, 8);
+		expect(result[1]).toBeCloseTo(0xa9 / 255, 8);
+		expect(result[2]).toBeCloseTo(0xed / 255, 8);
 		expect(result[0]).not.toBeCloseTo(1, 5);
 	});
 
 	test("regex requires end anchor (rejects trailing chars)", () => {
-		// Mutating /...$/ to /.../ would let "#1FD5F9XX" match the prefix.
+		// Mutating /...$/ to /.../ would let "#53A9EDXX" match the prefix.
 		// Without the $ anchor and given the original 7-char input, the parsed
-		// values would be 0x1f, 0xd5, 0xf9 — same as fallback! So we use a
+		// values would be 0x53, 0xa9, 0xed — same as fallback! So we use a
 		// DIFFERENT prefix to distinguish: "#FFFFFFXX" parsed without $ would
-		// give r=g=b=1.0, but the fallback gives the cyan color.
+		// give r=g=b=1.0, but the fallback gives the teal color.
 		const result = hexToRgb("#FFFFFFXX");
-		// Must be the cyan fallback, NOT all-ones (which would happen if $
+		// Must be the teal fallback, NOT all-ones (which would happen if $
 		// anchor were dropped and the regex matched the FFFFFF prefix).
-		expect(result[0]).toBeCloseTo(0x1f / 255, 8);
+		expect(result[0]).toBeCloseTo(0x53 / 255, 8);
 		expect(result[0]).not.toBeCloseTo(1, 5);
 	});
 });

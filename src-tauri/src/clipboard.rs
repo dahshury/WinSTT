@@ -101,7 +101,15 @@ fn paste_via_clipboard(
     let clipboard = app_handle.clipboard();
     let phase_started = Instant::now();
     info!("[clipboard] read_original_start");
-    let clipboard_content = clipboard.read_text().unwrap_or_default();
+    let clipboard_content = clipboard.read_text().unwrap_or_else(|e| {
+        // A transient read failure here means we proceed to write our text and then
+        // "restore" an empty string — permanently clearing whatever the user had.
+        // Keep the empty-default fallback, but surface it so the data loss is diagnosable.
+        warn!(
+            "[clipboard] read_original_failed error={e}; original content may be lost on restore"
+        );
+        String::new()
+    });
     let elapsed_ms = phase_started.elapsed().as_millis();
     info!(
         "[clipboard] read_original_complete duration_ms={elapsed_ms} chars={}",

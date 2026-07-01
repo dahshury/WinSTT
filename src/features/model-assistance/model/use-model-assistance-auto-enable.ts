@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
 	modelNeedsDictationCleanup,
 	useCatalogStore,
@@ -64,17 +64,35 @@ export function useModelAssistanceAutoEnable({
 		(s) => s.updateQualitySettings,
 	);
 
+	// The STT model id we last evaluated. Starts `undefined` so the FIRST effect
+	// pass (app boot / Settings mount / re-mount) is treated as "observe only" —
+	// it never auto-toggles anything. The suggestion fires ONLY on a genuine
+	// model SWITCH (the user picks a different STT model), which is the one moment
+	// the nudge is wanted. This is the core guarantee: mounting, reopening
+	// Settings, restarting the app, or toggling the dictation switch can NEVER
+	// re-assert cleanup the user turned off — the long-standing "it always boots
+	// with post-processing back on / disabling never sticks" bug.
+	const lastEvaluatedModelRef = useRef<string | undefined>(undefined);
+
 	useEffect(() => {
-		if (!enabled || !selectedModelId || !selectedModel) {
+		if (!enabled || !selectedModelId) {
 			return;
 		}
-		// PERSISTED guard (not a per-mount ref): once we've auto-evaluated a
-		// model we never auto-toggle dictation for it again, so reopening
-		// Settings or restarting the app can't silently re-enable cleanup that
-		// the user turned off. Reading/writing imperatively keeps the effect's
-		// deps identical to the value-driven inputs below.
+		const previousModelId = lastEvaluatedModelRef.current;
+		lastEvaluatedModelRef.current = selectedModelId;
+
+		// Boot/mount (no prior model) or the same model as before → do nothing.
+		// Only a real switch to a new model is a suggestion opportunity.
+		if (previousModelId === undefined || previousModelId === selectedModelId) {
+			return;
+		}
+
+		// Belt-and-suspenders persisted guard: never nudge the same model twice
+		// across sessions either. `selectedModel` (async catalog object) is needed
+		// only to evaluate the cleanup-need; if it hasn't loaded, skip this pass —
+		// a later pass re-runs once it resolves, still gated by the switch check.
 		const assistance = useModelAssistanceStore.getState();
-		if (assistance.hasAutoApplied(selectedModelId)) {
+		if (assistance.hasAutoApplied(selectedModelId) || !selectedModel) {
 			return;
 		}
 		assistance.markAutoApplied(selectedModelId);

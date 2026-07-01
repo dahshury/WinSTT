@@ -114,6 +114,26 @@ export default defineConfig(({ command }) => {
 		// vite-tsconfig-paths.
 		resolve: { tsconfigPaths: true },
 		plugins: [
+			// `messages/*.json` are pulled in via a dynamic `import()` in
+			// IntlProvider (`shared/i18n/loadMessages`), which HMR does NOT re-run on
+			// a JSON edit — so adding/changing a key otherwise leaves the running app
+			// rendering raw key paths (e.g. `settings.appDataUsageTitle`) until a
+			// manual reload. Force a full reload on any message change so new keys
+			// resolve immediately.
+			{
+				name: "winstt-i18n-full-reload",
+				handleHotUpdate({ file, server }) {
+					const normalized = file.replaceAll("\\", "/");
+					if (
+						normalized.includes("/messages/") &&
+						normalized.endsWith(".json")
+					) {
+						server.ws.send({ type: "full-reload" });
+						return [];
+					}
+					return undefined;
+				},
+			},
 			winsttDevSettingsBridge(),
 			react(),
 			...(isProdBuild ? [babel({ presets: [reactCompilerPreset()] })] : []),
@@ -168,6 +188,7 @@ export default defineConfig(({ command }) => {
 			sourcemap: false,
 			// Tauri's webview (WebView2 / WebKitGTK) supports the modern ES surface.
 			target: "esnext",
+			modulePreload: false,
 			reportCompressedSize: false,
 			rollupOptions: {
 				input: {
@@ -180,6 +201,7 @@ export default defineConfig(({ command }) => {
 					"tray-menu": resolve(rootDir, "windows/tray-menu.html"),
 					"model-picker": resolve(rootDir, "windows/model-picker.html"),
 					"device-picker": resolve(rootDir, "windows/device-picker.html"),
+					"model-footprint": resolve(rootDir, "windows/model-footprint.html"),
 					onboarding: resolve(rootDir, "windows/onboarding.html"),
 					history: resolve(rootDir, "windows/history.html"),
 					...(includeContextPlayground
@@ -193,29 +215,33 @@ export default defineConfig(({ command }) => {
 				},
 				output: {
 					manualChunks: (id) => {
-						if (id.includes("node_modules")) {
-							// INVARIANT: React core, react-dom, and @base-ui/* must share
-							// ONE chunk. Splitting them produces circular ESM imports
-							// between vendor-react and vendor-base-ui and crashes the
-							// webview with "Cannot read properties of undefined (reading
-							// 'useLayoutEffect')" on an unbound React namespace.
+						const normalizedId = id.replaceAll("\\", "/");
+						if (normalizedId.includes("node_modules")) {
+							if (normalizedId.includes("@base-ui/")) {
+								return "vendor-base-ui";
+							}
 							if (
-								id.includes("@base-ui/") ||
-								id.includes("react-dom") ||
-								id.includes("/react/")
+								normalizedId.includes("react-dom") ||
+								normalizedId.includes("/react/")
 							) {
 								return "vendor-react";
 							}
-							if (id.includes("/motion/") || id.includes("framer-motion")) {
+							if (
+								normalizedId.includes("/motion/") ||
+								normalizedId.includes("framer-motion")
+							) {
 								return "vendor-motion";
 							}
-							if (id.includes("@hugeicons/")) {
+							if (normalizedId.includes("@hugeicons/")) {
 								return "vendor-hugeicons";
 							}
-							if (id.includes("use-intl") || id.includes("@formatjs/")) {
+							if (
+								normalizedId.includes("use-intl") ||
+								normalizedId.includes("@formatjs/")
+							) {
 								return "vendor-intl";
 							}
-							if (id.includes("zustand")) {
+							if (normalizedId.includes("zustand")) {
 								return "vendor-zustand";
 							}
 						}
@@ -229,6 +255,12 @@ export default defineConfig(({ command }) => {
 			port: 1420,
 			strictPort: true,
 			host: devServerHost,
+			// WebView2 aggressively disk-caches dev assets and keeps serving stale
+			// JS/JSON across reloads (and even dev-server restarts) — the reason
+			// past UI fixes and newly-added i18n keys "never load" until the cache
+			// is manually cleared. `no-store` makes the dev server tell the webview
+			// never to cache, so a reload always picks up the latest modules.
+			headers: { "Cache-Control": "no-store" },
 			// Omit `hmr` entirely when there's no TAURI_DEV_HOST — under
 			// `exactOptionalPropertyTypes` an explicit `hmr: undefined` is rejected,
 			// so spread the key in conditionally instead.

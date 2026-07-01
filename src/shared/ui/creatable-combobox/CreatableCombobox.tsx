@@ -5,15 +5,16 @@ import {
 	PlusSignIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type ReactNode, useRef, useState } from "react";
-import {
-	SurfaceProvider,
-	surfaceClasses,
-	useSurface,
-} from "@/shared/lib/surface";
+import { useRef, useState } from "react";
+import { SurfaceProvider, surfaceClasses } from "@/shared/lib/surface";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { IconButton } from "@/shared/ui/icon-button";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
+import {
+	CheckIcon,
+	StopBubble,
+	usePopupSurfaceLevels,
+} from "@/shared/ui/select";
 
 export interface CreatableComboboxItem {
 	/** When true the row shows an inline delete button (wired to `onDelete`). */
@@ -22,7 +23,6 @@ export interface CreatableComboboxItem {
 	label: string;
 	meta?: string | undefined;
 }
-
 interface Row {
 	deletable: boolean;
 	id: string;
@@ -130,10 +130,11 @@ export function CreatableCombobox({
 		setQuery("");
 	};
 
-	const substrate = useSurface();
-	const inputLevel = Math.min(substrate + 1, 8);
-	const popupLevel = Math.min(substrate + 2, 8);
-	const popupShadow = Math.max(popupLevel, 6);
+	const {
+		triggerLevel: inputLevel,
+		popupLevel,
+		popupShadow,
+	} = usePopupSurfaceLevels({ selfElevate: false });
 	const popupRef = useRef<HTMLDivElement | null>(null);
 
 	return (
@@ -191,7 +192,7 @@ export function CreatableCombobox({
 								<Combobox.List className="outline-none">
 									{(row: Row) => (
 										<Combobox.Item
-											className="relative z-raised mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs py-[7px] ps-2.5 pe-1.5 text-body text-foreground leading-normal outline-none"
+											className="relative z-raised mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs py-[7px] ps-2.5 pe-1.5 text-body text-foreground leading-normal outline-none"
 											data-menu-option={row.id}
 											key={row.id}
 											value={row}
@@ -256,7 +257,7 @@ function RowContent({
 				</span>
 			) : null}
 			{row.deletable && onDelete ? (
-				<StopBubble>
+				<StopBubble className="ml-auto flex shrink-0 items-center">
 					<IconButton
 						aria-label={deleteAriaLabel ?? "Delete"}
 						icon={<HugeiconsIcon icon={Delete02Icon} size={14} />}
@@ -265,49 +266,5 @@ function RowContent({
 				</StopBubble>
 			) : null}
 		</>
-	);
-}
-
-/** Eats pointer/keyboard events so the inline delete button doesn't also select
- *  (and close) the combobox row. Mirrors SearchableSelect. */
-function swallowEvent(e: { stopPropagation: () => void }): void {
-	e.stopPropagation();
-}
-
-function StopBubble({ children }: { children: ReactNode }) {
-	return (
-		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: role="toolbar" is interactive per WAI-ARIA; this shim only stops events from bubbling to the listbox row so the inner delete button can fire without selecting the row.
-		<div
-			className="ml-auto flex shrink-0 items-center"
-			onClick={swallowEvent}
-			onKeyDown={swallowEvent}
-			onMouseDown={swallowEvent}
-			onPointerDown={swallowEvent}
-			role="toolbar"
-			tabIndex={-1}
-		>
-			{children}
-		</div>
-	);
-}
-
-// Decorative accessible name for the checkmark glyph. The <svg> is
-// aria-hidden, so screen readers never announce this <title>; it's kept as a
-// constant only so it isn't flagged as a user-facing literal.
-const CHECK_ICON_TITLE = "Selected";
-
-function CheckIcon() {
-	return (
-		<svg
-			aria-hidden="true"
-			fill="currentcolor"
-			height="10"
-			role="img"
-			viewBox="0 0 10 10"
-			width="10"
-		>
-			<title>{CHECK_ICON_TITLE}</title>
-			<path d="M9.16 1.12C9.51 1.35 9.6 1.81 9.38 2.16L5.14 8.66C5.02 8.84 4.82 8.97 4.6 9C4.39 9.02 4.17 8.95 4.01 8.81L1.25 6.31C0.94 6.03 0.92 5.56 1.19 5.25C1.47 4.94 1.95 4.92 2.25 5.2L4.36 7.1L8.12 1.34C8.35 0.99 8.81 0.9 9.16 1.12Z" />
-		</svg>
 	);
 }

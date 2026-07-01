@@ -393,7 +393,7 @@ For full license terms see <https://hugeicons.com/license>.
 ### Audio (recording-start / -stop SFX)
 
 User-selectable recording sounds shipped in `src-tauri/resources/*.wav`
-(marimba, pop, UI earcons) are either created by the WinSTT authors and released
+(marimba, pop) are either created by the WinSTT authors and released
 under the WinSTT EULA, or sourced from Creative Commons Zero (CC0) sound
 libraries with no attribution required. If a specific bundled file requires
 attribution, that attribution is reproduced here on update.

@@ -5,9 +5,8 @@ use tauri_plugin_store::StoreExt;
 
 use super::defaults::*;
 use super::types::{
-    AppSettings, AutoSubmitKey, ClipboardHandling, KeyboardImplementation, ModelUnloadTimeout,
-    OrtAcceleratorSetting, PasteMethod, PostProcessProvider, ShortcutBinding,
-    WhisperAcceleratorSetting,
+    AppSettings, AutoSubmitKey, ClipboardHandling, ModelUnloadTimeout, OrtAcceleratorSetting,
+    PasteMethod, PostProcessProvider, ShortcutBinding, WhisperAcceleratorSetting,
 };
 
 pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
@@ -103,9 +102,6 @@ pub fn get_default_settings() -> AppSettings {
 
     AppSettings {
         bindings,
-        audio_feedback: false,
-        audio_feedback_volume: default_audio_feedback_volume(),
-        sound_theme: default_sound_theme(),
         update_checks_enabled: default_update_checks_enabled(),
         selected_model: "".to_string(),
         selected_microphone: None,
@@ -116,9 +112,7 @@ pub fn get_default_settings() -> AppSettings {
         overlay_position: default_overlay_position(),
         debug_mode: false,
         log_level: default_log_level(),
-        custom_words: Vec::new(),
         model_unload_timeout: ModelUnloadTimeout::default(),
-        word_correction_threshold: default_word_correction_threshold(),
         paste_method: PasteMethod::default(),
         clipboard_handling: ClipboardHandling::default(),
         auto_submit: default_auto_submit(),
@@ -132,13 +126,9 @@ pub fn get_default_settings() -> AppSettings {
         post_process_selected_prompt_id: None,
         mute_while_recording: false,
         append_trailing_space: false,
-        app_language: default_app_language(),
-        experimental_enabled: false,
-        keyboard_implementation: KeyboardImplementation::default(),
         show_tray_icon: default_show_tray_icon(),
         paste_delay_ms: default_paste_delay_ms(),
         typing_tool: default_typing_tool(),
-        external_script_path: None,
         whisper_accelerator: WhisperAcceleratorSetting::default(),
         ort_accelerator: OrtAcceleratorSetting::default(),
         whisper_gpu_device: default_whisper_gpu_device(),
@@ -181,17 +171,6 @@ pub fn load_legacy_app_settings(app: &AppHandle) -> Option<AppSettings> {
             None
         }
     }
-}
-
-/// SINGLE-STORE BRIDGE: `AppSettings` is no longer a separately-persisted file —
-/// it is a derived view over `WinsttSettings.core` (persisted in
-/// `winstt-settings.json`). This reads the embedded `core`, backfills any newly
-/// added default bindings / post-process providers (the merge the old loader did),
-/// and returns it with secrets OPENED (the WinSTT read path decrypts them).
-pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
-    // The WinSTT store is seeded/migrated in lib.rs setup before this runs; reading
-    // it here also tolerates a not-yet-seeded store (defaults).
-    get_settings(app)
 }
 
 pub fn get_settings(app: &AppHandle) -> AppSettings {

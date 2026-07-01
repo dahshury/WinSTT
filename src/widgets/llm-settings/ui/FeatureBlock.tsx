@@ -2,8 +2,8 @@ import { MagicWand01Icon, PencilIcon } from "@hugeicons/core-free-icons";
 import { computeModelExclusionConfig } from "@/widgets/model-picker";
 import { type ReactNode, useEffect, useState } from "react";
 import { SettingSubsection } from "@/entities/setting";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
+import { Spinner } from "@/shared/ui/spinner";
 import { Switcher } from "@/shared/ui/switcher";
 import {
 	type LlmFeatureDraft,
@@ -19,6 +19,7 @@ import { WarmupStatusBanner } from "./WarmupStatusBanner";
 function useFeatureToggleHandler(
 	props: FeatureBlockProps,
 	checkOllamaReachable: () => Promise<boolean>,
+	onOllamaWarmStart?: (model: string) => void,
 ) {
 	return async (next: boolean) => {
 		await performFeatureToggle(next, {
@@ -34,8 +35,17 @@ function useFeatureToggleHandler(
 			scanOpenRouter: props.openrouterCatalog.scanModels,
 			apply: (patch) => {
 				(props.update as (p: Partial<LlmFeatureDraft>) => void)(patch);
-				if (patch.enabled === true && props.onEnabled) {
-					props.onEnabled();
+				if (patch.enabled === true) {
+					// Arm the "warming into VRAM" spinner the moment the enable
+					// commits — only for Ollama, which holds a local model in
+					// memory (OpenRouter is remote). The model may come from the
+					// patch (auto-pick/replace) or the existing snapshot (keep).
+					if (props.featureSnapshot.provider === "ollama") {
+						onOllamaWarmStart?.(patch.model ?? props.featureSnapshot.model);
+					}
+					if (props.onEnabled) {
+						props.onEnabled();
+					}
 				}
 			},
 			setShowOllamaDialog: props.setShowOllamaDialog,
@@ -166,6 +176,77 @@ function useOllamaSwapTracker(opts: {
 	};
 }
 
+/** Pure resolver for the enable-warmup spinner. Once armed (the user enabled the
+ *  feature), stays true until a FRESH warmup broadcast reports a terminal outcome
+ *  for the model — "loading" keeps it up, ok/unreachable/not-found/failed/skipped
+ *  settle it. Mirrors {@link resolvePendingSwap}; returns false when the feature is
+ *  off, not Ollama, or has no model (nothing holds VRAM). */
+function resolveWarmPending(
+	armedAtTimestamp: number | null,
+	model: string,
+	provider: LlmProvider,
+	enabled: boolean,
+	warmupStatus: import("@/shared/api/ipc-client").LlmWarmupStatus | null,
+): boolean {
+	if (armedAtTimestamp === null) {
+		return false;
+	}
+	if (provider !== "ollama" || !enabled || model.trim().length === 0) {
+		return false;
+	}
+	if (warmupStatus && warmupStatus.timestamp > armedAtTimestamp) {
+		const entry = warmupStatus.models.find((m) => m.model === model);
+		if (entry && entry.outcome !== "loading") {
+			return false;
+		}
+	}
+	return true;
+}
+
+/** Sibling of {@link useOllamaSwapTracker} for the *enable* transition: flipping
+ *  a feature on moves the toggle instantly, but the model only lands in VRAM once
+ *  the backend warmup pass finishes — seconds, or minutes for a big model on a cold
+ *  GPU. `beginWarm` arms the moment the enable commits; `isWarming` then tracks the
+ *  real load (resolved by the warmup broadcast) so the spinner doesn't vanish the
+ *  instant the toggle moves. */
+function useOllamaWarmTracker(opts: {
+	enabled: boolean;
+	model: string;
+	provider: LlmProvider;
+	warmupStatus: import("@/shared/api/ipc-client").LlmWarmupStatus | null;
+}): { beginWarm: (model: string) => void; isWarming: boolean } {
+	const { enabled, model, provider, warmupStatus } = opts;
+	const [armedAt, setArmedAt] = useState<number | null>(null);
+
+	const beginWarm = (target: string) => {
+		if (provider !== "ollama" || target.trim().length === 0) {
+			return;
+		}
+		setArmedAt(warmupStatus?.timestamp ?? 0);
+	};
+
+	// Safety: never let the spinner outlive a stuck/silent warmup. 180 s matches
+	// the swap tracker's ceiling — a big reasoning model on one GPU can take >60 s.
+	useEffect(() => {
+		if (armedAt === null) {
+			return;
+		}
+		const id = window.setTimeout(() => setArmedAt(null), 180_000);
+		return () => window.clearTimeout(id);
+	}, [armedAt]);
+
+	return {
+		beginWarm,
+		isWarming: resolveWarmPending(
+			armedAt,
+			model,
+			provider,
+			enabled,
+			warmupStatus,
+		),
+	};
+}
+
 interface FeatureBlockComponentProps extends FeatureBlockProps {
 	checkOllamaReachable: () => Promise<boolean>;
 	children: ReactNode;
@@ -210,6 +291,14 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 		forceDisabled = false,
 		forceDisabledTooltip,
 	} = props;
+	const isDictation = feature === "dictation";
+	const effectiveEnabled = forceDisabled ? false : featureSnapshot.enabled;
+	const warmTracker = useOllamaWarmTracker({
+		enabled: effectiveEnabled,
+		model: featureSnapshot.model,
+		provider: featureSnapshot.provider,
+		warmupStatus,
+	});
 	const handleToggleBase = useFeatureToggleHandler(
 		{
 			endpoint,
@@ -231,6 +320,7 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 			tc,
 		},
 		checkOllamaReachable,
+		warmTracker.beginWarm,
 	);
 	const handleToggle = async (next: boolean): Promise<void> => {
 		if (forceDisabled) {
@@ -242,8 +332,6 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 		featureSnapshot.openrouterModel,
 	);
 	const updateAny = update as (p: Partial<LlmFeatureDraft>) => void;
-	const isDictation = feature === "dictation";
-	const effectiveEnabled = forceDisabled ? false : featureSnapshot.enabled;
 	const { swap: ollamaSwap, beginSwap: beginOllamaSwap } = useOllamaSwapTracker(
 		{
 			currentModel: featureSnapshot.model,
@@ -254,8 +342,17 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 	);
 	return (
 		<SettingSubsection
+			busy={warmTracker.isWarming}
 			caption={
 				isDictation ? t("subDictationCaption") : t("subTransformCaption")
+			}
+			headerAction={
+				warmTracker.isWarming ? (
+					<span className="flex items-center gap-1.5 text-[11px] text-foreground-secondary">
+						<Spinner className="size-3.5" />
+						{tc("loading")}
+					</span>
+				) : undefined
 			}
 			icon={isDictation ? PencilIcon : MagicWand01Icon}
 			onToggle={handleToggle}
@@ -272,17 +369,15 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 					tooltip={t("providerTooltip")}
 					controlTooltip={forceDisabledTooltip}
 				>
-					<ElevatedSurface>
-						<Switcher
-							onChange={(v) => {
-								if (!forceDisabled) {
-									updateAny({ provider: v as LlmProvider });
-								}
-							}}
-							options={providerOpts}
-							value={featureSnapshot.provider}
-						/>
-					</ElevatedSurface>
+					<Switcher
+						onChange={(v) => {
+							if (!forceDisabled) {
+								updateAny({ provider: v as LlmProvider });
+							}
+						}}
+						options={providerOpts}
+						value={featureSnapshot.provider}
+					/>
 				</FormControl>
 				<ProviderSection
 					beginOllamaSwap={beginOllamaSwap}

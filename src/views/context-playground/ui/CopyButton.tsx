@@ -1,4 +1,3 @@
-import { Button as BaseButton } from "@base-ui/react/button";
 import { useState } from "react";
 import type { ContextDebugReport } from "@/shared/api/context-debug-types";
 import { cn } from "@/shared/lib/cn";
@@ -15,13 +14,13 @@ export function CopyButton({ report }: { report: ContextDebugReport }) {
 	};
 
 	return (
-		<BaseButton
+		<button
 			className={cn("rounded px-2 py-1 transition-colors", copyClass(status))}
 			onClick={onCopy}
 			type="button"
 		>
 			{copyLabel(status)}
-		</BaseButton>
+		</button>
 	);
 }
 

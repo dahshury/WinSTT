@@ -1,9 +1,8 @@
 /**
  * Pure helpers extracted from LlmSettingsPanel for testability.
  *
- * These functions contain the branchy display-logic that drove up CRAP scores
- * in the panel. Keeping them pure (no JSX, no hooks, no side effects) makes
- * them exhaustively unit-testable.
+ * These hold the panel's branchy display-logic. Keeping them pure (no JSX, no
+ * hooks, no side effects) makes them exhaustively unit-testable.
  */
 
 /**

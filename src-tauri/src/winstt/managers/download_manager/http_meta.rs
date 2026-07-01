@@ -62,13 +62,22 @@ pub(super) fn fetch_repo_file_sizes(http: &reqwest::Client, model: &str) -> BTre
     };
     // The model-info endpoint (`/api/models/…`), NOT the resolve host path the file streamer uses.
     let url = format!("https://huggingface.co/api/models/{owner}/{name}?blobs=true");
-    let resp = match tauri::async_runtime::block_on(http.get(&url).send()) {
-        Ok(r) if r.status().is_success() => r,
-        _ => return BTreeMap::new(),
+    // Bound the whole probe: this seeds the progress denominator and runs BEFORE any streaming, so a
+    // stalled metadata fetch (the `http` client only sets `connect_timeout`) would hang the download
+    // before the first byte. On timeout/error we degrade to an empty map (per-file growing total).
+    let fetch = async {
+        let resp = http.get(&url).send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        resp.json::<serde_json::Value>().await.ok()
     };
-    match tauri::async_runtime::block_on(resp.json::<serde_json::Value>()) {
-        Ok(body) => parse_sibling_sizes(&body),
-        Err(_) => BTreeMap::new(),
+    match tauri::async_runtime::block_on(tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        fetch,
+    )) {
+        Ok(Some(body)) => parse_sibling_sizes(&body),
+        _ => BTreeMap::new(),
     }
 }
 

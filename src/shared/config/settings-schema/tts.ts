@@ -28,7 +28,7 @@ export const ttsSettingsSchema = z.object({
 	hotkey: z.string().min(1).default("LCtrl+Space").catch("LCtrl+Space"),
 	// Local ⇄ Cloud switch mirroring the STT/LLM source toggles. "local" =
 	// Kokoro ONNX (the `voice`/`lang`/`speed` fields above); "cloud" routes
-	// synthesis through ElevenLabs entirely in the reference main process.
+	// synthesis through ElevenLabs entirely in the main process.
 	// Cloud is only selectable when the
 	// ElevenLabs key is present AND verified (`integrations.elevenlabs.verified`);
 	// the renderer gates the option, and the cloud path reuses the same
@@ -65,7 +65,7 @@ export const ttsSettingsSchema = z.object({
 });
 
 // Per-provider integration record. `apiKey` is encrypted at rest via
-// the reference `safeStorage` (DPAPI on Windows) — the wire/in-memory shape
+// the OS keystore (DPAPI on Windows) — the wire/in-memory shape
 // is plaintext but the persisted JSON contains `enc:v1:<base64>`; the
 // secret-storage layer transparently encrypts on save and decrypts on
 // read. `verified` is the result

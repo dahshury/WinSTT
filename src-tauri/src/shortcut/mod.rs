@@ -8,6 +8,7 @@ mod handler;
 mod modifier_combo;
 mod post_process_commands;
 mod priority;
+mod ptt_release_watchdog;
 mod settings_commands;
 mod tauri_impl;
 
@@ -39,7 +40,7 @@ pub fn init_shortcuts(app: &AppHandle) {
         return;
     }
 
-    let _ = settings::load_or_create_app_settings(app);
+    let _ = settings::get_settings(app);
     tauri_impl::init_shortcuts(app);
 }
 
@@ -398,17 +399,6 @@ pub fn resume_binding(app: AppHandle, id: String) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-// ============================================================================
-// Keyboard Implementation
-// ============================================================================
-
-/// Get the current keyboard implementation
-#[tauri::command]
-#[specta::specta]
-pub fn get_keyboard_implementation(_app: AppHandle) -> String {
-    "tauri".to_string()
 }
 
 #[cfg(test)]

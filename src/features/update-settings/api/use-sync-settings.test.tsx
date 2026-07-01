@@ -1,9 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { commands } from "@/bindings";
+
+const tauriCalls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+const originalSettingsCommands = {
+	winsttGetSettings: commands.winsttGetSettings,
+	winsttSetSettings: commands.winsttSetSettings,
+};
 import { useConnectionStore } from "@/entities/connection";
 import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
-import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
+import {
+	appSettingsSchema,
+	type AppSettingsOutput as AppSettings,
+} from "@/shared/config/settings-schema";
 import {
 	_resetIpcLoadTimingForTests,
 	markIpcLoadResolved,
@@ -16,19 +26,14 @@ import {
 } from "./use-sync-settings";
 import { useSettingsHydrationStore } from "../model/settings-hydration-store";
 
-// Contained boundary cast. The inline snapshots below are deliberately partial /
-// divergent AppSettings stand-ins shaped only enough to drive the diff helpers;
-// this wrapper holds the single unavoidable cast to the real AppSettings type.
-// Generic over the actual literal so each snapshot's shape is still type-checked
-// at the call site, and it returns the exact same object it was given.
 const asSettings = <T extends object>(s: T): AppSettings =>
 	s as unknown as AppSettings;
 
 const originalApi = window.nativeBridge;
-const initialSettings = useSettingsStore.getState().settings;
 const sentChannels: Array<{ channel: string; args: unknown[] }> = [];
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 const savedPatches: Array<Partial<AppSettings>> = [];
+let initialSettings = appSettingsSchema.parse({});
 
 function recordSave(settings: Partial<AppSettings>): void {
 	savedPatches.push(settings);
@@ -51,6 +56,13 @@ function makeApi() {
 		},
 		send: (channel: string, ...args: unknown[]) => {
 			sentChannels.push({ channel, args });
+			if (channel === IPC.SETTINGS_SAVE) {
+				const payload = args[0] as { settings?: unknown } | undefined;
+				tauriCalls.push({
+					cmd: "winstt_set_settings",
+					args: { settings: payload?.settings },
+				});
+			}
 		},
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
 			const list = listeners.get(channel) ?? [];
@@ -67,15 +79,31 @@ function makeApi() {
 }
 
 beforeEach(() => {
+	initialSettings = appSettingsSchema.parse({});
+	commands.winsttGetSettings = async () =>
+		({}) as Awaited<ReturnType<typeof commands.winsttGetSettings>>;
+	commands.winsttSetSettings = async (settings) => {
+		tauriCalls.push({
+			cmd: "winstt_set_settings",
+			args: { settings },
+		});
+		return {
+			status: "ok",
+			data: { needsRestart: false, changedStartupKeys: [] },
+		};
+	};
 	useSettingsStore.setState({ settings: initialSettings, isLoaded: false });
 	useSettingsHydrationStore.getState().reset();
 	useConnectionStore.setState({ serverStatus: "idle" });
 	window.nativeBridge = makeApi();
+	tauriCalls.length = 0;
 	savedPatches.length = 0;
 });
 
 afterEach(() => {
 	cleanup();
+	commands.winsttGetSettings = originalSettingsCommands.winsttGetSettings;
+	commands.winsttSetSettings = originalSettingsCommands.winsttSetSettings;
 	window.nativeBridge = originalApi;
 	useSettingsStore.setState({ settings: initialSettings, isLoaded: false });
 	useSettingsHydrationStore.getState().reset();
@@ -271,5 +299,83 @@ describe("useSyncSettings", () => {
 		});
 		rerender();
 		expect(() => unmount()).not.toThrow();
+	});
+
+	test("the FIRST user toggle after boot hydration is persisted (not eaten by a stale fromIpcLoad flag)", async () => {
+		// The exact "first boot" condition the user hit: post-processing starts
+		// OFF (the schema default that hydration resolves to), then the user
+		// flips it ON. Before the fix, hydration left `fromIpcLoad` set and the
+		// very first user change was silently skipped — the toggle never reached
+		// the backend, so the Ollama model state never changed. Only the SECOND
+		// toggle stuck. This guards the end-to-end frontend sync path.
+		useSettingsStore.setState({ settings: initialSettings, isLoaded: false });
+
+		renderHook(() => useSyncSettings());
+		await waitFor(() =>
+			expect(useSettingsHydrationStore.getState().status).toBe("ready"),
+		);
+
+		tauriCalls.length = 0;
+		// User clicks the toggle well after boot settles (past the 500ms IPC-load
+		// guard) — the realistic timing of a manual click.
+		_resetIpcLoadTimingForTests();
+		act(() => {
+			useSettingsStore.getState().updateLlmDictation({ enabled: true });
+		});
+
+		// The debounced (300ms) save MUST reach the backend with enabled=true.
+		await waitFor(
+			() => {
+				const saves = tauriCalls.filter((c) => c.cmd === "winstt_set_settings");
+				expect(saves.length).toBeGreaterThan(0);
+			},
+			{ timeout: 1500 },
+		);
+		const saved = tauriCalls
+			.filter((c) => c.cmd === "winstt_set_settings")
+			.at(-1)?.args as
+			| { settings?: { llm?: { dictation?: { enabled?: boolean } } } }
+			| undefined;
+		expect(saved?.settings?.llm?.dictation?.enabled).toBe(true);
+	});
+
+	test("consecutive toggles each persist (first ON then OFF — no dropped change)", async () => {
+		// Both the first AND the second toggle must reach the backend, so a
+		// disable→enable→disable sequence flips the Ollama model load state every
+		// time — not only on the second click.
+		useSettingsStore.setState({ settings: initialSettings, isLoaded: false });
+		renderHook(() => useSyncSettings());
+		await waitFor(() =>
+			expect(useSettingsHydrationStore.getState().status).toBe("ready"),
+		);
+
+		const enabledValues = (): Array<boolean | undefined> =>
+			tauriCalls
+				.filter((c) => c.cmd === "winstt_set_settings")
+				.map(
+					(c) =>
+						(
+							c.args as {
+								settings?: { llm?: { dictation?: { enabled?: boolean } } };
+							}
+						)?.settings?.llm?.dictation?.enabled,
+				);
+
+		tauriCalls.length = 0;
+		_resetIpcLoadTimingForTests();
+		act(() => {
+			useSettingsStore.getState().updateLlmDictation({ enabled: true });
+		});
+		await waitFor(() => expect(enabledValues().at(-1)).toBe(true), {
+			timeout: 1500,
+		});
+
+		_resetIpcLoadTimingForTests();
+		act(() => {
+			useSettingsStore.getState().updateLlmDictation({ enabled: false });
+		});
+		await waitFor(() => expect(enabledValues().at(-1)).toBe(false), {
+			timeout: 1500,
+		});
 	});
 });

@@ -6,6 +6,10 @@ use std::time::{Duration, Instant};
 struct ModelSwapState {
     in_flight: HashMap<String, usize>,
     warm: HashMap<String, Instant>,
+    /// When a model last FAILED to load (e.g. the Ollama runner crashing because
+    /// it does not fit in VRAM). Used to back off re-warming a model that keeps
+    /// crashing, so the periodic loop doesn't churn the GPU every tick.
+    load_failed: HashMap<String, Instant>,
 }
 
 /// Shared model lifecycle coordinator for subsystems that load or warm heavyweight models.
@@ -48,7 +52,9 @@ impl ModelSwapCoordinator {
 
     pub fn mark_warm(&self, key: impl Into<String>) {
         if let Ok(mut state) = self.state.lock() {
-            state.warm.insert(key.into(), Instant::now());
+            let key = key.into();
+            state.load_failed.remove(&key);
+            state.warm.insert(key, Instant::now());
         }
     }
 
@@ -58,18 +64,32 @@ impl ModelSwapCoordinator {
         }
     }
 
-    pub fn clear_all_warm(&self) {
+    /// Record that loading `key` just FAILED, so [`Self::is_load_failed_within`]
+    /// can back off re-warming it. Also clears any stale warm marker (a model
+    /// that crashed is not warm).
+    pub fn mark_load_failed(&self, key: impl Into<String>) {
         if let Ok(mut state) = self.state.lock() {
-            state.warm.clear();
+            let key = key.into();
+            state.warm.remove(&key);
+            state.load_failed.insert(key, Instant::now());
         }
     }
 
-    pub fn retain_warm<F>(&self, mut keep: F)
-    where
-        F: FnMut(&str) -> bool,
-    {
+    /// True iff `key`'s last load failure was within `backoff` — the caller
+    /// should SKIP re-warming it (it would just crash/churn again). A successful
+    /// load clears the marker via [`Self::mark_warm`].
+    pub fn is_load_failed_within(&self, key: &str, backoff: Duration) -> bool {
+        self.state.lock().is_ok_and(|state| {
+            state
+                .load_failed
+                .get(key)
+                .is_some_and(|failed| failed.elapsed() <= backoff)
+        })
+    }
+
+    pub fn clear_all_warm(&self) {
         if let Ok(mut state) = self.state.lock() {
-            state.warm.retain(|key, _| keep(key));
+            state.warm.clear();
         }
     }
 
@@ -146,5 +166,22 @@ mod tests {
         assert!(coordinator.is_warm_within("llm:qwen", Duration::from_secs(30)));
         coordinator.clear_warm("llm:qwen");
         assert!(!coordinator.is_warm("llm:qwen"));
+    }
+
+    #[test]
+    fn load_failure_backs_off_until_cleared_by_a_successful_warm() {
+        let coordinator = ModelSwapCoordinator::new();
+        // A crashing load is remembered → the periodic loop should back off.
+        coordinator.mark_load_failed("llm:gemma");
+        assert!(coordinator.is_load_failed_within("llm:gemma", Duration::from_secs(300)));
+        // An expired backoff window no longer suppresses re-warming.
+        assert!(!coordinator.is_load_failed_within("llm:gemma", Duration::from_secs(0)));
+        // A successful warm clears the failure (and marks warm).
+        coordinator.mark_warm("llm:gemma");
+        assert!(!coordinator.is_load_failed_within("llm:gemma", Duration::from_secs(300)));
+        assert!(coordinator.is_warm("llm:gemma"));
+        // Conversely, a fresh failure clears any stale warm marker.
+        coordinator.mark_load_failed("llm:gemma");
+        assert!(!coordinator.is_warm("llm:gemma"));
     }
 }

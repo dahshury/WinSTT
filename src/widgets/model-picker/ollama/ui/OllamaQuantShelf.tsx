@@ -4,12 +4,12 @@ import { BinaryCodeIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { OllamaLibraryTag, OllamaPullProgress } from "@/shared/api/models";
 import { Tooltip as ContentTooltip } from "@/shared/ui/tooltip";
-import {
-	type QuantDownloadAction,
-	type QuantDownloadSnapshot,
-	QuantShelf,
-	type QuantShelfEntry,
-} from "../../core/model-card/QuantShelf";
+import { QuantShelf } from "../../core/model-card/QuantShelf";
+import type {
+	QuantDownloadAction,
+	QuantDownloadSnapshot,
+	QuantShelfEntry,
+} from "../../core/model-card/quant-shelf-types";
 import { formatOllamaDisplayName } from "../lib/family-helpers";
 import {
 	findInstalledOllamaTag,
@@ -41,10 +41,41 @@ import type {
 // Ollama tags normalize into shared QuantShelf entries, so STT, TTS, and
 // Ollama share the same badge chrome and download controls.
 
+/**
+ * The percent the badge renders for a pull/paused frame. Prefers the ACTUAL
+ * downloaded bytes over the quant's KNOWN full size (`fullSizeBytes`) so the bar
+ * is one continuous, monotonic measure of the WHOLE download — every layer/file
+ * counted against a fixed denominator. Ollama streams its layers sequentially and
+ * its own aggregate `percent` uses a denominator that GROWS as each new layer is
+ * announced (so the raw percent dips when a file starts); anchoring to the known
+ * full size avoids that "reset". Falls back to the reported `percent` only when
+ * the byte counts or the full size aren't known yet, and pins to 100 on success.
+ */
+function ollamaProgressPercent(
+	progress: OllamaPullProgress,
+	fullSizeBytes: number | null,
+): number {
+	if (progress.status === "success") {
+		return 100;
+	}
+	if (
+		fullSizeBytes != null &&
+		fullSizeBytes > 0 &&
+		typeof progress.completed === "number"
+	) {
+		return Math.max(
+			0,
+			Math.min(100, Math.round((progress.completed / fullSizeBytes) * 100)),
+		);
+	}
+	return Math.max(0, Math.min(100, Math.round(progress.percent ?? 0)));
+}
+
 function deriveQuantBadgeState(
 	pull: OllamaPullProgress | undefined,
 	paused: PausedPullState | undefined,
 	installed: boolean,
+	fullSizeBytes: number | null,
 ): QuantBadgeState {
 	const isDownloading = pull !== undefined;
 	const cacheState = quantBadgeCacheState({
@@ -53,12 +84,9 @@ function deriveQuantBadgeState(
 	});
 	let progressPercent: number | null = null;
 	if (pull) {
-		progressPercent = Math.max(0, Math.min(100, Math.round(pull.percent ?? 0)));
+		progressPercent = ollamaProgressPercent(pull, fullSizeBytes);
 	} else if (paused) {
-		progressPercent = Math.max(
-			0,
-			Math.min(100, Math.round(paused.progress.percent ?? 0)),
-		);
+		progressPercent = ollamaProgressPercent(paused.progress, fullSizeBytes);
 	}
 	return { cacheState, isDownloading, progressPercent };
 }
@@ -108,10 +136,15 @@ function ollamaQuantCacheStatus(state: QuantBadgeState): string {
 
 function activePullSnapshot(
 	progressPercent: number | null,
+	downloadedBytes: number | null,
+	totalBytes: number | null,
 ): QuantDownloadSnapshot {
+	// Carry the REAL byte counts (Ollama's aggregate `completed` + the quant's full
+	// size) so the shared tooltip reports the actual download size instead of
+	// falling back to the scraped label, and the bar fills against the full total.
 	return {
-		downloadedBytes: 0,
-		totalBytes: 0,
+		downloadedBytes: downloadedBytes ?? 0,
+		totalBytes: totalBytes ?? 0,
 		progress: progressPercent,
 		paused: false,
 	};
@@ -141,14 +174,19 @@ function buildOllamaQuantEntries({
 		const installed = installedName !== undefined;
 		const pull = pullName ? pulls[pullName] : undefined;
 		const paused = pausedName ? pausedPulls[pausedName] : undefined;
-		const state = deriveQuantBadgeState(pull, paused, installed);
+		// The quant's KNOWN full download size: the scraped tag size (Ollama's
+		// reported total for this exact tag, covering all its layers), falling back
+		// to the live aggregate total while a pull is in flight. Drives the badge
+		// progress denominator AND the displayed/tooltip size so they agree.
+		const fullSizeBytes = tag.sizeBytes ?? pull?.total ?? null;
+		const state = deriveQuantBadgeState(pull, paused, installed, fullSizeBytes);
 		const isPaused = state.cacheState === "partial" && !state.isDownloading;
 		const canStartDownload = !(
 			state.isDownloading ||
 			installed ||
 			state.cacheState === "partial"
 		);
-		const fit = tag.sizeBytes ? getFit?.(tag.sizeBytes) : undefined;
+		const fit = fullSizeBytes ? getFit?.(fullSizeBytes) : undefined;
 		return {
 			actionQuant: actionName,
 			cacheProgress:
@@ -161,9 +199,13 @@ function buildOllamaQuantEntries({
 			canResumeDownload: isPaused,
 			canStartDownload,
 			download: state.isDownloading
-				? activePullSnapshot(state.progressPercent)
+				? activePullSnapshot(
+						state.progressPercent,
+						pull?.completed ?? null,
+						fullSizeBytes,
+					)
 				: undefined,
-			downloadSizeBytes: tag.sizeBytes ?? null,
+			downloadSizeBytes: fullSizeBytes,
 			...(tag.sizeLabel ? { downloadSizeLabel: tag.sizeLabel } : {}),
 			isActive: isSameOllamaTag(selectedName, tag.name) && installed,
 			isRecommended: false,
@@ -356,50 +398,3 @@ export function OllamaQuantShelf({
 		</div>
 	);
 }
-
-/**
- * Card-BODY click handler for a non-installed (`as="div"`) recommended/library
- * card: it selects/pulls the model's AUTO / recommended (default) tag — the bare
- * `<name>` / `<name>:<size>` with no precision suffix. Mirrors the STT picker,
- * where the "Auto" badge was removed and a card-body click selects the
- * recommended precision; the explicit per-quant badges keep their own clicks
- * (they `stopPropagation`, so they never reach here).
- *
- * The action matches a quant badge's own routing for the default tag: select it
- * when it's already installed, resume a paused pull, otherwise start the pull.
- * Returns `undefined` when the tag is actively downloading (no body action while
- * the default is in flight — the user uses the shelf controls to pause/cancel).
- */
-export { InstalledQuantShelf } from "./InstalledQuantShelf";
-export { LazyQuantShelf } from "./LazyQuantShelf";
-
-/** Library slug whose sibling tags to fetch + render (`gemma3`). */
-/** Tags to merge with fetched library tags. */
-/** Param size the card represents (`4b`). Filters the tag list. */
-/** Rendered until tags load — keeps a single badge visible so the shelf
- *  doesn't flicker empty for an installed model whose siblings are en route. */
-
-/** Lazily fetches the base-slug tags (idempotent in the store) and renders the
- *  quant shelf once they're available. Used by every card type so installed,
- *  recommended, and library rows all show the same precision strip. */
-
-/** Synthesize a one-tag list standing in for an installed model whose sibling
- *  library tags haven't loaded yet — the model's OWN tag, so the shelf shows at
- *  least the installed quant (muted-emerald, selectable) without flickering empty
- *  while {@link LazyQuantShelf} fetches the rest. Optional fields are omitted
- *  (not set to `undefined`) so the tag satisfies `exactOptionalPropertyTypes`. */
-
-/** The installed model's param size, as the token the library TAGS carry
- *  (`gemma3:4b` → `4b`). Ollama reports `details.parameterSize` as `4.3B`/`4.0B`
- *  — the rounded real param count, which never equals the tag token `4b` — so we
- *  parse the token out of the name and only fall back to the structured field
- *  when the name has no token (a bare `gemma3`). */
-
-/** The shelf rendered for an installed card. Lazily scrapes the family's sibling
- *  tags (gated to a few concurrent requests in the main process, so a picker-open
- *  burst can't overwhelm ollama.com) and renders every quant for the model's
- *  param size — the installed one tinted as cached/selectable, the rest as
- *  click-to-pull. Until the tags load (or if the scrape fails) the model's own
- *  quant shows as a placeholder so the shelf never flickers empty. */
-
-// forget-paused-pull handler — mirrors STT, whose delete hits a real delete.

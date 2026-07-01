@@ -1,15 +1,12 @@
 "use client";
 
-import { useTranslations } from "use-intl";
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+import {
+	QuantDeleteConfirmDialog,
+	type PendingQuantDelete,
+} from "../../ui/QuantDeleteConfirmDialog";
 
-export interface PendingDelete {
-	displayName: string;
-	modelId: string;
-	quantization: OnnxQuantization;
-	quantLabel: string;
-}
+export type PendingDelete = PendingQuantDelete<OnnxQuantization>;
 
 export interface DeleteQuantConfirmDialogProps {
 	onCancel: () => void;
@@ -17,42 +14,17 @@ export interface DeleteQuantConfirmDialogProps {
 	pending: PendingDelete | null;
 }
 
-/** Destructive confirmation rendered at the selector level (not inside the
- *  Combobox.Item) so Base UI's combobox dismiss + focus-trap rules don't fight
- *  the alert dialog's own focus management.
- *
- *  Uses the shared {@link ConfirmDialog} (→ {@link DialogShell}) so it matches
- *  every other confirm/dialog in the app — same surface, radius, padding,
- *  typography, backdrop, and the z-confirm tier (1300/1301, intentionally above
- *  z-popover/1100 where the Combobox renders, so the dialog never hides behind
- *  the open picker). AlertDialog under the hood keeps the destructive-confirm
- *  a11y semantics (``role="alertdialog"``, Esc dismiss, focus-trap, restore). */
 export function DeleteQuantConfirmDialog({
 	pending,
 	onCancel,
 	onConfirm,
 }: DeleteQuantConfirmDialogProps) {
-	const t = useTranslations("modelPicker");
 	return (
-		<ConfirmDialog
-			confirmLabel={t("delete")}
-			description={t.rich("deleteQuantDescription", {
-				quant: pending?.quantLabel ?? "",
-				name: pending?.displayName ?? "",
-				strong: (chunks) => (
-					<span className="font-medium text-foreground">{chunks}</span>
-				),
-			})}
+		<QuantDeleteConfirmDialog
+			descriptionKey="deleteQuantDescription"
+			onCancel={onCancel}
 			onConfirm={onConfirm}
-			onOpenChange={(next) => {
-				if (!next) {
-					onCancel();
-				}
-			}}
-			open={pending !== null}
-			title={t("deleteQuantTitle", {
-				quant: pending?.quantLabel ?? t("thisQuantFallback"),
-			})}
+			pending={pending}
 		/>
 	);
 }

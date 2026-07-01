@@ -1,19 +1,13 @@
 // Reference: server/src/stt_server/control_handler.py
 // `_handle_start_loopback`/`_handle_stop_loopback`.
-// Wraps managers::{LoopbackManager, DiarizationManager}.
+// Wraps managers::LoopbackManager.
 //
 // Listen-mode commands. start_listen turns on WASAPI loopback capture (system
-// audio → the same recording pipeline) and diarization; stop_listen turns both
-// off. The diarized subtitles + speaker segments are emitted as events.
+// audio → the same recording pipeline); stop_listen turns it off.
 //
 // IPC mapping (app/src/shared/api/native-bridge-adapter.ts):
 //   IPC.LOOPBACK_START (`loopback:start`, payload `{ deviceIndex, modelId }`) → start_listen
 //   IPC.LOOPBACK_STOP  (`loopback:stop`)                             → stop_listen
-//
-// The renderer never passes a `diarize` flag (the reference server reads the
-// `speakerDiarization` setting server-side); so start_listen reads it from the
-// persisted WinSTT settings (`general.speaker_diarization`), matching the
-// the reference split-of-concerns exactly.
 //
 // EVENTS (plain string events, lib_wiring §4b — byte-identical to WinSTT's IPC so
 // the reused renderer's `onLoopbackStarted`/`onLoopbackStopped` listeners in
@@ -30,14 +24,12 @@ use crate::winstt::commands::dictation::SttEvents;
 use crate::winstt::commands::events::names;
 use crate::winstt::commands::loopback::resolve_loopback_device;
 use crate::winstt::commands::runtime::{probe_cache_states, system_info_snapshot};
-use crate::winstt::commands::settings::read_settings;
 use crate::winstt::commands::stt::picker_accelerator;
-use crate::winstt::managers::{DiarizationManager, DownloadManager, LoopbackManager};
+use crate::winstt::managers::{DownloadManager, LoopbackManager};
 use crate::winstt::stt::cache_probe::engine_kind_for;
 
 /// `start_listen` — begin loopback capture on `device_index` (the positional
-/// ordinal from `loopback_list_devices`) and arm diarization when the persisted
-/// `general.speaker_diarization` setting is on.
+/// ordinal from `loopback_list_devices`).
 ///
 /// Emits `stt:loopback-started { deviceName }` on success so the renderer's
 /// `useListenMode` shows the active device name in the listen pill. The native
@@ -48,7 +40,6 @@ use crate::winstt::stt::cache_probe::engine_kind_for;
 pub async fn start_listen(
     app: AppHandle,
     loopback: State<'_, Arc<LoopbackManager>>,
-    diarization: State<'_, Arc<DiarizationManager>>,
     downloads: State<'_, Arc<DownloadManager>>,
     device_index: i32,
     model_id: String,
@@ -60,12 +51,6 @@ pub async fn start_listen(
     let model_id =
         ensure_cached_native_streaming_model(&app, downloads.inner().as_ref(), model_id.trim())
             .await?;
-
-    // Diarization follows the persisted setting (renderer doesn't pass a flag —
-    // it mirrors the reference server which reads `speakerDiarization` itself).
-    let diarize = read_settings(&app).general.speaker_diarization;
-    diarization.set_enabled(diarize);
-    diarization.reset();
 
     let selected_device = resolve_loopback_device(device_index)
         .ok_or_else(|| format!("loopback device index {device_index} is no longer available"))?;
@@ -147,33 +132,20 @@ async fn ensure_cached_native_streaming_model(
     Ok(canonical.to_string())
 }
 
-/// `stop_listen` — stop loopback capture + diarization. Emits
+/// `stop_listen` — stop loopback capture. Emits
 /// `stt:loopback-stopped` so the renderer clears the listen pill. Idempotent
 /// (mirrors the reference server, which only emits when capture was active — but
 /// the renderer's `setListening(false)` is itself idempotent, so an extra emit on
 /// an already-stopped session is harmless).
 #[tauri::command]
 #[specta::specta]
-pub fn stop_listen(
-    app: AppHandle,
-    loopback: State<'_, Arc<LoopbackManager>>,
-    diarization: State<'_, Arc<DiarizationManager>>,
-) {
-    stop_listen_runtime(
-        &app,
-        loopback.inner().as_ref(),
-        diarization.inner().as_ref(),
-    );
+pub fn stop_listen(app: AppHandle, loopback: State<'_, Arc<LoopbackManager>>) {
+    stop_listen_runtime(&app, loopback.inner().as_ref());
 }
 
-pub(crate) fn stop_listen_runtime(
-    app: &AppHandle,
-    loopback: &LoopbackManager,
-    diarization: &DiarizationManager,
-) {
+pub(crate) fn stop_listen_runtime(app: &AppHandle, loopback: &LoopbackManager) {
     let was_capturing = loopback.is_capturing();
     loopback.stop();
-    diarization.set_enabled(false);
     set_main_window_listen_mode(app, false);
     if was_capturing {
         SttEvents::vad_stop(app);

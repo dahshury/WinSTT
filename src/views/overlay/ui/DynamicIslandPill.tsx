@@ -229,7 +229,7 @@ function DynamicIslandPill(args: IslandStateArgs & { revealed: boolean }) {
 	// `revealed` is the sticky "actual words have been said this session" latch
 	// (shared with the floating-bottom pill via `computePillReveal` +
 	// `useStickyPillReveal`).
-	// Until it flips true the island stays collapsed to `empty` (0Ã—0, invisible)
+	// Until it flips true the island stays collapsed to `empty` (0×0, invisible)
 	// so it never pops on the bare recording-start before the first word — the
 	// same gate the floating-bottom chip uses. Once revealed, the normal size
 	// state-machine drives the width (it won't collapse back to `empty` mid-

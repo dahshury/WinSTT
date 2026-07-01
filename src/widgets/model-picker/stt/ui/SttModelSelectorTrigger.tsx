@@ -15,7 +15,7 @@ import {
 	SwitchingFromToRow,
 	SwitchingPill,
 } from "@/shared/ui/switching-trigger";
-import { publicAsset } from "../../lib/public-asset";
+import { publicAsset } from "@/shared/lib/public-asset";
 import {
 	getAuthorLabel,
 	getFamilyConfig,

@@ -93,6 +93,7 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
         }
         "sense_voice" => EngineKind::SenseVoiceCtc,
         "dolphin" => EngineKind::DolphinCtc,
+        "qwen3" => EngineKind::Qwen3Asr,
         "t-one" => EngineKind::ToneCtc,
         "kaldi" if has("streaming") => EngineKind::KaldiTransducerStreaming, // sherpa streaming zipformer2
         "kaldi" => EngineKind::KaldiTransducer, // vosk + zipformer both = transducer file set
@@ -242,7 +243,7 @@ pub struct ProbeModel {
 /// drives it on the shared runtime. A scan failure (no cache dir yet, IO error) degrades to an EMPTY
 /// map → every model reads `not_cached`, which is the honest cold-start answer.
 ///
-/// PICKER-OPEN HOT PATH (audit #7): this is the list path (`stt_list_models_with_state`). It does NOT
+/// PICKER-OPEN HOT PATH: this is the list path (`stt_list_models_with_state`). It does NOT
 /// run `verify_external_data_complete` — that stat/parses every cached `.onnx` (the Rust analogue of
 /// the documented Python `list_models_onnx_parse_loop_starvation` bug). Every `.onnx` present on
 /// disk is treated as complete here; the LOAD path (`resolver::resolve` → `all_onnx_complete`) does
@@ -322,9 +323,9 @@ mod tests {
         );
         assert_eq!(
             engine_kind_for(
-                "granite-speech-4.1-2b",
+                "granite-speech-4.1-2b-plus",
                 "granite",
-                "smcleod/ibm-granite-speech-4.1-2b-onnx"
+                "smcleod/ibm-granite-speech-4.1-2b-plus-onnx"
             ),
             EngineKind::GraniteSpeechAr
         );
@@ -355,6 +356,10 @@ mod tests {
         assert_eq!(
             engine_kind_for("alphacep/vosk-model-ru", "kaldi", "x"),
             EngineKind::KaldiTransducer
+        );
+        assert_eq!(
+            engine_kind_for("qwen3-asr-0.6b", "qwen3", "andrewleech/qwen3-asr-0.6b-onnx"),
+            EngineKind::Qwen3Asr
         );
     }
 
@@ -429,7 +434,7 @@ mod tests {
             ("int8/embed_tokens.onnx".to_string(), 400, true),
         ];
         let (state, bytes) = quant_state(
-            "granite-speech-4.1-2b",
+            "granite-speech-4.1-2b-plus",
             EngineKind::GraniteSpeechAr,
             Quantization::Int8,
             &files,
@@ -438,7 +443,7 @@ mod tests {
         assert_eq!(bytes, 1000);
 
         let (default_state, _) = quant_state(
-            "granite-speech-4.1-2b",
+            "granite-speech-4.1-2b-plus",
             EngineKind::GraniteSpeechAr,
             Quantization::Default,
             &files,

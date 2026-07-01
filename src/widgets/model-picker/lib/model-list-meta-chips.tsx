@@ -20,7 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
 import {
 	type FeatureSource,
 	hasDisplayableFeatures,
-} from "./endpoint-feature-icons-test-helpers";
+} from "./endpoint-feature-icons";
 import {
 	getPricingClassName,
 	getPricingLabel,

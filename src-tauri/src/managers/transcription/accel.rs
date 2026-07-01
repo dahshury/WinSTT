@@ -1,7 +1,7 @@
 //! Accelerator settings reporting for the WinSTT-owned STT engine.
 
 use crate::settings::{OrtAcceleratorSetting, WhisperAcceleratorSetting};
-use crate::winstt::commands::settings::read_settings_raw;
+use crate::winstt::settings_store::read_settings_raw;
 use serde::Serialize;
 use specta::Type;
 
@@ -68,7 +68,6 @@ fn whisper_accelerator_label(value: WhisperAcceleratorSetting) -> String {
     match value {
         WhisperAcceleratorSetting::Auto => "auto",
         WhisperAcceleratorSetting::Cpu => "cpu",
-        WhisperAcceleratorSetting::Gpu => "gpu",
     }
     .to_string()
 }

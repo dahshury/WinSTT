@@ -36,14 +36,6 @@ $prepend = @(
 $env:PATH = "$prepend;$env:PATH"
 $env:LIBCLANG_PATH = 'C:\Program Files\LLVM\bin'
 
-# Force the first-run onboarding wizard to open on EVERY dev launch, regardless of
-# the persisted `general.onboarded` flag (see is_force_onboarding_env_flag_set in
-# src-tauri/src/lib.rs). Handy while iterating on the wizard — finishing it still
-# sets onboarded=true, but this env var overrides that on the next launch so the
-# wizard always reappears. Comment this line out to return to normal dev behaviour
-# (onboarding only on a genuinely un-onboarded profile).
-$env:WINSTT_FORCE_ONBOARDING = '1'
-
 Set-Location $repoRoot
 
 # Kill only this repo's leftover debug app first. Packaged/portable WinSTT may be

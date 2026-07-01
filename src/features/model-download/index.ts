@@ -1,12 +1,17 @@
 export { useDownloadListener } from "./api/use-download-listener";
 export {
-	mergeProgressIntoSnapshot,
-	mergeSeedIntoSnapshot,
 	type ProgressSnapshotFields,
 	type QuantCacheSeedSource,
+	type QuantDownloadAction,
 	type QuantDownloadSeed,
-	quantDownloadSeedFromCache,
-} from "./lib/download-progress-core";
+	type QuantDownloadSnapshot,
+} from "@/shared/lib/download-progress-core";
+export {
+	aggregateDownloadEntries,
+	collectDownloadEntries,
+	type DownloadAggregate,
+	type DownloadEntry,
+} from "./model/download-aggregate";
 export {
 	isQuantDownloading,
 	type QuantDownloadState,
@@ -19,9 +24,9 @@ export {
 	type SttDeleteRecovery,
 	type SttSwitchTarget,
 } from "./model/stt-quant-delete-policy";
-export {
-	type DownloadAggregate,
-	useDownloadAggregate,
-} from "./model/use-download-aggregate";
+export { useDownloadAggregate } from "./model/use-download-aggregate";
 export { useQuantActions } from "./model/use-quant-actions";
-export { DownloadConfirmationDialog } from "./ui/DownloadConfirmationDialog";
+export {
+	DownloadConfirmationDialog,
+	type DownloadConfirmationDialogProps,
+} from "./ui/DownloadConfirmationDialog";

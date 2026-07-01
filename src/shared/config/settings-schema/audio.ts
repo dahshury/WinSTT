@@ -5,7 +5,7 @@ export const audioSettingsSchema = z.object({
 	sampleRate: z.number().int().default(16_000),
 	bufferSize: z.number().int().default(512),
 	// Trip threshold = 1 - sileroSensitivity (see server SileroVad.detect).
-	// Default 0.7 → trip > 0.3, the reference threshold. The previous default 0.4
+	// Default 0.7 → trip > 0.3, the tuned threshold. The previous default 0.4
 	// (→ trip > 0.6) silently dropped quiet/distant voices — Silero's
 	// confidence on far-mic speech routinely lives in 0.3–0.6, and 0.4
 	// sits on the wrong side of that band. Per-device adaptive
@@ -72,7 +72,7 @@ export const audioSettingsSchema = z.object({
 	// before the pause + stop sequence runs, so trailing syllables that
 	// escape just after the key-up still land in the buffer. 0 (default)
 	// preserves the historical snap-stop behaviour; capped at 2000 ms so
-	// a bad value can't lock the recorder. Mirrors the reference
+	// a bad value can't lock the recorder. Mirrors the backend
 	// `extra_recording_buffer_ms`. `.catch(0)` keeps older builds (no
 	// key) from wiping the whole audio section on first read.
 	extraRecordingBufferMs: z.number().int().min(0).max(2000).default(0).catch(0),

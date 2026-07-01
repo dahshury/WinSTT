@@ -8,7 +8,6 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { cn } from "@/shared/lib/cn";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import {
 	REASONING_EFFORT_OPTIONS,
@@ -69,14 +68,12 @@ export function ReasoningEffortDropdown({
 			)}
 			data-slot="reasoning-effort-dropdown"
 		>
-			<ElevatedSurface inline>
-				<Switcher
-					fullWidth={fullWidth}
-					onChange={onChange}
-					options={REASONING_EFFORT_SWITCHER_OPTIONS}
-					value={value}
-				/>
-			</ElevatedSurface>
+			<Switcher
+				fullWidth={fullWidth}
+				onChange={onChange}
+				options={REASONING_EFFORT_SWITCHER_OPTIONS}
+				value={value}
+			/>
 		</fieldset>
 	);
 }

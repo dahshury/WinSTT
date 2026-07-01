@@ -17,7 +17,7 @@ const GB = 1_000_000_000;
  *   - Llama 4 is MoE-only (Scout 67 GB+), so **llama3.2** remains the latest SMALL
  *     Llama — kept, not outdated.
  *   - SmolLM3 has no official library entry (404), so **smollm2** is the latest
- *     SmolLM on Ollama.
+ *     SmolLM on Ollama — all three library sizes (135m, 360m, 1.7b) are offered.
  *   - gemma4 is offered at the current local sizes requested from Ollama:
  *     `e2b`, `e4b`, and full `12b`.
  *   - Reasoning/"thinking" models are excluded by default (a `<think>` preamble
@@ -75,6 +75,16 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		sizeBytes: Math.round(0.731 * GB),
 		description:
 			"Liquid AI LFM2.5 Thinking 1.2B. Compact hybrid reasoning model with a 125K context window for longer cleanup and rewrite tasks.",
+		tags: ["fast", "instruct"],
+	},
+	{
+		name: "smollm2:1.7b",
+		displayName: "SmolLM 2 1.7B",
+		family: "smollm",
+		paramSize: "1.7B",
+		sizeBytes: Math.round(1.8 * GB),
+		description:
+			"Hugging Face SmolLM 2 1.7B instruct. The largest SmolLM 2 — noticeably stronger instruction-following while still tiny.",
 		tags: ["fast", "instruct"],
 	},
 	{

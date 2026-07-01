@@ -1,18 +1,14 @@
-// Deep-import the lightweight cache helpers (not the `@/widgets/model-picker` barrel) so this
-// main-window-reachable dialog doesn't drag the whole model-picker UI into the
-// main entry chunk via the barrel re-export.
+import type { ReactNode } from "react";
+import { useTranslations } from "use-intl";
 import {
 	resolveEffectiveQuant,
 	resolveQuantCache,
-} from "@/widgets/model-picker/stt/lib/cache-helpers";
-import type { ReactNode } from "react";
-import { useTranslations } from "use-intl";
-import type {
-	useCatalogStore,
-	useModelStateStore,
+	type ModelStatesById as StatesById,
+	type ModelSystemInfo as SystemInfo,
+	type useCatalogStore,
 } from "@/entities/model-catalog";
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import { formatBytes } from "@/shared/lib/format-bytes";
+import { formatBytes, formatBytesPerSecond } from "@/shared/lib/format-bytes";
 import { surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { DialogActionButton } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
@@ -26,8 +22,6 @@ import {
 	useDownloadStore,
 } from "../model/download-store";
 
-type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
-type SystemInfo = ReturnType<typeof useModelStateStore.getState>["systemInfo"];
 type DownloadT = ReturnType<typeof useTranslations<"download">>;
 
 /** "12 MB / 30 MB · 2 MB/s" — drives the right-side caption on the dictation
@@ -43,14 +37,12 @@ function formatStatsLine(
 			`${formatBytes(downloaded) ?? "0 B"} / ${formatBytes(total) ?? "0 B"}`,
 		);
 	}
-	if (speed > 0) {
-		if (speed < 1024) {
-			parts.push(`${speed.toFixed(0)} B/s`);
-		} else if (speed < 1024 * 1024) {
-			parts.push(`${(speed / 1024).toFixed(1)} KB/s`);
-		} else {
-			parts.push(`${(speed / (1024 * 1024)).toFixed(1)} MB/s`);
-		}
+	const speedLabel = formatBytesPerSecond(speed, {
+		minUnit: "B",
+		mbDecimals: 1,
+	});
+	if (speedLabel) {
+		parts.push(speedLabel);
 	}
 	return parts.join(" · ");
 }

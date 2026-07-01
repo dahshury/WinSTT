@@ -39,7 +39,11 @@ import {
 	getOllamaPublisher,
 	getOllamaPublisherBySlug,
 } from "../lib/family-helpers";
-import { libraryBaseSlug, paramSizeFromName } from "../lib/quant-shelf-helpers";
+import {
+	isSameOllamaTag,
+	libraryBaseSlug,
+	paramSizeFromName,
+} from "../lib/quant-shelf-helpers";
 import {
 	OLLAMA_SORT_HEADER_LABEL,
 	type OllamaSortKey,
@@ -60,11 +64,9 @@ import {
 	RecommendedStar,
 	WontFitChip,
 } from "./OllamaModelChips";
-import {
-	InstalledQuantShelf,
-	LazyQuantShelf,
-	OllamaQuantShelf,
-} from "./OllamaQuantShelf";
+import { InstalledQuantShelf } from "./InstalledQuantShelf";
+import { LazyQuantShelf } from "./LazyQuantShelf";
+import { OllamaQuantShelf } from "./OllamaQuantShelf";
 import { defaultTagBodyClick } from "./OllamaQuantShelf.helpers";
 import type {
 	MakerGroupDeps,
@@ -634,9 +636,27 @@ interface RecommendedRowProps {
 	shelfDeps: QuantShelfDeps;
 }
 
-/** The recommended model's param-count + disk-size facts as a middot meta-line. */
+/** The recommended/default tag's accurate download size: the SCRAPED size of the
+ *  exact tag a card-body click pulls (Ollama's reported total for all its layers),
+ *  falling back to the catalog's rounded estimate until the family's tags load. So
+ *  the card size, the badge tooltip, and the actual download all report the same
+ *  number. */
+function recommendedDownloadSizeBytes(
+	model: RecommendedOllamaModel,
+	getTags: ((baseSlug: string) => readonly OllamaLibraryTag[]) | undefined,
+): number {
+	const scraped = getTags
+		? getTags(libraryBaseSlug(model.name)).find((tag) =>
+				isSameOllamaTag(tag.name, model.name),
+			)?.sizeBytes
+		: undefined;
+	return scraped ?? model.sizeBytes;
+}
+
+/** The recommended model's param-count + download-size facts as a middot meta-line. */
 function buildRecommendedMetaEntries(
 	model: RecommendedOllamaModel,
+	sizeBytes: number,
 ): MetaEntry[] {
 	return [
 		{
@@ -648,8 +668,8 @@ function buildRecommendedMetaEntries(
 		{
 			key: "size",
 			icon: HardDriveIcon,
-			value: formatOllamaSize(model.sizeBytes),
-			tooltip: "Disk size",
+			value: formatOllamaSize(sizeBytes),
+			tooltip: "Download size",
 		},
 	];
 }
@@ -684,6 +704,10 @@ function RecommendedRow({
 	// folded in. Filter by the tag's param token (matching `model.paramSize`'s
 	// size), falling back to all when unparseable.
 	const paramSize = paramSizeFromName(model.name);
+	const downloadSizeBytes = recommendedDownloadSizeBytes(
+		model,
+		shelfDeps.getTags,
+	);
 	const activePullName = activePullNameForRow(
 		shelfDeps.pulls,
 		model.name,
@@ -723,7 +747,7 @@ function RecommendedRow({
 				onToggle: () => onToggleFavorite(model.name),
 			}}
 			makerIcon={<OllamaMakerIcon slug={recPublisher.slug} />}
-			meta={buildRecommendedMetaEntries(model)}
+			meta={buildRecommendedMetaEntries(model, downloadSizeBytes)}
 			name={model.displayName}
 			// Card-body click = use the recommended (default) tag: `model.name` is the
 			// bare recommended pull tag (e.g. `gemma3:4b`). Select it if installed,

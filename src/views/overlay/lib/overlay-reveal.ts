@@ -19,7 +19,7 @@ import { type DynamicIslandSize } from "@/shared/ui/dynamic-island";
  *      (`compactMedium`) and let the indicator replace the visualizer in
  *      place — ballooning to the full-width text surface for content that
  *      doesn't need it is the "island grows for nothing" regression.
- *   2. `!isRecordingActive` collapses to `empty` (0Ã—0) unless thinking —
+ *   2. `!isRecordingActive` collapses to `empty` (0×0) unless thinking —
  *      same gate as the legacy floating pill, so the island disappears
  *      between dictation sessions.
  *   3. Captioned recording uses `long` (460px wide) — the natural width
@@ -74,9 +74,6 @@ export function computeIslandSize(args: {
 export function computePillReveal(args: {
 	isRecordingActive: boolean;
 	isSpeaking: boolean;
-	hasText: boolean;
-	isThinking: boolean;
-	isTranscribing?: boolean;
 }): boolean {
 	return args.isRecordingActive && args.isSpeaking;
 }

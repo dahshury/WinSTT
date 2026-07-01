@@ -144,16 +144,8 @@ impl WakeWordDetector {
         label.trim().replace('_', " ")
     }
 
-    /// Number of active keywords this detector is armed for.
-    pub fn keyword_count(&self) -> usize {
-        self.keywords.len()
-    }
-
     /// Reset the streaming state (drop any partial decode). Fail-soft.
     pub fn reset(&mut self) {
         self.spotter.reset(&self.stream);
     }
-
-    /// No-op today (sherpa owns the session); kept for `IWakeWordDetector` parity.
-    pub fn cleanup(&mut self) {}
 }

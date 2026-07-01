@@ -5,8 +5,8 @@
  * "12.0 KB", "512 B"). Behaviour is tuned per call site via {@link FormatBytesOptions}
  * so every existing consumer keeps byte-identical output.
  *
- * The tier ladder is data-driven (a static table + `Array.find`) so the public
- * function stays at McCabe complexity ≤ 3 — no `if/else-if` tower.
+ * The tier ladder is data-driven (a static table + `Array.find`) rather than an
+ * `if/else-if` tower.
  */
 
 const KIB = 1024;
@@ -109,4 +109,21 @@ export function formatBytes(
 	}
 	const tiers = buildTiers({ ...DEFAULTS, ...options });
 	return renderTier(bytes, pickTier(bytes, tiers));
+}
+
+/**
+ * Format a transfer rate (bytes per second). Delegates to {@link formatBytes}
+ * — so it is always base-1024, consistent with every byte size in the app —
+ * then appends the `"/s"` suffix. Non-positive / non-finite / nullish input
+ * returns `null`, matching `formatBytes`.
+ *
+ * Per-tier precision is tuned via {@link FormatBytesOptions} exactly like
+ * `formatBytes`, so each download UI keeps its own decimals.
+ */
+export function formatBytesPerSecond(
+	bytesPerSecond: number | null | undefined,
+	options: FormatBytesOptions = {},
+): string | null {
+	const formatted = formatBytes(bytesPerSecond, options);
+	return formatted === null ? null : `${formatted}/s`;
 }

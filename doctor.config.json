@@ -2,5 +2,17 @@
 	"$schema": "https://react.doctor/schema/config.json",
 	"rules": {
 		"react-doctor/public-debug-artifact": "off"
+	},
+	"ignore": {
+		"overrides": [
+			{
+				"files": ["tools/perf/measure-page-load.mjs"],
+				"rules": ["deslop/unused-file"]
+			},
+			{
+				"files": ["package.json"],
+				"rules": ["deslop/unused-dev-dependency"]
+			}
+		]
 	}
 }

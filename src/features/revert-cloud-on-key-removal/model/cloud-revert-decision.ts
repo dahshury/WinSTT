@@ -1,5 +1,10 @@
 import { providerOf } from "@/entities/cloud-stt-provider";
-import { type ModelInfo, pickDefaultSttModel } from "@/entities/model-catalog";
+import {
+	type CatalogModels,
+	type ModelInfo,
+	type ModelStatesById as StatesById,
+	pickDefaultSttModel,
+} from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS } from "@/entities/setting";
 import type { CloudSttProvider } from "@/shared/api/models";
 import type { TranscriberBackend } from "@/shared/api/schema.zod";
@@ -41,9 +46,6 @@ export interface SttTarget {
 	backend: TranscriberBackend;
 	model: string;
 }
-
-type CatalogModels = Parameters<typeof pickDefaultSttModel>[0];
-type StatesById = Parameters<typeof pickDefaultSttModel>[1];
 
 /**
  * A key counts as "cleared" only on a non-whitespace → empty transition.

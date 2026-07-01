@@ -164,49 +164,6 @@ pub enum AutoSubmitKey {
     CmdEnter,
 }
 
-#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum KeyboardImplementation {
-    Tauri,
-}
-
-impl Default for KeyboardImplementation {
-    fn default() -> Self {
-        KeyboardImplementation::Tauri
-    }
-}
-
-impl<'de> Deserialize<'de> for KeyboardImplementation {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct KeyboardImplementationVisitor;
-
-        impl<'de> Visitor<'de> for KeyboardImplementationVisitor {
-            type Value = KeyboardImplementation;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("a keyboard shortcut backend name")
-            }
-
-            fn visit_str<E: de::Error>(self, _value: &str) -> Result<KeyboardImplementation, E> {
-                Ok(KeyboardImplementation::Tauri)
-            }
-        }
-
-        deserializer.deserialize_any(KeyboardImplementationVisitor)
-    }
-}
-
-impl From<KeyboardImplementation> for &'static str {
-    fn from(value: KeyboardImplementation) -> Self {
-        match value {
-            KeyboardImplementation::Tauri => "tauri",
-        }
-    }
-}
-
 impl Default for ModelUnloadTimeout {
     fn default() -> Self {
         // Match the renderer default: unload resident local models after 15 minutes idle.
@@ -237,6 +194,35 @@ impl Default for AutoSubmitKey {
 }
 
 impl ModelUnloadTimeout {
+    /// Stable, lossless u8 tag for atomic storage. Kept in sync with `from_tag`.
+    fn to_tag(self) -> u8 {
+        match self {
+            ModelUnloadTimeout::Never => 0,
+            ModelUnloadTimeout::Immediately => 1,
+            ModelUnloadTimeout::Min2 => 2,
+            ModelUnloadTimeout::Min5 => 3,
+            ModelUnloadTimeout::Min10 => 4,
+            ModelUnloadTimeout::Min15 => 5,
+            ModelUnloadTimeout::Hour1 => 6,
+            ModelUnloadTimeout::Sec15 => 7,
+        }
+    }
+
+    /// Inverse of `to_tag`; an unknown tag falls back to the default policy.
+    fn from_tag(tag: u8) -> Self {
+        match tag {
+            0 => ModelUnloadTimeout::Never,
+            1 => ModelUnloadTimeout::Immediately,
+            2 => ModelUnloadTimeout::Min2,
+            3 => ModelUnloadTimeout::Min5,
+            4 => ModelUnloadTimeout::Min10,
+            5 => ModelUnloadTimeout::Min15,
+            6 => ModelUnloadTimeout::Hour1,
+            7 => ModelUnloadTimeout::Sec15,
+            _ => ModelUnloadTimeout::default(),
+        }
+    }
+
     pub fn to_minutes(self) -> Option<u64> {
         match self {
             ModelUnloadTimeout::Never => None,
@@ -260,37 +246,38 @@ impl ModelUnloadTimeout {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum SoundTheme {
-    Marimba,
-    Pop,
-    Custom,
+/// Lock-free atomic cell holding a [`ModelUnloadTimeout`], for managers that cache
+/// the shared unload policy and update it from settings runtime hooks without a
+/// `Mutex`. Storage is a lossless u8 tag (see `ModelUnloadTimeout::to_tag`), so the
+/// exact variant round-trips — unlike a raw seconds encoding, which would collapse
+/// distinct finite variants. Replaces the bespoke per-manager atomic codecs.
+#[derive(Debug)]
+pub struct AtomicModelUnloadTimeout(std::sync::atomic::AtomicU8);
+
+impl AtomicModelUnloadTimeout {
+    pub fn new(timeout: ModelUnloadTimeout) -> Self {
+        Self(std::sync::atomic::AtomicU8::new(timeout.to_tag()))
+    }
+
+    pub fn load(&self) -> ModelUnloadTimeout {
+        ModelUnloadTimeout::from_tag(self.0.load(std::sync::atomic::Ordering::Acquire))
+    }
+
+    pub fn store(&self, timeout: ModelUnloadTimeout) {
+        self.0
+            .store(timeout.to_tag(), std::sync::atomic::Ordering::Release);
+    }
 }
 
-impl SoundTheme {
-    fn as_str(&self) -> &'static str {
-        match self {
-            SoundTheme::Marimba => "marimba",
-            SoundTheme::Pop => "pop",
-            SoundTheme::Custom => "custom",
-        }
+impl From<ModelUnloadTimeout> for AtomicModelUnloadTimeout {
+    fn from(timeout: ModelUnloadTimeout) -> Self {
+        Self::new(timeout)
     }
+}
 
-    #[expect(
-        clippy::wrong_self_convention,
-        reason = "to_* accessor on a Copy enum; renaming is a public API change"
-    )]
-    pub fn to_start_path(&self) -> String {
-        format!("resources/{}_start.wav", self.as_str())
-    }
-
-    #[expect(
-        clippy::wrong_self_convention,
-        reason = "to_* accessor on a Copy enum; renaming is a public API change"
-    )]
-    pub fn to_stop_path(&self) -> String {
-        format!("resources/{}_stop.wav", self.as_str())
+impl From<&AtomicModelUnloadTimeout> for ModelUnloadTimeout {
+    fn from(atomic: &AtomicModelUnloadTimeout) -> Self {
+        atomic.load()
     }
 }
 
@@ -311,12 +298,27 @@ impl Default for TypingTool {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum WhisperAcceleratorSetting {
     Auto,
     Cpu,
-    Gpu,
+}
+
+// Tolerant deserialization: legacy on-disk configs may still carry the removed
+// "gpu" value (or any other unknown string). Map anything that is not an exact
+// known variant to `Auto` instead of erroring, so old settings keep loading.
+impl<'de> Deserialize<'de> for WhisperAcceleratorSetting {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(match raw.as_str() {
+            "cpu" => WhisperAcceleratorSetting::Cpu,
+            _ => WhisperAcceleratorSetting::Auto,
+        })
+    }
 }
 
 impl Default for WhisperAcceleratorSetting {
@@ -388,11 +390,6 @@ pub struct AppSettings {
     // live reader. `#[serde(default)]` on the remaining fields means an older
     // settings_store.json that still carries `"push_to_talk"` deserializes fine (the unknown
     // key is ignored).
-    pub audio_feedback: bool,
-    #[serde(default = "default_audio_feedback_volume")]
-    pub audio_feedback_volume: f32,
-    #[serde(default = "default_sound_theme")]
-    pub sound_theme: SoundTheme,
     #[serde(default = "default_update_checks_enabled")]
     pub update_checks_enabled: bool,
     #[serde(default = "default_model")]
@@ -414,11 +411,7 @@ pub struct AppSettings {
     #[serde(default = "default_log_level")]
     pub log_level: LogLevel,
     #[serde(default)]
-    pub custom_words: Vec<String>,
-    #[serde(default)]
     pub model_unload_timeout: ModelUnloadTimeout,
-    #[serde(default = "default_word_correction_threshold")]
-    pub word_correction_threshold: f64,
     #[serde(default)]
     pub paste_method: PasteMethod,
     #[serde(default)]
@@ -445,19 +438,12 @@ pub struct AppSettings {
     pub mute_while_recording: bool,
     #[serde(default)]
     pub append_trailing_space: bool,
-    #[serde(default = "default_app_language")]
-    pub app_language: String,
-    #[serde(default)]
-    pub experimental_enabled: bool,
-    #[serde(default)]
-    pub keyboard_implementation: KeyboardImplementation,
     #[serde(default = "default_show_tray_icon")]
     pub show_tray_icon: bool,
     #[serde(default = "default_paste_delay_ms")]
     pub paste_delay_ms: u64,
     #[serde(default = "default_typing_tool")]
     pub typing_tool: TypingTool,
-    pub external_script_path: Option<String>,
     #[serde(default)]
     pub whisper_accelerator: WhisperAcceleratorSetting,
     #[serde(default)]

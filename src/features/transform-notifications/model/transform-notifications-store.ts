@@ -1,4 +1,7 @@
-import { create } from "zustand";
+import {
+	createTransientNotificationStore,
+	type TransientNotificationMeta,
+} from "@/shared/lib/create-transient-notification-store";
 
 /**
  * Transient in-memory notifications surfaced when a Transform finishes
@@ -6,34 +9,12 @@ import { create } from "zustand";
  * store doesn't persist; it just holds one entry at a time — newer events
  * overwrite older ones.
  */
-export interface TransformNotification {
+export interface TransformNotification extends TransientNotificationMeta {
 	after?: string;
 	before?: string;
-	createdAt: number;
-	id: string;
 	kind: "applied" | "failed" | "no-selection";
 	reason?: string;
 }
 
-interface TransformNotificationState {
-	clear: () => void;
-	current: TransformNotification | null;
-	show: (notification: Omit<TransformNotification, "createdAt" | "id">) => void;
-}
-
-let nextId = 0;
-
-export const useTransformNotifications = create<TransformNotificationState>(
-	(set) => ({
-		current: null,
-		show: (n) =>
-			set({
-				current: {
-					...n,
-					id: `${Date.now()}-${++nextId}`,
-					createdAt: Date.now(),
-				},
-			}),
-		clear: () => set({ current: null }),
-	}),
-);
+export const useTransformNotifications =
+	createTransientNotificationStore<TransformNotification>();

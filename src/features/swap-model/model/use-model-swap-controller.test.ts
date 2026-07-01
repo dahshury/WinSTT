@@ -106,6 +106,35 @@ describe("buildMainSwapPatch / buildRealtimeSwapPatch", () => {
 		});
 	});
 
+	test("model switch drops a precision the new model does not offer to default", () => {
+		// Regression: tiny ships q4, parakeet only ships ["", "int8"]. Switching to
+		// parakeet must NOT carry q4 (which made the settings:save fail) — it resets
+		// to the new model's default precision.
+		const out = t.buildMainSwapPatch(
+			"parakeet",
+			{ backend: "onnx_asr", availableQuantizations: ["", "int8"] } as never,
+			undefined, // no explicit precision pick
+			false, // precision not changing on its own
+			"q4", // carried over from the previous model
+		);
+		expect(out).toEqual({
+			model: "parakeet",
+			backend: "onnx_asr",
+			onnxQuantization: "",
+		});
+	});
+
+	test("model switch keeps a precision the new model offers", () => {
+		const out = t.buildMainSwapPatch(
+			"tiny",
+			{ backend: "onnx_asr", availableQuantizations: ["", "q4"] } as never,
+			undefined,
+			false,
+			"q4", // offered by the new model → left as-is, no override
+		);
+		expect(out).toEqual({ model: "tiny", backend: "onnx_asr" });
+	});
+
 	test("realtime patch swaps just the realtime model", () => {
 		expect(t.buildRealtimeSwapPatch("rt", undefined, false)).toEqual({
 			realtimeModel: "rt",
@@ -437,7 +466,7 @@ describe("runIssueSwap — cloud persistence (regression: cloud combo showed no 
 	});
 });
 
-describe("runHandleMainChange / runHandleRealtimeChange", () => {
+describe("runHandleChange", () => {
 	test("pure quant swap routes through the gate so the cache check + download dialog can fire", () => {
 		// Old behavior wrote settings.onnxQuantization synchronously via update,
 		// skipping the cache check. That triggered a reload with an uncached
@@ -448,7 +477,7 @@ describe("runHandleMainChange / runHandleRealtimeChange", () => {
 		// reload path is allowed to run with files that aren't on disk.
 		const update = mock(() => undefined);
 		const gateWithAssessment = mock(() => Promise.resolve());
-		t.runHandleMainChange({
+		t.runHandleChange({
 			currentModel: "m",
 			currentQuantization: "int8",
 			gateWithAssessment: gateWithAssessment as never,
@@ -469,7 +498,7 @@ describe("runHandleMainChange / runHandleRealtimeChange", () => {
 		const update = mock(() => undefined);
 		const gateWithAssessment = mock(() => Promise.resolve());
 		const issueSwap = mock(() => undefined);
-		t.runHandleMainChange({
+		t.runHandleChange({
 			currentModel: "m",
 			currentQuantization: "int8",
 			gateWithAssessment: gateWithAssessment as never,
@@ -486,7 +515,7 @@ describe("runHandleMainChange / runHandleRealtimeChange", () => {
 
 	test("dispatches when value changes", () => {
 		const issueSwap = mock(() => undefined);
-		t.runHandleMainChange({
+		t.runHandleChange({
 			currentModel: "prev",
 			currentQuantization: "int8",
 			gateWithAssessment: mock(() => Promise.resolve()) as never,
@@ -502,7 +531,7 @@ describe("runHandleMainChange / runHandleRealtimeChange", () => {
 	test("realtime path mirrors main path", () => {
 		const update = mock(() => undefined);
 		const gateWithAssessment = mock(() => Promise.resolve());
-		t.runHandleRealtimeChange({
+		t.runHandleChange({
 			currentModel: "rt",
 			currentQuantization: "int8",
 			gateWithAssessment: gateWithAssessment as never,

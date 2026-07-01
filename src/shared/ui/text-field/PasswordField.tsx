@@ -6,8 +6,10 @@ import { cn } from "@/shared/lib/cn";
 import { IconSwap } from "@/shared/ui/animated-value";
 import { TextField } from "./TextField";
 
-export interface PasswordFieldProps
-	extends Omit<ComponentPropsWithoutRef<"input">, "type"> {
+export interface PasswordFieldProps extends Omit<
+	ComponentPropsWithoutRef<"input">,
+	"type"
+> {
 	error?: boolean;
 	hideLabel?: string;
 	ref?: Ref<HTMLInputElement>;

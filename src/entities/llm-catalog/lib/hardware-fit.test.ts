@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SystemInfoEntry } from "@/shared/api/ipc-client";
-import { assessOllamaFit, isOllamaUncomfortable } from "./hardware-fit";
+import { assessOllamaFit } from "./hardware-fit";
 
 const GB = 1_000_000_000;
 
@@ -78,19 +78,5 @@ describe("assessOllamaFit", () => {
 		expect(res.fits).toBe(true);
 		expect(res.target).toBe("gpu");
 		expect(res.availableBytes).toBe(12 * GB);
-	});
-});
-
-describe("isOllamaUncomfortable", () => {
-	test("true when assessOllamaFit reports does-not-fit", () => {
-		expect(isOllamaUncomfortable(8 * GB, gpuSystem(4 * GB))).toBe(true);
-	});
-
-	test("false when assessOllamaFit reports fits", () => {
-		expect(isOllamaUncomfortable(2 * GB, gpuSystem(8 * GB))).toBe(false);
-	});
-
-	test("false when systemInfo is null (unknown is not a warning)", () => {
-		expect(isOllamaUncomfortable(20 * GB, null)).toBe(false);
 	});
 });

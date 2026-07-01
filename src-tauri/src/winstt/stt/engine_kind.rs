@@ -31,6 +31,11 @@ pub enum EngineKind {
     CohereAsr,
     GraniteSpeechAr,
     GraniteSpeechNar,
+    /// Qwen3-ASR: Whisper-style 128-mel encoder → audio embeds; a `decoder_init` graph that
+    /// embeds `input_ids` internally and splices the audio embeds at `audio_offset`, then a
+    /// `decoder_step` graph driven by externally-looked-up `input_embeds` (raw fp16
+    /// `embed_tokens.bin`). KV cache is two stacked f32 tensors `[layers, B, kv_heads, seq, head]`.
+    Qwen3Asr,
     /// NeMo Conformer single-graph CTC (`model.onnx` → `logprobs`).
     NemoCtc,
     /// NeMo Conformer RNN-T (encoder + decoder_joint, stateful predictor).
@@ -90,7 +95,7 @@ impl EngineKind {
 
     /// Whether this engine's ONNX graph CRASHES/HANGS on DirectML (or other non-CUDA
     /// GPU EPs) in ORT 1.24 — **empirically measured** via the DirectML benchmark harness,
-    /// NOT inherited from the reference's blanket family list. the reference excluded the whole
+    /// NOT inherited from the reference's blanket family list. The reference excluded the whole
     /// `nemo`/`gigaam`/`t-one`/`kaldi`/`sense_voice`/`dolphin` families after testing ONE
     /// AED model, but only these actually fail on DML:
     ///   * `NemoAed` (Canary): conformer-encoder `Reshape` kernel crash (MLOperatorAuthorImpl).
@@ -114,6 +119,11 @@ impl EngineKind {
                 | EngineKind::SenseVoiceCtc
                 | EngineKind::DolphinCtc
                 | EngineKind::KaldiTransducerStreaming
+                // Qwen3-ASR: conservatively CPU-pinned on non-CUDA GPU EPs. It's a brand-new large
+                // LLM-decoder graph (int4 MatMulNBits) whose DirectML stability is unverified; the
+                // mRoPE + int4 path is exactly the kind that crashes the DML reshape/MatMulNBits
+                // kernels on the granite/cohere-class graphs. CPU is correctness-safe.
+                | EngineKind::Qwen3Asr
         )
     }
 
@@ -173,6 +183,7 @@ impl EngineKind {
                 | EngineKind::NemoAed
                 | EngineKind::CohereAsr
                 | EngineKind::GraniteSpeechAr
+                | EngineKind::Qwen3Asr
         )
     }
 

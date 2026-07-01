@@ -7,7 +7,6 @@ import {
 	useMicrophoneLevels,
 } from "@/entities/audio-device";
 import { SettingField, SettingSection } from "@/entities/setting";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import type {
 	AudioSettings,
@@ -92,19 +91,18 @@ export function InputDeviceSection({
 					onReset={() => update({ inputDeviceIndex: null })}
 					tooltip={t("deviceTooltip")}
 				>
-					<ElevatedSurface className="w-52" inline>
-						<Select
-							onChange={(v) =>
-								update({
-									inputDeviceIndex:
-										v === "default" ? null : Number.parseInt(v, 10),
-								})
-							}
-							onOpenChange={setDeviceSelectOpen}
-							options={meteredDeviceOptions}
-							value={currentDeviceId}
-						/>
-					</ElevatedSurface>
+					<Select
+						className="w-52"
+						onChange={(v) =>
+							update({
+								inputDeviceIndex:
+									v === "default" ? null : Number.parseInt(v, 10),
+							})
+						}
+						onOpenChange={setDeviceSelectOpen}
+						options={meteredDeviceOptions}
+						value={currentDeviceId}
+					/>
 				</SettingField>
 				<SettingField
 					isDefault={currentClamshellId === "disabled"}
@@ -113,19 +111,18 @@ export function InputDeviceSection({
 					onReset={() => update({ clamshellMicrophone: null })}
 					tooltip={t("clamshellTooltip")}
 				>
-					<ElevatedSurface className="w-52" inline>
-						<Select
-							onChange={(v) =>
-								update({
-									clamshellMicrophone:
-										v === "disabled" ? null : Number.parseInt(v, 10),
-								})
-							}
-							onOpenChange={setClamshellSelectOpen}
-							options={clamshellOptions}
-							value={currentClamshellId}
-						/>
-					</ElevatedSurface>
+					<Select
+						className="w-52"
+						onChange={(v) =>
+							update({
+								clamshellMicrophone:
+									v === "disabled" ? null : Number.parseInt(v, 10),
+							})
+						}
+						onOpenChange={setClamshellSelectOpen}
+						options={clamshellOptions}
+						value={currentClamshellId}
+					/>
 				</SettingField>
 			</div>
 		</SettingSection>

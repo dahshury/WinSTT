@@ -18,11 +18,11 @@
 //   vocoder(latent) -> wav_tts @ 44.1 kHz
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 
 use serde::Deserialize;
 use unicode_normalization::UnicodeNormalization;
+
+use super::provider::LazyOrtEngine;
 
 pub const SUPERTONIC_SAMPLE_RATE: u32 = 44_100;
 const BASE_CHUNK_SIZE: usize = 512;
@@ -45,8 +45,13 @@ const NUM_INFERENCE_STEPS: usize = 8;
 // ~1.35 effective, well inside the official 0.9–1.5 recommended range). The
 // OFFSET keeps the neutral 1.0 on the model's natural rate (upstream default
 // 1.05). Mirrored by the frontend `ttsSpeedRange`.
-const SPEED_MIN: f32 = 0.4;
-const SPEED_MAX: f32 = 1.3;
+/// Supertonic's declared speed-multiplier range (0.4..1.3). Exposed so the
+/// manager can clamp to the ACTIVE engine's range (the generic local 0.5 floor
+/// would otherwise pre-clip Supertonic's wider 0.4 floor).
+pub const SUPERTONIC_SPEED_MIN: f32 = 0.4;
+pub const SUPERTONIC_SPEED_MAX: f32 = 1.3;
+const SPEED_MIN: f32 = SUPERTONIC_SPEED_MIN;
+const SPEED_MAX: f32 = SUPERTONIC_SPEED_MAX;
 const SPEED_OFFSET: f32 = 0.05;
 
 pub const SUPERTONIC_DEFAULT_VOICE: &str = "M3";
@@ -357,33 +362,26 @@ struct StyleTensor {
 
 pub struct SupertonicEngine {
     config: SupertonicConfig,
-    inner: Mutex<Option<Loaded>>,
-    ready: AtomicBool,
+    inner: LazyOrtEngine<Loaded>,
 }
 
 impl SupertonicEngine {
     pub fn new(config: SupertonicConfig) -> Self {
         Self {
             config,
-            inner: Mutex::new(None),
-            ready: AtomicBool::new(false),
+            inner: LazyOrtEngine::new(),
         }
     }
 
     pub fn is_ready(&self) -> bool {
-        self.ready.load(Ordering::Acquire)
+        self.inner.is_ready()
     }
 
     pub fn warm_up(&self) -> SupertonicResult<()> {
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| SupertonicError::Session("supertonic lock poisoned".into()))?;
-        if guard.is_none() {
-            *guard = Some(self.load()?);
-            self.ready.store(true, Ordering::Release);
-        }
-        Ok(())
+        self.inner.warm_up(
+            || SupertonicError::Session("supertonic lock poisoned".into()),
+            || self.load(),
+        )
     }
 
     fn load(&self) -> SupertonicResult<Loaded> {
@@ -451,34 +449,25 @@ impl SupertonicEngine {
         }
         let style = self.load_style(voice)?;
 
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| SupertonicError::Session("supertonic lock poisoned".into()))?;
-        if guard.is_none() {
-            *guard = Some(self.load()?);
-            self.ready.store(true, Ordering::Release);
-        }
-        let Some(loaded) = guard.as_mut() else {
-            return Err(SupertonicError::Session(
-                "supertonic session was not initialized".into(),
-            ));
-        };
-        let preprocessed = preprocess_text(trimmed, lang);
-        let ids = tokenize_with_indexer(&preprocessed, &loaded.unicode_indexer);
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let text_mask = vec![1.0_f32; ids.len()];
+        self.inner.with_loaded(
+            || SupertonicError::Session("supertonic lock poisoned".into()),
+            || SupertonicError::Session("supertonic session was not initialized".into()),
+            || self.load(),
+            |loaded| {
+                let preprocessed = preprocess_text(trimmed, lang);
+                let ids = tokenize_with_indexer(&preprocessed, &loaded.unicode_indexer);
+                if ids.is_empty() {
+                    return Ok(Vec::new());
+                }
+                let text_mask = vec![1.0_f32; ids.len()];
 
-        run_pipeline(loaded, &ids, &text_mask, &style, speed)
+                run_pipeline(loaded, &ids, &text_mask, &style, speed)
+            },
+        )
     }
 
     pub fn shutdown(&self) {
-        if let Ok(mut guard) = self.inner.lock() {
-            *guard = None;
-        }
-        self.ready.store(false, Ordering::Release);
+        self.inner.shutdown();
     }
 }
 
@@ -539,20 +528,16 @@ fn load_unicode_indexer(path: &Path) -> SupertonicResult<Vec<i64>> {
 }
 
 fn build_session(path: &Path) -> SupertonicResult<ort::session::Session> {
-    let (session, _) = super::provider::build_session(
+    super::provider::cpu_session(
         path,
-        super::types::TtsDevice::Cpu,
-        super::provider::TtsOrtProviderPolicy::CpuOnly {
-            reason: "Supertonic DirectML policy is not validated yet",
-        },
+        "Supertonic DirectML policy is not validated yet",
         "Supertonic",
     )
-    .map_err(SupertonicError::Session)?;
-    Ok(session)
+    .map_err(SupertonicError::Session)
 }
 
 fn output_names(s: &ort::session::Session) -> Vec<String> {
-    s.outputs().iter().map(|o| o.name().to_string()).collect()
+    super::provider::output_names(s)
 }
 
 fn out_idx(names: &[String], target: &str, default: usize) -> usize {

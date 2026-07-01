@@ -24,15 +24,17 @@ import {
 } from "@/entities/model-catalog";
 import {
 	DEFAULT_SETTINGS,
+	type GeneralSettings,
+	type GeneralT,
 	SettingField,
 	SettingSection,
+	type UpdateGeneralFn,
 	useSettingsStore,
 } from "@/entities/setting";
 import { useSoundPreview } from "@/features/recording-sound";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
@@ -51,12 +53,6 @@ function reductionToIndex(pct: number): number {
 function indexToReduction(index: number): number {
 	return REDUCTION_STEPS[index] ?? 0;
 }
-
-type GeneralT = ReturnType<typeof useTranslations<"general">>;
-type GeneralSettings = NonNullable<
-	ReturnType<typeof useSettingsStore.getState>["settings"]["general"]
->;
-type UpdateGeneralFn = (patch: Partial<GeneralSettings>) => void;
 
 function reductionStepLabel(pct: number, t: GeneralT): string {
 	if (pct <= 0) {
@@ -165,18 +161,17 @@ function PasteBehaviorSection({
 				value={autoSubmitKey}
 				{...(disabled ? {} : { disabledReason: tg("autoSubmit") })}
 			>
-				<ElevatedSurface className="w-72 max-w-full">
-					<Switcher
-						fullWidth
-						onChange={(next) => {
-							if (!disabled) {
-								onChangeAutoSubmitKey(next);
-							}
-						}}
-						options={listenAwareAutoSubmitKeyOptions}
-						value={autoSubmitKey}
-					/>
-				</ElevatedSurface>
+				<Switcher
+					className="w-72 max-w-full"
+					fullWidth
+					onChange={(next) => {
+						if (!disabled) {
+							onChangeAutoSubmitKey(next);
+						}
+					}}
+					options={listenAwareAutoSubmitKeyOptions}
+					value={autoSubmitKey}
+				/>
 			</SettingField>
 			<SettingField
 				defaultValue={DEFAULT_SETTINGS.general.previewBeforePasting}
@@ -266,24 +261,22 @@ function MuteSystemAudioControl({
 			tooltip={t("muteSystemAudioTooltip")}
 			value={level}
 		>
-			<ElevatedSurface inline>
-				<Slider
-					aria-label={t("muteSystemAudio")}
-					formatValue={(v) => reductionStepLabel(indexToReduction(v), t)}
-					max={REDUCTION_STEPS.length - 1}
-					min={0}
-					onChange={(v) => {
-						if (!disabled) {
-							update({
-								systemAudioReductionWhileDictating: indexToReduction(v),
-							});
-						}
-					}}
-					step={1}
-					disabled={disabled}
-					value={reductionToIndex(level)}
-				/>
-			</ElevatedSurface>
+			<Slider
+				aria-label={t("muteSystemAudio")}
+				formatValue={(v) => reductionStepLabel(indexToReduction(v), t)}
+				max={REDUCTION_STEPS.length - 1}
+				min={0}
+				onChange={(v) => {
+					if (!disabled) {
+						update({
+							systemAudioReductionWhileDictating: indexToReduction(v),
+						});
+					}
+				}}
+				step={1}
+				disabled={disabled}
+				value={reductionToIndex(level)}
+			/>
 		</SettingField>
 	);
 }
@@ -469,14 +462,13 @@ export function OutputSettingsPanel(): ReactNode {
 						tooltip={tg("fileTranscriptionFormatTooltip")}
 						value={transcriptionFormat}
 					>
-						<ElevatedSurface className="w-52">
-							<Switcher
-								fullWidth
-								onChange={(v) => updateGeneral({ fileTranscriptionFormat: v })}
-								options={TRANSCRIPTION_FORMAT_OPTIONS}
-								value={transcriptionFormat}
-							/>
-						</ElevatedSurface>
+						<Switcher
+							className="w-52"
+							fullWidth
+							onChange={(v) => updateGeneral({ fileTranscriptionFormat: v })}
+							options={TRANSCRIPTION_FORMAT_OPTIONS}
+							value={transcriptionFormat}
+						/>
 					</SettingField>
 				</SettingSection>
 			</div>
@@ -591,13 +583,12 @@ export function PlaybackSettingsPanel(): ReactNode {
 					tooltip={ta("outputDeviceTooltip")}
 					value={outputDeviceId}
 				>
-					<ElevatedSurface className="w-52" inline>
-						<Select
-							onChange={(v) => updateGeneral({ outputDeviceId: v })}
-							options={outputDeviceOptions}
-							value={outputDeviceId}
-						/>
-					</ElevatedSurface>
+					<Select
+						className="w-52"
+						onChange={(v) => updateGeneral({ outputDeviceId: v })}
+						options={outputDeviceOptions}
+						value={outputDeviceId}
+					/>
 				</SettingField>
 			</SettingSection>
 

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
-import { useConnectionStore } from "@/entities/connection";
+import { useGpuInfo } from "@/entities/connection";
 import { useDeviceSwitchFeedback } from "@/features/audio-device-feedback";
 import { useAudioDeviceMonitor } from "@/features/audio-device-monitor";
 import { useVisualizerSync } from "@/features/audio-visualizer";
@@ -18,7 +18,6 @@ import { useVadCalibration } from "@/features/vad-calibration";
 import {
 	audioGetDevices,
 	fetchRuntimeInfo,
-	gpuGetInfo,
 	notifyRendererReady,
 	settingsLoad,
 	webviewDiagLog,
@@ -65,8 +64,6 @@ function signalRendererStartupReady(): Promise<void> {
 }
 
 export function IpcProvider({ children }: { children: ReactNode }) {
-	const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
-
 	// Initialize all IPC subscriptions
 	useConnectionListener();
 	useTranscriptionFeed();
@@ -99,20 +96,7 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 
 	// GPU details are only needed by model/settings surfaces. Defer this off the
 	// immediate mount path so the main pill can paint before hardware enumeration.
-	useEffect(() => {
-		let cancelled = false;
-		const timeout = window.setTimeout(() => {
-			gpuGetInfo().then((info) => {
-				if (!cancelled) {
-					setGpuInfo(info);
-				}
-			});
-		}, 750);
-		return () => {
-			cancelled = true;
-			window.clearTimeout(timeout);
-		};
-	}, [setGpuInfo]);
+	useGpuInfo(750);
 
 	return <>{children}</>;
 }

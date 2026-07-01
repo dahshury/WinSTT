@@ -9,7 +9,11 @@ import {
 	sendPreview,
 } from "../lib/preview-config";
 import { useTranscriptPreviewStore } from "../model/preview-store";
-import { PreviewInfoPill, StaggerReveal } from "./preview-primitives";
+import {
+	PreviewInfoPill,
+	StaggerReveal,
+	TranscriptTextarea,
+} from "./preview-primitives";
 
 function isPresetKey(key: string): key is PresetKey {
 	return (ALL_PRESET_KEYS as readonly string[]).includes(key);
@@ -51,23 +55,14 @@ export function EditView() {
 	return (
 		<div className="flex flex-col gap-2 px-1">
 			<StaggerReveal>
-				<textarea
-					aria-label={tp("placeholder")}
-					className="t-stagger-line max-h-56 min-h-[3rem] w-full resize-none rounded-md border border-border bg-surface-2 px-2.5 py-2 text-foreground text-sm leading-snug placeholder:text-foreground-subtle focus:outline-none focus:ring-1 focus:ring-accent/60"
-					dir="auto"
-					onChange={(e) => {
-						store.setText(e.currentTarget.value);
-						store.setSelection(
-							e.currentTarget.selectionStart,
-							e.currentTarget.selectionEnd,
-						);
+				<TranscriptTextarea
+					ariaLabel={tp("placeholder")}
+					className="t-stagger-line max-h-56 min-h-[3rem] bg-surface-2"
+					onSelectionChange={store.setSelection}
+					onTextChange={(value, start, end) => {
+						store.setText(value);
+						store.setSelection(start, end);
 					}}
-					onSelect={(e) =>
-						store.setSelection(
-							e.currentTarget.selectionStart,
-							e.currentTarget.selectionEnd,
-						)
-					}
 					placeholder={tp("placeholder")}
 					value={store.text}
 				/>

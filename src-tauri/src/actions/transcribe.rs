@@ -19,7 +19,7 @@ use super::{
 };
 
 const AUDIO_SAMPLE_RATE: usize = 16_000;
-const SLOW_RECORDING_STOP_MS: u128 = 2_000;
+const SLOW_RECORDING_STOP_MS: u128 = 500;
 const SLOW_HISTORY_AUDIO_PERSIST_MS: u128 = 2_000;
 
 fn samples_to_ms(samples: usize) -> u64 {
@@ -273,27 +273,6 @@ impl ShortcutAction for TranscribeAction {
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
 
-        change_tray_icon(app, TrayIconState::Transcribing);
-
-        // WinSTT lifecycle: the recorder stopped (PTT release / toggle-off). The
-        // renderer's useVisualizerSync (onRecordingStop) snaps the visualizer to
-        // zero AND clears `isSpeaking`; the overlay pill stays armed until a terminal
-        // event lands. isRecordingActive is held true across recording-stop so the
-        // pill survives the "transcribing/thinking" transition (see useTranscriptionFeed).
-        // Do not call `show_recording_overlay` here: start already showed the window,
-        // and re-showing on key release can resurrect a stale floating-bottom frame
-        // right before the terminal event starts the exit animation.
-        // No fake `vad-stop` here — the recorder emits a real one (Cmd::Stop →
-        // speech_cb(false)) if speech was still open at release, and recordingStopped()
-        // zeroes `isSpeaking` regardless.
-        crate::winstt::commands::dictation::SttEvents::recording_stop(app);
-
-        // Restore the input mute applied at recording start. The winstt sound
-        // system has a single recording chime (played on start by
-        // duck_then_play_recording_chime) and no separate stop sound, so there is
-        // no stop chime to gate this on.
-        rm.remove_mute();
-
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
         let session_id = crate::transcription_coordinator::current_dictation_session();
@@ -303,6 +282,46 @@ impl ShortcutAction for TranscribeAction {
         // yields the take being finalized; a racing re-press makes the cache generation mismatch,
         // which `try_reuse_realtime` safely rejects.)
         let generation = rm.recording_generation();
+
+        let stop_recording_time = Instant::now();
+        info!("[stt-ui] recorder_stop_start binding_id='{binding_id}' generation={generation}");
+        let stopped_samples = rm.stop_recording(&binding_id);
+        let stop_recording_elapsed = stop_recording_time.elapsed();
+        let stopped_sample_count = stopped_samples.as_ref().map_or(0, Vec::len);
+        info!(
+            "[stt-ui] recorder_stop_complete binding_id='{binding_id}' duration_ms={} result={} samples={} audio_ms={}",
+            stop_recording_elapsed.as_millis(),
+            if stopped_samples.is_some() { "samples" } else { "none" },
+            stopped_sample_count,
+            samples_to_ms(stopped_sample_count)
+        );
+        if stop_recording_elapsed.as_millis() >= SLOW_RECORDING_STOP_MS {
+            crate::winstt::observability::IssueBuilder::new(
+                "stt",
+                "recording_stop",
+                "Recording stop took a long time before transcription",
+            )
+            .detail(format!(
+                "recording stop completed in {}ms",
+                stop_recording_elapsed.as_millis()
+            ))
+            .kind("timeout")
+            .severity("warn")
+            .duration_ms(stop_recording_elapsed.as_millis() as u64)
+            .user_visible(false)
+            .context("samples", stopped_sample_count.to_string())
+            .context("audioMs", samples_to_ms(stopped_sample_count).to_string())
+            .record(Some(app));
+        }
+
+        change_tray_icon(app, TrayIconState::Transcribing);
+
+        // WinSTT lifecycle: the recorder has stopped (PTT release / toggle-off). The
+        // renderer snaps the visualizer to zero and holds the pill until a terminal event.
+        crate::winstt::commands::dictation::SttEvents::recording_stop(app);
+
+        // Restore the input mute applied at recording start. There is no stop chime to gate.
+        rm.remove_mute();
 
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard {
@@ -314,32 +333,11 @@ impl ShortcutAction for TranscribeAction {
                 binding_id
             );
 
-            let stop_recording_time = Instant::now();
-            if let Some(samples) = rm.stop_recording(&binding_id) {
-                let stop_recording_elapsed = stop_recording_time.elapsed();
+            if let Some(samples) = stopped_samples {
                 debug!(
-                    "Recording stopped and samples retrieved in {:?}, sample count: {}",
-                    stop_recording_elapsed,
+                    "Recording samples handed to async transcription task, sample count: {}",
                     samples.len()
                 );
-                if stop_recording_elapsed.as_millis() >= SLOW_RECORDING_STOP_MS {
-                    crate::winstt::observability::IssueBuilder::new(
-                        "stt",
-                        "recording_stop",
-                        "Recording stop took a long time before transcription",
-                    )
-                    .detail(format!(
-                        "recording stop completed in {}ms",
-                        stop_recording_elapsed.as_millis()
-                    ))
-                    .kind("timeout")
-                    .severity("warn")
-                    .duration_ms(stop_recording_elapsed.as_millis() as u64)
-                    .user_visible(false)
-                    .context("samples", samples.len().to_string())
-                    .context("audioMs", samples_to_ms(samples.len()).to_string())
-                    .record(Some(&ah));
-                }
 
                 if cancelled_session_cleanup(&ah, session_id, "recording stop") {
                     return;

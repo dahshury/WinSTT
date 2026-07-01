@@ -1,4 +1,4 @@
-import { windowOpenSettings } from "@/shared/api/ipc-client";
+import { commands } from "@/bindings";
 
 /**
  * Cross-window deep-link into a specific Settings section.
@@ -47,7 +47,19 @@ export function openSettingsToSection(section: string): void {
 			// Storage unavailable — fall through and open the (default) window anyway.
 		}
 	}
-	windowOpenSettings();
+	void commands
+		.openWindow("settings", null, null, null, null, null, null, null)
+		.then((result) => {
+			if (result.status === "error") {
+				console.error(
+					"[settings] failed to open settings window:",
+					result.error,
+				);
+			}
+		})
+		.catch((error: unknown) => {
+			console.error("[settings] failed to open settings window:", error);
+		});
 }
 
 /** Read + clear any pending section. Call once when the Settings window mounts. */

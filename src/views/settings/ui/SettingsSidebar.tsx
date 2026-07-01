@@ -1,4 +1,4 @@
-﻿import { Button as BaseButton } from "@base-ui/react/button";
+import { Button as BaseButton } from "@base-ui/react/button";
 import { Tabs } from "@base-ui/react/tabs";
 import {
 	PanelLeftCloseIcon,
@@ -18,6 +18,10 @@ import {
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
+import {
+	readPersistedSelectorState,
+	writePersistedSelectorState,
+} from "@/shared/lib/persisted-selector-state";
 import { ClearableTextField } from "@/shared/ui/text-field";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { matchesSearchQuery } from "../lib/settings-search";
@@ -37,11 +41,21 @@ export interface SidebarLink {
 
 interface SettingsSidebarProps {
 	links: SidebarLink[];
+	/**
+	 * Warm a tab's lazily-loaded panel chunk ahead of the click. Fired on
+	 * pointer-enter / focus of a tab so the module is already cached by the time
+	 * the user actually selects it, making the switch instant.
+	 */
+	onPrefetch?: (key: string) => void;
 }
 
 const SIDEBAR_WIDTH = 200;
 const COLLAPSED_WIDTH = 56;
 const COLLAPSE_STORAGE_KEY = "winstt:settings-sidebar-collapsed";
+
+function isBoolean(value: unknown): value is boolean {
+	return typeof value === "boolean";
+}
 
 function SearchResultRow({
 	children,
@@ -82,19 +96,13 @@ function SearchResultRow({
 }
 
 function readCollapsed(): boolean {
-	try {
-		return window.localStorage.getItem(COLLAPSE_STORAGE_KEY) === "1";
-	} catch {
-		return false;
-	}
+	return readPersistedSelectorState(COLLAPSE_STORAGE_KEY, isBoolean, false);
 }
 function writeCollapsed(next: boolean): void {
-	try {
-		window.localStorage.setItem(COLLAPSE_STORAGE_KEY, next ? "1" : "0");
-	} catch {}
+	writePersistedSelectorState(COLLAPSE_STORAGE_KEY, next);
 }
 
-export function SettingsSidebar({ links }: SettingsSidebarProps) {
+export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 	const t = useTranslations("settings");
 	const [query, setQuery] = useState("");
 	const [collapsed, setCollapsed] = useState(readCollapsed);
@@ -202,7 +210,7 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 			style={{ width: collapsed ? COLLAPSED_WIDTH : SIDEBAR_WIDTH }}
 		>
 			{collapsed ? (
-				<div className="settings-sidebar-collapsed-header relative flex shrink-0 items-center justify-center px-2 pt-5 pb-4">
+				<div className="settings-sidebar-collapsed-header relative flex h-20 shrink-0 items-center justify-center px-2 pt-6 pb-3">
 					<div
 						aria-hidden="true"
 						className="titlebar-drag absolute inset-x-0 top-0 h-4"
@@ -211,7 +219,7 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 					{toggleButton}
 				</div>
 			) : (
-				<div className="settings-sidebar-header relative flex h-[4.25rem] shrink-0 items-center gap-2 px-5 pt-4 pb-3">
+				<div className="settings-sidebar-header relative flex h-20 shrink-0 items-center gap-2 px-5 pt-6 pb-3">
 					<div
 						aria-hidden="true"
 						className="titlebar-drag absolute inset-x-0 top-0 h-4"
@@ -270,8 +278,8 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 
 			<Tabs.List
 				className={cn(
-					"settings-sidebar-list relative flex min-h-0 flex-1 flex-col overflow-y-auto",
-					collapsed ? "items-center px-2 pt-1 pb-5" : "px-4 pt-3 pb-6",
+					"settings-sidebar-list relative flex min-h-0 flex-1 flex-col overflow-y-auto pt-3 pb-6",
+					collapsed ? "items-center px-2" : "px-4",
 				)}
 			>
 				<LazyMotion features={domAnimation} strict>
@@ -309,11 +317,19 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 								const tab = (
 									<Tabs.Tab
 										className={cn(
-											"settings-sidebar-tab group/seg relative flex cursor-pointer items-center border-0 bg-transparent py-0 outline-none transition-[background-color,color,transform,box-shadow] duration-200 ease-out active:translate-y-px focus-visible:ring-2 focus-visible:ring-accent",
+											// No `bg-transparent` here: that utility lives in @layer
+											// utilities and would beat the `.settings-sidebar-tab`
+											// background rules (in @layer components) regardless of
+											// specificity, so the active/hover fills would never paint.
+											// The base `.settings-sidebar-tab` rule sets the transparent
+											// resting background instead.
+											"settings-sidebar-tab group/seg relative flex cursor-pointer items-center border-0 py-0 outline-none transition-[background-color,color,transform,box-shadow] duration-200 ease-out active:translate-y-px focus-visible:ring-2 focus-visible:ring-accent",
 											collapsed
 												? "settings-sidebar-tab-collapsed justify-center"
 												: "w-full gap-2.5 ps-4 pe-4",
 										)}
+										onFocus={() => onPrefetch?.(link.key)}
+										onPointerEnter={() => onPrefetch?.(link.key)}
 										value={link.key}
 									>
 										<HugeiconsIcon

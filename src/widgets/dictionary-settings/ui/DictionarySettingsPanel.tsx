@@ -30,29 +30,6 @@ export function DictionarySettingsPanel() {
 		]);
 	};
 
-	const handleUpdate = (
-		id: string,
-		entry: Omit<DictionaryEntry, "id">,
-	): void => {
-		const term = entry.term.trim();
-		const currentDictionary =
-			useSettingsStore.getState().settings.dictionary ?? [];
-		if (
-			!term ||
-			dictionaryContainsTerm(
-				currentDictionary.filter((e) => e.id !== id),
-				term,
-			)
-		) {
-			return;
-		}
-		updateDictionary(
-			currentDictionary.map((existing) =>
-				existing.id === id ? { ...existing, ...entry, term } : existing,
-			),
-		);
-	};
-
 	return (
 		<SettingSection
 			description={t("description")}
@@ -75,25 +52,7 @@ export function DictionarySettingsPanel() {
 					existingTerms={existingTerms}
 					onAccept={(term) => handleAdd({ term, autoAdded: true })}
 				/>
-				<DictionaryTable
-					entries={dictionary}
-					onAdd={handleAdd}
-					onClearAll={() => {
-						updateDictionary([]);
-					}}
-					onRemove={(id) => {
-						updateDictionary(dictionary.filter((e) => e.id !== id));
-					}}
-					onRemoveMany={(ids) => {
-						const selected = new Set(ids);
-						const currentDictionary =
-							useSettingsStore.getState().settings.dictionary ?? [];
-						updateDictionary(
-							currentDictionary.filter((entry) => !selected.has(entry.id)),
-						);
-					}}
-					onUpdate={handleUpdate}
-				/>
+				<DictionaryTable entries={dictionary} onChange={updateDictionary} />
 			</div>
 		</SettingSection>
 	);

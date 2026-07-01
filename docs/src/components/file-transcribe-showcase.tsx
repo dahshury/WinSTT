@@ -64,7 +64,7 @@ function CursorGlyph() {
       height="15"
       viewBox="0 0 24 24"
       fill="var(--fg-strong)"
-      stroke="oklch(11% 0.015 265)"
+      stroke="var(--surface-2)"
       strokeWidth="1.2"
       aria-hidden="true"
       style={{ filter: "drop-shadow(0 2px 3px oklch(0% 0 0 / 0.6))" }}

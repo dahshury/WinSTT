@@ -230,7 +230,7 @@ impl SttBackend for WinsttSttBackend {
     }
 
     fn selected_model_id(&self, app: &AppHandle) -> String {
-        let model = crate::winstt::commands::settings::read_settings_raw(app)
+        let model = crate::winstt::settings_store::read_settings_raw(app)
             .model
             .model;
         crate::winstt::catalog::canonical_model_id(&model).to_string()
@@ -257,7 +257,7 @@ impl SttBackend for WinsttSttBackend {
             )
         })?;
 
-        let settings = crate::winstt::commands::settings::read_settings_raw(app);
+        let settings = crate::winstt::settings_store::read_settings_raw(app);
 
         // device → primary accelerator (CPU vs the shipped GPU flavor)
         let primary = stt::resolve_accelerator(settings.model.device);
@@ -416,7 +416,7 @@ impl SttBackend for WinsttSttBackend {
 
         // Read the WinSTT settings tree ONCE for this decode (picker is the source of truth).
         let settings_started = Instant::now();
-        let ws = crate::winstt::commands::settings::read_settings_raw(app);
+        let ws = crate::winstt::settings_store::read_settings_raw(app);
         record_slow_backend_phase(
             app,
             &meta,
@@ -603,7 +603,15 @@ impl SttBackend for WinsttSttBackend {
             ..Default::default()
         };
         let conditioned = peak_normalize(audio);
-        engine.transcribe(&conditioned, &opts).ok().map(|t| t.text)
+        match engine.transcribe(&conditioned, &opts) {
+            Ok(t) => Some(t.text),
+            Err(e) => {
+                // Realtime ticks fall back to None (no partial emitted this tick); surface the
+                // discarded SttError so transient decode failures are observable at debug level.
+                log::debug!("[stt] realtime decode tick failed: {e}");
+                None
+            }
+        }
     }
 
     fn warmup(&self, engine: &mut dyn Transcriber) -> Result<()> {
@@ -618,7 +626,7 @@ impl SttBackend for WinsttSttBackend {
     fn cloud_transcribe(&self, app: &AppHandle, model_id: &str, audio: &[f32]) -> Result<String> {
         // When the selected model carries a cloud prefix (openai:/elevenlabs:), there is NO local
         // engine — ship the captured audio to the provider via CloudSttManager.
-        let ws = crate::winstt::commands::settings::read_settings(app);
+        let ws = crate::winstt::settings_store::read_settings(app);
         let (provider, _) = crate::winstt::cloud_stt::split_model_id(model_id)
             .ok_or_else(|| anyhow::anyhow!("'{model_id}' is not a cloud STT model id"))?;
         let api_key = match provider {
@@ -716,6 +724,7 @@ fn engine_kind_for(
             | EngineKind::CohereAsr
             | EngineKind::GraniteSpeechAr
             | EngineKind::GraniteSpeechNar
+            | EngineKind::Qwen3Asr
             | EngineKind::KaldiTransducer
             | EngineKind::DolphinCtc
             | EngineKind::GigaamCtc

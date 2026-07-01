@@ -46,9 +46,9 @@ speech-to-text only. OpenRouter is the shared LLM key — it powers text cleanup
 
 ## Ollama endpoint
 
-The base URL for your local Ollama (or any OpenAI-compatible) server. This is **shared
-infrastructure** — one endpoint serves both [dictation cleanup](/docs/settings/quality#llm-cleanup) and
-text transforms.
+The base URL for your local Ollama server. This is **shared infrastructure** — one
+endpoint serves both [dictation cleanup](/docs/settings/quality#llm-cleanup) and text
+transforms.
 
 <Screenshot src="sec-integrations" label="Settings — External Integrations" alt="The External Integrations sections: a Language Models group with an Ollama endpoint field and an OpenRouter API-key password field, then a Cloud Speech-to-Text group with an ElevenLabs API-key field — each key showing a verification pill." chrome="card" caption="Every external credential in one place — the Ollama endpoint plus the two API keys (OpenRouter, ElevenLabs), each with its own verify pill." />
 
@@ -58,6 +58,13 @@ text transforms.
   does not auto-reconnect; features keep using the old value until the next call. A reset
   button restores the default.
 </SettingRow>
+
+<Callout type="info" title="Ollama models are discovered dynamically">
+  WinSTT does not hard-code a small Ollama model list. The picker reads installed models
+  from `/api/tags`, enriches them with `/api/show` capabilities, then browses the Ollama
+  library and model tags for pullable variants. Newly published Ollama models appear as
+  the upstream library exposes them.
+</Callout>
 
 ## Cloud STT key (ElevenLabs)
 
@@ -151,7 +158,7 @@ Every key — ElevenLabs and OpenRouter — is encrypted before it touches disk.
     Reshape dictation with Ollama, OpenRouter, or Apple Intelligence — the consumers of these keys.
   </Card>
   <Card title="Cloud STT" href="/docs/models">
-    How cloud transcription compares to the 40+ local models.
+    How cloud transcription compares to the 70+ local models.
   </Card>
   <Card title="Privacy & data" href="/docs/faq">
     What stays on-device, what leaves it, and where keys are stored.

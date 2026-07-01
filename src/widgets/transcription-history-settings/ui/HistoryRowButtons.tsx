@@ -10,10 +10,10 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState } from "react";
+import { COPY_FEEDBACK_MS, copyToClipboard } from "@/shared/lib/clipboard";
 import { cn } from "@/shared/lib/cn";
 import { Spinner } from "@/shared/ui/spinner";
 import { Tooltip } from "@/shared/ui/tooltip";
-import { COPY_FEEDBACK_MS, copyEntryText } from "../lib/copy-entry-text";
 
 export function PlayButton({
 	loading,
@@ -73,7 +73,7 @@ export function CopyButton({ label, text }: { label: string; text: string }) {
 	);
 
 	const handleCopy = () => {
-		copyEntryText(text);
+		copyToClipboard(text);
 		setCopied(true);
 		if (timerRef.current) {
 			clearTimeout(timerRef.current);

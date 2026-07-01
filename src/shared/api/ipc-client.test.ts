@@ -451,6 +451,35 @@ describe("wrappers migrated to direct commands.* (no channel)", () => {
 		expect(await ipc.aboutGetAppInfo()).toEqual({ version: "", copyright: "" });
 	});
 
+	test("direct command fallbacks log the command label and error", async () => {
+		installMockApi();
+		setTauriInvoke(() => {
+			throw new Error("about unavailable");
+		});
+		const originalWarn = console.warn;
+		const warnCalls: unknown[][] = [];
+		console.warn = (...args: unknown[]) => {
+			warnCalls.push(args);
+		};
+		try {
+			expect(await ipc.aboutGetAppInfo()).toEqual({
+				version: "",
+				copyright: "",
+			});
+		} finally {
+			console.warn = originalWarn;
+		}
+
+		expect(warnCalls).toHaveLength(1);
+		const [message, error] = warnCalls[0] ?? [];
+		expect(String(message)).toContain(
+			'[ipc] command "about_get_app_info" failed',
+		);
+		expect(String(message)).toContain("returning fallback");
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toBe("about unavailable");
+	});
+
 	test("diagSaveBundle calls diag_save_bundle", async () => {
 		installMockApi();
 		setTauriInvoke(() => ({ ok: true, path: "C:\\bundle.zip" }));
@@ -686,6 +715,31 @@ describe("invokeOrDefault wrappers", () => {
 			cmd: "hotkey_register",
 			args: { accelerator: "Ctrl+S" },
 		});
+	});
+
+	test("invoke fallbacks log the channel and argument digest", async () => {
+		installMockApi();
+		setTauriInvoke(() => {
+			throw new Error("accelerator rejected");
+		});
+		const originalWarn = console.warn;
+		const warnCalls: unknown[][] = [];
+		console.warn = (...args: unknown[]) => {
+			warnCalls.push(args);
+		};
+		try {
+			expect(await ipc.hotkeyRegister("Ctrl+Alt+X")).toBe(false);
+		} finally {
+			console.warn = originalWarn;
+		}
+
+		expect(warnCalls).toHaveLength(1);
+		const [message, error] = warnCalls[0] ?? [];
+		expect(String(message)).toContain(`[ipc] invoke "${IPC.HOTKEY_REGISTER}"`);
+		expect(String(message)).toContain('args=[["accelerator"]]');
+		expect(String(message)).toContain("returning fallback");
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toBe("accelerator rejected");
 	});
 
 	test("settingsLoad decodes the winstt_get_settings payload (migrated)", async () => {
@@ -1558,6 +1612,7 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 		ipc.onFullSentence(cb1);
 		ipc.onNoAudioDetected(cb1);
 		ipc.onRecordingStart(cb1);
+		ipc.onCaptureActive(cb1);
 		ipc.onRecordingStop(cb1);
 		ipc.onVadStart(cb1);
 		ipc.onVadStop(cb1);

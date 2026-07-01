@@ -12,5 +12,5 @@ pub use recorder::{
     AudioRecorderError, RealtimeAudioProgress,
 };
 pub use resampler::FrameResampler;
-pub use utils::{read_wav_samples, save_wav_file, verify_wav_file};
+pub use utils::{read_wav_samples, save_wav_file, verify_wav_file, wav_duration_ms};
 pub use visualizer::AudioVisualiser;

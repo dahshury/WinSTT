@@ -26,7 +26,7 @@ export function HotkeyDisplay({
 	isConnected,
 	side = "top",
 }: HotkeyDisplayProps) {
-	const isPressed = useHotkeyStore((s) => s.isPressed);
+	const micPhase = useHotkeyStore((s) => s.micPhase);
 	const accelerator = useHotkeyStore((s) => s.accelerator);
 	const keys = accelerator.split("+").map(formatKeyName);
 	const t = useTranslations("hotkey");
@@ -34,25 +34,39 @@ export function HotkeyDisplay({
 	const tooltipContent = isConnected
 		? t("displayTooltip")
 		: t("displayTooltipDisconnected");
-	const tone: InputGroupTone = resolveTone(isConnected, isPressed);
-	const showPulse = isPressed && isConnected;
+	// The recording state is conveyed ENTIRELY by how light the badge rectangle is
+	// — no dots, no motion. "opening" = the mic is being opened (Windows hasn't
+	// confirmed audio yet) → one surface step lighter; "live" = the recorder
+	// captured its first frame → full-on, the lightest. Idle rests at the base
+	// surface. Lightness is driven by the Elevated surface level (each +1 step is
+	// ~+4% L); the shadow is pinned so only the fill brightens.
+	const isOpening = micPhase === "opening" && isConnected;
+	const isLive = micPhase === "live" && isConnected;
+	const isArmed = isOpening || isLive;
+	const tone: InputGroupTone = resolveTone(isConnected, isArmed);
+	const surfaceOffset = isLive ? 4 : isOpening ? 2 : 1;
 
 	return (
 		<Tooltip content={tooltipContent} delay={FOOTER_TOOLTIP_DELAY} side={side}>
 			<Elevated
 				className={`inline-flex h-4 w-auto max-w-[min(48vw,18rem)] cursor-help items-center overflow-hidden rounded-xs px-1.5 ring-1 transition-colors duration-150 ${
-					showPulse ? "ring-accent/35" : "ring-divider/60"
+					isLive
+						? "ring-foreground/25"
+						: isOpening
+							? "ring-foreground/15"
+							: "ring-divider/60"
 				}`}
 				data-disconnected={!isConnected || undefined}
-				data-pressed={showPulse || undefined}
-				offset={1}
+				data-phase={isArmed ? micPhase : undefined}
+				data-pressed={isArmed || undefined}
+				offset={surfaceOffset}
 				shadowLevel={1}
 			>
 				<kbd
 					aria-label={tooltipContent}
 					className={`inline-flex min-w-0 items-center gap-1 overflow-hidden bg-transparent font-mono text-2xs leading-none ${TONE_TEXT[tone]}`}
 					data-disconnected={!isConnected || undefined}
-					data-pressed={showPulse || undefined}
+					data-pressed={isArmed || undefined}
 					data-tone={tone}
 				>
 					{keys.map((key, i) => (
@@ -74,12 +88,6 @@ export function HotkeyDisplay({
 							</span>
 						</span>
 					))}
-					{showPulse && (
-						<span
-							aria-hidden
-							className="ml-0.5 inline-block size-1.5 animate-recording-pulse rounded-full bg-accent shadow-[0_0_6px_1px_var(--color-accent-glow-strong)]"
-						/>
-					)}
 				</kbd>
 			</Elevated>
 		</Tooltip>

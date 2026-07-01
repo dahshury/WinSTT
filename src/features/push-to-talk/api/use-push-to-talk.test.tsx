@@ -163,7 +163,7 @@ beforeEach(() => {
 		},
 	});
 	useHotkeyStore.setState({
-		isPressed: false,
+		micPhase: "idle",
 		isActive: false,
 		accelerator: "LCtrl+LMeta",
 	});
@@ -184,7 +184,7 @@ afterEach(() => {
 	// module load) see the canonical defaults regardless of the order Bun
 	// happens to load files in this worker.
 	useHotkeyStore.setState({
-		isPressed: false,
+		micPhase: "idle",
 		isActive: false,
 		accelerator: "LCtrl+LMeta",
 	});
@@ -210,11 +210,11 @@ describe("usePushToTalk", () => {
 		);
 	});
 
-	test("hotkey-pressed in PTT mode sets isPressed=true and disables the silence endpoint", () => {
+	test("hotkey-pressed in PTT mode enters the 'opening' phase and disables the silence endpoint", () => {
 		// Sibling tests in the suite call useSettingsStore.setState(...) without
 		// resetting on teardown, so initialSettings (captured at module load) may
 		// have the recordingMode "listen" — under which usePushToTalk's press
-		// listener short-circuits before setPressed(true). Force PTT explicitly
+		// listener short-circuits before touching micPhase. Force PTT explicitly
 		// to make the test resilient to that pollution.
 		useSettingsStore.setState({
 			settings: {
@@ -231,7 +231,10 @@ describe("usePushToTalk", () => {
 			return;
 		}
 		fire(IPC.HOTKEY_PRESSED);
-		expect(useHotkeyStore.getState().isPressed).toBe(true);
+		// The keypress only ARMS the mic ("opening") — the badge must NOT jump straight
+		// to a "live" recording state until the backend confirms captured audio
+		// (stt:capture-active). This is the whole point of the change.
+		expect(useHotkeyStore.getState().micPhase).toBe("opening");
 		// The renderer no longer relays `set_microphone` — the backend (handler.rs)
 		// dispatches the recorder for ptt/toggle on the hotkey thread. The press
 		// handler's only OUTBOUND IPC is the PTT recorder-config re-assert that
@@ -248,14 +251,59 @@ describe("usePushToTalk", () => {
 		).toBe(true);
 	});
 
-	test("hotkey-released in PTT mode clears isPressed", () => {
+	test("hotkey-released in PTT mode returns the phase to idle", () => {
 		renderHook(() => usePushToTalk());
 		fire(IPC.HOTKEY_PRESSED);
 		fire(IPC.HOTKEY_RELEASED);
-		expect(useHotkeyStore.getState().isPressed).toBe(false);
+		expect(useHotkeyStore.getState().micPhase).toBe("idle");
 	});
 
-	test("listen mode short-circuits press/release without setting isPressed", () => {
+	test("capture-active promotes the PTT phase from opening to live", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "ptt",
+				},
+			},
+		});
+		renderHook(() => usePushToTalk());
+		if (!listeners.has(IPC.HOTKEY_PRESSED)) {
+			return;
+		}
+		fire(IPC.HOTKEY_PRESSED);
+		expect(useHotkeyStore.getState().micPhase).toBe("opening");
+		// Backend confirms the mic is delivering audio.
+		fire(IPC.STT_CAPTURE_ACTIVE);
+		expect(useHotkeyStore.getState().micPhase).toBe("live");
+		// Releasing the key ends the recording → back to idle.
+		fire(IPC.HOTKEY_RELEASED);
+		expect(useHotkeyStore.getState().micPhase).toBe("idle");
+	});
+
+	test("recording-stop returns a live phase to idle", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "ptt",
+				},
+			},
+		});
+		renderHook(() => usePushToTalk());
+		if (!listeners.has(IPC.HOTKEY_PRESSED)) {
+			return;
+		}
+		fire(IPC.HOTKEY_PRESSED);
+		fire(IPC.STT_CAPTURE_ACTIVE);
+		expect(useHotkeyStore.getState().micPhase).toBe("live");
+		fire(IPC.STT_RECORDING_STOP);
+		expect(useHotkeyStore.getState().micPhase).toBe("idle");
+	});
+
+	test("listen mode short-circuits press without changing the phase", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
@@ -264,10 +312,10 @@ describe("usePushToTalk", () => {
 		});
 		renderHook(() => usePushToTalk());
 		fire(IPC.HOTKEY_PRESSED);
-		expect(useHotkeyStore.getState().isPressed).toBe(false);
+		expect(useHotkeyStore.getState().micPhase).toBe("idle");
 	});
 
-	test("toggle mode flips isActive on each press and never relays set_microphone", () => {
+	test("toggle mode flips isActive/phase on each press and never relays set_microphone", () => {
 		useSettingsStore.setState({
 			settings: {
 				...useSettingsStore.getState().settings,
@@ -291,20 +339,23 @@ describe("usePushToTalk", () => {
 				.map((c) => c.args[0] as { method: string; args?: unknown[] })
 				.filter((m) => m.method === "set_microphone").length;
 
-		// First press: toggle on.
+		// First press: toggle on → arming ("opening") until capture is confirmed.
 		fire(IPC.HOTKEY_PRESSED);
 		expect(useHotkeyStore.getState().isActive).toBe(true);
-		expect(useHotkeyStore.getState().isPressed).toBe(true);
+		expect(useHotkeyStore.getState().micPhase).toBe("opening");
 		expect(micCalls()).toBe(0);
 
-		// Release in toggle mode flips the pressed pill off but is otherwise a no-op.
+		// Release in toggle mode is a no-op for the phase — the recording continues
+		// after the key lifts, so the badge must stay armed (unlike PTT).
 		fire(IPC.HOTKEY_RELEASED);
-		expect(useHotkeyStore.getState().isPressed).toBe(false);
+		expect(useHotkeyStore.getState().micPhase).toBe("opening");
 		expect(micCalls()).toBe(0);
 
-		// Second press: toggle off — active state flips back, still no mic relay.
+		// Second press: toggle off — active state flips back, phase returns to idle,
+		// still no mic relay.
 		fire(IPC.HOTKEY_PRESSED);
 		expect(useHotkeyStore.getState().isActive).toBe(false);
+		expect(useHotkeyStore.getState().micPhase).toBe("idle");
 		expect(micCalls()).toBe(0);
 	});
 
@@ -334,54 +385,6 @@ describe("usePushToTalk", () => {
 		).toBeGreaterThanOrEqual(2);
 	});
 
-	test("disables silence endpoint in PTT mode even when smartEndpoint is on", () => {
-		useSettingsStore.setState({
-			settings: {
-				...useSettingsStore.getState().settings,
-				general: {
-					...useSettingsStore.getState().settings.general,
-					recordingMode: "ptt",
-				},
-				quality: {
-					...useSettingsStore.getState().settings.quality,
-					smartEndpoint: true,
-				},
-			},
-		});
-		renderHook(() => usePushToTalk());
-		const setParamCalls = sentChannels
-			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
-			.map((c) => c.args[0] as { parameter: string; value: unknown });
-		const silenceCall = setParamCalls.find(
-			(p) => p.parameter === "silence_endpoint_enabled",
-		);
-		expect(silenceCall).toBeDefined();
-		expect(silenceCall?.value).toBe(false);
-	});
-
-	test("disables silence endpoint for PTT mode with smartEndpoint off", () => {
-		useSettingsStore.setState({
-			settings: {
-				...useSettingsStore.getState().settings,
-				general: {
-					...useSettingsStore.getState().settings.general,
-					recordingMode: "ptt",
-				},
-				quality: {
-					...useSettingsStore.getState().settings.quality,
-					smartEndpoint: false,
-				},
-			},
-		});
-		renderHook(() => usePushToTalk());
-		const silenceCall = sentChannels
-			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
-			.map((c) => c.args[0] as { parameter: string; value: unknown })
-			.find((p) => p.parameter === "silence_endpoint_enabled");
-		expect(silenceCall).toBeDefined();
-		expect(silenceCall?.value).toBe(false);
-	});
-
 	test("PTT press re-asserts the silence endpoint + timing disables", () => {
 		useSettingsStore.setState({
 			settings: {
@@ -396,7 +399,7 @@ describe("usePushToTalk", () => {
 		if (!listeners.has(IPC.HOTKEY_PRESSED)) {
 			return;
 		}
-		// Drop the mount-effect pushes so we inspect only what the PRESS emits.
+		// Drop any mount-time pushes so we inspect only what the PRESS emits.
 		sentChannels.length = 0;
 		fire(IPC.HOTKEY_PRESSED);
 
@@ -458,45 +461,6 @@ describe("usePushToTalk", () => {
 		expect(forcedOff).toBe(false);
 	});
 
-	test("disables silence endpoint in toggle mode when manualToggleStop is on", () => {
-		useSettingsStore.setState({
-			settings: {
-				...useSettingsStore.getState().settings,
-				general: {
-					...useSettingsStore.getState().settings.general,
-					recordingMode: "toggle",
-					manualToggleStop: true,
-				},
-			},
-		});
-		renderHook(() => usePushToTalk());
-		const silenceCalls = sentChannels
-			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
-			.map((c) => c.args[0] as { parameter: string; value: unknown })
-			.filter((p) => p.parameter === "silence_endpoint_enabled");
-		// Last value sent reflects the final effective state.
-		expect(silenceCalls.at(-1)?.value).toBe(false);
-	});
-
-	test("enables silence endpoint in toggle mode when manualToggleStop is off", () => {
-		useSettingsStore.setState({
-			settings: {
-				...useSettingsStore.getState().settings,
-				general: {
-					...useSettingsStore.getState().settings.general,
-					recordingMode: "toggle",
-					manualToggleStop: false,
-				},
-			},
-		});
-		renderHook(() => usePushToTalk());
-		const silenceCalls = sentChannels
-			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
-			.map((c) => c.args[0] as { parameter: string; value: unknown })
-			.filter((p) => p.parameter === "silence_endpoint_enabled");
-		expect(silenceCalls.at(-1)?.value).toBe(true);
-	});
-
 	test("subscribes to recording-stop and tears the listener down on unmount", () => {
 		const { unmount } = renderHook(() => usePushToTalk());
 		// onRecordingStop registers a listener that the test harness can fire.
@@ -506,9 +470,9 @@ describe("usePushToTalk", () => {
 		}
 		const beforeUnmount = (listeners.get(IPC.STT_RECORDING_STOP) ?? []).length;
 		expect(beforeUnmount).toBeGreaterThanOrEqual(1);
-		// Firing the channel must not throw and must not alter hotkey state.
+		// Firing the channel must not throw and must leave the badge idle.
 		fire(IPC.STT_RECORDING_STOP);
-		expect(useHotkeyStore.getState().isPressed).toBe(false);
+		expect(useHotkeyStore.getState().micPhase).toBe("idle");
 		unmount();
 		const afterUnmount = (listeners.get(IPC.STT_RECORDING_STOP) ?? []).length;
 		expect(afterUnmount).toBe(beforeUnmount - 1);

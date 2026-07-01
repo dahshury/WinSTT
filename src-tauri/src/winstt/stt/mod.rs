@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 
 // ── engine submodules ──
-/// WinSTT-owned STT backend trait (audit #14): the boundary the legacy pipeline core
+/// WinSTT-owned STT backend trait: the boundary the legacy pipeline core
 /// (`crate::managers::transcription`) calls into for every WinSTT-specific load/decode/cloud step,
 /// so the core stops reaching sideways into `crate::winstt::*` (restores the one-way dep edge).
 pub mod backend;
@@ -111,7 +111,7 @@ pub use quant_resolve::{
 };
 // Crate-internal session/provider helpers — keep `pub(crate)` (NOT `pub`) to avoid widening the
 // public API surface (used by whisper.rs / moonshine.rs / families.rs via `super::`).
-pub(crate) use device::{execution_providers, kv_sort_key, num_cpus_best_effort, provider_label};
+pub(crate) use device::{configure_session, kv_sort_key, num_cpus_best_effort, provider_label};
 
 // ---------------------------------------------------------------------------
 // Inputs / outputs

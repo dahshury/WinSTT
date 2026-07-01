@@ -19,7 +19,7 @@ describe("settings entry bootstrap", () => {
 	test("hydrates GPU info for the settings compute-device selector", () => {
 		const source = readSettingsEntry();
 
-		expect(source).toContain("gpuGetInfo()");
-		expect(source).toContain("setGpuInfo(info)");
+		expect(source).toContain("useGpuInfo()");
+		expect(source).toContain('from "@/entities/connection"');
 	});
 });

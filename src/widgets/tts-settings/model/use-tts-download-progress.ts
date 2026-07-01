@@ -8,6 +8,7 @@ import {
 	onTtsModelDownloadStart,
 	type TtsInstallPhase,
 } from "@/shared/api/ipc-client";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import { formatBytes } from "@/shared/lib/format-bytes";
 
 interface DownloadState {
@@ -41,13 +42,12 @@ export interface TtsDownloadProgress {
 	percent: number;
 }
 
-type Translator = ReturnType<typeof useTranslations>;
 type PhaseLookupKey = TtsInstallPhase | "null";
 
 // Phase → builder lookup. Every member of `TtsInstallPhase | null` is a key
 // (via `String(null) === "null"`) so the indexed access in `buildPhaseLabel`
 // is total — no `??`/`||` needed to coalesce a missing entry.
-const PHASE_LABEL_BUILDERS: Record<PhaseLookupKey, (t: Translator) => string> =
+const PHASE_LABEL_BUILDERS: Record<PhaseLookupKey, (t: TranslateFn) => string> =
 	{
 		engine: (t) => t("installPhaseEngine"),
 		model: (t) => t("installPhaseModel"),
@@ -58,7 +58,7 @@ const PHASE_LABEL_BUILDERS: Record<PhaseLookupKey, (t: Translator) => string> =
 
 /** Phase prefix (or "" when there's no active phase). Branch-free lookup. */
 export function buildPhaseLabel(
-	t: Translator,
+	t: TranslateFn,
 	installPhase: TtsInstallPhase | null,
 ): string {
 	const key = String(installPhase) as PhaseLookupKey;
@@ -86,7 +86,7 @@ export function firstString(
  * Indexing instead of a ternary keeps `buildProgressLabel` at CC 1.
  */
 const PROGRESS_LABEL_BUILDERS: ReadonlyArray<
-	(t: Translator, state: DownloadState) => string
+	(t: TranslateFn, state: DownloadState) => string
 > = [
 	(t) => t("downloading"),
 	(t, state) =>
@@ -108,11 +108,11 @@ const PROGRESS_LABEL_BUILDERS: ReadonlyArray<
 
 /** "Downloading…" line. Indexed lookup (no ternary). */
 export function buildProgressLabel(
-	t: Translator,
+	t: TranslateFn,
 	state: DownloadState,
 ): string {
 	const builder = PROGRESS_LABEL_BUILDERS[Number(state.totalBytes > 0)] as (
-		t: Translator,
+		t: TranslateFn,
 		state: DownloadState,
 	) => string;
 	return builder(t, state);

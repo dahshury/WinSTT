@@ -169,11 +169,10 @@ fn watch_windows_lid_reconfigure(app: tauri::AppHandle) {
             continue;
         }
 
+        // Clamshell mic is canonical in the WinSTT store (`audio.clamshellMicrophone`,
+        // a device index). No legacy `AppSettings` mirror anymore.
         let settings = crate::winstt::commands::settings::read_settings_raw(&app);
-        let legacy_settings = crate::settings::get_settings(&app);
-        if settings.audio.clamshell_microphone.is_none()
-            && legacy_settings.clamshell_microphone.is_none()
-        {
+        if settings.audio.clamshell_microphone.is_none() {
             continue;
         }
 

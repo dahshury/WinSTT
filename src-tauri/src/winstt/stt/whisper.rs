@@ -196,7 +196,7 @@ impl WhisperEngine {
 
         let tokenizer = WhisperTokenizer::load(vocab_path, added_tokens_path)?;
 
-        // n_mels resolution order: explicit "num_mel_bins" pseudo-entry (spike) → the
+        // n_mels resolution order: explicit "num_mel_bins" pseudo-entry → the
         // config.json `num_mel_bins` (the resolver provides a "config" path; else the sibling
         // of vocab.json) → 80 (every export except large-v3 = 128). Getting this wrong silently
         // breaks 128-mel models loaded through the live resolver path (they'd run at 80 mel).

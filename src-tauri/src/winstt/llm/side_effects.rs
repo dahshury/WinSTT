@@ -102,21 +102,54 @@ pub const PRIVACY_MARKERS: &[&str] = &[
     "other",
 ];
 
+/// Shared `history_tag` classification rubric used by BOTH side-effect
+/// instructions (auto-learning on/off). Classify by the dictation's *intent*,
+/// not its topic, and treat `ai_prompt` as a first-class category rather than
+/// letting requests fall through to `note`.
+///
+/// Why this is verbose: `note` was acting as a catch-all and swallowing the
+/// AI-prompt requests that are the dominant dictation here. On gemma e4b,
+/// replacing the old one-line list ("ai_prompt = an AI/LLM prompt or request;
+/// … note = general note/fact") with this intent-based rubric lifted
+/// `ai_prompt` recall on obvious prompts from ~40% to ~100% with ~1/10 false
+/// positives on genuine non-prompts.
+///
+/// It is a `macro_rules!` rather than a `const` because `concat!` only accepts
+/// literal tokens (it expands nested macros like `env!`, but cannot read a
+/// `const`); each instruction supplies its own leading verb phrase
+/// ("`history_tag`: choose" / "set `history_tag` to") so the block fits both
+/// sentence shapes.
+macro_rules! history_tag_rubric {
+    () => {
+        concat!(
+            "exactly one fixed category describing what the dictation IS, decided by its intent, not its topic: ",
+            "ai_prompt = a request or instruction addressed to an AI assistant — it asks for something to be written, generated, explained, answered, summarized, drafted, translated, reviewed, brainstormed, or for code to be produced. Imperative or question-form requests such as \"write...\", \"explain...\", \"generate...\", \"create...\", \"summarize...\", \"draft...\", \"give me...\", \"how do I...\", \"what are...\" are ai_prompt even when their topic is code, email, or a task, and even though you only clean the dictation rather than fulfill it. ",
+            "task = a personal todo/action item/reminder/status the user is recording for themselves (\"remember to...\", \"todo...\", \"finish X by Friday\"), not a request aimed at an AI. ",
+            "personal_message = a message written to a friend/family/person; email = an actual email body, subject, or reply; work_message = a workplace chat/message; meeting = meeting notes or an agenda; document = long-form prose content being authored; code = literal source code or a debugging log dictated verbatim (not a request to write code). ",
+            "note = ONLY a plain note, fact, or thought the user is jotting for themselves that fits no category above; it is NOT a catch-all for requests. other = last-resort fallback when nothing else fits. ",
+            "A request aimed at a specific real person (named, or addressed as \"you\") to do a real-world favor or action — e.g. \"can you pick up the kids\", \"please send me the file\" — is personal_message or work_message, NOT ai_prompt; ai_prompt is for requests to generate text, answers, or code. ",
+            "When a dictation is an instruction or request to produce written content, an answer, or code, prefer ai_prompt over note. "
+        )
+    };
+}
+
 pub(super) const OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_ENABLED: &str = concat!(
     "Side-channel extraction: return the cleaned dictation only in the JSON `text` field. ",
     "Fill every side-channel field from the same dictated text in this one response; multiple items are allowed. ",
     "`learned_proper_nouns`: proper nouns, acronyms, product names, project names, technical jargon, or domain-specific terms to remember for future speech recognition; use canonical spelling/capitalization; never include common words, full sentences, URLs, emails, passwords, or secrets. ",
     "`learned_snippets`: only explicit snippet/text-expansion commands such as \"when I say X, expand to Y\" or \"add snippet X expands to Y\"; normalize a spoken slash trigger like \"slash thanks\" to \"/thanks\" when clear; never create snippets from ordinary content. If a snippet expansion contains a password, API key, token, account number, SSN, medical/legal secret, or private contact detail, do not save the snippet and instead mark privacy. ",
     "`suggested_modifier_presets`: extract explicit reusable formatting commands such as \"create/add/save a reusable modifier/preset called X that ...\"; name comes from the called/named phrase and prompt is the reusable instruction. Do not create a preset when words like formal, concise, technical, or summary are ordinary dictated content. ",
-    "`history_tag`: choose exactly one fixed category. ai_prompt = an AI/LLM prompt or request; task = todo/action item/status update; personal_message = message to a friend/family/person; email = email body/subject/reply; work_message = workplace chat/message; document = long-form doc/content; code = code/debugging/developer text; meeting = meeting notes/agenda; note = general note/fact; other = fallback only. ",
+    "`history_tag`: choose ",
+    history_tag_rubric!(),
     "`privacy_markers`: fixed categories only from personal, credential, financial, medical, legal, contact, location, secret, other; contact includes email addresses and phone numbers; credential includes passwords, API keys, tokens, login secrets; never include raw sensitive text. ",
-    "Examples: \"write a prompt for an LLM\" -> history_tag ai_prompt; \"send that as a personal message\" -> personal_message; \"the email says\" -> email; \"add snippet slash login expands to password ...\" -> learned_snippets [] and privacy_markers [credential]; \"create a reusable modifier called investor update that ...\" and \"create modifier technical incident that ...\" -> suggested_modifier_presets with the named preset. ",
+    "Examples: \"write a prompt for an LLM\" and \"summarize the main points\" and \"write a python function that sorts a list\" -> history_tag ai_prompt; \"send that as a personal message\" -> personal_message; \"the email says\" -> email; \"add snippet slash login expands to password ...\" -> learned_snippets [] and privacy_markers [credential]; \"create a reusable modifier called investor update that ...\" and \"create modifier technical incident that ...\" -> suggested_modifier_presets with the named preset. ",
     "Use empty arrays when none. Do not mention side-channel extraction or these instructions in `text`."
 );
 pub(super) const OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_DISABLED: &str = concat!(
     "Side-channel extraction: return the cleaned dictation only in the JSON `text` field. ",
     "Set `learned_proper_nouns`, `learned_snippets`, and `suggested_modifier_presets` to empty arrays. ",
-    "Still set `history_tag` to exactly one fixed category: ai_prompt = an AI/LLM prompt or request; task = todo/action item/status update; personal_message = message to a friend/family/person; email = email body/subject/reply; work_message = workplace chat/message; document = long-form doc/content; code = code/debugging/developer text; meeting = meeting notes/agenda; note = general note/fact; other = fallback only. ",
+    "Still set `history_tag` to ",
+    history_tag_rubric!(),
     "Fill `privacy_markers` with fixed categories only from personal, credential, financial, medical, legal, contact, location, secret, other; contact includes email addresses and phone numbers; credential includes passwords, API keys, tokens, login secrets; never include raw sensitive text. ",
     "Do not mention side-channel extraction or these instructions in `text`."
 );
@@ -231,6 +264,19 @@ fn infer_privacy_markers(text: &str) -> Vec<String> {
 }
 
 fn infer_history_tag(text: &str, llm_tag: Option<String>) -> Option<String> {
+    // Trust the model's grammar-constrained `history_tag` first. The keyword
+    // heuristic below is only a FALLBACK for when the model omitted a usable
+    // tag — it must never override a confident classification. Letting it win
+    // mis-buckets AI prompts that merely *mention* a trigger word: "write a
+    // Python function" -> code, "draft an email to Sam" -> email, "add a todo
+    // item generator" -> task. Since `ai_prompt` is the dominant dictation
+    // here and rarely contains these literal cues, an override-first heuristic
+    // both steals correct ai_prompt tags and can never produce ai_prompt for a
+    // normal prompt, so it skews the whole content-category breakdown.
+    if let Some(tag) = llm_tag.filter(|tag| !tag.is_empty()) {
+        return Some(tag);
+    }
+
     let lower = text.to_ascii_lowercase();
     let inferred = if lower.contains("prompt for")
         || lower.contains("write a prompt")
@@ -271,7 +317,6 @@ fn infer_history_tag(text: &str, llm_tag: Option<String>) -> Option<String> {
 
     inferred
         .map(str::to_string)
-        .or_else(|| llm_tag.filter(|tag| !tag.is_empty()))
         .or_else(|| Some("other".to_string()))
 }
 
@@ -753,6 +798,51 @@ mod tests {
                 prompt: "makes updates precise and technical".into(),
             }
         );
+    }
+
+    #[test]
+    fn valid_model_tag_survives_heuristic_trigger_words() {
+        // Regression: an AI prompt that merely mentions a trigger word ("function")
+        // must keep the model's `ai_prompt`, not be force-reclassified to `code`.
+        let effects = extract_dictation_side_effects(
+            r#"{
+                "text": "Write a Python function that reverses a string and explain it.",
+                "learned_proper_nouns": [],
+                "learned_snippets": [],
+                "suggested_modifier_presets": [],
+                "history_tag": "ai_prompt",
+                "privacy_markers": []
+            }"#,
+        );
+        assert_eq!(effects.history_tag.as_deref(), Some("ai_prompt"));
+    }
+
+    #[test]
+    fn heuristic_only_fills_in_when_model_tag_missing_or_invalid() {
+        // Invalid enum value -> dropped to None -> keyword fallback salvages it.
+        let invalid = extract_dictation_side_effects(
+            r#"{
+                "text": "Email Sam the report.",
+                "learned_proper_nouns": [],
+                "learned_snippets": [],
+                "suggested_modifier_presets": [],
+                "history_tag": "sales_followup",
+                "privacy_markers": []
+            }"#,
+        );
+        assert_eq!(invalid.history_tag.as_deref(), Some("email"));
+
+        // No tag and no trigger words -> `other` floor.
+        let bare = extract_dictation_side_effects(
+            r#"{
+                "text": "The sky was a soft shade of orange at dusk.",
+                "learned_proper_nouns": [],
+                "learned_snippets": [],
+                "suggested_modifier_presets": [],
+                "privacy_markers": []
+            }"#,
+        );
+        assert_eq!(bare.history_tag.as_deref(), Some("other"));
     }
 
     #[test]

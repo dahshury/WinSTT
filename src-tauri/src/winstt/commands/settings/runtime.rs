@@ -43,9 +43,7 @@ pub(super) fn apply_model_runtime_settings(
     // memory after switching to the cloud (the first requirement of onboarding's
     // "configure cloud → unload local"). Idempotent and cheap: a no-op when the
     // swap controller already unloaded it (cloud ids report `is_model_loaded()==false`).
-    if previous.model.model != next.model.model
-        && crate::winstt::cloud_stt::provider_of(&next.model.model).is_some()
-    {
+    if stt_switched_to_cloud(previous, next) {
         unload_loaded_stt_model_async(app);
     }
     sync_core_model_unload_timeout(app, next.global.model_unload_timeout);
@@ -61,6 +59,16 @@ pub(super) fn apply_model_runtime_settings(
             unload_loaded_stt_model_async(app);
         }
     }
+}
+
+/// True when the STT model id CHANGED to a cloud provider id (`openrouter:` /
+/// `elevenlabs:`) — the exact moment a resident LOCAL engine must be freed,
+/// since a cloud model holds no local VRAM. Mirrors `local_tts_engine_wanted`'s
+/// role for TTS and the `ollama_models_for_enabled_features` provider filter for
+/// LLM: switching to cloud is an UNLOAD trigger, not only disabling.
+fn stt_switched_to_cloud(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
+    previous.model.model != next.model.model
+        && crate::winstt::cloud_stt::provider_of(&next.model.model).is_some()
 }
 
 fn sync_stt_runtime_policy(app: &AppHandle, settings: &WinsttSettings) {
@@ -159,8 +167,55 @@ pub(super) fn apply_tts_runtime_settings(
     next: &WinsttSettings,
 ) {
     sync_tts_idle_unload_timeout(app, next.global.model_unload_timeout);
+    // Disabling TTS (or moving it to a cloud voice) should free the local ONNX
+    // voice from VRAM right away — not leave it pinned until the idle timer fires
+    // (up to 15 min, or never under "never unload").
+    if local_tts_engine_wanted(previous) && !local_tts_engine_wanted(next) {
+        unload_local_tts_async(app);
+        return;
+    }
     if tts_warm_inputs_changed(previous, next) {
         warm_tts_async(app);
+    }
+}
+
+/// True iff a LOCAL (in-process ONNX) TTS voice is wanted — enabled AND sourced
+/// locally. A cloud voice holds no VRAM, so it is not "wanted" for this purpose.
+fn local_tts_engine_wanted(settings: &WinsttSettings) -> bool {
+    settings.tts.enabled && matches!(settings.tts.source, TtsSource::Local)
+}
+
+/// Drop the active local TTS session off-thread (cancels any in-flight read-aloud,
+/// which is the right call when the user just turned TTS off).
+fn unload_local_tts_async(app: &AppHandle) {
+    let Some(tts) = app.try_state::<Arc<crate::winstt::managers::TtsManager>>() else {
+        return;
+    };
+    let mgr = Arc::clone(tts.inner());
+    std::thread::spawn(move || {
+        mgr.unload_active_local_model_for_cleanup("tts disabled");
+    });
+}
+
+/// Free the on-device dictionary fallback's mmBERT session (~310 MB) when the
+/// feature is toggled OFF. Unlike STT/TTS it has no idle watcher, so without this
+/// the session would sit in the global engine cell until the app exits.
+pub(super) fn apply_encoder_dict_runtime_settings(
+    _app: &AppHandle,
+    previous: &WinsttSettings,
+    next: &WinsttSettings,
+) {
+    // Keep the encoder's idle-unload policy in lock-step with the shared
+    // `model_unload_timeout` (so the dictionary model unloads on the same
+    // schedule as STT/TTS/LLM instead of lingering in RAM forever).
+    crate::winstt::encoder_dict::update_idle_unload_timeout(core_timeout_from_winstt(
+        next.global.model_unload_timeout,
+    ));
+    if previous.general.encoder_dictionary_enabled && !next.general.encoder_dictionary_enabled {
+        std::thread::spawn(|| {
+            crate::winstt::encoder_dict::clear_loaded();
+            log::info!("[encoder-dict] session dropped (feature disabled)");
+        });
     }
 }
 
@@ -204,9 +259,52 @@ pub(super) fn apply_llm_runtime_settings(
     next: &WinsttSettings,
 ) {
     sync_llm_model_unload_timeout(app, next.global.model_unload_timeout);
+    // Any Ollama model that was backing an enabled feature but is NO LONGER in use
+    // (feature toggled off, model swapped, or provider changed) must be freed from
+    // VRAM immediately — by name, via `keep_alive: 0`. This is INDEPENDENT of the
+    // unload-timeout: that policy only governs how long an *enabled* model lingers
+    // idle; the moment a feature stops using a model it should release VRAM even
+    // under "never unload". Computing the diff (was-using − still-using) also frees
+    // the old model on a swap and leaves a model that a still-enabled feature uses
+    // untouched. Unloading by name (not the warm-tracking set) means a model loaded
+    // before this build's warm-tracking — e.g. resident from a prior run under
+    // keep_alive=-1 — still gets evicted.
+    let was_in_use = ollama_models_for_enabled_features(previous);
+    let still_in_use = ollama_models_for_enabled_features(next);
+    let to_unload: Vec<String> = was_in_use
+        .iter()
+        .filter(|model| !still_in_use.iter().any(|kept| &kept == model))
+        .cloned()
+        .collect();
+    log::info!(
+        "[llm] apply_llm_runtime: was_in_use={was_in_use:?} still_in_use={still_in_use:?} to_unload={to_unload:?} timeout={:?}",
+        next.global.model_unload_timeout
+    );
+    if !to_unload.is_empty() {
+        unload_ollama_models_async(app, to_unload);
+    }
     if llm_warm_inputs_changed(previous, next) {
         warm_llm_models_async(app);
     }
+}
+
+/// Evict the given Ollama models from VRAM off-thread (`keep_alive: 0` at the
+/// configured loopback endpoint). Used when a feature stops using a model so it
+/// frees memory right away instead of waiting out the keep-alive timer (or forever
+/// under "never unload").
+pub(crate) fn unload_ollama_models_async(app: &AppHandle, models: Vec<String>) {
+    if models.is_empty() {
+        return;
+    }
+    let Some(llm) = app.try_state::<Arc<crate::winstt::managers::LlmManager>>() else {
+        return;
+    };
+    let mgr = Arc::clone(llm.inner());
+    log::info!("[llm] unload_ollama_models_async: spawning unload for {models:?}");
+    tauri::async_runtime::spawn(async move {
+        mgr.unload_ollama_models(&models, std::time::Duration::from_secs(5))
+            .await;
+    });
 }
 
 fn sync_llm_model_unload_timeout(app: &AppHandle, timeout: WinsttModelUnloadTimeout) {
@@ -283,11 +381,13 @@ pub(super) fn apply_autostart_setting(
     crate::autostart::sync_launch_at_login(app, next.general.auto_start, "[settings]");
 }
 
-pub(crate) fn enabled_ollama_models(settings: &WinsttSettings) -> Vec<String> {
-    if !should_keep_stt_model_warm(settings.global.model_unload_timeout) {
-        return Vec::new();
-    }
-
+/// Ollama models backing an ENABLED post-processing feature (dictation/transforms,
+/// Ollama provider, non-empty model), deduped. Unlike [`enabled_ollama_models`]
+/// this IGNORES the unload-timeout: it answers "which models is a live feature
+/// using right now", which the VRAM-eviction diff in [`apply_llm_runtime_settings`]
+/// needs even under the "never unload" policy (the timeout governs an enabled
+/// model's idle lifetime, not whether a disabled feature frees its model).
+pub(crate) fn ollama_models_for_enabled_features(settings: &WinsttSettings) -> Vec<String> {
     fn push_feature(out: &mut Vec<String>, enabled: bool, provider: LlmProvider, model: &str) {
         let model = model.trim();
         if !enabled || provider != LlmProvider::Ollama || model.is_empty() {
@@ -314,6 +414,13 @@ pub(crate) fn enabled_ollama_models(settings: &WinsttSettings) -> Vec<String> {
     out
 }
 
+pub(crate) fn enabled_ollama_models(settings: &WinsttSettings) -> Vec<String> {
+    if !should_keep_stt_model_warm(settings.global.model_unload_timeout) {
+        return Vec::new();
+    }
+    ollama_models_for_enabled_features(settings)
+}
+
 fn llm_warm_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
     let previous_models = enabled_ollama_models(previous);
     let next_models = enabled_ollama_models(next);
@@ -337,7 +444,13 @@ pub(crate) fn warm_llm_models_async(app: &AppHandle) {
     };
     let mgr = Arc::clone(llm.inner());
     tauri::async_runtime::spawn(async move {
-        mgr.warm_enabled_models().await;
+        // Retry on the short trigger cadence: when the user toggles
+        // post-processing on or switches the model, the very first warm pass
+        // can lose the pass-claim to an in-flight periodic pass, or hit an
+        // Ollama that is momentarily busy unloading the previous model. A
+        // single fire-and-forget pass would then leave the new model cold until
+        // the 60s periodic tick — the user's "first post-process is slow" gap.
+        mgr.warm_enabled_models_with_retry("trigger").await;
     });
 }
 
@@ -374,6 +487,118 @@ mod tests {
         let mut b = a.clone();
         b.global.model_unload_timeout = ModelUnloadTimeout::Immediately;
         assert!(model_warm_inputs_changed(&a, &b));
+    }
+
+    #[test]
+    fn ollama_models_for_enabled_features_ignores_unload_timeout() {
+        use crate::winstt::settings_schema::{LlmProvider, ModelUnloadTimeout};
+
+        let mut on = WinsttSettings::default();
+        on.llm.dictation.enabled = true;
+        on.llm.dictation.base.provider = LlmProvider::Ollama;
+        on.llm.dictation.base.model = "gemma3:4b".into();
+        assert_eq!(ollama_models_for_enabled_features(&on), vec!["gemma3:4b"]);
+
+        // Unlike `enabled_ollama_models`, the "never unload" / immediate policy must
+        // NOT zero this — a disabled feature has to free its model under any policy.
+        on.global.model_unload_timeout = ModelUnloadTimeout::Never;
+        assert_eq!(ollama_models_for_enabled_features(&on), vec!["gemma3:4b"]);
+        on.global.model_unload_timeout = ModelUnloadTimeout::Immediately;
+        assert_eq!(ollama_models_for_enabled_features(&on), vec!["gemma3:4b"]);
+        assert!(enabled_ollama_models(&on).is_empty());
+
+        // Disabling the feature drops it from the in-use set (the unload diff then
+        // sees it in `previous` but not `next`).
+        let mut off = on.clone();
+        off.llm.dictation.enabled = false;
+        assert!(ollama_models_for_enabled_features(&off).is_empty());
+
+        // A cloud provider holds no local VRAM, and a blank model is not "in use".
+        let mut cloud = on.clone();
+        cloud.llm.dictation.base.provider = LlmProvider::Openrouter;
+        assert!(ollama_models_for_enabled_features(&cloud).is_empty());
+        let mut blank = on;
+        blank.llm.dictation.base.model = "  ".into();
+        assert!(ollama_models_for_enabled_features(&blank).is_empty());
+    }
+
+    #[test]
+    fn unload_diff_frees_disabled_and_swapped_models_keeps_in_use() {
+        use crate::winstt::settings_schema::LlmProvider;
+
+        let mut prev = WinsttSettings::default();
+        prev.global.model_unload_timeout =
+            crate::winstt::settings_schema::ModelUnloadTimeout::Never;
+        prev.llm.dictation.enabled = true;
+        prev.llm.dictation.base.provider = LlmProvider::Ollama;
+        prev.llm.dictation.base.model = "gemma3:4b".into();
+
+        let unload_diff = |a: &WinsttSettings, b: &WinsttSettings| -> Vec<String> {
+            let still = ollama_models_for_enabled_features(b);
+            ollama_models_for_enabled_features(a)
+                .into_iter()
+                .filter(|m| !still.iter().any(|k| k == m))
+                .collect()
+        };
+
+        // Toggle off → the model is freed even though timeout is "never".
+        let mut off = prev.clone();
+        off.llm.dictation.enabled = false;
+        assert_eq!(unload_diff(&prev, &off), vec!["gemma3:4b"]);
+
+        // Swap model → old freed, new is left for the warm path to load.
+        let mut swap = prev.clone();
+        swap.llm.dictation.base.model = "qwen3:8b".into();
+        assert_eq!(unload_diff(&prev, &swap), vec!["gemma3:4b"]);
+
+        // Still enabled, unchanged → nothing freed.
+        assert!(unload_diff(&prev, &prev).is_empty());
+    }
+
+    #[test]
+    fn local_tts_unload_triggers_only_when_local_voice_is_dropped() {
+        use crate::winstt::settings_schema::TtsSource;
+
+        let mut on = WinsttSettings::default();
+        on.tts.enabled = true;
+        on.tts.source = TtsSource::Local;
+        assert!(local_tts_engine_wanted(&on));
+
+        // Disable TTS → local voice no longer wanted → unload.
+        let mut off = on.clone();
+        off.tts.enabled = false;
+        assert!(!local_tts_engine_wanted(&off));
+
+        // Move to a cloud voice → local session no longer wanted → unload.
+        let mut cloud = on;
+        cloud.tts.source = TtsSource::Cloud;
+        assert!(!local_tts_engine_wanted(&cloud));
+    }
+
+    #[test]
+    fn stt_switch_to_cloud_provider_triggers_local_unload() {
+        // Switching the STT model from a local engine to a cloud id must free the
+        // resident local model — NOT only disabling does. Both cloud providers
+        // (openrouter / elevenlabs) count; a plain local→local swap does not.
+        let mut local = WinsttSettings::default();
+        local.model.model = "dolphin-base-ctc".into();
+
+        let mut to_eleven = local.clone();
+        to_eleven.model.model = "elevenlabs:scribe_v1".into();
+        assert!(stt_switched_to_cloud(&local, &to_eleven));
+
+        let mut to_openrouter = local.clone();
+        to_openrouter.model.model = "openrouter:whisper-large-v3".into();
+        assert!(stt_switched_to_cloud(&local, &to_openrouter));
+
+        // local → another local model is a swap, not a cloud switch.
+        let mut local_swap = local.clone();
+        local_swap.model.model = "nemo-parakeet-tdt-0.6b-v3".into();
+        assert!(!stt_switched_to_cloud(&local, &local_swap));
+
+        // Unchanged id, or already-cloud staying cloud, is not a fresh switch.
+        assert!(!stt_switched_to_cloud(&local, &local));
+        assert!(!stt_switched_to_cloud(&to_eleven, &to_eleven));
     }
 
     #[test]

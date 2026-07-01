@@ -368,8 +368,7 @@ pub async fn tts_download_estimate(
 /// there is no long-lived resumable job to pause yet. We emit `tts:install-paused`
 /// for UI parity with the reference; the partial files survive on disk and re-enabling
 /// resumes via HTTP Range automatically.
-// TODO(engine): when the shared resumable asset downloader lands (mod.rs
-// `download_kokoro_assets` DownloadControl), wire pause/resume/cancel to its
+// When the shared resumable asset downloader lands, route this through its
 // cooperative pause/cancel flags instead of this UI-only emit.
 #[tauri::command]
 #[specta::specta]
@@ -400,8 +399,8 @@ pub async fn tts_install_resume(
 ///
 /// Emits `tts:model-download-complete { cancelled: true }` for UI parity. Partial-
 /// file removal happens lazily on the next resume (HTTP Range re-validates).
-// TODO(engine): wire to the shared downloader's cooperative cancel + `.partial`
-// removal once it lands (see `tts_install_pause`).
+// Route this through the shared downloader's cooperative cancel + `.partial`
+// removal once that downloader owns Kokoro assets.
 #[tauri::command]
 #[specta::specta]
 pub fn tts_install_cancel(app: AppHandle) {

@@ -30,7 +30,7 @@ interface LlmProcessingState {
 }
 
 /** Patch for `setThinking(true)`: preserve an existing start so the timer is
- * monotonic across duplicate START events (CC 1). */
+ * monotonic across duplicate START events. */
 export function nextThinkingStart(
 	currentStart: number | null,
 	now: number = Date.now(),
@@ -41,7 +41,7 @@ export function nextThinkingStart(
 	};
 }
 
-/** Patch for `setThinking(false)`: clear both flags (CC 1). */
+/** Patch for `setThinking(false)`: clear both flags. */
 export function thinkingStopPatch(): {
 	isThinking: false;
 	thinkingStartedAt: null;
@@ -49,7 +49,7 @@ export function thinkingStopPatch(): {
 	return { isThinking: false, thinkingStartedAt: null };
 }
 
-/** Pick the right patch for a `setThinking(value)` call (CC 1). */
+/** Pick the right patch for a `setThinking(value)` call. */
 export function thinkingPatch(
 	value: boolean,
 	currentStart: number | null,
@@ -84,7 +84,7 @@ export function transformPatch(
 	return value ? nextTransformStart(currentStart) : transformStopPatch();
 }
 
-/** Patch for `appendThinking(chunk)`: empty chunks are no-ops (CC 1). */
+/** Patch for `appendThinking(chunk)`: empty chunks are no-ops. */
 export function appendThinkingPatch(
 	currentText: string,
 	chunk: string,

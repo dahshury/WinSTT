@@ -228,16 +228,22 @@ fn to_transcription_entry(
         Some(cleaned) if !cleaned.trim().is_empty() => Some(entry.transcription_text.clone()),
         _ => None,
     };
-    let audio_file_path = if entry.file_name.is_empty() {
+    // Resolve the saved WAV once: it drives both the play button (`audioFilePath`)
+    // and the recording duration. Duration is derived from the WAV header here
+    // rather than stored in the DB so it backfills rows written before duration
+    // was tracked; `0` means "no recording on disk" (cloud-STT / legacy rows),
+    // which the History WPM/speaking-time stats treat as "unknown".
+    let recording_path = if entry.file_name.is_empty() {
         None
     } else {
         let path = mgr.get_audio_file_path(&entry.file_name);
-        if path.exists() {
-            path.to_str().map(|s| s.to_string())
-        } else {
-            None
-        }
+        path.exists().then_some(path)
     };
+    let duration_ms = recording_path
+        .as_deref()
+        .and_then(crate::audio_toolkit::wav_duration_ms)
+        .map_or(0, |ms| ms as i64);
+    let audio_file_path = recording_path.and_then(|p| p.to_str().map(str::to_string));
     // Reshape the stored LLM telemetry JSON (`{model, processingMs, tokens}`)
     // into the footer's model / processing-time / speed chips. tokens/s is
     // computed here so the renderer only formats; it's omitted when the
@@ -248,11 +254,10 @@ fn to_transcription_entry(
         .map(parse_llm_meta)
         .unwrap_or_default();
     let llm_failed = meta.error.is_some();
-    let llm_tokens_per_second = match (llm_failed, meta.tokens, meta.processing_ms) {
-        (false, Some(tokens), Some(ms)) if tokens > 0 && ms > 0 => {
-            Some(tokens as f64 / (ms as f64 / 1000.0))
-        }
-        _ => None,
+    let llm_tokens_per_second = if llm_failed {
+        None
+    } else {
+        tokens_per_second(meta.tokens, meta.processing_ms)
     };
     // Resolve the stored STT model id to its catalog display name (e.g.
     // `tiny` → "Whisper Tiny"); cloud ids fall back to the raw id. Blank ids
@@ -270,7 +275,7 @@ fn to_transcription_entry(
         // History rows store `Utc::now().timestamp()` (SECONDS); the legacy renderer
         // shape is MILLIS (`new Date(ms)`), so scale up.
         timestamp: entry.timestamp.saturating_mul(1000),
-        duration_ms: 0,
+        duration_ms,
         audio_file_path,
         original_text,
         llm_model: meta.model,
@@ -290,12 +295,7 @@ fn to_transform_entry(entry: &TransformHistoryDbEntry) -> TransformHistoryEntry 
         .as_deref()
         .map(parse_llm_meta)
         .unwrap_or_default();
-    let llm_tokens_per_second = match (meta.tokens, meta.processing_ms) {
-        (Some(tokens), Some(ms)) if tokens > 0 && ms > 0 => {
-            Some(tokens as f64 / (ms as f64 / 1000.0))
-        }
-        _ => None,
-    };
+    let llm_tokens_per_second = tokens_per_second(meta.tokens, meta.processing_ms);
     TransformHistoryEntry {
         id: entry.id.to_string(),
         word_count: count_words(&entry.after_text),
@@ -337,6 +337,17 @@ struct LlmMeta {
     tokens: Option<i64>,
 }
 
+/// LLM generation speed (output tokens / processing second). `None` when the
+/// provider reported no tokens or the pass was sub-millisecond.
+fn tokens_per_second(tokens: Option<i64>, processing_ms: Option<i64>) -> Option<f64> {
+    match (tokens, processing_ms) {
+        (Some(tokens), Some(ms)) if tokens > 0 && ms > 0 => {
+            Some(tokens as f64 / (ms as f64 / 1000.0))
+        }
+        _ => None,
+    }
+}
+
 fn parse_llm_meta(raw: &str) -> LlmMeta {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
         return LlmMeta::default();
@@ -375,41 +386,13 @@ fn to_history_row(entry: &DbHistoryEntry) -> HistoryRow {
     }
 }
 
-/// Standard RFC4648 base64 (with `=` padding). Inlined to avoid pulling the
-/// `base64` crate (not in Cargo.toml; `00_cargo_additions.md` doesn't list it) —
-/// the only base64 in-tree is `families.rs`'s decoder, so we provide the encoder
-/// here. The output drives an `<audio src="data:audio/wav;base64,...">`.
-fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        out.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
-        out.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if chunk.len() > 2 {
-            out.push(ALPHABET[(n & 0x3f) as usize] as char);
-        } else {
-            out.push('=');
-        }
-    }
-    out
-}
-
 fn wav_to_data_uri(path: &PathBuf) -> Option<String> {
     if !path.exists() {
         return None;
     }
     match std::fs::read(path) {
         Ok(bytes) => {
-            let b64 = base64_encode(&bytes);
+            let b64 = super::base64_encode(&bytes);
             Some(format!("data:audio/wav;base64,{b64}"))
         }
         Err(_) => None,

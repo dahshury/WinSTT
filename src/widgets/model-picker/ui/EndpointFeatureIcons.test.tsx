@@ -3,7 +3,7 @@ import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { asInvalid } from "@test/lib/cast";
 import { render } from "@testing-library/react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
-import * as helpers from "../lib/endpoint-feature-icons-test-helpers";
+import * as helpers from "../lib/endpoint-feature-icons";
 import {
 	EndpointFeatureIcons,
 	ModelFeatureIcons,

@@ -12,8 +12,8 @@ import {
 	SettingField,
 	SettingSection,
 } from "@/entities/setting";
+import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import type {
@@ -34,6 +34,12 @@ interface RealtimeModelSectionProps {
 	/** Same shape as MainModelSection — drives the realtime trigger's
 	 *  download-aware variant when a realtime swap is in flight. */
 	downloadProgress: { modelId: string; percent: number | null } | null;
+	/** True when no live-transcription surface is enabled, so realtime preview
+	 *  has no observable output. The whole section greys out and becomes
+	 *  non-interactive. Derived from `isRealtimeEnabled` in the parent. */
+	disabled: boolean;
+	/** Reason shown on the greyed controls when `disabled` is true. */
+	disabledTooltip: string;
 	getFitAssessment: GetFitAssessment;
 	handleRealtimeModelChange: (
 		modelId: string,
@@ -84,6 +90,8 @@ export function RealtimeModelSection({
 	statesById,
 	systemInfo,
 	currentQuantization,
+	disabled,
+	disabledTooltip,
 	downloadProgress,
 	getFitAssessment,
 	isSwapping,
@@ -107,14 +115,23 @@ export function RealtimeModelSection({
 	const realtimeTooltip = mainModelCanNativeStream
 		? `${t("realtimeModelCaption")} ${t("useMainModelTooltip")}`
 		: `${t("realtimeModelCaption")} ${t("realtimeModelTooltip")}`;
+	// The selector is non-interactive either because the main model already
+	// owns the realtime slot (auto-reuse) or because realtime has no enabled
+	// output surface (`disabled`). Both collapse onto the same picker state.
+	const selectorDisabled = mainModelCanNativeStream || disabled;
 	return (
 		<SettingSection icon={Activity03Icon} title={t("realtimeModelSection")}>
 			<div className="flex flex-col">
 				<div className="col-span-2">
-					<FormControl label={t("realtimeModel")} tooltip={realtimeTooltip}>
+					<FormControl
+						controlTooltip={disabled ? disabledTooltip : undefined}
+						disabled={disabled}
+						label={t("realtimeModel")}
+						tooltip={realtimeTooltip}
+					>
 						<SttModelSelector
 							currentQuantization={currentQuantization}
-							disabled={mainModelCanNativeStream}
+							disabled={selectorDisabled}
 							downloadProgress={downloadProgress}
 							getFitAssessment={getFitAssessment}
 							isLoading={!catalogLoaded || isSwapping}
@@ -125,7 +142,10 @@ export function RealtimeModelSection({
 							onDeleteQuant={onDeleteQuant}
 							onDownloadAction={onDownloadAction}
 							onDownloadSnapshot={onDownloadSnapshot}
-							placeholder={t("useMainModel")}
+							onOpenDetached={(rect) =>
+								openModelPickerAtRect(rect, { pickerKind: "stt-realtime" })
+							}
+							placeholder={t("realtimeModelPlaceholder")}
 							prefilter={(m) =>
 								isSelectableRealtimeModel(m) &&
 								(mainModelInfo === undefined
@@ -149,6 +169,9 @@ export function RealtimeModelSection({
 				</div>
 				{updateIntervalApplies ? (
 					<SettingField
+						disabled={disabled}
+						disabledTooltip={disabled ? disabledTooltip : undefined}
+						hideReset={disabled}
 						isDefault={
 							(quality?.realtimeProcessingPause ??
 								DEFAULT_SETTINGS.quality.realtimeProcessingPause) ===
@@ -164,17 +187,16 @@ export function RealtimeModelSection({
 						}
 						tooltip={t("updateIntervalTooltip")}
 					>
-						<ElevatedSurface className="w-fit" inline>
-							<NumberStepper
-								min={0.01}
-								onChange={(v) => updateQuality({ realtimeProcessingPause: v })}
-								step={0.01}
-								value={
-									quality?.realtimeProcessingPause ??
-									DEFAULT_SETTINGS.quality.realtimeProcessingPause
-								}
-							/>
-						</ElevatedSurface>
+						<NumberStepper
+							disabled={disabled}
+							min={0.01}
+							onChange={(v) => updateQuality({ realtimeProcessingPause: v })}
+							step={0.01}
+							value={
+								quality?.realtimeProcessingPause ??
+								DEFAULT_SETTINGS.quality.realtimeProcessingPause
+							}
+						/>
 					</SettingField>
 				) : null}
 			</div>

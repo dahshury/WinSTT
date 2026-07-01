@@ -64,6 +64,13 @@ pub(crate) fn install_runtime_plugins(
 fn build_log_plugin(console_filter: Filter) -> tauri::plugin::TauriPlugin<Wry> {
     LogBuilder::new()
         .level(log::LevelFilter::Trace)
+        // `rusqlite_migration` logs an INFO "Database migrated to version N" on
+        // EVERY `to_latest()` call — even when zero migrations run (it just
+        // reports the current schema version). The DB is never re-migrated
+        // (user_version tracks applied steps), so the line is pure noise on every
+        // boot. Our own history.rs logs a real "migrated from X to Y" only when
+        // the version actually advances. Mute the crate's INFO chatter.
+        .level_for("rusqlite_migration", log::LevelFilter::Warn)
         .max_file_size(500_000)
         .rotation_strategy(RotationStrategy::KeepOne)
         .clear_targets()

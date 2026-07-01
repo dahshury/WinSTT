@@ -57,7 +57,7 @@ pub async fn resolve(req: &ResolveRequest) -> SttResult<ResolvedModel> {
     // Pass 1 — honour the caller's cache-only flag (mirrors resolver.py: try local_files_only=True).
     // It is "good" only if it resolved AND every `.onnx` has complete external data.
     //
-    // OFFLINE-FIRST (audit #2 CRITICAL): a 100%-cached model must load with ZERO network. We derive
+    // OFFLINE-FIRST (CRITICAL): a 100%-cached model must load with ZERO network. We derive
     // the planned file set straight from the ON-DISK hf-hub snapshot (`scan_cache`) and glob-match it
     // there — `repo.info().send()` (the HTTP tree listing) is NEVER touched on this pass. A genuine
     // cache miss / incomplete shard falls through to the single network pass below.
@@ -536,7 +536,7 @@ pub async fn is_file_cached(model_id: &str, repo_path: &str) -> bool {
 async fn list_repo_tree(
     repo: &hf_hub::HFRepository<hf_hub::RepoTypeModel>,
 ) -> SttResult<Vec<String>> {
-    // SPIKE: the HF `/api/models/{id}` response includes `siblings` (rfilename) by default, so a
+    // The HF `/api/models/{id}` response includes `siblings` (rfilename) by default, so a
     // plain `info().send()` should populate `ModelInfo.siblings`. If the builder gates siblings
     // behind an expand flag (e.g. `.expand("siblings")` / `.files(true)`), add it on the next line.
     let info = repo

@@ -4,10 +4,7 @@ import { useState } from "react";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
-import {
-	type LlmSettingsPanelModel,
-	useLlmSettingsPanel,
-} from "../model/use-llm-settings-panel";
+import { useLlmSettingsPanel } from "../model/use-llm-settings-panel";
 import { FeatureBlock } from "./FeatureBlock";
 import { LlmSettingsDialogs } from "./LlmSettingsDialogs";
 import {
@@ -15,8 +12,6 @@ import {
 	FeaturePresetControls,
 } from "./modifier-presets";
 import { PlaygroundModal } from "./playground-modal";
-
-export type { LlmSettingsPanelModel };
 
 export function LlmSettingsPanel() {
 	const model = useLlmSettingsPanel();

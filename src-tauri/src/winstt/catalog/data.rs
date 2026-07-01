@@ -1,4 +1,4 @@
-// The static STT catalog: the `ModelEntry` row shape + the verbatim 71-row `STT_CATALOG`
+// The static STT catalog: the `ModelEntry` row shape + the verbatim 73-row `STT_CATALOG`
 // const ported from `catalog.json`. Pure data, no policy. The precision/EP resolution policy
 // that consumes these rows lives in the sibling `policy` module.
 
@@ -29,11 +29,11 @@ pub struct ModelEntry {
     pub supports_realtime: bool,
 }
 
-/// The full STT catalog: 71 shipped models. Verbatim from `catalog.json` (id / display_name /
+/// The full STT catalog: 73 shipped models. Verbatim from `catalog.json` (id / display_name /
 /// family / onnx_model_name / available_quantizations / param_count / supports_realtime).
 ///
 /// Counts (asserted in tests): whisper 15, moonshine 10, nemo 34, kaldi 4, gigaam 2,
-/// cohere 1, sense_voice 1, t-one 1, dolphin 1.
+/// cohere 1, granite 2, sense_voice 1, t-one 1, dolphin 1, qwen3 2.
 pub const STT_CATALOG: &[ModelEntry] = &[
     // ── Whisper family (15) ──────────────────────────────────────────────────────────────
     ModelEntry {
@@ -274,10 +274,10 @@ pub const STT_CATALOG: &[ModelEntry] = &[
     },
     // ── Granite family (2) ───────────────────────────────────────────────────────────────
     ModelEntry {
-        id: "granite-speech-4.1-2b",
-        display_name: "Granite Speech 4.1 2B",
+        id: "granite-speech-4.1-2b-plus",
+        display_name: "Granite Speech 4.1 2B Plus",
         family: Family::Granite,
-        onnx_model_name: "smcleod/ibm-granite-speech-4.1-2b-onnx",
+        onnx_model_name: "smcleod/ibm-granite-speech-4.1-2b-plus-onnx",
         available_quantizations: &["", "int8", "fp16w"],
         param_count: 2_000_000_000,
         supports_realtime: true,
@@ -289,6 +289,27 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         onnx_model_name: "smcleod/ibm-granite-speech-4.1-2b-nar-onnx",
         available_quantizations: &["", "int8", "fp16w"],
         param_count: 2_000_000_000,
+        supports_realtime: true,
+    },
+    // ── Qwen3-ASR family (2) ─────────────────────────────────────────────────────────────
+    // Qwen3 LLM decoder + Whisper-style audio encoder. The fp default export is 4–10 GB, so only
+    // the int4 weight-quantized variant (`*.int4.onnx` + `decoder_weights.int4.data`) is shipped.
+    ModelEntry {
+        id: "qwen3-asr-0.6b",
+        display_name: "Qwen3-ASR 0.6B",
+        family: Family::Qwen3,
+        onnx_model_name: "andrewleech/qwen3-asr-0.6b-onnx",
+        available_quantizations: &["int4"],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "qwen3-asr-1.7b",
+        display_name: "Qwen3-ASR 1.7B",
+        family: Family::Qwen3,
+        onnx_model_name: "andrewleech/qwen3-asr-1.7b-onnx",
+        available_quantizations: &["int4"],
+        param_count: 1_700_000_000,
         supports_realtime: true,
     },
     // ── SenseVoice family (1) ────────────────────────────────────────────────────────────

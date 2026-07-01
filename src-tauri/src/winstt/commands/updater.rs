@@ -10,6 +10,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::command_auth;
 use crate::winstt::commands::settings::read_settings;
+use crate::winstt::observability::IssueBuilder;
 
 const GITHUB_RELEASES_API: &str =
     "https://api.github.com/repos/dahshury/WinSTT/releases?per_page=30";
@@ -114,6 +115,13 @@ impl UpdaterOperation {
             Self::Install => "install",
         }
     }
+
+    fn issue_operation(self) -> &'static str {
+        match self {
+            Self::CheckAndDownload => "check_and_download",
+            Self::Install => "install",
+        }
+    }
 }
 
 fn lock_state(state: &UpdaterRuntimeState) -> std::sync::MutexGuard<'_, UpdaterStateInner> {
@@ -179,6 +187,32 @@ fn blocked_result(reason: impl Into<String>) -> UpdaterCommandResult {
         reason: Some(reason.into()),
         triggered: false,
     }
+}
+
+fn updater_issue(
+    operation: UpdaterOperation,
+    summary: impl Into<String>,
+    detail: impl Into<String>,
+    version: Option<&str>,
+) -> IssueBuilder {
+    let mut issue = IssueBuilder::new("updater", operation.issue_operation(), summary)
+        .detail(detail)
+        .provider("github")
+        .user_visible(true);
+    if let Some(version) = version {
+        issue = issue.context("version", version.to_string());
+    }
+    issue
+}
+
+fn record_updater_failure(
+    app: &AppHandle,
+    operation: UpdaterOperation,
+    summary: &'static str,
+    detail: impl Into<String>,
+    version: Option<&str>,
+) {
+    updater_issue(operation, summary, detail, version).record(Some(app));
 }
 
 #[cfg(test)]
@@ -482,6 +516,13 @@ pub async fn winstt_updater_check_and_download(
     match result {
         Ok(result) => Ok(result),
         Err(message) => {
+            record_updater_failure(
+                &app,
+                UpdaterOperation::CheckAndDownload,
+                "Updater check or download failed",
+                message.clone(),
+                None,
+            );
             record_status(
                 &app,
                 &state,
@@ -531,6 +572,13 @@ pub fn winstt_updater_install(
             let mut inner = lock_state(&state);
             inner.pending = Some(pending);
             drop(inner);
+            record_updater_failure(
+                &app,
+                UpdaterOperation::Install,
+                "Updater install failed",
+                message.clone(),
+                Some(&version),
+            );
             record_status(
                 &app,
                 &state,
@@ -633,5 +681,25 @@ mod tests {
             Some(PORTABLE_UPDATES_DISABLED_REASON)
         );
         assert_eq!(portable_update_policy_block_reason(false), None);
+    }
+
+    #[test]
+    fn updater_issue_carries_provider_operation_and_version_context() {
+        let issue = updater_issue(
+            UpdaterOperation::Install,
+            "Updater install failed",
+            "permission denied while replacing executable",
+            Some("0.2.0"),
+        )
+        .build_for_test();
+
+        assert_eq!(issue.area, "updater");
+        assert_eq!(issue.operation, "install");
+        assert_eq!(issue.provider.as_deref(), Some("github"));
+        assert_eq!(issue.kind, "permission_denied");
+        assert_eq!(
+            issue.context.get("version").map(String::as_str),
+            Some("0.2.0")
+        );
     }
 }

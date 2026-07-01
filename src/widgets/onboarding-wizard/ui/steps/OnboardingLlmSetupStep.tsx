@@ -17,6 +17,7 @@ import {
 	startOllama,
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { ollamaLlmSelectorUiStorageKey } from "@/shared/lib/model-picker-ui-storage-keys";
 import { FormControl } from "@/shared/ui/form-control";
 import { PulseDot } from "@/shared/ui/pulse-dot";
@@ -64,7 +65,7 @@ export function OnboardingLlmSetupStep() {
 				if (!cancelled) {
 					setDetect(result);
 					if (result.installed) {
-						scanModels().catch(() => undefined);
+						fireAndForget(scanModels(), "onboarding.llmSetup.scanModels");
 					}
 				}
 			})

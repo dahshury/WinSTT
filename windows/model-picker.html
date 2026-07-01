@@ -16,6 +16,20 @@
 	</head>
 	<body>
 		<div id="root"></div>
-		<script type="module" src="/src/entries/model-picker.tsx"></script>
+		<script>
+			(function () {
+				var root = document.getElementById("root");
+				if (!root || root.firstChild) {
+					return;
+				}
+				var shell = document.createElement("div");
+				shell.setAttribute("data-winstt-startup-shell", "");
+				shell.setAttribute("aria-hidden", "true");
+				shell.style.cssText =
+					"min-height:100%;pointer-events:none;background:inherit;";
+				root.appendChild(shell);
+			})();
+		</script>
+		<script type="module" async src="/src/entries/model-picker.tsx"></script>
 	</body>
 </html>

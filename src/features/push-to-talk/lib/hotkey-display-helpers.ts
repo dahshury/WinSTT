@@ -13,12 +13,13 @@ export const TONE_TEXT: Record<InputGroupTone, string> = {
 
 export function resolveTone(
 	isConnected: boolean,
-	isPressed: boolean,
+	// True while a recording is opening OR live — both brighten the keycaps.
+	isArmed: boolean,
 ): InputGroupTone {
 	if (!isConnected) {
 		return "muted";
 	}
-	if (isPressed) {
+	if (isArmed) {
 		return "active";
 	}
 	return "default";

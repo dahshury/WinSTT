@@ -2,7 +2,6 @@
 
 import {
 	AlertCircleIcon,
-	Cancel01Icon,
 	KeyboardIcon,
 	LockIcon,
 	TimeQuarterPassIcon,
@@ -17,6 +16,7 @@ import type { CloudSttProvider } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
+import { ToastDismissButton, ToastShell } from "@/shared/ui/toast";
 
 const AUTO_DISMISS_MS = 8000;
 
@@ -87,9 +87,7 @@ const nextToastId = (() => {
 export function CloudSttErrorToasts() {
 	const [toasts, setToasts] = useState<CloudToast[]>([]);
 	const t = useTranslations("integrations");
-	const base = useSurface();
-	const level = Math.min(base + 3, 8);
-	const detailsLevel = Math.min(base + 4, 8);
+	const detailsLevel = Math.min(useSurface() + 4, 8);
 
 	useEffect(() => {
 		const push = (
@@ -212,15 +210,12 @@ export function CloudSttErrorToasts() {
 	return (
 		<div className="pointer-events-none fixed right-4 bottom-4 z-toast flex w-[420px] max-w-[90vw] flex-col gap-2">
 			{toasts.map((toast) => (
-				<div
-					aria-live="assertive"
-					className={cn(
-						"pointer-events-auto rounded-md border p-3 shadow-lg",
-						toast.kind === "restored" ? "border-border" : "border-error/40",
-						surfaceBg(level),
-					)}
+				<ToastShell
+					ariaLive="assertive"
+					className="pointer-events-auto"
 					key={toast.id}
 					role="alert"
+					tone={toast.kind === "restored" ? "neutral" : "error"}
 				>
 					<div className="flex items-start gap-2">
 						<HugeiconsIcon
@@ -253,15 +248,9 @@ export function CloudSttErrorToasts() {
 								</div>
 							) : null}
 						</div>
-						<Button
-							aria-label="Dismiss"
-							className="rounded p-1 text-foreground-muted hover:bg-surface-tertiary hover:text-foreground"
-							onClick={() => dismiss(toast.id)}
-						>
-							<HugeiconsIcon icon={Cancel01Icon} size={12} />
-						</Button>
+						<ToastDismissButton onClick={() => dismiss(toast.id)} />
 					</div>
-				</div>
+				</ToastShell>
 			))}
 		</div>
 	);

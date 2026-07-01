@@ -17,7 +17,7 @@ import {
 	useTranscriptPreviewStore,
 } from "@/features/transcript-preview";
 import { onSettingsChanged } from "@/shared/api/ipc-client";
-import { decodeSettingsPayload } from "@/shared/api/settings-codec";
+import { decodeSettingsPayload } from "@/shared/config/settings-codec";
 import { shouldSuppressPillPreviewForWordByWordPaste } from "@/shared/lib/realtime-enabled";
 import { DynamicIslandProvider } from "@/shared/ui/dynamic-island";
 import { computePillReveal, useStickyPillReveal } from "../lib/overlay-reveal";
@@ -37,15 +37,6 @@ import {
 } from "./overlay-shell.shared";
 import { TtsIslandLayer, useTtsIslandBridge } from "./TtsIsland";
 import { TtsPlaybackMount } from "./TtsPlaybackMount";
-
-// Re-export the pure compute helpers from their new lib home so existing
-// sibling test imports (`./OverlayPage`) keep resolving — these are the only
-// names consumed outside this file besides `OverlayPage` itself.
-export {
-	computeIslandSize,
-	computePillReveal,
-	computeStickyPillReveal,
-} from "../lib/overlay-reveal";
 
 type OverlaySettings = ReturnType<typeof useSettingsStore.getState>["settings"];
 
@@ -181,9 +172,6 @@ export function OverlayPage() {
 		(computePillReveal({
 			isRecordingActive,
 			isSpeaking,
-			hasText,
-			isThinking: showThinking,
-			isTranscribing: showTranscribing,
 		}) ||
 			isPreviewActive);
 	// Sticky once-on: hold the pill mounted for the rest of the active session

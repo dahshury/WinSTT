@@ -5,8 +5,7 @@ import {
 	VoiceIcon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
-import type { useTranslations } from "use-intl";
-import type { useSettingsStore } from "@/entities/setting";
+import type { GeneralSettings, GeneralT } from "@/entities/setting";
 import type { CreatableComboboxItem } from "@/shared/ui/creatable-combobox";
 
 // ── Local copies of the recording-mode + wake-word helpers ──
@@ -14,11 +13,6 @@ import type { CreatableComboboxItem } from "@/shared/ui/creatable-combobox";
 // FSD forbids importing from another widget's slice, so the subset this panel
 // needs (recording-mode options, wake-word grouping, recording-mode patch,
 // wake-word sensitivity slider mapping) is copied verbatim here.
-
-type GeneralT = ReturnType<typeof useTranslations<"general">>;
-type GeneralSettings = NonNullable<
-	ReturnType<typeof useSettingsStore.getState>["settings"]["general"]
->;
 
 export function buildRecordingModeOptions(t: GeneralT): readonly {
 	value: "ptt" | "toggle" | "listen" | "wakeword";

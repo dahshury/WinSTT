@@ -24,7 +24,7 @@ pub const OPENROUTER_SPEECH_URL: &str = "https://openrouter.ai/api/v1/audio/spee
 pub const OPENROUTER_TTS_FORMAT: &str = "mp3";
 
 /// Build the JSON body for OpenRouter `POST /api/v1/audio/speech`. `format` is
-/// the `response_format` the target model accepts. REAL CODE — tested.
+/// the `response_format` the target model accepts.
 pub fn build_openrouter_speech_body(
     model: &str,
     voice: &str,
@@ -68,7 +68,7 @@ fn speech_error_wants_pcm(err: &TtsError) -> bool {
 
 /// Pull `rate=`/`channels=` out of a `audio/pcm; rate=24000; channels=1`
 /// content-type. Defaults to 24 kHz mono — Gemini/OpenAI PCM's standard shape —
-/// when a parameter is absent. REAL CODE — tested.
+/// when a parameter is absent.
 pub fn parse_pcm_params(content_type: &str) -> (u32, u16) {
     let mut rate = 24_000u32;
     let mut channels = 1u16;
@@ -95,7 +95,7 @@ pub fn parse_pcm_params(content_type: &str) -> (u32, u16) {
 /// renderer plays cloud audio by handing the bytes to Web Audio's
 /// `decodeAudioData`, which rejects HEADERLESS PCM — so Gemini's raw `audio/pcm`
 /// must be wrapped before it can ride the same "encoded container" chunk path
-/// the mp3 providers use. REAL CODE — tested.
+/// the mp3 providers use.
 pub fn pcm_s16le_to_wav(pcm: &[u8], sample_rate: u32, channels: u16) -> Vec<u8> {
     const BITS_PER_SAMPLE: u16 = 16;
     let block_align = channels * (BITS_PER_SAMPLE / 8);
@@ -122,7 +122,7 @@ pub fn pcm_s16le_to_wav(pcm: &[u8], sample_rate: u32, channels: u16) -> Vec<u8> 
 /// Normalize a `/audio/speech` response into bytes the renderer can decode: an
 /// encoded container (mp3/wav) passes through untouched, while raw `audio/pcm`
 /// (Gemini TTS) is wrapped in a WAV header. The result always rides a
-/// `SynthesisChunk::mp3` "encoded container" chunk. REAL CODE — tested.
+/// `SynthesisChunk::mp3` "encoded container" chunk.
 pub fn normalize_speech_audio(bytes: Vec<u8>, content_type: &str) -> Vec<u8> {
     let ct = content_type.to_ascii_lowercase();
     if ct.starts_with("audio/pcm") || ct.starts_with("audio/l16") {
@@ -133,7 +133,7 @@ pub fn normalize_speech_audio(bytes: Vec<u8>, content_type: &str) -> Vec<u8> {
 }
 
 /// Human-readable reason for a failed `/audio/speech` call. OpenRouter error
-/// bodies are `{"error":{"message","code"}}`. REAL CODE — tested.
+/// bodies are `{"error":{"message","code"}}`.
 pub fn classify_openrouter_speech_status(status: u16, body: &str) -> String {
     let msg = serde_json::from_str::<serde_json::Value>(body)
         .ok()

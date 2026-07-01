@@ -3,10 +3,12 @@ import type { ModelInfo } from "../model/catalog-store";
 import type { ModelStateEntry } from "@/shared/api/ipc-client";
 import {
 	readLastLocalSttModelHistory,
-	readLastLocalSttModel,
 	recordLastLocalSttModel,
 	resolveLocalDefault,
 } from "./last-local-model";
+
+const lastLocalSttModel = (): string | null =>
+	readLastLocalSttModelHistory()[0] ?? null;
 
 const m = (id: string): ModelInfo => ({ id }) as unknown as ModelInfo;
 const models = [m("tiny"), m("base"), m("large")];
@@ -22,24 +24,23 @@ const states = {
 };
 
 afterEach(() => {
-	localStorage.removeItem("winstt:last-local-stt-model");
 	localStorage.removeItem("winstt:last-local-stt-model-history");
 });
 
-describe("recordLastLocalSttModel / readLastLocalSttModel", () => {
+describe("recordLastLocalSttModel / readLastLocalSttModelHistory", () => {
 	test("round-trips a model id", () => {
 		recordLastLocalSttModel("base");
-		expect(readLastLocalSttModel()).toBe("base");
+		expect(lastLocalSttModel()).toBe("base");
 	});
 
 	test("ignores an empty id", () => {
 		recordLastLocalSttModel("base");
 		recordLastLocalSttModel("");
-		expect(readLastLocalSttModel()).toBe("base");
+		expect(lastLocalSttModel()).toBe("base");
 	});
 
 	test("reads null when nothing was stored", () => {
-		expect(readLastLocalSttModel()).toBeNull();
+		expect(lastLocalSttModel()).toBeNull();
 	});
 
 	test("keeps most-recent-first history without duplicates", () => {

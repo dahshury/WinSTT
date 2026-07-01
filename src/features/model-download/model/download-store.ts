@@ -1,11 +1,5 @@
 import { create } from "zustand";
-import {
-	mergeProgressIntoSnapshot,
-	mergeSeedIntoSnapshot,
-	monotonicPercent,
-	percentFromFraction,
-	type QuantDownloadSeed,
-} from "@/features/model-download/lib/download-progress-core";
+import type { DownloadProgressPayload as IpcDownloadProgressPayload } from "@/shared/api/ipc-client";
 import {
 	cancelDownload as ipcCancelDownload,
 	deleteModelCache as ipcDeleteModelCache,
@@ -14,24 +8,25 @@ import {
 	predownloadModelQuant as ipcPredownloadModelQuant,
 	resumeModelDownload as ipcResumeModelDownload,
 } from "@/shared/api/ipc-client";
+import {
+	mergeProgressIntoSnapshot,
+	mergeSeedIntoSnapshot,
+	monotonicPercent,
+	percentFromFraction,
+	type QuantDownloadSeed,
+} from "@/shared/lib/download-progress-core";
 
 export {
 	type QuantCacheSeedSource,
 	type QuantDownloadSeed,
 	quantDownloadSeedFromCache,
-} from "@/features/model-download/lib/download-progress-core";
+} from "@/shared/lib/download-progress-core";
 
-export interface DownloadProgressPayload {
-	downloadedBytes?: number;
-	etaSeconds?: number;
-	progress: number;
-	/** Optional — the server's streaming downloader includes this so the
-	 *  store can fan out into ``quantDownloads`` keyed per-variant. Older
-	 *  payloads from the legacy snapshot-download path omit it. */
-	quantization?: string;
-	speedBps?: number;
-	totalBytes?: number;
-}
+/** The store's view of a download-progress event — the canonical IPC payload
+ *  ({@link IpcDownloadProgressPayload}) minus its `model` field, which the store
+ *  carries separately (in `modelName` / the per-quant map key) rather than on
+ *  each progress record. Kept as an `Omit` so the two never drift. */
+export type DownloadProgressPayload = Omit<IpcDownloadProgressPayload, "model">;
 
 export type SttDownloadOwner = "main" | "realtime";
 
@@ -121,12 +116,9 @@ interface DownloadState {
 	setDownloadProgress: (payload: DownloadProgressPayload) => void;
 	setDownloadStart: (model: string) => void;
 	/** Mark a quant entry as cleared from the live map — called when the
-	 *  server emits download_complete for it. */
-	setQuantDownloadComplete: (
-		modelId: string,
-		quantization: string,
-		cancelled: boolean,
-	) => void;
+	 *  server emits download_complete for it. The entry is dropped regardless of
+	 *  whether the download finished or was cancelled. */
+	setQuantDownloadComplete: (modelId: string, quantization: string) => void;
 	/** Update or insert the per-quant snapshot on a chunk event. */
 	setQuantDownloadProgress: (
 		modelId: string,
@@ -368,7 +360,7 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 			};
 		});
 	},
-	setQuantDownloadComplete: (modelId, quantization, _cancelled) => {
+	setQuantDownloadComplete: (modelId, quantization) => {
 		set((s) => {
 			const next = { ...s.quantDownloads };
 			delete next[quantKey(modelId, quantization)];

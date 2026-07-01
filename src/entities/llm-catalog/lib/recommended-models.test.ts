@@ -112,12 +112,25 @@ describe("RECOMMENDED_OLLAMA_MODELS contract", () => {
 		expect(gemmaNames).toEqual(["gemma4:e2b", "gemma4:e4b", "gemma4:12b"]);
 	});
 
-	test("omits the plain non-instruct SmolLM 2 1.7B tag", () => {
+	test("offers every SmolLM 2 library size (135m → 1.7b)", () => {
 		const smollmNames = RECOMMENDED_OLLAMA_MODELS.filter(
 			(m) => m.family === "smollm",
 		).map((m) => m.name);
-		expect(smollmNames).toEqual(["smollm2:135m", "smollm2:360m"]);
-		expect(findRecommendedModel("smollm2:1.7b")).toBeUndefined();
+		expect(smollmNames).toEqual([
+			"smollm2:135m",
+			"smollm2:360m",
+			"smollm2:1.7b",
+		]);
+		const smol17b = findRecommendedModel("smollm2:1.7b");
+		expect(smol17b?.displayName).toBe("SmolLM 2 1.7B");
+		expect(smol17b?.sizeBytes).toBe(Math.round(1.8 * 1_000_000_000));
+	});
+
+	test("carries no SmolLM v1 (smollm) entries — only smollm2", () => {
+		const v1 = RECOMMENDED_OLLAMA_MODELS.filter((m) =>
+			m.name.startsWith("smollm:"),
+		);
+		expect(v1).toEqual([]);
 	});
 
 	test("offers the requested LFM2.5 Thinking model", () => {

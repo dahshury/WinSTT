@@ -18,13 +18,14 @@ import type {
 	IntegrationCloudProvider,
 } from "@/shared/api/models";
 import { verifyCredentialCommand } from "../api/verify-credential";
-import { cn } from "@/shared/lib/cn";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
+import { useSurface } from "@/shared/lib/surface";
+import { brandLogoFor } from "@/shared/ui/brand-logo";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
-import { Spinner } from "@/shared/ui/spinner";
 import { PasswordField, StoredSecretField } from "@/shared/ui/text-field";
+import { CredentialStatusPill } from "./CredentialStatusPill";
 
 interface ProviderIntegrationSectionProps {
 	keyCaption: string;
@@ -178,7 +179,7 @@ export function ProviderIntegrationSection({
 		}
 		debounceRef.current = window.setTimeout(() => {
 			debounceRef.current = null;
-			runVerify(value).catch(() => undefined);
+			fireAndForget(runVerify(value), "verifyCredentials.runVerify");
 		}, VERIFY_DEBOUNCE_MS);
 	};
 
@@ -213,18 +214,21 @@ export function ProviderIntegrationSection({
 	const hasLocalKey = persistedApiKey.trim().length > 0;
 	const keyLocked = hasLocalKey && !editingApiKey;
 	const editableApiKey = editingApiKey ? draftApiKey : persistedApiKey;
-	const pill = renderStatusPill({
-		apiKey: persistedApiKey,
-		chipLevel,
-		status,
-		t,
-	});
+	const pill = (
+		<CredentialStatusPill
+			apiKey={persistedApiKey}
+			chipLevel={chipLevel}
+			status={status}
+			t={t}
+		/>
+	);
 	const apiKeyUrl = getApiKeyUrl(provider);
 
 	return (
 		<div className="col-span-2">
 			<FormControl
 				label={keyLabel}
+				labelIcon={brandLogoFor(provider)}
 				labelTrailing={
 					<div className="flex items-center gap-2">
 						{pill}
@@ -283,61 +287,4 @@ export function ProviderIntegrationSection({
 			/>
 		</div>
 	);
-}
-
-function renderStatusPill({
-	apiKey,
-	chipLevel,
-	status,
-	t,
-}: {
-	apiKey: string;
-	chipLevel: number;
-	status: { lastError?: string | undefined; status: string };
-	t: ReturnType<typeof useTranslations>;
-}) {
-	if (status.status === "verifying") {
-		return (
-			<span
-				className={cn(
-					"inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-2xs text-foreground-muted",
-					surfaceBg(chipLevel),
-				)}
-			>
-				<Spinner className="size-2.5 border" />
-				{t("verifying")}
-			</span>
-		);
-	}
-	if (apiKey.trim().length === 0) {
-		return null;
-	}
-	if (status.status === "verified") {
-		return (
-			<span className="rounded-sm bg-success/15 px-1.5 py-0.5 text-2xs text-success">
-				{t("verified")}
-			</span>
-		);
-	}
-	if (status.status === "invalid") {
-		return (
-			<span
-				className="rounded-sm bg-error/15 px-1.5 py-0.5 text-2xs text-error"
-				title={status.lastError}
-			>
-				{t("invalid")}
-			</span>
-		);
-	}
-	if (status.status === "offline") {
-		return (
-			<span
-				className="rounded-sm bg-warning/15 px-1.5 py-0.5 text-2xs text-warning"
-				title={status.lastError}
-			>
-				{t("couldNotVerify")}
-			</span>
-		);
-	}
-	return null;
 }

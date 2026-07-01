@@ -9,12 +9,13 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use super::chatterbox::{ChatterboxConfig, ChatterboxEngine, CHATTERBOX_SAMPLE_RATE};
-use super::kitten::{KittenConfig, KittenDevice, KittenEngine, KITTEN_SAMPLE_RATE};
+use super::kitten::{KittenConfig, KittenEngine, KITTEN_SAMPLE_RATE};
 use super::piper::{PiperConfig, PiperEngine};
 use super::supertonic::{
     SupertonicConfig, SupertonicEngine, SUPERTONIC_DEFAULT_VOICE, SUPERTONIC_SAMPLE_RATE,
+    SUPERTONIC_SPEED_MAX, SUPERTONIC_SPEED_MIN,
 };
-use super::{Gender, SentenceAudio, TtsEngine, TtsError, TtsResult, VoiceInfo};
+use super::{Gender, SentenceAudio, TtsDevice, TtsEngine, TtsError, TtsResult, VoiceInfo};
 
 // ---------------------------------------------------------------------------
 // Per-engine voice catalogs
@@ -275,7 +276,7 @@ impl KittenLocalEngine {
             engine: KittenEngine::new(KittenConfig {
                 cache_dir,
                 model_filename: model_filename.into(),
-                device: KittenDevice::Cpu,
+                device: TtsDevice::Cpu,
                 ..Default::default()
             }),
         }
@@ -349,6 +350,9 @@ impl TtsEngine for SupertonicLocalEngine {
             samples,
             sample_rate: SUPERTONIC_SAMPLE_RATE,
         })
+    }
+    fn speed_range(&self) -> (f32, f32) {
+        (SUPERTONIC_SPEED_MIN, SUPERTONIC_SPEED_MAX)
     }
     fn list_voices(&self) -> Vec<VoiceInfo> {
         SUPERTONIC_VOICES.to_vec()

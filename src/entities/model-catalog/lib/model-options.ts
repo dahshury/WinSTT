@@ -145,24 +145,6 @@ export function supportsTranslateToEnglish(model: ModelInfo): boolean {
 	);
 }
 
-/**
- * True when the model conditions its decode on a free-text `initial_prompt`
- * (Whisper's "prior text" slot). Both the standard Whisper exports and the
- * Lite-Whisper distillations honor it — `.en` and multilingual alike — because
- * the prompt is fed as prior decoder context, independent of language detection.
- *
- * Deliberately Whisper-only: every other family either lacks the slot or ships
- * an untrained one. NeMo Canary / Cohere expose a `<|startofcontext|>` token in
- * their vocab but the released checkpoints don't read it (180M empty-outs, 1B
- * no-ops — see memory/project_canary_cohere_prompt_slot_untrained), and CTC
- * engines (GigaAM, Kaldi/Vosk, Moonshine, Dolphin, SenseVoice) have no decoder
- * prompt at all. Showing the field for those would just lie to the user, so the
- * Model-tab control gates on this exactly like the translate toggle does.
- */
-export function supportsInitialPrompt(model: ModelInfo): boolean {
-	return model.family === "whisper" || model.family === "lite-whisper";
-}
-
 function normalizedLanguages(model: ModelInfo): Set<string> {
 	return new Set(model.languages.map((language) => language.toLowerCase()));
 }
@@ -227,14 +209,6 @@ export function modelsHaveLanguageOverlap(
 	return primary.languages.some((language) =>
 		candidateLanguages.has(language.toLowerCase()),
 	);
-}
-
-/** Build select options filtered to models with native streaming preview support. */
-export function buildRealtimeOpts(
-	models: readonly ModelInfo[],
-	ctx?: BuildOptionsContext,
-): SelectOption[] {
-	return buildModelOpts(models.filter(isSelectableRealtimeModel), ctx);
 }
 
 /** True when the saved model id is missing or not present in the loaded

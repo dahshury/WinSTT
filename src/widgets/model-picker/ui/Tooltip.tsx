@@ -20,13 +20,6 @@ export { TooltipTrigger } from "./TooltipTrigger";
 
 export interface TooltipProps {
 	children: ReactNode;
-	/**
-	 * Open delay in ms. Honored only when a parent `<TooltipPrimitive.Provider>`
-	 * is in scope; Base UI sets the per-tooltip delay there in 1.4. Accepted
-	 * here for API parity with the ported components — silently ignored
-	 * otherwise.
-	 */
-	delay?: number;
 	/** When true, the tooltip never opens. */
 	disabled?: boolean;
 }

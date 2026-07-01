@@ -9,11 +9,21 @@
 /// WinSTT's full nested settings tree (9 tabs) as a specta-typed struct.
 pub mod settings_schema;
 
+/// CORE settings persistence service: on-disk store I/O + secret seal/open/mask +
+/// cross-field normalization + seed/migrate. Both the `commands` route layer and the
+/// `managers` service layer depend DOWNWARD on this for settings reads (it never
+/// reaches back up into commands/managers).
+pub mod settings_store;
+
 /// Full 65-model STT catalog + quant/EP auto-policy (pure data + string logic).
 pub mod catalog;
 
 /// Shared in-flight request cancel registry (cloud STT / LLM / TTS).
 pub mod cancel_registry;
+
+/// Cleanup service: FS deletion, HF-cache scan, OS cleanup-script staging, and the
+/// model-uninstall settings patch behind the `remove_*` cleanup commands.
+pub mod cleanup;
 
 /// Shared `std::sync::Mutex` poison-recovery idiom (`MutexExt::lock_recover`).
 pub mod sync_ext;
@@ -27,6 +37,8 @@ pub mod audio_device_watcher;
 
 /// Shared single-flight + warm-state tracking for heavyweight model lifecycles.
 pub mod model_swap;
+/// Out-of-process hard-exit cleanup for loopback Ollama models WinSTT loaded.
+pub mod model_watchdog;
 
 /// Local-only operational issue timeline for user-visible diagnostics and support bundles.
 pub mod observability;
@@ -63,8 +75,6 @@ pub mod tts;
 pub mod wakeword;
 
 // ───────────────────────── Advanced subsystems ─────────────────────────
-/// Speaker diarization: sherpa-onnx embedder + OnlineSpeakerClustering + SpeakerTimeline.
-pub mod diarization;
 /// WASAPI system-audio loopback capture (listen mode) + slow-tracking AGC.
 pub mod loopback;
 /// Cross-attention DTW word-level timestamps (karaoke playback).

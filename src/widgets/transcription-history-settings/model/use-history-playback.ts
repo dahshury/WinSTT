@@ -4,6 +4,7 @@ import {
 	loadTranscriptionHistoryAudio,
 	type WordTiming,
 } from "@/shared/api/ipc-client";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 
 /**
  * Switch the underlying audio sink for an HTMLAudioElement. `setSinkId` is
@@ -152,7 +153,7 @@ export function useHistoryPlayback(
 			stopTicking();
 			return;
 		}
-		beginPlayback().catch(() => undefined);
+		fireAndForget(beginPlayback(), "history.beginPlayback");
 	};
 
 	const activeIndex =

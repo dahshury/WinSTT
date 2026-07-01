@@ -26,27 +26,26 @@ use crate::winstt::word_timestamps::{self, MappedWord, WordTiming};
 /// needs). ~40 MB, HF-cached once. Matches `word_aligner.py::DEFAULT_ALIGN_MODEL`.
 const DEFAULT_ALIGN_MODEL: &str = "onnx-community/whisper-tiny_timestamped";
 
+/// Lazily-initialized state of the cross-attention DTW engine. `Untried` until first use;
+/// `Unavailable` after a load FAILURE so we don't retry-storm on every play (documented degrade =
+/// no highlight); `Ready` once a usable engine is loaded.
+enum WordAlignerState {
+    Untried,
+    Unavailable,
+    Ready(Box<dyn stt::Transcriber>),
+}
+
 pub struct WordAligner {
     app: AppHandle,
-    /// Lazily-initialized cross-attention DTW engine. `None` until first use; `Some(None)` after a
-    /// load FAILURE so we don't retry-storm on every play (documented degrade = no highlight). The
-    /// inner `Option` distinguishes "never tried" from "tried and unavailable".
-    engine: Mutex<Option<Option<Box<dyn stt::Transcriber>>>>,
+    engine: Mutex<WordAlignerState>,
 }
 
 impl WordAligner {
     pub fn new(app: &AppHandle) -> Self {
         Self {
             app: app.clone(),
-            engine: Mutex::new(None),
+            engine: Mutex::new(WordAlignerState::Untried),
         }
-    }
-
-    /// Whether the alignment engine has been loaded yet.
-    pub fn is_loaded(&self) -> bool {
-        self.engine
-            .lock()
-            .is_ok_and(|e| matches!(e.as_ref(), Some(Some(_))))
     }
 
     /// Produce per-word timings for `audio` (mono 16 kHz f32) given the known `text`. Lazily loads
@@ -56,11 +55,14 @@ impl WordAligner {
     /// history playback falls back to no highlight, transcript intact).
     pub fn align_words(&self, audio: &[f32], text: &str) -> Result<Vec<WordResult>, String> {
         let mut guard = self.engine.lock().map_err(|_| "word aligner poisoned")?;
-        if guard.is_none() {
-            // First touch: attempt the load exactly once and cache the outcome (Some / Some(None)).
-            *guard = Some(self.try_load_engine());
+        if matches!(*guard, WordAlignerState::Untried) {
+            // First touch: attempt the load exactly once and cache the outcome.
+            *guard = match self.try_load_engine() {
+                Some(engine) => WordAlignerState::Ready(engine),
+                None => WordAlignerState::Unavailable,
+            };
         }
-        let Some(Some(engine)) = guard.as_mut() else {
+        let WordAlignerState::Ready(engine) = &mut *guard else {
             // Load failed earlier (or just now) → no highlight, text intact.
             return Ok(Vec::new());
         };
@@ -166,7 +168,10 @@ impl WordAligner {
                 }
             }
             Err(e) => {
-                log::debug!("[word-aligner] build {DEFAULT_ALIGN_MODEL} failed: {e}");
+                // A build failure here usually means a corrupt/incomplete export (the resolver
+                // already succeeded). Surface at warn so model corruption is visible at the
+                // default log level, not just under verbose debug.
+                log::warn!("[word-aligner] build {DEFAULT_ALIGN_MODEL} failed: {e}");
                 None
             }
         }

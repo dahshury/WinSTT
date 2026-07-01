@@ -55,7 +55,7 @@ export function FooterMenuChip({
 			<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
 				<Menu.Trigger
 					aria-label={ariaLabel}
-					className={`flex max-w-[180px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
+					className={`flex max-w-[180px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-secondary outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
 				>
 					<HugeiconsIcon
 						aria-hidden="true"
@@ -96,7 +96,7 @@ export function FooterMenuChip({
 								/>
 								{options.map((opt) => (
 									<Menu.RadioItem
-										className="relative z-raised mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs px-2.5 py-[6px] text-body text-foreground leading-normal outline-none data-[checked]:font-medium data-[checked]:text-foreground"
+										className="relative z-raised mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs px-2.5 py-[6px] text-body text-foreground leading-normal outline-none data-[checked]:font-medium data-[checked]:text-foreground"
 										closeOnClick
 										data-menu-option={opt.id}
 										key={opt.id}

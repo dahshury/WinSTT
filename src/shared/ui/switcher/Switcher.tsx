@@ -8,7 +8,12 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { springs } from "@/shared/lib/springs";
-import { surfaceBg, surfaceShadow, useSurface } from "@/shared/lib/surface";
+import {
+	SurfaceProvider,
+	surfaceBg,
+	surfaceShadow,
+	useSurface,
+} from "@/shared/lib/surface";
 import { SwitcherBadge } from "./SwitcherBadge";
 import { SwitcherOptionToggle } from "./SwitcherOptionToggle";
 import type { SwitcherOption } from "./switcher-option";
@@ -21,6 +26,11 @@ export interface SwitcherProps<T extends string = string> {
 	 *  cells in 2-D for free — giving a compact 2×2 (etc.) segmented control for
 	 *  tight surfaces like the tray menu. Implies a full-width grid. */
 	columns?: number;
+	/** Extra classes for the group container — width constraints (`w-52`) and
+	 *  disabled/transition state. The control is intrinsically frameless (only the
+	 *  sliding pill shows) and self-elevates its own surface, so callers need NO
+	 *  wrapper — pass width here instead of an outer `ElevatedSurface`. */
+	className?: string | undefined;
 	/** Stretch the group to fill its container; each option shares space equally */
 	fullWidth?: boolean;
 	onChange: (value: T) => void;
@@ -95,6 +105,7 @@ export function Switcher<T extends string = string>({
 	onChange,
 	fullWidth,
 	columns,
+	className,
 }: SwitcherProps<T>) {
 	// Grid mode: lay the options out in `columns` equal tracks instead of a single
 	// row. Static class names (not an interpolated `grid-cols-${n}`) so Tailwind's
@@ -111,13 +122,14 @@ export function Switcher<T extends string = string>({
 		: fullWidth
 			? "flex w-full"
 			: "inline-flex";
-	// The active-segment indicator pops two surface levels above the
-	// substrate (matches the CheckboxGroup and Slider value bar). Hover uses the
-	// intermediate level, so every selector shares the same rest -> hover ->
-	// selected ladder no matter which settings surface it sits on.
-	const substrate = useSurface();
+	// Self-elevates +1 above the host panel and re-provides it (SurfaceProvider in
+	// the return); the group paints its own connecting track at that level and the
+	// active pill lifts +2 / hover +1, so every selector shares the same
+	// rest -> hover -> selected ladder no matter which settings surface it sits on.
+	const substrate = Math.min(useSurface() + 1, 8);
 	const hoverLevel = Math.min(substrate + 1, 8);
 	const indicatorLevel = Math.min(substrate + 2, 8);
+	const trackBgClass = surfaceBg(substrate);
 	const hoverBgClass = surfaceBg(hoverLevel);
 	const indicatorBgClass = surfaceBg(indicatorLevel);
 	const indicatorShadowClass = surfaceShadow(indicatorLevel);
@@ -193,169 +205,179 @@ export function Switcher<T extends string = string>({
 	const usesColor = selectedOption?.color !== undefined;
 
 	return (
-		<LazyMotion features={domAnimation} strict={true}>
-			<ToggleGroup
-				className={cn("relative isolate select-none", layoutClass)}
-				onValueChange={(groupValue) => {
-					const next = groupValue[0] as T | undefined;
-					if (next != null) {
-						onChange(next);
-					}
-				}}
-				ref={containerRef}
-				value={[value]}
-			>
-				{/* Hairline separators between adjacent options (segmented-control
+		<SurfaceProvider value={substrate}>
+			<LazyMotion features={domAnimation} strict={true}>
+				<ToggleGroup
+					className={cn(
+						"relative isolate select-none rounded-lg shadow-elevated ring-1 ring-divider",
+						trackBgClass,
+						layoutClass,
+						className,
+					)}
+					onValueChange={(groupValue) => {
+						const next = groupValue[0] as T | undefined;
+						if (next != null) {
+							onChange(next);
+						}
+					}}
+					ref={containerRef}
+					value={[value]}
+				>
+					{/* Hairline separators between adjacent options (segmented-control
 				    look). Rendered beneath the indicator pill — the opaque selected
 				    pill covers the dividers touching it, so only the gaps between
 				    unselected options show, matching a native segmented control. */}
-				{options.map((opt, index) => {
-					if (
-						isGrid ||
-						index === 0 ||
-						index === selectedIndex ||
-						index - 1 === selectedIndex
-					) {
-						return null;
-					}
-					const r = rects[index];
-					if (!r) {
-						return null;
-					}
-					return (
-						<span
-							aria-hidden="true"
-							className="pointer-events-none absolute w-px bg-[var(--color-divider-strong)]"
-							key={`sep-${opt.value}`}
-							style={{
-								left: r.left,
-								top: r.top + 6,
-								height: Math.max(r.height - 12, 0),
-							}}
-						/>
-					);
-				})}
-				<AnimatePresence>
-					{selectedRect ? (
-						<motion.div
-							animate={{
-								left: selectedRect.left,
-								top: selectedRect.top,
-								width: selectedRect.width,
-								height: selectedRect.height,
-								opacity: isHoveringOther ? 0.85 : 1,
-							}}
-							className={cn(
-								"pointer-events-none absolute rounded-sm ring-1 ring-divider-strong ring-inset",
-								indicatorShadowClass,
-								usesColor ? null : indicatorBgClass,
-							)}
-							initial={false}
-							key="active-indicator"
-							{...(usesColor && selectedOption?.color
-								? { style: { backgroundColor: selectedOption.color } }
-								: {})}
-							transition={{ ...springs.moderate, opacity: { duration: 0.08 } }}
-						/>
-					) : null}
-				</AnimatePresence>
+					{options.map((opt, index) => {
+						if (
+							isGrid ||
+							index === 0 ||
+							index === selectedIndex ||
+							index - 1 === selectedIndex
+						) {
+							return null;
+						}
+						const r = rects[index];
+						if (!r) {
+							return null;
+						}
+						return (
+							<span
+								aria-hidden="true"
+								className="pointer-events-none absolute w-px bg-[var(--color-divider-strong)]"
+								key={`sep-${opt.value}`}
+								style={{
+									left: r.left,
+									top: r.top + 6,
+									height: Math.max(r.height - 12, 0),
+								}}
+							/>
+						);
+					})}
+					<AnimatePresence>
+						{selectedRect ? (
+							<motion.div
+								animate={{
+									left: selectedRect.left,
+									top: selectedRect.top,
+									width: selectedRect.width,
+									height: selectedRect.height,
+									opacity: isHoveringOther ? 0.85 : 1,
+								}}
+								className={cn(
+									"pointer-events-none absolute rounded-sm ring-1 ring-divider-strong ring-inset",
+									indicatorShadowClass,
+									usesColor ? null : indicatorBgClass,
+								)}
+								initial={false}
+								key="active-indicator"
+								{...(usesColor && selectedOption?.color
+									? { style: { backgroundColor: selectedOption.color } }
+									: {})}
+								transition={{
+									...springs.moderate,
+									opacity: { duration: 0.08 },
+								}}
+							/>
+						) : null}
+					</AnimatePresence>
 
-				<AnimatePresence>
-					{hoverRect && !isHoveringSelected ? (
-						<motion.div
-							animate={{
-								left: hoverRect.left,
-								top: hoverRect.top,
-								width: hoverRect.width,
-								height: hoverRect.height,
-								opacity: 0.5,
-							}}
-							className={cn(
-								"pointer-events-none absolute rounded-sm ring-1 ring-divider ring-inset",
-								hoverBgClass,
-							)}
-							exit={{ opacity: 0, transition: { duration: 0.08 } }}
-							initial={{
-								left: hoverRect.left,
-								top: hoverRect.top,
-								width: hoverRect.width,
-								height: hoverRect.height,
-								opacity: 0,
-							}}
-							transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
-						/>
-					) : null}
-				</AnimatePresence>
+					<AnimatePresence>
+						{hoverRect && !isHoveringSelected ? (
+							<motion.div
+								animate={{
+									left: hoverRect.left,
+									top: hoverRect.top,
+									width: hoverRect.width,
+									height: hoverRect.height,
+									opacity: 0.5,
+								}}
+								className={cn(
+									"pointer-events-none absolute rounded-sm ring-1 ring-divider ring-inset",
+									hoverBgClass,
+								)}
+								exit={{ opacity: 0, transition: { duration: 0.08 } }}
+								initial={{
+									left: hoverRect.left,
+									top: hoverRect.top,
+									width: hoverRect.width,
+									height: hoverRect.height,
+									opacity: 0,
+								}}
+								transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
+							/>
+						) : null}
+					</AnimatePresence>
 
-				<AnimatePresence>
-					{focusRect ? (
-						<motion.div
-							animate={{
-								left: focusRect.left - 2,
-								top: focusRect.top - 2,
-								width: focusRect.width + 4,
-								height: focusRect.height + 4,
-							}}
-							className="pointer-events-none absolute z-overlay rounded-sm border border-accent"
-							exit={{ opacity: 0, transition: { duration: 0.06 } }}
-							initial={false}
-							transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
-						/>
-					) : null}
-				</AnimatePresence>
+					<AnimatePresence>
+						{focusRect ? (
+							<motion.div
+								animate={{
+									left: focusRect.left - 2,
+									top: focusRect.top - 2,
+									width: focusRect.width + 4,
+									height: focusRect.height + 4,
+								}}
+								className="pointer-events-none absolute z-overlay rounded-sm border border-accent"
+								exit={{ opacity: 0, transition: { duration: 0.06 } }}
+								initial={false}
+								transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
+							/>
+						) : null}
+					</AnimatePresence>
 
-				{options.map((opt, index) => (
-					<SwitcherOptionToggle
-						dataIndex={index}
-						fullWidth={fullWidth}
-						grid={isGrid}
-						isHovered={hoveredIndex === index && !opt.disabled}
-						isSelected={opt.value === value}
-						key={opt.value}
-						onBlur={(e) => {
-							const nextTarget = e.relatedTarget as Node | null;
-							if (nextTarget && containerRef.current?.contains(nextTarget)) {
-								return;
-							}
-							setFocusedIndex(null);
-							setHoveredIndex((current) =>
-								current === index ? null : current,
-							);
-						}}
-						onFocus={(e) => {
-							setHoveredIndex(index);
-							setFocusedIndex(
-								e.currentTarget.matches(":focus-visible") ? index : null,
-							);
-						}}
-						onMouseEnter={() => {
-							if (!opt.disabled) {
+					{options.map((opt, index) => (
+						<SwitcherOptionToggle
+							dataIndex={index}
+							fullWidth={fullWidth}
+							grid={isGrid}
+							isHovered={hoveredIndex === index && !opt.disabled}
+							isSelected={opt.value === value}
+							key={opt.value}
+							onBlur={(e) => {
+								const nextTarget = e.relatedTarget as Node | null;
+								if (nextTarget && containerRef.current?.contains(nextTarget)) {
+									return;
+								}
+								setFocusedIndex(null);
+								setHoveredIndex((current) =>
+									current === index ? null : current,
+								);
+							}}
+							onFocus={(e) => {
 								setHoveredIndex(index);
-							}
-						}}
-						onMouseLeave={() => {
-							setHoveredIndex((current) =>
-								current === index ? null : current,
-							);
-						}}
-						option={opt}
-					/>
-				))}
-
-				{options.map((opt, index) => {
-					const rect = rects[index];
-					if (!(opt.badgeIcon && rect)) {
-						return null;
-					}
-					return (
-						<SwitcherBadge
-							key={`${opt.value}-badge`}
+								setFocusedIndex(
+									e.currentTarget.matches(":focus-visible") ? index : null,
+								);
+							}}
+							onMouseEnter={() => {
+								if (!opt.disabled) {
+									setHoveredIndex(index);
+								}
+							}}
+							onMouseLeave={() => {
+								setHoveredIndex((current) =>
+									current === index ? null : current,
+								);
+							}}
 							option={opt}
-							rect={rect}
 						/>
-					);
-				})}
-			</ToggleGroup>
-		</LazyMotion>
+					))}
+
+					{options.map((opt, index) => {
+						const rect = rects[index];
+						if (!(opt.badgeIcon && rect)) {
+							return null;
+						}
+						return (
+							<SwitcherBadge
+								key={`${opt.value}-badge`}
+								option={opt}
+								rect={rect}
+							/>
+						);
+					})}
+				</ToggleGroup>
+			</LazyMotion>
+		</SurfaceProvider>
 	);
 }

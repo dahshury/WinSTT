@@ -1,5 +1,4 @@
 import { FileExportIcon, FileImportIcon } from "@hugeicons/core-free-icons";
-import type { IconSvgElement } from "@hugeicons/react";
 import { type ReactNode, useReducer } from "react";
 import { useTranslations } from "use-intl";
 import {
@@ -13,7 +12,7 @@ import { settingsLoadStrict } from "@/shared/api/ipc-client";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { DialogActionButton, DialogClose } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
-import { AboutActionButton } from "./AboutActionButton";
+import { AboutActionRow } from "./AboutActionRow";
 
 function unwrapCommand<T>(result: Result<T, string>): T {
 	if (result.status === "error") {
@@ -245,40 +244,6 @@ function TransferErrorDialog({
 	);
 }
 
-function SettingsTransferRow({
-	buttonLabel,
-	disabled,
-	icon,
-	iconClassName,
-	onClick,
-	title,
-}: {
-	buttonLabel: string;
-	disabled?: boolean;
-	icon: IconSvgElement;
-	iconClassName?: string | undefined;
-	onClick: () => void;
-	title: string;
-}) {
-	return (
-		<div className="flex items-center gap-4 py-3">
-			<div className="flex min-w-0 flex-1 flex-col gap-1">
-				<span className="font-medium text-body text-foreground leading-tight">
-					{title}
-				</span>
-			</div>
-			<AboutActionButton
-				icon={icon}
-				onClick={onClick}
-				{...(disabled !== undefined ? { disabled } : {})}
-				{...(iconClassName !== undefined ? { iconClassName } : {})}
-			>
-				{buttonLabel}
-			</AboutActionButton>
-		</div>
-	);
-}
-
 export function SettingsTransferSection(): ReactNode {
 	// 'use no memo' — handleExport / handleImportConfirm contain try/catch/finally
 	// the React Compiler cannot memoize yet (react-hooks-js/todo). The error
@@ -379,7 +344,7 @@ export function SettingsTransferSection(): ReactNode {
 				icon={FileExportIcon}
 				title={`${settingsT("settingsExport")} / ${settingsT("settingsImport")}`}
 			>
-				<SettingsTransferRow
+				<AboutActionRow
 					buttonLabel={settingsT("settingsExport")}
 					disabled={exporting || importing}
 					icon={FileExportIcon}
@@ -387,7 +352,7 @@ export function SettingsTransferSection(): ReactNode {
 					onClick={handleExport}
 					title={settingsT("settingsExport")}
 				/>
-				<SettingsTransferRow
+				<AboutActionRow
 					buttonLabel={settingsT("settingsImport")}
 					disabled={exporting || importing}
 					icon={FileImportIcon}

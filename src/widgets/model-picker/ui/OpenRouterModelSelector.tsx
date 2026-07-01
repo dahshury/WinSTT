@@ -25,7 +25,7 @@ import {
 	isStringArray,
 	readPersistedSelectorState,
 	writePersistedSelectorState,
-} from "../lib/persisted-selector-state";
+} from "@/shared/lib/persisted-selector-state";
 import {
 	applyModelFilters,
 	applyToggleExpanded,
@@ -34,14 +34,14 @@ import {
 	resolveSelectionValue,
 	type ScrollToMakerRequest,
 	shouldBlockSelection,
-} from "../lib/openrouter-model-selector-test-helpers";
+} from "../lib/openrouter-selection-logic";
 import type { FilterableParameter } from "../lib/openrouter-provider-utils";
 import {
 	OPENROUTER_SORT_KEYS,
 	OPENROUTER_SORT_HEADER_LABEL,
 	type OpenRouterSortValue,
 } from "../lib/openrouter-sort";
-import { publicAsset } from "../lib/public-asset";
+import { publicAsset } from "@/shared/lib/public-asset";
 import { getProviderIcon } from "../lib/provider-icons";
 import { useModelSelectorFilters } from "../lib/use-model-selector-filters";
 import type { OpenRouterModelSelectorProps } from "../model/openrouter-model-selector.types";

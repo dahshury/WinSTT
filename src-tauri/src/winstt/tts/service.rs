@@ -7,7 +7,7 @@ use super::cloud::{CloudVoiceSettings, ElevenLabsEngine};
 use super::local::KokoroLocalEngine;
 use super::splitter::{split_sentences, DEFAULT_MAX_SENTENCE_LEN};
 use super::types::{
-    clamp_cloud_speed, clamp_speed, ChunkSink, Format, LocalTtsConfig, SentenceAudio,
+    clamp_cloud_speed, clamp_speed_to_range, ChunkSink, Format, LocalTtsConfig, SentenceAudio,
     SynthesisChunk, TtsEngine, TtsError, TtsResult, VoiceInfo,
 };
 
@@ -181,7 +181,9 @@ impl TtsManager {
 
     fn clamp_for_source(&self, speed: f32) -> f32 {
         match self.source {
-            TtsSource::Local => clamp_speed(speed),
+            // Clamp to the ACTIVE local engine's declared range (Supertonic 0.4..1.3,
+            // others 0.5..2.0) so each engine's true floor/ceiling is reachable.
+            TtsSource::Local => clamp_speed_to_range(speed, self.engine.speed_range()),
             TtsSource::Cloud => clamp_cloud_speed(speed),
         }
     }
@@ -194,7 +196,7 @@ impl TtsManager {
 // ---------------------------------------------------------------------------
 // Tauri-event bridge — the sink-less entry point the command layer calls.
 //
-// The renderer's Web-Audio playback queue is byte-identical to WinSTT's the reference
+// The renderer's Web-Audio playback queue is byte-identical to WinSTT's backend
 // contract; only the transport swaps (`IPC.TTS_CHUNK` → the `tts:chunk` Tauri
 // event). `read_aloud_emit` drives `read_aloud` with a sink that forwards each
 // chunk as a `tts:chunk` event and fires the lifecycle events around it.

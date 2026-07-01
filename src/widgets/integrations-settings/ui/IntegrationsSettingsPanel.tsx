@@ -9,16 +9,18 @@ import {
 	useSettingsStore,
 } from "@/entities/setting";
 import {
+	CredentialStatusPill,
+	type CredentialStatusKind,
 	ProviderIntegrationSection,
 	type VerifyResponse,
 	verifyCredentialCommand,
 } from "@/features/verify-credentials";
-import { cn } from "@/shared/lib/cn";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
+import { useSurface } from "@/shared/lib/surface";
+import { OllamaLogo, OpenRouterLogo } from "@/shared/ui/brand-logo";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
-import { Spinner } from "@/shared/ui/spinner";
 import {
 	PasswordField,
 	StoredSecretField,
@@ -31,24 +33,17 @@ const OPENROUTER_KEYS_URL = "https://openrouter.ai/keys";
  *  produces one probe, short enough that the verdict lands quickly. */
 const VERIFY_DEBOUNCE_MS = 600;
 
-type OpenRouterStatus =
-	| "idle"
-	| "verifying"
-	| "verified"
-	| "invalid"
-	| "offline";
-
 /** Pure mapper from a verify-credentials IPC response to an OpenRouter status
  *  pill state. Pulled out of the component so the async verify runner stays
  *  under Biome's cognitive-complexity cap. */
 function statusFromVerifyResponse(response: VerifyResponse): {
 	lastError?: string;
-	status: OpenRouterStatus;
+	status: CredentialStatusKind;
 } {
 	if (response.ok) {
 		return { status: "verified" };
 	}
-	const status: OpenRouterStatus =
+	const status: CredentialStatusKind =
 		response.code === "network" ? "offline" : "invalid";
 	return {
 		status,
@@ -67,7 +62,7 @@ type VerifySettlement =
 function computeOpenrouterNextStatus(
 	isStale: boolean,
 	settled: VerifySettlement,
-): { lastError?: string; status: OpenRouterStatus } | null {
+): { lastError?: string; status: CredentialStatusKind } | null {
 	if (isStale) {
 		return null;
 	}
@@ -111,7 +106,7 @@ export function IntegrationsSettingsPanel() {
 	// as a locked saved key until the user removes it.
 	const [openrouterStatus, setOpenrouterStatus] = useState<{
 		lastError?: string;
-		status: OpenRouterStatus;
+		status: CredentialStatusKind;
 	}>({ status: "idle" });
 	const [openrouterDraft, setOpenrouterDraft] = useState("");
 	const [openrouterEditing, setOpenrouterEditing] = useState(false);
@@ -169,7 +164,10 @@ export function IntegrationsSettingsPanel() {
 		}
 		openrouterDebounceRef.current = window.setTimeout(() => {
 			openrouterDebounceRef.current = null;
-			runOpenrouterVerify(value).catch(() => undefined);
+			fireAndForget(
+				runOpenrouterVerify(value),
+				"integrations.runOpenrouterVerify",
+			);
 		}, VERIFY_DEBOUNCE_MS);
 	};
 
@@ -206,12 +204,14 @@ export function IntegrationsSettingsPanel() {
 		? openrouterDraft
 		: persistedOpenrouterKey;
 
-	const openrouterPill = renderOpenrouterPill({
-		apiKey: persistedOpenrouterKey,
-		chipLevel,
-		status: openrouterStatus,
-		t,
-	});
+	const openrouterPill = (
+		<CredentialStatusPill
+			apiKey={persistedOpenrouterKey}
+			chipLevel={chipLevel}
+			status={openrouterStatus}
+			t={t}
+		/>
+	);
 
 	return (
 		<div className="flex flex-col gap-2">
@@ -233,6 +233,7 @@ export function IntegrationsSettingsPanel() {
 						<SettingField
 							isDefault={endpoint === DEFAULT_SETTINGS.llm.endpoint}
 							label={tLlm("endpoint")}
+							labelIcon={<OllamaLogo />}
 							onReset={() =>
 								updateLlmSettings({ endpoint: DEFAULT_SETTINGS.llm.endpoint })
 							}
@@ -253,6 +254,7 @@ export function IntegrationsSettingsPanel() {
 					<div className="col-span-2">
 						<FormControl
 							label={tLlm("openrouterApiKey")}
+							labelIcon={<OpenRouterLogo />}
 							labelTrailing={
 								<div className="flex items-center gap-2">
 									{openrouterPill}
@@ -338,61 +340,4 @@ export function IntegrationsSettingsPanel() {
 			</SettingSection>
 		</div>
 	);
-}
-
-function renderOpenrouterPill({
-	apiKey,
-	chipLevel,
-	status,
-	t,
-}: {
-	apiKey: string;
-	chipLevel: number;
-	status: { lastError?: string; status: OpenRouterStatus };
-	t: ReturnType<typeof useTranslations>;
-}) {
-	if (status.status === "verifying") {
-		return (
-			<span
-				className={cn(
-					"inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-2xs text-foreground-muted",
-					surfaceBg(chipLevel),
-				)}
-			>
-				<Spinner className="size-2.5 border" />
-				{t("verifying")}
-			</span>
-		);
-	}
-	if (apiKey.trim().length === 0) {
-		return null;
-	}
-	if (status.status === "verified") {
-		return (
-			<span className="rounded-sm bg-success/15 px-1.5 py-0.5 text-2xs text-success">
-				{t("verified")}
-			</span>
-		);
-	}
-	if (status.status === "invalid") {
-		return (
-			<span
-				className="rounded-sm bg-error/15 px-1.5 py-0.5 text-2xs text-error"
-				title={status.lastError}
-			>
-				{t("invalid")}
-			</span>
-		);
-	}
-	if (status.status === "offline") {
-		return (
-			<span
-				className="rounded-sm bg-warning/15 px-1.5 py-0.5 text-2xs text-warning"
-				title={status.lastError}
-			>
-				{t("couldNotVerify")}
-			</span>
-		);
-	}
-	return null;
 }

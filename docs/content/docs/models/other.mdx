@@ -1,17 +1,17 @@
 ---
 title: Other Families
-description: Moonshine, Cohere, SenseVoice, GigaAM, Vosk/Kaldi, and T-One — the low-latency, multilingual, and Russian-focused models beyond Whisper and NeMo.
+description: Moonshine, Cohere, Granite, Qwen3-ASR, SenseVoice, Dolphin, GigaAM, Vosk/Kaldi, and T-One — the low-latency, multilingual, and Russian-focused models beyond Whisper and NeMo.
 ---
 
-Beyond Whisper and NeMo, WinSTT ships five more model families on the same ONNX engine — covering ultra-low-latency English dictation, a leaderboard-topping multilingual model, East-Asian languages, and three Russian-specialist engines. Pick by language coverage first, then by the accuracy/speed trade-off.
+Beyond Whisper and NeMo, WinSTT ships nine more model families on the same ONNX engine — covering ultra-low-latency English dictation, leaderboard-topping multilingual ASR, LLM-decoder ASR, East-Asian and Eastern-language coverage, and three Russian-specialist engines. Pick by language coverage first, then by the accuracy/speed trade-off.
 
 Every model on this page runs through the single `onnx-asr` ONNX engine, supports the live realtime preview, and is hot-swappable from the [Model](/docs/settings/model) tab — no restart, no backend to choose. Precision is set per-model via `onnxQuantization`; see [Compute Types](/docs/models/compute-types).
 
 <StatGrid>
-  <Stat value="5" label="model families on this page" />
+  <Stat value="9" label="model families on this page" />
   <Stat value="5.1" label="lowest WER (Cohere Transcribe)" />
   <Stat value="1800" label="fastest RTFx (Moonshine Tiny)" />
-  <Stat value="3" label="Russian-specialist engines" />
+  <Stat value="30" label="Qwen3-ASR languages" />
 </StatGrid>
 
 ## Moonshine
@@ -65,6 +65,50 @@ Quantizations: `""` (default), `fp16`, `q4`, and `q4f16`. The default fp32 graph
   can't fit, ONNX Runtime falls back to CPU — accurate, but slow at this size.
 </Callout>
 
+## Granite Speech
+
+IBM Granite Speech 4.1 brings two 2B-parameter models to the catalog: an autoregressive
+`Plus` model and a non-autoregressive `NAR` model. Both cover English, French, German,
+Spanish, and Portuguese, and both are useful when punctuation and written-form output matter
+as much as raw word recognition.
+
+<ModelTable
+  head={["Model", "Params", "Languages", "Quant", "Typical size"]}
+  numeric={[1]}
+  rows={[
+    ["Granite Speech 4.1 2B Plus", "2B", "en · fr · de · es · pt", "—, int8, fp16w", "4.1 GB int8 / 16.4 GB default"],
+    ["Granite Speech 4.1 2B NAR", "2B", "en · fr · de · es · pt", "—, int8, fp16w", "2.5 GB int8 / 9.8 GB default"],
+  ]}
+  caption="The older Granite Speech 4.1 2B id is migrated to the newer 2B Plus export."
+/>
+
+<Callout type="warn" title="Large-model class">
+  Granite is a large speech model family. Start with `int8` unless you are explicitly testing
+  the full export; the default graphs are much larger than typical dictation models.
+</Callout>
+
+## Qwen3-ASR
+
+Qwen3-ASR is the new Alibaba Qwen family in this release. It pairs a Whisper-style audio
+encoder with a Qwen3 decoder and runs through three ONNX graphs (`encoder`,
+`decoder_init`, `decoder_step`) plus a shared fp16 embedding table. The catalog ships the
+int4 exports because the full precision graphs are too large for normal desktop use.
+
+<ModelTable
+  head={["Model", "Params", "Languages", "Quant", "Download"]}
+  numeric={[1]}
+  rows={[
+    ["Qwen3-ASR 0.6B", "600M", "30 + auto-detect", "int4 only", "2.0 GB"],
+    ["Qwen3-ASR 1.7B", "1.7B", "30 + auto-detect", "int4 only", "4.1 GB"],
+  ]}
+  caption="Languages include Chinese, English, Cantonese, Arabic, German, French, Spanish, Portuguese, Indonesian, Italian, Korean, Russian, Thai, Vietnamese, Japanese, Turkish, Hindi, Malay, Dutch, Swedish, Danish, Finnish, Polish, Czech, Filipino, Persian, Greek, Hungarian, Macedonian, and Romanian."
+/>
+
+<Callout type="info" title="CPU-first for correctness">
+  Qwen3-ASR is currently pinned away from unverified non-CUDA GPU paths. That keeps the new
+  int4 LLM-decoder graph on the safest execution path while the engine matures.
+</Callout>
+
 ## SenseVoice
 
 FunAudioLLM SenseVoice Small is a 234M Conformer encoder focused on **East-Asian languages**: Chinese, English, Japanese, Korean, and Cantonese, with automatic language detection. It ships as a single-pass `int8` graph — there is no fp32 variant — so the download is a compact 159 MB and the only available precision is `int8`.
@@ -76,6 +120,22 @@ FunAudioLLM SenseVoice Small is a 234M Conformer encoder focused on **East-Asian
     ["SenseVoice Small", "234M", "7.2", "850", "zh · en · ja · ko · yue"]
   ]}
   caption="yue = Cantonese. SenseVoice ships int8-only; the picker offers no other quantization."
+/>
+
+## Dolphin
+
+DataoceanAI Dolphin Base CTC is a compact `int8` CTC model for Eastern-language coverage:
+Arabic, Chinese, Japanese, Korean, Vietnamese, Hindi, Thai, Indonesian, Malay, Tamil, Urdu,
+Persian, Bengali, Nepali, and Burmese. It is a good alternative when Whisper's broad
+multilingual model is more than you need.
+
+<ModelTable
+  head={["Model", "Params", "Quant", "Download", "Languages"]}
+  numeric={[1]}
+  rows={[
+    ["Dolphin Base CTC", "140M", "int8 only", "104 MB", "15"],
+  ]}
+  caption="Dolphin is single-pass CTC and ships only as an int8 graph."
 />
 
 ## Russian-specialist families
@@ -136,7 +196,10 @@ Use this to narrow the list before weighing accuracy and speed:
   rows={[
     ["Fastest English realtime / dictation", "Moonshine Tiny or Base"],
     ["Top accuracy, 14 languages", "Cohere Transcribe"],
+    ["LLM-decoder multilingual ASR", "Qwen3-ASR 0.6B or 1.7B"],
+    ["Written-form punctuation in five languages", "Granite Speech 4.1"],
     ["Chinese / Japanese / Korean / Cantonese", "SenseVoice Small (or a Moonshine fine-tune)"],
+    ["Eastern-language CTC coverage", "Dolphin Base CTC"],
     ["Arabic or Vietnamese", "Moonshine Tiny (AR) / (VI)"],
     ["Best Russian accuracy", "GigaAM v3 RNN-T"],
     ["Smallest Russian, CPU-only", "Vosk Russian (Small) or T-One"],
@@ -147,12 +210,12 @@ Use this to narrow the list before weighing accuracy and speed:
 <Callout type="info" title="Single-language models hide the language picker">
   The Moonshine fine-tunes and every Russian model are single-language — the **Language**
   control in the Model tab disappears for them, since there is nothing to detect or pin.
-  Cohere and SenseVoice support auto-detect, so they keep it.
+  Cohere, Qwen3-ASR, and SenseVoice support auto-detect, so they keep it.
 </Callout>
 
 <Callout type="info" title="Hot-swapping vs. family switches">
   Switching between models within this group hot-swaps live without a restart. Changing to a
-  different model *family* (e.g. Moonshine → Cohere) reconnects the engine — the overlay shows a
+  different model *family* (e.g. Moonshine → Qwen3-ASR) reconnects the engine — the overlay shows a
   brief "swapping" state.
 </Callout>
 

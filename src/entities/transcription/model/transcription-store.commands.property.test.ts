@@ -1,6 +1,5 @@
 import { test } from "bun:test";
 import fc from "fast-check";
-import type { SpeakerSegment } from "./transcription";
 import { useTranscriptionStore } from "./transcription-store";
 
 const MAX_LIVE_ITEMS = 500;
@@ -10,7 +9,6 @@ interface Model {
 	isRecordingActive: boolean;
 	isTranscribing: boolean;
 	itemTexts: string[];
-	lastItemHasSegments: boolean;
 	processingPhase: "transcribing" | null;
 	realtime: string;
 }
@@ -44,7 +42,6 @@ function freshModel(): Model {
 		ephemeralText: null,
 		isRecordingActive: false,
 		isTranscribing: false,
-		lastItemHasSegments: false,
 		processingPhase: null,
 	};
 }
@@ -65,7 +62,6 @@ class AddFinalCmd implements fc.Command<Model, Real> {
 		}
 		m.realtime = "";
 		m.isTranscribing = false;
-		m.lastItemHasSegments = false;
 		m.processingPhase = null;
 		const state = snapshot(real);
 		if (state.items.length > MAX_LIVE_ITEMS) {
@@ -221,7 +217,6 @@ class ClearAllCmd implements fc.Command<Model, Real> {
 		m.ephemeralText = null;
 		m.isRecordingActive = false;
 		m.isTranscribing = false;
-		m.lastItemHasSegments = false;
 		m.processingPhase = null;
 		const s = snapshot(real);
 		if (s.items.length !== 0) {
@@ -251,48 +246,6 @@ class ClearAllCmd implements fc.Command<Model, Real> {
 	}
 }
 
-class AttachSegmentsCmd implements fc.Command<Model, Real> {
-	readonly segments: SpeakerSegment[];
-	constructor(segments: SpeakerSegment[]) {
-		this.segments = segments;
-	}
-	check(): boolean {
-		return true;
-	}
-	run(m: Model, real: Real): void {
-		const before = snapshot(real).items;
-		real.getState().attachSpeakerSegments(this.segments);
-		const after = snapshot(real).items;
-		if (m.itemTexts.length === 0) {
-			// empty feed → no-op; reference must be preserved
-			if (after !== before) {
-				throw new Error("attachSpeakerSegments mutated empty feed");
-			}
-		} else {
-			const last = after.at(-1);
-			if (
-				!last ||
-				JSON.stringify(last.speakerSegments) !== JSON.stringify(this.segments)
-			) {
-				throw new Error("segments not attached to last item");
-			}
-			if (after.length !== m.itemTexts.length) {
-				throw new Error("attachSpeakerSegments changed item count");
-			}
-			m.lastItemHasSegments = true;
-		}
-	}
-	toString(): string {
-		return `attachSegments(n=${this.segments.length})`;
-	}
-}
-
-const segmentArb: fc.Arbitrary<SpeakerSegment> = fc.record({
-	start: fc.double({ min: 0, max: 100, noNaN: true }),
-	end: fc.double({ min: 0, max: 100, noNaN: true }),
-	speaker: fc.integer({ min: 0, max: 8 }),
-});
-
 const commandsArb = fc.commands(
 	[
 		fc.string({ maxLength: 32 }).map((s) => new AddFinalCmd(s)),
@@ -302,9 +255,6 @@ const commandsArb = fc.commands(
 		fc.string({ maxLength: 16 }).map((s) => new ShowEphemeralCmd(s)),
 		fc.constant(new ClearEphemeralCmd()),
 		fc.constant(new ClearAllCmd()),
-		fc
-			.array(segmentArb, { maxLength: 5 })
-			.map((segs) => new AttachSegmentsCmd(segs)),
 	],
 	{ maxCommands: 40 },
 );

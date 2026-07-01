@@ -25,17 +25,16 @@
 // supplies its declared fallback).
 
 import { listen as tauriListen } from "@tauri-apps/api/event";
-import { commands, type UpdaterCommandResult } from "@/bindings";
-import { emitFileDragDropEvent } from "./file-drag-drop";
+import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
+import {
+	callPlugin,
+	type PluginTarget,
+	windowOp,
+	type WindowOp,
+} from "./adapter/plugins";
+import { fileToTauriPath, wireDragDrop } from "./adapter/drag-drop";
+import { checkAndDownloadUpdate } from "./adapter/updater";
 import { IPC } from "./ipc-channels";
-
-// Exhaustiveness guard for discriminated-union switches. Reaching it is a
-// COMPILE error (`x: never`) when every case is handled — so adding a new
-// `WindowOp` / `PluginTarget` member without a matching case fails to build
-// instead of silently falling through to a `return undefined`.
-function assertNever(x: never): never {
-	throw new Error(`unhandled: ${JSON.stringify(x)}`);
-}
 
 // `@tauri-apps/api/event` is statically imported so `install()` can run
 // SYNCHRONOUSLY (before React's first render fires the IPC hooks). The heavy
@@ -50,15 +49,9 @@ const evt = {
 };
 
 // ── Route kinds ───────────────────────────────────────────────────────────────
-type WindowOp =
-	| "minimize"
-	| "maximize"
-	| "close"
-	| "hide"
-	| "show"
-	| "quit"
-	| "ignore-mouse";
-
+// `WindowOp` / `PluginTarget` are defined alongside their dispatch in
+// `./adapter/plugins`; the `Route` discriminated union below references them.
+//
 // Every renderer→main COMMAND now routes through the typed COMMAND_INVOKERS map
 // in `ipc-transport.ts` (each entry calls a generated `commands.*` binding), so
 // the adapter ROUTE table carries only event / window-op / plugin / noop kinds —
@@ -68,21 +61,6 @@ type Route =
 	| { kind: "window"; op: WindowOp }
 	| { kind: "plugin"; plugin: PluginTarget }
 	| { kind: "noop" };
-
-// Plugin targets are handled by a small dispatch (see callPlugin) so we don't
-// statically import every plugin at module top (keeps the cold path lean).
-type PluginTarget =
-	| "dialog:open"
-	| "clipboard:operate"
-	| "os:locale"
-	| "opener:logs"
-	| "opener:custom-models"
-	| "updater:status-history"
-	| "updater:clear-status-history"
-	| "updater:check-now"
-	| "updater:quit-and-install"
-	| "autostart:set"
-	| "autostart:get";
 
 // ── The ROUTE table: WinSTT channel → Tauri target ─────────────────────────────
 // Grounded in `frontend/src/shared/api/ipc-channels.ts` (IPC + IPC_DIRECTIONS)
@@ -106,6 +84,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 		event: "stt:transcription-failed",
 	},
 	[IPC.STT_RECORDING_START]: { kind: "event", event: "stt:recording-start" },
+	[IPC.STT_CAPTURE_ACTIVE]: { kind: "event", event: "stt:capture-active" },
 	[IPC.STT_RECORDING_STOP]: { kind: "event", event: "stt:recording-stop" },
 	[IPC.STT_VAD_START]: { kind: "event", event: "stt:vad-start" },
 	[IPC.STT_VAD_STOP]: { kind: "event", event: "stt:vad-stop" },
@@ -135,10 +114,6 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.WAKEWORD_MODEL_STATUS]: {
 		kind: "event",
 		event: "wakeword:model-status",
-	},
-	[IPC.STT_SPEAKER_SEGMENTS]: {
-		kind: "event",
-		event: "stt:speaker-segments",
 	},
 
 	// ── Model catalog / picker / download (slices 01/03) ──
@@ -491,44 +466,12 @@ function reshape(channel: string, payload: unknown): unknown {
 	return payload;
 }
 
-// ── Plugin dispatch ─────────────────────────────────────────────────────────────
-// The Rust updater facade owns GitHub release selection, download/install state,
-// and the shared status history. This bridge keeps the legacy IPC shape
-// stable for the renderer.
-let updaterCheckPromise: Promise<UpdaterCommandResult> | null = null;
-
-async function checkAndDownloadUpdate(
-	includePrereleaseUpdates?: boolean,
-): Promise<UpdaterCommandResult> {
-	if (updaterCheckPromise) {
-		return updaterCheckPromise;
-	}
-
-	updaterCheckPromise = (async () => {
-		const res = await commands.winsttUpdaterCheckAndDownload(
-			includePrereleaseUpdates ?? null,
-		);
-		if (res.status === "error") {
-			throw new Error(res.error);
-		}
-		return res.data;
-	})();
-
-	try {
-		return await updaterCheckPromise;
-	} finally {
-		updaterCheckPromise = null;
-	}
-}
-
-async function installPendingUpdateAndRelaunch(): Promise<UpdaterCommandResult> {
-	const res = await commands.winsttUpdaterInstall();
-	if (res.status === "error") {
-		throw new Error(res.error);
-	}
-	return res.data;
-}
-
+// ── Updater check trigger ────────────────────────────────────────────────────
+// The updater facade (`checkAndDownloadUpdate` / `installPendingUpdateAndRelaunch`)
+// lives in `./adapter/updater`. This wiring listens for the backend's
+// `updater:check` event and drives the facade. The `evt.listen("updater:check")`
+// literal stays in this file so the emit-coverage guard sees the frontend listener
+// for the canonical `UPDATER_CHECK` backend event.
 async function wireUpdaterCheckTrigger(): Promise<void> {
 	try {
 		await evt.listen("updater:check", () => {
@@ -539,212 +482,8 @@ async function wireUpdaterCheckTrigger(): Promise<void> {
 	}
 }
 
-async function callPlugin(
-	target: PluginTarget,
-	args: unknown,
-): Promise<unknown> {
-	switch (target) {
-		case "dialog:open": {
-			const { open } = await import("@tauri-apps/plugin-dialog");
-			const a = (args ?? {}) as {
-				filters?: Array<{ name: string; extensions: string[] }>;
-				title?: string;
-			};
-			return open({
-				multiple: false,
-				...(a.filters ? { filters: a.filters } : {}),
-				...(a.title ? { title: a.title } : {}),
-			});
-		}
-		case "clipboard:operate": {
-			const cm = await import("@tauri-apps/plugin-clipboard-manager");
-			const op = (args ?? {}) as { operation: string; text?: string };
-			if (op.operation === "readText") {
-				return { operation: "readText", text: await cm.readText() };
-			}
-			if (op.operation === "writeText") {
-				await cm.writeText(op.text ?? "");
-				return { operation: "writeText" };
-			}
-			// "clear" — Tauri has no clear(); writing an empty string is equivalent.
-			await cm.writeText("");
-			return { operation: "clear" };
-		}
-		case "os:locale": {
-			const os = await import("@tauri-apps/plugin-os");
-			return (await os.locale()) ?? "";
-		}
-		case "opener:logs": {
-			try {
-				return await commands.diagOpenLogsFolder();
-			} catch (e) {
-				return { ok: false, error: String(e) };
-			}
-		}
-		case "opener:custom-models": {
-			const opener = await import("@tauri-apps/plugin-opener");
-			// The backend owns the real folder path; for the polyfill we route to a
-			// command if present, else fall back to a best-effort no-op success.
-			try {
-				const res = await commands.openCustomModelsFolder();
-				if (res.status === "error") {
-					return { ok: false, error: res.error };
-				}
-				const path = res.data;
-				if (typeof path === "string" && path.length > 0) {
-					await opener.openPath(path);
-				}
-				return { ok: true, path };
-			} catch (e) {
-				return { ok: false, error: String(e) };
-			}
-		}
-		case "updater:status-history":
-			return commands.winsttUpdaterGetStatusHistory();
-		case "updater:clear-status-history":
-			return commands.winsttUpdaterClearStatusHistory();
-		case "updater:check-now":
-			return checkAndDownloadUpdate(
-				(args as { includePrereleaseUpdates?: boolean } | undefined)
-					?.includePrereleaseUpdates,
-			);
-		case "updater:quit-and-install":
-			return installPendingUpdateAndRelaunch();
-		case "autostart:set": {
-			const as = await import("@tauri-apps/plugin-autostart");
-			const enabled = (args as { enabled?: boolean })?.enabled ?? false;
-			let current = false;
-			try {
-				current = await as.isEnabled();
-			} catch {
-				if (!enabled) {
-					return;
-				}
-			}
-			if (enabled && !current) {
-				await as.enable();
-			} else if (!enabled && current) {
-				await as.disable();
-			}
-			return;
-		}
-		case "autostart:get": {
-			const as = await import("@tauri-apps/plugin-autostart");
-			return as.isEnabled();
-		}
-		default:
-			return assertNever(target);
-	}
-}
-
-// ── Window ops ───────────────────────────────────────────────────────────────
-async function windowOp(op: WindowOp, args: unknown[]): Promise<void> {
-	const { getCurrentWindow } = await import("@tauri-apps/api/window");
-	const win = getCurrentWindow();
-	switch (op) {
-		case "minimize":
-			await win.minimize();
-			return;
-		case "maximize":
-			await win.toggleMaximize();
-			return;
-		case "hide":
-			await win.hide();
-			return;
-		case "show":
-			await win.show();
-			return;
-		case "close":
-			await win.close();
-			return;
-		case "quit": {
-			await commands.quitApp();
-			return;
-		}
-		case "ignore-mouse": {
-			const ignore = (args[0] as { ignore?: boolean })?.ignore ?? false;
-			await win.setIgnoreCursorEvents(ignore);
-			return;
-		}
-		default:
-			assertNever(op);
-	}
-}
-
-// ── getPathForFile drag-drop bridge (WU-8: file-transcription owns this) ─────────
-// Tauri's webview does NOT expose native paths on the DOM `File` (security). The
-// renderer's `getFilePath(file)` (used by the file-transcription drag-drop in
-// `widgets/audio-display`) is SYNCHRONOUS — it must return the absolute path the
-// instant the DOM `drop` handler runs `collectDroppedFiles`. So we cannot resolve
-// the path inside an `await`; we have to have it ready *before* the DOM drop fires.
-//
-// Tauri v2's `onDragDropEvent` emits phases `enter → over… → drop → leave`, and
-// BOTH `enter` and `drop` carry the absolute `paths`. The native `enter` fires
-// before the DOM `drop` (the OS announces the dragged payload as it crosses the
-// window before it's released), so populating `lastDropPaths` on `enter` makes
-// `getPathForFile` resolve synchronously by the time `drop` is handled. We keep
-// `drop` as a backstop (covers webviews/platforms where `enter` lacks paths) and
-// keep the map keyed by name (+size when available) for collision safety.
-const lastDropPaths = new Map<string, string>();
-
-function dropKey(name: string, size?: number): string {
-	return size === undefined ? name : `${name}:${size}`;
-}
-
-function rememberDropPaths(paths: readonly string[]): void {
-	for (const path of paths) {
-		const name = path.split(/[\\/]/).pop();
-		if (name) {
-			// Key by bare name (the DOM File exposes name+size, never the path).
-			lastDropPaths.set(name, path);
-		}
-	}
-}
-
-function fileToTauriPath(file: File): string {
-	return (
-		lastDropPaths.get(dropKey(file.name, file.size)) ??
-		lastDropPaths.get(file.name) ??
-		""
-	);
-}
-
-async function wireDragDrop(): Promise<void> {
-	try {
-		const { getCurrentWindow } = await import("@tauri-apps/api/window");
-		await getCurrentWindow().onDragDropEvent((event) => {
-			const payload = event.payload;
-			// `enter` AND `drop` carry `paths` in Tauri v2. Stash on BOTH: `enter`
-			// (before the DOM drop) makes the synchronous `getFilePath` resolve;
-			// `drop` is the backstop. `over`/`leave` carry no paths — ignore.
-			if (payload.type === "enter" || payload.type === "drop") {
-				rememberDropPaths(payload.paths);
-			}
-			emitFileDragDropEvent({
-				type: payload.type,
-				paths:
-					payload.type === "enter" || payload.type === "drop"
-						? [...payload.paths]
-						: [],
-			});
-		});
-	} catch {
-		// Not in a Tauri window context — drag-drop bridge unavailable.
-	}
-}
-
 // ── Install ──────────────────────────────────────────────────────────────────
 let installed = false;
-
-function hasTauriRuntime(): boolean {
-	if (typeof window === "undefined") {
-		return false;
-	}
-	const maybeWindow = window as Window & {
-		__TAURI_INTERNALS__?: unknown;
-	};
-	return maybeWindow.__TAURI_INTERNALS__ != null;
-}
 
 /**
  * Install the `window.nativeBridge` polyfill. SYNCHRONOUS + idempotent so it

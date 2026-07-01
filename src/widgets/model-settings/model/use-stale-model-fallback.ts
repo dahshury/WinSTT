@@ -8,14 +8,12 @@ import {
 	needsModelFallback,
 	pickCachedSttModel,
 	pickDefaultSttModel,
+	type CatalogModels,
+	type ModelStatesById as StatesById,
 	type SourceLanguageSelection,
-	type useCatalogStore,
-	type useModelStateStore,
 } from "@/entities/model-catalog";
 import { getSettingsStoreState } from "@/entities/setting";
 
-type CatalogModels = ReturnType<typeof useCatalogStore.getState>["models"];
-type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
 type UpdateModelFn = ReturnType<
 	typeof getSettingsStoreState
 >["updateModelSettings"];
@@ -138,6 +136,9 @@ function resolveRealtimePatch(
 	statesLoaded: boolean,
 	sourceLanguageSelection?: SourceLanguageSelection,
 ): ModelPatch | null {
+	if (providerOf(currentMainModel ?? "") !== null) {
+		return null;
+	}
 	if (catalogModels.length === 0 || !statesLoaded) {
 		return null;
 	}
@@ -271,6 +272,7 @@ export function useStaleModelFallback(
 			catalogModels,
 			statesById,
 			statesLoaded,
+			sourceLanguageSelection,
 		);
 		if (patch) {
 			applyResolvedPatch(patch);

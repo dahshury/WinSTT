@@ -176,9 +176,10 @@ Both features choose one of three providers. Switching provider resets that feat
 The model field depends on the active provider.
 
 <SettingRow label="Model (Ollama)" settingKey="llm.dictation.model" default='""'>
-  The Ollama model name to use. The picker shows installed models grouped by family with a
-  parameter-size chip and a hardware-fit assessment. Required for the feature to run on
-  Ollama.
+  The Ollama model name to use. The picker shows installed local models grouped by family
+  with parameter-size, quantization, capability, context-window, and hardware-fit chips.
+  It also browses the Ollama library and fetches per-model tags so you can pull variants
+  without leaving WinSTT. Required for the feature to run on Ollama.
 </SettingRow>
 
 <SettingRow label="Thinking Effort (Ollama)" settingKey="llm.dictation.thinkingEffort" default="medium">

@@ -1,0 +1,538 @@
+import {
+	type Announcements,
+	closestCenter,
+	closestCorners,
+	DndContext,
+	type DndContextProps,
+	type DragEndEvent,
+	type DraggableAttributes,
+	type DraggableSyntheticListeners,
+	DragOverlay,
+	type DragStartEvent,
+	type DropAnimation,
+	defaultDropAnimationSideEffects,
+	KeyboardSensor,
+	MouseSensor,
+	type ScreenReaderInstructions,
+	TouchSensor,
+	type UniqueIdentifier,
+	useSensor,
+	useSensors,
+} from "@dnd-kit/core";
+import {
+	restrictToHorizontalAxis,
+	restrictToParentElement,
+	restrictToVerticalAxis,
+} from "@dnd-kit/modifiers";
+import {
+	arrayMove,
+	horizontalListSortingStrategy,
+	SortableContext,
+	type SortableContextProps,
+	sortableKeyboardCoordinates,
+	useSortable,
+	verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { Slot as SlotPrimitive } from "@/shared/ui/data-grid/primitives/slot";
+import * as React from "react";
+import * as ReactDOM from "react-dom";
+import { useComposedRefs } from "@/shared/ui/data-grid/lib/compose-refs";
+import { cn } from "@/shared/lib/cn";
+
+const orientationConfig = {
+	vertical: {
+		modifiers: [restrictToVerticalAxis, restrictToParentElement],
+		strategy: verticalListSortingStrategy,
+		collisionDetection: closestCenter,
+	},
+	horizontal: {
+		modifiers: [restrictToHorizontalAxis, restrictToParentElement],
+		strategy: horizontalListSortingStrategy,
+		collisionDetection: closestCenter,
+	},
+	mixed: {
+		modifiers: [restrictToParentElement],
+		strategy: undefined,
+		collisionDetection: closestCorners,
+	},
+};
+
+const ROOT_NAME = "Sortable";
+const CONTENT_NAME = "SortableContent";
+const ITEM_NAME = "SortableItem";
+const ITEM_HANDLE_NAME = "SortableItemHandle";
+const OVERLAY_NAME = "SortableOverlay";
+
+interface SortableRootContextValue<T> {
+	id: string;
+	items: UniqueIdentifier[];
+	modifiers: DndContextProps["modifiers"];
+	strategy: SortableContextProps["strategy"];
+	activeId: UniqueIdentifier | null;
+	setActiveId: (id: UniqueIdentifier | null) => void;
+	getItemValue: (item: T) => UniqueIdentifier;
+	flatCursor: boolean;
+}
+
+const SortableRootContext =
+	React.createContext<SortableRootContextValue<unknown> | null>(null);
+
+function useSortableContext(consumerName: string) {
+	const context = React.use(SortableRootContext);
+	if (!context) {
+		throw new Error(`\`${consumerName}\` must be used within \`${ROOT_NAME}\``);
+	}
+	return context;
+}
+
+interface GetItemValue<T> {
+	/**
+	 * Callback that returns a unique identifier for each sortable item. Required for array of objects.
+	 * @example getItemValue={(item) => item.id}
+	 */
+	getItemValue: (item: T) => UniqueIdentifier;
+}
+
+type SortableProps<T> = DndContextProps &
+	(T extends object ? GetItemValue<T> : Partial<GetItemValue<T>>) & {
+		value: T[];
+		onValueChange?: (items: T[]) => void;
+		onMove?: (
+			event: DragEndEvent & { activeIndex: number; overIndex: number },
+		) => void;
+		strategy?: SortableContextProps["strategy"];
+		orientation?: "vertical" | "horizontal" | "mixed";
+		flatCursor?: boolean;
+	};
+
+function Sortable<T>(props: SortableProps<T>) {
+	const {
+		value,
+		onValueChange,
+		collisionDetection,
+		modifiers,
+		strategy,
+		onMove,
+		orientation = "vertical",
+		flatCursor = false,
+		getItemValue: getItemValueProp,
+		accessibility,
+		...sortableProps
+	} = props;
+
+	const id = React.useId();
+	const [activeId, setActiveId] = React.useState<UniqueIdentifier | null>(null);
+
+	const sensors = useSensors(
+		useSensor(MouseSensor),
+		useSensor(TouchSensor),
+		useSensor(KeyboardSensor, {
+			coordinateGetter: sortableKeyboardCoordinates,
+		}),
+	);
+	const config = orientationConfig[orientation];
+
+	const getItemValue = (item: T): UniqueIdentifier => {
+		if (typeof item === "object" && !getItemValueProp) {
+			throw new Error("`getItemValue` is required when using array of objects");
+		}
+		return getItemValueProp
+			? getItemValueProp(item)
+			: (item as UniqueIdentifier);
+	};
+
+	const items = value.map((item) => getItemValue(item));
+
+	const onDragStart = (event: DragStartEvent) => {
+		sortableProps.onDragStart?.(event);
+
+		if (event.activatorEvent.defaultPrevented) return;
+
+		setActiveId(event.active.id);
+	};
+
+	const onDragEnd = (event: DragEndEvent) => {
+		sortableProps.onDragEnd?.(event);
+
+		if (event.activatorEvent.defaultPrevented) return;
+
+		const { active, over } = event;
+		if (over && active.id !== over?.id) {
+			const activeIndex = value.findIndex(
+				(item) => getItemValue(item) === active.id,
+			);
+			const overIndex = value.findIndex(
+				(item) => getItemValue(item) === over.id,
+			);
+
+			if (onMove) {
+				onMove({ ...event, activeIndex, overIndex });
+			} else {
+				onValueChange?.(arrayMove(value, activeIndex, overIndex));
+			}
+		}
+		setActiveId(null);
+	};
+
+	const onDragCancel = (event: DragEndEvent) => {
+		sortableProps.onDragCancel?.(event);
+
+		if (event.activatorEvent.defaultPrevented) return;
+
+		setActiveId(null);
+	};
+
+	const announcements: Announcements = {
+		onDragStart({ active }) {
+			const activeValue = active.id.toString();
+			return `Grabbed sortable item "${activeValue}". Current position is ${active.data.current?.["sortable"].index + 1} of ${value.length}. Use arrow keys to move, space to drop.`;
+		},
+		onDragOver({ active, over }) {
+			if (over) {
+				const overIndex = over.data.current?.["sortable"].index ?? 0;
+				const activeIndex = active.data.current?.["sortable"].index ?? 0;
+				const moveDirection = overIndex > activeIndex ? "down" : "up";
+				const activeValue = active.id.toString();
+				return `Sortable item "${activeValue}" moved ${moveDirection} to position ${overIndex + 1} of ${value.length}.`;
+			}
+			return "Sortable item is no longer over a droppable area. Press escape to cancel.";
+		},
+		onDragEnd({ active, over }) {
+			const activeValue = active.id.toString();
+			if (over) {
+				const overIndex = over.data.current?.["sortable"].index ?? 0;
+				return `Sortable item "${activeValue}" dropped at position ${overIndex + 1} of ${value.length}.`;
+			}
+			return `Sortable item "${activeValue}" dropped. No changes were made.`;
+		},
+		onDragCancel({ active }) {
+			const activeIndex = active.data.current?.["sortable"].index ?? 0;
+			const activeValue = active.id.toString();
+			return `Sorting cancelled. Sortable item "${activeValue}" returned to position ${activeIndex + 1} of ${value.length}.`;
+		},
+		onDragMove({ active, over }) {
+			if (over) {
+				const overIndex = over.data.current?.["sortable"].index ?? 0;
+				const activeIndex = active.data.current?.["sortable"].index ?? 0;
+				const moveDirection = overIndex > activeIndex ? "down" : "up";
+				const activeValue = active.id.toString();
+				return `Sortable item "${activeValue}" is moving ${moveDirection} to position ${overIndex + 1} of ${value.length}.`;
+			}
+			return "Sortable item is no longer over a droppable area. Press escape to cancel.";
+		},
+	};
+
+	const screenReaderInstructions: ScreenReaderInstructions = {
+		draggable: `
+        To pick up a sortable item, press space or enter.
+        While dragging, use the ${orientation === "vertical" ? "up and down" : orientation === "horizontal" ? "left and right" : "arrow"} keys to move the item.
+        Press space or enter again to drop the item in its new position, or press escape to cancel.
+      `,
+	};
+
+	const contextValue = {
+		id,
+		items,
+		modifiers: modifiers ?? config.modifiers,
+		strategy: strategy ?? config.strategy,
+		activeId,
+		setActiveId,
+		getItemValue,
+		flatCursor,
+	};
+
+	return (
+		<SortableRootContext.Provider
+			value={contextValue as SortableRootContextValue<unknown>}
+		>
+			<DndContext
+				collisionDetection={collisionDetection ?? config.collisionDetection}
+				modifiers={modifiers ?? config.modifiers}
+				sensors={sensors}
+				{...(sortableProps as React.ComponentProps<typeof DndContext>)}
+				id={id}
+				onDragStart={onDragStart}
+				onDragEnd={onDragEnd}
+				onDragCancel={onDragCancel}
+				accessibility={{
+					announcements,
+					screenReaderInstructions,
+					...accessibility,
+				}}
+			/>
+		</SortableRootContext.Provider>
+	);
+}
+
+const SortableContentContext = React.createContext<boolean>(false);
+
+interface SortableContentProps extends React.ComponentProps<"div"> {
+	strategy?: SortableContextProps["strategy"];
+	children: React.ReactNode;
+	asChild?: boolean;
+	withoutSlot?: boolean;
+}
+
+function SortableContent(props: SortableContentProps) {
+	const {
+		strategy: strategyProp,
+		asChild,
+		withoutSlot,
+		children,
+		ref,
+		...contentProps
+	} = props;
+
+	const context = useSortableContext(CONTENT_NAME);
+
+	const ContentPrimitive = asChild ? SlotPrimitive.Slot : "div";
+
+	return (
+		<SortableContentContext.Provider value={true}>
+			<SortableContext
+				items={context.items}
+				{...({ strategy: strategyProp ?? context.strategy } as {
+					strategy?: NonNullable<SortableContextProps["strategy"]>;
+				})}
+			>
+				{withoutSlot ? (
+					children
+				) : (
+					<ContentPrimitive
+						data-slot="sortable-content"
+						{...contentProps}
+						ref={ref}
+					>
+						{children}
+					</ContentPrimitive>
+				)}
+			</SortableContext>
+		</SortableContentContext.Provider>
+	);
+}
+
+interface SortableItemContextValue {
+	id: string;
+	attributes: DraggableAttributes;
+	listeners: DraggableSyntheticListeners | undefined;
+	setActivatorNodeRef: (node: HTMLElement | null) => void;
+	isDragging?: boolean | undefined;
+	disabled?: boolean | undefined;
+}
+
+const SortableItemContext =
+	React.createContext<SortableItemContextValue | null>(null);
+
+function useSortableItemContext(consumerName: string) {
+	const context = React.use(SortableItemContext);
+	if (!context) {
+		throw new Error(`\`${consumerName}\` must be used within \`${ITEM_NAME}\``);
+	}
+	return context;
+}
+
+interface SortableItemProps extends React.ComponentProps<"div"> {
+	value: UniqueIdentifier;
+	asHandle?: boolean;
+	asChild?: boolean;
+	disabled?: boolean;
+}
+
+function SortableItem(props: SortableItemProps) {
+	const {
+		value,
+		style,
+		asHandle,
+		asChild,
+		disabled,
+		className,
+		ref,
+		...itemProps
+	} = props;
+
+	const inSortableContent = React.use(SortableContentContext);
+	const inSortableOverlay = React.use(SortableOverlayContext);
+
+	if (!inSortableContent && !inSortableOverlay) {
+		throw new Error(
+			`\`${ITEM_NAME}\` must be used within \`${CONTENT_NAME}\` or \`${OVERLAY_NAME}\``,
+		);
+	}
+
+	if (value === "") {
+		throw new Error(`\`${ITEM_NAME}\` value cannot be an empty string`);
+	}
+
+	const context = useSortableContext(ITEM_NAME);
+	const id = React.useId();
+	const {
+		attributes,
+		listeners,
+		setNodeRef,
+		setActivatorNodeRef,
+		transform,
+		transition,
+		isDragging,
+	} = useSortable({ id: value, disabled: disabled ?? false });
+
+	const composedRef = useComposedRefs(ref, (node) => {
+		if (disabled) return;
+		setNodeRef(node);
+		if (asHandle) setActivatorNodeRef(node);
+	});
+
+	const composedStyle: React.CSSProperties = {
+		transform: CSS.Translate.toString(transform),
+		transition,
+		...style,
+	};
+
+	const itemContext: SortableItemContextValue = {
+		id,
+		attributes,
+		listeners,
+		setActivatorNodeRef,
+		isDragging,
+		disabled,
+	};
+
+	const ItemPrimitive = asChild ? SlotPrimitive.Slot : "div";
+
+	return (
+		<SortableItemContext.Provider value={itemContext}>
+			<ItemPrimitive
+				id={id}
+				data-disabled={disabled}
+				data-dragging={isDragging ? "" : undefined}
+				data-slot="sortable-item"
+				{...itemProps}
+				{...(asHandle && !disabled ? attributes : {})}
+				{...(asHandle && !disabled ? listeners : {})}
+				ref={composedRef}
+				style={composedStyle}
+				className={cn(
+					"focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1",
+					{
+						"touch-none select-none": asHandle,
+						"cursor-default": context.flatCursor,
+						"data-dragging:cursor-grabbing": !context.flatCursor,
+						"cursor-grab": !isDragging && asHandle && !context.flatCursor,
+						"opacity-50": isDragging,
+						"pointer-events-none opacity-50": disabled,
+					},
+					className,
+				)}
+			/>
+		</SortableItemContext.Provider>
+	);
+}
+
+interface SortableItemHandleProps extends React.ComponentProps<"button"> {
+	asChild?: boolean;
+}
+
+function SortableItemHandle(props: SortableItemHandleProps) {
+	const { asChild, disabled, className, ref, ...itemHandleProps } = props;
+
+	const context = useSortableContext(ITEM_HANDLE_NAME);
+	const itemContext = useSortableItemContext(ITEM_HANDLE_NAME);
+
+	const isDisabled = disabled ?? itemContext.disabled;
+
+	const composedRef = useComposedRefs(ref, (node) => {
+		if (!isDisabled) return;
+		itemContext.setActivatorNodeRef(node);
+	});
+
+	const HandlePrimitive = asChild ? SlotPrimitive.Slot : "button";
+
+	return (
+		<HandlePrimitive
+			type="button"
+			aria-controls={itemContext.id}
+			data-disabled={isDisabled}
+			data-dragging={itemContext.isDragging ? "" : undefined}
+			data-slot="sortable-item-handle"
+			{...itemHandleProps}
+			{...(isDisabled ? {} : itemContext.attributes)}
+			{...(isDisabled ? {} : itemContext.listeners)}
+			ref={composedRef}
+			className={cn(
+				"select-none disabled:pointer-events-none disabled:opacity-50",
+				context.flatCursor
+					? "cursor-default"
+					: "cursor-grab data-dragging:cursor-grabbing",
+				className,
+			)}
+			disabled={isDisabled}
+		/>
+	);
+}
+
+const SortableOverlayContext = React.createContext(false);
+
+const dropAnimation: DropAnimation = {
+	sideEffects: defaultDropAnimationSideEffects({
+		styles: {
+			active: {
+				opacity: "0.4",
+			},
+		},
+	}),
+};
+
+interface SortableOverlayProps extends Omit<
+	React.ComponentProps<typeof DragOverlay>,
+	"children"
+> {
+	container?: Element | DocumentFragment | null;
+	children?:
+		| ((params: { value: UniqueIdentifier }) => React.ReactNode)
+		| React.ReactNode;
+}
+
+function SortableOverlay(props: SortableOverlayProps) {
+	const { container: containerProp, children, ...overlayProps } = props;
+
+	const context = useSortableContext(OVERLAY_NAME);
+
+	const [mounted, setMounted] = React.useState(false);
+
+	// eslint-disable-next-line react-hooks-js/set-state-in-effect -- portal mount-gate: defers createPortal until after first commit so the document.body target is resolved on the client; not derivable during render.
+	React.useLayoutEffect(() => setMounted(true), []);
+
+	const container =
+		containerProp ?? (mounted ? globalThis.document?.body : null);
+
+	if (!container) return null;
+
+	return ReactDOM.createPortal(
+		<DragOverlay
+			className={cn(!context.flatCursor && "cursor-grabbing")}
+			{...({
+				dropAnimation,
+				modifiers: context.modifiers,
+				...overlayProps,
+			} as React.ComponentProps<typeof DragOverlay>)}
+		>
+			<SortableOverlayContext.Provider value={true}>
+				{context.activeId
+					? typeof children === "function"
+						? children({ value: context.activeId })
+						: children
+					: null}
+			</SortableOverlayContext.Provider>
+		</DragOverlay>,
+		container,
+	);
+}
+
+export {
+	Sortable,
+	SortableContent,
+	SortableItem,
+	SortableItemHandle,
+	SortableOverlay,
+	type SortableProps,
+};

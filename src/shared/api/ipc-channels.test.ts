@@ -93,9 +93,4 @@ describe("channelsByDirection", () => {
 		// Generic invoke channels must NOT be secure.
 		expect(secureChannels.has(IPC.SETTINGS_LOAD)).toBe(false);
 	});
-
-	test("internal preload-only channels carry no renderer-facing direction", () => {
-		expect(IPC_DIRECTIONS[IPC.SECURE_GET_KEY]).toEqual([]);
-		expect(IPC_DIRECTIONS[IPC.SECURE_INVOKE]).toEqual([]);
-	});
 });

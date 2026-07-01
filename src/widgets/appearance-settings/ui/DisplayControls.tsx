@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { DEFAULT_SETTINGS, SettingField } from "@/entities/setting";
 import { DEFAULT_LOCALE, type Locale } from "@/shared/i18n";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import { Slider } from "@/shared/ui/slider";
 import { Switcher } from "@/shared/ui/switcher";
@@ -50,13 +49,12 @@ export function LanguageControl({
 			onReset={() => setLocale(DEFAULT_LOCALE)}
 			tooltip={t("languageTooltip")}
 		>
-			<ElevatedSurface className="w-52" inline>
-				<SearchableSelect
-					onChange={(v) => pickLocale(v, setLocale)}
-					options={LANGUAGE_OPTIONS}
-					value={locale}
-				/>
-			</ElevatedSurface>
+			<SearchableSelect
+				className="w-52"
+				onChange={(v) => pickLocale(v, setLocale)}
+				options={LANGUAGE_OPTIONS}
+				value={locale}
+			/>
 		</SettingField>
 	);
 }
@@ -92,20 +90,16 @@ export function OverlayControl({
 			}
 			tooltip={t("showRecordingOverlayTooltip")}
 		>
-			<ElevatedSurface
+			<Slider
 				className={isListenMode ? "pointer-events-none opacity-40" : undefined}
-				inline
-			>
-				<Slider
-					aria-label={t("showRecordingOverlay")}
-					formatValue={(v) => overlaySliderLabel(v, t)}
-					max={overlaySliderMax()}
-					min={0}
-					onChange={(v) => update(overlaySliderPatch(v, general))}
-					step={1}
-					value={idx}
-				/>
-			</ElevatedSurface>
+				aria-label={t("showRecordingOverlay")}
+				formatValue={(v) => overlaySliderLabel(v, t)}
+				max={overlaySliderMax()}
+				min={0}
+				onChange={(v) => update(overlaySliderPatch(v, general))}
+				step={1}
+				value={idx}
+			/>
 		</SettingField>
 	);
 }
@@ -144,16 +138,13 @@ export function OverlayModeControl({
 			}
 			tooltip={t("overlayModeTooltip")}
 		>
-			<ElevatedSurface
+			<Switcher
 				className={subDisabled ? "pointer-events-none opacity-40" : undefined}
-			>
-				<Switcher
-					fullWidth
-					onChange={onChange}
-					options={options}
-					value={value}
-				/>
-			</ElevatedSurface>
+				fullWidth
+				onChange={onChange}
+				options={options}
+				value={value}
+			/>
 		</SettingField>
 	);
 }
@@ -233,24 +224,22 @@ export function LiveTranscriptionDisplayControl({
 			}
 			tooltip={t("liveTranscriptionDisplayTooltip")}
 		>
-			<ElevatedSurface>
-				<CheckboxGroup checkedIndices={checkedIndices} className="w-full">
-					<CheckboxItem
-						checked={inApp}
-						disabled={isListenMode || realtimeLanguageUnavailable}
-						index={0}
-						label={t("liveTranscriptionDisplayInApp")}
-						onToggle={() => setInApp(!inApp)}
-					/>
-					<CheckboxItem
-						checked={inOverlay}
-						disabled={pillDisabled}
-						index={1}
-						label={t("liveTranscriptionDisplayInPill")}
-						onToggle={() => setInOverlay(!inOverlay)}
-					/>
-				</CheckboxGroup>
-			</ElevatedSurface>
+			<CheckboxGroup checkedIndices={checkedIndices} className="w-full" framed>
+				<CheckboxItem
+					checked={inApp}
+					disabled={isListenMode || realtimeLanguageUnavailable}
+					index={0}
+					label={t("liveTranscriptionDisplayInApp")}
+					onToggle={() => setInApp(!inApp)}
+				/>
+				<CheckboxItem
+					checked={inOverlay}
+					disabled={pillDisabled}
+					index={1}
+					label={t("liveTranscriptionDisplayInPill")}
+					onToggle={() => setInOverlay(!inOverlay)}
+				/>
+			</CheckboxGroup>
 		</SettingField>
 	);
 }
@@ -277,14 +266,12 @@ export function VisualizerTypeControl({
 			}
 			tooltip={t("visualizerTypeTooltip")}
 		>
-			<ElevatedSurface>
-				<Switcher
-					fullWidth
-					onChange={(v) => pickVisualizerType(v, update)}
-					options={options}
-					value={value}
-				/>
-			</ElevatedSurface>
+			<Switcher
+				fullWidth
+				onChange={(v) => pickVisualizerType(v, update)}
+				options={options}
+				value={value}
+			/>
 		</SettingField>
 	);
 }

@@ -25,16 +25,30 @@ export function useTranscriptionHistorySync(): void {
 
 	useEffect(() => {
 		let cancelled = false;
-		fetchTranscriptionHistory().then((entries) => {
-			if (!cancelled) {
-				setAll(entries);
-			}
-		});
-		fetchTransformHistory().then((entries) => {
-			if (!cancelled) {
-				setTransformAll(entries);
-			}
-		});
+		// Fetch ONCE per window. This hook is mounted at the settings-window root
+		// (SettingsBootstrap), so it stays alive across tab switches and the live
+		// added/deleted subscriptions below keep the store current. Re-fetching on
+		// every History-tab remount was the root of the "stats rebuild slowly each
+		// visit" lag: `setAll` swaps in a brand-new array, which busts every
+		// reference-keyed stats cache and forces a full recompute. Guarding on the
+		// already-hydrated flags keeps the array identity stable so revisits hit
+		// the warm caches instead.
+		const { isLoaded, transformsLoaded } =
+			useTranscriptionHistoryStore.getState();
+		if (!isLoaded) {
+			fetchTranscriptionHistory().then((entries) => {
+				if (!cancelled) {
+					setAll(entries);
+				}
+			});
+		}
+		if (!transformsLoaded) {
+			fetchTransformHistory().then((entries) => {
+				if (!cancelled) {
+					setTransformAll(entries);
+				}
+			});
+		}
 		const unsubAdded = onTranscriptionHistoryAdded((entry) => {
 			addEntry(entry);
 		});

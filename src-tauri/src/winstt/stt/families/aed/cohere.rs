@@ -152,7 +152,7 @@ impl CohereEngine {
         // Cohere (Conformer AED) uses the SAME 128-mel time-first featurizer as NeMo
         // (Slaney 128-mel, preemphasis 0.97, n_fft=512/win=400/hop=160 Hann, per-feature
         // norm over time) — faithful to onnx-asr's Cohere featurizer. The old 80-mel kaldi
-        // The previous 80-mel `compute_fbank` frontend produced wrong numerics and garbled output.
+        // `compute_fbank` frontend produced wrong numerics and garbled output.
         let fbank = frontend::nemo_features(audio, &self.mel_fb);
         let t = fbank.nrows();
         let feat_dim = fbank.ncols();

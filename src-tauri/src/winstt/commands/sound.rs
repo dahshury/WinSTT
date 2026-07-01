@@ -31,11 +31,7 @@ use crate::winstt::commands::settings::read_settings;
 
 const ORIGINAL_DEFAULT_SOUND_RESOURCE: &str = "resources/recording_sound_default.wav";
 const BUILTIN_SOUND_PREFIX: &str = "builtin:";
-const BUILTIN_RECORDING_SOUND_FILES: &[&str] = &[
-    "marimba_start.wav",
-    "recording_sound_ui_earcon_1.wav",
-    "recording_sound_ui_earcon_4.wav",
-];
+const BUILTIN_RECORDING_SOUND_FILES: &[&str] = &["marimba_start.wav"];
 
 /// Process-local monotonic counter, combined with the wall-clock nanos to form a
 /// collision-free library filename id (no `uuid` crate dependency — mirrors the
@@ -606,24 +602,20 @@ mod tests {
             built_in_recording_sound_resource("builtin:marimba_start.wav"),
             Some(Path::new("resources").join("marimba_start.wav"))
         );
-        assert_eq!(
-            built_in_recording_sound_resource("builtin:recording_sound_ui_earcon_1.wav"),
-            Some(Path::new("resources").join("recording_sound_ui_earcon_1.wav"))
-        );
-        assert_eq!(
-            built_in_recording_sound_resource("builtin:recording_sound_ui_earcon_4.wav"),
-            Some(Path::new("resources").join("recording_sound_ui_earcon_4.wav"))
-        );
 
         assert!(built_in_recording_sound_resource("builtin:marimba_stop.wav").is_none());
         assert!(built_in_recording_sound_resource("builtin:pop_start.wav").is_none());
         assert!(built_in_recording_sound_resource("builtin:pop_stop.wav").is_none());
         assert!(built_in_recording_sound_resource("builtin:recording_sound_default.wav").is_none());
+        // The UI-earcon alternates were removed from the bundle.
         assert!(
-            built_in_recording_sound_resource("builtin:../recording_sound_ui_earcon_1.wav")
-                .is_none()
+            built_in_recording_sound_resource("builtin:recording_sound_ui_earcon_1.wav").is_none()
         );
-        assert!(built_in_recording_sound_resource("recording_sound_ui_earcon_1.wav").is_none());
+        assert!(
+            built_in_recording_sound_resource("builtin:recording_sound_ui_earcon_4.wav").is_none()
+        );
+        assert!(built_in_recording_sound_resource("builtin:../marimba_start.wav").is_none());
+        assert!(built_in_recording_sound_resource("marimba_start.wav").is_none());
     }
 
     #[test]

@@ -402,63 +402,6 @@ fn with_compose_rules(system_prompt: &str) -> String {
     format!("{preamble}{system_prompt}")
 }
 fn with_context_prefix(system_prompt: &str, context: &str) -> String {
-    with_context_prefix_json(system_prompt, context)
-}
-
-#[expect(
-    dead_code,
-    reason = "legacy context prefix format is retained for prompt parity comparisons"
-)]
-fn with_context_prefix_legacy(system_prompt: &str, context: &str) -> String {
-    if context.is_empty() {
-        return system_prompt.to_string();
-    }
-    let preamble = [
-        "The CONTEXT block below describes what's currently on the user's",
-        "screen. Use it for:",
-        "  (a) Spelling proper nouns, names, and technical terms that appear",
-        "      in the dictation. If the dictation phonetically matches a name",
-        "      that appears in the context (e.g. an email recipient), prefer",
-        "      the context's spelling.",
-        "  (b) Composing or replying when the dictation explicitly asks for it",
-        "      (per the COMPOSE rule above: \"reply to this\", \"respond yes\",",
-        "      \"summarise this\", \"translate ...\").",
-        "  (c) Code identifier recognition. When the CONTEXT contains code —",
-        "      either because \"IDE context: yes\" is present in the header, or",
-        "      because the axHtml shows code-shaped tokens (camelCase like",
-        "      `useState`, PascalCase classes, snake_case functions, file",
-        "      paths with extensions like `auth.ts`, CLI flags like `--fix`) —",
-        "      AND the dictation phonetically matches one of those tokens,",
-        "      output the identifier verbatim wrapped in backticks. Examples:",
-        "        \"use state hook\" with `useState` visible → \"`useState` hook\"",
-        "        \"get user by id\"  with `getUserById` visible → \"`getUserById`\"",
-        "        \"run with fix flag\" with `--fix` visible → \"run with `--fix`\"",
-        "      Apply only when the match is phonetically clear; never invent",
-        "      identifiers the context doesn't actually show.",
-        "Do not reproduce, summarise, or echo the context unless a COMPOSE",
-        "instruction asked for it. Treat it as reference, not as content to",
-        "include.",
-        "",
-        "When a section for the text before the caret is present, the dictation is",
-        "being inserted at that caret — decide from how that text ends:",
-        "- If it ends mid-sentence (no terminal . ! ? : and not on a blank/new line),",
-        "  the dictation continues it: do not capitalize the first word (unless it is",
-        "  \"I\" or a proper noun) and add only the minimal joining space or punctuation",
-        "  needed to read on naturally.",
-        "- If it ends a sentence, ends with a newline, or there is no before-text,",
-        "  start the dictation normally with a capital letter.",
-        "Never reproduce the surrounding text. When a section for the text",
-        "after the caret is present, do not repeat words it already contains.",
-        "Output only the cleaned dictation, adjusted at its boundaries so it",
-        "stitches into place.",
-        "",
-        "<context>",
-    ]
-    .join("\n");
-    format!("{preamble}\n{context}\n</context>\n\n{system_prompt}")
-}
-
-fn with_context_prefix_json(system_prompt: &str, context: &str) -> String {
     if context.is_empty() {
         return system_prompt.to_string();
     }

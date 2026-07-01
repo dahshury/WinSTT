@@ -35,10 +35,14 @@ mod ctc;
 pub(crate) mod frontend;
 mod native_streaming;
 mod nemo_streaming;
+mod streaming;
 mod support;
 mod transducer;
 
 use super::{EngineConfig, EngineKind, SttError, SttResult, Transcriber};
+
+/// Shared scalar argmax for the sibling engine modules (`whisper`, `moonshine`) that wrap it.
+pub(crate) use support::argmax_1d;
 
 // ───────────────────────────────────────────────────────────────────────────
 // 9. Dispatch
@@ -75,6 +79,7 @@ pub fn build_family_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>>
         EngineKind::CohereAsr => Box::new(aed::CohereEngine::load(&cfg)?),
         EngineKind::GraniteSpeechAr => Box::new(aed::GraniteArEngine::load(&cfg)?),
         EngineKind::GraniteSpeechNar => Box::new(aed::GraniteNarEngine::load(&cfg)?),
+        EngineKind::Qwen3Asr => Box::new(aed::Qwen3AsrEngine::load(&cfg)?),
         EngineKind::NemoAed => Box::new(aed::CanaryEngine::load(&cfg)?),
         EngineKind::ToneCtc => Box::new(aed::ToneEngine::load(&cfg)?),
         EngineKind::NemoCtcStreaming

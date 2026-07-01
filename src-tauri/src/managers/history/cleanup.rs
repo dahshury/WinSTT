@@ -16,7 +16,7 @@ use crate::winstt::settings_schema::RecordingRetention;
 
 impl HistoryManager {
     pub fn cleanup_old_entries(&self) -> Result<()> {
-        let settings = crate::winstt::commands::settings::read_settings_raw(&self.app_handle);
+        let settings = crate::winstt::settings_store::read_settings_raw(&self.app_handle);
         let retention_period = settings.general.recording_retention;
 
         match retention_period {

@@ -127,7 +127,7 @@ impl WhisperTokenizer {
     /// residual segmentation mismatch is a ~zero quality regression. Whisper prepends one
     /// space so the first piece carries the `Ġ` leading-space marker the BPE was trained on.
     ///
-    /// SPIKE: a fully faithful encoder would apply the trained `merges.txt` rank order;
+    /// A fully faithful encoder would apply the trained `merges.txt` rank order;
     /// greedy-longest-prefix is the WinSTT-shipped approximation and matches its behavior.
     pub fn encode_prompt(&self, text: &str) -> Vec<i64> {
         if text.trim().is_empty() {

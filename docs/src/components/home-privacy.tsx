@@ -5,16 +5,16 @@ export function HomePrivacy() {
         className="relative overflow-hidden rounded-xl p-6"
         style={{
           background:
-            "linear-gradient(135deg, oklch(22% 0.06 155 / 0.35) 0%, var(--surface-1) 100%)",
-          border: "1px solid oklch(60% 0.15 150 / 0.2)",
+            "linear-gradient(135deg, color-mix(in oklab, var(--brand-success) 35%, transparent) 0%, var(--surface-1) 100%)",
+          border: "1px solid color-mix(in oklab, var(--brand-success) 20%, transparent)",
         }}
       >
         <div className="flex items-start gap-4">
           <div
             className="mt-0.5 shrink-0 rounded-lg p-2.5"
             style={{
-              background: "oklch(68% 0.17 150 / 0.12)",
-              color: "oklch(82% 0.12 150 / 0.9)",
+              background: "color-mix(in oklab, var(--brand-success) 12%, transparent)",
+              color: "color-mix(in oklab, var(--brand-success) 90%, transparent)",
             }}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -25,13 +25,13 @@ export function HomePrivacy() {
           <div>
             <h3
               className="mb-1.5 font-semibold text-sm"
-              style={{ color: "oklch(86% 0.1 150 / 0.95)" }}
+              style={{ color: "color-mix(in oklab, var(--brand-success) 95%, transparent)" }}
             >
               Your voice stays on your machine
             </h3>
             <p
               className="text-sm leading-relaxed"
-              style={{ color: "oklch(94% 0.015 265 /0.45)" }}
+              style={{ color: "color-mix(in oklab, var(--fg-strong) 45%, transparent)" }}
             >
               Transcription runs entirely on your local hardware. Audio is
               processed in-memory by on-device AI models and never written to

@@ -3,7 +3,14 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type ReactNode, useEffect, useReducer, useState } from "react";
+import {
+	type ComponentPropsWithoutRef,
+	type MouseEvent,
+	type ReactNode,
+	useEffect,
+	useReducer,
+	useState,
+} from "react";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { Button } from "@/shared/ui/button";
@@ -23,8 +30,8 @@ import { useModelPickerCloseGuard } from "../../lib/model-picker-close-guard";
 import {
 	readPersistedSelectorState,
 	writePersistedSelectorState,
-} from "../../lib/persisted-selector-state";
-import { publicAsset } from "../../lib/public-asset";
+} from "@/shared/lib/persisted-selector-state";
+import { publicAsset } from "@/shared/lib/public-asset";
 import { STT_PICKER_WIDTH_CLASS } from "../../stt/lib/dimensions";
 import {
 	buildTtsSearchCorpus,
@@ -62,6 +69,12 @@ export interface TtsModelSelectorProps {
 	isLoading?: boolean;
 	models: readonly TtsModelInfo[];
 	onChange: TtsModelChange;
+	/** When set, the trigger opens a detached picker window (passing its
+	 *  on-screen rect) INSTEAD of the in-window popup — used by the settings
+	 *  panel so the picker can extend beyond the settings window, the same way
+	 *  the STT main picker does. The inline popup is fully suppressed in this
+	 *  mode. Ignored when `inline` is set (the detached window renders inline). */
+	onOpenDetached?: (rect: DOMRect) => void;
 	/** Per-quant delete handler — fired after the user confirms in the
 	 *  selector-level alert dialog. When omitted, no trash icon is rendered. */
 	onDeleteQuant?: (modelId: string, quantization: string) => void;
@@ -89,6 +102,11 @@ export interface TtsModelSelectorProps {
 interface TtsSelectorUiState {
 	activeRailId: string | null;
 	open: boolean;
+	/** Text-search query, owned here (not inside `ModelPicker`) so a query can
+	 *  span ALL authors — it overrides the active rail, so e.g. "piper" finds
+	 *  Piper voices even while the Kokoro rail is selected. Mirrors the STT
+	 *  picker's lifted-search fix. */
+	search: string;
 }
 
 interface PersistedTtsSelectorUiState {
@@ -114,7 +132,8 @@ function isPersistedTtsSelectorUiState(
 
 type TtsSelectorUiAction =
 	| { id: string | null; type: "setActiveRailId" }
-	| { open: boolean; type: "setOpen" };
+	| { open: boolean; type: "setOpen" }
+	| { search: string; type: "setSearch" };
 
 function uiReducer(
 	state: TtsSelectorUiState,
@@ -129,6 +148,10 @@ function uiReducer(
 			return state.open === action.open
 				? state
 				: { ...state, open: action.open };
+		case "setSearch":
+			return state.search === action.search
+				? state
+				: { ...state, search: action.search };
 		default:
 			return state;
 	}
@@ -200,6 +223,38 @@ function TtsTriggerBody({
 	);
 }
 
+function TtsTriggerButton({
+	buttonProps,
+	disabled,
+	open,
+	placeholder,
+	selectedModel,
+}: {
+	buttonProps: ComponentPropsWithoutRef<"button">;
+	disabled: boolean;
+	open: boolean;
+	placeholder: string;
+	selectedModel: TtsModelInfo | undefined;
+}) {
+	return (
+		<Button
+			{...buttonProps}
+			aria-expanded={open}
+			className={MODEL_TRIGGER_GLASS_CLASSES}
+			data-slot="tts-model-selector-trigger"
+			data-state={open ? "open" : "closed"}
+			disabled={disabled}
+			type="button"
+		>
+			<TtsTriggerBody placeholder={placeholder} selectedModel={selectedModel} />
+			<HugeiconsIcon
+				className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"
+				icon={ArrowDown01Icon}
+			/>
+		</Button>
+	);
+}
+
 function DefaultTrigger({
 	disabled,
 	open,
@@ -215,25 +270,40 @@ function DefaultTrigger({
 		<Combobox.Trigger
 			nativeButton
 			render={(p) => (
-				<Button
-					{...p}
-					aria-expanded={open}
-					className={MODEL_TRIGGER_GLASS_CLASSES}
-					data-slot="tts-model-selector-trigger"
-					data-state={open ? "open" : "closed"}
+				<TtsTriggerButton
+					buttonProps={p as ComponentPropsWithoutRef<"button">}
 					disabled={disabled}
-					type="button"
-				>
-					<TtsTriggerBody
-						placeholder={placeholder}
-						selectedModel={selectedModel}
-					/>
-					<HugeiconsIcon
-						className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"
-						icon={ArrowDown01Icon}
-					/>
-				</Button>
+					open={open}
+					placeholder={placeholder}
+					selectedModel={selectedModel}
+				/>
 			)}
+		/>
+	);
+}
+
+/** Standalone trigger button — same glass-card visual as {@link DefaultTrigger}
+ *  but WITHOUT the `Combobox.Trigger` wrapper. For the settings panel, which
+ *  opens the detached picker BrowserWindow on click instead of an in-window
+ *  popup (mirrors `SttModelSelectorTriggerButton`). */
+function TtsModelSelectorTriggerButton({
+	onActivate,
+	disabled,
+	placeholder,
+	selectedModel,
+}: {
+	onActivate: (event: MouseEvent<HTMLButtonElement>) => void;
+	disabled: boolean;
+	placeholder: string;
+	selectedModel: TtsModelInfo | undefined;
+}) {
+	return (
+		<TtsTriggerButton
+			buttonProps={{ type: "button", onClick: onActivate }}
+			disabled={disabled}
+			open={false}
+			placeholder={placeholder}
+			selectedModel={selectedModel}
 		/>
 	);
 }
@@ -251,7 +321,7 @@ const filter = (model: TtsModelInfo, query: string) => {
  * hardware / sort filters and no variant bundles, so it skips the STT selector's
  * filter reducer + bundle-expansion machinery.
  */
-export function TtsModelSelector({
+function TtsModelSelectorPanel({
 	models,
 	value,
 	currentQuantization,
@@ -308,8 +378,10 @@ export function TtsModelSelector({
 			DEFAULT_PERSISTED_TTS_SELECTOR_UI_STATE,
 		).activeRailId,
 		open: false,
+		search: "",
 	}));
-	const { activeRailId, open } = uiState;
+	const { activeRailId, open, search } = uiState;
+	const hasSearch = search.trim().length > 0;
 	const effectiveOpen = inline ? true : open;
 	const shouldBuildList = effectiveOpen;
 	useEffect(() => {
@@ -321,13 +393,18 @@ export function TtsModelSelector({
 		engineGroups,
 		isFavorite,
 	);
+	// A text query spans ALL authors: it overrides the selected rail so e.g.
+	// "piper" still surfaces Piper voices while the Kokoro rail is active.
+	// Without this, the rail (engine) filter AND the text query both constrain
+	// the list, so searching for a maker not under the current rail yields a
+	// confusing empty "No models found". The rail only narrows when idle.
 	const groups: TtsListGroup[] =
-		activeRailId === ALL_AUTHORS_RAIL_ID
+		hasSearch || activeRailId === ALL_AUTHORS_RAIL_ID
 			? allGroups
 			: engineGroups.filter((group) => group.value === activeRailId);
 	const railItems = buildRailItems(engineGroups, models.length);
 	const visibleModelCount =
-		activeRailId === ALL_AUTHORS_RAIL_ID
+		hasSearch || activeRailId === ALL_AUTHORS_RAIL_ID
 			? models.length
 			: groups.reduce((sum, group) => sum + group.items.length, 0);
 
@@ -337,6 +414,22 @@ export function TtsModelSelector({
 
 	const handleSelect: TtsModelChange = (modelId, quantization) => {
 		onChange(modelId, quantization);
+		// The search is controlled here (so it can span authors), so Base UI's own
+		// "clear input on commit" no longer runs — reset it ourselves so a later
+		// reopen / inline reuse starts clean. Mirrors the STT picker.
+		if (hasSearch) {
+			dispatch({ type: "setSearch", search: "" });
+		}
+	};
+
+	const handleRailClick = (id: string) => {
+		// Picking an engine/maker is a "browse this maker" intent — drop any active
+		// query (which would otherwise override the rail, per `groups` above) so the
+		// click actually narrows the list to the chosen engine. Mirrors the STT picker.
+		if (hasSearch) {
+			dispatch({ type: "setSearch", search: "" });
+		}
+		dispatch({ type: "setActiveRailId", id });
 	};
 
 	return (
@@ -345,6 +438,10 @@ export function TtsModelSelector({
 				disabled={disabled || isLoading}
 				filter={filter}
 				inline={inline}
+				inputValue={search}
+				onInputValueChange={(next) =>
+					dispatch({ type: "setSearch", search: next })
+				}
 				isItemEqualToValue={(a, b) => a?.id === b?.id}
 				isLoading={isLoading}
 				items={shouldBuildList ? groups : []}
@@ -391,7 +488,7 @@ export function TtsModelSelector({
 							activeId={activeRailId}
 							favorites={favoriteAuthors}
 							items={railItems}
-							onClick={(id) => dispatch({ type: "setActiveRailId", id })}
+							onClick={handleRailClick}
 							onToggleFavorite={toggleAuthorFavorite}
 						/>
 					) : undefined
@@ -417,4 +514,40 @@ export function TtsModelSelector({
 			/>
 		</>
 	);
+}
+
+/** Detached-open mode (settings panel): render only the standalone trigger
+ *  button that opens the floating picker window on click; the in-window popup is
+ *  fully suppressed. Mirrors `SttModelSelectorDetachedTrigger`. */
+function TtsModelSelectorDetachedTrigger({
+	models,
+	value,
+	disabled = false,
+	isLoading = false,
+	placeholder = "Select a voice model",
+	onOpenDetached,
+}: TtsModelSelectorProps) {
+	const selectedModel = models.find((m) => m.id === value) ?? null;
+	return (
+		<TtsModelSelectorTriggerButton
+			disabled={disabled || isLoading}
+			onActivate={(event) =>
+				onOpenDetached?.(event.currentTarget.getBoundingClientRect())
+			}
+			placeholder={placeholder}
+			selectedModel={selectedModel ?? undefined}
+		/>
+	);
+}
+
+/**
+ * Top-level TTS voice/model picker. When `onOpenDetached` is supplied (and not
+ * `inline`), it renders a standalone trigger that opens the detached
+ * model-picker window; otherwise it renders the full in-window popup panel.
+ */
+export function TtsModelSelector(props: TtsModelSelectorProps) {
+	if (props.onOpenDetached && !props.inline) {
+		return <TtsModelSelectorDetachedTrigger {...props} />;
+	}
+	return <TtsModelSelectorPanel {...props} />;
 }

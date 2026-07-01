@@ -1,9 +1,5 @@
 use super::types::{Gender, VoiceInfo};
 
-// ===========================================================================
-// REAL, DETERMINISTIC DATA + LOGIC (compilable + unit-tested)
-// ===========================================================================
-
 /// The 54-voice Kokoro v1.0 catalog across 9 languages. Verbatim port of
 /// `server/src/synthesizer/infrastructure/voice_catalog.py` — the `id` and
 /// `language` strings are EXACTLY what the Kokoro engine accepts.

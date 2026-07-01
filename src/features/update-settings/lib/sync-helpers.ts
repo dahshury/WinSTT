@@ -1,13 +1,13 @@
 /**
  * Pure helpers extracted from use-sync-settings for testability.
  *
- * These functions contain the branchy logic that drives CRAP scores in the
- * hook. Keeping them pure (no ref-reads, no IPC calls) makes them trivially
- * unit-testable.
+ * Keeping the branchy logic pure (no ref-reads, no IPC calls) makes it
+ * trivially unit-testable.
  */
 
-import { decodeSettingsPayload } from "@/shared/api/settings-codec";
+import { decodeSettingsPayload } from "@/shared/config/settings-codec";
 import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
+import { isPlainRecord } from "@/shared/lib/is-record";
 
 /** True when a parameter must be sent on an initial (post-connect) flush. */
 export function shouldSendInitial(value: unknown): boolean {
@@ -25,7 +25,7 @@ export function shouldSendOnChange<V>(
 /**
  * True when the recording mode short-circuits all silence-driven endpoint
  * detection (PTT: key release defines the boundary; toggle+manualToggleStop:
- * second press defines the boundary). CC 3 — one ternary, one short-circuit.
+ * second press defines the boundary).
  */
 function silenceEndpointBypassed(
 	mode: string,
@@ -34,7 +34,7 @@ function silenceEndpointBypassed(
 	return mode === "ptt" || (mode === "toggle" && manualToggleStop);
 }
 
-/** True when the mode implies a continuously-listening pipeline (CC 2). */
+/** True when the mode implies a continuously-listening pipeline. */
 function modeImpliesContinuousListening(mode: string): boolean {
 	return mode === "toggle" || mode === "listen";
 }
@@ -178,11 +178,21 @@ export function advanceSkipRefs(refs: {
 	fromBroadcast: { current: boolean };
 	fromIpcLoad: { current: boolean };
 }): boolean {
+	// Consume BOTH origin flags on every call, including the first. The very
+	// first sync-effect run after hydration IS the IPC-load/broadcast that set
+	// these flags, so it must clear them here — otherwise a `fromIpcLoad` (or
+	// `fromBroadcast`) left set by hydration leaks onto the user's NEXT change
+	// and silently skips it. That was the "first post-processing toggle after
+	// boot never reaches the backend (Ollama model never unloads); only the
+	// second toggle sticks" bug. `clearIfSet` is invoked on BOTH refs (no `||`
+	// short-circuit) so a run that set both flags clears both.
+	const fromBroadcast = clearIfSet(refs.fromBroadcast);
+	const fromIpcLoad = clearIfSet(refs.fromIpcLoad);
 	if (!refs.loadedOnce.current) {
 		refs.loadedOnce.current = true;
 		return true;
 	}
-	return clearIfSet(refs.fromBroadcast) || clearIfSet(refs.fromIpcLoad);
+	return fromBroadcast || fromIpcLoad;
 }
 
 /**
@@ -294,7 +304,7 @@ export function scheduleSave(
  *  shape: every value is a primitive, plain object, or array of primitives /
  *  plain objects, and key ordering is stable across Zod parses on a given
  *  schema (it walks the shape definition in declaration order). */
-function settingsSectionsEqual(a: unknown, b: unknown): boolean {
+export function settingsSectionsEqual(a: unknown, b: unknown): boolean {
 	if (a === b) {
 		return true;
 	}
@@ -328,10 +338,6 @@ function settingsSectionsEqual(a: unknown, b: unknown): boolean {
 interface MergePick {
 	preserved: boolean;
 	value: unknown;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function mergeDirtyValue(
@@ -396,7 +402,28 @@ function mergeSections(
 	return { merged: result as AppSettings, preserved };
 }
 
-const LOCAL_CACHE_COLLECTION_KEYS = ["dictionary", "snippets"] as const;
+export const LOCAL_CACHE_COLLECTION_KEYS = ["dictionary", "snippets"] as const;
+
+// Text fields that make a dictionary/snippet row meaningful. A row whose known
+// text fields are all blank is an unfilled "Add row" leftover, not real data.
+const COLLECTION_TEXT_FIELDS = ["term", "trigger", "expansion"] as const;
+
+function isMeaningfulCollectionEntry(entry: unknown): boolean {
+	if (!entry || typeof entry !== "object") return true;
+	const record = entry as Record<string, unknown>;
+	const present = COLLECTION_TEXT_FIELDS.filter((field) => field in record);
+	// Unknown shape (no recognised text fields) — keep it rather than guess.
+	if (present.length === 0) return true;
+	return present.some(
+		(field) =>
+			typeof record[field] === "string" &&
+			(record[field] as string).trim() !== "",
+	);
+}
+
+function meaningfulEntries(value: unknown): unknown[] {
+	return Array.isArray(value) ? value.filter(isMeaningfulCollectionEntry) : [];
+}
 
 function shouldMigrateLocalCollection(
 	loadedValue: unknown,
@@ -406,8 +433,9 @@ function shouldMigrateLocalCollection(
 	return (
 		Array.isArray(loadedValue) &&
 		loadedValue.length === 0 &&
-		Array.isArray(currentValue) &&
-		currentValue.length > 0 &&
+		// Only migrate when there's REAL local data — never resurrect blank
+		// "Add row" leftovers over the empty backend collection.
+		meaningfulEntries(currentValue).length > 0 &&
 		settingsSectionsEqual(currentValue, loadBaselineValue)
 	);
 }
@@ -424,7 +452,8 @@ function applyLocalCollectionMigrations(
 		if (
 			shouldMigrateLocalCollection(loaded[key], current[key], loadBaseline[key])
 		) {
-			next[key] = current[key];
+			// Drop any trailing blank rows so the migration carries real data only.
+			next[key] = meaningfulEntries(current[key]);
 			migrated = true;
 		}
 	}

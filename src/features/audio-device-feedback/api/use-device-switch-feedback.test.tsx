@@ -31,12 +31,10 @@ const {
 	__test_shouldResetSavedIndex,
 	__test_shouldResetSavedOutputDevice,
 } = await import("./use-device-switch-feedback");
-const { _resetInputDevicesCacheForTests } = await import(
-	"@/entities/audio-device/model/use-input-devices"
-);
-const { _resetOutputDevicesCacheForTests } = await import(
-	"@/entities/audio-device/model/use-output-devices"
-);
+const { _resetInputDevicesCacheForTests } =
+	await import("@/entities/audio-device/model/use-input-devices");
+const { _resetOutputDevicesCacheForTests } =
+	await import("@/entities/audio-device/model/use-output-devices");
 
 const originalNativeBridge = window.nativeBridge;
 const originalMediaDevicesDescriptor = Object.getOwnPropertyDescriptor(

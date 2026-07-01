@@ -42,8 +42,8 @@ use regex::Regex;
 use tauri::AppHandle;
 
 use crate::helpers::regex::static_regex;
-use crate::winstt::commands::settings::read_settings;
 use crate::winstt::settings_schema::SnippetEntry;
+use crate::winstt::settings_store::read_settings;
 use phonetic::{double_metaphone, jaro_winkler, phonetic_overlap, SNIPPET_JW_THRESHOLD};
 
 // Words are letters/digits/apostrophes. Punctuation is intentionally excluded so

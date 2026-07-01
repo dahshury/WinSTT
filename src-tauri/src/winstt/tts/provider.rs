@@ -1,12 +1,131 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 
 use super::types::TtsDevice;
 use crate::winstt::stt::{
-    execution_providers, num_cpus_best_effort, pick_intra_op_threads, provider_label, Accelerator,
+    configure_session, num_cpus_best_effort, pick_intra_op_threads, provider_label, Accelerator,
 };
+
+/// Generic lazy-load holder shared by every in-process ONNX TTS engine.
+///
+/// The five local engines (Kokoro/Kitten/Piper/Supertonic/Chatterbox) all wrap
+/// their loaded ONNX state (`L`) behind a `Mutex<Option<L>>` + a `ready`
+/// `AtomicBool`, and all spell the same `is_ready`/`shutdown`/lazy-init preamble.
+/// This holder factors that skeleton out while leaving each engine's `L` type,
+/// `load()` builder and `synthesize()` body untouched. `E` is each engine's own
+/// error type — supplied per call via closures so the holder stays error-agnostic.
+pub(crate) struct LazyOrtEngine<L> {
+    loaded: Mutex<Option<L>>,
+    ready: AtomicBool,
+}
+
+impl<L> LazyOrtEngine<L> {
+    pub(crate) fn new() -> Self {
+        Self {
+            loaded: Mutex::new(None),
+            ready: AtomicBool::new(false),
+        }
+    }
+
+    /// True once a `load()` has succeeded (mirrors the old per-engine `ready`).
+    pub(crate) fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Acquire)
+    }
+
+    /// Read-only access to the loaded state (or `None`); used by
+    /// `active_providers()` which only needs to clone a field.
+    pub(crate) fn with_ref<T>(&self, f: impl FnOnce(&L) -> T) -> Option<T> {
+        self.loaded.lock().ok().and_then(|g| g.as_ref().map(f))
+    }
+
+    /// Force the load NOW (idempotent). `lock_err` builds the poison error, `load`
+    /// builds the engine's `L`. Matches the old `warm_up`: when already loaded it
+    /// returns `Ok(())` without re-running `load` or re-storing `ready`.
+    pub(crate) fn warm_up<E>(
+        &self,
+        lock_err: impl FnOnce() -> E,
+        load: impl FnOnce() -> Result<L, E>,
+    ) -> Result<(), E> {
+        let mut guard = self.loaded.lock().map_err(|_| lock_err())?;
+        if guard.is_none() {
+            *guard = Some(load()?);
+            self.ready.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    /// Lock, lazily `load` if not yet initialized, then run `f` against the loaded
+    /// state. `lock_err`/`not_init_err` build the engine's errors for the poisoned
+    /// and never-initialized branches. Mirrors the old `synthesize` preamble.
+    pub(crate) fn with_loaded<T, E>(
+        &self,
+        lock_err: impl Fn() -> E,
+        not_init_err: impl FnOnce() -> E,
+        load: impl FnOnce() -> Result<L, E>,
+        f: impl FnOnce(&mut L) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let mut guard = self.loaded.lock().map_err(|_| lock_err())?;
+        if guard.is_none() {
+            *guard = Some(load()?);
+            self.ready.store(true, Ordering::Release);
+        }
+        let Some(loaded) = guard.as_mut() else {
+            return Err(not_init_err());
+        };
+        f(loaded)
+    }
+
+    /// Drop the loaded state (idempotent) and clear `ready`. Byte-identical to the
+    /// old per-engine `shutdown`.
+    pub(crate) fn shutdown(&self) {
+        if let Ok(mut guard) = self.loaded.lock() {
+            *guard = None;
+        }
+        self.ready.store(false, Ordering::Release);
+    }
+}
+
+/// Build a **CPU-only** ORT session for an engine that has not validated DirectML
+/// yet. `reason` is logged when a non-CPU device was requested; `engine` is the
+/// log label. Returns `Err(String)` so each engine can wrap it in its own error.
+/// Factors out the byte-identical private `build_session` of Piper/Supertonic/
+/// Chatterbox (CpuOnly policy + `TtsDevice::Cpu`, dropping the active-providers).
+pub(crate) fn cpu_session(
+    path: &Path,
+    reason: &'static str,
+    engine: &str,
+) -> Result<Session, String> {
+    let (session, _active_providers) = build_session(
+        path,
+        TtsDevice::Cpu,
+        TtsOrtProviderPolicy::CpuOnly { reason },
+        engine,
+    )?;
+    Ok(session)
+}
+
+/// Input node names of a loaded session (e.g. Kokoro's `tokens` vs `input_ids`
+/// schema probe). Empty if the runtime exposes none.
+pub(crate) fn input_names(session: &Session) -> Vec<String> {
+    session
+        .inputs()
+        .iter()
+        .map(|o| o.name().to_string())
+        .collect()
+}
+
+/// Output node names of a loaded session (Supertonic resolves named outputs).
+pub(crate) fn output_names(session: &Session) -> Vec<String> {
+    session
+        .outputs()
+        .iter()
+        .map(|o| o.name().to_string())
+        .collect()
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum TtsOrtProviderPolicy {
@@ -35,22 +154,15 @@ pub(crate) fn build_session(
         .first()
         .is_some_and(|provider| !matches!(provider, Accelerator::Cpu));
 
-    let mut builder = Session::builder()
-        .map_err(|err| format!("session builder: {err}"))?
-        .with_optimization_level(GraphOptimizationLevel::Level3)
-        .map_err(|err| format!("opt level: {err}"))?;
-
-    if is_gpu {
-        builder = builder
-            .with_intra_threads(pick_intra_op_threads(true, num_cpus_best_effort()))
-            .map_err(|err| format!("intra threads: {err}"))?
-            .with_memory_pattern(false)
-            .map_err(|err| format!("disable memory pattern: {err}"))?;
-    }
-
-    builder = builder
-        .with_execution_providers(execution_providers(&providers))
-        .map_err(|err| format!("register EPs: {err}"))?;
+    // GPU path sets intra-op threads (CPU path keeps ORT's default) + disables the DML
+    // memory-pattern planner; Level3 (`ORT_ENABLE_ALL` layout) for all.
+    let intra_threads = is_gpu.then(|| pick_intra_op_threads(true, num_cpus_best_effort()));
+    let mut builder = configure_session(
+        GraphOptimizationLevel::Level3,
+        intra_threads,
+        is_gpu,
+        Some(&providers),
+    )?;
 
     let session = builder
         .commit_from_file(path)

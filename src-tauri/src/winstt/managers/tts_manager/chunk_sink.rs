@@ -1,8 +1,7 @@
 // The renderer chunk-emit unit: `EmitChunkSink` (a delay-one-chunk buffer that
 // stamps `is_final` on the true last chunk + polls the shared cancel flag) with
-// its `ChunkSink` impl, the `chunk_payload` `tts:chunk` wire builder, and the
-// `kitten_model_filename` catalog helper. Self-contained — referenced only where
-// `read_aloud` constructs the sink.
+// its `ChunkSink` impl and the `chunk_payload` `tts:chunk` wire builder.
+// Self-contained — referenced only where `read_aloud` constructs the sink.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -11,16 +10,6 @@ use tauri::{AppHandle, Emitter};
 use tokio_util::sync::CancellationToken;
 
 use crate::winstt::tts::{ChunkSink, Format, SynthesisChunk};
-
-/// The Kitten ONNX graph filename for a catalog id (both nano models share the
-/// `voices.npz`; only the graph file differs per version). Kept in sync with the
-/// download manager's `kitten_model_file`.
-pub(super) fn kitten_model_filename(model_id: &str) -> &'static str {
-    match model_id {
-        "kitten-nano-0.2" => "kitten_tts_nano_v0_2.onnx",
-        _ => "kitten_tts_nano_v0_1.onnx",
-    }
-}
 
 /// Build the `tts:chunk` event payload. `pcm` carries RAW BYTES the renderer
 /// interprets PER FORMAT:

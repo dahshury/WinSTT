@@ -9,7 +9,6 @@ import {
 	invokeSecureOrDefault,
 	noop,
 	onCast,
-	onTyped,
 } from "../ipc-transport";
 
 // Dialog
@@ -414,22 +413,6 @@ export const onFileQueueProgress = (
 
 export const onFileQueueActive = (cb: (data: { active: boolean }) => void) =>
 	onCast(IPC.FILE_QUEUE_ACTIVE, cb);
-
-// ── Diarization ─────────────────────────────────────────────────────
-export interface SpeakerSegmentPayload {
-	end: number;
-	speaker: number;
-	start: number;
-}
-
-export const onSpeakerSegments = (
-	cb: (segments: SpeakerSegmentPayload[]) => void,
-) =>
-	onTyped(
-		IPC.STT_SPEAKER_SEGMENTS,
-		(d: { segments: SpeakerSegmentPayload[] }) => d.segments,
-		cb,
-	);
 
 // ── Transcript quick-actions ─────────────────────────────────────────
 // Copy the most recent completed transcription to the clipboard (tray menu).

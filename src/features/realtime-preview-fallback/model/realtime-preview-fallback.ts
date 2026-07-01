@@ -3,15 +3,13 @@ import {
 	isSelectableRealtimeModel,
 	modelSupportsSelectedSourceLanguages,
 	type ModelInfo,
+	type ModelStatesById as StatesById,
 	modelsHaveLanguageOverlap,
 	pickCachedSttModel,
 	pickDefaultSttModel,
 	type SourceLanguageSelection,
 } from "@/entities/model-catalog";
-import type { ModelStateEntry } from "@/shared/api/ipc-client";
 import type { LiveTranscriptionDisplay } from "@/shared/lib/realtime-enabled";
-
-type StatesById = Record<string, ModelStateEntry>;
 
 export interface RealtimePreviewFallbackArgs {
 	catalogLoaded: boolean;

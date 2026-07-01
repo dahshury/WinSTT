@@ -24,22 +24,22 @@ const MODE_META: Record<
 > = {
   ptt: {
     label: "Push-to-Talk",
-    color: "#3b82f6",
+    color: "var(--brand-mode-ptt)",
     tagline: "Hold the key — record exactly as long as you hold it.",
   },
   toggle: {
     label: "Toggle",
-    color: "#facc15",
+    color: "var(--brand-mode-toggle)",
     tagline: "Tap on, tap off — a hands-free session in between.",
   },
   listen: {
     label: "Listen",
-    color: "#22c55e",
+    color: "var(--brand-mode-listen)",
     tagline: "Passively captures your speakers into a live feed.",
   },
   wakeword: {
     label: "Wake Word",
-    color: "#f97316",
+    color: "var(--brand-mode-wakeword)",
     tagline: "Say the keyword — it arms recording the moment it hears it.",
   },
 };

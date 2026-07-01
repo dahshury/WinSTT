@@ -38,7 +38,10 @@ use specta_typescript::{BigIntExportBehavior, Typescript};
 use signal_hook::consts::{SIGUSR1, SIGUSR2};
 #[cfg(unix)]
 use signal_hook::iterator::Signals;
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Instant;
 use tauri::image::Image;
 pub use transcription_coordinator::TranscriptionCoordinator;
@@ -52,6 +55,8 @@ pub use commands_registry::make_specta_builder;
 pub use startup::FILE_LOG_LEVEL;
 pub(crate) use startup::{log_model_duration, log_startup_duration, startup_profile_enabled};
 pub(crate) use window_state::show_main_window;
+
+static EXIT_CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
 
 // Boot-time helpers used only inside this crate root (run / initialize_core_logic
 // / the window-event handlers).
@@ -242,20 +247,6 @@ fn advance_startup_phase(startup: &mut StartupProfiler, app: &AppHandle, label: 
     splash::emit_startup_progress(app, label);
 }
 
-fn env_flag_truthy(name: &str) -> bool {
-    match std::env::var(name) {
-        Ok(value) => !matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "" | "0" | "false" | "no" | "off"
-        ),
-        Err(_) => false,
-    }
-}
-
-fn is_force_onboarding_env_flag_set() -> bool {
-    env_flag_truthy("WINSTT_FORCE_ONBOARDING")
-}
-
 fn open_startup_onboarding_window(
     app: &AppHandle,
     main_window: &tauri::WebviewWindow,
@@ -328,6 +319,8 @@ fn initialize_core_logic(
     // migrated user values.
     winstt::commands::settings::seed_defaults(app_handle);
     advance_startup_phase(startup, app_handle, "settings defaults seeded");
+    winstt::model_watchdog::install();
+    advance_startup_phase(startup, app_handle, "model cleanup watchdog installed");
 
     // Decide up-front whether the first-run wizard owns this launch (same predicate
     // that opens the onboarding window later in `run`'s setup). While it does, the
@@ -337,9 +330,7 @@ fn initialize_core_logic(
     // is lifted (and the deferred warmups run) in `onboarding_finish`.
     {
         let onboarding_settings = winstt::commands::settings::read_settings_raw(app_handle);
-        let onboarding_active =
-            is_force_onboarding_env_flag_set() || !onboarding_settings.general.onboarded;
-        winstt::commands::onboarding::set_onboarding_active(onboarding_active);
+        winstt::commands::onboarding::set_onboarding_active(!onboarding_settings.general.onboarded);
     }
 
     let core_managers = bootstrap::state::construct_core_managers(app_handle)?;
@@ -354,8 +345,8 @@ fn initialize_core_logic(
     helpers::clamshell::install_lid_state_monitor(app_handle);
     advance_startup_phase(startup, app_handle, "lid monitor initialized");
 
-    // Pre-warm the Silero VAD + audio recorder OFF the PTT press path. Neither
-    // WinSTT does not preload this, so the COLD first push-to-talk
+    // Pre-warm the Silero VAD + audio recorder OFF the PTT press path. WinSTT
+    // does not otherwise preload this, so the COLD first push-to-talk
     // otherwise pays the Silero ONNX load + recorder construction synchronously
     // inside `start_microphone_stream` (~50-200ms) before the recording chime
     // fires — the "warmup feels slow" the user reported. This only loads the
@@ -536,7 +527,7 @@ fn initialize_core_logic(
     autostart::sync_launch_at_login(app_handle, settings.general.auto_start, "[autostart]");
     advance_startup_phase(startup, app_handle, "tray settings and autostart applied");
 
-    // AUDIT #9: the separate `recording_overlay` window is no longer created — the
+    // The separate `recording_overlay` window is no longer created — the
     // WinSTT recording pill is the React `overlay` WebviewWindow, and every show path
     // already redirected to it (see overlay.rs). The old window could never appear yet
     // still received per-frame mic levels no renderer listened to.
@@ -637,17 +628,6 @@ fn continue_startup_after_splash_paint(app_handle: AppHandle, cli_args: CliArgs)
         advance_startup_phase(&mut startup, &app_handle, "interactive runtime initialized");
     }
 
-    let profile_accelerators = startup_profile_enabled();
-    std::thread::spawn(move || {
-        let started = Instant::now();
-        let _ = crate::managers::transcription::get_available_accelerators();
-        if profile_accelerators {
-            log::info!(
-                "[startup] accelerator enumeration thread completed: {} ms",
-                started.elapsed().as_millis()
-            );
-        }
-    });
     advance_startup_phase(
         &mut startup,
         &app_handle,
@@ -660,11 +640,7 @@ fn continue_startup_after_splash_paint(app_handle: AppHandle, cli_args: CliArgs)
     advance_startup_phase(&mut startup, &app_handle, "tray CLI visibility applied");
 
     let visibility_settings = winstt::commands::settings::read_settings_raw(&app_handle);
-    let force_onboarding = is_force_onboarding_env_flag_set();
-    let should_show_onboarding = force_onboarding || !visibility_settings.general.onboarded;
-    if force_onboarding {
-        log::info!("WINSTT_FORCE_ONBOARDING set; forcing onboarding regardless of stored flag");
-    }
+    let should_show_onboarding = !visibility_settings.general.onboarded;
     let should_hide = visibility_settings.general.start_minimized || cli_args.start_hidden;
     let should_force_show = should_force_show_permissions_window(&app_handle);
     let tray_available = settings.show_tray_icon && !cli_args.no_tray;
@@ -765,7 +741,19 @@ pub fn run(cli_args: CliArgs) {
                         .map(|s| s.to_string())
                         .or_else(|| info.payload().downcast_ref::<String>().cloned())
                         .unwrap_or_else(|| "<non-string panic payload>".to_string());
-                    log::error!("[panic] thread '{name}' at {location}: {payload}");
+                    // Capture a backtrace UNCONDITIONALLY (independent of the RUST_BACKTRACE
+                    // env var, which a GUI launch never sets) and route it through the FILE
+                    // log + observability issue. Without this, an intermittent worker-thread
+                    // panic — e.g. a dependency tripping a std `Rc`/`Arc` UB precondition
+                    // (`inc_strong` on a strong==0 refcount, which aborts the process) — only
+                    // surfaces its file:line, not the call stack that names the offending
+                    // crate. `force_capture()` resolves frames because the dev profile keeps
+                    // `debug = "line-tables-only"` and does not strip. This runs solely on the
+                    // panic/abort path, so its cost never touches steady-state.
+                    let backtrace = std::backtrace::Backtrace::force_capture().to_string();
+                    log::error!(
+                        "[panic] thread '{name}' at {location}: {payload}\n[panic][backtrace]\n{backtrace}"
+                    );
                     crate::winstt::observability::IssueBuilder::new(
                         "runtime",
                         "panic",
@@ -776,10 +764,20 @@ pub fn run(cli_args: CliArgs) {
                     .severity("error")
                     .context("thread", name.to_string())
                     .context("location", location)
+                    .context("backtrace", backtrace)
                     .record(Some(&app_for_panic));
                     prev_hook(info);
                 }));
             }
+
+            // Build the settings store handle HERE — on the main (event-loop) thread —
+            // before the spawned startup thread / realtime worker / PTT watchdog ever
+            // read settings. `app.store(..)` clones the `AppHandle` (and on Wry, tao's
+            // non-`Send` `Rc<EventLoopRunner>`); doing that from those background loops
+            // raced the main loop's refcount and aborted with an `Rc::inc_strong` UB
+            // precondition violation. Caching the handle here keeps every later read on
+            // the clone-free path. (Must precede the first `read_settings_raw` below.)
+            winstt::commands::settings::init_settings_store(&app_handle);
 
             let startup_winstt_settings =
                 winstt::commands::settings::read_settings_raw(&app_handle);
@@ -804,7 +802,7 @@ pub fn run(cli_args: CliArgs) {
                 // Closing the MAIN pill quits the whole app (the user expects X to close it,
                 // not silently hide-to-tray — KEEP quit-on-X, do NOT hide-to-tray).
                 //
-                // AUDIT #18: route through `app.exit(0)` rather than `std::process::exit(0)`.
+                // Route through `app.exit(0)` rather than `std::process::exit(0)`.
                 // `app.exit(0)` runs Tauri's graceful shutdown (RunEvent::ExitRequested →
                 // Exit) so the store plugin / history DB get a chance to flush — a raw
                 // `process::exit` skipped all of that. A background thread (wakeword tap /
@@ -843,7 +841,7 @@ pub fn run(cli_args: CliArgs) {
                         winstt::commands::settings::read_settings_raw(window.app_handle())
                             .general
                             .onboarded;
-                    if is_force_onboarding_env_flag_set() || !onboarded {
+                    if !onboarded {
                         request_app_exit(
                             window.app_handle(),
                             "Onboarding window closed before completion",
@@ -924,6 +922,9 @@ pub fn run(cli_args: CliArgs) {
     };
 
     app.run(|app, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = &event {
+            cleanup_runtime_models_on_exit(app);
+        }
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { .. } = &event {
             // Don't surface the main window from a dock reopen while the first-run
@@ -934,6 +935,92 @@ pub fn run(cli_args: CliArgs) {
         }
         let _ = (app, event); // suppress unused warnings on non-macOS
     });
+}
+
+/// On graceful exit, stop live capture paths and explicitly drop every model
+/// runtime WinSTT owns before process teardown. In-process ONNX sessions would be
+/// reclaimed by the OS eventually, but dropping them here gives DirectML/ORT and
+/// sherpa/Kokoro deterministic shutdown and keeps repeated dev launches clean.
+fn cleanup_runtime_models_on_exit(app: &AppHandle) {
+    if EXIT_CLEANUP_STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    let started = Instant::now();
+    log::info!("[shutdown] unloading model runtimes");
+
+    if let Some(llm) = app.try_state::<Arc<winstt::managers::LlmManager>>() {
+        llm.inner().begin_shutdown();
+    }
+
+    if let Some(tts) = app.try_state::<Arc<winstt::managers::TtsManager>>() {
+        tts.inner().cancel_all();
+    }
+
+    if let Some(audio) = app.try_state::<Arc<managers::audio::AudioRecordingManager>>() {
+        audio.inner().cancel_recording();
+        audio.inner().stop_microphone_stream();
+    }
+
+    if let Some(loopback) = app.try_state::<Arc<winstt::managers::LoopbackManager>>() {
+        loopback.inner().stop();
+    }
+
+    if let Some(wakeword) = app.try_state::<Arc<winstt::managers::WakeWordManager>>() {
+        wakeword.inner().shutdown_runtime();
+    }
+
+    if let Some(transcription) =
+        app.try_state::<Arc<managers::transcription::TranscriptionManager>>()
+    {
+        let manager = transcription.inner();
+        if manager.is_model_loaded() {
+            if let Err(err) = manager.unload_model() {
+                log::warn!("[shutdown] failed to unload STT model: {err}");
+            }
+        }
+    }
+
+    if let Some(tts) = app.try_state::<Arc<winstt::managers::TtsManager>>() {
+        tts.inner()
+            .unload_active_local_model_for_cleanup("app shutdown");
+    }
+
+    winstt::encoder_dict::clear_loaded();
+    free_ollama_vram_on_exit(app);
+
+    log::info!(
+        "[shutdown] model runtime cleanup finished in {}ms",
+        started.elapsed().as_millis()
+    );
+}
+
+/// On graceful exit, unload the Ollama model(s) WinSTT loaded into VRAM, then stop
+/// the `ollama serve` WinSTT auto-started (a no-op when the user owns the server).
+/// Ollama is a separate, detached process that survives WinSTT — without this the
+/// model lingers in VRAM after quit until Ollama's keep-alive timer fires (or
+/// forever under "never unload"). Bounded well under the 8s exit watchdog
+/// (`startup::spawn_exit_watchdog`): the unload drives on a worker thread and the
+/// main thread waits at most ~2.2s for it before letting exit proceed.
+fn free_ollama_vram_on_exit(app: &AppHandle) {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    if let Some(llm) = app.try_state::<Arc<winstt::managers::LlmManager>>() {
+        let mgr = Arc::clone(llm.inner());
+        let (tx, rx) = mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            // The Tauri async runtime is still alive at ExitRequested. The
+            // per-model timeout is below the join budget so a hung localhost call
+            // cannot push us past the exit watchdog.
+            tauri::async_runtime::block_on(
+                mgr.unload_warmed_ollama_models(Duration::from_millis(1500)),
+            );
+            let _ = tx.send(());
+        });
+        let _ = rx.recv_timeout(Duration::from_millis(2200));
+    }
+    winstt::commands::llm::stop_winstt_spawned_ollama();
 }
 
 #[cfg(test)]

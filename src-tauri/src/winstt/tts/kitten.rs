@@ -16,23 +16,17 @@
 //  * the tail trim is a fixed -5000 crop (not librosa energy trim).
 // Reuses the shared espeak-ng phonemizer (phonemize.rs) and a local npz/npy parser.
 
-#![expect(
-    dead_code,
-    reason = "staged TTS surface is defined ahead of call sites and wiring"
-)]
-
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use regex::Regex;
 
 use crate::helpers::regex::static_regex;
 
 use super::phonemize::{default_phonemizer, Phonemizer};
-use super::provider::TtsOrtProviderPolicy;
+use super::provider::LazyOrtEngine;
 use super::types::TtsDevice;
 
 /// KittenTTS emits 24 kHz mono float PCM.
@@ -43,21 +37,6 @@ pub const KITTEN_STYLE_DIM: usize = 256;
 const KITTEN_TAIL_CROP: usize = 5000;
 /// Default voice when none/unknown requested.
 pub const KITTEN_DEFAULT_VOICE: &str = "expr-voice-5-m";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KittenDevice {
-    Auto,
-    DirectMl,
-    Cpu,
-}
-
-fn kitten_device_to_tts(device: KittenDevice) -> TtsDevice {
-    match device {
-        KittenDevice::Auto => TtsDevice::Auto,
-        KittenDevice::DirectMl => TtsDevice::DirectMl,
-        KittenDevice::Cpu => TtsDevice::Cpu,
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum KittenError {
@@ -108,6 +87,7 @@ fn kitten_vocab() -> &'static HashMap<char, i64> {
 }
 
 /// Number of symbol POSITIONS (not unique chars). Used as a self-check.
+#[cfg(test)]
 fn kitten_symbol_count() -> usize {
     KITTEN_PAD.chars().count()
         + KITTEN_PUNCTUATION.chars().count()
@@ -191,10 +171,6 @@ impl KittenVoices {
             .or_else(|| self.voices.values().next())
             .ok_or_else(|| KittenError::Voice(format!("unknown voice id '{voice_id}'")))
     }
-
-    fn ids(&self) -> impl Iterator<Item = &str> {
-        self.voices.keys().map(|s| s.as_str())
-    }
 }
 
 /// Minimal little-endian `<f4` `.npy` parser → (flat f32, rows) where
@@ -254,7 +230,7 @@ pub struct KittenConfig {
     pub cache_dir: PathBuf,
     pub model_filename: String,
     pub voices_filename: String,
-    pub device: KittenDevice,
+    pub device: TtsDevice,
 }
 impl Default for KittenConfig {
     fn default() -> Self {
@@ -262,7 +238,7 @@ impl Default for KittenConfig {
             cache_dir: PathBuf::new(),
             model_filename: "kitten_tts_nano_v0_1.onnx".to_string(),
             voices_filename: "voices.npz".to_string(),
-            device: KittenDevice::Cpu,
+            device: TtsDevice::Cpu,
         }
     }
 }
@@ -286,57 +262,48 @@ struct LoadedKitten {
 
 pub struct KittenEngine {
     config: KittenConfig,
-    inner: Mutex<Option<LoadedKitten>>,
+    inner: LazyOrtEngine<LoadedKitten>,
     phonemizer: Box<dyn Phonemizer>,
-    ready: AtomicBool,
 }
 
 impl KittenEngine {
     pub fn new(config: KittenConfig) -> Self {
         Self {
             config,
-            inner: Mutex::new(None),
+            inner: LazyOrtEngine::new(),
             phonemizer: default_phonemizer(),
-            ready: AtomicBool::new(false),
         }
     }
     pub fn with_phonemizer(config: KittenConfig, phonemizer: Box<dyn Phonemizer>) -> Self {
         Self {
             config,
-            inner: Mutex::new(None),
+            inner: LazyOrtEngine::new(),
             phonemizer,
-            ready: AtomicBool::new(false),
         }
     }
     pub fn is_ready(&self) -> bool {
-        self.ready.load(Ordering::Acquire)
+        self.inner.is_ready()
     }
     pub fn active_providers(&self) -> Vec<String> {
         self.inner
-            .lock()
-            .ok()
-            .and_then(|g| g.as_ref().map(|k| k.active_providers.clone()))
+            .with_ref(|k| k.active_providers.clone())
             .unwrap_or_default()
     }
 
     pub fn warm_up(&self) -> KittenResult<()> {
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| KittenError::Session("kitten lock poisoned".into()))?;
-        if guard.is_some() {
-            return Ok(());
-        }
-        if !self.config.assets_present() {
-            return Err(KittenError::AssetsMissing(format!(
-                "expected {} and {}",
-                self.config.model_path().display(),
-                self.config.voices_path().display()
-            )));
-        }
-        *guard = Some(self.load()?);
-        self.ready.store(true, Ordering::Release);
-        Ok(())
+        self.inner.warm_up(
+            || KittenError::Session("kitten lock poisoned".into()),
+            || {
+                if !self.config.assets_present() {
+                    return Err(KittenError::AssetsMissing(format!(
+                        "expected {} and {}",
+                        self.config.model_path().display(),
+                        self.config.voices_path().display()
+                    )));
+                }
+                self.load()
+            },
+        )
     }
 
     /// Synthesize ONE sentence → mono f32 PCM @ 24 kHz. `lang` is accepted for
@@ -367,31 +334,26 @@ impl KittenEngine {
         input_ids.extend_from_slice(&mapped);
         input_ids.push(0i64);
 
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| KittenError::Session("kitten lock poisoned".into()))?;
-        if guard.is_none() {
-            if !self.config.assets_present() {
-                return Err(KittenError::AssetsMissing(format!(
-                    "expected {} and {}",
-                    self.config.model_path().display(),
-                    self.config.voices_path().display()
-                )));
-            }
-            *guard = Some(self.load()?);
-            self.ready.store(true, Ordering::Release);
-        }
-        let Some(loaded) = guard.as_mut() else {
-            return Err(KittenError::Session(
-                "kitten session was not initialized".into(),
-            ));
-        };
-
-        // Style row indexed by RAW INPUT TEXT char count (NOT token count).
-        let text_chars = trimmed.chars().count();
-        let style_row = loaded.voices.get(voice)?.row_for(text_chars).to_vec();
-        self.run_inference(loaded, &input_ids, &style_row, speed)
+        self.inner.with_loaded(
+            || KittenError::Session("kitten lock poisoned".into()),
+            || KittenError::Session("kitten session was not initialized".into()),
+            || {
+                if !self.config.assets_present() {
+                    return Err(KittenError::AssetsMissing(format!(
+                        "expected {} and {}",
+                        self.config.model_path().display(),
+                        self.config.voices_path().display()
+                    )));
+                }
+                self.load()
+            },
+            |loaded| {
+                // Style row indexed by RAW INPUT TEXT char count (NOT token count).
+                let text_chars = trimmed.chars().count();
+                let style_row = loaded.voices.get(voice)?.row_for(text_chars).to_vec();
+                self.run_inference(loaded, &input_ids, &style_row, speed)
+            },
+        )
     }
 
     fn load(&self) -> KittenResult<LoadedKitten> {
@@ -410,8 +372,8 @@ impl KittenEngine {
         let model_path = self.config.model_path();
         super::provider::build_session(
             &model_path,
-            kitten_device_to_tts(self.config.device),
-            TtsOrtProviderPolicy::CpuOnly {
+            self.config.device,
+            super::provider::TtsOrtProviderPolicy::CpuOnly {
                 reason: "StyleTTS2 ConvTranspose path not DirectML-validated",
             },
             "Kitten",
@@ -454,10 +416,7 @@ impl KittenEngine {
     }
 
     pub fn shutdown(&self) {
-        if let Ok(mut guard) = self.inner.lock() {
-            *guard = None;
-        }
-        self.ready.store(false, Ordering::Release);
+        self.inner.shutdown();
     }
 }
 

@@ -49,12 +49,21 @@ pub const OLLAMA_NUM_CTX: u32 = 16384;
 /// "raw JSON, no code fences" clause stops the model wrapping the object in a
 /// ```json block, whose opening fence can stream on its own and leak a bare
 /// ``` into the paste.
+///
+/// `history_tag` MUST stay a `<placeholder>`, never a concrete value: a small
+/// model reads a literal example like `"history_tag": "note"` as a few-shot
+/// default and copies it, collapsing the whole content-category breakdown into
+/// "Note". Measured on gemma e4b, hardcoding "note" here dropped `ai_prompt`
+/// recall on obvious AI prompts to ~40% (the rest fell to "note"); a neutral
+/// placeholder restores it.
 const OLLAMA_STRUCTURED_OUTPUT_GROUNDING: &str = concat!(
     "\n\nReturn your answer as a single raw JSON object — no markdown, no ``` code ",
     "fences, no text before or after it — matching this exact shape, with ONLY the ",
-    "cleaned, transformed text in the \"text\" field:\n",
+    "cleaned, transformed text in the \"text\" field and each placeholder replaced by a ",
+    "real value:\n",
     "{\"text\": \"<transformed text>\", \"learned_proper_nouns\": [], \"learned_snippets\": [], ",
-    "\"suggested_modifier_presets\": [], \"history_tag\": \"note\", \"privacy_markers\": []}"
+    "\"suggested_modifier_presets\": [], \"history_tag\": \"<one history_tag category>\", ",
+    "\"privacy_markers\": []}"
 );
 
 /// Map the shared model lifetime setting onto Ollama's keep_alive field.

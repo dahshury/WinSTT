@@ -3,19 +3,31 @@ import type { TtsPlaybackQueue } from "../lib/playback-queue";
 import {
 	discardTts,
 	getTtsLevel,
+	getTtsProgress,
 	pauseTts,
 	registerTtsQueue,
 	resumeTts,
+	seekTts,
+	setTtsVolume,
+	toggleTtsMuted,
 	unregisterTtsQueue,
 	useTtsPlaybackStore,
 } from "./tts-playback-store";
 
 // Stub queue implementing only the surface the controls touch. The single
-// boundary cast lives here and returns the exact object it was handed.
+// boundary cast lives here and returns the exact object it was handed. The
+// media-player methods are optional so the legacy controls block can keep its
+// minimal stub.
 interface StubQueue {
+	getBufferedEnd?: () => number;
+	getCurrentTime?: () => number;
+	getDuration?: () => number;
 	getLevel: () => number;
 	pause: () => void;
 	resume: () => void;
+	seek?: (seconds: number) => void;
+	setMuted?: (muted: boolean) => void;
+	setVolume?: (volume: number) => void;
 	stop: () => void;
 }
 const asQueue = (q: StubQueue) => q as unknown as TtsPlaybackQueue;
@@ -62,6 +74,11 @@ function resetStore(): void {
 		status: "idle",
 		requestId: null,
 		error: null,
+		currentTime: 0,
+		duration: 0,
+		bufferedEnd: 0,
+		volume: 1,
+		muted: false,
 	});
 }
 
@@ -174,5 +191,121 @@ describe("tts-playback queue controls", () => {
 		} finally {
 			restore();
 		}
+	});
+});
+
+describe("tts-playback media-player helpers", () => {
+	const calls = {
+		seek: [] as number[],
+		volume: [] as number[],
+		muted: [] as boolean[],
+	};
+	const progress = { currentTime: 0, duration: 0, bufferedEnd: 0 };
+	const queue = asQueue({
+		getLevel: () => 0,
+		pause: () => undefined,
+		resume: () => undefined,
+		stop: () => undefined,
+		seek: (s) => calls.seek.push(s),
+		setVolume: (v) => calls.volume.push(v),
+		setMuted: (m) => calls.muted.push(m),
+		getCurrentTime: () => progress.currentTime,
+		getDuration: () => progress.duration,
+		getBufferedEnd: () => progress.bufferedEnd,
+	});
+
+	beforeEach(() => {
+		calls.seek = [];
+		calls.volume = [];
+		calls.muted = [];
+		progress.currentTime = 0;
+		progress.duration = 0;
+		progress.bufferedEnd = 0;
+		resetStore();
+		registerTtsQueue(queue);
+	});
+	afterEach(() => {
+		unregisterTtsQueue(queue);
+	});
+
+	test("getTtsProgress reads the active queue", () => {
+		progress.currentTime = 1.5;
+		progress.duration = 4;
+		progress.bufferedEnd = 3;
+		expect(getTtsProgress()).toEqual({
+			currentTime: 1.5,
+			duration: 4,
+			bufferedEnd: 3,
+		});
+	});
+
+	test("getTtsProgress is all-zero with no queue", () => {
+		unregisterTtsQueue(queue);
+		expect(getTtsProgress()).toEqual({
+			currentTime: 0,
+			duration: 0,
+			bufferedEnd: 0,
+		});
+	});
+
+	test("seekTts seeks the queue and optimistically reflects the position", () => {
+		useTtsPlaybackStore.setState({ duration: 10, bufferedEnd: 8 });
+		seekTts(4);
+		expect(calls.seek).toEqual([4]);
+		expect(useTtsPlaybackStore.getState().currentTime).toBe(4);
+		expect(useTtsPlaybackStore.getState().duration).toBe(10);
+		expect(useTtsPlaybackStore.getState().bufferedEnd).toBe(8);
+	});
+
+	test("setTtsVolume sets the queue volume and mirrors it in the store", () => {
+		setTtsVolume(0.6);
+		expect(calls.volume).toEqual([0.6]);
+		expect(useTtsPlaybackStore.getState().volume).toBe(0.6);
+	});
+
+	test("toggleTtsMuted flips the mute latch on the queue and the store", () => {
+		toggleTtsMuted();
+		expect(calls.muted).toEqual([true]);
+		expect(useTtsPlaybackStore.getState().muted).toBe(true);
+		toggleTtsMuted();
+		expect(calls.muted).toEqual([true, false]);
+		expect(useTtsPlaybackStore.getState().muted).toBe(false);
+	});
+});
+
+describe("useTtsPlaybackStore progress", () => {
+	afterEach(resetStore);
+
+	test("setProgress no-ops (no notification) when values are unchanged", () => {
+		let notifications = 0;
+		const unsub = useTtsPlaybackStore.subscribe(() => {
+			notifications += 1;
+		});
+		useTtsPlaybackStore.getState().setProgress(1, 2, 1.5);
+		useTtsPlaybackStore.getState().setProgress(1, 2, 1.5);
+		unsub();
+		expect(notifications).toBe(1);
+		expect(useTtsPlaybackStore.getState().currentTime).toBe(1);
+		expect(useTtsPlaybackStore.getState().duration).toBe(2);
+		expect(useTtsPlaybackStore.getState().bufferedEnd).toBe(1.5);
+	});
+
+	test("markStarted resets the progress fields", () => {
+		useTtsPlaybackStore.getState().setProgress(3, 5, 4);
+		useTtsPlaybackStore.getState().markStarted("r");
+		const s = useTtsPlaybackStore.getState();
+		expect(s.currentTime).toBe(0);
+		expect(s.duration).toBe(0);
+		expect(s.bufferedEnd).toBe(0);
+	});
+
+	test("markEnded resets the progress fields", () => {
+		useTtsPlaybackStore.getState().markStarted("r");
+		useTtsPlaybackStore.getState().setProgress(3, 5, 4);
+		useTtsPlaybackStore.getState().markEnded();
+		const s = useTtsPlaybackStore.getState();
+		expect(s.currentTime).toBe(0);
+		expect(s.duration).toBe(0);
+		expect(s.bufferedEnd).toBe(0);
 	});
 });

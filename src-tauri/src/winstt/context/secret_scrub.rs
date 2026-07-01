@@ -45,7 +45,7 @@ pub(super) fn json_is_otp_or_signin_row(line: &str) -> bool {
 //
 // PRIVACY-CRITICAL. The per-row `json_is_otp_or_signin_row` filter above only
 // fires on the paths that iterate ROW-BY-ROW (the mail-blob scrubber, the
-// nav-list pruner). The window-dump fallback (`format_context_for_prompt_json`'s
+// nav-list pruner). The window-dump fallback (`format_context_for_prompt`'s
 // final `JsonPromptSection::text("screen", raw_axHtml)` branch) emits the whole
 // `<doc>` as a SINGLE line — so a buried `... verification OTP is: 17042 ...`
 // never gets seen by the per-row filter and leaks. This pass is the LAST gate:

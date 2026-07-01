@@ -1,5 +1,4 @@
 /* eslint-disable i18next/no-literal-string -- debug-only window, not user-facing/shipped */
-import { Button as BaseButton } from "@base-ui/react/button";
 import { cn } from "@/shared/lib/cn";
 import type { ContextPlaygroundController } from "../model/use-context-playground";
 import { CopyButton } from "./CopyButton";
@@ -21,7 +20,7 @@ export function Header({
 				DEBUG
 			</span>
 
-			<BaseButton
+			<button
 				className={cn(
 					"flex items-center gap-1.5 rounded px-2 py-1 text-[11px] transition-colors",
 					live
@@ -38,9 +37,9 @@ export function Header({
 					)}
 				/>
 				{live ? "LIVE" : "PAUSED"}
-			</BaseButton>
+			</button>
 
-			<BaseButton
+			<button
 				className={cn(
 					"rounded px-2 py-1 text-[11px] transition-colors",
 					deepArmed
@@ -52,7 +51,7 @@ export function Header({
 				type="button"
 			>
 				{deepArmed ? "Armed — focus target…" : "Deep capture (all modes)"}
-			</BaseButton>
+			</button>
 
 			<div className="ml-auto flex items-center gap-2 text-[11px] text-foreground-muted">
 				{report ? (

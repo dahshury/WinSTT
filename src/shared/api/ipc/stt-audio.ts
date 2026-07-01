@@ -1,4 +1,8 @@
-import { commands } from "@/bindings";
+import {
+	type AppDataUsageEntry,
+	commands,
+	type MicrophoneLevelMonitorTarget,
+} from "@/bindings";
 import { IPC } from "../ipc-channels";
 import {
 	commandOrDefault,
@@ -17,7 +21,7 @@ import type {
 	GpuInfo,
 	ServerStatus,
 } from "../models";
-import { decodeSettingsPayload } from "../settings-codec";
+import { decodeSettingsPayload } from "@/shared/config/settings-codec";
 
 type AppSettings = ReturnType<typeof decodeSettingsPayload>;
 
@@ -42,10 +46,7 @@ interface AudioOutputDevicesChangedPayload {
 	devices: AudioOutputDevice[];
 }
 
-export interface MicrophoneLevelMonitorTarget {
-	deviceIndex: number | null;
-	id: string;
-}
+export type { MicrophoneLevelMonitorTarget };
 
 export interface MicrophoneLevelEntry {
 	id: string;
@@ -281,6 +282,57 @@ export const windowShowMain = () =>
 export const windowCloseNamed = (name: string) =>
 	runWindowCommand(`close_window(${name})`, () => commands.closeWindow(name));
 
+/** Per-category on-disk footprint of WinSTT's application data, for the About
+ *  tab's "what will I free?" preview. Read-only; resolves the `Result`. */
+export const appDataUsage = async (): Promise<AppDataUsageEntry[]> => {
+	const result = await commands.appDataUsage();
+	if (result.status === "ok") {
+		return result.data;
+	}
+	throw new Error(
+		typeof result.error === "string"
+			? result.error
+			: "Failed to read application data usage",
+	);
+};
+
+/** Remove a SINGLE app-data category in-process (no restart). The `history`
+ *  category is handled by `commands.historyClear` instead. Resolves to the list
+ *  of per-path failures (empty on full success). */
+export const removeAppDataCategory = async (key: string): Promise<string[]> => {
+	const result = await commands.removeAppDataCategory(key);
+	if (result.status === "ok") {
+		return result.data;
+	}
+	throw new Error(
+		typeof result.error === "string"
+			? result.error
+			: "Failed to remove application data category",
+	);
+};
+
+/** Open the detached model-footprint hover panel, anchored above the trigger
+ *  rect (the footer GPU/CPU chip's viewport bounds). Mirrors how the model
+ *  picker is opened, but as a content-sized, non-focusable hover popup. */
+export const footprintWindowOpen = (rect: {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}) =>
+	runWindowCommand("open_window(model-footprint)", () =>
+		commands.openWindow(
+			"model-footprint",
+			rect.x,
+			rect.y,
+			rect.width,
+			rect.height,
+			null,
+			null,
+			null,
+		),
+	);
+
 export const windowResizeNamed = (
 	name: string,
 	width: number,
@@ -347,6 +399,11 @@ export const onTranscriptionFailed = (
 
 export const onRecordingStart = (cb: () => void) =>
 	on(IPC.STT_RECORDING_START, cb);
+/** Mic confirmed open and delivering audio (first captured frame of a recording).
+ * Fires once per take, after the OS finishes opening the device — distinct from
+ * `onRecordingStart`, which fires as soon as `stream.play()` returns. */
+export const onCaptureActive = (cb: () => void) =>
+	on(IPC.STT_CAPTURE_ACTIVE, cb);
 export const onRecordingStop = (cb: () => void) =>
 	on(IPC.STT_RECORDING_STOP, cb);
 export const onVadStart = (cb: () => void) => on(IPC.STT_VAD_START, cb);

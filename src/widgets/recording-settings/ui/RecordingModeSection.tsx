@@ -10,7 +10,6 @@ import {
 	type WakewordModelStatusPayload,
 } from "@/shared/api/ipc-client";
 import { CreatableCombobox } from "@/shared/ui/creatable-combobox";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Slider } from "@/shared/ui/slider";
 import { Switcher } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
@@ -103,19 +102,17 @@ function ToggleSilenceStopControl({
 			}
 			tooltip={t("postSpeechSilenceTooltip")}
 		>
-			<ElevatedSurface inline>
-				<Slider
-					aria-label={t("postSpeechSilence")}
-					formatValue={(v) => `${v.toFixed(1)}s`}
-					max={SILENCE_STOP_MAX_SECONDS}
-					min={SILENCE_STOP_MIN_SECONDS}
-					onChange={(v) =>
-						update({ postSpeechSilenceDuration: roundSilenceStopSeconds(v) })
-					}
-					step={SILENCE_STOP_STEP_SECONDS}
-					value={value}
-				/>
-			</ElevatedSurface>
+			<Slider
+				aria-label={t("postSpeechSilence")}
+				formatValue={(v) => `${v.toFixed(1)}s`}
+				max={SILENCE_STOP_MAX_SECONDS}
+				min={SILENCE_STOP_MIN_SECONDS}
+				onChange={(v) =>
+					update({ postSpeechSilenceDuration: roundSilenceStopSeconds(v) })
+				}
+				step={SILENCE_STOP_STEP_SECONDS}
+				value={value}
+			/>
 		</SettingField>
 	);
 }
@@ -244,20 +241,18 @@ function WakeWordSensitivityControl({
 			disabledReason={WAKEWORD_MODEL_DISABLED_REASON}
 			tooltip={t("wakeWordSensitivityTooltip")}
 		>
-			<ElevatedSurface inline>
-				<Slider
-					aria-label={t("wakeWordSensitivity")}
-					disabled={disabled}
-					formatValue={(idx) => sensitivityFromIndex(idx).toFixed(2)}
-					max={SENSITIVITY_STEPS}
-					min={0}
-					onChange={(idx) =>
-						update({ wakeWordSensitivity: sensitivityFromIndex(idx) })
-					}
-					step={1}
-					value={sensitivityToIndex(value)}
-				/>
-			</ElevatedSurface>
+			<Slider
+				aria-label={t("wakeWordSensitivity")}
+				disabled={disabled}
+				formatValue={(idx) => sensitivityFromIndex(idx).toFixed(2)}
+				max={SENSITIVITY_STEPS}
+				min={0}
+				onChange={(idx) =>
+					update({ wakeWordSensitivity: sensitivityFromIndex(idx) })
+				}
+				step={1}
+				value={sensitivityToIndex(value)}
+			/>
 		</SettingField>
 	);
 }
@@ -286,18 +281,16 @@ function WakeWordTimeoutControl({
 			disabledReason={WAKEWORD_MODEL_DISABLED_REASON}
 			tooltip={t("wakeWordTimeoutTooltip")}
 		>
-			<ElevatedSurface inline>
-				<Slider
-					aria-label={t("wakeWordTimeout")}
-					disabled={disabled}
-					formatValue={(v) => `${v}s`}
-					max={30}
-					min={1}
-					onChange={(v) => update({ wakeWordTimeout: v })}
-					step={1}
-					value={value}
-				/>
-			</ElevatedSurface>
+			<Slider
+				aria-label={t("wakeWordTimeout")}
+				disabled={disabled}
+				formatValue={(v) => `${v}s`}
+				max={30}
+				min={1}
+				onChange={(v) => update({ wakeWordTimeout: v })}
+				step={1}
+				value={value}
+			/>
 		</SettingField>
 	);
 }
@@ -387,14 +380,12 @@ export function RecordingModeSection({
 					{/* Hero control — sets the design template for every other
 					    interactive group on the tab. Same ElevatedSurface wraps
 					    them all so the tab reads as one consistent language. */}
-					<ElevatedSurface>
-						<Switcher
-							fullWidth
-							onChange={handleRecordingModeChange}
-							options={recordingModeOptions}
-							value={recordingMode}
-						/>
-					</ElevatedSurface>
+					<Switcher
+						fullWidth
+						onChange={handleRecordingModeChange}
+						options={recordingModeOptions}
+						value={recordingMode}
+					/>
 				</SettingField>
 				{recordingMode !== "wakeword" && showWakewordDownloadProgress ? (
 					<WakewordDownloadProgress status={wakewordStatus} />

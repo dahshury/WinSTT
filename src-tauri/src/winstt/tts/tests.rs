@@ -90,6 +90,18 @@ fn cloud_speed_clamps_to_0_7_1_2() {
     assert_eq!(clamp_cloud_speed(5.0), 1.2);
 }
 
+#[test]
+fn clamp_speed_to_range_uses_active_engine_floor() {
+    // Supertonic's 0.4 floor must be reachable (the bug: a generic 0.5 floor
+    // pre-clipped it). Non-finite collapses to 1.0.
+    assert_eq!(clamp_speed_to_range(0.4, (0.4, 1.3)), 0.4);
+    assert_eq!(clamp_speed_to_range(0.1, (0.4, 1.3)), 0.4);
+    assert_eq!(clamp_speed_to_range(2.0, (0.4, 1.3)), 1.3);
+    assert_eq!(clamp_speed_to_range(f32::NAN, (0.4, 1.3)), 1.0);
+    // Generic local range still clamps 0.5..2.0.
+    assert_eq!(clamp_speed_to_range(0.1, (0.5, 2.0)), 0.5);
+}
+
 // --- sentence splitter parity with tts-reader.ts ---
 
 #[test]

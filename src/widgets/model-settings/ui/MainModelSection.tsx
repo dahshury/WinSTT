@@ -18,8 +18,7 @@ import {
 	CloudModelSelect,
 	useSttSourceSwitch,
 } from "@/features/select-cloud-stt-model";
-import { IPC } from "@/shared/api/ipc-channels";
-import { ipcSend } from "@/shared/api/ipc-client";
+import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
@@ -43,15 +42,6 @@ import type {
 	TFn,
 	UpdateModelFn,
 } from "../lib/types";
-
-function openDetachedPicker(rect: DOMRect): void {
-	ipcSend(IPC.MODEL_PICKER_OPEN, {
-		x: rect.x,
-		y: rect.y,
-		width: rect.width,
-		height: rect.height,
-	});
-}
 
 interface MainModelSectionProps {
 	catalogLoaded: boolean;
@@ -218,14 +208,13 @@ function SourceArea({
 					layout="row"
 					tooltip={tIntegrations("sourceTooltip")}
 				>
-					<ElevatedSurface className="w-52">
-						<Switcher
-							fullWidth
-							onChange={handleSourceChange}
-							options={sourceOptions}
-							value={source}
-						/>
-					</ElevatedSurface>
+					<Switcher
+						className="w-52"
+						fullWidth
+						onChange={handleSourceChange}
+						options={sourceOptions}
+						value={source}
+					/>
 				</FormControl>
 			</div>
 			<div className="col-span-2">
@@ -239,6 +228,9 @@ function SourceArea({
 						<CloudModelSelect
 							disabled={disabled}
 							disabledTooltip={disabledTooltip}
+							onOpenDetached={(rect) =>
+								openModelPickerAtRect(rect, { pickerKind: "stt-cloud" })
+							}
 							onSelect={(id) => handleSelectedModelChange(id)}
 							selectedId={isCloud ? selectedModel : ""}
 						/>
@@ -256,7 +248,9 @@ function SourceArea({
 							onDeleteQuant={onDeleteQuant}
 							onDownloadAction={onDownloadAction}
 							onDownloadSnapshot={onDownloadSnapshot}
-							onOpenDetached={openDetachedPicker}
+							onOpenDetached={(rect) =>
+								openModelPickerAtRect(rect, { pickerKind: "stt" })
+							}
 							prefilter={isVisibleSttModel}
 							statesById={statesById}
 							systemInfo={systemInfo}
@@ -424,56 +418,53 @@ export function MainModelSection({
 							})
 						}
 					>
-						{effectiveLanguageAutoDetect ? undefined : (
+						{effectiveLanguageAutoDetect ? undefined : languageCandidateSelectionSupported ? (
 							<ElevatedSurface className="w-52" inline>
-								{languageCandidateSelectionSupported ? (
-									<LanguageMultiCombobox
-										ariaLabel={t("language")}
-										disabled={disabled}
-										emptyLabel={t("languageNoResults")}
-										onChange={(value) => {
-											if (disabled) {
-												return;
-											}
-											const next = normalizeLanguageCandidates(
-												value,
-												langOpts,
-												DEFAULT_SETTINGS.model.language,
-											);
-											update({
-												autoDetectLanguage: false,
-												language: next[0] ?? DEFAULT_SETTINGS.model.language,
-												languageCandidates: next,
-											});
-										}}
-										options={langOpts}
-										placeholder={t("languagePlaceholder")}
-										removeLabel={(language) =>
-											t("languageRemove", { language })
+								<LanguageMultiCombobox
+									ariaLabel={t("language")}
+									disabled={disabled}
+									emptyLabel={t("languageNoResults")}
+									onChange={(value) => {
+										if (disabled) {
+											return;
 										}
-										selectedCountLabel={(count) => `${count}+`}
-										selectedHeading={t("languageSelectedHeading")}
-										value={languageComboboxValue}
-									/>
-								) : (
-									<SearchableSelect
-										disabled={disabled}
-										onChange={(value) => {
-											if (disabled) {
-												return;
-											}
-											update({
-												autoDetectLanguage: false,
-												language: value,
-												languageCandidates: [],
-											});
-										}}
-										options={langOpts}
-										placeholder={t("languagePlaceholder")}
-										value={fixedLanguage}
-									/>
-								)}
+										const next = normalizeLanguageCandidates(
+											value,
+											langOpts,
+											DEFAULT_SETTINGS.model.language,
+										);
+										update({
+											autoDetectLanguage: false,
+											language: next[0] ?? DEFAULT_SETTINGS.model.language,
+											languageCandidates: next,
+										});
+									}}
+									options={langOpts}
+									placeholder={t("languagePlaceholder")}
+									removeLabel={(language) => t("languageRemove", { language })}
+									selectedCountLabel={(count) => `${count}+`}
+									selectedHeading={t("languageSelectedHeading")}
+									value={languageComboboxValue}
+								/>
 							</ElevatedSurface>
+						) : (
+							<SearchableSelect
+								className="w-52"
+								disabled={disabled}
+								onChange={(value) => {
+									if (disabled) {
+										return;
+									}
+									update({
+										autoDetectLanguage: false,
+										language: value,
+										languageCandidates: [],
+									});
+								}}
+								options={langOpts}
+								placeholder={t("languagePlaceholder")}
+								value={fixedLanguage}
+							/>
 						)}
 					</SettingField>
 				)}

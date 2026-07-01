@@ -1,12 +1,11 @@
 import { useEffect } from "react";
-import type { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
 	SettingField,
 	useSettingsStore,
 } from "@/entities/setting";
 import type { OpenRouterTtsModel } from "@/shared/api/models";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import {
 	SearchableSelect,
 	type SelectOptionGroup,
@@ -22,7 +21,7 @@ export interface OpenRouterTtsControlsProps {
 	isSpeaking: boolean;
 	previewVoice: (modelId: string, voiceId: string) => void;
 	previewVoiceId: string | null;
-	t: ReturnType<typeof useTranslations>;
+	t: TranslateFn;
 }
 
 const CLOUD_DEFAULTS = DEFAULT_SETTINGS.tts.cloud;
@@ -182,49 +181,48 @@ export function OpenRouterTtsControls({
 				layout="row"
 				tooltip="Voices are loaded from OpenRouter's model catalog for the selected speech model."
 			>
-				<ElevatedSurface className="w-72" inline>
-					<SearchableSelect
-						disabled={!selectedModel || !hasVoices}
-						groups={voiceGroups}
-						inputTrailing={
-							selectedModel && selectedVoice ? (
-								<TtsPreviewButton
-									activeRequestId={activeRequestId}
-									compact={true}
-									isLoading={isLoading}
-									isSpeaking={isSpeaking}
-									langForVoice={() => ""}
-									previewVoice={() =>
-										previewSelectedVoice(selectedModel, selectedVoice)
-									}
-									previewVoiceId={previewVoiceId}
-									t={t}
-									targetVoiceId={previewKey(selectedModel.id, selectedVoice)}
-								/>
-							) : null
-						}
-						onChange={handleVoiceChange}
-						placeholder={voicePlaceholder}
-						renderItemTrailing={(option) =>
-							selectedModel ? (
-								<TtsPreviewButton
-									activeRequestId={activeRequestId}
-									compact={true}
-									isLoading={isLoading}
-									isSpeaking={isSpeaking}
-									langForVoice={() => ""}
-									previewVoice={() =>
-										previewSelectedVoice(selectedModel, option.id)
-									}
-									previewVoiceId={previewVoiceId}
-									t={t}
-									targetVoiceId={previewKey(selectedModel.id, option.id)}
-								/>
-							) : null
-						}
-						value={hasVoices ? selectedVoice : ""}
-					/>
-				</ElevatedSurface>
+				<SearchableSelect
+					className="w-72"
+					disabled={!selectedModel || !hasVoices}
+					groups={voiceGroups}
+					inputTrailing={
+						selectedModel && selectedVoice ? (
+							<TtsPreviewButton
+								activeRequestId={activeRequestId}
+								compact={true}
+								isLoading={isLoading}
+								isSpeaking={isSpeaking}
+								langForVoice={() => ""}
+								previewVoice={() =>
+									previewSelectedVoice(selectedModel, selectedVoice)
+								}
+								previewVoiceId={previewVoiceId}
+								t={t}
+								targetVoiceId={previewKey(selectedModel.id, selectedVoice)}
+							/>
+						) : null
+					}
+					onChange={handleVoiceChange}
+					placeholder={voicePlaceholder}
+					renderItemTrailing={(option) =>
+						selectedModel ? (
+							<TtsPreviewButton
+								activeRequestId={activeRequestId}
+								compact={true}
+								isLoading={isLoading}
+								isSpeaking={isSpeaking}
+								langForVoice={() => ""}
+								previewVoice={() =>
+									previewSelectedVoice(selectedModel, option.id)
+								}
+								previewVoiceId={previewVoiceId}
+								t={t}
+								targetVoiceId={previewKey(selectedModel.id, option.id)}
+							/>
+						) : null
+					}
+					value={hasVoices ? selectedVoice : ""}
+				/>
 			</SettingField>
 
 			<SettingField
@@ -233,17 +231,15 @@ export function OpenRouterTtsControls({
 				onReset={() => patchCloud({ speed: CLOUD_DEFAULTS.speed })}
 				tooltip={t("cloudSpeedCaption")}
 			>
-				<ElevatedSurface inline>
-					<Slider
-						aria-label={t("speed")}
-						formatValue={(v) => `${v.toFixed(2)}x`}
-						max={1.2}
-						min={0.7}
-						onChange={(v) => patchCloud({ speed: v })}
-						step={0.05}
-						value={cloud.speed}
-					/>
-				</ElevatedSurface>
+				<Slider
+					aria-label={t("speed")}
+					formatValue={(v) => `${v.toFixed(2)}x`}
+					max={1.2}
+					min={0.7}
+					onChange={(v) => patchCloud({ speed: v })}
+					step={0.05}
+					value={cloud.speed}
+				/>
 			</SettingField>
 		</>
 	);

@@ -5,7 +5,7 @@
  *   - Is this macOS at all?
  *   - If yes, is it Apple Silicon (arm64) vs Intel (x86_64)?
  *
- * The the reference main process knows this from `process.platform` /
+ * The native main process knows this from `process.platform` /
  * `process.arch` natively, but the renderer can't read those directly
  * (they're undefined in a sandboxed renderer). We classify from
  * `navigator.userAgent` / `navigator.platform` instead — the same data
@@ -43,8 +43,8 @@ function detectMac(platform: string, userAgent: string): boolean {
  * On a Mac, look for "ARM" / "Apple Silicon" / "arm64" tokens to classify
  * as Apple Silicon. macOS Safari/Chrome on Apple Silicon include
  * "Mac OS X" + "Intel" in the UA string for compatibility reasons (legacy
- * Intel UA), but the reference's userAgent on Apple Silicon includes "the reference"
- * without lying about the architecture. We additionally accept
+ * Intel UA), so we look for explicit "arm" / "apple silicon" tokens
+ * rather than trusting the legacy "Intel" string. We additionally accept
  * `navigator.userAgentData` (Client Hints) if the caller passes a
  * pre-flattened hint string. Both inputs are expected pre-lowercased.
  */

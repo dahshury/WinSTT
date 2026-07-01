@@ -216,6 +216,30 @@ fn is_degenerate_decode_error(err: &anyhow::Error) -> bool {
     msg.contains(WHISPER_GARBAGE_MARKER) || msg.contains("degenerate Whisper decode")
 }
 
+/// True when a decode error means the GPU/accelerator device was lost, reset, or suspended —
+/// a DirectML/D3D12 device-removal (driver TDR reset, the GPU being reset by another process,
+/// or a system sleep/wake transition). DXGI surfaces these as `DXGI_ERROR_DEVICE_REMOVED`
+/// (`887A0005`) / `DEVICE_HUNG` (`887A0006`) / `DEVICE_RESET` (`887A0007`), and ORT bubbles up
+/// the literal "The GPU device instance has been suspended" / "GetDeviceRemovedReason" text.
+///
+/// Once this fires the ONNX Runtime session bound to that device is permanently dead, so reusing
+/// the loaded engine would fail identically forever. The decode path drops the engine and clears
+/// the resident/warmed model so the NEXT transcription rebuilds a fresh session on a new DML
+/// device. Kept DISTINCT from `is_degenerate_decode_error`: device loss is environmental and
+/// usually transient, so — unlike a degenerate decode — it must NOT count toward the DirectML →
+/// CPU demotion (a single sleep/wake should not permanently drop the user onto CPU). The full
+/// error chain is flattened (`{err:#}`) and lowercased so we match regardless of nesting/case.
+fn is_device_lost_error(err: &anyhow::Error) -> bool {
+    let msg = format!("{err:#}").to_ascii_lowercase();
+    msg.contains("device instance has been suspended")
+        || msg.contains("device has been removed")
+        || msg.contains("device has been reset")
+        || msg.contains("getdeviceremovedreason")
+        || msg.contains("887a0005") // DXGI_ERROR_DEVICE_REMOVED
+        || msg.contains("887a0006") // DXGI_ERROR_DEVICE_HUNG
+        || msg.contains("887a0007") // DXGI_ERROR_DEVICE_RESET
+}
+
 #[derive(Clone)]
 pub struct TranscriptionManager {
     engine: Arc<Mutex<Option<LoadedEngine>>>,
@@ -252,7 +276,7 @@ pub struct TranscriptionManager {
 
 impl TranscriptionManager {
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
-        let runtime_settings = crate::winstt::commands::settings::read_settings_raw(app_handle);
+        let runtime_settings = crate::winstt::settings_store::read_settings_raw(app_handle);
         let model_unload_timeout = crate::winstt::commands::settings::core_timeout_from_winstt(
             runtime_settings.global.model_unload_timeout,
         );
@@ -501,6 +525,29 @@ mod tests {
     // Whisper-hallucination clips ("Thank you.") measured rms ≤ 0.0014; real speech
     // recordings measured rms ≥ 0.0074. The 0.003 floor must reject the former and pass
     // the latter — regression guard for the "Thank you. on silence" bug.
+
+    #[test]
+    fn device_lost_error_is_classified_but_degenerate_is_not() {
+        // The exact suspended-GPU chain observed in the field (nemo-parakeet VAD-segment path).
+        let suspended = anyhow::anyhow!(
+            "WinSTT VAD-segment transcription failed: inference failed: encoder run: \
+             ExecutionProvider.cpp(952) Exception(1065) 887A0005 The GPU device instance has \
+             been suspended. Use GetDeviceRemovedReason to determine the appropriate action."
+        );
+        assert!(super::is_device_lost_error(&suspended));
+        // Device loss must NOT be misread as a degenerate decode (different recovery: no CPU demotion).
+        assert!(!super::is_degenerate_decode_error(&suspended));
+
+        // A degenerate Whisper decode is the other fatal class — and is NOT a device-loss.
+        let degenerate = anyhow::anyhow!("[whisper-garbage] degenerate Whisper decode detected");
+        assert!(super::is_degenerate_decode_error(&degenerate));
+        assert!(!super::is_device_lost_error(&degenerate));
+
+        // An ordinary, recoverable decode error is neither — the engine is kept loaded.
+        let ordinary = anyhow::anyhow!("inference failed: enc tensor: shape mismatch");
+        assert!(!super::is_device_lost_error(&ordinary));
+        assert!(!super::is_degenerate_decode_error(&ordinary));
+    }
 
     #[test]
     fn dc_immune_rms_is_zero_on_constant_dc_offset() {

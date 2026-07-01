@@ -139,8 +139,7 @@ export interface RecommendedOllamaModel {
 // The Rust command (`openrouter_refresh_models`) types `pricing` and
 // `architecture` as opaque `serde_json::Value` (so bindings exposes them as
 // `JsonValue | null`) and does NOT fan out per-model `/endpoints` enrichment
-// (`endpoints` is absent at runtime — see the TODO in
-// `src-tauri/src/winstt/commands/llm.rs`). The picker, ported 1:1 from
+// (`endpoints` is absent at runtime). The picker, ported 1:1 from
 // the reference, still reads the *structured* OpenRouter JSON those opaque blobs
 // actually carry (`pricing.prompt`, `architecture.input_modalities`) and the
 // literal-union `variant`, plus guards `endpoints` as "always empty for now".
@@ -214,8 +213,10 @@ export type OpenRouterVariant =
  * shapes and `variant` to its literal union; `endpoints` is renderer-only
  * (absent at runtime today, defensively read as `?? []`).
  */
-export interface OpenRouterModel
-	extends Pick<OpenRouterModelPayload, "id" | "name"> {
+export interface OpenRouterModel extends Pick<
+	OpenRouterModelPayload,
+	"id" | "name"
+> {
 	architecture?: OpenRouterArchitecture;
 	context_length?: number;
 	description?: string;
@@ -246,8 +247,10 @@ export interface OpenRouterScanResult {
  * `OpenRouterSttModelPayload` with the card metadata needed by the shared
  * OpenRouter picker.
  */
-export interface OpenRouterSttModel
-	extends Pick<OpenRouterSttModelPayload, "id" | "name"> {
+export interface OpenRouterSttModel extends Pick<
+	OpenRouterSttModelPayload,
+	"id" | "name"
+> {
 	accuracy_score: number;
 	description?: string;
 	endpoints?: OpenRouterEndpoint[];
@@ -266,8 +269,10 @@ export interface OpenRouterSttScanResult {
  * A speech (TTS) model from OpenRouter `/api/v1/models?output_modalities=speech`.
  * Lean `{ id, name }` for the cloud TTS picker.
  */
-export interface OpenRouterTtsModel
-	extends Pick<OpenRouterTtsModelPayload, "id" | "name"> {
+export interface OpenRouterTtsModel extends Pick<
+	OpenRouterTtsModelPayload,
+	"id" | "name"
+> {
 	description?: string;
 	pricing?: OpenRouterPricing;
 	quality_score: number;

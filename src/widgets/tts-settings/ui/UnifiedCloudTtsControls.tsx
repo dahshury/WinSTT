@@ -1,6 +1,7 @@
 import { OpenRouterModelSelector } from "@/widgets/model-picker";
-import type { useTranslations } from "use-intl";
 import { SettingField, useSettingsStore } from "@/entities/setting";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { parseModelSelection } from "@/shared/lib/openrouter-model-selection";
 import type { SelectOptionGroup } from "@/shared/ui/searchable-select";
 import {
@@ -40,7 +41,7 @@ export interface UnifiedCloudTtsControlsProps {
 	/** Synthesize a short OpenRouter preview for the model/voice. */
 	previewOpenRouterVoice: (modelId: string, voiceId: string) => void;
 	previewVoiceId: string | null;
-	t: ReturnType<typeof useTranslations>;
+	t: TranslateFn;
 }
 
 /**
@@ -81,9 +82,6 @@ export function UnifiedCloudTtsControls({
 		elevenAvailable,
 		openrouterAvailable,
 	);
-
-	// so voices appear without forcing a manual pick — only while OpenRouter is
-	// the active provider and the persisted model isn't a real catalog row.
 
 	const pickerModels = buildCloudPickerModels({
 		elevenAvailable,
@@ -138,7 +136,7 @@ export function UnifiedCloudTtsControls({
 					onChange={handleModelChange}
 					onOpen={() => {
 						if (openrouterAvailable) {
-							scanOpenrouterModels().catch(() => undefined);
+							fireAndForget(scanOpenrouterModels(), "tts.scanOpenrouterModels");
 						}
 					}}
 					placeholder={modelPlaceholder}

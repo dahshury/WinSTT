@@ -21,8 +21,9 @@ interface FakeSource {
 	disconnect: () => void;
 	disconnected: boolean;
 	onended: (() => void) | null;
-	start: (when?: number) => void;
+	start: (when?: number, offset?: number) => void;
 	startedAt: number;
+	startedOffset: number;
 	stop: () => void;
 	stopped: boolean;
 }
@@ -42,10 +43,25 @@ interface FakeAnalyser {
 	getByteTimeDomainData: (arr: Uint8Array) => void;
 }
 
+interface FakeGain {
+	connect: () => void;
+	// `setTargetAtTime` reflects the target into `value` immediately so tests can
+	// assert the resolved gain directly.
+	gain: {
+		setTargetAtTime: (
+			target: number,
+			when: number,
+			timeConstant: number,
+		) => void;
+		value: number;
+	};
+}
+
 let createdSources: FakeSource[] = [];
 let createdBuffers: FakeBuffer[] = [];
 let createdContexts: FakeAudioContext[] = [];
 let createdAnalysers: FakeAnalyser[] = [];
+let createdGains: FakeGain[] = [];
 let constructedSinkIds: Array<string | undefined> = [];
 let setSinkIdCalls: Array<string | { type: "none" }> = [];
 let resumeCalls = 0;
@@ -121,14 +137,16 @@ class FakeAudioContext {
 			buffer: null,
 			onended: null,
 			startedAt: 0,
+			startedOffset: 0,
 			stopped: false,
 			disconnected: false,
 			connect: () => undefined,
 			disconnect() {
 				this.disconnected = true;
 			},
-			start(when = 0) {
+			start(when = 0, offset = 0) {
 				this.startedAt = when;
+				this.startedOffset = offset;
 			},
 			stop() {
 				this.stopped = true;
@@ -136,6 +154,19 @@ class FakeAudioContext {
 		};
 		createdSources.push(src);
 		return src;
+	}
+	createGain(): FakeGain {
+		const node: FakeGain = {
+			connect: () => undefined,
+			gain: {
+				value: 1,
+				setTargetAtTime(target) {
+					node.gain.value = target;
+				},
+			},
+		};
+		createdGains.push(node);
+		return node;
 	}
 	createAnalyser(): FakeAnalyser {
 		const analyser: FakeAnalyser = {
@@ -203,6 +234,7 @@ function reset(): void {
 	createdBuffers = [];
 	createdContexts = [];
 	createdAnalysers = [];
+	createdGains = [];
 	constructedSinkIds = [];
 	setSinkIdCalls = [];
 	resumeCalls = 0;
@@ -959,5 +991,215 @@ describe("TtsPlaybackQueue.isPlaying false branch", () => {
 		expect(queue.isPlaying).toBe(true);
 		createdSources[0]?.onended?.();
 		expect(queue.isPlaying).toBe(false);
+	});
+});
+
+describe("TtsPlaybackQueue position + duration", () => {
+	test("duration grows as chunks arrive; current time tracks the clock", () => {
+		currentTime = 0;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0))); // 0.5s
+		expect(queue.getDuration()).toBeCloseTo(0.5, 5);
+		expect(queue.getBufferedEnd()).toBeCloseTo(0.5, 5);
+		expect(queue.getCurrentTime()).toBeCloseTo(0, 5);
+		currentTime = 0.2;
+		expect(queue.getCurrentTime()).toBeCloseTo(0.2, 5);
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0))); // +0.5s
+		expect(queue.getDuration()).toBeCloseTo(1.0, 5);
+	});
+
+	test("current time is clamped to the buffered duration", () => {
+		currentTime = 0;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0))); // 0.5s
+		currentTime = 10; // clock far past the buffered audio
+		expect(queue.getCurrentTime()).toBeCloseTo(0.5, 5);
+	});
+
+	test("a fresh request restarts the timeline at 0 after a natural end", () => {
+		currentTime = 0;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r1", new Array(12_000).fill(0))); // 0.5s
+		createdSources[0]?.onended?.(); // natural end (no stop())
+		expect(queue.isPlaying).toBe(false);
+		queue.enqueue(makeF32leChunk("r2", new Array(2400).fill(0))); // 0.1s
+		expect(queue.getDuration()).toBeCloseTo(0.1, 5);
+	});
+
+	test("isComplete flips on markComplete", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0)));
+		expect(queue.isComplete).toBe(false);
+		queue.markComplete("r");
+		expect(queue.isComplete).toBe(true);
+	});
+
+	test("stop resets duration / current time back to 0", () => {
+		currentTime = 0;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0)));
+		queue.markComplete("r");
+		queue.stop();
+		expect(queue.getDuration()).toBe(0);
+		expect(queue.getCurrentTime()).toBe(0);
+		expect(queue.isComplete).toBe(false);
+	});
+});
+
+describe("TtsPlaybackQueue.seek", () => {
+	test("reschedules from the buffer covering the target at the right intra-buffer offset", () => {
+		currentTime = 0;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0))); // buffer 0: 0..0.5
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0))); // buffer 1: 0.5..1.0
+		queue.markComplete("r"); // duration final → seek can reach the full range
+		const before = createdSources.length; // 2
+		currentTime = 10;
+		queue.seek(0.75); // inside buffer 1, 0.25s in
+		expect(createdSources.slice(0, before).every((s) => s.stopped)).toBe(true);
+		expect(createdSources).toHaveLength(before + 1); // only buffer 1 rescheduled
+		const fresh = createdSources[before];
+		expect(fresh?.startedAt).toBeCloseTo(10, 5);
+		expect(fresh?.startedOffset).toBeCloseTo(0.25, 5);
+	});
+
+	test("re-anchors so current time reports the seek target and advances from there", () => {
+		currentTime = 0;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", new Array(24_000).fill(0))); // 1.0s
+		queue.markComplete("r");
+		currentTime = 3;
+		queue.seek(0.6);
+		expect(queue.getCurrentTime()).toBeCloseTo(0.6, 5);
+		currentTime = 3.2;
+		expect(queue.getCurrentTime()).toBeCloseTo(0.8, 5);
+	});
+
+	test("a superseded source's onended does NOT fire onEnd after a seek", () => {
+		currentTime = 0;
+		const queue = new TtsPlaybackQueue();
+		let ends = 0;
+		queue.onEnd(() => {
+			ends += 1;
+		});
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0))); // buffer 0
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0))); // buffer 1
+		queue.markComplete("r");
+		const stale = createdSources.slice(); // the two pre-seek sources
+		currentTime = 10;
+		queue.seek(0.75);
+		// The browser fires onended on the sources we stopped — these must no-op.
+		for (const s of stale) {
+			s.onended?.();
+		}
+		expect(ends).toBe(0);
+		// Draining the rescheduled source DOES finish the read.
+		createdSources.at(-1)?.onended?.();
+		expect(ends).toBe(1);
+	});
+
+	test("clamps just shy of the end while still streaming (no premature finish)", () => {
+		currentTime = 0;
+		const queue = new TtsPlaybackQueue();
+		let ends = 0;
+		queue.onEnd(() => {
+			ends += 1;
+		});
+		queue.enqueue(makeF32leChunk("r", new Array(24_000).fill(0))); // 1.0s, NOT complete
+		currentTime = 5;
+		queue.seek(5); // way past the end
+		// Capped to bufferedDuration - 0.05 = 0.95 so a tail still plays.
+		expect(queue.getCurrentTime()).toBeGreaterThan(0.9);
+		expect(queue.getCurrentTime()).toBeLessThan(1);
+		expect(ends).toBe(0);
+	});
+
+	test("is a no-op before any audio has been scheduled", () => {
+		const queue = new TtsPlaybackQueue();
+		expect(() => queue.seek(1)).not.toThrow();
+		expect(createdSources).toHaveLength(0);
+	});
+
+	test("a paused read stays parked (suspended) at the new position after a seek", () => {
+		currentTime = 0;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", new Array(24_000).fill(0))); // 1.0s
+		queue.markComplete("r");
+		queue.pause();
+		expect(createdContexts[0]?.state).toBe("suspended");
+		currentTime = 2;
+		queue.seek(0.5);
+		expect(queue.isPaused).toBe(true);
+		expect(createdContexts[0]?.state).toBe("suspended");
+		expect(queue.getCurrentTime()).toBeCloseTo(0.5, 5);
+	});
+});
+
+describe("TtsPlaybackQueue volume + mute", () => {
+	test("applies the stored volume to the gain node when the graph is built", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.setVolume(0.5); // before any context — just stored
+		queue.enqueue(makeF32leChunk("r", [0.1])); // builds the graph
+		expect(createdGains).toHaveLength(1);
+		expect(createdGains[0]?.gain.value).toBeCloseTo(0.5, 5);
+		expect(queue.currentVolume).toBeCloseTo(0.5, 5);
+	});
+
+	test("setVolume / setMuted ramp the live gain; mute → 0, unmute → stored volume", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		const gain = createdGains[0];
+		queue.setVolume(0.8);
+		expect(gain?.gain.value).toBeCloseTo(0.8, 5);
+		queue.setMuted(true);
+		expect(gain?.gain.value).toBe(0);
+		expect(queue.isMuted).toBe(true);
+		// A volume change while muted updates the stored level but keeps gain at 0.
+		queue.setVolume(0.4);
+		expect(gain?.gain.value).toBe(0);
+		queue.setMuted(false);
+		expect(gain?.gain.value).toBeCloseTo(0.4, 5);
+		expect(queue.isMuted).toBe(false);
+	});
+
+	test("clamps volume into [0, 1]", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.setVolume(5);
+		expect(queue.currentVolume).toBe(1);
+		queue.setVolume(-2);
+		expect(queue.currentVolume).toBe(0);
+	});
+
+	test("re-applies volume to a rebuilt gain after the context is recreated", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		queue.setVolume(0.3);
+		const live = createdContexts[0];
+		if (live) {
+			live.state = "closed"; // force a rebuild on the next enqueue
+		}
+		// Same request id so the chunk isn't dropped as stale — it just lands on a
+		// freshly rebuilt context (and thus a freshly built gain).
+		queue.enqueue(makeF32leChunk("r", [0.2]));
+		expect(createdGains).toHaveLength(2);
+		expect(createdGains[1]?.gain.value).toBeCloseTo(0.3, 5);
+	});
+});
+
+describe("TtsPlaybackQueue.getCurrentTime while paused", () => {
+	test("freezes at the pause position and resumes from there", () => {
+		currentTime = 0;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", new Array(24_000).fill(0))); // 1.0s
+		currentTime = 0.4;
+		expect(queue.getCurrentTime()).toBeCloseTo(0.4, 5);
+		queue.pause();
+		currentTime = 5; // clock jumps while suspended — position must NOT drift
+		expect(queue.getCurrentTime()).toBeCloseTo(0.4, 5);
+		queue.resume(); // fake resume() sets state→running synchronously
+		// First read after resume re-anchors to the live clock (no jump)…
+		expect(queue.getCurrentTime()).toBeCloseTo(0.4, 5);
+		currentTime = 5.3; // …then advances normally
+		expect(queue.getCurrentTime()).toBeCloseTo(0.7, 5);
 	});
 });

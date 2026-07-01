@@ -54,3 +54,89 @@ describe("ProcessingExtrasPanel formatting rules", () => {
 		expect(quality.formatSpokenSymbolCommands).toBe(false);
 	});
 });
+
+describe("ProcessingExtrasPanel context-awareness scope", () => {
+	function setupContext(generalOverrides: Record<string, unknown> = {}) {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				general: {
+					...DEFAULT_SETTINGS.general,
+					contextAwareness: true,
+					contextAppMode: "all-except-denied",
+					contextAllowList: [],
+					...generalOverrides,
+				},
+				// The section only renders when a context consumer is active; the
+				// dictation LLM qualifies regardless of the (non-whisper) STT model.
+				llm: {
+					...DEFAULT_SETTINGS.llm,
+					dictation: { ...DEFAULT_SETTINGS.llm.dictation, enabled: true },
+				},
+			},
+			isLoaded: true,
+		});
+	}
+
+	function clickScope(label: "Black list" | "Allow list") {
+		fireEvent.click(getVisibleText(label));
+	}
+
+	function storedGeneral() {
+		return useSettingsStore.getState().settings.general;
+	}
+
+	function toggleChecked(): string | null {
+		return (
+			document.querySelector('[role="switch"]')?.getAttribute("aria-checked") ??
+			null
+		);
+	}
+
+	beforeEach(() => setupContext());
+
+	test("switching to Allow list with no apps actually disables context awareness", () => {
+		renderPanel();
+		expect(toggleChecked()).toBe("true");
+
+		clickScope("Allow list");
+
+		expect(storedGeneral().contextAppMode).toBe("selected-only");
+		// The stored flag — what the backend reads — must be honestly off, not
+		// just a cosmetic toggle that leaves capture running.
+		expect(storedGeneral().contextAwareness).toBe(false);
+		expect(toggleChecked()).toBe("false");
+	});
+
+	test("switching back to Black list re-enables context awareness", () => {
+		renderPanel();
+		clickScope("Allow list");
+		expect(storedGeneral().contextAwareness).toBe(false);
+
+		clickScope("Black list");
+		expect(storedGeneral().contextAppMode).toBe("all-except-denied");
+		expect(storedGeneral().contextAwareness).toBe(true);
+		expect(toggleChecked()).toBe("true");
+	});
+
+	test("Allow list with apps already selected stays enabled", () => {
+		setupContext({ contextAllowList: ["chrome.exe"] });
+		renderPanel();
+
+		clickScope("Allow list");
+		expect(storedGeneral().contextAppMode).toBe("selected-only");
+		expect(storedGeneral().contextAwareness).toBe(true);
+		expect(toggleChecked()).toBe("true");
+	});
+
+	test("scope config stays interactive in the Allow-list dead state", () => {
+		renderPanel();
+		clickScope("Allow list");
+		// The scope + allow-list config must not be pointer-events-disabled, or the
+		// user could never add an app to switch context awareness back on.
+		const wrapper = getVisibleText("Allow list").closest(
+			".pointer-events-none",
+		);
+		expect(wrapper).toBeNull();
+	});
+});

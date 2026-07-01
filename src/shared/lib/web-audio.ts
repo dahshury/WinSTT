@@ -21,8 +21,8 @@ function warnDecodeFailure(): null {
 
 /**
  * Slice binary IPC data into a clean ArrayBuffer.
- * the reference delivered Buffer as Uint8Array; Tauri serializes Rust `Vec<u8>` as a
- * plain `number[]` (no `.buffer`). Accept both (plus ArrayBuffer) so binary
+ * Tauri serializes Rust `Vec<u8>` as a plain `number[]` (no `.buffer`), while
+ * other sources deliver a `Uint8Array`. Accept both (plus ArrayBuffer) so binary
  * commands like `sound:get-data` don't throw `undefined.slice` and crash the page.
  */
 export function toArrayBuffer(

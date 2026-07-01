@@ -1,11 +1,12 @@
 import type {
+	ModelStatesById as StatesById,
 	useCatalogStore,
-	useModelStateStore,
 } from "@/entities/model-catalog";
 import type { useSettingsStore } from "@/entities/setting";
 import type { useSystemResourcesStore } from "@/entities/system-resources";
 import type { FitAssessmentEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+export type { ModelStatesById as StatesById } from "@/entities/model-catalog";
 
 export type SettingsStoreState = ReturnType<typeof useSettingsStore.getState>;
 export type ModelSettings = SettingsStoreState["settings"]["model"];
@@ -13,9 +14,6 @@ export type UpdateModelFn = SettingsStoreState["updateModelSettings"];
 export type UpdatePatch = Parameters<UpdateModelFn>[0];
 
 export type DeviceValue = "auto" | "cpu";
-export type StatesById = ReturnType<
-	typeof useModelStateStore.getState
->["statesById"];
 export type GetModelFn = ReturnType<
 	typeof useCatalogStore.getState
 >["getModel"];

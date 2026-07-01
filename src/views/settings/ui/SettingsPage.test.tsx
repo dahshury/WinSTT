@@ -43,16 +43,16 @@ describe("SettingsPage", () => {
 		expect(screen.queryByText("Recording Mode")).toBeNull();
 	});
 
-	test("renders settings content when backend settings are unavailable in browser mode", () => {
+	test("renders settings content when backend settings are unavailable in browser mode", async () => {
 		useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isLoaded: true });
 		useSettingsHydrationStore.setState({ error: null, status: "unavailable" });
 
 		renderSettingsPage();
 
-		expect(screen.getByText("Recording Mode")).toBeDefined();
+		expect(await screen.findByText("Recording Mode")).toBeDefined();
 	});
 
-	test("renders settings transfer controls in the About tab", () => {
+	test("renders settings transfer controls in the About tab", async () => {
 		useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isLoaded: true });
 		useSettingsHydrationStore.setState({ error: null, status: "unavailable" });
 		renderSettingsPage();
@@ -62,21 +62,23 @@ describe("SettingsPage", () => {
 		fireEvent.click(screen.getByRole("tab", { name: /about/i }));
 
 		expect(
-			screen.getByRole("button", { name: "Export settings" }),
+			await screen.findByRole("button", { name: "Export settings" }),
 		).toBeDefined();
 		expect(
-			screen.getByRole("button", { name: "Import settings" }),
+			await screen.findByRole("button", { name: "Import settings" }),
 		).toBeDefined();
 		expect(screen.queryByTestId("settings-update-button")).toBeNull();
 	});
 
-	test("requires confirmation before importing settings", () => {
+	test("requires confirmation before importing settings", async () => {
 		useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isLoaded: true });
 		useSettingsHydrationStore.setState({ error: null, status: "unavailable" });
 		renderSettingsPage();
 
 		fireEvent.click(screen.getByRole("tab", { name: /about/i }));
-		fireEvent.click(screen.getByRole("button", { name: "Import settings" }));
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Import settings" }),
+		);
 
 		expect(screen.getByText("Restore settings?")).toBeDefined();
 		expect(screen.getByText("Restore")).toBeDefined();

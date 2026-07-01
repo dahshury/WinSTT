@@ -231,7 +231,7 @@ impl WakeWordManager {
     /// the settings store and rebuild. Called on construction; the command layer
     /// also calls `set_wake_word` directly with the renderer-supplied values.
     pub fn sync_from_settings(&self) {
-        let general = crate::winstt::commands::settings::read_settings_raw(&self.app).general;
+        let general = crate::winstt::settings_store::read_settings_raw(&self.app).general;
         let name = general.wake_word;
         let sensitivity = general.wake_word_sensitivity as f32;
         let timeout = general.wake_word_timeout as f32;
@@ -244,7 +244,7 @@ impl WakeWordManager {
     /// detector. Used by the status command while the app is not in wakeword
     /// mode, so the dialog describes the runtime that will actually be needed.
     pub fn sync_selection_from_settings(&self) {
-        let general = crate::winstt::commands::settings::read_settings_raw(&self.app).general;
+        let general = crate::winstt::settings_store::read_settings_raw(&self.app).general;
         let phrase = if general.wake_word.trim().is_empty() {
             String::new()
         } else {
@@ -476,6 +476,13 @@ impl WakeWordManager {
             }
         }
         was
+    }
+
+    /// Drop the active wake-word detector during app shutdown so the native
+    /// sherpa/Porcupine session releases before process teardown.
+    pub fn shutdown_runtime(&self) {
+        self.armed.store(false, Ordering::Release);
+        self.store_detector(None);
     }
 
     /// Feed one 16 kHz mono f32 chunk to the detector (from the audio consumer
@@ -738,7 +745,7 @@ impl WakeWordManager {
     /// Pick the sherpa provider from the shared model device setting (TTS/STT
     /// share `model.device`) through the same platform-aware STT resolver.
     fn resolve_provider(&self) -> WakeWordProvider {
-        let device = crate::winstt::commands::settings::read_settings_raw(&self.app)
+        let device = crate::winstt::settings_store::read_settings_raw(&self.app)
             .model
             .device;
         WakeWordProvider::from_stt_accelerator(crate::winstt::stt::resolve_accelerator(device))

@@ -6,7 +6,6 @@
  *   1. Same model + same provider = excluded (exact match)
  *   2. Same model + no provider in primary = entire model excluded (all providers)
  *   3. Same model + different provider = allowed
- *   4. Both "auto" = caller must validate (not handled here)
  */
 
 import type { OpenRouterModel } from "@/shared/api/models";
@@ -53,8 +52,8 @@ function buildExclusionFromParsed(
 		: NO_EXCLUSION;
 }
 
-// Provider-side exclusion check shared by isFallbackExcluded and
-// isEndpointExcluded. Assumes the modelId match has already been confirmed.
+// Provider-side exclusion check used by isEndpointExcluded. Assumes the
+// modelId match has already been confirmed.
 function isProviderExcluded(
 	providerSlug: string | undefined,
 	config: ModelExclusionConfig,
@@ -81,25 +80,6 @@ export function computeModelExclusionConfig(
 		return NO_EXCLUSION;
 	}
 	return buildExclusionFromParsed(parseModelSelection(primaryValue));
-}
-
-/** True when the fallback selection conflicts with the primary. */
-export function isFallbackExcluded(
-	fallbackValue: string | undefined | null,
-	exclusionConfig: ModelExclusionConfig,
-): boolean {
-	// Empty/null/undefined fallback → not excluded. Handling this explicitly
-	// (instead of routing through `parseModelSelection(fallbackValue ?? "")`)
-	// removes the dead `??` fallback branch and lets TS narrow `fallbackValue`
-	// to `string` for the remaining logic.
-	if (!fallbackValue) {
-		return false;
-	}
-	const { modelId, providerSlug } = parseModelSelection(fallbackValue);
-	return (
-		modelId === exclusionConfig.excludedModelId &&
-		isProviderExcluded(providerSlug, exclusionConfig)
-	);
 }
 
 /**
@@ -129,9 +109,9 @@ export function isEndpointExcluded(
 	providerSlug: string | undefined,
 	exclusionConfig: ModelExclusionConfig,
 ): boolean {
-	// Same simplification as isFallbackExcluded — the `!excludedModelId`
-	// early-return is redundant because `string !== undefined` is the
-	// same answer as the early-return path produces.
+	// The `!excludedModelId` early-return is redundant because
+	// `string !== undefined` is the same answer as the early-return path
+	// produces.
 	return (
 		modelId === exclusionConfig.excludedModelId &&
 		isProviderExcluded(providerSlug, exclusionConfig)

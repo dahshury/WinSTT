@@ -22,6 +22,11 @@ interface PanelRectState {
 	warmPanel: PanelRect;
 	shouldMountBody: boolean;
 	dropdownStateClass: string;
+	/** Bumps every time the panel fully closes. The host folds this into the
+	 *  picker-body `key` so the warm-mounted (never-unmounting) body is remounted
+	 *  while hidden — clearing transient in-picker UI like the search query so the
+	 *  next open (any mode) never inherits a stale filter. See the host. */
+	openGeneration: number;
 }
 
 /**
@@ -36,10 +41,17 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 	// current chip position / clamped height).
 	const [panel, setPanelState] = useState<PanelRect | null>(null);
 	const [panelPhase, setPanelPhaseState] = useState<PanelPhase>("hidden");
+	// Bumped on every full close so the host can remount the warm picker body
+	// (while hidden) and reset its transient search query. Distinct from
+	// `openGenerationRef` below, which bumps on OPEN to guard the close timer.
+	const [bodyGeneration, setBodyGenerationState] = useState(0);
 	const panelRef = useRef<PanelRect | null>(null);
 	const panelPhaseRef = useRef<PanelPhase>("hidden");
 	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const openGenerationRef = useRef(0);
+	const [bumpBodyGeneration] = useState(
+		() => () => setBodyGenerationState((generation) => generation + 1),
+	);
 	const [setPanel] = useState(() => (next: PanelRect | null) => {
 		panelRef.current = next;
 		setPanelState(next);
@@ -78,8 +90,9 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 				clearCloseTimer();
 				setPanel(null);
 				setPanelPhase("hidden");
+				bumpBodyGeneration();
 			}),
-		[clearCloseTimer, setPanel, setPanelPhase],
+		[clearCloseTimer, setPanel, setPanelPhase, bumpBodyGeneration],
 	);
 	useEffect(() => {
 		const unsubscribe = ipcOn(IPC.MODEL_PICKER_CLOSING, () => {
@@ -97,6 +110,7 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 					}
 					setPanel(null);
 					setPanelPhase("hidden");
+					bumpBodyGeneration();
 				}, MODEL_PICKER_CLOSE_MS);
 			}
 		});
@@ -104,7 +118,7 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 			clearCloseTimer();
 			unsubscribe();
 		};
-	}, [clearCloseTimer, setPanel, setPanelPhase]);
+	}, [clearCloseTimer, setPanel, setPanelPhase, bumpBodyGeneration]);
 
 	const mode = panel?.mode ?? DEFAULT_MODEL_PICKER_MODE;
 	const { height: desiredHeight, width: desiredWidth } =
@@ -160,5 +174,6 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 		warmPanel,
 		shouldMountBody,
 		dropdownStateClass,
+		openGeneration: bodyGeneration,
 	};
 }

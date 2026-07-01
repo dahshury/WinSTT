@@ -5,7 +5,7 @@ import { DEFAULT_LOCALE } from "./config";
 //
 // Previously this module statically `import`ed all 20 `messages/*.json`
 // bundles (~1.5 MB) and exposed them as one synchronous map. Because every
-// the reference/Tauri window's entry pulls in `IntlProvider`, that static map made
+// Tauri window's entry pulls in `IntlProvider`, that static map made
 // *each* window eagerly bundle + modulepreload all 20 locales — the single
 // largest chunk in the build (~1.37 MB) — even though a window only ever shows
 // ONE locale.

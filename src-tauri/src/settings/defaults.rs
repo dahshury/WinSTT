@@ -2,8 +2,8 @@ use log::debug;
 use std::collections::HashMap;
 
 use super::types::{
-    AppSettings, LLMPrompt, LogLevel, OverlayPosition, PostProcessProvider, SecretMap, SoundTheme,
-    TypingTool, APPLE_INTELLIGENCE_DEFAULT_MODEL_ID, APPLE_INTELLIGENCE_PROVIDER_ID,
+    AppSettings, LLMPrompt, LogLevel, OverlayPosition, PostProcessProvider, SecretMap, TypingTool,
+    APPLE_INTELLIGENCE_DEFAULT_MODEL_ID, APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 
 pub(super) fn default_model() -> String {
@@ -39,10 +39,6 @@ pub(super) fn default_log_level() -> LogLevel {
     LogLevel::Info
 }
 
-pub(super) fn default_word_correction_threshold() -> f64 {
-    0.18
-}
-
 pub(super) fn default_paste_delay_ms() -> u64 {
     60
 }
@@ -51,20 +47,8 @@ pub(super) fn default_auto_submit() -> bool {
     false
 }
 
-pub(super) fn default_audio_feedback_volume() -> f32 {
-    1.0
-}
-
-pub(super) fn default_sound_theme() -> SoundTheme {
-    SoundTheme::Marimba
-}
-
 pub(super) fn default_post_process_enabled() -> bool {
     false
-}
-
-pub(super) fn default_app_language() -> String {
-    tauri_plugin_os::locale().map_or_else(|| "en".to_string(), |l| l.replace('_', "-"))
 }
 
 pub(super) fn default_show_tray_icon() -> bool {
@@ -212,8 +196,7 @@ pub(super) fn default_typing_tool() -> TypingTool {
     TypingTool::Auto
 }
 
-pub(super) fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
-    let mut changed = false;
+pub(super) fn ensure_post_process_defaults(settings: &mut AppSettings) {
     for provider in default_post_process_providers() {
         // Use match to do a single lookup - either sync existing or add new
         match settings
@@ -231,13 +214,11 @@ pub(super) fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
                         provider.supports_structured_output
                     );
                     existing.supports_structured_output = provider.supports_structured_output;
-                    changed = true;
                 }
             }
             None => {
                 // Provider doesn't exist, add it
                 settings.post_process_providers.push(provider.clone());
-                changed = true;
             }
         }
 
@@ -245,7 +226,6 @@ pub(super) fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
             settings
                 .post_process_api_keys
                 .insert(provider.id.clone(), String::new());
-            changed = true;
         }
 
         let default_model = default_model_for_provider(&provider.id);
@@ -253,17 +233,13 @@ pub(super) fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
             Some(existing) => {
                 if existing.is_empty() && !default_model.is_empty() {
                     *existing = default_model.clone();
-                    changed = true;
                 }
             }
             None => {
                 settings
                     .post_process_models
                     .insert(provider.id.clone(), default_model);
-                changed = true;
             }
         }
     }
-
-    changed
 }

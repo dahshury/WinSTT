@@ -40,14 +40,16 @@ impl EncoderDict {
             .map_or(4, |n| n.get())
             .clamp(1, 8);
         // `ort::Error` is not `Send+Sync`, so anyhow's `.context()` doesn't apply — map to strings.
-        let session = Session::builder()
-            .map_err(|e| anyhow::anyhow!("Session::builder: {e}"))?
-            .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|e| anyhow::anyhow!("opt level: {e}"))?
-            .with_intra_threads(threads)
-            .map_err(|e| anyhow::anyhow!("intra threads: {e}"))?
-            .commit_from_file(model_path)
-            .map_err(|e| anyhow::anyhow!("commit_from_file {}: {e}", model_path.display()))?;
+        // CPU default (no explicit EP registration); Level3, no DML mem-pattern disable.
+        let session = crate::winstt::stt::configure_session(
+            GraphOptimizationLevel::Level3,
+            Some(threads),
+            false,
+            None,
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .commit_from_file(model_path)
+        .map_err(|e| anyhow::anyhow!("commit_from_file {}: {e}", model_path.display()))?;
         Ok(Self {
             session,
             tokenizer,

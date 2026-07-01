@@ -20,6 +20,10 @@ pub enum Quantization {
     Q4f16,
     Bnb4,
     Uint8,
+    /// 4-bit RTN block-quantized weights (`MatMulNBits`). Used by the Qwen3-ASR ONNX export
+    /// (`*.int4.onnx` + `decoder_weights.int4.data`); the fp default of that model is 4–10 GB,
+    /// so int4 is the only practical ship target for it.
+    Int4,
 }
 
 impl Quantization {
@@ -36,6 +40,7 @@ impl Quantization {
             Quantization::Q4f16 => "q4f16",
             Quantization::Bnb4 => "bnb4",
             Quantization::Uint8 => "uint8",
+            Quantization::Int4 => "int4",
         }
     }
 
@@ -49,6 +54,7 @@ impl Quantization {
             "q4f16" => Quantization::Q4f16,
             "bnb4" => Quantization::Bnb4,
             "uint8" => Quantization::Uint8,
+            "int4" => Quantization::Int4,
             _ => return None,
         })
     }
@@ -98,6 +104,46 @@ pub fn providers_for_accelerator(primary: Accelerator) -> Vec<Accelerator> {
 // ---------------------------------------------------------------------------
 // Shared ORT session/provider helpers (used by whisper.rs, moonshine.rs, families.rs)
 // ---------------------------------------------------------------------------
+
+/// Apply the shared ORT `SessionBuilder` configuration that every engine duplicates, returning the
+/// configured (but NOT yet committed) builder so each caller keeps its own `.commit_from_*`, error
+/// mapping, and return shape. The load-bearing per-engine differences are PARAMETERS:
+///   * `opt_level`        — graph optimization level (Whisper fp16 → EXTENDED/Level2, others All/Level3).
+///   * `intra_threads`    — `Some(n)` calls `with_intra_threads(n)`; `None` leaves ORT's default
+///     (the TTS GPU-only / diarization conditional / encoder-dict paths differ).
+///   * `disable_mem_pattern` — `true` calls `with_memory_pattern(false)` (DirectML / dynamic shapes).
+///   * `providers`        — `Some(list)` registers `execution_providers(list)`; `None` skips EP
+///     registration entirely (encoder-dict CPU-default path).
+///
+/// Errors are returned as plain `String` so each caller can wrap them in its native error type
+/// (`SttError::SessionCreate`, `anyhow`, or the TTS `String`) with its existing message prefixes.
+pub(crate) fn configure_session(
+    opt_level: ort::session::builder::GraphOptimizationLevel,
+    intra_threads: Option<usize>,
+    disable_mem_pattern: bool,
+    providers: Option<&[Accelerator]>,
+) -> Result<ort::session::builder::SessionBuilder, String> {
+    let mut builder = ort::session::Session::builder()
+        .map_err(|e| format!("session builder: {e}"))?
+        .with_optimization_level(opt_level)
+        .map_err(|e| format!("opt level: {e}"))?;
+    if let Some(threads) = intra_threads {
+        builder = builder
+            .with_intra_threads(threads)
+            .map_err(|e| format!("intra threads: {e}"))?;
+    }
+    if disable_mem_pattern {
+        builder = builder
+            .with_memory_pattern(false)
+            .map_err(|e| format!("disable mem pattern: {e}"))?;
+    }
+    if let Some(list) = providers {
+        builder = builder
+            .with_execution_providers(execution_providers(list))
+            .map_err(|e| format!("register EPs: {e}"))?;
+    }
+    Ok(builder)
+}
 
 /// Best-effort logical CPU count for `with_intra_threads` / `pick_intra_op_threads`.
 /// Falls back to 4 when the platform can't report it.

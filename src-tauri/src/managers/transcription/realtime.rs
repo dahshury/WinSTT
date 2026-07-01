@@ -105,7 +105,7 @@ impl TranscriptionManager {
     ///   poison the worker; returns `None` on panic.
     ///
     /// REUSES THE MAIN ENGINE: there is deliberately no second realtime engine in this port —
-    /// do not wire one. The the reference server's separate realtime transcriber maps to this single
+    /// do not wire one. The reference server's separate realtime transcriber maps to this single
     /// in-proc engine, shared with the batch path under the same mutex.
     pub fn transcribe_realtime(&self, audio: &[f32], language: Option<&str>) -> Option<String> {
         if audio.is_empty() {
@@ -536,7 +536,7 @@ impl TranscriptionManager {
         // where `touch_activity` normally runs).
         self.touch_activity();
         // Same cleanup the WinSTT `decode` path applies, so reuse == a fresh decode would produce.
-        let ws = crate::winstt::commands::settings::read_settings_raw(&self.app_handle);
+        let ws = crate::winstt::settings_store::read_settings_raw(&self.app_handle);
         Some(crate::winstt::stt::backend::winstt_postprocess(
             &raw_text, &ws,
         ))

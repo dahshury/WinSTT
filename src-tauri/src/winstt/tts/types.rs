@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::kokoro::{KokoroConfig, KokoroDevice};
+use super::kokoro::KokoroConfig;
 
 // ---------------------------------------------------------------------------
 // Public DTOs
@@ -117,16 +117,6 @@ pub enum TtsDevice {
     Cpu,
 }
 
-impl TtsDevice {
-    fn to_kokoro(self) -> KokoroDevice {
-        match self {
-            TtsDevice::Auto => KokoroDevice::Auto,
-            TtsDevice::DirectMl => KokoroDevice::DirectMl,
-            TtsDevice::Cpu => KokoroDevice::Cpu,
-        }
-    }
-}
-
 impl Default for LocalTtsConfig {
     fn default() -> Self {
         Self {
@@ -153,7 +143,7 @@ impl LocalTtsConfig {
             cache_dir: self.cache_dir.clone(),
             model_filename: self.model_filename.clone(),
             voices_dir: self.voices_dir.clone(),
-            device: self.device.to_kokoro(),
+            device: self.device,
         }
     }
 }
@@ -167,9 +157,20 @@ pub const CLOUD_MAX_SPEED: f32 = 1.2;
 /// Defends against a known Kokoro phoneme-overflow on huge inputs.
 pub const MAX_SYNTHESIS_CHARS: usize = 8000;
 
-/// Clamp a local-Kokoro speed request into the supported range.
+/// Clamp a local speed request into the generic local range (0.5..2.0).
 pub fn clamp_speed(speed: f32) -> f32 {
     speed.clamp(MIN_SPEED, MAX_SPEED)
+}
+
+/// Clamp a speed request into a specific engine's `(min, max)` range, guarding
+/// against non-finite input. Used by the manager to clamp to the ACTIVE engine's
+/// declared `speed_range()` rather than the one-size local clamp.
+pub fn clamp_speed_to_range(speed: f32, (min, max): (f32, f32)) -> f32 {
+    if speed.is_finite() {
+        speed.clamp(min, max)
+    } else {
+        1.0
+    }
 }
 
 /// Clamp a cloud (ElevenLabs) speed request into the supported range.
@@ -254,6 +255,15 @@ pub trait TtsEngine: Send + Sync {
         };
         sink.push(chunk);
         Ok(())
+    }
+
+    /// The `(min, max)` speed-multiplier range this engine actually supports.
+    /// The manager clamps a requested speed to THIS range (not a one-size local
+    /// clamp) before calling the engine — so e.g. Supertonic's wider 0.4 floor is
+    /// reachable instead of being pre-clipped at the generic 0.5. Defaults to the
+    /// common local range (0.5..2.0); Supertonic overrides it.
+    fn speed_range(&self) -> (f32, f32) {
+        (MIN_SPEED, MAX_SPEED)
     }
 
     /// Every voice this engine can render (local → static catalog; cloud → empty).

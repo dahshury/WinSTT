@@ -193,6 +193,40 @@ export class TtsPlaybackQueue {
 	/** User-paused via `pause()` → `ctx.suspend()`. Gates the auto-resume in
 	 *  `ensureCtx` so a chunk arriving mid-pause can't silently un-pause. */
 	private paused = false;
+	/** Volume gain node between the source fan-in and the analyser
+	 *  (`source → gain → analyser → destination`). Rebuilt with the context (see
+	 *  `createOrReuseCtx`); `volume`/`muted` are re-applied by `ensureGraph`, so a
+	 *  sink / context swap keeps the user's level. */
+	private gain: GainNode | null = null;
+	/** Persisted user volume in `[0, 1]` (pre-mute). Survives a context rebuild. */
+	private volume = 1;
+	/** Persisted mute latch; the gain target is `muted ? 0 : volume`. */
+	private muted = false;
+	/** Ordered playback timeline — every decoded buffer in the order it was
+	 *  scheduled, with its cumulative start offset (seconds) within the read. NOT
+	 *  pruned on `onended`, so {@link seek} can re-address already-played audio.
+	 *  Reset per request (`claimRequestId`) and on {@link stop}. */
+	private timeline: Array<{ buffer: AudioBuffer; offset: number }> = [];
+	/** Total buffered media seconds = sum of `timeline` durations. Grows while
+	 *  streaming; final once `markComplete` arrives. Also the furthest seekable
+	 *  point (we only retain fully-decoded buffers). */
+	private bufferedDuration = 0;
+	/** True once `markComplete` fired for the active request (duration is final). */
+	private complete = false;
+	/** Anchor mapping the ctx clock → media position: at clock `anchorCtx` the
+	 *  played position was `anchorMedia`. {@link getCurrentTime} extrapolates from
+	 *  here; {@link pause}/{@link resume}/{@link seek} re-anchor. */
+	private anchorCtx = 0;
+	private anchorMedia = 0;
+	/** Set on {@link resume}; the next {@link getCurrentTime} re-anchors `anchorCtx`
+	 *  to the live clock once the context is actually running again (resume is
+	 *  async), so the position is exact whether or not the clock advanced while
+	 *  suspended. */
+	private reanchorOnResume = false;
+	/** Monotonic schedule generation, bumped by {@link seek} and {@link stop}. A
+	 *  source's `onended` only counts toward finishing if its captured generation
+	 *  still matches — so the sources we stop mid-seek can't fire `onEnd`. */
+	private generation = 0;
 
 	/**
 	 * Switch the user-selected output sink. Applied to a new AudioContext
@@ -269,6 +303,10 @@ export class TtsPlaybackQueue {
 		this.paused = true;
 		const ctx = this.ctx;
 		if (ctx != null && ctx.state === "running") {
+			// Freeze the played position before the clock stops so the time label
+			// holds steady through the pause (and resume continues from here).
+			this.anchorMedia = this.getCurrentTime();
+			this.anchorCtx = ctx.currentTime;
 			ctx.suspend().catch(() => {
 				/* ignored — best effort */
 			});
@@ -280,7 +318,161 @@ export class TtsPlaybackQueue {
 		this.paused = false;
 		const ctx = this.ctx;
 		if (ctx != null && ctx.state === "suspended") {
+			// Resume is async; re-anchor to the live clock on the next read so the
+			// position continues smoothly from where it paused.
+			this.reanchorOnResume = true;
 			ctx.resume().catch(() => {
+				/* ignored — best effort */
+			});
+		}
+	}
+
+	/**
+	 * Current played position in seconds, clamped to the buffered range. While
+	 * the context is not running (paused) the clock is frozen, so this holds at
+	 * `anchorMedia` regardless of whether the runtime advances `currentTime`
+	 * during suspension. After a {@link resume} the first call re-anchors to the
+	 * live clock (resume is async).
+	 */
+	getCurrentTime(): number {
+		const ctx = this.ctx;
+		if (ctx == null || this.timeline.length === 0) {
+			return this.anchorMedia;
+		}
+		if (ctx.state !== "running") {
+			return Math.min(this.anchorMedia, this.bufferedDuration);
+		}
+		if (this.reanchorOnResume) {
+			this.anchorCtx = ctx.currentTime;
+			this.reanchorOnResume = false;
+		}
+		const elapsed = ctx.currentTime - this.anchorCtx;
+		const pos = this.anchorMedia + Math.max(0, elapsed);
+		return Math.min(pos, this.bufferedDuration);
+	}
+
+	/** Total buffered media seconds — grows while streaming, final after
+	 *  `markComplete`. */
+	getDuration(): number {
+		return this.bufferedDuration;
+	}
+
+	/** Furthest seekable point in seconds (== {@link getDuration}; we only retain
+	 *  fully-decoded buffers). */
+	getBufferedEnd(): number {
+		return this.bufferedDuration;
+	}
+
+	/** True once the server signalled `tts_complete` for the active read. */
+	get isComplete(): boolean {
+		return this.complete;
+	}
+
+	get currentVolume(): number {
+		return this.volume;
+	}
+
+	get isMuted(): boolean {
+		return this.muted;
+	}
+
+	/**
+	 * Set the playback volume in `[0, 1]` (pre-mute). Applied to the live gain via
+	 * a short `setTargetAtTime` ramp (click-free) and persisted so it survives a
+	 * context rebuild. While muted the audible level stays 0, but the stored value
+	 * still updates so unmuting restores it.
+	 */
+	setVolume(volume: number): void {
+		this.volume = Math.max(0, Math.min(1, volume));
+		if (this.gain != null && !this.muted) {
+			this.rampGain(this.volume);
+		}
+	}
+
+	/** Mute / unmute. The gain ramps to `0` (muted) or the stored `volume`. */
+	setMuted(muted: boolean): void {
+		this.muted = muted;
+		if (this.gain != null) {
+			this.rampGain(muted ? 0 : this.volume);
+		}
+	}
+
+	/** Ramp the gain to `target` with a short time constant to avoid a click. */
+	private rampGain(target: number): void {
+		const when = this.ctx ? this.ctx.currentTime : 0;
+		this.gain?.gain.setTargetAtTime(target, when, 0.015);
+	}
+
+	/**
+	 * Jump playback to `targetSeconds`, clamped to the buffered range (and kept
+	 * just shy of the end while still streaming, so a zero-length tail can't fire
+	 * a premature finish). Stops the live sources without firing `onEnd` (the
+	 * generation bump neutralises their `onended`), then reschedules every buffer
+	 * from the seek point forward gap-free via `source.start(when, offset)`.
+	 * Honors the current pause state: a paused read is re-suspended so it stays
+	 * parked at the new position until {@link resume}.
+	 */
+	seek(targetSeconds: number): void {
+		const ctx = this.ctx;
+		if (ctx == null || this.timeline.length === 0) {
+			return;
+		}
+		const cap = this.complete
+			? this.bufferedDuration
+			: Math.max(0, this.bufferedDuration - 0.05);
+		const target = Math.max(0, Math.min(targetSeconds, cap));
+
+		// Supersede the live sources: bump first so their `onended` is a no-op,
+		// then stop them.
+		this.generation += 1;
+		for (const source of this.scheduled) {
+			stopAndDisconnect(source);
+		}
+		this.scheduled = [];
+
+		// Locate the buffer covering `target` (the last buffer when target == end).
+		let idx = this.timeline.findIndex(
+			(t) => target < t.offset + t.buffer.duration,
+		);
+		if (idx === -1) {
+			idx = this.timeline.length - 1;
+		}
+		const head = this.timeline[idx];
+		const intra = head ? Math.max(0, target - head.offset) : 0;
+
+		// Reschedule from `idx` forward, gap-free, starting "now".
+		this.playhead = ctx.currentTime;
+		const gen = this.generation;
+		for (let i = idx; i < this.timeline.length; i++) {
+			const entry = this.timeline[i];
+			if (!entry) {
+				continue;
+			}
+			const offset = i === idx ? intra : 0;
+			const startAt = Math.max(this.playhead, ctx.currentTime);
+			const source = ctx.createBufferSource();
+			source.buffer = entry.buffer;
+			source.connect(this.ensureGraph(ctx));
+			source.start(startAt, offset);
+			this.playhead = startAt + (entry.buffer.duration - offset);
+			this.scheduled.push(source);
+			source.onended = () => {
+				if (gen !== this.generation) {
+					return;
+				}
+				this.scheduled = this.scheduled.filter((s) => s !== source);
+				this.maybeFinish();
+			};
+		}
+
+		// At clock `ctx.currentTime`, the played position is now `target`.
+		this.anchorCtx = ctx.currentTime;
+		this.anchorMedia = target;
+		this.reanchorOnResume = false;
+
+		// Keep a paused read parked at the new spot.
+		if (this.paused && ctx.state === "running") {
+			ctx.suspend().catch(() => {
 				/* ignored — best effort */
 			});
 		}
@@ -304,19 +496,24 @@ export class TtsPlaybackQueue {
 				? { sinkId: this.outputDeviceId }
 				: undefined;
 			this.ctx = opts ? new AudioContext(opts) : new AudioContext();
-			// The analyser belongs to the *old* context — drop it so `ensureAnalyser`
-			// rebuilds one wired into the new context's destination.
+			// The analyser + gain belong to the *old* context — drop them so
+			// `ensureGraph` rebuilds them wired into the new context's destination.
 			this.analyser = null;
+			this.gain = null;
 		}
 		return this.ctx;
 	}
 
 	/**
-	 * Lazily build the analyser node for ``ctx`` and wire it to the destination.
-	 * Every scheduled source connects through this node so {@link getLevel} reads
-	 * a live RMS off the mixed playback signal. Rebuilt whenever the context is.
+	 * Lazily build the playback graph for ``ctx`` — a gain node feeding an
+	 * analyser feeding the destination (``source → gain → analyser →
+	 * destination``) — and return the gain node every source connects through.
+	 * Gain sits BEFORE the analyser so {@link getLevel} (and the overlay
+	 * visualiser) reflects the audible, post-volume signal: muting calms the bars.
+	 * `volume`/`muted` are re-applied here so they survive a context rebuild.
+	 * Rebuilt whenever the context is.
 	 */
-	private ensureAnalyser(ctx: AudioContext): AnalyserNode {
+	private ensureGraph(ctx: AudioContext): GainNode {
 		if (this.analyser == null) {
 			const analyser = ctx.createAnalyser();
 			// 1024 samples ≈ 21 ms @ 48 kHz — snappy enough for a 60 fps meter
@@ -326,7 +523,13 @@ export class TtsPlaybackQueue {
 			this.analyser = analyser;
 			this.levelData = new Uint8Array(analyser.fftSize);
 		}
-		return this.analyser;
+		if (this.gain == null) {
+			const gain = ctx.createGain();
+			gain.gain.value = this.muted ? 0 : this.volume;
+			gain.connect(this.analyser);
+			this.gain = gain;
+		}
+		return this.gain;
 	}
 
 	/**
@@ -337,9 +540,23 @@ export class TtsPlaybackQueue {
 	private claimRequestId(chunk: ChunkInput): boolean {
 		if (this.activeRequestId == null) {
 			this.activeRequestId = chunk.requestId;
+			// Fresh read — start the position timeline at 0 (a prior read may have
+			// ended naturally without a `stop()`, leaving its timeline behind).
+			this.resetTimelineState();
 			return true;
 		}
 		return this.activeRequestId === chunk.requestId;
+	}
+
+	/** Reset the per-read position timeline so a freshly-claimed request starts
+	 *  at 0. Does not touch `scheduled`/`paused` (caller-owned). */
+	private resetTimelineState(): void {
+		this.timeline = [];
+		this.bufferedDuration = 0;
+		this.complete = false;
+		this.anchorCtx = 0;
+		this.anchorMedia = 0;
+		this.reanchorOnResume = false;
 	}
 
 	/**
@@ -352,8 +569,14 @@ export class TtsPlaybackQueue {
 	): AudioBufferSourceNode {
 		const source = ctx.createBufferSource();
 		source.buffer = buffer;
-		source.connect(this.ensureAnalyser(ctx));
+		source.connect(this.ensureGraph(ctx));
 		const startAt = Math.max(this.playhead, ctx.currentTime);
+		// First audible buffer of the read: anchor the clock→media map at its
+		// real start time (position 0 plays at clock `startAt`).
+		if (this.timeline.length === 1) {
+			this.anchorCtx = startAt;
+			this.anchorMedia = 0;
+		}
 		source.start(startAt);
 		this.playhead = startAt + buffer.duration;
 		this.scheduled.push(source);
@@ -400,9 +623,19 @@ export class TtsPlaybackQueue {
 	 * end → maybeFinish. Shared by the raw-f32le and async-decode paths.
 	 */
 	private scheduleDecodedBuffer(ctx: AudioContext, buffer: AudioBuffer): void {
+		// Record on the timeline (with its cumulative offset) BEFORE scheduling so
+		// `seek` can re-address it and `getDuration` grows as audio arrives.
+		this.timeline.push({ buffer, offset: this.bufferedDuration });
+		this.bufferedDuration += buffer.duration;
 		const source = this.scheduleSource(ctx, buffer);
 		this.maybeFireStart();
+		const gen = this.generation;
 		source.onended = () => {
+			// A seek (or stop) since this source was scheduled supersedes it — its
+			// end is meaningless to the current run.
+			if (gen !== this.generation) {
+				return;
+			}
 			// Remove from the live list; if this was the last scheduled source for
 			// the active request (and no decode is pending), fire the end callbacks.
 			this.scheduled = this.scheduled.filter((s) => s !== source);
@@ -450,11 +683,16 @@ export class TtsPlaybackQueue {
 		if (this.activeRequestId !== requestId) {
 			return;
 		}
+		// Generation is now final — let the UI render a fixed (non-growing) duration.
+		this.complete = true;
 		this.maybeFinish();
 	}
 
 	/** Abort playback immediately. Any in-flight scheduled sources are stopped. */
 	stop(): void {
+		// Supersede live sources so their `onended` (fired by `source.stop()`)
+		// can't reach `maybeFinish` after we've already ended here.
+		this.generation += 1;
 		for (const source of this.scheduled) {
 			stopAndDisconnect(source);
 		}
@@ -466,6 +704,7 @@ export class TtsPlaybackQueue {
 		this.startedFor = null;
 		// Clear the pause latch so the next utterance isn't blocked from resuming.
 		this.paused = false;
+		this.resetTimelineState();
 		this.resetPlayhead();
 		this.fireEnd();
 	}
@@ -532,6 +771,7 @@ export class TtsPlaybackQueue {
 		}
 		this.ctx = null;
 		this.analyser = null;
+		this.gain = null;
 		this.levelData = null;
 		this.endCallbacks = [];
 		this.startCallbacks = [];

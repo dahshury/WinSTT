@@ -86,7 +86,7 @@ pub(super) fn capture_selection(context: &ContextManager, app: &AppHandle) -> Tr
     // 2. Clipboard-sandwich fallback (mirrors captureViaClipboard): save the
     //    current clipboard, simulate Ctrl+C, poll for the clipboard to change,
     //    then restore the original clipboard. UIA fails silently in Chromium-
-    //    based renderers (Slack, Discord, VS Code) and most the reference apps unless
+    //    based renderers (Slack, Discord, VS Code) and most modern apps unless
     //    accessibility is force-enabled — this trick covers those.
     capture_via_clipboard(app)
 }

@@ -1,5 +1,6 @@
 import { NumberField } from "@base-ui/react/number-field";
 import {
+	surfaceBg,
 	surfaceClasses,
 	surfaceHoverBg,
 	useSurface,
@@ -24,7 +25,10 @@ export function NumberStepper({
 	smallStep,
 	disabled,
 }: NumberStepperProps) {
-	const substrate = useSurface();
+	// Self-elevates +1 above the host panel; callers render a bare <NumberStepper/>.
+	// The group paints the surface (shown through the transparent center input) and
+	// the +/- buttons sit one step above.
+	const substrate = Math.min(useSurface() + 1, 8);
 	const buttonLevel = Math.min(substrate + 1, 8);
 	const hoverLevel = Math.min(buttonLevel + 1, 8);
 	return (
@@ -41,7 +45,9 @@ export function NumberStepper({
 			step={step}
 			value={value}
 		>
-			<NumberField.Group className="inline-flex rounded-lg focus-within:ring-2 focus-within:ring-accent focus-within:ring-offset-1 focus-within:ring-offset-surface-1">
+			<NumberField.Group
+				className={`inline-flex rounded-lg ${surfaceBg(substrate)} shadow-elevated ring-1 ring-divider focus-within:ring-2 focus-within:ring-accent focus-within:ring-offset-1 focus-within:ring-offset-surface-1`}
+			>
 				<NumberField.Decrement
 					className={`flex size-8 cursor-pointer select-none items-center justify-center rounded-r-none rounded-l-lg ${surfaceClasses(buttonLevel)} p-0 text-foreground-secondary outline-none ${surfaceHoverBg(hoverLevel)}`}
 				>

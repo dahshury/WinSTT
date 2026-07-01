@@ -7,6 +7,7 @@ import {
 } from "@/entities/llm-catalog";
 import { useModelStateStore } from "@/entities/model-catalog";
 import type { OllamaPullProgress } from "@/shared/api/models";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import type { OllamaModelSelectorProps } from "@/widgets/model-picker";
 
 /**
@@ -80,28 +81,28 @@ export function useOnboardingOllamaPicker(): OnboardingOllamaPickerProps {
 			isLoading: library.isLoading,
 			tagsByModel: library.tagsByModel,
 			loadCatalog: () => {
-				library.loadCatalog().catch(() => undefined);
+				fireAndForget(library.loadCatalog(), "onboarding.loadCatalog");
 			},
 			fetchTags: (m) => {
-				library.fetchTags(m).catch(() => undefined);
+				fireAndForget(library.fetchTags(m), "onboarding.fetchTags");
 			},
 		},
 		models,
 		onDelete: (name) => {
-			deleteModel(name).catch(() => undefined);
+			fireAndForget(deleteModel(name), "onboarding.deleteModel");
 		},
 		onDiscardPull: discardPausedPull,
 		onOpen: () => {
-			scanModels().catch(() => undefined);
+			fireAndForget(scanModels(), "onboarding.scanModels");
 		},
 		onPull: (name) => {
-			pullModel(name).catch(() => undefined);
+			fireAndForget(pullModel(name), "onboarding.pullModel");
 		},
 		onResumePull: (name) => {
-			resumePull(name).catch(() => undefined);
+			fireAndForget(resumePull(name), "onboarding.resumePull");
 		},
 		onStopPull: (name) => {
-			cancelPull(name).catch(() => undefined);
+			fireAndForget(cancelPull(name), "onboarding.cancelPull");
 		},
 		pausedPulls,
 		pulls,

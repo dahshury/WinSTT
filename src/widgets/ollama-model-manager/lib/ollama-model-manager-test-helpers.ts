@@ -1,6 +1,5 @@
-import type { useTranslations } from "use-intl";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 
-type TranslateFn = ReturnType<typeof useTranslations>;
 type Tab = "installed" | "recommended";
 
 export function buildTabOptions(t: TranslateFn) {

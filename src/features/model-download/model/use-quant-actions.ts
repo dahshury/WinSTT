@@ -1,6 +1,9 @@
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import { useModelStateStore } from "@/entities/model-catalog";
-import { resolveQuantCache } from "@/widgets/model-picker/stt/lib/cache-helpers";
+import {
+	resolveQuantCache,
+	useModelStateStore,
+} from "@/entities/model-catalog";
+import type { QuantDownloadAction } from "@/shared/lib/download-progress-core";
 import {
 	quantDownloadSeedFromCache,
 	type QuantDownloadState,
@@ -23,7 +26,7 @@ interface QuantActions {
 	 *  automatically (no manual refetch needed). */
 	handleDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
 	handleDownloadAction: (
-		action: "start" | "pause" | "resume" | "cancel",
+		action: QuantDownloadAction,
 		modelId: string,
 		quantization: OnnxQuantization,
 		owner?: SttDownloadOwner,
@@ -77,7 +80,7 @@ export function useQuantActions(): QuantActions {
 		quantDownloads[`${modelId}@${quantization}`];
 
 	const handleDownloadAction = (
-		action: "start" | "pause" | "resume" | "cancel",
+		action: QuantDownloadAction,
 		modelId: string,
 		quantization: OnnxQuantization,
 		owner?: SttDownloadOwner,

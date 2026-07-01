@@ -4,7 +4,6 @@ import {
 	SettingField,
 	SettingSection,
 } from "@/entities/setting";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Slider } from "@/shared/ui/slider";
 import type {
@@ -42,20 +41,18 @@ export function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 					}
 					tooltip={ta("sileroSensitivityTooltip")}
 				>
-					<ElevatedSurface inline>
-						<Slider
-							aria-label={ta("sileroSensitivity")}
-							formatValue={(v) => v.toFixed(2)}
-							max={1}
-							min={0}
-							onChange={(v) => updateAudio({ sileroSensitivity: v })}
-							step={0.05}
-							value={
-								audio?.sileroSensitivity ??
-								DEFAULT_SETTINGS.audio.sileroSensitivity
-							}
-						/>
-					</ElevatedSurface>
+					<Slider
+						aria-label={ta("sileroSensitivity")}
+						formatValue={(v) => v.toFixed(2)}
+						max={1}
+						min={0}
+						onChange={(v) => updateAudio({ sileroSensitivity: v })}
+						step={0.05}
+						value={
+							audio?.sileroSensitivity ??
+							DEFAULT_SETTINGS.audio.sileroSensitivity
+						}
+					/>
 				</SettingField>
 				<SettingField
 					isDefault={
@@ -71,19 +68,17 @@ export function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 					}
 					tooltip={ta("webrtcSensitivityTooltip")}
 				>
-					<ElevatedSurface inline>
-						<Slider
-							aria-label={ta("webrtcSensitivity")}
-							max={3}
-							min={0}
-							onChange={(v) => updateAudio({ webrtcSensitivity: v })}
-							step={1}
-							value={
-								audio?.webrtcSensitivity ??
-								DEFAULT_SETTINGS.audio.webrtcSensitivity
-							}
-						/>
-					</ElevatedSurface>
+					<Slider
+						aria-label={ta("webrtcSensitivity")}
+						max={3}
+						min={0}
+						onChange={(v) => updateAudio({ webrtcSensitivity: v })}
+						step={1}
+						value={
+							audio?.webrtcSensitivity ??
+							DEFAULT_SETTINGS.audio.webrtcSensitivity
+						}
+					/>
 				</SettingField>
 				<SettingField
 					isDefault={
@@ -101,17 +96,15 @@ export function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 					}
 					tooltip={ta("postSpeechSilenceTooltip")}
 				>
-					<ElevatedSurface className="w-fit" inline>
-						<NumberStepper
-							min={0.1}
-							onChange={(v) => updateAudio({ postSpeechSilenceDuration: v })}
-							step={0.1}
-							value={
-								audio?.postSpeechSilenceDuration ??
-								DEFAULT_SETTINGS.audio.postSpeechSilenceDuration
-							}
-						/>
-					</ElevatedSurface>
+					<NumberStepper
+						min={0.1}
+						onChange={(v) => updateAudio({ postSpeechSilenceDuration: v })}
+						step={0.1}
+						value={
+							audio?.postSpeechSilenceDuration ??
+							DEFAULT_SETTINGS.audio.postSpeechSilenceDuration
+						}
+					/>
 				</SettingField>
 			</div>
 		</SettingSection>

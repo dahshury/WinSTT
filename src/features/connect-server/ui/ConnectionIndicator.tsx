@@ -4,11 +4,17 @@ import {
 	WifiDisconnected01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type ReactNode, useEffect } from "react";
+import {
+	type PointerEvent as ReactPointerEvent,
+	type ReactNode,
+	useEffect,
+	useRef,
+} from "react";
 import { useTranslations } from "use-intl";
 import { useConnectionStore } from "@/entities/connection";
 import { useSystemResourcesStore } from "@/entities/system-resources";
-import type { LiveResourcesEntry } from "@/shared/api/ipc-client";
+import { footprintWindowOpen, windowCloseNamed } from "@/shared/api/ipc-client";
+import type { StatusBarTranslateFn } from "@/shared/i18n/translation-types";
 import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -17,85 +23,20 @@ import {
 	resolveConnectionChip,
 	resolveGpuChipConfig,
 } from "../lib/connection-indicator-helpers";
-
-type Translator = ReturnType<typeof useTranslations<"statusBar">>;
+import {
+	type RuntimeResourceFill,
+	buildRuntimeFill,
+} from "../lib/runtime-resource-fill";
 
 const RESOURCE_POLL_MS = 3000;
-
-interface RuntimeResourceFill {
-	label: "RAM" | "VRAM";
-	percent: number;
-	totalBytes: number;
-	usedBytes: number;
-}
-
-function clampPercent(value: number): number {
-	if (!Number.isFinite(value)) {
-		return 0;
-	}
-	return Math.max(0, Math.min(100, value));
-}
-
-function percentUsed(usedBytes: number, totalBytes: number): number {
-	return totalBytes > 0 ? clampPercent((usedBytes / totalBytes) * 100) : 0;
-}
+// Hover-card timings: a short open delay so a passing cursor doesn't flash the
+// panel, and a brief close grace so tiny gaps (sub-pixel jitter) don't dismiss it.
+const FOOTPRINT_OPEN_DELAY_MS = 300;
+const FOOTPRINT_CLOSE_GRACE_MS = 120;
+const FOOTPRINT_WINDOW = "model-footprint";
 
 function formatResourceBytes(bytes: number): string {
 	return formatBytes(bytes, { gbDecimals: 1, mbDecimals: 0 }) ?? "0 MB";
-}
-
-function pickDisplayGpu(
-	snapshot: LiveResourcesEntry | null,
-): LiveResourcesEntry["gpus"][number] | null {
-	const first = snapshot?.gpus[0];
-	if (!first) {
-		return null;
-	}
-	return snapshot.gpus.reduce(
-		(best, gpu) => (gpu.total_vram_bytes > best.total_vram_bytes ? gpu : best),
-		first,
-	);
-}
-
-function buildGpuFill(
-	snapshot: LiveResourcesEntry | null,
-): RuntimeResourceFill {
-	const gpu = pickDisplayGpu(snapshot);
-	const totalBytes = gpu?.total_vram_bytes ?? 0;
-	const freeBytes = gpu?.free_vram_bytes ?? 0;
-	const usedBytes =
-		gpu === null
-			? 0
-			: gpu.used_vram_bytes > 0
-				? gpu.used_vram_bytes
-				: Math.max(0, totalBytes - freeBytes);
-	return {
-		label: "VRAM",
-		percent: percentUsed(usedBytes, totalBytes),
-		totalBytes,
-		usedBytes,
-	};
-}
-
-function buildRamFill(
-	snapshot: LiveResourcesEntry | null,
-): RuntimeResourceFill {
-	const totalBytes = snapshot?.ram_total_bytes ?? 0;
-	const availableBytes = snapshot?.ram_available_bytes ?? 0;
-	const usedBytes = Math.max(0, totalBytes - availableBytes);
-	return {
-		label: "RAM",
-		percent: percentUsed(usedBytes, totalBytes),
-		totalBytes,
-		usedBytes,
-	};
-}
-
-function buildRuntimeFill(
-	snapshot: LiveResourcesEntry | null,
-	isGpu: boolean,
-): RuntimeResourceFill {
-	return isGpu ? buildGpuFill(snapshot) : buildRamFill(snapshot);
 }
 
 function usageLabel(resource: RuntimeResourceFill): string {
@@ -114,7 +55,7 @@ function fillClass(isGpu: boolean, totalBytes: number): string {
 		: "bg-gradient-to-r from-foreground/[0.07] via-foreground/[0.10] to-foreground/[0.14]";
 }
 
-function ConnectingChip({ t }: { t: Translator }): ReactNode {
+function ConnectingChip({ t }: { t: StatusBarTranslateFn }): ReactNode {
 	return (
 		<Tooltip
 			content={t("connectingTooltip")}
@@ -131,7 +72,7 @@ function ConnectingChip({ t }: { t: Translator }): ReactNode {
 	);
 }
 
-function ErrorChip({ t }: { t: Translator }): ReactNode {
+function ErrorChip({ t }: { t: StatusBarTranslateFn }): ReactNode {
 	return (
 		<Tooltip
 			content={t("errorTooltip")}
@@ -146,7 +87,7 @@ function ErrorChip({ t }: { t: Translator }): ReactNode {
 	);
 }
 
-function OfflineChip({ t }: { t: Translator }): ReactNode {
+function OfflineChip({ t }: { t: StatusBarTranslateFn }): ReactNode {
 	return (
 		<Tooltip
 			content={t("offlineTooltip")}
@@ -166,61 +107,116 @@ function OfflineChip({ t }: { t: Translator }): ReactNode {
 }
 
 interface GpuChipProps {
-	gpuName: string;
 	isGpu: boolean;
 	resource: RuntimeResourceFill;
-	t: Translator;
 }
 
-function GpuChip({ isGpu, gpuName, resource, t }: GpuChipProps): ReactNode {
+/**
+ * The footer GPU/CPU chip. Hovering it opens the detached, non-focusable
+ * model-footprint panel anchored above it (the breakdown is taller than the
+ * 420×150 main window can show); leaving the chip closes it. The chip itself
+ * keeps its live VRAM/RAM fill bar.
+ */
+function GpuChip({ isGpu, resource }: GpuChipProps): ReactNode {
 	const { icon, label, colorClass } = resolveGpuChipConfig(isGpu);
-	const tooltipContent = isGpu
-		? t("gpuTooltip", { name: gpuName })
-		: t("cpuTooltip", { name: gpuName });
 	const resourceLabel = usageLabel(resource);
+	const openTimer = useRef<number | null>(null);
+	const closeTimer = useRef<number | null>(null);
+
+	const cancelOpen = () => {
+		if (openTimer.current !== null) {
+			window.clearTimeout(openTimer.current);
+			openTimer.current = null;
+		}
+	};
+	const cancelClose = () => {
+		if (closeTimer.current !== null) {
+			window.clearTimeout(closeTimer.current);
+			closeTimer.current = null;
+		}
+	};
+
+	const handleEnter = (e: ReactPointerEvent<HTMLOutputElement>) => {
+		const r = e.currentTarget.getBoundingClientRect();
+		cancelClose();
+		if (openTimer.current !== null) {
+			return;
+		}
+		openTimer.current = window.setTimeout(() => {
+			openTimer.current = null;
+			footprintWindowOpen({
+				x: r.x,
+				y: r.y,
+				width: r.width,
+				height: r.height,
+			});
+		}, FOOTPRINT_OPEN_DELAY_MS);
+	};
+
+	const handleLeave = () => {
+		cancelOpen();
+		if (closeTimer.current !== null) {
+			return;
+		}
+		closeTimer.current = window.setTimeout(() => {
+			closeTimer.current = null;
+			windowCloseNamed(FOOTPRINT_WINDOW);
+		}, FOOTPRINT_CLOSE_GRACE_MS);
+	};
+
+	// On unmount (chip leaves the GPU state), drop any pending timer and make
+	// sure the panel doesn't linger.
+	useEffect(
+		() => () => {
+			cancelOpen();
+			cancelClose();
+			windowCloseNamed(FOOTPRINT_WINDOW);
+		},
+		[],
+	);
 
 	return (
-		<Tooltip content={tooltipContent} delay={FOOTER_TOOLTIP_DELAY} side="top">
-			<output
-				aria-label={`${label}, ${resourceLabel}`}
-				className="relative isolate flex cursor-help items-center gap-1 overflow-hidden rounded-xs px-1.5 py-[1px] shadow-[inset_0_0_0_1px_var(--color-divider)]"
+		<output
+			aria-label={`${label}, ${resourceLabel}`}
+			className="relative isolate flex cursor-help items-center gap-1 overflow-hidden rounded-xs px-1.5 py-[1px] shadow-[inset_0_0_0_1px_var(--color-divider)]"
+			data-slot="gpu-footprint-trigger"
+			onPointerEnter={handleEnter}
+			onPointerLeave={handleLeave}
+		>
+			<span
+				aria-hidden="true"
+				className="absolute inset-0 bg-foreground/[0.025]"
+			/>
+			<span
+				aria-hidden="true"
+				className={cn(
+					"absolute inset-y-0 start-0 transition-[width] duration-500 ease-out",
+					fillClass(isGpu, resource.totalBytes),
+				)}
+				data-slot="runtime-resource-fill"
+				style={{ width: `${resource.percent}%` }}
+			/>
+			<span
+				aria-hidden="true"
+				className="absolute inset-0 bg-gradient-to-b from-overlay-foreground/[0.055] to-transparent"
+			/>
+			<HugeiconsIcon
+				className={cn("relative z-raised", colorClass)}
+				icon={icon}
+				size={12}
+			/>
+			<span
+				className={cn("relative z-raised font-medium text-2xs", colorClass)}
 			>
-				<span
-					aria-hidden="true"
-					className="absolute inset-0 bg-foreground/[0.025]"
-				/>
-				<span
-					aria-hidden="true"
-					className={cn(
-						"absolute inset-y-0 start-0 transition-[width] duration-500 ease-out",
-						fillClass(isGpu, resource.totalBytes),
-					)}
-					data-slot="runtime-resource-fill"
-					style={{ width: `${resource.percent}%` }}
-				/>
-				<span
-					aria-hidden="true"
-					className="absolute inset-0 bg-gradient-to-b from-overlay-foreground/[0.055] to-transparent"
-				/>
-				<HugeiconsIcon
-					className={cn("relative z-raised", colorClass)}
-					icon={icon}
-					size={12}
-				/>
-				<span
-					className={cn("relative z-raised font-medium text-2xs", colorClass)}
-				>
-					{label}
-				</span>
-			</output>
-		</Tooltip>
+				{label}
+			</span>
+		</output>
 	);
 }
 
 export function ConnectionIndicator() {
 	const connectionStatus = useConnectionStore((s) => s.connectionStatus);
 	const serverStatus = useConnectionStore((s) => s.serverStatus);
-	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
 	const runtimeInfo = useConnectionStore((s) => s.runtimeInfo);
 	const liveResources = useSystemResourcesStore((s) => s.liveResources);
 	const refreshResources = useSystemResourcesStore((s) => s.refresh);
@@ -252,16 +248,8 @@ export function ConnectionIndicator() {
 	if (chip === "offline") {
 		return <OfflineChip t={t} />;
 	}
-	// runtimeIsGpu is non-null here per resolveConnectionChip's contract;
-	// fall back to gpuInfo.name only for display.
 	const isGpu = runtimeIsGpu === true;
-	const displayName = isGpu ? (gpuInfo[0]?.name ?? "GPU") : "CPU";
 	return (
-		<GpuChip
-			gpuName={displayName}
-			isGpu={isGpu}
-			resource={buildRuntimeFill(liveResources, isGpu)}
-			t={t}
-		/>
+		<GpuChip isGpu={isGpu} resource={buildRuntimeFill(liveResources, isGpu)} />
 	);
 }

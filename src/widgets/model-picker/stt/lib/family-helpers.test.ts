@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelInfo } from "@/entities/model-catalog";
+import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import {
 	buildModelSearchCorpus,
 	bundleVariants,
@@ -73,7 +74,7 @@ describe("getFamilyConfig", () => {
 	});
 
 	test("includes Granite with IBM metadata and search aliases", () => {
-		const granite = model("granite-speech-4.1-2b", "granite", "2B");
+		const granite = model("granite-speech-4.1-2b-plus", "granite", "2B");
 		const cfg = getFamilyConfig("granite");
 		const corpus = buildModelSearchCorpus(granite);
 
@@ -82,6 +83,67 @@ describe("getFamilyConfig", () => {
 		expect(getAuthorLabel("granite")).toBe("IBM");
 		expect(corpus).toContain("ibm");
 		expect(corpus).toContain("granite speech");
+	});
+
+	test("a model name never matches its siblings via family aliases", () => {
+		// Regression: the NeMo family aliases used to include "parakeet" / "canary"
+		// (specific model names), so searching "parakeet" surfaced EVERY NeMo model
+		// (FastConformer, Streaming NeMo, …). Family aliases must stay family-wide.
+		const parakeet = model("Parakeet TDT v3", "nemo", "627M");
+		const fastConformer = model("FastConformer RU CTC", "nemo", "109M");
+
+		// The named model still matches its own name (via displayName).
+		expect(
+			matchesFuzzySearch(buildModelSearchCorpus(parakeet), "parakeet"),
+		).toBe(true);
+		// …but a sibling in the same family must NOT.
+		expect(
+			matchesFuzzySearch(buildModelSearchCorpus(fastConformer), "parakeet"),
+		).toBe(false);
+
+		// The genuine family/author terms still match every sibling.
+		for (const term of ["nvidia", "nemo"]) {
+			expect(matchesFuzzySearch(buildModelSearchCorpus(parakeet), term)).toBe(
+				true,
+			);
+			expect(
+				matchesFuzzySearch(buildModelSearchCorpus(fastConformer), term),
+			).toBe(true);
+		}
+
+		// Same class of bug for Whisper: "breeze" (a specific variant) must not
+		// taint a plain Whisper sibling.
+		expect(
+			matchesFuzzySearch(
+				buildModelSearchCorpus(model("tiny", "whisper")),
+				"breeze",
+			),
+		).toBe(false);
+	});
+
+	test("tolerates single-letter typos in a model search", () => {
+		// End-to-end (corpus + fuzzy): a one-letter slip should still find the
+		// model the user means, without dragging in unrelated families.
+		const whisper = model("Whisper Large v3", "whisper", "1.5B");
+		const parakeet = model("Parakeet TDT v3", "nemo", "627M");
+		const fastConformer = model("FastConformer RU CTC", "nemo", "109M");
+
+		expect(matchesFuzzySearch(buildModelSearchCorpus(whisper), "wisper")).toBe(
+			true,
+		);
+		expect(matchesFuzzySearch(buildModelSearchCorpus(whisper), "whispr")).toBe(
+			true,
+		);
+		expect(
+			matchesFuzzySearch(buildModelSearchCorpus(parakeet), "parkeet"),
+		).toBe(true);
+		// A typo for one model must not leak onto an unrelated sibling.
+		expect(
+			matchesFuzzySearch(buildModelSearchCorpus(fastConformer), "parkeet"),
+		).toBe(false);
+		expect(matchesFuzzySearch(buildModelSearchCorpus(whisper), "parkeet")).toBe(
+			false,
+		);
 	});
 
 	test("uses transparent brand logos for every STT family", () => {

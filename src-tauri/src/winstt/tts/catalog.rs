@@ -231,6 +231,18 @@ pub fn find(id: &str) -> Option<&'static TtsModelEntry> {
     TTS_CATALOG.iter().find(|m| m.id == id)
 }
 
+/// The Kitten ONNX graph filename for a catalog id. Both nano models ship the same
+/// `voices.npz` + `config.json`; only the graph file name differs per version.
+/// Shared by the TTS download manager (file fetch) and the read-aloud chunk sink
+/// (engine load) so the two never drift apart.
+pub(crate) fn kitten_model_file(model_id: &str) -> &'static str {
+    match model_id {
+        "kitten-nano-0.2" => "kitten_tts_nano_v0_2.onnx",
+        // nano-0.1 (and any future default) uses the v0.1 graph.
+        _ => "kitten_tts_nano_v0_1.onnx",
+    }
+}
+
 /// The default catalog selection (Kokoro stays the default engine).
 pub const DEFAULT_TTS_MODEL_ID: &str = "kokoro-82m";
 

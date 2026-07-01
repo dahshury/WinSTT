@@ -1,5 +1,5 @@
-import { describe, expect, mock, test } from "bun:test";
-import { renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { cleanup, renderHook } from "@testing-library/react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { useSettingsStore } from "@/entities/setting";
 import type { ModelStateEntry } from "@/shared/api/ipc-client";
@@ -110,6 +110,16 @@ const STATES: StatesById = {
 };
 
 describe("useStaleModelFallback", () => {
+	beforeEach(() => {
+		cleanup();
+		_setStaleModelFallbackPatchApplierForTests(null);
+	});
+
+	afterEach(() => {
+		cleanup();
+		_setStaleModelFallbackPatchApplierForTests(null);
+	});
+
 	test("skips entirely while the catalog is still loading (both effects)", () => {
 		const update = mock<Update>(() => undefined);
 		renderFallback({

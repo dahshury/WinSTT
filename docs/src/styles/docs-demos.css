@@ -127,7 +127,7 @@
   display: block;
   width: 100%;
   height: auto;
-  background: #0a0a0f;
+  background: var(--surface-0);
 }
 
 .hint-hover {

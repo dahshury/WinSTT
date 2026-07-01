@@ -43,6 +43,10 @@ export interface SttModelSelectorViewProps {
 	handleRailClick: (id: string) => void;
 	handleSelect: SttModelChange;
 	inline: boolean;
+	/** Controlled search query — owned by the parent so a query can span all
+	 *  authors (override the rail). */
+	inputValue: string;
+	onInputValueChange: (next: string) => void;
 	isFavorite: (modelId: string) => boolean;
 	isLoading: boolean;
 	kind: "main" | "realtime";
@@ -120,6 +124,8 @@ export function SttModelSelectorView(
 		handleRailClick,
 		handleSelect,
 		inline,
+		inputValue,
+		onInputValueChange,
 		isFavorite,
 		isLoading,
 		kind,
@@ -153,6 +159,8 @@ export function SttModelSelectorView(
 		<ModelPicker<ModelInfo, ModelInfo | null>
 			disabled={disabled || isLoading}
 			filter={filter}
+			inputValue={inputValue}
+			onInputValueChange={onInputValueChange}
 			filtersMenuSlot={
 				<SttFiltersMenu
 					availableLanguages={availableLanguages}

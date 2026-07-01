@@ -1,11 +1,10 @@
 import { Button as BaseButton } from "@base-ui/react/button";
-import type { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
 	SettingField,
 	useSettingsStore,
 } from "@/entities/setting";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import {
 	SearchableSelect,
 	type SelectOptionGroup,
@@ -32,7 +31,7 @@ export interface CloudTtsControlsProps {
 	previewVoice: (voiceId: string, lang: string) => void;
 	/** Which voice the active preview belongs to (drives the play/stop affordance). */
 	previewVoiceId: string | null;
-	t: ReturnType<typeof useTranslations>;
+	t: TranslateFn;
 }
 
 // Shared formatter for the 0..1 voice-setting sliders shown as percentages.
@@ -101,17 +100,15 @@ function CloudSliderField({
 			onReset={onReset}
 			tooltip={tooltip}
 		>
-			<ElevatedSurface inline>
-				<Slider
-					aria-label={label}
-					max={max}
-					min={min}
-					onChange={onChange}
-					step={step}
-					value={value}
-					{...(formatValue ? { formatValue } : {})}
-				/>
-			</ElevatedSurface>
+			<Slider
+				aria-label={label}
+				max={max}
+				min={min}
+				onChange={onChange}
+				step={step}
+				value={value}
+				{...(formatValue ? { formatValue } : {})}
+			/>
 		</SettingField>
 	);
 }
@@ -162,10 +159,27 @@ export function CloudTtsControls({
 				onReset={() => patchCloud({ voice: CLOUD_DEFAULTS.voice })}
 				tooltip={t("cloudVoiceCaption")}
 			>
-				<ElevatedSurface className="w-52" inline>
-					<SearchableSelect
-						groups={groups}
-						inputTrailing={
+				<SearchableSelect
+					className="w-52"
+					groups={groups}
+					inputTrailing={
+						<TtsPreviewButton
+							activeRequestId={activeRequestId}
+							compact={true}
+							isLoading={isLoading}
+							isSpeaking={isSpeaking}
+							langForVoice={() => ""}
+							previewVoice={previewVoice}
+							previewVoiceId={previewVoiceId}
+							t={t}
+							targetVoiceId={cloud.voice}
+						/>
+					}
+					onChange={(id) => patchCloud({ voice: id })}
+					placeholder={voicePlaceholder}
+					renderItemTrailing={(option) => (
+						<>
+							{option.disabled ? <PremiumVoiceBadge /> : null}
 							<TtsPreviewButton
 								activeRequestId={activeRequestId}
 								compact={true}
@@ -175,30 +189,12 @@ export function CloudTtsControls({
 								previewVoice={previewVoice}
 								previewVoiceId={previewVoiceId}
 								t={t}
-								targetVoiceId={cloud.voice}
+								targetVoiceId={option.id}
 							/>
-						}
-						onChange={(id) => patchCloud({ voice: id })}
-						placeholder={voicePlaceholder}
-						renderItemTrailing={(option) => (
-							<>
-								{option.disabled ? <PremiumVoiceBadge /> : null}
-								<TtsPreviewButton
-									activeRequestId={activeRequestId}
-									compact={true}
-									isLoading={isLoading}
-									isSpeaking={isSpeaking}
-									langForVoice={() => ""}
-									previewVoice={previewVoice}
-									previewVoiceId={previewVoiceId}
-									t={t}
-									targetVoiceId={option.id}
-								/>
-							</>
-						)}
-						value={hasVoices ? cloud.voice : ""}
-					/>
-				</ElevatedSurface>
+						</>
+					)}
+					value={hasVoices ? cloud.voice : ""}
+				/>
 			</SettingField>
 			<CloudSliderField
 				formatValue={formatPercent}

@@ -68,7 +68,7 @@ export function SwitcherOptionToggle<T extends string>({
 	const toggleEl = (
 		<Toggle
 			className={cn(
-				"relative z-raised inline-flex items-center justify-center gap-1.5 bg-transparent px-3 py-1 font-medium text-body-sm outline-none transition-colors focus-visible:outline-none",
+				"relative z-raised inline-flex h-8 items-center justify-center gap-1.5 bg-transparent px-2.5 font-medium text-[13px] outline-none transition-colors focus-visible:outline-none",
 				textClass,
 				option.disabled && "cursor-not-allowed opacity-60",
 				grid ? "w-full" : fullWidth && "flex-1",
@@ -82,12 +82,16 @@ export function SwitcherOptionToggle<T extends string>({
 			style={style}
 			value={option.value}
 		>
-			{option.icon ? (
+			{option.iconNode ? (
+				<span aria-hidden="true" className="flex shrink-0 items-center">
+					{option.iconNode}
+				</span>
+			) : option.icon ? (
 				<HugeiconsIcon
 					aria-hidden="true"
 					className="shrink-0"
 					icon={option.icon}
-					size={13}
+					size={16}
 				/>
 			) : null}
 			<span className="inline-grid whitespace-nowrap">

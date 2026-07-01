@@ -12,6 +12,7 @@ import { useSettingsStore } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import { fetchOllamaModels, retryLlmWarmup } from "@/shared/api/ipc-client";
 import { detectAppleIntelligencePlatform } from "@/shared/lib/apple-intelligence-platform";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { useWarmupStatusFeed } from "../api/use-warmup-status-feed";
 import {
 	buildLevelOpts,
@@ -129,19 +130,12 @@ export function useLlmSettingsPanel() {
 	}
 
 	const systemInfo = useModelStateStore((s) => s.systemInfo);
-	const getOllamaFit = (sizeBytes: number) => {
-		const a = assessOllamaFit(sizeBytes, systemInfo);
-		return {
-			availableBytes: a.availableBytes,
-			fits: a.fits,
-			requiredBytes: a.requiredBytes,
-			shortfall: a.shortfall,
-		};
-	};
+	const getOllamaFit = (sizeBytes: number) =>
+		assessOllamaFit(sizeBytes, systemInfo);
 
 	const ollamaPullBundle: OllamaPullBundle = {
 		cancelPull: (name: string) => {
-			ollamaCancelPull(name).catch(() => undefined);
+			fireAndForget(ollamaCancelPull(name), "llm-settings.cancelPull");
 		},
 		deleteModel: ollamaDeleteModel,
 		discardPausedPull: ollamaDiscardPausedPull,
@@ -171,10 +165,10 @@ export function useLlmSettingsPanel() {
 			isLoading: libraryState.isLoading,
 			tagsByModel: libraryState.tagsByModel,
 			loadCatalog: () => {
-				libraryState.loadCatalog().catch(() => undefined);
+				fireAndForget(libraryState.loadCatalog(), "llm-settings.loadCatalog");
 			},
 			fetchTags: (m) => {
-				libraryState.fetchTags(m).catch(() => undefined);
+				fireAndForget(libraryState.fetchTags(m), "llm-settings.fetchTags");
 			},
 		};
 
@@ -226,13 +220,14 @@ export function useLlmSettingsPanel() {
 			return;
 		}
 		let cancelled = false;
-		fetchOllamaModels()
-			.then((result) => {
+		fireAndForget(
+			fetchOllamaModels().then((result) => {
 				if (!cancelled) {
 					setOllamaReachable(result.reachable);
 				}
-			})
-			.catch(() => undefined);
+			}),
+			"llm-settings.fetchOllamaModels",
+		);
 		return () => {
 			cancelled = true;
 		};

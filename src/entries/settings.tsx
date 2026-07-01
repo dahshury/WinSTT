@@ -5,15 +5,19 @@ import { HtmlLang } from "@/app/layouts/HtmlLang";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import "@/app/styles/fonts.css";
 import "@/app/styles/globals.css";
-import { useConnectionStore } from "@/entities/connection";
+import { useGpuInfo } from "@/entities/connection";
 import { useConnectionListener } from "@/features/connect-server";
 import { useDownloadListener } from "@/features/model-download";
 import { useRealtimePreviewFallback } from "@/features/realtime-preview-fallback";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
-import { gpuGetInfo } from "@/shared/api/ipc-client";
 import { diagBeacon, installWebviewDiag } from "@/shared/lib/winstt-diag";
 import { SettingsPage } from "@/views/settings";
+// Deep import (not via the widget barrel) ON PURPOSE: the barrel re-exports the
+// heavy, lazily-loaded History panel, and pulling it into this always-mounted
+// bootstrap would defeat that code-split. This module only carries the
+// lightweight store + IPC sync, so the History panel chunk stays lazy.
+import { useTranscriptionHistorySync } from "@/widgets/transcription-history-settings/api/use-history-sync";
 
 installWebviewDiag("settings");
 
@@ -37,23 +41,16 @@ if (!container) {
 let settingsBeaconSent = false;
 
 export function SettingsBootstrap() {
-	const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
 	useSyncSettings(); // settingsLoad() -> backend hydration gate + write-back on change
 	useSyncActiveModel(); // active-model reconcile for the model tab
 	useRealtimePreviewFallback(); // cached realtime model or main-model preview fallback
 	useDownloadListener(); // per-quant download progress for the model tab
 	useConnectionListener(); // server/runtime status for the badges
-	useEffect(() => {
-		let cancelled = false;
-		gpuGetInfo().then((info) => {
-			if (!cancelled) {
-				setGpuInfo(info);
-			}
-		});
-		return () => {
-			cancelled = true;
-		};
-	}, [setGpuInfo]);
+	useGpuInfo(); // GPU details for the model tab device/fit surfaces
+	// Hydrate + live-sync transcription/transform history at the window root so
+	// the store stays current while the user is on other tabs and the History
+	// tab's stats read warm caches on every revisit (no per-visit refetch).
+	useTranscriptionHistorySync();
 	useEffect(() => {
 		if (!settingsBeaconSent) {
 			settingsBeaconSent = true;

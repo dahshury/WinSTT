@@ -116,7 +116,7 @@ export function useDownloadListener(): void {
 					// can't re-insert the entry we're about to clear (which would leave
 					// a zombie "downloading" badge that never resolves).
 					pending.delete(quantBufferKey(model, quantization));
-					setQuantDownloadComplete(model, quantization, cancelled);
+					setQuantDownloadComplete(model, quantization);
 					return;
 				}
 				setDownloadComplete(cancelled);

@@ -1,7 +1,7 @@
 import { PlayIcon, StopIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { useTranslations } from "use-intl";
 import { ttsCancel } from "@/shared/api/ipc-client";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
 import { IconSwap } from "@/shared/ui/animated-value";
 import { IconButton } from "@/shared/ui/icon-button";
 import { PulseDot } from "@/shared/ui/pulse-dot";
@@ -14,7 +14,7 @@ export interface TtsPreviewButtonProps {
 	langForVoice: (voiceId: string) => string;
 	previewVoice: (voiceId: string, lang: string) => void;
 	previewVoiceId: string | null;
-	t: ReturnType<typeof useTranslations>;
+	t: TranslateFn;
 	targetVoiceId: string;
 }
 

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { audioRefreshDevices } from "@/shared/api/ipc-client";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 
 const DEVICECHANGE_DEBOUNCE_MS = 200;
 
@@ -8,7 +9,7 @@ export function useAudioDeviceMonitor(): void {
 		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 		const refreshSafely = () => {
-			audioRefreshDevices().catch(() => undefined);
+			fireAndForget(audioRefreshDevices(), "audioDeviceMonitor.refresh");
 		};
 
 		refreshSafely();

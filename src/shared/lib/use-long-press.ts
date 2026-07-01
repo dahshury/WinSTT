@@ -3,17 +3,18 @@ import type {
 	PointerEvent as ReactPointerEvent,
 } from "react";
 import { useEffect, useRef, useState } from "react";
+import {
+	type ActivePointer,
+	capturePointer,
+	clearTimeoutRef,
+	pointerAllowed,
+	pointerMovedPastTolerance,
+	TOUCH_POINTER_TYPES,
+} from "./pointer-gesture";
 
-const DEFAULT_POINTER_TYPES = ["touch", "pen"] as const;
 const DEFAULT_DELAY_MS = 520;
 const DEFAULT_MOVE_TOLERANCE_PX = 10;
 const CONTEXT_MENU_SUPPRESS_MS = 750;
-
-interface ActivePointer {
-	id: number;
-	x: number;
-	y: number;
-}
 
 interface UseLongPressOptions {
 	delay?: number;
@@ -40,7 +41,7 @@ export function useLongPress(
 		delay = DEFAULT_DELAY_MS,
 		disabled = false,
 		moveTolerance = DEFAULT_MOVE_TOLERANCE_PX,
-		pointerTypes = DEFAULT_POINTER_TYPES,
+		pointerTypes = TOUCH_POINTER_TYPES,
 	}: UseLongPressOptions = {},
 ): UseLongPressResult {
 	const [pressing, setPressing] = useState(false);
@@ -57,10 +58,7 @@ export function useLongPress(
 	}, [onLongPress]);
 
 	const clearTimer = () => {
-		if (timerRef.current) {
-			clearTimeout(timerRef.current);
-			timerRef.current = null;
-		}
+		clearTimeoutRef(timerRef);
 	};
 
 	const cancel = () => {
@@ -71,9 +69,7 @@ export function useLongPress(
 
 	const suppressNextContextMenu = () => {
 		suppressContextMenuRef.current = true;
-		if (contextMenuTimerRef.current) {
-			clearTimeout(contextMenuTimerRef.current);
-		}
+		clearTimeoutRef(contextMenuTimerRef);
 		contextMenuTimerRef.current = setTimeout(() => {
 			suppressContextMenuRef.current = false;
 			contextMenuTimerRef.current = null;
@@ -85,33 +81,18 @@ export function useLongPress(
 		// the per-render `clearTimer` here would re-run (and tear down the pending
 		// long-press timer) on every render once the manual memoization is gone.
 		() => () => {
-			if (timerRef.current) {
-				clearTimeout(timerRef.current);
-			}
-			if (contextMenuTimerRef.current) {
-				clearTimeout(contextMenuTimerRef.current);
-			}
+			clearTimeoutRef(timerRef);
+			clearTimeoutRef(contextMenuTimerRef);
 		},
 		[],
 	);
 
-	const pointerAllowed = (event: ReactPointerEvent<HTMLElement>) => {
-		if (disabled || event.pointerType === "mouse") {
-			return false;
-		}
-		return pointerTypes.includes(event.pointerType);
-	};
-
 	const onPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
-		if (!pointerAllowed(event) || event.button !== 0) {
+		if (!pointerAllowed(event, disabled, pointerTypes) || event.button !== 0) {
 			return;
 		}
 		clearTimer();
-		activePointerRef.current = {
-			id: event.pointerId,
-			x: event.clientX,
-			y: event.clientY,
-		};
+		activePointerRef.current = capturePointer(event);
 		setPressing(true);
 		timerRef.current = setTimeout(() => {
 			timerRef.current = null;
@@ -127,9 +108,7 @@ export function useLongPress(
 		if (!activePointer || activePointer.id !== event.pointerId) {
 			return;
 		}
-		const dx = Math.abs(event.clientX - activePointer.x);
-		const dy = Math.abs(event.clientY - activePointer.y);
-		if (dx > moveTolerance || dy > moveTolerance) {
+		if (pointerMovedPastTolerance(activePointer, event, moveTolerance)) {
 			cancel();
 		}
 	};
@@ -140,10 +119,7 @@ export function useLongPress(
 		}
 		event.preventDefault();
 		suppressContextMenuRef.current = false;
-		if (contextMenuTimerRef.current) {
-			clearTimeout(contextMenuTimerRef.current);
-			contextMenuTimerRef.current = null;
-		}
+		clearTimeoutRef(contextMenuTimerRef);
 	};
 
 	const handlers = {

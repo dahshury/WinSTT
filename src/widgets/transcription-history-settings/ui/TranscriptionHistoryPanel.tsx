@@ -27,21 +27,16 @@ import {
 	clearTransformHistory,
 	deleteTransformHistoryEntry,
 } from "@/shared/api/ipc-client";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { Button } from "@/shared/ui/button";
 import type { DateRange } from "@/shared/ui/calendar-heatmap";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Select, type SelectOption } from "@/shared/ui/select";
-import { useTranscriptionHistorySync } from "../api/use-history-sync";
+import { useHistoryStats } from "../api/use-history-stats";
 import { computeStreak } from "../lib/streak";
 import { computeUsage } from "../lib/usage-breakdown";
-import { computeVoiceProfile } from "../lib/voice-profile";
-import {
-	aggregate,
-	buildHeatmap,
-	filterEntriesByDateRange,
-} from "../lib/word-stats";
+import { buildHeatmap, filterEntriesByDateRange } from "../lib/word-stats";
 import { useTranscriptionHistoryStore } from "../model/history-store";
 import { ActivityHeatmap } from "./ActivityHeatmap";
 import { ContributionGraph } from "./ContributionGraph";
@@ -54,8 +49,35 @@ import { VoiceProfile } from "./VoiceProfile";
 type RetentionValue = "never" | "cap" | "days3" | "weeks2" | "months3";
 
 const handleDeleteTransform = (id: string) => {
-	deleteTransformHistoryEntry(id).catch(() => undefined);
+	fireAndForget(deleteTransformHistoryEntry(id), "history.deleteTransform");
 };
+
+/**
+ * Placeholder grid shown while the worker computes the hero / voice-profile
+ * stats on a cold open. Mirrors the real grids' columns so the layout doesn't
+ * shift when the numbers arrive.
+ */
+function StatsSkeleton({
+	className,
+	count,
+	itemClassName,
+}: {
+	className: string;
+	count: number;
+	itemClassName: string;
+}) {
+	return (
+		<div aria-hidden className={className}>
+			{Array.from({ length: count }, (_, i) => (
+				<div
+					className={`animate-pulse rounded-lg bg-surface-elevated ${itemClassName}`}
+					// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length static placeholder
+					key={i}
+				/>
+			))}
+		</div>
+	);
+}
 
 const recentDailyWordsCache = new WeakMap<object, number[]>();
 
@@ -71,7 +93,10 @@ function recentDailyWords(entries: ReturnType<typeof buildHeatmap>): number[] {
 
 export function TranscriptionHistoryPanel() {
 	const t = useTranslations("history");
-	useTranscriptionHistorySync();
+	// History data is hydrated + kept live at the settings-window root
+	// (SettingsBootstrap → useTranscriptionHistorySync), so this panel is a pure
+	// reader: on every tab revisit the entries array keeps its identity and the
+	// stats caches stay warm.
 	const entries = useTranscriptionHistoryStore((s) => s.entries);
 	const transformEntries = useTranscriptionHistoryStore(
 		(s) => s.transformEntries,
@@ -110,8 +135,15 @@ export function TranscriptionHistoryPanel() {
 		selectedRange?.from ?? null,
 		selectedRange?.to ?? null,
 	);
-	const stats = aggregate(filteredEntries);
-	const voiceProfile = computeVoiceProfile(filteredEntries);
+	// The two diff/tokenize-heavy stats are computed off the main thread; the
+	// rest below are cheap O(n) passes kept inline. `statsLoading` is true only
+	// on the first compute (cold cache), so revisits with warm data render
+	// immediately without a skeleton flash.
+	const {
+		stats,
+		voiceProfile,
+		loading: statsLoading,
+	} = useHistoryStats(filteredEntries);
 	const usageOtherLabel = t("usageOther");
 	const usage = computeUsage(filteredEntries, usageOtherLabel);
 	// Streak and the year-long contribution graph are all-time habit views, so
@@ -134,7 +166,15 @@ export function TranscriptionHistoryPanel() {
 		<div className="flex flex-col gap-2">
 			<SettingSection icon={Analytics01Icon} title={t("summaryTitle")}>
 				<div className="py-2">
-					<HistoryHero dailyWords={dailyWords} stats={stats} />
+					{statsLoading ? (
+						<StatsSkeleton
+							className="grid grid-cols-3 gap-2"
+							count={3}
+							itemClassName="h-[132px]"
+						/>
+					) : (
+						<HistoryHero dailyWords={dailyWords} stats={stats} />
+					)}
 				</div>
 			</SettingSection>
 
@@ -168,7 +208,15 @@ export function TranscriptionHistoryPanel() {
 
 			<SettingSection icon={VoiceIdIcon} title={t("profileTitle")}>
 				<div className="py-2">
-					<VoiceProfile stats={voiceProfile} />
+					{statsLoading ? (
+						<StatsSkeleton
+							className="grid grid-cols-2 gap-2"
+							count={4}
+							itemClassName="h-16"
+						/>
+					) : (
+						<VoiceProfile stats={voiceProfile} />
+					)}
 				</div>
 			</SettingSection>
 
@@ -256,15 +304,13 @@ export function TranscriptionHistoryPanel() {
 					tooltip={`${t("historyMaxEntriesTooltip")} ${t("historyMaxEntriesCaption")}`}
 					value={historyMaxEntries}
 				>
-					<ElevatedSurface className="w-fit" inline>
-						<NumberStepper
-							max={10_000}
-							min={10}
-							onChange={(v) => updateGeneral({ historyMaxEntries: v })}
-							step={10}
-							value={historyMaxEntries}
-						/>
-					</ElevatedSurface>
+					<NumberStepper
+						max={10_000}
+						min={10}
+						onChange={(v) => updateGeneral({ historyMaxEntries: v })}
+						step={10}
+						value={historyMaxEntries}
+					/>
 				</SettingField>
 				<SettingField
 					defaultValue={DEFAULT_SETTINGS.general.recordingRetention}
@@ -278,15 +324,14 @@ export function TranscriptionHistoryPanel() {
 					tooltip={t("retentionTooltip")}
 					value={recordingRetention}
 				>
-					<ElevatedSurface className="w-52" inline>
-						<Select
-							onChange={(v) =>
-								updateGeneral({ recordingRetention: v as RetentionValue })
-							}
-							options={retentionOptions}
-							value={recordingRetention}
-						/>
-					</ElevatedSurface>
+					<Select
+						className="w-52"
+						onChange={(v) =>
+							updateGeneral({ recordingRetention: v as RetentionValue })
+						}
+						options={retentionOptions}
+						value={recordingRetention}
+					/>
 				</SettingField>
 			</SettingSection>
 		</div>

@@ -52,6 +52,10 @@ export interface PreviewState {
 	/** Change ordinals (matching the diff's `changes`) the user reverted. Empty =
 	 *  every AI change accepted (the default — "default-accept + cherry-pick"). */
 	rejectedChanges: number[];
+	/** Set when the last run FAILED (so an error is distinguishable from a
+	 *  successful "no changes" run, which leaves this null). Cleared on the next
+	 *  `beginProcessing`. */
+	enhanceError: string | null;
 
 	// ── actions ──
 	open: (payload: {
@@ -80,6 +84,9 @@ export interface PreviewState {
 	) => void;
 	appendReasoning: (chunk: string) => void;
 	finishProcessing: (candidate: string | null) => void;
+	/** End a run that FAILED — stops processing and records an error message so
+	 *  the UI can show a distinct failure state (not a silent "no changes"). */
+	failProcessing: (error: string) => void;
 	/** Toggle one change between accepted and reverted. */
 	toggleChangeDecision: (changeIndex: number) => void;
 	/** Commit the CURRENT decisions: splice the applied result into `text` (whole
@@ -109,6 +116,7 @@ const INITIAL = {
 	diffBase: null as string | null,
 	candidateRange: null as { start: number; end: number } | null,
 	rejectedChanges: [] as number[],
+	enhanceError: null as string | null,
 };
 
 export const useTranscriptPreviewStore = create<PreviewState>((set, get) => ({
@@ -172,6 +180,7 @@ export const useTranscriptPreviewStore = create<PreviewState>((set, get) => ({
 			diffBase: base,
 			candidateRange: range,
 			rejectedChanges: [],
+			enhanceError: null,
 		}),
 
 	appendReasoning: (chunk) => {
@@ -182,7 +191,20 @@ export const useTranscriptPreviewStore = create<PreviewState>((set, get) => ({
 	},
 
 	finishProcessing: (candidate) =>
-		set({ isProcessing: false, candidate, view: "enhance" }),
+		set({
+			isProcessing: false,
+			candidate,
+			enhanceError: null,
+			view: "enhance",
+		}),
+
+	failProcessing: (error) =>
+		set({
+			isProcessing: false,
+			candidate: null,
+			enhanceError: error,
+			view: "enhance",
+		}),
 
 	toggleChangeDecision: (changeIndex) =>
 		set((s) => ({

@@ -7,7 +7,7 @@ import {
 import { type RefObject, useEffect, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { springs } from "@/shared/lib/springs";
-import { surfaceBg, surfaceShadow, useSurface } from "@/shared/lib/surface";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import {
 	type HighlightRect,
 	findDataAttributeElement,
@@ -89,7 +89,6 @@ export function MenuHighlightLayer({
 	const selectedLevel = Math.min(substrate + 2, 8);
 	const hoverBgClass = surfaceBg(hoverLevel);
 	const selectedBgClass = surfaceBg(selectedLevel);
-	const selectedShadowClass = surfaceShadow(selectedLevel);
 	const [state, setState] = useState<MeasureState>(EMPTY_STATE);
 
 	// This component only mounts while the popup is open (Base UI unmounts the
@@ -149,10 +148,10 @@ export function MenuHighlightLayer({
 	}, [containerRef, value]);
 
 	const { selectedRect, highlightedRect, highlightedIsSelected } = state;
+	// True while the highlight rests on a non-selected row: dims the selected pill
+	// and shows the hover pill. Suppressed on the selected row (the selected pill
+	// already marks it) so the hover pill only appears when gliding elsewhere.
 	const isHoveringOther = highlightedRect !== null && !highlightedIsSelected;
-	// The hover pill is suppressed while the highlight rests on the selected row
-	// (the selected pill already marks it) — only shown when gliding elsewhere.
-	const showHover = highlightedRect !== null && !highlightedIsSelected;
 	const hoverOrigin = selectedRect ?? highlightedRect;
 
 	return (
@@ -169,9 +168,8 @@ export function MenuHighlightLayer({
 						}}
 						aria-hidden="true"
 						className={cn(
-							"pointer-events-none absolute rounded-xs ring-1 ring-divider-strong ring-inset",
+							"pointer-events-none absolute rounded-lg ring-1 ring-foreground/[0.06] ring-inset",
 							selectedBgClass,
-							selectedShadowClass,
 						)}
 						exit={{ opacity: 0, transition: { duration: 0.12 } }}
 						initial={false}
@@ -182,7 +180,7 @@ export function MenuHighlightLayer({
 			</AnimatePresence>
 
 			<AnimatePresence>
-				{showHover && highlightedRect ? (
+				{isHoveringOther && highlightedRect ? (
 					<motion.div
 						animate={{
 							top: highlightedRect.top,
@@ -193,7 +191,7 @@ export function MenuHighlightLayer({
 						}}
 						aria-hidden="true"
 						className={cn(
-							"pointer-events-none absolute rounded-xs ring-1 ring-divider ring-inset",
+							"pointer-events-none absolute rounded-lg ring-1 ring-divider ring-inset",
 							hoverBgClass,
 						)}
 						exit={{ opacity: 0, transition: { duration: 0.06 } }}

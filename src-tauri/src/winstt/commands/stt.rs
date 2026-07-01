@@ -225,13 +225,13 @@ fn query_adapter_vram(
 }
 
 /// `set_custom_model` — register/scan a user-supplied ONNX model directory.
-/// SPIKE: scan the directory for the family-shaped file set (encoder/decoder/...)
+/// Scan the directory for the family-shaped file set (encoder/decoder/...)
 /// and add it as a `Family::Custom` catalog row; the resolver treats it like any
 /// off-catalog repo. Returns the inferred catalog row on success.
 #[tauri::command]
 #[specta::specta]
 pub fn set_custom_model(_app: AppHandle, path: String) -> Result<CatalogModelInfo, String> {
-    // SPIKE: detect family from the file layout (custom-model scanner port). Until
+    // Detect family from the file layout (custom-model scanner port). Until
     // then, reject with a clear message so the UI surfaces "not yet supported".
     let _ = path;
     Err("custom model scanning not yet wired (scanner spike)".to_string())

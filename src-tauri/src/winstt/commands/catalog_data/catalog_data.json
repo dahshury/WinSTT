@@ -1699,21 +1699,20 @@
       }
     },
     {
-      "id": "granite-speech-4.1-2b",
-      "display_name": "Granite Speech 4.1 2B",
+      "id": "granite-speech-4.1-2b-plus",
+      "display_name": "Granite Speech 4.1 2B Plus",
       "family": "granite",
       "languages": [
         "en",
         "fr",
         "de",
         "es",
-        "pt",
-        "ja"
+        "pt"
       ],
       "supports_language_detection": false,
       "supports_realtime": true,
-      "onnx_model_name": "smcleod/ibm-granite-speech-4.1-2b-onnx",
-      "description": "IBM Granite Speech 4.1 autoregressive multilingual ASR with strong punctuation quality.",
+      "onnx_model_name": "smcleod/ibm-granite-speech-4.1-2b-plus-onnx",
+      "description": "IBM Granite Speech 4.1 Plus autoregressive multilingual ASR with strong punctuation quality.",
       "param_count": 2000000000,
       "wer": 0,
       "rtfx": 0,
@@ -1723,9 +1722,9 @@
         "fp16w"
       ],
       "size_bytes_by_quantization": {
-        "": 15784050475,
-        "int8": 3988567346,
-        "fp16w": 7896101356
+        "": 16399827308,
+        "int8": 4055596124,
+        "fp16w": 8104489645
       }
     },
     {
@@ -1755,6 +1754,52 @@
         "": 9843053044,
         "int8": 2480379791,
         "fp16w": 4924060937
+      }
+    },
+    {
+      "id": "qwen3-asr-0.6b",
+      "display_name": "Qwen3-ASR 0.6B",
+      "family": "qwen3",
+      "languages": [
+        "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it", "ko",
+        "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv", "da", "fi",
+        "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro"
+      ],
+      "supports_language_detection": true,
+      "supports_realtime": true,
+      "onnx_model_name": "andrewleech/qwen3-asr-0.6b-onnx",
+      "description": "Alibaba Qwen3-ASR LLM-based multilingual ASR (30 languages, auto language detection). int4-quantized.",
+      "param_count": 600000000,
+      "wer": 0,
+      "rtfx": 0,
+      "available_quantizations": [
+        "int4"
+      ],
+      "size_bytes_by_quantization": {
+        "int4": 2020098572
+      }
+    },
+    {
+      "id": "qwen3-asr-1.7b",
+      "display_name": "Qwen3-ASR 1.7B",
+      "family": "qwen3",
+      "languages": [
+        "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it", "ko",
+        "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv", "da", "fi",
+        "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro"
+      ],
+      "supports_language_detection": true,
+      "supports_realtime": true,
+      "onnx_model_name": "andrewleech/qwen3-asr-1.7b-onnx",
+      "description": "Alibaba Qwen3-ASR LLM-based multilingual ASR (30 languages, auto language detection), larger 1.7B model. int4-quantized.",
+      "param_count": 1700000000,
+      "wer": 0,
+      "rtfx": 0,
+      "available_quantizations": [
+        "int4"
+      ],
+      "size_bytes_by_quantization": {
+        "int4": 4119604870
       }
     },
     {

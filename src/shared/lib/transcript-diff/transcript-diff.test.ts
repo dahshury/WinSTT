@@ -63,9 +63,11 @@ describe("reconstructFromDiff", () => {
 
 	test("reverts a rejected replacement to the original wording", () => {
 		expect(
-			reconstructFromDiff("send the massage today", "send the message today", [
-				0,
-			]),
+			reconstructFromDiff(
+				"send the massage today",
+				"send the message today",
+				[0],
+			),
 		).toBe("send the massage today");
 	});
 

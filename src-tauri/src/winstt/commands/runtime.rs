@@ -34,8 +34,9 @@ use crate::winstt::managers::DownloadManager;
 use crate::winstt::stt::cache_probe::{CacheState, ProbeModel};
 
 use super::catalog_data::{self, ModelCacheInfo, ModelsWithState, SystemInfoEntry};
-use super::settings::read_settings_raw;
+use super::settings::effective_realtime;
 use super::stt::picker_accelerator;
+use crate::winstt::settings_store::read_settings_raw;
 
 /// Active-runtime snapshot — byte-identical to the renderer's `RuntimeInfoPayload` (ipc-client.ts):
 /// drives the GPU/CPU chip + the `useSyncActiveModel` reconciliation.
@@ -130,13 +131,17 @@ pub fn runtime_info_snapshot(
             Some(m)
         }
     });
-    let realtime_model = {
-        let rt = settings.model.realtime_model;
-        if rt.is_empty() {
-            None
-        } else {
-            Some(rt)
-        }
+    // The selected realtime model is only actually loaded when realtime is
+    // enabled for the current settings AND a SEPARATE model is used (not the main
+    // model). Reporting it whenever the setting is non-empty made the footer chip
+    // / model-footprint show a "LIVE" realtime model the user had disabled.
+    let realtime_model = if effective_realtime(&settings)
+        && !settings.quality.use_main_model_for_realtime
+        && !settings.model.realtime_model.is_empty()
+    {
+        Some(settings.model.realtime_model)
+    } else {
+        None
     };
     RuntimeInfoPayload {
         device: device.to_string(),
@@ -244,7 +249,7 @@ fn cache_info_from(state: CacheState, downloaded: u64, total: u64) -> ModelCache
     }
 }
 
-/// Live system snapshot for the fitness fields. SPIKE: `sysinfo` for RAM + DXGI for VRAM. Zeros are
+/// Live system snapshot for the fitness fields. `sysinfo` for RAM + DXGI for VRAM. Zeros are
 /// a valid "unknown" answer (the fit heuristics skip warnings when RAM/VRAM read 0).
 pub(crate) fn system_info_snapshot() -> SystemInfoEntry {
     // Real total RAM via sysinfo (fixes the model-download dialog's "RAM: unknown") + real DXGI
@@ -302,7 +307,7 @@ pub fn assess_ollama_fit(_app: AppHandle, size_bytes: u64) -> Option<FitAssessme
 }
 
 /// One GPU as the renderer's `GpuInfo` rows expect. `gpu_get_info` powers the device-picker /
-/// quality settings GPU chip. SPIKE: enumerate adapters via DXGI; empty list = "no GPU detected".
+/// quality settings GPU chip. Enumerate adapters via DXGI; empty list = "no GPU detected".
 #[derive(Clone, Debug, Serialize, Deserialize, Type, Default)]
 pub struct GpuInfoEntry {
     pub name: String,

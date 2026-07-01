@@ -10,7 +10,7 @@ hotkey. Everything runs in one process — there is no server and no IPC to a mo
 
 <StatGrid>
   <Stat value="1" label="OS process — no model host" />
-  <Stat value="~40" label="STT models, 8 families" />
+  <Stat value="73" label="STT models, 11 families" />
   <Stat value="12" label="managed-state managers" />
   <Stat value="~90" label="#[tauri::command] fns" />
 </StatGrid>
@@ -131,7 +131,7 @@ pub trait Transcriber: Send {
 
 ### Model families
 
-The catalog spans ~40 models across eight families, each an `EngineKind`:
+The catalog spans 73 models across 11 families, each routed to an `EngineKind`:
 
 <ModelTable
   head={["Class", "Engines"]}
@@ -139,14 +139,14 @@ The catalog spans ~40 models across eight families, each an `EngineKind`:
     ["Whisper", "WhisperHf (encoder + merged decoder, device-resident KV-cache via IoBinding), Moonshine"],
     ["CTC", "NemoCtc, GigaamCtc, ToneCtc, DolphinCtc, SenseVoiceCtc"],
     ["Transducer", "NemoRnnt, NemoTdt, KaldiTransducer (Zipformer), GigaamRnnt"],
-    ["AED", "NemoAed (Canary), CohereAsr"],
+    ["AED / LLM decoder", "NemoAed (Canary), CohereAsr, GraniteSpeechAr/Nar, Qwen3Asr"],
   ]}
   caption="EngineKind families behind the SttBackend seam."
 />
 
 Models resolve through the **`onnx-asr` resolver** (`resolver.rs`): a HuggingFace snapshot
 fetch (`hf-hub`) that verifies sharded `.onnx_data` completeness and caches per-quantization
-(`""`/`fp16`/`int8`/`q4`/`q4f16`/`bnb4`/`uint8`).
+(`""`/`fp16`/`fp16w`/`int8`/`int4`/`q4`/`q4f16`/`bnb4`/`uint8`).
 
 ### Device policy (`ort`)
 

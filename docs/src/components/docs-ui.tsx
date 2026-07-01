@@ -670,10 +670,10 @@ export function Step({
 /* ------------------------------------------------------------------ */
 
 const MODE_META: Record<string, { label: string; color: string }> = {
-  ptt: { label: "Push-to-Talk", color: "#3b82f6" },
-  toggle: { label: "Toggle", color: "#facc15" },
-  listen: { label: "Listen", color: "#22c55e" },
-  wakeword: { label: "Wake Word", color: "#f97316" },
+  ptt: { label: "Push-to-Talk", color: "var(--brand-mode-ptt)" },
+  toggle: { label: "Toggle", color: "var(--brand-mode-toggle)" },
+  listen: { label: "Listen", color: "var(--brand-mode-listen)" },
+  wakeword: { label: "Wake Word", color: "var(--brand-mode-wakeword)" },
 };
 
 export function ModeBadge({

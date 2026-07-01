@@ -1,7 +1,6 @@
 "use client";
 
 import { cn } from "@/shared/lib/cn";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import {
 	VERBOSITY_OPTIONS,
@@ -41,14 +40,12 @@ export function VerbosityDropdown({
 			)}
 			data-slot="verbosity-dropdown"
 		>
-			<ElevatedSurface inline>
-				<Switcher
-					fullWidth
-					onChange={onChange}
-					options={VERBOSITY_SWITCHER_OPTIONS}
-					value={value}
-				/>
-			</ElevatedSurface>
+			<Switcher
+				fullWidth
+				onChange={onChange}
+				options={VERBOSITY_SWITCHER_OPTIONS}
+				value={value}
+			/>
 		</fieldset>
 	);
 }

@@ -2,16 +2,19 @@ import {
 	resolveEffectiveQuant,
 	STT_PICKER_WIDTH_PX,
 } from "@/widgets/model-picker";
-import { providerOf } from "@/entities/cloud-stt-provider";
-import type {
-	useCatalogStore,
-	useModelStateStore,
-} from "@/entities/model-catalog";
+import { providerOf } from "@/entities/cloud-stt-provider/model/catalog";
+import type { ModelStatesById as StatesById } from "@/entities/model-catalog";
 import type { useQuantActions } from "@/features/model-download";
 import { IPC } from "@/shared/api/ipc-channels";
 import type { FitAssessmentEntry } from "@/shared/api/ipc-client";
 import { ipcSend } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { isRecord } from "@/shared/lib/is-record";
+export type {
+	CatalogModels,
+	ModelStatesById as StatesById,
+	ModelSystemInfo as SystemInfo,
+} from "@/entities/model-catalog";
 
 // Desired footprint reported once to the main process. Main caps the height
 // to whichever side of the chip has more room (never spilling over the screen)
@@ -61,6 +64,13 @@ export type DetachedLlmFeature = "dictation" | "transforms";
 
 export type DetachedModelPickerMode =
 	| { kind: "stt" }
+	/** Realtime-preview STT slot (writes `settings.realtimeModel`). */
+	| { kind: "stt-realtime" }
+	/** Cloud STT picker, forced regardless of the persisted model's source —
+	 *  opened from the Settings Local/Cloud toggle when "Cloud" is selected. */
+	| { kind: "stt-cloud" }
+	/** Read-aloud (TTS) voice-model picker. */
+	| { kind: "tts" }
 	| { feature: DetachedLlmFeature; kind: "llm-ollama" }
 	| {
 			feature: DetachedLlmFeature;
@@ -71,10 +81,6 @@ export type DetachedModelPickerMode =
 export const DEFAULT_MODEL_PICKER_MODE: DetachedModelPickerMode = {
 	kind: "stt",
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
 
 function normalizeFeature(value: unknown): DetachedLlmFeature {
 	return value === "transforms" ? "transforms" : "dictation";
@@ -99,6 +105,15 @@ export function normalizeDetachedModelPickerMode(
 			target: value["target"] === "fallback" ? "fallback" : "primary",
 		};
 	}
+	if (value["kind"] === "stt-realtime") {
+		return { kind: "stt-realtime" };
+	}
+	if (value["kind"] === "stt-cloud") {
+		return { kind: "stt-cloud" };
+	}
+	if (value["kind"] === "tts") {
+		return { kind: "tts" };
+	}
 	return DEFAULT_MODEL_PICKER_MODE;
 }
 
@@ -111,7 +126,13 @@ export function desiredSizeForMode(mode: DetachedModelPickerMode): {
 			return { width: OLLAMA_PICKER_WIDTH, height: LLM_PICKER_HEIGHT };
 		case "llm-openrouter":
 			return { width: OPENROUTER_PICKER_WIDTH, height: LLM_PICKER_HEIGHT };
+		// STT main / realtime / cloud and TTS all share the STT picker footprint —
+		// the renderer-reported width is the FLOOR; Rust widens the panel to the
+		// trigger combobox's measured width when it is wider (see place_model_picker).
 		case "stt":
+		case "stt-realtime":
+		case "stt-cloud":
+		case "tts":
 			return { width: DESIRED_WIDTH, height: DESIRED_HEIGHT };
 	}
 }
@@ -120,15 +141,6 @@ export function close(): void {
 	ipcSend(IPC.MODEL_PICKER_CLOSE);
 }
 
-export type CatalogModels = ReturnType<
-	typeof useCatalogStore.getState
->["models"];
-export type StatesById = ReturnType<
-	typeof useModelStateStore.getState
->["statesById"];
-export type SystemInfo = ReturnType<
-	typeof useModelStateStore.getState
->["systemInfo"];
 export type QuantActions = ReturnType<typeof useQuantActions>;
 export type GetFitAssessment = (modelId: string) => FitAssessmentEntry | null;
 

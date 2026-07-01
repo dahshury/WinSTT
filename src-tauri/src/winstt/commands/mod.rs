@@ -74,9 +74,8 @@ pub mod listen;
 pub mod verify;
 pub mod wakeword;
 // ── slice: loopback device list ──
-/// PLAIN-event emit helpers for the listen channels (device-switch-failed,
-/// speaker-segments). No commands — called by the producers (device-switch path /
-/// DiarizationManager). NOT collected.
+/// PLAIN-event emit helper for the listen channel (device-switch-failed). No
+/// commands — called by the producer (device-switch path). NOT collected.
 pub mod listen_events;
 /// `loopback_list_devices` — enumerate WASAPI loopback output devices for the
 /// listen-mode device picker. Registered in lib.rs collect_commands![].
@@ -165,3 +164,32 @@ pub mod snippets;
 /// The specta-typed events the WinSTT port emits (registered in
 /// `collect_events![]`). Re-exported here so lib.rs has one import site.
 pub mod events;
+
+/// Standard RFC4648 base64 (with `=` padding). Inlined to avoid pulling the
+/// `base64` crate (not in Cargo.toml; `00_cargo_additions.md` doesn't list it) —
+/// the only base64 in-tree is `families.rs`'s decoder, so we provide the encoder
+/// here. Shared by `history` (`<audio src="data:audio/wav;base64,...">`) and
+/// `context` (BMP screenshot data URIs).
+pub(crate) fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(ALPHABET[(n & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}

@@ -236,15 +236,6 @@ export interface TtsSpeakResult {
 	requestId: string;
 }
 
-function unwrapSpeakResult(
-	result: Result<SpeakResult, string>,
-): TtsSpeakResult {
-	if (result.status === "ok") {
-		return result.data;
-	}
-	throw result.error;
-}
-
 function unwrapResult<T>(result: Result<T, string>): T {
 	if (result.status === "ok") {
 		return result.data;
@@ -375,7 +366,7 @@ export const ttsOpenRouterPreview = (payload: {
 	commandOrDefault(
 		"tts_preview_openrouter",
 		async () =>
-			unwrapSpeakResult(
+			unwrapResult<SpeakResult>(
 				await commands.ttsPreviewOpenrouter(
 					payload.model,
 					payload.voice,

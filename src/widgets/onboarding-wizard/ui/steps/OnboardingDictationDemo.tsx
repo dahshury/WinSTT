@@ -10,6 +10,7 @@ import {
 import { useTranslations } from "use-intl";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "@/entities/setting";
+import type { RecordingMode } from "@/shared/config/recording-mode-color";
 import {
 	onFullSentence,
 	onNoAudioDetected,
@@ -22,8 +23,6 @@ import { cn } from "@/shared/lib/cn";
 import { formatKeyName } from "@/shared/lib/format-key-name";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { PulseDot } from "@/shared/ui/pulse-dot";
-
-type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword";
 
 // Decorative separator glyph between keycaps — a visual symbol, not translatable
 // copy (held in a const so `i18next/no-literal-string` doesn't flag it).

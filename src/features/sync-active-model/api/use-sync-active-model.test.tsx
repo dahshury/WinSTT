@@ -4,13 +4,16 @@ import type { RuntimeInfo } from "@/entities/connection";
 import { useConnectionStore } from "@/entities/connection";
 import {
 	_resetOptimisticSwapForTests,
+	type ModelInfo,
 	useCatalogStore,
 	useModelSwapStore,
 } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { _resetSwapFailureTimingForTests } from "@/shared/lib/swap-failure-timing";
 import {
+	adoptCompletedSwap,
 	type ImplicitSwapInputs,
+	resolveSwapCompletedPatch,
 	shouldOpenImplicitSwap,
 	useSyncActiveModel,
 } from "./use-sync-active-model";
@@ -383,5 +386,130 @@ describe("shouldOpenImplicitSwap", () => {
 		expect(
 			shouldOpenImplicitSwap({ ...base, lastSwapFailedAt: base.now - 5000 }),
 		).toBe(true);
+	});
+});
+
+describe("resolveSwapCompletedPatch", () => {
+	const catalog: ModelInfo[] = [
+		{
+			id: "nemo-canary-1b-v2",
+			displayName: "Canary",
+			family: "nemo",
+			backend: "onnx_asr",
+			languages: [],
+			supportsLanguageDetection: false,
+			previewCapable: false,
+			nativeStreaming: false,
+			finalReuseSafe: false,
+			supportsRealtime: false,
+			sizeLabel: "",
+			onnxModelName: null,
+			description: "",
+			availableQuantizations: [],
+			sizeBytesByQuantization: {},
+			available: true,
+			errorMessage: "",
+			localPath: null,
+			speedScore: 0,
+			accuracyScore: 0,
+		},
+	];
+
+	test("main pick resolves the paired backend from the catalog", () => {
+		expect(
+			resolveSwapCompletedPatch(
+				"main",
+				"nemo-canary-1b-v2",
+				"tiny",
+				null,
+				catalog,
+			),
+		).toEqual({ model: "nemo-canary-1b-v2", backend: "onnx_asr" });
+	});
+
+	test("main no-op when the loaded model already matches settings", () => {
+		expect(
+			resolveSwapCompletedPatch("main", "tiny", "tiny", null, catalog),
+		).toBeNull();
+	});
+
+	test("cloud main id (no catalog entry) gets the benign cloud backend", () => {
+		const patch = resolveSwapCompletedPatch(
+			"main",
+			"elevenlabs:scribe_v1",
+			"tiny",
+			null,
+			catalog,
+		);
+		expect(patch).toEqual({
+			model: "elevenlabs:scribe_v1",
+			backend: "onnx_asr",
+		});
+	});
+
+	test("unknown local id (not cloud, not in catalog) yields null — never a bare {model}", () => {
+		expect(
+			resolveSwapCompletedPatch("main", "ghost-model", "tiny", null, catalog),
+		).toBeNull();
+	});
+
+	test("empty name is a no-op (e.g. realtime clear — handled by broadcast)", () => {
+		expect(
+			resolveSwapCompletedPatch("main", "", "tiny", null, catalog),
+		).toBeNull();
+		expect(
+			resolveSwapCompletedPatch("realtime", "", null, "tiny", catalog),
+		).toBeNull();
+	});
+
+	test("realtime pick patches only realtimeModel", () => {
+		expect(
+			resolveSwapCompletedPatch(
+				"realtime",
+				"nemo-canary-1b-v2",
+				"tiny",
+				"old-rt",
+				catalog,
+			),
+		).toEqual({ realtimeModel: "nemo-canary-1b-v2" });
+	});
+
+	test("realtime no-op when it already matches", () => {
+		expect(
+			resolveSwapCompletedPatch("realtime", "rt", "tiny", "rt", catalog),
+		).toBeNull();
+	});
+});
+
+describe("adoptCompletedSwap", () => {
+	// The reported bug: a swap committed in the detached picker window leaves
+	// every other window stuck on the previous model — the picker closes before
+	// its `settings:changed` broadcast lands, and the runtime-info reconciler
+	// never re-fires after `activeMain` clears. The global `model-swap-completed`
+	// event carries the loaded model name; adopting it must converge settings.
+	// (beforeEach leaves settings on "tiny" with the catalog seeded.)
+	test("writes the loaded main model + paired backend into settings (detached-picker fix)", () => {
+		adoptCompletedSwap("main", "nemo-canary-1b-v2");
+		const model = useSettingsStore.getState().settings.model;
+		expect(model.model).toBe("nemo-canary-1b-v2");
+		// Backend is resolved from the catalog (the typed ModelPatch couple).
+		expect(model.backend).toBe("onnx_asr");
+	});
+
+	test("is a no-op when the loaded model already matches (initiating window)", () => {
+		adoptCompletedSwap("main", "tiny");
+		expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
+	});
+
+	test("a realtime completion patches realtimeModel only, leaving main untouched", () => {
+		adoptCompletedSwap("realtime", "nemo-canary-1b-v2");
+		const model = useSettingsStore.getState().settings.model;
+		expect(model.realtimeModel).toBe("nemo-canary-1b-v2");
+		expect(model.model).toBe("tiny");
+	});
+
+	test("an unknown local id is ignored (never a bare {model} without backend)", () => {
+		adoptCompletedSwap("main", "ghost-model");
+		expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
 	});
 });

@@ -1,9 +1,12 @@
-import type { useTranslations } from "use-intl";
-import type { PausedPullState } from "@/entities/llm-catalog";
+import type { TranslateFn } from "@/shared/i18n/translation-types";
+import type {
+	OllamaFitAssessment,
+	PausedPullState,
+} from "@/entities/llm-catalog";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import type { LlmFeatureDraft } from "../lib/llm-settings-panel-test-helpers";
 
-export type TranslateFn = ReturnType<typeof useTranslations>;
+export type { TranslateFn } from "@/shared/i18n/translation-types";
 
 // Re-uses the spec-generated shape so `details.parameterSize` /
 // `details.quantizationLevel` flow through to the picker.
@@ -20,23 +23,22 @@ export type ReasoningEffort = LlmDictation["reasoningEffort"];
 export type Verbosity = LlmDictation["verbosity"];
 
 export type OllamaThinkingEffort = LlmDictation["thinkingEffort"];
+export interface OllamaMutationResult {
+	error?: string | undefined;
+	success: boolean;
+}
 
 export interface OllamaPullBundle {
 	cancelPull: (name: string) => void;
-	deleteModel: (name: string) => Promise<unknown>;
+	deleteModel: (name: string) => Promise<OllamaMutationResult>;
 	discardPausedPull: (name: string) => void;
-	getFit: (sizeBytes: number) => {
-		availableBytes: number;
-		fits: boolean;
-		requiredBytes: number;
-		shortfall: "vram" | "ram" | "unknown" | undefined;
-	};
+	getFit: (sizeBytes: number) => OllamaFitAssessment;
 	pausedPulls: Readonly<Record<string, PausedPullState>>;
-	pullModel: (name: string) => Promise<unknown>;
+	pullModel: (name: string) => Promise<OllamaMutationResult>;
 	pulls: Readonly<
 		Record<string, import("@/shared/api/models").OllamaPullProgress>
 	>;
-	resumePull: (name: string) => Promise<unknown>;
+	resumePull: (name: string) => Promise<OllamaMutationResult>;
 }
 
 export interface OllamaCatalogState {

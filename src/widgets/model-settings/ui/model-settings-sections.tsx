@@ -17,7 +17,6 @@ import {
 } from "@/entities/setting";
 import { DownloadConfirmationDialog } from "@/features/model-download";
 import type { SwapController } from "@/features/swap-model";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
@@ -65,30 +64,29 @@ export function ModelLifetimeSection({
 				}
 				tooltip={`${t("modelUnloadTimeoutCaption")} ${t("modelUnloadTimeoutTooltip")}`}
 			>
-				<ElevatedSurface className="w-52" inline>
-					<SearchableSelect
-						onChange={(v) => {
-							if (!isForcedNever) {
-								update({ modelUnloadTimeout: v as ModelUnloadTimeoutValue });
-							}
-						}}
-						disabled={isForcedNever}
-						options={[
-							{
-								id: "immediately",
-								label: t("modelUnloadImmediately"),
-								icon: FlashIcon,
-							},
-							{ id: "never", label: t("modelUnloadNever"), icon: InfinityIcon },
-							{ id: "min2", label: t("modelUnloadMin2"), icon: Timer01Icon },
-							{ id: "min5", label: t("modelUnloadMin5"), icon: Timer01Icon },
-							{ id: "min10", label: t("modelUnloadMin10"), icon: Timer01Icon },
-							{ id: "min15", label: t("modelUnloadMin15"), icon: Timer01Icon },
-							{ id: "hour1", label: t("modelUnloadHour1"), icon: Timer01Icon },
-						]}
-						value={value}
-					/>
-				</ElevatedSurface>
+				<SearchableSelect
+					className="w-52"
+					onChange={(v) => {
+						if (!isForcedNever) {
+							update({ modelUnloadTimeout: v as ModelUnloadTimeoutValue });
+						}
+					}}
+					disabled={isForcedNever}
+					options={[
+						{
+							id: "immediately",
+							label: t("modelUnloadImmediately"),
+							icon: FlashIcon,
+						},
+						{ id: "never", label: t("modelUnloadNever"), icon: InfinityIcon },
+						{ id: "min2", label: t("modelUnloadMin2"), icon: Timer01Icon },
+						{ id: "min5", label: t("modelUnloadMin5"), icon: Timer01Icon },
+						{ id: "min10", label: t("modelUnloadMin10"), icon: Timer01Icon },
+						{ id: "min15", label: t("modelUnloadMin15"), icon: Timer01Icon },
+						{ id: "hour1", label: t("modelUnloadHour1"), icon: Timer01Icon },
+					]}
+					value={value}
+				/>
 			</SettingField>
 		</SettingSection>
 	);
@@ -126,14 +124,13 @@ export function DeviceSection({
 				layout="row"
 				tooltip={`${t("deviceSectionCaption")} ${t("deviceCaptionGpu")}`}
 			>
-				<ElevatedSurface className="w-52">
-					<Switcher
-						fullWidth
-						onChange={(v) => update({ device: v })}
-						options={deviceOpts}
-						value={deviceValue}
-					/>
-				</ElevatedSurface>
+				<Switcher
+					className="w-52"
+					fullWidth
+					onChange={(v) => update({ device: v })}
+					options={deviceOpts}
+					value={deviceValue}
+				/>
 			</FormControl>
 		</SettingSection>
 	);

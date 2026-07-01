@@ -8,7 +8,6 @@ import {
 	onRealtimeText,
 	onRecordingStart,
 	onRecordingStop,
-	onSpeakerSegments,
 	onSttSessionAborted,
 	onTranscriptionStart,
 	onTranscriptionFailed,
@@ -72,9 +71,6 @@ export function useTranscriptionFeed(): void {
 		recordingModeRef.current = recordingMode;
 	}, [recordingMode]);
 	const addFinalSentence = useTranscriptionStore((s) => s.addFinalSentence);
-	const attachSpeakerSegments = useTranscriptionStore(
-		(s) => s.attachSpeakerSegments,
-	);
 	const beginRecordingSession = useTranscriptionStore(
 		(s) => s.beginRecordingSession,
 	);
@@ -195,12 +191,6 @@ export function useTranscriptionFeed(): void {
 			clearEphemeral();
 		});
 
-		// Diarization arrives a beat after fullSentence — the store attaches
-		// segments to the most-recent item (same utterance by construction).
-		const unsubSpeakerSegments = onSpeakerSegments((segments) => {
-			attachSpeakerSegments(segments);
-		});
-
 		return () => {
 			unsubStart();
 			unsubStop();
@@ -211,11 +201,9 @@ export function useTranscriptionFeed(): void {
 			unsubNoAudio();
 			unsubTranscriptionFailed();
 			unsubAborted();
-			unsubSpeakerSegments();
 		};
 	}, [
 		addFinalSentence,
-		attachSpeakerSegments,
 		beginRecordingSession,
 		setRealtimeText,
 		setRecordingActive,

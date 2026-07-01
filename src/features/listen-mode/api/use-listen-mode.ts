@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { z } from "zod";
 import { useOutputDevices, type OutputDevice } from "@/entities/audio-device";
 import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
@@ -12,61 +11,12 @@ import {
 	onLoopbackStarted,
 	onLoopbackStopped,
 } from "@/shared/api/ipc-client";
+import {
+	type LoopbackDevice,
+	parseLoopbackDevices,
+} from "../lib/loopback-devices";
 import { resolveListenStreamingModelId } from "../lib/listen-mode-model-gate";
 import { useListenStore } from "../model/listen-store";
-
-const loopbackDeviceSchema = z.object({
-	id: z.string().optional(),
-	index: z.number().int(),
-	name: z.string(),
-	defaultSampleRate: z.number(),
-	maxOutputChannels: z.number(),
-	isDefault: z.boolean().optional(),
-});
-
-type ParsedLoopbackDevice = z.infer<typeof loopbackDeviceSchema>;
-
-interface LoopbackDevice {
-	defaultSampleRate: number;
-	id?: string;
-	index: number;
-	isDefault?: boolean;
-	maxOutputChannels: number;
-	name: string;
-}
-
-function normalizeParsedLoopbackDevice(
-	parsed: ParsedLoopbackDevice,
-): LoopbackDevice {
-	const device: LoopbackDevice = {
-		index: parsed.index,
-		name: parsed.name,
-		defaultSampleRate: parsed.defaultSampleRate,
-		maxOutputChannels: parsed.maxOutputChannels,
-	};
-	if (parsed.id !== undefined) {
-		device.id = parsed.id;
-	}
-	if (parsed.isDefault !== undefined) {
-		device.isDefault = parsed.isDefault;
-	}
-	return device;
-}
-
-/**
- * Validates a raw device list via Zod and returns only the valid entries.
- * Exported for unit testing.
- */
-export function validateDevices(raw: unknown[]): LoopbackDevice[] {
-	const valid: LoopbackDevice[] = [];
-	for (const d of raw) {
-		const parsed = loopbackDeviceSchema.safeParse(d);
-		if (parsed.success) {
-			valid.push(normalizeParsedLoopbackDevice(parsed.data));
-		}
-	}
-	return valid;
-}
 
 function shouldStartLoopback(
 	recordingMode: string,
@@ -343,7 +293,7 @@ export function useListenMode(): void {
 					return;
 				}
 				if (Array.isArray(devices)) {
-					const valid = validateDevices(devices);
+					const valid = parseLoopbackDevices(devices);
 					setLoopbackDevices(valid);
 					setDevices(valid);
 				} else {

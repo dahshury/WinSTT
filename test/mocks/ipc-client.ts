@@ -51,7 +51,7 @@
 
 import { commands } from "@/bindings";
 import { IPC } from "@/shared/api/ipc-channels";
-import { decodeSettingsPayload } from "@/shared/api/settings-codec";
+import { decodeSettingsPayload } from "@/shared/config/settings-codec";
 
 type NativeBridgeApi = Window["nativeBridge"] | undefined;
 
@@ -679,12 +679,6 @@ export function ipcClientMock(): Record<string, unknown> {
 			onCast(IPC.STT_DIARIZATION_TOGGLE_COMPLETED, cb),
 		onDiarizationToggleFailed: (cb: (info: unknown) => void) =>
 			onCast(IPC.STT_DIARIZATION_TOGGLE_FAILED, cb),
-		onSpeakerSegments: (cb: (segments: unknown[]) => void) =>
-			onTyped(
-				IPC.STT_SPEAKER_SEGMENTS,
-				(d: { segments: unknown[] }) => d.segments,
-				cb,
-			),
 
 		// Model cache + fitness
 		deleteModelCache: (modelId: string) =>

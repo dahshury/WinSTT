@@ -153,6 +153,24 @@ fn selected_only_policy_redacts_unlisted_app() {
     assert_eq!(allowed.focused_text, "private draft");
 }
 
+#[test]
+fn selected_only_with_empty_allow_list_captures_nothing() {
+    // No apps chosen in Allow-list mode ⇒ context awareness is off: not even the
+    // window title (which redaction otherwise keeps) should survive.
+    let s = WindowContextSnapshot {
+        window_title: "Notes".into(),
+        element_name: "Body".into(),
+        focused_text: "private draft".into(),
+        app_exe: Some("notepad.exe".into()),
+        ..snap()
+    };
+    let out = apply_context_app_policy(&s, ContextAppMode::SelectedOnly, &[], &[]);
+    assert_eq!(out.window_title, "");
+    assert_eq!(out.element_name, "");
+    assert_eq!(out.focused_text, "");
+    assert!(format_context_for_prompt(&out).is_empty());
+}
+
 // ── host extraction ──
 
 #[test]
@@ -231,85 +249,6 @@ fn ide_kind_classification() {
     );
     assert_eq!(ide_kind_from_exe(Some("chrome.exe")), None);
     assert_eq!(ide_kind_from_exe(None), None);
-}
-
-#[test]
-fn ide_profile_file_tagging_is_cursor_windsurf_only() {
-    let cursor = WindowContextSnapshot {
-        app_exe: Some("cursor.exe".into()),
-        ..snap()
-    };
-    let p = ide_profile(&cursor).expect("cursor is an ide");
-    assert!(p.variable_recognition);
-    assert!(p.file_tagging);
-
-    let vscode = WindowContextSnapshot {
-        app_exe: Some("code.exe".into()),
-        ..snap()
-    };
-    let p = ide_profile(&vscode).expect("vscode is an ide");
-    assert!(p.variable_recognition);
-    assert!(!p.file_tagging, "file tagging is Cursor/Windsurf only");
-
-    let chrome = WindowContextSnapshot {
-        app_exe: Some("chrome.exe".into()),
-        ..snap()
-    };
-    assert!(ide_profile(&chrome).is_none());
-}
-
-#[test]
-fn ide_terminal_requires_ide_and_terminal_element() {
-    let cursor_term = WindowContextSnapshot {
-        app_exe: Some("cursor.exe".into()),
-        element_name: "Terminal 1, pwsh".into(),
-        ..snap()
-    };
-    assert!(is_ide_terminal(&cursor_term));
-    // IDE editor (not terminal) → not an IDE terminal.
-    let cursor_editor = WindowContextSnapshot {
-        app_exe: Some("cursor.exe".into()),
-        element_name: "Editor, main.rs".into(),
-        ..snap()
-    };
-    assert!(!is_ide_terminal(&cursor_editor));
-    // Terminal in a non-IDE app → not an IDE terminal.
-    let wt = WindowContextSnapshot {
-        app_exe: Some("windowsterminal.exe".into()),
-        element_name: "Terminal".into(),
-        ..snap()
-    };
-    assert!(!is_ide_terminal(&wt));
-}
-
-#[test]
-fn ai_cli_detection_needs_terminal_and_cli_name() {
-    let claude = WindowContextSnapshot {
-        window_title: "Claude Code — myproject".into(),
-        element_name: "Terminal 2, bash".into(),
-        ..snap()
-    };
-    assert!(is_ai_coding_cli(&claude));
-    let codex = WindowContextSnapshot {
-        window_title: "codex".into(),
-        element_name: "console".into(),
-        ..snap()
-    };
-    assert!(is_ai_coding_cli(&codex));
-    // A terminal with no CLI name → not an AI CLI.
-    let plain = WindowContextSnapshot {
-        window_title: "pwsh".into(),
-        element_name: "Terminal 1".into(),
-        ..snap()
-    };
-    assert!(!is_ai_coding_cli(&plain));
-    // The CLI name outside a terminal (e.g. a browser tab) → not an AI CLI.
-    let browser = WindowContextSnapshot {
-        window_title: "Claude — Anthropic".into(),
-        element_name: "Document".into(),
-        ..snap()
-    };
-    assert!(!is_ai_coding_cli(&browser));
 }
 
 // ── prompt formatter ──
@@ -401,7 +340,7 @@ fn format_ide_marker() {
 
 #[test]
 fn caret_before_keeps_tail_after_keeps_head() {
-    let before = format!("{}TAIL", "x".repeat(CARET_BEFORE_LLM_MAX));
+    let before = format!("{}TAIL", "x".repeat(JSON_CARET_BEFORE_LLM_MAX));
     let after = format!("HEAD{}", "y".repeat(CARET_AFTER_LLM_MAX));
     let s = WindowContextSnapshot {
         element_name: "Body".into(),

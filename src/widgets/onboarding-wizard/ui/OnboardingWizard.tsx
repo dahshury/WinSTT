@@ -23,8 +23,8 @@ import {
 } from "motion/react";
 import { useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
-import { IPC } from "@/shared/api/ipc-channels";
-import { ipcSend } from "@/shared/api/ipc-client";
+import { commands } from "@/bindings";
+import { openSettingsToSection } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, useSurface } from "@/shared/lib/surface";
 import { ScrollArea } from "@/shared/ui/scroll-area";
@@ -287,17 +287,29 @@ export function OnboardingWizard() {
 		currentStep === "llm" ||
 		currentStep === "overview";
 
-	const handleFinish = (completed: boolean) => {
+	const handleFinish = async (completed: boolean) => {
 		// Clear the saved progress before leaving: once `onboarded` flips true the
 		// wizard won't reopen normally, but a forced re-onboarding / settings reset
 		// should begin at welcome rather than resume this just-finished run.
 		resetProgress();
-		ipcSend(IPC.ONBOARDING_FINISH, { completed, track });
+		try {
+			const result = await commands.onboardingFinish({ completed, track });
+			if (result.status === "error") {
+				console.error("[onboarding] finish failed:", result.error);
+			}
+		} catch (error) {
+			console.error("[onboarding] finish failed:", error);
+		}
+	};
+
+	const handleOpenSettingsSection = async (section: string) => {
+		await handleFinish(true);
+		openSettingsToSection(section);
 	};
 
 	const handleNext = () => {
 		if (last) {
-			handleFinish(true);
+			void handleFinish(true);
 			return;
 		}
 		goNext();
@@ -379,7 +391,10 @@ export function OnboardingWizard() {
 								key={currentStep}
 								variants={STEP_BODY_VARIANTS}
 							>
-								<StepBody step={currentStep} />
+								<StepBody
+									onOpenSettingsSection={handleOpenSettingsSection}
+									step={currentStep}
+								/>
 							</m.div>
 						</AnimatePresence>
 					</SurfaceProvider>
@@ -399,7 +414,7 @@ export function OnboardingWizard() {
 						    finish straight away without walking the rest of the wizard. The
 						    final overview is read-only, so it shows only Finish. */}
 						{currentStep === "llm" ? (
-							<WizardGhostButton onClick={() => handleFinish(true)}>
+							<WizardGhostButton onClick={() => void handleFinish(true)}>
 								<span>{t("skip")}</span>
 							</WizardGhostButton>
 						) : null}
@@ -417,7 +432,13 @@ export function OnboardingWizard() {
 	);
 }
 
-function StepBody({ step }: { step: OnboardingStepId }) {
+function StepBody({
+	onOpenSettingsSection,
+	step,
+}: {
+	onOpenSettingsSection: (section: string) => void | Promise<void>;
+	step: OnboardingStepId;
+}) {
 	if (step === "welcome") {
 		return <OnboardingLocalVsCloudStep />;
 	}
@@ -434,7 +455,9 @@ function StepBody({ step }: { step: OnboardingStepId }) {
 		return <OnboardingCloudKeysStep />;
 	}
 	if (step === "overview") {
-		return <OnboardingOverviewStep />;
+		return (
+			<OnboardingOverviewStep onOpenSettingsSection={onOpenSettingsSection} />
+		);
 	}
 	return <OnboardingLlmSetupStep />;
 }

@@ -1,9 +1,9 @@
 // Cloud STT pure layer. Source: entities/cloud-stt-provider/model/catalog.ts.
 //
 // Cloud STT: reqwest JSON+base64 POST to OpenRouter /audio/transcriptions and
-// multipart POST to ElevenLabs /v1/speech-to-text. In WinSTT-the reference the Python pipeline's
+// multipart POST to ElevenLabs /v1/speech-to-text. In the reference build the Python pipeline's
 // RemoteTranscriber adapter sends the WAV bytes to the main process over WS;
-// in the Rust/Tauri port there is NO Python and NO WS â€” the
+// in the Rust/Tauri port there is NO Python and NO WS -- the
 // TranscriptionManager calls `CloudSttManager::transcribe` directly when the
 // active model is a cloud model (`openrouter:*` / `elevenlabs:*`). This module exposes the
 // pure classification + request-shape layer, and the upload itself lives in
@@ -11,7 +11,7 @@
 //
 // Ported faithfully:
 //   - Provider audio byte limits (bail BEFORE the upload). [PROVIDER_AUDIO_LIMIT_BYTES]
-//   - HTTP-status â†’ typed error code taxonomy. [HTTP_STATUS_ERROR_CODE]
+//   - HTTP-status -> typed error code taxonomy. [HTTP_STATUS_ERROR_CODE]
 //   - ElevenLabs scoped-key 401 `missing_permissions` = VALID auth, not a bad
 //     key. [isElevenLabsScopedKeyValid / credentials.ts]
 //   - retry-after parsing for rate limits.
@@ -27,7 +27,7 @@ use tauri::{AppHandle, Emitter};
 
 /// Cloud STT providers. Mirrors `CloudSttProvider`.
 ///
-/// OpenAI was removed as a direct cloud STT provider â€” its transcription models
+/// OpenAI was removed as a direct cloud STT provider -- its transcription models
 /// (whisper-1 / gpt-4o-transcribe) are all served by OpenRouter as `openai/*`,
 /// so the direct integration was redundant. ElevenLabs stays (its Scribe model
 /// is NOT on OpenRouter).
@@ -172,7 +172,7 @@ pub fn exceeds_audio_limit(provider: CloudSttProvider, byte_len: u64) -> bool {
 }
 
 /// Map an HTTP status to a typed error code. Mirrors HTTP_STATUS_ERROR_CODE
-/// + fallbackStatusCode (no status â‡’ network; unknown status â‡’ provider).
+/// + fallbackStatusCode (no status => network; unknown status => provider).
 pub fn classify_status(status: Option<u16>) -> CloudSttErrorCode {
     match status {
         Some(401) | Some(403) => CloudSttErrorCode::Auth,
@@ -197,7 +197,7 @@ pub fn parse_retry_after(value: Option<&str>) -> Option<f64> {
 /// True when an ElevenLabs 401 body signals a valid-but-scoped key (status
 /// `missing_permissions` inside `detail`). Mirrors isElevenLabsScopedKeyValid:
 /// the credential is still valid for what it IS scoped to, so verify/auth
-/// must treat it as OK, not "invalid key". `invalid_api_key` â‡’ genuinely bad.
+/// must treat it as OK, not "invalid key". `invalid_api_key` => genuinely bad.
 pub fn is_elevenlabs_scoped_key_valid(status: u16, body: &str) -> bool {
     if status != 401 {
         return false;
@@ -418,7 +418,7 @@ pub fn trigger_connectivity_watch(app: &AppHandle, provider: CloudSttProvider) {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .expect("reqwest TLS init");
         let mut restored = false;
         for _ in 0..24 {
             tokio::time::sleep(Duration::from_secs(5)).await;
@@ -488,14 +488,14 @@ pub fn preflight(req: &CloudTranscribeRequest) -> Result<(), CloudSttError> {
 /// per-request cancel token, taxonomy) lives in `managers::CloudSttManager`.
 pub const CLOUD_TRANSCRIBE_TIMEOUT_SECS: u64 = 90;
 
-// â”€â”€ `<provider>:<id>` model-id convention + curated cloud catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- `<provider>:<id>` model-id convention + curated cloud catalog ----------
 //
 // The picker persists the prefixed `<provider>:<id>` into `model.model`
 // (settings_schema ModelSettings.model). `providerOf` / `split_model_id`
 // recover the provider + bare provider model id at the boundary. The reused
 // React renderer renders the cloud picker straight from its own hardcoded
-// `CLOUD_CATALOG` (entities/cloud-stt-provider/model/catalog.ts) â€” it never
-// queries the backend for cloud rows â€” so `CLOUD_CATALOG` below is the
+// `CLOUD_CATALOG` (entities/cloud-stt-provider/model/catalog.ts) -- it never
+// queries the backend for cloud rows -- so `CLOUD_CATALOG` below is the
 // backend-side mirror, kept BYTE-IDENTICAL to the renderer's curated table
 // (used to default + validate a cloud id and available for any future
 // enumerate-cloud-models command). Crucially it is NOT folded into the local
@@ -508,7 +508,7 @@ pub const CLOUD_TRANSCRIBE_TIMEOUT_SECS: u64 = 90;
 #[derive(Debug, Clone, Copy)]
 pub struct CloudModel {
     /// Bare provider model id (appended to the provider prefix verbatim, e.g.
-    /// `whisper-1` â†’ `openai:whisper-1`).
+    /// `whisper-1` -> `openai:whisper-1`).
     pub id: &'static str,
     pub display_name: &'static str,
     pub description: &'static str,
@@ -516,7 +516,7 @@ pub struct CloudModel {
     pub is_default: bool,
 }
 
-/// ElevenLabs cloud STT models. Mirrors `CURATED_CLOUD_MODELS.elevenlabs` âˆª
+/// ElevenLabs cloud STT models. Mirrors `CURATED_CLOUD_MODELS.elevenlabs` and
 /// `GENERATED_CLOUD_MODEL_IDS.elevenlabs`.
 pub const ELEVENLABS_CLOUD_MODELS: &[CloudModel] = &[
     CloudModel {
@@ -534,7 +534,7 @@ pub const ELEVENLABS_CLOUD_MODELS: &[CloudModel] = &[
 ];
 
 /// The curated cloud STT catalog for `provider` (the renderer's `CLOUD_CATALOG[provider]`).
-/// OpenRouter has NO curated catalog â€” its transcription models are fetched live
+/// OpenRouter has NO curated catalog -- its transcription models are fetched live
 /// (`openrouter_refresh_stt_models`) and filtered by `output_modalities=transcription`,
 /// so the picker drives selection there. The backend only ever receives a concrete
 /// `openrouter:<id>` the renderer already resolved.
@@ -569,7 +569,7 @@ pub fn split_model_id(model_id: &str) -> Option<(CloudSttProvider, String)> {
     Some((provider, bare))
 }
 
-/// The default `<provider>:<id>` for a provider â€” the `is_default` entry, else
+/// The default `<provider>:<id>` for a provider -- the `is_default` entry, else
 /// the first. Mirrors `defaultCloudModelId` (catalog.ts).
 pub fn default_cloud_model_id(provider: CloudSttProvider) -> String {
     let models = cloud_models_for(provider);
@@ -622,7 +622,7 @@ pub fn samples_to_wav_bytes(samples: &[f32]) -> Result<Vec<u8>, CloudSttError> {
 
 /// Parse a provider transcription JSON body into the common payload.
 /// OpenAI verbose_json: { text, language, duration }. ElevenLabs:
-/// { text, language_code?, â€¦ }. OpenRouter: { text, usage: { seconds, â€¦ } }.
+/// { text, language_code?, ... }. OpenRouter: { text, usage: { seconds, ... } }.
 /// Mirrors buildTranscribeResult.
 pub fn parse_transcription_json(
     provider: CloudSttProvider,
@@ -902,7 +902,7 @@ mod tests {
 
     #[test]
     fn parse_openrouter_usage_seconds() {
-        // OpenRouter's dedicated endpoint: { text, usage: { seconds, â€¦ } }.
+        // OpenRouter's dedicated endpoint: { text, usage: { seconds, ... } }.
         let json = serde_json::json!({
             "text": "hello from openrouter",
             "usage": { "seconds": 9.2, "total_tokens": 113 }
@@ -930,7 +930,7 @@ mod tests {
             provider_of("openrouter:openai/whisper-1"),
             Some(CloudSttProvider::OpenRouter)
         );
-        // OpenAI is no longer a direct provider â€” `openai:` is now an unknown prefix.
+        // OpenAI is no longer a direct provider -- `openai:` is now an unknown prefix.
         assert_eq!(provider_of("openai:whisper-1"), None);
         // local-catalog ids + custom ids carry no prefix.
         assert_eq!(provider_of("tiny"), None);
@@ -978,7 +978,7 @@ mod tests {
 
     #[test]
     fn wav_bytes_are_a_valid_riff_container() {
-        // 0.1s of silence at 16 kHz mono â†’ a parseable WAV with a RIFF/WAVE header.
+        // 0.1s of silence at 16 kHz mono -> a parseable WAV with a RIFF/WAVE header.
         let samples = vec![0.0f32; 1600];
         let bytes = samples_to_wav_bytes(&samples).expect("encode");
         assert!(bytes.len() > 44, "must include 44-byte header + data");

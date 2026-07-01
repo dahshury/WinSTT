@@ -226,6 +226,7 @@ fn family_slug_of(family: winstt_app_lib::winstt::catalog::Family) -> &'static s
         Family::Kaldi => "kaldi",
         Family::TOne => "t-one",
         Family::Dolphin => "dolphin",
+        Family::Qwen3 => "qwen3",
         Family::Custom => "custom",
     }
 }

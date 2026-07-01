@@ -48,9 +48,7 @@ export function useVisualizerSync(): void {
 	// frames without listing it as a dependency (the function closes over
 	// store setters which are stable, but the ref keeps things honest).
 	// @crap-exclude rAF callback — covered via E2E
-	const animateRef = useRef<() => void>(() => {
-		// noop placeholder, replaced on every render below
-	});
+	const animateRef = useRef<() => void>(() => undefined);
 	// Keep the latest animate fn in the ref without writing `.current` during
 	// render (the React Compiler forbids that). A layout effect runs before any
 	// rAF the subscription effects schedule, so `animateRef.current` is fresh

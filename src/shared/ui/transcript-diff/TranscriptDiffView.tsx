@@ -127,7 +127,7 @@ function DiffChangeChip({
 	return (
 		<span
 			className={cn(
-				"inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-border bg-foreground/5 px-1.5 py-1 text-[11px] leading-none",
+				"inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-foreground/[0.04] px-1.5 py-1 text-[11px] leading-none ring-1 ring-divider ring-inset",
 				rejected && "opacity-60",
 			)}
 			title={
@@ -139,7 +139,7 @@ function DiffChangeChip({
 			}
 		>
 			{change.before ? (
-				<span className="min-w-0 max-w-[9rem] truncate text-error line-through decoration-error/70">
+				<span className="min-w-0 max-w-[9rem] truncate rounded bg-error-dim/40 px-1 text-error line-through decoration-error/70">
 					{before}
 				</span>
 			) : (
@@ -149,9 +149,9 @@ function DiffChangeChip({
 			{change.after ? (
 				<span
 					className={cn(
-						"min-w-0 max-w-[9rem] truncate text-success",
+						"min-w-0 max-w-[9rem] truncate rounded bg-success-dim/50 px-1 text-success",
 						rejected &&
-							"text-foreground-muted line-through decoration-foreground-muted/60",
+							"bg-foreground/5 text-foreground-muted line-through decoration-foreground-muted/60",
 					)}
 				>
 					{after}
@@ -257,8 +257,8 @@ export function TranscriptDiffView({
 
 	return (
 		<div className="flex flex-col gap-2.5">
-			<div className="flex flex-wrap items-center gap-2">
-				<span className="inline-flex items-center gap-1 rounded-md bg-accent-glow px-1.5 py-1 font-medium text-[11px] text-accent leading-none">
+			<div className="flex flex-wrap items-center gap-2 border-divider border-b pb-2.5">
+				<span className="inline-flex items-center gap-1 rounded-md bg-accent-glow px-1.5 py-1 font-medium text-[11px] text-accent leading-none ring-1 ring-accent/20 ring-inset">
 					<HugeiconsIcon
 						aria-hidden="true"
 						className="size-3"
@@ -284,7 +284,7 @@ export function TranscriptDiffView({
 					/>
 				))}
 				{hiddenChanges > 0 ? (
-					<span className="inline-flex items-center rounded-md border border-border bg-foreground/5 px-1.5 py-1 text-[11px] text-foreground-muted leading-none">
+					<span className="inline-flex items-center rounded-md bg-foreground/[0.04] px-1.5 py-1 text-[11px] text-foreground-muted leading-none ring-1 ring-divider ring-inset">
 						{labels.moreChanges(hiddenChanges)}
 					</span>
 				) : null}
@@ -293,22 +293,30 @@ export function TranscriptDiffView({
 			<div className="grid gap-2 sm:grid-cols-2">
 				<section
 					className={cn(
-						"min-w-0 rounded-md border border-border p-2",
+						"min-w-0 rounded-lg p-2.5 ring-1 ring-divider ring-inset",
 						surfaceBg(panelLevel),
 					)}
 				>
-					<div className="mb-1.5 font-medium text-[11px] text-foreground-muted uppercase leading-none tracking-[0.08em]">
+					<div className="mb-1.5 flex items-center gap-1.5 font-medium text-[11px] text-foreground-muted uppercase leading-none tracking-[0.08em]">
+						<span
+							aria-hidden="true"
+							className="size-1.5 rounded-full bg-error/70"
+						/>
 						{labels.before}
 					</div>
 					<DiffText diff={diff} ordinals={ordinals} side="before" />
 				</section>
 				<section
 					className={cn(
-						"min-w-0 rounded-md border border-border p-2",
+						"min-w-0 rounded-lg p-2.5 ring-1 ring-divider ring-inset",
 						surfaceBg(panelLevel),
 					)}
 				>
-					<div className="mb-1.5 font-medium text-[11px] text-foreground-muted uppercase leading-none tracking-[0.08em]">
+					<div className="mb-1.5 flex items-center gap-1.5 font-medium text-[11px] text-foreground-muted uppercase leading-none tracking-[0.08em]">
+						<span
+							aria-hidden="true"
+							className="size-1.5 rounded-full bg-success/70"
+						/>
 						{labels.after}
 					</div>
 					<DiffText
@@ -330,7 +338,7 @@ export function TranscriptDiffView({
 						{review.discardLabel}
 					</BaseButton>
 					<BaseButton
-						className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 font-medium text-sm text-on-accent transition-colors hover:bg-accent-hover"
+						className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 font-medium text-on-accent text-sm shadow-action-accent transition-[background-color,box-shadow] hover:bg-accent-hover hover:shadow-action-accent-hover"
 						onClick={review.onCommit}
 						type="button"
 					>

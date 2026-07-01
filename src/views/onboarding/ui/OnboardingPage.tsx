@@ -16,8 +16,10 @@ import { useTouchActivation } from "@/shared/lib/use-touch-activation";
 import { Button } from "@/shared/ui/button";
 import { Spinner } from "@/shared/ui/spinner";
 import { Tooltip } from "@/shared/ui/tooltip";
-import { OnboardingWizard } from "@/widgets/onboarding-wizard";
-import { useOnboardingWizardStore } from "@/widgets/onboarding-wizard/model/wizard-store";
+import {
+	OnboardingWizard,
+	useOnboardingWizardStore,
+} from "@/widgets/onboarding-wizard";
 
 /**
  * First-run wizard view. Mirrors the SettingsPage shell so the window reads

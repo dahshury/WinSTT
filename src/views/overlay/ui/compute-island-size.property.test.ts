@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
-import { computeIslandSize } from "./OverlayPage";
+import { computeIslandSize } from "../lib/overlay-reveal";
 
 // Property tests for the dynamic-island width state machine. The function
 // maps four booleans (isRecordingActive, isSpeaking, isThinking, hasShownText)

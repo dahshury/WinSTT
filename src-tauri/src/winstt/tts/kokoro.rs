@@ -15,11 +15,10 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use super::phonemize::{default_phonemizer, Phonemizer, MAX_PHONEME_LENGTH};
-use super::provider::TtsOrtProviderPolicy;
+use super::provider::LazyOrtEngine;
 use super::types::TtsDevice;
 
 /// Kokoro v1.0 emits 24 kHz mono float PCM.
@@ -36,25 +35,6 @@ pub const STYLE_DIM: usize = 256;
 pub const KOKORO_HF_REPO: &str = "onnx-community/Kokoro-82M-v1.0-ONNX";
 pub const KOKORO_FP16_URL: &str =
     "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_fp16.onnx";
-
-/// EP intent — mirrors the STT slice's `Accelerator` collapse. Kokoro is
-/// DirectML-SAFE (82M fp16, NOT in the int8 DML-incompatible STT families), so
-/// it follows the model device with a graceful CPU demotion on session-create
-/// failure (like WinSTT's CUDA→CPU path).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KokoroDevice {
-    Auto,
-    DirectMl,
-    Cpu,
-}
-
-fn kokoro_device_to_tts(device: KokoroDevice) -> TtsDevice {
-    match device {
-        KokoroDevice::Auto => TtsDevice::Auto,
-        KokoroDevice::DirectMl => TtsDevice::DirectMl,
-        KokoroDevice::Cpu => TtsDevice::Cpu,
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum KokoroError {
@@ -185,7 +165,7 @@ pub struct KokoroConfig {
     pub model_filename: String,
     /// Subdir holding the per-voice raw `.bin` files (`voices` by default).
     pub voices_dir: String,
-    pub device: KokoroDevice,
+    pub device: TtsDevice,
 }
 
 impl Default for KokoroConfig {
@@ -194,7 +174,7 @@ impl Default for KokoroConfig {
             cache_dir: PathBuf::new(),
             model_filename: "model_fp16.onnx".to_string(),
             voices_dir: "voices".to_string(),
-            device: KokoroDevice::Auto,
+            device: TtsDevice::Auto,
         }
     }
 }
@@ -227,26 +207,22 @@ struct LoadedKokoro {
     /// The model input name for the token ids — newer Kokoro exports use
     /// `input_ids`, older ones `tokens`. Detected at load from the graph.
     tokens_input: String,
-    /// Whether the `speed` input is i64 (newer) or f32 (older). Detected at load.
-    speed_is_f32: bool,
 }
 
 /// In-process Kokoro-82M engine on ort. `Send + Sync` via the inner `Mutex`
 /// (ORT sessions are not re-entrant — mirrors the Python `_synth_lock`).
 pub struct KokoroEngine {
     config: KokoroConfig,
-    inner: Mutex<Option<LoadedKokoro>>,
+    inner: LazyOrtEngine<LoadedKokoro>,
     phonemizer: Box<dyn Phonemizer>,
-    ready: AtomicBool,
 }
 
 impl KokoroEngine {
     pub fn new(config: KokoroConfig) -> Self {
         Self {
             config,
-            inner: Mutex::new(None),
+            inner: LazyOrtEngine::new(),
             phonemizer: default_phonemizer(),
-            ready: AtomicBool::new(false),
         }
     }
 
@@ -254,21 +230,18 @@ impl KokoroEngine {
     pub fn with_phonemizer(config: KokoroConfig, phonemizer: Box<dyn Phonemizer>) -> Self {
         Self {
             config,
-            inner: Mutex::new(None),
+            inner: LazyOrtEngine::new(),
             phonemizer,
-            ready: AtomicBool::new(false),
         }
     }
 
     pub fn is_ready(&self) -> bool {
-        self.ready.load(Ordering::Acquire)
+        self.inner.is_ready()
     }
 
     pub fn active_providers(&self) -> Vec<String> {
         self.inner
-            .lock()
-            .ok()
-            .and_then(|g| g.as_ref().map(|k| k.active_providers.clone()))
+            .with_ref(|k| k.active_providers.clone())
             .unwrap_or_default()
     }
 
@@ -276,24 +249,19 @@ impl KokoroEngine {
     /// Assets must already be on disk (the host runs `download_assets` first via
     /// the shared resumable downloader). Returns Ok once `ready`.
     pub fn warm_up(&self) -> KokoroResult<()> {
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| KokoroError::Session("kokoro engine lock poisoned".into()))?;
-        if guard.is_some() {
-            return Ok(());
-        }
-        if !self.config.assets_present() {
-            return Err(KokoroError::AssetsMissing(format!(
-                "expected {} and {}",
-                self.config.model_path().display(),
-                self.config.voices_dir_path().display()
-            )));
-        }
-        let loaded = self.load()?;
-        *guard = Some(loaded);
-        self.ready.store(true, Ordering::Release);
-        Ok(())
+        self.inner.warm_up(
+            || KokoroError::Session("kokoro engine lock poisoned".into()),
+            || {
+                if !self.config.assets_present() {
+                    return Err(KokoroError::AssetsMissing(format!(
+                        "expected {} and {}",
+                        self.config.model_path().display(),
+                        self.config.voices_dir_path().display()
+                    )));
+                }
+                self.load()
+            },
+        )
     }
 
     /// Synthesize ONE sentence → mono f32 PCM @ 24 kHz. Blocking. Lazily warms
@@ -331,34 +299,29 @@ impl KokoroEngine {
             )));
         }
 
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| KokoroError::Session("kokoro engine lock poisoned".into()))?;
-        if guard.is_none() {
-            if !self.config.assets_present() {
-                return Err(KokoroError::AssetsMissing(format!(
-                    "expected {} and {}",
-                    self.config.model_path().display(),
-                    self.config.voices_dir_path().display()
-                )));
-            }
-            *guard = Some(self.load()?);
-            self.ready.store(true, Ordering::Release);
-        }
-        let Some(loaded) = guard.as_mut() else {
-            return Err(KokoroError::Session(
-                "kokoro session was not initialized".into(),
-            ));
-        };
-
-        // Style vector for the UNPADDED token count. kokoro_onnx does
-        // `voice = voice[len(tokens)]` BEFORE padding to `[0, *tokens, 0]`, so the row
-        // index is `tokens.len()`, NOT the padded length. Indexing at `padded.len()`
-        // (tokens.len()+2) picked the wrong style row → wrong prosody and a longer clip
-        // (81000 vs the reference's 65536 samples on the JFK sentence). Match the reference exactly.
-        let style_row = loaded.voices.style_row(voice, tokens.len())?;
-        self.run_inference(loaded, &padded, &style_row, speed)
+        self.inner.with_loaded(
+            || KokoroError::Session("kokoro engine lock poisoned".into()),
+            || KokoroError::Session("kokoro session was not initialized".into()),
+            || {
+                if !self.config.assets_present() {
+                    return Err(KokoroError::AssetsMissing(format!(
+                        "expected {} and {}",
+                        self.config.model_path().display(),
+                        self.config.voices_dir_path().display()
+                    )));
+                }
+                self.load()
+            },
+            |loaded| {
+                // Style vector for the UNPADDED token count. kokoro_onnx does
+                // `voice = voice[len(tokens)]` BEFORE padding to `[0, *tokens, 0]`, so the row
+                // index is `tokens.len()`, NOT the padded length. Indexing at `padded.len()`
+                // (tokens.len()+2) picked the wrong style row → wrong prosody and a longer clip
+                // (81000 vs kokoro_onnx's 65536 samples on the JFK sentence). Match kokoro_onnx exactly.
+                let style_row = loaded.voices.style_row(voice, tokens.len())?;
+                self.run_inference(loaded, &padded, &style_row, speed)
+            },
+        )
     }
 
     /// Build the ORT session + parse the voice pack + detect the input schema.
@@ -371,22 +334,19 @@ impl KokoroEngine {
         // `tokens`. BOTH take `style [1,256] f32` + `speed [1] f32` — verified at
         // runtime: the onnx-community model rejects an int64 speed
         // ("Unexpected input data type ... expected (tensor(float))"). So speed is
-        // always f32 here (the i64 path in run_inference is kept as a guard but
-        // unused by the shipped exports).
-        let names = input_node_names(&session);
+        // always f32 here.
+        let names = super::provider::input_names(&session);
         let tokens_input = if names.iter().any(|n| n == "input_ids") {
             "input_ids".to_string()
         } else {
             "tokens".to_string()
         };
-        let speed_is_f32 = true;
 
         Ok(LoadedKokoro {
             session,
             voices,
             active_providers,
             tokens_input,
-            speed_is_f32,
         })
     }
 
@@ -394,8 +354,8 @@ impl KokoroEngine {
     /// `/encoder/F0.1/pool/ConvTranspose` HARD-FAILS on DirectML with
     /// `80070057 The parameter is incorrect` — not a clean unsupported-op CPU
     /// fallback, an actual runtime crash. PROVEN identically by BOTH the Python
-    /// `kokoro_onnx` path (the reference) and this Rust path (see the tts benchmark), so
-    /// the upstream the reference app is likewise CPU-only for Kokoro. We therefore never
+    /// `kokoro_onnx` path (the upstream reference) and this Rust path (see the tts benchmark), so
+    /// the upstream reference app is likewise CPU-only for Kokoro. We therefore never
     /// register the DirectML EP here regardless of the requested device. An 82M model
     /// on CPU is fast — and faster than DML's per-op launch overhead would be at this
     /// size — once we let ORT use its full intra-op thread pool (below).
@@ -403,8 +363,8 @@ impl KokoroEngine {
         let model_path = self.config.model_path();
         super::provider::build_session(
             &model_path,
-            kokoro_device_to_tts(self.config.device),
-            TtsOrtProviderPolicy::CpuOnly {
+            self.config.device,
+            super::provider::TtsOrtProviderPolicy::CpuOnly {
                 reason: "DML ConvTranspose unsupported",
             },
             "Kokoro",
@@ -434,32 +394,17 @@ impl KokoroEngine {
             Tensor::from_array(([1usize, STYLE_DIM], style_row.to_vec().into_boxed_slice()))
                 .map_err(|e| KokoroError::Session(format!("style tensor: {e}")))?;
 
-        // speed: f32 [1] (canonical kokoro-v1.0 export) or i64 [1] (newer HF re-export).
-        let outputs = if loaded.speed_is_f32 {
-            let speed_tensor = Tensor::from_array(([1usize], vec![speed].into_boxed_slice()))
-                .map_err(|e| KokoroError::Session(format!("speed tensor: {e}")))?;
-            loaded
-                .session
-                .run(ort::inputs! {
-                    loaded.tokens_input.as_str() => ids_tensor,
-                    "style" => style_tensor,
-                    "speed" => speed_tensor,
-                })
-                .map_err(|e| KokoroError::Session(format!("inference: {e}")))?
-        } else {
-            // Integer-scalar speed export; round to nearest (min 1).
-            let speed_i = speed.round().max(1.0) as i64;
-            let speed_tensor = Tensor::from_array(([1usize], vec![speed_i].into_boxed_slice()))
-                .map_err(|e| KokoroError::Session(format!("speed tensor: {e}")))?;
-            loaded
-                .session
-                .run(ort::inputs! {
-                    loaded.tokens_input.as_str() => ids_tensor,
-                    "style" => style_tensor,
-                    "speed" => speed_tensor,
-                })
-                .map_err(|e| KokoroError::Session(format!("inference: {e}")))?
-        };
+        // speed: f32 [1] (the shipped kokoro-v1.0 / onnx-community export type).
+        let speed_tensor = Tensor::from_array(([1usize], vec![speed].into_boxed_slice()))
+            .map_err(|e| KokoroError::Session(format!("speed tensor: {e}")))?;
+        let outputs = loaded
+            .session
+            .run(ort::inputs! {
+                loaded.tokens_input.as_str() => ids_tensor,
+                "style" => style_tensor,
+                "speed" => speed_tensor,
+            })
+            .map_err(|e| KokoroError::Session(format!("inference: {e}")))?;
 
         // Output is the first (only) tensor: f32 audio samples. The graph emits
         // either [num_samples] or [1, num_samples]; flatten either way.
@@ -469,19 +414,16 @@ impl KokoroEngine {
             .map_err(|e| KokoroError::Session(format!("extract audio: {e}")))?;
         // Trim leading/trailing silence, mirroring kokoro_onnx's `create(trim=True)`
         // (librosa.effects.trim). Kokoro pads ~0.5–0.6s of near-silence around each
-        // utterance; without this our clips ran ~24% longer than the reference path
+        // utterance; without this our clips ran ~24% longer than the kokoro_onnx path
         // (81000 vs 65536 samples on the JFK sentence) — same speech, just dead air.
-        // Trimming matches the reference AND makes read-aloud start/stop snappier.
+        // Trimming matches kokoro_onnx AND makes read-aloud start/stop snappier.
         Ok(trim_silence(data))
     }
 
     /// Drop the session + voices (idempotent). Rust's Drop releases the native
     /// ORT handle; this lets the host unload before a device-change reload.
     pub fn shutdown(&self) {
-        if let Ok(mut guard) = self.inner.lock() {
-            *guard = None;
-        }
-        self.ready.store(false, Ordering::Release);
+        self.inner.shutdown();
     }
 }
 
@@ -532,24 +474,6 @@ fn trim_silence(audio: &[f32]) -> Vec<f32> {
         }
         _ => audio.to_vec(),
     }
-}
-
-/// Read the input node names from a loaded session, defensively.
-///
-/// SPIKE: `ort 2.0.0-rc.12` exposes input descriptors via `session.inputs()`
-/// returning `&[Outlet]`; the `Outlet`'s public `name` accessor was not fully
-/// documented at draft time. The canonical kokoro-v1.0 export uses `tokens`, so
-/// if this returns empty (API shape differs at compile), `load` falls back to
-/// the canonical schema and synthesis still works. Confirm the exact `Outlet`
-/// field/method in the compile loop and tighten this.
-fn input_node_names(session: &ort::session::Session) -> Vec<String> {
-    // `session.inputs()` → &[Outlet]; `Outlet::name()` is a method (matches
-    // winstt/stt/whisper.rs `o.name()`), NOT a field.
-    session
-        .inputs()
-        .iter()
-        .map(|o| o.name().to_string())
-        .collect()
 }
 
 /// Resolve the fp16 graph URL, allowing env override (CI / self-host).

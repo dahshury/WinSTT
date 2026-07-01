@@ -5,6 +5,7 @@ export const IPC = {
 	STT_NO_AUDIO_DETECTED: "stt:no-audio-detected",
 	STT_TRANSCRIPTION_FAILED: "stt:transcription-failed",
 	STT_RECORDING_START: "stt:recording-start",
+	STT_CAPTURE_ACTIVE: "stt:capture-active",
 	STT_RECORDING_STOP: "stt:recording-stop",
 	STT_VAD_START: "stt:vad-start",
 	STT_VAD_STOP: "stt:vad-stop",
@@ -43,7 +44,6 @@ export const IPC = {
 	STT_GET_LIVE_RESOURCES: "stt:get-live-resources",
 	STT_ASSESS_DICTATION_FIT: "stt:assess-dictation-fit",
 	STT_ASSESS_OLLAMA_FIT: "stt:assess-ollama-fit",
-	STT_SPEAKER_SEGMENTS: "stt:speaker-segments",
 	STT_DIARIZATION_TOGGLE_STARTED: "stt:diarization-toggle-started",
 	STT_DIARIZATION_TOGGLE_COMPLETED: "stt:diarization-toggle-completed",
 	STT_DIARIZATION_TOGGLE_FAILED: "stt:diarization-toggle-failed",
@@ -405,8 +405,6 @@ export const IPC = {
 	// the updater's `quitAndInstall`. The renderer wires this to the
 	// "Restart to install" button shown once status === "downloaded".
 	UPDATER_QUIT_AND_INSTALL: "updater:quit-and-install",
-	SECURE_GET_KEY: "secure:get-key",
-	SECURE_INVOKE: "secure:invoke",
 
 	// Transcription history (renderer → main) — persisted store backed.
 	// Layered alongside the SQLite history (`history:*` channels below);
@@ -464,8 +462,9 @@ export type IpcChannel = (typeof IPC)[keyof typeof IPC];
  *   - `on`       main → renderer push (`ipcRenderer.on`)
  *   - `secure`   renderer → main via the encrypted secure-IPC channel
  *
- * Channels used only between main and preload itself (e.g. SECURE_GET_KEY)
- * appear with an empty direction array — they are not exposed to the renderer.
+ * Retired channels kept only for back-compat (e.g. TTS_OPENROUTER_PREVIEW,
+ * whose wrapper now calls the generated binding directly) appear with an empty
+ * direction array — they are not exposed to the renderer.
  */
 export type IpcDirection = "send" | "invoke" | "on" | "secure";
 
@@ -484,6 +483,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_NO_AUDIO_DETECTED]: ["on"],
 	[IPC.STT_TRANSCRIPTION_FAILED]: ["on"],
 	[IPC.STT_RECORDING_START]: ["on"],
+	[IPC.STT_CAPTURE_ACTIVE]: ["on"],
 	[IPC.STT_RECORDING_STOP]: ["on"],
 	[IPC.STT_VAD_START]: ["on"],
 	[IPC.STT_VAD_STOP]: ["on"],
@@ -738,10 +738,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.UPDATER_CHECK_NOW]: ["invoke"],
 	[IPC.UPDATER_QUIT_AND_INSTALL]: ["invoke"],
 
-	// Secure-IPC plumbing — preload uses these internally, not exposed to renderer
-	[IPC.SECURE_GET_KEY]: [],
-	[IPC.SECURE_INVOKE]: [],
-
 	// Transcription history
 	[IPC.HISTORY_GET_ALL]: ["invoke"],
 	[IPC.HISTORY_CLEAR]: ["invoke"],
@@ -765,7 +761,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.LLM_WARMUP_STATUS]: ["on"],
 
 	// Speaker diarization (server → main → renderer)
-	[IPC.STT_SPEAKER_SEGMENTS]: ["on"],
 	[IPC.STT_DIARIZATION_TOGGLE_STARTED]: ["on"],
 	[IPC.STT_DIARIZATION_TOGGLE_COMPLETED]: ["on"],
 	[IPC.STT_DIARIZATION_TOGGLE_FAILED]: ["on"],

@@ -6,7 +6,7 @@ use std::path::Path;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 
-use super::super::{execution_providers, Accelerator, EngineConfig, SttError, SttResult};
+use super::super::{configure_session, Accelerator, EngineConfig, SttError, SttResult};
 
 /// Build one ORT session with the resolved providers + thread count. `is_whisper_fp16`
 /// lowers the optimization level to EXTENDED (Level2) to dodge `SimplifiedLayerNormFusion`
@@ -22,14 +22,6 @@ pub(super) fn build_session(
     } else {
         GraphOptimizationLevel::All // = ORT_ENABLE_ALL (Level3 is layout-only, NOT "all")
     };
-    let mut builder = Session::builder()
-        .map_err(|e| SttError::SessionCreate(format!("session builder: {e}")))?
-        .with_execution_providers(execution_providers(&cfg.providers))
-        .map_err(|e| SttError::SessionCreate(format!("set providers: {e}")))?
-        .with_optimization_level(level)
-        .map_err(|e| SttError::SessionCreate(format!("opt level: {e}")))?
-        .with_intra_threads(intra)
-        .map_err(|e| SttError::SessionCreate(format!("intra threads: {e}")))?;
     // DirectML session config (L1): disable the memory-pattern planner on the GPU path. ORT's DML
     // EP manages its own device memory (DisableMemPattern + ORT_SEQUENTIAL are required), and our
     // Whisper KV-cache decode binds device-resident tensors via IoBinding — the mem-pattern planner
@@ -38,11 +30,8 @@ pub(super) fn build_session(
         .providers
         .first()
         .is_some_and(|p| !matches!(p, Accelerator::Cpu));
-    if is_gpu {
-        builder = builder
-            .with_memory_pattern(false)
-            .map_err(|e| SttError::SessionCreate(format!("disable mem pattern (DML): {e}")))?;
-    }
+    let mut builder = configure_session(level, Some(intra), is_gpu, Some(&cfg.providers))
+        .map_err(SttError::SessionCreate)?;
     builder
         .commit_from_file(path)
         .map_err(|e| SttError::SessionCreate(format!("commit {}: {e}", path.display())))

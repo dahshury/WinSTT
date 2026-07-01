@@ -15,7 +15,7 @@ mod misc_actions;
 mod post_process;
 mod transcribe;
 
-use misc_actions::{CancelAction, ReadAloudAction, RepasteAction, TestAction, TransformAction};
+use misc_actions::{CancelAction, ReadAloudAction, RepasteAction, TransformAction};
 use transcribe::TranscribeAction;
 
 #[derive(Clone, serde::Serialize)]
@@ -120,10 +120,6 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "cancel".to_string(),
         Arc::new(CancelAction) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "test".to_string(),
-        Arc::new(TestAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "transforms".to_string(),

@@ -12,7 +12,7 @@ import {
 	SparklesIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { ModelInfo } from "@/entities/model-catalog";
+import { type ModelInfo, resolveQuantCache } from "@/entities/model-catalog";
 import type {
 	FitAssessmentEntry,
 	FitSeverity,
@@ -34,7 +34,6 @@ import {
 	type QuantShelfEntry,
 } from "../../core/model-card/QuantShelf";
 import { resolveQuantDownloadState } from "../../core/model-card/quant-shelf-state";
-import { resolveQuantCache } from "../lib/cache-helpers";
 import { variantDisplayName } from "../lib/family-helpers";
 import { severityFor } from "../lib/hardware-fit";
 import { formatLanguages } from "../lib/language-names";

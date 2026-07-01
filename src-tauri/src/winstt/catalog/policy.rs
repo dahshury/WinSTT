@@ -1,8 +1,7 @@
 // Family / Accelerator types and the deterministic precision + execution-provider resolution
 // policy: id canonicalization, display-name helpers, the per-family int8/fp16-auto policy, and
 // the DML force-CPU decision. Consumes the static `ModelEntry` rows + `STT_CATALOG` table from the
-// sibling `data` module via `super::`. There is no ML here — only string-state arithmetic — so it
-// is written as REAL code with `#[cfg(test)]` unit tests (per slice rules).
+// sibling `data` module via `super::`. There is no ML here — only string-state arithmetic.
 
 use std::collections::BTreeSet;
 
@@ -25,6 +24,8 @@ pub enum Family {
     Kaldi,
     TOne,
     Dolphin,
+    /// Qwen3-ASR (Qwen3 LLM decoder + audio encoder; init/step ONNX graphs, raw fp16 embed table).
+    Qwen3,
     /// Runtime sentinel for user custom models (not in the shipped catalog).
     Custom,
 }
@@ -43,6 +44,7 @@ impl Family {
             Family::Kaldi => "kaldi",
             Family::TOne => "t-one",
             Family::Dolphin => "dolphin",
+            Family::Qwen3 => "qwen3",
             Family::Custom => "custom",
         }
     }
@@ -65,6 +67,7 @@ impl Family {
             "kaldi" => Family::Kaldi,
             "t-one" => Family::TOne,
             "dolphin" => Family::Dolphin,
+            "qwen3" => Family::Qwen3,
             _ => Family::Custom,
         }
     }
@@ -136,11 +139,15 @@ pub fn canonical_model_id(id: &str) -> &str {
         "streaming-nemotron-en-160ms" => "streaming-nemotron-en-160ms-int8",
         "streaming-nemotron-en-560ms" => "streaming-nemotron-en-560ms-int8",
         "streaming-nemotron-en-1120ms" => "streaming-nemotron-en-1120ms-int8",
+        // Granite Speech 4.1-2b was REPLACED by the 4.1-2b-plus re-export (same AR architecture +
+        // graph layout, better training data). Migrate any persisted old-id selection so a user who
+        // had the previous model keeps a working choice instead of falling back to `tiny`.
+        "granite-speech-4.1-2b" => "granite-speech-4.1-2b-plus",
         _ => id,
     }
 }
 
-/// Look up a catalog row by id. Linear scan over 71 entries — cheap and avoids a lazy map.
+/// Look up a catalog row by id. Linear scan over 73 entries — cheap and avoids a lazy map.
 pub fn find(id: &str) -> Option<&'static ModelEntry> {
     let id = canonical_model_id(id);
     STT_CATALOG.iter().find(|m| m.id == id)
@@ -344,6 +351,11 @@ pub fn resolve_quantization(
         if publishes("int8") {
             return Some("int8");
         }
+        // int4-only models (Qwen3-ASR): no fp/int8 export exists, so auto must request int4 rather
+        // than falling through to `None` (which would ask for a non-existent unsuffixed graph).
+        if publishes("int4") {
+            return Some("int4");
+        }
         return None;
     }
 
@@ -392,7 +404,9 @@ pub fn must_force_cpu(family: Family, accel: Accelerator) -> bool {
 /// Map a known quant string to its `'static` form, so resolution can return `&'static str`
 /// without leaking. The universe of quant suffixes is small and closed.
 fn static_quant(q: &str) -> Option<&'static str> {
-    const ALL: &[&str] = &["", "fp16", "fp16w", "q4", "q4f16", "bnb4", "int8", "uint8"];
+    const ALL: &[&str] = &[
+        "", "fp16", "fp16w", "q4", "q4f16", "bnb4", "int8", "uint8", "int4",
+    ];
     ALL.iter().copied().find(|s| *s == q)
 }
 

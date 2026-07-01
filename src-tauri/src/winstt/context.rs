@@ -1,11 +1,11 @@
 // Context-awareness for the dictation cleanup path. ZERO reimplementation of
-// the UIA reader — `winstt-context.exe` (the existing C binary, byte-identical
-// to the reference build) ships as a Tauri SIDECAR (externalBin) and is invoked
+// the UIA reader — `winstt-context.exe` (the existing C binary) ships as a
+// Tauri SIDECAR (externalBin) and is invoked
 // per dictation via std::process::Command. This module:
 //
 //   1. Resolves + spawns the sidecar with the right mode flag
 //      (--selection / --split / --tree), with the same hard timeout as the
-//      the reference wrapper (READ_TIMEOUT_MS = 1200ms; the binary's own 750ms
+//      sidecar wrapper (READ_TIMEOUT_MS = 1200ms; the binary's own 750ms
 //      watchdog is the inner fence).
 //   2. Parses its single-line JSON stdout into a `WindowContextSnapshot`,
 //      attaching optional fields only when non-empty (so an empty capture is
@@ -15,9 +15,8 @@
 //      redaction, and the prompt FORMATTER (compact fragment for the LLM).
 //
 // The deny-list, IDE/terminal/canvas detection, host extraction, and prompt
-// formatter are PURE STRING LOGIC ported 1:1 from context-snapshot.ts and
-// fully unit-tested. The only non-pure part is the Command spawn (a thin
-// sketch — wire during the compile loop).
+// formatter are PURE STRING LOGIC ported 1:1 from context-snapshot.ts. The
+// only non-pure part is the Command spawn.
 //
 // Sidecar registration (tauri.conf.json):
 //   "bundle": { "externalBin": ["binaries/winstt-context"] }
@@ -57,8 +56,7 @@ pub use snapshot::{
 };
 use surface::contains_word;
 pub use surface::{
-    ide_kind_from_exe, ide_profile, is_ai_coding_cli, is_canvas_surface, is_ide_context,
-    is_ide_terminal, looks_like_terminal, IdeKind, IdeProfile,
+    ide_kind_from_exe, is_canvas_surface, is_ide_context, looks_like_terminal, IdeKind,
 };
 
 // ───────────────────────── prompt formatter ───────────────────────────
@@ -67,13 +65,12 @@ pub use surface::{
 // phrases are EXACT — the system-prompt continuation clause matches against
 // them literally (see with_context_prefix in llm/mod.rs). `clean_caret` here
 // is a minimal denoise (trim + collapse blank lines); the full ax-prune
-// pipeline (denoiseForLlm / stripListScrollback / pruneAxHtmlForLlm) is a
-// separate slice — wire it in where marked.
+// pipeline (denoiseForLlm / stripListScrollback / pruneAxHtmlForLlm) is not
+// yet ported.
 
 const RICH_FIELD_MIN_CHARS: usize = 40;
 const SELECTED_TEXT_LLM_MAX: usize = 4000;
 const CLIPBOARD_LLM_MAX: usize = 2000;
-const CARET_BEFORE_LLM_MAX: usize = 24_000;
 const CARET_AFTER_LLM_MAX: usize = 2000;
 
 fn clip_head(value: &str, max: usize) -> String {
@@ -89,159 +86,20 @@ fn clip_tail(value: &str, max: usize) -> String {
     }
 }
 
-/// Minimal caret/field cleaner: trim + collapse runs of blank lines. The full
-/// LLM denoise (object-replacement chars, list scrollback) is the ax-prune
-/// slice — wire `denoise_for_llm` / `strip_list_scrollback` here when present.
-fn clean_caret(raw: Option<&str>) -> String {
-    let s = raw.unwrap_or("").trim();
-    // collapse 2+ consecutive newlines into one
-    let mut out = String::with_capacity(s.len());
-    let mut newline_run = 0;
-    for ch in s.chars() {
-        if ch == '\n' {
-            newline_run += 1;
-            if newline_run == 1 {
-                out.push('\n');
-            }
-        } else {
-            newline_run = 0;
-            out.push(ch);
-        }
-    }
-    out.trim().to_string()
-}
-
 fn focused_field_is_rich(snapshot: &WindowContextSnapshot) -> bool {
-    let caret = clean_caret(snapshot.text_before.as_deref()).chars().count()
-        + clean_caret(snapshot.text_after.as_deref()).chars().count();
+    let caret = json_clean_caret(snapshot.text_before.as_deref())
+        .chars()
+        .count()
+        + json_clean_caret(snapshot.text_after.as_deref())
+            .chars()
+            .count();
     if caret >= RICH_FIELD_MIN_CHARS {
         return true;
     }
-    clean_caret(Some(&snapshot.focused_text)).chars().count() >= RICH_FIELD_MIN_CHARS
-}
-
-fn push_section(out: &mut Vec<String>, value: &str, render: impl FnOnce(&str) -> String) {
-    if !value.is_empty() {
-        out.push(render(value));
-    }
-}
-
-/// The lightweight metadata sections (app / IDE / URL / window / focused field).
-fn push_metadata(out: &mut Vec<String>, snapshot: &WindowContextSnapshot) {
-    push_section(out, snapshot.app_exe.as_deref().unwrap_or("").trim(), |v| {
-        format!("App: {v}")
-    });
-    if is_ide_context(snapshot) {
-        out.push("IDE context: yes (treat visible content as code)".to_string());
-    }
-    push_section(out, snapshot.url.as_deref().unwrap_or("").trim(), |v| {
-        format!("URL: {v}")
-    });
-    push_section(out, snapshot.window_title.trim(), |v| {
-        format!("Window: {v}")
-    });
-    push_section(out, snapshot.element_name.trim(), |v| {
-        format!("Focused field: {v}")
-    });
-}
-
-fn push_selected(out: &mut Vec<String>, snapshot: &WindowContextSnapshot) {
-    let v = clip_head(
-        &clean_caret(snapshot.selected_text.as_deref()),
-        SELECTED_TEXT_LLM_MAX,
-    );
-    push_section(out, &v, |s| {
-        format!(
-            "Selected text (the user highlighted this — likely the thing they're acting on):\n{s}"
-        )
-    });
-}
-
-fn push_clipboard(out: &mut Vec<String>, snapshot: &WindowContextSnapshot) {
-    let v = clip_head(
-        &clean_caret(snapshot.clipboard_text.as_deref()),
-        CLIPBOARD_LLM_MAX,
-    );
-    push_section(out, &v, |s| {
-        format!("Clipboard contents (the user recently copied this — use only if relevant):\n{s}")
-    });
-}
-
-fn push_content(out: &mut Vec<String>, snapshot: &WindowContextSnapshot) {
-    let before = clean_caret(snapshot.text_before.as_deref());
-    let after = clean_caret(snapshot.text_after.as_deref());
-    if !before.is_empty() || !after.is_empty() {
-        let b = clip_tail(&before, CARET_BEFORE_LLM_MAX);
-        push_section(out, &b, |s| {
-            format!("Text immediately before the caret (your cleaned output will be inserted directly after this — continue it, do not repeat it):\n{s}")
-        });
-        let a = clip_head(&after, CARET_AFTER_LLM_MAX);
-        push_section(out, &a, |s| {
-            format!("Text immediately after the caret (your output will sit directly before this — do not repeat it):\n{s}")
-        });
-        return;
-    }
-    let focused = clean_caret(Some(&snapshot.focused_text));
-    push_section(out, &focused, |s| format!("Visible content:\n{s}"));
-}
-
-fn push_fallback_tree(out: &mut Vec<String>, snapshot: &WindowContextSnapshot) {
-    if is_canvas_surface(snapshot.app_exe.as_deref(), snapshot.url.as_deref()) {
-        return;
-    }
-    // The full pruner (pruneAxHtmlForLlm) is the ax-prune slice — until it's
-    // wired, emit the raw (trimmed) axHtml fenced as reference. Replace with
-    // the pruned variant when available.
-    let ax = snapshot.ax_html.as_deref().unwrap_or("").trim();
-    push_section(out, ax, |s| {
-        format!("Visible UI (XML — DO NOT echo, only use for reference):\n{s}")
-    });
-}
-
-fn push_ocr(out: &mut Vec<String>, snapshot: &WindowContextSnapshot) {
-    let v = clean_caret(snapshot.ocr_text.as_deref());
-    push_section(out, &v, |s| {
-        format!("Screen text (OCR — approximate, no reliable reading order; the structured fields above were empty so this is the only context):\n{s}")
-    });
-}
-
-/// Format the snapshot into a compact LLM-cleanup prompt fragment. Returns ""
-/// when no context is available, so callers can blindly concatenate. Mirrors
-/// formatContextForPrompt + buildPromptSections (focused-field-first; terminal
-/// scrollback omitted; tree/OCR only when the focused field is thin).
-pub fn format_context_for_prompt(snapshot: &WindowContextSnapshot) -> String {
-    format_context_for_prompt_json(snapshot)
-}
-
-#[expect(
-    dead_code,
-    reason = "legacy prompt formatter is retained for parity comparisons"
-)]
-fn format_context_for_prompt_legacy(snapshot: &WindowContextSnapshot) -> String {
-    let mut sections: Vec<String> = Vec::new();
-    push_metadata(&mut sections, snapshot);
-    push_selected(&mut sections, snapshot);
-
-    if looks_like_terminal(snapshot) {
-        sections.push(
-            "Terminal/console focused — scrollback omitted (no clean prior text available)."
-                .to_string(),
-        );
-        push_clipboard(&mut sections, snapshot);
-        return sections.join("\n");
-    }
-
-    if focused_field_is_rich(snapshot) {
-        push_content(&mut sections, snapshot);
-        push_clipboard(&mut sections, snapshot);
-        return sections.join("\n");
-    }
-
-    push_fallback_tree(&mut sections, snapshot);
-    push_content(&mut sections, snapshot);
-    push_ocr(&mut sections, snapshot);
-    push_clipboard(&mut sections, snapshot);
-    sections.join("\n")
+    json_clean_caret(Some(&snapshot.focused_text))
+        .chars()
+        .count()
+        >= RICH_FIELD_MIN_CHARS
 }
 
 static JSON_LLM_NOISE_RE: Lazy<Regex> = Lazy::new(|| {
@@ -2383,7 +2241,9 @@ fn json_caret_is_page_scrollback(text: &str) -> bool {
         || (has_speaker_line && text.lines().count() > 12)
 }
 
-fn format_context_for_prompt_json(snapshot: &WindowContextSnapshot) -> String {
+/// Format the snapshot into a compact JSON LLM-cleanup prompt fragment. Returns
+/// "" when no context is available, so callers can blindly concatenate.
+pub fn format_context_for_prompt(snapshot: &WindowContextSnapshot) -> String {
     let mut sections = json_build_metadata_sections(snapshot);
     sections.push(json_build_selected_section(snapshot));
 
@@ -2510,6 +2370,14 @@ pub fn apply_context_app_policy(
 ) -> WindowContextSnapshot {
     match app_mode {
         ContextAppMode::AllExceptDenied => apply_deny_list(snapshot, deny_list),
+        ContextAppMode::SelectedOnly if allow_list.is_empty() => {
+            // "Allow list" mode with no apps selected captures nothing — context
+            // awareness is effectively off (the settings UI persists the toggle
+            // off in this state too). Return a blank snapshot so not even the
+            // window-title metadata that `redact_sensitive_fields` keeps reaches
+            // the prompt.
+            WindowContextSnapshot::default()
+        }
         ContextAppMode::SelectedOnly => {
             if is_allowed_by_list(snapshot, allow_list) {
                 snapshot.clone()

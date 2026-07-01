@@ -19,7 +19,12 @@ import {
 import { cn } from "@/shared/lib/cn";
 import { fontWeights } from "@/shared/lib/font-weight";
 import { springs } from "@/shared/lib/springs";
-import { surfaceBg, surfaceShadow, useSurface } from "@/shared/lib/surface";
+import {
+	SurfaceProvider,
+	surfaceBg,
+	surfaceShadow,
+	useSurface,
+} from "@/shared/lib/surface";
 import { useProximityHover } from "@/shared/lib/use-proximity-hover";
 import { Tooltip } from "@/shared/ui/tooltip";
 
@@ -40,10 +45,15 @@ function useCheckboxGroupCtx(): CheckboxGroupContextValue {
 	return ctx;
 }
 
-export interface CheckboxGroupProps
-	extends HTMLAttributes<HTMLFieldSetElement> {
+export interface CheckboxGroupProps extends HTMLAttributes<HTMLFieldSetElement> {
 	checkedIndices: Set<number>;
 	children: ReactNode;
+	/** Paint the standalone settings frame (self-elevated bg + p-1.5 gutter +
+	 *  ring + shadow) the group used to get from a wrapping `ElevatedSurface`.
+	 *  Default OFF — the group stays a transparent fieldset so it sits flush
+	 *  inside a popup or another framed surface (language picker, filter menus,
+	 *  modifier list). */
+	framed?: boolean;
 	ref?: Ref<HTMLFieldSetElement>;
 }
 
@@ -120,12 +130,23 @@ export function CheckboxGroup({
 	checkedIndices,
 	children,
 	className,
+	framed = false,
 	ref,
 	...props
 }: CheckboxGroupProps) {
-	const substrate = useSurface();
+	// `framed` self-elevates +1 and paints the standalone container (bg + p-1.5
+	// gutter + ring + shadow) — the look a wrapping `ElevatedSurface` used to give
+	// in settings panels. Unframed (default) stays a transparent fieldset at the
+	// host level so the group sits flush inside a popup / another framed surface.
+	const substrate = Math.min(useSurface() + (framed ? 1 : 0), 8);
 	const hoverLevel = Math.min(substrate + 1, 8);
 	const selectedLevel = Math.min(substrate + 2, 8);
+	const containerClass = framed
+		? cn(
+				"rounded-lg p-1.5 shadow-elevated ring-1 ring-divider",
+				surfaceBg(substrate),
+			)
+		: "p-0";
 	const hoverBgClass = surfaceBg(hoverLevel);
 	const selectedBgClass = surfaceBg(selectedLevel);
 	const selectedShadowClass = surfaceShadow(selectedLevel);
@@ -194,155 +215,167 @@ export function CheckboxGroup({
 	// behaviour and the ref the proximity hook measures against.
 	return (
 		<CheckboxGroupContext.Provider value={contextValue}>
-			<LazyMotion features={domAnimation} strict={true}>
-				<fieldset
-					className={cn("relative m-0 select-none border-0 p-0", className)}
-					ref={ref}
-					{...props}
-				>
-					{/* biome-ignore lint/a11y/noStaticElementInteractions: presentational wrapper for proximity tracking; the parent <fieldset> carries the semantic grouping, the CheckboxItem children carry the interactive semantics */}
-					<div
-						className="relative flex flex-col"
-						onBlur={(e) => {
-							if (
-								containerRef.current?.contains(e.relatedTarget as Node | null)
-							) {
-								return;
-							}
-							setFocusedIndex(null);
-							setActiveIndex(null);
-						}}
-						onFocus={(e) => {
-							const indexAttr = (e.target as HTMLElement)
-								.closest("[data-proximity-index]")
-								?.getAttribute("data-proximity-index");
-							if (indexAttr === null || indexAttr === undefined) {
-								return;
-							}
-							const idx = Number(indexAttr);
-							setActiveIndex(idx);
-							setFocusedIndex(
-								(e.target as HTMLElement).matches(":focus-visible")
-									? idx
-									: null,
-							);
-						}}
-						onKeyDown={(e) => {
-							const items = Array.from(
-								containerRef.current?.querySelectorAll<HTMLElement>(
-									"[data-proximity-index]",
-								) ?? [],
-							);
-							const currentIdx = items.indexOf(e.target as HTMLElement);
-							if (currentIdx === -1) {
-								return;
-							}
-							if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-								e.preventDefault();
-								const next =
-									e.key === "ArrowDown"
-										? (currentIdx + 1) % items.length
-										: (currentIdx - 1 + items.length) % items.length;
-								items[next]?.focus();
-							} else if (e.key === "Home") {
-								e.preventDefault();
-								items[0]?.focus();
-							} else if (e.key === "End") {
-								e.preventDefault();
-								items.at(-1)?.focus();
-							}
-						}}
-						onMouseEnter={() => {
-							setSession((prev) => prev + 1);
-							handlers.onMouseEnter();
-						}}
-						onMouseLeave={handlers.onMouseLeave}
-						onMouseMove={handlers.onMouseMove}
-						ref={setRef}
-						role="presentation"
+			<SurfaceProvider value={substrate}>
+				<LazyMotion features={domAnimation} strict={true}>
+					<fieldset
+						className={cn(
+							"relative m-0 select-none border-0",
+							containerClass,
+							className,
+						)}
+						ref={ref}
+						{...props}
 					>
-						<AnimatePresence>
-							{checkedGroups.map((group) => {
-								const startRect = itemRects[group.start];
-								const endRect = itemRects[group.end];
-								if (!(startRect && endRect)) {
-									return null;
+						{/* biome-ignore lint/a11y/noStaticElementInteractions: presentational wrapper for proximity tracking; the parent <fieldset> carries the semantic grouping, the CheckboxItem children carry the interactive semantics */}
+						<div
+							className="relative flex flex-col"
+							onBlur={(e) => {
+								if (
+									containerRef.current?.contains(e.relatedTarget as Node | null)
+								) {
+									return;
 								}
-								return (
+								setFocusedIndex(null);
+								setActiveIndex(null);
+							}}
+							onFocus={(e) => {
+								const indexAttr = (e.target as HTMLElement)
+									.closest("[data-proximity-index]")
+									?.getAttribute("data-proximity-index");
+								if (indexAttr === null || indexAttr === undefined) {
+									return;
+								}
+								const idx = Number(indexAttr);
+								setActiveIndex(idx);
+								setFocusedIndex(
+									(e.target as HTMLElement).matches(":focus-visible")
+										? idx
+										: null,
+								);
+							}}
+							onKeyDown={(e) => {
+								const items = Array.from(
+									containerRef.current?.querySelectorAll<HTMLElement>(
+										"[data-proximity-index]",
+									) ?? [],
+								);
+								const currentIdx = items.indexOf(e.target as HTMLElement);
+								if (currentIdx === -1) {
+									return;
+								}
+								if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+									e.preventDefault();
+									const next =
+										e.key === "ArrowDown"
+											? (currentIdx + 1) % items.length
+											: (currentIdx - 1 + items.length) % items.length;
+									items[next]?.focus();
+								} else if (e.key === "Home") {
+									e.preventDefault();
+									items[0]?.focus();
+								} else if (e.key === "End") {
+									e.preventDefault();
+									items.at(-1)?.focus();
+								}
+							}}
+							onMouseEnter={() => {
+								setSession((prev) => prev + 1);
+								handlers.onMouseEnter();
+							}}
+							onMouseLeave={handlers.onMouseLeave}
+							onMouseMove={handlers.onMouseMove}
+							ref={setRef}
+							role="presentation"
+						>
+							<AnimatePresence>
+								{checkedGroups.map((group) => {
+									const startRect = itemRects[group.start];
+									const endRect = itemRects[group.end];
+									if (!(startRect && endRect)) {
+										return null;
+									}
+									return (
+										<motion.div
+											animate={{
+												top: startRect.top,
+												left: Math.min(startRect.left, endRect.left),
+												width: Math.max(startRect.width, endRect.width),
+												height: endRect.top + endRect.height - startRect.top,
+												opacity: isHoveringOther ? 0.8 : 1,
+											}}
+											className={cn(
+												"pointer-events-none absolute rounded-lg ring-1 ring-divider-strong ring-inset",
+												selectedBgClass,
+												selectedShadowClass,
+											)}
+											exit={{ opacity: 0, transition: { duration: 0.12 } }}
+											initial={false}
+											key={`group-${group.id}`}
+											transition={{
+												...springs.moderate,
+												opacity: { duration: 0.08 },
+											}}
+										/>
+									);
+								})}
+							</AnimatePresence>
+
+							<AnimatePresence>
+								{activeRect ? (
 									<motion.div
 										animate={{
-											top: startRect.top,
-											left: Math.min(startRect.left, endRect.left),
-											width: Math.max(startRect.width, endRect.width),
-											height: endRect.top + endRect.height - startRect.top,
-											opacity: isHoveringOther ? 0.8 : 1,
+											top: activeRect.top,
+											left: activeRect.left,
+											width: activeRect.width,
+											height: activeRect.height,
+											opacity: 1,
 										}}
 										className={cn(
-											"pointer-events-none absolute rounded-lg ring-1 ring-divider-strong ring-inset",
-											selectedBgClass,
-											selectedShadowClass,
+											"pointer-events-none absolute rounded-lg ring-1 ring-divider ring-inset",
+											hoverBgClass,
 										)}
-										exit={{ opacity: 0, transition: { duration: 0.12 } }}
-										initial={false}
-										key={`group-${group.id}`}
+										exit={{ opacity: 0, transition: { duration: 0.06 } }}
+										initial={{
+											top: activeRect.top,
+											left: activeRect.left,
+											width: activeRect.width,
+											height: activeRect.height,
+											opacity: 0,
+										}}
+										key={session}
 										transition={{
-											...springs.moderate,
+											...springs.fast,
 											opacity: { duration: 0.08 },
 										}}
 									/>
-								);
-							})}
-						</AnimatePresence>
+								) : null}
+							</AnimatePresence>
 
-						<AnimatePresence>
-							{activeRect ? (
-								<motion.div
-									animate={{
-										top: activeRect.top,
-										left: activeRect.left,
-										width: activeRect.width,
-										height: activeRect.height,
-										opacity: 1,
-									}}
-									className={cn(
-										"pointer-events-none absolute rounded-lg ring-1 ring-divider ring-inset",
-										hoverBgClass,
-									)}
-									exit={{ opacity: 0, transition: { duration: 0.06 } }}
-									initial={{
-										top: activeRect.top,
-										left: activeRect.left,
-										width: activeRect.width,
-										height: activeRect.height,
-										opacity: 0,
-									}}
-									key={session}
-									transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
-								/>
-							) : null}
-						</AnimatePresence>
+							<AnimatePresence>
+								{focusRect ? (
+									<motion.div
+										animate={{
+											left: focusRect.left - 2,
+											top: focusRect.top - 2,
+											width: focusRect.width + 4,
+											height: focusRect.height + 4,
+										}}
+										className="pointer-events-none absolute z-overlay rounded-[10px] border border-accent"
+										exit={{ opacity: 0, transition: { duration: 0.06 } }}
+										initial={false}
+										transition={{
+											...springs.fast,
+											opacity: { duration: 0.08 },
+										}}
+									/>
+								) : null}
+							</AnimatePresence>
 
-						<AnimatePresence>
-							{focusRect ? (
-								<motion.div
-									animate={{
-										left: focusRect.left - 2,
-										top: focusRect.top - 2,
-										width: focusRect.width + 4,
-										height: focusRect.height + 4,
-									}}
-									className="pointer-events-none absolute z-overlay rounded-[10px] border border-accent"
-									exit={{ opacity: 0, transition: { duration: 0.06 } }}
-									initial={false}
-									transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
-								/>
-							) : null}
-						</AnimatePresence>
-
-						{children}
-					</div>
-				</fieldset>
-			</LazyMotion>
+							{children}
+						</div>
+					</fieldset>
+				</LazyMotion>
+			</SurfaceProvider>
 		</CheckboxGroupContext.Provider>
 	);
 }
@@ -456,10 +489,13 @@ export function CheckboxItem({
 						"absolute inset-0 rounded-[5px] border-[1.5px] border-solid transition-colors duration-[80ms]",
 						// Checked = no box at all; the foreground-coloured check carries the state.
 						checked && "border-transparent",
-						// Stronger edge on hover / keyboard focus so the unchecked
-						// box outline stays visible against the substrate.
-						!checked && isActive && "border-border-strong",
-						!(checked || isActive) && "border-border",
+						// Unchecked boxes are drawn with a foreground-tinted edge (not the
+						// near-substrate `border-*` tokens, which vanish against the
+						// elevated surface these rows sit on): `foreground-dim` at rest is
+						// a clearly-visible empty box, `foreground-muted` brightens it on
+						// hover / keyboard focus.
+						!checked && isActive && "border-foreground-muted",
+						!(checked || isActive) && "border-foreground-dim",
 					)}
 				/>
 				{/* `AnimatePresence initial={false}` suppresses the very-first-paint

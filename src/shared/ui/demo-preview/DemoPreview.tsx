@@ -38,6 +38,11 @@ export function DemoPreview({
 	// Seed from navigator.onLine so a definitely-offline session never flashes an
 	// empty popup; the <video> onError covers the online-but-unreachable case.
 	const [failed, setFailed] = useState(startsOffline);
+	// The clip is fetched lazily, so for an online-but-unreachable CDN the popup
+	// would otherwise paint its dark chrome before onError fires — a black flash.
+	// Keep the popup transparent (while the video loads underneath) until the
+	// first frame is decoded, so the dark surface only appears with real content.
+	const [ready, setReady] = useState(false);
 
 	return (
 		<TooltipPrimitive.Root disabled={failed}>
@@ -49,7 +54,13 @@ export function DemoPreview({
 						sideOffset={8}
 						style={{ zIndex: Z_INDEX.tooltip }}
 					>
-						<TooltipPrimitive.Popup className="origin-(--transform-origin) overflow-hidden rounded-xl border border-border bg-surface-2 shadow-tooltip transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0">
+						<TooltipPrimitive.Popup
+							className={`origin-(--transform-origin) overflow-hidden rounded-xl transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[ending-style]:opacity-0 ${
+								ready
+									? "scale-100 border border-border bg-surface-2 opacity-100 shadow-tooltip"
+									: "scale-95 border border-transparent opacity-0"
+							}`}
+						>
 							<video
 								aria-label={`${demo} demo`}
 								autoPlay
@@ -57,6 +68,7 @@ export function DemoPreview({
 								loop
 								muted
 								onError={() => setFailed(true)}
+								onLoadedData={() => setReady(true)}
 								playsInline
 								src={demoPreviewUrl(demo)}
 								tabIndex={-1}

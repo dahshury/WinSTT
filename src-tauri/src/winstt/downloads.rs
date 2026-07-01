@@ -7,6 +7,15 @@ use std::time::{Duration, Instant};
 use reqwest::header::{CONTENT_RANGE, RANGE};
 use reqwest::{Client, StatusCode};
 
+/// Max time to wait for the connection to start delivering data (response headers) and for EACH
+/// subsequent body chunk. `connect_timeout` only bounds the TCP/TLS handshake — once connected, a
+/// server that accepts the socket but never sends bytes (HF CDN / xet stalls, captive portals,
+/// flaky links) leaves `Response::chunk().await` blocked forever, which surfaces as a download
+/// "stuck at 0%" no matter how long you wait. On elapse we return a `Network` error; the caller
+/// resumes via HTTP-Range (the partial `.incomplete` bytes are preserved) or falls back to hf-hub,
+/// so a stall self-heals instead of wedging the badge.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[derive(Debug, thiserror::Error)]
 pub enum TransferError {
     #[error("io: {0}")]
@@ -65,6 +74,57 @@ impl TransferControl for AtomicBool {
     }
 }
 
+/// Cooperative pause/cancel flags polled by `transfer_url` on every chunk. The three download
+/// managers (STT quants, TTS catalog, encoder dictionary) each embed one of these instead of
+/// re-declaring an identical `{ paused, cancelled }` pair plus its `TransferControl` impl.
+///
+/// Semantics are intentionally minimal so each manager keeps its own cancel policy: `cancel` only
+/// raises the cancel flag (a manager that also wants to clear a pending pause on cancel calls
+/// `resume` afterwards), `resume` clears only the pause bit, and `reset` clears both (the start /
+/// re-enqueue path).
+#[derive(Default)]
+pub(crate) struct PauseCancelFlags {
+    paused: AtomicBool,
+    cancelled: AtomicBool,
+}
+
+impl PauseCancelFlags {
+    pub(crate) fn pause(&self) {
+        self.paused.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn resume(&self) {
+        self.paused.store(false, Ordering::Release);
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn reset(&self) {
+        self.paused.store(false, Ordering::Release);
+        self.cancelled.store(false, Ordering::Release);
+    }
+
+    pub(crate) fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+impl TransferControl for PauseCancelFlags {
+    fn should_cancel(&self) -> bool {
+        self.is_cancelled()
+    }
+
+    fn should_pause(&self) -> bool {
+        self.is_paused()
+    }
+}
+
 pub async fn transfer_url<F>(
     client: &Client,
     request: TransferRequest<'_>,
@@ -84,20 +144,14 @@ where
         http_request = http_request.header(RANGE, format!("bytes={existing_bytes}-"));
     }
 
-    let mut response = http_request
-        .send()
-        .await
-        .map_err(|err| TransferError::Network(format!("request {}: {err}", request.url)))?;
+    let mut response = with_idle_timeout(http_request.send(), request.url, "request").await?;
     let mut status = response.status();
 
     if existing_bytes > 0 && status == StatusCode::OK {
         drop(response);
         let _ = fs::remove_file(request.partial_path);
-        response = client
-            .get(request.url)
-            .send()
-            .await
-            .map_err(|err| TransferError::Network(format!("request {}: {err}", request.url)))?;
+        response =
+            with_idle_timeout(client.get(request.url).send(), request.url, "request").await?;
         status = response.status();
     }
 
@@ -146,11 +200,7 @@ where
             });
         }
 
-        let Some(bytes) = response
-            .chunk()
-            .await
-            .map_err(|err| TransferError::Network(format!("read {}: {err}", request.url)))?
-        else {
+        let Some(bytes) = with_idle_timeout(response.chunk(), request.url, "read").await? else {
             break;
         };
         file.write_all(&bytes).map_err(io_error)?;
@@ -202,6 +252,24 @@ where
     F: FnMut(TransferProgress),
 {
     tauri::async_runtime::block_on(transfer_url(client, request, control, on_progress))
+}
+
+/// Await a reqwest future under [`IDLE_TIMEOUT`], mapping both a transport error and a stall into a
+/// `Network` error. Used for the initial `send` (time-to-first-byte) and every body `chunk` read so
+/// neither can hang indefinitely.
+async fn with_idle_timeout<T>(
+    fut: impl std::future::Future<Output = Result<T, reqwest::Error>>,
+    url: &str,
+    what: &str,
+) -> Result<T, TransferError> {
+    match tokio::time::timeout(IDLE_TIMEOUT, fut).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(err)) => Err(TransferError::Network(format!("{what} {url}: {err}"))),
+        Err(_) => Err(TransferError::Network(format!(
+            "{what} {url}: no data for {}s (stalled)",
+            IDLE_TIMEOUT.as_secs()
+        ))),
+    }
 }
 
 fn requested_outcome(control: Option<&dyn TransferControl>) -> Option<TransferOutcome> {

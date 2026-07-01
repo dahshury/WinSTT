@@ -167,19 +167,97 @@ describe("useLlmCatalogStore.setPullProgress", () => {
 		useLlmCatalogStore.setState({
 			pulls: {
 				llama3: {
-					progress: { model: "llama3", status: "pulling", statusText: "first" },
+					progress: {
+						model: "llama3",
+						status: "downloading",
+						statusText: "first",
+						percent: 10,
+					},
 					startedAt,
 				},
 			},
 		});
 		useLlmCatalogStore.getState().setPullProgress({
 			model: "llama3",
-			status: "pulling",
+			status: "downloading",
 			statusText: "second",
+			percent: 25,
 		});
 		const { pulls } = useLlmCatalogStore.getState();
 		expect(pulls["llama3"]!.startedAt).toBe(startedAt);
+		expect(pulls["llama3"]!.progress.percent).toBe(25);
 		expect(pulls["llama3"]!.progress.statusText).toBe("second");
+	});
+
+	test("coalesces frames that do not change the displayed status or rounded percent", () => {
+		const startedAt = 1000;
+		const seed = {
+			llama3: {
+				progress: {
+					model: "llama3",
+					status: "downloading" as const,
+					statusText: "pulling abc123",
+					percent: 42.2,
+				},
+				startedAt,
+			},
+		};
+		useLlmCatalogStore.setState({ pulls: seed });
+		const before = useLlmCatalogStore.getState().pulls;
+		// Same status, same rounded percent (42), different sub-percent + statusText:
+		// nothing the UI renders would change, so the store must drop it WITHOUT a
+		// new `pulls` reference (a new reference re-renders the whole picker list).
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "llama3",
+			status: "downloading",
+			statusText: "pulling abc123 still",
+			percent: 42.4,
+		});
+		expect(useLlmCatalogStore.getState().pulls).toBe(before);
+	});
+
+	test("applies a frame once the rounded percent advances", () => {
+		useLlmCatalogStore.setState({
+			pulls: {
+				llama3: {
+					progress: {
+						model: "llama3",
+						status: "downloading",
+						percent: 42.2,
+					},
+					startedAt: 1000,
+				},
+			},
+		});
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "llama3",
+			status: "downloading",
+			percent: 43.1,
+		});
+		expect(
+			useLlmCatalogStore.getState().pulls["llama3"]!.progress.percent,
+		).toBe(43.1);
+	});
+
+	test("never coalesces a terminal frame even at the same percent", () => {
+		useLlmCatalogStore.setState({
+			pulls: {
+				llama3: {
+					progress: {
+						model: "llama3",
+						status: "downloading",
+						percent: 100,
+					},
+					startedAt: 1000,
+				},
+			},
+		});
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "llama3",
+			status: "success",
+			percent: 100,
+		});
+		expect(useLlmCatalogStore.getState().pulls["llama3"]).toBeUndefined();
 	});
 
 	test("removes pull entry on 'success' terminal status", () => {
@@ -451,6 +529,39 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 		// the cancelled status itself — that's what the UI bar renders.
 		expect(state.pausedPulls["phi"]?.progress.percent).toBe(60);
 		expect(state.pausedPulls["phi"]?.progress.status).toBe("downloading");
+	});
+
+	// Regression guard for "opening the Ollama selector doesn't show the percentage
+	// of a partial download". A partial Ollama model's percent has ONE source — the
+	// persisted pausedPulls (Ollama has no partial-cache API) — so it must round-trip
+	// through localStorage to survive a window close/reopen. The load side is gated on
+	// `hasTauriRuntime()` (always true the instant a renderer module runs), not on the
+	// separately-installed `window.nativeBridge`, so it can't lose the percent to an
+	// install-ordering race.
+	test("persists a paused pull's percent to localStorage so it survives reopen", () => {
+		window.localStorage.removeItem("winstt:ollama-paused-pulls");
+		useLlmCatalogStore.setState({
+			pulls: {
+				phi: {
+					progress: { model: "phi", status: "downloading", percent: 60 },
+					startedAt: 100,
+				},
+			},
+			pausedPulls: {},
+		});
+		useLlmCatalogStore
+			.getState()
+			.setPullProgress({ model: "phi", status: "cancelled" });
+
+		const raw = window.localStorage.getItem("winstt:ollama-paused-pulls");
+		expect(raw).toBeTruthy();
+		const parsed = JSON.parse(raw ?? "{}") as Record<
+			string,
+			{ progress: { percent?: number } }
+		>;
+		// This is exactly the value a freshly-opened picker reads back to render the
+		// partial badge's "60%".
+		expect(parsed["phi"]?.progress.percent).toBe(60);
 	});
 
 	test("a 'cancelled' status with no active pull does not synthesize a paused entry", () => {

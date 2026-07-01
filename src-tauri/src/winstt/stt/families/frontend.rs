@@ -6,11 +6,6 @@
 // `crate::winstt::stt::gigaam_v3_consts` window/filterbank tables. Lifted verbatim out of the old
 // monolithic `families.rs` (was an inline `mod frontend`).
 
-#![expect(
-    dead_code,
-    reason = "staged STT frontend surface is defined ahead of call sites and wiring"
-)]
-
 use ndarray::Array2;
 
 pub const SAMPLE_RATE: usize = 16_000;
@@ -144,19 +139,6 @@ fn rfft_power(frame: &[f32], n_fft: usize, n_freqs: usize) -> Vec<f32> {
         .collect()
 }
 
-// ── Kaldi 80-mel fbank featurizer (KaldiPreprocessorNumpy, kaldi branch) ───────────────
-// EXACT port of onnx-asr preprocessors/numpy_preprocessor.py::KaldiPreprocessorNumpy with
-// name="kaldi": n_fft=512, win=400, hop=160, 80 mels, snip_edges=False, remove_dc_offset=True,
-// preemphasis=0.97, window = numpy.hanning(400)^0.85 (povey). Filterbank from
-// preprocessors/kaldi.py: melscale_fbanks(257, low_freq=20, high_freq=-400→7600, 80,
-// sr=16000, mel_scale="kaldi") — kaldi mel scale (1127*ln(1+f/700)), HTK-style triangles in
-// mel space, fmax=sr/2-400=7600, NO slaney normalization.
-//
-// Used by Dolphin (EngineKind::DolphinCtc / CtcFrontend::KaldiWithMetaCmvn) for the filterbank
-// AND by the Vosk/zipformer transducers for the FRAME PROCESSING (they pair `compute_kaldi_fbank`
-// with their own HTK-mel filterbank — `build_zipformer_mel_filterbank` below). SEPARATE from the
-// SenseVoice `compute_fbank`/`build_mel_filterbank` (Hamming/n_fft=400/snip_edges=True) which
-// other families share — do NOT merge them.
 pub fn granite_ar_features(samples: &[f32]) -> Array2<f32> {
     granite_features(samples, None)
 }
@@ -534,7 +516,6 @@ pub fn gigaam_v3_features(samples: &[f32]) -> Array2<f32> {
 pub const NEMO_N_FFT: usize = 512;
 pub const NEMO_WIN: usize = 400;
 pub const NEMO_HOP: usize = 160;
-pub const NEMO_N_MELS: usize = 128;
 const NEMO_LOG_GUARD: f32 = 5.960_464_5e-8; // 2^-24
 
 /// Slaney-normalized mel filterbank `(n_fft/2+1, n_mels)` for NeMo/Cohere (fmin=0, fmax=sr/2).
@@ -588,16 +569,37 @@ pub fn build_nemo_mel_filterbank(n_mels: usize) -> Array2<f32> {
     fb
 }
 
+/// NeMo featurizer normalization mode. Offline NeMo exports apply per-mel-bin (per-feature)
+/// CMVN over time; sherpa streaming Nemotron/FastConformer exports leave it unset and expect
+/// raw log-mel frames. The ONNX metadata's `normalize_type` ("per_feature" / "NA" / absent)
+/// maps onto these two variants in `NemoNorm::from_metadata`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NemoNorm {
+    PerFeature,
+    None,
+}
+
+impl NemoNorm {
+    /// Resolve the ONNX `normalize_type` metadata string: `"per_feature"` → `PerFeature`,
+    /// everything else (including the sentinel `"NA"` and a missing key) → `None`.
+    pub fn from_metadata(value: Option<&str>) -> Self {
+        match value {
+            Some("per_feature") => NemoNorm::PerFeature,
+            _ => NemoNorm::None,
+        }
+    }
+}
+
 /// NeMo featurizer → `(T, 128)` per-feature-normalized log-mel (T = `samples.len()/hop`, the
 /// model's `features_lens`). The engine transposes to `(1, 128, T)` for `audio_signal`.
 pub fn nemo_features(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32> {
-    nemo_features_with_normalization(samples, fbanks, "per_feature")
+    nemo_features_with_normalization(samples, fbanks, NemoNorm::PerFeature)
 }
 
 pub fn nemo_features_with_normalization(
     samples: &[f32],
     fbanks: &Array2<f32>,
-    normalize_type: &str,
+    normalize_type: NemoNorm,
 ) -> Array2<f32> {
     use std::f32::consts::PI;
     let n_mels = fbanks.ncols(); // 80 or 128 — whatever the model declared
@@ -652,7 +654,7 @@ pub fn nemo_features_with_normalization(
     // 5. Optional per-feature (per mel bin) normalization over time:
     //    (x-mean)/(sqrt(unbiased var)+1e-5). Offline NeMo exports use this path; sherpa streaming
     //    Nemotron/FastConformer exports leave normalize_type empty and expect raw log-mel frames.
-    if normalize_type == "per_feature" {
+    if normalize_type == NemoNorm::PerFeature {
         for m in 0..n_mels {
             let mut mean = 0f32;
             for t in 0..num_frames {
@@ -704,7 +706,17 @@ pub fn apply_lfr(features: &Array2<f32>, window_size: usize, window_shift: usize
 pub fn apply_cmvn(features: &mut Array2<f32>, neg_mean: &[f32], inv_stddev: &[f32]) {
     let cols = features.ncols();
     if neg_mean.len() != cols || inv_stddev.len() != cols {
-        return; // shape mismatch → leave untouched (matches the size==0 guard upstream)
+        // shape mismatch → leave untouched (matches the size==0 guard upstream). Surface ONCE so
+        // corrupt CMVN metadata (which silently un-normalizes the features) is observable.
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            log::warn!(
+                "[stt] apply_cmvn skipped: stats len mismatch (neg_mean={}, inv_stddev={}, cols={cols}) — features left un-normalized",
+                neg_mean.len(),
+                inv_stddev.len()
+            );
+        });
+        return;
     }
     for mut row in features.rows_mut() {
         for (d, v) in row.iter_mut().enumerate() {
@@ -717,6 +729,16 @@ pub fn apply_cmvn(features: &mut Array2<f32>, neg_mean: &[f32], inv_stddev: &[f3
 pub fn apply_dolphin_cmvn(features: &mut Array2<f32>, mean: &[f32], invstd: &[f32]) {
     let cols = features.ncols();
     if mean.len() != cols || invstd.len() != cols {
+        // Surface ONCE so corrupt Dolphin CMVN metadata (which silently un-normalizes the
+        // features) is observable; keep the un-normalized fallback.
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            log::warn!(
+                "[stt] apply_dolphin_cmvn skipped: stats len mismatch (mean={}, invstd={}, cols={cols}) — features left un-normalized",
+                mean.len(),
+                invstd.len()
+            );
+        });
         return;
     }
     for mut row in features.rows_mut() {

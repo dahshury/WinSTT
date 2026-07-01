@@ -11,6 +11,7 @@ import {
 } from "@/entities/llm-catalog";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";
+import { writePersistedSelectorState } from "@/shared/lib/persisted-selector-state";
 import type { PresetCarrier } from "../lib/llm-settings-panel-test-helpers";
 
 type LlmProvider = AppSettingsOutput["llm"]["dictation"]["provider"];
@@ -205,12 +206,9 @@ function loadConfigurations(): SavedConfiguration[] {
 }
 
 function persistConfigurations(configs: readonly SavedConfiguration[]): void {
-	try {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(configs));
-	} catch {
-		// Quota / serialization failures are non-fatal — the in-memory list
-		// still works for the current session.
-	}
+	// Quota / serialization failures are non-fatal — the in-memory list still
+	// works for the current session.
+	writePersistedSelectorState(STORAGE_KEY, configs);
 }
 
 interface ConfigurationsState {
@@ -280,9 +278,6 @@ export function loadPlaygroundSession(): PlaygroundSession | null {
 }
 
 export function savePlaygroundSession(session: PlaygroundSession): void {
-	try {
-		localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-	} catch {
-		// Non-fatal — the current open still works, only cross-open memory is lost.
-	}
+	// Non-fatal — the current open still works, only cross-open memory is lost.
+	writePersistedSelectorState(SESSION_KEY, session);
 }

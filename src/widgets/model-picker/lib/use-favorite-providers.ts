@@ -1,36 +1,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+	readPersistedSelectorState,
+	writePersistedSelectorState,
+} from "@/shared/lib/persisted-selector-state";
 
 const DEFAULT_OPENROUTER_FAVORITE_PROVIDERS_STORAGE_KEY =
 	"winstt:openrouter-favorite-providers";
 const DEFAULT_FAVORITES = ["openai", "google", "anthropic"];
 
-function isNonEmptyArray(value: unknown): value is unknown[] {
+// A stored value only overrides the defaults when it's a NON-EMPTY array;
+// an empty array (or any non-array) falls back to the default providers.
+function isNonEmptyStringArray(value: unknown): value is string[] {
 	return Array.isArray(value) && value.length > 0;
 }
 
-function parseStoredFavorites(stored: string | null): string[] | null {
-	if (!stored) {
-		return null;
-	}
-	const parsed: unknown = JSON.parse(stored);
-	return isNonEmptyArray(parsed) ? (parsed as string[]) : null;
-}
-
-function readStoredFavorites(storageKey: string): string[] | null {
-	if (typeof window === "undefined") {
-		return null;
-	}
-	try {
-		return parseStoredFavorites(window.localStorage.getItem(storageKey));
-	} catch {
-		return null;
-	}
-}
-
 function getInitialFavorites(storageKey: string): string[] {
-	return readStoredFavorites(storageKey) ?? DEFAULT_FAVORITES;
+	return readPersistedSelectorState(
+		storageKey,
+		isNonEmptyStringArray,
+		DEFAULT_FAVORITES,
+	);
 }
 
 export function useFavoriteProviders(
@@ -39,31 +30,11 @@ export function useFavoriteProviders(
 	const [favorites, setFavorites] = useState<string[]>(() =>
 		getInitialFavorites(storageKey),
 	);
-	const [isLoaded] = useState(true);
 
 	useEffect(() => {
-		if (typeof window === "undefined") {
-			return;
-		}
-		try {
-			window.localStorage.setItem(storageKey, JSON.stringify(favorites));
-		} catch {
-			// ignore storage errors
-		}
+		// Ignore SSR / storage errors — favorites are non-critical UI state.
+		writePersistedSelectorState(storageKey, favorites);
 	}, [storageKey, favorites]);
-
-	const addFavorite = (provider: string) => {
-		setFavorites((prev) => {
-			if (prev.includes(provider)) {
-				return prev;
-			}
-			return [...prev, provider];
-		});
-	};
-
-	const removeFavorite = (provider: string) => {
-		setFavorites((prev) => prev.filter((p) => p !== provider));
-	};
 
 	const toggleFavorite = (provider: string) => {
 		setFavorites((prev) => {
@@ -74,16 +45,8 @@ export function useFavoriteProviders(
 		});
 	};
 
-	const favoritesSet = new Set(favorites);
-
-	const isFavorite = (provider: string) => favoritesSet.has(provider);
-
 	return {
 		favorites,
-		addFavorite,
-		removeFavorite,
 		toggleFavorite,
-		isFavorite,
-		isLoaded,
 	};
 }

@@ -3,7 +3,6 @@ import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { ModelInfo } from "../model/catalog-store";
 import {
 	buildModelOpts,
-	buildRealtimeOpts,
 	formatCacheBadge,
 	hasEstimatedFootprint,
 	hasGpu,
@@ -16,7 +15,6 @@ import {
 	needsModelFallback,
 	pickCachedSttModel,
 	pickDefaultSttModel,
-	supportsInitialPrompt,
 	supportsTranslateToEnglish,
 } from "./model-options";
 
@@ -234,109 +232,6 @@ describe("modelsHaveLanguageOverlap", () => {
 				{ ...fixture[2], languages: [] } as ModelInfo,
 			),
 		).toBe(true);
-	});
-});
-
-describe("buildRealtimeOpts", () => {
-	test("filters out models without native streaming support", () => {
-		const opts = buildRealtimeOpts(fixture);
-		expect(opts.map((o) => o.id).sort()).toEqual(["nemo-en", "tiny"].sort());
-	});
-
-	test("returns empty array when no models support native streaming", () => {
-		const noRealtime = fixture.map((m) => ({
-			...m,
-			nativeStreaming: false,
-		}));
-		expect(buildRealtimeOpts(noRealtime)).toEqual([]);
-	});
-
-	test("collapses duplicated streaming export variants to canonical realtime rows", () => {
-		const models = [
-			{
-				...fixture[2]!,
-				id: "streaming-nemo-rnnt-en-80ms",
-				displayName: "RNN-T 80ms fp32",
-				nativeStreaming: true,
-			},
-			{
-				...fixture[2]!,
-				id: "streaming-nemo-rnnt-en-80ms-int8",
-				displayName: "RNN-T 80ms int8",
-				nativeStreaming: true,
-			},
-			{
-				...fixture[2]!,
-				id: "streaming-nemo-rnnt-en-1040ms",
-				displayName: "RNN-T 1040ms fp32",
-				nativeStreaming: true,
-			},
-			{
-				...fixture[2]!,
-				id: "streaming-nemo-rnnt-en-1040ms-int8",
-				displayName: "RNN-T 1040ms int8",
-				nativeStreaming: true,
-			},
-			{
-				...fixture[2]!,
-				id: "streaming-parakeet-unified-en-560ms-int8",
-				displayName: "Parakeet 560ms int8",
-				nativeStreaming: true,
-			},
-			{
-				...fixture[2]!,
-				id: "streaming-parakeet-unified-en-1120ms",
-				displayName: "Parakeet 1120ms fp32",
-				nativeStreaming: true,
-			},
-			{
-				...fixture[2]!,
-				id: "streaming-parakeet-unified-en-1120ms-int8",
-				displayName: "Parakeet 1120ms int8",
-				nativeStreaming: true,
-			},
-			{
-				...fixture[2]!,
-				id: "streaming-parakeet-unified-en-240ms-int8",
-				displayName: "Parakeet 240ms int8",
-				nativeStreaming: true,
-			},
-			{
-				...fixture[2]!,
-				id: "streaming-nemotron-en-560ms",
-				displayName: "Nemotron 560ms fp32",
-				nativeStreaming: true,
-			},
-			{
-				...fixture[2]!,
-				id: "streaming-nemotron-en-1120ms",
-				displayName: "Nemotron 1120ms fp32",
-				nativeStreaming: true,
-			},
-			{
-				...fixture[2]!,
-				id: "streaming-nemotron-en-1120ms-int8",
-				displayName: "Nemotron 1120ms int8",
-				nativeStreaming: true,
-			},
-			{
-				...fixture[0]!,
-				id: "t-tech/t-one",
-				displayName: "T-One",
-				family: "t-one",
-				nativeStreaming: true,
-			} as ModelInfo,
-		];
-
-		expect(buildRealtimeOpts(models).map((o) => o.id)).toEqual([
-			"streaming-nemo-rnnt-en-1040ms",
-			"streaming-nemo-rnnt-en-1040ms-int8",
-			"streaming-parakeet-unified-en-1120ms",
-			"streaming-parakeet-unified-en-1120ms-int8",
-			"streaming-nemotron-en-1120ms",
-			"streaming-nemotron-en-1120ms-int8",
-			"t-tech/t-one",
-		]);
 	});
 });
 
@@ -735,36 +630,6 @@ describe("pickCachedSttModel", () => {
 		expect(
 			pickCachedSttModel(fixture, statesById, (m) => m.nativeStreaming),
 		).toBeNull();
-	});
-});
-
-describe("supportsInitialPrompt", () => {
-	const withFamily = (family: ModelInfo["family"]): ModelInfo =>
-		({ ...fixture[0], family }) as ModelInfo;
-
-	test("is true for the Whisper family (.en and multilingual alike)", () => {
-		expect(supportsInitialPrompt(withFamily("whisper"))).toBe(true);
-	});
-
-	test("is true for Lite-Whisper distillations", () => {
-		expect(supportsInitialPrompt(withFamily("lite-whisper"))).toBe(true);
-	});
-
-	test("is false for every non-Whisper engine (no prompt slot, or an untrained one)", () => {
-		for (const family of [
-			"nemo",
-			"granite",
-			"gigaam",
-			"kaldi",
-			"t-one",
-			"moonshine",
-			"cohere",
-			"sense_voice",
-			"dolphin",
-			"custom",
-		] as const) {
-			expect(supportsInitialPrompt(withFamily(family))).toBe(false);
-		}
 	});
 });
 

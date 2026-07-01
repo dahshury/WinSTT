@@ -32,6 +32,8 @@ export interface SettingFieldProps {
 	 */
 	isDefault?: boolean;
 	label?: string;
+	/** Glyph rendered immediately before the label text (e.g. a provider brand mark). */
+	labelIcon?: ReactNode;
 	/** Element rendered inline on the trailing edge of the label (e.g. a Toggle). */
 	labelAddon?: ReactNode;
 	/** "stacked" (default, wide control below) or "row" (compact control beside the label). */
@@ -72,6 +74,7 @@ export function SettingField({
 	disabledTooltip,
 	isDefault,
 	label,
+	labelIcon,
 	labelAddon,
 	layout,
 	onReset,
@@ -99,6 +102,7 @@ export function SettingField({
 			controlTooltip={controlTooltip}
 			disabled={disabled}
 			label={label}
+			labelIcon={labelIcon}
 			labelAddon={labelAddon}
 			labelTrailing={
 				showReset ? (

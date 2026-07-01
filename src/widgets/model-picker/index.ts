@@ -9,14 +9,13 @@
 export {
 	computeModelExclusionConfig,
 	filterModelsForFallback,
-	isFallbackExcluded,
 } from "./lib/model-exclusion";
-export { OllamaModelSelector } from "./ollama/ui/OllamaModelSelector";
-export type { OllamaModelSelectorProps } from "./ollama/ui/ollama-selector-types";
 export {
 	resolveEffectiveQuant,
 	resolveQuantCache,
-} from "./stt/lib/cache-helpers";
+} from "@/entities/model-catalog";
+export { OllamaModelSelector } from "./ollama/ui/OllamaModelSelector";
+export type { OllamaModelSelectorProps } from "./ollama/ui/ollama-selector-types";
 export { STT_PICKER_WIDTH_PX } from "./stt/lib/dimensions";
 export { getFamilyConfig, variantDisplayName } from "./stt/lib/family-helpers";
 export { isRealtimeViable } from "./stt/lib/realtime-viability";

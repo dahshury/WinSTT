@@ -21,8 +21,8 @@ import {
 	isStringArray,
 	readPersistedSelectorState,
 	writePersistedSelectorState,
-} from "../../lib/persisted-selector-state";
-import { publicAsset } from "../../lib/public-asset";
+} from "@/shared/lib/persisted-selector-state";
+import { publicAsset } from "@/shared/lib/public-asset";
 import { STT_PICKER_WIDTH_CLASS } from "../lib/dimensions";
 import {
 	buildModelSearchCorpus,
@@ -59,7 +59,10 @@ import {
 	type PendingDelete,
 } from "./DeleteQuantConfirmDialog";
 import { SttModelSelectorTriggerButton } from "./SttModelSelectorTrigger";
-import { SttModelSelectorView } from "./SttModelSelectorView";
+import {
+	SttModelSelectorView,
+	type SttModelSelectorViewProps,
+} from "./SttModelSelectorView";
 import {
 	createInitialUiState,
 	type PersistedSttSelectorUiState,
@@ -314,7 +317,7 @@ function buildRailItems(
  * search clear; the shell auto-clears only the search query on close
  * (matching the OpenRouter + Ollama behaviour).
  */
-function SttModelSelectorPanel({
+function useSttModelSelectorPanelState({
 	models,
 	value,
 	currentQuantization,
@@ -424,7 +427,9 @@ function SttModelSelectorPanel({
 			),
 		),
 	);
-	const { filters, sort, activeRailId, expandedBundles, open } = uiState;
+	const { filters, sort, activeRailId, expandedBundles, open, search } =
+		uiState;
+	const hasSearch = search.trim().length > 0;
 	const lockedFilterKeys = kind === "realtime" ? REALTIME_LOCKED_FILTERS : [];
 	const effectiveFilters = applyLockedFilters(filters, lockedFilterKeys);
 	const shouldBuildList = inline || (!externalOpen && open);
@@ -467,8 +472,13 @@ function SttModelSelectorPanel({
 						items: sortSttModels(menuFilteredModels, sort),
 					},
 				];
+	// A text query spans ALL authors: it overrides the selected rail so e.g.
+	// "whisper" still surfaces Whisper models while the NeMo rail is active.
+	// Without this, the rail (author) filter AND the text query both constrain
+	// the list, so searching for a maker not under the current rail yields a
+	// confusing empty "No models found". The rail only narrows when idle.
 	const groups: SttListGroup[] =
-		activeRailId === ALL_AUTHORS_RAIL_ID
+		hasSearch || activeRailId === ALL_AUTHORS_RAIL_ID
 			? allGroups
 			: authorGroups.filter((group) => group.value === activeRailId);
 	const filtersActive = hasActiveFilters(effectiveFilters);
@@ -482,7 +492,7 @@ function SttModelSelectorPanel({
 		menuFilteredModels.length,
 	);
 	const visibleModelCount =
-		activeRailId === ALL_AUTHORS_RAIL_ID
+		hasSearch || activeRailId === ALL_AUTHORS_RAIL_ID
 			? menuFilteredModels.length
 			: groups.reduce((sum, group) => sum + group.items.length, 0);
 	// Re-sync the active rail tile to the selection's family during render
@@ -510,6 +520,12 @@ function SttModelSelectorPanel({
 		if (id !== ALL_AUTHORS_RAIL_ID && sort !== null) {
 			dispatch({ type: "setSort", sort: null });
 		}
+		// Picking an author is a "browse this maker" intent — drop any active
+		// query (which would otherwise override the rail, per `groups` above) so
+		// the click actually narrows the list to the chosen author.
+		if (hasSearch) {
+			dispatch({ type: "setSearch", search: "" });
+		}
 		dispatch({ type: "setActiveRailId", id });
 	};
 
@@ -524,6 +540,12 @@ function SttModelSelectorPanel({
 
 	const handleSelect = (modelId: string, quantization?: OnnxQuantization) => {
 		onChange(modelId, quantization);
+		// The search is controlled here (so it can span authors), so Base UI's
+		// own "clear input on commit" no longer runs — reset it ourselves so a
+		// later reopen / inline reuse starts clean.
+		if (hasSearch) {
+			dispatch({ type: "setSearch", search: "" });
+		}
 		// In the in-window popup (onboarding), a real selection must dismiss the
 		// popup the way the detached settings picker does. Base UI only auto-closes
 		// on a card-BODY commit (onValueChange); a precision-BADGE pick routes
@@ -536,62 +558,74 @@ function SttModelSelectorPanel({
 		}
 	};
 
+	const viewProps: SttModelSelectorViewProps = {
+		activeRailId,
+		availableLanguages,
+		baseModels,
+		currentQuantization,
+		disabled,
+		downloadProgress,
+		expandedBundles,
+		filter: matchesQuery,
+		filters: effectiveFilters,
+		filtersActive,
+		groups,
+		handleOpenChange,
+		handleRailClick,
+		handleSelect,
+		inline,
+		inputValue: search,
+		onInputValueChange: (next) => dispatch({ type: "setSearch", search: next }),
+		isFavorite,
+		isLoading,
+		kind,
+		onDownloadAction,
+		onDownloadSnapshot,
+		lockedFilterKeys,
+		onFiltersChange: (next) =>
+			dispatch({
+				type: "setFilters",
+				filters: applyLockedFilters(next, lockedFilterKeys),
+			}),
+		getFitAssessment,
+		canDeleteQuant,
+		onRequestDelete: handleRequestDelete,
+		onSortChange: (next) => dispatch({ type: "setSort", sort: next }),
+		onToggleExpanded: handleToggleExpanded,
+		onToggleFavorite: toggleFavorite,
+		onToggleRailFavorite: toggleAuthorFavorite,
+		open: externalOpen ? false : open,
+		placeholder,
+		popupHeightClass,
+		popupRef: openGuard.setPopupNode,
+		popupWidthClass,
+		railFavorites: favoriteAuthors,
+		railItems,
+		selectedModel,
+		sort,
+		statesById: routedStatesById,
+		systemInfo,
+		trigger: effectiveTrigger,
+		value,
+		visibleModelCount,
+	};
+
+	return {
+		handleCancelDelete: () => setPendingDelete(null),
+		handleConfirmDelete,
+		pendingDelete,
+		viewProps,
+	};
+}
+
+function SttModelSelectorPanel(props: SttModelSelectorProps) {
+	const { handleCancelDelete, handleConfirmDelete, pendingDelete, viewProps } =
+		useSttModelSelectorPanelState(props);
 	return (
 		<>
-			<SttModelSelectorView
-				activeRailId={activeRailId}
-				availableLanguages={availableLanguages}
-				baseModels={baseModels}
-				currentQuantization={currentQuantization}
-				disabled={disabled}
-				downloadProgress={downloadProgress}
-				expandedBundles={expandedBundles}
-				filter={matchesQuery}
-				filters={effectiveFilters}
-				filtersActive={filtersActive}
-				groups={groups}
-				handleOpenChange={handleOpenChange}
-				handleRailClick={handleRailClick}
-				handleSelect={handleSelect}
-				inline={inline}
-				isFavorite={isFavorite}
-				isLoading={isLoading}
-				kind={kind}
-				onDownloadAction={onDownloadAction}
-				onDownloadSnapshot={onDownloadSnapshot}
-				lockedFilterKeys={lockedFilterKeys}
-				onFiltersChange={(next) =>
-					dispatch({
-						type: "setFilters",
-						filters: applyLockedFilters(next, lockedFilterKeys),
-					})
-				}
-				getFitAssessment={getFitAssessment}
-				canDeleteQuant={canDeleteQuant}
-				onRequestDelete={handleRequestDelete}
-				onSortChange={(next) => dispatch({ type: "setSort", sort: next })}
-				onToggleExpanded={handleToggleExpanded}
-				onToggleFavorite={toggleFavorite}
-				onToggleRailFavorite={toggleAuthorFavorite}
-				open={externalOpen ? false : open}
-				placeholder={placeholder}
-				popupHeightClass={popupHeightClass}
-				popupRef={(node) => {
-					openGuard.setPopupNode(node);
-				}}
-				popupWidthClass={popupWidthClass}
-				railFavorites={favoriteAuthors}
-				railItems={railItems}
-				selectedModel={selectedModel}
-				sort={sort}
-				statesById={routedStatesById}
-				systemInfo={systemInfo}
-				trigger={effectiveTrigger}
-				value={value}
-				visibleModelCount={visibleModelCount}
-			/>
+			<SttModelSelectorView {...viewProps} />
 			<DeleteQuantConfirmDialog
-				onCancel={() => setPendingDelete(null)}
+				onCancel={handleCancelDelete}
 				onConfirm={handleConfirmDelete}
 				pending={pendingDelete}
 			/>

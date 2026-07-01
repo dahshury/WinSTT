@@ -18,20 +18,21 @@
 //   - `openrouter`   — the self-contained OpenRouter provider.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 
 use crate::winstt::cancel_registry::CancelRegistry;
-use crate::winstt::commands::settings::{core_timeout_from_winstt, read_settings_raw};
+use crate::winstt::commands::settings::core_timeout_from_winstt;
 use crate::winstt::llm::{self, ollama_keep_alive_from_core_timeout};
 use crate::winstt::model_swap::ModelSwapCoordinator;
 use crate::winstt::ollama_client::OllamaClient;
 pub use crate::winstt::ollama_client::{
     OllamaCapabilities, OllamaModelDetails, OllamaModelInfo, PullOutcome,
 };
+use crate::winstt::settings_store::read_settings_raw;
 
 mod ollama_chat;
 mod openrouter;
@@ -48,42 +49,22 @@ const OLLAMA_WARMUP_TIMEOUT: Duration = Duration::from_secs(120);
 const OLLAMA_EVICT_TIMEOUT: Duration = Duration::from_secs(5);
 const OLLAMA_BOOT_WAIT: Duration = Duration::from_secs(10);
 const OLLAMA_RECENT_WARM_SKIP: Duration = Duration::from_secs(30);
+// After a warmup LOAD failure (e.g. the runner crashing because the model does
+// not fit in VRAM), skip re-warming that model for this long so the 60s periodic
+// loop doesn't churn the GPU with a ~28s crashing load every tick. After the
+// backoff it tries once more (in case VRAM was freed); a success clears it.
+const OLLAMA_LOAD_FAIL_BACKOFF: Duration = Duration::from_secs(300);
 const LLM_WARMUP_PASS_KEY: &str = "llm:warmup-pass";
-const CORE_TIMEOUT_NEVER: u8 = 0;
-const CORE_TIMEOUT_IMMEDIATELY: u8 = 1;
-const CORE_TIMEOUT_MIN2: u8 = 2;
-const CORE_TIMEOUT_MIN5: u8 = 3;
-const CORE_TIMEOUT_MIN10: u8 = 4;
-const CORE_TIMEOUT_MIN15: u8 = 5;
-const CORE_TIMEOUT_HOUR1: u8 = 6;
-const CORE_TIMEOUT_SEC15: u8 = 7;
-
-fn encode_core_timeout(timeout: crate::settings::ModelUnloadTimeout) -> u8 {
-    match timeout {
-        crate::settings::ModelUnloadTimeout::Never => CORE_TIMEOUT_NEVER,
-        crate::settings::ModelUnloadTimeout::Immediately => CORE_TIMEOUT_IMMEDIATELY,
-        crate::settings::ModelUnloadTimeout::Min2 => CORE_TIMEOUT_MIN2,
-        crate::settings::ModelUnloadTimeout::Min5 => CORE_TIMEOUT_MIN5,
-        crate::settings::ModelUnloadTimeout::Min10 => CORE_TIMEOUT_MIN10,
-        crate::settings::ModelUnloadTimeout::Min15 => CORE_TIMEOUT_MIN15,
-        crate::settings::ModelUnloadTimeout::Hour1 => CORE_TIMEOUT_HOUR1,
-        crate::settings::ModelUnloadTimeout::Sec15 => CORE_TIMEOUT_SEC15,
-    }
-}
-
-fn decode_core_timeout(code: u8) -> crate::settings::ModelUnloadTimeout {
-    match code {
-        CORE_TIMEOUT_NEVER => crate::settings::ModelUnloadTimeout::Never,
-        CORE_TIMEOUT_IMMEDIATELY => crate::settings::ModelUnloadTimeout::Immediately,
-        CORE_TIMEOUT_MIN2 => crate::settings::ModelUnloadTimeout::Min2,
-        CORE_TIMEOUT_MIN5 => crate::settings::ModelUnloadTimeout::Min5,
-        CORE_TIMEOUT_MIN10 => crate::settings::ModelUnloadTimeout::Min10,
-        CORE_TIMEOUT_MIN15 => crate::settings::ModelUnloadTimeout::Min15,
-        CORE_TIMEOUT_HOUR1 => crate::settings::ModelUnloadTimeout::Hour1,
-        CORE_TIMEOUT_SEC15 => crate::settings::ModelUnloadTimeout::Sec15,
-        _ => crate::settings::ModelUnloadTimeout::default(),
-    }
-}
+// A freshly-triggered warm (boot pass + on-toggle/on-select) retries on a short
+// cadence instead of bailing once and waiting out the 60s periodic tick. The
+// first attempt can lose the pass-claim to an in-flight periodic pass, or
+// Ollama can be momentarily unreachable (just auto-spawned at boot, or busy
+// unloading the previous model during a model switch). Without a retry the
+// model stays cold until the next 60s tick — exactly the "first post-process is
+// slow, the rest are fast" gap. ~8 × 1.5s ≈ 12s covers the Ollama spawn window
+// and any switch contention; steady-state refresh stays on the 60s loop.
+const OLLAMA_WARM_TRIGGER_ATTEMPTS: u32 = 8;
+const OLLAMA_WARM_TRIGGER_RETRY_DELAY: Duration = Duration::from_millis(1500);
 
 /// Thin emit sink that forwards live reasoning deltas to the renderer pill.
 /// Mirrors the `llm:reasoning-delta` plain-string event (07_* §4b).
@@ -113,7 +94,10 @@ pub struct LlmManager {
     /// Guards the app-lifetime periodic keep-alive loop against duplicate startup wiring.
     warmup_loop_started: AtomicBool,
     /// Cached shared unload policy for Ollama `keep_alive`, updated by settings runtime hooks.
-    ollama_keep_alive_timeout: AtomicU8,
+    ollama_keep_alive_timeout: crate::settings::AtomicModelUnloadTimeout,
+    /// Stops background warmup/chat bookkeeping from starting new model loads
+    /// once app shutdown begins.
+    shutting_down: AtomicBool,
     /// Coalesces Ollama warmup passes and tracks models this process warmed.
     lifecycle: ModelSwapCoordinator,
     /// OpenRouter `supported_parameters` from the latest model scan. The chat
@@ -130,15 +114,29 @@ pub struct LlmChatOutput {
 impl LlmManager {
     pub fn new(app: &AppHandle) -> Self {
         let client = reqwest::Client::new();
+        // Ollama is ALWAYS a loopback endpoint, so it must NEVER go through a
+        // system/VPN proxy. The default client honors HTTP(S)_PROXY/WinINET proxy
+        // settings, which on a dev/corp machine can swallow 127.0.0.1 — the
+        // reachability probe then fails (looks like Ollama is down) and WinSTT
+        // spawns a redundant `ollama serve`. `no_proxy()` forces a direct loopback
+        // connection; the bounded connect timeout makes a genuinely-dead endpoint
+        // fail fast instead of hanging the probe. (The cloud `client` above keeps
+        // proxy support — OpenRouter is remote and may need it.)
+        let ollama_client = reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(3))
+            .build()
+            .unwrap_or_else(|_| client.clone());
         let timeout = core_timeout_from_winstt(read_settings_raw(app).global.model_unload_timeout);
         Self {
             app: app.clone(),
-            client: client.clone(),
-            ollama: OllamaClient::new(client),
+            client,
+            ollama: OllamaClient::new(ollama_client),
             cancelled: CancelRegistry::new(),
             seq: AtomicU64::new(1),
             warmup_loop_started: AtomicBool::new(false),
-            ollama_keep_alive_timeout: AtomicU8::new(encode_core_timeout(timeout)),
+            ollama_keep_alive_timeout: crate::settings::AtomicModelUnloadTimeout::new(timeout),
+            shutting_down: AtomicBool::new(false),
             lifecycle: ModelSwapCoordinator::new(),
             openrouter_supported_parameters: Mutex::new(HashMap::new()),
         }
@@ -157,6 +155,15 @@ impl LlmManager {
         self.cancelled.cancel_all();
     }
 
+    pub fn begin_shutdown(&self) {
+        self.shutting_down.store(true, Ordering::Release);
+        self.cancel_all();
+    }
+
+    pub(crate) fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::Acquire)
+    }
+
     fn track_cancel(&self, request_id: &str) {
         self.cancelled.track(request_id);
     }
@@ -170,17 +177,15 @@ impl LlmManager {
     }
 
     fn ollama_keep_alive(&self) -> serde_json::Value {
-        let timeout = decode_core_timeout(self.ollama_keep_alive_timeout.load(Ordering::Acquire));
-        ollama_keep_alive_from_core_timeout(timeout)
+        ollama_keep_alive_from_core_timeout(self.ollama_keep_alive_timeout.load())
     }
 
     pub(crate) fn update_model_unload_timeout(&self, timeout: crate::settings::ModelUnloadTimeout) {
-        self.ollama_keep_alive_timeout
-            .store(encode_core_timeout(timeout), Ordering::Release);
+        self.ollama_keep_alive_timeout.store(timeout);
     }
 
     fn ollama_keep_alive_refresh_enabled(&self) -> bool {
-        self.ollama_keep_alive_timeout.load(Ordering::Acquire) == CORE_TIMEOUT_NEVER
+        self.ollama_keep_alive_timeout.load() == crate::settings::ModelUnloadTimeout::Never
     }
 
     pub fn client(&self) -> &reqwest::Client {
