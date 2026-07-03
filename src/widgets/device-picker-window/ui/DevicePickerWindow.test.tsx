@@ -1,14 +1,31 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { act, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { commands } from "@/bindings";
 import { _resetInputDevicesCacheForTests } from "@/entities/audio-device/model/use-input-devices";
+import { IPC } from "@/shared/api/ipc-channels";
 import { DevicePickerWindow } from "./DevicePickerWindow";
 
+const originalBridge = window.nativeBridge;
+const originalGetSettings = commands.winsttGetSettings;
+const originalGetAudioDevices = commands.getAudioDevices;
+const originalRefreshAudioDevices = commands.refreshAudioDevices;
+const originalResizeWindow = commands.resizeWindow;
 const originalStart = commands.startMicrophoneLevelMonitor;
 const originalStop = commands.stopMicrophoneLevelMonitor;
 let startCalls = 0;
 let stopCalls = 0;
+
+type BridgeListener = (...args: unknown[]) => void;
+let bridgeListeners = new Map<string, BridgeListener[]>();
+
+function recordStart(): void {
+	startCalls += 1;
+}
+
+function recordStop(): void {
+	stopCalls += 1;
+}
 
 async function flushReactEffects() {
 	await act(async () => {
@@ -16,19 +33,80 @@ async function flushReactEffects() {
 	});
 }
 
+function installNativeBridgeStub(): void {
+	bridgeListeners = new Map<string, BridgeListener[]>();
+	window.nativeBridge = {
+		...window.nativeBridge,
+		getPathForFile: () => "",
+		invoke: async (channel: string) => {
+			if (channel === IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR) {
+				recordStart();
+				return undefined;
+			}
+			if (channel === IPC.AUDIO_STOP_MICROPHONE_LEVEL_MONITOR) {
+				recordStop();
+				return undefined;
+			}
+			if (
+				channel === IPC.AUDIO_GET_DEVICES ||
+				channel === IPC.AUDIO_REFRESH_DEVICES
+			) {
+				return [];
+			}
+			if (channel === IPC.SETTINGS_LOAD) {
+				return {};
+			}
+			return undefined;
+		},
+		on: (channel, cb) => {
+			const list = bridgeListeners.get(channel) ?? [];
+			list.push(cb);
+			bridgeListeners.set(channel, list);
+			return () => {
+				bridgeListeners.set(
+					channel,
+					(bridgeListeners.get(channel) ?? []).filter(
+						(listener) => listener !== cb,
+					),
+				);
+			};
+		},
+		secureInvoke: async () => undefined,
+		send: () => {},
+	} satisfies typeof window.nativeBridge;
+}
+
 beforeEach(() => {
 	_resetInputDevicesCacheForTests();
 	startCalls = 0;
 	stopCalls = 0;
+	installNativeBridgeStub();
+	commands.winsttGetSettings = (async () =>
+		({}) as Awaited<
+			ReturnType<typeof commands.winsttGetSettings>
+		>) satisfies typeof commands.winsttGetSettings;
+	commands.getAudioDevices = (async () => []) satisfies typeof commands.getAudioDevices;
+	commands.refreshAudioDevices = (async () =>
+		[]) satisfies typeof commands.refreshAudioDevices;
+	commands.resizeWindow = (async () => ({
+		status: "ok",
+		data: null,
+	})) satisfies typeof commands.resizeWindow;
 	commands.startMicrophoneLevelMonitor = (async () => {
-		startCalls += 1;
+		recordStart();
 	}) satisfies typeof commands.startMicrophoneLevelMonitor;
 	commands.stopMicrophoneLevelMonitor = (async () => {
-		stopCalls += 1;
+		recordStop();
 	}) satisfies typeof commands.stopMicrophoneLevelMonitor;
 });
 
 afterEach(() => {
+	cleanup();
+	window.nativeBridge = originalBridge;
+	commands.winsttGetSettings = originalGetSettings;
+	commands.getAudioDevices = originalGetAudioDevices;
+	commands.refreshAudioDevices = originalRefreshAudioDevices;
+	commands.resizeWindow = originalResizeWindow;
 	commands.startMicrophoneLevelMonitor = originalStart;
 	commands.stopMicrophoneLevelMonitor = originalStop;
 	_resetInputDevicesCacheForTests();
