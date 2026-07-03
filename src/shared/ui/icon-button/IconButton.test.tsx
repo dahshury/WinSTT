@@ -35,6 +35,15 @@ describe("IconButton", () => {
 		expect(onClick).not.toHaveBeenCalled();
 	});
 
+	test("does not apply enabled hover affordances when disabled", () => {
+		render(<IconButton aria-label="Close" disabled icon={<span />} />);
+
+		const className = screen.getByRole("button").className;
+		expect(className).toContain("disabled:cursor-not-allowed");
+		expect(className).not.toContain("hover:bg-surface-");
+		expect(className).not.toContain("hover:text-foreground-secondary");
+	});
+
 	test("merges custom className", () => {
 		render(<IconButton aria-label="X" className="extra" icon={<span />} />);
 		expect(screen.getByRole("button").className).toContain("extra");

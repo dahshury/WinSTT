@@ -29,8 +29,11 @@ export function IconButton({
 		<Button
 			aria-label={ariaLabel}
 			className={cn(
-				"size-7 rounded-full bg-transparent p-0 text-foreground-muted hover:text-foreground-secondary",
-				surfaceHoverBg(hoverLevel),
+				"size-7 rounded-full bg-transparent p-0 text-foreground-muted",
+				disabled
+					? "cursor-not-allowed disabled:cursor-not-allowed"
+					: "hover:text-foreground-secondary",
+				!disabled && surfaceHoverBg(hoverLevel),
 				className,
 			)}
 			disabled={disabled}

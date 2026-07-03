@@ -110,7 +110,7 @@ export function ModelPickerPanelBody({
 			</div>
 			<div className="flex min-h-0 min-w-0 flex-1">
 				{renderCollection ? sidebarSlot : null}
-				<div className="flex min-h-0 min-w-0 flex-1 flex-col">
+				<div className="model-picker-content-substrate flex min-h-0 min-w-0 flex-1 flex-col">
 					{renderCollection ? (
 						list
 					) : (

@@ -578,6 +578,52 @@
 			);
 	}
 
+	.model-picker-content-substrate {
+		position: relative;
+		isolation: isolate;
+		background:
+			radial-gradient(
+				ellipse 112% 86% at 52% 42%,
+				var(--color-settings-card-bloom-strong) 0%,
+				var(--color-settings-card-bloom-soft) 36%,
+				transparent 76%
+			),
+			radial-gradient(
+				ellipse 130% 50% at 48% -8%,
+				var(--color-settings-card-top-bloom),
+				transparent 31rem
+			),
+			linear-gradient(
+				180deg,
+				var(--color-settings-card-top) 0%,
+				var(--color-settings-card-bottom) 100%
+			);
+	}
+
+	.model-picker-content-substrate::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		z-index: 0;
+		pointer-events: none;
+		background:
+			radial-gradient(
+				ellipse 78% 46% at 50% 44%,
+				var(--color-settings-card-overlay-bloom),
+				transparent 70%
+			),
+			linear-gradient(
+				180deg,
+				var(--color-settings-card-overlay-highlight) 0%,
+				transparent 15rem
+			);
+	}
+
+	.model-picker-content-substrate > * {
+		position: relative;
+		z-index: 1;
+	}
+
 	.settings-sidebar-shell {
 		isolation: isolate;
 		/* Transparent — the window substrate (`.settings-window-shell`, a ~#101216
