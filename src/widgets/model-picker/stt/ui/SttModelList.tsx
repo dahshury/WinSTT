@@ -19,9 +19,9 @@ import { openCustomModelsFolder } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { FavoritesGroupLabel } from "../../core/model-card/FavoritesGroupLabel";
 import { GROUP_HEADER_CLASSES } from "../../core/model-card/card-constants";
-import { ModelListScrollbarHeaderMask } from "../../core/ModelListScrollbarHeaderMask";
 import { publicAsset } from "@/shared/lib/public-asset";
 import {
 	bundleVariants,
@@ -345,14 +345,15 @@ export function SttModelList({
 	visibleModelCount,
 }: SttModelListProps) {
 	return (
-		<div
-			className="relative flex min-h-0 flex-1 overflow-hidden"
+		<ScrollArea
+			className="min-h-0 flex-1"
 			data-slot="stt-model-list-shell"
+			rubberBandOnTouch={false}
+			verticalOnly
+			verticalScrollbarClassName="mt-8 mb-1"
+			viewportClassName="flex min-h-0 flex-col"
 		>
-			<div
-				className="flex min-h-0 flex-1 flex-col overflow-y-auto [overflow-y:overlay]"
-				data-slot="stt-model-list"
-			>
+			<div className="flex min-h-full flex-col" data-slot="stt-model-list">
 				{/* Live region for assistive tech — Combobox.Status content is
 			    announced politely (`aria-live="polite"`) every time the
 			    filtered count changes, so screen-reader users hear
@@ -453,7 +454,6 @@ export function SttModelList({
 					}}
 				</Combobox.List>
 			</div>
-			<ModelListScrollbarHeaderMask />
-		</div>
+		</ScrollArea>
 	);
 }

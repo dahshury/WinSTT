@@ -5,10 +5,10 @@ import { ServerStack01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { isFavoritesGroupValue } from "../../core/favorites";
 import { GROUP_HEADER_CLASSES } from "../../core/model-card/card-constants";
 import { FavoritesGroupLabel } from "../../core/model-card/FavoritesGroupLabel";
-import { ModelListScrollbarHeaderMask } from "../../core/ModelListScrollbarHeaderMask";
 import {
 	type TtsEngineKey,
 	type TtsListGroup,
@@ -152,14 +152,15 @@ export function TtsModelList({
 	visibleModelCount,
 }: TtsModelListProps) {
 	return (
-		<div
-			className="relative flex min-h-0 flex-1 overflow-hidden"
+		<ScrollArea
+			className="min-h-0 flex-1"
 			data-slot="tts-model-list-shell"
+			rubberBandOnTouch={false}
+			verticalOnly
+			verticalScrollbarClassName="mt-8 mb-1"
+			viewportClassName="flex min-h-0 flex-col"
 		>
-			<div
-				className="flex min-h-0 flex-1 flex-col overflow-y-auto [overflow-y:overlay]"
-				data-slot="tts-model-list"
-			>
+			<div className="flex min-h-full flex-col" data-slot="tts-model-list">
 				<Combobox.Status className="sr-only">
 					{visibleModelCount === 1
 						? "1 voice available"
@@ -199,7 +200,6 @@ export function TtsModelList({
 					)}
 				</Combobox.List>
 			</div>
-			<ModelListScrollbarHeaderMask />
-		</div>
+		</ScrollArea>
 	);
 }
