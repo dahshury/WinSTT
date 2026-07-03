@@ -720,6 +720,18 @@
 		background: var(--color-settings-sidebar-icon-active-bg);
 	}
 
+	/* Clickable field wrapper: compact at rest, expands on hover/focus. */
+	.settings-sidebar-search {
+		width: 56px;
+		overflow: hidden;
+		transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+	}
+
+	.settings-sidebar-search:hover,
+	.settings-sidebar-search:focus-within {
+		width: 230px;
+	}
+
 	.settings-sidebar-search-input {
 		height: 2.5rem;
 		border-color: var(--color-settings-sidebar-search-border);
@@ -1084,8 +1096,7 @@
 	}
 
 	/* Width/height resize tween (Transitions.dev "card resize" recipe). Put on
-	   any element and change its width/height — the two sizes tween. Used by the
-	   settings sidebar search field as it grows in / out. The global
+	   any element and change its width/height — the two sizes tween. The global
 	   prefers-reduced-motion rule below already neutralises the transition. */
 	.t-resize {
 		transition:

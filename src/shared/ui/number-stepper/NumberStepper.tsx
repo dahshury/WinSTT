@@ -1,4 +1,5 @@
 import { NumberField } from "@base-ui/react/number-field";
+import { cn } from "@/shared/lib/cn";
 import {
 	surfaceBg,
 	surfaceClasses,
@@ -11,6 +12,7 @@ export interface NumberStepperProps {
 	max?: number;
 	min?: number;
 	onChange: (value: number) => void;
+	scrubbable?: boolean;
 	smallStep?: number;
 	step?: number;
 	value: number;
@@ -24,6 +26,7 @@ export function NumberStepper({
 	step = 1,
 	smallStep,
 	disabled,
+	scrubbable = false,
 }: NumberStepperProps) {
 	// Self-elevates +1 above the host panel; callers render a bare <NumberStepper/>.
 	// The group paints the surface (shown through the transparent center input) and
@@ -31,6 +34,12 @@ export function NumberStepper({
 	const substrate = Math.min(useSurface() + 1, 8);
 	const buttonLevel = Math.min(substrate + 1, 8);
 	const hoverLevel = Math.min(buttonLevel + 1, 8);
+	const inputClassName = cn(
+		"number-stepper-value h-8 w-[60px] border-border border-x-0 border-y bg-transparent text-center font-mono text-body text-foreground tabular-nums caret-accent outline-none",
+		scrubbable && "cursor-ew-resize select-none [touch-action:none]",
+	);
+	const input = <NumberField.Input className={inputClassName} />;
+
 	return (
 		<NumberField.Root
 			disabled={disabled}
@@ -53,7 +62,16 @@ export function NumberStepper({
 				>
 					<MinusIcon />
 				</NumberField.Decrement>
-				<NumberField.Input className="h-8 w-[60px] border-border border-x-0 border-y bg-transparent text-center font-mono text-body text-foreground tabular-nums caret-accent outline-none" />
+				{scrubbable ? (
+					<NumberField.ScrubArea
+						className="number-stepper-scrub-area cursor-ew-resize select-none [touch-action:none]"
+						pixelSensitivity={3}
+					>
+						{input}
+					</NumberField.ScrubArea>
+				) : (
+					input
+				)}
 				<NumberField.Increment
 					className={`flex size-8 cursor-pointer select-none items-center justify-center rounded-r-lg rounded-l-none ${surfaceClasses(buttonLevel)} p-0 text-foreground-secondary outline-none ${surfaceHoverBg(hoverLevel)}`}
 				>

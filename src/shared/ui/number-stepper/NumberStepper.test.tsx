@@ -1,6 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { NumberStepper } from "./NumberStepper";
+
+function nextFrame(): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 describe("NumberStepper", () => {
 	test("renders an input with the current value", () => {
@@ -44,5 +48,53 @@ describe("NumberStepper", () => {
 		// base-ui NumberField does not always wire min/max as aria-valuemin/max
 		// onto the textual input — exercise the prop path without asserting
 		// implementation-specific aria attributes.
+	});
+
+	test("keeps value scrubbing opt-in", () => {
+		const { container, rerender } = render(
+			<NumberStepper onChange={() => undefined} value={5} />,
+		);
+
+		expect(container.querySelector(".number-stepper-scrub-area")).toBeNull();
+
+		rerender(<NumberStepper scrubbable onChange={() => undefined} value={5} />);
+
+		const input = screen.getByRole("textbox");
+		expect(input.className).toContain("cursor-ew-resize");
+		expect(input.closest(".number-stepper-scrub-area")).not.toBeNull();
+	});
+
+	test("scrubs the value from touch pointer movement", async () => {
+		const onChange = mock(() => undefined);
+		render(<NumberStepper scrubbable onChange={onChange} value={5} />);
+
+		const scrubArea = document.querySelector(".number-stepper-scrub-area");
+		expect(scrubArea).not.toBeNull();
+
+		fireEvent.pointerDown(scrubArea!, {
+			button: 0,
+			clientX: 10,
+			clientY: 4,
+			pointerId: 1,
+			pointerType: "touch",
+		});
+		await act(nextFrame);
+		fireEvent.pointerMove(window, {
+			clientX: 18,
+			clientY: 4,
+			movementX: 8,
+			movementY: 0,
+			pointerId: 1,
+			pointerType: "touch",
+		});
+		fireEvent.pointerUp(window, {
+			button: 0,
+			clientX: 18,
+			clientY: 4,
+			pointerId: 1,
+			pointerType: "touch",
+		});
+
+		expect(onChange).toHaveBeenCalled();
 	});
 });

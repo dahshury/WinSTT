@@ -343,6 +343,7 @@ export function TranscriptionHistoryPanel() {
 						max={10_000}
 						min={10}
 						onChange={(v) => updateGeneral({ historyMaxEntries: v })}
+						scrubbable
 						step={10}
 						value={historyMaxEntries}
 					/>

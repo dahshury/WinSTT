@@ -30,12 +30,12 @@ function renderSidebar() {
 	);
 }
 
-// The field is always mounted (so it can animate in/out) but `aria-hidden` while
-// folded, so a role query only finds it once it's open. Click the affordance,
-// then return the now-accessible textbox.
+// The field is always mounted in the expanded header so CSS can grow the wrapper
+// on hover/focus. Focus it, then return the textbox for filtering assertions.
 function openSearch() {
-	fireEvent.click(screen.getByRole("button", { name: /search/i }));
-	return screen.getByRole("textbox");
+	const search = screen.getByRole("textbox");
+	fireEvent.focus(search);
+	return search;
 }
 
 describe("SettingsSidebar", () => {
@@ -94,17 +94,17 @@ describe("SettingsSidebar", () => {
 		expect(screen.queryByRole("button", { name: /close/i })).toBeNull();
 	});
 
-	test("search field stays out of reach until the affordance is clicked", () => {
-		renderSidebar();
-		// Folded: the field is aria-hidden, so no accessible textbox.
-		expect(screen.queryByRole("textbox")).toBeNull();
-		openSearch();
-		expect(screen.queryByRole("textbox")).not.toBeNull();
+	test("search field uses the compact expanding sidebar wrapper", () => {
+		const { container } = renderSidebar();
+		const search = screen.getByRole("textbox");
+
+		expect(search.closest(".settings-sidebar-search")).not.toBeNull();
+		expect(container.querySelector(".settings-sidebar-search")).not.toBeNull();
 	});
 
-	test("search field opens as a bordered field without the accent focus ring", () => {
+	test("search field renders as a bordered field without the accent focus ring", () => {
 		renderSidebar();
-		const search = openSearch();
+		const search = screen.getByRole("textbox");
 
 		expect(search.className).toContain("settings-sidebar-search-input");
 		expect(search.className).toContain("focus-visible:ring-0");
@@ -120,16 +120,15 @@ describe("SettingsSidebar", () => {
 		expect(dragStrip?.className).toContain("h-4");
 	});
 
-	test("hides the Settings wordmark while the search field is open", () => {
+	test("keeps the Settings wordmark beside the compact search field", () => {
 		renderSidebar();
 		expect(screen.getByText("Settings")).toBeDefined();
 		openSearch();
-		expect(screen.queryByText("Settings")).toBeNull();
+		expect(screen.getByText("Settings")).toBeDefined();
 	});
 
-	test("uses the left search affordance as the expanded field group", () => {
+	test("uses the search field directly instead of a separate affordance button", () => {
 		renderSidebar();
-		openSearch();
 
 		expect(screen.queryByRole("button", { name: /search/i })).toBeNull();
 		expect(screen.getByRole("textbox")).toBeDefined();
