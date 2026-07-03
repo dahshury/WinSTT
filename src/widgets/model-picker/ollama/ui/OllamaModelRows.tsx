@@ -24,13 +24,13 @@ import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import { PulseDot } from "@/shared/ui/pulse-dot";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { FAVORITES_GROUP_VALUE } from "../../core/favorites";
 import type { MetaEntry } from "../../core/model-card/CardMeta";
 import {
 	GroupHeader,
 	NeutralHeaderIcon,
 } from "../../core/model-card/GroupHeader";
-import { ModelListScrollbarHeaderMask } from "../../core/ModelListScrollbarHeaderMask";
 import { ModelCard } from "../../core/model-card/ModelCard";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/Tooltip";
 import {
@@ -1080,12 +1080,16 @@ export function ListBody(props: ListBodyProps) {
 	}
 
 	return (
-		<div
-			className="relative flex min-h-0 flex-1 overflow-hidden"
+		<ScrollArea
+			className="min-h-0 flex-1"
 			data-slot="ollama-model-list-shell"
+			rubberBandOnTouch={false}
+			verticalOnly
+			verticalScrollbarClassName="mt-8 mb-1"
+			viewportClassName="flex min-h-0 flex-col"
 		>
 			<Combobox.List
-				className="min-h-0 flex-1 overflow-y-auto [overflow-y:overlay] p-0"
+				className="min-h-full p-0"
 				data-slot="ollama-model-list"
 			>
 				{/* A global sort flattens EVERY model into one sorted column (matching the
@@ -1168,7 +1172,6 @@ export function ListBody(props: ListBodyProps) {
 					/>
 				)}
 			</Combobox.List>
-			<ModelListScrollbarHeaderMask />
-		</div>
+		</ScrollArea>
 	);
 }

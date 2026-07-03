@@ -9,9 +9,9 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { VList, type VListHandle } from "virtua";
+import { Virtualizer, type VirtualizerHandle } from "virtua";
 import type { OpenRouterModel } from "@/shared/api/models";
-import { ModelListScrollbarHeaderMask } from "../core/ModelListScrollbarHeaderMask";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { GroupHeader, NeutralHeaderIcon } from "../core/model-card/GroupHeader";
 import {
 	EmptyState,
@@ -61,7 +61,7 @@ interface ScrollAnchor {
 }
 
 function readScrollAnchor(
-	handle: VListHandle | null,
+	handle: VirtualizerHandle | null,
 	virtualItems: ReturnType<typeof buildVirtualItems>,
 	offset: number,
 ): ScrollAnchor | null {
@@ -81,7 +81,7 @@ function readScrollAnchor(
 }
 
 function restoreScrollAnchor(
-	handle: VListHandle | null,
+	handle: VirtualizerHandle | null,
 	virtualItems: ReturnType<typeof buildVirtualItems>,
 	anchor: ScrollAnchor | null,
 ): void {
@@ -162,7 +162,8 @@ export function ModelListContentVirtualized({
 	onToggleModelFavorite,
 	showFavoritesGroup = true,
 }: ModelListContentVirtualizedProps): ReactNode {
-	const virtualizerHandleRef = useRef<VListHandle>(null);
+	const virtualizerHandleRef = useRef<VirtualizerHandle>(null);
+	const scrollViewportRef = useRef<HTMLDivElement>(null);
 	const scrollAnchorRef = useRef<ScrollAnchor | null>(null);
 	const virtualItemsSignatureRef = useRef("");
 	// Section id whose header is currently pinned as the floating overlay (the
@@ -296,17 +297,25 @@ export function ModelListContentVirtualized({
 					/>
 				</div>
 			) : null}
-			<VList
-				className="min-h-0 flex-1 overscroll-contain overflow-y-auto [overflow-y:overlay]"
-				data={virtualItems}
+			<ScrollArea
+				className="min-h-0 flex-1"
 				data-slot="model-list-scroll-container"
-				onScroll={handleVirtualScroll}
-				ref={virtualizerHandleRef}
-				style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
+				rubberBandOnTouch={false}
+				verticalOnly
+				verticalScrollbarClassName="mt-8 mb-1"
+				viewportClassName="overscroll-contain"
+				viewportRef={scrollViewportRef}
+				viewportStyle={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
 			>
-				{renderVirtualRow}
-			</VList>
-			<ModelListScrollbarHeaderMask />
+				<Virtualizer
+					data={virtualItems}
+					onScroll={handleVirtualScroll}
+					ref={virtualizerHandleRef}
+					scrollRef={scrollViewportRef}
+				>
+					{renderVirtualRow}
+				</Virtualizer>
+			</ScrollArea>
 		</Combobox.List>
 	);
 }
