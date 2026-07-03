@@ -72,10 +72,11 @@ export const GROUP_HEADER_CLASSES = cn(
 	"backdrop-blur-md",
 );
 
-/** Covers only the native scrollbar gutter beside a docked group header. The
- *  list keeps native scrolling, but the bar visually starts below the header. */
+/** Covers only the native scrollbar gutter beside a docked group header. It
+ *  uses the same fill and bottom edge as the header, but skips the header's
+ *  ring/shadow so it doesn't read as a separate rectangle. */
 export const GROUP_HEADER_SCROLLBAR_MASK_CLASSES = cn(
 	"pointer-events-none absolute top-0 end-0 z-overlay h-8 w-3",
-	"border-border/70 border-b bg-surface-5/95 shadow-surface-3 ring-1 ring-divider/70 ring-inset",
+	"border-border/70 border-b bg-surface-5/95",
 	"backdrop-blur-md",
 );
