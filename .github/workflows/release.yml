@@ -7,13 +7,18 @@ on:
         description: "Leave the GitHub release as a draft after all assets upload"
         required: true
         type: boolean
-        default: true
+        default: false
+  workflow_run:
+    workflows: ["Rust CI"]
+    types: [completed]
+    branches: [main]
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -21,12 +26,19 @@ jobs:
     name: Release metadata
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
     outputs:
+      draft: ${{ steps.gate.outputs.draft }}
+      should_publish: ${{ steps.gate.outputs.should_publish }}
+      tag: ${{ steps.gate.outputs.tag }}
+      target_sha: ${{ steps.gate.outputs.target_sha }}
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Validate version
         id: version
@@ -49,9 +61,61 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Decide release mode
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_DRAFT_INPUT: ${{ inputs.draft || false }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
+          WORKFLOW_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
+          WORKFLOW_RUN_EVENT: ${{ github.event.workflow_run.event || '' }}
+          WORKFLOW_RUN_NAME: ${{ github.event.workflow_run.name || '' }}
+        run: |
+          set -euo pipefail
+
+          tag="v$VERSION"
+          draft="$RELEASE_DRAFT_INPUT"
+          should_publish="true"
+
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            draft="false"
+
+            if [ "$WORKFLOW_RUN_NAME" != "Rust CI" ] ||
+               [ "$WORKFLOW_RUN_EVENT" != "push" ] ||
+               [ "$WORKFLOW_RUN_CONCLUSION" != "success" ]; then
+              echo "Automatic release skipped for workflow '$WORKFLOW_RUN_NAME' event '$WORKFLOW_RUN_EVENT' conclusion '$WORKFLOW_RUN_CONCLUSION'."
+              should_publish="false"
+            elif gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Automatic release skipped because $tag already exists."
+              should_publish="false"
+            else
+              ci_success_count="$(
+                gh run list \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --workflow ci.yml \
+                  --commit "$TARGET_SHA" \
+                  --json status,conclusion \
+                  --jq '[.[] | select(.status == "completed" and .conclusion == "success")] | length'
+              )"
+
+              if [ "$ci_success_count" -eq 0 ]; then
+                echo "::error::Cannot publish $tag automatically: CI has not completed successfully for $TARGET_SHA."
+                exit 1
+              fi
+            fi
+          fi
+
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+          echo "should_publish=$should_publish" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+
   windows:
     name: Build Windows portable artifacts
     needs: metadata
+    if: needs.metadata.outputs.should_publish == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
     permissions:
@@ -66,6 +130,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.metadata.outputs.target_sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -140,6 +206,7 @@ jobs:
   linux:
     name: Build Linux bundle artifacts
     needs: metadata
+    if: needs.metadata.outputs.should_publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -147,6 +214,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.metadata.outputs.target_sha }}
 
       - name: Install Linux Tauri dependencies
         env:
@@ -222,6 +291,7 @@ jobs:
   macos:
     name: Build macOS bundle artifacts (${{ matrix.arch }})
     needs: metadata
+    if: needs.metadata.outputs.should_publish == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     permissions:
@@ -236,6 +306,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.metadata.outputs.target_sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -273,6 +345,7 @@ jobs:
   publish:
     name: Upload assets to GitHub release
     needs: [metadata, windows, linux, macos]
+    if: needs.metadata.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -281,6 +354,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
+          ref: ${{ needs.metadata.outputs.target_sha }}
 
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -292,6 +366,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ needs.metadata.outputs.target_sha }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           $tag = "v$env:VERSION"
@@ -307,7 +382,7 @@ jobs:
             "--field",
             "tag_name=$tag",
             "--field",
-            "target_commitish=$env:GITHUB_SHA",
+            "target_commitish=$env:TARGET_SHA",
             "--jq",
             ".body"
           )
@@ -351,7 +426,8 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_DRAFT: ${{ inputs.draft }}
+          RELEASE_DRAFT: ${{ needs.metadata.outputs.draft }}
+          TARGET_SHA: ${{ needs.metadata.outputs.target_sha }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           $draft = [System.Convert]::ToBoolean($env:RELEASE_DRAFT)
@@ -361,6 +437,6 @@ jobs:
             -AssetsRoot release-assets `
             -Version $env:VERSION `
             -Notes $notes `
-            -Target $env:GITHUB_SHA `
+            -Target $env:TARGET_SHA `
             -Prerelease:$prerelease `
             -Draft:$draft
