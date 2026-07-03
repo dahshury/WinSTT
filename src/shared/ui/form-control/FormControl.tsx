@@ -160,8 +160,10 @@ export function FormControl({
 		return (
 			<Field.Root
 				className={cn(
-					"flex items-center gap-4 py-3",
-					disabled && "cursor-not-allowed opacity-40",
+					"flex items-center gap-4 py-3.5",
+					// Dim the CONTENT (children), not the row root — the root may carry
+					// a divide-y hairline that must stay crisp while the field greys out.
+					disabled && "cursor-not-allowed [&>*]:opacity-40",
 					className,
 				)}
 			>
@@ -192,8 +194,10 @@ export function FormControl({
 	return (
 		<Field.Root
 			className={cn(
-				"flex flex-col gap-1.5 py-3",
-				disabled && "cursor-not-allowed opacity-40",
+				"flex flex-col gap-1.5 py-3.5",
+				// Dim the CONTENT (children), not the row root — the root may carry
+				// a divide-y hairline that must stay crisp while the field greys out.
+				disabled && "cursor-not-allowed [&>*]:opacity-40",
 				className,
 			)}
 		>

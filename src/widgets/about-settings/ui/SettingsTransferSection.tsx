@@ -340,6 +340,7 @@ export function SettingsTransferSection(): ReactNode {
 				title={errorTitle}
 			/>
 			<SettingSection
+				boxed
 				divided
 				icon={FileExportIcon}
 				title={`${settingsT("settingsExport")} / ${settingsT("settingsImport")}`}

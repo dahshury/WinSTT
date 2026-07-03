@@ -79,20 +79,27 @@ fn is_closer(c: char) -> bool {
 fn chunk_long_sentence(long: &str, max_len: usize) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut current = String::new();
+    let mut current_len = 0usize;
     for word in long.split_whitespace() {
-        let candidate = if current.is_empty() {
-            word.to_string()
+        let word_len = word.chars().count();
+        let candidate_len = if current.is_empty() {
+            word_len
         } else {
-            format!("{current} {word}")
+            current_len + 1 + word_len
         };
-        if candidate.chars().count() <= max_len {
-            current = candidate;
+        if candidate_len <= max_len {
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(word);
+            current_len = candidate_len;
             continue;
         }
         if !current.is_empty() {
             out.push(std::mem::take(&mut current));
+            current_len = 0;
         }
-        if word.chars().count() > max_len {
+        if word_len > max_len {
             let wchars: Vec<char> = word.chars().collect();
             let mut i = 0;
             while i < wchars.len() {
@@ -100,9 +107,9 @@ fn chunk_long_sentence(long: &str, max_len: usize) -> Vec<String> {
                 out.push(wchars[i..end].iter().collect());
                 i = end;
             }
-            current.clear();
         } else {
             current = word.to_string();
+            current_len = word_len;
         }
     }
     if !current.is_empty() {

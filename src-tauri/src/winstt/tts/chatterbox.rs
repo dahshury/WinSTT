@@ -96,6 +96,25 @@ struct Loaded {
     tokenizer: Tokenizer,
     past_names: Vec<String>,
     present_names: Vec<String>,
+    /// Single-slot cache of the reference-voice conditioning (`speech_encoder`
+    /// over the whole reference WAV — by far the most expensive fixed cost).
+    /// Keyed by (path, mtime) so a multi-sentence read runs the encoder ONCE
+    /// and an edited reference clip still re-encodes. Dropped with the session.
+    ref_cond: Option<RefCondCacheEntry>,
+}
+
+/// Cached `speech_encoder` outputs for one reference clip.
+struct RefConditioning {
+    cond_emb: ArrayD<f32>,
+    prompt_token: ArrayD<i64>,
+    ref_x_vector: ArrayD<f32>,
+    prompt_feat: ArrayD<f32>,
+}
+
+struct RefCondCacheEntry {
+    path: PathBuf,
+    mtime: Option<std::time::SystemTime>,
+    cond: std::sync::Arc<RefConditioning>,
 }
 
 pub struct ChatterboxEngine {
@@ -150,6 +169,7 @@ impl ChatterboxEngine {
             tokenizer,
             past_names,
             present_names,
+            ref_cond: None,
         })
     }
 
@@ -191,13 +211,9 @@ impl ChatterboxEngine {
                     })
                     .collect();
 
-                // --- reference audio (24k mono f32) ---
+                // --- reference conditioning (cached per clip; see RefCondCacheEntry) ---
                 let ref_path =
                     ref_wav.map_or_else(|| self.config.default_voice_path(), |p| p.to_path_buf());
-                let audio = load_wav_24k_mono(&ref_path)?;
-                if audio.is_empty() {
-                    return Err(ChatterboxError::Audio("reference audio is empty".into()));
-                }
 
                 let exaggeration = if exaggeration.is_finite() {
                     exaggeration.clamp(0.0, 1.0)
@@ -205,7 +221,7 @@ impl ChatterboxEngine {
                     DEFAULT_EXAGGERATION
                 };
 
-                run_pipeline(loaded, &ids, &position_ids, &audio, exaggeration)
+                run_pipeline(loaded, &ids, &position_ids, &ref_path, exaggeration)
             },
         )
     }
@@ -248,18 +264,28 @@ fn extract_i64(
         .map_err(|e| ChatterboxError::Inference(format!("shape {name}: {e}")))
 }
 
-fn run_pipeline(
+/// The reference conditioning for `ref_path`, reusing the cached encoder run
+/// when the same (path, mtime) was already conditioned this session. A
+/// multi-sentence read otherwise re-decoded the WAV and re-ran the (whole-clip)
+/// speech encoder for EVERY sentence.
+fn ensure_ref_conditioning(
     loaded: &mut Loaded,
-    ids: &[i64],
-    position_ids: &[i64],
-    audio: &[f32],
-    exaggeration: f32,
-) -> ChatterboxResult<Vec<f32>> {
-    let s = ids.len();
+    ref_path: &Path,
+) -> ChatterboxResult<std::sync::Arc<RefConditioning>> {
+    let mtime = std::fs::metadata(ref_path).and_then(|m| m.modified()).ok();
+    if let Some(entry) = &loaded.ref_cond
+        && entry.path == ref_path
+        && entry.mtime == mtime
+    {
+        return Ok(entry.cond.clone());
+    }
 
-    // --- speech_encoder (once): reference conditioning ---
+    let audio = load_wav_24k_mono(ref_path)?;
+    if audio.is_empty() {
+        return Err(ChatterboxError::Audio("reference audio is empty".into()));
+    }
     let se_out = {
-        let av = Array2::from_shape_vec((1, audio.len()), audio.to_vec())
+        let av = Array2::from_shape_vec((1, audio.len()), audio)
             .map_err(|e| ChatterboxError::Inference(format!("audio_values: {e}")))?;
         let t = Tensor::from_array(av)
             .map_err(|e| ChatterboxError::Inference(format!("audio tensor: {e}")))?;
@@ -268,11 +294,34 @@ fn run_pipeline(
             .run(ort::inputs! { "audio_values" => t })
             .map_err(|e| ChatterboxError::Inference(format!("speech_encoder: {e}")))?
     };
-    let cond_emb = extract_f32(&se_out, "audio_features")?; // [1, Lc, H]
-    let prompt_token = extract_i64(&se_out, "audio_tokens")?; // [1, Lp]
-    let ref_x_vector = extract_f32(&se_out, "speaker_embeddings")?;
-    let prompt_feat = extract_f32(&se_out, "speaker_features")?;
+    let cond = std::sync::Arc::new(RefConditioning {
+        cond_emb: extract_f32(&se_out, "audio_features")?, // [1, Lc, H]
+        prompt_token: extract_i64(&se_out, "audio_tokens")?, // [1, Lp]
+        ref_x_vector: extract_f32(&se_out, "speaker_embeddings")?,
+        prompt_feat: extract_f32(&se_out, "speaker_features")?,
+    });
     drop(se_out);
+    loaded.ref_cond = Some(RefCondCacheEntry {
+        path: ref_path.to_path_buf(),
+        mtime,
+        cond: cond.clone(),
+    });
+    Ok(cond)
+}
+
+fn run_pipeline(
+    loaded: &mut Loaded,
+    ids: &[i64],
+    position_ids: &[i64],
+    ref_path: &Path,
+    exaggeration: f32,
+) -> ChatterboxResult<Vec<f32>> {
+    let s = ids.len();
+
+    // --- speech_encoder conditioning (cached per reference clip) ---
+    let cond = ensure_ref_conditioning(loaded, ref_path)?;
+    let cond_emb = &cond.cond_emb; // [1, Lc, H]
+    let prompt_token = &cond.prompt_token; // [1, Lp]
 
     // --- prefill embed_tokens(full text) ---
     let mut embed_ids: Vec<i64> = ids.to_vec();
@@ -324,10 +373,13 @@ fn run_pipeline(
             SessionInputValue::from(mask_t),
         ));
         for name in &loaded.past_names {
+            // MOVE the cached array into the tensor (the slot is refilled from
+            // `present.*` right after this run) — cloning here copied the whole
+            // KV cache a second time per generated token.
             let arr = kv
-                .get(name)
+                .remove(name)
                 .ok_or_else(|| ChatterboxError::Inference(format!("missing kv cache {name}")))?;
-            let t = Tensor::from_array(arr.clone())
+            let t = Tensor::from_array(arr)
                 .map_err(|e| ChatterboxError::Inference(format!("kv {name}: {e}")))?;
             inputs.push((Cow::Owned(name.clone()), SessionInputValue::from(t)));
         }
@@ -401,9 +453,11 @@ fn run_pipeline(
             .map_err(|e| ChatterboxError::Inference(format!("speech_tokens: {e}")))?,
     )
     .map_err(|e| ChatterboxError::Inference(format!("speech_tokens tensor: {e}")))?;
-    let spk = Tensor::from_array(ref_x_vector)
+    // Cloned out of the cached conditioning (tensors consume their input; the
+    // cache keeps the originals for the next sentence).
+    let spk = Tensor::from_array(cond.ref_x_vector.clone())
         .map_err(|e| ChatterboxError::Inference(format!("speaker_embeddings: {e}")))?;
-    let feat = Tensor::from_array(prompt_feat)
+    let feat = Tensor::from_array(cond.prompt_feat.clone())
         .map_err(|e| ChatterboxError::Inference(format!("speaker_features: {e}")))?;
     let dec = loaded
         .conditional_decoder
@@ -520,11 +574,12 @@ mod tests {
             cache_dir: PathBuf::from("/x/chatterbox"),
             ..Default::default()
         };
-        assert!(c
-            .onnx("speech_encoder.onnx")
-            .to_string_lossy()
-            .replace('\\', "/")
-            .ends_with("onnx/speech_encoder.onnx"));
+        assert!(
+            c.onnx("speech_encoder.onnx")
+                .to_string_lossy()
+                .replace('\\', "/")
+                .ends_with("onnx/speech_encoder.onnx")
+        );
         assert!(c.tokenizer_path().ends_with("tokenizer.json"));
         assert!(c.default_voice_path().ends_with("default_voice.wav"));
     }

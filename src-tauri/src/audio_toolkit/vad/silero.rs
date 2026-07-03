@@ -27,6 +27,14 @@ impl SileroVad {
             threshold,
         })
     }
+
+    /// Clear the Silero recurrent state so a CACHED instance can be reused across
+    /// recordings without carrying speech context from the previous one — reusing a
+    /// warm session skips the per-decode ONNX session rebuild for long-form
+    /// segmentation.
+    pub fn reset(&mut self) {
+        self.engine.reset();
+    }
 }
 
 impl VoiceActivityDetector for SileroVad {

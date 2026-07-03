@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::winstt::downloads::{transfer_url_blocking, TransferOutcome, TransferRequest};
+use crate::winstt::downloads::{TransferOutcome, TransferRequest, transfer_url_blocking};
 
 use super::resolve::{
     espeak_shared_lib_name, local_app_data, resolve_espeak_data_home, resolve_espeak_lib,

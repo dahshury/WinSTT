@@ -147,24 +147,29 @@ pub(crate) fn validate_binding_for_active_backend(id: &str, binding: &str) -> Re
 }
 
 // ============================================================================
-// WinSTT-tree hotkeys (transforms / read_aloud / repaste)
+// WinSTT-tree hotkeys (transforms / read_aloud / repaste / profile swap)
 // ============================================================================
 
 /// True for the bindings whose accelerator SOURCE OF TRUTH lives in the WinSTT
-/// settings tree (`llm.transforms.hotkey`, `tts.hotkey`, `general.repasteHotkey`)
+/// settings tree (`llm.transforms.hotkey`, `llm.profileSwapHotkey`, `tts.hotkey`,
+/// `general.repasteHotkey`)
 /// rather than in `AppSettings.bindings`. These are armed exclusively through
 /// [`reconcile_winstt_hotkeys`] — the init / implementation-switch loops MUST skip
 /// them, because those loops would try to register raw WinSTT key names (e.g.
 /// `LCtrl+LMeta`) directly against the backend parser and gate on the wrong store.
 pub(crate) fn is_winstt_tree_binding(id: &str) -> bool {
-    matches!(id, "transforms" | "read_aloud" | "repaste")
+    matches!(
+        id,
+        "transforms" | "read_aloud" | "repaste" | "post_processing_profile_swap"
+    )
 }
 
-/// Arm (or disarm) the three WinSTT-tree global hotkeys from the WinSTT settings
+/// Arm (or disarm) the WinSTT-tree global hotkeys from the WinSTT settings
 /// tree. The single source of truth for each accelerator + its enable flag:
-///   * `transforms` → `llm.transforms.hotkey`   (gated on `llm.transforms.enabled`)
-///   * `read_aloud` → `tts.hotkey`              (gated on `tts.enabled`)
-///   * `repaste`    → `general.repasteHotkey`   (always on when non-empty)
+///   * `transforms`                    → `llm.transforms.hotkey`   (gated on `llm.transforms.enabled`)
+///   * `post_processing_profile_swap`  → `llm.profileSwapHotkey`   (gated on any post-processing branch enabled)
+///   * `read_aloud`                    → `tts.hotkey`              (gated on `tts.enabled`)
+///   * `repaste`                       → `general.repasteHotkey`   (always on when non-empty)
 ///
 /// Called at startup (lib.rs setup), whenever one of those settings changes
 /// (`apply_settings_patch`), and after a keyboard-implementation switch — so the
@@ -187,6 +192,12 @@ pub fn reconcile_winstt_hotkeys(app: &AppHandle) {
         "transforms",
         ws.llm.transforms.enabled,
         &ws.llm.transforms.hotkey,
+    );
+    reconcile_one(
+        app,
+        "post_processing_profile_swap",
+        ws.llm.dictation.enabled || ws.llm.transforms.enabled,
+        &ws.llm.profile_swap_hotkey,
     );
     reconcile_one(app, "read_aloud", ws.tts.enabled, &ws.tts.hotkey);
     // Re-paste has no enable flag — active whenever a non-empty combo is configured.
@@ -231,6 +242,11 @@ pub(crate) fn disarm_all_shortcuts(app: &AppHandle) {
 
     let ws = crate::winstt::commands::settings::read_settings(app);
     unregister_winstt_tree_binding(app, "transforms", &ws.llm.transforms.hotkey);
+    unregister_winstt_tree_binding(
+        app,
+        "post_processing_profile_swap",
+        &ws.llm.profile_swap_hotkey,
+    );
     unregister_winstt_tree_binding(app, "read_aloud", &ws.tts.hotkey);
     unregister_winstt_tree_binding(app, "repaste", &ws.general.repaste_hotkey);
     unregister_if_nonempty(app, escape_cancel_binding());
@@ -379,11 +395,11 @@ pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, Stri
 #[tauri::command]
 #[specta::specta]
 pub fn suspend_binding(app: AppHandle, id: String) -> Result<(), String> {
-    if let Some(b) = settings::get_bindings(&app).get(&id).cloned() {
-        if let Err(e) = unregister_shortcut(&app, b) {
-            error!("suspend_binding error for id '{}': {}", id, e);
-            return Err(e);
-        }
+    if let Some(b) = settings::get_bindings(&app).get(&id).cloned()
+        && let Err(e) = unregister_shortcut(&app, b)
+    {
+        error!("suspend_binding error for id '{}': {}", id, e);
+        return Err(e);
     }
     Ok(())
 }
@@ -392,18 +408,18 @@ pub fn suspend_binding(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn resume_binding(app: AppHandle, id: String) -> Result<(), String> {
-    if let Some(b) = settings::get_bindings(&app).get(&id).cloned() {
-        if let Err(e) = register_shortcut(&app, b) {
-            error!("resume_binding error for id '{}': {}", id, e);
-            return Err(e);
-        }
+    if let Some(b) = settings::get_bindings(&app).get(&id).cloned()
+        && let Err(e) = register_shortcut(&app, b)
+    {
+        error!("resume_binding error for id '{}': {}", id, e);
+        return Err(e);
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{binding_for_tauri_backend, ShortcutBinding};
+    use super::{ShortcutBinding, binding_for_tauri_backend};
 
     fn binding(id: &str, current_binding: &str) -> ShortcutBinding {
         ShortcutBinding {

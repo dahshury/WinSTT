@@ -311,17 +311,17 @@ fn fix_if_subgraph(
         }
 
         // (b) retype: parent declared a tensor elem_type and it differs → copy parent's type over.
-        if let Some(it) = intended_type {
-            if let Some(tt) = it.tensor_type.as_ref() {
-                let want = tt.elem_type;
-                let have = out
-                    .r#type
-                    .as_ref()
-                    .and_then(|t| t.tensor_type.as_ref())
-                    .map_or(0, |t| t.elem_type);
-                if want != 0 && want != have {
-                    retypes.push((i, it.clone()));
-                }
+        if let Some(it) = intended_type
+            && let Some(tt) = it.tensor_type.as_ref()
+        {
+            let want = tt.elem_type;
+            let have = out
+                .r#type
+                .as_ref()
+                .and_then(|t| t.tensor_type.as_ref())
+                .map_or(0, |t| t.elem_type);
+            if want != 0 && want != have {
+                retypes.push((i, it.clone()));
             }
         }
     }

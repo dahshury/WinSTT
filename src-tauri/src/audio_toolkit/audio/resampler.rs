@@ -53,10 +53,10 @@ impl FrameResampler {
             src = &src[take..];
 
             if self.in_buf.len() == self.chunk_in {
-                if let Some(resampler) = self.resampler.as_mut() {
-                    if let Ok(out) = resampler.process(&[&self.in_buf[..]], None) {
-                        self.emit_frames(&out[0], &mut emit);
-                    }
+                if let Some(resampler) = self.resampler.as_mut()
+                    && let Ok(out) = resampler.process(&[&self.in_buf[..]], None)
+                {
+                    self.emit_frames(&out[0], &mut emit);
                 }
                 self.in_buf.clear();
             }
@@ -65,13 +65,13 @@ impl FrameResampler {
 
     pub fn finish(&mut self, mut emit: impl FnMut(&[f32])) {
         // Process any remaining input samples
-        if let Some(ref mut resampler) = self.resampler {
-            if !self.in_buf.is_empty() {
-                // Pad with zeros to reach chunk size
-                self.in_buf.resize(self.chunk_in, 0.0);
-                if let Ok(out) = resampler.process(&[&self.in_buf[..]], None) {
-                    self.emit_frames(&out[0], &mut emit);
-                }
+        if let Some(ref mut resampler) = self.resampler
+            && !self.in_buf.is_empty()
+        {
+            // Pad with zeros to reach chunk size
+            self.in_buf.resize(self.chunk_in, 0.0);
+            if let Ok(out) = resampler.process(&[&self.in_buf[..]], None) {
+                self.emit_frames(&out[0], &mut emit);
             }
         }
 

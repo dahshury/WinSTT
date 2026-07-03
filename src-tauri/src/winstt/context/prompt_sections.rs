@@ -42,10 +42,10 @@ pub(super) fn json_serialize_context(sections: Vec<JsonPromptSection>) -> String
     let sections = sections
         .into_iter()
         .map(|mut section| {
-            if let JsonPromptValue::Text(value) = &section.value {
-                if json_section_carries_content(section.key) {
-                    section.value = JsonPromptValue::Text(json_scrub_secret_codes(value));
-                }
+            if let JsonPromptValue::Text(value) = &section.value
+                && json_section_carries_content(section.key)
+            {
+                section.value = JsonPromptValue::Text(json_scrub_secret_codes(value));
             }
             section
         })

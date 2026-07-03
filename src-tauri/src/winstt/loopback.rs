@@ -19,10 +19,10 @@
 // and unit-tested everywhere.
 
 #[cfg(windows)]
+use std::sync::Arc;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-#[cfg(windows)]
-use std::sync::Arc;
 #[cfg(windows)]
 use std::thread::JoinHandle;
 
@@ -242,10 +242,9 @@ impl LoopbackCapture {
                     capture_info,
                     sink,
                     thread_stop.clone(),
-                ) {
-                    if !thread_stop.load(Ordering::SeqCst) {
-                        log::error!("[loopback] WASAPI capture failed: {err}");
-                    }
+                ) && !thread_stop.load(Ordering::SeqCst)
+                {
+                    log::error!("[loopback] WASAPI capture failed: {err}");
                 }
             })
             .map_err(|e| LoopbackError::Backend(format!("spawn capture thread: {e}")))?;
@@ -516,7 +515,7 @@ mod windows_impl {
 
     use crate::audio_toolkit::audio::FrameResampler;
     use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
-    use wasapi::{deinitialize, initialize_mta, Direction, SampleType, StreamMode};
+    use wasapi::{Direction, SampleType, StreamMode, deinitialize, initialize_mta};
 
     /// Buffer duration requested from WASAPI (hundred-nanosecond units). 200 ms
     /// shared-mode buffer keeps the event wait responsive to `stop`.

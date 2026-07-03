@@ -1,13 +1,13 @@
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
+use ort::session::builder::GraphOptimizationLevel;
 
 use super::types::TtsDevice;
 use crate::winstt::stt::{
-    configure_session, num_cpus_best_effort, pick_intra_op_threads, provider_label, Accelerator,
+    Accelerator, configure_session, num_cpus_best_effort, pick_intra_op_threads, provider_label,
 };
 
 /// Generic lazy-load holder shared by every in-process ONNX TTS engine.

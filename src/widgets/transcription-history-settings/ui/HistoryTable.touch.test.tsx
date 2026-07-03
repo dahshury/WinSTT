@@ -9,7 +9,7 @@ import {
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { IPC } from "@/shared/api/ipc-channels";
 import type { TranscriptionHistoryEntry } from "../model/history-store";
-import { HistoryTable } from "./HistoryTable";
+import { HistoryTable, type HistoryTableItem } from "./HistoryTable";
 
 const clipboardDescriptor = Object.getOwnPropertyDescriptor(
 	globalThis.navigator,
@@ -19,6 +19,14 @@ const audioDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Audio");
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function transcriptionItem(entry: TranscriptionHistoryEntry): HistoryTableItem {
+	return { entry, kind: "transcription" };
+}
+
+function transformItem(entry: TranscriptionHistoryEntry): HistoryTableItem {
+	return { entry, kind: "transform" };
 }
 
 afterEach(() => {
@@ -59,7 +67,7 @@ describe("HistoryTable touch gestures", () => {
 
 		render(
 			<IntlProvider>
-				<HistoryTable entries={[entry]} />
+				<HistoryTable entries={[transcriptionItem(entry)]} />
 			</IntlProvider>,
 		);
 
@@ -95,7 +103,7 @@ describe("HistoryTable LLM variant toggle", () => {
 
 		render(
 			<IntlProvider>
-				<HistoryTable entries={[entry]} />
+				<HistoryTable entries={[transcriptionItem(entry)]} />
 			</IntlProvider>,
 		);
 
@@ -117,7 +125,7 @@ describe("HistoryTable LLM variant toggle", () => {
 
 		render(
 			<IntlProvider>
-				<HistoryTable entries={[entry]} />
+				<HistoryTable entries={[transcriptionItem(entry)]} />
 			</IntlProvider>,
 		);
 
@@ -169,7 +177,7 @@ describe("HistoryTable LLM variant toggle", () => {
 
 		render(
 			<IntlProvider>
-				<HistoryTable entries={[entry]} />
+				<HistoryTable entries={[transcriptionItem(entry)]} />
 			</IntlProvider>,
 		);
 
@@ -188,8 +196,10 @@ describe("HistoryTable LLM variant toggle", () => {
 });
 
 describe("HistoryTable transform mode", () => {
-	test("uses the provided delete handler and hides audio-only stats", async () => {
-		const onDeleteEntry = mock<(id: string) => void>(() => undefined);
+	test("uses the provided delete handler, transform icon, and hides audio-only stats", async () => {
+		const onDeleteEntry = mock<
+			(id: string, kind: "transcription" | "transform") => void
+		>(() => undefined);
 		const entry: TranscriptionHistoryEntry = {
 			durationMs: 0,
 			id: "transform-row",
@@ -202,17 +212,17 @@ describe("HistoryTable transform mode", () => {
 		render(
 			<IntlProvider>
 				<HistoryTable
-					entries={[entry]}
+					entries={[transformItem(entry)]}
 					onDeleteEntry={onDeleteEntry}
-					showAudioStats={false}
 				/>
 			</IntlProvider>,
 		);
 
 		await screen.findByText("after transform");
+		expect(screen.getByRole("img", { name: "Transformations" })).not.toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: "Delete entry" }));
 
-		expect(onDeleteEntry).toHaveBeenCalledWith("transform-row");
+		expect(onDeleteEntry).toHaveBeenCalledWith("transform-row", "transform");
 		expect(screen.queryByTitle("Duration")).toBeNull();
 	});
 });

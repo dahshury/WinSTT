@@ -472,6 +472,13 @@ export const diagObservabilityTimeline = (
 		[],
 	);
 
+export const diagClearObservabilityTimeline = (): Promise<number> =>
+	commandOrDefault(
+		"diag_clear_observability_timeline",
+		commands.diagClearObservabilityTimeline,
+		0,
+	);
+
 export const webviewDiagLog = (
 	label: string,
 	level: "info" | "warn" | "error",

@@ -213,7 +213,7 @@ export function AppDataUsageBreakdown(): ReactNode {
 				open={pending !== null}
 				title={t("appDataUsageRemoveTitle", { item: pendingLabel })}
 			/>
-			<div className="flex flex-col gap-3 rounded-md border border-divider bg-foreground/5 p-3">
+			<div className="my-3 flex flex-col gap-3 rounded-md border border-divider bg-foreground/5 p-3">
 				<div className="flex items-baseline justify-between gap-2">
 					<span className="font-medium text-body-sm text-foreground">
 						{t("appDataUsageTitle")}

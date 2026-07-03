@@ -89,9 +89,15 @@ fn leveled_concise(level: PresetLevel) -> &'static str {
 }
 fn leveled_summarize(level: PresetLevel) -> &'static str {
     match level {
-        PresetLevel::Light => "Shorten lightly. When the input has more than one clause, the output must be shorter than the input. Remove low-priority detail while keeping the key points, structure, tone, and point of view.",
-        PresetLevel::Medium => "Summarize substantially. Keep the main point and essential details; drop examples, asides, repetition, and low-priority support. Preserve tone and point of view.",
-        PresetLevel::High => "Compress to the core message and critical outcome or ask. Use one short sentence when possible. Preserve the speaker's point of view; never make it clinical or impersonal.",
+        PresetLevel::Light => {
+            "Shorten lightly. When the input has more than one clause, the output must be shorter than the input. Remove low-priority detail while keeping the key points, structure, tone, and point of view."
+        }
+        PresetLevel::Medium => {
+            "Summarize substantially. Keep the main point and essential details; drop examples, asides, repetition, and low-priority support. Preserve tone and point of view."
+        }
+        PresetLevel::High => {
+            "Compress to the core message and critical outcome or ask. Use one short sentence when possible. Preserve the speaker's point of view; never make it clinical or impersonal."
+        }
     }
 }
 fn custom_level_hint(level: PresetLevel) -> &'static str {
@@ -130,11 +136,7 @@ fn raw_builtin_prompt(key: PresetKey, level: Option<PresetLevel>) -> String {
 fn translate_prompt_for(lang: &str) -> String {
     let target = {
         let t = lang.trim();
-        if t.is_empty() {
-            DEFAULT_TARGET_LANG
-        } else {
-            t
-        }
+        if t.is_empty() { DEFAULT_TARGET_LANG } else { t }
     };
     format!(
         "First apply the base cleanup in the source language, then translate the cleaned, styled result into {target}.  Do not copy the source text when {target} is different from the source language.  Treat every cleanup and style rule above as language-general: the English examples  (capitalization of \"I\", English homophones, English unit/date/number forms) are illustrative only —  apply the equivalent punctuation, capitalization, spacing, quotation, and number/date/time/currency  conventions of {target} for the output, and of the source language as actually spoken for the input. Preserve people names, organization names, product names, project names, app names, code, command lines, URLs, file paths, email addresses, identifiers, and quoted UI labels exactly unless the quoted text is ordinary prose being translated. Button, menu, mode, value, and error labels introduced by phrases like \"button says\" or \"labeled\" must still be in quote marks after translation.  Preserve the speaker's meaning, intent, tone, voice, and line breaks; translate idioms to their natural  {target} equivalent rather than word-for-word. Output ONLY the {target} text — do not include the  original, transliteration, romanization, explanations, or alternatives. If the input is empty or pure  noise, return it unchanged."
@@ -709,10 +711,10 @@ fn active_modifier_user_prompt(presets: &[PresetEntry], text: &str) -> Option<St
     if entries.is_empty() {
         return None;
     }
-    if entries.len() == 1 {
-        if let Some(prompt) = single_builtin_user_prompt(entries[0], text) {
-            return Some(prompt);
-        }
+    if entries.len() == 1
+        && let Some(prompt) = single_builtin_user_prompt(entries[0], text)
+    {
+        return Some(prompt);
     }
     let operations = entries
         .iter()

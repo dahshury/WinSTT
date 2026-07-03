@@ -616,24 +616,26 @@ describe("ttsSettingsSchema hotkey", () => {
 });
 
 describe("appSettingsSchema — no hotkey field is ever empty", () => {
-	test("all four hotkeys resolve to non-empty defaults from an empty input", () => {
+	test("all five hotkeys resolve to non-empty defaults from an empty input", () => {
 		const out = appSettingsSchema.parse({});
 		expect(out.hotkey.pushToTalkKey.length).toBeGreaterThan(0);
 		expect(out.general.repasteHotkey.length).toBeGreaterThan(0);
 		expect(out.tts.hotkey.length).toBeGreaterThan(0);
+		expect(out.llm.profileSwapHotkey.length).toBeGreaterThan(0);
 		expect(out.llm.transforms.hotkey.length).toBeGreaterThan(0);
 	});
 
-	test("all four hotkeys rehydrate to non-empty even when persisted as empty strings", () => {
+	test("all five hotkeys rehydrate to non-empty even when persisted as empty strings", () => {
 		const out = appSettingsSchema.parse({
 			hotkey: { pushToTalkKey: "" },
 			general: { repasteHotkey: "" },
 			tts: { hotkey: "" },
-			llm: { transforms: { hotkey: "" } },
+			llm: { profileSwapHotkey: "", transforms: { hotkey: "" } },
 		});
 		expect(out.hotkey.pushToTalkKey).toBe("LCtrl+LMeta");
 		expect(out.general.repasteHotkey).toBe("LCtrl+LShift+V");
 		expect(out.tts.hotkey).toBe("LCtrl+Space");
+		expect(out.llm.profileSwapHotkey).toBe("LCtrl+LShift+P");
 		expect(out.llm.transforms.hotkey).toBe("LCtrl+LShift+T");
 	});
 });
@@ -788,6 +790,15 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 
 	test("openrouterApiKey defaults to empty string (shared)", () => {
 		expect(llmSettingsSchema.parse({}).openrouterApiKey).toBe("");
+	});
+
+	test("profileSwapHotkey defaults to LCtrl+LShift+P and rescues empty input", () => {
+		expect(llmSettingsSchema.parse({}).profileSwapHotkey).toBe(
+			"LCtrl+LShift+P",
+		);
+		expect(
+			llmSettingsSchema.parse({ profileSwapHotkey: "" }).profileSwapHotkey,
+		).toBe("LCtrl+LShift+P");
 	});
 
 	test("dictation.model / openrouter* default to empty strings", () => {

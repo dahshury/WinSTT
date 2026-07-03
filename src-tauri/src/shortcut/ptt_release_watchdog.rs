@@ -1,16 +1,16 @@
 #[cfg(target_os = "windows")]
 mod platform {
     use log::{debug, info, warn};
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};
     use tauri::{AppHandle, Manager};
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY};
 
+    use crate::TranscriptionCoordinator;
     use crate::managers::audio::AudioRecordingManager;
     use crate::winstt::settings_schema::RecordingMode;
-    use crate::TranscriptionCoordinator;
 
     const POLL_INTERVAL: Duration = Duration::from_millis(10);
     const START_WAIT_TIMEOUT: Duration = Duration::from_secs(2);

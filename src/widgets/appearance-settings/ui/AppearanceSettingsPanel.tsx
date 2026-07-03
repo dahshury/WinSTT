@@ -64,7 +64,7 @@ export function AppearanceSettingsPanel() {
 
 	return (
 		<div className="flex flex-col gap-2">
-			<SettingSection divided icon={MonitorDotIcon} title={t("display")}>
+			<SettingSection boxed divided icon={MonitorDotIcon} title={t("display")}>
 				<LanguageControl locale={locale} setLocale={setLocale} t={t} />
 				<VisualizerTypeControl general={general} t={t} update={update} />
 				<VisualizerShapeControls general={general} t={t} update={update} />

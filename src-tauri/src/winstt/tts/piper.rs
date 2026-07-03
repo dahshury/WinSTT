@@ -53,6 +53,10 @@ pub struct PiperVoiceConfig {
     pub noise_w: f32,
     /// phoneme string-key → id list (values are usually a single id).
     pub phoneme_id_map: HashMap<String, Vec<i64>>,
+    /// Single-codepoint phoneme lookup built once from `phoneme_id_map`. Piper
+    /// consumes espeak output per codepoint, so this avoids allocating a
+    /// temporary String for every phoneme during synthesis.
+    pub phoneme_char_id_map: HashMap<char, Vec<i64>>,
 }
 
 impl PiperVoiceConfig {
@@ -104,6 +108,7 @@ impl PiperVoiceConfig {
                 )));
             }
         }
+        let phoneme_char_id_map = build_phoneme_char_id_map(&phoneme_id_map);
         Ok(Self {
             sample_rate,
             espeak_voice,
@@ -112,8 +117,23 @@ impl PiperVoiceConfig {
             length_scale,
             noise_w,
             phoneme_id_map,
+            phoneme_char_id_map,
         })
     }
+}
+
+fn build_phoneme_char_id_map(id_map: &HashMap<String, Vec<i64>>) -> HashMap<char, Vec<i64>> {
+    let mut char_map = HashMap::with_capacity(id_map.len());
+    for (key, ids) in id_map {
+        let mut chars = key.chars();
+        let Some(ch) = chars.next() else {
+            continue;
+        };
+        if chars.next().is_none() {
+            char_map.insert(ch, ids.clone());
+        }
+    }
+    char_map
 }
 
 #[derive(Clone, Debug)]
@@ -184,7 +204,11 @@ impl PiperEngine {
                     .phonemize_voice(trimmed, &loaded.cfg.espeak_voice)
                     .map_err(|e| PiperError::Phonemize(e.to_string()))?;
 
-                let ids = phonemes_to_ids(&phonemes, &loaded.cfg.phoneme_id_map);
+                let ids = phonemes_to_ids(
+                    &phonemes,
+                    &loaded.cfg.phoneme_id_map,
+                    &loaded.cfg.phoneme_char_id_map,
+                );
                 if ids.is_empty() {
                     return Ok((Vec::new(), loaded.cfg.sample_rate));
                 }
@@ -281,7 +305,11 @@ impl PiperEngine {
 /// id(s) followed by PAD, then EOS. Unknown codepoints are skipped. Verbatim port
 /// of piper1-gpl `phonemes_to_ids`. `phonemes` is the cleaned espeak IPA string
 /// (per-codepoint); NFD is skipped (espeak output + the map share espeak's form).
-fn phonemes_to_ids(phonemes: &str, id_map: &HashMap<String, Vec<i64>>) -> Vec<i64> {
+fn phonemes_to_ids(
+    phonemes: &str,
+    id_map: &HashMap<String, Vec<i64>>,
+    char_id_map: &HashMap<char, Vec<i64>>,
+) -> Vec<i64> {
     let mut ids: Vec<i64> = Vec::with_capacity(phonemes.len() * 2 + 4);
     if let Some(bos) = id_map.get(PIPER_BOS) {
         ids.extend_from_slice(bos);
@@ -289,12 +317,11 @@ fn phonemes_to_ids(phonemes: &str, id_map: &HashMap<String, Vec<i64>>) -> Vec<i6
     if let Some(pad) = id_map.get(PIPER_PAD) {
         ids.extend_from_slice(pad);
     }
-    let pad = id_map.get(PIPER_PAD).cloned().unwrap_or_default();
+    let pad = id_map.get(PIPER_PAD).map(Vec::as_slice).unwrap_or(&[]);
     for ch in phonemes.chars() {
-        let key = ch.to_string();
-        if let Some(phoneme_ids) = id_map.get(&key) {
+        if let Some(phoneme_ids) = char_id_map.get(&ch) {
             ids.extend_from_slice(phoneme_ids);
-            ids.extend_from_slice(&pad);
+            ids.extend_from_slice(pad);
         }
         // unknown phoneme codepoints are silently skipped (matches piper warn+skip)
     }
@@ -321,14 +348,19 @@ mod tests {
     #[test]
     fn phonemes_to_ids_interleaves_pad_bos_eos() {
         let m = tiny_map();
+        let chars = build_phoneme_char_id_map(&m);
         // "ab" → BOS PAD a PAD b PAD EOS = 1 0 10 0 11 0 2
-        assert_eq!(phonemes_to_ids("ab", &m), vec![1, 0, 10, 0, 11, 0, 2]);
+        assert_eq!(
+            phonemes_to_ids("ab", &m, &chars),
+            vec![1, 0, 10, 0, 11, 0, 2]
+        );
     }
 
     #[test]
     fn phonemes_to_ids_skips_unknown() {
         let m = tiny_map();
+        let chars = build_phoneme_char_id_map(&m);
         // 'z' unknown → skipped: BOS PAD a PAD EOS
-        assert_eq!(phonemes_to_ids("az", &m), vec![1, 0, 10, 0, 2]);
+        assert_eq!(phonemes_to_ids("az", &m, &chars), vec![1, 0, 10, 0, 2]);
     }
 }

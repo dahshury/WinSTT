@@ -16,8 +16,12 @@ export interface SettingSubsectionProps {
 	/** Help text shown in an info-icon tooltip next to the title. */
 	caption?: string;
 	children: ReactNode;
+	/** Dims and blocks the body even when this subsection does not render its own toggle. */
+	contentDisabled?: boolean;
 	/** Action rendered on the trailing edge of the title row, before any toggle. */
 	headerAction?: ReactNode;
+	/** When true, render only the body with the subsection enable/disable semantics. */
+	headerless?: boolean;
 	/** Optional leading icon shown before the title. */
 	icon?: IconSvgElement;
 	onToggle?: (checked: boolean) => void;
@@ -41,18 +45,20 @@ export function SettingSubsection({
 	caption,
 	children,
 	headerAction,
+	headerless = false,
 	icon,
 	toggled,
 	onToggle,
 	toggleDisabled,
 	toggleDisabledTooltip,
 	busy = false,
+	contentDisabled = false,
 }: SettingSubsectionProps) {
 	const hasToggle = onToggle !== undefined;
 	// Body is inert when the toggle is off OR while a transition is in flight
 	// (`busy`) — the user enabled it, but the controls shouldn't be touched until
 	// the model finishes loading.
-	const isDisabled = (hasToggle && !toggled) || busy;
+	const isDisabled = contentDisabled || (hasToggle && !toggled) || busy;
 	const toggle = hasToggle ? (
 		<Toggle
 			aria-label={`Toggle ${title}`}
@@ -63,37 +69,39 @@ export function SettingSubsection({
 	) : null;
 
 	return (
-		<div className="mt-7 border-divider border-t pt-6 first:mt-0 first:border-t-0 first:pt-0">
-			<div className="mb-3 flex items-center gap-2">
-				{icon && (
-					<span
-						aria-hidden="true"
-						className="flex size-7 shrink-0 items-center justify-center rounded bg-activity/10 text-activity ring-1 ring-activity/20"
-					>
-						<HugeiconsIcon icon={icon} size={13} />
-					</span>
-				)}
-				<h4 className="min-w-0 font-medium text-foreground text-subtitle">
-					{title}
-				</h4>
-				{caption ? <InfoTooltip content={caption} /> : null}
-				{headerAction || hasToggle ? (
-					<div className="ml-auto flex items-center gap-1.5">
-						{headerAction}
-						{toggleDisabled && toggleDisabledTooltip && toggle ? (
-							<Tooltip content={toggleDisabledTooltip}>
-								<span className="inline-flex">{toggle}</span>
-							</Tooltip>
-						) : (
-							toggle
-						)}
-					</div>
-				) : null}
-			</div>
+		<div className="mt-8 border-divider border-t pt-7 first:mt-0 first:border-t-0 first:pt-0">
+			{headerless ? null : (
+				<div className="mb-3 flex items-center gap-2">
+					{icon && (
+						<span
+							aria-hidden="true"
+							className="flex size-7 shrink-0 items-center justify-center rounded bg-activity/10 text-activity ring-1 ring-activity/20"
+						>
+							<HugeiconsIcon icon={icon} size={13} />
+						</span>
+					)}
+					<h4 className="min-w-0 font-medium text-foreground text-subtitle">
+						{title}
+					</h4>
+					{caption ? <InfoTooltip content={caption} /> : null}
+					{headerAction || hasToggle ? (
+						<div className="ml-auto flex items-center gap-1.5">
+							{headerAction}
+							{toggleDisabled && toggleDisabledTooltip && toggle ? (
+								<Tooltip content={toggleDisabledTooltip}>
+									<span className="inline-flex">{toggle}</span>
+								</Tooltip>
+							) : (
+								toggle
+							)}
+						</div>
+					) : null}
+				</div>
+			)}
 			<div
 				className={cn(
 					"transition-opacity duration-200 ease-out",
-					isDisabled && "pointer-events-none opacity-40",
+					isDisabled && "settings-dim pointer-events-none",
 				)}
 			>
 				{children}

@@ -139,10 +139,10 @@ fn explicit_data_dir(lib_path: &Path) -> Option<PathBuf> {
             if dp.join("espeak-ng-data").is_dir() {
                 return Some(dp);
             }
-            if let Some(parent) = dp.parent() {
-                if parent.join("espeak-ng-data").is_dir() {
-                    return Some(parent.to_path_buf());
-                }
+            if let Some(parent) = dp.parent()
+                && parent.join("espeak-ng-data").is_dir()
+            {
+                return Some(parent.to_path_buf());
             }
         }
     }

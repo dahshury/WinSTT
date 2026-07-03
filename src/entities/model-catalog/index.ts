@@ -8,12 +8,15 @@ export {
 } from "./lib/last-local-model";
 export {
 	getModelAssistance,
-	modelNeedsDictationCleanup,
 	type ModelAssistance,
 	type ModelAssistanceKind,
 	type ModelAssistanceReason,
 } from "./lib/model-assistance";
-export { modelHasNativeBasicFormatting } from "./lib/model-formatting";
+export {
+	getModelNativeFormatting,
+	type ModelNativeFormatting,
+	type ModelNativeFormattingKey,
+} from "./lib/model-formatting";
 export { resolveEffectiveQuant, resolveQuantCache } from "./lib/quant-cache";
 export {
 	isSelectableRealtimeModel,

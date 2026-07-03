@@ -128,11 +128,11 @@ export function IntegrationsSettingsPanel() {
 	);
 
 	const runOpenrouterVerify = async (key: string) => {
+		const myReqId = ++openrouterReqIdRef.current;
 		if (key.trim().length === 0) {
 			setOpenrouterStatus({ status: "idle" });
 			return;
 		}
-		const myReqId = ++openrouterReqIdRef.current;
 		setOpenrouterStatus({ status: "verifying" });
 		// Dispatch the IPC, then translate either path (success or rejection)
 		// into a single ``next`` status. No conditional early-return follows
@@ -143,7 +143,9 @@ export function IntegrationsSettingsPanel() {
 			(response) => ({ ok: true as const, response }),
 			(err: unknown) => ({ ok: false as const, err }),
 		);
-		const isStale = myReqId !== openrouterReqIdRef.current;
+		const isStale =
+			myReqId !== openrouterReqIdRef.current ||
+			useSettingsStore.getState().settings.llm.openrouterApiKey !== key;
 		const next = computeOpenrouterNextStatus(isStale, settled);
 		if (next) {
 			setOpenrouterStatus(next);
@@ -161,6 +163,12 @@ export function IntegrationsSettingsPanel() {
 		updateLlmSettings({ openrouterApiKey: value });
 		if (openrouterDebounceRef.current !== null) {
 			window.clearTimeout(openrouterDebounceRef.current);
+			openrouterDebounceRef.current = null;
+		}
+		openrouterReqIdRef.current++;
+		if (value.trim().length === 0) {
+			setOpenrouterStatus({ status: "idle" });
+			return;
 		}
 		openrouterDebounceRef.current = window.setTimeout(() => {
 			openrouterDebounceRef.current = null;
@@ -214,7 +222,7 @@ export function IntegrationsSettingsPanel() {
 	);
 
 	return (
-		<div className="flex flex-col gap-2">
+		<div className="flex flex-col">
 			{/* ── Language Models (LLM) ───────────────────────────────────
 			 *  Powers dictation cleanup, context-aware edits and translation.
 			 *  Backed by a LOCAL Ollama server (endpoint) or a CLOUD OpenRouter
@@ -224,12 +232,13 @@ export function IntegrationsSettingsPanel() {
 			 *  STT-only providers (OpenAI / ElevenLabs) live in the section
 			 *  below. */}
 			<SettingSection
+				boxed
 				description={t("llmSectionCaption")}
 				icon={AiBrain01Icon}
 				title={t("llmSectionTitle")}
 			>
-				<div className="flex flex-col">
-					<div className="col-span-2">
+				<div className="flex flex-col divide-y divide-divider">
+					<div>
 						<SettingField
 							isDefault={endpoint === DEFAULT_SETTINGS.llm.endpoint}
 							label={tLlm("endpoint")}
@@ -251,7 +260,7 @@ export function IntegrationsSettingsPanel() {
 						</SettingField>
 					</div>
 
-					<div className="col-span-2">
+					<div>
 						<FormControl
 							label={tLlm("openrouterApiKey")}
 							labelIcon={<OpenRouterLogo />}
@@ -263,7 +272,12 @@ export function IntegrationsSettingsPanel() {
 										onClick={
 											hasOpenrouterKey
 												? requestRemoveOpenrouter
-												: () => window.open(OPENROUTER_KEYS_URL, "_blank")
+												: () =>
+														window.open(
+															OPENROUTER_KEYS_URL,
+															"_blank",
+															"noopener,noreferrer",
+														)
 										}
 										type="button"
 									>
@@ -325,6 +339,7 @@ export function IntegrationsSettingsPanel() {
 			 *  ElevenLabs key PLUS `llm.openrouterApiKey`. (OpenAI was removed — its
 			 *  Whisper / GPT-4o transcribe models are served via OpenRouter.) */}
 			<SettingSection
+				boxed
 				description={t("sttSectionCaption")}
 				icon={ApiIcon}
 				title={t("sttSectionTitle")}

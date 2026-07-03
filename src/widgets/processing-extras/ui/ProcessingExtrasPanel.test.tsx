@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
+import { type ModelInfo, useCatalogStore } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { ProcessingExtrasPanel } from "./ProcessingExtrasPanel";
 
@@ -22,9 +23,36 @@ function getVisibleText(text: string): HTMLElement {
 	return element;
 }
 
+function sttModel(overrides: Partial<ModelInfo>): ModelInfo {
+	return {
+		id: "tiny",
+		displayName: "Whisper Tiny",
+		backend: "onnx_asr",
+		family: "whisper",
+		languages: ["en"],
+		supportsLanguageDetection: true,
+		sizeLabel: "39M",
+		previewCapable: true,
+		nativeStreaming: false,
+		finalReuseSafe: false,
+		supportsRealtime: true,
+		onnxModelName: null,
+		description: "",
+		availableQuantizations: [""],
+		sizeBytesByQuantization: {},
+		available: true,
+		errorMessage: "",
+		localPath: null,
+		speedScore: 0.5,
+		accuracyScore: 0.5,
+		...overrides,
+	};
+}
+
 describe("ProcessingExtrasPanel formatting rules", () => {
 	beforeEach(() => {
 		useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isLoaded: true });
+		useCatalogStore.setState({ isLoaded: false, models: [] });
 	});
 
 	test("shows one merged control for spoken punctuation and code commands", () => {
@@ -52,6 +80,48 @@ describe("ProcessingExtrasPanel formatting rules", () => {
 		quality = useSettingsStore.getState().settings.quality;
 		expect(quality.formatSpokenPunctuationCommands).toBe(false);
 		expect(quality.formatSpokenSymbolCommands).toBe(false);
+	});
+
+	test("keeps remaining rules enabled when the model only covers basic formatting", () => {
+		const canary = sttModel({
+			id: "nemo-canary-180m-flash",
+			displayName: "NeMo Canary 180M Flash",
+			family: "nemo",
+		});
+		useCatalogStore.setState({ isLoaded: true, models: [canary] });
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				model: {
+					...DEFAULT_SETTINGS.model,
+					model: canary.id,
+				},
+				quality: {
+					...DEFAULT_SETTINGS.quality,
+					formatBasicPunctuationCasing: false,
+					formatQuoteCommands: false,
+				},
+			},
+			isLoaded: true,
+		});
+
+		renderPanel();
+
+		expect(
+			getVisibleText(
+				"NeMo Canary 180M Flash already handles punctuation and casing. Choose any remaining deterministic rules WinSTT should run.",
+			),
+		).toBeDefined();
+
+		fireEvent.pointerUp(getVisibleText("Basic punctuation and casing"));
+		expect(
+			useSettingsStore.getState().settings.quality.formatBasicPunctuationCasing,
+		).toBe(false);
+
+		fireEvent.pointerUp(getVisibleText("Quote commands"));
+		expect(
+			useSettingsStore.getState().settings.quality.formatQuoteCommands,
+		).toBe(true);
 	});
 });
 

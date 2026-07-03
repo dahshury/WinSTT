@@ -12,13 +12,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use ndarray::{ArrayD, ArrayView2};
-use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
+use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
 
 use super::super::{
-    configure_session, num_cpus_best_effort, pick_intra_op_threads, provider_label,
-    vocab_is_uppercase, Accelerator, ResolvedModel, SttError, SttResult,
+    Accelerator, ResolvedModel, SttError, SttResult, configure_session, num_cpus_best_effort,
+    pick_intra_op_threads, provider_label, vocab_is_uppercase,
 };
 
 /// fp16 element type. `ort` depends on `half` and impls `PrimitiveTensorElementType` for
@@ -184,10 +184,8 @@ impl Vocab {
                 continue;
             };
             let mut sym = symbol.to_string();
-            if base64_encoded {
-                if let Some(decoded) = b64_to_utf8(&sym) {
-                    sym = decoded;
-                }
+            if base64_encoded && let Some(decoded) = b64_to_utf8(&sym) {
+                sym = decoded;
             }
             if replace_underscore {
                 sym = sym.replace('\u{2581}', " ");
@@ -582,14 +580,12 @@ pub(super) fn read_special_id(
     fallback_token: &str,
     hard_default: i64,
 ) -> i64 {
-    if let Some(path) = cfg_path {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                if let Some(id) = v.get(key).and_then(|x| x.as_i64()) {
-                    return id;
-                }
-            }
-        }
+    if let Some(path) = cfg_path
+        && let Ok(text) = std::fs::read_to_string(path)
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text)
+        && let Some(id) = v.get(key).and_then(|x| x.as_i64())
+    {
+        return id;
     }
     token_to_id
         .get(fallback_token)

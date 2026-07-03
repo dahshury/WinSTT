@@ -244,13 +244,17 @@ pub fn remediation_for_kind(kind: &str) -> Option<&'static str> {
         ),
         "auth" => Some("Verify the configured API key and provider permissions."),
         "key_missing" => Some("Add a valid API key for the selected cloud provider."),
-        "rate_limited" => Some("Wait for the provider quota window to reset or switch providers/models."),
+        "rate_limited" => {
+            Some("Wait for the provider quota window to reset or switch providers/models.")
+        }
         "disk_full" => Some("Free disk space and retry the download or model operation."),
         "permission_denied" => Some(
             "Check file permissions, antivirus quarantine, and whether the app can access its data folder.",
         ),
         "model_corrupt" => Some("Delete the affected model cache and download the model again."),
-        "not_found" => Some("Confirm the model id, selected quantization, and whether the model is available."),
+        "not_found" => {
+            Some("Confirm the model id, selected quantization, and whether the model is available.")
+        }
         "panic" => Some("Restart WinSTT. Save a diagnostic bundle if the issue repeats."),
         _ => None,
     }
@@ -262,6 +266,15 @@ pub fn recent_issues(limit: Option<usize>) -> Vec<ObservabilityIssue> {
         return Vec::new();
     };
     issues.iter().rev().take(limit).cloned().collect()
+}
+
+pub fn clear_issues() -> usize {
+    let Ok(mut issues) = issue_store().lock() else {
+        return 0;
+    };
+    let cleared = issues.len();
+    issues.clear();
+    cleared
 }
 
 fn issue_store() -> &'static Mutex<VecDeque<ObservabilityIssue>> {
@@ -431,10 +444,12 @@ mod tests {
                 issue.context.get("device").map(String::as_str),
                 Some("directml")
             );
-            assert!(issue
-                .remediation
-                .as_deref()
-                .is_some_and(|text| text.contains("smaller or quantized model")));
+            assert!(
+                issue
+                    .remediation
+                    .as_deref()
+                    .is_some_and(|text| text.contains("smaller or quantized model"))
+            );
 
             let recent = recent_issues(Some(1));
             assert_eq!(recent.len(), 1);
@@ -461,6 +476,20 @@ mod tests {
                 recent.last().map(|issue| issue.summary.as_str()),
                 Some("issue-5")
             );
+        });
+    }
+
+    #[test]
+    fn clear_issues_empties_store_without_reusing_issue_ids() {
+        with_clean_issue_store(|| {
+            IssueBuilder::new("test", "clear", "first").record(None);
+            IssueBuilder::new("test", "clear", "second").record(None);
+
+            assert_eq!(clear_issues(), 2);
+            assert!(recent_issues(None).is_empty());
+
+            let issue = IssueBuilder::new("test", "clear", "third").record(None);
+            assert_eq!(issue.id, 3);
         });
     }
 

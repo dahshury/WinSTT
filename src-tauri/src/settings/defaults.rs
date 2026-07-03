@@ -2,8 +2,8 @@ use log::debug;
 use std::collections::HashMap;
 
 use super::types::{
-    AppSettings, LLMPrompt, LogLevel, OverlayPosition, PostProcessProvider, SecretMap, TypingTool,
-    APPLE_INTELLIGENCE_DEFAULT_MODEL_ID, APPLE_INTELLIGENCE_PROVIDER_ID,
+    APPLE_INTELLIGENCE_DEFAULT_MODEL_ID, APPLE_INTELLIGENCE_PROVIDER_ID, AppSettings, LLMPrompt,
+    LogLevel, OverlayPosition, PostProcessProvider, SecretMap, TypingTool,
 };
 
 pub(super) fn default_model() -> String {

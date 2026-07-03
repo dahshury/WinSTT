@@ -52,13 +52,7 @@ fn at(chars: &[char], idx: i64) -> char {
 /// decisions. (See the regression note in tests.)
 fn slice(norm: &[char], start: i64, end: i64) -> String {
     let len = norm.len() as i64;
-    let resolve = |i: i64| -> i64 {
-        if i < 0 {
-            (len + i).max(0)
-        } else {
-            i.min(len)
-        }
-    };
+    let resolve = |i: i64| -> i64 { if i < 0 { (len + i).max(0) } else { i.min(len) } };
     let s = resolve(start);
     let e = resolve(end);
     if s >= e {

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelInfo } from "../model/catalog-store";
-import { modelHasNativeBasicFormatting } from "./model-formatting";
+import {
+	getModelNativeFormatting,
+	modelHasNativeBasicFormatting,
+} from "./model-formatting";
 
 const baseModel: ModelInfo = {
 	id: "large-v3",
@@ -66,5 +69,22 @@ describe("model native formatting policy", () => {
 		] as const) {
 			expect(modelHasNativeBasicFormatting(model({ family }))).toBe(false);
 		}
+	});
+
+	test("reports only the formatting promises the model covers natively", () => {
+		expect(getModelNativeFormatting(model({ family: "whisper" }))).toEqual({
+			basicPunctuationCasing: true,
+			fillerRepeatCleanup: false,
+			quoteCommands: false,
+			spokenPunctuationCommands: false,
+			spokenSymbolCommands: false,
+		});
+		expect(getModelNativeFormatting(model({ family: "dolphin" }))).toEqual({
+			basicPunctuationCasing: false,
+			fillerRepeatCleanup: false,
+			quoteCommands: false,
+			spokenPunctuationCommands: false,
+			spokenSymbolCommands: false,
+		});
 	});
 });

@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.1.3-alpha.4] - 2026-07-03
+
+Changes since `v0.1.3-alpha.3`.
+
+### Added
+
+- Added a reusable input-device selector and device-picker window coverage for the recording and device-picker flows.
+- Added model author/provider usage analysis and a model-author radar view for transcription history.
+- Added post-processing profile swap helpers and expanded LLM/settings coverage for provider configuration, modifier presets, and processing extras.
+
+### Changed
+
+- Refined settings, model picker, shortcut, tray, overlay, diagnostics, updates, transcription-history, and data-grid UI behavior.
+- Reworked backend audio, STT, TTS, file-transcribe, download, history, settings, window-placement, and command plumbing while keeping generated Tauri bindings in sync.
+- Moved the Rust crate to edition 2024 and refreshed dependency pinning, lockfile checks, and cargo-deny policy.
+- Updated release verification examples and app metadata for `0.1.3-alpha.4`.
+
+### Fixed
+
+- Fixed additional audio-device, push-to-talk, model-selection, snippets, history, tray-menu, and processing-extra edge cases covered by the expanded test suite.
+- Fixed updater/about diagnostics presentation and restart/status messaging across localized settings strings.
+
+### Maintenance
+
+- Bumped the application version from `0.1.3-alpha.3` to `0.1.3-alpha.4` while keeping the alpha release policy.
+
 ## [0.1.3-alpha.3] - 2026-07-01
 
 Changes since `v0.1.3-alpha.2`.

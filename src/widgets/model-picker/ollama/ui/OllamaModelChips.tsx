@@ -16,6 +16,7 @@ import {
 	getProviderIconWithFallback,
 	resolveProviderIcon,
 } from "../../lib/provider-icons";
+import { AuthorBadge } from "../../ui/AuthorBadge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/Tooltip";
 import { EndpointFeatureIcons } from "../../ui/EndpointFeatureIcons";
 import {
@@ -59,18 +60,11 @@ export function OllamaMakerIcon({ slug }: { slug: string }) {
 
 export function PublisherChip({ family }: { family: string }) {
 	const publisher = getOllamaPublisher(family);
-	const iconSrc = getProviderIconWithFallback(publisher.slug);
 	return (
-		<span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface-secondary/60 px-1.5 py-0.5 font-medium text-[10px] text-foreground-secondary leading-none">
-			<img
-				alt=""
-				className="size-3 rounded-[2px] object-cover"
-				height={12}
-				src={iconSrc}
-				width={12}
-			/>
-			{publisher.label}
-		</span>
+		<AuthorBadge
+			label={publisher.label}
+			logoSrc={getProviderIconWithFallback(publisher.slug)}
+		/>
 	);
 }
 

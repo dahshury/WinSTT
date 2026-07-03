@@ -1,9 +1,9 @@
 use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
-use crate::managers::transcription::{is_silent_recording, TranscriptionManager};
+use crate::managers::transcription::{TranscriptionManager, is_silent_recording};
 use crate::shortcut;
-use crate::tray::{change_tray_icon, TrayIconState};
+use crate::tray::{TrayIconState, change_tray_icon};
 use crate::utils::{self, show_recording_overlay};
 use log::{debug, error, info, warn};
 use std::path::PathBuf;
@@ -14,8 +14,8 @@ use tauri::{AppHandle, Emitter};
 
 use super::post_process::{process_transcription_output, should_run_winstt_dictation_llm_from_app};
 use super::{
-    cancelled_session_cleanup, set_last_transcription, FinishGuard, RecordingErrorEvent,
-    ShortcutAction,
+    FinishGuard, RecordingErrorEvent, ShortcutAction, cancelled_session_cleanup,
+    set_last_transcription,
 };
 
 const AUDIO_SAMPLE_RATE: usize = 16_000;
@@ -146,10 +146,6 @@ impl ShortcutAction for TranscribeAction {
         let binding_id = binding_id.to_string();
         let session_id = crate::transcription_coordinator::begin_dictation_session();
         debug!("Starting dictation session {session_id}");
-        shortcut::register_cancel_shortcut(app);
-        crate::winstt::commands::tts::request_tts_playback_pause_for_dictation(app);
-        change_tray_icon(app, TrayIconState::Recording);
-        show_recording_overlay(app);
 
         // Get the microphone mode to determine audio feedback timing.
         let settings = crate::winstt::commands::settings::read_settings_raw(app);
@@ -159,28 +155,48 @@ impl ShortcutAction for TranscribeAction {
         );
         debug!("Microphone mode - always_on: {}", is_always_on);
 
-        let mut recording_error: Option<String> = None;
-        if is_always_on {
-            // Always-on mode: the mic stream is already open, so mute can apply
-            // immediately. The start chime is the winstt recording sound played
-            // below (duck_then_play_recording_chime) — it routes to the OUTPUT
-            // device and is independent of the INPUT mute applied here.
-            debug!("Always-on mode: applying mute");
-            rm.apply_mute();
-
-            if let Err(e) = rm.try_start_recording(&binding_id) {
-                debug!("Recording failed: {}", e);
-                recording_error = Some(e);
-            }
-        } else {
-            // On-demand mode: start recording first, then apply mute once the mic
-            // stream is active. The start chime (winstt recording sound) plays
-            // below on the output device, so muting the input does not silence it.
-            debug!("On-demand mode: starting recording first, then muting input");
-            let recording_start_time = Instant::now();
-            match rm.try_start_recording(&binding_id) {
-                Ok(()) => {
+        // Open the microphone CONCURRENTLY with the UI work below. In on-demand mode the
+        // cpal/WASAPI stream open is the slowest step of `start` (tens of ms, device
+        // dependent) and every millisecond it runs serialized is dictated speech lost
+        // before capture begins. The UI work (cancel shortcut, TTS pause, tray icon,
+        // overlay show) is independent of the recorder, so it runs while the device opens;
+        // the join below restores the original sequencing guarantee (`start` returns with
+        // the recorder either running or errored, which the coordinator's Stage machine
+        // relies on).
+        let mic_thread = {
+            let rm = Arc::clone(&rm);
+            std::thread::spawn(move || -> Result<(), String> {
+                if is_always_on {
+                    // Always-on mode: the mic stream is already open, so mute can apply
+                    // immediately. The start chime is the winstt recording sound played
+                    // below (duck_then_play_recording_chime) — it routes to the OUTPUT
+                    // device and is independent of the INPUT mute applied here.
+                    debug!("Always-on mode: applying mute");
+                    rm.apply_mute();
+                } else {
+                    // On-demand mode: start recording first (stream open below), then the
+                    // caller applies mute once the mic stream is active. The start chime
+                    // (winstt recording sound) plays on the output device, so muting the
+                    // input does not silence it.
+                    debug!("On-demand mode: starting recording first, then muting input");
+                }
+                let recording_start_time = Instant::now();
+                let result = rm.try_start_recording(&binding_id);
+                if result.is_ok() {
                     debug!("Recording started in {:?}", recording_start_time.elapsed());
+                }
+                result
+            })
+        };
+
+        shortcut::register_cancel_shortcut(app);
+        crate::winstt::commands::tts::request_tts_playback_pause_for_dictation(app);
+        change_tray_icon(app, TrayIconState::Recording);
+        show_recording_overlay(app);
+
+        let recording_error: Option<String> = match mic_thread.join() {
+            Ok(Ok(())) => {
+                if !is_always_on {
                     // Small delay to ensure microphone stream is active before mute.
                     let rm_clone = Arc::clone(&rm);
                     std::thread::spawn(move || {
@@ -189,12 +205,19 @@ impl ShortcutAction for TranscribeAction {
                         rm_clone.apply_mute();
                     });
                 }
-                Err(e) => {
-                    debug!("Failed to start recording: {}", e);
-                    recording_error = Some(e);
-                }
+                None
             }
-        }
+            Ok(Err(e)) => {
+                debug!("Recording failed: {}", e);
+                Some(e)
+            }
+            Err(panic) => {
+                // A panicking device open must not take down the coordinator thread —
+                // contain it here and surface it like any other recording failure.
+                error!("Microphone open thread panicked: {panic:?}");
+                Some("microphone open panicked".to_string())
+            }
+        };
 
         if recording_error.is_none() {
             if crate::transcription_coordinator::is_dictation_session_cancelled(session_id) {
@@ -291,7 +314,11 @@ impl ShortcutAction for TranscribeAction {
         info!(
             "[stt-ui] recorder_stop_complete binding_id='{binding_id}' duration_ms={} result={} samples={} audio_ms={}",
             stop_recording_elapsed.as_millis(),
-            if stopped_samples.is_some() { "samples" } else { "none" },
+            if stopped_samples.is_some() {
+                "samples"
+            } else {
+                "none"
+            },
             stopped_sample_count,
             samples_to_ms(stopped_sample_count)
         );
@@ -355,12 +382,17 @@ impl ShortcutAction for TranscribeAction {
                     utils::hide_recording_overlay(&ah);
                     change_tray_icon(&ah, TrayIconState::Idle);
                 } else {
-                    // Save WAV concurrently with transcription
+                    // Save WAV concurrently with transcription. The captured buffer is
+                    // SHARED (Arc) between the WAV task and the decode task — a minute of
+                    // 16 kHz f32 audio is ~3.8 MB, and the previous deep clone here was
+                    // pure memcpy on the hot path for zero benefit (both consumers only
+                    // read).
+                    let samples = Arc::new(samples);
                     let sample_count = samples.len();
                     let file_name = format!("winstt-{}.wav", chrono::Utc::now().timestamp());
                     let wav_path = hm.recordings_dir().join(&file_name);
                     let wav_path_for_verify = wav_path.clone();
-                    let samples_for_wav = samples.clone();
+                    let samples_for_wav = Arc::clone(&samples);
                     let wav_handle = tauri::async_runtime::spawn_blocking(move || {
                         crate::audio_toolkit::save_wav_file(&wav_path, &samples_for_wav)
                     });
@@ -393,6 +425,7 @@ impl ShortcutAction for TranscribeAction {
                     // so final paste follows the model's end-of-stream result instead of a fixed
                     // post-key-up delay. Falls back to a fresh decode when reuse is not safe.
                     let tm_for_decode = Arc::clone(&tm);
+                    let samples_for_decode = Arc::clone(&samples);
                     let transcription_result =
                         match tauri::async_runtime::spawn_blocking(move || {
                             if preview_requested {
@@ -400,27 +433,25 @@ impl ShortcutAction for TranscribeAction {
                                     "Preview-before-pasting active; skipping realtime reuse for batch final transcript"
                                 );
                                 tm_for_decode.clear_realtime_reuse();
-                                return (false, tm_for_decode.transcribe(samples));
+                                return (false, tm_for_decode.transcribe(&samples_for_decode));
                             }
 
                             if let Some(reused) =
-                                tm_for_decode.try_reuse_realtime(generation, &samples)
+                                tm_for_decode.try_reuse_realtime(generation, &samples_for_decode)
                             {
                                 (true, Ok(reused))
                             } else {
-                                (false, tm_for_decode.transcribe(samples))
+                                (false, tm_for_decode.transcribe(&samples_for_decode))
                             }
                         })
                         .await
                         {
                             Ok((reused_realtime, result)) => {
-                                if reused_realtime {
-                                    if let Ok(text) = &result {
-                                        debug!(
-                                            "Reused finalized realtime stream for final transcription ({} chars)",
-                                            text.len()
-                                        );
-                                    }
+                                if reused_realtime && let Ok(text) = &result {
+                                    debug!(
+                                        "Reused finalized realtime stream for final transcription ({} chars)",
+                                        text.len()
+                                    );
                                 }
                                 result
                             }
@@ -614,10 +645,14 @@ impl ShortcutAction for TranscribeAction {
                                         std::thread::spawn(move || {
                                             #[cfg(target_os = "windows")]
                                             {
-                                                crate::input::release_held_modifiers();
-                                                std::thread::sleep(
-                                                    std::time::Duration::from_millis(15),
-                                                );
+                                                // Settle only when a modifier key-up was
+                                                // actually injected; the common toggle-mode
+                                                // paste (nothing held) skips the 15ms wait.
+                                                if crate::input::release_held_modifiers() {
+                                                    std::thread::sleep(
+                                                        std::time::Duration::from_millis(15),
+                                                    );
+                                                }
                                             }
 
                                             let paste_time = Instant::now();

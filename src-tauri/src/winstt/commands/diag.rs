@@ -26,8 +26,8 @@ use specta::Type;
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
-use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
+use zip::write::SimpleFileOptions;
 
 use crate::command_auth;
 use crate::winstt::observability::{self, IssueBuilder, ObservabilityIssue};
@@ -361,15 +361,16 @@ fn build_bundle(app: &AppHandle) -> DiagSaveBundleResult {
 #[specta::specta]
 pub async fn diag_save_bundle(app: AppHandle) -> DiagSaveBundleResult {
     let result = build_bundle(&app);
-    if !result.ok && result.cancelled != Some(true) {
-        if let Some(error) = result.error.as_ref() {
-            record_diag_failure(
-                &app,
-                "save_bundle",
-                "Diagnostic bundle could not be saved",
-                error.clone(),
-            );
-        }
+    if !result.ok
+        && result.cancelled != Some(true)
+        && let Some(error) = result.error.as_ref()
+    {
+        record_diag_failure(
+            &app,
+            "save_bundle",
+            "Diagnostic bundle could not be saved",
+            error.clone(),
+        );
     }
     result
 }
@@ -381,6 +382,14 @@ pub async fn diag_save_bundle(app: AppHandle) -> DiagSaveBundleResult {
 #[specta::specta]
 pub fn diag_observability_timeline(limit: Option<usize>) -> Vec<ObservabilityIssue> {
     observability::recent_issues(limit)
+}
+
+/// `diag_clear_observability_timeline` - clear the local operational issue
+/// buffer shown in Settings > About. Returns the number of issue entries removed.
+#[tauri::command]
+#[specta::specta]
+pub fn diag_clear_observability_timeline() -> usize {
+    observability::clear_issues()
 }
 
 #[cfg(test)]

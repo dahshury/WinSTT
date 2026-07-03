@@ -1,13 +1,11 @@
 import { Button as BaseButton } from "@base-ui/react/button";
-import { Mic01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
+import { Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
-	buildInputDeviceOptions,
-	MicrophoneLevelMeter,
+	useInputDevicePickerModel,
 	useInputDevices,
-	useMicrophoneLevels,
 } from "@/entities/audio-device";
 import {
 	onSettingsChanged,
@@ -20,15 +18,40 @@ import { cn } from "@/shared/lib/cn";
 import { surfaceClasses } from "@/shared/lib/surface";
 import { useEscapeToClose } from "@/shared/lib/window-effects";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
+import { SelectOptionContent, StopBubble } from "@/shared/ui/select";
 
-// This picker pops out of the tray menu's mic row. The tray menu now sits at
-// surface-3 (matching the settings window); per the surfaces model a popup
-// opened from a surface lifts +2, so the picker rides at surface-5 — a clear
-// floating layer above the tray menu rather than the old, much-too-light
-// surface-7 box that clashed once the tray menu darkened. Shadow + ring mirror
-// the tray menu so the two read as one family.
+// This detached tray picker shares the same popup level used by the settings
+// Select for the mic control: settings section content sits at surface-2, the
+// Select self-elevates, then its popup lands on surface-5 with a surface-6
+// shadow. Keeping the detached shell on that pair makes the two pickers read as
+// one implementation even though the tray version lives in its own window.
 const PANEL_LEVEL = 5;
-const PANEL_SHADOW_LEVEL = 7;
+const PANEL_SHADOW_LEVEL = 6;
+
+// Dispatched by the Rust placement/close paths (windows/placement.rs). The
+// window is PREWARMED (created hidden at startup) and dismissed via hide(),
+// neither of which the page can observe — so visibility must be pushed in.
+const DEVICE_PICKER_SHOWN_EVENT = "winstt:device-picker-shown";
+const DEVICE_PICKER_HIDDEN_EVENT = "winstt:device-picker-hidden";
+
+/** Is the picker window actually on screen? Gates the microphone level
+ *  monitor: metering while hidden would hold every input device open in the
+ *  background from boot (and fight the Settings mic selects over the single
+ *  global monitor, flapping the devices open/closed). */
+function useDevicePickerShown(): boolean {
+	const [shown, setShown] = useState(false);
+	useEffect(() => {
+		const onShown = () => setShown(true);
+		const onHidden = () => setShown(false);
+		window.addEventListener(DEVICE_PICKER_SHOWN_EVENT, onShown);
+		window.addEventListener(DEVICE_PICKER_HIDDEN_EVENT, onHidden);
+		return () => {
+			window.removeEventListener(DEVICE_PICKER_SHOWN_EVENT, onShown);
+			window.removeEventListener(DEVICE_PICKER_HIDDEN_EVENT, onHidden);
+		};
+	}, []);
+	return shown;
+}
 
 function close(): void {
 	windowCloseNamed("device-picker");
@@ -94,27 +117,22 @@ export function DevicePickerWindow() {
 		return () => observer.disconnect();
 	}, []);
 
-	const defaultLabel = defaultDevice
-		? `${t("systemDefault")} (${defaultDevice.name})`
-		: t("systemDefault");
-	const { deviceOptions, currentDeviceId } = buildInputDeviceOptions(
+	const shown = useDevicePickerShown();
+	const { deviceOptions, currentDeviceId } = useInputDevicePickerModel({
+		defaultDeviceName: defaultDevice?.name,
 		devices,
 		inputDeviceIndex,
-		defaultLabel,
-		defaultDevice?.name,
-	);
-	const levels = useMicrophoneLevels(
-		true,
-		deviceOptions.map((opt) => opt.id),
-	);
+		monitorOpen: shown,
+		systemDefaultLabel: t("systemDefault"),
+	});
 
 	return (
 		<div className="flex h-screen w-screen items-end overflow-hidden">
 			<div
 				className={cn(
-					"max-h-screen w-full overflow-y-auto rounded-xl p-1 ring-1 ring-divider-strong",
+					"select-popup max-h-screen w-full overflow-y-auto rounded-lg py-1.5",
 					surfaceClasses(PANEL_LEVEL, PANEL_SHADOW_LEVEL),
-					"font-sans text-body-sm text-foreground",
+					"font-sans text-foreground",
 				)}
 				ref={containerRef}
 			>
@@ -128,7 +146,7 @@ export function DevicePickerWindow() {
 							<BaseButton
 								aria-pressed={active}
 								className={cn(
-									"relative z-raised flex w-full cursor-pointer select-none items-center gap-2 rounded-xs px-3 py-2 text-left text-body leading-normal outline-none",
+									"relative z-raised mx-1 flex w-[calc(100%-0.5rem)] cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2.5 text-left text-body text-foreground leading-normal outline-none",
 									active ? "font-medium text-foreground" : "text-foreground",
 								)}
 								data-menu-option={opt.id}
@@ -147,14 +165,7 @@ export function DevicePickerWindow() {
 									? { "data-highlighted": "" }
 									: {})}
 							>
-								<HugeiconsIcon
-									aria-hidden="true"
-									className="shrink-0 text-foreground-muted"
-									icon={opt.icon ?? Mic01Icon}
-									size={16}
-									strokeWidth={active ? 2 : 1.5}
-								/>
-								<span className="min-w-0 flex-1 truncate">{opt.label}</span>
+								<SelectOptionContent active={active} option={opt} />
 								{active ? (
 									<HugeiconsIcon
 										aria-hidden="true"
@@ -163,10 +174,9 @@ export function DevicePickerWindow() {
 										size={16}
 									/>
 								) : null}
-								<MicrophoneLevelMeter
-									active={active}
-									level={levels[opt.id] ?? 0}
-								/>
+								{opt.trailing ? (
+									<StopBubble className="shrink-0">{opt.trailing}</StopBubble>
+								) : null}
 							</BaseButton>
 						);
 					})}

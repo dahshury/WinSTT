@@ -1,7 +1,7 @@
 use super::kokoro::{self, KokoroConfig};
 use super::voices::KOKORO_VOICE_CATALOG;
 use crate::winstt::downloads::{
-    transfer_url_blocking, TransferControl, TransferOutcome, TransferRequest,
+    TransferControl, TransferOutcome, TransferRequest, transfer_url_blocking,
 };
 
 // ---------------------------------------------------------------------------

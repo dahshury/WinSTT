@@ -85,21 +85,22 @@ mod sherpa_detector;
 mod tokenize;
 
 pub use config::{
-    KwsModelPaths, LegacyPorcupinePaths, WakeWordConfig, WakeWordProvider, KWS_BPE_FILE,
-    KWS_BUNDLE_DIRNAME, KWS_DECODER_FILE, KWS_DECODER_INT8_FILE, KWS_ENCODER_FILE,
-    KWS_ENCODER_INT8_FILE, KWS_JOINER_FILE, KWS_JOINER_INT8_FILE, KWS_TOKENS_FILE,
+    KWS_BPE_FILE, KWS_BUNDLE_DIRNAME, KWS_DECODER_FILE, KWS_DECODER_INT8_FILE, KWS_ENCODER_FILE,
+    KWS_ENCODER_INT8_FILE, KWS_JOINER_FILE, KWS_JOINER_INT8_FILE, KWS_TOKENS_FILE, KwsModelPaths,
+    LegacyPorcupinePaths, WakeWordConfig, WakeWordProvider,
 };
 pub use legacy_porcupine::LegacyPorcupineDetector;
 pub use presets::{
-    is_legacy_porcupine_keyword, resolve_phrase, wakeword_runtime_engine_for_name, WakeWordPreset,
-    WakeWordRuntimeEngine, LEGACY_PORCUPINE_KEYWORDS, WAKE_WORD_PRESETS,
+    LEGACY_PORCUPINE_KEYWORDS, WAKE_WORD_PRESETS, WakeWordPreset, WakeWordRuntimeEngine,
+    is_legacy_porcupine_keyword, resolve_phrase, wakeword_runtime_engine_for_name,
 };
 pub use sherpa_detector::WakeWordDetector;
 pub use tokenize::{
-    build_keyword_content, build_keyword_content_with_vocabulary, build_keywords_file,
-    keyword_label, load_token_vocabulary, sensitivity_to_threshold, tokenize_phrase,
+    KeywordSpec, THRESHOLD_MAX, THRESHOLD_MIN, build_keyword_content,
+    build_keyword_content_with_vocabulary, build_keywords_file, keyword_label,
+    load_token_vocabulary, sensitivity_to_threshold, tokenize_phrase,
     tokenize_phrase_for_kws_model, tokenize_phrase_with_sentencepiece,
-    tokenize_phrase_with_vocabulary, KeywordSpec, THRESHOLD_MAX, THRESHOLD_MIN,
+    tokenize_phrase_with_vocabulary,
 };
 
 // ═════════════════════════════════════════════════════════════════════════════

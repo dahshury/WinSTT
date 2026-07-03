@@ -3,20 +3,20 @@
 // Lives in a second `impl LlmManager` block so it shares the struct's private fields.
 
 use std::collections::HashSet;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::Emitter;
 
 use super::{
-    LlmManager, LLM_WARMUP_PASS_KEY, OLLAMA_BOOT_WAIT, OLLAMA_EVICT_TIMEOUT,
-    OLLAMA_LOAD_FAIL_BACKOFF, OLLAMA_RECENT_WARM_SKIP, OLLAMA_WARMUP_INTERVAL,
-    OLLAMA_WARMUP_TIMEOUT, OLLAMA_WARM_TRIGGER_ATTEMPTS, OLLAMA_WARM_TRIGGER_RETRY_DELAY,
+    LLM_WARMUP_PASS_KEY, LlmManager, OLLAMA_BOOT_WAIT, OLLAMA_EVICT_TIMEOUT,
+    OLLAMA_LOAD_FAIL_BACKOFF, OLLAMA_RECENT_WARM_SKIP, OLLAMA_WARM_TRIGGER_ATTEMPTS,
+    OLLAMA_WARM_TRIGGER_RETRY_DELAY, OLLAMA_WARMUP_INTERVAL, OLLAMA_WARMUP_TIMEOUT,
 };
 use crate::winstt::commands::ollama_pull::{
-    clear_warmup_status as clear_last_warmup_status, set_warmup_status, LlmWarmupModelStatus,
-    LlmWarmupOutcome, LlmWarmupStatus,
+    LlmWarmupModelStatus, LlmWarmupOutcome, LlmWarmupStatus,
+    clear_warmup_status as clear_last_warmup_status, set_warmup_status,
 };
 use crate::winstt::commands::settings::enabled_ollama_models;
 use crate::winstt::llm::validate_loopback_ollama_endpoint;
@@ -275,7 +275,9 @@ impl LlmManager {
             log::warn!("[llm] Ollama not reachable and no `ollama` executable found to auto-start");
             return (false, detected.installed);
         };
-        log::info!("[llm] Ollama not reachable at '{endpoint}'; auto-starting `ollama serve` and waiting up to {OLLAMA_BOOT_WAIT:?}");
+        log::info!(
+            "[llm] Ollama not reachable at '{endpoint}'; auto-starting `ollama serve` and waiting up to {OLLAMA_BOOT_WAIT:?}"
+        );
         if let Err(err) = crate::winstt::commands::llm::spawn_ollama_serve(&path) {
             log::warn!("[llm] Ollama auto-start failed: {err}");
             return (false, true);
@@ -449,7 +451,9 @@ impl LlmManager {
             .lifecycle
             .is_warm_within(&model_key, OLLAMA_RECENT_WARM_SKIP)
         {
-            log::info!("[llm] warm '{model}': already warm within {OLLAMA_RECENT_WARM_SKIP:?}, skipping load");
+            log::info!(
+                "[llm] warm '{model}': already warm within {OLLAMA_RECENT_WARM_SKIP:?}, skipping load"
+            );
             return LlmWarmupModelStatus {
                 model: model.to_string(),
                 outcome: LlmWarmupOutcome::Ok,

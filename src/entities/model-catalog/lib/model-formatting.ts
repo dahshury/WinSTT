@@ -1,5 +1,23 @@
 import type { ModelInfo } from "../model/catalog-store";
 
+export interface ModelNativeFormatting {
+	basicPunctuationCasing: boolean;
+	fillerRepeatCleanup: boolean;
+	quoteCommands: boolean;
+	spokenPunctuationCommands: boolean;
+	spokenSymbolCommands: boolean;
+}
+
+export type ModelNativeFormattingKey = keyof ModelNativeFormatting;
+
+const NO_NATIVE_FORMATTING = {
+	basicPunctuationCasing: false,
+	fillerRepeatCleanup: false,
+	quoteCommands: false,
+	spokenPunctuationCommands: false,
+	spokenSymbolCommands: false,
+} as const satisfies ModelNativeFormatting;
+
 /**
  * Native STT formatting means the decoder itself emits normal written text:
  * sentence casing plus punctuation marks. This does not include explicit
@@ -20,4 +38,19 @@ export function modelHasNativeBasicFormatting(
 		return true;
 	}
 	return model.family === "nemo" && model.id.toLowerCase().includes("canary");
+}
+
+/**
+ * Formatting coverage provided by the selected STT model itself. Most native
+ * dictation models cover only written-text punctuation/casing; deterministic
+ * command conversion and filler/repeat cleanup remain WinSTT-owned unless a
+ * model is explicitly known to cover those promises too.
+ */
+export function getModelNativeFormatting(
+	model: ModelInfo | undefined,
+): ModelNativeFormatting {
+	return {
+		...NO_NATIVE_FORMATTING,
+		basicPunctuationCasing: modelHasNativeBasicFormatting(model),
+	};
 }

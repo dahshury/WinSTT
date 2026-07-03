@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 
@@ -15,6 +15,8 @@ export interface ButtonGroupProps {
 	connected?: boolean;
 	/** Lay the segments out as a column. Default is a row. */
 	orientation?: "horizontal" | "vertical";
+	/** Override the default toolbar role when another container owns semantics. */
+	role?: ComponentPropsWithoutRef<"div">["role"];
 }
 
 export function ButtonGroup({
@@ -22,6 +24,7 @@ export function ButtonGroup({
 	className,
 	connected = false,
 	orientation = "horizontal",
+	role = "toolbar",
 	"aria-label": ariaLabel,
 }: ButtonGroupProps) {
 	// Lift one step above the substrate so the joined control reads as its own
@@ -34,7 +37,7 @@ export function ButtonGroup({
 			<div
 				aria-label={ariaLabel}
 				className={cn("inline-flex", vertical && "flex-col", className)}
-				role="toolbar"
+				role={role}
 			>
 				{children}
 			</div>
@@ -52,7 +55,7 @@ export function ButtonGroup({
 					: "divide-x divide-divider",
 				className,
 			)}
-			role="toolbar"
+			role={role}
 		>
 			{children}
 		</div>

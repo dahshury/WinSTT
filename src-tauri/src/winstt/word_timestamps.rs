@@ -37,10 +37,10 @@ mod dsp;
 mod heads;
 mod text_map;
 
-pub use align::{align_words, AlignArgs, CrossAttentions, WordTiming};
+pub use align::{AlignArgs, CrossAttentions, WordTiming, align_words};
 pub use dsp::{dtw, median_filter_1d, split_tokens_into_words};
 pub use heads::{decode_alignment_heads, lookup_alignment_heads};
-pub use text_map::{map_timings_to_text, MappedWord};
+pub use text_map::{MappedWord, map_timings_to_text};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. Constants — copied VERBATIM from word_timestamps.py / openai-whisper.
@@ -109,9 +109,7 @@ pub enum WordTsError {
     Base85(String),
     #[error("gzip inflate failed: {0}")]
     Gzip(String),
-    #[error(
-        "alignment-heads blob reshapes to {got} bools, expected {expected} ({layers}x{heads})"
-    )]
+    #[error("alignment-heads blob reshapes to {got} bools, expected {expected} ({layers}x{heads})")]
     Shape {
         got: usize,
         expected: usize,
@@ -324,7 +322,7 @@ mod tests {
         // 2 layers, 1 head, all heads selected via a custom mask.
         let mut mask = Array2::from_elem((2, 1), false);
         mask[[1, 0]] = true; // upper-half head
-                             // text tokens: [1(" Hello"), 2(" world"), 100(EOT)]; prompt_length 1.
+        // text tokens: [1(" Hello"), 2(" world"), 100(EOT)]; prompt_length 1.
         let text = [1i64, 2, 100];
         // Decoder rows = prompt + text = 1 + 3 = 4 tokens; 8 encoder frames.
         let n_tokens = 4;

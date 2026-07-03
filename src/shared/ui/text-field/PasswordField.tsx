@@ -30,8 +30,11 @@ export function PasswordField({
 		setRevealed((v) => !v);
 		setFlashKey((v) => v + 1);
 	};
+	// The wrapper is NOT `overflow-hidden`: clipping it would swallow the
+	// TextField's own drop shadow (leaving the field looking flatter than a
+	// plain TextField). The reveal sweep gets its own clip instead.
 	return (
-		<div className="relative w-full overflow-hidden rounded-lg">
+		<div className="relative w-full rounded-lg">
 			<TextField
 				className={cn("pr-9", className)}
 				error={error ?? false}
@@ -40,7 +43,12 @@ export function PasswordField({
 				{...props}
 			/>
 			{flashKey > 0 ? (
-				<span aria-hidden="true" className="t-secret-reveal" key={flashKey} />
+				<span
+					aria-hidden="true"
+					className="pointer-events-none absolute inset-0 overflow-hidden rounded-lg"
+				>
+					<span className="t-secret-reveal" key={flashKey} />
+				</span>
 			) : null}
 			<BaseButton
 				aria-label={revealed ? hideLabel : revealLabel}

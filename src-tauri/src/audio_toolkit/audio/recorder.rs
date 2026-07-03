@@ -1,21 +1,22 @@
 use std::{
     sync::{
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Condvar, Mutex,
+        mpsc,
     },
     time::Duration,
 };
 
 use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, Sample, SizedSample,
+    traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 
 use crate::audio_toolkit::{
+    VoiceActivityDetector,
     audio::{AudioVisualiser, FrameResampler},
     constants,
     vad::{self, VadFrame},
-    VoiceActivityDetector,
 };
 use crate::winstt::sync_ext::MutexExt;
 
@@ -50,7 +51,8 @@ enum AudioChunk {
 
 fn send_input_callback_chunk(
     sample_tx: &mpsc::Sender<AudioChunk>,
-    samples: &[f32],
+    samples: &mut Vec<f32>,
+    recycle_rx: &mpsc::Receiver<Vec<f32>>,
     stop_requested: bool,
     eos_sent: &mut bool,
 ) {
@@ -58,12 +60,33 @@ fn send_input_callback_chunk(
         return;
     }
 
-    if !samples.is_empty()
-        && sample_tx
-            .send(AudioChunk::Samples(samples.to_vec()))
-            .is_err()
-    {
-        log::error!("Failed to send samples");
+    if !samples.is_empty() {
+        let next_capacity = samples.capacity().max(samples.len());
+        let chunk = std::mem::take(samples);
+        match sample_tx.send(AudioChunk::Samples(chunk)) {
+            Ok(()) => {
+                *samples = match recycle_rx.try_recv() {
+                    Ok(mut recycled) => {
+                        recycled.clear();
+                        if recycled.capacity() < next_capacity {
+                            recycled.reserve(next_capacity - recycled.capacity());
+                        }
+                        recycled
+                    }
+                    Err(_) => Vec::with_capacity(next_capacity),
+                };
+            }
+            Err(err) => {
+                log::error!("Failed to send samples");
+                match err.0 {
+                    AudioChunk::Samples(mut returned) => {
+                        returned.clear();
+                        *samples = returned;
+                    }
+                    AudioChunk::EndOfStream => {}
+                }
+            }
+        }
     }
 
     if stop_requested {
@@ -85,7 +108,7 @@ pub struct AudioRecorder {
     cmd_tx: Option<mpsc::Sender<Cmd>>,
     worker_handle: Option<std::thread::JoinHandle<()>>,
     vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
-    level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    level_cb: Option<Arc<dyn Fn(f32) + Send + Sync + 'static>>,
     /// Fired EXACTLY ONCE per recording, the instant the FIRST raw audio chunk is captured
     /// after a `Cmd::Start` — i.e. the proof the OS actually opened the mic and it is
     /// delivering frames (not merely that `stream.play()` returned). Lets the app surface a
@@ -157,7 +180,7 @@ impl AudioRecorder {
 
     pub fn with_level_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn(Vec<f32>) + Send + Sync + 'static,
+        F: Fn(f32) + Send + Sync + 'static,
     {
         self.level_cb = Some(Arc::new(cb));
         self
@@ -207,6 +230,7 @@ impl AudioRecorder {
         }
 
         let (sample_tx, sample_rx) = mpsc::channel::<AudioChunk>();
+        let (recycle_tx, recycle_rx) = mpsc::channel::<Vec<f32>>();
         let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
         let (init_tx, init_rx) = mpsc::sync_channel::<Result<(), String>>(1);
 
@@ -255,6 +279,7 @@ impl AudioRecorder {
                         &thread_device,
                         &config,
                         sample_tx,
+                        recycle_rx,
                         channels,
                         stop_flag_for_stream,
                     )
@@ -263,6 +288,7 @@ impl AudioRecorder {
                         &thread_device,
                         &config,
                         sample_tx,
+                        recycle_rx,
                         channels,
                         stop_flag_for_stream,
                     )
@@ -271,6 +297,7 @@ impl AudioRecorder {
                         &thread_device,
                         &config,
                         sample_tx,
+                        recycle_rx,
                         channels,
                         stop_flag_for_stream,
                     )
@@ -279,6 +306,7 @@ impl AudioRecorder {
                         &thread_device,
                         &config,
                         sample_tx,
+                        recycle_rx,
                         channels,
                         stop_flag_for_stream,
                     )
@@ -287,6 +315,7 @@ impl AudioRecorder {
                         &thread_device,
                         &config,
                         sample_tx,
+                        recycle_rx,
                         channels,
                         stop_flag_for_stream,
                     )
@@ -311,6 +340,7 @@ impl AudioRecorder {
                         sample_rate,
                         vad,
                         sample_rx,
+                        recycle_tx,
                         cmd_rx,
                         level_cb,
                         capture_live_cb,
@@ -411,6 +441,7 @@ impl AudioRecorder {
         device: &cpal::Device,
         config: &cpal::SupportedStreamConfig,
         sample_tx: mpsc::Sender<AudioChunk>,
+        recycle_rx: mpsc::Receiver<Vec<f32>>,
         channels: usize,
         stop_flag: Arc<AtomicBool>,
     ) -> Result<cpal::Stream, cpal::BuildStreamError>
@@ -430,6 +461,7 @@ impl AudioRecorder {
             output_buffer.clear();
 
             if channels == 1 {
+                output_buffer.reserve(data.len());
                 output_buffer.extend(data.iter().map(|&sample| sample.to_sample::<f32>()));
             } else {
                 let frame_count = data.len() / channels;
@@ -445,7 +477,13 @@ impl AudioRecorder {
                 }
             }
 
-            send_input_callback_chunk(&sample_tx, &output_buffer, stop_requested, &mut eos_sent);
+            send_input_callback_chunk(
+                &sample_tx,
+                &mut output_buffer,
+                &recycle_rx,
+                stop_requested,
+                &mut eos_sent,
+            );
         };
 
         device.build_input_stream(
@@ -602,8 +640,8 @@ mod tests {
     use std::sync::mpsc;
 
     use super::{
-        is_microphone_access_denied, is_no_input_device_error, send_input_callback_chunk,
-        AudioChunk, AudioDeviceError,
+        AudioChunk, AudioDeviceError, is_microphone_access_denied, is_no_input_device_error,
+        send_input_callback_chunk,
     };
 
     #[test]
@@ -671,9 +709,11 @@ mod tests {
     #[test]
     fn stop_callback_sends_current_samples_before_end_of_stream() {
         let (tx, rx) = mpsc::channel();
+        let (_recycle_tx, recycle_rx) = mpsc::channel();
+        let mut samples = vec![0.25, -0.5, 0.75];
         let mut eos_sent = false;
 
-        send_input_callback_chunk(&tx, &[0.25, -0.5, 0.75], true, &mut eos_sent);
+        send_input_callback_chunk(&tx, &mut samples, &recycle_rx, true, &mut eos_sent);
 
         match rx.recv().unwrap() {
             AudioChunk::Samples(samples) => assert_eq!(samples, vec![0.25, -0.5, 0.75]),
@@ -686,12 +726,31 @@ mod tests {
     #[test]
     fn stop_callback_drops_callbacks_after_end_of_stream_was_sent() {
         let (tx, rx) = mpsc::channel();
+        let (_recycle_tx, recycle_rx) = mpsc::channel();
+        let mut samples = vec![1.0];
         let mut eos_sent = true;
 
-        send_input_callback_chunk(&tx, &[1.0], true, &mut eos_sent);
+        send_input_callback_chunk(&tx, &mut samples, &recycle_rx, true, &mut eos_sent);
 
         assert!(rx.try_recv().is_err());
         assert!(eos_sent);
+    }
+
+    #[test]
+    fn stop_callback_reuses_recycled_buffer_after_send() {
+        let (tx, rx) = mpsc::channel();
+        let (recycle_tx, recycle_rx) = mpsc::channel();
+        let recycled = Vec::<f32>::with_capacity(64);
+        recycle_tx.send(recycled).unwrap();
+        let mut samples = vec![1.0, 2.0];
+        let mut eos_sent = false;
+
+        send_input_callback_chunk(&tx, &mut samples, &recycle_rx, false, &mut eos_sent);
+
+        assert!(matches!(rx.recv().unwrap(), AudioChunk::Samples(_)));
+        assert!(samples.is_empty());
+        assert!(samples.capacity() >= 64);
+        assert!(!eos_sent);
     }
 }
 
@@ -719,8 +778,9 @@ fn run_consumer(
     in_sample_rate: u32,
     vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
     sample_rx: mpsc::Receiver<AudioChunk>,
+    recycle_tx: mpsc::Sender<Vec<f32>>,
     cmd_rx: mpsc::Receiver<Cmd>,
-    level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    level_cb: Option<Arc<dyn Fn(f32) + Send + Sync + 'static>>,
     // Fired once per recording on the first captured frame after Cmd::Start (mic confirmed live).
     capture_live_cb: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
     chunk_cb: Option<Arc<dyn Fn(&[f32]) + Send + Sync + 'static>>,
@@ -845,10 +905,10 @@ fn run_consumer(
             }
 
             // ---------- spectrum processing ---------------------------------- //
-            if let Some(buckets) = visualizer.feed(&raw) {
-                if let Some(cb) = &level_cb {
-                    cb(buckets);
-                }
+            if let Some(level) = visualizer.feed(&raw)
+                && let Some(cb) = &level_cb
+            {
+                cb(level);
             }
 
             // ---------- existing pipeline ------------------------------------ //
@@ -882,6 +942,8 @@ fn run_consumer(
                 }
             });
 
+            let _ = recycle_tx.send(raw);
+
             // ---------- realtime live-audio mirror (tail-sync) --------------- //
             // Mirror only the NEW tail of `processed_samples` into the shared buffer so the realtime
             // worker can read a growing window of the active recording. O(new samples), NOT a full
@@ -889,21 +951,22 @@ fn run_consumer(
             // `realtime_enabled` so we skip the second copy entirely when the live preview is off
             // (the common dictation case). The batch path still mem::take's `processed_samples`;
             // this only reads it.
-            if recording && realtime_enabled.load(Ordering::Relaxed) {
-                if let Some(mirror) = &live_audio {
-                    let new_len = {
-                        let mut m = mirror.lock_recover();
-                        let mirrored = m.len();
-                        if processed_samples.len() > mirrored {
-                            m.extend_from_slice(&processed_samples[mirrored..]);
-                            Some(m.len())
-                        } else {
-                            None
-                        }
-                    };
-                    if let Some(new_len) = new_len {
-                        publish_realtime_audio_progress(&realtime_audio_signal, new_len);
+            if recording
+                && realtime_enabled.load(Ordering::Relaxed)
+                && let Some(mirror) = &live_audio
+            {
+                let new_len = {
+                    let mut m = mirror.lock_recover();
+                    let mirrored = m.len();
+                    if processed_samples.len() > mirrored {
+                        m.extend_from_slice(&processed_samples[mirrored..]);
+                        Some(m.len())
+                    } else {
+                        None
                     }
+                };
+                if let Some(new_len) = new_len {
+                    publish_realtime_audio_progress(&realtime_audio_signal, new_len);
                 }
             }
         }
@@ -936,6 +999,7 @@ fn run_consumer(
                             frame_resampler.push(&remaining, &mut |frame: &[f32]| {
                                 let _ = handle_frame(frame, true, &vad, &mut processed_samples);
                             });
+                            let _ = recycle_tx.send(remaining);
                         }
                     }
                     recording = false;

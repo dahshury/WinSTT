@@ -44,8 +44,8 @@ export function AdvancedSection({
 		{ id: "min5", label: t("microphoneReleaseMin5"), icon: HourglassIcon },
 	];
 	return (
-		<SettingSection icon={SlidersHorizontalIcon} title={t("advancedTitle")}>
-			<div className="flex flex-col">
+		<SettingSection boxed icon={SlidersHorizontalIcon} title={t("advancedTitle")}>
+			<div className="flex flex-col divide-y divide-divider">
 				<SettingField
 					isDefault={
 						microphoneRelease === DEFAULT_SETTINGS.audio.microphoneRelease

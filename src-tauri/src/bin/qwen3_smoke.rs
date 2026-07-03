@@ -9,10 +9,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use winstt_app_lib::winstt::stt::{
-    build_engine, providers_for_accelerator, Accelerator, EngineConfig, EngineKind, Quantization,
-    ResolvedModel, TranscribeOptions,
+    Accelerator, EngineConfig, EngineKind, Quantization, ResolvedModel, TranscribeOptions,
+    build_engine, providers_for_accelerator,
 };
 
 const SAMPLE_RATE: u32 = 16_000;

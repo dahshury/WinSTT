@@ -7,7 +7,9 @@ import { useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	getModelAssistance,
-	modelHasNativeBasicFormatting,
+	getModelNativeFormatting,
+	type ModelNativeFormatting,
+	type ModelNativeFormattingKey,
 	type ModelAssistance,
 	useCatalogStore,
 } from "@/entities/model-catalog";
@@ -76,10 +78,87 @@ const FORMATTING_OPTIONS = [
 const LISTEN_MODE_PROCESSING_DISABLED_TOOLTIP =
 	"Listen mode does not run post-processing; it only transcribes speaker audio inside the main app window.";
 
+const NATIVE_FORMATTING_KEY_BY_SETTING = {
+	formatBasicPunctuationCasing: "basicPunctuationCasing",
+	formatFillerRepeatCleanup: "fillerRepeatCleanup",
+	formatQuoteCommands: "quoteCommands",
+	formatSpokenPunctuationCommands: "spokenPunctuationCommands",
+	formatSpokenSymbolCommands: "spokenSymbolCommands",
+} as const satisfies Record<FormattingOptionKey, ModelNativeFormattingKey>;
+
+const NATIVE_FORMATTING_LABEL = {
+	basicPunctuationCasing: "punctuation and casing",
+	fillerRepeatCleanup: "filler/repeat cleanup",
+	quoteCommands: "quote commands",
+	spokenPunctuationCommands: "spoken punctuation commands",
+	spokenSymbolCommands: "code and symbol commands",
+} as const satisfies Record<ModelNativeFormattingKey, string>;
+
 function formattingOptionKeys(
 	option: FormattingOption,
 ): readonly FormattingOptionKey[] {
 	return option.linkedKeys ? [option.key, ...option.linkedKeys] : [option.key];
+}
+
+function nativeFormattingKey(
+	key: FormattingOptionKey,
+): ModelNativeFormattingKey {
+	return NATIVE_FORMATTING_KEY_BY_SETTING[key];
+}
+
+function needsDeterministicFormatting(
+	key: FormattingOptionKey,
+	nativeFormatting: ModelNativeFormatting,
+): boolean {
+	return !nativeFormatting[nativeFormattingKey(key)];
+}
+
+function formattingOptionNeedsDeterministicPass(
+	option: FormattingOption,
+	nativeFormatting: ModelNativeFormatting,
+): boolean {
+	return formattingOptionKeys(option).some((key) =>
+		needsDeterministicFormatting(key, nativeFormatting),
+	);
+}
+
+function deterministicFormattingKeys(
+	option: FormattingOption,
+	nativeFormatting: ModelNativeFormatting,
+): readonly FormattingOptionKey[] {
+	return formattingOptionKeys(option).filter((key) =>
+		needsDeterministicFormatting(key, nativeFormatting),
+	);
+}
+
+function formatList(labels: readonly string[]): string {
+	if (labels.length <= 1) {
+		return labels[0] ?? "";
+	}
+	if (labels.length === 2) {
+		return `${labels[0]} and ${labels[1]}`;
+	}
+	return `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}`;
+}
+
+function nativeFormattingLabels(
+	nativeFormatting: ModelNativeFormatting,
+): string[] {
+	return Object.entries(nativeFormatting).flatMap(([key, enabled]) =>
+		enabled ? [NATIVE_FORMATTING_LABEL[key as ModelNativeFormattingKey]] : [],
+	);
+}
+
+function optionNativeFormattingLabels(
+	option: FormattingOption,
+	nativeFormatting: ModelNativeFormatting,
+): string[] {
+	return formattingOptionKeys(option).flatMap((key) => {
+		const nativeKey = nativeFormattingKey(key);
+		return nativeFormatting[nativeKey]
+			? [NATIVE_FORMATTING_LABEL[nativeKey]]
+			: [];
+	});
 }
 
 function formattingDefaultsPatch(): Partial<QualitySettings> {
@@ -96,10 +175,15 @@ function formattingDefaultsPatch(): Partial<QualitySettings> {
 	};
 }
 
-function formattingAtDefault(quality: QualitySettings): boolean {
+function formattingAtDefault(
+	quality: QualitySettings,
+	nativeFormatting: ModelNativeFormatting,
+): boolean {
 	return FORMATTING_OPTIONS.every((option) =>
 		formattingOptionKeys(option).every(
-			(key) => quality[key] === DEFAULT_SETTINGS.quality[key],
+			(key) =>
+				!needsDeterministicFormatting(key, nativeFormatting) ||
+				quality[key] === DEFAULT_SETTINGS.quality[key],
 		),
 	);
 }
@@ -132,7 +216,6 @@ function ContextAwarenessSection({
 	onConfirm,
 	tg,
 }: ContextAwarenessSectionProps) {
-	const ts = useTranslations("settings");
 	const general = useSettingsStore((s) => s.settings.general);
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
 	const [dialogOpen, setDialogOpen] = useState(false);
@@ -205,72 +288,59 @@ function ContextAwarenessSection({
 		updateGeneral({ contextAppMode: next, contextAwareness: true });
 	};
 	return (
-		<SettingSection icon={EyeIcon} title={tg("contextAwarenessSection")}>
-			<div className="flex flex-col">
+		<SettingSection
+			boxed
+			headerAction={
+				<Toggle
+					checked={effectiveEnabled}
+					disabled={disabled}
+					onCheckedChange={handleToggle}
+				/>
+			}
+			icon={EyeIcon}
+			title={tg("contextAwarenessSection")}
+			tooltip={tg("contextAwarenessTooltip")}
+		>
+			{/* The enable toggle is on the section header (above); the body is the
+			    scope + deny/allow-list config. It keeps its OWN dim state rather
+			    than the section's — the allow-list must stay reachable so the user
+			    can add an app even while the feature reads as off. */}
+			<div
+				className={cn(
+					"flex flex-col divide-y divide-divider transition-opacity duration-200 ease-out",
+					!configInteractive && "settings-dim pointer-events-none",
+				)}
+			>
 				<SettingField
 					disabled={disabled}
-					disabledTooltip={
-						disabled
-							? disabledTooltip
-							: effectiveEnabled
-								? undefined
-								: ts("disabledReason", { name: tg("contextAwareness") })
-					}
+					disabledTooltip={disabledTooltip}
 					hideReset={disabled}
-					isDefault={
-						effectiveEnabled === DEFAULT_SETTINGS.general.contextAwareness
+					isDefault={contextAppMode === DEFAULT_SETTINGS.general.contextAppMode}
+					label="Context scope"
+					layout="row"
+					onReset={() =>
+						updateGeneral({
+							contextAppMode: DEFAULT_SETTINGS.general.contextAppMode,
+						})
 					}
-					label={tg("contextAwareness")}
-					labelAddon={
-						<Toggle
-							checked={effectiveEnabled}
-							disabled={disabled}
-							onCheckedChange={handleToggle}
-						/>
-					}
-					onReset={onCancel}
-					tooltip={tg("contextAwarenessTooltip")}
-				/>
-				{/* The deny-list (apps/sites to skip) configures the same capture
-				    pipeline this toggle gates, so it lives directly beneath it —
-				    shown disabled (not hidden) until context awareness is on. */}
-				<div
-					className={cn(
-						"transition-opacity duration-200 ease-out",
-						!configInteractive && "pointer-events-none opacity-40",
-					)}
+					tooltip="Choose whether context awareness can read every app except blocked entries, or only apps you select."
 				>
-					<SettingField
-						disabled={disabled}
-						disabledTooltip={disabledTooltip}
-						hideReset={disabled}
-						isDefault={
-							contextAppMode === DEFAULT_SETTINGS.general.contextAppMode
-						}
-						label="Context scope"
-						onReset={() =>
-							updateGeneral({
-								contextAppMode: DEFAULT_SETTINGS.general.contextAppMode,
-							})
-						}
-						tooltip="Choose whether context awareness can read every app except blocked entries, or only apps you select."
-					>
-						<Switcher
-							fullWidth
-							onChange={handleScopeChange}
-							options={CONTEXT_APP_MODE_OPTIONS}
-							value={contextAppMode}
-						/>
-					</SettingField>
-					{contextAppMode === "selected-only" ? (
-						<ContextAllowedAppsSection
-							initialOpen={appsOpenNonce > 0}
-							key={appsOpenNonce}
-						/>
-					) : (
-						<ContextDenyListSection />
-					)}
-				</div>
+					<Switcher
+						className="w-52"
+						fullWidth
+						onChange={handleScopeChange}
+						options={CONTEXT_APP_MODE_OPTIONS}
+						value={contextAppMode}
+					/>
+				</SettingField>
+				{contextAppMode === "selected-only" ? (
+					<ContextAllowedAppsSection
+						initialOpen={appsOpenNonce > 0}
+						key={appsOpenNonce}
+					/>
+				) : (
+					<ContextDenyListSection />
+				)}
 			</div>
 			<OptInDialog
 				body={tg("contextAwarenessDialogBody")}
@@ -333,6 +403,7 @@ function ModelAssistanceSection({
 		: ` ${t("modelAssistanceCleanupNeedsModel")}`;
 	return (
 		<SettingSection
+			boxed
 			divided
 			icon={SparklesIcon}
 			title={t("modelAssistanceTitle")}
@@ -360,40 +431,52 @@ function DeterministicFormattingSection({
 	activeModelName,
 	disabled = false,
 	disabledTooltip,
-	nativeBasicFormatting,
+	nativeFormatting,
 	quality,
 	updateQuality,
 }: {
 	activeModelName: string;
 	disabled?: boolean;
 	disabledTooltip?: string | undefined;
-	nativeBasicFormatting: boolean;
+	nativeFormatting: ModelNativeFormatting;
 	quality: QualitySettings;
 	updateQuality: UpdateQualityFn;
 }) {
-	const basicEnabled =
-		!disabled && quality.formatBasicPunctuationCasing && !nativeBasicFormatting;
-	const basicDisabledReason = nativeBasicFormatting
-		? `${activeModelName} already adds punctuation and casing`
-		: undefined;
+	const allFormattingNative = FORMATTING_OPTIONS.every(
+		(option) =>
+			!formattingOptionNeedsDeterministicPass(option, nativeFormatting),
+	);
+	const fieldDisabled = disabled || allFormattingNative;
+	const fullNativeReason = `${activeModelName} already handles every formatting rule here.`;
+	const nativeLabels = nativeFormattingLabels(nativeFormatting);
+	const caption = disabled
+		? LISTEN_MODE_PROCESSING_DISABLED_TOOLTIP
+		: allFormattingNative
+			? fullNativeReason
+			: nativeLabels.length > 0
+				? `${activeModelName} already handles ${formatList(nativeLabels)}. Choose any remaining deterministic rules WinSTT should run.`
+				: "Choose which deterministic formatting rules run after speech recognition.";
 	const checkedIndices = new Set<number>();
 	FORMATTING_OPTIONS.forEach((option, index) => {
+		const deterministicKeys = deterministicFormattingKeys(
+			option,
+			nativeFormatting,
+		);
 		const checked =
-			option.key === "formatBasicPunctuationCasing"
-				? basicEnabled
-				: !disabled &&
-					formattingOptionKeys(option).every((key) => quality[key]);
+			!fieldDisabled &&
+			deterministicKeys.length > 0 &&
+			deterministicKeys.every((key) => quality[key]);
 		if (checked) {
 			checkedIndices.add(index);
 		}
 	});
 
 	const setOption = (option: FormattingOption, next: boolean): void => {
-		if (disabled) {
+		if (fieldDisabled) {
 			return;
 		}
 		const patch: Partial<QualitySettings> = {};
-		for (const key of formattingOptionKeys(option)) {
+		for (const key of deterministicFormattingKeys(option, nativeFormatting)) {
 			patch[key] = next;
 		}
 		updateQuality(patch);
@@ -401,23 +484,24 @@ function DeterministicFormattingSection({
 
 	return (
 		<SettingSection
+			boxed
 			divided
 			icon={TextFontIcon}
 			title="Formatting"
 			tooltip="Local rule-based cleanup that runs after speech recognition and before any LLM cleanup."
 		>
 			<SettingField
-				caption={
+				caption={caption}
+				disabled={fieldDisabled}
+				disabledTooltip={
 					disabled
-						? LISTEN_MODE_PROCESSING_DISABLED_TOOLTIP
-						: nativeBasicFormatting
-							? `${activeModelName} provides this natively, so WinSTT skips the deterministic pass.`
-							: "Choose which deterministic formatting rules run after speech recognition."
+						? disabledTooltip
+						: allFormattingNative
+							? fullNativeReason
+							: undefined
 				}
-				disabled={disabled}
-				disabledTooltip={disabledTooltip}
-				hideReset={disabled}
-				isDefault={formattingAtDefault(quality)}
+				hideReset={fieldDisabled}
+				isDefault={formattingAtDefault(quality, nativeFormatting)}
 				label="Rules"
 				onReset={() => updateQuality(formattingDefaultsPatch())}
 				tooltip="Local formatting rules that run before any LLM cleanup."
@@ -428,20 +512,26 @@ function DeterministicFormattingSection({
 					framed
 				>
 					{FORMATTING_OPTIONS.map((option, index) => {
+						const deterministicKeys = deterministicFormattingKeys(
+							option,
+							nativeFormatting,
+						);
 						const checked =
-							option.key === "formatBasicPunctuationCasing"
-								? basicEnabled
-								: !disabled &&
-									formattingOptionKeys(option).every((key) => quality[key]);
-						const optionDisabled =
-							disabled ||
-							(option.key === "formatBasicPunctuationCasing" &&
-								nativeBasicFormatting);
+							!fieldDisabled &&
+							deterministicKeys.length > 0 &&
+							deterministicKeys.every((key) => quality[key]);
+						const optionNeedsFormatting = deterministicKeys.length > 0;
+						const optionDisabled = fieldDisabled || !optionNeedsFormatting;
+						const nativeReason = optionNeedsFormatting
+							? undefined
+							: `${activeModelName} already handles ${formatList(
+									optionNativeFormattingLabels(option, nativeFormatting),
+								)}, so WinSTT skips this deterministic pass.`;
 						const tooltip =
 							optionDisabled && disabledTooltip
 								? disabledTooltip
-								: optionDisabled && basicDisabledReason
-									? `${basicDisabledReason}, so WinSTT skips this deterministic pass.`
+								: optionDisabled && nativeReason
+									? nativeReason
 									: option.tooltip;
 						return (
 							<CheckboxItem
@@ -492,7 +582,7 @@ export function ProcessingExtrasPanel() {
 	const activeModelName = activeSttModel?.displayName ?? activeSttModelId;
 	const modelAssistance = getModelAssistance(activeSttModel);
 	const modelAssistanceUseful = modelAssistance.length > 0;
-	const nativeBasicFormatting = modelHasNativeBasicFormatting(activeSttModel);
+	const nativeFormatting = getModelNativeFormatting(activeSttModel);
 	const contextAwarenessUseful =
 		activeSttFamily === "whisper" || llmDictationEnabled;
 	const tg = useTranslations("general");
@@ -505,7 +595,7 @@ export function ProcessingExtrasPanel() {
 	const contextAwarenessEnabled = general?.contextAwareness ?? false;
 
 	return (
-		<div className="flex flex-col gap-2">
+		<div className="flex flex-col">
 			{modelAssistanceUseful ? (
 				<ModelAssistanceSection
 					assistance={modelAssistance}
@@ -520,7 +610,7 @@ export function ProcessingExtrasPanel() {
 				activeModelName={activeModelName || "The selected model"}
 				disabled={isListenMode}
 				disabledTooltip={listenModeDisabledTooltip}
-				nativeBasicFormatting={nativeBasicFormatting}
+				nativeFormatting={nativeFormatting}
 				quality={quality}
 				updateQuality={updateQuality}
 			/>

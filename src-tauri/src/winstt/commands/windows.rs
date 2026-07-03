@@ -42,8 +42,8 @@
 // unchanged; the submodules' entry points are re-used below.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -55,8 +55,9 @@ mod placement;
 mod settings_modal;
 
 use placement::{
-    anchor_from_rect, center_window, close_model_picker_with_animation, place_picker,
-    resolve_opener, visible_picker_open_should_toggle,
+    anchor_from_rect, center_window, close_model_picker_with_animation,
+    dispatch_device_picker_dom_event, place_picker, resolve_opener,
+    visible_picker_open_should_toggle,
 };
 use settings_modal::close_settings_window;
 
@@ -156,8 +157,8 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         title: "WinSTT",
         // Initial size only — the renderer's ResizeObserver immediately resizes
         // the window to the menu's true (capped) content size. Kept close to the
-        // compact menu width so there's no oversized first frame.
-        width: 192.0,
+        // compact menu shell width so there's no oversized first frame.
+        width: 196.0,
         height: 360.0,
         min_width: 1.0,
         min_height: 1.0,
@@ -612,6 +613,16 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
             if !window.is_visible().unwrap_or(false) {
                 return;
             }
+            // The device picker's own WebView2 focus blips during its first
+            // show → resize → re-place churn; closing on that transient would
+            // dismiss the picker AND collapse the tray menu the instant the
+            // mic row was clicked. Real click-aways after the settle grace
+            // still close it.
+            if picker_label == "device-picker"
+                && crate::winstt::commands::tray_menu::is_device_picker_settling()
+            {
+                return;
+            }
             if picker_label == "model-picker" {
                 close_model_picker_with_animation(&app_handle, &window);
             } else {
@@ -639,10 +650,18 @@ static POST_STARTUP_PREWARM_SCHEDULED: AtomicBool = AtomicBool::new(false);
 ///
 /// `overlay` is included here so the first PTT session only has to reveal an
 /// already-loaded transparent webview, avoiding the first-use black rectangle.
-/// `tray-menu` has a custom off-screen lifecycle warmup. Lower-probability
-/// windows stay lazy.
-const POST_STARTUP_PREWARM_LABELS: &[&str] =
-    &["overlay", "settings", "model-picker", "model-footprint"];
+/// `tray-menu` has a custom off-screen lifecycle warmup. `device-picker` is the
+/// tray menu's mic submenu: creating it lazily inside the `open_window` command
+/// is exactly the on-main-thread WebView2 creation this list exists to avoid
+/// (observed to hang the first mic-row click). Lower-probability windows stay
+/// lazy.
+const POST_STARTUP_PREWARM_LABELS: &[&str] = &[
+    "overlay",
+    "settings",
+    "model-picker",
+    "model-footprint",
+    "device-picker",
+];
 
 /// Pre-create hidden secondary windows after the main pill paints, so first
 /// interaction paths usually show an already-loaded webview. This keeps WebView2
@@ -712,10 +731,10 @@ pub(crate) fn schedule_post_startup_prewarm(app: &AppHandle) {
 
 // Enable/disable the main pill's input while the Settings modal is up.
 pub(crate) fn set_main_modal(app: &AppHandle, modal_active: bool) {
-    if let Some(main) = app.get_webview_window("main") {
-        if let Err(e) = main.set_enabled(!modal_active) {
-            log::warn!("set_main_modal({modal_active}): {e}");
-        }
+    if let Some(main) = app.get_webview_window("main")
+        && let Err(e) = main.set_enabled(!modal_active)
+    {
+        log::warn!("set_main_modal({modal_active}): {e}");
     }
 }
 
@@ -812,6 +831,13 @@ pub fn open_window(
     if label == "onboarding" {
         crate::bootstrap::state::deactivate_runtime_for_onboarding(&app);
     }
+    // The device picker is the tray menu's submenu and takes focus as it opens;
+    // stamp the open BEFORE creating/showing it so the tray menu's blur-hide
+    // handler doesn't mistake that focus steal for a click-away (the blur can
+    // land before the picker window reports visible).
+    if label == "device-picker" {
+        crate::winstt::commands::tray_menu::note_device_picker_opening();
+    }
 
     let window = ensure_window(&app, label)
         .inspect_err(|e| log::error!("open_window('{name}') ensure_window failed: {e}"))?;
@@ -848,6 +874,9 @@ pub fn open_window(
         // transparent backdrop with a renderer-owned panel, so a visible open
         // should repair/re-anchor a stale invisible backdrop instead of closing.
         if window.is_visible().unwrap_or(false) && visible_picker_open_should_toggle(label) {
+            if label == "device-picker" {
+                dispatch_device_picker_dom_event(&window, false);
+            }
             let _ = window.hide();
             with_picker_state(label, |s| s.anchor = None);
             return Ok(());
@@ -855,11 +884,11 @@ pub fn open_window(
 
         // Stash the trigger anchor (converted to screen space via the opener =
         // the calling window).
-        if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, width, height) {
-            if let Some(opener) = resolve_opener(&app, &webview, label) {
-                let anchor = anchor_from_rect(&opener, x, y, w, h);
-                with_picker_state(label, |s| s.anchor = Some(anchor));
-            }
+        if let (Some(x), Some(y), Some(w), Some(h)) = (x, y, width, height)
+            && let Some(opener) = resolve_opener(&app, &webview, label)
+        {
+            let anchor = anchor_from_rect(&opener, x, y, w, h);
+            with_picker_state(label, |s| s.anchor = Some(anchor));
         }
         place_picker(&app, label, &window);
         return Ok(());
@@ -934,6 +963,9 @@ pub(crate) fn close_window_internal(app: &AppHandle, name: &str) -> Result<(), S
             close_model_picker_with_animation(app, &window);
             return Ok(());
         }
+        if label == "device-picker" {
+            dispatch_device_picker_dom_event(&window, false);
+        }
         window.hide().map_err(|e| e.to_string())?;
     }
     // A closed picker forgets its anchor so a stray resize can't re-show it.
@@ -1006,10 +1038,10 @@ pub fn resize_window(
             s.width = width.max(1.0).ceil();
             s.height = height.max(1.0).ceil();
         });
-        if let Some(window) = app.get_webview_window(label) {
-            if window.is_visible().unwrap_or(false) {
-                place_picker(&app, label, &window);
-            }
+        if let Some(window) = app.get_webview_window(label)
+            && window.is_visible().unwrap_or(false)
+        {
+            place_picker(&app, label, &window);
         }
         return Ok(());
     }
@@ -1031,6 +1063,12 @@ pub fn resize_window(
             )
         });
         if current != Some((next_w, next_h)) {
+            // `set_size` on the tray menu makes WebView2 transiently drop focus;
+            // stamp the resize FIRST so the blur-hide handler in tray_menu.rs can
+            // ignore that transient instead of collapsing the open menu.
+            if label == "tray-menu" {
+                crate::winstt::commands::tray_menu::note_tray_menu_resize();
+            }
             window
                 .set_size(LogicalSize::new(f64::from(next_w), f64::from(next_h)))
                 .map_err(|e| e.to_string())?;
@@ -1074,7 +1112,7 @@ pub fn anchor_window(
 #[cfg(test)]
 mod tests {
     use super::{
-        is_picker, is_window_operation_allowed, known_window_label, spec_for, WindowOperation,
+        WindowOperation, is_picker, is_window_operation_allowed, known_window_label, spec_for,
     };
 
     #[test]

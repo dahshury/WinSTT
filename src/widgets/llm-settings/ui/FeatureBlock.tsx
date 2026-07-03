@@ -249,9 +249,11 @@ function useOllamaWarmTracker(opts: {
 
 interface FeatureBlockComponentProps extends FeatureBlockProps {
 	checkOllamaReachable: () => Promise<boolean>;
+	caption?: string;
 	children: ReactNode;
 	forceDisabled?: boolean;
 	forceDisabledTooltip?: string | undefined;
+	headerless?: boolean;
 	// Accept the richer ProviderOption shape (label, value, optional disabled
 	// + disabledTooltip) so Apple Intelligence can render greyed-out on Intel
 	// Macs. The Switcher ignores unknown fields, so older callers passing the
@@ -263,6 +265,8 @@ interface FeatureBlockComponentProps extends FeatureBlockProps {
 		value: string;
 	}>;
 	retryOllamaWarmup: () => Promise<void>;
+	showToggle?: boolean;
+	title?: string;
 }
 
 export function FeatureBlock(props: FeatureBlockComponentProps) {
@@ -288,8 +292,12 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 		t,
 		tc,
 		children,
+		caption,
 		forceDisabled = false,
 		forceDisabledTooltip,
+		headerless = false,
+		showToggle = true,
+		title,
 	} = props;
 	const isDictation = feature === "dictation";
 	const effectiveEnabled = forceDisabled ? false : featureSnapshot.enabled;
@@ -340,12 +348,18 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 			warmupStatus,
 		},
 	);
+	const toggleProps = showToggle
+		? { onToggle: handleToggle, toggled: effectiveEnabled }
+		: {};
 	return (
 		<SettingSubsection
 			busy={warmTracker.isWarming}
 			caption={
-				isDictation ? t("subDictationCaption") : t("subTransformCaption")
+				caption ??
+				(isDictation ? t("subDictationCaption") : t("subTransformCaption"))
 			}
+			contentDisabled={!showToggle && !effectiveEnabled}
+			headerless={headerless}
 			headerAction={
 				warmTracker.isWarming ? (
 					<span className="flex items-center gap-1.5 text-[11px] text-foreground-secondary">
@@ -355,13 +369,14 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 				) : undefined
 			}
 			icon={isDictation ? PencilIcon : MagicWand01Icon}
-			onToggle={handleToggle}
-			title={isDictation ? t("subDictationTitle") : t("subTransformTitle")}
-			toggled={effectiveEnabled}
+			title={
+				title ?? (isDictation ? t("subDictationTitle") : t("subTransformTitle"))
+			}
 			toggleDisabled={forceDisabled}
 			toggleDisabledTooltip={forceDisabledTooltip}
+			{...toggleProps}
 		>
-			<div className="flex flex-col">
+			<div className="flex flex-col divide-y divide-divider">
 				<FormControl
 					disabled={forceDisabled}
 					label={t("provider")}
@@ -404,6 +419,10 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 						updateAny={updateAny}
 					/>
 				) : null}
+				{/* Tone + Modifiers (the feature's preset controls) join the same
+				    divided column so every row in the block is hairline-separated
+				    instead of stacking into one dense wall. */}
+				{children}
 				{effectiveEnabled ? (
 					<WarmupStatusBanner
 						feature={feature}
@@ -414,7 +433,6 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 					/>
 				) : null}
 			</div>
-			{children}
 		</SettingSubsection>
 	);
 }

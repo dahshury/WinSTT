@@ -42,21 +42,21 @@ mod secret_scrub;
 mod snapshot;
 mod surface;
 
-use ax_tree::{json_parse_ax_html, JsonAxNode, JsonAxTree};
+use ax_tree::{JsonAxNode, JsonAxTree, json_parse_ax_html};
 #[cfg(test)]
 use policy::extract_host;
 pub use policy::{is_allowed_by_list, is_denied_by_list, redact_sensitive_fields};
-use prompt_sections::{json_serialize_context, json_trim_or_empty, JsonPromptSection};
+use prompt_sections::{JsonPromptSection, json_serialize_context, json_trim_or_empty};
 #[cfg(test)]
 use secret_scrub::JSON_SECRET_CODE_PHRASE_RE;
 use secret_scrub::{json_is_otp_or_signin_row, json_scrub_secret_codes};
 pub use snapshot::{
-    empty_context, parse_snapshot, ContextMode, ContextReader, WindowContextSnapshot,
-    MAX_BUFFER_BYTES, READ_TIMEOUT_MS,
+    ContextMode, ContextReader, MAX_BUFFER_BYTES, READ_TIMEOUT_MS, WindowContextSnapshot,
+    empty_context, parse_snapshot,
 };
 use surface::contains_word;
 pub use surface::{
-    ide_kind_from_exe, is_canvas_surface, is_ide_context, looks_like_terminal, IdeKind,
+    IdeKind, ide_kind_from_exe, is_canvas_surface, is_ide_context, looks_like_terminal,
 };
 
 // ───────────────────────── prompt formatter ───────────────────────────
@@ -1434,12 +1434,11 @@ fn json_should_clip_thread_tail(lines: &[String], focus: Option<usize>) -> bool 
 fn json_resolve_landmark(tree: &JsonAxTree) -> Option<usize> {
     let path = json_find_focus_path(tree);
     let focus = path.as_ref().and_then(|p| p.last()).copied();
-    if let (Some(path), Some(focus)) = (path.as_deref(), focus) {
-        if !json_is_omnibox(&tree.nodes[focus]) {
-            if let Some(on_path) = json_find_landmark_on_path(tree, path, focus) {
-                return Some(on_path);
-            }
-        }
+    if let (Some(path), Some(focus)) = (path.as_deref(), focus)
+        && !json_is_omnibox(&tree.nodes[focus])
+        && let Some(on_path) = json_find_landmark_on_path(tree, path, focus)
+    {
+        return Some(on_path);
     }
     json_find_largest_landmark(tree)
 }
@@ -1919,10 +1918,10 @@ fn json_scrub_discord_blob(blob: &str) -> String {
     let half = badge_free.len() / 2;
     let mut card_cut = badge_free.len();
     for marker in JSON_DISCORD_PROFILE_CARD_MARKERS {
-        if let Some(i) = badge_free.find(marker) {
-            if i >= half {
-                card_cut = card_cut.min(i);
-            }
+        if let Some(i) = badge_free.find(marker)
+            && i >= half
+        {
+            card_cut = card_cut.min(i);
         }
     }
     badge_free[..card_cut].trim().to_string()
@@ -2310,20 +2309,20 @@ pub fn format_context_for_prompt(snapshot: &WindowContextSnapshot) -> String {
     // (the reroute below sends it to `screen`). A real Discord composer has no
     // page-nav markers and no scrollback tree, so it still reaches this path.
     let reconstructed_chat = denoise_for_llm(snapshot.text_before.as_deref());
-    if !(has_tree && caret_is_scrollback) {
-        if let Some(turns) = json_reconstruct_discord_stream(&reconstructed_chat) {
-            sections.push(JsonPromptSection::text(
-                "beforeCaret",
-                clip_tail(&turns, JSON_CARET_BEFORE_LLM_MAX),
-            ));
-            let after = json_clean_caret(snapshot.text_after.as_deref());
-            sections.push(JsonPromptSection::text(
-                "afterCaret",
-                clip_head(&after, CARET_AFTER_LLM_MAX),
-            ));
-            sections.push(json_build_clipboard_section(snapshot));
-            return json_serialize_context(sections);
-        }
+    if !(has_tree && caret_is_scrollback)
+        && let Some(turns) = json_reconstruct_discord_stream(&reconstructed_chat)
+    {
+        sections.push(JsonPromptSection::text(
+            "beforeCaret",
+            clip_tail(&turns, JSON_CARET_BEFORE_LLM_MAX),
+        ));
+        let after = json_clean_caret(snapshot.text_after.as_deref());
+        sections.push(JsonPromptSection::text(
+            "afterCaret",
+            clip_head(&after, CARET_AFTER_LLM_MAX),
+        ));
+        sections.push(json_build_clipboard_section(snapshot));
+        return json_serialize_context(sections);
     }
 
     if json_focused_field_is_rich(snapshot) && !(has_tree && caret_is_scrollback) {

@@ -145,17 +145,16 @@ function DynamicIslandPillContent({
 		);
 	}
 
-	// Padding tuned to the shell's 28px bottom-corner radius:
-	//   - `pt-1`  (4px) keeps the top row almost flush with the flat top
-	//     edge — the iPhone-notch look the user asked for.
-	//   - `px-5` (20px) keeps the rightmost char of the timer and the
-	//     last word of wrapped text clear of the bottom-corner curves.
-	//   - `pb-3` (12px) leaves a comfortable gap between the bottom text
-	//     line and the rounded bottom edge.
-	// Inner `gap-1` separates the top row from the transcription/thinking
-	// block by ~4px so they don't visually touch.
+	const recordingContentClassName = [
+		"flex flex-col px-5",
+		showText ? "gap-1 pt-1 pb-3" : "min-h-9 justify-center py-0",
+	].join(" ");
+
+	// Captioned recording keeps asymmetric padding so wrapped text clears the
+	// bottom radius. Timer-only recording uses a 36px centered row so the
+	// smallest island does not bias the elapsed time toward the top edge.
 	return (
-		<div className="flex flex-col gap-1 px-5 pt-1 pb-3">
+		<div className={recordingContentClassName}>
 			{isRecordingActive ? (
 				<div
 					className="flex items-center justify-between gap-3"
@@ -172,7 +171,7 @@ function DynamicIslandPillContent({
 					<div className="flex items-center gap-1.5">
 						<LivePulse isSpeaking={isSpeaking} />
 						<span
-							className="font-mono text-overlay-foreground/70 tabular-nums"
+							className="font-mono leading-none text-overlay-foreground/70 tabular-nums"
 							style={{ fontSize: timerFontSize }}
 						>
 							{elapsed}

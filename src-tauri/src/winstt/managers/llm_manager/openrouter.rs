@@ -6,7 +6,7 @@
 
 use super::{EmitReasoningSink, LlmManager};
 use crate::winstt::llm::{
-    self, apply_openrouter_runtime_options, OpenRouterRequestOptions, ReasoningSink,
+    self, OpenRouterRequestOptions, ReasoningSink, apply_openrouter_runtime_options,
 };
 
 /// One OpenRouter catalog model (the subset the picker rows consume).
@@ -651,14 +651,13 @@ fn extract_openrouter_text(content: &str, fallback: &str) -> String {
         .trim_end_matches("```")
         .trim();
     if let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(stripped)
+        && let Some(text) = obj.get("text").and_then(|t| t.as_str())
     {
-        if let Some(text) = obj.get("text").and_then(|t| t.as_str()) {
-            let out = text.trim();
-            if !out.is_empty() {
-                return out.to_string();
-            }
-            return fallback.to_string();
+        let out = text.trim();
+        if !out.is_empty() {
+            return out.to_string();
         }
+        return fallback.to_string();
     }
     // Not a JSON envelope (model ignored response_format) — use raw prose.
     if !stripped.is_empty() {

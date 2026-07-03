@@ -70,14 +70,23 @@ describe("TitleBar", () => {
 
 	test("renders three buttons (settings, minimize, close)", () => {
 		renderWithIntl();
-		const buttons = screen.getAllByRole("button");
-		expect(buttons.length).toBeGreaterThanOrEqual(3);
+		expect(screen.getByRole("button", { name: /settings/i })).toBeTruthy();
+		expect(screen.getByRole("button", { name: /minimize/i })).toBeTruthy();
+		expect(screen.getByRole("button", { name: /close/i })).toBeTruthy();
+	});
+
+	test("centers the hotkey against the titlebar content area", () => {
+		const { container } = renderWithIntl();
+		const center = container.querySelector(
+			'[data-slot="titlebar-hotkey-center"]',
+		);
+		expect(center?.className).toContain("top-0");
+		expect(center?.className).toContain("bottom-px");
 	});
 
 	test("clicking the settings button opens the settings window", () => {
 		renderWithIntl();
-		const buttons = screen.getAllByRole("button");
-		fireEvent.click(buttons[0]!);
+		fireEvent.click(screen.getByRole("button", { name: /settings/i }));
 		// Typed command path: `open_window("settings")`, not a nativeBridge.send.
 		expect(
 			tauriCalls.some(
@@ -90,20 +99,20 @@ describe("TitleBar", () => {
 
 	test("clicking minimize and close sends their channels", () => {
 		renderWithIntl();
-		const buttons = screen.getAllByRole("button");
-		fireEvent.click(buttons[1]!);
-		fireEvent.click(buttons[2]!);
+		fireEvent.click(screen.getByRole("button", { name: /minimize/i }));
+		fireEvent.click(screen.getByRole("button", { name: /close/i }));
 		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_MINIMIZE)).toBe(true);
 		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_CLOSE)).toBe(true);
 	});
 
 	test("touch tapping minimize and close sends their channels without a synthesized click", () => {
 		renderWithIntl();
-		const buttons = screen.getAllByRole("button");
-		touchTap(buttons[1]!, 1);
-		fireEvent.click(buttons[1]!);
-		touchTap(buttons[2]!, 2);
-		fireEvent.click(buttons[2]!);
+		const minimize = screen.getByRole("button", { name: /minimize/i });
+		const close = screen.getByRole("button", { name: /close/i });
+		touchTap(minimize, 1);
+		fireEvent.click(minimize);
+		touchTap(close, 2);
+		fireEvent.click(close);
 		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_MINIMIZE)).toBe(true);
 		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_CLOSE)).toBe(true);
 		expect(

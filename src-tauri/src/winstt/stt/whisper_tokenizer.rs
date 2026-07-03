@@ -60,12 +60,11 @@ impl WhisperTokenizer {
             .map_err(|e| SttError::Tokenizer(format!("read vocab.json: {e}")))?;
         let mut tokens: HashMap<String, i64> = serde_json::from_str(&raw)
             .map_err(|e| SttError::Tokenizer(format!("parse vocab.json: {e}")))?;
-        if let Some(p) = added_tokens_path {
-            if let Ok(raw_add) = std::fs::read_to_string(p) {
-                if let Ok(added) = serde_json::from_str::<HashMap<String, i64>>(&raw_add) {
-                    tokens.extend(added);
-                }
-            }
+        if let Some(p) = added_tokens_path
+            && let Ok(raw_add) = std::fs::read_to_string(p)
+            && let Ok(added) = serde_json::from_str::<HashMap<String, i64>>(&raw_add)
+        {
+            tokens.extend(added);
         }
         Self::from_tokens(tokens)
     }
@@ -219,10 +218,10 @@ impl WhisperTokenizer {
     fn collect_byte_chars(&self, ids: &[i64]) -> String {
         let mut s = String::new();
         for &id in ids {
-            if let Some(tok) = self.vocab.get(&id) {
-                if !tok.starts_with("<|") {
-                    s.push_str(tok);
-                }
+            if let Some(tok) = self.vocab.get(&id)
+                && !tok.starts_with("<|")
+            {
+                s.push_str(tok);
             }
             // Missing id (incomplete vocab) → silently skipped (no crash).
         }

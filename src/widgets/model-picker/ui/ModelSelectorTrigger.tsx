@@ -6,8 +6,6 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef } from "react";
 import { useTranslations } from "use-intl";
 import type { OpenRouterModel } from "@/shared/api/models";
-import { cn } from "@/shared/lib/cn";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { PulseDot } from "@/shared/ui/pulse-dot";
@@ -16,6 +14,7 @@ import { VariantBadge } from "../lib/model-list-meta-chips";
 import { getVariantClasses } from "../lib/model-selector-display-utils";
 import { formatMaker, formatModelName } from "../lib/model-selector-utils";
 import { getProviderIconWithFallback } from "../lib/provider-icons";
+import { AuthorBadge } from "./AuthorBadge";
 import {
 	getTriggerDataState,
 	isMissingModelId,
@@ -39,32 +38,14 @@ export interface ModelSelectorTriggerProps {
 }
 
 function MakerBadge({ maker }: { maker: string | undefined }) {
-	const level = Math.min(useSurface() + 1, 8);
 	if (!maker) {
 		return null;
 	}
-	const providerIcon = getProviderIconWithFallback(maker);
 	return (
-		<Badge className="shrink-0 gap-1.5 text-2xs" variant="secondary">
-			{providerIcon ? (
-				<span
-					className={cn(
-						"flex size-3 shrink-0 items-center justify-center overflow-hidden rounded border border-border/50 p-0.5",
-						surfaceBg(level),
-					)}
-				>
-					<img
-						alt=""
-						className="size-full object-contain"
-						height={12}
-						loading="eager"
-						src={providerIcon}
-						width={12}
-					/>
-				</span>
-			) : null}
-			{formatMaker(maker)}
-		</Badge>
+		<AuthorBadge
+			label={formatMaker(maker)}
+			logoSrc={getProviderIconWithFallback(maker)}
+		/>
 	);
 }
 

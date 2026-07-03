@@ -11,6 +11,7 @@ export function SnippetsSettingsPanel() {
 
 	return (
 		<SettingSection
+			boxed
 			description={t("description")}
 			headerAction={
 				snippets.length > 0 ? (
@@ -26,7 +27,7 @@ export function SnippetsSettingsPanel() {
 			icon={StickyNote01Icon}
 			title={t("title")}
 		>
-			<div className="py-2">
+			<div className="pt-2 pb-4">
 				<SnippetsTable entries={snippets} onChange={updateSnippets} />
 			</div>
 		</SettingSection>

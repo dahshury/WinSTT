@@ -21,8 +21,8 @@ use specta::Type;
 use std::time::Duration;
 
 use crate::winstt::cloud_stt::{
-    classify_http_failure, classify_transport_error, is_elevenlabs_scoped_key_valid,
-    CloudSttErrorCode,
+    CloudSttErrorCode, classify_http_failure, classify_transport_error,
+    is_elevenlabs_scoped_key_valid,
 };
 
 /// 10s — verify is a single round-trip and shouldn't block the UI longer.

@@ -4,7 +4,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use winstt_app_lib::winstt::context::{format_context_for_prompt, parse_snapshot};
 
 #[derive(Debug, Default)]
@@ -354,10 +354,10 @@ fn unescape_ts_string(raw: &str) -> String {
             Some('`') => out.push('`'),
             Some('u') => {
                 let hex = chars.by_ref().take(4).collect::<String>();
-                if let Ok(codepoint) = u32::from_str_radix(&hex, 16) {
-                    if let Some(value) = char::from_u32(codepoint) {
-                        out.push(value);
-                    }
+                if let Ok(codepoint) = u32::from_str_radix(&hex, 16)
+                    && let Some(value) = char::from_u32(codepoint)
+                {
+                    out.push(value);
                 }
             }
             Some(other) => out.push(other),
@@ -1016,10 +1016,12 @@ mod tests {
         assert_eq!(report["promptJsonValid"], true);
         assert_eq!(report["quality"]["contextPayloadUsable"], true);
         assert_eq!(report["quality"]["replyContextReady"], true);
-        assert!(report["promptKeys"]
-            .as_array()
-            .unwrap()
-            .contains(&Value::String("beforeCaret".to_string())));
+        assert!(
+            report["promptKeys"]
+                .as_array()
+                .unwrap()
+                .contains(&Value::String("beforeCaret".to_string()))
+        );
     }
 
     #[test]
@@ -1169,12 +1171,14 @@ mod tests {
         assert_eq!(report["promptJsonValid"], true);
         assert_eq!(report["privacySignals"]["loginOrSkeletonNoise"], true);
         assert_eq!(report["quality"]["contextPayloadUsable"], false);
-        assert!(report["quality"]["warnings"]
-            .as_array()
-            .unwrap()
-            .contains(&Value::String(
-                "login_or_skeleton_page_detected".to_string()
-            )));
+        assert!(
+            report["quality"]["warnings"]
+                .as_array()
+                .unwrap()
+                .contains(&Value::String(
+                    "login_or_skeleton_page_detected".to_string()
+                ))
+        );
     }
 
     #[test]

@@ -17,8 +17,9 @@
 // HARD-RULE-safe: NEW file under winstt/commands/. Reuses windows::ensure_window
 // (made pub(crate)) so the same lazily-created `tray-menu` webview is positioned.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, LogicalPosition, Manager, PhysicalPosition, PhysicalSize};
 
 use super::windows::ensure_window;
@@ -38,6 +39,65 @@ const TASKBAR_MARGIN: f64 = 8.0;
 const OFFSCREEN: f64 = -9999.0;
 
 static TRAY_MENU_LIFECYCLE_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+/// Instant of the last programmatic tray-menu resize (`resize_window`). A
+/// `set_size` on this window makes WebView2 transiently drop and regain focus
+/// (observed on Windows: `Focused(false)` lands just before the `Resized`
+/// event, `Focused(true)` follows right after), which used to trip the
+/// blur-hide handler whenever the menu was resized while open. Blur events
+/// inside this grace window are ignored.
+static LAST_TRAY_MENU_RESIZE: Mutex<Option<Instant>> = Mutex::new(None);
+const RESIZE_BLUR_GRACE: Duration = Duration::from_millis(500);
+
+/// Instant `open_window("device-picker")` last started. The detached mic
+/// picker steals focus from the tray menu as it is created/shown, and its
+/// `Focused(false)` can reach the tray menu BEFORE the picker window reports
+/// `is_visible()` — so the visible-picker suppression alone races on open.
+static LAST_DEVICE_PICKER_OPEN: Mutex<Option<Instant>> = Mutex::new(None);
+const PICKER_OPEN_BLUR_GRACE: Duration = Duration::from_millis(1000);
+
+fn stamp_now(slot: &Mutex<Option<Instant>>) {
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(Instant::now());
+    }
+}
+
+fn within_grace(slot: &Mutex<Option<Instant>>, grace: Duration) -> bool {
+    slot.lock()
+        .ok()
+        .and_then(|guard| *guard)
+        .is_some_and(|at| at.elapsed() < grace)
+}
+
+/// Called by `resize_window` right before it applies a new tray-menu size, so
+/// the blur-hide handler can tell a resize-induced focus transient from a real
+/// click-away.
+pub(crate) fn note_tray_menu_resize() {
+    stamp_now(&LAST_TRAY_MENU_RESIZE);
+}
+
+/// Called by `open_window` when the detached device-picker submenu starts
+/// opening, before the picker window is created/shown (see
+/// `LAST_DEVICE_PICKER_OPEN`).
+pub(crate) fn note_device_picker_opening() {
+    stamp_now(&LAST_DEVICE_PICKER_OPEN);
+}
+
+/// Is the device picker still settling from its open? Its first show runs a
+/// show → ResizeObserver → resize → re-place → re-focus churn during which its
+/// OWN WebView2 focus blips; the picker's blur-close handler must not treat
+/// that as a click-away (it would close the picker AND collapse the tray menu).
+pub(crate) fn is_device_picker_settling() -> bool {
+    within_grace(&LAST_DEVICE_PICKER_OPEN, PICKER_OPEN_BLUR_GRACE)
+}
+
+/// Is the tray menu currently open (shown AND parked on-screen)? Used by the
+/// device-picker placement so the fly-out never anchors itself beside a
+/// dismissed (off-screen-parked) menu.
+pub(crate) fn is_tray_menu_open(app: &AppHandle) -> bool {
+    app.get_webview_window(TRAY_MENU_LABEL)
+        .is_some_and(|window| is_tray_menu_on_screen(&window))
+}
 
 const TRAY_MENU_WILL_OPEN_EVENT: &str = "winstt:tray-menu-will-open";
 const TRAY_MENU_OPENED_EVENT: &str = "winstt:tray-menu-opened";
@@ -191,10 +251,10 @@ fn place_tray_menu(app: &AppHandle, anchor: (f64, f64)) -> Result<(), String> {
 #[specta::specta]
 pub fn show_tray_menu(app: AppHandle, x: Option<f64>, y: Option<f64>) -> Result<(), String> {
     let anchor = resolve_anchor(&app, x, y);
-    if let Some(state) = app.try_state::<TrayMenuAnchor>() {
-        if let Ok(mut guard) = state.0.lock() {
-            *guard = Some(anchor);
-        }
+    if let Some(state) = app.try_state::<TrayMenuAnchor>()
+        && let Ok(mut guard) = state.0.lock()
+    {
+        *guard = Some(anchor);
     }
     place_tray_menu(&app, anchor)
 }
@@ -226,10 +286,10 @@ pub fn hide_tray_menu(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(TRAY_MENU_LABEL) {
         hide_tray_menu_window(&window);
     }
-    if let Some(state) = app.try_state::<TrayMenuAnchor>() {
-        if let Ok(mut guard) = state.0.lock() {
-            *guard = None;
-        }
+    if let Some(state) = app.try_state::<TrayMenuAnchor>()
+        && let Ok(mut guard) = state.0.lock()
+    {
+        *guard = None;
     }
     Ok(())
 }
@@ -248,10 +308,10 @@ fn hide_tray_menu_internal(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(TRAY_MENU_LABEL) {
         hide_tray_menu_window(&window);
     }
-    if let Some(state) = app.try_state::<TrayMenuAnchor>() {
-        if let Ok(mut guard) = state.0.lock() {
-            *guard = None;
-        }
+    if let Some(state) = app.try_state::<TrayMenuAnchor>()
+        && let Ok(mut guard) = state.0.lock()
+    {
+        *guard = None;
     }
 }
 
@@ -270,10 +330,10 @@ pub fn show_tray_menu_at_physical(app: &AppHandle, physical_x: f64, physical_y: 
         .flatten()
         .map_or(1.0, |m| m.scale_factor());
     let logical = (physical_x / scale, physical_y / scale);
-    if let Some(state) = app.try_state::<TrayMenuAnchor>() {
-        if let Ok(mut guard) = state.0.lock() {
-            *guard = Some(logical);
-        }
+    if let Some(state) = app.try_state::<TrayMenuAnchor>()
+        && let Ok(mut guard) = state.0.lock()
+    {
+        *guard = Some(logical);
     }
     if let Err(e) = place_tray_menu(app, logical) {
         log::warn!("Failed to open tray menu from tray click: {e}");
@@ -331,12 +391,11 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
             let anchor = app_handle
                 .try_state::<TrayMenuAnchor>()
                 .and_then(|state| state.0.lock().ok().and_then(|g| *g));
-            if let Some(anchor) = anchor {
-                if let Some(window) = app_handle.get_webview_window(TRAY_MENU_LABEL) {
-                    if is_tray_menu_on_screen(&window) {
-                        let _ = position_tray_menu(&app_handle, &window, anchor);
-                    }
-                }
+            if let Some(anchor) = anchor
+                && let Some(window) = app_handle.get_webview_window(TRAY_MENU_LABEL)
+                && is_tray_menu_on_screen(&window)
+            {
+                let _ = position_tray_menu(&app_handle, &window, anchor);
             }
         }
         tauri::WindowEvent::Focused(false) => {
@@ -345,20 +404,28 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
             // Focused(false) (e.g. when it was park-shown at startup) — parking
             // it again is harmless, but guarding avoids clearing the anchor on a
             // window that isn't even open.
-            if let Some(window) = app_handle.get_webview_window(TRAY_MENU_LABEL) {
-                if is_tray_menu_on_screen(&window) {
-                    // SUPPRESS blur-hide when focus went to the device-picker SUBMENU —
-                    // it's a legitimate always-on-top child of the tray menu, so opening
-                    // the mic selector must NOT collapse the menu (the reference's handleBlur
-                    // ignores the device-picker child). Choosing a device / Esc closes the
-                    // picker via close_window("device-picker") → hide_tray_menu, which
-                    // collapses the whole menu — so it still dismisses correctly afterward.
-                    let picker_open = app_handle
-                        .get_webview_window("device-picker")
-                        .is_some_and(|p| p.is_visible().unwrap_or(false));
-                    if !picker_open {
-                        hide_tray_menu_internal(&app_handle);
-                    }
+            if let Some(window) = app_handle.get_webview_window(TRAY_MENU_LABEL)
+                && is_tray_menu_on_screen(&window)
+            {
+                // SUPPRESS blur-hide when focus went to the device-picker SUBMENU:
+                // the mic row opens it as a detached always-on-top window that
+                // takes focus, and that must NOT collapse the menu. Two signals
+                // cover it — the picker being visible, plus a short grace after
+                // `open_window("device-picker")` starts (its focus steal can land
+                // here BEFORE the picker reports visible). Dismissal still works:
+                // choosing a device / Esc / clicking away closes the picker via
+                // close_window("device-picker") → hide_tray_menu.
+                let picker_open = app_handle
+                    .get_webview_window("device-picker")
+                    .is_some_and(|p| p.is_visible().unwrap_or(false))
+                    || within_grace(&LAST_DEVICE_PICKER_OPEN, PICKER_OPEN_BLUR_GRACE);
+                // ALSO suppress while a programmatic resize is in flight:
+                // `set_size` on this window makes WebView2 momentarily drop focus
+                // before regaining it (see LAST_TRAY_MENU_RESIZE). A real
+                // click-away outside these windows still dismisses immediately.
+                let resizing = within_grace(&LAST_TRAY_MENU_RESIZE, RESIZE_BLUR_GRACE);
+                if !picker_open && !resizing {
+                    hide_tray_menu_internal(&app_handle);
                 }
             }
         }
@@ -373,7 +440,7 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{clamp_to_work_area, TASKBAR_MARGIN};
+    use super::{TASKBAR_MARGIN, clamp_to_work_area};
 
     #[test]
     fn clamps_into_work_area_bottom_with_taskbar_margin() {

@@ -66,4 +66,9 @@ export const RECESSED_SHELF_CLASSES =
 /** Sticky section/group header chrome — identical across every picker so the
  *  headers dock the same way while scrolling. */
 export const GROUP_HEADER_CLASSES =
-	"sticky top-0 z-raised flex items-center gap-2 border-border/60 border-b bg-surface-elevated/95 px-3 py-1.5 backdrop-blur-sm";
+	"sticky top-0 z-raised flex h-8 shrink-0 items-center gap-2 border-border/60 border-b bg-surface-elevated/95 px-3 py-0 backdrop-blur-sm";
+
+/** Covers only the native scrollbar gutter beside a docked group header. The
+ *  list keeps native scrolling, but the bar visually starts below the header. */
+export const GROUP_HEADER_SCROLLBAR_MASK_CLASSES =
+	"pointer-events-none absolute top-0 end-0 z-overlay h-8 w-3 border-border/60 border-b bg-surface-elevated/95 backdrop-blur-sm";

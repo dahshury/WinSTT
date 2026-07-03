@@ -19,7 +19,7 @@
 use std::borrow::Cow;
 use std::time::Instant;
 
-use crate::audio_toolkit::vad::{SileroVad, VoiceActivityDetector, VAD_FRAME_SAMPLES};
+use crate::audio_toolkit::vad::{SileroVad, VAD_FRAME_SAMPLES, VoiceActivityDetector};
 
 use super::{TranscribeOptions, Transcriber};
 
@@ -136,20 +136,20 @@ fn coalesce_short_chunks(
             continue;
         }
 
-        if let Some(last) = out.last_mut() {
-            if e.saturating_sub(last.0) <= max_chunk {
-                last.1 = e;
-                i += 1;
-                continue;
-            }
+        if let Some(last) = out.last_mut()
+            && e.saturating_sub(last.0) <= max_chunk
+        {
+            last.1 = e;
+            i += 1;
+            continue;
         }
 
-        if let Some(&(_, next_e)) = chunks.get(i + 1) {
-            if next_e.saturating_sub(s) <= max_chunk {
-                out.push((s, next_e));
-                i += 2;
-                continue;
-            }
+        if let Some(&(_, next_e)) = chunks.get(i + 1)
+            && next_e.saturating_sub(s) <= max_chunk
+        {
+            out.push((s, next_e));
+            i += 2;
+            continue;
         }
 
         out.push((s, e));
@@ -259,12 +259,18 @@ pub fn compact_for_transcription<'a>(audio: &'a [f32], vad: &mut SileroVad) -> C
 
 /// Last `n` chars of `s` (char-safe), for the optional Whisper prior-chunk continuation prompt.
 fn tail_chars(s: &str, n: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= n {
-        s.to_string()
-    } else {
-        chars[chars.len() - n..].iter().collect()
+    if n == 0 {
+        return String::new();
     }
+
+    let mut seen = 0usize;
+    for (idx, _) in s.char_indices().rev() {
+        seen += 1;
+        if seen == n {
+            return s[idx..].to_string();
+        }
+    }
+    s.to_string()
 }
 
 /// Decode an arbitrarily long recording by VAD-segmenting it into ≤ `max_chunk_s` chunks and
@@ -349,13 +355,13 @@ pub fn vad_segment_decode(
     // 2. Raw regions → merged chunks (onnx-asr constants @ 16 kHz).
     let pad = SR * 30 / 1000; // 480
     let min_speech = (SR * 250 / 1000).saturating_sub(2 * pad); // 3040
-                                                                // PACK-TO-CAP: onnx-asr's 100 ms min_silence splits on every thinking-pause, and since
-                                                                // `compact_silences` already caps every retained gap at 200 ms, ~every pause in spontaneous
-                                                                // dictation exceeds it → dozens of 1–2 s chunks. Short chunks are exactly where Whisper (and
-                                                                // the fragile lite-whisper low-rank encoder especially) hallucinate "..." walls and repeat
-                                                                // text. whisperX instead packs speech into fixed near-window chunks; we do the same by merging
-                                                                // across any pause and letting ONLY the max-chunk cap force a split (on a real region boundary).
-                                                                // This hands the decoder long, coherent context — the configuration that transcribes cleanly.
+    // PACK-TO-CAP: onnx-asr's 100 ms min_silence splits on every thinking-pause, and since
+    // `compact_silences` already caps every retained gap at 200 ms, ~every pause in spontaneous
+    // dictation exceeds it → dozens of 1–2 s chunks. Short chunks are exactly where Whisper (and
+    // the fragile lite-whisper low-rank encoder especially) hallucinate "..." walls and repeat
+    // text. whisperX instead packs speech into fixed near-window chunks; we do the same by merging
+    // across any pause and letting ONLY the max-chunk cap force a split (on a real region boundary).
+    // This hands the decoder long, coherent context — the configuration that transcribes cleanly.
     let min_silence = max_chunk;
     log::debug!(
         "[stt][{request_id}][vad-segment] compacted_speech_mask_start compacted_audio_ms={}",
@@ -619,6 +625,7 @@ mod tests {
 
     #[test]
     fn tail_chars_is_char_safe() {
+        assert_eq!(tail_chars("hello world", 0), "");
         assert_eq!(tail_chars("hello world", 5), "world");
         assert_eq!(tail_chars("hi", 5), "hi");
         assert_eq!(tail_chars("héllo wörld", 5).chars().count(), 5);

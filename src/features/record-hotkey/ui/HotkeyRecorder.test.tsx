@@ -166,6 +166,13 @@ describe("HotkeyRecorder", () => {
 		expect(recBtn).toBeDefined();
 	});
 
+	test("the idle record button is transparent, not a surfaced play disk", () => {
+		renderIt();
+		const recBtn = screen.getByRole("button", { name: /record/i });
+		expect(recBtn.className).toContain("bg-transparent");
+		expect(recBtn.className).not.toMatch(/\bbg-surface-/);
+	});
+
 	test("clicking the record button calls hotkeyStartRecording (via the typed __TAURI_INTERNALS__.invoke seam)", () => {
 		renderIt();
 		const recBtn = screen.getByRole("button", { name: /record/i });

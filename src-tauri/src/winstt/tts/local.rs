@@ -1,8 +1,8 @@
-use super::download::{download_kokoro_assets, DownloadError};
-use super::kokoro::{KokoroEngine, KOKORO_SAMPLE_RATE};
+use super::download::{DownloadError, download_kokoro_assets};
+use super::kokoro::{KOKORO_SAMPLE_RATE, KokoroEngine};
 use super::types::{
-    clamp_speed, LocalTtsConfig, SentenceAudio, TtsEngine, TtsError, TtsResult, VoiceInfo,
-    MAX_SYNTHESIS_CHARS,
+    LocalTtsConfig, MAX_SYNTHESIS_CHARS, SentenceAudio, TtsEngine, TtsError, TtsResult, VoiceInfo,
+    clamp_speed,
 };
 use super::voices::KOKORO_VOICE_CATALOG;
 

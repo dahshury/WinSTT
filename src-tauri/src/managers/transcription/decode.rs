@@ -5,14 +5,14 @@
 //! module root; all shared free helpers / types / consts live in [`super`].
 
 use super::{
-    dc_immune_rms, is_degenerate_decode_error, is_device_lost_error, is_silent_recording,
-    local_final_decode_audio_with_silence, next_transcription_request_id, LoadedEngine,
-    ModelStateEvent, TranscriptionManager, LOCAL_FINAL_DECODE_SILENCE_PAD_MS, SILENCE_AC_FLOOR,
+    LoadedEngine, ModelStateEvent, SILENCE_AC_FLOOR, TranscriptionManager, dc_immune_rms,
+    is_degenerate_decode_error, is_device_lost_error, is_silent_recording,
+    next_transcription_request_id,
 };
 use crate::winstt::stt::BackendRoute;
 use anyhow::Result;
 use log::{debug, error, info, warn};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant};
 use tauri::Emitter;
@@ -35,7 +35,6 @@ impl TranscriptionWatchdog {
         request_id: String,
         model_id: String,
         raw_samples: usize,
-        local_samples: usize,
         started: Instant,
     ) -> Self {
         let (stop, stop_rx) = mpsc::channel();
@@ -51,9 +50,8 @@ impl TranscriptionWatchdog {
 
                 let elapsed_ms = started.elapsed().as_millis() as u64;
                 warn!(
-                    "[stt][{request_id}] transcription still running after {elapsed_ms}ms model='{model_id}' raw_audio_ms={} local_audio_ms={}",
-                    samples_to_ms(raw_samples),
-                    samples_to_ms(local_samples)
+                    "[stt][{request_id}] transcription still running after {elapsed_ms}ms model='{model_id}' raw_audio_ms={}",
+                    samples_to_ms(raw_samples)
                 );
                 crate::winstt::observability::IssueBuilder::new(
                     "stt",
@@ -70,11 +68,6 @@ impl TranscriptionWatchdog {
                 .context("thresholdMs", threshold_ms.to_string())
                 .context("rawSamples", raw_samples.to_string())
                 .context("rawAudioMs", samples_to_ms(raw_samples).to_string())
-                .context("localFinalDecodeSamples", local_samples.to_string())
-                .context(
-                    "localFinalDecodeAudioMs",
-                    samples_to_ms(local_samples).to_string(),
-                )
                 .record(Some(&app_handle));
             }
         });
@@ -134,17 +127,19 @@ impl TranscriptionManager {
         anyhow::anyhow!(detail)
     }
 
-    pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+    /// Borrows the audio (never mutates or keeps it) so callers can share one buffer
+    /// with the concurrent WAV-persist task instead of cloning multi-MB sample vectors.
+    pub fn transcribe(&self, audio: &[f32]) -> Result<String> {
         let desired = self.desired_model_id();
         self.transcribe_with_selected_model(&desired, audio)
     }
 
-    pub fn transcribe_with_model(&self, model_id: &str, audio: Vec<f32>) -> Result<String> {
+    pub fn transcribe_with_model(&self, model_id: &str, audio: &[f32]) -> Result<String> {
         let desired = crate::winstt::catalog::canonical_model_id(model_id).to_string();
         self.transcribe_with_selected_model(&desired, audio)
     }
 
-    fn transcribe_with_selected_model(&self, desired: &str, audio: Vec<f32>) -> Result<String> {
+    fn transcribe_with_selected_model(&self, desired: &str, audio: &[f32]) -> Result<String> {
         let request_id = next_transcription_request_id();
 
         #[cfg(debug_assertions)]
@@ -182,8 +177,8 @@ impl TranscriptionManager {
         // earlier gate required `rms < 0.0008 AND dc_dominated`, which let GENUINE digital
         // silence through (rms≈0, mean≈0 → not DC-dominated) — the "Thank you." bug. Audio
         // here is RAW (pre-`peak_normalize`).
-        if is_silent_recording(&audio) {
-            let rms = dc_immune_rms(&audio);
+        if is_silent_recording(audio) {
+            let rms = dc_immune_rms(audio);
             debug!(
                 "[stt][{request_id}] silent recording skipped; rms={rms:.6}; ac_floor={SILENCE_AC_FLOOR}"
             );
@@ -205,7 +200,7 @@ impl TranscriptionManager {
         if self.backend.route_of(desired) == BackendRoute::Cloud {
             let filtered = match self
                 .backend
-                .cloud_transcribe(&self.app_handle, desired, &audio)
+                .cloud_transcribe(&self.app_handle, desired, audio)
             {
                 Ok(text) => text,
                 Err(e) => {
@@ -243,12 +238,10 @@ impl TranscriptionManager {
             anyhow::anyhow!("failed to load model '{desired}': {e}")
         })?;
 
-        let local_audio = local_final_decode_audio_with_silence(&audio);
-        debug!(
-            "[stt][{request_id}] local_final_decode_samples={} final_silence_pad_ms={}",
-            local_audio.len(),
-            LOCAL_FINAL_DECODE_SILENCE_PAD_MS
-        );
+        // Trailing-silence padding for the final decode is OWNED BY THE BACKEND now
+        // (`backend.decode` pads only its single-pass branch): padding here inflated the
+        // apparent audio length, pushing sub-threshold recordings onto the long-form
+        // VAD-segmentation path — which then compacted the synthetic pad right back out.
 
         // Check if model is loaded, if not try to load it
         {
@@ -329,17 +322,13 @@ impl TranscriptionManager {
                 request_id.clone(),
                 desired.to_string(),
                 audio.len(),
-                local_audio.len(),
                 st,
             );
             let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
                 match &mut engine {
-                    LoadedEngine::Winstt(winstt_engine) => backend.decode(
-                        &app_handle,
-                        winstt_engine.as_mut(),
-                        &local_audio,
-                        &request_id,
-                    ),
+                    LoadedEngine::Winstt(winstt_engine) => {
+                        backend.decode(&app_handle, winstt_engine.as_mut(), audio, &request_id)
+                    }
                 }
             }));
             match transcribe_result {

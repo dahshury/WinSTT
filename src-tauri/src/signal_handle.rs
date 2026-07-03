@@ -65,11 +65,11 @@ pub fn terminate_process_success() -> ! {
 /// terminate `tauri dev` with exit code 0 and without WebView2 teardown noise.
 #[cfg(windows)]
 pub fn setup_windows_ctrl_handler() {
-    use windows::core::BOOL;
     use windows::Win32::System::Console::{
-        SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, CTRL_LOGOFF_EVENT,
-        CTRL_SHUTDOWN_EVENT,
+        CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
+        SetConsoleCtrlHandler,
     };
+    use windows::core::BOOL;
 
     unsafe extern "system" fn handler(ctrl_type: u32) -> BOOL {
         match ctrl_type {

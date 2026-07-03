@@ -32,6 +32,7 @@ export function DictionarySettingsPanel() {
 
 	return (
 		<SettingSection
+			boxed
 			description={t("description")}
 			headerAction={
 				dictionary.length > 0 ? (

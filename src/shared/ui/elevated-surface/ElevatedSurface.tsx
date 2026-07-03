@@ -3,6 +3,14 @@ import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 
 export interface ElevatedSurfaceProps {
+	/**
+	 * Drop the painted surface (bg + ring + shadow) but keep the padding + the
+	 * lifted surface context. For a control/list that already sits INSIDE a
+	 * `boxed` section card — the card is the single surface, so a second painted
+	 * fill would double up. Nested plates still elevate from the re-provided
+	 * level.
+	 */
+	bare?: boolean;
 	children: ReactNode;
 	className?: string | undefined;
 	/**
@@ -32,6 +40,7 @@ export interface ElevatedSurfaceProps {
  * fluidfunctionalism multi-layer shadow with the n8n accent bottom edge.
  */
 export function ElevatedSurface({
+	bare = false,
 	children,
 	className,
 	inline = false,
@@ -43,8 +52,12 @@ export function ElevatedSurface({
 		<SurfaceProvider value={level}>
 			<div
 				className={cn(
-					surfaceBg(level),
-					"rounded-lg shadow-elevated ring-1 ring-divider transition-[transform,box-shadow] duration-200 ease-out",
+					bare
+						? "rounded-lg"
+						: cn(
+								surfaceBg(level),
+								"rounded-lg shadow-elevated ring-1 ring-divider transition-[transform,box-shadow] duration-200 ease-out",
+							),
 					inline ? "[&>*]:rounded-lg" : "p-1.5",
 					className,
 				)}

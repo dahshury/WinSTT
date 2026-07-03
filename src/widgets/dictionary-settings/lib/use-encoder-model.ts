@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
+import { commands, type EncoderDownloadStatus, type Result } from "@/bindings";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 
 /**
@@ -17,13 +17,8 @@ export type EncoderModelState =
 	| "paused"
 	| "present";
 
-interface StatusPayload {
-	state: string;
-	progress: number;
-	downloadedBytes: number;
-	totalBytes: number;
-	speedBps?: number;
-}
+type StatusPayload = EncoderDownloadStatus;
+
 interface CompletePayload {
 	present: boolean;
 	cancelled: boolean;
@@ -47,10 +42,12 @@ export interface EncoderModel {
 	unload: () => void;
 }
 
-const INITIAL: Omit<
+type EncoderModelSnapshot = Omit<
 	EncoderModel,
 	"start" | "pause" | "resume" | "cancel" | "remove" | "preload" | "unload"
-> = {
+>;
+
+const INITIAL: EncoderModelSnapshot = {
 	state: "loading",
 	progress: 0,
 	downloadedBytes: 0,
@@ -58,9 +55,24 @@ const INITIAL: Omit<
 	speedBps: 0,
 };
 
-function applyStatus(p: StatusPayload) {
+function normalizeEncoderState(
+	state: StatusPayload["state"],
+): EncoderModelState {
+	switch (state) {
+		case "absent":
+		case "downloading":
+		case "paused":
+		case "present":
+			return state;
+		default:
+			console.warn("[encoder-dict] unknown status state:", state);
+			return "absent";
+	}
+}
+
+function applyStatus(p: StatusPayload): EncoderModelSnapshot {
 	return {
-		state: p.state as EncoderModelState,
+		state: normalizeEncoderState(p.state),
 		progress: p.progress,
 		downloadedBytes: p.downloadedBytes,
 		totalBytes: p.totalBytes,
@@ -68,19 +80,34 @@ function applyStatus(p: StatusPayload) {
 	};
 }
 
+async function runEncoderCommand(
+	promise: Promise<Result<null, string>>,
+): Promise<void> {
+	const result = await promise;
+	if (result.status === "error") {
+		throw new Error(result.error);
+	}
+}
+
 function cancelEncoderDownload(): void {
 	fireAndForget(
-		invoke("encoder_dict_download_cancel"),
+		runEncoderCommand(commands.encoderDictDownloadCancel()),
 		"encoder_dict_download_cancel",
 	);
 }
 
 function preloadEncoderModel(): void {
-	fireAndForget(invoke("encoder_dict_preload"), "encoder_dict_preload");
+	fireAndForget(
+		runEncoderCommand(commands.encoderDictPreload()),
+		"encoder_dict_preload",
+	);
 }
 
 function unloadEncoderModel(): void {
-	fireAndForget(invoke("encoder_dict_unload"), "encoder_dict_unload");
+	fireAndForget(
+		runEncoderCommand(commands.encoderDictUnload()),
+		"encoder_dict_unload",
+	);
 }
 
 export function useEncoderModel(): EncoderModel {
@@ -91,7 +118,8 @@ export function useEncoderModel(): EncoderModel {
 	// failed. Without this, a rejected start/remove leaves the card showing a
 	// state the backend never entered.
 	const reconcileFromBackend = () => {
-		invoke<StatusPayload>("encoder_dict_status")
+		commands
+			.encoderDictStatus()
 			.then((status) => setS(applyStatus(status)))
 			.catch((error) => {
 				console.error("[encoder-dict] status reconcile failed:", error);
@@ -100,7 +128,8 @@ export function useEncoderModel(): EncoderModel {
 
 	useEffect(() => {
 		let active = true;
-		invoke<StatusPayload>("encoder_dict_status")
+		commands
+			.encoderDictStatus()
 			.then((status) => {
 				if (active) {
 					setS(applyStatus(status));
@@ -114,11 +143,18 @@ export function useEncoderModel(): EncoderModel {
 			});
 		const offProgress = listen<StatusPayload>(
 			"encoder-dict:download-progress",
-			(e) => setS(applyStatus(e.payload)),
+			(e) => {
+				if (active) {
+					setS(applyStatus(e.payload));
+				}
+			},
 		);
 		const offComplete = listen<CompletePayload>(
 			"encoder-dict:download-complete",
-			(e) =>
+			(e) => {
+				if (!active) {
+					return;
+				}
 				setS(
 					e.payload.present
 						? {
@@ -135,18 +171,33 @@ export function useEncoderModel(): EncoderModel {
 								totalBytes: 0,
 								speedBps: 0,
 							},
-				),
+				);
+			},
 		);
 		return () => {
 			active = false;
-			offProgress.then((f) => f());
-			offComplete.then((f) => f());
+			offProgress
+				.then((f) => f())
+				.catch((error) => {
+					console.error(
+						"[encoder-dict] progress listener cleanup failed:",
+						error,
+					);
+				});
+			offComplete
+				.then((f) => f())
+				.catch((error) => {
+					console.error(
+						"[encoder-dict] complete listener cleanup failed:",
+						error,
+					);
+				});
 		};
 	}, []);
 
 	const start = () => {
 		setS((prev) => ({ ...prev, state: "downloading" }));
-		invoke("encoder_dict_download_start").catch((error) => {
+		runEncoderCommand(commands.encoderDictDownloadStart()).catch((error) => {
 			// The optimistic "downloading" state above is wrong if the start
 			// invoke rejected — surface it and reconcile with the real status.
 			console.error("[encoder-dict] download start failed:", error);
@@ -155,17 +206,17 @@ export function useEncoderModel(): EncoderModel {
 	};
 	const pause = () => {
 		setS((prev) => ({ ...prev, state: "paused" }));
-		fireAndForget(
-			invoke("encoder_dict_download_pause"),
-			"encoder_dict_download_pause",
-		);
+		runEncoderCommand(commands.encoderDictDownloadPause()).catch((error) => {
+			console.error("[encoder-dict] download pause failed:", error);
+			reconcileFromBackend();
+		});
 	};
 	const resume = () => {
 		setS((prev) => ({ ...prev, state: "downloading" }));
-		fireAndForget(
-			invoke("encoder_dict_download_resume"),
-			"encoder_dict_download_resume",
-		);
+		runEncoderCommand(commands.encoderDictDownloadResume()).catch((error) => {
+			console.error("[encoder-dict] download resume failed:", error);
+			reconcileFromBackend();
+		});
 	};
 	const remove = () => {
 		// Optimistically drop to "absent" so the card reflects the off-switch
@@ -177,7 +228,7 @@ export function useEncoderModel(): EncoderModel {
 			totalBytes: 0,
 			speedBps: 0,
 		});
-		invoke("encoder_dict_remove").catch((error) => {
+		runEncoderCommand(commands.encoderDictRemove()).catch((error) => {
 			// The optimistic "absent" state above is wrong if remove rejected —
 			// surface it and reconcile with the real on-disk status.
 			console.error("[encoder-dict] remove failed:", error);

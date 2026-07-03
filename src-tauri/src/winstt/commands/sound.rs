@@ -358,13 +358,13 @@ pub fn sound_library_remove(
         };
     }
     let p = Path::new(&path);
-    if p.exists() {
-        if let Err(err) = std::fs::remove_file(p) {
-            return SoundLibraryRemoveResult {
-                ok: false,
-                error: Some(err.to_string()),
-            };
-        }
+    if p.exists()
+        && let Err(err) = std::fs::remove_file(p)
+    {
+        return SoundLibraryRemoveResult {
+            ok: false,
+            error: Some(err.to_string()),
+        };
     }
     SoundLibraryRemoveResult {
         ok: true,

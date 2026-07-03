@@ -52,25 +52,25 @@ use ort::session::Session;
 use ort::value::{DynValue, Tensor};
 
 use degenerate::{
-    mark_directml_degenerate_model, DML_DEGENERATE_BLOCK_THRESHOLD, DML_PROVIDER_LABEL,
+    DML_DEGENERATE_BLOCK_THRESHOLD, DML_PROVIDER_LABEL, mark_directml_degenerate_model,
 };
 use loader::{build_session, load_decoder_with_fp16_repair};
 use ort_shapes::{
     device_for_providers, first_dim, kv_head_dim, read_config_usize, read_whisper_head_dims,
 };
 use token_select::{
-    build_suppress_token_mask, no_repeat_ngram_banned, select_whisper_token,
-    select_whisper_token_from_allowed, NO_REPEAT_NGRAM_SIZE,
+    NO_REPEAT_NGRAM_SIZE, build_suppress_token_mask, no_repeat_ngram_banned, select_whisper_token,
+    select_whisper_token_from_allowed,
 };
 
-use super::mel::{MelExtractor, HOP_LENGTH};
+use super::mel::{HOP_LENGTH, MelExtractor};
 use super::whisper_tokenizer::WhisperTokenizer;
 use super::{
-    kv_sort_key, num_cpus_best_effort as num_cpus, provider_label, Accelerator, EngineConfig,
-    EngineKind, Segment, SttError, SttResult, TranscribeOptions, Transcriber, Transcription,
-    WordResult,
+    Accelerator, EngineConfig, EngineKind, Segment, SttError, SttResult, TranscribeOptions,
+    Transcriber, Transcription, WordResult, kv_sort_key, num_cpus_best_effort as num_cpus,
+    provider_label,
 };
-use crate::winstt::word_timestamps::{self, lookup_alignment_heads, AlignArgs, CrossAttentions};
+use crate::winstt::word_timestamps::{self, AlignArgs, CrossAttentions, lookup_alignment_heads};
 
 /// Re-export so `stt::whisper::directml_degenerate_model_blocked` (backend.rs) keeps resolving.
 pub(crate) use degenerate::directml_degenerate_model_blocked;
@@ -240,15 +240,15 @@ impl WhisperEngine {
         // concrete ints). The empty step-0 cache must still be (0, num_heads, 0, head_dim)
         // or the merged decoder's If-node branch shapes mismatch. Fall back to config.json
         // (sibling of vocab.json): decoder_attention_heads + d_model/heads.
-        if kv_dims.iter().any(|&(h, d)| h <= 0 || d <= 0) {
-            if let Some((h, d)) = read_whisper_head_dims(vocab_path) {
-                for kv in kv_dims.iter_mut() {
-                    if kv.0 <= 0 {
-                        kv.0 = h;
-                    }
-                    if kv.1 <= 0 {
-                        kv.1 = d;
-                    }
+        if kv_dims.iter().any(|&(h, d)| h <= 0 || d <= 0)
+            && let Some((h, d)) = read_whisper_head_dims(vocab_path)
+        {
+            for kv in kv_dims.iter_mut() {
+                if kv.0 <= 0 {
+                    kv.0 = h;
+                }
+                if kv.1 <= 0 {
+                    kv.1 = d;
                 }
             }
         }
@@ -274,13 +274,13 @@ impl WhisperEngine {
 
         if std::env::var("WINSTT_STT_DEBUG").is_ok() {
             eprintln!(
-				"[whisper] {} past_kv tensors; dims[0]={:?}; use_cache_branch={}; cross_attn={}; multilingual={}",
-				past_kv_names.len(),
-				kv_dims.first(),
-				has_use_cache_branch,
-				has_cross_attention,
-				tokenizer.is_multilingual
-			);
+                "[whisper] {} past_kv tensors; dims[0]={:?}; use_cache_branch={}; cross_attn={}; multilingual={}",
+                past_kv_names.len(),
+                kv_dims.first(),
+                has_use_cache_branch,
+                has_cross_attention,
+                tokenizer.is_multilingual
+            );
         }
 
         let providers = cfg.providers.iter().map(provider_label).collect();
@@ -375,12 +375,11 @@ impl WhisperEngine {
                 tk.notimestamps_token_id,
             ]
         };
-        if tk.is_multilingual {
-            if let Some(lang) = opts.language.as_deref().filter(|l| !l.is_empty()) {
-                if let Some(tok) = tk.language_token(lang) {
-                    prompt[1] = tok;
-                }
-            }
+        if tk.is_multilingual
+            && let Some(lang) = opts.language.as_deref().filter(|l| !l.is_empty())
+            && let Some(tok) = tk.language_token(lang)
+        {
+            prompt[1] = tok;
         }
         prompt
     }
@@ -388,10 +387,10 @@ impl WhisperEngine {
     fn candidate_language_tokens(&self, candidates: &[String]) -> Vec<i64> {
         let mut out = Vec::new();
         for candidate in candidates {
-            if let Some(token) = self.tokenizer.language_token(candidate) {
-                if !out.contains(&token) {
-                    out.push(token);
-                }
+            if let Some(token) = self.tokenizer.language_token(candidate)
+                && !out.contains(&token)
+            {
+                out.push(token);
             }
         }
         out
@@ -792,12 +791,12 @@ impl WhisperEngine {
         // the reused cross-attn/encoder KV). Extracted values are session-owned and survive the
         // binding drop, so they rebind next step with no host round-trip.
         for (i, pname) in state.present_names.iter().enumerate() {
-            if let Some(v) = outputs.remove(pname.as_str()) {
-                if first_dim(&v) != 0 {
-                    state.past[i] = Some(v);
-                }
-                // else: present empty → keep the existing past[i] (reused encoder KV).
+            if let Some(v) = outputs.remove(pname.as_str())
+                && first_dim(&v) != 0
+            {
+                state.past[i] = Some(v);
             }
+            // else: present empty → keep the existing past[i] (reused encoder KV).
         }
         drop(outputs);
         drop(binding);

@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
 use crate::winstt::context::{
-    capture_prompt_fragment, empty_context, parse_snapshot, ContextMode, ContextReader,
-    WindowContextSnapshot,
+    ContextMode, ContextReader, WindowContextSnapshot, capture_prompt_fragment, empty_context,
+    parse_snapshot,
 };
 #[cfg(windows)]
 use crate::winstt::context::{MAX_BUFFER_BYTES, READ_TIMEOUT_MS};
@@ -99,12 +99,12 @@ fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
         }
     }
     // 2. Next to the executable.
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join("binaries").join(name);
-            if candidate.exists() {
-                return Some(candidate);
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidate = dir.join("binaries").join(name);
+        if candidate.exists() {
+            return Some(candidate);
         }
     }
     // 3. Dev fallback: prefer `src-tauri/binaries/` when present.

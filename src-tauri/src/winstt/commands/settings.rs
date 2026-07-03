@@ -45,10 +45,10 @@ use specta::Type;
 use tauri::{AppHandle, Emitter};
 
 use crate::winstt::settings_schema::{
-    is_secret, AudioSettings, CustomModifier, DictionaryEntry, GeneralSettings, GlobalSettings,
+    AudioSettings, CustomModifier, DictionaryEntry, GeneralSettings, GlobalSettings,
     HotkeySettings, IntegrationsSettings, LiveTranscriptionDisplay, LlmFeatureBase, LlmSettings,
-    ModelSettings, PresetEntry, PresetKey, QualitySettings, SnippetEntry, SoundLibraryEntry,
-    Transform, TtsCloud, TtsSettings, WinsttSettings, SECRET_KEYS,
+    ModelSettings, PresetEntry, PresetKey, QualitySettings, SECRET_KEYS, SnippetEntry,
+    SoundLibraryEntry, Transform, TtsCloud, TtsSettings, WinsttSettings, is_secret,
 };
 
 use self::runtime::{
@@ -57,6 +57,7 @@ use self::runtime::{
     apply_tts_runtime_settings,
 };
 use self::wakeword::apply_wakeword_runtime_settings;
+use crate::winstt::commands::secret_storage::is_encrypted;
 use crate::winstt::settings_store::{
     normalize_cross_field_settings, preserve_masked_secrets, read_settings_for_renderer,
     sanitize_settings_for_renderer, try_read_settings, try_seal_secrets, with_settings_write_lock,
@@ -82,13 +83,13 @@ pub(crate) use self::wakeword::{
 // `crate::winstt::settings_store` module (managers depend on it DOWNWARD). These
 // re-exports keep the historical `crate::winstt::commands::settings::X` paths the
 // route-layer callers and a few legacy sites still use; the constants are also
-// re-exported here for the onboarding command + secret sentinel consumers.
-pub(crate) use crate::winstt::settings_store::read_settings_raw;
+// re-exported here for secret sentinel consumers.
 pub use crate::winstt::settings_store::WINSTT_SETTINGS_KEY;
+pub(crate) use crate::winstt::settings_store::read_settings_raw;
+pub(crate) use crate::winstt::settings_store::SECRET_PRESENT_SENTINEL;
 pub use crate::winstt::settings_store::{
     init_settings_store, read_settings, recording_mode, seed_defaults, write_core_settings,
 };
-pub(crate) use crate::winstt::settings_store::{SECRET_PRESENT_SENTINEL, WINSTT_SETTINGS_FILE};
 
 /// The `settings:changed` plain event — the post-save full masked snapshot every other
 /// window re-hydrates its Zustand store from. Byte-identical to the reference
@@ -201,7 +202,10 @@ pub fn apply_settings_patch(
     // renderer broadcast run AFTER the lock is released — they call back into
     // `get_settings` / `read_settings`, so keeping them outside the guard avoids any
     // nested settings-lock acquisition (the lock is non-reentrant).
-    let (previous, next, changed_startup) = with_settings_write_lock(|| {
+    let (previous, next, changed_startup, changed) = with_settings_write_lock(|| {
+        let raw_previous = read_settings_raw(app);
+        let needs_secret_seal = has_unsealed_secrets(&raw_previous);
+
         // `previous` here is the PLAINTEXT view (secrets opened). The renderer's patch
         // is plaintext too, so the merge + diff operate entirely in plaintext — like
         // the reference's `snapshotSettings`, which decrypts before diffing.
@@ -221,6 +225,10 @@ pub fn apply_settings_patch(
         //     model, wakeword, and realtime changes in-process.
         let changed_startup = compute_restart_keys(&previous, &next);
 
+        if next == previous && !needs_secret_seal {
+            return Ok::<_, String>((previous, next, changed_startup, false));
+        }
+
         // (c) seal the secret fields at rest, then persist. Clone so runtime
         //     side-effects keep the plaintext `next`; only the on-disk copy is
         //     sealed and the renderer broadcast is masked below.
@@ -229,9 +237,15 @@ pub fn apply_settings_patch(
         debug_assert!(SECRET_KEYS.iter().all(|k| is_secret(k)));
         write_settings_value(app, &to_persist)?;
 
-        Ok::<_, String>((previous, next, changed_startup))
+        Ok::<_, String>((previous, next, changed_startup, true))
     })?;
     let needs_restart = !changed_startup.is_empty();
+    if !changed {
+        return Ok(SetSettingsResult {
+            needs_restart,
+            changed_startup_keys: changed_startup,
+        });
+    }
     if previous.general.recording_mode != next.general.recording_mode
         || previous.general.wake_word != next.general.wake_word
     {
@@ -289,14 +303,31 @@ fn compute_restart_keys(_prev: &WinsttSettings, _next: &WinsttSettings) -> Vec<S
     Vec::new()
 }
 
+fn has_unsealed_secret(value: &str) -> bool {
+    !value.is_empty() && !is_encrypted(value)
+}
+
+fn has_unsealed_secrets(settings: &WinsttSettings) -> bool {
+    has_unsealed_secret(&settings.llm.openrouter_api_key)
+        || has_unsealed_secret(&settings.integrations.elevenlabs.api_key)
+        || settings
+            .core
+            .post_process_api_keys
+            .values()
+            .any(|value| has_unsealed_secret(value))
+}
+
 /// Did any WinSTT-tree global hotkey's accelerator OR enable flag change between two
 /// snapshots? Used to trigger `reconcile_winstt_hotkeys` on save. Covers the
-/// transforms hotkey + enable, the TTS read-aloud hotkey + enable, and the re-paste
-/// hotkey (no enable flag). The PTT hotkey is intentionally excluded — the renderer
-/// owns its registration via `hotkey_register`.
+/// transforms hotkey + enable, post-processing profile swap hotkey + enable, the TTS
+/// read-aloud hotkey + enable, and the re-paste hotkey (no enable flag). The PTT
+/// hotkey is intentionally excluded — the renderer owns its registration via
+/// `hotkey_register`.
 fn winstt_hotkeys_changed(prev: &WinsttSettings, next: &WinsttSettings) -> bool {
     prev.llm.transforms.hotkey != next.llm.transforms.hotkey
         || prev.llm.transforms.enabled != next.llm.transforms.enabled
+        || prev.llm.profile_swap_hotkey != next.llm.profile_swap_hotkey
+        || prev.llm.dictation.enabled != next.llm.dictation.enabled
         || prev.tts.hotkey != next.tts.hotkey
         || prev.tts.enabled != next.tts.enabled
         || prev.general.repaste_hotkey != next.general.repaste_hotkey
@@ -792,6 +823,7 @@ fn validate_llm_settings(llm: &LlmSettings) -> Result<(), String> {
         MAX_SECRET_LEN,
     )?;
     validate_i64_range("llm.timeout", llm.timeout, 1_000, 30_000)?;
+    validate_hotkey("llm.profileSwapHotkey", &llm.profile_swap_hotkey, true)?;
     validate_llm_feature_base("llm.dictation", &llm.dictation.base)?;
     validate_presets_len("llm.dictation.presets", &llm.dictation.presets)?;
     validate_custom_modifiers(
@@ -1016,13 +1048,13 @@ fn validate_quantization(model_id: &str, quantization: &str) -> Result<(), Strin
     if quant.is_empty() || quant == "auto" {
         return Ok(());
     }
-    if let Some(entry) = crate::winstt::catalog::find(model_id) {
-        if !entry.available_quantizations.contains(&quant) {
-            return Err(format!(
-                "model.onnxQuantization '{quant}' is not available for model '{}'",
-                entry.id
-            ));
-        }
+    if let Some(entry) = crate::winstt::catalog::find(model_id)
+        && !entry.available_quantizations.contains(&quant)
+    {
+        return Err(format!(
+            "model.onnxQuantization '{quant}' is not available for model '{}'",
+            entry.id
+        ));
     }
     Ok(())
 }
@@ -1720,6 +1752,24 @@ mod tests {
         let current = WinsttSettings::default();
         let next = merge_patch_over(&current, PartialWinsttSettings::default());
         assert_eq!(next, current);
+    }
+
+    #[test]
+    fn detects_unsealed_plaintext_secrets() {
+        let mut settings = WinsttSettings::default();
+        assert!(!has_unsealed_secrets(&settings));
+
+        settings.llm.openrouter_api_key = "sk-plain".into();
+        assert!(has_unsealed_secrets(&settings));
+
+        settings.llm.openrouter_api_key = "enc:v1:feedface".into();
+        assert!(!has_unsealed_secrets(&settings));
+
+        settings
+            .core
+            .post_process_api_keys
+            .insert("openai".into(), "sk-legacy".into());
+        assert!(has_unsealed_secrets(&settings));
     }
 
     #[test]

@@ -25,7 +25,7 @@ use regex::Regex;
 
 use crate::helpers::regex::static_regex;
 
-use super::phonemize::{default_phonemizer, Phonemizer};
+use super::phonemize::{Phonemizer, default_phonemizer};
 use super::provider::LazyOrtEngine;
 use super::types::TtsDevice;
 
@@ -103,16 +103,23 @@ fn basic_tokenize_re() -> &'static Regex {
 /// `' '.join(re.findall(r"\w+|[^\w\s]", phonemes))` then char->id via the dense
 /// vocab (dropping misses). Mirrors KittenTTS basic_english_tokenize + TextCleaner.
 fn kitten_text_to_ids(phonemes: &str) -> Vec<i64> {
-    let joined = basic_tokenize_re()
-        .find_iter(phonemes)
-        .map(|m| m.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
     let vocab = kitten_vocab();
-    joined
-        .chars()
-        .filter_map(|c| vocab.get(&c).copied())
-        .collect()
+    let mut ids = Vec::with_capacity(phonemes.len());
+    let mut first = true;
+    for token in basic_tokenize_re().find_iter(phonemes) {
+        if first {
+            first = false;
+        } else if let Some(space) = vocab.get(&' ') {
+            ids.push(*space);
+        }
+        ids.extend(
+            token
+                .as_str()
+                .chars()
+                .filter_map(|c| vocab.get(&c).copied()),
+        );
+    }
+    ids
 }
 
 // ---------------------------------------------------------------------------
@@ -444,7 +451,7 @@ mod tests {
         assert_eq!(v.get(&'a'), Some(&43));
         assert_eq!(v.get(&'z'), Some(&68));
         assert_eq!(v.get(&'\u{0251}'), Some(&69)); // ɑ — first IPA
-                                                   // ascii 'g' IS in the dense table (unlike Kokoro), at letter position.
+        // ascii 'g' IS in the dense table (unlike Kokoro), at letter position.
         assert!(v.get(&'g').is_some());
     }
 

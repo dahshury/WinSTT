@@ -156,6 +156,49 @@ describe("useSettingsStore mutators", () => {
 		expect(useSettingsStore.getState().settings.llm.dictation.model).toBe("");
 	});
 
+	test("updateLlmPostProcessing mirrors shared profile fields into dictation and transforms", () => {
+		useSettingsStore.getState().updateLlmTransforms({
+			hotkey: "LCtrl+LAlt+T",
+			prompts: [
+				{
+					id: "p1",
+					name: "Keep",
+					prompt: "keep",
+					hotkey: "LCtrl+LAlt+K",
+					builtin: false,
+				},
+			],
+		});
+
+		useSettingsStore.getState().updateLlmPostProcessing({
+			enabled: true,
+			model: "llama3",
+			provider: "ollama",
+			presets: [{ key: "formal" }],
+			dictionaryAutoAddEnabled: true,
+		});
+
+		const { dictation, transforms } = useSettingsStore.getState().settings.llm;
+		expect(dictation.enabled).toBe(true);
+		expect(transforms.enabled).toBe(true);
+		expect(dictation.model).toBe("llama3");
+		expect(transforms.model).toBe("llama3");
+		expect(dictation.presets).toEqual([{ key: "formal" }]);
+		expect(transforms.presets).toEqual([{ key: "formal" }]);
+		expect(dictation.dictionaryAutoAddEnabled).toBe(true);
+		expect("dictionaryAutoAddEnabled" in transforms).toBe(false);
+		expect(transforms.hotkey).toBe("LCtrl+LAlt+T");
+		expect(transforms.prompts).toEqual([
+			{
+				id: "p1",
+				name: "Keep",
+				prompt: "keep",
+				hotkey: "LCtrl+LAlt+K",
+				builtin: false,
+			},
+		]);
+	});
+
 	test("updateDictionary replaces the dictionary list wholesale", () => {
 		const dict = [{ id: "1", term: "Kubernetes" }];
 		useSettingsStore.getState().updateDictionary(dict);

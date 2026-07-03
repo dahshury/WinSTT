@@ -10,8 +10,8 @@ use std::time::Instant;
 
 use winstt_app_lib::winstt::audio_conditioning::StreamingRmsNormalizer;
 use winstt_app_lib::winstt::wakeword::{
-    build_keywords_file, keyword_label, tokenize_phrase_for_kws_model, KeywordSpec, KwsModelPaths,
-    WakeWordConfig, WakeWordDetector, WakeWordProvider, KWS_BUNDLE_DIRNAME,
+    KWS_BUNDLE_DIRNAME, KeywordSpec, KwsModelPaths, WakeWordConfig, WakeWordDetector,
+    WakeWordProvider, build_keywords_file, keyword_label, tokenize_phrase_for_kws_model,
 };
 
 const SAMPLE_RATE: u32 = 16_000;

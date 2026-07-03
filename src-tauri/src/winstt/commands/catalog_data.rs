@@ -26,7 +26,7 @@ use crate::winstt::catalog::{self, Accelerator};
 mod cloud;
 mod dto;
 
-pub use cloud::{all_cloud_catalog_rows, cloud_catalog_rows, CloudCatalogModel};
+pub use cloud::{CloudCatalogModel, all_cloud_catalog_rows, cloud_catalog_rows};
 pub use dto::{
     CatalogModelInfo, ModelCacheInfo, ModelStateEntry, ModelsWithState, SystemInfoEntry,
     SystemInfoGpu,
@@ -760,9 +760,10 @@ mod tests {
     #[test]
     fn rich_rows_split_preview_native_streaming_and_final_reuse() {
         let rows = catalog_rows(Accelerator::Cpu);
-        assert!(rows
-            .iter()
-            .all(|r| r.supports_realtime == r.preview_capable));
+        assert!(
+            rows.iter()
+                .all(|r| r.supports_realtime == r.preview_capable)
+        );
 
         let tiny = rows
             .iter()

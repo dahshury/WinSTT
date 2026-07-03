@@ -27,14 +27,15 @@ pub fn get_current_theme(app: &AppHandle) -> AppTheme {
         AppTheme::Colored
     } else {
         // On other platforms, map system theme to our app theme
-        if let Some(main_window) = app.get_webview_window("main") {
-            match main_window.theme().unwrap_or(Theme::Dark) {
-                Theme::Light => AppTheme::Light,
-                Theme::Dark => AppTheme::Dark,
-                _ => AppTheme::Dark, // Default fallback
+        match app.get_webview_window("main") {
+            Some(main_window) => {
+                match main_window.theme().unwrap_or(Theme::Dark) {
+                    Theme::Light => AppTheme::Light,
+                    Theme::Dark => AppTheme::Dark,
+                    _ => AppTheme::Dark, // Default fallback
+                }
             }
-        } else {
-            AppTheme::Dark
+            None => AppTheme::Dark,
         }
     }
 }
@@ -182,10 +183,13 @@ fn last_transcript_text(entry: &HistoryEntry) -> &str {
 
 pub fn set_tray_visibility(app: &AppHandle, visible: bool) {
     let tray = app.state::<TrayIcon>();
-    if let Err(e) = tray.set_visible(visible) {
-        error!("Failed to set tray visibility: {}", e);
-    } else {
-        info!("Tray visibility set to: {}", visible);
+    match tray.set_visible(visible) {
+        Err(e) => {
+            error!("Failed to set tray visibility: {}", e);
+        }
+        Ok(()) => {
+            info!("Tray visibility set to: {}", visible);
+        }
     }
 }
 

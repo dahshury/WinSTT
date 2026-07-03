@@ -132,10 +132,10 @@ fn live_cpu_ram_snapshot() -> (u64, u64, f64) {
 fn live_gpu_entries() -> Vec<LiveGpuEntry> {
     #[cfg(windows)]
     {
-        use windows::core::Interface;
         use windows::Win32::Graphics::Dxgi::{
-            CreateDXGIFactory1, IDXGIAdapter3, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
+            CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIAdapter3, IDXGIFactory1,
         };
+        use windows::core::Interface;
 
         let mut gpus = Vec::new();
         // SAFETY: DXGI factory and adapter interfaces are used synchronously on this thread and

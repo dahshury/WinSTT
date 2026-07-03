@@ -14,7 +14,6 @@ export type {
 } from "@/entities/setting";
 
 export type CommonT = ReturnType<typeof useTranslations<"common">>;
-export type SettingsT = ReturnType<typeof useTranslations<"settings">>;
 
 export const SILENCE_STOP_MIN_SECONDS = 0.1;
 export const SILENCE_STOP_MAX_SECONDS = 10;

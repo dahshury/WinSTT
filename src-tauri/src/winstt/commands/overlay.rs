@@ -20,8 +20,8 @@
 //     above the taskbar.
 //
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex,
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -104,12 +104,16 @@ enum ResolvedPosition {
 
 /// Truthy env-flag check (1/true/yes/on, case-insensitive). Empty / 0 / false /
 /// no / off / unset → false. Ports `isForceOverlayEnvFlagSet`.
+fn is_force_overlay_env_value_set(value: &str) -> bool {
+    !matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "no" | "off"
+    )
+}
+
 fn is_force_overlay_env_flag_set() -> bool {
     match std::env::var("WINSTT_FORCE_OVERLAY") {
-        Ok(v) => !matches!(
-            v.trim().to_ascii_lowercase().as_str(),
-            "" | "0" | "false" | "no" | "off"
-        ),
+        Ok(v) => is_force_overlay_env_value_set(&v),
         Err(_) => false,
     }
 }
@@ -251,7 +255,7 @@ fn overlay_opacity_byte(opacity: f64) -> u8 {
 fn set_overlay_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Result<(), String> {
     use windows::Win32::Foundation::COLORREF;
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE, LWA_ALPHA,
+        GWL_EXSTYLE, GetWindowLongPtrW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongPtrW,
         WS_EX_LAYERED,
     };
 
@@ -421,7 +425,7 @@ fn ignore_cursor_events_for_show_reason(reason: &str) -> bool {
 #[cfg(target_os = "windows")]
 fn force_overlay_topmost(window: &tauri::WebviewWindow) {
     use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+        HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetWindowPos,
     };
     let w = window.clone();
     let _ = window.run_on_main_thread(move || {
@@ -468,7 +472,7 @@ fn apply_overlay_hit_regions(
     rects: &[OverlayHitRect],
 ) -> Result<(), String> {
     use windows::Win32::Graphics::Gdi::{
-        CombineRgn, CreateRectRgn, DeleteObject, SetWindowRgn, RGN_OR,
+        CombineRgn, CreateRectRgn, DeleteObject, RGN_OR, SetWindowRgn,
     };
 
     let hwnd = window.hwnd().map_err(|e| e.to_string())?;
@@ -814,12 +818,10 @@ mod tests {
 
     #[test]
     fn force_env_flag_truthiness() {
-        std::env::set_var("WINSTT_FORCE_OVERLAY", "1");
-        assert!(is_force_overlay_env_flag_set());
-        std::env::set_var("WINSTT_FORCE_OVERLAY", "off");
-        assert!(!is_force_overlay_env_flag_set());
-        std::env::remove_var("WINSTT_FORCE_OVERLAY");
-        assert!(!is_force_overlay_env_flag_set());
+        assert!(is_force_overlay_env_value_set("1"));
+        assert!(is_force_overlay_env_value_set("true"));
+        assert!(!is_force_overlay_env_value_set("off"));
+        assert!(!is_force_overlay_env_value_set(""));
     }
 
     #[test]

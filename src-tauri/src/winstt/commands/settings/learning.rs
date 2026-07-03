@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use tauri::AppHandle;
 
-use super::{apply_settings_patch, PartialWinsttSettings};
+use super::{PartialWinsttSettings, apply_settings_patch};
 use crate::winstt::llm::{DictationSideEffects, LearnedSnippet, SuggestedModifierPreset};
 use crate::winstt::settings_schema::{CustomModifier, DictionaryEntry, SnippetEntry};
 use crate::winstt::settings_store::read_settings;

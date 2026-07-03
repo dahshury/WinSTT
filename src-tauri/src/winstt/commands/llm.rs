@@ -36,13 +36,13 @@ use log::warn;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::winstt::cloud_stt::{
-    classify_cloud_failure_message, emit_cloud_failure, CloudSttErrorCode, CloudSttProvider,
+    CloudSttErrorCode, CloudSttProvider, classify_cloud_failure_message, emit_cloud_failure,
 };
 use crate::winstt::llm::{
-    self, build_dictation_system_prompt, build_system_prompt, DictationSideEffects, Vocab,
+    self, DictationSideEffects, Vocab, build_dictation_system_prompt, build_system_prompt,
 };
-use crate::winstt::managers::llm_manager::PullOutcome;
 use crate::winstt::managers::LlmManager;
+use crate::winstt::managers::llm_manager::PullOutcome;
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::{LlmProvider, WinsttSettings};
 
@@ -51,7 +51,7 @@ use super::settings::read_settings;
 
 use conversions::{dictation_presets, openrouter_options, to_llm_effort, transforms_presets};
 use ollama_proc::{emit_pull_progress, validate_model_name};
-use verify::{probe_verify, resolve_verify_api_key, VerifyProbe};
+use verify::{VerifyProbe, probe_verify, resolve_verify_api_key};
 
 // Re-exports preserving the public `winstt::commands::llm::*` paths.
 pub use payloads::{
@@ -1090,22 +1090,20 @@ pub async fn ollama_delete(
     let endpoint = settings.llm.endpoint.clone();
     let mgr = llm_manager.inner().clone();
     let (success, error) = mgr.ollama_delete(&endpoint, &model).await;
-    if !success {
-        if let Some(detail) = error.as_deref() {
-            record_llm_issue(
-                &app,
-                "llm",
-                "ollama_delete",
-                "Ollama model delete failed",
-                detail,
-                "ollama",
-                &model,
-                "",
-                "model_management",
-                true,
-                &[("endpoint", endpoint.as_str())],
-            );
-        }
+    if !success && let Some(detail) = error.as_deref() {
+        record_llm_issue(
+            &app,
+            "llm",
+            "ollama_delete",
+            "Ollama model delete failed",
+            detail,
+            "ollama",
+            &model,
+            "",
+            "model_management",
+            true,
+            &[("endpoint", endpoint.as_str())],
+        );
     }
     Ok(OllamaDeleteResultPayload {
         success,

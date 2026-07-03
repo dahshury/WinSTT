@@ -22,9 +22,9 @@
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::TranscriptionCoordinator;
 use crate::managers::audio::AudioRecordingManager;
 use crate::winstt::commands::settings::read_settings;
-use crate::TranscriptionCoordinator;
 use std::sync::Arc;
 
 /// The transcribe binding id the dictation pipeline drives. The renderer owns the

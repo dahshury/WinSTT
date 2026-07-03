@@ -1,8 +1,32 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
+import { commands } from "@/bindings";
 import { CONTEXT_PLAYGROUND_ENABLED } from "@/shared/config/debug-flags";
 import { TrayMenu } from "./TrayMenu";
+
+interface OpenWindowCall {
+	height: number | null;
+	name: string;
+	width: number | null;
+	x: number | null;
+	y: number | null;
+}
+
+const originalOpenWindow = commands.openWindow;
+let openWindowCalls: OpenWindowCall[] = [];
+
+beforeEach(() => {
+	openWindowCalls = [];
+	commands.openWindow = (async (name, x, y, width, height) => {
+		openWindowCalls.push({ name, x, y, width, height });
+		return { status: "ok", data: null };
+	}) satisfies typeof commands.openWindow;
+});
+
+afterEach(() => {
+	commands.openWindow = originalOpenWindow;
+});
 
 describe("TrayMenu", () => {
 	test("renders without crashing", () => {
@@ -39,7 +63,34 @@ describe("TrayMenu", () => {
 		expect(text).toContain("QuitQ");
 	});
 
-	test("opens microphone selector as a tray popover", () => {
+	test("renders action icons without adding icons to recording modes", () => {
+		render(
+			<IntlProvider>
+				<TrayMenu />
+			</IntlProvider>,
+		);
+
+		for (const name of [
+			/^Show Window/,
+			/^Settings/,
+			/^Copy Last Transcript/,
+			/^Transcribe File/,
+			/^Check for Updates/,
+			/^Quit/,
+		]) {
+			expect(screen.getByRole("button", { name }).querySelector("svg")).not.toBe(
+				null,
+			);
+		}
+
+		for (const name of ["PTT", "Toggle", "Listen", "Wake Word"]) {
+			expect(
+				screen.getByRole("button", { name }).querySelector("svg"),
+			).toBeNull();
+		}
+	});
+
+	test("opens microphone selector as a detached tray picker", () => {
 		const { container } = render(
 			<IntlProvider>
 				<TrayMenu />
@@ -50,11 +101,14 @@ describe("TrayMenu", () => {
 			1,
 		);
 		fireEvent.click(screen.getByText("System Default"));
-		expect(
-			container.textContent?.match(/System Default/g)?.length ?? 0,
-		).toBeGreaterThan(1);
-		expect(container.firstElementChild?.className).toContain("w-[440px]");
-		expect(container.firstElementChild?.className).toContain(
+		expect(openWindowCalls.some((call) => call.name === "device-picker")).toBe(
+			true,
+		);
+		expect(container.textContent?.match(/System Default/g)?.length ?? 0).toBe(
+			1,
+		);
+		expect(container.firstElementChild?.className).toContain("w-[196px]");
+		expect(container.firstElementChild?.className).not.toContain(
 			"flex-row-reverse",
 		);
 	});

@@ -4,7 +4,7 @@
 
 use ndarray::{Array2, Array3};
 
-use super::{dtw, median_filter_1d, split_tokens_into_words, WordTsError, TOKENS_PER_SECOND};
+use super::{TOKENS_PER_SECOND, WordTsError, dtw, median_filter_1d, split_tokens_into_words};
 
 /// Per-word alignment result: rendered text + start/end seconds + token IDs.
 #[derive(Debug, Clone, PartialEq)]

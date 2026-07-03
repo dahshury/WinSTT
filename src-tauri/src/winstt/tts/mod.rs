@@ -37,25 +37,26 @@ mod types;
 mod voices;
 
 pub use self::cloud::{
+    CLOUD_OUTPUT_FORMAT, CloudSynthesisRequest, CloudVoice, CloudVoiceSettings,
+    ELEVENLABS_SUBSCRIPTION_URL, ELEVENLABS_TTS_BASE, ELEVENLABS_VOICES_URL, ElevenLabsEngine,
     build_cloud_body, build_cloud_url, classify_cloud_status, parse_cloud_voices,
-    parse_detail_status, CloudSynthesisRequest, CloudVoice, CloudVoiceSettings, ElevenLabsEngine,
-    CLOUD_OUTPUT_FORMAT, ELEVENLABS_SUBSCRIPTION_URL, ELEVENLABS_TTS_BASE, ELEVENLABS_VOICES_URL,
+    parse_detail_status,
 };
-pub use self::download::{download_kokoro_assets, DownloadControl, DownloadError};
-pub use self::kokoro::{KokoroConfig, KokoroEngine, KOKORO_SAMPLE_RATE};
+pub use self::download::{DownloadControl, DownloadError, download_kokoro_assets};
+pub use self::kokoro::{KOKORO_SAMPLE_RATE, KokoroConfig, KokoroEngine};
 pub use self::local::KokoroLocalEngine;
 pub use self::openrouter::OpenRouterTtsEngine;
 pub use self::service::{
-    tts_error_category, TtsChunkPayload, TtsEventEmitter, TtsManager, TtsSource,
+    TtsChunkPayload, TtsEventEmitter, TtsManager, TtsSource, tts_error_category,
 };
-pub use self::splitter::{split_sentences, DEFAULT_MAX_SENTENCE_LEN};
+pub use self::splitter::{DEFAULT_MAX_SENTENCE_LEN, split_sentences};
 pub use self::types::{
-    clamp_cloud_speed, clamp_speed, clamp_speed_to_range, ChunkSink, Format, Gender,
-    LocalTtsConfig, SentenceAudio, SynthesisChunk, TtsDevice, TtsEngine, TtsError, TtsResult,
-    VoiceInfo, CLOUD_MAX_SPEED, CLOUD_MIN_SPEED, MAX_SPEED, MAX_SYNTHESIS_CHARS, MIN_SPEED,
+    CLOUD_MAX_SPEED, CLOUD_MIN_SPEED, ChunkSink, Format, Gender, LocalTtsConfig, MAX_SPEED,
+    MAX_SYNTHESIS_CHARS, MIN_SPEED, SentenceAudio, SynthesisChunk, TtsDevice, TtsEngine, TtsError,
+    TtsResult, VoiceInfo, clamp_cloud_speed, clamp_speed, clamp_speed_to_range,
 };
 pub use self::voices::{
-    voice_by_id, voices_for_language, KOKORO_VOICE_CATALOG, SUPPORTED_LANGUAGES,
+    KOKORO_VOICE_CATALOG, SUPPORTED_LANGUAGES, voice_by_id, voices_for_language,
 };
 
 /// Per-model TTS cache dir (`%LOCALAPPDATA%/winstt/tts/<model-id>/`). This is the

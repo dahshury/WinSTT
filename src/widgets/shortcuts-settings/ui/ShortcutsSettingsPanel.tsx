@@ -25,6 +25,10 @@ export function ShortcutsSettingsPanel() {
 	const transformHotkey = useSettingsStore(
 		(s) => s.settings.llm?.transforms?.hotkey ?? "",
 	);
+	const profileSwapHotkey = useSettingsStore(
+		(s) => s.settings.llm?.profileSwapHotkey ?? "",
+	);
+	const updateLlm = useSettingsStore((s) => s.updateLlmSettings);
 	const updateTransforms = useSettingsStore((s) => s.updateLlmTransforms);
 	// A hotkey is meaningless while its feature is off — the backend doesn't even
 	// register it (see `reconcile_winstt_hotkeys`, gated on the same flags). Mirror
@@ -34,136 +38,167 @@ export function ShortcutsSettingsPanel() {
 	const transformsEnabled = useSettingsStore(
 		(s) => s.settings.llm?.transforms?.enabled ?? false,
 	);
+	const postProcessingEnabled = useSettingsStore(
+		(s) =>
+			Boolean(s.settings.llm?.dictation?.enabled) ||
+			Boolean(s.settings.llm?.transforms?.enabled),
+	);
 	const th = useTranslations("hotkey");
 	const tt = useTranslations("tts");
 	const tl = useTranslations("llm");
 	const pttKey = hotkey?.pushToTalkKey ?? DEFAULT_SETTINGS.hotkey.pushToTalkKey;
 	// Each recorder must reject anything equal-to / subset-of / superset-of the
-	// OTHER three bindings — otherwise pressing one hotkey would also satisfy the
+	// OTHER bindings — otherwise pressing one hotkey would also satisfy the
 	// matcher for another. Labels are localized here so the inline error names
 	// the colliding binding by its visible setting name.
 	const pttLabel = th("conflictOtherPushToTalk");
 	const repasteLabel = th("conflictOtherRepaste");
 	const ttsLabel = th("conflictOtherTts");
 	const transformLabel = tl("subTransformTitle");
+	const profileSwapLabel = "Post processing profile swap";
 	const pttForbidden: ForbiddenCombo[] = [
 		{ combo: repasteHotkey, label: repasteLabel },
 		{ combo: ttsHotkey, label: ttsLabel },
 		{ combo: transformHotkey, label: transformLabel },
+		{ combo: profileSwapHotkey, label: profileSwapLabel },
 	];
 	const repasteForbidden: ForbiddenCombo[] = [
 		{ combo: pttKey, label: pttLabel },
 		{ combo: ttsHotkey, label: ttsLabel },
 		{ combo: transformHotkey, label: transformLabel },
+		{ combo: profileSwapHotkey, label: profileSwapLabel },
 	];
 	const ttsForbidden: ForbiddenCombo[] = [
 		{ combo: pttKey, label: pttLabel },
 		{ combo: repasteHotkey, label: repasteLabel },
 		{ combo: transformHotkey, label: transformLabel },
+		{ combo: profileSwapHotkey, label: profileSwapLabel },
 	];
 	const transformForbidden: ForbiddenCombo[] = [
 		{ combo: pttKey, label: pttLabel },
 		{ combo: repasteHotkey, label: repasteLabel },
 		{ combo: ttsHotkey, label: ttsLabel },
+		{ combo: profileSwapHotkey, label: profileSwapLabel },
+	];
+	const profileSwapForbidden: ForbiddenCombo[] = [
+		{ combo: pttKey, label: pttLabel },
+		{ combo: repasteHotkey, label: repasteLabel },
+		{ combo: ttsHotkey, label: ttsLabel },
+		{ combo: transformHotkey, label: transformLabel },
 	];
 
 	return (
 		<div className="flex flex-col gap-2">
 			{/* ── Hotkey (Push-to-Talk disabled in Listen mode — the hotkey
 			    isn't used to start/stop a server-driven listen session) */}
-			<SettingSection icon={CommandIcon} title={th("configuration")}>
-				<div className="flex flex-col">
-					<div className="py-2">
-						<SettingField
-							disabled={recordingMode === "listen"}
-							isDefault={pttKey === DEFAULT_SETTINGS.hotkey.pushToTalkKey}
-							label={th("pushToTalkKey")}
-							onReset={() =>
-								updateHotkey({
-									pushToTalkKey: DEFAULT_SETTINGS.hotkey.pushToTalkKey,
-								})
-							}
-							tooltip={th("pushToTalkKeyTooltip")}
-						>
-							<HotkeyRecorder
-								currentKey={pttKey}
-								forbiddenCombos={pttForbidden}
-								onKeyRecorded={(key) => updateHotkey({ pushToTalkKey: key })}
-							/>
-						</SettingField>
-					</div>
-					<div className="py-2">
-						<SettingField
-							isDefault={
-								repasteHotkey === DEFAULT_SETTINGS.general.repasteHotkey
-							}
-							label={th("repasteKey")}
-							onReset={() =>
-								updateGeneral({
-									repasteHotkey: DEFAULT_SETTINGS.general.repasteHotkey,
-								})
-							}
-							tooltip={th("repasteKeyTooltip")}
-						>
-							<HotkeyRecorder
-								currentKey={repasteHotkey}
-								forbiddenCombos={repasteForbidden}
-								onKeyRecorded={(key) => updateGeneral({ repasteHotkey: key })}
-							/>
-						</SettingField>
-					</div>
-					<div className="py-2">
-						<SettingField
-							disabled={!ttsEnabled}
-							isDefault={ttsHotkey === DEFAULT_SETTINGS.tts.hotkey}
-							label={tt("hotkeyLabel")}
-							onReset={() => updateTts({ hotkey: DEFAULT_SETTINGS.tts.hotkey })}
-							tooltip={tt("hotkeyHint")}
-						>
-							<HotkeyRecorder
-								currentKey={ttsHotkey}
-								forbiddenCombos={ttsForbidden}
-								onKeyRecorded={(key) => updateTts({ hotkey: key })}
-							/>
-						</SettingField>
-					</div>
-					{/* ── Text-transformation hotkey — global combo that runs the
-					    composed LLM transform on the current selection. Lives here
-					    with the other global hotkeys; the transforms feature itself
-					    is configured in the Text-transformation settings. */}
-					<div className="py-2">
-						<SettingField
-							disabled={!transformsEnabled}
-							isDefault={
-								transformHotkey === DEFAULT_SETTINGS.llm.transforms.hotkey
-							}
-							label={tl("subTransformTitle")}
-							onReset={() =>
-								updateTransforms({
-									hotkey: DEFAULT_SETTINGS.llm.transforms.hotkey,
-								})
-							}
-							tooltip={`${tl("transformHotkeyTooltip")} ${tl("transformHotkeyCaption")}`}
-						>
-							<HotkeyRecorder
-								currentKey={transformHotkey}
-								forbiddenCombos={transformForbidden}
-								onKeyRecorded={(key) => updateTransforms({ hotkey: key })}
-							/>
-						</SettingField>
-					</div>
-					<div className="py-3">
-						<FormControl
-							label={th("shortcutsLegendLabel")}
-							tooltip={`${th("shortcutsLegendTooltip")} ${th("shortcutsLegendCaption")}`}
-						>
-							{/* The legend reads the same hotkey state the recorder
-							    above writes, so changing the binding above
-							    instantly re-tints the central hub here. */}
-							<HotkeyShortcutsLegend disabled={recordingMode === "listen"} />
-						</FormControl>
-					</div>
-				</div>
+			<SettingSection
+				boxed
+				divided
+				icon={CommandIcon}
+				title={th("configuration")}
+			>
+				<SettingField
+					disabled={recordingMode === "listen"}
+					isDefault={pttKey === DEFAULT_SETTINGS.hotkey.pushToTalkKey}
+					label={th("pushToTalkKey")}
+					layout="row"
+					onReset={() =>
+						updateHotkey({
+							pushToTalkKey: DEFAULT_SETTINGS.hotkey.pushToTalkKey,
+						})
+					}
+					tooltip={th("pushToTalkKeyTooltip")}
+				>
+					<HotkeyRecorder
+						currentKey={pttKey}
+						forbiddenCombos={pttForbidden}
+						onKeyRecorded={(key) => updateHotkey({ pushToTalkKey: key })}
+					/>
+				</SettingField>
+				<SettingField
+					isDefault={repasteHotkey === DEFAULT_SETTINGS.general.repasteHotkey}
+					label={th("repasteKey")}
+					layout="row"
+					onReset={() =>
+						updateGeneral({
+							repasteHotkey: DEFAULT_SETTINGS.general.repasteHotkey,
+						})
+					}
+					tooltip={th("repasteKeyTooltip")}
+				>
+					<HotkeyRecorder
+						currentKey={repasteHotkey}
+						forbiddenCombos={repasteForbidden}
+						onKeyRecorded={(key) => updateGeneral({ repasteHotkey: key })}
+					/>
+				</SettingField>
+				<SettingField
+					disabled={!ttsEnabled}
+					isDefault={ttsHotkey === DEFAULT_SETTINGS.tts.hotkey}
+					label={tt("hotkeyLabel")}
+					layout="row"
+					onReset={() => updateTts({ hotkey: DEFAULT_SETTINGS.tts.hotkey })}
+					tooltip={tt("hotkeyHint")}
+				>
+					<HotkeyRecorder
+						currentKey={ttsHotkey}
+						forbiddenCombos={ttsForbidden}
+						onKeyRecorded={(key) => updateTts({ hotkey: key })}
+					/>
+				</SettingField>
+				{/* Profile-swap hotkey: global combo that cycles saved post-processing
+				    profiles using the order from the LLM settings profile picker. */}
+				<SettingField
+					disabled={!postProcessingEnabled}
+					isDefault={
+						profileSwapHotkey === DEFAULT_SETTINGS.llm.profileSwapHotkey
+					}
+					label={profileSwapLabel}
+					layout="row"
+					onReset={() =>
+						updateLlm({
+							profileSwapHotkey: DEFAULT_SETTINGS.llm.profileSwapHotkey,
+						})
+					}
+					tooltip="Press this combo from any app to cycle through saved post-processing profiles in the order shown in LLM Post-Processing."
+				>
+					<HotkeyRecorder
+						currentKey={profileSwapHotkey}
+						forbiddenCombos={profileSwapForbidden}
+						onKeyRecorded={(key) => updateLlm({ profileSwapHotkey: key })}
+					/>
+				</SettingField>
+				{/* ── Text-transformation hotkey — global combo that runs the
+				    composed LLM transform on the current selection. Lives here
+				    with the other global hotkeys; the transforms feature itself
+				    is configured in the Text-transformation settings. */}
+				<SettingField
+					disabled={!transformsEnabled}
+					isDefault={transformHotkey === DEFAULT_SETTINGS.llm.transforms.hotkey}
+					label={tl("subTransformTitle")}
+					layout="row"
+					onReset={() =>
+						updateTransforms({
+							hotkey: DEFAULT_SETTINGS.llm.transforms.hotkey,
+						})
+					}
+					tooltip={`${tl("transformHotkeyTooltip")} ${tl("transformHotkeyCaption")}`}
+				>
+					<HotkeyRecorder
+						currentKey={transformHotkey}
+						forbiddenCombos={transformForbidden}
+						onKeyRecorded={(key) => updateTransforms({ hotkey: key })}
+					/>
+				</SettingField>
+				<FormControl
+					label={th("shortcutsLegendLabel")}
+					tooltip={`${th("shortcutsLegendTooltip")} ${th("shortcutsLegendCaption")}`}
+				>
+					{/* The legend reads the same hotkey state the recorder
+					    above writes, so changing the binding above
+					    instantly re-tints the central hub here. */}
+					<HotkeyShortcutsLegend disabled={recordingMode === "listen"} />
+				</FormControl>
 			</SettingSection>
 		</div>
 	);

@@ -8,6 +8,7 @@ import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
 import { isFavoritesGroupValue } from "../../core/favorites";
 import { GROUP_HEADER_CLASSES } from "../../core/model-card/card-constants";
 import { FavoritesGroupLabel } from "../../core/model-card/FavoritesGroupLabel";
+import { ModelListScrollbarHeaderMask } from "../../core/ModelListScrollbarHeaderMask";
 import {
 	type TtsEngineKey,
 	type TtsListGroup,
@@ -152,47 +153,53 @@ export function TtsModelList({
 }: TtsModelListProps) {
 	return (
 		<div
-			className="flex min-h-0 flex-1 flex-col overflow-y-auto [overflow-y:overlay]"
-			data-slot="tts-model-list"
+			className="relative flex min-h-0 flex-1 overflow-hidden"
+			data-slot="tts-model-list-shell"
 		>
-			<Combobox.Status className="sr-only">
-				{visibleModelCount === 1
-					? "1 voice available"
-					: `${visibleModelCount} voices available`}
-			</Combobox.Status>
-			<Combobox.Empty className="block">
-				<EmptyState hasActiveFilters={hasActiveFilters} />
-			</Combobox.Empty>
-			<Combobox.List className="p-0 pb-2">
-				{(group: TtsListGroup) => (
-					<Combobox.Group
-						className="flex flex-col"
-						items={group.items}
-						key={group.value}
-					>
-						{isFavoritesGroupValue(group.value) ? (
-							<FavoritesGroupLabel
-								count={group.items.length}
-								noun="voice model"
-							/>
-						) : (
-							<EngineLabel engine={group.value} />
-						)}
-						<ModelCards
-							currentQuantization={currentQuantization}
-							getDownloadSnapshot={getDownloadSnapshot}
-							isFavorite={isFavorite}
+			<div
+				className="flex min-h-0 flex-1 flex-col overflow-y-auto [overflow-y:overlay]"
+				data-slot="tts-model-list"
+			>
+				<Combobox.Status className="sr-only">
+					{visibleModelCount === 1
+						? "1 voice available"
+						: `${visibleModelCount} voices available`}
+				</Combobox.Status>
+				<Combobox.Empty className="block">
+					<EmptyState hasActiveFilters={hasActiveFilters} />
+				</Combobox.Empty>
+				<Combobox.List className="p-0 pb-2">
+					{(group: TtsListGroup) => (
+						<Combobox.Group
+							className="flex flex-col"
 							items={group.items}
-							onDownloadAction={onDownloadAction}
-							onRequestDeleteQuant={onRequestDeleteQuant}
-							onSelect={onSelect}
-							onToggleFavorite={onToggleFavorite}
-							selectedId={selectedId}
-							statesById={statesById}
-						/>
-					</Combobox.Group>
-				)}
-			</Combobox.List>
+							key={group.value}
+						>
+							{isFavoritesGroupValue(group.value) ? (
+								<FavoritesGroupLabel
+									count={group.items.length}
+									noun="voice model"
+								/>
+							) : (
+								<EngineLabel engine={group.value} />
+							)}
+							<ModelCards
+								currentQuantization={currentQuantization}
+								getDownloadSnapshot={getDownloadSnapshot}
+								isFavorite={isFavorite}
+								items={group.items}
+								onDownloadAction={onDownloadAction}
+								onRequestDeleteQuant={onRequestDeleteQuant}
+								onSelect={onSelect}
+								onToggleFavorite={onToggleFavorite}
+								selectedId={selectedId}
+								statesById={statesById}
+							/>
+						</Combobox.Group>
+					)}
+				</Combobox.List>
+			</div>
+			<ModelListScrollbarHeaderMask />
 		</div>
 	);
 }

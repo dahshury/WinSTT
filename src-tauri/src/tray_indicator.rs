@@ -1,8 +1,8 @@
 use crate::winstt::commands::settings;
 use crate::winstt::settings_schema::{GeneralSettings, VisualizerAuraShape, VisualizerType};
 use once_cell::sync::Lazy;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::image::Image;
@@ -186,10 +186,10 @@ pub(crate) fn on_recording_stop(app: &AppHandle) {
 }
 
 pub(crate) fn on_audio_level(level: f32) {
-    if let Ok(mut state) = TRAY_INDICATOR.state.lock() {
-        if state.is_recording {
-            state.raw_level = (level as f64).clamp(0.0, 1.0);
-        }
+    if let Ok(mut state) = TRAY_INDICATOR.state.lock()
+        && state.is_recording
+    {
+        state.raw_level = (level as f64).clamp(0.0, 1.0);
     }
 }
 
@@ -295,12 +295,14 @@ fn reconcile_view(app: &AppHandle) {
 }
 
 fn spawn_tick(app: AppHandle, generation: u64, interval: Duration) {
-    thread::spawn(move || loop {
-        thread::sleep(interval);
-        if TRAY_INDICATOR.generation.load(Ordering::SeqCst) != generation {
-            break;
+    thread::spawn(move || {
+        loop {
+            thread::sleep(interval);
+            if TRAY_INDICATOR.generation.load(Ordering::SeqCst) != generation {
+                break;
+            }
+            render_frame_for_generation(&app, generation);
         }
-        render_frame_for_generation(&app, generation);
     });
 }
 

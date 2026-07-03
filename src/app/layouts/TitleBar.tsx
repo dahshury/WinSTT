@@ -65,7 +65,7 @@ export function TitleBar() {
 	return (
 		<SurfaceProvider value={barLevel}>
 			<header
-				className={`titlebar-drag relative flex h-8 shrink-0 items-stretch border-border border-b ${surfaceClasses(barLevel, 1)}`}
+				className={`titlebar-drag relative flex h-8 shrink-0 items-stretch ${surfaceClasses(barLevel, 1)}`}
 			>
 				{/* Left: Branding */}
 				<div className="flex items-center pl-3">
@@ -89,7 +89,10 @@ export function TitleBar() {
 				    stays at the true window midpoint regardless of the branding /
 				    control widths. pointer-events-none lets drags + the window
 				    controls behind it stay live; only the badge itself opts back in. */}
-				<div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+				<div
+					className="pointer-events-none absolute inset-x-0 top-0 bottom-px flex items-center justify-center"
+					data-slot="titlebar-hotkey-center"
+				>
 					<div className="titlebar-no-drag pointer-events-auto">
 						<HotkeyDisplay isConnected={isConnected} side="bottom" />
 					</div>

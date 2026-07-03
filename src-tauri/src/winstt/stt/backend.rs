@@ -39,7 +39,7 @@ use crate::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
 use crate::winstt::audio_conditioning::peak_normalize;
 use crate::winstt::stt::formatting::apply_deterministic_formatting;
 use crate::winstt::stt::vad_segment::{
-    compact_for_transcription, vad_segment_decode, VAD_COMPACT_MIN_S,
+    VAD_COMPACT_MIN_S, compact_for_transcription, vad_segment_decode,
 };
 use crate::winstt::stt::{EngineConfig, TranscribeOptions, Transcriber};
 use anyhow::Result;
@@ -50,6 +50,30 @@ use tauri::{AppHandle, Manager};
 const STT_SAMPLE_RATE: usize = 16_000;
 const SLOW_BACKEND_SETUP_PHASE_MS: u128 = 1_000;
 const SLOW_BACKEND_ENGINE_PHASE_MS: u128 = 10_000;
+
+/// Trailing silence appended to the SINGLE-PASS final decode so the engine has quiet
+/// context to close out the last word (no end-of-audio clipping). Applied HERE — in the
+/// single-pass branch only — and NOT before the long-form routing decision: when the pad
+/// was added upstream (the core's old `local_final_decode_audio_with_silence`), it
+/// inflated the apparent length, shoving recordings just UNDER `VAD_COMPACT_MIN_S` onto
+/// the VAD-segmentation path, which paid two Silero sweeps only to compact the synthetic
+/// pad straight back out.
+const FINAL_DECODE_SILENCE_PAD_MS: usize = 700;
+
+/// Peak-normalized `audio` followed by [`FINAL_DECODE_SILENCE_PAD_MS`] of zeros.
+fn peak_normalize_with_final_silence_pad(audio: &[f32]) -> Vec<f32> {
+    let pad_samples = STT_SAMPLE_RATE * FINAL_DECODE_SILENCE_PAD_MS / 1000;
+    let mut padded = Vec::with_capacity(audio.len() + pad_samples);
+    let peak = audio.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+    if peak > 0.0 {
+        let gain = 0.95 / peak;
+        padded.extend(audio.iter().map(|&x| x * gain));
+    } else {
+        padded.extend_from_slice(audio);
+    }
+    padded.resize(padded.len() + pad_samples, 0.0);
+    padded
+}
 
 /// Which load/decode path a model id routes to. Decided by id namespace (cloud prefix → catalog
 /// lookup → neither). The core branches on this in `dispatch_load` / `transcribe`.
@@ -162,11 +186,7 @@ fn quantization_log_label(q: crate::winstt::stt::Quantization) -> &'static str {
 }
 
 fn quantization_log_label_raw(raw: &str) -> &str {
-    if raw.is_empty() {
-        "default"
-    } else {
-        raw
-    }
+    if raw.is_empty() { "default" } else { raw }
 }
 
 fn samples_to_ms(samples: usize) -> u64 {
@@ -446,30 +466,31 @@ impl SttBackend for WinsttSttBackend {
             ..Default::default()
         };
 
-        // Peak-normalize once at the WinSTT backend boundary.
-        let normalize_started = Instant::now();
-        let conditioned = peak_normalize(audio);
-        record_slow_backend_phase(
-            app,
-            &meta,
-            "peak_normalize",
-            normalize_started.elapsed(),
-            SLOW_BACKEND_SETUP_PHASE_MS,
-        );
         // Pause-heavy recordings waste decoder time on thinking silence. For local offline engines,
         // run a VAD compaction pass that keeps at most a short natural pause between speech runs.
         // If the compacted result still exceeds an engine window (Whisper's 30 s mel wall, AED
         // token caps), the same path chunks it on speech boundaries.
         const MAX_CHUNK_S: f32 = 28.0; // headroom under Whisper's 30 s mel wall
         let transcribe_once = |engine: &mut dyn Transcriber, phase: &str| -> Result<String> {
+            // Single-pass decodes get the trailing-silence pad (the VAD-segment path
+            // compacts silences anyway, so it never wants the pad).
+            let normalize_started = Instant::now();
+            let padded = peak_normalize_with_final_silence_pad(audio);
+            record_slow_backend_phase(
+                app,
+                &meta,
+                "peak_normalize",
+                normalize_started.elapsed(),
+                SLOW_BACKEND_SETUP_PHASE_MS,
+            );
             log::info!(
-                "[stt][{request_id}] {phase}_start model='{model_id}' kind={kind_label} samples={} audio_ms={}",
-                conditioned.len(),
-                samples_to_ms(conditioned.len())
+                "[stt][{request_id}] {phase}_start model='{model_id}' kind={kind_label} samples={} audio_ms={} final_silence_pad_ms={FINAL_DECODE_SILENCE_PAD_MS}",
+                padded.len(),
+                samples_to_ms(padded.len())
             );
             let phase_started = Instant::now();
             let result = engine
-                .transcribe(&conditioned, &opts)
+                .transcribe(&padded, &opts)
                 .map(|t| t.text)
                 .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e));
             let elapsed = phase_started.elapsed();
@@ -488,72 +509,87 @@ impl SttBackend for WinsttSttBackend {
             result
         };
         let non_native_offline = !kind.supports_native_streaming();
+        let audio_len = audio.len();
         let needs_long_form_segmenting =
-            conditioned.len() > (MAX_CHUNK_S * 16_000.0) as usize && non_native_offline;
+            audio_len > (MAX_CHUNK_S * 16_000.0) as usize && non_native_offline;
         let should_vad_compact =
-            conditioned.len() > (VAD_COMPACT_MIN_S * 16_000.0) as usize && non_native_offline;
+            audio_len > (VAD_COMPACT_MIN_S * 16_000.0) as usize && non_native_offline;
         log::info!(
-            "[stt][{request_id}] local_decode_route model='{model_id}' kind={kind_label} path={} conditioned_samples={} conditioned_audio_ms={} vad_compact_min_s={VAD_COMPACT_MIN_S}",
+            "[stt][{request_id}] local_decode_route model='{model_id}' kind={kind_label} path={} input_samples={} input_audio_ms={} vad_compact_min_s={VAD_COMPACT_MIN_S}",
             if should_vad_compact {
                 "vad_segment"
             } else {
                 "single_pass"
             },
-            conditioned.len(),
-            samples_to_ms(conditioned.len())
+            audio_len,
+            samples_to_ms(audio_len)
         );
         let text = if should_vad_compact {
             let vad_build_started = Instant::now();
-            match build_segmentation_vad(app) {
-                Ok(mut vad) => {
-                    let vad_build_elapsed = vad_build_started.elapsed();
-                    log::info!(
-                        "[stt][{request_id}] vad_build_complete duration_ms={}",
-                        vad_build_elapsed.as_millis()
-                    );
-                    record_slow_backend_phase(
-                        app,
-                        &meta,
-                        "vad_build",
-                        vad_build_elapsed,
-                        SLOW_BACKEND_SETUP_PHASE_MS,
-                    );
-                    let vad_segment_started = Instant::now();
-                    log::info!(
-                        "[stt][{request_id}] vad_segment_start model='{model_id}' kind={kind_label} max_chunk_s={MAX_CHUNK_S:.1} audio_ms={}",
-                        samples_to_ms(conditioned.len())
-                    );
-                    let result = vad_segment_decode(
-                        engine,
-                        &conditioned,
-                        MAX_CHUNK_S,
-                        kind.needs_past_context(),
-                        &mut vad,
-                        &opts,
-                        request_id,
-                    )
-                    .map_err(|e| anyhow::anyhow!("WinSTT VAD-segment transcription failed: {}", e));
-                    let vad_segment_elapsed = vad_segment_started.elapsed();
-                    match &result {
-                        Ok(text) => log::info!(
-                            "[stt][{request_id}] vad_segment_complete duration_ms={} output_chars={}",
-                            vad_segment_elapsed.as_millis(),
-                            text.chars().count()
-                        ),
-                        Err(err) => log::warn!(
-                            "[stt][{request_id}] vad_segment_failed duration_ms={} error={err}",
-                            vad_segment_elapsed.as_millis()
-                        ),
-                    }
-                    record_slow_backend_phase(
-                        app,
-                        &meta,
-                        "vad_segment",
-                        vad_segment_elapsed,
-                        SLOW_BACKEND_ENGINE_PHASE_MS,
-                    );
-                    result?
+            // Reuses the process-wide cached Silero session (reset per use); only the
+            // very first long-form decode pays the ONNX session build.
+            let segment_outcome = with_segmentation_vad(app, |vad| {
+                let vad_build_elapsed = vad_build_started.elapsed();
+                log::info!(
+                    "[stt][{request_id}] vad_build_complete duration_ms={}",
+                    vad_build_elapsed.as_millis()
+                );
+                record_slow_backend_phase(
+                    app,
+                    &meta,
+                    "vad_build",
+                    vad_build_elapsed,
+                    SLOW_BACKEND_SETUP_PHASE_MS,
+                );
+                let normalize_started = Instant::now();
+                let conditioned = peak_normalize(audio);
+                record_slow_backend_phase(
+                    app,
+                    &meta,
+                    "peak_normalize",
+                    normalize_started.elapsed(),
+                    SLOW_BACKEND_SETUP_PHASE_MS,
+                );
+                let vad_segment_started = Instant::now();
+                log::info!(
+                    "[stt][{request_id}] vad_segment_start model='{model_id}' kind={kind_label} max_chunk_s={MAX_CHUNK_S:.1} audio_ms={}",
+                    samples_to_ms(conditioned.len())
+                );
+                // Explicit reborrow: the closure must not consume the `&mut` engine —
+                // the VAD-unavailable fallback below still decodes with it.
+                let result = vad_segment_decode(
+                    &mut *engine,
+                    &conditioned,
+                    MAX_CHUNK_S,
+                    kind.needs_past_context(),
+                    vad,
+                    &opts,
+                    request_id,
+                )
+                .map_err(|e| anyhow::anyhow!("WinSTT VAD-segment transcription failed: {}", e));
+                let vad_segment_elapsed = vad_segment_started.elapsed();
+                match &result {
+                    Ok(text) => log::info!(
+                        "[stt][{request_id}] vad_segment_complete duration_ms={} output_chars={}",
+                        vad_segment_elapsed.as_millis(),
+                        text.chars().count()
+                    ),
+                    Err(err) => log::warn!(
+                        "[stt][{request_id}] vad_segment_failed duration_ms={} error={err}",
+                        vad_segment_elapsed.as_millis()
+                    ),
                 }
+                record_slow_backend_phase(
+                    app,
+                    &meta,
+                    "vad_segment",
+                    vad_segment_elapsed,
+                    SLOW_BACKEND_ENGINE_PHASE_MS,
+                );
+                result
+            });
+            match segment_outcome {
+                Ok(result) => result?,
                 Err(e) => {
                     if needs_long_form_segmenting {
                         log::warn!(
@@ -617,9 +653,8 @@ impl SttBackend for WinsttSttBackend {
     fn warmup(&self, engine: &mut dyn Transcriber) -> Result<()> {
         // Decode dummy silence DIRECTLY (the core bypasses the RMS silence-gate for this).
         let dummy = vec![0.0f32; 16_000];
-        let conditioned = peak_normalize(&dummy);
         engine
-            .warmup(&conditioned, &TranscribeOptions::default())
+            .warmup(&dummy, &TranscribeOptions::default())
             .map_err(|e| anyhow::anyhow!("WinSTT warmup failed: {}", e))
     }
 
@@ -734,11 +769,7 @@ fn engine_kind_for(
             | EngineKind::NemoRnntStreaming
             | EngineKind::KaldiTransducerStreaming
     );
-    if validated {
-        Some(kind)
-    } else {
-        None
-    }
+    if validated { Some(kind) } else { None }
 }
 
 /// Normalize the WinSTT picker's language string to the engine wire form: empty / "auto" →
@@ -796,7 +827,7 @@ pub(crate) fn fixed_realtime_language_from_model(
     model_language_options(model).0
 }
 
-/// Build a one-shot Silero VAD for offline FINAL-decode segmentation (long recordings only). This
+/// Build a Silero VAD for offline FINAL-decode segmentation (long recordings only). This
 /// is a SEPARATE instance from the recorder's live VAD — segmentation runs over the already-
 /// captured buffer, not the realtime stream — and resolves the same bundled model the recorder
 /// uses (managers/audio.rs). Built lazily so normal short-PTT dictation never pays the load.
@@ -809,6 +840,31 @@ fn build_segmentation_vad(app: &AppHandle) -> Result<SileroVad> {
         )
         .map_err(|e| anyhow::anyhow!("resolve VAD path: {e}"))?;
     SileroVad::new(&path, VAD_SPEECH_THRESHOLD)
+}
+
+/// Process-wide cached segmentation VAD. Previously EVERY >`VAD_COMPACT_MIN_S` decode
+/// rebuilt the Silero ONNX session from disk (tens of ms of session-create serialized
+/// ahead of the engine decode); the session is tiny and stateless-by-`reset()`, so build
+/// it once and reuse. `reset()` before each use clears the recurrent state so one
+/// recording's speech context can never bleed into the next (concurrent decodes are
+/// already serialized by the core's engine mutex; this mutex is only a correctness
+/// backstop).
+static SEGMENTATION_VAD: std::sync::OnceLock<std::sync::Mutex<Option<SileroVad>>> =
+    std::sync::OnceLock::new();
+
+fn with_segmentation_vad<R>(app: &AppHandle, f: impl FnOnce(&mut SileroVad) -> R) -> Result<R> {
+    let cell = SEGMENTATION_VAD.get_or_init(|| std::sync::Mutex::new(None));
+    // Poison recovery is safe here: `reset()` below restores a well-defined state even if
+    // a previous holder panicked mid-inference.
+    let mut guard = cell.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if guard.is_none() {
+        *guard = Some(build_segmentation_vad(app)?);
+    }
+    let vad = guard
+        .as_mut()
+        .expect("segmentation VAD populated by the branch above");
+    vad.reset();
+    Ok(f(vad))
 }
 
 /// Apply the WinSTT-arm text post-processing — deterministic formatting — to an

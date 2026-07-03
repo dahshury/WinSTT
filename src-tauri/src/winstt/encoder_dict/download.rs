@@ -14,9 +14,9 @@ use serde::Serialize;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
-use crate::winstt::downloads::{transfer_url, PauseCancelFlags, TransferOutcome, TransferRequest};
+use crate::winstt::downloads::{PauseCancelFlags, TransferOutcome, TransferRequest, transfer_url};
 
-use super::{model_dir, MODEL_FILENAME, TOKENIZER_FILENAME};
+use super::{MODEL_FILENAME, TOKENIZER_FILENAME, model_dir};
 
 const REPO: &str = "onnx-community/mmBERT-base-ONNX";
 /// (repo path, local filename) — small file first so the big model dominates the visible bar.

@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::types::{
-    clamp_cloud_speed, ChunkSink, SentenceAudio, SynthesisChunk, TtsEngine, TtsError, TtsResult,
-    VoiceInfo,
+    ChunkSink, SentenceAudio, SynthesisChunk, TtsEngine, TtsError, TtsResult, VoiceInfo,
+    clamp_cloud_speed,
 };
 
 // ---------------------------------------------------------------------------
@@ -75,17 +75,16 @@ pub fn parse_pcm_params(content_type: &str) -> (u32, u16) {
     for part in content_type.split(';') {
         let part = part.trim();
         if let Some(v) = part.strip_prefix("rate=") {
-            if let Ok(n) = v.trim().parse::<u32>() {
-                if n > 0 {
-                    rate = n;
-                }
+            if let Ok(n) = v.trim().parse::<u32>()
+                && n > 0
+            {
+                rate = n;
             }
-        } else if let Some(v) = part.strip_prefix("channels=") {
-            if let Ok(n) = v.trim().parse::<u16>() {
-                if n > 0 {
-                    channels = n;
-                }
-            }
+        } else if let Some(v) = part.strip_prefix("channels=")
+            && let Ok(n) = v.trim().parse::<u16>()
+            && n > 0
+        {
+            channels = n;
         }
     }
     (rate, channels)

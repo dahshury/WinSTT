@@ -2,6 +2,7 @@ import { Mic02Icon, MicOff01Icon } from "@hugeicons/core-free-icons";
 import { useState, type ReactNode } from "react";
 import {
 	buildInputDeviceOptions,
+	InputDeviceSelect,
 	MicrophoneLevelMeter,
 	useInputDevices,
 	useMicrophoneLevels,
@@ -26,29 +27,13 @@ export function InputDeviceSection({
 	update,
 }: InputDeviceSectionProps): ReactNode {
 	const { devices, defaultDevice } = useInputDevices();
-	const [deviceSelectOpen, setDeviceSelectOpen] = useState(false);
 	const defaultLabel = defaultDevice
 		? `${t("systemDefault")} (${defaultDevice.name})`
 		: t("systemDefault");
-	const { deviceOptions, currentDeviceId } = buildInputDeviceOptions(
-		devices,
-		audio?.inputDeviceIndex ?? null,
-		defaultLabel,
-		defaultDevice?.name,
-	);
-	const levels = useMicrophoneLevels(
-		deviceSelectOpen,
-		deviceOptions.map((option) => option.id),
-	);
-	const meteredDeviceOptions: SelectOption[] = deviceOptions.map((option) => ({
-		...option,
-		trailing: (
-			<MicrophoneLevelMeter
-				active={option.id === currentDeviceId}
-				level={levels[option.id] ?? 0}
-			/>
-		),
-	}));
+	const currentDeviceId =
+		audio?.inputDeviceIndex == null
+			? "default"
+			: String(audio.inputDeviceIndex);
 
 	const [clamshellSelectOpen, setClamshellSelectOpen] = useState(false);
 	const { deviceOptions: clamshellDeviceOptions } = buildInputDeviceOptions(
@@ -82,8 +67,8 @@ export function InputDeviceSection({
 	];
 
 	return (
-		<SettingSection icon={Mic02Icon} title={t("inputDevice")}>
-			<div className="flex flex-col">
+		<SettingSection boxed icon={Mic02Icon} title={t("inputDevice")}>
+			<div className="flex flex-col divide-y divide-divider">
 				<SettingField
 					isDefault={currentDeviceId === "default"}
 					label={t("device")}
@@ -91,17 +76,11 @@ export function InputDeviceSection({
 					onReset={() => update({ inputDeviceIndex: null })}
 					tooltip={t("deviceTooltip")}
 				>
-					<Select
+					<InputDeviceSelect
 						className="w-52"
-						onChange={(v) =>
-							update({
-								inputDeviceIndex:
-									v === "default" ? null : Number.parseInt(v, 10),
-							})
-						}
-						onOpenChange={setDeviceSelectOpen}
-						options={meteredDeviceOptions}
-						value={currentDeviceId}
+						inputDeviceIndex={audio?.inputDeviceIndex ?? null}
+						onChange={(inputDeviceIndex) => update({ inputDeviceIndex })}
+						systemDefaultLabel={t("systemDefault")}
 					/>
 				</SettingField>
 				<SettingField

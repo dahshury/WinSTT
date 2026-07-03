@@ -1,5 +1,4 @@
 import {
-	AiEditingIcon,
 	AiMicIcon,
 	Analytics01Icon,
 	CalendarAnalysisIcon,
@@ -17,6 +16,10 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
 import {
+	type ModelInfo,
+	useCatalogStore,
+} from "@/entities/model-catalog";
+import {
 	DEFAULT_SETTINGS,
 	SettingField,
 	SettingSection,
@@ -25,15 +28,25 @@ import {
 import {
 	clearTranscriptionHistory,
 	clearTransformHistory,
-	deleteTransformHistoryEntry,
 } from "@/shared/api/ipc-client";
-import { fireAndForget } from "@/shared/lib/fire-and-forget";
+import { publicAsset } from "@/shared/lib/public-asset";
 import { Button } from "@/shared/ui/button";
 import type { DateRange } from "@/shared/ui/calendar-heatmap";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Select, type SelectOption } from "@/shared/ui/select";
+// Deep-import the lightweight family logo/maker resolvers (NOT the heavy
+// `@/widgets/model-picker` barrel) so the settings chunk stays lean — same guard
+// `useRuntimeModelBreakdown` uses.
+import {
+	getAuthorLabel,
+	getFamilyConfig,
+} from "@/widgets/model-picker/stt/lib/family-helpers";
 import { useHistoryStats } from "../api/use-history-stats";
+import {
+	computeAuthorUsage,
+	type ResolvedAuthor,
+} from "../lib/author-usage";
 import { computeStreak } from "../lib/streak";
 import { computeUsage } from "../lib/usage-breakdown";
 import { buildHeatmap, filterEntriesByDateRange } from "../lib/word-stats";
@@ -42,15 +55,38 @@ import { ActivityHeatmap } from "./ActivityHeatmap";
 import { ContributionGraph } from "./ContributionGraph";
 import { HistoryHero } from "./HistoryHero";
 import { HistoryTable } from "./HistoryTable";
+import { ModelAuthorRadar } from "./ModelAuthorRadar";
 import { StreakBanner } from "./StreakBanner";
-import { UsageBars } from "./UsageBreakdown";
+import { CATEGORY_ICONS, UsageBars } from "./UsageBreakdown";
 import { VoiceProfile } from "./VoiceProfile";
 
 type RetentionValue = "never" | "cap" | "days3" | "weeks2" | "months3";
 
-const handleDeleteTransform = (id: string) => {
-	fireAndForget(deleteTransformHistoryEntry(id), "history.deleteTransform");
-};
+/**
+ * Build a `sttModel` → maker+logo resolver from the STT catalog. History stores
+ * the loaded model's id (or, for older rows, its display name), so we key on
+ * both. Unknown strings resolve to `null` and land in the pie's "Other" slice.
+ */
+function buildAuthorResolver(
+	models: ModelInfo[],
+): (sttModel: string) => ResolvedAuthor | null {
+	const familyByKey = new Map<string, ModelInfo["family"]>();
+	for (const model of models) {
+		familyByKey.set(model.id.toLowerCase(), model.family);
+		familyByKey.set(model.displayName.toLowerCase(), model.family);
+	}
+	return (sttModel) => {
+		const family = familyByKey.get(sttModel.toLowerCase().trim());
+		if (!family) {
+			return null;
+		}
+		const logoSrc = getFamilyConfig(family).logoSrc;
+		return {
+			author: getAuthorLabel(family),
+			logoSrc: logoSrc ? publicAsset(logoSrc) : null,
+		};
+	};
+}
 
 /**
  * Placeholder grid shown while the worker computes the hero / voice-profile
@@ -135,6 +171,16 @@ export function TranscriptionHistoryPanel() {
 		selectedRange?.from ?? null,
 		selectedRange?.to ?? null,
 	);
+	const combinedHistoryEntries = [
+		...filteredEntries.map((entry) => ({
+			entry,
+			kind: "transcription" as const,
+		})),
+		...filteredTransformEntries.map((entry) => ({
+			entry,
+			kind: "transform" as const,
+		})),
+	];
 	// The two diff/tokenize-heavy stats are computed off the main thread; the
 	// rest below are cheap O(n) passes kept inline. `statsLoading` is true only
 	// on the first compute (cold cache), so revisits with warm data render
@@ -146,6 +192,14 @@ export function TranscriptionHistoryPanel() {
 	} = useHistoryStats(filteredEntries);
 	const usageOtherLabel = t("usageOther");
 	const usage = computeUsage(filteredEntries, usageOtherLabel);
+	// Group the same filtered history by model maker for the pie beside the
+	// model bars. The catalog self-hydrates on import, so it's populated here.
+	const catalogModels = useCatalogStore((s) => s.models);
+	const authorSlices = computeAuthorUsage(
+		filteredEntries,
+		buildAuthorResolver(catalogModels),
+		usageOtherLabel,
+	);
 	// Streak and the year-long contribution graph are all-time habit views, so
 	// they read the full history rather than the selected date range.
 	const streak = computeStreak(entries);
@@ -163,7 +217,7 @@ export function TranscriptionHistoryPanel() {
 	};
 
 	return (
-		<div className="flex flex-col gap-2">
+		<div className="flex flex-col">
 			<SettingSection icon={Analytics01Icon} title={t("summaryTitle")}>
 				<div className="py-2">
 					{statsLoading ? (
@@ -180,8 +234,11 @@ export function TranscriptionHistoryPanel() {
 
 			{usage.models.length > 0 ? (
 				<SettingSection icon={AiMicIcon} title={t("usageModelsTitle")}>
-					<div className="py-2">
-						<UsageBars buckets={usage.models} />
+					<div className="flex flex-col gap-5 py-2 sm:flex-row sm:items-center sm:gap-6">
+						<div className="min-w-0 flex-1">
+							<UsageBars buckets={usage.models} />
+						</div>
+						<ModelAuthorRadar slices={authorSlices} />
 					</div>
 				</SettingSection>
 			) : null}
@@ -189,7 +246,7 @@ export function TranscriptionHistoryPanel() {
 			{usage.categories.length > 0 ? (
 				<SettingSection icon={Tag01Icon} title={t("usageCategoriesTitle")}>
 					<div className="py-2">
-						<UsageBars buckets={usage.categories} />
+						<UsageBars buckets={usage.categories} icons={CATEGORY_ICONS} />
 					</div>
 				</SettingSection>
 			) : null}
@@ -222,7 +279,7 @@ export function TranscriptionHistoryPanel() {
 
 			<SettingSection
 				headerAction={
-					<>
+					<div className="flex flex-wrap items-center justify-end gap-1.5">
 						<ConfirmDialog
 							confirmLabel={t("clearConfirm")}
 							description={t("clearDescription")}
@@ -239,19 +296,6 @@ export function TranscriptionHistoryPanel() {
 							<HugeiconsIcon icon={Delete02Icon} size={14} />
 							{t("clearButton")}
 						</Button>
-					</>
-				}
-				icon={ListViewIcon}
-				title={t("tableTitle")}
-			>
-				<div className="py-2">
-					<HistoryTable entries={filteredEntries} />
-				</div>
-			</SettingSection>
-
-			<SettingSection
-				headerAction={
-					<>
 						<ConfirmDialog
 							confirmLabel={t("clearConfirm")}
 							description={t("clearTransformsDescription")}
@@ -268,18 +312,14 @@ export function TranscriptionHistoryPanel() {
 							<HugeiconsIcon icon={Delete02Icon} size={14} />
 							{t("clearTransformsButton")}
 						</Button>
-					</>
+					</div>
 				}
-				icon={AiEditingIcon}
-				title={t("transformTableTitle")}
+				boxed
+				icon={ListViewIcon}
+				title={`${t("tableTitle")} / ${t("transformTableTitle")}`}
 			>
 				<div className="py-2">
-					<HistoryTable
-						emptyLabel={t("transformTableEmpty")}
-						entries={filteredTransformEntries}
-						onDeleteEntry={handleDeleteTransform}
-						showAudioStats={false}
-					/>
+					<HistoryTable entries={combinedHistoryEntries} />
 				</div>
 			</SettingSection>
 
@@ -288,6 +328,7 @@ export function TranscriptionHistoryPanel() {
 			    only when the entry count exceeds the cap; absolute time
 			    cutoffs are opt-in). */}
 			<SettingSection
+				boxed
 				divided
 				icon={DatabaseSettingIcon}
 				title={t("limitsTitle")}

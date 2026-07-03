@@ -23,8 +23,8 @@ export function SentencePauseSection({
 	update,
 }: SentencePauseSectionProps) {
 	return (
-		<SettingSection icon={PauseCircleIcon} title={t("sentencePauses")}>
-			<div className="flex flex-col">
+		<SettingSection boxed icon={PauseCircleIcon} title={t("sentencePauses")}>
+			<div className="flex flex-col divide-y divide-divider">
 				<SettingField
 					isDefault={
 						(q?.endOfSentenceDetectionPause ??

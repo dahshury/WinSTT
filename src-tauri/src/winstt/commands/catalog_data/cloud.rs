@@ -34,7 +34,7 @@ pub struct CloudCatalogModel {
 /// The cloud STT catalog for one provider id (`"elevenlabs"`); empty for unknown / dynamic
 /// (`openrouter`).
 pub fn cloud_catalog_rows(provider_id: &str) -> Vec<CloudCatalogModel> {
-    use crate::winstt::cloud_stt::{cloud_models_for, CloudSttProvider};
+    use crate::winstt::cloud_stt::{CloudSttProvider, cloud_models_for};
 
     let Some(provider) = CloudSttProvider::from_id(provider_id) else {
         return Vec::new();

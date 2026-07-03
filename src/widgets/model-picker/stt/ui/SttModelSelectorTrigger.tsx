@@ -16,6 +16,7 @@ import {
 	SwitchingPill,
 } from "@/shared/ui/switching-trigger";
 import { publicAsset } from "@/shared/lib/public-asset";
+import { AuthorBadge } from "../../ui/AuthorBadge";
 import {
 	getAuthorLabel,
 	getFamilyConfig,
@@ -62,8 +63,8 @@ export interface SttModelSelectorTriggerProps {
 	selectedModel: ModelInfo | undefined;
 }
 
-/** Author/maker chip — logo + label (e.g. "NVIDIA", "OpenAI"). Mirrors the
- *  Ollama selector's PublisherChip so triggers across pickers feel uniform. */
+/** Author/maker chip — the shared {@link AuthorBadge} fed from the STT family
+ *  metadata (logo + author label, e.g. "NVIDIA", "OpenAI"). */
 function AuthorChip({
 	family,
 	muted = false,
@@ -72,27 +73,13 @@ function AuthorChip({
 	muted?: boolean;
 }) {
 	const config = getFamilyConfig(family);
-	const author = getAuthorLabel(family);
-	const tone = muted
-		? "border-border/60 bg-surface-secondary/40 text-foreground-dim"
-		: "border-border bg-surface-secondary/60 text-foreground-secondary";
 	return (
-		<span
-			className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 font-medium text-[10px] leading-none ${tone}`}
-		>
-			{config.logoSrc ? (
-				<img
-					alt=""
-					className={`size-3 rounded-[2px] object-contain ${muted ? "opacity-60" : ""}`}
-					height={12}
-					src={publicAsset(config.logoSrc)}
-					width={12}
-				/>
-			) : (
-				<HugeiconsIcon className="size-3" icon={config.icon} />
-			)}
-			{author}
-		</span>
+		<AuthorBadge
+			icon={config.icon}
+			label={getAuthorLabel(family)}
+			logoSrc={config.logoSrc ? publicAsset(config.logoSrc) : null}
+			muted={muted}
+		/>
 	);
 }
 

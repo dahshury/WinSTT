@@ -30,6 +30,7 @@ import {
 	GroupHeader,
 	NeutralHeaderIcon,
 } from "../../core/model-card/GroupHeader";
+import { ModelListScrollbarHeaderMask } from "../../core/ModelListScrollbarHeaderMask";
 import { ModelCard } from "../../core/model-card/ModelCard";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/Tooltip";
 import {
@@ -1079,85 +1080,95 @@ export function ListBody(props: ListBodyProps) {
 	}
 
 	return (
-		<Combobox.List
-			className="min-h-0 flex-1 overflow-y-auto [overflow-y:overlay] p-0"
-			data-slot="ollama-model-list"
+		<div
+			className="relative flex min-h-0 flex-1 overflow-hidden"
+			data-slot="ollama-model-list-shell"
 		>
-			{/* A global sort flattens EVERY model into one sorted column (matching the
+			<Combobox.List
+				className="min-h-0 flex-1 overflow-y-auto [overflow-y:overlay] p-0"
+				data-slot="ollama-model-list"
+			>
+				{/* A global sort flattens EVERY model into one sorted column (matching the
 			    STT picker), so the Favorites group — which is intrinsically unsorted /
 			    starred-order — is suppressed while sorting; the favorited models still
 			    appear in the flat sorted column. */}
-			{sortKey === null &&
-			favoritesVisible.length + favoriteRecommended.length > 0 ? (
-				<div>
-					<FavoritesGroupHeader
-						count={favoritesVisible.length + favoriteRecommended.length}
-					/>
-					<div className="flex flex-col gap-1.5 p-1.5">
-						{favoritesVisible.map((m) => (
-							<OllamaModelRow
-								description={installedDescriptionForModel(
-									m,
-									makerDeps.descriptionsByBase,
-								)}
-								isCatalogModel={makerDeps.isCatalogModel(m.name)}
-								isFavorited
-								isSelected={m.name === value}
-								key={`fav-${m.name}`}
-								model={m}
-								onDelete={onDelete}
-								onToggleFavorite={onToggleFavorite}
-								shelfDeps={shelfDeps}
-							/>
-						))}
-						{favoriteRecommended.map((m) => (
-							<RecommendedRow
-								description={ollamaDescriptionForName(
-									m.name,
-									makerDeps.descriptionsByBase,
-								)}
-								fit={makerDeps.getFit?.(m.sizeBytes)}
-								isFavorited
-								key={`fav-${m.name}`}
-								model={m}
-								onToggleFavorite={onToggleFavorite}
-								shelfDeps={shelfDeps}
-							/>
-						))}
+				{sortKey === null &&
+				favoritesVisible.length + favoriteRecommended.length > 0 ? (
+					<div>
+						<FavoritesGroupHeader
+							count={favoritesVisible.length + favoriteRecommended.length}
+						/>
+						<div className="flex flex-col gap-1.5 p-1.5">
+							{favoritesVisible.map((m) => (
+								<OllamaModelRow
+									description={installedDescriptionForModel(
+										m,
+										makerDeps.descriptionsByBase,
+									)}
+									isCatalogModel={makerDeps.isCatalogModel(m.name)}
+									isFavorited
+									isSelected={m.name === value}
+									key={`fav-${m.name}`}
+									model={m}
+									onDelete={onDelete}
+									onToggleFavorite={onToggleFavorite}
+									shelfDeps={shelfDeps}
+								/>
+							))}
+							{favoriteRecommended.map((m) => (
+								<RecommendedRow
+									description={ollamaDescriptionForName(
+										m.name,
+										makerDeps.descriptionsByBase,
+									)}
+									fit={makerDeps.getFit?.(m.sizeBytes)}
+									isFavorited
+									key={`fav-${m.name}`}
+									model={m}
+									onToggleFavorite={onToggleFavorite}
+									shelfDeps={shelfDeps}
+								/>
+							))}
+						</div>
 					</div>
-				</div>
-			) : null}
-			{showTypedModel && typedModelInfo && typedModelMatch ? (
-				<div className="p-1.5">
-					<TypedModelRow
-						info={typedModelInfo}
-						matchingTag={typedModelMatch}
-						shelfDeps={shelfDeps}
-						tagsState={typedModelTagsState}
-					/>
-				</div>
-			) : null}
-			{/* Default view: one section per maker, merging that maker's installed +
+				) : null}
+				{showTypedModel && typedModelInfo && typedModelMatch ? (
+					<div className="p-1.5">
+						<TypedModelRow
+							info={typedModelInfo}
+							matchingTag={typedModelMatch}
+							shelfDeps={shelfDeps}
+							tagsState={typedModelTagsState}
+						/>
+					</div>
+				) : null}
+				{/* Default view: one section per maker, merging that maker's installed +
 			    recommended models so every model sits under its real maker. An active
 			    sort instead flattens all installed models into
 			    one globally-sorted column. */}
-			{sortKey === null ? (
-				makerGroups.map((group) => (
-					<MakerGroupSection deps={makerDeps} group={group} key={group.slug} />
-				))
-			) : (
-				<InstalledModelsSection
-					descriptionsByBase={makerDeps.descriptionsByBase}
-					isCatalogModel={makerDeps.isCatalogModel}
-					isFavorite={makerDeps.isFavorite}
-					onDelete={onDelete}
-					onToggleFavorite={onToggleFavorite}
-					shelfDeps={shelfDeps}
-					sortedInstalled={sortedInstalled}
-					sortKey={sortKey}
-					value={value}
-				/>
-			)}
-		</Combobox.List>
+				{sortKey === null ? (
+					makerGroups.map((group) => (
+						<MakerGroupSection
+							deps={makerDeps}
+							group={group}
+							key={group.slug}
+						/>
+					))
+				) : (
+					<InstalledModelsSection
+						descriptionsByBase={makerDeps.descriptionsByBase}
+						isCatalogModel={makerDeps.isCatalogModel}
+						isFavorite={makerDeps.isFavorite}
+						onDelete={onDelete}
+						onToggleFavorite={onToggleFavorite}
+						shelfDeps={shelfDeps}
+						sortedInstalled={sortedInstalled}
+						sortKey={sortKey}
+						value={value}
+					/>
+				)}
+			</Combobox.List>
+			<ModelListScrollbarHeaderMask />
+		</div>
 	);
 }

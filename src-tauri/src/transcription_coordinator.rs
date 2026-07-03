@@ -1,9 +1,9 @@
 use crate::actions::ACTION_MAP;
 use crate::managers::audio::AudioRecordingManager;
 use log::{debug, error, warn};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
@@ -120,7 +120,9 @@ impl TranscriptionCoordinator {
                     );
                 }));
                 if let Err(e) = outcome {
-                    error!("Transcription coordinator recovered from a panic in command handling: {e:?}");
+                    error!(
+                        "Transcription coordinator recovered from a panic in command handling: {e:?}"
+                    );
                     stage = Stage::Idle;
                     processing_since = None;
                 }

@@ -99,6 +99,16 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: "LCtrl+LShift+V".to_string(),
         },
     );
+    bindings.insert(
+        "post_processing_profile_swap".to_string(),
+        ShortcutBinding {
+            id: "post_processing_profile_swap".to_string(),
+            name: "Post Processing Profile Swap".to_string(),
+            description: "Cycles through saved post-processing profiles.".to_string(),
+            default_binding: "LCtrl+LShift+P".to_string(),
+            current_binding: "LCtrl+LShift+P".to_string(),
+        },
+    );
 
     AppSettings {
         bindings,

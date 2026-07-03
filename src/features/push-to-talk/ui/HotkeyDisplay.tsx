@@ -29,11 +29,15 @@ export function HotkeyDisplay({
 	const micPhase = useHotkeyStore((s) => s.micPhase);
 	const accelerator = useHotkeyStore((s) => s.accelerator);
 	const keys = accelerator.split("+").map(formatKeyName);
+	const accessibleAccelerator = keys.join(" + ");
 	const t = useTranslations("hotkey");
 
 	const tooltipContent = isConnected
 		? t("displayTooltip")
 		: t("displayTooltipDisconnected");
+	const accessibleLabel = accessibleAccelerator
+		? `${accessibleAccelerator}. ${tooltipContent}`
+		: tooltipContent;
 	// The recording state is conveyed ENTIRELY by how light the badge rectangle is
 	// — no dots, no motion. "opening" = the mic is being opened (Windows hasn't
 	// confirmed audio yet) → one surface step lighter; "live" = the recorder
@@ -49,7 +53,7 @@ export function HotkeyDisplay({
 	return (
 		<Tooltip content={tooltipContent} delay={FOOTER_TOOLTIP_DELAY} side={side}>
 			<Elevated
-				className={`inline-flex h-4 w-auto max-w-[min(48vw,18rem)] cursor-help items-center overflow-hidden rounded-xs px-1.5 ring-1 transition-colors duration-150 ${
+				className={`inline-flex h-4 w-auto max-w-[min(48vw,18rem)] cursor-help items-center overflow-hidden rounded-xs px-1.5 leading-none ring-1 transition-colors duration-150 ${
 					isLive
 						? "ring-foreground/25"
 						: isOpening
@@ -63,24 +67,27 @@ export function HotkeyDisplay({
 				shadowLevel={1}
 			>
 				<kbd
-					aria-label={tooltipContent}
-					className={`inline-flex min-w-0 items-center gap-1 overflow-hidden bg-transparent font-mono text-2xs leading-none ${TONE_TEXT[tone]}`}
+					aria-label={accessibleLabel}
+					className={`inline-flex h-full min-w-0 items-center gap-1 overflow-hidden bg-transparent font-mono text-2xs leading-none ${TONE_TEXT[tone]}`}
 					data-disconnected={!isConnected || undefined}
 					data-pressed={isArmed || undefined}
 					data-tone={tone}
 				>
 					{keys.map((key, i) => (
 						<span
-							className="flex min-w-0 items-center gap-1"
+							className="flex h-full min-w-0 items-center gap-1"
 							key={`${key}-${i}`}
 						>
 							{i > 0 && (
-								<span aria-hidden className="text-[8px] text-foreground-dim">
+								<span
+									aria-hidden
+									className="inline-flex h-full items-center text-[8px] text-foreground-dim leading-none"
+								>
 									{PLUS_GLYPH}
 								</span>
 							)}
 							<span
-								className={`inline-flex min-w-0 items-center justify-center bg-transparent p-0 font-medium shadow-none ring-0 ${
+								className={`inline-flex h-full min-w-0 items-center justify-center bg-transparent p-0 font-medium leading-none shadow-none ring-0 ${
 									isConnected ? "" : "line-through decoration-foreground-dim/80"
 								}`}
 							>

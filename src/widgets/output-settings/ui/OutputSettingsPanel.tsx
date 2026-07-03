@@ -122,6 +122,7 @@ function PasteBehaviorSection({
 		: autoSubmitKeyOptions;
 	return (
 		<SettingSection
+			boxed
 			divided
 			icon={ClipboardPasteIcon}
 			title={tg("pasteBehaviorTitle")}
@@ -414,7 +415,7 @@ export function OutputSettingsPanel(): ReactNode {
 
 	return (
 		<>
-			<div className="flex flex-col gap-2">
+			<div className="flex flex-col">
 				<PasteBehaviorSection
 					autoSubmit={autoSubmit}
 					autoSubmitKey={autoSubmitKey}
@@ -445,6 +446,7 @@ export function OutputSettingsPanel(): ReactNode {
 				/>
 
 				<SettingSection
+					boxed
 					divided
 					icon={FileScriptIcon}
 					title={tg("fileTranscription")}
@@ -567,8 +569,13 @@ export function PlaybackSettingsPanel(): ReactNode {
 	})();
 
 	return (
-		<div className="flex flex-col gap-2">
-			<SettingSection divided icon={HeadphonesIcon} title={ta("outputDevice")}>
+		<div className="flex flex-col">
+			<SettingSection
+				boxed
+				divided
+				icon={HeadphonesIcon}
+				title={ta("playbackRouting")}
+			>
 				<SettingField
 					defaultValue={DEFAULT_SETTINGS.general.outputDeviceId}
 					disabled={!showOutputDevice}
@@ -593,9 +600,10 @@ export function PlaybackSettingsPanel(): ReactNode {
 			</SettingSection>
 
 			<SettingSection
+				boxed
 				divided
 				icon={VolumeMinusIcon}
-				title={tg("muteSystemAudio")}
+				title={tg("systemAudioSection")}
 			>
 				<MuteSystemAudioControl
 					disabled={isListenMode}

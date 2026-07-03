@@ -268,10 +268,12 @@ fn format_terminal_omits_scrollback() {
     };
     let out = format_context_for_prompt(&s);
     let ctx = context_json(&out);
-    assert!(ctx["note"]
-        .as_str()
-        .unwrap()
-        .contains("Terminal/console focused"));
+    assert!(
+        ctx["note"]
+            .as_str()
+            .unwrap()
+            .contains("Terminal/console focused")
+    );
     assert!(ctx.get("beforeCaret").is_none());
     assert!(ctx.get("screen").is_none());
     assert!(!out.contains("soup"));
@@ -303,10 +305,12 @@ fn format_thin_field_includes_tree() {
     };
     let out = format_context_for_prompt(&s);
     let ctx = context_json(&out);
-    assert!(ctx["screen"]
-        .as_str()
-        .unwrap()
-        .contains("original email body"));
+    assert!(
+        ctx["screen"]
+            .as_str()
+            .unwrap()
+            .contains("original email body")
+    );
 }
 
 #[test]
@@ -1981,14 +1985,18 @@ fn split_dictation_capture_is_clean_focused_field() {
     assert_eq!(ctx["app"], "chrome.exe");
     assert_eq!(ctx["url"], "https://mail.google.com/mail/u/0/");
     assert!(ctx["window"].as_str().unwrap_or("").contains("Gmail"));
-    assert!(ctx["beforeCaret"]
-        .as_str()
-        .unwrap_or("")
-        .contains("thanks for the update"));
-    assert!(ctx["afterCaret"]
-        .as_str()
-        .unwrap_or("")
-        .contains("Dana Lee wrote"));
+    assert!(
+        ctx["beforeCaret"]
+            .as_str()
+            .unwrap_or("")
+            .contains("thanks for the update")
+    );
+    assert!(
+        ctx["afterCaret"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Dana Lee wrote")
+    );
     // The focused-field path must NOT emit a whole-window tree dump.
     assert!(
         ctx.get("screen").is_none(),
@@ -2048,9 +2056,11 @@ fn discord_server_tag_badge_is_not_a_speaker() {
     // And in a real flat blob the badge is plain roster text, never a turn.
     let blob = "anaskame1 Pacok Jake Edvin Server Tag: CCO Home Dachi Speranski";
     assert_eq!(json_attribute_flat_blob(blob), blob);
-    assert!(!blob
-        .lines()
-        .any(|l| json_is_speaker_turn_line(l) && l.starts_with("Server Tag")));
+    assert!(
+        !blob
+            .lines()
+            .any(|l| json_is_speaker_turn_line(l) && l.starts_with("Server Tag"))
+    );
 }
 
 /// Discord renders a real message group as `<Author>` / [`Server Tag: X`] /
@@ -2221,10 +2231,12 @@ fn ai_chat_collapses_to_user_assistant_turns() {
 #[test]
 fn ai_chat_requires_both_roles() {
     // Only an assistant label, no "You" — not a conversation.
-    assert!(json_reconstruct_ai_chat_blob(
-        "ChatGPT: the smartest model. Gemini: also great. Footer links here."
-    )
-    .is_none());
+    assert!(
+        json_reconstruct_ai_chat_blob(
+            "ChatGPT: the smartest model. Gemini: also great. Footer links here."
+        )
+        .is_none()
+    );
     // Only a user label — not a conversation either.
     assert!(json_reconstruct_ai_chat_blob("You: typed this. Some other text here.").is_none());
 }
@@ -2381,10 +2393,12 @@ fn ai_chat_role_markers_match_real_verbs_only_with_colon() {
     );
     assert_eq!(json_ai_chat_role_speaker("Random label"), None);
     // A bare brand WITHOUT a colon is not a marker (footer text is not a turn).
-    assert!(json_reconstruct_ai_chat_blob(
-        "Claude is AI and can make mistakes. Please double-check responses."
-    )
-    .is_none());
+    assert!(
+        json_reconstruct_ai_chat_blob(
+            "Claude is AI and can make mistakes. Please double-check responses."
+        )
+        .is_none()
+    );
 }
 
 /// Claude/ChatGPT collapse also covers the `ChatGPT said:` shape the recipe is

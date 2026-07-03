@@ -3,14 +3,22 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_BACK, VK_LCONTROL, VK_LMENU, VK_LSHIFT,
-    VK_LWIN, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN,
+    GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
+    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY, VK_BACK, VK_LCONTROL, VK_LMENU,
+    VK_LSHIFT, VK_LWIN, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN,
 };
 
 /// Wrapper for Enigo to store in Tauri's managed state.
 /// Enigo is wrapped in a Mutex since it requires mutable access.
 pub struct EnigoState(pub Mutex<Enigo>);
+
+/// How long a synthesized accelerator (Ctrl+V / Ctrl+A / Shift+Insert) holds its modifier
+/// down after the primary key click before releasing it. The paste itself lands on the
+/// key-down; this hold only protects target apps that sample the modifier asynchronously
+/// (GetAsyncKeyState / low-level hooks) instead of the queue-synchronized GetKeyState.
+/// 50 ms is ample for that class of app while halving the previous 100 ms window during
+/// which the user's own keystrokes would arrive Ctrl-modified.
+const KEY_COMBO_MODIFIER_HOLD: std::time::Duration = std::time::Duration::from_millis(50);
 
 impl EnigoState {
     pub fn new() -> Result<Self, String> {
@@ -48,7 +56,7 @@ pub fn send_paste_ctrl_v(enigo: &mut Enigo) -> Result<(), String> {
         .key(v_key_code, enigo::Direction::Click)
         .map_err(|e| format!("Failed to click V key: {}", e))?;
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::thread::sleep(KEY_COMBO_MODIFIER_HOLD);
 
     enigo
         .key(modifier_key, enigo::Direction::Release)
@@ -80,7 +88,7 @@ pub fn send_paste_ctrl_shift_v(enigo: &mut Enigo) -> Result<(), String> {
         .key(v_key_code, enigo::Direction::Click)
         .map_err(|e| format!("Failed to click V key: {}", e))?;
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::thread::sleep(KEY_COMBO_MODIFIER_HOLD);
 
     enigo
         .key(Key::Shift, enigo::Direction::Release)
@@ -109,7 +117,7 @@ pub fn send_paste_shift_insert(enigo: &mut Enigo) -> Result<(), String> {
         .key(insert_key_code, enigo::Direction::Click)
         .map_err(|e| format!("Failed to click Insert key: {}", e))?;
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::thread::sleep(KEY_COMBO_MODIFIER_HOLD);
 
     enigo
         .key(Key::Shift, enigo::Direction::Release)
@@ -135,7 +143,7 @@ pub fn send_select_all(enigo: &mut Enigo) -> Result<(), String> {
         .key(a_key_code, enigo::Direction::Click)
         .map_err(|e| format!("Failed to click A key: {}", e))?;
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::thread::sleep(KEY_COMBO_MODIFIER_HOLD);
 
     enigo
         .key(modifier_key, enigo::Direction::Release)
@@ -151,9 +159,14 @@ pub fn send_select_all(enigo: &mut Enigo) -> Result<(), String> {
 /// the logical modifier state prevents Ctrl/Win/Shift/Alt from changing the injected text or
 /// paste shortcut delivered to the target app.
 /// Injecting a key-up for a key that isn't down is harmless; non-Windows builds no-op.
+///
+/// Returns `true` when at least one modifier key-up was actually injected — callers use
+/// this to skip their post-release settle sleep entirely when no modifier was held (the
+/// common case for toggle-mode dictation, where the hotkey was released long before the
+/// decode finished).
 #[cfg(target_os = "windows")]
-pub fn release_held_modifiers() {
-    let _ = release_current_modifiers();
+pub fn release_held_modifiers() -> bool {
+    release_current_modifiers().is_ok_and(|released| !released.is_empty())
 }
 
 #[cfg(target_os = "windows")]
@@ -434,7 +447,7 @@ pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{split_paste_ops, PasteOp};
+    use super::{PasteOp, split_paste_ops};
 
     fn text(s: &str) -> PasteOp {
         PasteOp::Text(s.to_string())

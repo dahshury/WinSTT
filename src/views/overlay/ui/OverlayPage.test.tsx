@@ -998,7 +998,7 @@ describe("OverlayPage", () => {
 				intervalDelays.push(delay);
 			}
 			return passthroughSetInterval(...args);
-		}) as typeof globalThis.setInterval;
+		}) as unknown as typeof globalThis.setInterval;
 		try {
 			useSettingsStore.setState({
 				settings: {

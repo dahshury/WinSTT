@@ -90,7 +90,6 @@ export function RecordingSettingsPanel() {
 	const ta = useTranslations("audio");
 	const tc = useTranslations("common");
 	const tq = useTranslations("quality");
-	const ts = useTranslations("settings");
 
 	useEffect(() => {
 		void refreshModelState();
@@ -152,7 +151,7 @@ export function RecordingSettingsPanel() {
 	};
 
 	return (
-		<div className="flex flex-col gap-2">
+		<div className="flex flex-col">
 			<RecordingModeSection
 				audio={audio}
 				general={general}
@@ -200,7 +199,6 @@ export function RecordingSettingsPanel() {
 					general={general}
 					t={t}
 					tCommon={tc}
-					tSettings={ts}
 					update={updateGeneral}
 				/>
 			)}

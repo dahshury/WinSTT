@@ -14,7 +14,7 @@
 
 use crate::settings::PostProcessProvider;
 use log::debug;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde_json::Value;
 
 /// OpenRouter-style nested reasoning config (`reasoning: { effort, exclude }`).
@@ -144,16 +144,16 @@ pub async fn send_chat_completion_with_schema(
         options = options.with_response_format(JsonSpec::new("transcription_output", schema));
     }
     // OpenAI-style top-level reasoning_effort (e.g. "none" for custom servers).
-    if let Some(effort) = reasoning_effort.as_deref() {
-        if let Some(parsed) = ReasoningEffort::from_keyword(effort) {
-            options = options.with_reasoning_effort(parsed);
-        }
+    if let Some(effort) = reasoning_effort.as_deref()
+        && let Some(parsed) = ReasoningEffort::from_keyword(effort)
+    {
+        options = options.with_reasoning_effort(parsed);
     }
     // OpenRouter-style nested reasoning object, merged into the request body.
-    if let Some(rc) = reasoning {
-        if let Some(extra) = openrouter_reasoning_extra_body(&rc) {
-            options = options.with_extra_body(extra);
-        }
+    if let Some(rc) = reasoning
+        && let Some(extra) = openrouter_reasoning_extra_body(&rc)
+    {
+        options = options.with_extra_body(extra);
     }
 
     crate::cloud_llm::run_chat(target, request, options).await

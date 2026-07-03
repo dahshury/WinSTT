@@ -268,6 +268,11 @@
 	   dividers and subdued separators where `border-border` reads too heavy. */
 	--color-divider: oklch(94% 0.015 265 / 0.08);
 	--color-divider-strong: oklch(94% 0.015 265 / 0.14);
+	/* Pre-multiplied divider for content dimmed to 40% opacity (`.settings-dim`):
+	   0.20 × 0.4 ≈ 0.08, so a hairline inside a disabled/greyed group reads at the
+	   SAME strength as a normal `--color-divider` in a fully-lit group. Keeps
+	   separators crisp while the surrounding controls grey out. */
+	--color-divider-dim-compensated: oklch(94% 0.015 265 / 0.2);
 
 	/* Radii — rounded-xs, rounded-sm, rounded-md, rounded-lg */
 	--radius-xs: 3px;
@@ -507,6 +512,25 @@
 			) !important;
 	}
 
+	/* "Disabled/off" dimming for a settings group (a section toggle is off, a
+	   feature is greyed). `opacity` fades the whole subtree — INCLUDING its
+	   divide-y hairlines, which then vanish and adjacent rows merge into one
+	   block. We can't exempt a descendant border from an ancestor's opacity, so
+	   we compensate: fade the group to 40% AND paint its dividers with the
+	   pre-multiplied token so 0.20 × 0.4 lands back at the normal ~0.08 hairline.
+	   Result: controls grey out, separators stay crisp. */
+	.settings-dim {
+		opacity: 0.4;
+	}
+	/* Compensate BOTH nestings: the divide-y container as a DESCENDANT of the
+	   dimmed element (`.settings-dim .divide-y`) and as the SAME element
+	   (`.settings-dim.divide-y`, e.g. the context-awareness config wrapper that
+	   is itself dimmed). Either way the hairlines read at full strength. */
+	.settings-dim .divide-y > *,
+	.settings-dim.divide-y > * {
+		border-color: var(--color-divider-dim-compensated) !important;
+	}
+
 	.settings-content-frame {
 		/* Transparent: the window substrate should flow continuously from the
 		   sidebar into the gutter around the elevated content card. */
@@ -674,6 +698,28 @@
 		);
 		box-shadow: 0 1px 0 var(--color-settings-sidebar-separator-shadow);
 	}
+
+	/* Uppercase micro-label naming a nav group in the expanded rail. Sits in
+	   the tab column's own inline padding so it left-aligns with tab labels. */
+	.settings-sidebar-group-label {
+		padding: 0.95rem 1rem 0.15rem;
+		font-size: 10px;
+		font-weight: 650;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--color-settings-sidebar-tab-text);
+		opacity: 0.66;
+		user-select: none;
+	}
+
+	/* The first row's group label loses the tall top inset — the header above
+	   already provides the breathing room. */
+	.settings-sidebar-list
+		> [data-settings-search-result]:first-child
+		.settings-sidebar-group-label {
+		padding-top: 0.2rem;
+	}
+
 
 	/* Every row shares one fixed height. The active row is NOT taller and the
 	   label/icon metrics stay identical, so selecting a tab cannot resize it. */

@@ -173,7 +173,7 @@ function UpdateStatusBar({
 		<ElevatedSurface className="overflow-hidden" inline>
 			<div
 				aria-label={t("updatesTitle")}
-				className="relative flex items-center gap-3 py-2.5 pr-2 pl-4"
+				className="relative flex min-h-12 items-stretch overflow-hidden rounded-lg divide-x divide-divider-strong"
 				role="toolbar"
 			>
 				{/* light-catching bevel along the top edge */}
@@ -181,12 +181,10 @@ function UpdateStatusBar({
 					aria-hidden="true"
 					className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-foreground/15 to-transparent"
 				/>
-				<VersionBlock t={t} version={version} />
-				<span
-					aria-hidden="true"
-					className="h-7 w-px shrink-0 bg-divider-strong"
-				/>
-				<div className="flex min-w-0 flex-1 items-center gap-2">
+				<div className="flex shrink-0 items-center px-4">
+					<VersionBlock t={t} version={version} />
+				</div>
+				<div className="flex min-w-0 flex-1 items-center gap-2 px-4">
 					<StatusDot tone={tone} />
 					<span
 						aria-live="polite"
@@ -196,36 +194,38 @@ function UpdateStatusBar({
 						{statusLabel}
 					</span>
 				</div>
-				{isDownloaded ? (
-					<Button
-						className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-accent px-3 font-medium text-body text-on-accent shadow-action-accent transition-[background-color,box-shadow] hover:bg-accent-hover hover:shadow-action-accent-hover"
-						onClick={onRestart}
-					>
-						<HugeiconsIcon aria-hidden="true" icon={RefreshIcon} size={14} />
-						<span className="truncate">{t("updatesRestartToInstall")}</span>
-					</Button>
-				) : (
-					<IconButton
-						aria-label={t("updatesCheckNow")}
-						className="group size-8 rounded-md"
-						disabled={disabled}
-						icon={
-							<HugeiconsIcon
-								aria-hidden="true"
-								className={cn(
-									"transition-transform duration-300 ease-out",
-									disabled
-										? "animate-spin"
-										: "group-hover:-rotate-180 group-active:rotate-0",
-								)}
-								icon={RefreshIcon}
-								size={15}
-							/>
-						}
-						onClick={onCheck}
-						tooltip={t("updatesCheckNow")}
-					/>
-				)}
+				<div className="flex shrink-0 items-center justify-center px-2">
+					{isDownloaded ? (
+						<Button
+							className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-accent px-3 font-medium text-body text-on-accent shadow-action-accent transition-[background-color,box-shadow] hover:bg-accent-hover hover:shadow-action-accent-hover"
+							onClick={onRestart}
+						>
+							<HugeiconsIcon aria-hidden="true" icon={RefreshIcon} size={14} />
+							<span className="truncate">{t("updatesRestartToInstall")}</span>
+						</Button>
+					) : (
+						<IconButton
+							aria-label={t("updatesCheckNow")}
+							className="group size-8 rounded-md"
+							disabled={disabled}
+							icon={
+								<HugeiconsIcon
+									aria-hidden="true"
+									className={cn(
+										"transition-transform duration-300 ease-out",
+										disabled
+											? "animate-spin"
+											: "group-hover:-rotate-180 group-active:rotate-0",
+									)}
+									icon={RefreshIcon}
+									size={15}
+								/>
+							}
+							onClick={onCheck}
+							tooltip={t("updatesCheckNow")}
+						/>
+					)}
+				</div>
 			</div>
 		</ElevatedSurface>
 	);
@@ -337,11 +337,12 @@ export function UpdatesSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 
 	return (
 		<SettingSection
+			boxed
 			description={t("updatesDescription")}
 			icon={AppWindowIcon}
 			title={APP_NAME}
 		>
-			<div className="flex flex-col gap-3">
+			<div className="flex flex-col gap-3 pt-1.5">
 				<UpdateStatusBar
 					checking={checking}
 					isDownloaded={isDownloaded}

@@ -36,9 +36,10 @@ use std::sync::Arc;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_specta::Event;
 
+use crate::command_auth;
 use crate::managers::history::{
     HistoryEntry as DbHistoryEntry, HistoryManager, HistoryUpdatePayload, TransformHistoryDbEntry,
 };
@@ -52,6 +53,52 @@ const EVT_TRANSFORM_HISTORY_DELETED: &str = "transform-history:deleted";
 /// the newest `HISTORY_GET_ALL_CAP` rows so a runaway history can't blow up
 /// memory or the IPC payload. The cap is logged when hit so it's diagnosable.
 const HISTORY_GET_ALL_CAP: i64 = 5000;
+const HISTORY_READ_ALLOWED_WINDOWS: &[&str] = &["settings", "history", "tray-menu"];
+const HISTORY_WRITE_ALLOWED_WINDOWS: &[&str] = &["settings", "history"];
+const HISTORY_ADD_ALLOWED_WINDOWS: &[&str] = &["main", "settings", "history"];
+
+#[derive(Clone, Copy, Debug)]
+enum HistoryOperation {
+    Read,
+    Write,
+    Add,
+}
+
+impl HistoryOperation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read history",
+            Self::Write => "modify history",
+            Self::Add => "add history row",
+        }
+    }
+
+    fn allowed_windows(self) -> &'static [&'static str] {
+        match self {
+            Self::Read => HISTORY_READ_ALLOWED_WINDOWS,
+            Self::Write => HISTORY_WRITE_ALLOWED_WINDOWS,
+            Self::Add => HISTORY_ADD_ALLOWED_WINDOWS,
+        }
+    }
+}
+
+fn authorize_history_operation(
+    caller: &WebviewWindow,
+    operation: HistoryOperation,
+) -> Result<(), String> {
+    command_auth::authorize_webview(
+        caller,
+        "history",
+        operation.as_str(),
+        operation.allowed_windows(),
+        "",
+    )
+}
+
+#[cfg(test)]
+fn is_history_operation_allowed(caller: &str, operation: HistoryOperation) -> bool {
+    command_auth::label_in(caller, operation.allowed_windows())
+}
 
 // ── Renderer-facing payload shapes (camelCase, byte-identical to WinSTT) ────────
 
@@ -457,9 +504,11 @@ fn map_db_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbHistoryEntry> {
 #[specta::specta]
 pub async fn history_list(
     app: AppHandle,
+    webview: WebviewWindow,
     offset: i64,
     limit: i64,
 ) -> Result<PaginatedHistory, String> {
+    authorize_history_operation(&webview, HistoryOperation::Read)?;
     let lim = limit.clamp(1, 100);
     let off = offset.max(0);
     let fetch = lim + 1;
@@ -493,7 +542,12 @@ pub async fn history_list(
 /// `history:recent` — the `n` newest rows (tray submenu / quick re-paste).
 #[tauri::command]
 #[specta::specta]
-pub async fn history_recent(app: AppHandle, value: Option<i64>) -> Result<Vec<HistoryRow>, String> {
+pub async fn history_recent(
+    app: AppHandle,
+    webview: WebviewWindow,
+    value: Option<i64>,
+) -> Result<Vec<HistoryRow>, String> {
+    authorize_history_operation(&webview, HistoryOperation::Read)?;
     let n = value.unwrap_or(5).clamp(1, 100);
     let rows = spawn_db(&app, move |conn| {
         let mut stmt = conn.prepare(
@@ -518,8 +572,10 @@ pub async fn history_recent(app: AppHandle, value: Option<i64>) -> Result<Vec<Hi
 #[specta::specta]
 pub async fn history_delete_row(
     history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
     id: i64,
 ) -> Result<DeletedResult, String> {
+    authorize_history_operation(&webview, HistoryOperation::Write)?;
     let exists = history_manager
         .get_entry_by_id(id)
         .await
@@ -541,8 +597,10 @@ pub async fn history_delete_row(
 #[specta::specta]
 pub async fn history_toggle(
     history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
     id: i64,
 ) -> Result<ToggleResult, String> {
+    authorize_history_operation(&webview, HistoryOperation::Write)?;
     let Some(entry) = history_manager
         .get_entry_by_id(id)
         .await
@@ -564,8 +622,10 @@ pub async fn history_toggle(
 #[specta::specta]
 pub async fn history_load_audio_by_row(
     history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
     id: i64,
 ) -> Result<Option<String>, String> {
+    authorize_history_operation(&webview, HistoryOperation::Read)?;
     let Some(entry) = history_manager
         .get_entry_by_id(id)
         .await
@@ -587,11 +647,13 @@ pub async fn history_load_audio_by_row(
 #[specta::specta]
 pub async fn history_add(
     history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
     text: Option<String>,
     post_processed_text: Option<String>,
     post_process_prompt: Option<String>,
     post_process_requested: Option<bool>,
 ) -> Result<Option<HistoryRow>, String> {
+    authorize_history_operation(&webview, HistoryOperation::Add)?;
     let transcription_text = text.unwrap_or_default();
     if transcription_text.trim().is_empty() {
         return Ok(None);
@@ -623,8 +685,10 @@ pub async fn history_add(
 #[specta::specta]
 pub async fn history_get_all(
     app: AppHandle,
+    webview: WebviewWindow,
     history_manager: State<'_, Arc<HistoryManager>>,
 ) -> Result<Vec<TranscriptionHistoryEntry>, String> {
+    authorize_history_operation(&webview, HistoryOperation::Read)?;
     // Clone the `Arc` so the reshape (which does a per-row `path.exists()`
     // filesystem stat for the audio button) can run inside the blocking task
     // alongside the query, off the async pump.
@@ -667,8 +731,10 @@ pub async fn history_get_all(
 #[specta::specta]
 pub async fn history_clear(
     app: AppHandle,
+    webview: WebviewWindow,
     history_manager: State<'_, Arc<HistoryManager>>,
 ) -> Result<ClearResult, String> {
+    authorize_history_operation(&webview, HistoryOperation::Write)?;
     // Collect ids first, then delete via the manager so each WAV is unlinked and
     // a `Deleted` event fires per row (the bridge fans them to the renderer).
     let ids: Vec<i64> = spawn_db(&app, |conn| {
@@ -691,8 +757,10 @@ pub async fn history_clear(
 #[specta::specta]
 pub async fn history_delete(
     history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
     id: String,
 ) -> Result<DeletedResult, String> {
+    authorize_history_operation(&webview, HistoryOperation::Write)?;
     let Ok(numeric) = id.parse::<i64>() else {
         return Ok(DeletedResult { deleted: false });
     };
@@ -716,8 +784,10 @@ pub async fn history_delete(
 #[specta::specta]
 pub async fn history_load_audio(
     history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
     id: String,
 ) -> Result<Option<String>, String> {
+    authorize_history_operation(&webview, HistoryOperation::Read)?;
     let Ok(numeric) = id.parse::<i64>() else {
         return Ok(None);
     };
@@ -741,7 +811,9 @@ pub async fn history_load_audio(
 #[specta::specta]
 pub async fn transform_history_get_all(
     history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
 ) -> Result<Vec<TransformHistoryEntry>, String> {
+    authorize_history_operation(&webview, HistoryOperation::Read)?;
     let rows = history_manager
         .get_transform_history_entries()
         .map_err(|e| e.to_string())?;
@@ -756,7 +828,9 @@ pub async fn transform_history_get_all(
 pub async fn transform_history_clear(
     app: AppHandle,
     history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
 ) -> Result<ClearResult, String> {
+    authorize_history_operation(&webview, HistoryOperation::Write)?;
     let rows = history_manager
         .get_transform_history_entries()
         .map_err(|e| e.to_string())?;
@@ -777,8 +851,10 @@ pub async fn transform_history_clear(
 pub async fn transform_history_delete(
     app: AppHandle,
     history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
     id: String,
 ) -> Result<DeletedResult, String> {
+    authorize_history_operation(&webview, HistoryOperation::Write)?;
     let Ok(numeric) = id.parse::<i64>() else {
         return Ok(DeletedResult { deleted: false });
     };
@@ -844,4 +920,47 @@ fn read_saved_flag(app: &AppHandle, id: i64) -> Option<bool> {
         |row| row.get::<_, bool>(0),
     )
     .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_authorization_matches_renderer_surfaces() {
+        command_auth::assert_label_rules(
+            &["settings", "history", "tray-menu"],
+            &[
+                "main",
+                "overlay",
+                "model-picker",
+                "device-picker",
+                "context-playground",
+            ],
+            |caller| is_history_operation_allowed(caller, HistoryOperation::Read),
+        );
+        command_auth::assert_label_rules(
+            &["settings", "history"],
+            &[
+                "main",
+                "overlay",
+                "tray-menu",
+                "model-picker",
+                "device-picker",
+                "context-playground",
+            ],
+            |caller| is_history_operation_allowed(caller, HistoryOperation::Write),
+        );
+        command_auth::assert_label_rules(
+            &["main", "settings", "history"],
+            &[
+                "overlay",
+                "tray-menu",
+                "model-picker",
+                "device-picker",
+                "context-playground",
+            ],
+            |caller| is_history_operation_allowed(caller, HistoryOperation::Add),
+        );
+    }
 }

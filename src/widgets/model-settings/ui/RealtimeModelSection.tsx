@@ -120,9 +120,13 @@ export function RealtimeModelSection({
 	// output surface (`disabled`). Both collapse onto the same picker state.
 	const selectorDisabled = mainModelCanNativeStream || disabled;
 	return (
-		<SettingSection icon={Activity03Icon} title={t("realtimeModelSection")}>
-			<div className="flex flex-col">
-				<div className="col-span-2">
+		<SettingSection
+			boxed
+			icon={Activity03Icon}
+			title={t("realtimePreviewSection")}
+		>
+			<div className="flex flex-col divide-y divide-divider">
+				<div>
 					<FormControl
 						controlTooltip={disabled ? disabledTooltip : undefined}
 						disabled={disabled}

@@ -63,6 +63,9 @@ export function useLlmSettingsPanel() {
 	const llm = useSettingsStore((s) => s.settings.llm);
 	const updateShared = useSettingsStore((s) => s.updateLlmSettings);
 	const updateDictation = useSettingsStore((s) => s.updateLlmDictation);
+	const updatePostProcessing = useSettingsStore(
+		(s) => s.updateLlmPostProcessing,
+	);
 	const updateTransforms = useSettingsStore((s) => s.updateLlmTransforms);
 	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
 
@@ -342,7 +345,7 @@ export function useLlmSettingsPanel() {
 		if (pendingFeature === "dictation") {
 			const patch = resolveOllamaEnablePatch(dictation.model);
 			if (patch.enabled) {
-				updateDictation(patch);
+				updatePostProcessing(patch);
 				disableDictationConflicts();
 			}
 		} else if (pendingFeature === "transforms") {
@@ -361,7 +364,9 @@ export function useLlmSettingsPanel() {
 		// marked the catalog loaded, so a plain scan would skip the retry.
 		scanOpenRouter(true);
 		if (pendingFeature === "dictation") {
-			updateDictation(resolveOpenRouterEnablePatch(dictation.openrouterModel));
+			updatePostProcessing(
+				resolveOpenRouterEnablePatch(dictation.openrouterModel),
+			);
 			disableDictationConflicts();
 		} else if (pendingFeature === "transforms") {
 			updateTransforms(
@@ -431,6 +436,7 @@ export function useLlmSettingsPanel() {
 		disableDictationConflicts,
 		updateShared,
 		updateDictation,
+		updatePostProcessing,
 		updateTransforms,
 		setShowOllamaDialogFor,
 		setShowApiKeyDialogFor,

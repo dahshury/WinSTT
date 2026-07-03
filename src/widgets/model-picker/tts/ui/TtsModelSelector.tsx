@@ -47,7 +47,7 @@ import {
 	type TtsPendingDelete,
 	TtsDeleteQuantConfirmDialog,
 } from "./TtsDeleteQuantConfirmDialog";
-import { TtsMakerLogo } from "./TtsMakerLogo";
+import { AuthorBadge } from "../../ui/AuthorBadge";
 import { TtsModelList } from "./TtsModelList";
 import {
 	type QuantDownloadAction,
@@ -210,14 +210,16 @@ function TtsTriggerBody({
 			</span>
 		);
 	}
+	const engineLogo = getEngineLogoSrc(selectedModel.engine);
 	return (
 		<span className="flex min-w-0 flex-1 items-center gap-2">
-			<TtsMakerLogo engine={selectedModel.engine} />
+			<AuthorBadge
+				icon={getEngineConfig(selectedModel.engine).icon}
+				label={getEngineLabel(selectedModel.engine)}
+				logoSrc={engineLogo ? publicAsset(engineLogo) : null}
+			/>
 			<span className="truncate font-medium text-body text-foreground leading-tight tracking-tight">
 				{selectedModel.displayName}
-			</span>
-			<span className="shrink-0 text-[10px] text-foreground-dim">
-				{getEngineLabel(selectedModel.engine)}
 			</span>
 		</span>
 	);

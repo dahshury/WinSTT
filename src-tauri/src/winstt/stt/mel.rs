@@ -133,23 +133,29 @@ impl MelExtractor {
         // pre-decode latency). `self.fft` is `Arc<dyn Fft>` and rustfft's `Fft: Send + Sync`, so the
         // plan is shared; each worker owns its FFT buffer + scratch. Byte-identical to the serial loop.
         use rayon::prelude::*;
-        log_mel
-            .par_chunks_mut(n_mels)
-            .enumerate()
-            .for_each(|(t, row)| {
+        log_mel.par_chunks_mut(n_mels).enumerate().for_each_init(
+            // FFT buffer + scratch are allocated ONCE per rayon work batch (not per
+            // frame): the old per-frame `vec![...]` pair inside the closure re-allocated
+            // and re-zeroed ~6 KB × 3000 frames per utterance — and per realtime tick.
+            // Every buffer slot is overwritten below before the FFT reads it, so reuse
+            // is byte-identical to the fresh-allocation version.
+            || {
+                (
+                    vec![Complex::<f32>::new(0.0, 0.0); N_FFT],
+                    vec![Complex::<f32>::new(0.0, 0.0); self.fft.get_inplace_scratch_len()],
+                )
+            },
+            |(buffer, scratch), (t, row)| {
                 let start = t * HOP_LENGTH;
                 // Windowed frame into the complex buffer (re = windowed sample, im = 0 for real PCM).
                 // WIN_LENGTH == N_FFT (400 == 400) so the whole frame is windowed directly.
-                let mut buffer = vec![Complex::<f32>::new(0.0, 0.0); N_FFT];
-                let mut scratch =
-                    vec![Complex::<f32>::new(0.0, 0.0); self.fft.get_inplace_scratch_len()];
                 for (i, slot) in buffer.iter_mut().enumerate() {
                     let s = padded.get(start + i).copied().unwrap_or(0.0);
                     *slot = Complex::new(s * self.window[i], 0.0);
                 }
                 // Real-input FFT → |X[k]|² for the first N_FREQS bins (drops Nyquist, matching
                 // rfft[:, :-1]). O(n_fft·log n_fft), numerically identical to the previous naive DFT.
-                self.fft.process_with_scratch(&mut buffer, &mut scratch);
+                self.fft.process_with_scratch(buffer, scratch);
                 let mut power = [0.0f32; N_FREQS];
                 for (f, p) in power.iter_mut().enumerate() {
                     let c = buffer[f];
@@ -163,7 +169,8 @@ impl MelExtractor {
                     }
                     *out = acc.max(CLAMP_MIN).log10();
                 }
-            });
+            },
+        );
 
         // 5. global max over all log-mel bins (single O(n_mels·T) pass; ~0.2 ms, not worth a reduce).
         let global_max = log_mel.iter().copied().fold(f32::NEG_INFINITY, f32::max);

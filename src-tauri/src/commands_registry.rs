@@ -1,7 +1,7 @@
 //! The tauri-specta `Builder` construction: full command list +
 //! event registry. Pure declarative, no shared state.
 
-use tauri_specta::{collect_commands, collect_events, Builder};
+use tauri_specta::{Builder, collect_commands, collect_events};
 
 use tauri::{AppHandle, Emitter};
 
@@ -227,6 +227,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::diag::diag_open_logs_folder,
         winstt::commands::diag::diag_save_bundle,
         winstt::commands::diag::diag_observability_timeline,
+        winstt::commands::diag::diag_clear_observability_timeline,
         winstt::commands::sound::sound_library_add,
         winstt::commands::sound::sound_library_pick_and_add,
         winstt::commands::sound::sound_library_read_file,

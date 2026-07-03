@@ -24,7 +24,14 @@ yanked = "warn"
 unmaintained = "workspace"
 # CVEs without a severity-based exception below fail by default (advisories
 # version 2 denies vulnerabilities unless explicitly ignored).
-ignore = []
+ignore = [
+  # quick-xml is pulled transitively by the current Tauri 2 stack through
+  # plist 1.9.0 and wayland-scanner 0.31.10. WinSTT does not directly parse
+  # untrusted XML with quick-xml/plist; remove these entries once upstream
+  # releases can resolve quick-xml >= 0.41.0.
+  { id = "RUSTSEC-2026-0194", reason = "Transitive quick-xml via current Tauri plist/wayland-scanner stack; no direct WinSTT untrusted XML parser use; blocked until upstream resolves quick-xml >=0.41.0." },
+  { id = "RUSTSEC-2026-0195", reason = "Transitive quick-xml via current Tauri plist/wayland-scanner stack; no direct WinSTT untrusted XML parser use; blocked until upstream resolves quick-xml >=0.41.0." },
+]
 
 # ---------------------------------------------------------------------------
 # Licenses — allow the permissive / weak-copyleft set this repo already ships

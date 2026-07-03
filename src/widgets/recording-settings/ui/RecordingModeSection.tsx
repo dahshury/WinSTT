@@ -3,6 +3,7 @@ import { type ReactNode } from "react";
 import {
 	DEFAULT_SETTINGS,
 	SettingField,
+	SettingResetButton,
 	SettingSection,
 } from "@/entities/setting";
 import {
@@ -369,68 +370,76 @@ export function RecordingModeSection({
 		}
 	};
 	return (
-		<SettingSection icon={RecordIcon} title={t("recording")}>
-			<div className="flex flex-col">
-				<SettingField
+		<SettingSection
+			boxed
+			divided
+			headerAction={
+				<SettingResetButton
 					isDefault={recordingMode === DEFAULT_SETTINGS.general.recordingMode}
-					label={t("recordingMode")}
 					onReset={handleRecordingModeReset}
-					tooltip={t("recordingModeTooltip")}
-				>
-					{/* Hero control — sets the design template for every other
-					    interactive group on the tab. Same ElevatedSurface wraps
-					    them all so the tab reads as one consistent language. */}
-					<Switcher
-						fullWidth
-						onChange={handleRecordingModeChange}
-						options={recordingModeOptions}
-						value={recordingMode}
-					/>
-				</SettingField>
-				{recordingMode !== "wakeword" && showWakewordDownloadProgress ? (
-					<WakewordDownloadProgress status={wakewordStatus} />
-				) : null}
-				{recordingMode === "toggle" ? (
-					<>
-						<ManualToggleStopControl
-							enabled={manualToggleStop}
-							t={t}
-							update={update}
-						/>
-						{!manualToggleStop ? (
-							<ToggleSilenceStopControl
-								audio={audio}
-								t={ta}
-								update={updateAudio}
-							/>
-						) : null}
-					</>
-				) : null}
-				{recordingMode === "wakeword" ? (
-					<>
-						<WakeWordControl
-							customWakeWords={general?.customWakeWords ?? []}
-							disabled={wakewordControlsLocked}
-							t={t}
-							update={update}
-							value={general?.wakeWord ?? ""}
-						/>
-						<WakewordDownloadProgress status={wakewordStatus} />
-						<WakeWordSensitivityControl
-							disabled={wakewordControlsLocked}
-							t={t}
-							update={update}
-							value={general?.wakeWordSensitivity ?? 0.6}
-						/>
-						<WakeWordTimeoutControl
-							disabled={wakewordControlsLocked}
-							t={t}
-							update={update}
-							value={general?.wakeWordTimeout ?? 5}
-						/>
-					</>
-				) : null}
+				/>
+			}
+			icon={RecordIcon}
+			title={t("recordingMode")}
+			tooltip={t("recordingModeTooltip")}
+		>
+			{/* Hero control — sets the design template for every other
+			    interactive group on the tab. Same ElevatedSurface wraps
+			    them all so the tab reads as one consistent language. The
+			    section header owns this control's tooltip + reset (the tab's
+			    page title already says "Recording", so a second in-body
+			    label row would just repeat it). */}
+			<div className="py-3.5">
+				<Switcher
+					fullWidth
+					onChange={handleRecordingModeChange}
+					options={recordingModeOptions}
+					value={recordingMode}
+				/>
 			</div>
+			{recordingMode !== "wakeword" && showWakewordDownloadProgress ? (
+				<WakewordDownloadProgress status={wakewordStatus} />
+			) : null}
+			{recordingMode === "toggle" ? (
+				<>
+					<ManualToggleStopControl
+						enabled={manualToggleStop}
+						t={t}
+						update={update}
+					/>
+					{!manualToggleStop ? (
+						<ToggleSilenceStopControl
+							audio={audio}
+							t={ta}
+							update={updateAudio}
+						/>
+					) : null}
+				</>
+			) : null}
+			{recordingMode === "wakeword" ? (
+				<>
+					<WakeWordControl
+						customWakeWords={general?.customWakeWords ?? []}
+						disabled={wakewordControlsLocked}
+						t={t}
+						update={update}
+						value={general?.wakeWord ?? ""}
+					/>
+					<WakewordDownloadProgress status={wakewordStatus} />
+					<WakeWordSensitivityControl
+						disabled={wakewordControlsLocked}
+						t={t}
+						update={update}
+						value={general?.wakeWordSensitivity ?? 0.6}
+					/>
+					<WakeWordTimeoutControl
+						disabled={wakewordControlsLocked}
+						t={t}
+						update={update}
+						value={general?.wakeWordTimeout ?? 5}
+					/>
+				</>
+			) : null}
 		</SettingSection>
 	);
 }

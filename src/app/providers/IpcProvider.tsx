@@ -22,6 +22,7 @@ import {
 	settingsLoad,
 	webviewDiagLog,
 } from "@/shared/api/ipc-client";
+import { usePostProcessingProfileSwap } from "@/widgets/llm-settings/model/use-post-processing-profile-swap";
 
 const STARTUP_READY_PROBE_TIMEOUT_MS = 2500;
 let startupReadyPromise: Promise<void> | null = null;
@@ -79,6 +80,7 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 	useDownloadListener();
 	useFileTranscriptionListener();
 	useListenMode();
+	usePostProcessingProfileSwap();
 	useDeviceSwitchFeedback();
 	useVadCalibration();
 	useAudioDeviceMonitor();

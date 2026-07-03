@@ -11,7 +11,7 @@
 // alone (video stays video) and never inserting an unspoken term. NOT shipped — a dev harness.
 
 use winstt_app_lib::winstt::llm::{
-    build_dictation_system_prompt, dictation_user_prompt_for_presets, PresetEntry, PresetKey, Vocab,
+    PresetEntry, PresetKey, Vocab, build_dictation_system_prompt, dictation_user_prompt_for_presets,
 };
 
 struct Case {

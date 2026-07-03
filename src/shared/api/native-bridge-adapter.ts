@@ -292,6 +292,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 		kind: "event",
 		event: "llm:learned-proper-nouns",
 	},
+	[IPC.LLM_PROFILE_SWAP]: { kind: "event", event: "llm:profile-swap" },
 	[IPC.LLM_WARMUP_STATUS]: { kind: "event", event: "llm:warmup-status" },
 
 	// ── Transforms (slice 13) ──
@@ -425,6 +426,23 @@ function shouldDeliver(channel: string, payload: unknown): boolean {
 	return code === expectedCode;
 }
 
+type Uint8ArrayBase64Constructor = Uint8ArrayConstructor & {
+	fromBase64?: (source: string) => Uint8Array;
+};
+
+function decodeBase64ToArrayBuffer(encoded: string): ArrayBuffer {
+	const fromBase64 = (Uint8Array as Uint8ArrayBase64Constructor).fromBase64;
+	if (typeof fromBase64 === "function") {
+		return fromBase64(encoded).buffer as ArrayBuffer;
+	}
+	const raw = atob(encoded);
+	const bytes = new Uint8Array(raw.length);
+	for (let i = 0; i < raw.length; i++) {
+		bytes[i] = raw.charCodeAt(i);
+	}
+	return bytes.buffer;
+}
+
 function reshape(channel: string, payload: unknown): unknown {
 	// Wake-word: WinSTT `onWakeWordDetected` reshaping expects `{ word }`. The
 	// Tauri `WakeWordDetectedPayload` carries the detected word under `word`/`keyword`.
@@ -436,22 +454,22 @@ function reshape(channel: string, payload: unknown): unknown {
 		const p = payload as { word?: string; keyword?: string };
 		return { word: p.word ?? p.keyword ?? "" };
 	}
-	// TTS chunk: the backend emits `pcm` as a serde `Vec<u8>`, which Tauri's JSON
-	// event bridge delivers as a plain `number[]` of byte values — NOT the binary
-	// `ArrayBuffer` that the renderer's `TtsChunkPayload.pcm: ArrayBuffer` type +
-	// playback-queue assume.
-	// The playback path does `new Float32Array(pcm)` (f32le) / `decodeAudioData(pcm)`
-	// (mp3); both REQUIRE a real ArrayBuffer. Handed a raw `number[]`, `Float32Array`
-	// reads each *byte* as a float (0–255) → 4× the samples, all far outside [-1,1],
-	// which `copyToChannel` hard-clips to ±1 = full-scale high-frequency NOISE (and
-	// `decodeAudioData` would reject it outright). Normalize to an ArrayBuffer here at
-	// the port boundary so the rest of the renderer stays the same shape.
+	// TTS chunk: the backend emits `pcm` as a base64 string (Tauri events are
+	// JSON — raw bytes would serialize as one JSON number per byte, ~4× the size
+	// and far slower to parse). The renderer's `TtsChunkPayload.pcm: ArrayBuffer`
+	// type + playback-queue need real binary: `new Float32Array(pcm)` (f32le) /
+	// `decodeAudioData(pcm)` (mp3) both REQUIRE an ArrayBuffer. Decode here at the
+	// port boundary so the rest of the renderer stays the same shape. The legacy
+	// `number[]` / typed-array shapes are still normalized for any older emitter.
 	if (
 		channel === IPC.TTS_CHUNK &&
 		payload !== null &&
 		typeof payload === "object"
 	) {
 		const pcm = (payload as { pcm?: unknown }).pcm;
+		if (typeof pcm === "string") {
+			return { ...payload, pcm: decodeBase64ToArrayBuffer(pcm) };
+		}
 		if (Array.isArray(pcm)) {
 			return { ...payload, pcm: new Uint8Array(pcm).buffer };
 		}

@@ -40,7 +40,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::managers::transcription::TranscriptionManager;
 use crate::winstt::managers::transcode::{
-    decode_audio_to_pcm, format_transcript, TARGET_SAMPLE_RATE,
+    TARGET_SAMPLE_RATE, decode_audio_to_pcm, format_transcript,
 };
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::{FileSaveLocation, FileTranscriptionFormat};
@@ -256,16 +256,16 @@ impl FileTranscribeManager {
         let mut changed = false;
         {
             let mut st = self.lock_state();
-            if let Some(it) = st.items.iter_mut().find(|it| it.id == id) {
-                if it.status != QueueStatus::Transcribing {
-                    it.status = QueueStatus::Queued;
-                    it.progress = 0.0;
-                    it.stage = "queued".into();
-                    it.message = String::new();
-                    it.text = None;
-                    it.paused_by_user = false;
-                    changed = true;
-                }
+            if let Some(it) = st.items.iter_mut().find(|it| it.id == id)
+                && it.status != QueueStatus::Transcribing
+            {
+                it.status = QueueStatus::Queued;
+                it.progress = 0.0;
+                it.stage = "queued".into();
+                it.message = String::new();
+                it.text = None;
+                it.paused_by_user = false;
+                changed = true;
             }
         }
         if changed {
@@ -284,12 +284,11 @@ impl FileTranscribeManager {
                 .find(|it| it.id == id)
                 .and_then(|it| it.text.clone())
         };
-        if let Some(text) = text {
-            if !text.is_empty() {
-                if let Err(e) = self.write_clipboard(&text) {
-                    log::warn!("[file-transcribe] copy to clipboard failed for {id}: {e}");
-                }
-            }
+        if let Some(text) = text
+            && !text.is_empty()
+            && let Err(e) = self.write_clipboard(&text)
+        {
+            log::warn!("[file-transcribe] copy to clipboard failed for {id}: {e}");
         }
     }
 
@@ -406,13 +405,13 @@ impl FileTranscribeManager {
         let mut changed = false;
         {
             let mut st = self.lock_state();
-            if let Some(it) = st.items.iter_mut().find(|it| it.id == id) {
-                if it.status == QueueStatus::Paused {
-                    it.status = QueueStatus::Queued;
-                    it.stage = "queued".into();
-                    it.paused_by_user = false;
-                    changed = true;
-                }
+            if let Some(it) = st.items.iter_mut().find(|it| it.id == id)
+                && it.status == QueueStatus::Paused
+            {
+                it.status = QueueStatus::Queued;
+                it.stage = "queued".into();
+                it.paused_by_user = false;
+                changed = true;
             }
         }
         if changed {
@@ -512,7 +511,7 @@ impl FileTranscribeManager {
         // Mid-file progress tick so the bar moves before the (blocking) transcribe.
         self.tick_progress(&item.id, 0.5, "transcribing");
 
-        match self.transcription.transcribe(audio) {
+        match self.transcription.transcribe(&audio) {
             Ok(text) => self.finish(
                 &item.id,
                 QueueStatus::Complete,
@@ -568,26 +567,26 @@ impl FileTranscribeManager {
         error: Option<&str>,
     ) {
         let mut error_message = error.map(str::to_string);
-        if status == QueueStatus::Complete {
-            if let Some(text) = text {
-                let output_target = {
-                    let st = self.lock_state();
-                    st.items
-                        .iter()
-                        .find(|it| it.id == id && it.status != QueueStatus::Canceled)
-                        .map(|it| (it.file_path.clone(), it.file_name.clone()))
-                };
-                if let Some((source_path, file_name)) = output_target {
-                    if let Err(e) = self.write_transcript_file(
-                        &source_path,
-                        &file_name,
-                        text,
-                        duration_secs.unwrap_or(0.0),
-                    ) {
-                        status = QueueStatus::Error;
-                        error_message = Some(e);
-                    }
-                }
+        if status == QueueStatus::Complete
+            && let Some(text) = text
+        {
+            let output_target = {
+                let st = self.lock_state();
+                st.items
+                    .iter()
+                    .find(|it| it.id == id && it.status != QueueStatus::Canceled)
+                    .map(|it| (it.file_path.clone(), it.file_name.clone()))
+            };
+            if let Some((source_path, file_name)) = output_target
+                && let Err(e) = self.write_transcript_file(
+                    &source_path,
+                    &file_name,
+                    text,
+                    duration_secs.unwrap_or(0.0),
+                )
+            {
+                status = QueueStatus::Error;
+                error_message = Some(e);
             }
         }
         let mut observed_error: Option<(String, String, String)> = None;

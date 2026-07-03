@@ -1256,6 +1256,9 @@ pub struct LlmSettings {
     /// SECRET — OpenRouter API key. Encrypt at rest (see 02_settings.md).
     #[serde(default)]
     pub openrouter_api_key: String,
+    /// Global shortcut that cycles through saved post-processing profiles.
+    #[serde(default = "LlmSettings::default_profile_swap_hotkey")]
+    pub profile_swap_hotkey: String,
     #[serde(default)]
     pub dictation: LlmDictation,
     #[serde(default)]
@@ -1272,6 +1275,9 @@ impl LlmSettings {
     fn default_timeout() -> i64 {
         5000
     }
+    fn default_profile_swap_hotkey() -> String {
+        "LCtrl+LShift+P".to_string()
+    }
 }
 
 impl Default for LlmSettings {
@@ -1279,6 +1285,7 @@ impl Default for LlmSettings {
         Self {
             endpoint: Self::default_endpoint(),
             openrouter_api_key: String::new(),
+            profile_swap_hotkey: Self::default_profile_swap_hotkey(),
             dictation: LlmDictation::default(),
             transforms: LlmTransforms::default(),
             timeout: Self::default_timeout(),
@@ -1950,6 +1957,7 @@ mod tests {
         // llm
         assert_eq!(s.llm.endpoint, "http://localhost:11434");
         assert_eq!(s.llm.timeout, 5000);
+        assert_eq!(s.llm.profile_swap_hotkey, "LCtrl+LShift+P");
         assert!(!s.llm.dictation.enabled);
         assert!(!s.llm.dictation.dictionary_auto_add_enabled);
         assert_eq!(s.llm.dictation.base.provider, LlmProvider::Ollama);
@@ -2105,6 +2113,7 @@ mod tests {
         assert_eq!(s.llm.dictation.presets.len(), 4);
         // Shared infra + transforms default.
         assert_eq!(s.llm.endpoint, "http://localhost:11434");
+        assert_eq!(s.llm.profile_swap_hotkey, "LCtrl+LShift+P");
         assert_eq!(s.llm.transforms.hotkey, "LCtrl+LShift+T");
     }
 

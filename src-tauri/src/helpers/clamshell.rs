@@ -189,16 +189,16 @@ fn watch_windows_lid_reconfigure(app: tauri::AppHandle) {
 
 #[cfg(target_os = "windows")]
 fn run_windows_lid_message_loop() {
-    use windows::core::w;
     use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Power::RegisterPowerSettingNotification;
     use windows::Win32::System::SystemServices::GUID_LIDSWITCH_STATE_CHANGE;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
-        TranslateMessage, DEVICE_NOTIFY_WINDOW_HANDLE, HWND_MESSAGE, MSG, PBT_POWERSETTINGCHANGE,
+        CreateWindowExW, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DispatchMessageW,
+        GetMessageW, HWND_MESSAGE, MSG, PBT_POWERSETTINGCHANGE, RegisterClassW, TranslateMessage,
         WINDOW_EX_STYLE, WINDOW_STYLE, WM_POWERBROADCAST, WNDCLASSW,
     };
+    use windows::core::w;
 
     unsafe extern "system" fn wnd_proc(
         hwnd: HWND,

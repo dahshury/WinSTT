@@ -39,8 +39,8 @@ use signal_hook::consts::{SIGUSR1, SIGUSR2};
 #[cfg(unix)]
 use signal_hook::iterator::Signals;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Instant;
 use tauri::image::Image;
@@ -61,8 +61,8 @@ static EXIT_CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
 // Boot-time helpers used only inside this crate root (run / initialize_core_logic
 // / the window-event handlers).
 use startup::{
-    build_console_filter, configure_webview_window_builder, ensure_hf_cache_env, request_app_exit,
-    wait_for_renderer_dev_server, StartupProfiler,
+    StartupProfiler, build_console_filter, configure_webview_window_builder, ensure_hf_cache_env,
+    request_app_exit, wait_for_renderer_dev_server,
 };
 use window_state::{
     restore_main_window_position, save_main_window_position, should_force_show_permissions_window,
@@ -154,11 +154,7 @@ fn replace_generated_event_helper(text: &str) -> String {
 
 #[cfg(any(debug_assertions, test))]
 fn preferred_typescript_newline(text: &str) -> &'static str {
-    if text.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    }
+    if text.contains("\r\n") { "\r\n" } else { "\n" }
 }
 
 #[cfg(any(debug_assertions, test))]
@@ -171,8 +167,7 @@ fn normalize_newlines(text: &str, newline: &str) -> String {
 }
 
 #[cfg(any(debug_assertions, test))]
-const COMMAND_ERROR_HELPER_LF: &str =
-    "function __commandError__<E>(error: unknown): { status: \"error\"; error: E } {\n\treturn { status: \"error\", error: error as E };\n}\n";
+const COMMAND_ERROR_HELPER_LF: &str = "function __commandError__<E>(error: unknown): { status: \"error\"; error: E } {\n\treturn { status: \"error\", error: error as E };\n}\n";
 
 #[cfg(any(debug_assertions, test))]
 const EVENT_HELPER_LF: &str = r#"type __EventAccessor__<T> = __EventObj__<T> & {
@@ -285,9 +280,9 @@ fn spawn_stt_boot_warmup(
         }
         tm.initiate_model_load(); // spawns its own background load thread
         tm.warmup(); // waits out that load, then dummy-decodes to compile kernels
-                     // Signal the splash ready-watcher that the backend is up + warm (or had
-                     // nothing to load). The single-process analog of the reference's
-                     // `server-ready`; one of the two gates before the pill is shown.
+        // Signal the splash ready-watcher that the backend is up + warm (or had
+        // nothing to load). The single-process analog of the reference's
+        // `server-ready`; one of the two gates before the pill is shown.
         if profile_stt {
             log::info!(
                 "[startup] STT boot/warmup thread completed: {} ms",
@@ -974,10 +969,10 @@ fn cleanup_runtime_models_on_exit(app: &AppHandle) {
         app.try_state::<Arc<managers::transcription::TranscriptionManager>>()
     {
         let manager = transcription.inner();
-        if manager.is_model_loaded() {
-            if let Err(err) = manager.unload_model() {
-                log::warn!("[shutdown] failed to unload STT model: {err}");
-            }
+        if manager.is_model_loaded()
+            && let Err(err) = manager.unload_model()
+        {
+            log::warn!("[shutdown] failed to unload STT model: {err}");
         }
     }
 

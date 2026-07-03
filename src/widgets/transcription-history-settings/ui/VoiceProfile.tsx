@@ -76,7 +76,7 @@ export function VoiceProfile({ stats }: VoiceProfileProps) {
 	return (
 		<div className="grid grid-cols-2 gap-2">
 			{tiles.map((tile, i) => (
-				<StatTile key={tile.label} {...tile} index={i} />
+				<StatTile key={tile.label} {...tile} hoverEffect={false} index={i} />
 			))}
 		</div>
 	);

@@ -17,7 +17,9 @@
 //                    total_step, current_step) -> denoised_latent
 //   vocoder(latent) -> wav_tts @ 44.1 kHz
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 use unicode_normalization::UnicodeNormalization;
@@ -174,7 +176,14 @@ fn has_terminal_punctuation(s: &str) -> bool {
 }
 
 fn collapse_spaces(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut out = String::with_capacity(s.len());
+    for word in s.split_whitespace() {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    out
 }
 
 fn normalize_spacing(mut s: String) -> String {
@@ -229,11 +238,7 @@ fn tokenize_with_indexer(text: &str, indexer: &[i64]) -> Vec<i64> {
         .map(|c| {
             let code = c as usize;
             let id = indexer.get(code).copied().unwrap_or(-1);
-            if id >= 0 {
-                id
-            } else {
-                0
-            }
+            if id >= 0 { id } else { 0 }
         })
         .collect()
 }
@@ -266,11 +271,7 @@ impl Gauss {
 
     fn next_uniform(&mut self) -> f32 {
         let v = (self.next_u64() >> 11) as f32 / (1u64 << 53) as f32;
-        if v <= 0.0 {
-            f32::MIN_POSITIVE
-        } else {
-            v
-        }
+        if v <= 0.0 { f32::MIN_POSITIVE } else { v }
     }
 
     fn next_normal(&mut self) -> f32 {
@@ -363,6 +364,10 @@ struct StyleTensor {
 pub struct SupertonicEngine {
     config: SupertonicConfig,
     inner: LazyOrtEngine<Loaded>,
+    /// Parsed voice-style embeddings by resolved voice id. The style JSON is
+    /// ~13k floats read + recursively flattened from disk; without this cache
+    /// every SENTENCE of a read paid that parse again.
+    styles: Mutex<HashMap<&'static str, Arc<StyleEmbeddings>>>,
 }
 
 impl SupertonicEngine {
@@ -370,6 +375,7 @@ impl SupertonicEngine {
         Self {
             config,
             inner: LazyOrtEngine::new(),
+            styles: Mutex::new(HashMap::new()),
         }
     }
 
@@ -415,8 +421,23 @@ impl SupertonicEngine {
         })
     }
 
-    fn load_style(&self, voice: &str) -> SupertonicResult<StyleEmbeddings> {
+    /// The parsed style embeddings for `voice`, cached per resolved voice id so
+    /// a multi-sentence read parses each voice's JSON once, not per sentence.
+    fn load_style(&self, voice: &str) -> SupertonicResult<Arc<StyleEmbeddings>> {
         let voice = resolve_voice_id(voice);
+        if let Ok(cache) = self.styles.lock()
+            && let Some(style) = cache.get(voice)
+        {
+            return Ok(style.clone());
+        }
+        let style = Arc::new(self.parse_style(voice)?);
+        if let Ok(mut cache) = self.styles.lock() {
+            cache.insert(voice, style.clone());
+        }
+        Ok(style)
+    }
+
+    fn parse_style(&self, voice: &'static str) -> SupertonicResult<StyleEmbeddings> {
         let path = self.config.style_path(voice);
         let bytes = std::fs::read(&path)
             .map_err(|e| SupertonicError::Voice(format!("read {}: {e}", path.display())))?;
@@ -468,6 +489,9 @@ impl SupertonicEngine {
 
     pub fn shutdown(&self) {
         self.inner.shutdown();
+        if let Ok(mut cache) = self.styles.lock() {
+            cache.clear();
+        }
     }
 }
 

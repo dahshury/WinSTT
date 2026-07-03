@@ -133,7 +133,12 @@ pub fn hotkey_start_recording(app: AppHandle, webview: tauri::WebviewWindow) -> 
     }
 
     let _ = crate::shortcut::suspend_binding(app.clone(), PTT_BINDING.to_string());
-    for id in ["transforms", "read_aloud", "repaste"] {
+    for id in [
+        "transforms",
+        "read_aloud",
+        "repaste",
+        "post_processing_profile_swap",
+    ] {
         let _ = crate::shortcut::suspend_binding(app.clone(), id.to_string());
     }
     true

@@ -263,10 +263,10 @@ fn app_label_from_path(path: &std::path::Path) -> String {
 fn icon_data_uri_for_path(path: &std::path::Path) -> Option<String> {
     use std::mem::size_of;
     use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_NORMAL;
-    use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON};
+    use windows::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGetFileInfoW};
     use windows::Win32::UI::WindowsAndMessaging::DestroyIcon;
+    use windows::core::PCWSTR;
 
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
     wide.push(0);
@@ -297,10 +297,10 @@ fn hicon_to_bmp_data_uri(hicon: windows::Win32::UI::WindowsAndMessaging::HICON) 
     use std::mem::size_of;
     use std::ptr::null_mut;
     use windows::Win32::Graphics::Gdi::{
-        CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC,
-        SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
+        BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS,
+        DeleteDC, DeleteObject, GetDC, HGDIOBJ, ReleaseDC, SelectObject,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{DrawIconEx, DI_NORMAL};
+    use windows::Win32::UI::WindowsAndMessaging::{DI_NORMAL, DrawIconEx};
 
     const ICON_SIZE: usize = 32;
     const BYTES_PER_PIXEL: usize = 4;
@@ -447,7 +447,7 @@ pub fn debug_read_context(
     context: State<'_, Arc<ContextManager>>,
     mode: String,
 ) -> ContextDebugPayload {
-    use crate::winstt::context::{debug_verdicts, format_context_for_prompt, ContextReader};
+    use crate::winstt::context::{ContextReader, debug_verdicts, format_context_for_prompt};
 
     let mode = match mode.as_str() {
         "selection" => ContextMode::Selection,

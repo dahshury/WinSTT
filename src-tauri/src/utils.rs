@@ -1,7 +1,7 @@
+use crate::TranscriptionCoordinator;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::shortcut;
-use crate::TranscriptionCoordinator;
 use log::info;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};

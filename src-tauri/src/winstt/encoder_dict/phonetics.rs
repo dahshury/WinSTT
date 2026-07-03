@@ -53,10 +53,10 @@ fn soundex(word: &str) -> String {
     let mut prev = digit(first);
     for &c in &letters[1..] {
         let d = digit(c);
-        if let Some(dd) = d {
-            if Some(dd) != prev {
-                out.push(dd);
-            }
+        if let Some(dd) = d
+            && Some(dd) != prev
+        {
+            out.push(dd);
         }
         // h/w are transparent (don't reset prev); vowels reset it so a digit can repeat across them.
         if c != 'h' && c != 'w' {

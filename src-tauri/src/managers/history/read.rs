@@ -5,7 +5,7 @@
 //! history, latest-entry lookups, and single-entry fetch.
 
 use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::{HistoryEntry, HistoryManager, PaginatedHistory, TransformHistoryDbEntry};
 
@@ -41,10 +41,9 @@ impl HistoryManager {
                      ORDER BY id DESC
                      LIMIT ?2",
                 )?;
-                let result = stmt
-                    .query_map(params![cursor_id, fetch_count], Self::map_history_entry)?
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                result
+
+                stmt.query_map(params![cursor_id, fetch_count], Self::map_history_entry)?
+                    .collect::<std::result::Result<Vec<_>, _>>()?
             }
             (None, Some(lim)) => {
                 let fetch_count = (lim + 1) as i64;
@@ -54,10 +53,9 @@ impl HistoryManager {
                      ORDER BY id DESC
                      LIMIT ?1",
                 )?;
-                let result = stmt
-                    .query_map(params![fetch_count], Self::map_history_entry)?
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                result
+
+                stmt.query_map(params![fetch_count], Self::map_history_entry)?
+                    .collect::<std::result::Result<Vec<_>, _>>()?
             }
             (_, None) => {
                 let mut stmt = conn.prepare(
@@ -65,10 +63,9 @@ impl HistoryManager {
                      FROM transcription_history
                      ORDER BY id DESC",
                 )?;
-                let result = stmt
-                    .query_map([], Self::map_history_entry)?
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                result
+
+                stmt.query_map([], Self::map_history_entry)?
+                    .collect::<std::result::Result<Vec<_>, _>>()?
             }
         };
 

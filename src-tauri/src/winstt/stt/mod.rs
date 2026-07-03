@@ -103,7 +103,7 @@ mod engine_kind;
 /// Pure quant/fit/device-routing decision helpers (+ deterministic CTC/thread/vocab) with tests.
 mod quant_resolve;
 
-pub use device::{providers_for_accelerator, resolve_accelerator, Accelerator, Quantization};
+pub use device::{Accelerator, Quantization, providers_for_accelerator, resolve_accelerator};
 pub use engine_kind::EngineKind;
 pub use quant_resolve::{
     ctc_greedy_collapse, fit_aware_auto_quant, override_dml_to_cpu_for_kind, pick_intra_op_threads,

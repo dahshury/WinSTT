@@ -35,13 +35,13 @@ pub(super) fn first_dim(v: &DynValue) -> i64 {
 /// Whisper exports declare `(batch, num_heads, past_len, head_dim)`; dims 1 & 3 are static.
 /// Unknown/dynamic dims → 0, yielding a (0,0,0,0) empty cache ORT accepts as "no past".
 pub(super) fn kv_head_dim(decoder: &Session, name: &str) -> (i64, i64) {
-    if let Some(outlet) = decoder.inputs().iter().find(|o| o.name() == name) {
-        if let ValueType::Tensor { shape, .. } = outlet.dtype() {
-            let dims: &[i64] = shape; // Shape derefs to [i64]
-            let h = dims.get(1).copied().filter(|&d| d > 0).unwrap_or(0);
-            let d = dims.get(3).copied().filter(|&d| d > 0).unwrap_or(0);
-            return (h, d);
-        }
+    if let Some(outlet) = decoder.inputs().iter().find(|o| o.name() == name)
+        && let ValueType::Tensor { shape, .. } = outlet.dtype()
+    {
+        let dims: &[i64] = shape; // Shape derefs to [i64]
+        let h = dims.get(1).copied().filter(|&d| d > 0).unwrap_or(0);
+        let d = dims.get(3).copied().filter(|&d| d > 0).unwrap_or(0);
+        return (h, d);
     }
     (0, 0)
 }
@@ -72,7 +72,7 @@ pub(super) fn read_whisper_head_dims(vocab_path: &Path) -> Option<(i64, i64)> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::{kv_sort_key, provider_label, Accelerator};
+    use super::super::super::{Accelerator, kv_sort_key, provider_label};
 
     #[test]
     fn kv_sort_orders_by_layer_then_sub() {

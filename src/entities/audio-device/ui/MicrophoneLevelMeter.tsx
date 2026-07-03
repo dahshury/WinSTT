@@ -22,25 +22,12 @@ function monitorTargetForOption(id: string): MicrophoneLevelMonitorTarget {
 	};
 }
 
-function monitorTargetKey(
-	targets: readonly MicrophoneLevelMonitorTarget[],
-): string {
-	return targets
-		.map((target) => `${target.id}:${target.deviceIndex ?? "default"}`)
-		.join("|");
-}
-
 export function useMicrophoneLevels(
 	enabled: boolean,
 	optionIds: readonly string[],
 ): Record<string, number> {
 	const optionIdsKey = optionIds.join("|");
-	const targets = optionIdsKey
-		.split("|")
-		.filter((id) => id.length > 0)
-		.map(monitorTargetForOption);
-	const targetsKey = monitorTargetKey(targets);
-	const currentKey = enabled ? targetsKey : null;
+	const currentKey = enabled ? optionIdsKey : null;
 	const [state, setState] = useState<{
 		key: string | null;
 		levels: Record<string, number>;
@@ -50,7 +37,17 @@ export function useMicrophoneLevels(
 		if (!enabled) {
 			return;
 		}
-		const key = targetsKey;
+		// The targets are rebuilt INSIDE the effect from the identity-stable
+		// string key. Depending on a freshly-mapped targets array restarted the
+		// monitor (stop + start, reopening every input device) on each levels
+		// payload — every payload re-rendered the consumer, remapping the array
+		// — flapping the microphones open/closed for as long as any meter was
+		// on screen.
+		const targets = optionIdsKey
+			.split("|")
+			.filter((id) => id.length > 0)
+			.map(monitorTargetForOption);
+		const key = optionIdsKey;
 		const unsubscribe = onMicrophoneLevels((payload) => {
 			setState({
 				key,
@@ -67,7 +64,7 @@ export function useMicrophoneLevels(
 			unsubscribe();
 			void stopMicrophoneLevelMonitor();
 		};
-	}, [enabled, targets, targetsKey]);
+	}, [enabled, optionIdsKey]);
 
 	return state.key === currentKey ? state.levels : {};
 }

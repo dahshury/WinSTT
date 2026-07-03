@@ -1,6 +1,6 @@
 use crate::audio_toolkit::{
-    list_input_devices, vad::SmoothedVad, AudioRecorder, CpalDeviceInfo, RealtimeAudioProgress,
-    SileroVad,
+    AudioRecorder, CpalDeviceInfo, RealtimeAudioProgress, SileroVad, list_input_devices,
+    vad::SmoothedVad,
 };
 use crate::helpers::clamshell;
 use crate::winstt::settings_schema::{MicrophoneRelease, RecordingMode, WinsttSettings};
@@ -104,7 +104,9 @@ fn warn_set_mute_failed_once(step: &str, err: &windows::core::Error) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static LOGGED: AtomicBool = AtomicBool::new(false);
     if !LOGGED.swap(true, Ordering::Relaxed) {
-        warn!("[audio] set_mute failed at {step}: {err} (muting unavailable on this system; subsequent failures suppressed)");
+        warn!(
+            "[audio] set_mute failed at {step}: {err} (muting unavailable on this system; subsequent failures suppressed)"
+        );
     }
 }
 
@@ -123,17 +125,17 @@ fn set_mute(mute: bool) {
         unsafe {
             use windows::Win32::{
                 Media::Audio::{
-                    eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
-                    MMDeviceEnumerator,
+                    Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator, MMDeviceEnumerator,
+                    eMultimedia, eRender,
                 },
-                System::Com::{CoCreateInstance, CLSCTX_ALL},
+                System::Com::{CLSCTX_ALL, CoCreateInstance},
             };
 
             // Surface persistent COM/HRESULT failures once (rate-limited) so a system
             // where muting never works is diagnosable, without spamming the log on every
             // dictation. Behavior is unchanged: we still fail soft and return.
             macro_rules! unwrap_or_return {
-                ($expr:expr, $what:expr) => {
+                ($expr:expr_2021, $what:expr_2021) => {
                     match $expr {
                         Ok(val) => val,
                         Err(err) => {
@@ -244,18 +246,10 @@ fn create_audio_recorder(
         .with_vad(Box::new(smoothed_vad))
         .with_level_callback({
             let app_handle = app_handle.clone();
-            move |levels| {
+            move |level| {
                 // WinSTT scalar level for the reused renderer's audio visualizer.
                 // useVisualizerSync (onAudioLevel) reads `{ level: number }` (a
-                // single 0..1 RMS-ish amplitude) and feeds the rAF bar loop. The
-                // multiband callback gives a per-band magnitude vector; collapse it
-                // to one representative level via peak-across-bands so the bars
-                // react to the loudest band (what the eye tracks). Clamped to 0..1.
-                let level = levels
-                    .iter()
-                    .copied()
-                    .fold(0.0_f32, f32::max)
-                    .clamp(0.0, 1.0);
+                // single 0..1 peak-across-vocal-bands amplitude) and feeds the rAF bar loop.
                 crate::winstt::commands::dictation::SttEvents::audio_level(&app_handle, level);
                 // DIAGNOSTIC: log the peak level ~once/sec so we can see whether the
                 // mic is actually delivering audio (a silent/virtual default device
@@ -267,8 +261,7 @@ fn create_audio_recorder(
                         .is_multiple_of(90)
                     {
                         log::debug!(
-                            "[audio] mic peak level = {level:.3} ({} bands)",
-                            levels.len()
+                            "[audio] mic peak level = {level:.3}"
                         );
                     }
                 }
@@ -504,27 +497,43 @@ impl AudioRecordingManager {
         }
     }
 
-    fn schedule_lazy_close(&self) {
+    fn schedule_close_when_idle(&self, delay: Duration) {
         let app = self.app_handle.clone();
-        let delay = lazy_close_delay(&read_settings_raw(&app)).unwrap_or(STREAM_IDLE_TIMEOUT);
-        let gen = self.close_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = self.close_generation.fetch_add(1, Ordering::SeqCst) + 1;
         std::thread::spawn(move || {
-            std::thread::sleep(delay);
+            if delay > Duration::from_millis(0) {
+                std::thread::sleep(delay);
+            }
             let rm = app.state::<Arc<AudioRecordingManager>>();
             // Hold state lock across the check AND close to serialize against
             // try_start_recording, preventing a race where the stream is closed
             // under an active recording.
             let state = rm.state.lock_recover();
-            if rm.close_generation.load(Ordering::SeqCst) == gen
+            if rm.close_generation.load(Ordering::SeqCst) == generation
                 && matches!(*state, RecordingState::Idle)
                 && !rm.wakeword_mode_active()
             {
                 // stop_microphone_stream does not acquire the state lock,
                 // so holding it here is safe (no deadlock).
-                info!("Closing idle microphone stream after {:?}", delay);
+                if delay > Duration::from_millis(0) {
+                    info!("Closing idle microphone stream after {:?}", delay);
+                } else {
+                    info!("Closing idle microphone stream after recording stop");
+                }
                 rm.stop_microphone_stream();
             }
         });
+    }
+
+    fn schedule_lazy_close(&self) {
+        let delay =
+            lazy_close_delay(&read_settings_raw(&self.app_handle)).unwrap_or(STREAM_IDLE_TIMEOUT);
+        self.schedule_close_when_idle(delay);
+    }
+
+    fn schedule_release_after_stop(&self) {
+        let delay = lazy_close_delay(&read_settings_raw(&self.app_handle)).unwrap_or_default();
+        self.schedule_close_when_idle(delay);
     }
 
     /* ---------- microphone life-cycle -------------------------------------- */
@@ -782,6 +791,10 @@ impl AudioRecordingManager {
                 binding_id: ref active,
             } if active == binding_id => {
                 *state = RecordingState::Stopping;
+                // Stop the live-preview mirror at the recording boundary. The final
+                // paste path owns the model from here; letting realtime start one
+                // more preview decode during key-up can delay the final transcript.
+                self.set_realtime_enabled(false);
                 drop(state);
 
                 let samples = if let Some(rec) = self.recorder.lock_recover().as_ref() {
@@ -799,13 +812,18 @@ impl AudioRecordingManager {
 
                 *self.is_recording.lock_recover() = false;
 
-                // In on-demand mode, close the mic (lazily if the setting is enabled)
-                if matches!(*self.mode.lock_recover(), MicrophoneMode::OnDemand)
-                    && !self.wakeword_mode_active()
-                {
-                    self.stop_microphone_stream();
-                }
+                let should_release_stream =
+                    matches!(*self.mode.lock_recover(), MicrophoneMode::OnDemand)
+                        && !self.wakeword_mode_active();
                 *self.state.lock_recover() = RecordingState::Idle;
+
+                // In on-demand mode, close the mic according to the release policy,
+                // but do it off the stop->transcribe hot path. We already have the
+                // finalized samples; waiting for CPAL thread teardown here delays
+                // paste without improving transcription correctness.
+                if should_release_stream {
+                    self.schedule_release_after_stop();
+                }
 
                 // Pad if very short
                 let s_len = samples.len();
@@ -822,10 +840,7 @@ impl AudioRecordingManager {
         }
     }
     pub fn is_recording(&self) -> bool {
-        matches!(
-            *self.state.lock_recover(),
-            RecordingState::Recording { .. } | RecordingState::Stopping
-        )
+        matches!(*self.state.lock_recover(), RecordingState::Recording { .. })
     }
 
     /// Monotonic recording-start counter (see the field doc). The realtime worker

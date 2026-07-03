@@ -21,8 +21,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::AppHandle;
 
-use engine::EncoderDict;
 pub use engine::DEFAULT_RANK_K;
+use engine::EncoderDict;
 
 /// Local filenames the model is stored under (in the app-data `encoder-dict` dir).
 pub(crate) const MODEL_FILENAME: &str = "model_int8.onnx";
@@ -152,18 +152,20 @@ pub fn start_idle_watcher() {
     if ENCODER_WATCHER_STARTED.swap(true, Ordering::AcqRel) {
         return;
     }
-    std::thread::spawn(|| loop {
-        std::thread::sleep(Duration::from_secs(5));
-        let secs = ENCODER_IDLE_SECS.load(Ordering::Acquire);
-        // Nothing loaded → nothing to drop (also covers Never/Immediately, which
-        // never leave a finite-idle session for the watcher to reap).
-        if !encoder_is_loaded() {
-            continue;
-        }
-        let idle_ms = now_ms().saturating_sub(ENCODER_LAST_USED_MS.load(Ordering::Acquire));
-        if idle_unload_due(secs, idle_ms) {
-            clear_loaded();
-            log::info!("[encoder-dict] session dropped (idle timeout {secs}s)");
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(Duration::from_secs(5));
+            let secs = ENCODER_IDLE_SECS.load(Ordering::Acquire);
+            // Nothing loaded → nothing to drop (also covers Never/Immediately, which
+            // never leave a finite-idle session for the watcher to reap).
+            if !encoder_is_loaded() {
+                continue;
+            }
+            let idle_ms = now_ms().saturating_sub(ENCODER_LAST_USED_MS.load(Ordering::Acquire));
+            if idle_unload_due(secs, idle_ms) {
+                clear_loaded();
+                log::info!("[encoder-dict] session dropped (idle timeout {secs}s)");
+            }
         }
     });
 }

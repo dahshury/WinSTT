@@ -53,6 +53,8 @@ export interface SavedConfiguration {
 	name: string;
 }
 
+export type ConfigurationDropPlacement = "before" | "after";
+
 /** The last config (and the combobox label it was seeded from) the user left
  *  the Playground on. Restored on the next open so the model/tweaks survive
  *  across sessions instead of snapping back to the live dictation config. */
@@ -123,6 +125,56 @@ export function matchConfigurationId(
 	return configs.find((c) => carrierSignature(c.config) === sig)?.id ?? "";
 }
 
+function normalizeConfiguration(config: LlmConfiguration) {
+	return {
+		...normalizeCarrier(config),
+		maxOutputTokens: config.maxOutputTokens,
+		model: config.model,
+		openrouterFallbackModel: config.openrouterFallbackModel,
+		openrouterModel: config.openrouterModel,
+		provider: config.provider,
+		reasoningEffort: config.reasoningEffort,
+		thinkingEffort: config.thinkingEffort,
+		verbosity: config.verbosity,
+	};
+}
+
+function configurationSignature(config: LlmConfiguration): string {
+	return JSON.stringify(normalizeConfiguration(config));
+}
+
+/** Full post-processing profile match. Unlike `matchConfigurationId`, this
+ * compares provider/model and request-tuning fields too. `enabled` is excluded:
+ * the profile picker/hotkey swaps profile content, while the visible toggle
+ * remains the single on/off control. */
+export function matchFullConfigurationId(
+	config: LlmConfiguration,
+	configs: readonly SavedConfiguration[],
+): string {
+	const sig = configurationSignature(config);
+	return (
+		configs.find((c) => configurationSignature(c.config) === sig)?.id ?? ""
+	);
+}
+
+export function matchPostProcessingProfileId(
+	config: LlmConfiguration,
+	configs: readonly SavedConfiguration[],
+): string {
+	return (
+		matchFullConfigurationId(config, configs) ||
+		matchConfigurationId(config, configs)
+	);
+}
+
+export function postProcessingPatchFromConfiguration(
+	config: LlmConfiguration,
+): Partial<LlmConfiguration> {
+	const clone = cloneLlmConfiguration(config);
+	const { enabled: _enabled, ...patch } = clone;
+	return patch;
+}
+
 const PRESET_KEYS = [...TONE_GROUP, ...INDEPENDENT_PRESETS] as const;
 
 const presetKeySchema = z.enum(PRESET_KEYS);
@@ -173,30 +225,79 @@ const savedConfigurationSchema = z.object({
 	config: llmConfigurationSchema,
 });
 
+function parseSavedConfigurations(raw: string | null): SavedConfiguration[] {
+	if (!raw) {
+		return [];
+	}
+	const parsed: unknown = JSON.parse(raw);
+	if (!Array.isArray(parsed)) {
+		return [];
+	}
+	const configs: SavedConfiguration[] = [];
+	for (const entry of parsed) {
+		const result = savedConfigurationSchema.safeParse(entry);
+		if (result.success) {
+			configs.push(result.data);
+		}
+	}
+	return configs;
+}
+
+export function mergeSavedConfigurations(
+	primary: readonly SavedConfiguration[],
+	legacy: readonly SavedConfiguration[],
+): SavedConfiguration[] {
+	const seen = new Set<string>();
+	const merged: SavedConfiguration[] = [];
+	for (const config of [...primary, ...legacy]) {
+		if (seen.has(config.id)) {
+			continue;
+		}
+		seen.add(config.id);
+		merged.push(config);
+	}
+	return merged;
+}
+
+export function reorderSavedConfigurations(
+	configs: readonly SavedConfiguration[],
+	id: string,
+	targetId: string,
+	placement: ConfigurationDropPlacement,
+): SavedConfiguration[] {
+	if (id === targetId) {
+		return [...configs];
+	}
+	const source = configs.find((config) => config.id === id);
+	if (!source || !configs.some((config) => config.id === targetId)) {
+		return [...configs];
+	}
+	const withoutSource = configs.filter((config) => config.id !== id);
+	const targetIndex = withoutSource.findIndex((config) => config.id === targetId);
+	if (targetIndex < 0) {
+		return [...configs];
+	}
+	const insertIndex = placement === "after" ? targetIndex + 1 : targetIndex;
+	return [
+		...withoutSource.slice(0, insertIndex),
+		source,
+		...withoutSource.slice(insertIndex),
+	];
+}
+
 /** Load saved configurations from localStorage. Returns [] on any read/parse
  *  error — configurations are a non-critical convenience, never block the UI.
- *  Falls back to the legacy playground-presets key for pre-rename data. */
+ *  Merges the legacy playground-presets key so older presets remain visible even
+ *  after the shared key has already been created. */
 function loadConfigurations(): SavedConfiguration[] {
 	try {
-		const raw =
-			localStorage.getItem(STORAGE_KEY) ??
-			localStorage.getItem(LEGACY_STORAGE_KEY);
-		if (!raw) {
-			return [];
-		}
-		const parsed: unknown = JSON.parse(raw);
-		if (!Array.isArray(parsed)) {
-			return [];
-		}
-		// Single pass: parse each entry and keep only the ones that validate,
-		// extracting `.data` inline so a malformed configuration is dropped
-		// without iterating the list twice.
-		const configs: SavedConfiguration[] = [];
-		for (const entry of parsed) {
-			const result = savedConfigurationSchema.safeParse(entry);
-			if (result.success) {
-				configs.push(result.data);
-			}
+		const primary = parseSavedConfigurations(localStorage.getItem(STORAGE_KEY));
+		const legacy = parseSavedConfigurations(
+			localStorage.getItem(LEGACY_STORAGE_KEY),
+		);
+		const configs = mergeSavedConfigurations(primary, legacy);
+		if (legacy.length > 0 && configs.length > primary.length) {
+			persistConfigurations(configs);
 		}
 		return configs;
 	} catch {
@@ -212,10 +313,17 @@ function persistConfigurations(configs: readonly SavedConfiguration[]): void {
 }
 
 interface ConfigurationsState {
+	activeConfigurationId: string | null;
 	configurations: SavedConfiguration[];
+	moveConfiguration: (
+		id: string,
+		targetId: string,
+		placement: ConfigurationDropPlacement,
+	) => void;
 	removeConfiguration: (id: string) => void;
 	/** Save `config` under `name` and return the new id. */
 	saveConfiguration: (name: string, config: LlmConfiguration) => string;
+	setActiveConfiguration: (id: string | null) => void;
 }
 
 /**
@@ -227,6 +335,7 @@ interface ConfigurationsState {
  */
 export const useLlmConfigurationsStore = create<ConfigurationsState>()(
 	(set, get) => ({
+		activeConfigurationId: null,
 		configurations: loadConfigurations(),
 		saveConfiguration: (name, config) => {
 			const id = generateId();
@@ -236,13 +345,30 @@ export const useLlmConfigurationsStore = create<ConfigurationsState>()(
 				config: cloneLlmConfiguration(config),
 			};
 			const next = [...get().configurations, entry];
-			set({ configurations: next });
+			set({ configurations: next, activeConfigurationId: id });
 			persistConfigurations(next);
 			return id;
 		},
+		setActiveConfiguration: (id) => set({ activeConfigurationId: id }),
+		moveConfiguration: (id, targetId, placement) => {
+			const next = reorderSavedConfigurations(
+				get().configurations,
+				id,
+				targetId,
+				placement,
+			);
+			set({ configurations: next });
+			persistConfigurations(next);
+		},
 		removeConfiguration: (id) => {
 			const next = get().configurations.filter((c) => c.id !== id);
-			set({ configurations: next });
+			set({
+				configurations: next,
+				activeConfigurationId:
+					get().activeConfigurationId === id
+						? null
+						: get().activeConfigurationId,
+			});
 			persistConfigurations(next);
 		},
 	}),

@@ -19,11 +19,18 @@ import { SoundLibraryHighlight } from "./SoundLibraryHighlight";
 import { SoundLibraryRow } from "./SoundLibraryRow";
 
 interface SoundLibraryProps {
+	/** Drop the picker's own painted surface — it sits on a `boxed` section
+	 *  card that already provides the single background. */
+	bare?: boolean;
 	t: TranslateFn;
 	tCommon: TranslateFn;
 }
 
-export function SoundLibrary({ t, tCommon }: SoundLibraryProps): ReactNode {
+export function SoundLibrary({
+	bare = false,
+	t,
+	tCommon,
+}: SoundLibraryProps): ReactNode {
 	const defaultName = t("soundLibraryDefaultName");
 	const [bannerError, setBannerError] = useState<string>("");
 	const [pendingDelete, setPendingDelete] = useState<SoundLibraryItem | null>(
@@ -75,7 +82,7 @@ export function SoundLibrary({ t, tCommon }: SoundLibraryProps): ReactNode {
 
 	return (
 		<div className="flex flex-col gap-2">
-			<ElevatedSurface className={containerClass}>
+			<ElevatedSurface bare={bare} className={containerClass}>
 				{/* Drop target wraps both the scrollable list and the pinned add row so
             a file dropped anywhere on the card is accepted. */}
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: drop target surface — interactive controls live in child rows. */}

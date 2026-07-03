@@ -50,6 +50,7 @@ fn store_path() -> std::path::PathBuf {
 /// over the Send proxy channel — none re-clone the `AppHandle` — so they are safe to
 /// call from any thread.
 static SETTINGS_STORE: OnceLock<Arc<Store<tauri::Wry>>> = OnceLock::new();
+static SETTINGS_RAW_CACHE: OnceLock<Mutex<Option<WinsttSettings>>> = OnceLock::new();
 
 /// Build + cache the settings store handle on the MAIN thread. MUST be called once from
 /// the tauri setup hook BEFORE any background thread (the spawned startup thread, the
@@ -81,6 +82,18 @@ fn settings_store(app: &AppHandle) -> Result<Arc<Store<tauri::Wry>>, String> {
         .map_err(|err| format!("winstt settings store: {err}"))?;
     let _ = SETTINGS_STORE.set(Arc::clone(&store));
     Ok(store)
+}
+
+fn settings_raw_cache() -> &'static Mutex<Option<WinsttSettings>> {
+    SETTINGS_RAW_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn cached_raw_settings() -> Option<WinsttSettings> {
+    settings_raw_cache().lock_recover().clone()
+}
+
+fn update_raw_settings_cache(settings: &WinsttSettings) {
+    *settings_raw_cache().lock_recover() = Some(settings.clone());
 }
 
 /// Process-wide serializer for every read-modify-write of `winstt-settings.json`.
@@ -193,11 +206,17 @@ pub(crate) fn read_settings_raw(app: &AppHandle) -> WinsttSettings {
 }
 
 fn try_read_settings_raw(app: &AppHandle) -> Result<WinsttSettings, String> {
+    if let Some(settings) = cached_raw_settings() {
+        return Ok(settings);
+    }
+
     let store = settings_store(app)?;
-    match store.get(WINSTT_SETTINGS_KEY) {
+    let settings = match store.get(WINSTT_SETTINGS_KEY) {
         Some(value) => parse_settings_value(value),
         None => Ok(WinsttSettings::default()),
-    }
+    }?;
+    update_raw_settings_cache(&settings);
+    Ok(settings)
 }
 
 fn parse_settings_value(value: serde_json::Value) -> Result<WinsttSettings, String> {
@@ -215,6 +234,7 @@ pub(crate) fn normalize_cross_field_settings(settings: &mut WinsttSettings) {
     if settings.general.word_by_word_pasting {
         settings.general.preview_before_pasting = false;
         settings.llm.dictation.enabled = false;
+        settings.llm.transforms.enabled = false;
     }
 }
 
@@ -339,6 +359,7 @@ pub(crate) fn write_settings_value(
     let value = serde_json::to_value(settings).map_err(|e| e.to_string())?;
     store.set(WINSTT_SETTINGS_KEY, value);
     store.save().map_err(|e| e.to_string())?;
+    update_raw_settings_cache(settings);
     Ok(())
 }
 
@@ -383,6 +404,8 @@ pub fn seed_defaults(app: &AppHandle) {
                     log::error!(
                         "[settings] core-migration: failed to persist fresh defaults: {err}"
                     );
+                } else {
+                    update_raw_settings_cache(&defaults);
                 }
             }
             return;
@@ -548,12 +571,14 @@ mod tests {
         ));
         assert_eq!(sealed.core.post_process_api_keys.get("custom").unwrap(), "");
         // Plaintext must not leak into the on-disk envelope.
-        assert!(!sealed
-            .core
-            .post_process_api_keys
-            .get("openai")
-            .unwrap()
-            .contains("sk-pp-openai-secret"));
+        assert!(
+            !sealed
+                .core
+                .post_process_api_keys
+                .get("openai")
+                .unwrap()
+                .contains("sk-pp-openai-secret")
+        );
 
         let mut opened = sealed.clone();
         try_open_secrets(&mut opened).unwrap();

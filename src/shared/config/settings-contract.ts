@@ -50,6 +50,7 @@ export const SETTINGS_CONTRACT = {
 		"llm.dictation.verbosity",
 		"llm.endpoint",
 		"llm.openrouterApiKey",
+		"llm.profileSwapHotkey",
 		"llm.timeout",
 		"llm.transforms.customModifiers",
 		"llm.transforms.enabled",

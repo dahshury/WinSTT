@@ -79,15 +79,14 @@ mod windows_impl {
 
     use std::time::{Duration, Instant};
 
-    use windows::core::{w, BSTR, PCWSTR};
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_APARTMENTTHREADED,
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        CoUninitialize,
     };
     use windows::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
-        PROCESS_QUERY_LIMITED_INFORMATION,
+        OpenProcess, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
     };
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
@@ -108,6 +107,7 @@ mod windows_impl {
         TreeScope_Descendants, TreeScope_Subtree,
     };
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+    use windows::core::{BSTR, PCWSTR, w};
 
     // ─────────────────────── CLI parse + dispatch ─────────────────────────
 
@@ -134,10 +134,10 @@ mod windows_impl {
                 "--hwnd" => {
                     if let Some(v) = args.next() {
                         // Decimal HWND, matching the C `_strtoui64(.., 10)`.
-                        if let Ok(value) = v.trim().parse::<u64>() {
-                            if value > 0 {
-                                cli.hwnd = Some(value as isize);
-                            }
+                        if let Ok(value) = v.trim().parse::<u64>()
+                            && value > 0
+                        {
+                            cli.hwnd = Some(value as isize);
                         }
                     }
                 }
@@ -354,11 +354,7 @@ mod windows_impl {
         // SAFETY: `range` is a live UIA text range; -1 asks UIA for the whole range.
         let text: BSTR = unsafe { range.GetText(-1) }.ok()?;
         let s = text.to_string();
-        if s.is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+        if s.is_empty() { None } else { Some(s) }
     }
 
     /// TextPattern selection ranges, concatenated. Mirrors
@@ -384,11 +380,7 @@ mod windows_impl {
                 }
             }
         }
-        if out.is_empty() {
-            None
-        } else {
-            Some(out)
-        }
+        if out.is_empty() { None } else { Some(out) }
     }
 
     /// ValuePattern.CurrentValue (plain edit controls / address bars).
@@ -399,11 +391,7 @@ mod windows_impl {
         // SAFETY: `pat` is a live ValuePattern interface returned by UIA.
         let text: BSTR = unsafe { pat.CurrentValue() }.ok()?;
         let s = text.to_string();
-        if s.is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+        if s.is_empty() { None } else { Some(s) }
     }
 
     fn read_element_name(elem: &IUIAutomationElement) -> String {
@@ -962,12 +950,11 @@ mod windows_impl {
         // SAFETY: `uia` is live and `v` contains a valid AutomationId string.
         if let Ok(cond) = unsafe { uia.CreatePropertyCondition(UIA_AutomationIdPropertyId, &v) } {
             // SAFETY: `root` and `cond` are live UIA interfaces; no ownership crosses this call.
-            if let Ok(el) = unsafe { root.FindFirst(TreeScope_Descendants, &cond) } {
-                if let Some(url) = read_value_pattern(&el) {
-                    if looks_like_url_or_host(&url) {
-                        return url;
-                    }
-                }
+            if let Ok(el) = unsafe { root.FindFirst(TreeScope_Descendants, &cond) }
+                && let Some(url) = read_value_pattern(&el)
+                && looks_like_url_or_host(&url)
+            {
+                return url;
             }
         }
 
@@ -987,14 +974,12 @@ mod windows_impl {
                 let len = unsafe { edits.Length() }.unwrap_or(0);
                 for i in 0..len {
                     // SAFETY: `i` is within the collection length returned by UIA.
-                    if let Ok(el) = unsafe { edits.GetElement(i) } {
-                        if let Some(val) =
+                    if let Ok(el) = unsafe { edits.GetElement(i) }
+                        && let Some(val) =
                             read_value_pattern(&el).or_else(|| read_text_pattern(&el))
-                        {
-                            if looks_like_url_or_host(&val) {
-                                return val;
-                            }
-                        }
+                        && looks_like_url_or_host(&val)
+                    {
+                        return val;
                     }
                 }
             }

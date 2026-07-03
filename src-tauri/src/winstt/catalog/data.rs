@@ -446,8 +446,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemo-rnnt-en-1040ms",
         display_name: "Streaming NeMo FastConformer RNN-T 1040ms (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-1040ms",
+        onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-1040ms",
         available_quantizations: &[""],
         param_count: 114_000_000,
         supports_realtime: true,
@@ -456,8 +455,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemo-rnnt-en-80ms-int8",
         display_name: "Streaming NeMo FastConformer RNN-T (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms-int8",
+        onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms-int8",
         available_quantizations: &["int8"],
         param_count: 114_000_000,
         supports_realtime: true,
@@ -466,8 +464,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemo-rnnt-en-480ms-int8",
         display_name: "Streaming NeMo FastConformer RNN-T 480ms INT8 (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-480ms-int8",
+        onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-480ms-int8",
         available_quantizations: &["int8"],
         param_count: 114_000_000,
         supports_realtime: true,
@@ -476,8 +473,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemo-rnnt-en-1040ms-int8",
         display_name: "Streaming NeMo FastConformer RNN-T 1040ms INT8 (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-1040ms-int8",
+        onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-1040ms-int8",
         available_quantizations: &["int8"],
         param_count: 114_000_000,
         supports_realtime: true,
@@ -513,8 +509,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-parakeet-unified-en-240ms-int8",
         display_name: "Streaming Parakeet Unified (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-240ms",
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-240ms",
         available_quantizations: &["int8"],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -523,8 +518,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-parakeet-unified-en-560ms-int8",
         display_name: "Streaming Parakeet Unified 560ms INT8 (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-560ms",
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-560ms",
         available_quantizations: &["int8"],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -533,8 +527,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-parakeet-unified-en-1120ms-int8",
         display_name: "Streaming Parakeet Unified 1120ms INT8 (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-1120ms",
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-1120ms",
         available_quantizations: &["int8"],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -543,8 +536,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemotron-en-80ms",
         display_name: "Streaming Nemotron 80ms (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-2026-04-25",
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-2026-04-25",
         available_quantizations: &[""],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -553,8 +545,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemotron-en-160ms",
         display_name: "Streaming Nemotron 160ms (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-2026-04-25",
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-2026-04-25",
         available_quantizations: &[""],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -563,8 +554,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemotron-en-560ms",
         display_name: "Streaming Nemotron 560ms (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-2026-04-25",
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-2026-04-25",
         available_quantizations: &[""],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -573,8 +563,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemotron-en-1120ms",
         display_name: "Streaming Nemotron 1120ms (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-2026-04-25",
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-2026-04-25",
         available_quantizations: &[""],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -583,8 +572,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemotron-en-80ms-int8",
         display_name: "Streaming Nemotron (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-int8-2026-04-25",
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-int8-2026-04-25",
         available_quantizations: &["int8"],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -593,8 +581,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemotron-en-160ms-int8",
         display_name: "Streaming Nemotron 160ms INT8 (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-int8-2026-04-25",
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-int8-2026-04-25",
         available_quantizations: &["int8"],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -603,8 +590,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemotron-en-560ms-int8",
         display_name: "Streaming Nemotron 560ms INT8 (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25",
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25",
         available_quantizations: &["int8"],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -613,8 +599,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemotron-en-1120ms-int8",
         display_name: "Streaming Nemotron 1120ms INT8 (English)",
         family: Family::Nemo,
-        onnx_model_name:
-            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25",
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25",
         available_quantizations: &["int8"],
         param_count: 600_000_000,
         supports_realtime: true,

@@ -5,8 +5,8 @@ use std::time::Duration;
 use futures_util::StreamExt;
 
 use crate::winstt::llm::{
-    build_loopback_ollama_api_url, parse_chat_stream_line, validate_loopback_ollama_endpoint,
-    OllamaStreamState, OLLAMA_NUM_CTX,
+    OLLAMA_NUM_CTX, OllamaStreamState, build_loopback_ollama_api_url, parse_chat_stream_line,
+    validate_loopback_ollama_endpoint,
 };
 
 /// How often the chat-stream loop wakes to poll cancellation when no token has
@@ -470,13 +470,13 @@ impl OllamaClient {
         }
 
         let trimmed = buf.trim();
-        if !trimmed.is_empty() {
-            if let Some((status, payload)) = parse_pull_line(model, trimmed, &mut layers) {
-                if status == "success" {
-                    success = true;
-                }
-                emit(payload);
+        if !trimmed.is_empty()
+            && let Some((status, payload)) = parse_pull_line(model, trimmed, &mut layers)
+        {
+            if status == "success" {
+                success = true;
             }
+            emit(payload);
         }
 
         if success {
@@ -588,11 +588,7 @@ fn parse_ollama_details(d: &serde_json::Value) -> Option<OllamaModelDetails> {
         || out.families.is_some()
         || out.parameter_size.is_some()
         || out.quantization_level.is_some();
-    if any {
-        Some(out)
-    } else {
-        None
-    }
+    if any { Some(out) } else { None }
 }
 
 fn parse_ollama_show(json: &serde_json::Value) -> OllamaCapabilities {
@@ -645,11 +641,11 @@ struct PullLayers {
 
 impl PullLayers {
     fn record(&mut self, digest: Option<&str>, completed: Option<i64>, total: Option<i64>) {
-        if let (Some(d), Some(t)) = (digest, total) {
-            if t > 0 {
-                let c = completed.unwrap_or(0).clamp(0, t);
-                self.by_digest.insert(d.to_string(), (c, t));
-            }
+        if let (Some(d), Some(t)) = (digest, total)
+            && t > 0
+        {
+            let c = completed.unwrap_or(0).clamp(0, t);
+            self.by_digest.insert(d.to_string(), (c, t));
         }
     }
 

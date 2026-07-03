@@ -123,6 +123,7 @@
     },
     "endpoint": "http://localhost:11434",
     "openrouterApiKey": "",
+    "profileSwapHotkey": "LCtrl+LShift+P",
     "timeout": 5000,
     "transforms": {
       "customModifiers": [],

@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use super::phonemize::{default_phonemizer, Phonemizer, MAX_PHONEME_LENGTH};
+use super::phonemize::{MAX_PHONEME_LENGTH, Phonemizer, default_phonemizer};
 use super::provider::LazyOrtEngine;
 use super::types::TtsDevice;
 

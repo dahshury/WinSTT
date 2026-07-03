@@ -12,6 +12,7 @@ import {
 	surfaceHoverBg,
 	useSurface,
 } from "@/shared/lib/surface";
+import { ButtonGroup } from "@/shared/ui/button-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
 
 /**
@@ -64,13 +65,14 @@ export interface GroupRailProps {
 }
 
 const TILE_BASE_CLASSES = cn(
-	"group/tile relative flex h-12 w-12 shrink-0 items-center justify-center rounded-md ring-1 transition-colors",
-	"focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40",
+	"group/tile relative flex h-12 w-12 shrink-0 items-center justify-center transition-colors",
+	"focus-visible:z-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40",
 );
 
 // Selected tile: the single app accent (tint + accent ring + accent icon) —
 // the same restrained selection treatment the model cards use.
-const TILE_ACTIVE = "bg-accent/15 text-accent ring-accent/40 shadow-sm";
+const TILE_ACTIVE =
+	"bg-accent/15 text-accent shadow-[inset_0_0_0_1px_var(--color-accent-hairline)]";
 
 const STAR_FAVORITED = "text-favorite opacity-100";
 const STAR_IDLE = cn(
@@ -124,7 +126,7 @@ export function GroupRail({
 	const authorItems = items.filter((it) => !it.pinned);
 	const favoriteItems = authorItems.filter(isStarredAuthor);
 	const otherItems = authorItems.filter((it) => !isStarredAuthor(it));
-	const showDivider = favoriteItems.length > 0 && otherItems.length > 0;
+	const topItems = [...pinnedItems, ...favoriteItems];
 
 	return (
 		// Fixed surface baseline so the rail looks IDENTICAL regardless of where the
@@ -149,48 +151,67 @@ export function GroupRail({
 					ref={containerRef}
 					style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
 				>
-					<div className="flex flex-col items-center gap-2 px-1.5 py-2.5">
-						{pinnedItems.map((item) => (
-							<GroupRailTile
-								isActive={item.id === activeId}
-								isFavorited={false}
-								item={item}
-								key={item.id}
-								onClick={onClick}
-							/>
-						))}
-						{favoriteItems.map((item) => (
-							<GroupRailTile
-								isActive={item.id === activeId}
-								isFavorited
-								item={item}
-								key={item.id}
-								onClick={onClick}
-								onToggleFavorite={onToggleFavorite}
-							/>
-						))}
-						{showDivider ? (
-							<div
-								aria-hidden="true"
-								className="my-1 h-px w-7 shrink-0 bg-divider/80"
-							/>
+					<div className="flex flex-col items-center gap-3 px-1.5 py-2.5">
+						<GroupRailButtonGroup>
+							{topItems.map((item) => (
+								<GroupRailTile
+									isActive={item.id === activeId}
+									isFavorited={isStarredAuthor(item)}
+									item={item}
+									key={item.id}
+									onClick={onClick}
+									onToggleFavorite={
+										item.pinned || item.starrable === false
+											? undefined
+											: onToggleFavorite
+									}
+								/>
+							))}
+						</GroupRailButtonGroup>
+						{otherItems.length > 0 ? (
+							<GroupRailButtonGroup>
+								{otherItems.map((item) => (
+									<GroupRailTile
+										isActive={item.id === activeId}
+										isFavorited={false}
+										item={item}
+										key={item.id}
+										onClick={onClick}
+										onToggleFavorite={
+											item.starrable === false ? undefined : onToggleFavorite
+										}
+									/>
+								))}
+							</GroupRailButtonGroup>
 						) : null}
-						{otherItems.map((item) => (
-							<GroupRailTile
-								isActive={item.id === activeId}
-								isFavorited={false}
-								item={item}
-								key={item.id}
-								onClick={onClick}
-								onToggleFavorite={
-									item.starrable === false ? undefined : onToggleFavorite
-								}
-							/>
-						))}
 					</div>
 				</div>
 			</div>
 		</SurfaceProvider>
+	);
+}
+
+function GroupRailButtonGroup({ children }: { children: ReactNode }) {
+	return (
+		<ButtonGroup
+			className={cn(
+				"divide-y-0 rounded-lg shadow-sm ring-divider-strong",
+				"[&>[data-rail-tile]+[data-rail-tile]]:relative",
+				"[&>[data-rail-tile]+[data-rail-tile]]:before:absolute",
+				"[&>[data-rail-tile]+[data-rail-tile]]:before:inset-x-2",
+				"[&>[data-rail-tile]+[data-rail-tile]]:before:top-0",
+				"[&>[data-rail-tile]+[data-rail-tile]]:before:h-px",
+				"[&>[data-rail-tile]+[data-rail-tile]]:before:bg-divider-strong",
+				"[&>[data-rail-tile]+[data-rail-tile]]:before:content-['']",
+				"[&_[data-rail-favorite-button]]:rounded-full",
+				"[&_[data-rail-favorite-button]]:shadow-sm",
+			)}
+			connected
+			orientation="vertical"
+			role="presentation"
+		>
+			{children}
+		</ButtonGroup>
 	);
 }
 
@@ -215,7 +236,7 @@ function GroupRailTile({
 	const idleTile = cn(
 		surfaceBg(Math.min(level + 1, 8)),
 		surfaceHoverBg(Math.min(level + 2, 8)),
-		"text-foreground-muted ring-divider hover:text-foreground hover:ring-border",
+		"text-foreground-muted hover:text-foreground",
 	);
 	// Corner badge / star lift a couple of steps further so they read as small
 	// surfaces stacked on the tile, not bare pills.
@@ -226,7 +247,11 @@ function GroupRailTile({
 		onToggleFavorite?.(item.id);
 	};
 	return (
-		<div className="group/tile relative shrink-0" data-rail-id={item.id}>
+		<div
+			className="group/tile relative h-12 w-12 shrink-0"
+			data-rail-id={item.id}
+			data-rail-tile="true"
+		>
 			<Tooltip>
 				<TooltipTrigger
 					render={(props) => (
@@ -238,6 +263,7 @@ function GroupRailTile({
 								TILE_BASE_CLASSES,
 								isActive ? TILE_ACTIVE : idleTile,
 							)}
+							data-rail-tab="true"
 							onClick={() => onClick(item.id)}
 							role="tab"
 							type="button"
@@ -248,7 +274,7 @@ function GroupRailTile({
 							{item.badge ? (
 								<span
 									className={cn(
-										"absolute -end-1 -bottom-1 z-raised flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-semibold text-[9px] text-foreground-secondary tabular-nums leading-none ring-1 ring-divider",
+										"absolute end-0.5 bottom-0.5 z-raised flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-semibold text-[9px] text-foreground-secondary tabular-nums leading-none ring-1 ring-divider",
 										cornerSurface,
 									)}
 								>
@@ -267,10 +293,11 @@ function GroupRailTile({
 					}
 					aria-pressed={isFavorited}
 					className={cn(
-						"absolute -end-1 -top-1 z-raised flex size-5 items-center justify-center rounded-full shadow-sm ring-1 ring-divider transition-opacity",
+						"absolute top-0.5 end-0.5 z-raised flex size-5 items-center justify-center rounded-full shadow-sm ring-1 ring-divider transition-opacity",
 						cornerSurface,
 						isFavorited ? STAR_FAVORITED : STAR_IDLE,
 					)}
+					data-rail-favorite-button="true"
 					onClick={handleFavoriteClick}
 					type="button"
 				>

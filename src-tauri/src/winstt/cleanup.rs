@@ -16,7 +16,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::winstt::commands::settings::PartialWinsttSettings;
 use crate::winstt::managers::{
-    tts_download_manager::TtsDownloadManager, DownloadManager, LlmManager,
+    DownloadManager, LlmManager, tts_download_manager::TtsDownloadManager,
 };
 use crate::winstt::settings_schema::{
     LiveTranscriptionDisplay, LlmProvider, RecordingMode, WinsttSettings,
@@ -263,15 +263,15 @@ impl CleanupPlan {
         }
 
         let mut delete_portable_app_dir = false;
-        if crate::portable::is_portable() {
-            if let Some(dir) = app_dir.as_ref() {
-                if safe_to_remove_portable_app_dir(dir, &app_data_dir, &exe_path) {
-                    delete_portable_app_dir = true;
-                    targets.insert(dir.clone());
-                } else {
-                    targets.insert(exe_path);
-                    targets.insert(dir.join("portable"));
-                }
+        if crate::portable::is_portable()
+            && let Some(dir) = app_dir.as_ref()
+        {
+            if safe_to_remove_portable_app_dir(dir, &app_data_dir, &exe_path) {
+                delete_portable_app_dir = true;
+                targets.insert(dir.clone());
+            } else {
+                targets.insert(exe_path);
+                targets.insert(dir.join("portable"));
             }
         }
 

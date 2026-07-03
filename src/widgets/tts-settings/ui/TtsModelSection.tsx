@@ -72,6 +72,7 @@ export function TtsModelSection() {
 
 	return (
 		<SettingSection
+			boxed
 			description={t("description")}
 			icon={AiVoiceGeneratorIcon}
 			onToggle={handleEnabledToggle}
@@ -82,8 +83,8 @@ export function TtsModelSection() {
 			<div className="flex flex-col">
 				<div
 					className={cn(
-						"flex flex-col transition-opacity duration-200 ease-out",
-						installing && "pointer-events-none opacity-40",
+						"flex flex-col divide-y divide-divider transition-opacity duration-200 ease-out",
+						installing && "settings-dim pointer-events-none",
 					)}
 				>
 					<SettingField
@@ -131,7 +132,6 @@ export function TtsModelSection() {
 							<SettingField
 								isDefault={model === DEFAULT_SETTINGS.tts.model}
 								label={t("model")}
-								layout="row"
 								onReset={() => handleModelChange(DEFAULT_SETTINGS.tts.model)}
 								tooltip={t("modelCaption")}
 							>

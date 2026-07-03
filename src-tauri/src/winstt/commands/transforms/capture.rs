@@ -18,8 +18,12 @@ use super::TransformSource;
 
 /// How long we wait for the clipboard to update after the synthetic Ctrl+C.
 const CLIPBOARD_POLL_TIMEOUT_MS: u64 = 700;
-/// Polling interval — fast enough to feel instant, slow enough not to spin.
-const CLIPBOARD_POLL_INTERVAL_MS: u64 = 25;
+/// Polling interval. The fallback path is user-visible hotkey latency, so poll
+/// frequently for the short capture window instead of adding a coarse wait.
+const CLIPBOARD_POLL_INTERVAL_MS: u64 = 10;
+/// Keep Ctrl/Cmd held just long enough for apps that sample modifier state
+/// asynchronously; the clipboard polling loop owns the real post-copy wait.
+const COPY_MODIFIER_HOLD_MS: u64 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TransformCaptureScope {
@@ -65,14 +69,14 @@ pub(super) fn capture_selection(context: &ContextManager, app: &AppHandle) -> Tr
     //    full-field transform, so paste-back must select-all first.
     if context.is_available() {
         let snap = ContextReader::read(context, ContextMode::Selection);
-        if let Some(selected) = snap.selected_text.clone() {
-            if !selected.trim().is_empty() {
-                return TransformCapture {
-                    scope: TransformCaptureScope::Selection,
-                    source: TransformSource::Uia,
-                    text: selected,
-                };
-            }
+        if let Some(selected) = snap.selected_text.clone()
+            && !selected.trim().is_empty()
+        {
+            return TransformCapture {
+                scope: TransformCaptureScope::Selection,
+                source: TransformSource::Uia,
+                text: selected,
+            };
         }
         if !snap.focused_text.trim().is_empty() {
             return TransformCapture {
@@ -185,7 +189,7 @@ fn send_copy_keystroke_on_main(app: &AppHandle) -> Result<(), String> {
     enigo
         .key(c_key, Direction::Click)
         .map_err(|e| format!("Failed to click C key: {e}"))?;
-    std::thread::sleep(Duration::from_millis(50));
+    std::thread::sleep(Duration::from_millis(COPY_MODIFIER_HOLD_MS));
     enigo
         .key(modifier_key, Direction::Release)
         .map_err(|e| format!("Failed to release modifier key: {e}"))?;

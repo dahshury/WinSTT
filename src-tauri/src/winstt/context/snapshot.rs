@@ -69,11 +69,7 @@ pub fn parse_snapshot(raw: &str) -> WindowContextSnapshot {
     };
     let non_empty = |k: &str| {
         let v = get(k);
-        if v.is_empty() {
-            None
-        } else {
-            Some(v)
-        }
+        if v.is_empty() { None } else { Some(v) }
     };
     WindowContextSnapshot {
         window_title: get("windowTitle"),

@@ -17,7 +17,7 @@ use sherpa_onnx::{
 };
 
 use super::config::WakeWordConfig;
-use super::{normalize_keyword_label, path_string, path_string_lossy, WakeWordResult};
+use super::{WakeWordResult, normalize_keyword_label, path_string, path_string_lossy};
 
 pub struct WakeWordDetector {
     spotter: KeywordSpotter,
@@ -136,10 +136,10 @@ impl WakeWordDetector {
     }
 
     fn display_word_for_label(&self, label: &str, index: i32) -> String {
-        if index >= 0 {
-            if let Some(keyword) = self.keywords.get(index as usize) {
-                return keyword.clone();
-            }
+        if index >= 0
+            && let Some(keyword) = self.keywords.get(index as usize)
+        {
+            return keyword.clone();
         }
         label.trim().replace('_', " ")
     }

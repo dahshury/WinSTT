@@ -32,6 +32,12 @@ function RailSeparator() {
 
 export interface SidebarLink {
 	groupEnd?: boolean;
+	/**
+	 * Uppercase micro-label rendered above this link in the expanded rail,
+	 * naming the group this link starts. Collapsed mode falls back to the
+	 * hairline separators (`groupEnd`); search results render label-free.
+	 */
+	groupLabel?: string;
 	icon: IconSvgElement;
 	key: string;
 	keywords?: string | undefined;
@@ -278,8 +284,8 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 
 			<Tabs.List
 				className={cn(
-					"settings-sidebar-list relative flex min-h-0 flex-1 flex-col overflow-y-auto pt-3 pb-6",
-					collapsed ? "items-center px-2" : "px-4",
+					"settings-sidebar-list relative flex min-h-0 flex-1 flex-col overflow-y-auto",
+					collapsed ? "items-center px-2 pt-3 pb-6" : "px-4 pt-1 pb-4",
 				)}
 			>
 				<LazyMotion features={domAnimation} strict>
@@ -350,6 +356,11 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 										key={link.key}
 										reduceMotion={reduceMotion ?? false}
 									>
+										{!searching && !collapsed && link.groupLabel ? (
+											<div className="settings-sidebar-group-label truncate">
+												{link.groupLabel}
+											</div>
+										) : null}
 										{collapsed ? (
 											<Tooltip content={link.label} side="right">
 												{tab}
@@ -357,7 +368,9 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 										) : (
 											tab
 										)}
-										{!searching && link.groupEnd ? <RailSeparator /> : null}
+										{!searching && collapsed && link.groupEnd ? (
+											<RailSeparator />
+										) : null}
 									</SearchResultRow>
 								);
 							})

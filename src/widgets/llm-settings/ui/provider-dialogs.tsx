@@ -8,7 +8,6 @@ import {
 } from "@/shared/ui/dialog";
 import { Modal } from "@/shared/ui/modal";
 import { PasswordField } from "@/shared/ui/text-field";
-import { getOllamaDialogTexts } from "../lib/llm-settings-panel-test-helpers";
 import type { TranslateFn } from "./types";
 
 interface DialogProps {
@@ -23,7 +22,32 @@ interface OllamaDialogProps extends DialogProps {
 }
 
 function openSignup(): void {
-	window.open("https://openrouter.ai/keys", "_blank");
+	window.open("https://openrouter.ai/keys", "_blank", "noopener,noreferrer");
+}
+
+function errorMessage(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+interface OllamaDialogTexts {
+	description: string;
+	title: string;
+}
+
+function getOllamaDialogTexts(
+	showRun: boolean,
+	t: TranslateFn,
+): OllamaDialogTexts {
+	if (showRun) {
+		return {
+			title: t("ollamaNotRunning"),
+			description: t("ollamaNotRunningDescription"),
+		};
+	}
+	return {
+		title: t("ollamaRequired"),
+		description: t("ollamaRequiredDescription"),
+	};
 }
 
 function OllamaStartErrorBanner({ message }: { message: string | null }) {
@@ -36,6 +60,7 @@ function OllamaStartErrorBanner({ message }: { message: string | null }) {
 }
 
 interface OllamaPrimaryButtonProps {
+	detecting: boolean;
 	onDownload: () => void;
 	onStart: () => void;
 	showRun: boolean;
@@ -44,11 +69,11 @@ interface OllamaPrimaryButtonProps {
 }
 
 function OllamaPrimaryButton(props: OllamaPrimaryButtonProps) {
-	const { showRun, starting, t, onStart, onDownload } = props;
+	const { detecting, showRun, starting, t, onStart, onDownload } = props;
 	if (showRun) {
 		return (
 			<DialogActionButton
-				disabled={starting}
+				disabled={detecting || starting}
 				onClick={onStart}
 				variant="accent"
 			>
@@ -57,7 +82,11 @@ function OllamaPrimaryButton(props: OllamaPrimaryButtonProps) {
 		);
 	}
 	return (
-		<DialogActionButton onClick={onDownload} variant="accent">
+		<DialogActionButton
+			disabled={detecting || starting}
+			onClick={onDownload}
+			variant="accent"
+		>
 			{t("downloadOllama")}
 		</DialogActionButton>
 	);
@@ -71,6 +100,7 @@ interface OllamaDialogState {
 
 type OllamaDialogAction =
 	| { type: "reset-status" }
+	| { type: "detect-failed"; error: string }
 	| { type: "set-installed"; value: boolean | null }
 	| { type: "start-attempt" }
 	| { type: "start-failed"; error: string }
@@ -82,9 +112,16 @@ function ollamaDialogReducer(
 ): OllamaDialogState {
 	switch (action.type) {
 		case "reset-status":
-			return { ...state, startError: null, starting: false };
+			return INITIAL_OLLAMA_DIALOG_STATE;
+		case "detect-failed":
+			return {
+				...state,
+				installed: false,
+				starting: false,
+				startError: action.error,
+			};
 		case "set-installed":
-			return { ...state, installed: action.value };
+			return { ...state, installed: action.value, startError: null };
 		case "start-attempt":
 			return { ...state, starting: true, startError: null };
 		case "start-failed":
@@ -114,6 +151,26 @@ export function OllamaDialog({
 		INITIAL_OLLAMA_DIALOG_STATE,
 	);
 	const { installed, starting, startError } = state;
+	const isOpenRef = useRef(isOpen);
+	const startSuccessTimeoutRef = useRef<number | null>(null);
+
+	useEffect(() => {
+		isOpenRef.current = isOpen;
+		if (!isOpen && startSuccessTimeoutRef.current !== null) {
+			window.clearTimeout(startSuccessTimeoutRef.current);
+			startSuccessTimeoutRef.current = null;
+		}
+	}, [isOpen]);
+
+	useEffect(
+		() => () => {
+			if (startSuccessTimeoutRef.current !== null) {
+				window.clearTimeout(startSuccessTimeoutRef.current);
+				startSuccessTimeoutRef.current = null;
+			}
+		},
+		[],
+	);
 
 	useEffect(() => {
 		if (!isOpen) {
@@ -122,24 +179,47 @@ export function OllamaDialog({
 		dispatch({ type: "reset-status" });
 		let cancelled = false;
 		(async () => {
-			const result = await detectOllama();
-			if (!cancelled) {
-				dispatch({ type: "set-installed", value: result.installed });
+			try {
+				const result = await detectOllama();
+				if (!cancelled) {
+					dispatch({ type: "set-installed", value: result.installed });
+				}
+			} catch (err) {
+				if (!cancelled) {
+					dispatch({
+						type: "detect-failed",
+						error: errorMessage(err) || t("ollamaStartFailed"),
+					});
+				}
 			}
 		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [isOpen]);
+	}, [isOpen, t]);
 
 	const openDownload = () => {
-		window.open("https://ollama.com", "_blank");
+		window.open("https://ollama.com", "_blank", "noopener,noreferrer");
 		onClose();
 	};
 
 	const handleStart = async () => {
 		dispatch({ type: "start-attempt" });
-		const result = await startOllama();
+		let result: Awaited<ReturnType<typeof startOllama>>;
+		try {
+			result = await startOllama();
+		} catch (err) {
+			if (isOpenRef.current) {
+				dispatch({
+					type: "start-failed",
+					error: errorMessage(err) || t("ollamaStartFailed"),
+				});
+			}
+			return;
+		}
+		if (!isOpenRef.current) {
+			return;
+		}
 		if (!result.started) {
 			dispatch({
 				type: "start-failed",
@@ -147,13 +227,21 @@ export function OllamaDialog({
 			});
 			return;
 		}
-		setTimeout(() => {
+		if (startSuccessTimeoutRef.current !== null) {
+			window.clearTimeout(startSuccessTimeoutRef.current);
+		}
+		startSuccessTimeoutRef.current = window.setTimeout(() => {
+			startSuccessTimeoutRef.current = null;
+			if (!isOpenRef.current) {
+				return;
+			}
 			dispatch({ type: "start-succeeded" });
 			onStarted();
 		}, 1500);
 	};
 
 	const showRun = installed === true;
+	const detecting = installed === null;
 	const { title, description } = getOllamaDialogTexts(showRun, t);
 
 	return (
@@ -171,6 +259,7 @@ export function OllamaDialog({
 						{tc("cancel")}
 					</DialogActionButton>
 					<OllamaPrimaryButton
+						detecting={detecting}
 						onDownload={openDownload}
 						onStart={handleStart}
 						showRun={showRun}
@@ -196,21 +285,23 @@ export function ApiKeyDialog({
 	isOpen,
 	onClose,
 	onSave,
-	initialKey,
+	initialKey: _initialKey,
 }: ApiKeyDialogProps) {
 	const inputRef = useRef<HTMLInputElement>(null);
-	const [hasValue, setHasValue] = useState(initialKey.trim().length > 0);
+	const [value, setValue] = useState("");
+	const hasValue = value.trim().length > 0;
 
 	useEffect(() => {
 		if (!isOpen) {
 			return;
 		}
+		setValue("");
 		const id = window.setTimeout(() => inputRef.current?.focus(), 0);
 		return () => window.clearTimeout(id);
 	}, [isOpen]);
 
 	const submit = () => {
-		const trimmed = (inputRef.current?.value ?? "").trim();
+		const trimmed = value.trim();
 		if (!trimmed) {
 			return;
 		}
@@ -223,10 +314,9 @@ export function ApiKeyDialog({
 				<DialogTitle>{t("apiKeyRequired")}</DialogTitle>
 				<DialogDescription>{t("apiKeyRequiredDescription")}</DialogDescription>
 				<PasswordField
-					defaultValue={initialKey}
 					hideLabel={tc("hidePassword")}
 					key={isOpen ? "open" : "closed"}
-					onChange={(e) => setHasValue(e.target.value.trim().length > 0)}
+					onChange={(e) => setValue(e.target.value)}
 					onKeyDown={(e) => {
 						if (e.key === "Enter") {
 							submit();
@@ -235,6 +325,7 @@ export function ApiKeyDialog({
 					placeholder={t("openrouterApiKeyPlaceholder")}
 					ref={inputRef}
 					revealLabel={tc("showPassword")}
+					value={value}
 				/>
 				<DialogFooter>
 					<DialogActionButton onClick={openSignup} variant="neutral">

@@ -316,12 +316,12 @@ fn protected_winstt_process_ids() -> std::collections::HashSet<u32> {
 
 #[cfg(windows)]
 fn enumerate_audio_session_volumes() -> Option<Vec<AudioSessionVolume>> {
-    use windows::core::Interface;
     use windows::Win32::Media::Audio::{
-        eMultimedia, eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
-        ISimpleAudioVolume, MMDeviceEnumerator,
+        IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume,
+        MMDeviceEnumerator, eMultimedia, eRender,
     };
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+    use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
+    use windows::core::Interface;
 
     let _com = crate::windows_com::ComApartment::init_multithreaded();
     // SAFETY: COM is initialized for this thread and each interface returned by WASAPI is
@@ -450,7 +450,7 @@ mod tests {
     fn reduction_clamped_to_unit_range() {
         assert_eq!(reduction_target(2.0, 0), 1.0); // clamps high
         assert_eq!(reduction_target(-1.0, 0), 0.0); // clamps low
-                                                    // pct above 100 is clamped to 100 → full mute
+        // pct above 100 is clamped to 100 → full mute
         assert_eq!(reduction_target(0.9, 200), 0.0);
     }
 
@@ -483,9 +483,10 @@ mod tests {
         );
         // COM captured two background sessions; nobody released, so nothing to
         // restore yet.
-        assert!(s
-            .on_duck_complete(vec![snap(10, 0.8), snap(20, 0.5)])
-            .is_empty());
+        assert!(
+            s.on_duck_complete(vec![snap(10, 0.8), snap(20, 0.5)])
+                .is_empty()
+        );
 
         // releasing the only reason returns the captured snapshots to restore.
         let restore = s.request_restore(DuckReason::Dictation);

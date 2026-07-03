@@ -79,7 +79,7 @@ export function StatusBar() {
 	return (
 		<div
 			className={[
-				`flex shrink-0 items-center gap-1.5 overflow-hidden whitespace-nowrap border-border border-t ${surfaceClasses(barLevel, 1)} px-2 py-1 font-mono`,
+				`flex shrink-0 items-center gap-1.5 overflow-hidden whitespace-nowrap ${surfaceClasses(barLevel, 1)} py-1 pr-2 pl-3 font-mono`,
 				isDownloading && "pointer-events-none opacity-50",
 			]
 				.filter(Boolean)

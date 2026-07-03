@@ -16,11 +16,11 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::command_auth;
+use crate::winstt::managers::TtsManager;
 use crate::winstt::managers::tts_manager::{
     CloudSubscriptionPayload, CloudVoiceCatalogPayload, DownloadEstimatePayload,
     VoiceCatalogPayload,
 };
-use crate::winstt::managers::TtsManager;
 
 const TTS_OVERLAY_READY_TIMEOUT: Duration = Duration::from_millis(750);
 
@@ -162,7 +162,7 @@ pub fn tts_cancel(tts: State<'_, Arc<TtsManager>>, request_id: Option<String>) {
 #[specta::specta]
 pub fn tts_set_speed(app: AppHandle, tts: State<'_, Arc<TtsManager>>, speed: f32) {
     use crate::winstt::commands::settings::{
-        apply_settings_patch, read_settings, PartialWinsttSettings,
+        PartialWinsttSettings, apply_settings_patch, read_settings,
     };
     use crate::winstt::settings_schema::TtsSource;
 
@@ -604,9 +604,21 @@ pub fn tts_list_models_with_state(dl: State<'_, Arc<TtsDownloadManager>>) -> Tts
 #[specta::specta]
 pub fn tts_predownload_model(
     dl: State<'_, Arc<TtsDownloadManager>>,
+    webview: tauri::WebviewWindow,
     model_id: String,
     quantization: String,
 ) {
+    if command_auth::authorize_webview(
+        &webview,
+        "tts",
+        "start TTS download",
+        TTS_CACHE_MUTATION_ALLOWED_WINDOWS,
+        " through TTS model cache",
+    )
+    .is_err()
+    {
+        return;
+    }
     dl.inner().predownload(&model_id, &quantization);
 }
 
@@ -615,9 +627,21 @@ pub fn tts_predownload_model(
 #[specta::specta]
 pub fn tts_download_pause(
     dl: State<'_, Arc<TtsDownloadManager>>,
+    webview: tauri::WebviewWindow,
     model_id: String,
     quantization: String,
 ) {
+    if command_auth::authorize_webview(
+        &webview,
+        "tts",
+        "pause TTS download",
+        TTS_CACHE_MUTATION_ALLOWED_WINDOWS,
+        " through TTS model cache",
+    )
+    .is_err()
+    {
+        return;
+    }
     dl.pause(&model_id, &quantization);
 }
 
@@ -627,9 +651,21 @@ pub fn tts_download_pause(
 #[specta::specta]
 pub fn tts_download_resume(
     dl: State<'_, Arc<TtsDownloadManager>>,
+    webview: tauri::WebviewWindow,
     model_id: String,
     quantization: String,
 ) {
+    if command_auth::authorize_webview(
+        &webview,
+        "tts",
+        "resume TTS download",
+        TTS_CACHE_MUTATION_ALLOWED_WINDOWS,
+        " through TTS model cache",
+    )
+    .is_err()
+    {
+        return;
+    }
     dl.inner().predownload(&model_id, &quantization);
 }
 
@@ -638,13 +674,25 @@ pub fn tts_download_resume(
 #[specta::specta]
 pub fn tts_download_cancel(
     dl: State<'_, Arc<TtsDownloadManager>>,
+    webview: tauri::WebviewWindow,
     model_id: String,
     quantization: String,
 ) {
+    if command_auth::authorize_webview(
+        &webview,
+        "tts",
+        "cancel TTS download",
+        TTS_CACHE_MUTATION_ALLOWED_WINDOWS,
+        " through TTS model cache",
+    )
+    .is_err()
+    {
+        return;
+    }
     dl.cancel(&model_id, &quantization);
 }
 
-const TTS_CACHE_MUTATION_ALLOWED_WINDOWS: &[&str] = &["settings"];
+const TTS_CACHE_MUTATION_ALLOWED_WINDOWS: &[&str] = &["settings", "model-picker"];
 
 #[cfg(test)]
 fn is_tts_cache_mutation_allowed(caller: &str) -> bool {
@@ -676,14 +724,13 @@ mod tests {
     use super::is_tts_cache_mutation_allowed;
 
     #[test]
-    fn tts_cache_mutation_authorization_matches_settings_only_policy() {
+    fn tts_cache_mutation_authorization_matches_renderer_flows() {
         crate::command_auth::assert_label_rules(
-            &["settings"],
+            &["settings", "model-picker"],
             &[
                 "main",
                 "overlay",
                 "tray-menu",
-                "model-picker",
                 "device-picker",
                 "history",
                 "onboarding",

@@ -6,7 +6,7 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_log::{Builder as LogBuilder, RotationStrategy, Target, TargetKind};
 
 use crate::cli::CliArgs;
-use crate::startup::{level_filter_from_u8, FILE_LOG_LEVEL};
+use crate::startup::{FILE_LOG_LEVEL, level_filter_from_u8};
 
 pub(crate) fn install_runtime_plugins(
     builder: Builder<Wry>,

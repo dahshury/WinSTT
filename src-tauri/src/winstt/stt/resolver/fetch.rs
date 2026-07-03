@@ -3,7 +3,7 @@
 // DownloadManager-facing plan/download/cache APIs.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use super::globs::{file_globs, glob_match, pick_kaldi_tiebreak, resolve_repo};
 use super::sidecars::{is_sidecar_for, verify_external_data_complete};
@@ -39,6 +39,50 @@ struct PlannedFile {
     repo_path: String,
 }
 
+/// Normalize and validate a Hugging Face repo-relative file path before it can
+/// be matched, downloaded, or joined into the local cache layout.
+pub(crate) fn validate_repo_path(raw: &str) -> Result<String, String> {
+    let path = raw.trim();
+    if path.is_empty() {
+        return Err("empty repo path".into());
+    }
+    if path != raw {
+        return Err(format!("repo path has surrounding whitespace: {raw}"));
+    }
+    if path.contains('\\')
+        || path.contains('\0')
+        || path.contains('?')
+        || path.contains('#')
+        || path.bytes().any(|b| b.is_ascii_control())
+    {
+        return Err(format!("repo path contains forbidden characters: {raw}"));
+    }
+
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        return Err(format!("repo path must be relative: {raw}"));
+    }
+    for component in candidate.components() {
+        match component {
+            Component::Normal(part) => {
+                let Some(part) = part.to_str() else {
+                    return Err(format!("repo path contains non-utf8 component: {raw}"));
+                };
+                if part.is_empty()
+                    || part == "."
+                    || part == ".."
+                    || part.contains(':')
+                    || part.bytes().any(|b| b.is_ascii_control())
+                {
+                    return Err(format!("repo path contains unsafe component: {raw}"));
+                }
+            }
+            _ => return Err(format!("repo path contains unsafe component: {raw}")),
+        }
+    }
+    Ok(path.to_string())
+}
+
 /// Resolve a model to its on-disk file set (async — uses the hf-hub async client).
 ///
 /// Flow (port of resolver.py `resolve_model` + `_download_model` + onnxasr `_refetch_hf_snapshot`):
@@ -62,12 +106,12 @@ pub async fn resolve(req: &ResolveRequest) -> SttResult<ResolvedModel> {
     // there — `repo.info().send()` (the HTTP tree listing) is NEVER touched on this pass. A genuine
     // cache miss / incomplete shard falls through to the single network pass below.
     if req.local_files_only {
-        if let Ok(resolved) = resolve_cached_offline(req).await {
-            if all_onnx_complete(&resolved) {
-                return Ok(resolved);
-            }
-            // else: cache present but an `.onnx_data_N` shard is missing → fall through to refetch.
+        if let Ok(resolved) = resolve_cached_offline(req).await
+            && all_onnx_complete(&resolved)
+        {
+            return Ok(resolved);
         }
+        // else: cache present but an `.onnx_data_N` shard is missing → fall through to refetch.
         // Pass 2 — exactly ONE network attempt (cache-only miss OR the partial-shard refetch).
         let refetched = resolve_remote(req, false).await?;
         if all_onnx_complete(&refetched) {
@@ -198,11 +242,11 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
             .filter(|p| glob_match(&fg.glob, p))
             .collect();
         // `.ort` fallback when the `.onnx` form has no match (resolver.py find()).
-        if matches.is_empty() {
-            if let Some(stem) = fg.glob.strip_suffix(".onnx") {
-                let ort = format!("{stem}.ort");
-                matches = tree_paths.iter().filter(|p| glob_match(&ort, p)).collect();
-            }
+        if matches.is_empty()
+            && let Some(stem) = fg.glob.strip_suffix(".onnx")
+        {
+            let ort = format!("{stem}.ort");
+            matches = tree_paths.iter().filter(|p| glob_match(&ort, p)).collect();
         }
         let path = match pick_kaldi_tiebreak(req.kind, &matches) {
             Ok(Some(p)) => p,
@@ -219,10 +263,10 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
                 )));
             }
         };
-        if path.ends_with(".onnx") {
-            if let Some(stem) = path.strip_suffix(".onnx") {
-                onnx_stems.push(stem.to_string());
-            }
+        if path.ends_with(".onnx")
+            && let Some(stem) = path.strip_suffix(".onnx")
+        {
+            onnx_stems.push(stem.to_string());
         }
         planned.push(PlannedFile {
             key: Some(fg.key),
@@ -349,15 +393,15 @@ async fn resolve_cached_offline(req: &ResolveRequest) -> SttResult<ResolvedModel
             .map(|(p, _)| p)
             .filter(|p| glob_match(&fg.glob, p))
             .collect();
-        if matches.is_empty() {
-            if let Some(stem) = fg.glob.strip_suffix(".onnx") {
-                let ort = format!("{stem}.ort");
-                matches = cached
-                    .iter()
-                    .map(|(p, _)| p)
-                    .filter(|p| glob_match(&ort, p))
-                    .collect();
-            }
+        if matches.is_empty()
+            && let Some(stem) = fg.glob.strip_suffix(".onnx")
+        {
+            let ort = format!("{stem}.ort");
+            matches = cached
+                .iter()
+                .map(|(p, _)| p)
+                .filter(|p| glob_match(&ort, p))
+                .collect();
         }
         let chosen = match pick_kaldi_tiebreak(req.kind, &matches) {
             Ok(Some(p)) => (*p).clone(),
@@ -432,11 +476,11 @@ pub async fn plan_quant_download(
             .iter()
             .filter(|p| glob_match(&fg.glob, p))
             .collect();
-        if matches.is_empty() {
-            if let Some(stem) = fg.glob.strip_suffix(".onnx") {
-                let ort = format!("{stem}.ort");
-                matches = tree_paths.iter().filter(|p| glob_match(&ort, p)).collect();
-            }
+        if matches.is_empty()
+            && let Some(stem) = fg.glob.strip_suffix(".onnx")
+        {
+            let ort = format!("{stem}.ort");
+            matches = tree_paths.iter().filter(|p| glob_match(&ort, p)).collect();
         }
         // Kaldi-scoped tie-break (zipformer default glob also matches `.int8` siblings); for any
         // other kind a unique match is chosen, and >1 falls back to `first()` (pre-existing behaviour).
@@ -494,13 +538,15 @@ pub async fn download_planned_file(
 ) -> SttResult<PathBuf> {
     use hf_hub::HFClient;
 
+    let repo_path = validate_repo_path(repo_path)
+        .map_err(|e| SttError::Resolve(format!("unsafe repo path: {e}")))?;
     let (owner, name) = resolve_repo(model_id)
         .ok_or_else(|| SttError::Resolve(format!("unknown model alias / repo: {model_id}")))?;
     let client = HFClient::new().map_err(|e| SttError::Resolve(format!("hf client init: {e}")))?;
     let repo = client.model(owner, name);
     let progress: hf_hub::progress::Progress = progress.into();
     repo.download_file()
-        .filename(repo_path)
+        .filename(&repo_path)
         .local_files_only(cache_only)
         .progress(progress)
         .send()
@@ -547,8 +593,13 @@ async fn list_repo_tree(
     let siblings = info.siblings.unwrap_or_default();
     Ok(siblings
         .into_iter()
-        .map(|s| s.rfilename.replace('\\', "/"))
-        .filter(|p| !p.is_empty())
+        .filter_map(|s| match validate_repo_path(&s.rfilename) {
+            Ok(path) => Some(path),
+            Err(err) => {
+                log::warn!("[stt-resolver] skipped unsafe HF repo path: {err}");
+                None
+            }
+        })
         .collect())
 }
 
@@ -580,4 +631,38 @@ fn list_dir_posix(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     let mut out = Vec::new();
     walk(root, root, &mut out)?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repo_path_validation_accepts_safe_posix_relative_paths() {
+        assert_eq!(
+            validate_repo_path("onnx/encoder_model_fp16.onnx").unwrap(),
+            "onnx/encoder_model_fp16.onnx"
+        );
+        assert_eq!(validate_repo_path("config.json").unwrap(), "config.json");
+    }
+
+    #[test]
+    fn repo_path_validation_rejects_traversal_and_host_paths() {
+        for path in [
+            "../outside.onnx",
+            "onnx/../../outside.onnx",
+            "/absolute/model.onnx",
+            "C:/Windows/win.ini",
+            "onnx\\decoder.onnx",
+            "onnx/model?.onnx",
+            "onnx/model#frag.onnx",
+            "onnx/file:stream",
+            " onnx/model.onnx",
+        ] {
+            assert!(
+                validate_repo_path(path).is_err(),
+                "{path} should be rejected"
+            );
+        }
+    }
 }

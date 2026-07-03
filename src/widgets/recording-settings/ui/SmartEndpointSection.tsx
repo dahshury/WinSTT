@@ -5,7 +5,6 @@ import {
 	SettingSection,
 } from "@/entities/setting";
 import { NumberStepper } from "@/shared/ui/number-stepper";
-import { Toggle } from "@/shared/ui/toggle";
 import type {
 	QualitySettings,
 	QualityT,
@@ -27,44 +26,39 @@ export function SmartEndpointSection({
 }: SmartEndpointSectionProps) {
 	const enabled = q?.smartEndpoint ?? false;
 	return (
-		<SettingSection icon={Radar02Icon} title={t("smartEndpoint")}>
-			<div className="flex flex-col">
-				<SettingField
-					isDefault={enabled === DEFAULT_SETTINGS.quality.smartEndpoint}
-					label={t("smartEndpointLabel")}
-					labelAddon={<Toggle checked={enabled} onCheckedChange={onToggle} />}
-					onReset={() => onToggle(DEFAULT_SETTINGS.quality.smartEndpoint)}
-					tooltip={t("smartEndpointTooltip")}
+		<SettingSection
+			boxed
+			icon={Radar02Icon}
+			onToggle={onToggle}
+			title={t("smartEndpoint")}
+			toggled={enabled}
+			tooltip={t("smartEndpointTooltip")}
+		>
+			<SettingField
+				isDefault={
+					(q?.smartEndpointSpeed ??
+						DEFAULT_SETTINGS.quality.smartEndpointSpeed) ===
+					DEFAULT_SETTINGS.quality.smartEndpointSpeed
+				}
+				label={t("detectionSpeed")}
+				layout="row"
+				onReset={() =>
+					update({
+						smartEndpointSpeed: DEFAULT_SETTINGS.quality.smartEndpointSpeed,
+					})
+				}
+				tooltip={t("detectionSpeedTooltip")}
+			>
+				<NumberStepper
+					max={3.0}
+					min={0.5}
+					onChange={(v) => update({ smartEndpointSpeed: v })}
+					step={0.1}
+					value={
+						q?.smartEndpointSpeed ?? DEFAULT_SETTINGS.quality.smartEndpointSpeed
+					}
 				/>
-				<SettingField
-					disabled={!enabled}
-					disabledReason={t("smartEndpoint")}
-					isDefault={
-						(q?.smartEndpointSpeed ??
-							DEFAULT_SETTINGS.quality.smartEndpointSpeed) ===
-						DEFAULT_SETTINGS.quality.smartEndpointSpeed
-					}
-					label={t("detectionSpeed")}
-					layout="row"
-					onReset={() =>
-						update({
-							smartEndpointSpeed: DEFAULT_SETTINGS.quality.smartEndpointSpeed,
-						})
-					}
-					tooltip={t("detectionSpeedTooltip")}
-				>
-					<NumberStepper
-						max={3.0}
-						min={0.5}
-						onChange={(v) => update({ smartEndpointSpeed: v })}
-						step={0.1}
-						value={
-							q?.smartEndpointSpeed ??
-							DEFAULT_SETTINGS.quality.smartEndpointSpeed
-						}
-					/>
-				</SettingField>
-			</div>
+			</SettingField>
 		</SettingSection>
 	);
 }

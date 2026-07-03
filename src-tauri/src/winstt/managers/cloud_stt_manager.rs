@@ -10,16 +10,16 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::winstt::cancel_registry::CancelRegistry;
 use crate::winstt::cloud_stt::{
-    classify_http_failure, classify_transport_error, classify_verify, default_cloud_model_id,
-    emit_cloud_failure, parse_transcription_json, preflight, samples_to_wav_bytes, split_model_id,
-    CloudSttError, CloudSttErrorCode, CloudSttProvider, CloudTranscribeRequest, CloudTranscription,
-    VerifyResult, CLOUD_TRANSCRIBE_TIMEOUT_SECS,
+    CLOUD_TRANSCRIBE_TIMEOUT_SECS, CloudSttError, CloudSttErrorCode, CloudSttProvider,
+    CloudTranscribeRequest, CloudTranscription, VerifyResult, classify_http_failure,
+    classify_transport_error, classify_verify, default_cloud_model_id, emit_cloud_failure,
+    parse_transcription_json, preflight, samples_to_wav_bytes, split_model_id,
 };
 
 pub struct CloudSttManager {
@@ -193,10 +193,10 @@ impl CloudSttManager {
                 let mut form = reqwest::multipart::Form::new()
                     .part("file", part)
                     .text("model_id", req.model_id.clone());
-                if let Some(lang) = req.language.clone() {
-                    if !lang.is_empty() {
-                        form = form.text("language_code", lang);
-                    }
+                if let Some(lang) = req.language.clone()
+                    && !lang.is_empty()
+                {
+                    form = form.text("language_code", lang);
                 }
                 self.client
                     .post(endpoint)
@@ -213,10 +213,10 @@ impl CloudSttManager {
                     "model": req.model_id,
                     "input_audio": { "data": b64, "format": "wav" },
                 });
-                if let Some(lang) = req.language.clone() {
-                    if !lang.is_empty() {
-                        body["language"] = serde_json::Value::String(lang);
-                    }
+                if let Some(lang) = req.language.clone()
+                    && !lang.is_empty()
+                {
+                    body["language"] = serde_json::Value::String(lang);
                 }
                 self.client
                     .post(endpoint)

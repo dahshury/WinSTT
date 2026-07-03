@@ -22,7 +22,6 @@ import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import { Spinner } from "@/shared/ui/spinner";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
-import { Toggle } from "@/shared/ui/toggle";
 import type {
 	DeviceValue,
 	GlobalSettings,
@@ -50,7 +49,7 @@ export function ModelLifetimeSection({
 		global?.modelUnloadTimeout ?? DEFAULT_SETTINGS.global.modelUnloadTimeout;
 	const value = isForcedNever ? "never" : savedValue;
 	return (
-		<SettingSection icon={Timer01Icon} title={t("modelUnloadTimeout")}>
+		<SettingSection boxed icon={Timer01Icon} title={t("modelMemory")}>
 			<SettingField
 				disabled={isForcedNever}
 				hideReset={isForcedNever}
@@ -118,9 +117,13 @@ export function DeviceSection({
 	update: UpdateModelFn;
 }): ReactNode {
 	return (
-		<SettingSection icon={CpuSettingsIcon} title={t("device")}>
+		<SettingSection
+			boxed
+			icon={CpuSettingsIcon}
+			title={t("localAcceleration")}
+		>
 			<FormControl
-				label={t("device")}
+				label={t("computeDevice")}
 				layout="row"
 				tooltip={`${t("deviceSectionCaption")} ${t("deviceCaptionGpu")}`}
 			>
@@ -220,35 +223,24 @@ export function SpeakerDiarizationSection(): ReactNode {
 
 	return (
 		<SettingSection
+			boxed
+			headerAction={
+				pending ? (
+					<Spinner
+						aria-label={tGeneral("speakerDiarization")}
+						className="size-3.5 text-foreground-muted"
+					/>
+				) : undefined
+			}
 			icon={UserMultiple02Icon}
+			onToggle={(v) => update({ speakerDiarization: v })}
 			title={tGeneral("speakerDiarization")}
+			toggleDisabled={pending}
+			toggled={enabled}
 		>
-			<SettingField
-				isDefault={enabled === DEFAULT_SETTINGS.general.speakerDiarization}
-				label={tGeneral("speakerDiarization")}
-				labelAddon={
-					<div className="flex items-center gap-2">
-						{pending ? (
-							<Spinner
-								aria-label={tGeneral("speakerDiarization")}
-								className="size-3.5 text-foreground-muted"
-							/>
-						) : null}
-						<Toggle
-							aria-label={tGeneral("speakerDiarization")}
-							checked={enabled}
-							disabled={pending}
-							onCheckedChange={(v) => update({ speakerDiarization: v })}
-						/>
-					</div>
-				}
-				onReset={() =>
-					update({
-						speakerDiarization: DEFAULT_SETTINGS.general.speakerDiarization,
-					})
-				}
-				tooltip={tGeneral("speakerDiarizationTooltip")}
-			/>
+			<p className="py-3.5 text-body-sm text-foreground-muted leading-snug">
+				{tGeneral("speakerDiarizationTooltip")}
+			</p>
 		</SettingSection>
 	);
 }

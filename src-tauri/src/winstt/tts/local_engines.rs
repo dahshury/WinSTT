@@ -6,14 +6,14 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use super::chatterbox::{ChatterboxConfig, ChatterboxEngine, CHATTERBOX_SAMPLE_RATE};
-use super::kitten::{KittenConfig, KittenEngine, KITTEN_SAMPLE_RATE};
+use super::chatterbox::{CHATTERBOX_SAMPLE_RATE, ChatterboxConfig, ChatterboxEngine};
+use super::kitten::{KITTEN_SAMPLE_RATE, KittenConfig, KittenEngine};
 use super::piper::{PiperConfig, PiperEngine};
 use super::supertonic::{
-    SupertonicConfig, SupertonicEngine, SUPERTONIC_DEFAULT_VOICE, SUPERTONIC_SAMPLE_RATE,
-    SUPERTONIC_SPEED_MAX, SUPERTONIC_SPEED_MIN,
+    SUPERTONIC_DEFAULT_VOICE, SUPERTONIC_SAMPLE_RATE, SUPERTONIC_SPEED_MAX, SUPERTONIC_SPEED_MIN,
+    SupertonicConfig, SupertonicEngine,
 };
 use super::{Gender, SentenceAudio, TtsDevice, TtsEngine, TtsError, TtsResult, VoiceInfo};
 
@@ -383,7 +383,7 @@ impl TtsEngine for SupertonicLocalEngine {
 pub struct PiperLocalEngine {
     cache_dir: PathBuf,
     /// stem → loaded `PiperEngine` (lazily inserted on first use of that voice).
-    engines: Mutex<HashMap<String, PiperEngine>>,
+    engines: Mutex<HashMap<String, Arc<PiperEngine>>>,
 }
 impl PiperLocalEngine {
     /// `cache_dir` holds `{stem}.onnx` + `{stem}.onnx.json` for every used voice.
@@ -410,17 +410,21 @@ impl PiperLocalEngine {
         stem: &str,
         f: impl FnOnce(&PiperEngine) -> TtsResult<T>,
     ) -> TtsResult<T> {
-        let mut map = self
-            .engines
-            .lock()
-            .map_err(|_| TtsError::Engine("piper engine map poisoned".into()))?;
-        let engine = map.entry(stem.to_string()).or_insert_with(|| {
-            PiperEngine::new(PiperConfig {
-                cache_dir: self.cache_dir.clone(),
-                voice_stem: stem.to_string(),
-            })
-        });
-        f(engine)
+        let engine = {
+            let mut map = self
+                .engines
+                .lock()
+                .map_err(|_| TtsError::Engine("piper engine map poisoned".into()))?;
+            map.entry(stem.to_string())
+                .or_insert_with(|| {
+                    Arc::new(PiperEngine::new(PiperConfig {
+                        cache_dir: self.cache_dir.clone(),
+                        voice_stem: stem.to_string(),
+                    }))
+                })
+                .clone()
+        };
+        f(engine.as_ref())
     }
 }
 impl TtsEngine for PiperLocalEngine {

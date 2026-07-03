@@ -43,8 +43,8 @@ export function StartupSection({
 }: StartupSectionProps): ReactNode {
 	const flags = readStartupFlags(general);
 	return (
-		<SettingSection icon={PowerSocket01Icon} title={t("startup")}>
-			<div className="flex flex-col">
+		<SettingSection boxed icon={PowerSocket01Icon} title={t("startup")}>
+			<div className="flex flex-col divide-y divide-divider">
 				{/* Single "Start on login" switch — on launches WinSTT on sign-in,
 				    minimized straight to the tray (autoStart + startMinimized +
 				    minimizeToTray together); off disables auto-launch. The former

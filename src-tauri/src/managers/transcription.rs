@@ -29,7 +29,30 @@ mod accel;
 // Re-export the accelerator free functions / DTOs so external callers keep reaching them at
 // `crate::managers::transcription::{apply_accelerator_settings, get_available_accelerators,
 // AvailableAccelerators, GpuDeviceOption}` (lib.rs, shortcut/mod.rs).
-pub use accel::{apply_accelerator_settings, get_available_accelerators, AvailableAccelerators};
+pub use accel::{AvailableAccelerators, apply_accelerator_settings, get_available_accelerators};
+
+/// Single-pass mean + DC-immune RMS (AC energy) over a recording. One traversal computes
+/// Σx and Σx² in f64 (variance = E[x²] − mean², clamped at 0 against rounding), replacing
+/// the previous three full passes (mean, then a second mean inside the RMS helper, then
+/// the residual pass) — this runs on the FULL buffer per batch decode and again on the
+/// growing buffer every realtime tick. The f64 accumulators are also strictly more
+/// accurate than the old f32 running sums on long recordings.
+fn audio_energy_stats(audio: &[f32]) -> (f32, f32) {
+    if audio.is_empty() {
+        return (0.0, 0.0);
+    }
+    let mut sum = 0.0f64;
+    let mut sum_sq = 0.0f64;
+    for &x in audio {
+        let x = f64::from(x);
+        sum += x;
+        sum_sq += x * x;
+    }
+    let n = audio.len() as f64;
+    let mean = sum / n;
+    let variance = (sum_sq / n - mean * mean).max(0.0);
+    (mean as f32, variance.sqrt() as f32)
+}
 
 /// DC-immune RMS (AC energy): subtract the mean (constant offset) first so a dead
 /// device's constant DC bias doesn't read as signal, then RMS the residual. Shared by
@@ -37,12 +60,7 @@ pub use accel::{apply_accelerator_settings, get_available_accelerators, Availabl
 /// decodable speech energy — below this Whisper hallucinates phantom text ("Thank you.")
 /// on the silence the Silero VAD (threshold 0.3) lets through.
 pub(crate) fn dc_immune_rms(audio: &[f32]) -> f32 {
-    let n = audio.len() as f32;
-    if n == 0.0 {
-        return 0.0;
-    }
-    let mean = audio.iter().copied().sum::<f32>() / n;
-    (audio.iter().map(|&x| (x - mean) * (x - mean)).sum::<f32>() / n).sqrt()
+    audio_energy_stats(audio).1
 }
 
 /// AC-energy floor separating real speech from silence / room-tone / Whisper-on-silence
@@ -55,7 +73,6 @@ pub(crate) const SILENCE_AC_FLOOR: f32 = 0.003;
 /// The DC offset must exceed the AC RMS by this factor to be classed "all offset, no audio"
 /// (the dead/virtual-mic fingerprint that makes Whisper emit a wall of garbled text).
 const DC_DOMINANCE_RATIO: f32 = 10.0;
-const LOCAL_FINAL_DECODE_SILENCE_PAD_MS: usize = 700;
 const NATIVE_STREAM_FINAL_SILENCE_PAD_MS: usize = 2000;
 const NATIVE_STREAM_SAMPLE_RATE: usize = 16_000;
 
@@ -76,9 +93,7 @@ pub(crate) fn is_silent_recording(audio: &[f32]) -> bool {
     if audio.is_empty() {
         return true;
     }
-    let n = audio.len() as f32;
-    let mean = audio.iter().copied().sum::<f32>() / n;
-    let rms = dc_immune_rms(audio);
+    let (mean, rms) = audio_energy_stats(audio);
     let dc_dominated = mean.abs() > rms * DC_DOMINANCE_RATIO;
     rms < SILENCE_AC_FLOOR || dc_dominated
 }
@@ -87,14 +102,6 @@ fn native_stream_final_tail_with_silence(tail: &[f32]) -> Vec<f32> {
     let pad_samples = NATIVE_STREAM_SAMPLE_RATE * NATIVE_STREAM_FINAL_SILENCE_PAD_MS / 1000;
     let mut padded = Vec::with_capacity(tail.len() + pad_samples);
     padded.extend_from_slice(tail);
-    padded.resize(padded.len() + pad_samples, 0.0);
-    padded
-}
-
-fn local_final_decode_audio_with_silence(audio: &[f32]) -> Vec<f32> {
-    let pad_samples = NATIVE_STREAM_SAMPLE_RATE * LOCAL_FINAL_DECODE_SILENCE_PAD_MS / 1000;
-    let mut padded = Vec::with_capacity(audio.len() + pad_samples);
-    padded.extend_from_slice(audio);
     padded.resize(padded.len() + pad_samples, 0.0);
     padded
 }
@@ -497,10 +504,13 @@ impl Drop for TranscriptionManager {
 
         // Wait for the thread to finish gracefully
         if let Some(handle) = self.watcher_handle.lock_recover().take() {
-            if let Err(e) = handle.join() {
-                warn!("Failed to join idle watcher thread: {:?}", e);
-            } else {
-                debug!("Idle watcher thread joined successfully");
+            match handle.join() {
+                Err(e) => {
+                    warn!("Failed to join idle watcher thread: {:?}", e);
+                }
+                Ok(()) => {
+                    debug!("Idle watcher thread joined successfully");
+                }
             }
         }
 
@@ -601,17 +611,5 @@ mod tests {
         assert_eq!(&padded[..tail.len()], tail.as_slice());
         assert_eq!(padded.len(), tail.len() + expected_pad);
         assert!(padded[tail.len()..].iter().all(|sample| *sample == 0.0));
-    }
-
-    #[test]
-    fn local_final_decode_audio_appends_silence_pad_after_captured_audio() {
-        let audio = vec![0.4_f32, -0.1, 0.2];
-        let padded = super::local_final_decode_audio_with_silence(&audio);
-        let expected_pad =
-            super::NATIVE_STREAM_SAMPLE_RATE * super::LOCAL_FINAL_DECODE_SILENCE_PAD_MS / 1000;
-
-        assert_eq!(&padded[..audio.len()], audio.as_slice());
-        assert_eq!(padded.len(), audio.len() + expected_pad);
-        assert!(padded[audio.len()..].iter().all(|sample| *sample == 0.0));
     }
 }

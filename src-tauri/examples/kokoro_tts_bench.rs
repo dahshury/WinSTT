@@ -18,9 +18,9 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use winstt_app_lib::winstt::tts::kokoro::{KokoroConfig, KokoroEngine, KOKORO_SAMPLE_RATE};
+use winstt_app_lib::winstt::tts::kokoro::{KOKORO_SAMPLE_RATE, KokoroConfig, KokoroEngine};
 use winstt_app_lib::winstt::tts::phonemize::{default_phonemizer, resolve_espeak_lib};
-use winstt_app_lib::winstt::tts::{voice_by_id, TtsDevice, KOKORO_VOICE_CATALOG};
+use winstt_app_lib::winstt::tts::{KOKORO_VOICE_CATALOG, TtsDevice, voice_by_id};
 
 const DEFAULT_SENTENCE: &str = "The quick brown fox jumps over the lazy dog.";
 

@@ -65,7 +65,9 @@ import {
 	toggleIndependent,
 } from "../lib/llm-settings-panel-test-helpers";
 import {
-	matchConfigurationId,
+	type LlmConfiguration,
+	matchPostProcessingProfileId,
+	postProcessingPatchFromConfiguration,
 	useLlmConfigurationsStore,
 } from "../model/configurations";
 import type { LlmSettingsPanelModel } from "../model/use-llm-settings-panel";
@@ -672,7 +674,7 @@ function IndependentPresetList({
 	);
 
 	return (
-		<div className="flex w-full flex-col gap-1.5">
+		<div className="flex w-full flex-col gap-1.5 pb-1.5">
 			{scrollable ? (
 				<ScrollArea viewportClassName="max-h-[19rem]">{group}</ScrollArea>
 			) : (
@@ -709,32 +711,26 @@ export type PresetUpdate = Partial<{
 }>;
 
 // The full per-feature snapshot (provider/model fields + the tone/modifiers
-// carrier). The Configuration combobox needs the model half too, so saving from
-// the tone row captures a complete configuration that's also runnable in the
-// Playground — `seedDraftFromFeature` (hoisted, defined below) projects it.
+// carrier). Saved post-processing profiles capture a complete configuration
+// that's also runnable in the Playground.
 export type FullFeatureSnapshot = LlmFeatureDraft & PresetCarrier;
 
 /**
- * Configuration combobox for a feature's Tone row. Lists every saved
- * configuration (shared across both features AND the Playground via
- * `useLlmConfigurationsStore`):
- *   - selecting one applies its tone + modifiers to THIS section (the
- *     provider/model half is left untouched — that's the Playground's job);
- *   - typing a name saves the section's CURRENT full state as a configuration;
- *   - the inline delete removes one.
- * The closed value reflects the configuration whose tone + modifiers currently
- * match the section, or blank once the user diverges. Applying restores custom
- * modifiers wholesale — including ones the user had since deleted, whose full
- * definitions live on inside the saved configuration.
+ * Full-profile picker for the unified post-processing header. Selecting a saved
+ * profile applies provider/model, tone, modifiers and request-tuning settings
+ * together; the enable toggle is deliberately excluded so profile swaps do not
+ * silently turn post-processing on or off.
  */
-export function ConfigurationsCombobox({
+export function PostProcessingProfilesCombobox({
+	disabled = false,
 	snapshot,
 	t,
 	update,
 }: {
+	disabled?: boolean;
 	snapshot: FullFeatureSnapshot;
 	t: TranslateFn;
-	update: (patch: PresetUpdate) => void;
+	update: (patch: Partial<LlmConfiguration>) => void;
 }) {
 	const configurations = useLlmConfigurationsStore((s) => s.configurations);
 	const saveConfiguration = useLlmConfigurationsStore(
@@ -743,6 +739,17 @@ export function ConfigurationsCombobox({
 	const removeConfiguration = useLlmConfigurationsStore(
 		(s) => s.removeConfiguration,
 	);
+	const moveConfiguration = useLlmConfigurationsStore(
+		(s) => s.moveConfiguration,
+	);
+	const activeConfigurationId = useLlmConfigurationsStore(
+		(s) => s.activeConfigurationId,
+	);
+	const setActiveConfiguration = useLlmConfigurationsStore(
+		(s) => s.setActiveConfiguration,
+	);
+	const draft = seedDraftFromFeature(snapshot);
+	const matchedId = matchPostProcessingProfileId(draft, configurations);
 
 	const items: CreatableComboboxItem[] = configurations.map((c) => ({
 		id: c.id,
@@ -755,31 +762,39 @@ export function ConfigurationsCombobox({
 		if (!cfg) {
 			return;
 		}
-		update({
-			presets: cfg.config.presets.map((p) => ({ ...p })),
-			customModifiers: cfg.config.customModifiers.map((m) => ({ ...m })),
-		});
+		update(postProcessingPatchFromConfiguration(cfg.config));
+		setActiveConfiguration(id);
 	};
 
 	const handleCreate = (rawName: string) => {
 		const name = rawName.trim();
 		if (name) {
-			saveConfiguration(name, seedDraftFromFeature(snapshot));
+			saveConfiguration(name, draft);
+		}
+	};
+
+	const handleDelete = (id: string) => {
+		removeConfiguration(id);
+		if (activeConfigurationId === id) {
+			setActiveConfiguration(null);
 		}
 	};
 
 	return (
 		<CreatableCombobox
-			className="ml-auto w-52"
+			className="w-64 max-w-[40vw]"
 			createLabel={(name) => t("modifierPresetCreate", { name })}
 			deleteAriaLabel={t("playgroundDeletePreset")}
+			disabled={disabled}
 			emptyLabel={t("modifierPresetEmpty")}
 			items={items}
 			onCreate={handleCreate}
-			onDelete={removeConfiguration}
+			onDelete={handleDelete}
+			onReorder={moveConfiguration}
 			onSelect={applyConfiguration}
-			placeholder={t("playgroundSelectConfig")}
-			value={matchConfigurationId(snapshot, configurations)}
+			placeholder={t("modifierPresetPlaceholder")}
+			reorderAriaLabel={(item) => `Drag ${item.label} to reorder`}
+			value={matchedId}
 		/>
 	);
 }
@@ -821,8 +836,8 @@ export function FeaturePresetControls({
 		activeSttModel !== undefined &&
 		supportsTranslateToEnglish(activeSttModel);
 	return (
-		<div className="flex flex-col">
-			<div className="col-span-2">
+		<div className="flex flex-col divide-y divide-divider">
+			<div>
 				<FormControl
 					label={t("tone")}
 					labelTrailing={configControl}
@@ -843,7 +858,7 @@ export function FeaturePresetControls({
 					/>
 				</FormControl>
 			</div>
-			<div className="col-span-2">
+			<div>
 				<FormControl
 					label={t("modifiers")}
 					tooltip={`${t("modifiersTooltip")} ${t("modifiersCaption")}`}

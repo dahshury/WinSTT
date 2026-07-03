@@ -1,11 +1,11 @@
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::apple_intelligence;
-use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{APPLE_INTELLIGENCE_PROVIDER_ID, AppSettings, get_settings};
 use crate::winstt::context::ContextMode;
 use crate::winstt::llm::DictationSideEffects;
 use crate::winstt::managers::{ContextManager, LlmManager};
 use crate::winstt::settings_schema::{LlmProvider, RecordingMode, WinsttSettings};
-use ferrous_opencc::{config::BuiltinConfig, OpenCC};
+use ferrous_opencc::{OpenCC, config::BuiltinConfig};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Instant;
@@ -282,8 +282,7 @@ async fn post_process_transcription(
         Err(e) => {
             error!(
                 "LLM post-processing failed for provider '{}': {}. Falling back to original transcription.",
-                provider.id,
-                e
+                provider.id, e
             );
             None
         }
@@ -440,7 +439,10 @@ async fn maybe_convert_chinese_variant(
             Some(converted)
         }
         Err(e) => {
-            error!("Failed to initialize OpenCC converter: {}. Falling back to original transcription.", e);
+            error!(
+                "Failed to initialize OpenCC converter: {}. Falling back to original transcription.",
+                e
+            );
             None
         }
     }
@@ -550,30 +552,28 @@ pub(crate) async fn process_transcription_output(
             }))
             .ok();
         }
-    } else if legacy_post_process {
-        if let Some((processed_text, meta)) =
+    } else if legacy_post_process
+        && let Some((processed_text, meta)) =
             post_process_transcription(app, &settings, &final_text).await
-        {
-            post_processed_text = Some(processed_text.clone());
-            final_text = processed_text;
-            // Stash the model/timing/tokens for the history footer. `tokens`
-            // serializes to null when the provider reported no usage.
-            llm_meta = serde_json::to_string(&serde_json::json!({
-                "model": meta.model,
-                "processingMs": meta.duration_ms,
-                "tokens": meta.completion_tokens,
-            }))
-            .ok();
+    {
+        post_processed_text = Some(processed_text.clone());
+        final_text = processed_text;
+        // Stash the model/timing/tokens for the history footer. `tokens`
+        // serializes to null when the provider reported no usage.
+        llm_meta = serde_json::to_string(&serde_json::json!({
+            "model": meta.model,
+            "processingMs": meta.duration_ms,
+            "tokens": meta.completion_tokens,
+        }))
+        .ok();
 
-            if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
-                if let Some(prompt) = settings
-                    .post_process_prompts
-                    .iter()
-                    .find(|prompt| &prompt.id == prompt_id)
-                {
-                    post_process_prompt = Some(prompt.prompt.clone());
-                }
-            }
+        if let Some(prompt_id) = &settings.post_process_selected_prompt_id
+            && let Some(prompt) = settings
+                .post_process_prompts
+                .iter()
+                .find(|prompt| &prompt.id == prompt_id)
+        {
+            post_process_prompt = Some(prompt.prompt.clone());
         }
     }
 

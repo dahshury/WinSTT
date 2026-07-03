@@ -1698,6 +1698,13 @@ async diagObservabilityTimeline(limit: number | null) : Promise<ObservabilityIss
     return await TAURI_INVOKE("diag_observability_timeline", { limit });
 },
 /**
+ * `diag_clear_observability_timeline` - clear the local operational issue
+ * buffer shown in Settings > About. Returns the number of issue entries removed.
+ */
+async diagClearObservabilityTimeline() : Promise<number> {
+    return await TAURI_INVOKE("diag_clear_observability_timeline");
+},
+/**
  * `sound_library_add` is retained for older renderer code but intentionally
  * fails closed: renderer-supplied paths are not a trusted proof of user file
  * selection. Use `sound_library_pick_and_add`, which owns the native picker.
@@ -2685,7 +2692,11 @@ endpoint?: string;
 /**
  * SECRET — OpenRouter API key. Encrypt at rest (see 02_settings.md).
  */
-openrouterApiKey?: string; dictation?: LlmDictation; transforms?: LlmTransforms;
+openrouterApiKey?: string;
+/**
+ * Global shortcut that cycles through saved post-processing profiles.
+ */
+profileSwapHotkey?: string; dictation?: LlmDictation; transforms?: LlmTransforms;
 /**
  * Client request timeout (ms). Range 1000..30000. Persisted but NOT applied at network layer.
  */

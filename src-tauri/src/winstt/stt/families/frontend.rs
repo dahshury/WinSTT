@@ -287,7 +287,7 @@ fn kaldi_hz_to_mel(f: f32) -> f32 {
 /// Used by Dolphin (CtcFrontend::KaldiWithMetaCmvn).
 pub fn build_kaldi_mel_filterbank() -> Array2<f32> {
     let n_freqs = KALDI_N_FFT / 2 + 1; // 257
-                                       // all_freqs = linspace(0, sample_rate//2, n_freqs) = linspace(0, 8000, 257).
+    // all_freqs = linspace(0, sample_rate//2, n_freqs) = linspace(0, 8000, 257).
     let all_freqs_mel: Vec<f32> = (0..n_freqs)
         .map(|i| {
             let hz = (SAMPLE_RATE as f32 / 2.0) * (i as f32) / ((n_freqs - 1) as f32);

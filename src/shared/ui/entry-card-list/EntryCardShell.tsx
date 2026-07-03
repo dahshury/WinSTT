@@ -10,14 +10,22 @@ import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
  * while sharing the frame. Shared by the transcription history table and the
  * diagnostics issue list.
  */
-export function EntryCardShell({ children }: { children: ReactNode }) {
+export function EntryCardShell({
+	bare = false,
+	children,
+}: {
+	/** Drop the painted fill + border — the list sits on a `boxed` section card
+	 *  that already supplies the single surface, so a second one would double. */
+	bare?: boolean;
+	children: ReactNode;
+}) {
 	const level = Math.min(useSurface() + 1, 8);
 	return (
 		<SurfaceProvider value={level}>
 			<div
 				className={cn(
-					"overflow-hidden rounded-xl border border-border",
-					surfaceBg(level),
+					"overflow-hidden rounded-xl",
+					bare ? "" : cn("border border-border", surfaceBg(level)),
 				)}
 			>
 				{children}

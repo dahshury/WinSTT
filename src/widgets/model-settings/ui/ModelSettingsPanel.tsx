@@ -307,7 +307,7 @@ function useModelSettingsPanelRender() {
 		useDownloadGating({ controller, handleDownloadAction });
 
 	return (
-		<div className="flex flex-col gap-2">
+		<div className="flex flex-col">
 			<MainModelSection
 				catalogLoaded={catalogLoaded}
 				catalogModels={catalogModels}

@@ -205,11 +205,7 @@ fn parse_capabilities(block: &str) -> Option<Vec<String>> {
         .filter_map(|c| c.get(1).map(|m| strip_tags(m.as_str())))
         .filter(|s| !s.is_empty())
         .collect();
-    if caps.is_empty() {
-        None
-    } else {
-        Some(caps)
-    }
+    if caps.is_empty() { None } else { Some(caps) }
 }
 
 fn first_group(re: &Regex, block: &str) -> Option<String> {

@@ -72,7 +72,9 @@ function PremiumVoiceBadge() {
 		<Tooltip content={PREMIUM_BADGE_TOOLTIP} side="left">
 			<BaseButton
 				className="shrink-0 cursor-pointer rounded-xs border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-semibold text-[9px] text-accent uppercase tracking-wider"
-				onClick={() => window.open(ELEVENLABS_PRICING_URL, "_blank")}
+				onClick={() =>
+					window.open(ELEVENLABS_PRICING_URL, "_blank", "noopener,noreferrer")
+				}
 				type="button"
 			>
 				{PREMIUM_BADGE_TEXT}

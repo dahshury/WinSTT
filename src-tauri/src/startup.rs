@@ -14,8 +14,7 @@ use tauri::AppHandle;
 use crate::signal_handle;
 
 #[cfg(windows)]
-const WEBVIEW2_BROWSER_ARGS: &str =
-    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-logging --log-level=3";
+const WEBVIEW2_BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-logging --log-level=3";
 
 // Global atomic to store the file log level filter
 // We use u8 to store the log::LevelFilter as a number
@@ -254,7 +253,9 @@ pub(crate) fn ensure_hf_cache_env() {
         let hf_home = std::path::Path::new(&profile)
             .join(".cache")
             .join("huggingface");
-        std::env::set_var("HF_HOME", hf_home);
+        // SAFETY: called during `run` startup before the Tauri builder creates
+        // webview, plugin, or background worker threads.
+        unsafe { std::env::set_var("HF_HOME", hf_home) };
     }
 }
 

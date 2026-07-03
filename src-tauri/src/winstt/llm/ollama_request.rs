@@ -5,9 +5,8 @@
 // HTTP transport lives in `winstt::ollama_client`.
 
 use super::side_effects::{
-    cleanup_dictionary_terms, HISTORY_TAGS, OLLAMA_DICTIONARY_TOOL_NAME,
-    OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_DISABLED, OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_ENABLED,
-    PRIVACY_MARKERS,
+    HISTORY_TAGS, OLLAMA_DICTIONARY_TOOL_NAME, OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_DISABLED,
+    OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_ENABLED, PRIVACY_MARKERS, cleanup_dictionary_terms,
 };
 
 /// Effort knob for thinking-capable models. Maps to Ollama's `ThinkValue`.
@@ -367,16 +366,16 @@ impl OllamaStreamState {
     pub fn apply_chunk(&mut self, chunk: &OllamaChatChunk) -> StreamDeltas {
         let mut deltas = StreamDeltas::default();
         if let Some(msg) = &chunk.message {
-            if let Some(t) = &msg.thinking {
-                if !t.is_empty() {
-                    self.thinking.push_str(t);
-                    deltas.thinking = Some(t.clone());
-                }
+            if let Some(t) = &msg.thinking
+                && !t.is_empty()
+            {
+                self.thinking.push_str(t);
+                deltas.thinking = Some(t.clone());
             }
-            if let Some(c) = &msg.content {
-                if !c.is_empty() {
-                    self.content.push_str(c);
-                }
+            if let Some(c) = &msg.content
+                && !c.is_empty()
+            {
+                self.content.push_str(c);
             }
             if !msg.tool_calls.is_empty() {
                 self.tool_calls.extend(msg.tool_calls.iter().cloned());
@@ -579,10 +578,12 @@ mod tests {
         let mut body =
             build_ollama_chat_body("qwen3", "sys", "usr", 100, true, ThinkingEffort::Medium);
         add_ollama_side_effect_schema_instruction(&mut body, true);
-        assert!(body["messages"][0]["content"]
-            .as_str()
-            .unwrap()
-            .contains(OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_ENABLED));
+        assert!(
+            body["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains(OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_ENABLED)
+        );
         assert!(body.get("tools").is_none());
     }
 

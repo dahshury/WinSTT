@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use ndarray::{s, Array2, ArrayD, Axis, IxDyn};
+use ndarray::{Array2, ArrayD, Axis, IxDyn, s};
 use ort::session::{Session, SessionInputValue};
 use ort::value::Tensor;
 

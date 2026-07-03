@@ -56,16 +56,16 @@ pub(in crate::winstt::stt::families) fn canary_prompt_tokens(
     if toks.len() < 6 {
         return toks;
     }
-    if let Some(lang) = canary_configured_language(opts) {
-        if let Some(&id) = token_to_id.get(&format!("<|{lang}|>")) {
-            toks[4] = id;
-            toks[5] = id;
-        }
+    if let Some(lang) = canary_configured_language(opts)
+        && let Some(&id) = token_to_id.get(&format!("<|{lang}|>"))
+    {
+        toks[4] = id;
+        toks[5] = id;
     }
-    if opts.translate {
-        if let Some(&id) = token_to_id.get("<|en|>") {
-            toks[5] = id;
-        }
+    if opts.translate
+        && let Some(&id) = token_to_id.get("<|en|>")
+    {
+        toks[5] = id;
     }
     toks
 }
@@ -269,10 +269,10 @@ impl Transcriber for CanaryEngine {
         let out_tokens = &batch_tokens[prefix_len..];
         let mut text = String::new();
         for &tid in out_tokens {
-            if let Some(sym) = self.vocab.get(tid) {
-                if !sym.starts_with("<|") {
-                    text.push_str(sym);
-                }
+            if let Some(sym) = self.vocab.get(tid)
+                && !sym.starts_with("<|")
+            {
+                text.push_str(sym);
             }
         }
         let text = join_and_normalize(&[text.as_str()], false);

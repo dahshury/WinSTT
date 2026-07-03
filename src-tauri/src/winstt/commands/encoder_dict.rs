@@ -6,7 +6,28 @@ use std::sync::Arc;
 
 use tauri::State;
 
+use crate::command_auth;
 use crate::winstt::encoder_dict::download::{EncoderDownloadStatus, EncoderModelDownloader};
+
+const ENCODER_DICT_MUTATION_ALLOWED_WINDOWS: &[&str] = &["settings"];
+
+#[cfg(test)]
+fn is_encoder_dict_mutation_allowed(caller: &str) -> bool {
+    command_auth::label_in(caller, ENCODER_DICT_MUTATION_ALLOWED_WINDOWS)
+}
+
+fn authorize_encoder_dict_mutation(
+    caller: &tauri::WebviewWindow,
+    action: &str,
+) -> Result<(), String> {
+    command_auth::authorize_webview(
+        caller,
+        "encoder_dict",
+        action,
+        ENCODER_DICT_MUTATION_ALLOWED_WINDOWS,
+        "",
+    )
+}
 
 #[tauri::command]
 #[specta::specta]
@@ -20,7 +41,9 @@ pub fn encoder_dict_status(
 #[specta::specta]
 pub fn encoder_dict_download_start(
     downloader: State<'_, Arc<EncoderModelDownloader>>,
+    webview: tauri::WebviewWindow,
 ) -> Result<(), String> {
+    authorize_encoder_dict_mutation(&webview, "start encoder dictionary download")?;
     downloader.inner().start();
     Ok(())
 }
@@ -29,7 +52,9 @@ pub fn encoder_dict_download_start(
 #[specta::specta]
 pub fn encoder_dict_download_pause(
     downloader: State<'_, Arc<EncoderModelDownloader>>,
+    webview: tauri::WebviewWindow,
 ) -> Result<(), String> {
+    authorize_encoder_dict_mutation(&webview, "pause encoder dictionary download")?;
     downloader.pause();
     Ok(())
 }
@@ -38,7 +63,9 @@ pub fn encoder_dict_download_pause(
 #[specta::specta]
 pub fn encoder_dict_download_resume(
     downloader: State<'_, Arc<EncoderModelDownloader>>,
+    webview: tauri::WebviewWindow,
 ) -> Result<(), String> {
+    authorize_encoder_dict_mutation(&webview, "resume encoder dictionary download")?;
     // Resume == start: the streamer picks up the partial file via an HTTP Range request.
     downloader.inner().start();
     Ok(())
@@ -48,7 +75,9 @@ pub fn encoder_dict_download_resume(
 #[specta::specta]
 pub fn encoder_dict_download_cancel(
     downloader: State<'_, Arc<EncoderModelDownloader>>,
+    webview: tauri::WebviewWindow,
 ) -> Result<(), String> {
+    authorize_encoder_dict_mutation(&webview, "cancel encoder dictionary download")?;
     downloader.cancel();
     Ok(())
 }
@@ -59,7 +88,9 @@ pub fn encoder_dict_download_cancel(
 #[specta::specta]
 pub fn encoder_dict_remove(
     downloader: State<'_, Arc<EncoderModelDownloader>>,
+    webview: tauri::WebviewWindow,
 ) -> Result<(), String> {
+    authorize_encoder_dict_mutation(&webview, "remove encoder dictionary model")?;
     downloader.remove();
     Ok(())
 }
@@ -68,7 +99,11 @@ pub fn encoder_dict_remove(
 /// turns the feature on, so the first dictation is fast instead of cold-loading.
 #[tauri::command]
 #[specta::specta]
-pub fn encoder_dict_preload(app: tauri::AppHandle) -> Result<(), String> {
+pub fn encoder_dict_preload(
+    app: tauri::AppHandle,
+    webview: tauri::WebviewWindow,
+) -> Result<(), String> {
+    authorize_encoder_dict_mutation(&webview, "preload encoder dictionary model")?;
     crate::winstt::encoder_dict::preload_async(&app);
     Ok(())
 }
@@ -77,7 +112,30 @@ pub fn encoder_dict_preload(app: tauri::AppHandle) -> Result<(), String> {
 /// feature off, to free the ~310 MB session it was holding.
 #[tauri::command]
 #[specta::specta]
-pub fn encoder_dict_unload() -> Result<(), String> {
+pub fn encoder_dict_unload(webview: tauri::WebviewWindow) -> Result<(), String> {
+    authorize_encoder_dict_mutation(&webview, "unload encoder dictionary model")?;
     crate::winstt::encoder_dict::clear_loaded();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encoder_dict_mutation_authorization_matches_settings_surface() {
+        command_auth::assert_label_rules(
+            &["settings"],
+            &[
+                "main",
+                "overlay",
+                "tray-menu",
+                "model-picker",
+                "device-picker",
+                "history",
+                "context-playground",
+            ],
+            is_encoder_dict_mutation_allowed,
+        );
+    }
 }

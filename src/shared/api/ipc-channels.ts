@@ -387,6 +387,7 @@ export const IPC = {
 	// dictionary auto-add UI which surfaces each noun as an
 	// Accept/Decline pill. Skipped if the array is empty.
 	LLM_LEARNED_PROPER_NOUNS: "llm:learned-proper-nouns",
+	LLM_PROFILE_SWAP: "llm:profile-swap",
 	// Warmup status — invoke pulls the last snapshot on mount, broadcast
 	// fires whenever the periodic probe in main runs. Main-side wiring is
 	// still WIP; until it lands, the invoke handler is missing and the
@@ -730,6 +731,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.LLM_PROCESSING_END]: ["on"],
 	[IPC.LLM_REASONING_DELTA]: ["on"],
 	[IPC.LLM_LEARNED_PROPER_NOUNS]: ["on"],
+	[IPC.LLM_PROFILE_SWAP]: ["on"],
 
 	// Updater
 	[IPC.UPDATER_GET_STATUS_HISTORY]: ["invoke", "secure"],

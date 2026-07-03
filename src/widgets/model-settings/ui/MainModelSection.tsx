@@ -200,7 +200,7 @@ function SourceArea({
 	};
 	return (
 		<>
-			<div className="col-span-2">
+			<div>
 				<FormControl
 					disabled={disabled}
 					controlTooltip={disabledTooltip}
@@ -217,7 +217,7 @@ function SourceArea({
 					/>
 				</FormControl>
 			</div>
-			<div className="col-span-2">
+			<div>
 				<FormControl
 					disabled={disabled}
 					controlTooltip={disabledTooltip}
@@ -324,8 +324,8 @@ export function MainModelSection({
 	);
 
 	return (
-		<SettingSection icon={AiMicIcon} title={t("mainModel")}>
-			<div className="flex flex-col">
+		<SettingSection boxed icon={AiMicIcon} title={t("mainModel")}>
+			<div className="flex flex-col divide-y divide-divider">
 				{/* `key` resets the local `source` state inside SourceArea whenever
 				 *  the persisted model's source changes or API-key availability
 				 *  flips — no derived-state effect needed. */}

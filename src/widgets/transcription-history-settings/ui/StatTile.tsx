@@ -12,6 +12,7 @@ export interface StatTileData {
 interface StatTileProps extends StatTileData {
 	/** Stagger ordinal — drives the fade-in delay so tiles cascade in. */
 	index: number;
+	hoverEffect?: boolean;
 }
 
 /**
@@ -21,14 +22,24 @@ interface StatTileProps extends StatTileData {
  * History "Overall Stats" summary and the "AI Impact" section so both rows are
  * pixel-identical — no per-tile hue, coloured rail, or gradient wash.
  */
-export function StatTile({ icon, label, unit, value, index }: StatTileProps) {
+export function StatTile({
+	icon,
+	label,
+	unit,
+	value,
+	index,
+	hoverEffect = true,
+}: StatTileProps) {
 	const substrate = useSurface();
 	const tileBg = surfaceBg(Math.min(substrate + 1, 8));
 	const chipBg = surfaceBg(Math.min(substrate + 2, 8));
+	const hoverClasses = hoverEffect
+		? "transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-px hover:border-border-hover hover:shadow-md"
+		: "";
 
 	return (
 		<div
-			className={`group relative overflow-hidden rounded-lg border border-divider ${tileBg} opacity-0 shadow-surface-2 transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-px hover:border-border-hover hover:shadow-md`}
+			className={`group relative overflow-hidden rounded-lg border border-divider ${tileBg} opacity-0 shadow-surface-2 ${hoverClasses}`}
 			style={{ animation: `fade-in 320ms ease-out ${index * 70}ms forwards` }}
 		>
 			<div className="flex flex-col gap-2 px-2.5 py-2.5">

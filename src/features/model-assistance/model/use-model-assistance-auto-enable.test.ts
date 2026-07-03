@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { type ModelInfo, useCatalogStore } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
-import { useModelAssistanceStore } from "./model-assistance-store";
 import {
 	type DictationCleanupAutoInputs,
 	resolveDictationCleanupAutoAction,
@@ -98,9 +97,6 @@ const settle = () =>
 	});
 
 beforeEach(() => {
-	// The auto-applied marker persists across mounts (that's the whole point),
-	// so it must be cleared between tests for isolation.
-	useModelAssistanceStore.getState().reset();
 	useCatalogStore.setState({
 		isLoaded: true,
 		models: [assistanceModel()],
@@ -110,7 +106,6 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
-	useModelAssistanceStore.getState().reset();
 	useCatalogStore.setState({ isLoaded: false, models: [] });
 	useSettingsStore.setState({ isLoaded: true, settings: DEFAULT_SETTINGS });
 });
@@ -131,17 +126,17 @@ describe("resolveDictationCleanupAutoAction", () => {
 		).toBe("none");
 	});
 
-	test("enables Ollama cleanup when a model is already selected", () => {
-		expect(resolveDictationCleanupAutoAction(base)).toBe("enable");
+	test("does not enable Ollama cleanup when a model is already selected", () => {
+		expect(resolveDictationCleanupAutoAction(base)).toBe("none");
 	});
 
-	test("opens the Ollama picker when cleanup is needed but no model is selected", () => {
+	test("does not open the Ollama picker when cleanup is needed but no model is selected", () => {
 		expect(
 			resolveDictationCleanupAutoAction({ ...base, ollamaModel: "" }),
-		).toBe("openOllamaPicker");
+		).toBe("none");
 	});
 
-	test("requires an OpenRouter API key before enabling cloud cleanup", () => {
+	test("does not enable cloud cleanup when an OpenRouter API key is present", () => {
 		expect(
 			resolveDictationCleanupAutoAction({
 				...base,
@@ -156,7 +151,7 @@ describe("resolveDictationCleanupAutoAction", () => {
 				openrouterApiKey: "sk-or-v1-test",
 				provider: "openrouter",
 			}),
-		).toBe("enable");
+		).toBe("none");
 	});
 });
 
@@ -204,7 +199,7 @@ describe("useModelAssistanceAutoEnable", () => {
 		);
 	});
 
-	test("auto-enables + disables smart endpoint when the user switches to a cleanup model in-session", async () => {
+	test("does not auto-enable Ollama cleanup when the user switches to a cleanup model in-session", async () => {
 		seedCatalogWithBothModels();
 		seedSettings({ selectedModel: "plain-whisper" });
 		renderHook(() => useModelAssistanceAutoEnable({ enabled: true }));
@@ -214,18 +209,18 @@ describe("useModelAssistanceAutoEnable", () => {
 			false,
 		);
 
-		// In-session switch to a model that needs cleanup → the one moment we nudge.
+		// In-session switch to a model that benefits from cleanup still leaves the
+		// user-owned Ollama post-processing toggle alone.
 		act(() => {
 			seedSettings({ selectedModel: "crisper-whisper" });
 		});
-		await waitFor(() => {
-			const s = useSettingsStore.getState().settings;
-			expect(s.llm.dictation.enabled).toBe(true);
-			expect(s.quality.smartEndpoint).toBe(false);
-		});
+		await settle();
+		const s = useSettingsStore.getState().settings;
+		expect(s.llm.dictation.enabled).toBe(false);
+		expect(s.quality.smartEndpoint).toBe(true);
 	});
 
-	test("opens the Ollama picker on switch when no cleanup model is selected", async () => {
+	test("does not open the Ollama picker on switch when no cleanup model is selected", async () => {
 		seedCatalogWithBothModels();
 		seedSettings({ selectedModel: "plain-whisper" });
 		const onOpenOllamaPicker = mock(() => undefined);
@@ -237,15 +232,14 @@ describe("useModelAssistanceAutoEnable", () => {
 		act(() => {
 			seedSettings({ selectedModel: "crisper-whisper", dictationModel: "" });
 		});
-		await waitFor(() => {
-			expect(onOpenOllamaPicker).toHaveBeenCalledTimes(1);
-		});
+		await settle();
+		expect(onOpenOllamaPicker).not.toHaveBeenCalled();
 		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
 			false,
 		);
 	});
 
-	test("does not fight a manual disable after an in-session switch", async () => {
+	test("keeps a manual disable after an in-session switch", async () => {
 		seedCatalogWithBothModels();
 		seedSettings({ selectedModel: "plain-whisper" });
 		renderHook(() => useModelAssistanceAutoEnable({ enabled: true }));
@@ -253,13 +247,11 @@ describe("useModelAssistanceAutoEnable", () => {
 		act(() => {
 			seedSettings({ selectedModel: "crisper-whisper" });
 		});
-		await waitFor(() => {
-			expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
-				true,
-			);
-		});
+		await settle();
+		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
+			false,
+		);
 
-		// User turns it back off → must stick (no re-assert without a new switch).
 		act(() => {
 			useSettingsStore.getState().updateLlmDictation({ enabled: false });
 		});
@@ -269,7 +261,7 @@ describe("useModelAssistanceAutoEnable", () => {
 		);
 	});
 
-	test("nudges a switched-to cleanup model only once (persisted marker)", async () => {
+	test("switching away and back does not enable Ollama cleanup", async () => {
 		seedCatalogWithBothModels();
 		seedSettings({ selectedModel: "plain-whisper" });
 		renderHook(() => useModelAssistanceAutoEnable({ enabled: true }));
@@ -277,16 +269,10 @@ describe("useModelAssistanceAutoEnable", () => {
 		act(() => {
 			seedSettings({ selectedModel: "crisper-whisper" });
 		});
-		await waitFor(() => {
-			expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
-				true,
-			);
-		});
-		// Disable, switch away, then switch BACK — the already-nudged model is not
-		// re-enabled (the persisted marker holds across the round trip).
-		act(() => {
-			useSettingsStore.getState().updateLlmDictation({ enabled: false });
-		});
+		await settle();
+		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
+			false,
+		);
 		act(() => {
 			seedSettings({ selectedModel: "plain-whisper" });
 		});

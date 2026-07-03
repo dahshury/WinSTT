@@ -298,10 +298,10 @@ impl RealtimeAccumulator {
         let start = self.committed_frames;
         let end = start + commit_chunk;
         // Transcribe the slice; append only non-empty, non-None text.
-        if let Some(text) = transcribe_window(start, end) {
-            if !text.trim().is_empty() {
-                self.append_committed_text(text.trim());
-            }
+        if let Some(text) = transcribe_window(start, end)
+            && !text.trim().is_empty()
+        {
+            self.append_committed_text(text.trim());
         }
         // Always advance, even on empty/None output.
         self.committed_frames = end;
@@ -377,7 +377,7 @@ mod tests {
         // "abcabcabca" — searching for tail "0123456789"? Build a case where the
         // target recurs and the RIGHT-MOST wins.
         let t1 = chars("XXXXXrepeat"); // last 10 = "XXXXrepeat"
-                                       // text2 has "XXXXrepeat" twice; expect the END index of the second one.
+        // text2 has "XXXXrepeat" twice; expect the END index of the second one.
         let t2 = chars("XXXXrepeat____XXXXrepeat");
         let pos = find_tail_match_in_text(&t1, &t2, TAIL_MATCH_LEN).unwrap();
         assert_eq!(pos, t2.len()); // right-most window ends at the very end
@@ -461,7 +461,7 @@ mod tests {
         let mut s = RealtimeStabilizer::new();
         s.update("你好世界这是测试一二三"); // 11 chars
         let out = s.update("你好世界这是测试一二三四"); // extends by one char
-                                                        // safetext should be the 11-char common prefix; output extends to 12.
+        // safetext should be the 11-char common prefix; output extends to 12.
         assert_eq!(s.safetext().chars().count(), 11);
         assert_eq!(out.chars().count(), 12);
     }
@@ -488,7 +488,7 @@ mod tests {
     fn commit_advances_watermark_and_appends() {
         let mut acc = RealtimeAccumulator::new();
         let fps = 100.0; // commit_chunk = 2000 frames
-                         // Not enough fresh frames -> no commit, watermark stays 0.
+        // Not enough fresh frames -> no commit, watermark stays 0.
         let wm = acc.commit_if_needed(1500, fps, |_s, _e| Some("nope".into()));
         assert_eq!(wm, 0);
         assert_eq!(acc.committed_text(), "");
@@ -506,7 +506,7 @@ mod tests {
     fn commit_advances_even_on_empty_or_none() {
         let mut acc = RealtimeAccumulator::new();
         let fps = 100.0; // commit_chunk = 2000
-                         // None (mid-swap): watermark still advances, no text appended.
+        // None (mid-swap): watermark still advances, no text appended.
         let wm = acc.commit_if_needed(2500, fps, |_s, _e| None);
         assert_eq!(wm, 2000);
         assert_eq!(acc.committed_text(), "");

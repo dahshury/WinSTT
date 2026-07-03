@@ -51,13 +51,13 @@ pub fn openrouter_extra_body(provider_slug: Option<&str>) -> serde_json::Value {
     let mut body = serde_json::json!({
         "plugins": [ { "id": "response-healing" } ]
     });
-    if let Some(slug) = provider_slug {
-        if !slug.is_empty() {
-            body["provider"] = serde_json::json!({
-                "order": [slug],
-                "allow_fallbacks": false
-            });
-        }
+    if let Some(slug) = provider_slug
+        && !slug.is_empty()
+    {
+        body["provider"] = serde_json::json!({
+            "order": [slug],
+            "allow_fallbacks": false
+        });
     }
     body
 }

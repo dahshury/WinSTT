@@ -29,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::winstt::cancel_registry::CancelRegistry;
 use crate::winstt::cloud_stt::{
-    classify_cloud_failure_message, emit_cloud_failure, CloudSttProvider,
+    CloudSttProvider, classify_cloud_failure_message, emit_cloud_failure,
 };
 use crate::winstt::managers::tts_download_manager::{TtsDownloadErr, TtsDownloadManager};
 use crate::winstt::model_swap::ModelSwapCoordinator;
@@ -40,26 +40,27 @@ use crate::winstt::settings_store::{read_settings, read_settings_raw};
 use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::tts::catalog::{self, TtsEngineId};
 use crate::winstt::tts::local_engines::{
-    piper_voice_infos, ChatterboxLocalEngine, KittenLocalEngine, PiperLocalEngine,
-    SupertonicLocalEngine, CHATTERBOX_VOICES, KITTEN_VOICES, SUPERTONIC_VOICES,
+    CHATTERBOX_VOICES, ChatterboxLocalEngine, KITTEN_VOICES, KittenLocalEngine, PiperLocalEngine,
+    SUPERTONIC_VOICES, SupertonicLocalEngine, piper_voice_infos,
 };
 use crate::winstt::tts::phonemize::{
-    ensure_espeak_runtime, espeak_runtime_available, espeak_runtime_pack,
-    ESPEAK_RUNTIME_COMPONENT_ID, ESPEAK_RUNTIME_COMPONENT_LABEL,
+    ESPEAK_RUNTIME_COMPONENT_ID, ESPEAK_RUNTIME_COMPONENT_LABEL, ensure_espeak_runtime,
+    espeak_runtime_available, espeak_runtime_pack,
 };
 use crate::winstt::tts::supertonic::SUPERTONIC_LANGUAGES;
 use crate::winstt::tts::{
-    clamp_cloud_speed, clamp_speed, clamp_speed_to_range, classify_cloud_status,
-    parse_cloud_voices, parse_detail_status, split_sentences, CloudVoiceSettings, ElevenLabsEngine,
-    KokoroLocalEngine, LocalTtsConfig, OpenRouterTtsEngine, SynthesisChunk, TtsDevice, TtsEngine,
-    TtsError, TtsResult, TtsSource, VoiceInfo, DEFAULT_MAX_SENTENCE_LEN,
-    ELEVENLABS_SUBSCRIPTION_URL, ELEVENLABS_VOICES_URL, KOKORO_VOICE_CATALOG, SUPPORTED_LANGUAGES,
+    CloudVoiceSettings, DEFAULT_MAX_SENTENCE_LEN, ELEVENLABS_SUBSCRIPTION_URL,
+    ELEVENLABS_VOICES_URL, ElevenLabsEngine, KOKORO_VOICE_CATALOG, KokoroLocalEngine,
+    LocalTtsConfig, OpenRouterTtsEngine, SUPPORTED_LANGUAGES, SynthesisChunk, TtsDevice, TtsEngine,
+    TtsError, TtsResult, TtsSource, VoiceInfo, clamp_cloud_speed, clamp_speed,
+    clamp_speed_to_range, classify_cloud_status, parse_cloud_voices, parse_detail_status,
+    split_sentences,
 };
 
 mod chunk_sink;
 mod payloads;
 
-use chunk_sink::{chunk_payload, EmitChunkSink};
+use chunk_sink::{EmitChunkSink, chunk_payload};
 pub use payloads::*;
 
 /// Live engine + the source it was built for + the settings it was built from.
@@ -214,19 +215,21 @@ impl TtsManager {
             return;
         }
         let manager = Arc::clone(self);
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(5));
-            let Some(max_idle) = manager.cached_idle_unload_duration() else {
-                continue;
-            };
-            if max_idle.is_zero() || manager.active_reads.load(Ordering::Acquire) != 0 {
-                continue;
-            }
-            let idle_for = Duration::from_millis(
-                now_ms().saturating_sub(manager.last_used_ms.load(Ordering::Acquire)),
-            );
-            if idle_for >= max_idle {
-                manager.unload_active_local_model("idle timeout");
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(5));
+                let Some(max_idle) = manager.cached_idle_unload_duration() else {
+                    continue;
+                };
+                if max_idle.is_zero() || manager.active_reads.load(Ordering::Acquire) != 0 {
+                    continue;
+                }
+                let idle_for = Duration::from_millis(
+                    now_ms().saturating_sub(manager.last_used_ms.load(Ordering::Acquire)),
+                );
+                if idle_for >= max_idle {
+                    manager.unload_active_local_model("idle timeout");
+                }
             }
         });
     }
@@ -1078,23 +1081,23 @@ impl TtsManager {
             serde_json::json!({ "requestId": request_id }),
         );
 
-        if !matches!(settings.tts.source, SettingsTtsSource::Cloud) {
-            if let Err(e) = self.ensure_espeak_runtime_for_settings(&settings, true) {
-                self.drop_request(request_id);
-                self.record_failure(
-                    "engine_runtime",
-                    "TTS engine runtime setup failed",
-                    request_id,
-                    &e.to_string(),
-                    Some("local"),
-                    Some(started.elapsed().as_millis() as u64),
-                );
-                self.emit_event(
-                    "tts:failed",
-                    serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
-                );
-                return;
-            }
+        if !matches!(settings.tts.source, SettingsTtsSource::Cloud)
+            && let Err(e) = self.ensure_espeak_runtime_for_settings(&settings, true)
+        {
+            self.drop_request(request_id);
+            self.record_failure(
+                "engine_runtime",
+                "TTS engine runtime setup failed",
+                request_id,
+                &e.to_string(),
+                Some("local"),
+                Some(started.elapsed().as_millis() as u64),
+            );
+            self.emit_event(
+                "tts:failed",
+                serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
+            );
+            return;
         }
 
         let (source, engine, engine_key) = self.ensure_engine_for(&settings);
@@ -1108,23 +1111,23 @@ impl TtsManager {
         };
         // Auto-download the selected local model's assets (with progress) before
         // synthesizing — mirrors the STT first-use download. Kokoro self-downloads.
-        if matches!(source, TtsSource::Local) {
-            if let Err(e) = self.ensure_local_model_assets_for(&settings) {
-                self.drop_request(request_id);
-                self.record_failure(
-                    "model_download",
-                    "TTS local model assets could not be prepared",
-                    request_id,
-                    &e.to_string(),
-                    Some("local"),
-                    Some(started.elapsed().as_millis() as u64),
-                );
-                self.emit_event(
-                    "tts:failed",
-                    serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
-                );
-                return;
-            }
+        if matches!(source, TtsSource::Local)
+            && let Err(e) = self.ensure_local_model_assets_for(&settings)
+        {
+            self.drop_request(request_id);
+            self.record_failure(
+                "model_download",
+                "TTS local model assets could not be prepared",
+                request_id,
+                &e.to_string(),
+                Some("local"),
+                Some(started.elapsed().as_millis() as u64),
+            );
+            self.emit_event(
+                "tts:failed",
+                serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
+            );
+            return;
         }
         // Fill voice/lang from settings when the caller omitted them (the renderer's
         // `ttsSpeak` passes them, but the hotkey path may not).
@@ -1208,7 +1211,6 @@ impl TtsManager {
             app: self.app.clone(),
             request_id: request_id.to_string(),
             cancelled: cancel.clone(),
-            last_chunk: Mutex::new(None),
             seq: AtomicU64::new(0),
         };
         let sentences = split_sentences(text, DEFAULT_MAX_SENTENCE_LEN);
@@ -1233,10 +1235,6 @@ impl TtsManager {
                 break;
             }
         }
-        // Flush the held-back final chunk with is_final=true (so the renderer queue
-        // markComplete()s exactly once at the true end of the read).
-        sink.flush_final();
-
         self.drop_request(request_id);
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match &result {

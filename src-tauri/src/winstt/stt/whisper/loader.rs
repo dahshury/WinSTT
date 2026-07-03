@@ -3,10 +3,10 @@
 
 use std::path::Path;
 
-use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
+use ort::session::builder::GraphOptimizationLevel;
 
-use super::super::{configure_session, Accelerator, EngineConfig, SttError, SttResult};
+use super::super::{Accelerator, EngineConfig, SttError, SttResult, configure_session};
 
 /// Build one ORT session with the resolved providers + thread count. `is_whisper_fp16`
 /// lowers the optimization level to EXTENDED (Level2) to dodge `SimplifiedLayerNormFusion`

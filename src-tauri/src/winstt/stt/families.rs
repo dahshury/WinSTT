@@ -124,8 +124,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::super::TranscribeOptions;
-    use super::aed::{canary_prompt_tokens, COHERE_LANGUAGES};
-    use super::ctc::{parse_float_vec, SvMeta};
+    use super::aed::{COHERE_LANGUAGES, canary_prompt_tokens};
+    use super::ctc::{SvMeta, parse_float_vec};
     use super::frontend;
     use super::support::{
         argmax_1d, argmax_last_axis_2d, b64_to_utf8, is_special_token, join_and_normalize,

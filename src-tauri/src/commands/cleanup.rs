@@ -9,10 +9,10 @@ use crate::command_auth;
 use crate::managers::transcription::TranscriptionManager;
 use crate::winstt::cleanup;
 use crate::winstt::commands::settings::{
-    apply_settings_patch, read_settings, PartialWinsttSettings,
+    PartialWinsttSettings, apply_settings_patch, read_settings,
 };
 use crate::winstt::managers::{
-    tts_download_manager::TtsDownloadManager, DownloadManager, LlmManager, TtsManager,
+    DownloadManager, LlmManager, TtsManager, tts_download_manager::TtsDownloadManager,
 };
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::RecordingMode;
@@ -224,11 +224,11 @@ pub async fn remove_app_data_category(
         "logs" => {
             // Delete each log file best-effort; the active log file is held open
             // by the logger and simply stays (reported as an error), which is fine.
-            if let Ok(dir) = crate::portable::app_log_dir(&app) {
-                if let Ok(entries) = std::fs::read_dir(&dir) {
-                    for entry in entries.flatten() {
-                        delete_path_best_effort(&entry.path(), &mut errors);
-                    }
+            if let Ok(dir) = crate::portable::app_log_dir(&app)
+                && let Ok(entries) = std::fs::read_dir(&dir)
+            {
+                for entry in entries.flatten() {
+                    delete_path_best_effort(&entry.path(), &mut errors);
                 }
             }
         }

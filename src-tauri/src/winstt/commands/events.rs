@@ -52,6 +52,8 @@ pub mod names {
     pub const STARTUP_COMPLETE: &str = "startup:complete";
     /// Proper nouns the cleanup model identified during the last structured-output pass.
     pub const LLM_LEARNED_PROPER_NOUNS: &str = "llm:learned-proper-nouns";
+    /// Cycle to the next saved post-processing profile in renderer-owned order.
+    pub const LLM_PROFILE_SWAP: &str = "llm:profile-swap";
     /// Manual "check for updates" trigger (main → renderer fan-out).
     pub const UPDATER_CHECK: &str = "updater:check";
 }

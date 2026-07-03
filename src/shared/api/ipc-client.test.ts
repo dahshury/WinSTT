@@ -511,6 +511,17 @@ describe("wrappers migrated to direct commands.* (no channel)", () => {
 		expect(result).toHaveLength(1);
 	});
 
+	test("diagClearObservabilityTimeline calls diag_clear_observability_timeline", async () => {
+		installMockApi();
+		setTauriInvoke(() => 3);
+		const result = await ipc.diagClearObservabilityTimeline();
+		expect(lastTauriCall()).toEqual({
+			cmd: "diag_clear_observability_timeline",
+			args: undefined,
+		});
+		expect(result).toBe(3);
+	});
+
 	test("copyLastTranscript calls copy_last_transcript and returns the bool", async () => {
 		installMockApi();
 		setTauriInvoke(() => true);

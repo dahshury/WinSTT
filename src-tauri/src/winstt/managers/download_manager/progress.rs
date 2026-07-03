@@ -52,10 +52,10 @@ impl ProgressAgg {
     /// Mark a file complete: clamp completed == total.
     pub(super) fn mark_file_complete(&self, name: &str) {
         let mut m = self.files.lock_recover();
-        if let Some(slot) = m.get_mut(name) {
-            if slot.1 > 0 {
-                slot.0 = slot.1;
-            }
+        if let Some(slot) = m.get_mut(name)
+            && slot.1 > 0
+        {
+            slot.0 = slot.1;
         }
     }
 

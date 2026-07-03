@@ -2,8 +2,8 @@
 // Split out of the `llm` command root; used by the command entries in `mod.rs`.
 
 use crate::winstt::llm::{
-    self, merge_presets_with_custom_modifiers, PresetEntry as LlmPresetEntry,
-    PresetKey as LlmPresetKey, PresetLevel as LlmPresetLevel, ThinkingEffort as LlmEffort,
+    self, PresetEntry as LlmPresetEntry, PresetKey as LlmPresetKey, PresetLevel as LlmPresetLevel,
+    ThinkingEffort as LlmEffort, merge_presets_with_custom_modifiers,
 };
 use crate::winstt::settings_schema::{
     EffortLevel as SettingsOpenRouterEffort, LlmFeatureBase, PresetEntry as SettingsPreset,

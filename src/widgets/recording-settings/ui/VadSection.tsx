@@ -21,12 +21,13 @@ interface VadSectionProps {
 export function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 	return (
 		<SettingSection
+			boxed
 			icon={VoiceIdIcon}
 			onToggle={(v) => updateAudio({ sileroDeactivityDetection: v })}
 			title={ta("vad")}
 			toggled={audio?.sileroDeactivityDetection ?? true}
 		>
-			<div className="flex flex-col">
+			<div className="flex flex-col divide-y divide-divider">
 				<SettingField
 					isDefault={
 						(audio?.sileroSensitivity ??

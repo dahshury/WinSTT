@@ -1,10 +1,12 @@
 use crate::utils;
 use log::{debug, error};
 use std::sync::Arc;
+use std::time::Instant;
 use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 
-use super::{last_transcription, ShortcutAction};
+use super::{ShortcutAction, last_transcription};
+use crate::winstt::commands::events::names;
 
 // Cancel Action
 pub(super) struct CancelAction;
@@ -43,6 +45,19 @@ impl ShortcutAction for TransformAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
+// Post-processing profile swap (WinSTT llm.profileSwapHotkey): renderer owns
+// saved profile storage/order, so the backend only broadcasts a single-shot
+// event when the global shortcut is pressed.
+pub(super) struct PostProcessingProfileSwapAction;
+
+impl ShortcutAction for PostProcessingProfileSwapAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        let _ = app.emit(names::LLM_PROFILE_SWAP, ());
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Re-paste Action (WinSTT general.repasteHotkey, default LCtrl+LShift+V): re-inject
 // the most recent dictation transcription without re-dictating. The key hook registers
 // the combo with blocking, so the accelerator is consumed system-wide (the reference's
@@ -74,9 +89,12 @@ impl ShortcutAction for RepasteAction {
         std::thread::spawn(move || {
             #[cfg(target_os = "windows")]
             {
-                crate::input::release_held_modifiers();
-                // Let the foreground app process the modifier key-ups before the paste.
-                std::thread::sleep(std::time::Duration::from_millis(15));
+                // The repaste hotkey fires on key-DOWN, so modifiers are normally still
+                // held here — but skip the settle wait in the rare no-modifier case.
+                if crate::input::release_held_modifiers() {
+                    // Let the foreground app process the modifier key-ups before the paste.
+                    std::thread::sleep(std::time::Duration::from_millis(15));
+                }
             }
             debug!(
                 "RepasteAction: re-pasting last transcription ({} chars)",
@@ -118,9 +136,11 @@ impl ShortcutAction for ReadAloudAction {
         let app = app.clone();
         // Selection capture + blocking synthesis run off the hotkey thread.
         std::thread::spawn(move || {
+            let started = Instant::now();
             let text = crate::winstt::commands::transforms::capture_selection_text(&app);
+            let capture_ms = started.elapsed().as_millis();
             if text.trim().is_empty() {
-                debug!("ReadAloudAction: no selection captured");
+                debug!("ReadAloudAction: no selection captured after {capture_ms}ms");
                 let _ = app.emit(
                     "tts:failed",
                     serde_json::json!({ "requestId": "", "reason": "No text selected" }),
@@ -132,12 +152,31 @@ impl ShortcutAction for ReadAloudAction {
             };
             let mgr = tts.inner().clone();
             let rid = mgr.next_request_id();
+            let reserve_started = Instant::now();
             crate::winstt::commands::tts::reserve_tts_playback_layer(&app);
+            let reserve_ms = reserve_started.elapsed().as_millis();
+            debug!(
+                "ReadAloudAction: captured {} bytes in {capture_ms}ms; overlay reserve {reserve_ms}ms",
+                text.len()
+            );
             // Empty voice/lang → the manager fills them from the active source's
             // settings (same as the `tts_speak_selection` command path). Speed is
             // sampled per sentence so a mid-read change applies to the next one.
             let speed_mgr = mgr.clone();
-            mgr.read_aloud(&rid, &text, "", "", move || speed_mgr.current_speed());
+            let panic_mgr = mgr.clone();
+            let panic_rid = rid.clone();
+            let synth_started = Instant::now();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                mgr.read_aloud(&rid, &text, "", "", move || speed_mgr.current_speed());
+            }));
+            if result.is_err() {
+                error!("ReadAloudAction: TTS synthesis panicked");
+                panic_mgr.fail_request(&panic_rid, "TTS synthesis panicked");
+            }
+            debug!(
+                "ReadAloudAction: synthesis returned in {}ms",
+                synth_started.elapsed().as_millis()
+            );
         });
     }
 

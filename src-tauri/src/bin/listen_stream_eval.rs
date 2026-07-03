@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use winstt_app_lib::winstt::catalog;
 use winstt_app_lib::winstt::stt::cache_probe::engine_kind_for;
-use winstt_app_lib::winstt::stt::resolver::{resolve, ResolveRequest};
+use winstt_app_lib::winstt::stt::resolver::{ResolveRequest, resolve};
 use winstt_app_lib::winstt::stt::{
-    build_engine, providers_for_accelerator, Accelerator, EngineConfig, Quantization,
-    TranscribeOptions, Transcriber,
+    Accelerator, EngineConfig, Quantization, TranscribeOptions, Transcriber, build_engine,
+    providers_for_accelerator,
 };
 
 const SAMPLE_RATE: usize = 16_000;

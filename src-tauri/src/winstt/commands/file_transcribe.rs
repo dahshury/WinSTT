@@ -20,13 +20,14 @@
 // `file:queue-*` events the reused renderer listener subscribes to. Every payload
 // type derives `specta::Type` so tauri-specta emits TS bindings.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+use crate::command_auth;
 use crate::winstt::managers::FileTranscribeManager;
 
 const MAX_PICKED_FILES: usize = 32;
@@ -35,6 +36,54 @@ const SUPPORTED_MEDIA_EXTENSIONS: &[&str] = &[
     "mp3", "wav", "flac", "m4a", "aac", "ogg", "wma", "mp4", "mkv", "avi", "mov", "wmv", "flv",
     "webm",
 ];
+const FILE_TRANSCRIBE_QUEUE_WINDOWS: &[&str] = &["main"];
+const FILE_TRANSCRIBE_PICK_WINDOWS: &[&str] = &["main", "tray-menu"];
+const FILE_TRANSCRIBE_ACTIVE_WINDOWS: &[&str] = &["main", "model-picker"];
+
+#[derive(Clone, Copy, Debug)]
+enum FileTranscribeOperation {
+    Enqueue,
+    PickAndEnqueue,
+    ControlQueue,
+    ReadActive,
+}
+
+impl FileTranscribeOperation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Enqueue => "enqueue file transcription",
+            Self::PickAndEnqueue => "open file transcription picker",
+            Self::ControlQueue => "control file transcription queue",
+            Self::ReadActive => "read file transcription active state",
+        }
+    }
+
+    fn allowed_windows(self) -> &'static [&'static str] {
+        match self {
+            Self::Enqueue | Self::ControlQueue => FILE_TRANSCRIBE_QUEUE_WINDOWS,
+            Self::PickAndEnqueue => FILE_TRANSCRIBE_PICK_WINDOWS,
+            Self::ReadActive => FILE_TRANSCRIBE_ACTIVE_WINDOWS,
+        }
+    }
+}
+
+fn authorize_file_transcribe_operation(
+    caller: &tauri::WebviewWindow,
+    operation: FileTranscribeOperation,
+) -> Result<(), String> {
+    command_auth::authorize_webview(
+        caller,
+        "file_transcribe",
+        operation.as_str(),
+        operation.allowed_windows(),
+        "",
+    )
+}
+
+#[cfg(test)]
+fn is_file_transcribe_operation_allowed(caller: &str, operation: FileTranscribeOperation) -> bool {
+    command_auth::label_in(caller, operation.allowed_windows())
+}
 
 /// One dropped file: its native path + display name (resolved renderer-side via
 /// the `getPathForFile` drag-drop bridge). Mirrors the reference enqueue payload.
@@ -78,13 +127,12 @@ fn prepare_backend_selected_files(paths: Vec<PathBuf>) -> Vec<(PathBuf, String)>
 
 fn display_file_name(path: &std::path::Path, fallback: &str) -> String {
     let fallback = fallback.trim();
-    if !fallback.is_empty() {
-        if let Some(name) = std::path::Path::new(fallback)
+    if !fallback.is_empty()
+        && let Some(name) = std::path::Path::new(fallback)
             .file_name()
             .and_then(|name| name.to_str())
-        {
-            return name.to_string();
-        }
+    {
+        return name.to_string();
     }
     path.file_name()
         .and_then(|name| name.to_str())
@@ -92,7 +140,14 @@ fn display_file_name(path: &std::path::Path, fallback: &str) -> String {
         .to_string()
 }
 
-fn prepare_dropped_files(files: Vec<DroppedFile>) -> Vec<(PathBuf, String)> {
+fn is_webview_allowed_file(webview: &tauri::WebviewWindow, path: &Path) -> bool {
+    webview.asset_protocol_scope().is_allowed(path)
+}
+
+fn prepare_dropped_files(
+    webview: &tauri::WebviewWindow,
+    files: Vec<DroppedFile>,
+) -> Vec<(PathBuf, String)> {
     files
         .into_iter()
         .take(MAX_PICKED_FILES)
@@ -110,6 +165,13 @@ fn prepare_dropped_files(files: Vec<DroppedFile>) -> Vec<(PathBuf, String)> {
                 return None;
             }
             let path = path.canonicalize().unwrap_or(path);
+            if !is_webview_allowed_file(webview, &path) {
+                log::warn!(
+                    "[file_transcribe] blocked renderer path not present in caller file scope: {}",
+                    path.display()
+                );
+                return None;
+            }
             let file_name = display_file_name(&path, &file.file_name);
             Some((path, file_name))
         })
@@ -134,9 +196,13 @@ fn enqueue_prepared(
 #[specta::specta]
 pub fn file_transcribe_enqueue(
     file_tx: State<'_, Arc<FileTranscribeManager>>,
+    webview: tauri::WebviewWindow,
     files: Vec<DroppedFile>,
 ) -> Vec<String> {
-    let prepared = prepare_dropped_files(files);
+    if authorize_file_transcribe_operation(&webview, FileTranscribeOperation::Enqueue).is_err() {
+        return Vec::new();
+    }
+    let prepared = prepare_dropped_files(&webview, files);
     enqueue_prepared(file_tx, prepared)
 }
 
@@ -146,8 +212,14 @@ pub fn file_transcribe_enqueue(
 #[specta::specta]
 pub fn file_transcribe_pick_and_enqueue(
     app: AppHandle,
+    webview: tauri::WebviewWindow,
     file_tx: State<'_, Arc<FileTranscribeManager>>,
 ) -> Vec<String> {
+    if authorize_file_transcribe_operation(&webview, FileTranscribeOperation::PickAndEnqueue)
+        .is_err()
+    {
+        return Vec::new();
+    }
     let Some(selected) = app
         .dialog()
         .file()
@@ -169,14 +241,30 @@ pub fn file_transcribe_pick_and_enqueue(
 /// in-flight file (removed once its one-shot transcribe returns).
 #[tauri::command]
 #[specta::specta]
-pub fn file_transcribe_cancel(file_tx: State<'_, Arc<FileTranscribeManager>>, id: String) {
+pub fn file_transcribe_cancel(
+    file_tx: State<'_, Arc<FileTranscribeManager>>,
+    webview: tauri::WebviewWindow,
+    id: String,
+) {
+    if authorize_file_transcribe_operation(&webview, FileTranscribeOperation::ControlQueue).is_err()
+    {
+        return;
+    }
     file_tx.inner().clone().cancel(&id);
 }
 
 /// `file_transcribe_retry` `{id}` — re-queue a terminal/paused row from scratch.
 #[tauri::command]
 #[specta::specta]
-pub fn file_transcribe_retry(file_tx: State<'_, Arc<FileTranscribeManager>>, id: String) {
+pub fn file_transcribe_retry(
+    file_tx: State<'_, Arc<FileTranscribeManager>>,
+    webview: tauri::WebviewWindow,
+    id: String,
+) {
+    if authorize_file_transcribe_operation(&webview, FileTranscribeOperation::ControlQueue).is_err()
+    {
+        return;
+    }
     file_tx.inner().clone().retry(&id);
 }
 
@@ -184,14 +272,29 @@ pub fn file_transcribe_retry(file_tx: State<'_, Arc<FileTranscribeManager>>, id:
 /// clipboard (via the clipboard-manager plugin).
 #[tauri::command]
 #[specta::specta]
-pub fn file_transcribe_copy(file_tx: State<'_, Arc<FileTranscribeManager>>, id: String) {
+pub fn file_transcribe_copy(
+    file_tx: State<'_, Arc<FileTranscribeManager>>,
+    webview: tauri::WebviewWindow,
+    id: String,
+) {
+    if authorize_file_transcribe_operation(&webview, FileTranscribeOperation::ControlQueue).is_err()
+    {
+        return;
+    }
     file_tx.copy(&id);
 }
 
 /// `file_transcribe_clear` — remove every terminal row (the auto-clear path).
 #[tauri::command]
 #[specta::specta]
-pub fn file_transcribe_clear(file_tx: State<'_, Arc<FileTranscribeManager>>) {
+pub fn file_transcribe_clear(
+    file_tx: State<'_, Arc<FileTranscribeManager>>,
+    webview: tauri::WebviewWindow,
+) {
+    if authorize_file_transcribe_operation(&webview, FileTranscribeOperation::ControlQueue).is_err()
+    {
+        return;
+    }
     file_tx.inner().clone().clear_finished();
 }
 
@@ -200,21 +303,44 @@ pub fn file_transcribe_clear(file_tx: State<'_, Arc<FileTranscribeManager>>) {
 ///   • no `id`   → PTT whole-queue auto-pause (the model is busy dictating).
 #[tauri::command]
 #[specta::specta]
-pub fn file_transcribe_pause(file_tx: State<'_, Arc<FileTranscribeManager>>, id: Option<String>) {
+pub fn file_transcribe_pause(
+    file_tx: State<'_, Arc<FileTranscribeManager>>,
+    webview: tauri::WebviewWindow,
+    id: Option<String>,
+) {
+    if authorize_file_transcribe_operation(&webview, FileTranscribeOperation::ControlQueue).is_err()
+    {
+        return;
+    }
     file_tx.inner().clone().pause(id.as_deref());
 }
 
 /// `file_transcribe_resume` — optional `{id}` (symmetric with pause).
 #[tauri::command]
 #[specta::specta]
-pub fn file_transcribe_resume(file_tx: State<'_, Arc<FileTranscribeManager>>, id: Option<String>) {
+pub fn file_transcribe_resume(
+    file_tx: State<'_, Arc<FileTranscribeManager>>,
+    webview: tauri::WebviewWindow,
+    id: Option<String>,
+) {
+    if authorize_file_transcribe_operation(&webview, FileTranscribeOperation::ControlQueue).is_err()
+    {
+        return;
+    }
     file_tx.inner().clone().resume(id.as_deref());
 }
 
 /// `file_transcribe_discard_all` — cancel the in-flight file and drop all rows.
 #[tauri::command]
 #[specta::specta]
-pub fn file_transcribe_discard_all(file_tx: State<'_, Arc<FileTranscribeManager>>) {
+pub fn file_transcribe_discard_all(
+    file_tx: State<'_, Arc<FileTranscribeManager>>,
+    webview: tauri::WebviewWindow,
+) {
+    if authorize_file_transcribe_operation(&webview, FileTranscribeOperation::ControlQueue).is_err()
+    {
+        return;
+    }
     file_tx.inner().clone().discard_all();
 }
 
@@ -222,6 +348,63 @@ pub fn file_transcribe_discard_all(file_tx: State<'_, Arc<FileTranscribeManager>
 /// AFTER the edge-triggered `file:queue-active` broadcast.
 #[tauri::command]
 #[specta::specta]
-pub fn file_transcribe_get_active(file_tx: State<'_, Arc<FileTranscribeManager>>) -> bool {
+pub fn file_transcribe_get_active(
+    file_tx: State<'_, Arc<FileTranscribeManager>>,
+    webview: tauri::WebviewWindow,
+) -> bool {
+    if authorize_file_transcribe_operation(&webview, FileTranscribeOperation::ReadActive).is_err() {
+        return false;
+    }
     file_tx.is_active()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_transcribe_authorization_matches_renderer_surfaces() {
+        command_auth::assert_label_rules(
+            &["main"],
+            &[
+                "settings",
+                "overlay",
+                "tray-menu",
+                "device-picker",
+                "history",
+                "context-playground",
+            ],
+            |caller| is_file_transcribe_operation_allowed(caller, FileTranscribeOperation::Enqueue),
+        );
+        command_auth::assert_label_rules(
+            &["main", "tray-menu"],
+            &[
+                "settings",
+                "overlay",
+                "device-picker",
+                "history",
+                "context-playground",
+            ],
+            |caller| {
+                is_file_transcribe_operation_allowed(
+                    caller,
+                    FileTranscribeOperation::PickAndEnqueue,
+                )
+            },
+        );
+        command_auth::assert_label_rules(
+            &["main", "model-picker"],
+            &[
+                "settings",
+                "overlay",
+                "tray-menu",
+                "device-picker",
+                "history",
+                "context-playground",
+            ],
+            |caller| {
+                is_file_transcribe_operation_allowed(caller, FileTranscribeOperation::ReadActive)
+            },
+        );
+    }
 }

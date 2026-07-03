@@ -24,11 +24,12 @@ pub(crate) fn directml_degenerate_model_blocked(model_id: &str) -> bool {
 
 pub(super) fn mark_directml_degenerate_model(model_id: &str) -> usize {
     let models = DML_DEGENERATE_MODELS.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut models) = models.lock() {
-        let count = models.entry(model_id.to_string()).or_default();
-        *count += 1;
-        *count
-    } else {
-        DML_DEGENERATE_BLOCK_THRESHOLD
+    match models.lock() {
+        Ok(mut models) => {
+            let count = models.entry(model_id.to_string()).or_default();
+            *count += 1;
+            *count
+        }
+        Err(_) => DML_DEGENERATE_BLOCK_THRESHOLD,
     }
 }

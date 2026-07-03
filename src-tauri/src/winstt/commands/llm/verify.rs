@@ -14,7 +14,7 @@ use crate::winstt::cloud_stt::{
 };
 
 use super::payloads::VerifyCredentialPayload;
-use crate::winstt::commands::settings::{read_settings, SECRET_PRESENT_SENTINEL};
+use crate::winstt::commands::settings::{SECRET_PRESENT_SENTINEL, read_settings};
 
 // ── verify probe (shared OpenAI/OpenRouter/ElevenLabs classification) ──────────
 

@@ -181,10 +181,10 @@ pub fn extract_structured_final_text(content: &str) -> Option<String> {
     if !trimmed.starts_with('{') {
         return None;
     }
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&trimmed) {
-        if let Some(text) = value.get("text").and_then(|t| t.as_str()) {
-            return Some(text.to_string());
-        }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&trimmed)
+        && let Some(text) = value.get("text").and_then(|t| t.as_str())
+    {
+        return Some(text.to_string());
     }
     salvage_structured_text(&trimmed)
 }

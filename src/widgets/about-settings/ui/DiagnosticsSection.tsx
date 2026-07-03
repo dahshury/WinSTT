@@ -1,9 +1,12 @@
 import {
 	Bug01Icon,
+	ChevronDownIcon,
+	ChevronUpIcon,
 	Clock01Icon,
 	CloudIcon,
 	Copy01Icon,
 	CpuIcon,
+	Delete02Icon,
 	FileZipIcon,
 	FingerPrintIcon,
 	Folder01Icon,
@@ -16,6 +19,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SettingSection } from "@/entities/setting";
 import {
+	diagClearObservabilityTimeline,
 	diagObservabilityTimeline,
 	diagOpenLogsFolder,
 	diagSaveBundle,
@@ -34,12 +38,19 @@ import {
 	type EntryCardMetaPart,
 	EntryCardShell,
 } from "@/shared/ui/entry-card-list";
-import { AboutActionButton } from "./AboutActionButton";
+import {
+	surfaceClasses,
+	surfaceHoverBg,
+	useSurface,
+} from "@/shared/lib/surface";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { AboutActionRow } from "./AboutActionRow";
 import type { AboutT } from "./types";
 
 const OBSERVABILITY_COPY = {
 	backgroundOnly: "Background only",
+	clearAll: "Clear all",
+	clearAllTitle: "Clear all operational issues",
 	copied: "Copied",
 	copy: "Copy issue",
 	empty: "No recent operational issues recorded.",
@@ -49,6 +60,8 @@ const OBSERVABILITY_COPY = {
 	recentTitle: "Recent Operational Issues",
 	refresh: "Refresh",
 	remediationLabel: "Suggested action: ",
+	showLess: "Show less",
+	showMore: "Show more",
 	shownToUser: "Shown to user",
 };
 
@@ -58,6 +71,8 @@ const ISSUE_FETCH_LIMIT = 50;
 // Bound the scroll region so the issue list stays a contained, paginated box
 // under the diagnostics actions instead of growing the whole section.
 const ISSUES_BODY_MAX_HEIGHT_PX = 420;
+const ISSUE_DETAIL_COLLAPSE_LENGTH = 360;
+const ISSUE_DETAIL_COLLAPSE_LINES = 4;
 
 const ISSUE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
 	day: "2-digit",
@@ -233,6 +248,142 @@ const INITIAL_OBSERVABILITY_TIMELINE: ObservabilityTimelineState = {
 	loading: true,
 };
 
+function ObservabilityActionGroup({
+	canClear,
+	clearing,
+	loading,
+	onClear,
+	onRefresh,
+}: {
+	canClear: boolean;
+	clearing: boolean;
+	loading: boolean;
+	onClear: () => void;
+	onRefresh: () => void;
+}): ReactNode {
+	return (
+		<ElevatedSurface className="w-52 shrink-0 overflow-hidden" inline>
+			<ObservabilityActionGroupButtons
+				canClear={canClear}
+				clearing={clearing}
+				loading={loading}
+				onClear={onClear}
+				onRefresh={onRefresh}
+			/>
+		</ElevatedSurface>
+	);
+}
+
+function ObservabilityActionGroupButtons({
+	canClear,
+	clearing,
+	loading,
+	onClear,
+	onRefresh,
+}: {
+	canClear: boolean;
+	clearing: boolean;
+	loading: boolean;
+	onClear: () => void;
+	onRefresh: () => void;
+}): ReactNode {
+	const substrate = useSurface();
+	const level = Math.min(substrate + 1, 8);
+	const hoverLevel = Math.min(substrate + 2, 8);
+	const busy = loading || clearing;
+
+	return (
+		<div
+			aria-label="Operational issue actions"
+			className={cn(
+				"flex h-8 w-full overflow-hidden rounded-lg",
+				surfaceClasses(level),
+			)}
+			role="toolbar"
+		>
+			<Button
+				className={cn(
+					"flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 px-2 text-body text-foreground leading-normal transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50",
+					surfaceHoverBg(hoverLevel),
+				)}
+				disabled={busy}
+				onClick={onRefresh}
+			>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className="shrink-0 text-foreground-muted"
+					icon={RefreshIcon}
+					size={14}
+				/>
+				<span className="min-w-0 truncate">{OBSERVABILITY_COPY.refresh}</span>
+			</Button>
+			<span
+				aria-hidden="true"
+				className="my-1.5 w-px shrink-0 self-stretch bg-divider-strong"
+				data-slot="observability-action-separator"
+			/>
+			<Button
+				aria-label={OBSERVABILITY_COPY.clearAllTitle}
+				className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 px-2 font-medium text-body text-error leading-normal transition-colors duration-150 hover:bg-error-dim/40 disabled:cursor-not-allowed disabled:opacity-50"
+				disabled={busy || !canClear}
+				onClick={onClear}
+				title={OBSERVABILITY_COPY.clearAllTitle}
+			>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className="shrink-0 text-current"
+					icon={Delete02Icon}
+					size={14}
+				/>
+				<span className="min-w-0 truncate">{OBSERVABILITY_COPY.clearAll}</span>
+			</Button>
+		</div>
+	);
+}
+
+function isLongIssueDetail(detail: string): boolean {
+	return (
+		detail.length > ISSUE_DETAIL_COLLAPSE_LENGTH ||
+		detail.split(/\r?\n/).length > ISSUE_DETAIL_COLLAPSE_LINES
+	);
+}
+
+function IssueDetail({ detail }: { detail: string }): ReactNode {
+	const [expanded, setExpanded] = useState(false);
+	const canCollapse = isLongIssueDetail(detail);
+	const label = expanded
+		? OBSERVABILITY_COPY.showLess
+		: OBSERVABILITY_COPY.showMore;
+
+	return (
+		<div className="flex min-w-0 flex-col items-start gap-1">
+			<p
+				className={cn(
+					"min-w-0 whitespace-pre-wrap break-words text-body-sm text-foreground-muted leading-snug",
+					canCollapse && !expanded && "line-clamp-4",
+				)}
+			>
+				{detail}
+			</p>
+			{canCollapse ? (
+				<Button
+					aria-expanded={expanded}
+					className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 font-medium text-accent text-body-sm transition-colors duration-150 hover:bg-accent/10"
+					onClick={() => setExpanded((current) => !current)}
+				>
+					<HugeiconsIcon
+						aria-hidden="true"
+						className="shrink-0"
+						icon={expanded ? ChevronUpIcon : ChevronDownIcon}
+						size={13}
+					/>
+					<span>{label}</span>
+				</Button>
+			) : null}
+		</div>
+	);
+}
+
 function IssueCard({ issue }: { issue: ObservabilityIssue }): ReactNode {
 	return (
 		<EntryCard footer={issueFooterParts(issue)}>
@@ -241,11 +392,7 @@ function IssueCard({ issue }: { issue: ObservabilityIssue }): ReactNode {
 					<span className="font-medium text-body-sm text-foreground leading-snug">
 						{issue.summary}
 					</span>
-					{issue.detail ? (
-						<span className="text-body-sm text-foreground-muted leading-snug">
-							{issue.detail}
-						</span>
-					) : null}
+					{issue.detail ? <IssueDetail detail={issue.detail} /> : null}
 					{issue.remediation ? (
 						<span className="text-body-sm text-foreground-muted leading-snug">
 							<span className="font-medium text-foreground">
@@ -282,6 +429,7 @@ function ObservabilityTimeline(): ReactNode {
 	const [timeline, setTimeline] = useState<ObservabilityTimelineState>(
 		INITIAL_OBSERVABILITY_TIMELINE,
 	);
+	const [clearing, setClearing] = useState(false);
 	const { issues, loading } = timeline;
 
 	const refresh = () => {
@@ -292,6 +440,20 @@ function ObservabilityTimeline(): ReactNode {
 			})
 			.catch(() => {
 				setTimeline((current) => ({ ...current, loading: false }));
+			});
+	};
+
+	const clearAll = () => {
+		setClearing(true);
+		diagClearObservabilityTimeline()
+			.then(() => {
+				setTimeline({ issues: [], loading: false });
+			})
+			.catch(() => {
+				setTimeline((current) => ({ ...current, loading: false }));
+			})
+			.finally(() => {
+				setClearing(false);
 			});
 	};
 
@@ -329,7 +491,7 @@ function ObservabilityTimeline(): ReactNode {
 	} else {
 		body = (
 			<div
-				className="overflow-y-auto"
+				className="overflow-y-auto px-1"
 				style={{
 					maxHeight: ISSUES_BODY_MAX_HEIGHT_PX,
 					scrollbarGutter: "stable both-edges",
@@ -345,8 +507,8 @@ function ObservabilityTimeline(): ReactNode {
 	}
 
 	return (
-		<div className="border-border border-t pt-4">
-			<div className="flex items-start gap-4">
+		<div className="border-border border-t pt-4 pb-3">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 				<div className="flex min-w-0 flex-1 flex-col gap-1">
 					<span className="font-medium text-body text-foreground leading-tight">
 						{OBSERVABILITY_COPY.recentTitle}
@@ -355,12 +517,16 @@ function ObservabilityTimeline(): ReactNode {
 						{OBSERVABILITY_COPY.recentSummary}
 					</span>
 				</div>
-				<AboutActionButton icon={RefreshIcon} onClick={refresh}>
-					{OBSERVABILITY_COPY.refresh}
-				</AboutActionButton>
+				<ObservabilityActionGroup
+					canClear={issues.length > 0}
+					clearing={clearing}
+					loading={loading}
+					onClear={clearAll}
+					onRefresh={refresh}
+				/>
 			</div>
 			<div className="mt-3">
-				<EntryCardShell>{body}</EntryCardShell>
+				<EntryCardShell bare>{body}</EntryCardShell>
 			</div>
 		</div>
 	);
@@ -369,6 +535,7 @@ function ObservabilityTimeline(): ReactNode {
 export function DiagnosticsSection({ t }: { t: AboutT }): ReactNode {
 	return (
 		<SettingSection
+			boxed
 			description={t("diagnosticsDescription")}
 			divided
 			icon={Bug01Icon}

@@ -35,4 +35,15 @@ describe("ButtonGroup", () => {
 		expect(screen.getByText("first")).toBeDefined();
 		expect(screen.getByText("second")).toBeDefined();
 	});
+
+	test("allows callers to override the wrapper role", () => {
+		render(
+			<ButtonGroup role="presentation">
+				<button type="button">Only</button>
+			</ButtonGroup>,
+		);
+
+		expect(screen.queryByRole("toolbar")).toBeNull();
+		expect(screen.getByRole("button", { name: "Only" })).toBeDefined();
+	});
 });

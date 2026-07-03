@@ -24,11 +24,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_store::StoreExt;
 
-use crate::winstt::commands::settings::{
-    SETTINGS_CHANGED_EVENT, WINSTT_SETTINGS_FILE, WINSTT_SETTINGS_KEY,
-};
+use crate::winstt::commands::settings::SETTINGS_CHANGED_EVENT;
 use crate::winstt::settings_schema::OnboardedTrack;
 
 /// While the first-run wizard owns the launch, the app stays MODEL-FREE: the boot
@@ -95,13 +92,12 @@ fn mark_onboarded(app: &AppHandle, track: OnboardedTrack) -> Result<serde_json::
     settings.general.onboarded_at = Some(now_ms());
     settings.general.onboarded_track = track;
 
-    let value = serde_json::to_value(&settings).map_err(|e| e.to_string())?;
-    let store = app
-        .store(crate::portable::store_path(WINSTT_SETTINGS_FILE))
-        .map_err(|e| format!("winstt settings store: {e}"))?;
-    store.set(WINSTT_SETTINGS_KEY, value.clone());
-    store.save().map_err(|e| e.to_string())?;
-    Ok(value)
+    let mut to_persist = settings.clone();
+    crate::winstt::settings_store::try_seal_secrets(&mut to_persist)?;
+    crate::winstt::settings_store::write_settings_value(app, &to_persist)?;
+
+    crate::winstt::settings_store::sanitize_settings_for_renderer(&mut settings);
+    serde_json::to_value(&settings).map_err(|e| e.to_string())
 }
 
 fn now_ms() -> i64 {
@@ -169,7 +165,7 @@ pub fn onboarding_enable_dictation(app: AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{track_from_str, OnboardedTrack};
+    use super::{OnboardedTrack, track_from_str};
 
     #[test]
     fn maps_track_strings_to_enum() {

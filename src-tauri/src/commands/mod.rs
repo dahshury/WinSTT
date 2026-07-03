@@ -1,7 +1,7 @@
 pub mod audio;
 pub mod cleanup;
 
-use crate::settings::{get_settings, write_settings, LogLevel};
+use crate::settings::{LogLevel, get_settings, write_settings};
 use crate::utils::cancel_current_operation;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;

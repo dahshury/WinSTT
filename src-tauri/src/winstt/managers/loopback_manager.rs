@@ -35,7 +35,7 @@ use crate::managers::transcription::{RealtimeStreamOutcome, TranscriptionManager
 
 use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
 use crate::audio_toolkit::vad::{
-    SileroVad, SmoothedVad, VadFrame, VoiceActivityDetector, VAD_FRAME_SAMPLES,
+    SileroVad, SmoothedVad, VAD_FRAME_SAMPLES, VadFrame, VoiceActivityDetector,
 };
 use crate::winstt::commands::dictation::SttEvents;
 use crate::winstt::loopback::{DeviceInfo, LoopbackCapture};

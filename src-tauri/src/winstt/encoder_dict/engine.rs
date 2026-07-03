@@ -12,7 +12,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use ndarray::{Array2, Axis};
-use ort::session::{builder::GraphOptimizationLevel, Session};
+use ort::session::{Session, builder::GraphOptimizationLevel};
 use ort::value::Tensor;
 use tokenizers::Tokenizer;
 
@@ -103,13 +103,13 @@ impl EncoderDict {
         let enc = self.tokenizer.encode(text, true).ok()?;
         let ids = enc.get_ids();
         let offsets = enc.get_offsets(); // CHARACTER offsets into `text` (verified)
-                                         // Our candidate spans are BYTE offsets; the tokenizer reports CHAR offsets — convert.
+        // Our candidate spans are BYTE offsets; the tokenizer reports CHAR offsets — convert.
         let char_start = text.get(..byte_start)?.chars().count();
         let char_end = text.get(..byte_end)?.chars().count();
         let span: Vec<usize> = offsets
             .iter()
             .enumerate()
-            .filter(|(_, &(o0, o1))| !(o0 == 0 && o1 == 0) && o0 < char_end && o1 > char_start)
+            .filter(|&(_, &(o0, o1))| !(o0 == 0 && o1 == 0) && o0 < char_end && o1 > char_start)
             .map(|(i, _)| i)
             .collect();
         if span.is_empty() {

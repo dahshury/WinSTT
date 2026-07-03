@@ -206,10 +206,13 @@ fn reload_main_renderer(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    if let Err(e) = window.eval("window.location.reload();") {
-        log::warn!("[splash] main renderer recovery reload failed: {e}");
-    } else {
-        log::warn!("[splash] main renderer recovery reload requested");
+    match window.eval("window.location.reload();") {
+        Err(e) => {
+            log::warn!("[splash] main renderer recovery reload failed: {e}");
+        }
+        Ok(()) => {
+            log::warn!("[splash] main renderer recovery reload requested");
+        }
     }
 }
 
@@ -418,12 +421,15 @@ pub fn close_splash_window(app: &AppHandle) {
                 log::warn!("[splash] close animation eval failed: {e}");
             }
             std::thread::sleep(std::time::Duration::from_millis(SPLASH_CLOSE_ANIMATION_MS));
-            if let Err(e) = window.destroy() {
-                log::warn!("[splash] destroy failed: {e}");
-                SPLASH_CLOSING.store(false, Ordering::SeqCst);
-            } else {
-                log::info!("[splash] destroyed");
-                SPLASH_CLOSING.store(false, Ordering::SeqCst);
+            match window.destroy() {
+                Err(e) => {
+                    log::warn!("[splash] destroy failed: {e}");
+                    SPLASH_CLOSING.store(false, Ordering::SeqCst);
+                }
+                Ok(()) => {
+                    log::info!("[splash] destroyed");
+                    SPLASH_CLOSING.store(false, Ordering::SeqCst);
+                }
             }
         });
     }

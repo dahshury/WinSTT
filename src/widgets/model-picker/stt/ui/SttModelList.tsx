@@ -20,6 +20,8 @@ import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { FavoritesGroupLabel } from "../../core/model-card/FavoritesGroupLabel";
+import { GROUP_HEADER_CLASSES } from "../../core/model-card/card-constants";
+import { ModelListScrollbarHeaderMask } from "../../core/ModelListScrollbarHeaderMask";
 import { publicAsset } from "@/shared/lib/public-asset";
 import {
 	bundleVariants,
@@ -98,7 +100,7 @@ function AuthorLabel({ family }: { family: FamilyKey }) {
 	const author = getAuthorLabel(family);
 	return (
 		<Combobox.GroupLabel
-			className="sticky top-0 z-raised flex items-center gap-2 border-border/60 border-b bg-surface-elevated/95 px-3 py-1.5 backdrop-blur-sm"
+			className={GROUP_HEADER_CLASSES}
 			data-rail-section={family}
 		>
 			{config.logoSrc ? (
@@ -202,7 +204,7 @@ function SortedLabel({ sortKey }: { sortKey: SttSortKey | null }) {
 	// the scroll-spy from latching onto this header and leaving the rail with no
 	// active tile once the sort is cleared.
 	return (
-		<Combobox.GroupLabel className="sticky top-0 z-raised flex items-center gap-2 border-border/60 border-b bg-surface-elevated/95 px-3 py-1.5 backdrop-blur-sm">
+		<Combobox.GroupLabel className={GROUP_HEADER_CLASSES}>
 			<span className="flex size-4 items-center justify-center rounded bg-foreground/[0.06] text-foreground-muted">
 				<HugeiconsIcon className="size-3" icon={ArrowUpDownIcon} />
 			</span>
@@ -344,108 +346,114 @@ export function SttModelList({
 }: SttModelListProps) {
 	return (
 		<div
-			className="flex min-h-0 flex-1 flex-col overflow-y-auto [overflow-y:overlay]"
-			data-slot="stt-model-list"
+			className="relative flex min-h-0 flex-1 overflow-hidden"
+			data-slot="stt-model-list-shell"
 		>
-			{/* Live region for assistive tech — Combobox.Status content is
+			<div
+				className="flex min-h-0 flex-1 flex-col overflow-y-auto [overflow-y:overlay]"
+				data-slot="stt-model-list"
+			>
+				{/* Live region for assistive tech — Combobox.Status content is
 			    announced politely (`aria-live="polite"`) every time the
 			    filtered count changes, so screen-reader users hear
 			    "3 models available" instead of guessing why their list
 			    shrank. Hidden visually via the `sr-only` utility. */}
-			<Combobox.Status className="sr-only">
-				{visibleModelCount === 1
-					? "1 model available"
-					: `${visibleModelCount} models available`}
-			</Combobox.Status>
-			<Combobox.Empty className="block">
-				<EmptyState hasActiveFilters={hasActiveFilters} />
-			</Combobox.Empty>
-			<Combobox.List className="p-0 pb-2">
-				{(group: SttListGroup) => {
-					// An active sort flattens every maker into one ordered column —
-					// rendered solo (the selector hands us just this group + hides
-					// the rail), so there are no per-maker headers to fight with.
-					if (isSortedGroup(group.value)) {
-						return (
-							<SortedGroup
-								currentQuantization={currentQuantization}
-								getDownloadSnapshot={getDownloadSnapshot}
-								getFitAssessment={getFitAssessment}
-								isFavorite={isFavorite}
-								items={group.items}
-								key={group.value}
-								onDownloadAction={onDownloadAction}
-								onRequestDeleteQuant={onRequestDeleteQuant}
-								canDeleteQuant={canDeleteQuant}
-								onSelect={onSelect}
-								onToggleFavorite={onToggleFavorite}
-								selectedId={selectedId}
-								sortKey={sortKey}
-								statesById={statesById}
-								systemInfo={systemInfo}
-							/>
-						);
-					}
-					// The synthetic Favorites group is maker-agnostic and flat —
-					// rendered ahead of (and separately from) the per-maker groups.
-					if (isFavoritesGroup(group.value)) {
-						return (
-							<FavoritesGroup
-								currentQuantization={currentQuantization}
-								getDownloadSnapshot={getDownloadSnapshot}
-								getFitAssessment={getFitAssessment}
-								isFavorite={isFavorite}
-								items={group.items}
-								key={group.value}
-								onDownloadAction={onDownloadAction}
-								onRequestDeleteQuant={onRequestDeleteQuant}
-								canDeleteQuant={canDeleteQuant}
-								onSelect={onSelect}
-								onToggleFavorite={onToggleFavorite}
-								selectedId={selectedId}
-								statesById={statesById}
-								systemInfo={systemInfo}
-							/>
-						);
-					}
-					// Bundling happens INSIDE the group render so it stays
-					// responsive to the menu-filtered set the selector hands
-					// us — a filter that hides a multilingual variant lets
-					// its .en sibling render solo automatically.
-					const family: FamilyKey = group.value;
-					const bundles = bundleVariants(group.items);
-					return (
-						<Combobox.Group
-							className="flex flex-col"
-							items={group.items}
-							key={group.value}
-						>
-							<AuthorLabel family={family} />
-							{bundles.map((bundle) => (
-								<SttVariantBundle
-									bundle={bundle}
+				<Combobox.Status className="sr-only">
+					{visibleModelCount === 1
+						? "1 model available"
+						: `${visibleModelCount} models available`}
+				</Combobox.Status>
+				<Combobox.Empty className="block">
+					<EmptyState hasActiveFilters={hasActiveFilters} />
+				</Combobox.Empty>
+				<Combobox.List className="p-0 pb-2">
+					{(group: SttListGroup) => {
+						// An active sort flattens every maker into one ordered column —
+						// rendered solo (the selector hands us just this group + hides
+						// the rail), so there are no per-maker headers to fight with.
+						if (isSortedGroup(group.value)) {
+							return (
+								<SortedGroup
 									currentQuantization={currentQuantization}
-									expanded={expandedBundles.has(bundle.baseId)}
 									getDownloadSnapshot={getDownloadSnapshot}
 									getFitAssessment={getFitAssessment}
 									isFavorite={isFavorite}
-									key={bundle.baseId}
+									items={group.items}
+									key={group.value}
 									onDownloadAction={onDownloadAction}
 									onRequestDeleteQuant={onRequestDeleteQuant}
 									canDeleteQuant={canDeleteQuant}
 									onSelect={onSelect}
-									onToggleExpanded={onToggleExpanded}
+									onToggleFavorite={onToggleFavorite}
+									selectedId={selectedId}
+									sortKey={sortKey}
+									statesById={statesById}
+									systemInfo={systemInfo}
+								/>
+							);
+						}
+						// The synthetic Favorites group is maker-agnostic and flat —
+						// rendered ahead of (and separately from) the per-maker groups.
+						if (isFavoritesGroup(group.value)) {
+							return (
+								<FavoritesGroup
+									currentQuantization={currentQuantization}
+									getDownloadSnapshot={getDownloadSnapshot}
+									getFitAssessment={getFitAssessment}
+									isFavorite={isFavorite}
+									items={group.items}
+									key={group.value}
+									onDownloadAction={onDownloadAction}
+									onRequestDeleteQuant={onRequestDeleteQuant}
+									canDeleteQuant={canDeleteQuant}
+									onSelect={onSelect}
 									onToggleFavorite={onToggleFavorite}
 									selectedId={selectedId}
 									statesById={statesById}
 									systemInfo={systemInfo}
 								/>
-							))}
-							{family === "custom" ? <OpenCustomModelsFolderRow /> : null}
-						</Combobox.Group>
-					);
-				}}
-			</Combobox.List>
+							);
+						}
+						// Bundling happens INSIDE the group render so it stays
+						// responsive to the menu-filtered set the selector hands
+						// us — a filter that hides a multilingual variant lets
+						// its .en sibling render solo automatically.
+						const family: FamilyKey = group.value;
+						const bundles = bundleVariants(group.items);
+						return (
+							<Combobox.Group
+								className="flex flex-col"
+								items={group.items}
+								key={group.value}
+							>
+								<AuthorLabel family={family} />
+								{bundles.map((bundle) => (
+									<SttVariantBundle
+										bundle={bundle}
+										currentQuantization={currentQuantization}
+										expanded={expandedBundles.has(bundle.baseId)}
+										getDownloadSnapshot={getDownloadSnapshot}
+										getFitAssessment={getFitAssessment}
+										isFavorite={isFavorite}
+										key={bundle.baseId}
+										onDownloadAction={onDownloadAction}
+										onRequestDeleteQuant={onRequestDeleteQuant}
+										canDeleteQuant={canDeleteQuant}
+										onSelect={onSelect}
+										onToggleExpanded={onToggleExpanded}
+										onToggleFavorite={onToggleFavorite}
+										selectedId={selectedId}
+										statesById={statesById}
+										systemInfo={systemInfo}
+									/>
+								))}
+								{family === "custom" ? <OpenCustomModelsFolderRow /> : null}
+							</Combobox.Group>
+						);
+					}}
+				</Combobox.List>
+			</div>
+			<ModelListScrollbarHeaderMask />
 		</div>
 	);
 }

@@ -11,6 +11,25 @@ const DEFAULTS: AppSettingsOutput = appSettingsSchema.parse({});
 type Integrations = AppSettingsOutput["integrations"];
 type GeneralSettings = AppSettingsOutput["general"];
 type LlmSettings = AppSettingsOutput["llm"];
+type LlmDictationSettings = LlmSettings["dictation"];
+type LlmTransformsSettings = LlmSettings["transforms"];
+type LlmPostProcessingPatch = Partial<
+	Pick<
+		LlmDictationSettings,
+		| "customModifiers"
+		| "enabled"
+		| "maxOutputTokens"
+		| "model"
+		| "openrouterFallbackModel"
+		| "openrouterModel"
+		| "presets"
+		| "provider"
+		| "reasoningEffort"
+		| "thinkingEffort"
+		| "verbosity"
+	>
+> &
+	Partial<Pick<LlmDictationSettings, "dictionaryAutoAddEnabled">>;
 interface IntegrationPatch {
 	elevenlabs?: Partial<Integrations["elevenlabs"]>;
 }
@@ -77,6 +96,7 @@ function normalizeLlmSettings(settings: AppSettingsOutput): LlmSettings {
 	return {
 		...settings.llm,
 		dictation: { ...settings.llm.dictation, enabled: false },
+		transforms: { ...settings.llm.transforms, enabled: false },
 	};
 }
 
@@ -89,6 +109,14 @@ function normalizeSettings(settings: AppSettingsOutput): AppSettingsOutput {
 		...next,
 		llm: normalizeLlmSettings(next),
 	};
+}
+
+function toTransformsPostProcessingPatch(
+	patch: LlmPostProcessingPatch,
+): Partial<LlmTransformsSettings> {
+	const { dictionaryAutoAddEnabled: _dictionaryAutoAddEnabled, ...shared } =
+		patch;
+	return shared;
 }
 
 /**
@@ -155,6 +183,7 @@ interface SettingsState {
 	updateLlmDictation: (
 		patch: Partial<AppSettingsOutput["llm"]["dictation"]>,
 	) => void;
+	updateLlmPostProcessing: (patch: LlmPostProcessingPatch) => void;
 	/**
 	 * Patches top-level shared fields on `settings.llm` (endpoint, openrouterApiKey).
 	 * For per-feature config use `updateLlmDictation` / `updateLlmTransforms`.
@@ -230,6 +259,25 @@ export const useSettingsStore = create<SettingsState>()(
 						llm: {
 							...state.settings.llm,
 							dictation: { ...state.settings.llm.dictation, ...patch },
+						},
+					};
+					return { settings: normalizeSettings(settings) };
+				}),
+			updateLlmPostProcessing: (patch) =>
+				set((state) => {
+					const dictation = {
+						...state.settings.llm.dictation,
+						...patch,
+					};
+					const settings = {
+						...state.settings,
+						llm: {
+							...state.settings.llm,
+							dictation,
+							transforms: {
+								...state.settings.llm.transforms,
+								...toTransformsPostProcessingPatch(dictation),
+							},
 						},
 					};
 					return { settings: normalizeSettings(settings) };

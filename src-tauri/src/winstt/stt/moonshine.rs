@@ -33,8 +33,9 @@ use ort::session::{Session, SessionInputValue};
 use ort::value::{Tensor, TensorRef};
 
 use super::{
-    configure_session, kv_sort_key, num_cpus_best_effort as num_cpus, provider_label, Accelerator,
-    EngineConfig, EngineKind, SttError, SttResult, TranscribeOptions, Transcriber, Transcription,
+    Accelerator, EngineConfig, EngineKind, SttError, SttResult, TranscribeOptions, Transcriber,
+    Transcription, configure_session, kv_sort_key, num_cpus_best_effort as num_cpus,
+    provider_label,
 };
 
 /// onnx-asr `_DEFAULT_MAX_LENGTH` — a safety cap on a runaway greedy decode. Moonshine's
@@ -525,34 +526,32 @@ impl MoonshineTokenizer {
 
         // tokenizer_config.json's added_tokens_decoder is the same data in a slightly different
         // shape — read as a belt-and-braces fallback (a variant might ship only one file).
-        if let Some(cfg_path) = tokenizer_config_path {
-            if let Ok(cfg_raw) = std::fs::read_to_string(cfg_path) {
-                if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&cfg_raw) {
-                    if let Some(atd) = cfg.get("added_tokens_decoder").and_then(|a| a.as_object()) {
-                        for (tid_str, entry) in atd {
-                            let Ok(tid) = tid_str.parse::<i64>() else {
-                                continue;
-                            };
-                            let content = entry
-                                .get("content")
-                                .and_then(|c| c.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let special = entry
-                                .get("special")
-                                .and_then(|s| s.as_bool())
-                                .unwrap_or(false);
-                            id_to_token.entry(tid).or_insert_with(|| content.clone());
-                            if special {
-                                special_token_ids.insert(tid);
-                            }
-                            if content == "<s>" && bos_id.is_none() {
-                                bos_id = Some(tid);
-                            } else if content == "</s>" && eos_id.is_none() {
-                                eos_id = Some(tid);
-                            }
-                        }
-                    }
+        if let Some(cfg_path) = tokenizer_config_path
+            && let Ok(cfg_raw) = std::fs::read_to_string(cfg_path)
+            && let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&cfg_raw)
+            && let Some(atd) = cfg.get("added_tokens_decoder").and_then(|a| a.as_object())
+        {
+            for (tid_str, entry) in atd {
+                let Ok(tid) = tid_str.parse::<i64>() else {
+                    continue;
+                };
+                let content = entry
+                    .get("content")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let special = entry
+                    .get("special")
+                    .and_then(|s| s.as_bool())
+                    .unwrap_or(false);
+                id_to_token.entry(tid).or_insert_with(|| content.clone());
+                if special {
+                    special_token_ids.insert(tid);
+                }
+                if content == "<s>" && bos_id.is_none() {
+                    bos_id = Some(tid);
+                } else if content == "</s>" && eos_id.is_none() {
+                    eos_id = Some(tid);
                 }
             }
         }
@@ -595,11 +594,13 @@ impl MoonshineTokenizer {
             };
             // Byte-fallback pieces: `<0xNN>` (exactly 6 chars: `<0x` + 2 hex + `>`).
             let bytes = piece.as_bytes();
-            if bytes.len() == 6 && piece.starts_with("<0x") && piece.ends_with('>') {
-                if let Ok(b) = u8::from_str_radix(&piece[3..5], 16) {
-                    byte_buf.push(b);
-                    continue;
-                }
+            if bytes.len() == 6
+                && piece.starts_with("<0x")
+                && piece.ends_with('>')
+                && let Ok(b) = u8::from_str_radix(&piece[3..5], 16)
+            {
+                byte_buf.push(b);
+                continue;
             }
             flush(&mut byte_buf, &mut out);
             out.push_str(piece);

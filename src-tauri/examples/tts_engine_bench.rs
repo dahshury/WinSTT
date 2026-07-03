@@ -13,15 +13,15 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use winstt_app_lib::winstt::tts::TtsDevice;
 use winstt_app_lib::winstt::tts::chatterbox::{
-    ChatterboxConfig, ChatterboxEngine, CHATTERBOX_SAMPLE_RATE,
+    CHATTERBOX_SAMPLE_RATE, ChatterboxConfig, ChatterboxEngine,
 };
-use winstt_app_lib::winstt::tts::kitten::{KittenConfig, KittenEngine, KITTEN_SAMPLE_RATE};
+use winstt_app_lib::winstt::tts::kitten::{KITTEN_SAMPLE_RATE, KittenConfig, KittenEngine};
 use winstt_app_lib::winstt::tts::piper::{PiperConfig, PiperEngine};
 use winstt_app_lib::winstt::tts::supertonic::{
-    SupertonicConfig, SupertonicEngine, SUPERTONIC_SAMPLE_RATE,
+    SUPERTONIC_SAMPLE_RATE, SupertonicConfig, SupertonicEngine,
 };
-use winstt_app_lib::winstt::tts::TtsDevice;
 
 const DEFAULT_SENTENCE: &str = "The quick brown fox jumps over the lazy dog.";
 
@@ -31,8 +31,8 @@ fn cache_root() -> PathBuf {
 }
 
 fn ensure_espeak() {
-    if std::env::var_os("ESPEAK_NG_LIBRARY").is_none() {
-        if let Some(lib) = std::env::var_os("LOCALAPPDATA")
+    if std::env::var_os("ESPEAK_NG_LIBRARY").is_none()
+        && let Some(lib) = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .map(|local| {
                 local
@@ -43,9 +43,9 @@ fn ensure_espeak() {
                     .join("espeak-ng.dll")
             })
             .filter(|lib| lib.exists())
-        {
-            std::env::set_var("ESPEAK_NG_LIBRARY", lib);
-        }
+    {
+        // SAFETY: this benchmark sets the default before initializing any TTS engine threads.
+        unsafe { std::env::set_var("ESPEAK_NG_LIBRARY", lib) };
     }
     eprintln!(
         "espeak-ng: {}",

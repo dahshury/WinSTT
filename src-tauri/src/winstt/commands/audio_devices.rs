@@ -27,16 +27,16 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::Duration,
 };
 
 use cpal::{
-    traits::{DeviceTrait, StreamTrait},
     Sample, SizedSample,
+    traits::{DeviceTrait, StreamTrait},
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -366,6 +366,7 @@ fn stop_existing_microphone_level_monitor() {
         .unwrap_or_else(|p| p.into_inner());
     if let Some(stop) = current.take() {
         stop.store(true, Ordering::Relaxed);
+        log::debug!("[devices] microphone level monitor stopped");
     }
 }
 
@@ -582,6 +583,10 @@ pub fn start_microphone_level_monitor(app: AppHandle, targets: Vec<MicrophoneLev
     if targets.is_empty() {
         return;
     }
+    log::debug!(
+        "[devices] microphone level monitor started ({} targets)",
+        targets.len()
+    );
 
     let stop = Arc::new(AtomicBool::new(false));
     {

@@ -21,11 +21,11 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
 use crate::winstt::downloads::{
-    transfer_url_blocking, PauseCancelFlags, TransferOutcome, TransferProgress, TransferRequest,
+    PauseCancelFlags, TransferOutcome, TransferProgress, TransferRequest, transfer_url_blocking,
 };
 use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::tts::catalog::{self, TtsEngineId, TtsModelEntry};
-use crate::winstt::tts::local_engines::{piper_voice_def, PIPER_DEFAULT_VOICE};
+use crate::winstt::tts::local_engines::{PIPER_DEFAULT_VOICE, piper_voice_def};
 use crate::winstt::tts::voice_by_id;
 
 fn catalog_model_id(model_id: &str) -> Option<&'static str> {
@@ -372,18 +372,18 @@ impl TtsDownloadManager {
             let paused = matches!(outcome, Err(TtsDownloadErr::Paused));
             if !paused {
                 let cancelled = matches!(outcome, Err(TtsDownloadErr::Cancelled));
-                if let Err(err) = &outcome {
-                    if !cancelled {
-                        crate::winstt::observability::IssueBuilder::new(
-                            "tts_download",
-                            "model_download",
-                            "TTS model download failed",
-                        )
-                        .detail(err.to_string())
-                        .model_id(model_id.clone())
-                        .context("quantization", quant.clone())
-                        .record(Some(&this.app));
-                    }
+                if let Err(err) = &outcome
+                    && !cancelled
+                {
+                    crate::winstt::observability::IssueBuilder::new(
+                        "tts_download",
+                        "model_download",
+                        "TTS model download failed",
+                    )
+                    .detail(err.to_string())
+                    .model_id(model_id.clone())
+                    .context("quantization", quant.clone())
+                    .record(Some(&this.app));
                 }
                 let _ = this.app.emit(
                     "tts:catalog-model-download-complete",

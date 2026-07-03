@@ -2,8 +2,8 @@
 // attribution predicate and the `key()` composite-key helper (shared by the impl, the delete
 // functions, and the tests). None of these touch `DownloadManager`'s private state.
 
-use crate::winstt::stt::resolver;
 use crate::winstt::stt::Quantization;
+use crate::winstt::stt::resolver;
 
 /// Composite key for the in-flight registry: `model@quant` (matches the renderer's `quantKey`).
 pub(super) fn key(model: &str, quant: &str) -> String {
@@ -91,7 +91,7 @@ pub(super) fn file_belongs_to_quant(name: &str, quant: Quantization) -> bool {
     // Sidecar: `<graph_stem>.onnx_data*` / `.onnx.data*` — quant is on the graph stem.
     if let Some(idx) = file.find(".onnx") {
         let graph_stem = &file[..idx]; // up to but excluding ".onnx"
-                                       // The sidecar's graph stem is `graph_stem`; its quant tag is the last `_`/`.` component.
+        // The sidecar's graph stem is `graph_stem`; its quant tag is the last `_`/`.` component.
         let last = graph_stem.rsplit(['_', '.']).next().unwrap_or("");
         let tag = Quantization::parse(last)
             .filter(|q| *q != Quantization::Default)
@@ -106,10 +106,10 @@ pub(super) fn file_belongs_to_quant(name: &str, quant: Quantization) -> bool {
 /// Delete the entire cache subdir for `model_id`'s repo (every quant + every revision). Mirrors the
 /// server's whole-model cache wipe.
 pub(super) async fn delete_repo_cache(model_id: &str) -> std::io::Result<()> {
-    if let Some(path) = cached_repo_path(model_id).await {
-        if path.exists() {
-            std::fs::remove_dir_all(&path)?;
-        }
+    if let Some(path) = cached_repo_path(model_id).await
+        && path.exists()
+    {
+        std::fs::remove_dir_all(&path)?;
     }
     Ok(())
 }

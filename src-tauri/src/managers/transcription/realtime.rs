@@ -4,10 +4,10 @@
 //! module root; all shared free helpers / types / consts live in [`super`].
 
 use super::{
-    dc_immune_rms, is_silent_recording, native_stream_final_tail_with_silence, LoadedEngine,
-    LoadedTranscriptionCapabilities, RealtimeReuse, RealtimeStreamOutcome, RealtimeStreamText,
-    TranscriptionManager, NATIVE_STREAM_FINAL_SILENCE_PAD_MS, NATIVE_STREAM_SAMPLE_RATE,
-    SILENCE_AC_FLOOR,
+    LoadedEngine, LoadedTranscriptionCapabilities, NATIVE_STREAM_FINAL_SILENCE_PAD_MS,
+    NATIVE_STREAM_SAMPLE_RATE, RealtimeReuse, RealtimeStreamOutcome, RealtimeStreamText,
+    SILENCE_AC_FLOOR, TranscriptionManager, dc_immune_rms, is_silent_recording,
+    native_stream_final_tail_with_silence,
 };
 use crate::winstt::stt::{NativeStreamUpdate, SttResult};
 use crate::winstt::sync_ext::MutexExt;
@@ -157,10 +157,10 @@ impl TranscriptionManager {
             }
         };
         drop(guard);
-        if text.is_some() {
-            if let Some(model_id) = self.get_current_model() {
-                self.mark_model_warmed_if_current(&model_id);
-            }
+        if text.is_some()
+            && let Some(model_id) = self.get_current_model()
+        {
+            self.mark_model_warmed_if_current(&model_id);
         }
         text
     }
@@ -191,10 +191,10 @@ impl TranscriptionManager {
     ) -> Option<SttResult<String>> {
         match engine {
             Some(LoadedEngine::Winstt(e)) if e.supports_native_streaming() => {
-                if !tail.is_empty() {
-                    if let Err(err) = e.stream_accept(tail) {
-                        return Some(Err(err));
-                    }
+                if !tail.is_empty()
+                    && let Err(err) = e.stream_accept(tail)
+                {
+                    return Some(Err(err));
                 }
                 Some(e.stream_finalize())
             }
@@ -353,10 +353,8 @@ impl TranscriptionManager {
             });
         }
         drop(guard);
-        if did_decode {
-            if let Some(model_id) = self.get_current_model() {
-                self.mark_model_warmed_if_current(&model_id);
-            }
+        if did_decode && let Some(model_id) = self.get_current_model() {
+            self.mark_model_warmed_if_current(&model_id);
         }
         outcome
     }
@@ -416,10 +414,8 @@ impl TranscriptionManager {
             });
         }
         drop(guard);
-        if did_decode {
-            if let Some(model_id) = self.get_current_model() {
-                self.mark_model_warmed_if_current(&model_id);
-            }
+        if did_decode && let Some(model_id) = self.get_current_model() {
+            self.mark_model_warmed_if_current(&model_id);
         }
         outcome
     }
@@ -432,10 +428,10 @@ impl TranscriptionManager {
             warn!("Engine mutex poisoned by a previous panic, recovering (stream_reset)");
             p.into_inner()
         });
-        if let Some(LoadedEngine::Winstt(e)) = &mut *guard {
-            if e.supports_native_streaming() {
-                e.stream_reset();
-            }
+        if let Some(LoadedEngine::Winstt(e)) = &mut *guard
+            && e.supports_native_streaming()
+        {
+            e.stream_reset();
         }
     }
 

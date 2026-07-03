@@ -7,8 +7,8 @@ use tauri::Emitter;
 use super::{EmitReasoningSink, LlmChatOutput, LlmManager};
 use crate::winstt::commands::settings::auto_apply_dictation_learning;
 use crate::winstt::llm::{
-    self, build_ollama_chat_body_with_keep_alive, finalize_chat_answer, ReasoningSink,
-    ThinkingEffort,
+    self, ReasoningSink, ThinkingEffort, build_ollama_chat_body_with_keep_alive,
+    finalize_chat_answer,
 };
 use crate::winstt::ollama_client::{OllamaCapabilities, OllamaModelInfo, PullOutcome};
 
@@ -252,13 +252,13 @@ impl LlmManager {
             return Err(err);
         }
         let (answer, reasoning) = finalize_chat_answer(&state.content, fallback);
-        if let Some(r) = reasoning {
-            if !r.is_empty() {
-                let _ = self.app.emit(
-                    "llm:reasoning-delta",
-                    serde_json::json!({ "requestId": request_id, "delta": r }),
-                );
-            }
+        if let Some(r) = reasoning
+            && !r.is_empty()
+        {
+            let _ = self.app.emit(
+                "llm:reasoning-delta",
+                serde_json::json!({ "requestId": request_id, "delta": r }),
+            );
         }
         self.clear_cancel(request_id);
         Ok(LlmChatOutput {

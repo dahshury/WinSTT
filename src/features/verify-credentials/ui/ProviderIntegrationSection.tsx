@@ -118,7 +118,9 @@ export function ProviderIntegrationSection({
 		try {
 			response = await verifyCredentialCommand(provider, key);
 		} catch (err) {
-			if (myReqId !== reqIdRef.current) {
+			const currentKey =
+				useSettingsStore.getState().settings.integrations[provider].apiKey;
+			if (myReqId !== reqIdRef.current || currentKey !== key) {
 				return;
 			}
 			const message = err instanceof Error ? err.message : String(err);
@@ -130,7 +132,9 @@ export function ProviderIntegrationSection({
 			return;
 		}
 
-		if (myReqId !== reqIdRef.current) {
+		const currentKey =
+			useSettingsStore.getState().settings.integrations[provider].apiKey;
+		if (myReqId !== reqIdRef.current || currentKey !== key) {
 			return;
 		}
 
@@ -172,10 +176,18 @@ export function ProviderIntegrationSection({
 		updateIntegrations({
 			[provider]: { apiKey: value, verified: null, lastVerifiedAt: null },
 		});
-		// Cancel any pending probe so we don't fire stale verifications
-		// against intermediate keystrokes.
+		// Cancel pending and in-flight probes so older values cannot write
+		// verification metadata for the newly persisted key.
 		if (debounceRef.current !== null) {
 			window.clearTimeout(debounceRef.current);
+			debounceRef.current = null;
+		}
+		reqIdRef.current++;
+		if (value.trim().length === 0) {
+			useCredentialStatusStore
+				.getState()
+				.setStatus(provider, { status: "idle" });
+			return;
 		}
 		debounceRef.current = window.setTimeout(() => {
 			debounceRef.current = null;
@@ -194,6 +206,11 @@ export function ProviderIntegrationSection({
 			setDialogOpen(true);
 			return;
 		}
+		if (debounceRef.current !== null) {
+			window.clearTimeout(debounceRef.current);
+			debounceRef.current = null;
+		}
+		reqIdRef.current++;
 		setDraftApiKey("");
 		setEditingApiKey(false);
 		updateIntegrations({
@@ -203,6 +220,11 @@ export function ProviderIntegrationSection({
 	};
 
 	const confirmRemoveApiKey = () => {
+		if (debounceRef.current !== null) {
+			window.clearTimeout(debounceRef.current);
+			debounceRef.current = null;
+		}
+		reqIdRef.current++;
 		setDraftApiKey("");
 		setEditingApiKey(false);
 		updateIntegrations({
@@ -237,7 +259,8 @@ export function ProviderIntegrationSection({
 							onClick={
 								hasLocalKey
 									? requestRemoveApiKey
-									: () => window.open(apiKeyUrl, "_blank")
+									: () =>
+											window.open(apiKeyUrl, "_blank", "noopener,noreferrer")
 							}
 							type="button"
 						>

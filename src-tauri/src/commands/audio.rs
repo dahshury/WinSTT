@@ -9,8 +9,8 @@ use tauri::{AppHandle, Manager};
 
 #[cfg(target_os = "windows")]
 use winreg::{
+    HKEY, RegKey,
     enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE},
-    RegKey, HKEY,
 };
 
 #[derive(Serialize, Type)]
@@ -77,10 +77,8 @@ fn read_registry_permission_access(root_hkey: HKEY, path: &str) -> PermissionAcc
 
 #[cfg(target_os = "windows")]
 fn get_windows_microphone_permission_status_impl() -> WindowsMicrophonePermissionStatus {
-    const MICROPHONE_PATH: &str =
-        "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone";
-    const DESKTOP_APPS_PATH: &str =
-        "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged";
+    const MICROPHONE_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone";
+    const DESKTOP_APPS_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged";
 
     let device_access = read_registry_permission_access(HKEY_LOCAL_MACHINE, MICROPHONE_PATH);
     let app_access = read_registry_permission_access(HKEY_CURRENT_USER, MICROPHONE_PATH);

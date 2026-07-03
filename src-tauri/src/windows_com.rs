@@ -6,7 +6,7 @@ pub(crate) struct ComApartment {
 #[cfg(windows)]
 impl ComApartment {
     pub(crate) fn init_multithreaded() -> Self {
-        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+        use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 
         // SAFETY: initializes COM for the current thread. A successful call,
         // including S_FALSE for "already initialized", must be balanced by

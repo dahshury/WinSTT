@@ -333,6 +333,27 @@ export const footprintWindowOpen = (rect: {
 		),
 	);
 
+/** Open the tray mic picker as a detached, content-sized popup anchored to the
+ *  tray menu's mic row. */
+export const devicePickerWindowOpen = (rect: {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}) =>
+	runWindowCommand("open_window(device-picker)", () =>
+		commands.openWindow(
+			"device-picker",
+			rect.x,
+			rect.y,
+			rect.width,
+			rect.height,
+			null,
+			null,
+			null,
+		),
+	);
+
 export const windowResizeNamed = (
 	name: string,
 	width: number,
@@ -428,6 +449,9 @@ export const onServerStatus = (cb: (status: ServerStatus) => void) =>
 
 export const onHotkeyPressed = (cb: () => void) => on(IPC.HOTKEY_PRESSED, cb);
 export const onHotkeyReleased = (cb: () => void) => on(IPC.HOTKEY_RELEASED, cb);
+
+export const onPostProcessingProfileSwap = (cb: () => void) =>
+	on(IPC.LLM_PROFILE_SWAP, () => cb());
 
 export const onHotkeyRecordingUpdate = (cb: (keys: string[]) => void) =>
 	onTyped(IPC.HOTKEY_RECORDING_UPDATE, (d: { keys: string[] }) => d.keys, cb);

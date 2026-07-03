@@ -4,7 +4,7 @@
 
 use ndarray::Array2;
 
-use super::{WordTsError, ALIGNMENT_HEADS, EN_VOCAB_SIZE, MODEL_SIZE_BY_DIMS};
+use super::{ALIGNMENT_HEADS, EN_VOCAB_SIZE, MODEL_SIZE_BY_DIMS, WordTsError};
 
 /// Decode a base85-gzipped flat bool array into a `(num_layers, num_heads)` mask.
 /// Mirrors `decode_alignment_heads` / `Whisper.set_alignment_heads`.

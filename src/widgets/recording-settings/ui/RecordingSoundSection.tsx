@@ -2,17 +2,14 @@ import { BellRingIcon } from "@hugeicons/core-free-icons";
 import type { ReactNode } from "react";
 import {
 	DEFAULT_SETTINGS,
-	SettingField,
+	SettingResetButton,
 	SettingSection,
 } from "@/entities/setting";
 import { SoundLibrary } from "@/features/recording-sound";
-import { cn } from "@/shared/lib/cn";
-import { Toggle } from "@/shared/ui/toggle";
 import type {
 	CommonT,
 	GeneralSettings,
 	GeneralT,
-	SettingsT,
 	UpdateGeneralFn,
 } from "./recording-settings-types";
 
@@ -21,7 +18,6 @@ interface RecordingSoundSectionProps {
 	general: GeneralSettings | undefined;
 	t: GeneralT;
 	tCommon: CommonT;
-	tSettings: SettingsT;
 	update: UpdateGeneralFn;
 }
 
@@ -30,43 +26,43 @@ export function RecordingSoundSection({
 	general,
 	t,
 	tCommon,
-	tSettings,
 	update,
 }: RecordingSoundSectionProps): ReactNode {
+	// The enable toggle lives on the section header (matching every other
+	// master-switch section); when it's off the section body dims + goes inert
+	// on its own, so the sound picker needs no separate disabled wrapper. The
+	// sound-path reset sits on the header too, shown only while enabled.
+	// `boxed` gives the same section-card surface as every other section (e.g.
+	// Input Device); the picker renders `bare` so its own surface doesn't nest
+	// a second background inside that card.
 	return (
-		<SettingSection divided icon={BellRingIcon} title={t("recordingSound")}>
-			<SettingField
-				defaultValue={DEFAULT_SETTINGS.general.recordingSoundPath}
-				hideReset={!enabled}
-				label={t("recordingSound")}
-				labelAddon={
-					<Toggle
-						checked={enabled}
-						onCheckedChange={(v) => update({ recordingSound: v })}
+		<SettingSection
+			boxed
+			headerAction={
+				enabled ? (
+					<SettingResetButton
+						isDefault={
+							(general?.recordingSoundPath ?? "") ===
+							DEFAULT_SETTINGS.general.recordingSoundPath
+						}
+						onReset={() =>
+							update({
+								recordingSoundPath:
+									DEFAULT_SETTINGS.general.recordingSoundPath,
+							})
+						}
 					/>
-				}
-				onReset={() =>
-					update({
-						recordingSoundPath: DEFAULT_SETTINGS.general.recordingSoundPath,
-					})
-				}
-				disabledTooltip={
-					enabled
-						? undefined
-						: tSettings("disabledReason", { name: t("recordingSound") })
-				}
-				tooltip={t("soundLibraryTooltip")}
-				value={general?.recordingSoundPath ?? ""}
-			>
-				<div
-					className={cn(
-						"transition-opacity duration-200 ease-out",
-						!enabled && "pointer-events-none opacity-40",
-					)}
-				>
-					<SoundLibrary t={t} tCommon={tCommon} />
-				</div>
-			</SettingField>
+				) : undefined
+			}
+			icon={BellRingIcon}
+			onToggle={(v) => update({ recordingSound: v })}
+			title={t("recordingSound")}
+			toggled={enabled}
+			tooltip={t("soundLibraryTooltip")}
+		>
+			<div className="py-3.5">
+				<SoundLibrary bare t={t} tCommon={tCommon} />
+			</div>
 		</SettingSection>
 	);
 }

@@ -28,22 +28,33 @@ impl SmoothedVad {
             prefill_frames,
             hangover_frames,
             onset_frames,
-            frame_buffer: VecDeque::new(),
+            frame_buffer: VecDeque::with_capacity(prefill_frames + 1),
             hangover_counter: 0,
             onset_counter: 0,
             in_speech: false,
             temp_out: Vec::new(),
         }
     }
+
+    fn push_prefill_frame(&mut self, frame: &[f32]) {
+        let max_frames = self.prefill_frames + 1;
+        if self.frame_buffer.len() == max_frames
+            && let Some(mut recycled) = self.frame_buffer.pop_front()
+        {
+            recycled.clear();
+            recycled.extend_from_slice(frame);
+            self.frame_buffer.push_back(recycled);
+            return;
+        }
+
+        self.frame_buffer.push_back(frame.to_vec());
+    }
 }
 
 impl VoiceActivityDetector for SmoothedVad {
     fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> Result<VadFrame<'a>> {
         // 1. Buffer every incoming frame for possible pre-roll
-        self.frame_buffer.push_back(frame.to_vec());
-        while self.frame_buffer.len() > self.prefill_frames + 1 {
-            self.frame_buffer.pop_front();
-        }
+        self.push_prefill_frame(frame);
 
         // 2. Delegate to the wrapped boolean VAD
         let is_voice = self.inner_vad.is_voice(frame)?;
@@ -61,7 +72,7 @@ impl VoiceActivityDetector for SmoothedVad {
                     // Collect prefill + current frame
                     self.temp_out.clear();
                     for buf in &self.frame_buffer {
-                        self.temp_out.extend(buf);
+                        self.temp_out.extend_from_slice(buf);
                     }
                     Ok(VadFrame::Speech(&self.temp_out))
                 } else {

@@ -35,8 +35,8 @@ impl Drop for OwnedHandle {
 pub(crate) fn announce_packaged_hotkey_owner() {
     #[cfg(all(windows, not(debug_assertions)))]
     {
-        use windows::core::PCWSTR;
         use windows::Win32::System::Threading::CreateMutexW;
+        use windows::core::PCWSTR;
 
         let name = wide_owner_mutex_name();
         match unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) } {
@@ -60,9 +60,11 @@ pub(crate) fn ensure_dev_priority_watcher(app: &AppHandle) {
         let app = app.clone();
         let _ = std::thread::Builder::new()
             .name("winstt-dev-hotkey-priority".into())
-            .spawn(move || loop {
-                refresh_dev_hotkey_priority(&app);
-                std::thread::sleep(DEV_PRIORITY_POLL_INTERVAL);
+            .spawn(move || {
+                loop {
+                    refresh_dev_hotkey_priority(&app);
+                    std::thread::sleep(DEV_PRIORITY_POLL_INTERVAL);
+                }
             });
     }
 
@@ -131,9 +133,9 @@ fn dev_hotkeys_forced() -> bool {
 
 #[cfg(all(windows, debug_assertions))]
 fn packaged_hotkey_owner_exists() -> bool {
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{OpenMutexW, SYNCHRONIZATION_SYNCHRONIZE};
+    use windows::core::PCWSTR;
 
     let name = wide_owner_mutex_name();
     match unsafe { OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, PCWSTR(name.as_ptr())) } {

@@ -11,7 +11,8 @@ fn main() {
     {
         // DMABUF renderer causes crashes on various GPU/display server configurations
         // See: https://github.com/tauri-apps/tauri/issues/9394
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        // SAFETY: this runs at process startup before Tauri creates webview or worker threads.
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
     }
 
     winstt_app_lib::run(cli_args)

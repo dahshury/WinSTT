@@ -5,7 +5,7 @@
 //! after a non-blank token, and the joiner runs once per encoder frame. These sessions use WinSTT's
 //! shared `ort` provider routing, so DirectML can be selected on Windows.
 
-use ndarray::{s, Array2, ArrayD, Axis, IxDyn};
+use ndarray::{Array2, ArrayD, Axis, IxDyn, s};
 use ort::session::Session;
 use ort::value::Tensor;
 
@@ -405,8 +405,8 @@ impl Transcriber for NativeNemoStreamingEngine {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::streaming::meta_usize;
     use super::NativeNemoStreamingEngine;
+    use super::streaming::meta_usize;
     use crate::winstt::stt::{EngineConfig, EngineKind, Quantization, ResolvedModel};
 
     #[test]

@@ -220,6 +220,84 @@ describe("AboutSettingsPanel", () => {
 		}
 	});
 
+	test("collapses long operational issue details until the user expands them", async () => {
+		const tauriWindow = window as unknown as Window & {
+			__TAURI_INTERNALS__: TauriInternals;
+		};
+		const previousNativeBridge = window.nativeBridge;
+		const previousTauriInvoke = tauriWindow.__TAURI_INTERNALS__.invoke;
+		const longDetail = Array.from(
+			{ length: 8 },
+			(_, index) => `stack-frame-${index}`,
+		).join("\n");
+
+		window.nativeBridge = {
+			...previousNativeBridge,
+			invoke: async () => undefined,
+			secureInvoke: async (channel: string) => {
+				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
+					return [{ status: "not-available", timestamp: 1 }];
+				}
+				return;
+			},
+		};
+		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
+			if (cmd === "about_get_app_info") {
+				return { version: "1.2.3", copyright: "Copyright WinSTT" };
+			}
+			if (cmd === "diag_observability_timeline") {
+				return [
+					{
+						area: "renderer",
+						context: {},
+						detail: longDetail,
+						id: 10,
+						kind: "webview",
+						operation: "error",
+						severity: "error",
+						summary: "Renderer reported a webview error",
+						timestampMs: 10,
+						userVisible: false,
+					},
+				];
+			}
+			return;
+		};
+
+		try {
+			render(
+				<IntlProvider>
+					<AboutSettingsPanel />
+				</IntlProvider>,
+			);
+
+			await screen.findByText("Renderer reported a webview error");
+			const issueActions = screen.getByRole("toolbar", {
+				name: "Operational issue actions",
+			});
+			expect(
+				issueActions.querySelector(
+					'[data-slot="observability-action-separator"]',
+				),
+			).not.toBeNull();
+
+			const detail = await screen.findByText(
+				(_, node) => node?.textContent === longDetail,
+			);
+			expect(detail.getAttribute("class")).toContain("line-clamp-4");
+
+			fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+
+			expect(detail.getAttribute("class")).not.toContain("line-clamp-4");
+			expect(
+				screen.getByRole("button", { name: "Show less" }),
+			).toBeDefined();
+		} finally {
+			window.nativeBridge = previousNativeBridge;
+			tauriWindow.__TAURI_INTERNALS__.invoke = previousTauriInvoke;
+		}
+	});
+
 	test("renders settings import and export actions in the About tab", async () => {
 		const tauriWindow = window as unknown as Window & {
 			__TAURI_INTERNALS__: TauriInternals;

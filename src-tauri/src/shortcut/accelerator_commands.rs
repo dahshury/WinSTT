@@ -14,10 +14,10 @@ fn apply_and_reload_accelerator(app: &AppHandle, s: settings::AppSettings) {
     crate::managers::transcription::apply_accelerator_settings(app);
 
     let tm = app.state::<std::sync::Arc<crate::managers::transcription::TranscriptionManager>>();
-    if tm.is_model_loaded() {
-        if let Err(e) = tm.unload_model() {
-            log::warn!("Failed to unload model after accelerator change: {e}");
-        }
+    if tm.is_model_loaded()
+        && let Err(e) = tm.unload_model()
+    {
+        log::warn!("Failed to unload model after accelerator change: {e}");
     }
 }
 
@@ -37,8 +37,8 @@ pub fn change_whisper_gpu_device(app: AppHandle, device: i32) -> Result<(), Stri
 /// pool only to keep the Tauri command async.
 #[tauri::command]
 #[specta::specta]
-pub async fn get_available_accelerators(
-) -> Result<crate::managers::transcription::AvailableAccelerators, String> {
+pub async fn get_available_accelerators()
+-> Result<crate::managers::transcription::AvailableAccelerators, String> {
     tauri::async_runtime::spawn_blocking(crate::managers::transcription::get_available_accelerators)
         .await
         .map_err(|err| format!("get_available_accelerators worker failed: {err}"))

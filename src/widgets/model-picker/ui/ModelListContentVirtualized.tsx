@@ -11,6 +11,7 @@ import {
 } from "react";
 import { VList, type VListHandle } from "virtua";
 import type { OpenRouterModel } from "@/shared/api/models";
+import { ModelListScrollbarHeaderMask } from "../core/ModelListScrollbarHeaderMask";
 import { GroupHeader, NeutralHeaderIcon } from "../core/model-card/GroupHeader";
 import {
 	EmptyState,
@@ -305,6 +306,7 @@ export function ModelListContentVirtualized({
 			>
 				{renderVirtualRow}
 			</VList>
+			<ModelListScrollbarHeaderMask />
 		</Combobox.List>
 	);
 }

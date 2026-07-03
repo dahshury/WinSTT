@@ -15,6 +15,20 @@ pub(super) enum StreamOutcome {
     Failed,
 }
 
+pub(super) fn is_safe_hf_cache_component(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value != "."
+        && value != ".."
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+fn is_safe_hf_commit(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// The file's content ETag, from HF's `x-linked-etag` (LFS/xet) else the plain `etag`, normalized
 /// the way hf-hub does (drop the weak `W/` prefix + surrounding quotes) — this is the `blobs/<etag>`
 /// filename, so it MUST match hf-hub byte-for-byte or the cache pointer won't resolve.
@@ -29,7 +43,7 @@ pub(super) fn header_etag(h: &reqwest::header::HeaderMap) -> Option<String> {
                 .trim_matches('"')
                 .to_string()
         })
-        .filter(|s| !s.is_empty())
+        .filter(|s| is_safe_hf_cache_component(s))
 }
 
 /// The commit hash the revision resolved to (`x-repo-commit`) — the `snapshots/<commit>/` dir name.
@@ -37,7 +51,7 @@ pub(super) fn header_commit(h: &reqwest::header::HeaderMap) -> Option<String> {
     h.get("x-repo-commit")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
-        .filter(|s| !s.is_empty())
+        .filter(|s| is_safe_hf_commit(s))
 }
 
 /// File size in bytes: `x-linked-size` (LFS/xet logical size) else `content-length`.
@@ -92,8 +106,9 @@ pub(crate) fn parse_sibling_sizes(body: &serde_json::Value) -> BTreeMap<String, 
             if let (Some(path), Some(size)) = (
                 s.get("rfilename").and_then(|v| v.as_str()),
                 s.get("size").and_then(|v| v.as_u64()),
-            ) {
-                out.insert(path.replace('\\', "/"), size);
+            ) && let Ok(path) = resolver::validate_repo_path(path)
+            {
+                out.insert(path, size);
             }
         }
     }

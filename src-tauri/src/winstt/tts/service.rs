@@ -1,14 +1,14 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::winstt::cancel_registry::CancelRegistry;
 
 use super::cloud::{CloudVoiceSettings, ElevenLabsEngine};
 use super::local::KokoroLocalEngine;
-use super::splitter::{split_sentences, DEFAULT_MAX_SENTENCE_LEN};
+use super::splitter::{DEFAULT_MAX_SENTENCE_LEN, split_sentences};
 use super::types::{
-    clamp_cloud_speed, clamp_speed_to_range, ChunkSink, Format, LocalTtsConfig, SentenceAudio,
-    SynthesisChunk, TtsEngine, TtsError, TtsResult, VoiceInfo,
+    ChunkSink, Format, LocalTtsConfig, SentenceAudio, SynthesisChunk, TtsEngine, TtsError,
+    TtsResult, VoiceInfo, clamp_cloud_speed, clamp_speed_to_range,
 };
 
 // ---------------------------------------------------------------------------
@@ -157,11 +157,11 @@ impl TtsManager {
                 }
             };
             // Flush the previously-pending chunk (NOT final — another came after).
-            if let Some(prev) = pending.take() {
-                if !sink.push(prev) {
-                    self.clear_cancel(request_id);
-                    return Err(TtsError::Cancelled);
-                }
+            if let Some(prev) = pending.take()
+                && !sink.push(prev)
+            {
+                self.clear_cancel(request_id);
+                return Err(TtsError::Cancelled);
             }
             pending = Some(chunk);
             seq += 1;

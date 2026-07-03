@@ -44,8 +44,8 @@ use specta::Type;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::winstt::context::{
-    apply_deny_list, format_context_for_prompt, is_denied_by_list, is_ide_context,
-    looks_like_terminal, ContextMode, ContextReader, WindowContextSnapshot,
+    ContextMode, ContextReader, WindowContextSnapshot, apply_deny_list, format_context_for_prompt,
+    is_denied_by_list, is_ide_context, looks_like_terminal,
 };
 use crate::winstt::managers::ContextManager;
 

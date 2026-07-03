@@ -16,8 +16,8 @@
 // Shared imports re-exported for the per-engine submodules (`use super::*`). Mirrors the imports the
 // old single-file `aed.rs` pulled in (`super::super::{…}`, `super::frontend`, `super::support::*`).
 pub(super) use super::super::{
-    ctc_greedy_collapse, EngineConfig, EngineKind, NativeStreamUpdate, SttError, SttResult,
-    TranscribeOptions, Transcriber, Transcription,
+    EngineConfig, EngineKind, NativeStreamUpdate, SttError, SttResult, TranscribeOptions,
+    Transcriber, Transcription, ctc_greedy_collapse,
 };
 pub(super) use super::{frontend, support::*};
 
@@ -31,12 +31,12 @@ mod tone;
 // `canary_prompt_tokens` / `COHERE_LANGUAGES` are consumed only by the `#[cfg(test)]` pure-logic
 // tests in `families.rs`; gate the re-exports to the same builds so the lib build has no unused
 // import (the originals were `pub(super)` definitions, which the dead-code lint already exempts).
+pub use canary::CanaryEngine;
 #[cfg(test)]
 pub(super) use canary::canary_prompt_tokens;
-pub use canary::CanaryEngine;
-pub use cohere::CohereEngine;
 #[cfg(test)]
 pub(super) use cohere::COHERE_LANGUAGES;
+pub use cohere::CohereEngine;
 pub(super) use granite_ar::GraniteArEngine;
 pub(super) use granite_nar::GraniteNarEngine;
 pub(super) use qwen3::Qwen3AsrEngine;

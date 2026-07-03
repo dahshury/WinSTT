@@ -125,11 +125,7 @@ pub fn runtime_info_snapshot(
     let loaded = transcription.get_current_model();
     let model = loaded.or_else(|| {
         let m = settings.model.model.clone();
-        if m.is_empty() {
-            None
-        } else {
-            Some(m)
-        }
+        if m.is_empty() { None } else { Some(m) }
     });
     // The selected realtime model is only actually loaded when realtime is
     // enabled for the current settings AND a SEPARATE model is used (not the main
@@ -332,7 +328,7 @@ fn enumerate_gpus() -> Vec<GpuInfoEntry> {
     #[cfg(windows)]
     {
         use windows::Win32::Graphics::Dxgi::{
-            CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
+            CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1,
         };
         let mut gpus = Vec::new();
         // SAFETY: DXGI factory and adapter interfaces are used only inside this enumeration

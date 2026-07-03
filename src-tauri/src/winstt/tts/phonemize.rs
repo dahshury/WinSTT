@@ -44,9 +44,9 @@ use std::sync::Mutex;
 // valid with ZERO edits at the call sites.
 pub use resolve::resolve_espeak_lib;
 pub use runtime::{
+    ESPEAK_RUNTIME_COMPONENT_ID, ESPEAK_RUNTIME_COMPONENT_LABEL, EspeakRuntimePack,
     ensure_espeak_runtime, espeak_runtime_available, espeak_runtime_install_required_message,
-    espeak_runtime_loader_dir, espeak_runtime_pack, EspeakRuntimePack, ESPEAK_RUNTIME_COMPONENT_ID,
-    ESPEAK_RUNTIME_COMPONENT_LABEL,
+    espeak_runtime_loader_dir, espeak_runtime_pack,
 };
 pub use vocab::vocab;
 
@@ -223,10 +223,10 @@ pub fn clean_espeak_ipa(raw: &str) -> String {
 fn espeak_binary() -> String {
     // `ESPEAK_NG_BIN` / `WINSTT_ESPEAK_NG` point at a CLI `espeak-ng[.exe]`.
     for var in ["ESPEAK_NG_BIN", "WINSTT_ESPEAK_NG"] {
-        if let Ok(p) = std::env::var(var) {
-            if !p.trim().is_empty() {
-                return p;
-            }
+        if let Ok(p) = std::env::var(var)
+            && !p.trim().is_empty()
+        {
+            return p;
         }
     }
     // `espeak-ng` resolves `espeak-ng.exe` on Windows via std's PATHEXT handling.
@@ -583,10 +583,10 @@ impl Phonemizer for NullPhonemizer {
 ///
 /// The host calls this once at engine warm-up and keeps the choice.
 pub fn default_phonemizer() -> Box<dyn Phonemizer> {
-    if let Some(lib) = EspeakLibPhonemizer::discover() {
-        if lib.is_available() {
-            return Box::new(lib);
-        }
+    if let Some(lib) = EspeakLibPhonemizer::discover()
+        && lib.is_available()
+    {
+        return Box::new(lib);
     }
     let cli = EspeakCliPhonemizer::default();
     if cli.is_available() {

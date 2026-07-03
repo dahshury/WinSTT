@@ -2,10 +2,11 @@ import { Combobox } from "@base-ui/react/combobox";
 import {
 	ArrowDown01Icon,
 	Delete02Icon,
+	DragDropVerticalIcon,
 	PlusSignIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useRef, useState } from "react";
+import { type DragEvent, useRef, useState } from "react";
 import { SurfaceProvider, surfaceClasses } from "@/shared/lib/surface";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { IconButton } from "@/shared/ui/icon-button";
@@ -15,6 +16,7 @@ import {
 	StopBubble,
 	usePopupSurfaceLevels,
 } from "@/shared/ui/select";
+import "@/shared/ui/searchable-select/searchable-select.css";
 
 export interface CreatableComboboxItem {
 	/** When true the row shows an inline delete button (wired to `onDelete`). */
@@ -30,6 +32,7 @@ interface Row {
 	label: string;
 	meta?: string | undefined;
 }
+type DropPlacement = "before" | "after";
 
 interface CreatableComboboxProps {
 	/** Wrapper width/placement classes (e.g. "ml-auto w-56"). */
@@ -44,8 +47,14 @@ interface CreatableComboboxProps {
 	 *  the combobox select-only (no create row). */
 	onCreate?: (name: string) => void;
 	onDelete?: (id: string) => void;
+	onReorder?: (
+		draggedId: string,
+		targetId: string,
+		placement: DropPlacement,
+	) => void;
 	onSelect: (id: string) => void;
 	placeholder: string;
+	reorderAriaLabel?: (item: CreatableComboboxItem) => string;
 	/** The selected item's id ("" = none). Drives the checkmark and the closed
 	 *  display value. */
 	value: string;
@@ -78,12 +87,19 @@ export function CreatableCombobox({
 	items,
 	onCreate,
 	onDelete,
+	onReorder,
 	onSelect,
 	placeholder,
+	reorderAriaLabel,
 	value,
 }: CreatableComboboxProps) {
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState("");
+	const [draggedId, setDraggedId] = useState<string | null>(null);
+	const [dropTarget, setDropTarget] = useState<{
+		id: string;
+		placement: DropPlacement;
+	} | null>(null);
 
 	const selected = items.find((i) => i.id === value) ?? null;
 	const trimmed = query.trim();
@@ -128,6 +144,40 @@ export function CreatableCombobox({
 		}
 		setOpen(false);
 		setQuery("");
+	};
+	const clearDragState = () => {
+		setDraggedId(null);
+		setDropTarget(null);
+	};
+	const handleDragStart = (event: DragEvent<HTMLElement>, row: Row) => {
+		if (!onReorder || row.isCreate) {
+			event.preventDefault();
+			return;
+		}
+		event.dataTransfer.effectAllowed = "move";
+		event.dataTransfer.setData("text/plain", row.id);
+		setDraggedId(row.id);
+	};
+	const handleDragOver = (event: DragEvent<HTMLElement>, row: Row) => {
+		if (!onReorder || row.isCreate || !draggedId || draggedId === row.id) {
+			return;
+		}
+		event.preventDefault();
+		event.dataTransfer.dropEffect = "move";
+		const bounds = event.currentTarget.getBoundingClientRect();
+		const placement =
+			event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+		setDropTarget({ id: row.id, placement });
+	};
+	const handleDrop = (event: DragEvent<HTMLElement>, row: Row) => {
+		if (!onReorder || row.isCreate || !draggedId || draggedId === row.id) {
+			clearDragState();
+			return;
+		}
+		event.preventDefault();
+		const placement = dropTarget?.id === row.id ? dropTarget.placement : "after";
+		onReorder(draggedId, row.id, placement);
+		clearDragState();
 	};
 
 	const {
@@ -179,7 +229,7 @@ export function CreatableCombobox({
 							sideOffset={4}
 						>
 							<Combobox.Popup
-								className={`relative w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-lg ${surfaceClasses(popupLevel, popupShadow)} py-1 [max-height:min(14rem,var(--available-height))]`}
+								className={`searchable-select-popup relative w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-lg ${surfaceClasses(popupLevel, popupShadow)} py-1 [max-height:min(14rem,var(--available-height))]`}
 								ref={popupRef}
 							>
 								<MenuHighlightLayer
@@ -192,15 +242,36 @@ export function CreatableCombobox({
 								<Combobox.List className="outline-none">
 									{(row: Row) => (
 										<Combobox.Item
-											className="relative z-raised mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs py-[7px] ps-2.5 pe-1.5 text-body text-foreground leading-normal outline-none"
+											className={`relative z-raised mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs border-y py-[6px] ps-2.5 pe-1.5 text-body text-foreground leading-normal outline-none ${
+												dropTarget?.id === row.id
+													? dropTarget.placement === "before"
+														? "border-t-accent border-b-transparent"
+														: "border-t-transparent border-b-accent"
+													: "border-transparent"
+											} ${draggedId === row.id ? "opacity-50" : ""}`}
 											data-menu-option={row.id}
 											key={row.id}
+											onDragLeave={(event) => {
+												const nextTarget = event.relatedTarget as Node | null;
+												if (event.currentTarget.contains(nextTarget)) {
+													return;
+												}
+												if (dropTarget?.id === row.id) {
+													setDropTarget(null);
+												}
+											}}
+											onDragOver={(event) => handleDragOver(event, row)}
+											onDrop={(event) => handleDrop(event, row)}
 											value={row}
 										>
 											<RowContent
 												createLabel={createLabel}
 												deleteAriaLabel={deleteAriaLabel}
 												onDelete={onDelete}
+												onDragEnd={clearDragState}
+												onDragStart={(event) => handleDragStart(event, row)}
+												reorderAriaLabel={reorderAriaLabel}
+												reorderable={Boolean(onReorder)}
 												row={row}
 											/>
 										</Combobox.Item>
@@ -219,11 +290,19 @@ function RowContent({
 	createLabel,
 	deleteAriaLabel,
 	onDelete,
+	onDragEnd,
+	onDragStart,
+	reorderAriaLabel,
+	reorderable,
 	row,
 }: {
 	createLabel: (name: string) => string;
 	deleteAriaLabel?: string | undefined;
 	onDelete?: ((id: string) => void) | undefined;
+	onDragEnd: () => void;
+	onDragStart: (event: DragEvent<HTMLElement>) => void;
+	reorderAriaLabel?: ((item: CreatableComboboxItem) => string) | undefined;
+	reorderable: boolean;
 	row: Row;
 }) {
 	if (row.isCreate) {
@@ -256,13 +335,30 @@ function RowContent({
 					{row.meta}
 				</span>
 			) : null}
-			{row.deletable && onDelete ? (
-				<StopBubble className="ml-auto flex shrink-0 items-center">
-					<IconButton
-						aria-label={deleteAriaLabel ?? "Delete"}
-						icon={<HugeiconsIcon icon={Delete02Icon} size={14} />}
-						onClick={() => onDelete(row.id)}
-					/>
+			{reorderable || (row.deletable && onDelete) ? (
+				<StopBubble className="ml-auto flex shrink-0 items-center gap-0.5">
+					{reorderable ? (
+						<button
+							aria-label={
+								reorderAriaLabel?.(row) ?? `Drag ${row.label} to reorder`
+							}
+							className="inline-flex size-7 cursor-grab items-center justify-center rounded-full bg-transparent p-0 text-foreground-muted hover:text-foreground-secondary active:cursor-grabbing"
+							draggable
+							onClick={(event) => event.preventDefault()}
+							onDragEnd={onDragEnd}
+							onDragStart={onDragStart}
+							type="button"
+						>
+							<HugeiconsIcon icon={DragDropVerticalIcon} size={14} />
+						</button>
+					) : null}
+					{row.deletable && onDelete ? (
+						<IconButton
+							aria-label={deleteAriaLabel ?? "Delete"}
+							icon={<HugeiconsIcon icon={Delete02Icon} size={14} />}
+							onClick={() => onDelete(row.id)}
+						/>
+					) : null}
 				</StopBubble>
 			) : null}
 		</>

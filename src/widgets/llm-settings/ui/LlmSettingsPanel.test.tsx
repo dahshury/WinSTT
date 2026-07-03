@@ -31,6 +31,48 @@ describe("LlmSettingsPanel", () => {
 		expect(container.firstElementChild).not.toBeNull();
 	});
 
+	test("disables profile presets while post-processing is off and shows one title", () => {
+		render(
+			<IntlProvider>
+				<LlmSettingsPanel />
+			</IntlProvider>,
+		);
+
+		expect(screen.getAllByText("LLM Post-Processing")).toHaveLength(1);
+		expect(
+			(screen.getByPlaceholderText(
+				"Select or create preset…",
+			) as HTMLInputElement).disabled,
+		).toBe(true);
+	});
+
+	test("orders header actions as playground, presets, then toggle", () => {
+		render(
+			<IntlProvider>
+				<LlmSettingsPanel />
+			</IntlProvider>,
+		);
+
+		const playground = screen.getByRole("button", { name: "Playground" });
+		const preset = screen.getByPlaceholderText("Select or create preset…");
+		const toggle = screen.getByRole("switch", {
+			name: "Toggle post-processing",
+		});
+
+		expect(
+			Boolean(
+				playground.compareDocumentPosition(preset) &
+					Node.DOCUMENT_POSITION_FOLLOWING,
+			),
+		).toBe(true);
+		expect(
+			Boolean(
+				preset.compareDocumentPosition(toggle) &
+					Node.DOCUMENT_POSITION_FOLLOWING,
+			),
+		).toBe(true);
+	});
+
 	test("forces LLM features off in listen mode without overwriting saved settings", () => {
 		useSettingsStore.setState({
 			settings: {
@@ -63,14 +105,10 @@ describe("LlmSettingsPanel", () => {
 			</IntlProvider>,
 		);
 
-		const dictationToggle = screen.getByRole("switch", {
-			name: "Toggle Dictation post-processing",
+		const postProcessingToggle = screen.getByRole("switch", {
+			name: "Toggle post-processing",
 		});
-		const transformToggle = screen.getByRole("switch", {
-			name: "Toggle Text transformation",
-		});
-		expect(dictationToggle.getAttribute("aria-checked")).toBe("false");
-		expect(transformToggle.getAttribute("aria-checked")).toBe("false");
+		expect(postProcessingToggle.getAttribute("aria-checked")).toBe("false");
 		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
 			true,
 		);

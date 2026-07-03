@@ -7,7 +7,7 @@
 // into the module root (via `super::`) for `EngineKind`, the `Accelerator`/`Quantization` types,
 // and `providers_for_accelerator`/`resolve_accelerator`, all of which the root re-exports.
 
-use super::{providers_for_accelerator, Accelerator, EngineKind, Quantization};
+use super::{Accelerator, EngineKind, Quantization, providers_for_accelerator};
 
 // ---------------------------------------------------------------------------
 // Pure-logic helpers. These are the safe
@@ -126,7 +126,7 @@ pub fn fit_aware_auto_quant(
 ) -> Quantization {
     const GPU_HEADROOM: f64 = 1.5; // matches catalog_data GPU_HEADROOM
     const RAM_USABLE_FRACTION: f64 = 0.7; // matches fit-assessor cpuBudget
-                                          // Accuracy order best→worst.
+    // Accuracy order best→worst.
     const ORDER: &[Quantization] = &[
         Quantization::Default,
         Quantization::Fp16,

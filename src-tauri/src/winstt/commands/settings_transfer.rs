@@ -16,15 +16,15 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::command_auth;
 use crate::winstt::catalog;
-use crate::winstt::cloud_stt::{provider_of, CloudSttProvider};
+use crate::winstt::cloud_stt::{CloudSttProvider, provider_of};
 use crate::winstt::commands::catalog_data::ModelCacheInfo;
 use crate::winstt::commands::runtime::probe_cache_states;
 use crate::winstt::commands::settings::{
-    apply_settings_patch, read_settings, PartialWinsttSettings, SECRET_PRESENT_SENTINEL,
+    PartialWinsttSettings, SECRET_PRESENT_SENTINEL, apply_settings_patch, read_settings,
 };
+use crate::winstt::managers::DownloadManager;
 use crate::winstt::managers::llm_manager::LlmManager;
 use crate::winstt::managers::tts_download_manager::{TtsCacheState, TtsDownloadManager};
-use crate::winstt::managers::DownloadManager;
 use crate::winstt::settings_schema::{
     LlmFeatureBase, LlmProvider, TtsCloudProvider, TtsSource, WinsttSettings,
 };
@@ -792,9 +792,11 @@ mod tests {
             reconcile_imported_settings(imported, &current, &availability(&["base"], &[], &[]));
 
         assert_eq!(next.model.model, "base");
-        assert!(adjusted
-            .iter()
-            .any(|item| item.area == "Transcription model"));
+        assert!(
+            adjusted
+                .iter()
+                .any(|item| item.area == "Transcription model")
+        );
     }
 
     #[test]

@@ -12,8 +12,8 @@ use ort::session::Session;
 use ort::value::Tensor;
 
 use super::super::{
-    ctc_greedy_collapse, EngineConfig, EngineKind, SttError, SttResult, TranscribeOptions,
-    Transcriber, Transcription,
+    EngineConfig, EngineKind, SttError, SttResult, TranscribeOptions, Transcriber, Transcription,
+    ctc_greedy_collapse,
 };
 use super::frontend;
 use super::support::*;

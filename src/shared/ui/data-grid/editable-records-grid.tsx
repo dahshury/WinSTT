@@ -1,6 +1,7 @@
 import type { ColumnDef, Table } from "@tanstack/react-table";
 import { useRef } from "react";
 import { cellUpdatesBetween } from "@/shared/lib/grid-cell-diff";
+import { ButtonGroup } from "@/shared/ui/button-group";
 import { DataGrid } from "./data-grid";
 import { DataGridFilterMenu } from "./data-grid-filter-menu";
 import { DataGridKeyboardShortcuts } from "./data-grid-keyboard-shortcuts";
@@ -123,16 +124,16 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 
 	return (
 		<div className="flex flex-col gap-3" onBlur={onBlur} ref={wrapperRef}>
-			<div
-				aria-orientation="horizontal"
-				className="flex items-center gap-2 self-end"
-				role="toolbar"
+			<ButtonGroup
+				aria-label="Table controls"
+				className="self-end"
+				connected
 			>
 				<DataGridFilterMenu table={table} />
 				<DataGridSortMenu table={table} />
 				<DataGridRowHeightMenu table={table} />
 				<DataGridViewMenu table={table} />
-			</div>
+			</ButtonGroup>
 			<DataGridKeyboardShortcuts
 				features={{
 					enableSearch: Boolean(dataGridProps.searchState),

@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::types::{
-    clamp_cloud_speed, ChunkSink, SentenceAudio, SynthesisChunk, TtsEngine, TtsError, TtsResult,
-    VoiceInfo,
+    ChunkSink, SentenceAudio, SynthesisChunk, TtsEngine, TtsError, TtsResult, VoiceInfo,
+    clamp_cloud_speed,
 };
 
 const MAX_PREVIEW_BYTES: usize = 10 * 1024 * 1024;

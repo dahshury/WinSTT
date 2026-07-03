@@ -41,8 +41,8 @@ pub(crate) fn register_core_managers(app_handle: &AppHandle, managers: &CoreMana
 
 pub(crate) fn register_winstt_managers(app_handle: &AppHandle, managers: &CoreManagers) {
     use crate::winstt::managers::{
-        ollama_manager, CloudSttManager, ContextManager, DownloadManager, FileTranscribeManager,
-        LlmManager, LoopbackManager, RealtimeManager, TtsManager, WakeWordManager, WordAligner,
+        CloudSttManager, ContextManager, DownloadManager, FileTranscribeManager, LlmManager,
+        LoopbackManager, RealtimeManager, TtsManager, WakeWordManager, WordAligner, ollama_manager,
     };
 
     app_handle.manage(Arc::new(LlmManager::new(app_handle)));
@@ -159,15 +159,14 @@ pub(crate) fn deactivate_runtime_for_onboarding(app_handle: &AppHandle) {
 
     if let Some(transcription) =
         app_handle.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
+        && transcription.inner().is_model_loaded()
     {
-        if transcription.inner().is_model_loaded() {
-            let tm = Arc::clone(transcription.inner());
-            std::thread::spawn(move || {
-                if let Err(err) = tm.unload_model() {
-                    log::warn!("[onboarding] failed to unload STT model: {err}");
-                }
-            });
-        }
+        let tm = Arc::clone(transcription.inner());
+        std::thread::spawn(move || {
+            if let Err(err) = tm.unload_model() {
+                log::warn!("[onboarding] failed to unload STT model: {err}");
+            }
+        });
     }
 }
 

@@ -26,7 +26,7 @@ use tauri::State;
 use crate::command_auth;
 use crate::winstt::catalog::{self, ModelEntry};
 use crate::winstt::managers::DownloadManager;
-use crate::winstt::stt::{resolver, Quantization};
+use crate::winstt::stt::{Quantization, resolver};
 
 fn catalog_model(model_id: &str, action: &str) -> Result<&'static ModelEntry, String> {
     catalog::find(model_id)
@@ -126,9 +126,17 @@ fn is_stt_cache_mutation_allowed(caller: &str) -> bool {
 #[specta::specta]
 pub fn stt_predownload_quant(
     downloads: State<'_, Arc<DownloadManager>>,
+    webview: tauri::WebviewWindow,
     model_id: String,
     quantization: String,
 ) -> Result<(), String> {
+    command_auth::authorize_webview(
+        &webview,
+        "download",
+        "start STT download",
+        STT_CACHE_MUTATION_ALLOWED_WINDOWS,
+        " through STT model cache",
+    )?;
     validate_download_quantization_target(&model_id, &quantization, "start STT download")?;
     // DIAGNOSTIC: trace the download trigger (the reported "clicking download does nothing /
     // resets the selector" — confirms the command is actually reached + with what args).
@@ -145,9 +153,17 @@ pub fn stt_predownload_quant(
 #[specta::specta]
 pub fn download_pause_quant(
     downloads: State<'_, Arc<DownloadManager>>,
+    webview: tauri::WebviewWindow,
     model_id: String,
     quantization: String,
 ) -> Result<(), String> {
+    command_auth::authorize_webview(
+        &webview,
+        "download",
+        "pause STT download",
+        STT_CACHE_MUTATION_ALLOWED_WINDOWS,
+        " through STT model cache",
+    )?;
     validate_download_quantization_target(&model_id, &quantization, "pause STT download")?;
     downloads.pause_quant(&model_id, &quantization);
     Ok(())
@@ -158,9 +174,17 @@ pub fn download_pause_quant(
 #[specta::specta]
 pub fn download_resume_quant(
     downloads: State<'_, Arc<DownloadManager>>,
+    webview: tauri::WebviewWindow,
     model_id: String,
     quantization: String,
 ) -> Result<(), String> {
+    command_auth::authorize_webview(
+        &webview,
+        "download",
+        "resume STT download",
+        STT_CACHE_MUTATION_ALLOWED_WINDOWS,
+        " through STT model cache",
+    )?;
     validate_download_quantization_target(&model_id, &quantization, "resume STT download")?;
     downloads.resume_quant(model_id, quantization);
     Ok(())
@@ -172,9 +196,17 @@ pub fn download_resume_quant(
 #[specta::specta]
 pub fn download_cancel_quant(
     downloads: State<'_, Arc<DownloadManager>>,
+    webview: tauri::WebviewWindow,
     model_id: String,
     quantization: String,
 ) -> Result<(), String> {
+    command_auth::authorize_webview(
+        &webview,
+        "download",
+        "cancel STT download",
+        STT_CACHE_MUTATION_ALLOWED_WINDOWS,
+        " through STT model cache",
+    )?;
     validate_download_quantization_target(&model_id, &quantization, "cancel STT download")?;
     downloads.cancel_quant(&model_id, &quantization);
     Ok(())
@@ -242,7 +274,21 @@ pub async fn delete_model_cache(
 /// rather than sharing the per-model/per-quantization cancel routes.
 #[tauri::command]
 #[specta::specta]
-pub fn winstt_cancel_download(downloads: State<'_, Arc<DownloadManager>>) {
+pub fn winstt_cancel_download(
+    downloads: State<'_, Arc<DownloadManager>>,
+    webview: tauri::WebviewWindow,
+) {
+    if command_auth::authorize_webview(
+        &webview,
+        "download",
+        "cancel STT download",
+        STT_CACHE_MUTATION_ALLOWED_WINDOWS,
+        " through STT model cache",
+    )
+    .is_err()
+    {
+        return;
+    }
     downloads.cancel_download();
 }
 
@@ -279,12 +325,14 @@ mod tests {
 
     #[test]
     fn download_target_accepts_explicit_off_catalog_hf_repo_id() {
-        assert!(validate_download_quantization_target(
-            "some-owner/some-model",
-            "int8",
-            "start STT download",
-        )
-        .is_ok());
+        assert!(
+            validate_download_quantization_target(
+                "some-owner/some-model",
+                "int8",
+                "start STT download",
+            )
+            .is_ok()
+        );
     }
 
     #[test]

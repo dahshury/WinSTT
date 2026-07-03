@@ -41,10 +41,9 @@ import type { LlmProvider, TranslateFn } from "./types";
 // (tone + modifiers + provider/model) is sent to the preview IPC as an explicit
 // override so the user can test how the LLM behaves under arbitrary configs.
 
-// Built-in (non-deletable) selections — the live dictation/transforms configs.
+// Built-in (non-deletable) selection — the live unified post-processing config.
 // Saved config presets use their own ids.
-const LIVE_DICTATION = "live:dictation";
-const LIVE_TRANSFORMS = "live:transforms";
+const LIVE_POST_PROCESSING = "live:post-processing";
 
 /** True for combobox values the restored session can legitimately point at:
  *  the two live entries always, a saved preset only while it still exists. */
@@ -53,27 +52,23 @@ function isResolvableSelection(
 	presets: readonly SavedConfiguration[],
 ): boolean {
 	return (
-		selection === LIVE_DICTATION ||
-		selection === LIVE_TRANSFORMS ||
+		selection === LIVE_POST_PROCESSING ||
 		presets.some((p) => p.id === selection)
 	);
 }
 
 function initialPlaygroundSelection(
-	model: LlmSettingsPanelModel,
 	presets: readonly SavedConfiguration[],
 ): string {
 	// A remembered session wins — but if its label was a since-deleted preset,
-	// fall back to the Dictation entry (the draft itself is still restored).
+	// fall back to the live profile entry (the draft itself is still restored).
 	const session = loadPlaygroundSession();
 	if (session) {
 		return isResolvableSelection(session.selection, presets)
 			? session.selection
-			: LIVE_DICTATION;
+			: LIVE_POST_PROCESSING;
 	}
-	return model.dictation.enabled || !model.transforms.enabled
-		? LIVE_DICTATION
-		: LIVE_TRANSFORMS;
+	return LIVE_POST_PROCESSING;
 }
 
 /** Resolve the editable draft for the chosen combobox value — a live config or
@@ -83,9 +78,6 @@ function seedForSelection(
 	model: LlmSettingsPanelModel,
 	presets: readonly SavedConfiguration[],
 ): LlmConfiguration {
-	if (selection === LIVE_TRANSFORMS) {
-		return seedDraftFromFeature(model.transforms);
-	}
 	const preset = presets.find((p) => p.id === selection);
 	if (preset) {
 		return cloneLlmConfiguration(preset.config);
@@ -104,11 +96,7 @@ function initialPlaygroundDraft(
 	if (session) {
 		return cloneLlmConfiguration(session.config);
 	}
-	return seedForSelection(
-		initialPlaygroundSelection(model, presets),
-		model,
-		presets,
-	);
+	return seedForSelection(initialPlaygroundSelection(presets), model, presets);
 }
 
 /**
@@ -218,8 +206,7 @@ function buildConfigItems(
 	t: TranslateFn,
 ): CreatableComboboxItem[] {
 	return [
-		{ id: LIVE_DICTATION, label: t("playgroundConfigDictation") },
-		{ id: LIVE_TRANSFORMS, label: t("playgroundConfigTransforms") },
+		{ id: LIVE_POST_PROCESSING, label: t("title") },
 		...presets.map((p) => ({ id: p.id, label: p.name, deletable: true })),
 	];
 }
@@ -243,7 +230,7 @@ function PlaygroundModalBody({
 		(s) => s.removeConfiguration,
 	);
 	const [selection, setSelection] = useState<string>(() =>
-		initialPlaygroundSelection(model, presets),
+		initialPlaygroundSelection(presets),
 	);
 	const [draft, setDraft] = useState<LlmConfiguration>(() =>
 		initialPlaygroundDraft(model, presets),
@@ -285,7 +272,7 @@ function PlaygroundModalBody({
 	const deletePreset = (id: string) => {
 		removeConfiguration(id);
 		if (selection === id) {
-			handleSelect(LIVE_DICTATION);
+			handleSelect(LIVE_POST_PROCESSING);
 		}
 	};
 
@@ -328,11 +315,7 @@ function PlaygroundModalBody({
 			presets: draft.presets,
 			customModifiers: draft.customModifiers,
 		};
-		return runLlmPreview(
-			sample,
-			selection === LIVE_TRANSFORMS ? "transforms" : "dictation",
-			config,
-		);
+		return runLlmPreview(sample, "dictation", config);
 	};
 
 	return (
@@ -389,7 +372,7 @@ function PlaygroundModalBody({
 						{/* Re-key on `selection` so the preset list's internal level/lang
 						    caches reseed from the freshly-seeded draft on switch. */}
 						<FeaturePresetControls
-							feature="transforms"
+							feature="dictation"
 							key={selection}
 							model={model}
 							snapshot={{

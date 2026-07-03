@@ -4,13 +4,13 @@
 //! module root; all shared free helpers / types / guards live in [`super`].
 
 use super::{
-    is_degenerate_decode_error, LoadedEngine, LoadingGuard, ModelStateEvent, TranscriptionManager,
-    WarmingGuard,
+    LoadedEngine, LoadingGuard, ModelStateEvent, TranscriptionManager, WarmingGuard,
+    is_degenerate_decode_error,
 };
 use crate::winstt::stt::BackendRoute;
 use anyhow::Result;
 use log::{debug, error, info, warn};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::Ordering;
 use tauri::Emitter;
 

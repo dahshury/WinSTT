@@ -8,8 +8,8 @@
 //   2. Transcript serialization (txt/srt) — `format_transcript` /
 //      `format_srt_timestamp`.
 
-use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::codecs::CodecParameters;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error as SymError;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};

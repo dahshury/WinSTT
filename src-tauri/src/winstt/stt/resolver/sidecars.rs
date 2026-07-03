@@ -165,10 +165,11 @@ pub(crate) fn is_sidecar_for(stem: &str, repo_path: &str) -> bool {
             return true;
         }
         let shard_prefix = format!("{base}_");
-        if let Some(rest) = repo_path.strip_prefix(&shard_prefix) {
-            if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
-                return true;
-            }
+        if let Some(rest) = repo_path.strip_prefix(&shard_prefix)
+            && !rest.is_empty()
+            && rest.chars().all(|c| c.is_ascii_digit())
+        {
+            return true;
         }
     }
     false

@@ -242,11 +242,11 @@ pub async fn confirm_paste(app: AppHandle, text: String) -> Result<(), String> {
         }
         #[cfg(not(target_os = "windows"))]
         let _ = target;
-        if !text_to_paste.is_empty() {
-            if let Err(e) = crate::clipboard::paste(text_to_paste, app_for_paste.clone()) {
-                log::error!("[preview] confirm paste failed: {e}");
-                crate::winstt::commands::events::emit_paste_error(&app_for_paste);
-            }
+        if !text_to_paste.is_empty()
+            && let Err(e) = crate::clipboard::paste(text_to_paste, app_for_paste.clone())
+        {
+            log::error!("[preview] confirm paste failed: {e}");
+            crate::winstt::commands::events::emit_paste_error(&app_for_paste);
         }
         // Tear down AFTER the paste so the geometry/focus changes can't race the
         // Ctrl+V into the just-restored target window.

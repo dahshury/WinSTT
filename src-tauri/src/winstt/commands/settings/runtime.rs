@@ -258,7 +258,6 @@ pub(super) fn apply_llm_runtime_settings(
     previous: &WinsttSettings,
     next: &WinsttSettings,
 ) {
-    sync_llm_model_unload_timeout(app, next.global.model_unload_timeout);
     // Any Ollama model that was backing an enabled feature but is NO LONGER in use
     // (feature toggled off, model swapped, or provider changed) must be freed from
     // VRAM immediately — by name, via `keep_alive: 0`. This is INDEPENDENT of the
@@ -276,6 +275,13 @@ pub(super) fn apply_llm_runtime_settings(
         .filter(|model| !still_in_use.iter().any(|kept| &kept == model))
         .cloned()
         .collect();
+    let timeout_changed = previous.global.model_unload_timeout != next.global.model_unload_timeout;
+    let should_warm = llm_warm_inputs_changed(previous, next);
+    if to_unload.is_empty() && !timeout_changed && !should_warm {
+        return;
+    }
+
+    sync_llm_model_unload_timeout(app, next.global.model_unload_timeout);
     log::info!(
         "[llm] apply_llm_runtime: was_in_use={was_in_use:?} still_in_use={still_in_use:?} to_unload={to_unload:?} timeout={:?}",
         next.global.model_unload_timeout
@@ -283,7 +289,7 @@ pub(super) fn apply_llm_runtime_settings(
     if !to_unload.is_empty() {
         unload_ollama_models_async(app, to_unload);
     }
-    if llm_warm_inputs_changed(previous, next) {
+    if should_warm {
         warm_llm_models_async(app);
     }
 }
@@ -363,10 +369,8 @@ pub(super) fn apply_audio_runtime_settings(
         }
     }
 
-    if input_device_changed {
-        if let Err(err) = audio_manager.update_selected_device() {
-            log::warn!("[settings] failed to apply microphone device change: {err}");
-        }
+    if input_device_changed && let Err(err) = audio_manager.update_selected_device() {
+        log::warn!("[settings] failed to apply microphone device change: {err}");
     }
 }
 

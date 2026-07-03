@@ -74,7 +74,7 @@ export interface SelectProps {
 // Leading badge + icon + label, shared by the trigger (current value) and the
 // option rows. `active` marks the selected/highlighted state so the leading
 // icon thickens (strokeWidth 2) — the fluidfunctionalism dropdown's active cue.
-function OptionContent({
+export function SelectOptionContent({
 	active,
 	option,
 }: {
@@ -115,7 +115,7 @@ function SelectRow({ option, value }: { option: SelectOption; value: string }) {
 			disabled={option.disabled}
 			value={option.id}
 		>
-			<OptionContent active={active} option={option} />
+			<SelectOptionContent active={active} option={option} />
 			{active ? (
 				<HugeiconsIcon
 					aria-hidden="true"
@@ -190,7 +190,7 @@ export function Select({
 				>
 					<span className="flex min-w-0 flex-1 items-center gap-2">
 						{selected ? (
-							<OptionContent active option={selected} />
+							<SelectOptionContent active option={selected} />
 						) : (
 							<span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
 								{selectedLabel}

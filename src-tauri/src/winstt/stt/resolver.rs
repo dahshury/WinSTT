@@ -175,55 +175,67 @@ mod tests {
             EngineKind::GraniteSpeechAr,
             Quantization::Int8,
         );
-        assert!(ar
-            .iter()
-            .any(|f| f.key == "encoder" && f.glob == "int8/encoder.onnx"));
-        assert!(ar
-            .iter()
-            .any(|f| f.key == "prompt_encode" && f.glob == "int8/prompt_encode.onnx"));
-        assert!(ar
-            .iter()
-            .any(|f| f.key == "decode_step" && f.glob == "int8/decode_step.onnx"));
-        assert!(ar
-            .iter()
-            .any(|f| f.key == "embed_tokens" && f.glob == "int8/embed_tokens.onnx"));
+        assert!(
+            ar.iter()
+                .any(|f| f.key == "encoder" && f.glob == "int8/encoder.onnx")
+        );
+        assert!(
+            ar.iter()
+                .any(|f| f.key == "prompt_encode" && f.glob == "int8/prompt_encode.onnx")
+        );
+        assert!(
+            ar.iter()
+                .any(|f| f.key == "decode_step" && f.glob == "int8/decode_step.onnx")
+        );
+        assert!(
+            ar.iter()
+                .any(|f| f.key == "embed_tokens" && f.glob == "int8/embed_tokens.onnx")
+        );
 
         let nar = file_globs(
             "granite-speech-4.1-2b-nar",
             EngineKind::GraniteSpeechNar,
             Quantization::Fp16w,
         );
-        assert!(nar
-            .iter()
-            .any(|f| f.key == "encoder" && f.glob == "fp16w/encoder.onnx"));
-        assert!(nar
-            .iter()
-            .any(|f| f.key == "editor" && f.glob == "fp16w/editor.onnx"));
-        assert!(nar
-            .iter()
-            .any(|f| f.key == "embed_tokens" && f.glob == "fp16w/embed_tokens.onnx"));
+        assert!(
+            nar.iter()
+                .any(|f| f.key == "encoder" && f.glob == "fp16w/encoder.onnx")
+        );
+        assert!(
+            nar.iter()
+                .any(|f| f.key == "editor" && f.glob == "fp16w/editor.onnx")
+        );
+        assert!(
+            nar.iter()
+                .any(|f| f.key == "embed_tokens" && f.glob == "fp16w/embed_tokens.onnx")
+        );
     }
 
     #[test]
     fn qwen3_globs_root_files_and_int4_suffix() {
         let g = file_globs("qwen3-asr-0.6b", EngineKind::Qwen3Asr, Quantization::Int4);
-        assert!(g
-            .iter()
-            .any(|f| f.key == "encoder" && f.glob == "encoder?int4.onnx"));
-        assert!(g
-            .iter()
-            .any(|f| f.key == "decoder_init" && f.glob == "decoder_init?int4.onnx"));
-        assert!(g
-            .iter()
-            .any(|f| f.key == "decoder_step" && f.glob == "decoder_step?int4.onnx"));
+        assert!(
+            g.iter()
+                .any(|f| f.key == "encoder" && f.glob == "encoder?int4.onnx")
+        );
+        assert!(
+            g.iter()
+                .any(|f| f.key == "decoder_init" && f.glob == "decoder_init?int4.onnx")
+        );
+        assert!(
+            g.iter()
+                .any(|f| f.key == "decoder_step" && f.glob == "decoder_step?int4.onnx")
+        );
         // The shared external-data blob must be an explicit file (not a stem sidecar).
-        assert!(g
-            .iter()
-            .any(|f| f.key == "decoder_weights" && f.glob == "decoder_weights?int4.data"));
+        assert!(
+            g.iter()
+                .any(|f| f.key == "decoder_weights" && f.glob == "decoder_weights?int4.data")
+        );
         // The fp16 embed table is shared across precisions → no quant suffix.
-        assert!(g
-            .iter()
-            .any(|f| f.key == "embed_tokens" && f.glob == "embed_tokens.bin"));
+        assert!(
+            g.iter()
+                .any(|f| f.key == "embed_tokens" && f.glob == "embed_tokens.bin")
+        );
         // `?int4` matches the `.int4` separator the export uses.
         assert!(glob_match("encoder?int4.onnx", "encoder.int4.onnx"));
         assert!(glob_match(
@@ -251,21 +263,24 @@ mod tests {
             EngineKind::WhisperHf,
             Quantization::Default,
         );
-        assert!(g
-            .iter()
-            .any(|f| f.key == "encoder" && f.glob == "**/encoder_model.onnx"));
-        assert!(g
-            .iter()
-            .any(|f| f.key == "decoder" && f.glob == "**/decoder_model_merged.onnx"));
+        assert!(
+            g.iter()
+                .any(|f| f.key == "encoder" && f.glob == "**/encoder_model.onnx")
+        );
+        assert!(
+            g.iter()
+                .any(|f| f.key == "decoder" && f.glob == "**/decoder_model_merged.onnx")
+        );
         let g16 = file_globs(
             "onnx-community/whisper-tiny",
             EngineKind::WhisperHf,
             Quantization::Fp16,
         );
         assert!(g16.iter().any(|f| f.glob == "**/encoder_model?fp16.onnx"));
-        assert!(g16
-            .iter()
-            .any(|f| f.glob == "**/decoder_model_merged?fp16.onnx"));
+        assert!(
+            g16.iter()
+                .any(|f| f.glob == "**/decoder_model_merged?fp16.onnx")
+        );
     }
 
     #[test]
@@ -276,12 +291,14 @@ mod tests {
             EngineKind::KaldiTransducer,
             Quantization::Int8,
         );
-        assert!(g
-            .iter()
-            .any(|f| f.key == "encoder" && f.glob == "*/encoder?int8.onnx"));
-        assert!(g
-            .iter()
-            .any(|f| f.key == "vocab" && f.glob == "*/tokens.txt"));
+        assert!(
+            g.iter()
+                .any(|f| f.key == "encoder" && f.glob == "*/encoder?int8.onnx")
+        );
+        assert!(
+            g.iter()
+                .any(|f| f.key == "vocab" && f.glob == "*/tokens.txt")
+        );
     }
 
     #[test]
@@ -292,15 +309,18 @@ mod tests {
             EngineKind::KaldiTransducer,
             Quantization::Default,
         );
-        assert!(g
-            .iter()
-            .any(|f| f.key == "encoder" && f.glob == "encoder-*.onnx"));
-        assert!(g
-            .iter()
-            .any(|f| f.key == "decoder" && f.glob == "decoder-*.onnx"));
-        assert!(g
-            .iter()
-            .any(|f| f.key == "joiner" && f.glob == "joiner-*.onnx"));
+        assert!(
+            g.iter()
+                .any(|f| f.key == "encoder" && f.glob == "encoder-*.onnx")
+        );
+        assert!(
+            g.iter()
+                .any(|f| f.key == "decoder" && f.glob == "decoder-*.onnx")
+        );
+        assert!(
+            g.iter()
+                .any(|f| f.key == "joiner" && f.glob == "joiner-*.onnx")
+        );
         assert!(g.iter().any(|f| f.key == "vocab" && f.glob == "tokens.txt"));
         let gi = file_globs(
             "icefall-zipformer",
@@ -317,24 +337,28 @@ mod tests {
             EngineKind::KaldiTransducerStreaming,
             Quantization::Default,
         );
-        assert!(g
-            .iter()
-            .any(|f| f.key == "encoder" && f.glob == "encoder-*chunk-16-left-128.onnx"));
-        assert!(g
-            .iter()
-            .any(|f| f.key == "decoder" && f.glob == "decoder-*chunk-16-left-128.onnx"));
-        assert!(g
-            .iter()
-            .any(|f| f.key == "joiner" && f.glob == "joiner-*chunk-16-left-128.onnx"));
+        assert!(
+            g.iter()
+                .any(|f| f.key == "encoder" && f.glob == "encoder-*chunk-16-left-128.onnx")
+        );
+        assert!(
+            g.iter()
+                .any(|f| f.key == "decoder" && f.glob == "decoder-*chunk-16-left-128.onnx")
+        );
+        assert!(
+            g.iter()
+                .any(|f| f.key == "joiner" && f.glob == "joiner-*chunk-16-left-128.onnx")
+        );
 
         let gi = file_globs(
             "csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26",
             EngineKind::KaldiTransducerStreaming,
             Quantization::Int8,
         );
-        assert!(gi
-            .iter()
-            .any(|f| f.glob == "encoder-*chunk-16-left-128?int8.onnx"));
+        assert!(
+            gi.iter()
+                .any(|f| f.glob == "encoder-*chunk-16-left-128?int8.onnx")
+        );
     }
 
     #[test]

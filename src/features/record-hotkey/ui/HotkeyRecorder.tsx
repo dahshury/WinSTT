@@ -257,12 +257,10 @@ export function HotkeyRecorder({
 							<InputGroupButton
 								aria-label={toggleLabel}
 								onClick={onToggle}
-								// FF: a neutral *surfaced* disk while idle (no blue accent fill) — its
-								// own hairline-ringed surface that lifts above the field per the surfaces
-								// concept, instead of the old transparent ghost that read as "floating".
-								// Recording keeps the red "active" tone, consistent with the rest of the
-								// recording state's error-red theme.
-								tone={recording ? "danger" : "surface"}
+								// Idle stays transparent so the shortcuts rows don't show a
+								// repeated column of filled play disks. Recording keeps the red
+								// active tone, matching the rest of the recording state.
+								tone={recording ? "danger" : "ghost"}
 							>
 								<ToggleIcon recording={recording} />
 							</InputGroupButton>

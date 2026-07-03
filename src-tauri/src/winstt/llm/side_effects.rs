@@ -213,6 +213,112 @@ fn push_unique_marker(markers: &mut Vec<String>, marker: &str) {
     }
 }
 
+fn trim_token_delimiters(raw: &str) -> &str {
+    raw.trim_matches(|ch: char| {
+        matches!(
+            ch,
+            '"' | '\'' | '`' | ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+        )
+    })
+}
+
+fn is_base64_urlish(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'='))
+}
+
+fn looks_like_jwt(token: &str) -> bool {
+    let parts = token.split('.').collect::<Vec<_>>();
+    parts.len() == 3
+        && token.len() >= 40
+        && parts
+            .iter()
+            .all(|part| part.len() >= 8 && is_base64_urlish(part))
+        && parts
+            .first()
+            .is_some_and(|header| header.starts_with("eyJ"))
+}
+
+fn looks_like_prefixed_secret(token: &str) -> bool {
+    let lower = token.to_ascii_lowercase();
+    token.starts_with("AIza")
+        || lower.starts_with("sk-")
+        || lower.starts_with("sk_")
+        || lower.starts_with("ghp_")
+        || lower.starts_with("gho_")
+        || lower.starts_with("ghu_")
+        || lower.starts_with("ghs_")
+        || lower.starts_with("github_pat_")
+        || lower.starts_with("glpat-")
+        || lower.starts_with("xoxb-")
+        || lower.starts_with("xoxp-")
+        || lower.starts_with("xoxa-")
+        || lower.starts_with("xoxr-")
+        || lower.starts_with("xoxs-")
+        || lower.starts_with("ya29.")
+}
+
+fn looks_like_aws_access_key(token: &str) -> bool {
+    token.len() == 20
+        && (token.starts_with("AKIA") || token.starts_with("ASIA"))
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+}
+
+fn looks_like_high_entropy_secret(token: &str) -> bool {
+    if token.len() < 32
+        || !token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'='))
+    {
+        return false;
+    }
+
+    let has_lower = token.bytes().any(|b| b.is_ascii_lowercase());
+    let has_upper = token.bytes().any(|b| b.is_ascii_uppercase());
+    let has_digit = token.bytes().any(|b| b.is_ascii_digit());
+    let has_symbol = token
+        .bytes()
+        .any(|b| matches!(b, b'-' | b'_' | b'.' | b'='));
+    let class_count = [has_lower, has_upper, has_digit, has_symbol]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+    let hex_like = token.len() >= 32 && token.bytes().all(|b| b.is_ascii_hexdigit());
+
+    hex_like || class_count >= 3
+}
+
+fn looks_like_credential_token(raw: &str) -> bool {
+    let token = trim_token_delimiters(raw);
+    if token.is_empty() {
+        return false;
+    }
+    looks_like_jwt(token)
+        || looks_like_prefixed_secret(token)
+        || looks_like_aws_access_key(token)
+        || looks_like_high_entropy_secret(token)
+}
+
+fn contains_credential_shape(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("bearer ") {
+        return true;
+    }
+
+    text.split(|ch: char| {
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                '"' | '\'' | '`' | ',' | ';' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+            )
+    })
+    .any(looks_like_credential_token)
+}
+
 fn infer_privacy_markers(text: &str) -> Vec<String> {
     let lower = text.to_ascii_lowercase();
     let mut markers = Vec::new();
@@ -232,6 +338,7 @@ fn infer_privacy_markers(text: &str) -> Vec<String> {
         || lower.contains("token")
         || lower.contains("login")
         || lower.contains("credential")
+        || contains_credential_shape(text)
     {
         push_unique_marker(&mut markers, "credential");
     }
@@ -456,6 +563,7 @@ pub fn extract_dictation_side_effects(content: &str) -> DictationSideEffects {
     };
 
     let learned_proper_nouns = merge_dictionary_suggestions(extract_learned_proper_nouns(content));
+    let mut rejected_snippet_privacy_markers = Vec::new();
     let learned_snippets = value
         .get("learned_snippets")
         .and_then(|v| v.as_array())
@@ -476,9 +584,20 @@ pub fn extract_dictation_side_effects(content: &str) -> DictationSideEffects {
                 let (Some(trigger), Some(expansion)) = (trigger, expansion) else {
                     continue;
                 };
+                let expansion_privacy_markers = infer_privacy_markers(&expansion);
+                let has_sensitive_expansion = expansion_privacy_markers
+                    .iter()
+                    .any(|marker| !matches!(marker.as_str(), "location" | "other"));
                 if trigger.eq_ignore_ascii_case(&expansion)
                     || looks_like_bad_snippet(&trigger, &expansion)
                 {
+                    if has_sensitive_expansion {
+                        for marker in expansion_privacy_markers {
+                            if !matches!(marker.as_str(), "location" | "other") {
+                                push_unique_marker(&mut rejected_snippet_privacy_markers, &marker);
+                            }
+                        }
+                    }
                     continue;
                 }
                 if seen.insert(trigger.to_ascii_lowercase()) {
@@ -572,6 +691,9 @@ pub fn extract_dictation_side_effects(content: &str) -> DictationSideEffects {
     for marker in infer_privacy_markers(cleaned_text) {
         push_unique_marker(&mut privacy_markers, &marker);
     }
+    for marker in rejected_snippet_privacy_markers {
+        push_unique_marker(&mut privacy_markers, &marker);
+    }
     for snippet in &learned_snippets {
         for marker in infer_privacy_markers(&snippet.expansion) {
             push_unique_marker(&mut privacy_markers, &marker);
@@ -663,10 +785,10 @@ fn unescape_json_string_body(s: &str) -> String {
             Some('\\') => out.push('\\'),
             Some('u') => {
                 let hex: String = (0..4).filter_map(|_| chars.next()).collect();
-                if let Ok(cp) = u32::from_str_radix(&hex, 16) {
-                    if let Some(ch) = char::from_u32(cp) {
-                        out.push(ch);
-                    }
+                if let Ok(cp) = u32::from_str_radix(&hex, 16)
+                    && let Some(ch) = char::from_u32(cp)
+                {
+                    out.push(ch);
                 }
             }
             Some(other) => {
@@ -742,6 +864,32 @@ mod tests {
                 "learned_proper_nouns": [],
                 "learned_snippets": [
                     { "trigger": "/login", "expansion": "password hunter two" }
+                ],
+                "suggested_modifier_presets": [],
+                "history_tag": "note",
+                "privacy_markers": []
+            }"#,
+        );
+
+        assert!(effects.learned_snippets.is_empty());
+        assert_eq!(effects.privacy_markers, vec!["credential".to_string()]);
+    }
+
+    #[test]
+    fn drops_bare_credential_shaped_snippets() {
+        let effects = extract_dictation_side_effects(
+            r#"{
+                "text": "Remember this shorthand.",
+                "learned_proper_nouns": [],
+                "learned_snippets": [
+                    {
+                        "trigger": "/session",
+                        "expansion": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.ZmFrZVNpZ25hdHVyZUJ1dExvbmdFbm91Z2g"
+                    },
+                    {
+                        "trigger": "/deploy",
+                        "expansion": "ghp_0123456789abcdefghijklmnopqrstuv"
+                    }
                 ],
                 "suggested_modifier_presets": [],
                 "history_tag": "note",

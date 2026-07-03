@@ -51,7 +51,7 @@ export const useLlmModelPickerStore = create<LlmModelPickerState>(
 				? { model, provider: "ollama" as const, enabled: true }
 				: { model, provider: "ollama" as const };
 			if (feature === "dictation") {
-				settings.updateLlmDictation(patch);
+				settings.updateLlmPostProcessing(patch);
 				if (enableOnInstall) {
 					// Mutual exclusion with Smart Endpoint — mirrors the panel's
 					// `disableSmartEndpoint`: turning dictation cleanup on turns the

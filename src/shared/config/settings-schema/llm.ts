@@ -179,6 +179,12 @@ export const llmSettingsSchema = z.object({
 	// Shared infrastructure (one Ollama instance, one OpenRouter account).
 	endpoint: z.url().default("http://localhost:11434"),
 	openrouterApiKey: z.string().default(""),
+	// Global combo that cycles through the user-ordered post-processing profiles.
+	profileSwapHotkey: z
+		.string()
+		.min(1)
+		.default("LCtrl+LShift+P")
+		.catch("LCtrl+LShift+P"),
 	// Per-feature config — each independently picks provider + model.
 	// The feature runs iff its own `enabled` is true AND a model is configured;
 	// there is no master switch (the IPC layer treats "no model" as off).

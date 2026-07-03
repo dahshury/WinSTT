@@ -71,10 +71,10 @@ pub fn handle_shortcut_event(
             // Idle↔Recording on each `is_pressed:true, push_to_talk:false` (start on the first
             // press, stop on the next). Releases are ignored so a hold doesn't toggle twice.
             RecordingMode::Toggle => {
-                if is_pressed {
-                    if let Some(coordinator) = app.try_state::<crate::TranscriptionCoordinator>() {
-                        coordinator.send_input("transcribe", "", true, false);
-                    }
+                if is_pressed
+                    && let Some(coordinator) = app.try_state::<crate::TranscriptionCoordinator>()
+                {
+                    coordinator.send_input("transcribe", "", true, false);
                 }
             }
             // LISTEN / WAKEWORD: server-driven (system-audio loopback / wake event). The mic

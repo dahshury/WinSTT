@@ -34,15 +34,15 @@ mod platform_impl {
 
     use tauri::AppHandle;
     use windows::{
-        core::{implement, Result as WinResult, PCWSTR},
         Win32::{
             Foundation::PROPERTYKEY,
             Media::Audio::{
-                EDataFlow, ERole, IMMDeviceEnumerator, IMMNotificationClient,
-                IMMNotificationClient_Impl, MMDeviceEnumerator, DEVICE_STATE,
+                DEVICE_STATE, EDataFlow, ERole, IMMDeviceEnumerator, IMMNotificationClient,
+                IMMNotificationClient_Impl, MMDeviceEnumerator,
             },
-            System::Com::{CoCreateInstance, CLSCTX_ALL},
+            System::Com::{CLSCTX_ALL, CoCreateInstance},
         },
+        core::{PCWSTR, Result as WinResult, implement},
     };
 
     const DEVICECHANGE_DEBOUNCE: Duration = Duration::from_millis(250);
@@ -150,11 +150,11 @@ mod platform_impl {
     };
 
     use objc2_core_audio::{
-        kAudioHardwareNoError, kAudioHardwarePropertyDefaultInputDevice,
-        kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
-        kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
         AudioObjectAddPropertyListener, AudioObjectID, AudioObjectPropertyAddress,
-        AudioObjectRemovePropertyListener,
+        AudioObjectRemovePropertyListener, kAudioHardwareNoError,
+        kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDefaultOutputDevice,
+        kAudioHardwarePropertyDevices, kAudioObjectPropertyElementMain,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
     };
     use tauri::AppHandle;
 

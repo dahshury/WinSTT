@@ -267,14 +267,14 @@ impl RealtimeManager {
             }
         };
 
-        if let Some(edit) = edit {
-            if let Err(err) = crate::clipboard::paste_streaming_edit_on_main_thread(
+        if let Some(edit) = edit
+            && let Err(err) = crate::clipboard::paste_streaming_edit_on_main_thread(
                 &self.app,
                 edit.backspace_chars,
                 edit.text,
-            ) {
-                log::error!("word-by-word paste failed to schedule: {err}");
-            }
+            )
+        {
+            log::error!("word-by-word paste failed to schedule: {err}");
         }
     }
 
@@ -296,14 +296,14 @@ impl RealtimeManager {
             edit.text.push(' ');
         }
 
-        if !edit.is_empty() {
-            if let Err(err) = crate::clipboard::paste_streaming_edit_on_main_thread(
+        if !edit.is_empty()
+            && let Err(err) = crate::clipboard::paste_streaming_edit_on_main_thread(
                 &self.app,
                 edit.backspace_chars,
                 edit.text,
-            ) {
-                log::error!("word-by-word final suffix paste failed to schedule: {err}");
-            }
+            )
+        {
+            log::error!("word-by-word final suffix paste failed to schedule: {err}");
         }
         SttEvents::realtime_stabilized_with_final(&self.app, final_text, true);
         SttEvents::realtime_text_with_final(&self.app, final_text, true);

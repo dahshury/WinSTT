@@ -1,24 +1,34 @@
 import { Separator } from "@base-ui/react/separator";
 import {
+	AppWindowIcon,
 	ArrowRight01Icon,
+	ArrowReloadHorizontalIcon,
 	Bug01Icon,
+	ClipboardCopyIcon,
+	FileAudioIcon,
+	Logout03Icon,
 	Mic01Icon,
-	Tick02Icon,
+	Settings05Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { useEffect, useReducer, useRef, useState } from "react";
+import {
+	type MouseEvent,
+	type ReactNode,
+	useEffect,
+	useReducer,
+	useRef,
+} from "react";
 import { useTranslations } from "use-intl";
 import {
-	buildInputDeviceOptions,
-	MicrophoneLevelMeter,
+	useInputDevicePickerModel,
 	useInputDevices,
-	useMicrophoneLevels,
 } from "@/entities/audio-device";
 import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsTabStore } from "@/entities/setting";
 import { resolveListenStreamingModelId } from "@/features/listen-mode";
 import {
 	copyLastTranscript,
+	devicePickerWindowOpen,
 	fileQueuePickAndEnqueue,
 	onConnectionChange,
 	onSettingsChanged,
@@ -43,7 +53,6 @@ import {
 	surfaceHoverBg,
 } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
-import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 import { Switcher } from "@/shared/ui/switcher";
 
 interface TrayMenuState {
@@ -151,11 +160,6 @@ function useTrayMenuRender() {
 		receivePrereleaseUpdates,
 	} = state;
 	const containerRef = useRef<HTMLDivElement | null>(null);
-	const deviceListRef = useRef<HTMLDivElement | null>(null);
-	const [devicePickerOpen, setDevicePickerOpen] = useState(false);
-	const [highlightedDeviceId, setHighlightedDeviceId] = useState<string | null>(
-		null,
-	);
 	const t = useTranslations("tray");
 	const tAudio = useTranslations("audio");
 	const { devices, defaultDevice } = useInputDevices();
@@ -268,18 +272,8 @@ function useTrayMenuRender() {
 		});
 	};
 
-	const handleOpenDevicePicker = () => {
-		setDevicePickerOpen((open) => !open);
-	};
-
-	const handleSelectDevice = async (id: string) => {
-		const next = id === "default" ? null : Number.parseInt(id, 10);
-		const settings = await settingsLoad();
-		await settingsSave({
-			audio: { ...settings.audio, inputDeviceIndex: next },
-		});
-		setDevicePickerOpen(false);
-		closeTrayMenu();
+	const handleOpenDevicePicker = (event: MouseEvent<HTMLButtonElement>) => {
+		devicePickerWindowOpen(event.currentTarget.getBoundingClientRect());
 	};
 
 	const handleCheckForUpdates = async () => {
@@ -301,10 +295,6 @@ function useTrayMenuRender() {
 
 			if (event.key === "Escape") {
 				event.preventDefault();
-				if (devicePickerOpen) {
-					setDevicePickerOpen(false);
-					return;
-				}
 				closeTrayMenu();
 				return;
 			}
@@ -336,7 +326,7 @@ function useTrayMenuRender() {
 
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
-	}, [devicePickerOpen, isConnected]);
+	}, [isConnected]);
 
 	const recordingModeOptions: ReadonlyArray<{
 		value: RecordingMode;
@@ -348,109 +338,33 @@ function useTrayMenuRender() {
 		{ value: "wakeword", label: t("modeWakeWord") },
 	];
 
-	const defaultLabel = defaultDevice
-		? `${tAudio("systemDefault")} (${defaultDevice.name})`
-		: tAudio("systemDefault");
-	const { deviceOptions, currentDeviceId, currentDeviceLabel } =
-		buildInputDeviceOptions(
-			devices,
-			inputDeviceIndex,
-			defaultLabel,
-			defaultDevice?.name,
-		);
-	const levels = useMicrophoneLevels(
-		devicePickerOpen,
-		deviceOptions.map((option) => option.id),
-	);
+	const { currentDeviceIcon, currentDeviceLabel } = useInputDevicePickerModel({
+		defaultDeviceName: defaultDevice?.name,
+		devices,
+		inputDeviceIndex,
+		monitorOpen: false,
+		systemDefaultLabel: tAudio("systemDefault"),
+	});
 
 	const menuLevel = 3;
 	const hoverLevel = Math.min(menuLevel + 1, 8);
 	const activeLevel = Math.min(menuLevel + 2, 8);
 	const hoverBg = surfaceHoverBg(hoverLevel);
 	const activeBg = surfaceActivePseudoBg(activeLevel);
-	const devicePopupLevel = Math.min(menuLevel + 2, 8);
 	return (
 		<SurfaceProvider value={menuLevel}>
 			<div
 				className={cn(
 					TRAY_MENU_OPEN_SHELL_CLASS,
-					"relative flex flex-row-reverse items-start justify-end gap-2 transition-[width] duration-100 ease-out",
-					devicePickerOpen ? "w-[440px]" : "w-[192px]",
+					// The OS window is sized exactly to this shell, so the menu's
+					// box-shadow spilling into the p-0.5 gutter would be cut off
+					// SQUARE at the window corners. Clip the shell along a rounded
+					// path — menu rounded-xl (0.75rem) + the 0.125rem gutter — so
+					// all four corners of the clipped shadow stay round.
+					"relative w-[196px] overflow-hidden rounded-[0.875rem] p-0.5 transition-[width] duration-100 ease-out",
 				)}
 				ref={containerRef}
 			>
-				{devicePickerOpen && (
-					<div
-						className={cn(
-							"relative max-h-56 w-[240px] overflow-y-auto rounded-xl p-1 ring-1 ring-divider-strong",
-							surfaceClasses(devicePopupLevel, 7),
-							"font-sans text-body-sm text-foreground",
-						)}
-						ref={deviceListRef}
-					>
-						<MenuHighlightLayer
-							containerRef={deviceListRef}
-							value={currentDeviceId}
-						/>
-						{deviceOptions.map((option) => {
-							const active = option.id === currentDeviceId;
-							return (
-								<Button
-									aria-pressed={active}
-									className={cn(
-										"relative z-raised w-full justify-between gap-2 rounded px-2 py-1.5 text-left transition-colors",
-										active ? "font-medium text-foreground" : "text-foreground",
-										hoverBg,
-										activeBg,
-									)}
-									data-menu-option={option.id}
-									key={option.id}
-									onBlur={() =>
-										setHighlightedDeviceId((cur) =>
-											cur === option.id ? null : cur,
-										)
-									}
-									onClick={() => void handleSelectDevice(option.id)}
-									onFocus={() => setHighlightedDeviceId(option.id)}
-									onMouseEnter={() => setHighlightedDeviceId(option.id)}
-									onMouseLeave={() =>
-										setHighlightedDeviceId((cur) =>
-											cur === option.id ? null : cur,
-										)
-									}
-									{...(highlightedDeviceId === option.id
-										? { "data-highlighted": "" }
-										: {})}
-								>
-									<span className="flex min-w-0 items-center gap-2">
-										<HugeiconsIcon
-											aria-hidden="true"
-											className="shrink-0 text-foreground-dim"
-											icon={option.icon ?? Mic01Icon}
-											size={13}
-											strokeWidth={active ? 2 : 1.5}
-										/>
-										<span className="truncate">{option.label}</span>
-									</span>
-									<span className="flex shrink-0 items-center gap-1.5">
-										{active ? (
-											<HugeiconsIcon
-												aria-hidden="true"
-												className="text-accent"
-												icon={Tick02Icon}
-												size={13}
-											/>
-										) : null}
-										<MicrophoneLevelMeter
-											active={active}
-											level={levels[option.id] ?? 0}
-										/>
-									</span>
-								</Button>
-							);
-						})}
-					</div>
-				)}
 				<div
 					className={cn(
 						"w-[192px] rounded-xl p-1 ring-1 ring-divider-strong",
@@ -461,6 +375,7 @@ function useTrayMenuRender() {
 					<MenuItem
 						activeBg={activeBg}
 						hoverBg={hoverBg}
+						icon={AppWindowIcon}
 						onClick={handleShowWindow}
 						shortcut="W"
 					>
@@ -469,6 +384,7 @@ function useTrayMenuRender() {
 					<MenuItem
 						activeBg={activeBg}
 						hoverBg={hoverBg}
+						icon={Settings05Icon}
 						onClick={handleSettings}
 						shortcut=","
 					>
@@ -477,6 +393,7 @@ function useTrayMenuRender() {
 					<MenuItem
 						activeBg={activeBg}
 						hoverBg={hoverBg}
+						icon={ClipboardCopyIcon}
 						onClick={handleCopyLastTranscript}
 					>
 						{t("copyLastTranscript")}
@@ -510,7 +427,7 @@ function useTrayMenuRender() {
 								<HugeiconsIcon
 									aria-hidden="true"
 									className="shrink-0 text-foreground-dim"
-									icon={Mic01Icon}
+									icon={currentDeviceIcon ?? Mic01Icon}
 									size={13}
 								/>
 								<span className="max-w-[9rem] truncate">
@@ -521,7 +438,6 @@ function useTrayMenuRender() {
 								aria-hidden="true"
 								className={cn(
 									"shrink-0 text-foreground-muted transition-transform",
-									devicePickerOpen && "rotate-180",
 								)}
 								icon={ArrowRight01Icon}
 								size={11}
@@ -535,6 +451,7 @@ function useTrayMenuRender() {
 						activeBg={activeBg}
 						disabled={!isConnected}
 						hoverBg={hoverBg}
+						icon={FileAudioIcon}
 						onClick={handleTranscribeFile}
 						shortcut="T"
 					>
@@ -543,6 +460,7 @@ function useTrayMenuRender() {
 					<MenuItem
 						activeBg={activeBg}
 						hoverBg={hoverBg}
+						icon={ArrowReloadHorizontalIcon}
 						onClick={handleCheckForUpdates}
 					>
 						{t("checkForUpdates")}
@@ -569,6 +487,7 @@ function useTrayMenuRender() {
 					<MenuItem
 						activeBg={activeBg}
 						hoverBg={hoverBg}
+						icon={Logout03Icon}
 						onClick={handleQuit}
 						shortcut="Q"
 					>
@@ -586,7 +505,7 @@ export function TrayMenu() {
 
 interface MenuItemProps {
 	activeBg: string;
-	children: React.ReactNode;
+	children: ReactNode;
 	disabled?: boolean;
 	hoverBg: string;
 	icon?: IconSvgElement;

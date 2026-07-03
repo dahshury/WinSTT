@@ -107,8 +107,11 @@ function useFeatureSnapshot(feature: DetachedLlmFeature) {
 
 function useFeatureUpdaters() {
 	const updateDictation = useSettingsStore((s) => s.updateLlmDictation);
+	const updatePostProcessing = useSettingsStore(
+		(s) => s.updateLlmPostProcessing,
+	);
 	const updateTransforms = useSettingsStore((s) => s.updateLlmTransforms);
-	return { updateDictation, updateTransforms };
+	return { updateDictation, updatePostProcessing, updateTransforms };
 }
 
 function useOllamaPulls() {
@@ -182,7 +185,7 @@ function DetachedOllamaPicker({
 	systemInfo: SystemInfo;
 }) {
 	const featureSnapshot = useFeatureSnapshot(mode.feature);
-	const { updateDictation, updateTransforms } = useFeatureUpdaters();
+	const { updatePostProcessing, updateTransforms } = useFeatureUpdaters();
 	const {
 		cancelPull,
 		deleteModel,
@@ -219,7 +222,7 @@ function DetachedOllamaPicker({
 		if (mode.feature === "transforms") {
 			updateTransforms({ provider: "ollama", model: modelName });
 		} else {
-			updateDictation({ provider: "ollama", model: modelName });
+			updatePostProcessing({ provider: "ollama", model: modelName });
 		}
 		close();
 	};
@@ -272,7 +275,7 @@ function DetachedOllamaPicker({
 
 function DetachedOpenRouterPicker({ mode }: { mode: DetachedOpenRouterMode }) {
 	const featureSnapshot = useFeatureSnapshot(mode.feature);
-	const { updateDictation, updateTransforms } = useFeatureUpdaters();
+	const { updatePostProcessing, updateTransforms } = useFeatureUpdaters();
 	const openrouterApiKey = useSettingsStore(
 		(s) => s.settings.llm.openrouterApiKey,
 	);
@@ -305,7 +308,7 @@ function DetachedOpenRouterPicker({ mode }: { mode: DetachedOpenRouterMode }) {
 					: { provider: "openrouter", openrouterModel: modelName },
 			);
 		} else {
-			updateDictation(
+			updatePostProcessing(
 				mode.target === "fallback"
 					? {
 							provider: "openrouter",

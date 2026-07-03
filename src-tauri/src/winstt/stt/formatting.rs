@@ -2,7 +2,7 @@ use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
 
 use crate::helpers::regex::static_regex;
-use crate::winstt::catalog::{find, Family};
+use crate::winstt::catalog::{Family, find};
 use crate::winstt::settings_schema::WinsttSettings;
 
 static QUOTE_RE: Lazy<Regex> = Lazy::new(|| {

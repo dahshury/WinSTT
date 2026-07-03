@@ -1,6 +1,6 @@
-use crate::tray::{change_tray_icon, TrayIconState};
-use crate::utils;
 use crate::TranscriptionCoordinator;
+use crate::tray::{TrayIconState, change_tray_icon};
+use crate::utils;
 use log::debug;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -15,7 +15,9 @@ mod misc_actions;
 mod post_process;
 mod transcribe;
 
-use misc_actions::{CancelAction, ReadAloudAction, RepasteAction, TransformAction};
+use misc_actions::{
+    CancelAction, PostProcessingProfileSwapAction, ReadAloudAction, RepasteAction, TransformAction,
+};
 use transcribe::TranscribeAction;
 
 #[derive(Clone, serde::Serialize)]
@@ -133,6 +135,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         "read_aloud".to_string(),
         Arc::new(ReadAloudAction) as Arc<dyn ShortcutAction>,
     );
+    map.insert(
+        "post_processing_profile_swap".to_string(),
+        Arc::new(PostProcessingProfileSwapAction) as Arc<dyn ShortcutAction>,
+    );
     map
 });
 
@@ -180,10 +186,9 @@ fn schedule_wakeword_followup_timeout(app: &AppHandle) {
         if audio.is_recording()
             && audio.recording_generation() == recording_generation
             && !audio.speech_seen_since_recording_start()
+            && let Some(coord) = app.try_state::<crate::TranscriptionCoordinator>()
         {
-            if let Some(coord) = app.try_state::<crate::TranscriptionCoordinator>() {
-                coord.request_silence_stop("transcribe", recording_generation);
-            }
+            coord.request_silence_stop("transcribe", recording_generation);
         }
     });
 }

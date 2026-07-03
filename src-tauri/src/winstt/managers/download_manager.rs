@@ -37,6 +37,7 @@ pub(crate) mod http_meta;
 mod progress;
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -47,11 +48,11 @@ use tauri::{AppHandle, Emitter};
 
 use crate::winstt::catalog;
 use crate::winstt::downloads::{
-    transfer_url_blocking, PauseCancelFlags, TransferControl, TransferOutcome, TransferRequest,
+    PauseCancelFlags, TransferControl, TransferOutcome, TransferRequest, transfer_url_blocking,
 };
+use crate::winstt::stt::Quantization;
 use crate::winstt::stt::cache_probe::{self, CacheState, ProbeModel};
 use crate::winstt::stt::resolver;
-use crate::winstt::stt::Quantization;
 use crate::winstt::sync_ext::MutexExt;
 
 // Re-import the submodule helpers so the impl's call sites resolve unchanged, and so the
@@ -93,6 +94,59 @@ impl DownloadHandle {
             start: Instant::now(),
         }
     }
+}
+
+fn percent_encode_path_segment(segment: &str) -> String {
+    let mut encoded = String::new();
+    for byte in segment.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn encoded_repo_path(repo_path: &str) -> Option<String> {
+    let repo_path = resolver::validate_repo_path(repo_path).ok()?;
+    Some(
+        repo_path
+            .split('/')
+            .map(percent_encode_path_segment)
+            .collect::<Vec<_>>()
+            .join("/"),
+    )
+}
+
+fn path_stays_under(base: &Path, child: &Path) -> bool {
+    match (std::path::absolute(base), std::path::absolute(child)) {
+        (Ok(base), Ok(child)) => child.starts_with(base),
+        _ => false,
+    }
+}
+
+fn checked_cache_path(base: &Path, components: &[&str]) -> Option<PathBuf> {
+    let mut path = base.to_path_buf();
+    for component in components {
+        if !is_safe_hf_cache_component(component) {
+            return None;
+        }
+        path.push(component);
+    }
+    path_stays_under(base, &path).then_some(path)
+}
+
+fn checked_snapshot_path(base: &Path, commit: &str, repo_path: &str) -> Option<PathBuf> {
+    if !is_safe_hf_cache_component(commit) {
+        return None;
+    }
+    let repo_path = resolver::validate_repo_path(repo_path).ok()?;
+    let mut path = base.join("snapshots").join(commit);
+    for component in repo_path.split('/') {
+        path.push(component);
+    }
+    path_stays_under(base, &path).then_some(path)
 }
 
 impl TransferControl for DownloadHandle {
@@ -325,28 +379,30 @@ impl DownloadManager {
                 let rx = Arc::clone(&rx);
                 let spawned = std::thread::Builder::new()
                     .name(format!("stt-download-worker-{n}"))
-                    .spawn(move || loop {
-                        // Block until a job is available. Holding the lock only across `recv()`
-                        // (then dropping it before running) lets the OTHER worker grab the next job
-                        // concurrently → up to N transfers in flight, the same bound as the old
-                        // 2-permit semaphore. When the `Sender` is dropped at process teardown,
-                        // `recv()` returns `Err` and the worker exits cleanly (no leak, no hang).
-                        let job = {
-                            let guard = match rx.lock() {
-                                Ok(g) => g,
-                                Err(_) => break, // receiver mutex poisoned → exit the worker
+                    .spawn(move || {
+                        loop {
+                            // Block until a job is available. Holding the lock only across `recv()`
+                            // (then dropping it before running) lets the OTHER worker grab the next job
+                            // concurrently → up to N transfers in flight, the same bound as the old
+                            // 2-permit semaphore. When the `Sender` is dropped at process teardown,
+                            // `recv()` returns `Err` and the worker exits cleanly (no leak, no hang).
+                            let job = {
+                                let guard = match rx.lock() {
+                                    Ok(g) => g,
+                                    Err(_) => break, // receiver mutex poisoned → exit the worker
+                                };
+                                match guard.recv() {
+                                    Ok(job) => job,
+                                    Err(_) => break, // channel closed → drain done, exit
+                                }
                             };
-                            match guard.recv() {
-                                Ok(job) => job,
-                                Err(_) => break, // channel closed → drain done, exit
-                            }
-                        };
-                        let DownloadJob {
-                            model,
-                            quantization,
-                            handle,
-                        } = job;
-                        me.run_quant_download(model, quantization, handle);
+                            let DownloadJob {
+                                model,
+                                quantization,
+                                handle,
+                            } = job;
+                            me.run_quant_download(model, quantization, handle);
+                        }
                     });
                 if let Err(e) = spawned {
                     // OS refused the thread (out of handles / memory). This worker won't drain jobs;
@@ -440,10 +496,10 @@ impl DownloadManager {
                     h.flags.cancel();
                     h.flags.resume();
                     if h.parked.load(Ordering::Acquire) {
-                        if let Ok(mut partial_path) = h.partial_path.lock() {
-                            if let Some(path) = partial_path.take() {
-                                let _ = std::fs::remove_file(path);
-                            }
+                        if let Ok(mut partial_path) = h.partial_path.lock()
+                            && let Some(path) = partial_path.take()
+                        {
+                            let _ = std::fs::remove_file(path);
                         }
                         map.remove(&k);
                         true
@@ -522,10 +578,10 @@ impl DownloadManager {
             map.retain(|k, h| {
                 if k.starts_with(&prefix) {
                     h.flags.cancel();
-                    if h.parked.load(Ordering::Acquire) {
-                        if let Some(q) = k.strip_prefix(&prefix) {
-                            parked_removed.push(q.to_string());
-                        }
+                    if h.parked.load(Ordering::Acquire)
+                        && let Some(q) = k.strip_prefix(&prefix)
+                    {
+                        parked_removed.push(q.to_string());
                     }
                     false
                 } else {
@@ -595,13 +651,13 @@ impl DownloadManager {
                         .get(q)
                         .copied()
                         .unwrap_or((CacheState::NotCached, 0, 0));
-                if entry.0 != CacheState::Cached {
-                    if let Some(handle) = inflight.get(&key(&m.id, q)) {
-                        let (downloaded, total) = handle.agg.totals();
-                        entry.1 = entry.1.max(downloaded);
-                        entry.2 = entry.2.max(total).max(entry.1);
-                        entry.0 = CacheState::Partial;
-                    }
+                if entry.0 != CacheState::Cached
+                    && let Some(handle) = inflight.get(&key(&m.id, q))
+                {
+                    let (downloaded, total) = handle.agg.totals();
+                    entry.1 = entry.1.max(downloaded);
+                    entry.2 = entry.2.max(total).max(entry.1);
+                    entry.0 = CacheState::Partial;
                 }
                 by_quant.insert(q.clone(), entry);
             }
@@ -858,7 +914,11 @@ impl DownloadManager {
         let Some((owner, name)) = resolver::resolve_repo(model) else {
             return StreamOutcome::Failed;
         };
-        let url = format!("https://huggingface.co/{owner}/{name}/resolve/main/{repo_path}");
+        let Some(encoded_path) = encoded_repo_path(repo_path) else {
+            log::warn!("[stt-download] unsafe repo path for {model}@{quantization}: {repo_path}");
+            return StreamOutcome::Failed;
+        };
+        let url = format!("https://huggingface.co/{owner}/{name}/resolve/main/{encoded_path}");
 
         // HEAD (no-redirect) for the cache-layout identity: commit + etag + size live on HF's 302,
         // not on the CDN response. Any status is fine as long as those headers are present.
@@ -883,12 +943,28 @@ impl DownloadManager {
             Err(_) => return StreamOutcome::Failed,
         };
         let repo_folder = format!("models--{owner}--{name}");
+        if !is_safe_hf_cache_component(&repo_folder) {
+            log::warn!("[stt-download] unsafe HF repo cache folder for {model}: {repo_folder}");
+            return StreamOutcome::Failed;
+        }
         let base = cache_dir.join(&repo_folder);
-        let snapshot = base.join("snapshots").join(&commit).join(repo_path);
-        let ref_file = base.join("refs").join("main");
+        let Some(snapshot) = checked_snapshot_path(&base, &commit, repo_path) else {
+            log::warn!(
+                "[stt-download] unsafe snapshot cache path for {model}@{quantization}: {repo_path}"
+            );
+            return StreamOutcome::Failed;
+        };
+        let Some(ref_file) = checked_cache_path(&base, &["refs", "main"]) else {
+            log::warn!("[stt-download] unsafe refs cache path for {model}@{quantization}");
+            return StreamOutcome::Failed;
+        };
         // Staging file for the in-flight transfer (NOT a kept blob — it's renamed to `snapshot` on
         // completion). `blobs/<etag>.incomplete` matches hf-hub's staging path for cross-resume.
-        let staging = base.join("blobs").join(format!("{etag}.incomplete"));
+        let staging_name = format!("{etag}.incomplete");
+        let Some(staging) = checked_cache_path(&base, &["blobs", &staging_name]) else {
+            log::warn!("[stt-download] unsafe staging cache path for {model}@{quantization}");
+            return StreamOutcome::Failed;
+        };
 
         // Final file already present (a prior run finished it, or it survived): ensure refs/main and
         // settle. After a delete the snapshot is gone, so this won't fire → a real re-download runs.
@@ -944,10 +1020,10 @@ impl DownloadManager {
                 return StreamOutcome::Failed;
             }
         };
-        if report.outcome != TransferOutcome::Paused {
-            if let Ok(mut partial_path) = handle.partial_path.lock() {
-                *partial_path = None;
-            }
+        if report.outcome != TransferOutcome::Paused
+            && let Ok(mut partial_path) = handle.partial_path.lock()
+        {
+            *partial_path = None;
         }
         match report.outcome {
             TransferOutcome::Cancelled => return StreamOutcome::Cancelled,
@@ -1103,26 +1179,75 @@ mod tests {
     }
 
     #[test]
+    fn header_commit_rejects_unsafe_cache_components() {
+        use reqwest::header::HeaderMap;
+        let mut h = HeaderMap::new();
+        h.insert(
+            "x-repo-commit",
+            "0123456789abcdef0123456789abcdef01234567".parse().unwrap(),
+        );
+        assert_eq!(
+            header_commit(&h),
+            Some("0123456789abcdef0123456789abcdef01234567".to_string())
+        );
+
+        let mut h = HeaderMap::new();
+        h.insert("x-repo-commit", "../outside".parse().unwrap());
+        assert_eq!(header_commit(&h), None);
+    }
+
+    #[test]
     fn parses_blobs_sibling_sizes() {
-        // A `?blobs=true` body: each sibling carries `rfilename` + `size`. Paths are normalized to
-        // forward slashes so they match the download plan's keys; a sibling with no `size` (the
-        // shape a non-`blobs` request returns) is skipped so the seed only covers known totals.
+        // A `?blobs=true` body: each sibling carries `rfilename` + `size`. Unsafe paths and siblings
+        // with no `size` (the shape a non-`blobs` request returns) are skipped so the seed only
+        // covers known safe totals.
         let body = serde_json::json!({
             "siblings": [
                 { "rfilename": "config.json", "size": 1234 },
                 { "rfilename": "onnx/encoder_model_fp16.onnx", "size": 59370049u64 },
                 { "rfilename": "onnx\\decoder_model_fp16.onnx", "size": 31u64 },
+                { "rfilename": "../outside.onnx", "size": 99u64 },
                 { "rfilename": "README.md" },
             ]
         });
         let sizes = parse_sibling_sizes(&body);
         assert_eq!(sizes.get("config.json"), Some(&1234));
         assert_eq!(sizes.get("onnx/encoder_model_fp16.onnx"), Some(&59370049));
-        // Backslash path normalized to the plan's forward-slash key.
-        assert_eq!(sizes.get("onnx/decoder_model_fp16.onnx"), Some(&31));
+        assert_eq!(sizes.get("onnx/decoder_model_fp16.onnx"), None);
+        assert_eq!(sizes.get("../outside.onnx"), None);
         // No `size` → not seeded (the caller falls back to the growing total for that file).
         assert_eq!(sizes.get("README.md"), None);
-        assert_eq!(sizes.len(), 3);
+        assert_eq!(sizes.len(), 2);
+    }
+
+    #[test]
+    fn cache_path_helpers_encode_and_contain_remote_components() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let base = dir.path().join("models--owner--repo");
+
+        assert_eq!(
+            encoded_repo_path("onnx/model file.onnx").as_deref(),
+            Some("onnx/model%20file.onnx")
+        );
+        assert_eq!(encoded_repo_path("../outside.onnx"), None);
+
+        let safe = checked_snapshot_path(
+            &base,
+            "0123456789abcdef0123456789abcdef01234567",
+            "onnx/model.onnx",
+        )
+        .expect("safe snapshot");
+        assert!(safe.starts_with(&base));
+        assert!(
+            checked_snapshot_path(
+                &base,
+                "0123456789abcdef0123456789abcdef01234567",
+                "../outside.onnx",
+            )
+            .is_none()
+        );
+        assert!(checked_cache_path(&base, &["blobs", "etag.incomplete"]).is_some());
+        assert!(checked_cache_path(&base, &["blobs", "../etag.incomplete"]).is_none());
     }
 
     #[test]

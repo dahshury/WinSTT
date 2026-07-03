@@ -70,10 +70,10 @@ pub fn try_decrypt_secret(stored: &str) -> Result<String, String> {
 
 #[cfg(target_os = "windows")]
 fn seal_bytes(plain: &[u8]) -> Result<Vec<u8>, String> {
-    use windows::core::w;
     use windows::Win32::Security::Cryptography::{
-        CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+        CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData,
     };
+    use windows::core::w;
 
     let input = CRYPT_INTEGER_BLOB {
         cbData: plain
@@ -107,7 +107,7 @@ fn seal_bytes(plain: &[u8]) -> Result<Vec<u8>, String> {
 #[cfg(target_os = "windows")]
 fn open_bytes(sealed: &[u8]) -> Result<Vec<u8>, String> {
     use windows::Win32::Security::Cryptography::{
-        CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+        CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptUnprotectData,
     };
 
     let input = CRYPT_INTEGER_BLOB {

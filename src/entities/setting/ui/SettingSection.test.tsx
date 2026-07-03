@@ -73,7 +73,7 @@ describe("SettingSection", () => {
 		expect(screen.getByTestId("surface-level").textContent).toBe("3");
 	});
 
-	test("divided mode stacks rows without in-section separators", () => {
+	test("divided mode separates rows with hairline dividers", () => {
 		const { container } = render(
 			<SettingSection divided title="Audio">
 				<div>First</div>
@@ -81,8 +81,7 @@ describe("SettingSection", () => {
 			</SettingSection>,
 		);
 
-		expect(container.querySelector(".divide-y")).toBeNull();
-		expect(container.querySelector(".divide-surface-1")).toBeNull();
+		expect(container.querySelector(".divide-y.divide-divider")).not.toBeNull();
 	});
 
 	test("dims content when section has a toggle that is off (pointer-events disabled)", () => {

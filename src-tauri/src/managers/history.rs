@@ -13,7 +13,7 @@
 use anyhow::Result;
 use log::{debug, info};
 use rusqlite::Connection;
-use rusqlite_migration::{Migrations, M};
+use rusqlite_migration::{M, Migrations};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::fs;
@@ -44,7 +44,9 @@ static MIGRATIONS: &[M<'_>] = &[
     ),
     M::up("ALTER TABLE transcription_history ADD COLUMN post_processed_text TEXT;"),
     M::up("ALTER TABLE transcription_history ADD COLUMN post_process_prompt TEXT;"),
-    M::up("ALTER TABLE transcription_history ADD COLUMN post_process_requested BOOLEAN NOT NULL DEFAULT 0;"),
+    M::up(
+        "ALTER TABLE transcription_history ADD COLUMN post_process_requested BOOLEAN NOT NULL DEFAULT 0;",
+    ),
     // JSON telemetry of the LLM post-process pass — `{model, processingMs, tokens}`.
     // NULL when no LLM ran. Reshaped into the history footer's model/duration/speed chips.
     M::up("ALTER TABLE transcription_history ADD COLUMN llm_meta TEXT;"),

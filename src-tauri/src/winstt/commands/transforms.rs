@@ -52,8 +52,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::managers::history::HistoryManager;
 use crate::winstt::context::{ContextMode, ContextReader};
 use crate::winstt::llm::{
-    self, build_dictation_system_prompt, build_system_prompt, PresetEntry as LlmPresetEntry,
-    PresetKey as LlmPresetKey,
+    self, PresetEntry as LlmPresetEntry, PresetKey as LlmPresetKey, build_dictation_system_prompt,
+    build_system_prompt,
 };
 use crate::winstt::managers::{ContextManager, LlmManager};
 use crate::winstt::observability::IssueBuilder;
@@ -69,7 +69,7 @@ mod capture;
 mod convert;
 mod provider;
 
-use capture::{capture_selection, plan_transform_paste, TransformCapture, TransformPastePlan};
+use capture::{TransformCapture, TransformPastePlan, capture_selection, plan_transform_paste};
 use convert::{
     openrouter_options, openrouter_options_from_preview, parse_effort, parse_provider, saved_model,
     to_llm_effort, transforms_presets,
@@ -203,7 +203,11 @@ fn ensure_preview_changed_if_required(
     Err(format!(
         "LLM preview returned the input unchanged even though active tone/modifier instructions were selected (provider={}, model={}).",
         provider_label(provider),
-        if model.trim().is_empty() { "auto" } else { model.trim() }
+        if model.trim().is_empty() {
+            "auto"
+        } else {
+            model.trim()
+        }
     ))
 }
 
@@ -212,7 +216,11 @@ fn preview_timeout_error(provider: LlmProvider, model: &str) -> String {
         "LLM preview timed out after {} seconds (provider={}, model={}). Try a smaller model or set thinking effort to Off/Low.",
         PLAYGROUND_PREVIEW_TIMEOUT.as_secs(),
         provider_label(provider),
-        if model.trim().is_empty() { "auto" } else { model.trim() }
+        if model.trim().is_empty() {
+            "auto"
+        } else {
+            model.trim()
+        }
     )
 }
 
@@ -892,14 +900,16 @@ mod tests {
 
     #[test]
     fn unchanged_preview_is_allowed_for_neutral_cleanup() {
-        assert!(ensure_preview_changed_if_required(
-            false,
-            "Already clean.",
-            "Already clean.",
-            LlmProvider::Ollama,
-            "gemma4:12b",
-        )
-        .is_ok());
+        assert!(
+            ensure_preview_changed_if_required(
+                false,
+                "Already clean.",
+                "Already clean.",
+                LlmProvider::Ollama,
+                "gemma4:12b",
+            )
+            .is_ok()
+        );
     }
 
     #[test]

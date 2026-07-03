@@ -12,7 +12,7 @@ use libloading::Library;
 
 use super::config::LegacyPorcupinePaths;
 use super::presets::normalize_name;
-use super::{cstring_path, WakeWordResult};
+use super::{WakeWordResult, cstring_path};
 
 type PvPorcupineInit = unsafe extern "C" fn(
     *const c_char,

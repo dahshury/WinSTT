@@ -1,4 +1,5 @@
 import {
+	AiEditingIcon,
 	AiMicIcon,
 	Clock01Icon,
 	CpuIcon,
@@ -8,6 +9,7 @@ import {
 	StopWatchIcon,
 	TextFontIcon,
 } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
 import { VList } from "virtua";
@@ -17,7 +19,10 @@ import {
 	hasPrivacyMarkers,
 	historyTagLabel,
 } from "@/entities/transcription-history";
-import { deleteTranscriptionHistoryEntry } from "@/shared/api/ipc-client";
+import {
+	deleteTranscriptionHistoryEntry,
+	deleteTransformHistoryEntry,
+} from "@/shared/api/ipc-client";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import {
 	makerFromModelId,
@@ -48,11 +53,17 @@ import {
 } from "./HistoryRowButtons";
 import { RowTranscript } from "./RowTranscript";
 
+export type HistoryTableEntryKind = "transcription" | "transform";
+
+export interface HistoryTableItem {
+	entry: TranscriptionHistoryEntry;
+	kind: HistoryTableEntryKind;
+}
+
 interface HistoryTableProps {
 	emptyLabel?: string;
-	entries: TranscriptionHistoryEntry[];
-	onDeleteEntry?: (id: string) => void;
-	showAudioStats?: boolean;
+	entries: HistoryTableItem[];
+	onDeleteEntry?: (id: string, kind: HistoryTableEntryKind) => void;
 }
 
 // Initial size estimate only — virtua re-measures every mounted row, so rows
@@ -82,7 +93,7 @@ function formatTimestamp(ms: number): string {
 
 interface HistoryRowProps {
 	copyLabel: string;
-	entry: TranscriptionHistoryEntry;
+	item: HistoryTableItem;
 }
 
 interface MetaLabels {
@@ -92,34 +103,36 @@ interface MetaLabels {
 	speed: string;
 	sttModel: string;
 	time: string;
+	transform: string;
 	words: string;
 	wpm: string;
 }
 
 interface HistoryRowFullProps extends HistoryRowProps {
 	labels: MetaLabels;
-	onDeleteEntry: (id: string) => void;
+	onDeleteEntry: (id: string, kind: HistoryTableEntryKind) => void;
 	outputDeviceId: string;
-	showAudioStats: boolean;
 	viewFullLabel: string;
 	viewOriginalLabel: string;
 	viewProcessedLabel: string;
 }
 
 function HistoryRow({
-	entry,
 	copyLabel,
+	item,
 	labels,
 	onDeleteEntry,
 	outputDeviceId,
-	showAudioStats,
 	viewFullLabel,
 	viewOriginalLabel,
 	viewProcessedLabel,
 }: HistoryRowFullProps) {
+	const { entry, kind } = item;
+	const hasPlayableAudio =
+		kind === "transcription" && Boolean(entry.audioFilePath);
 	const playback = useHistoryPlayback(
 		entry.id,
-		Boolean(entry.audioFilePath),
+		hasPlayableAudio,
 		outputDeviceId,
 	);
 	const transcriptDiff = getEntryTranscriptDiff(entry);
@@ -137,6 +150,7 @@ function HistoryRow({
 	};
 	const tagLabel = historyTagLabel(entry.historyTag);
 	const sensitive = hasPrivacyMarkers(entry.privacyMarkers);
+	const showAudioStats = kind === "transcription";
 	const wpm = showAudioStats
 		? wordsPerMinute(entry.wordCount, entry.durationMs)
 		: 0;
@@ -235,13 +249,24 @@ function HistoryRow({
 	return (
 		<EntryCard footer={meta}>
 			<div className="flex items-start gap-3">
-				{entry.audioFilePath ? (
+				{kind === "transform" ? (
+					<span
+						aria-label={labels.transform}
+						className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent"
+						role="img"
+						title={labels.transform}
+					>
+						<HugeiconsIcon className="size-3.5" icon={AiEditingIcon} />
+					</span>
+				) : hasPlayableAudio ? (
 					<PlayButton
 						loading={playback.loading}
 						onToggle={handlePlaybackToggle}
 						playing={playback.playing}
 					/>
-				) : null}
+				) : (
+					<span aria-hidden className="size-7 shrink-0" />
+				)}
 				<RowTranscript
 					activeIndex={playback.activeIndex}
 					diff={transcriptDiff}
@@ -258,7 +283,7 @@ function HistoryRow({
 					</div>
 					<ButtonGroup
 						aria-label={copyLabel}
-						className="shrink-0"
+						className="shrink-0 ring-divider-strong [&>button+button]:relative [&>button+button]:before:absolute [&>button+button]:before:inset-x-2 [&>button+button]:before:top-0 [&>button+button]:before:h-px [&>button+button]:before:bg-divider-strong [&>button+button]:before:content-['']"
 						connected
 						orientation="vertical"
 					>
@@ -271,7 +296,10 @@ function HistoryRow({
 							/>
 						) : null}
 						<CopyButton label={copyLabel} text={displayText} />
-						<DeleteButton entryId={entry.id} onDelete={onDeleteEntry} />
+						<DeleteButton
+							entryId={entry.id}
+							onDelete={(id) => onDeleteEntry(id, kind)}
+						/>
 					</ButtonGroup>
 				</div>
 			</div>
@@ -283,21 +311,25 @@ export function HistoryTable({
 	emptyLabel,
 	entries,
 	onDeleteEntry,
-	showAudioStats = true,
 }: HistoryTableProps) {
 	const t = useTranslations("history");
 	const outputDeviceId = useSettingsStore(
 		(s) => s.settings.general.outputDeviceId,
 	);
-	// Most recent first; entries are stored chronologically by the main process.
-	const sorted = [...entries].reverse();
 	const copyLabel = t("copy");
 	const viewFullLabel = t("viewFull");
 	const viewOriginalLabel = t("viewOriginal");
 	const viewProcessedLabel = t("viewProcessed");
-	const deleteEntry =
+	const deleteEntry: (id: string, kind: HistoryTableEntryKind) => void =
 		onDeleteEntry ??
-		((id: string) => {
+		((id, kind) => {
+			if (kind === "transform") {
+				fireAndForget(
+					deleteTransformHistoryEntry(id),
+					"history.deleteTransform",
+				);
+				return;
+			}
 			fireAndForget(deleteTranscriptionHistoryEntry(id), "history.deleteEntry");
 		});
 	const labels: MetaLabels = {
@@ -307,19 +339,27 @@ export function HistoryTable({
 		speed: t("colSpeed"),
 		sttModel: t("colSttModel"),
 		time: t("colTime"),
+		transform: t("transformTableTitle"),
 		wpm: t("colWpm"),
 		words: t("colWords"),
 	};
 
-	const renderRow = (entry: TranscriptionHistoryEntry) => (
+	const sorted = entries
+		.map((item, index) => ({ index, item }))
+		.sort(
+			(a, b) =>
+				b.item.entry.timestamp - a.item.entry.timestamp || b.index - a.index,
+		)
+		.map(({ item }) => item);
+
+	const renderRow = (item: HistoryTableItem) => (
 		<HistoryRow
 			copyLabel={copyLabel}
-			entry={entry}
-			key={entry.id}
+			item={item}
+			key={`${item.kind}:${item.entry.id}`}
 			labels={labels}
 			onDeleteEntry={deleteEntry}
 			outputDeviceId={outputDeviceId}
-			showAudioStats={showAudioStats}
 			viewFullLabel={viewFullLabel}
 			viewOriginalLabel={viewOriginalLabel}
 			viewProcessedLabel={viewProcessedLabel}
@@ -367,5 +407,7 @@ export function HistoryTable({
 		);
 	}
 
-	return <EntryCardShell>{body}</EntryCardShell>;
+	// `bare`: the table sits inside a `boxed` section card, which is the single
+	// surface — a painted shell here would nest a second background.
+	return <EntryCardShell bare>{body}</EntryCardShell>;
 }

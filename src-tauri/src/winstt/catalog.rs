@@ -553,7 +553,7 @@ mod tests {
     #[test]
     fn picker_filters_sub_fp16_only_on_cuda() {
         let moon = find("moonshine-base").unwrap(); // ["","fp16","q4","bnb4","int8","uint8","q4f16"]
-                                                    // CUDA: only "" and fp16 survive (order preserved).
+        // CUDA: only "" and fp16 survive (order preserved).
         assert_eq!(
             picker_quantizations_for(moon, Accelerator::Cuda),
             vec!["", "fp16"]

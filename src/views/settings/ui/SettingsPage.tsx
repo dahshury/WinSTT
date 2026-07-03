@@ -204,16 +204,19 @@ function VocabularyTab(): ReactNode {
 	return (
 		<>
 			{llmCleanupEnabled ? null : (
-				<EncoderModelCard
-					enabled={encoderEnabled}
-					model={model}
-					onToggle={handleEncoderToggle}
-				/>
+				// Matches a section's own top gap so the encoder card sits the
+				// same distance below the page header as any first section does.
+				<div className="pt-8">
+					<EncoderModelCard
+						enabled={encoderEnabled}
+						model={model}
+						onToggle={handleEncoderToggle}
+					/>
+				</div>
 			)}
 			<div
 				className={cn(
-					!llmCleanupEnabled && "pt-5",
-					disabled && "pointer-events-none select-none opacity-50",
+					disabled && "settings-dim pointer-events-none select-none",
 				)}
 				{...(disabled ? { inert: true } : {})}
 			>
@@ -400,6 +403,7 @@ export function SettingsPage() {
 			icon: Mic01Icon,
 			tooltip: t("tabRecordingTooltip"),
 			keywords: keywords["recording"],
+			groupLabel: t("navDictation"),
 		},
 		{
 			key: "model",
@@ -443,6 +447,7 @@ export function SettingsPage() {
 			icon: KeyboardIcon,
 			tooltip: t("tabShortcutsTooltip"),
 			keywords: keywords["shortcuts"],
+			groupLabel: t("navInterface"),
 		},
 		{
 			key: "appearance",
@@ -459,6 +464,7 @@ export function SettingsPage() {
 			tooltip: t("tabHistoryTooltip"),
 			keywords: keywords["history"],
 			groupEnd: true,
+			groupLabel: t("navActivity"),
 		},
 		{
 			key: "integrations",
@@ -466,6 +472,7 @@ export function SettingsPage() {
 			icon: PlugSocketIcon,
 			tooltip: t("tabIntegrationsTooltip"),
 			keywords: keywords["integrations"],
+			groupLabel: t("navApplication"),
 		},
 		{
 			key: "about",
@@ -475,6 +482,11 @@ export function SettingsPage() {
 			keywords: keywords["about"],
 		},
 	];
+
+	// Drives the content-side page header. Keyed off the DEFERRED tab so the
+	// title swaps in the same render as the panel body — never a frame ahead of
+	// it during a tab switch.
+	const contentLink = links.find((l) => l.key === contentTab) ?? links[0];
 
 	return (
 		<SurfaceProvider value={1}>
@@ -531,8 +543,25 @@ export function SettingsPage() {
 								rubberBandOnTouch
 								verticalOnly
 								verticalScrollbarClassName="mb-3 me-1"
-								viewportClassName="px-6 pt-6 pb-6"
+								viewportClassName="px-7 pt-6 pb-5"
 							>
+								{/* Page header — the active tab's name + one-line summary lead
+									    the content column, giving each page a clear top-level title
+									    above its section headings (the sidebar rail alone is easy to
+									    lose track of). The title keeps clear of the floating close
+									    button via pe-10. */}
+								{canRenderSettings && contentLink ? (
+									<header className="flex flex-col gap-1.5 pb-0">
+										<h2 className="min-w-0 pe-10 font-semibold text-[22px] text-foreground leading-tight tracking-[-0.02em]">
+											{contentLink.label}
+										</h2>
+										{contentLink.tooltip ? (
+											<p className="max-w-xl text-body-sm text-foreground-muted">
+												{contentLink.tooltip}
+											</p>
+										) : null}
+									</header>
+								) : null}
 								{/* The panel is focusable (tabIndex 0) for a11y; its content is
 									    individually focusable, so suppress the UA focus ring that would
 									    otherwise draw a bright rectangle around the whole tab. */}

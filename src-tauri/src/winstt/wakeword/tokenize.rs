@@ -216,10 +216,10 @@ pub fn tokenize_phrase_for_kws_model(
     model: &KwsModelPaths,
 ) -> Result<String, String> {
     let bpe_path = model.bpe_model();
-    if bpe_path.exists() {
-        if let Ok(tokens) = tokenize_phrase_with_sentencepiece(phrase, &bpe_path) {
-            return Ok(tokens);
-        }
+    if bpe_path.exists()
+        && let Ok(tokens) = tokenize_phrase_with_sentencepiece(phrase, &bpe_path)
+    {
+        return Ok(tokens);
     }
     let vocab = load_token_vocabulary(&model.tokens)?;
     Ok(tokenize_phrase_with_vocabulary(phrase, &vocab))

@@ -25,7 +25,7 @@
 mod download;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -38,18 +38,18 @@ use crate::winstt::audio_conditioning::{NormalizedFrame, StreamingRmsNormalizer}
 use crate::winstt::commands::events::WakeWordDetectedPayload;
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::wakeword::{
-    build_keywords_file, keyword_label, resolve_phrase, sensitivity_to_threshold,
-    tokenize_phrase_for_kws_model, wakeword_runtime_engine_for_name, KeywordSpec, KwsModelPaths,
-    LegacyPorcupineDetector, LegacyPorcupinePaths, WakeWordConfig, WakeWordDetector,
-    WakeWordProvider, WakeWordResult, WakeWordRuntimeEngine, KWS_BUNDLE_DIRNAME, WAKE_WORD_PRESETS,
+    KWS_BUNDLE_DIRNAME, KeywordSpec, KwsModelPaths, LegacyPorcupineDetector, LegacyPorcupinePaths,
+    WAKE_WORD_PRESETS, WakeWordConfig, WakeWordDetector, WakeWordProvider, WakeWordResult,
+    WakeWordRuntimeEngine, build_keywords_file, keyword_label, resolve_phrase,
+    sensitivity_to_threshold, tokenize_phrase_for_kws_model, wakeword_runtime_engine_for_name,
 };
 
 use download::{
-    cleanup_partial_download_for_engine, clear_download_snapshot, download_model_bundle_for_engine,
-    emit_wakeword_model_status, hydrate_paused_snapshot_from_partial, mark_download_complete,
-    mark_download_failed, mark_download_paused, model_status_from_snapshot,
-    partial_download_bytes_for_engine, reset_download_snapshot, status_for_app,
-    wakeword_model_root_dir, WakeWordDownloadOutcome,
+    WakeWordDownloadOutcome, cleanup_partial_download_for_engine, clear_download_snapshot,
+    download_model_bundle_for_engine, emit_wakeword_model_status,
+    hydrate_paused_snapshot_from_partial, mark_download_complete, mark_download_failed,
+    mark_download_paused, model_status_from_snapshot, partial_download_bytes_for_engine,
+    reset_download_snapshot, status_for_app, wakeword_model_root_dir,
 };
 
 pub(super) const KWS_MODEL_DOWNLOAD_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2";
@@ -469,10 +469,10 @@ impl WakeWordManager {
         let was = self.armed.swap(armed, Ordering::AcqRel);
         if armed && !was {
             self.reset_audio_normalizer();
-            if let Ok(mut guard) = self.detector.lock() {
-                if let Some(det) = guard.as_mut() {
-                    det.reset();
-                }
+            if let Ok(mut guard) = self.detector.lock()
+                && let Some(det) = guard.as_mut()
+            {
+                det.reset();
             }
         }
         was

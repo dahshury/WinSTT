@@ -15,14 +15,14 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 
 use super::{
-    WakeWordDownloadPhase, WakeWordModelDownloadSnapshot, WakeWordModelStatusPayload,
     DOWNLOAD_CONTROL_CANCEL, DOWNLOAD_CONTROL_PAUSE, DOWNLOAD_PROGRESS_EMIT_INTERVAL,
     KWS_MODEL_DOWNLOAD_SHA256, KWS_MODEL_DOWNLOAD_URL, LEGACY_PORCUPINE_WHEEL_SHA256,
-    LEGACY_PORCUPINE_WHEEL_URL, WAKEWORD_MODEL_STATUS_EVENT,
+    LEGACY_PORCUPINE_WHEEL_URL, WAKEWORD_MODEL_STATUS_EVENT, WakeWordDownloadPhase,
+    WakeWordModelDownloadSnapshot, WakeWordModelStatusPayload,
 };
-use crate::winstt::downloads::{transfer_url, TransferControl, TransferOutcome, TransferRequest};
+use crate::winstt::downloads::{TransferControl, TransferOutcome, TransferRequest, transfer_url};
 use crate::winstt::wakeword::{
-    KwsModelPaths, LegacyPorcupinePaths, WakeWordRuntimeEngine, KWS_BUNDLE_DIRNAME,
+    KWS_BUNDLE_DIRNAME, KwsModelPaths, LegacyPorcupinePaths, WakeWordRuntimeEngine,
 };
 
 pub(super) fn wakeword_model_root_dir(app: &AppHandle) -> PathBuf {
@@ -621,9 +621,11 @@ mod tests {
     #[test]
     fn kws_download_hash_is_pinned_sha256_hex() {
         assert_eq!(KWS_MODEL_DOWNLOAD_SHA256.len(), 64);
-        assert!(KWS_MODEL_DOWNLOAD_SHA256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit()));
+        assert!(
+            KWS_MODEL_DOWNLOAD_SHA256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        );
     }
 
     #[test]
@@ -632,11 +634,13 @@ mod tests {
         let path = dir.path().join("wakeword.bin");
         fs::write(&path, b"wakeword").unwrap();
 
-        assert!(verify_sha256(
-            &path,
-            "d4ab8e6f44016607d98b969f31ffb9b3e6415636cfa711ae43c640d5ead8aa47"
-        )
-        .is_ok());
+        assert!(
+            verify_sha256(
+                &path,
+                "d4ab8e6f44016607d98b969f31ffb9b3e6415636cfa711ae43c640d5ead8aa47"
+            )
+            .is_ok()
+        );
     }
 
     #[test]

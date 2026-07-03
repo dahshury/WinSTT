@@ -1,7 +1,7 @@
 use crate::input::{self, EnigoState};
 #[cfg(target_os = "linux")]
 use crate::settings::TypingTool;
-use crate::settings::{get_settings, AutoSubmitKey, ClipboardHandling, PasteMethod};
+use crate::settings::{AutoSubmitKey, ClipboardHandling, PasteMethod, get_settings};
 use enigo::{Direction, Enigo, Key, Keyboard};
 use log::{info, warn};
 #[cfg(target_os = "linux")]
@@ -168,7 +168,7 @@ fn paste_via_clipboard(
             _ => {
                 return Err(ClipboardError::Config(
                     "Invalid paste method for clipboard paste".into(),
-                ))
+                ));
             }
         }
     }

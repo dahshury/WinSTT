@@ -230,6 +230,7 @@ export function ResetSection(): ReactNode {
 				title={ts("removeApplicationDataTitle")}
 			/>
 			<SettingSection
+				boxed
 				description={ts("applicationDataDescription")}
 				divided
 				icon={Delete02Icon}
@@ -259,6 +260,7 @@ export function ResetSection(): ReactNode {
 				/>
 			</SettingSection>
 			<SettingSection
+				boxed
 				description={ts("resetDefaultsSummary")}
 				icon={ArrowTurnBackwardIcon}
 				title={ts("resetDefaultsTitle")}

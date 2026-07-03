@@ -1,7 +1,7 @@
 use super::*;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // --- catalog invariants ---
 
@@ -211,8 +211,10 @@ fn cloud_status_classification_by_http() {
 #[test]
 fn cloud_status_classification_prefers_detail_status() {
     // a scoped key missing voices_read 401s with missing_permissions — NOT invalid
-    assert!(classify_cloud_status(401, Some("missing_permissions"))
-        .contains("missing a required permission"));
+    assert!(
+        classify_cloud_status(401, Some("missing_permissions"))
+            .contains("missing a required permission")
+    );
     assert!(classify_cloud_status(402, Some("quota_exceeded")).contains("quota exceeded"));
     assert!(classify_cloud_status(404, Some("voice_not_found")).contains("voice not found"));
 }

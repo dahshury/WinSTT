@@ -1,4 +1,4 @@
-use rustfft::{num_complex::Complex32, Fft, FftPlanner};
+use rustfft::{Fft, FftPlanner, num_complex::Complex32};
 use std::sync::Arc;
 
 const DB_MIN: f32 = -55.0;
@@ -12,9 +12,9 @@ pub struct AudioVisualiser {
     bucket_ranges: Vec<(usize, usize)>,
     fft_input: Vec<Complex32>,
     noise_floor: Vec<f32>,
+    levels: Vec<f32>,
     buffer: Vec<f32>,
     window_size: usize,
-    buckets: usize,
 }
 
 impl AudioVisualiser {
@@ -71,13 +71,13 @@ impl AudioVisualiser {
             bucket_ranges,
             fft_input: vec![Complex32::new(0.0, 0.0); window_size],
             noise_floor: vec![-40.0; buckets], // Initialize to reasonable noise floor
+            levels: vec![0.0; buckets],
             buffer: Vec::with_capacity(window_size * 2),
             window_size,
-            buckets,
         }
     }
 
-    pub fn feed(&mut self, samples: &[f32]) -> Option<Vec<f32>> {
+    pub fn feed(&mut self, samples: &[f32]) -> Option<f32> {
         // Add new samples to buffer
         self.buffer.extend_from_slice(samples);
 
@@ -102,7 +102,7 @@ impl AudioVisualiser {
         self.fft.process(&mut self.fft_input);
 
         // Compute power spectrum and bucket levels
-        let mut buckets = vec![0.0; self.buckets];
+        self.levels.fill(0.0);
 
         for (bucket_idx, &(start_bin, end_bin)) in self.bucket_ranges.iter().enumerate() {
             if start_bin >= end_bin || end_bin > self.fft_input.len() / 2 {
@@ -134,18 +134,28 @@ impl AudioVisualiser {
 
             // Map configurable dB range to 0-1 with gain and curve shaping
             let normalized = ((db - DB_MIN) / (DB_MAX - DB_MIN)).clamp(0.0, 1.0);
-            buckets[bucket_idx] = (normalized * GAIN).powf(CURVE_POWER).clamp(0.0, 1.0);
+            self.levels[bucket_idx] = (normalized * GAIN).powf(CURVE_POWER).clamp(0.0, 1.0);
         }
 
         // Apply light smoothing to reduce jitter
-        for i in 1..buckets.len() - 1 {
-            buckets[i] = buckets[i] * 0.7 + buckets[i - 1] * 0.15 + buckets[i + 1] * 0.15;
+        if self.levels.len() > 2 {
+            for i in 1..self.levels.len() - 1 {
+                self.levels[i] =
+                    self.levels[i] * 0.7 + self.levels[i - 1] * 0.15 + self.levels[i + 1] * 0.15;
+            }
         }
+
+        let peak = self
+            .levels
+            .iter()
+            .copied()
+            .fold(0.0_f32, f32::max)
+            .clamp(0.0, 1.0);
 
         // Clear processed samples from buffer
         self.buffer.clear();
 
-        Some(buckets)
+        Some(peak)
     }
 
     pub fn reset(&mut self) {
