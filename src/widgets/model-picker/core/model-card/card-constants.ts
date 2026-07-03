@@ -71,12 +71,3 @@ export const GROUP_HEADER_CLASSES = cn(
 	"border-border/70 border-b",
 	"backdrop-blur-md",
 );
-
-/** Covers only the native scrollbar gutter beside a docked group header. It
- *  uses the same fill and bottom edge as the header, but skips the header's
- *  ring/shadow so it doesn't read as a separate rectangle. */
-export const GROUP_HEADER_SCROLLBAR_MASK_CLASSES = cn(
-	"model-picker-group-header-surface pointer-events-none absolute top-0 end-0 z-overlay h-8 w-6",
-	"border-border/70 border-b",
-	"backdrop-blur-md",
-);
