@@ -10,6 +10,12 @@ const originalStop = commands.stopMicrophoneLevelMonitor;
 let startCalls = 0;
 let stopCalls = 0;
 
+async function flushReactEffects() {
+	await act(async () => {
+		await Promise.resolve();
+	});
+}
+
 beforeEach(() => {
 	_resetInputDevicesCacheForTests();
 	startCalls = 0;
@@ -29,12 +35,13 @@ afterEach(() => {
 });
 
 describe("DevicePickerWindow", () => {
-	test("does NOT start the mic level monitor while hidden (prewarmed at boot)", () => {
+	test("does NOT start the mic level monitor while hidden (prewarmed at boot)", async () => {
 		render(
 			<IntlProvider>
 				<DevicePickerWindow />
 			</IntlProvider>,
 		);
+		await flushReactEffects();
 		expect(startCalls).toBe(0);
 	});
 
@@ -44,12 +51,13 @@ describe("DevicePickerWindow", () => {
 				<DevicePickerWindow />
 			</IntlProvider>,
 		);
-		act(() => {
+		await flushReactEffects();
+		await act(async () => {
 			window.dispatchEvent(new Event("winstt:device-picker-shown"));
 		});
 		await waitFor(() => expect(startCalls).toBeGreaterThan(0));
 		expect(stopCalls).toBe(0);
-		act(() => {
+		await act(async () => {
 			window.dispatchEvent(new Event("winstt:device-picker-hidden"));
 		});
 		await waitFor(() => expect(stopCalls).toBeGreaterThan(0));
