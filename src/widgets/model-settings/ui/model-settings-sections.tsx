@@ -117,11 +117,7 @@ export function DeviceSection({
 	update: UpdateModelFn;
 }): ReactNode {
 	return (
-		<SettingSection
-			boxed
-			icon={CpuSettingsIcon}
-			title={t("localAcceleration")}
-		>
+		<SettingSection boxed icon={CpuSettingsIcon} title={t("localAcceleration")}>
 			<FormControl
 				label={t("computeDevice")}
 				layout="row"

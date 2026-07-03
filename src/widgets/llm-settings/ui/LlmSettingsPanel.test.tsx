@@ -40,9 +40,11 @@ describe("LlmSettingsPanel", () => {
 
 		expect(screen.getAllByText("LLM Post-Processing")).toHaveLength(1);
 		expect(
-			(screen.getByPlaceholderText(
-				"Select or create preset…",
-			) as HTMLInputElement).disabled,
+			(
+				screen.getByPlaceholderText(
+					"Select or create preset…",
+				) as HTMLInputElement
+			).disabled,
 		).toBe(true);
 	});
 
@@ -62,13 +64,13 @@ describe("LlmSettingsPanel", () => {
 		expect(
 			Boolean(
 				playground.compareDocumentPosition(preset) &
-					Node.DOCUMENT_POSITION_FOLLOWING,
+				Node.DOCUMENT_POSITION_FOLLOWING,
 			),
 		).toBe(true);
 		expect(
 			Boolean(
 				preset.compareDocumentPosition(toggle) &
-					Node.DOCUMENT_POSITION_FOLLOWING,
+				Node.DOCUMENT_POSITION_FOLLOWING,
 			),
 		).toBe(true);
 	});

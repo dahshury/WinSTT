@@ -140,8 +140,7 @@
 		transparent
 	);
 	--shadow-model-picker-group-header:
-		inset 0 1px 0 0 oklch(100% 0 0 / 0.07),
-		0 2px 6px 0 oklch(0% 0 0 / 0.24);
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.07), 0 2px 6px 0 oklch(0% 0 0 / 0.24);
 	--color-settings-sidebar-bloom-strong: oklch(24% 0.014 265 / 0.62);
 	--color-settings-sidebar-bloom-mid: oklch(17.5% 0.014 265 / 0.24);
 	--color-settings-sidebar-bloom-soft: oklch(20% 0.014 265 / 0.48);

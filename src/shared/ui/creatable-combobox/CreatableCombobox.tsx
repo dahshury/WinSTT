@@ -175,7 +175,8 @@ export function CreatableCombobox({
 			return;
 		}
 		event.preventDefault();
-		const placement = dropTarget?.id === row.id ? dropTarget.placement : "after";
+		const placement =
+			dropTarget?.id === row.id ? dropTarget.placement : "after";
 		onReorder(draggedId, row.id, placement);
 		clearDragState();
 	};

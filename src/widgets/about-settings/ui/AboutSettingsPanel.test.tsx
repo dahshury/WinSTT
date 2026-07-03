@@ -289,9 +289,7 @@ describe("AboutSettingsPanel", () => {
 			fireEvent.click(screen.getByRole("button", { name: "Show more" }));
 
 			expect(detail.getAttribute("class")).not.toContain("line-clamp-4");
-			expect(
-				screen.getByRole("button", { name: "Show less" }),
-			).toBeDefined();
+			expect(screen.getByRole("button", { name: "Show less" })).toBeDefined();
 		} finally {
 			window.nativeBridge = previousNativeBridge;
 			tauriWindow.__TAURI_INTERNALS__.invoke = previousTauriInvoke;

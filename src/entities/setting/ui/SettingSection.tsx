@@ -101,7 +101,9 @@ export function SettingSection({
 			    section against the first). The page header supplies the gap
 			    above the very first section, so no `first:` reset here. */}
 			<section className="pt-8">
-				<header className={cn("flex items-center", boxed ? "gap-2 ps-1" : "gap-2.5")}>
+				<header
+					className={cn("flex items-center", boxed ? "gap-2 ps-1" : "gap-2.5")}
+				>
 					{icon && (
 						<HugeiconsIcon
 							aria-hidden="true"

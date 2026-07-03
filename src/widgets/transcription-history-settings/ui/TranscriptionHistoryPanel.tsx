@@ -15,10 +15,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
-import {
-	type ModelInfo,
-	useCatalogStore,
-} from "@/entities/model-catalog";
+import { type ModelInfo, useCatalogStore } from "@/entities/model-catalog";
 import {
 	DEFAULT_SETTINGS,
 	SettingField,
@@ -43,10 +40,7 @@ import {
 	getFamilyConfig,
 } from "@/widgets/model-picker/stt/lib/family-helpers";
 import { useHistoryStats } from "../api/use-history-stats";
-import {
-	computeAuthorUsage,
-	type ResolvedAuthor,
-} from "../lib/author-usage";
+import { computeAuthorUsage, type ResolvedAuthor } from "../lib/author-usage";
 import { computeStreak } from "../lib/streak";
 import { computeUsage } from "../lib/usage-breakdown";
 import { buildHeatmap, filterEntriesByDateRange } from "../lib/word-stats";

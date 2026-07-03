@@ -305,7 +305,10 @@ export function ModelListContentVirtualized({
 				verticalScrollbarClassName="mt-8 mb-1"
 				viewportClassName="overscroll-contain"
 				viewportRef={scrollViewportRef}
-				viewportStyle={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
+				viewportStyle={{
+					touchAction: "pan-y",
+					WebkitOverflowScrolling: "touch",
+				}}
 			>
 				<Virtualizer
 					data={virtualItems}

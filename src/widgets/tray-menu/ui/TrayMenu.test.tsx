@@ -78,9 +78,9 @@ describe("TrayMenu", () => {
 			/^Check for Updates/,
 			/^Quit/,
 		]) {
-			expect(screen.getByRole("button", { name }).querySelector("svg")).not.toBe(
-				null,
-			);
+			expect(
+				screen.getByRole("button", { name }).querySelector("svg"),
+			).not.toBe(null);
 		}
 
 		for (const name of ["PTT", "Toggle", "Listen", "Wake Word"]) {

@@ -273,7 +273,9 @@ export function reorderSavedConfigurations(
 		return [...configs];
 	}
 	const withoutSource = configs.filter((config) => config.id !== id);
-	const targetIndex = withoutSource.findIndex((config) => config.id === targetId);
+	const targetIndex = withoutSource.findIndex(
+		(config) => config.id === targetId,
+	);
 	if (targetIndex < 0) {
 		return [...configs];
 	}

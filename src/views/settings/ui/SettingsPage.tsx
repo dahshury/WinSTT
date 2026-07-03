@@ -422,10 +422,7 @@ function useSettingsWindowMotion(onClosed: () => void): {
 			setMotionPhase("closed");
 		};
 		const maybeReplayOpen = () => {
-			if (
-				waitingForReopenRef.current ||
-				phaseRef.current === "closed"
-			) {
+			if (waitingForReopenRef.current || phaseRef.current === "closed") {
 				waitingForReopenRef.current = false;
 				playOpen();
 			}

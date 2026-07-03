@@ -58,11 +58,13 @@ describe("DictionaryTable", () => {
 
 		expect(previous.hasAttribute("disabled")).toBe(true);
 		expect(current.getAttribute("aria-current")).toBe("page");
-		expect(within(pagination).getByRole("button", { name: "Page 2 of 8" }))
-			.toBeDefined();
+		expect(
+			within(pagination).getByRole("button", { name: "Page 2 of 8" }),
+		).toBeDefined();
 		expect(within(pagination).getByText("...")).toBeDefined();
-		expect(within(pagination).getByRole("button", { name: "Page 8 of 8" }))
-			.toBeDefined();
+		expect(
+			within(pagination).getByRole("button", { name: "Page 8 of 8" }),
+		).toBeDefined();
 		expect(next.hasAttribute("disabled")).toBe(false);
 
 		fireEvent.click(

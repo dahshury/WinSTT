@@ -197,7 +197,9 @@ describe("ModelPicker popup animation", () => {
 	test("inline detached surfaces do not run their own dropdown animation", () => {
 		renderPicker(false, true);
 
-		const inlinePanel = document.querySelector('[data-slot="model-picker-inline"]');
+		const inlinePanel = document.querySelector(
+			'[data-slot="model-picker-inline"]',
+		);
 
 		expect(inlinePanel).not.toBeNull();
 		expect(inlinePanel?.className).not.toContain("t-dropdown");

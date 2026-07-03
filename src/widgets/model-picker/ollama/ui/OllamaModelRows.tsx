@@ -1088,10 +1088,7 @@ export function ListBody(props: ListBodyProps) {
 			verticalScrollbarClassName="mt-8 mb-1"
 			viewportClassName="flex min-h-0 flex-col"
 		>
-			<Combobox.List
-				className="min-h-full p-0"
-				data-slot="ollama-model-list"
-			>
+			<Combobox.List className="min-h-full p-0" data-slot="ollama-model-list">
 				{/* A global sort flattens EVERY model into one sorted column (matching the
 			    STT picker), so the Favorites group — which is intrinsically unsorted /
 			    starred-order — is suppressed while sorting; the favorited models still

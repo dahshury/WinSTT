@@ -456,7 +456,9 @@ export function SearchableSelect({
 												)}
 									</Combobox.List>
 								</Combobox.Popup>
-								{groups ? <PopupScrollbarHeaderMask level={popupLevel} /> : null}
+								{groups ? (
+									<PopupScrollbarHeaderMask level={popupLevel} />
+								) : null}
 							</div>
 						</Combobox.Positioner>
 					</SurfaceProvider>

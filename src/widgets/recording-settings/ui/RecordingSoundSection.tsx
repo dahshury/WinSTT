@@ -47,8 +47,7 @@ export function RecordingSoundSection({
 						}
 						onReset={() =>
 							update({
-								recordingSoundPath:
-									DEFAULT_SETTINGS.general.recordingSoundPath,
+								recordingSoundPath: DEFAULT_SETTINGS.general.recordingSoundPath,
 							})
 						}
 					/>

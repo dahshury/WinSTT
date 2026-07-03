@@ -124,11 +124,7 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 
 	return (
 		<div className="flex flex-col gap-3" onBlur={onBlur} ref={wrapperRef}>
-			<ButtonGroup
-				aria-label="Table controls"
-				className="self-end"
-				connected
-			>
+			<ButtonGroup aria-label="Table controls" className="self-end" connected>
 				<DataGridFilterMenu table={table} />
 				<DataGridSortMenu table={table} />
 				<DataGridRowHeightMenu table={table} />

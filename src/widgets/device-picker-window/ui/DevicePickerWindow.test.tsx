@@ -85,9 +85,10 @@ beforeEach(() => {
 		({}) as Awaited<
 			ReturnType<typeof commands.winsttGetSettings>
 		>) satisfies typeof commands.winsttGetSettings;
-	commands.getAudioDevices = (async () => []) satisfies typeof commands.getAudioDevices;
-	commands.refreshAudioDevices = (async () =>
-		[]) satisfies typeof commands.refreshAudioDevices;
+	commands.getAudioDevices =
+		(async () => []) satisfies typeof commands.getAudioDevices;
+	commands.refreshAudioDevices =
+		(async () => []) satisfies typeof commands.refreshAudioDevices;
 	commands.resizeWindow = (async () => ({
 		status: "ok",
 		data: null,

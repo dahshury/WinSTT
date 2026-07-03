@@ -233,7 +233,9 @@ describe("ProcessingExtrasPanel context-awareness scope", () => {
 		clickScope("Allow list");
 		// The scope + allow-list config must not be pointer-events-disabled, or the
 		// user could never add an app to switch context awareness back on.
-		const wrapper = getVisibleText("Allow list").closest(".pointer-events-none");
+		const wrapper = getVisibleText("Allow list").closest(
+			".pointer-events-none",
+		);
 		expect(wrapper).toBeNull();
 	});
 });
