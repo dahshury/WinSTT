@@ -84,9 +84,9 @@ pub(crate) use self::wakeword::{
 // re-exports keep the historical `crate::winstt::commands::settings::X` paths the
 // route-layer callers and a few legacy sites still use; the constants are also
 // re-exported here for secret sentinel consumers.
+pub(crate) use crate::winstt::settings_store::SECRET_PRESENT_SENTINEL;
 pub use crate::winstt::settings_store::WINSTT_SETTINGS_KEY;
 pub(crate) use crate::winstt::settings_store::read_settings_raw;
-pub(crate) use crate::winstt::settings_store::SECRET_PRESENT_SENTINEL;
 pub use crate::winstt::settings_store::{
     init_settings_store, read_settings, recording_mode, seed_defaults, write_core_settings,
 };

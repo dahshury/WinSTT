@@ -3,7 +3,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { type ModelInfo, useCatalogStore } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
-import { ProcessingExtrasPanel } from "./ProcessingExtrasPanel";
+import { useTranslations } from "use-intl";
+import {
+	ContextAwarenessSection,
+	ProcessingExtrasPanel,
+} from "./ProcessingExtrasPanel";
 
 function renderPanel() {
 	return render(
@@ -126,7 +130,32 @@ describe("ProcessingExtrasPanel formatting rules", () => {
 });
 
 describe("ProcessingExtrasPanel context-awareness scope", () => {
+	function renderContextAwarenessSection() {
+		function ContextHarness() {
+			const tg = useTranslations("general");
+			const enabled = useSettingsStore(
+				(s) => s.settings.general?.contextAwareness ?? false,
+			);
+			const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
+			return (
+				<ContextAwarenessSection
+					enabled={enabled}
+					onCancel={() => updateGeneral({ contextAwareness: false })}
+					onConfirm={() => updateGeneral({ contextAwareness: true })}
+					tg={tg}
+				/>
+			);
+		}
+
+		return render(
+			<IntlProvider>
+				<ContextHarness />
+			</IntlProvider>,
+		);
+	}
+
 	function setupContext(generalOverrides: Record<string, unknown> = {}) {
+		useCatalogStore.setState({ isLoaded: false, models: [] });
 		useSettingsStore.setState({
 			settings: {
 				...DEFAULT_SETTINGS,
@@ -166,7 +195,7 @@ describe("ProcessingExtrasPanel context-awareness scope", () => {
 	beforeEach(() => setupContext());
 
 	test("switching to Allow list with no apps actually disables context awareness", () => {
-		renderPanel();
+		renderContextAwarenessSection();
 		expect(toggleChecked()).toBe("true");
 
 		clickScope("Allow list");
@@ -179,7 +208,7 @@ describe("ProcessingExtrasPanel context-awareness scope", () => {
 	});
 
 	test("switching back to Black list re-enables context awareness", () => {
-		renderPanel();
+		renderContextAwarenessSection();
 		clickScope("Allow list");
 		expect(storedGeneral().contextAwareness).toBe(false);
 
@@ -191,7 +220,7 @@ describe("ProcessingExtrasPanel context-awareness scope", () => {
 
 	test("Allow list with apps already selected stays enabled", () => {
 		setupContext({ contextAllowList: ["chrome.exe"] });
-		renderPanel();
+		renderContextAwarenessSection();
 
 		clickScope("Allow list");
 		expect(storedGeneral().contextAppMode).toBe("selected-only");
@@ -200,13 +229,11 @@ describe("ProcessingExtrasPanel context-awareness scope", () => {
 	});
 
 	test("scope config stays interactive in the Allow-list dead state", () => {
-		renderPanel();
+		renderContextAwarenessSection();
 		clickScope("Allow list");
 		// The scope + allow-list config must not be pointer-events-disabled, or the
 		// user could never add an app to switch context awareness back on.
-		const wrapper = getVisibleText("Allow list").closest(
-			".pointer-events-none",
-		);
+		const wrapper = getVisibleText("Allow list").closest(".pointer-events-none");
 		expect(wrapper).toBeNull();
 	});
 });

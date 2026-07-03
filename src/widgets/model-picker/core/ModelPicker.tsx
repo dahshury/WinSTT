@@ -38,13 +38,14 @@ export interface ModelPickerProps<TItem, TValue> {
 
 const DEFAULT_POPUP_HEIGHT = "h-[min(620px,var(--available-height))]";
 const DEFAULT_POPUP_WIDTH = "w-[max(520px,var(--anchor-width))]";
-const POPUP_BASE_CLASSES = cn(
-	"t-dropdown relative z-popover flex flex-col overflow-hidden rounded-xl p-0",
+const PANEL_SURFACE_CLASSES = cn(
+	"relative z-popover flex flex-col overflow-hidden rounded-xl p-0",
 	"max-w-[calc(100vw-32px)]",
 	"bg-gradient-to-b from-surface-3/95 to-surface-2/98",
 	"shadow-model-picker-popup ring-1 ring-overlay-foreground/[0.08] ring-inset",
 	"backdrop-blur-md backdrop-saturate-150",
 );
+const POPUP_BASE_CLASSES = cn("t-dropdown", PANEL_SURFACE_CLASSES);
 
 export function ModelPicker<TItem, TValue = TItem | null>({
 	activeFiltersSlot,
@@ -74,8 +75,6 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 }: ModelPickerProps<TItem, TValue>) {
 	const [internalOpen, setInternalOpen] = useState(false);
 	const [internalSearch, setInternalSearch] = useState("");
-	const [popupSide, setPopupSide] = useState<"top" | "bottom">("bottom");
-	const triggerWrapperRef = useRef<HTMLDivElement>(null);
 	const popupNodeRef = useRef<HTMLElement | null>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -90,7 +89,6 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 		filter ??
 		((item: TItem, query: string) =>
 			matchesFuzzySearch(itemToStringLabel?.(item) ?? String(item), query));
-	const popupOrigin = popupSide === "top" ? "bottom-left" : "top-left";
 	const popupStateClass =
 		!inline && !effectiveOpen ? "is-closing" : effectiveOpen ? "is-open" : "";
 	const renderPanelControls = inline || effectiveOpen;
@@ -114,20 +112,6 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 			cancelAnimationFrame(frame);
 		};
 	}, [effectiveOpen]);
-
-	useLayoutEffect(() => {
-		if (inline || !effectiveOpen) {
-			return;
-		}
-		const anchor = triggerWrapperRef.current;
-		if (!anchor) {
-			return;
-		}
-		const rect = anchor.getBoundingClientRect();
-		const spaceAbove = rect.top;
-		const spaceBelow = window.innerHeight - rect.bottom;
-		setPopupSide(spaceAbove > spaceBelow ? "top" : "bottom");
-	}, [effectiveOpen, inline]);
 
 	useEffect(() => {
 		if (inline || !effectiveOpen || hasRenderedCollection) {
@@ -219,12 +203,10 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 				{inline ? (
 					<div
 						className={cn(
-							POPUP_BASE_CLASSES,
-							"is-open",
+							PANEL_SURFACE_CLASSES,
 							popupHeightClass,
 							popupWidthClass,
 						)}
-						data-origin="top-left"
 						data-slot="model-picker-inline"
 						ref={setPopupNode}
 					>
@@ -232,14 +214,13 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 					</div>
 				) : (
 					<>
-						<div className="w-full" ref={triggerWrapperRef}>
-							{trigger}
-						</div>
+						<div className="w-full">{trigger}</div>
 						<Combobox.Portal keepMounted>
 							<Combobox.Positioner
 								align="start"
 								className="z-popover outline-none"
-								side={popupSide}
+								collisionPadding={8}
+								side="bottom"
 								sideOffset={6}
 							>
 								<Combobox.Popup
@@ -249,7 +230,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 										popupHeightClass,
 										popupWidthClass,
 									)}
-									data-origin={popupOrigin}
+									data-origin="top-left"
 									data-slot="model-picker-popup"
 									ref={setPopupNode}
 								>

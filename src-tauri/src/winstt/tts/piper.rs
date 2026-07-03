@@ -317,7 +317,7 @@ fn phonemes_to_ids(
     if let Some(pad) = id_map.get(PIPER_PAD) {
         ids.extend_from_slice(pad);
     }
-    let pad = id_map.get(PIPER_PAD).map(Vec::as_slice).unwrap_or(&[]);
+    let pad = id_map.get(PIPER_PAD).map_or(&[] as &[i64], Vec::as_slice);
     for ch in phonemes.chars() {
         if let Some(phoneme_ids) = char_id_map.get(&ch) {
             ids.extend_from_slice(phoneme_ids);

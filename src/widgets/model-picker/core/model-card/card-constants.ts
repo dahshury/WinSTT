@@ -7,21 +7,21 @@ import { cn } from "@/shared/lib/cn";
  *
  * Each card is a solid, elevated *specimen*: a real surface step (surface-3
  * over the surface-2 popup) with a tinted depth shadow, so it reads as a
- * discrete object. Hover lifts it 1px and deepens the shadow; press settles it
- * back with a subtle scale (12-principles: transform/opacity only, ease-out
- * ≤150ms, motion-reduce guarded).
+ * discrete object. Hover deepens the shadow without moving the card; press
+ * settles it with a subtle scale (12-principles: transform/opacity only,
+ * ease-out ≤150ms, motion-reduce guarded).
  */
 export const CARD_BASE = cn(
 	// `group` enables the hover-reveal of `group-hover:` descendants (e.g. the
 	// Ollama delete button) — without it that button stays invisible/unclickable.
-	"group relative my-1.5 flex cursor-pointer flex-col gap-2.5 overflow-hidden rounded-lg px-3.5 py-3 outline-none",
+	"group relative mx-1.5 my-1.5 flex cursor-pointer flex-col gap-2.5 overflow-hidden rounded-lg px-3.5 py-3 outline-none",
 	"border border-border bg-surface-3 shadow-surface-2",
 	"[content-visibility:auto] [contain-intrinsic-size:0_136px]",
 	"transition-[transform,border-color,background-color,box-shadow] duration-150 ease-out",
-	"hover:-translate-y-px hover:border-border-hover hover:bg-surface-4 hover:shadow-surface-3",
-	"active:translate-y-0 active:scale-[0.99]",
+	"hover:border-border-hover hover:bg-surface-4 hover:shadow-surface-3",
+	"active:scale-[0.99]",
 	"data-[highlighted]:border-border-hover data-[highlighted]:bg-surface-4 data-[highlighted]:shadow-surface-3",
-	"motion-reduce:transition-none motion-reduce:active:scale-100 motion-reduce:hover:translate-y-0",
+	"motion-reduce:transition-none motion-reduce:active:scale-100",
 );
 
 /** Active selection: the fill warms to a Docker-blue tint and gains a ring.
@@ -50,11 +50,11 @@ export const CARD_NESTED = cn(
 	"data-[highlighted]:bg-surface-3",
 );
 
-/** Desaturates a broken/unavailable card and parks the hover-lift (a
- *  non-selectable card shouldn't feel tactile) without changing dimensions. */
+/** Desaturates a broken/unavailable card and parks the hover surface change (a
+ *  non-selectable card shouldn't feel tactile). */
 export const CARD_UNAVAILABLE = cn(
 	"cursor-not-allowed opacity-55",
-	"hover:-translate-y-0 hover:border-border hover:bg-surface-3 hover:shadow-surface-2",
+	"hover:border-border hover:bg-surface-3 hover:shadow-surface-2",
 );
 
 /** The recessed "how to get it" shelf: a subtly-darkened ledge that bleeds to

@@ -79,6 +79,13 @@ const STAR_IDLE = cn(
 	"text-foreground-muted opacity-0",
 	"focus-visible:opacity-100 group-hover/tile:opacity-100",
 );
+const RAIL_BUTTON_GROUP_CLASSES = cn(
+	"rounded-lg shadow-sm",
+	"[&_[data-rail-favorite-button]]:rounded-full",
+	"[&_[data-rail-favorite-button]]:shadow-sm",
+);
+const RAIL_SURFACE_LEVEL = 2;
+const RAIL_BACKGROUND_CLASSES = "bg-surface-2";
 
 /**
  * Shared vertical group rail for every picker in the package. Replaces the
@@ -87,12 +94,12 @@ const STAR_IDLE = cn(
  * vocabulary, the same active-state styling, the same favorites toggle,
  * and the same click-to-jump affordance.
  *
- * Surfaces: the rail column is transparent (it shares the popup substrate and
- * is delineated only by its end divider); every tile is a surface lifted one
- * step above that substrate, so the provider icons sit *on* a surface of their
- * own instead of floating directly on the rail. Count badge / favorite star /
- * fallback initial each lift a further step so they read as their own small
- * surfaces stacked on the tile, never as bare pills.
+ * Surfaces: the rail column paints the same model-picker body surface as the
+ * adjacent sidebar/list substrate instead of the near-black base surface. Every
+ * tile is a surface lifted one step above that substrate, so the provider icons
+ * sit *on* a surface of their own instead of floating directly on the rail.
+ * Count badge / favorite star / fallback initial each lift a further step so
+ * they read as their own small surfaces stacked on the tile, never as bare pills.
  */
 export function GroupRail({
 	activeId,
@@ -129,17 +136,15 @@ export function GroupRail({
 	const topItems = [...pinnedItems, ...favoriteItems];
 
 	return (
-		// Fixed surface baseline so the rail looks IDENTICAL regardless of where the
-		// picker is embedded: STT opens in its own (substrate-1) window, while Ollama
-		// nests in the LLM settings panel (a higher substrate) — which otherwise made
-		// Ollama's author tiles render lighter/washed than STT's. Pinning to 1 yields
-		// a recessed surface-1 sidebar with surface-2 tiles in every picker.
-		<SurfaceProvider value={1}>
+		// Fixed surface baseline so the rail tiles look identical regardless of where
+		// the picker is embedded, while the rail fill matches the surrounding
+		// picker/sidebar substrate instead of forcing a near-black strip.
+		<SurfaceProvider value={RAIL_SURFACE_LEVEL}>
 			<div
 				aria-orientation="vertical"
 				className={cn(
 					"flex w-16 shrink-0 flex-col self-stretch border-divider border-e",
-					surfaceBg(1),
+					RAIL_BACKGROUND_CLASSES,
 				)}
 				role="tablist"
 			>
@@ -152,7 +157,13 @@ export function GroupRail({
 					style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
 				>
 					<div className="flex flex-col items-center gap-3 px-1.5 py-2.5">
-						<GroupRailButtonGroup>
+						<ButtonGroup
+							className={RAIL_BUTTON_GROUP_CLASSES}
+							connected
+							orientation="vertical"
+							role="presentation"
+							separator="inset-strong"
+						>
 							{topItems.map((item) => (
 								<GroupRailTile
 									isActive={item.id === activeId}
@@ -167,9 +178,15 @@ export function GroupRail({
 									}
 								/>
 							))}
-						</GroupRailButtonGroup>
+						</ButtonGroup>
 						{otherItems.length > 0 ? (
-							<GroupRailButtonGroup>
+							<ButtonGroup
+								className={RAIL_BUTTON_GROUP_CLASSES}
+								connected
+								orientation="vertical"
+								role="presentation"
+								separator="inset-strong"
+							>
 								{otherItems.map((item) => (
 									<GroupRailTile
 										isActive={item.id === activeId}
@@ -182,36 +199,12 @@ export function GroupRail({
 										}
 									/>
 								))}
-							</GroupRailButtonGroup>
+							</ButtonGroup>
 						) : null}
 					</div>
 				</div>
 			</div>
 		</SurfaceProvider>
-	);
-}
-
-function GroupRailButtonGroup({ children }: { children: ReactNode }) {
-	return (
-		<ButtonGroup
-			className={cn(
-				"divide-y-0 rounded-lg shadow-sm ring-divider-strong",
-				"[&>[data-rail-tile]+[data-rail-tile]]:relative",
-				"[&>[data-rail-tile]+[data-rail-tile]]:before:absolute",
-				"[&>[data-rail-tile]+[data-rail-tile]]:before:inset-x-2",
-				"[&>[data-rail-tile]+[data-rail-tile]]:before:top-0",
-				"[&>[data-rail-tile]+[data-rail-tile]]:before:h-px",
-				"[&>[data-rail-tile]+[data-rail-tile]]:before:bg-divider-strong",
-				"[&>[data-rail-tile]+[data-rail-tile]]:before:content-['']",
-				"[&_[data-rail-favorite-button]]:rounded-full",
-				"[&_[data-rail-favorite-button]]:shadow-sm",
-			)}
-			connected
-			orientation="vertical"
-			role="presentation"
-		>
-			{children}
-		</ButtonGroup>
 	);
 }
 
@@ -249,8 +242,8 @@ function GroupRailTile({
 	return (
 		<div
 			className="group/tile relative h-12 w-12 shrink-0"
+			data-button-group-item="true"
 			data-rail-id={item.id}
-			data-rail-tile="true"
 		>
 			<Tooltip>
 				<TooltipTrigger
@@ -263,6 +256,7 @@ function GroupRailTile({
 								TILE_BASE_CLASSES,
 								isActive ? TILE_ACTIVE : idleTile,
 							)}
+							data-button-group-segment="true"
 							data-rail-tab="true"
 							onClick={() => onClick(item.id)}
 							role="tab"

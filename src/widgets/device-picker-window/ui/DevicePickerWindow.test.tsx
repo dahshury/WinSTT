@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { act, render } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { commands } from "@/bindings";
+import { _resetInputDevicesCacheForTests } from "@/entities/audio-device/model/use-input-devices";
 import { DevicePickerWindow } from "./DevicePickerWindow";
 
 const originalStart = commands.startMicrophoneLevelMonitor;
@@ -10,6 +11,7 @@ let startCalls = 0;
 let stopCalls = 0;
 
 beforeEach(() => {
+	_resetInputDevicesCacheForTests();
 	startCalls = 0;
 	stopCalls = 0;
 	commands.startMicrophoneLevelMonitor = (async () => {
@@ -23,6 +25,7 @@ beforeEach(() => {
 afterEach(() => {
 	commands.startMicrophoneLevelMonitor = originalStart;
 	commands.stopMicrophoneLevelMonitor = originalStop;
+	_resetInputDevicesCacheForTests();
 });
 
 describe("DevicePickerWindow", () => {
@@ -35,7 +38,7 @@ describe("DevicePickerWindow", () => {
 		expect(startCalls).toBe(0);
 	});
 
-	test("starts metering when shown and stops when hidden again", () => {
+	test("starts metering when shown and stops when hidden again", async () => {
 		render(
 			<IntlProvider>
 				<DevicePickerWindow />
@@ -44,11 +47,11 @@ describe("DevicePickerWindow", () => {
 		act(() => {
 			window.dispatchEvent(new Event("winstt:device-picker-shown"));
 		});
-		expect(startCalls).toBeGreaterThan(0);
+		await waitFor(() => expect(startCalls).toBeGreaterThan(0));
 		expect(stopCalls).toBe(0);
 		act(() => {
 			window.dispatchEvent(new Event("winstt:device-picker-hidden"));
 		});
-		expect(stopCalls).toBeGreaterThan(0);
+		await waitFor(() => expect(stopCalls).toBeGreaterThan(0));
 	});
 });

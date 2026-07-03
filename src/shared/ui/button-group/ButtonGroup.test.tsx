@@ -46,4 +46,17 @@ describe("ButtonGroup", () => {
 		expect(screen.queryByRole("toolbar")).toBeNull();
 		expect(screen.getByRole("button", { name: "Only" })).toBeDefined();
 	});
+
+	test("can render inset strong separators for connected controls", () => {
+		render(
+			<ButtonGroup connected orientation="vertical" separator="inset-strong">
+				<button type="button">Top</button>
+				<button type="button">Bottom</button>
+			</ButtonGroup>,
+		);
+
+		const toolbar = screen.getByRole("toolbar");
+		expect(toolbar.className).toContain("ring-divider-strong");
+		expect(toolbar.className).toContain("[&>button+button]:before:h-px");
+	});
 });

@@ -720,7 +720,6 @@
 		padding-top: 0.2rem;
 	}
 
-
 	/* Every row shares one fixed height. The active row is NOT taller and the
 	   label/icon metrics stay identical, so selecting a tab cannot resize it. */
 	.settings-sidebar-tab {
@@ -1259,6 +1258,34 @@
 .t-dropdown[data-origin="bottom-right"] {
 	--dropdown-slide-y: 6px;
 	transform-origin: bottom right;
+}
+.t-dropdown[data-side="bottom"] {
+	--dropdown-slide-y: -6px;
+	transform-origin: top left;
+}
+.t-dropdown[data-side="bottom"][data-align="center"] {
+	transform-origin: top center;
+}
+.t-dropdown[data-side="bottom"][data-align="end"] {
+	transform-origin: top right;
+}
+.t-dropdown[data-side="top"] {
+	--dropdown-slide-y: 6px;
+	transform-origin: bottom left;
+}
+.t-dropdown[data-side="top"][data-align="center"] {
+	transform-origin: bottom center;
+}
+.t-dropdown[data-side="top"][data-align="end"] {
+	transform-origin: bottom right;
+}
+.t-dropdown[data-side="right"] {
+	--dropdown-slide-y: 0px;
+	transform-origin: left top;
+}
+.t-dropdown[data-side="left"] {
+	--dropdown-slide-y: 0px;
+	transform-origin: right top;
 }
 
 .t-dropdown.is-open,

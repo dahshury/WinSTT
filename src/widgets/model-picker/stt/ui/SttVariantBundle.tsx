@@ -214,9 +214,9 @@ export function SttVariantBundle({
 	// highlight on the primary so the bundle is findable at a glance even
 	// when its strongest-highlight selected sibling lives below the chevron.
 	const hasSelectedVariant = siblings.some((m) => m.id === selectedId);
-	// Wrapper is a layout-only Fragment so the primary card keeps its own
-	// `mx-2 my-1` outer margins — every SttModelCard in the list (singleton
-	// or bundle primary) now resolves to the same `parent − 16px` width.
+	// Wrapper is a layout-only Fragment so the primary card keeps the shared
+	// ModelCard margins — singletons and bundle primaries resolve to the same
+	// width.
 	// The bundle affordance lives in the chevron + "+N variants" chip in
 	// the card's actions slot, plus the indented siblings panel below.
 	return (

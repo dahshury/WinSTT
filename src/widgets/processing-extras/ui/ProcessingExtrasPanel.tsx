@@ -208,7 +208,7 @@ interface ContextAwarenessSectionProps {
 	tg: GeneralT;
 }
 
-function ContextAwarenessSection({
+export function ContextAwarenessSection({
 	disabled = false,
 	disabledTooltip,
 	enabled,

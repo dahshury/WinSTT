@@ -283,9 +283,10 @@ function HistoryRow({
 					</div>
 					<ButtonGroup
 						aria-label={copyLabel}
-						className="shrink-0 ring-divider-strong [&>button+button]:relative [&>button+button]:before:absolute [&>button+button]:before:inset-x-2 [&>button+button]:before:top-0 [&>button+button]:before:h-px [&>button+button]:before:bg-divider-strong [&>button+button]:before:content-['']"
+						className="shrink-0"
 						connected
 						orientation="vertical"
+						separator="inset-strong"
 					>
 						{hasOriginal ? (
 							<SwapButton

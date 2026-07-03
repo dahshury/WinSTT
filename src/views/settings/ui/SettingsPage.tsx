@@ -18,8 +18,11 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import {
 	lazy,
 	Suspense,
+	useCallback,
 	useDeferredValue,
 	useEffect,
+	useRef,
+	useState,
 	type ReactNode,
 } from "react";
 import { useTranslations } from "use-intl";
@@ -331,6 +334,137 @@ function SettingsHydrationPanel({
 	);
 }
 
+type SettingsWindowMotionPhase = "closed" | "open" | "closing";
+
+function modalCloseDurationMs(): number {
+	const reducedMotion = window.matchMedia?.(
+		"(prefers-reduced-motion: reduce)",
+	).matches;
+	if (reducedMotion) {
+		return 0;
+	}
+	const raw = window
+		.getComputedStyle(document.documentElement)
+		.getPropertyValue("--modal-close-dur")
+		.trim();
+	if (raw.endsWith("ms")) {
+		return Number.parseFloat(raw) || 150;
+	}
+	if (raw.endsWith("s")) {
+		return (Number.parseFloat(raw) || 0.15) * 1000;
+	}
+	return 150;
+}
+
+function settingsMotionClassName(phase: SettingsWindowMotionPhase): string {
+	switch (phase) {
+		case "open":
+			return "is-open";
+		case "closing":
+			return "is-closing";
+		case "closed":
+			return "";
+	}
+}
+
+function useSettingsWindowMotion(onClosed: () => void): {
+	motionClassName: string;
+	requestClose: () => void;
+} {
+	const [phase, setPhase] = useState<SettingsWindowMotionPhase>("closed");
+	const phaseRef = useRef<SettingsWindowMotionPhase>("closed");
+	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const openFrameRef = useRef<number | null>(null);
+	const waitingForReopenRef = useRef(false);
+
+	const setMotionPhase = useCallback((next: SettingsWindowMotionPhase) => {
+		phaseRef.current = next;
+		setPhase(next);
+	}, []);
+
+	const clearCloseTimer = useCallback(() => {
+		if (closeTimerRef.current !== null) {
+			clearTimeout(closeTimerRef.current);
+			closeTimerRef.current = null;
+		}
+	}, []);
+
+	const clearOpenFrame = useCallback(() => {
+		if (openFrameRef.current !== null) {
+			cancelAnimationFrame(openFrameRef.current);
+			openFrameRef.current = null;
+		}
+	}, []);
+
+	const playOpen = useCallback(() => {
+		clearCloseTimer();
+		clearOpenFrame();
+		setMotionPhase("closed");
+		openFrameRef.current = requestAnimationFrame(() => {
+			openFrameRef.current = null;
+			setMotionPhase("open");
+		});
+	}, [clearCloseTimer, clearOpenFrame, setMotionPhase]);
+
+	useEffect(() => {
+		playOpen();
+		return () => {
+			clearCloseTimer();
+			clearOpenFrame();
+		};
+	}, [clearCloseTimer, clearOpenFrame, playOpen]);
+
+	useEffect(() => {
+		const markClosed = () => {
+			waitingForReopenRef.current = true;
+			clearCloseTimer();
+			clearOpenFrame();
+			setMotionPhase("closed");
+		};
+		const maybeReplayOpen = () => {
+			if (
+				waitingForReopenRef.current ||
+				phaseRef.current === "closed"
+			) {
+				waitingForReopenRef.current = false;
+				playOpen();
+			}
+		};
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === "hidden") {
+				markClosed();
+				return;
+			}
+			maybeReplayOpen();
+		};
+		document.addEventListener("visibilitychange", handleVisibilityChange);
+		window.addEventListener("focus", maybeReplayOpen);
+		return () => {
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
+			window.removeEventListener("focus", maybeReplayOpen);
+		};
+	}, [clearCloseTimer, clearOpenFrame, playOpen, setMotionPhase]);
+
+	const requestClose = useCallback(() => {
+		if (phaseRef.current === "closing" || phaseRef.current === "closed") {
+			return;
+		}
+		clearOpenFrame();
+		setMotionPhase("closing");
+		closeTimerRef.current = setTimeout(() => {
+			closeTimerRef.current = null;
+			setMotionPhase("closed");
+			waitingForReopenRef.current = true;
+			onClosed();
+		}, modalCloseDurationMs());
+	}, [clearOpenFrame, onClosed, setMotionPhase]);
+
+	return {
+		motionClassName: settingsMotionClassName(phase),
+		requestClose,
+	};
+}
+
 export function SettingsPage() {
 	const isLoaded = useSettingsStore((s) => s.isLoaded);
 	const hydrationStatus = useSettingsHydrationStore((s) => s.status);
@@ -366,8 +500,10 @@ export function SettingsPage() {
 	// panel on screen while the next one's (prefetched, microtask-fast) chunk
 	// resolves — no blank fallback flash on the swap.
 	const contentTab = useDeferredValue(activeTab);
-	const closeActivation = useTouchActivation(windowCloseSelf);
-	useEscapeToClose(windowCloseSelf);
+	const { motionClassName, requestClose } =
+		useSettingsWindowMotion(windowCloseSelf);
+	const closeActivation = useTouchActivation(requestClose);
+	useEscapeToClose(requestClose);
 
 	// Once the window can render, warm every panel chunk in the background so the
 	// first click on any tab is instant. Deferred to idle so it never competes
@@ -490,7 +626,12 @@ export function SettingsPage() {
 
 	return (
 		<SurfaceProvider value={1}>
-			<div className="noise-overlay settings-window-shell flex h-dvh min-h-dvh bg-surface-1">
+			<div
+				className={cn(
+					"t-modal noise-overlay settings-window-shell flex h-dvh min-h-dvh bg-surface-1",
+					motionClassName,
+				)}
+			>
 				{/* Keep the settings shell visible while backend settings hydrate. */}
 				<Tabs.Root
 					className="flex flex-1 overflow-hidden"

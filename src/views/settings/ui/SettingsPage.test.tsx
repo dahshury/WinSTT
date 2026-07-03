@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import {
 	DEFAULT_SETTINGS,
@@ -15,6 +15,20 @@ function renderSettingsPage() {
 			<SettingsPage />
 		</IntlProvider>,
 	);
+}
+
+function settingsShell(): HTMLElement {
+	const shell = document.querySelector<HTMLElement>(".settings-window-shell");
+	if (!shell) {
+		throw new Error("settings shell did not render");
+	}
+	return shell;
+}
+
+async function nextAnimationFrame(): Promise<void> {
+	await act(async () => {
+		await new Promise((resolve) => requestAnimationFrame(resolve));
+	});
 }
 
 describe("SettingsPage", () => {
@@ -96,5 +110,39 @@ describe("SettingsPage", () => {
 			"settings backend failed",
 		);
 		expect(screen.queryByText("Recording Mode")).toBeNull();
+	});
+
+	test("replays the modal open animation after the kept-alive window closes", async () => {
+		useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isLoaded: true });
+		useSettingsHydrationStore.setState({ error: null, status: "unavailable" });
+		document.documentElement.style.setProperty("--modal-close-dur", "1ms");
+
+		try {
+			renderSettingsPage();
+			await nextAnimationFrame();
+
+			expect(settingsShell().className).toContain("t-modal");
+			expect(settingsShell().className).toContain("is-open");
+
+			fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+			expect(settingsShell().className).toContain("is-closing");
+
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+			});
+
+			expect(settingsShell().className).not.toContain("is-open");
+			expect(settingsShell().className).not.toContain("is-closing");
+
+			act(() => {
+				window.dispatchEvent(new FocusEvent("focus"));
+			});
+			await nextAnimationFrame();
+
+			expect(settingsShell().className).toContain("is-open");
+		} finally {
+			document.documentElement.style.removeProperty("--modal-close-dur");
+		}
 	});
 });

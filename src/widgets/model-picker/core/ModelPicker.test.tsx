@@ -194,6 +194,16 @@ describe("ModelPicker popup animation", () => {
 		expect(screen.getByTestId("heavy-list")).toBeDefined();
 	});
 
+	test("inline detached surfaces do not run their own dropdown animation", () => {
+		renderPicker(false, true);
+
+		const inlinePanel = document.querySelector('[data-slot="model-picker-inline"]');
+
+		expect(inlinePanel).not.toBeNull();
+		expect(inlinePanel?.className).not.toContain("t-dropdown");
+		expect(inlinePanel?.hasAttribute("data-origin")).toBe(false);
+	});
+
 	test("scrolls the selected model to the top of the picker list", () => {
 		const { container } = render(
 			<div data-slot="model-picker-popup">

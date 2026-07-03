@@ -260,9 +260,7 @@ fn create_audio_recorder(
                         .fetch_add(1, Ordering::Relaxed)
                         .is_multiple_of(90)
                     {
-                        log::debug!(
-                            "[audio] mic peak level = {level:.3}"
-                        );
+                        log::debug!("[audio] mic peak level = {level:.3}");
                     }
                 }
             }
