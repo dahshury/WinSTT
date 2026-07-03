@@ -134,6 +134,14 @@
 	--color-settings-card-bottom: oklch(14% 0.015 265);
 	--color-settings-card-overlay-bloom: oklch(30% 0.012 265 / 0.14);
 	--color-settings-card-overlay-highlight: oklch(100% 0 0 / 0.035);
+	--color-model-picker-group-header-surface: color-mix(
+		in oklch,
+		var(--color-surface-5) 95%,
+		transparent
+	);
+	--shadow-model-picker-group-header:
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.07),
+		0 2px 6px 0 oklch(0% 0 0 / 0.24);
 	--color-settings-sidebar-bloom-strong: oklch(24% 0.014 265 / 0.62);
 	--color-settings-sidebar-bloom-mid: oklch(17.5% 0.014 265 / 0.24);
 	--color-settings-sidebar-bloom-soft: oklch(20% 0.014 265 / 0.48);
@@ -622,6 +630,11 @@
 	.model-picker-content-substrate > * {
 		position: relative;
 		z-index: 1;
+	}
+
+	.model-picker-group-header-surface {
+		background: var(--color-model-picker-group-header-surface);
+		box-shadow: var(--shadow-model-picker-group-header);
 	}
 
 	.settings-sidebar-shell {
