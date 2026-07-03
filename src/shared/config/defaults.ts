@@ -28,6 +28,7 @@ export const ONNX_QUANTIZATIONS = [
 	"fp16",
 	"fp16w",
 	"uint8",
+	"int4",
 	"q4",
 	"q4f16",
 	"bnb4",

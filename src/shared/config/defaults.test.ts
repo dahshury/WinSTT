@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	DEFAULT_HOTKEY,
 	LANGUAGES,
+	ONNX_QUANTIZATIONS,
 	STT_CONTROL_PORT,
 	STT_DATA_PORT,
 	WHISPER_MODELS,
@@ -61,5 +62,11 @@ describe("port and hotkey defaults", () => {
 		expect(Number.isInteger(STT_CONTROL_PORT)).toBe(true);
 		expect(Number.isInteger(STT_DATA_PORT)).toBe(true);
 		expect(STT_CONTROL_PORT).not.toBe(STT_DATA_PORT);
+	});
+});
+
+describe("ONNX_QUANTIZATIONS", () => {
+	test("includes int4 for Qwen3-ASR's int4-only ONNX export", () => {
+		expect(ONNX_QUANTIZATIONS).toContain("int4");
 	});
 });

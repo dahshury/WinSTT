@@ -1040,7 +1040,7 @@ fn validate_quantization(model_id: &str, quantization: &str) -> Result<(), Strin
         );
     }
     const KNOWN_QUANTIZATIONS: &[&str] = &[
-        "", "auto", "fp16", "fp16w", "q4", "q4f16", "bnb4", "int8", "uint8",
+        "", "auto", "fp16", "fp16w", "q4", "q4f16", "bnb4", "int8", "uint8", "int4",
     ];
     if !KNOWN_QUANTIZATIONS.contains(&quant) {
         return Err(format!("unknown model.onnxQuantization: {quant}"));
@@ -1412,6 +1412,14 @@ mod tests {
         settings.model.model = "tiny".into();
         settings.model.onnx_quantization = "int8".into();
         assert_validation_error(settings, "model.onnxQuantization");
+    }
+
+    #[test]
+    fn accepts_qwen3_int4_quantization() {
+        let mut settings = WinsttSettings::default();
+        settings.model.model = "qwen3-asr-0.6b".into();
+        settings.model.onnx_quantization = "int4".into();
+        assert!(validate_settings(&settings).is_ok());
     }
 
     #[test]

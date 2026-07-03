@@ -32,6 +32,7 @@ const quantArb: fc.Arbitrary<OnnxQuantization> = fc.constantFrom(
 	"int8",
 	"fp16",
 	"uint8",
+	"int4",
 	"q4",
 	"q4f16",
 	"bnb4",

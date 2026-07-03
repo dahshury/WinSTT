@@ -32,6 +32,7 @@ const BYTES_PER_PARAM_BY_QUANT: Record<string, number> = {
 	fp16w: 2,
 	int8: 1.2,
 	uint8: 1.2,
+	int4: 0.75,
 	q4: 0.75,
 	q4f16: 0.75,
 	bnb4: 0.75,

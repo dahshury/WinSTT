@@ -98,7 +98,7 @@ fn bytes_per_param(q: Quantization) -> f64 {
 }
 
 /// Accuracy/faithfulness weight (higher = more accurate) — mirrors the picker's
-/// `QUANTIZATION_WEIGHT` ("" 32, fp16 16, int8/uint8 8, q4f16 6, bnb4/q4 4).
+/// `QUANTIZATION_WEIGHT` ("" 32, fp16 16, int8/uint8 8, q4f16 6, int4/bnb4/q4 4).
 fn accuracy_weight(q: Quantization) -> u32 {
     match q {
         Quantization::Default => 32,

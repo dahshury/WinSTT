@@ -336,6 +336,19 @@ describe("SttModelCard precision-badge download affordance", () => {
 		expect(onSelect).not.toHaveBeenCalled();
 	});
 
+	test("renders the concrete int4 badge for Qwen3-style int4-only models", () => {
+		renderDownloadCard(
+			makeModel({
+				id: "qwen3-asr-0.6b",
+				displayName: "Qwen3-ASR 0.6B",
+				family: "qwen3",
+				availableQuantizations: ["int4"],
+				sizeBytesByQuantization: { int4: 2_020_098_572 },
+			}),
+		);
+		expect(screen.getByLabelText("Download int4 weights")).toBeDefined();
+	});
+
 	test("a downloading CONCRETE badge shows progress + pause/cancel, and stops being a download trigger", () => {
 		const snapshot: QuantDownloadSnapshot = {
 			downloadedBytes: 5,

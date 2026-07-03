@@ -403,8 +403,8 @@ pub struct ModelSettings {
     /// Transcriber engine (auto-derived from model id on load). HOT-SWAP.
     #[serde(default)]
     pub backend: TranscriberBackend,
-    /// ONNX file quant suffix (`""`, `int8`, `fp16`, `uint8`, `q4`, `q4f16`,
-    /// `bnb4`). Free-string (not an enum) — the catalog gates valid values per
+    /// ONNX file quant suffix (`""`, `int8`, `fp16`, `uint8`, `int4`, `q4`,
+    /// `q4f16`, `bnb4`). Free-string (not an enum) — the catalog gates valid values per
     /// model and the server resolves `""`/`auto`. HOT-SWAP.
     #[serde(default)]
     pub onnx_quantization: String,

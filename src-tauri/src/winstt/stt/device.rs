@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 /// The precision tier actually loaded. Maps to the HF file suffix
-/// (`""` → default fp32 export, `fp16`, `int8`, `q4`, `q4f16`, `bnb4`, `uint8`).
+/// (`""` → default fp32 export, `fp16`, `int8`, `int4`, `q4`, `q4f16`, `bnb4`, `uint8`).
 /// `None`/`Default` means "the unsuffixed export on disk".
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Quantization {

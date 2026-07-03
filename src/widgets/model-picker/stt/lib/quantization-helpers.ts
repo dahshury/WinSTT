@@ -37,6 +37,11 @@ const QUANTIZATION_LABELS: Record<
 		label: "uint8",
 		tooltip: "Unsigned 8-bit quantization. Similar trade-off to int8.",
 	},
+	int4: {
+		label: "int4",
+		tooltip:
+			"4-bit integer weight quantization. Very compact; used by models that do not ship a full-precision export.",
+	},
 	q4: {
 		label: "q4",
 		tooltip:
@@ -71,6 +76,7 @@ const QUANTIZATION_WEIGHT: Record<OnnxQuantization, number> = {
 	int8: 8,
 	uint8: 8,
 	q4f16: 6,
+	int4: 4,
 	bnb4: 4,
 	q4: 4,
 };
