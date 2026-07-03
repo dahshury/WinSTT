@@ -323,7 +323,7 @@ if ($ReleaseExists) {
         "--draft=$($Draft.ToString().ToLowerInvariant())",
         "--prerelease=$($Prerelease.ToString().ToLowerInvariant())"
     )
-    if (-not $Draft) {
+    if (-not $Draft -and -not $Prerelease) {
         $EditArgs += "--latest"
     }
     Invoke-Gh @EditArgs
@@ -334,8 +334,9 @@ if ($ReleaseExists) {
     }
     if ($Prerelease) {
         $CreateArgs += "--prerelease"
+        $CreateArgs += "--latest=false"
     }
-    if (-not $Draft) {
+    if (-not $Draft -and -not $Prerelease) {
         $CreateArgs += "--latest"
     }
     Invoke-Gh @CreateArgs

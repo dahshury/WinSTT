@@ -7,7 +7,7 @@ corrections, snippets, transcription history, optional LLM cleanup, and
 text-to-speech.
 
 **Docs:** [winstt.github.io/WinSTT](https://winstt.github.io/WinSTT/) ·
-**Latest alpha:** [GitHub Releases](https://github.com/dahshury/WinSTT/releases/latest)
+**Latest alpha:** [GitHub Releases](https://github.com/dahshury/WinSTT/releases)
 
 <p align="center">
   <img src="docs/public/screenshots/main.png" alt="WinSTT main window with a live audio visualizer, hotkey, microphone, and model footer." width="840">
