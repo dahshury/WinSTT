@@ -235,6 +235,8 @@ fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
 
 /// The `"mode"` string for a serve request line (mirrors the child's
 /// `Mode::parse_mode`). `Focused` is the default and serializes to `"focused"`.
+// Only the Windows context sidecar consumes serve request lines; unused on other targets.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn mode_str(mode: ContextMode) -> &'static str {
     match mode {
         ContextMode::Focused => "focused",
@@ -248,6 +250,7 @@ fn mode_str(mode: ContextMode) -> &'static str {
 /// (hwnd omitted when `None` / `0`; `ocr` omitted when false, its default). No
 /// JSON escaping is needed — every field is a number, a bool, or a fixed
 /// lowercase ASCII token.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn serve_request_line(id: u64, mode: ContextMode, hwnd: Option<u64>, ocr: bool) -> String {
     let ocr_field = if ocr { r#","ocr":true"# } else { "" };
     match hwnd.filter(|h| *h > 0) {

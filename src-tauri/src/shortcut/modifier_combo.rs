@@ -893,10 +893,14 @@ mod platform {
         Ok(false)
     }
 
+    // Stubs kept for a uniform module surface; the PTT low-level-hook combo state
+    // is a Windows-only concept, so nothing calls these on other platforms.
+    #[allow(dead_code)]
     pub fn ptt_hook_combo_key_down() -> Option<bool> {
         None
     }
 
+    #[allow(dead_code)]
     pub fn ptt_hook_combo_engaged() -> Option<bool> {
         None
     }
