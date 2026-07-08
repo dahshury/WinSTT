@@ -61,6 +61,11 @@ once_cell = "1"
 # `file:///…` workspace URIs and is compiled on every target, so this can't live
 # in the Windows-only block with the gitignore walk that uses it.
 percent-encoding = "2.3"
+# gitignore-aware workspace walk. The lib only walks on Windows (workspace_index
+# has a non-Windows stub), but the `workspace_tagging_e2e` example uses the
+# `ignore` builder directly and is compiled on every target by `--all-targets`,
+# so this can't be Windows-only either.
+ignore = "0.4.27"
 tauri = { version = "2.11.2", features = [
   "protocol-asset",
   "macos-private-api",
@@ -165,12 +170,6 @@ tauri-plugin-updater = "2.10.0"
 [target.'cfg(windows)'.dependencies]
 ort = { version = "=2.0.0-rc.12", features = ["directml"] }
 wasapi = "0.23.0"  # WASAPI loopback capture for listen mode
-# Workspace-wide IDE `@file` tagging (context/workspace_index.rs, Windows-only):
-# a gitignore-aware file walk (12x fewer files than a raw walk: 1,909 tracked vs
-# 24,003 raw in this repo) to map a spoken filename to a real workspace file.
-# (`percent-encoding` for the folder-URI decode is a general dep — see below —
-# because `decode_folder_uri` is compiled on every target.)
-ignore = "0.4.27"
 windows-core = "0.61.2"
 windows = { version = "0.61.3", features = [
   "Win32_Media_Audio_Endpoints",
