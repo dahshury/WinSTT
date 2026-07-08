@@ -57,6 +57,10 @@ serde = { version = "1", features = ["derive"] }
 
 [dependencies]
 once_cell = "1"
+# Cross-platform: `decode_folder_uri` (context/workspace_index.rs) percent-decodes
+# `file:///…` workspace URIs and is compiled on every target, so this can't live
+# in the Windows-only block with the gitignore walk that uses it.
+percent-encoding = "2.3"
 tauri = { version = "2.11.2", features = [
   "protocol-asset",
   "macos-private-api",
@@ -163,10 +167,10 @@ ort = { version = "=2.0.0-rc.12", features = ["directml"] }
 wasapi = "0.23.0"  # WASAPI loopback capture for listen mode
 # Workspace-wide IDE `@file` tagging (context/workspace_index.rs, Windows-only):
 # a gitignore-aware file walk (12x fewer files than a raw walk: 1,909 tracked vs
-# 24,003 raw in this repo) to map a spoken filename to a real workspace file, and
-# URL-decoding of the `file:///…` folder URIs in Cursor/Code workspaceStorage.
+# 24,003 raw in this repo) to map a spoken filename to a real workspace file.
+# (`percent-encoding` for the folder-URI decode is a general dep — see below —
+# because `decode_folder_uri` is compiled on every target.)
 ignore = "0.4.27"
-percent-encoding = "2.3"
 windows-core = "0.61.2"
 windows = { version = "0.61.3", features = [
   "Win32_Media_Audio_Endpoints",

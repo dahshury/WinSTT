@@ -21,8 +21,12 @@ use tauri::{AppHandle, Manager};
 use crate::winstt::context::MAX_BUFFER_BYTES;
 use crate::winstt::context::{
     ContextMode, ContextReader, WindowContextSnapshot, apply_context_app_policy,
-    capture_prompt_fragment, empty_context, format_context_for_prompt, parse_snapshot,
+    capture_prompt_fragment, empty_context, format_context_for_prompt,
 };
+// `parse_snapshot` is only consumed by the Windows-gated snapshot branch below;
+// on Linux the import is unused, so allow it rather than fail `-D warnings`.
+#[cfg_attr(not(windows), allow(unused_imports))]
+use crate::winstt::context::parse_snapshot;
 use crate::winstt::settings_schema::ContextAppMode;
 
 /// Outer timeout for one persistent-sidecar request. With no cold spawn on the

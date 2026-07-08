@@ -903,6 +903,10 @@ mod platform {
 }
 
 pub(crate) use platform::{
-    is_modifier_only_accelerator, ptt_hook_combo_engaged, ptt_hook_combo_key_down,
-    register_if_modifier_only, unregister_if_modifier_only,
+    is_modifier_only_accelerator, register_if_modifier_only, unregister_if_modifier_only,
 };
+// Consumed only by the Windows PTT mode-cycle / release-watchdog paths. The Linux
+// platform module still defines stubs (re-exported for a uniform surface), so the
+// re-export is unused there — allow it rather than fail `-D warnings` on Linux.
+#[cfg_attr(not(windows), allow(unused_imports))]
+pub(crate) use platform::{ptt_hook_combo_engaged, ptt_hook_combo_key_down};
