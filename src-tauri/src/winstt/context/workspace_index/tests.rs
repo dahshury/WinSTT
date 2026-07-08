@@ -108,6 +108,9 @@ fn pool_from(pairs: &[(&str, u64)]) -> HashMap<String, Vec<PoolEntry>> {
     pool
 }
 
+// Windows drive-letter paths (`e:\…`): backslashes are path separators only on
+// Windows, so `file_name()`-based basename matching is inherently Windows-only.
+#[cfg(windows)]
 #[test]
 fn unique_basename_resolves_to_its_path() {
     let pool = pool_from(&[(r"e:\DL\Projects\WinSTT", 100)]);
@@ -122,6 +125,7 @@ fn unique_basename_resolves_to_its_path() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn same_path_opened_many_times_dedups_to_one() {
     // The SAME folder in the pool twice (reopened) is one candidate, not a
@@ -136,6 +140,7 @@ fn same_path_opened_many_times_dedups_to_one() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn cross_root_collision_picks_mru() {
     // Two DISTINCT roots share basename `python-whatsapp-bot`; MRU wins.
