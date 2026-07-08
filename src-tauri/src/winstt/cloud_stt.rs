@@ -423,16 +423,14 @@ fn connectivity_watch_registry() -> &'static Mutex<HashSet<&'static str>> {
 pub fn provider_appears_offline(provider: CloudSttProvider) -> bool {
     connectivity_watch_registry()
         .lock()
-        .map(|active| active.contains(provider.id()))
-        .unwrap_or(false)
+        .is_ok_and(|active| active.contains(provider.id()))
 }
 
 /// Whether ANY cloud provider is currently believed offline (any active connectivity watch).
 pub fn any_cloud_provider_offline() -> bool {
     connectivity_watch_registry()
         .lock()
-        .map(|active| !active.is_empty())
-        .unwrap_or(false)
+        .is_ok_and(|active| !active.is_empty())
 }
 
 /// Trigger-based provider connectivity monitor. It starts only after a

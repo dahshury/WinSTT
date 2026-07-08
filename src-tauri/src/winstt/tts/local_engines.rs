@@ -712,7 +712,7 @@ impl TtsEngine for OrpheusLocalEngine {
         ORPHEUS_VOICE_INFOS.to_vec()
     }
     fn is_ready(&self) -> bool {
-        self.engine.lock().map(|g| g.is_some()).unwrap_or(false)
+        self.engine.lock().is_ok_and(|g| g.is_some())
     }
     fn warm_up(&self) -> TtsResult<()> {
         self.ensure_loaded()
@@ -838,7 +838,7 @@ impl TtsEngine for SparkLocalEngine {
         SPARK_VOICE_INFOS.to_vec()
     }
     fn is_ready(&self) -> bool {
-        self.engine.lock().map(|g| g.is_some()).unwrap_or(false)
+        self.engine.lock().is_ok_and(|g| g.is_some())
     }
     fn warm_up(&self) -> TtsResult<()> {
         self.ensure_loaded()

@@ -316,6 +316,7 @@ fn run_catalog_mode(cat_id: &str) {
         resolved,
         providers: providers_from_env(),
         whisper_fp16_workaround,
+        language: None,
     };
     let build_started = Instant::now();
     let mut engine = match build_engine(cfg) {
@@ -508,6 +509,7 @@ fn real_main() {
         },
         providers: providers_from_env(),
         whisper_fp16_workaround: false,
+        language: None,
     };
 
     // ---- 3. load ----

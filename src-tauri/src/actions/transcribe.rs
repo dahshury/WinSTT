@@ -192,28 +192,27 @@ impl ShortcutAction for TranscribeAction {
         // `show_recording_overlay` self-gates to a no-op when the overlay is disabled, so in that
         // case the suppressed chime IS the (only) signal — exactly the requested behavior.
         let selected_model = crate::winstt::catalog::canonical_model_id(&settings.model.model);
-        if let Some(provider) = crate::winstt::cloud_stt::provider_of(selected_model) {
-            if crate::winstt::cloud_stt::provider_appears_offline(provider)
-                && crate::winstt::stt::fallback::resolve_local_stt_fallback(app).is_none()
-            {
-                warn!(
-                    "STT cloud provider '{}' offline and no local model cached; skipping capture",
-                    provider.id()
-                );
-                crate::transcription_coordinator::finish_dictation_session(session_id);
-                super::pinned_foreground::clear();
-                utils::unregister_cancel_shortcut_if_idle(app);
-                show_recording_overlay(app);
-                crate::winstt::stt::fallback::emit_stt_pipeline_unavailable(
-                    app,
-                    "offline_no_local",
-                    Some(provider.id()),
-                );
-                // Tear the (possibly shown) overlay back down after the transient error pill has
-                // had time to display, so a subsequent successful recording starts clean.
-                schedule_offline_notice_hide(app);
-                return;
-            }
+        if let Some(provider) = crate::winstt::cloud_stt::provider_of(selected_model)
+            && crate::winstt::cloud_stt::provider_appears_offline(provider)
+            && crate::winstt::stt::fallback::resolve_local_stt_fallback(app).is_none()
+        {
+            warn!(
+                "STT cloud provider '{}' offline and no local model cached; skipping capture",
+                provider.id()
+            );
+            crate::transcription_coordinator::finish_dictation_session(session_id);
+            super::pinned_foreground::clear();
+            utils::unregister_cancel_shortcut_if_idle(app);
+            show_recording_overlay(app);
+            crate::winstt::stt::fallback::emit_stt_pipeline_unavailable(
+                app,
+                "offline_no_local",
+                Some(provider.id()),
+            );
+            // Tear the (possibly shown) overlay back down after the transient error pill has
+            // had time to display, so a subsequent successful recording starts clean.
+            schedule_offline_notice_hide(app);
+            return;
         }
 
         // Open the microphone CONCURRENTLY with the UI work below. In on-demand mode the

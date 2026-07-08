@@ -358,10 +358,6 @@ fn looks_like_composer_field(element: &str) -> bool {
     .is_match(element)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "quality warning classifier intentionally keeps the smoke-test fields flat"
-)]
 fn quality_warnings(
     prompt_json_valid: bool,
     prompt_empty: bool,

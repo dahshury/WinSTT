@@ -31,6 +31,11 @@ ignore = [
   # releases can resolve quick-xml >= 0.41.0.
   { id = "RUSTSEC-2026-0194", reason = "Transitive quick-xml via current Tauri plist/wayland-scanner stack; no direct WinSTT untrusted XML parser use; blocked until upstream resolves quick-xml >=0.41.0." },
   { id = "RUSTSEC-2026-0195", reason = "Transitive quick-xml via current Tauri plist/wayland-scanner stack; no direct WinSTT untrusted XML parser use; blocked until upstream resolves quick-xml >=0.41.0." },
+  # crossbeam-epoch: invalid pointer deref only in the fmt::Pointer/Debug impls
+  # for `Atomic`/`Shared`. WinSTT never formats those handles; the crate is a
+  # deep transitive dep (via tokio/tao's lock-free structures). Remove once a
+  # patched crossbeam-epoch is available in the tree.
+  { id = "RUSTSEC-2026-0204", reason = "Transitive crossbeam-epoch; advisory is limited to fmt::Pointer/Debug on Atomic/Shared, which WinSTT never formats; blocked until a patched crossbeam-epoch reaches the tree." },
 ]
 
 # ---------------------------------------------------------------------------

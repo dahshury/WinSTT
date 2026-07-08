@@ -19,6 +19,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::{AppHandle, Manager};
 
+/// A display rectangle in LOGICAL px, as `(x, y, width, height)`.
+type LogicalRect = (f64, f64, f64, f64);
+/// `(full_monitor_rect, work_area_rect)` for a display, each a [`LogicalRect`].
+type MonitorRects = (LogicalRect, LogicalRect);
+
 /// Window label == Vite entry key == WINDOW_SPECS spec label.
 pub(crate) const TRAY_INDICATOR_LABEL: &str = "tray-indicator";
 
@@ -161,7 +166,7 @@ fn lift_above_overlay(app: &AppHandle, x: f64, y: f64) -> Option<(f64, f64)> {
 /// `(full_monitor_rect, work_area_rect)` for the primary display in LOGICAL px,
 /// each as `(x, y, width, height)`.
 #[cfg(target_os = "windows")]
-fn monitor_rects(app: &AppHandle) -> ((f64, f64, f64, f64), (f64, f64, f64, f64)) {
+fn monitor_rects(app: &AppHandle) -> MonitorRects {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
@@ -202,13 +207,13 @@ fn monitor_rects(app: &AppHandle) -> ((f64, f64, f64, f64), (f64, f64, f64, f64)
 }
 
 #[cfg(not(target_os = "windows"))]
-fn monitor_rects(app: &AppHandle) -> ((f64, f64, f64, f64), (f64, f64, f64, f64)) {
+fn monitor_rects(app: &AppHandle) -> MonitorRects {
     primary_fallback(app)
 }
 
 /// Fallback when the work area can't be queried: use the full monitor and assume a
 /// conventional bottom taskbar inset so the pill still clears it.
-fn primary_fallback(app: &AppHandle) -> ((f64, f64, f64, f64), (f64, f64, f64, f64)) {
+fn primary_fallback(app: &AppHandle) -> MonitorRects {
     const ASSUMED_TASKBAR: f64 = 48.0;
     if let Some(monitor) = app.primary_monitor().ok().flatten() {
         let scale = monitor.scale_factor();

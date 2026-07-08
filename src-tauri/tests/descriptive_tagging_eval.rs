@@ -20,11 +20,11 @@ use winstt_app_lib::winstt::context::file_reference_resolver::{
     FileRefIndex, resolve_descriptive_tags,
 };
 
-/// Optional external corpus override via the `WINSTT_DESC_CORPUS` env var (a path
-/// to a JSON file). When set the harness reads it as-is for fast iteration without
-/// a recompile; otherwise it falls back to [`EMBEDDED_CORPUS`], the
-/// version-controlled copy that ships with the repo so this measurement is
-/// reproducible on any checkout.
+// Optional external corpus override via the `WINSTT_DESC_CORPUS` env var (a path
+// to a JSON file). When set the harness reads it as-is for fast iteration without
+// a recompile; otherwise it falls back to [`EMBEDDED_CORPUS`], the
+// version-controlled copy that ships with the repo so this measurement is
+// reproducible on any checkout.
 
 /// The labeled corpus, embedded so the reliability measurement is reproducible on
 /// a fresh checkout (no dependency on an ephemeral scratchpad file). 58 cases:

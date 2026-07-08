@@ -68,6 +68,7 @@ fn run() -> Result<()> {
         resolved,
         providers: providers_for_accelerator(Accelerator::Cpu),
         whisper_fp16_workaround: false,
+        language: None,
     };
 
     let load_started = std::time::Instant::now();

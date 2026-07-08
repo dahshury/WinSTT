@@ -227,6 +227,7 @@ fn load_engine(
         resolved,
         providers: providers_for_accelerator(provider),
         whisper_fp16_workaround: false,
+        language: None,
     };
     build_engine(cfg).map_err(|e| anyhow!("build engine {}: {e}", entry.id))
 }

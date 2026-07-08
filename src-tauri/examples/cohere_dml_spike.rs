@@ -21,9 +21,9 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use winstt_app_lib::winstt::stt::resolver::{resolve_blocking, ResolveRequest};
+use winstt_app_lib::winstt::stt::resolver::{ResolveRequest, resolve_blocking};
 use winstt_app_lib::winstt::stt::{
-    build_engine, Accelerator, EngineConfig, EngineKind, Quantization, TranscribeOptions,
+    Accelerator, EngineConfig, EngineKind, Quantization, TranscribeOptions, build_engine,
 };
 
 fn env_or(key: &str, default: &str) -> String {
@@ -97,11 +97,18 @@ fn main() {
 
     // Resolve the model files from the HF cache (offline-first).
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let local_dir = std::env::var("COHERE_LOCAL_DIR")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+    if let Some(d) = &local_dir {
+        eprintln!("local_dir = {}", d.display());
+    }
     let req = ResolveRequest {
         model_id: model_id.clone(),
         kind: EngineKind::CohereAsr,
         effective_quant: quant,
-        local_dir: None,
+        local_dir,
         local_files_only: true,
     };
     let resolved = match resolve_blocking(rt.handle(), &req) {
@@ -111,7 +118,10 @@ fn main() {
             std::process::exit(2);
         }
     };
-    eprintln!("resolved effective quant = {:?}", resolved.effective_quantization);
+    eprintln!(
+        "resolved effective quant = {:?}",
+        resolved.effective_quantization
+    );
     let mut keys: Vec<&String> = resolved.files.keys().collect();
     keys.sort();
     eprintln!("resolved files: {keys:?}");
@@ -119,15 +129,19 @@ fn main() {
     let dml_safe = winstt_app_lib::winstt::stt::cohere_export_dml_safe(&resolved);
     eprintln!(
         "cohere_export_dml_safe = {dml_safe}  → resolve_catalog would {} DirectML",
-        if dml_safe { "RESTORE" } else { "keep CPU pin, NOT restore" }
+        if dml_safe {
+            "RESTORE"
+        } else {
+            "keep CPU pin, NOT restore"
+        }
     );
 
     let cfg = EngineConfig {
-        model_name: model_id.clone(),
+        model_name: model_id,
         family: "cohere".into(),
         kind: EngineKind::CohereAsr,
         resolved,
-        providers: providers.clone(),
+        providers,
         whisper_fp16_workaround: false,
         language: None,
     };
@@ -151,7 +165,11 @@ fn main() {
 
     // ── TRANSCRIBE (the decode loop drives MultiHeadAttention every token) ──
     let audio = load_audio();
-    eprintln!("audio samples = {} ({:.1}s @16k)", audio.len(), audio.len() as f32 / 16000.0);
+    eprintln!(
+        "audio samples = {} ({:.1}s @16k)",
+        audio.len(),
+        audio.len() as f32 / 16000.0
+    );
     let opts = TranscribeOptions {
         language: lang,
         ..Default::default()
