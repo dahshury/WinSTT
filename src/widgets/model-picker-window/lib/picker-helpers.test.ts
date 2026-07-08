@@ -1,14 +1,19 @@
 import { describe, expect, mock, test } from "bun:test";
+import * as realBindings from "@/shared/api/ipc-client";
+import * as realPicker from "@/widgets/model-picker";
 
 // picker-helpers pulls `ipcSend` (for `close()`) and a couple of pure helpers
-// from the model-picker barrel; stub both so this stays a pure-function test.
+// from the model-picker barrel. bun's `mock.module` is process-GLOBAL and
+// persistent across files, so an INCOMPLETE stub here would drop every other
+// export of these modules (and replace `resolveEffectiveQuant` with a landmine
+// `() => ""`) for every test file that runs later in the same process —
+// stranding e.g. the STT selector trigger on a bogus "FP32" quant. Spread the
+// REAL modules and override ONLY `ipcSend`, so the mock is a harmless superset.
 mock.module("@/shared/api/ipc-client", () => ({
+	...realBindings,
 	ipcSend: () => undefined,
 }));
-mock.module("@/widgets/model-picker", () => ({
-	resolveEffectiveQuant: () => "",
-	STT_PICKER_WIDTH_PX: 600,
-}));
+mock.module("@/widgets/model-picker", () => ({ ...realPicker }));
 
 const {
 	DEFAULT_MODEL_PICKER_MODE,

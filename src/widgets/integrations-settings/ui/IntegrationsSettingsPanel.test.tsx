@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useSettingsStore } from "@/entities/setting";
 import { IntegrationsSettingsPanel } from "./IntegrationsSettingsPanel";
@@ -12,6 +12,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	// Unmount every rendered panel so React runs its effect cleanups — chiefly
+	// the OpenRouter key's `VERIFY_DEBOUNCE_MS` `clearTimeout`. Without this the
+	// pending debounce timers survive the file (bun:test shares one process) and
+	// fire later against `verifyCredential`, inflating the call count in the
+	// sibling verify-race suite.
+	cleanup();
 	useSettingsStore.setState({ settings: initial });
 });
 
