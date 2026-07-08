@@ -71,6 +71,23 @@ export function isRealtimeEnabled({
 	);
 }
 
+// Settings patch for the Model-tab "Realtime Preview" master switch. The
+// switch itself stores NOTHING — realtime enablement stays derived from its
+// consumers (see `isRealtimeEnabled`), so the switch just writes them:
+//   ON  → restore the default display surfaces ("both"); the overlay setting
+//         is left alone — "both" enables the in-app panel regardless.
+//   OFF → remove EVERY realtime consumer: display surfaces AND word-by-word
+//         pasting, so the derived state flips false and the engine unloads.
+export function realtimeMasterTogglePatch(
+	next: boolean,
+):
+	| { liveTranscriptionDisplay: "both" }
+	| { liveTranscriptionDisplay: "none"; wordByWordPasting: false } {
+	return next
+		? { liveTranscriptionDisplay: "both" }
+		: { liveTranscriptionDisplay: "none", wordByWordPasting: false };
+}
+
 export function shouldSuppressPillPreviewForWordByWordPaste({
 	mainModelId,
 	realtimeModelId,

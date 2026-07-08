@@ -10,7 +10,9 @@ GlobalRegistrator.register();
 // bundle immediately, so component tests that `render(<IntlProvider>…)` and
 // assert synchronously see their translated children. See
 // `test/mocks/intl-provider.tsx`.
-mock.module("@/app/providers/IntlProvider", () => require("./mocks/intl-provider"));
+mock.module("@/app/providers/IntlProvider", () =>
+	require("./mocks/intl-provider"),
+);
 
 // happy-dom does not implement the Web Animations API. Base UI's ScrollArea
 // viewport schedules a deferred `viewport.getAnimations({ subtree: true })` via a
@@ -25,7 +27,10 @@ for (const proto of [
 	typeof Element === "undefined" ? undefined : Element.prototype,
 	typeof Document === "undefined" ? undefined : Document.prototype,
 ]) {
-	if (proto && typeof (proto as { getAnimations?: unknown }).getAnimations !== "function") {
+	if (
+		proto &&
+		typeof (proto as { getAnimations?: unknown }).getAnimations !== "function"
+	) {
 		Object.defineProperty(proto, "getAnimations", {
 			configurable: true,
 			writable: true,
@@ -45,8 +50,14 @@ if (typeof Node !== "undefined") {
 		removeChild: <T extends Node>(child: T) => T;
 	};
 	const realRemoveChild = proto.removeChild;
-	proto.removeChild = function leniently<T extends Node>(this: Node, child: T): T {
-		if (child == null || (child as unknown as { parentNode?: Node | null }).parentNode !== this) {
+	proto.removeChild = function leniently<T extends Node>(
+		this: Node,
+		child: T,
+	): T {
+		if (
+			child == null ||
+			(child as unknown as { parentNode?: Node | null }).parentNode !== this
+		) {
 			return child;
 		}
 		return realRemoveChild.call(this, child) as T;
@@ -65,9 +76,11 @@ if (typeof HTMLLabelElement !== "undefined") {
 	const forwardingDispatch = labelProto.dispatchEvent;
 	const baseDispatch = Object.getPrototypeOf(labelProto).dispatchEvent as (
 		this: EventTarget,
-		event: Event
+		event: Event,
 	) => boolean;
-	labelProto.dispatchEvent = function specCompliantLabelDispatch(event: Event): boolean {
+	labelProto.dispatchEvent = function specCompliantLabelDispatch(
+		event: Event,
+	): boolean {
 		const target = event.target as Element | null;
 		if (
 			event.type === "click" &&
@@ -113,8 +126,15 @@ function installDefaultTauriInternals(): void {
 				unregisterListener: (event: string, eventId: number) => void;
 			};
 			__TAURI_INTERNALS__: {
-				invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
-				transformCallback: (cb?: (payload: unknown) => void, once?: boolean) => number;
+				invoke: (
+					cmd: string,
+					args?: unknown,
+					options?: unknown,
+				) => Promise<unknown>;
+				transformCallback: (
+					cb?: (payload: unknown) => void,
+					once?: boolean,
+				) => number;
 			};
 		}
 	).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
@@ -125,8 +145,15 @@ function installDefaultTauriInternals(): void {
 	(
 		window as unknown as {
 			__TAURI_INTERNALS__: {
-				invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
-				transformCallback: (cb?: (payload: unknown) => void, once?: boolean) => number;
+				invoke: (
+					cmd: string,
+					args?: unknown,
+					options?: unknown,
+				) => Promise<unknown>;
+				transformCallback: (
+					cb?: (payload: unknown) => void,
+					once?: boolean,
+				) => number;
 			};
 		}
 	).__TAURI_INTERNALS__ = {
@@ -172,7 +199,10 @@ declare global {
 			send: (channel: string, ...args: unknown[]) => void;
 			invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
 			secureInvoke: (channel: string, payload?: unknown) => Promise<unknown>;
-			on: (channel: string, callback: (...args: unknown[]) => void) => () => void;
+			on: (
+				channel: string,
+				callback: (...args: unknown[]) => void,
+			) => () => void;
 		};
 	}
 }

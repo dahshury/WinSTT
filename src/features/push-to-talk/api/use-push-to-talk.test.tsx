@@ -107,7 +107,7 @@ function makeApi() {
 			if (channel === IPC.HOTKEY_REGISTER) {
 				return true;
 			}
-			return;
+			return undefined;
 		},
 		send: (channel: string, ...args: unknown[]) => {
 			sentChannels.push({ channel, args });

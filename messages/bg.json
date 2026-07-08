@@ -251,7 +251,46 @@
     "retentionDays3": "След 3 дни",
     "retentionWeeks2": "След 2 седмици",
     "retentionMonths3": "След 3 месеца",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "История на транскрипциите",
+    "enabledTooltip": "Когато е включено, WinSTT записва вашите транскрипции, преобразувания и гласови изпълнения, за да може това табло да показва статистики и разходи. Изключете го, за да спрете събирането на нови данни.",
+    "disabledHint": "Историята е изключена — WinSTT не записва нова активност. Съществуващите данни се пазят, докато не ги изтриете.",
+    "deleteAllTitle": "Изтриване на цялата история?",
+    "deleteAllDescription": "Всички записани транскрипции, преобразувания, гласови изпълнения и запазени записи ще бъдат премахнати завинаги. Това не може да бъде отменено.",
+    "deleteAllButton": "Изтриване на всички данни",
+    "clearTtsButton": "Изчистване на гласа",
+    "clearTtsTitle": "Изчистване на цялата история на гласа?",
+    "clearTtsDescription": "Всички запазени изпълнения текст-към-глас и аудио ще бъдат премахнати. Това не може да бъде отменено.",
+    "combinedTableTitle": "История",
+    "filterDateRange": "Период",
+    "filterAllTime": "За цялото време",
+    "heatmapEarlier": "По-рано",
+    "heatmapLater": "По-късно",
+    "spendingTitle": "Разходи",
+    "spendingTotalLabel": "Общ разход",
+    "spendingByModalityTitle": "Разход по тип",
+    "spendingByProviderTitle": "Разход по доставчик",
+    "spendingByModelTitle": "Разход по модел",
+    "spendingByMakerTitle": "Разход по производител",
+    "spendingEstimatedHint": "Някои стойности са приблизителни, където точните цени не са отчетени.",
+    "costSpeechToText": "Реч към текст",
+    "costTextToSpeech": "Текст към реч",
+    "costLanguageModel": "Езиков модел",
+    "colCharacters": "Знаци",
+    "cloudLabel": "Облак",
+    "colCost": "Облачен разход",
+    "costEstimated": "Приблизително",
+    "costTotal": "Общо",
+    "kindSpeechToText": "Реч към текст",
+    "kindTextToSpeech": "Текст към реч",
+    "durationLlmProcessing": "AI обработка",
+    "durationNotRecorded": "Незаписано",
+    "durationNotRun": "Неизпълнено",
+    "durationRecording": "Запис",
+    "durationSpeechToText": "Транскрипция",
+    "durationTotalProcessing": "Време за обработка",
+    "colTtsModel": "Гласов модел",
+    "colVoice": "Глас"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "Резервен OCR на екрана",
+    "contextScreenOcrCaption": "Разчита текста на екрана близо до курсора като допълнителен контекст",
+    "contextScreenOcrTooltip": "Когато осъзнаването на контекста не може да разчете директно активното поле, WinSTT прибягва до разчитане (OCR) на областта от екрана около курсора, за да улови близкия текст. Това е по-бавно и по-неточно от директното разчитане на полето — изключете го, за да пропуснете този резервен вариант."
   },
   "model": {
     "initialPrompt": "Начална подкана",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "Секунди тишина за ранно стартиране",
     "earlyTranscriptionTooltip": "Стартирай разпознаването преди напълно да сте спрели да говорите, задействано след толкова секунди тишина. Намалява забавянето между говоренето и виждането на окончателния текст. Задайте 0 за деактивиране.",
     "realtimeModel": "Реалтайм модел",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "Реалтайм модел",
     "realtimeModelCaption": "По-малък модел за преглед в реално време",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "Минимално време между актуализациите на живото разпознаване. По-ниските стойности дават по-чести обновявания, но използват повече процесорна мощ. Увеличете при прекъсвания или висок CPU при диктуване.",
     "llm": "Голям езиков модел",
     "deviceAutoLabel": "Авто",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "Изключване на транскрипцията дума по дума?",
+    "realtimeOffWordByWordDescription": "Този модел стриймва транскрипцията дума по дума, докато говорите. Изключването на реалното време го превключва към транскрибиране едва след като спрете.",
+    "realtimeOffWordByWordConfirm": "Изключване"
   },
   "audio": {
     "inputDevice": "Входно устройство",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "Незабавно",
     "microphoneReleaseSec30": "30 секунди",
     "microphoneReleaseMin1": "1 минута",
-    "microphoneReleaseMin5": "5 минути"
+    "microphoneReleaseMin5": "5 минути",
+    "devicePriorityHandle": "Плъзнете за пренареждане на приоритета"
   },
   "quality": {
     "enableRealtime": "Активирай реалтайм",
@@ -717,7 +766,8 @@
     "waiting": "Изчакване на реч...",
     "serverOffline": "Сървърът е офлайн",
     "noAudioDetected": "(не е открито аудио)",
-    "transcriptionFailed": "(разпознаването неуспешно)"
+    "transcriptionFailed": "(разпознаването неуспешно)",
+    "offlineNoLocalModel": "Няма интернет · няма локален модел"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "Инсталирай въпреки това",
     "unfitSelectTitle": "Използване на този голям модел?",
     "unfitSelectDescription": "„{model}“ е по-голям от поддържаното от хардуера ви (~{required} необходимо, {available} налично). Може да работи много бавно или да не успее да се зареди. Използвате ли го въпреки това?",
-    "unfitSelectAnyway": "Използвай въпреки това"
+    "unfitSelectAnyway": "Използвай въпреки това",
+    "dictionaryAutoAddLiteModel": "Не е налично при lite модели — превключете към по-голям модел, за да добавяте корекции в речника автоматично."
   },
   "tts": {
     "title": "Синтез на реч",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "Добавете и проверете ElevenLabs API ключ в Интеграции за използване на облачни гласове.",
     "cloudLoadingVoices": "Зареждане на гласове…",
     "cloudNoVoices": "Не са намерени гласове за този ElevenLabs акаунт.",
-    "cloudError": "Не могат да се заредят ElevenLabs гласове."
+    "cloudError": "Не могат да се заредят ElevenLabs гласове.",
+    "voiceDesignLabel": "Описване на глас",
+    "voiceDesignTooltip": "Опишете с думи желания глас — тембър, възраст, акцент, емоция — и моделът синтезира съответстващ глас, вместо да избира от предварително зададен набор.",
+    "voiceDesignButtonPlaceholder": "Опишете глас",
+    "voiceDesignDialogTitle": "Описване на глас",
+    "voiceDesignDialogDescription": "Опишете гласа с едно-две изречения. Оставете празно, за да използвате гласа по подразбиране на модела.",
+    "voiceDesignPromptLabel": "Описание на гласа",
+    "voiceDesignPromptPlaceholder": "напр. топъл разказвач с нисък тон и лек британски акцент",
+    "voiceDesignPromptEmptyHint": "Оставете празно, за да се използва вграденият глас на модела.",
+    "voiceDesignCancel": "Отказ",
+    "voiceDesignSave": "Запази",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "Нещо се обърка",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "Достигнат лимит от {provider}",
     "toastRateLimitedRetry": "Опитайте отново след {seconds}с",
     "toastProviderError": "{provider} STT грешка: {message}",
-    "openIntegrations": "Отвори Интеграции"
+    "openIntegrations": "Отвори Интеграции",
+    "toastTtsOfflineNoLocal": "Няма интернет и няма инсталиран локален глас — четенето на глас е недостъпно."
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "Lite",
+    "liteTierTip": "По-малък и по-бърз вариант с намалена точност — най-подходящ за бързи задачи на ограничен хардуер."
   },
   "dataGrid": {
     "addRow": "Add row",

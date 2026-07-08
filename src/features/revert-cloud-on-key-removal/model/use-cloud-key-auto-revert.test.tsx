@@ -67,7 +67,6 @@ function model(id: string, backend = "onnx_asr"): ModelInfo {
 		previewCapable: false,
 		nativeStreaming: false,
 		finalReuseSafe: false,
-		supportsRealtime: false,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [],

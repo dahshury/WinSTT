@@ -1,5 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
+import { commands } from "@/bindings";
+
+/// Max reference-clip length for zero-shot cloning (Spark). Longer clips are rejected on upload.
+const MAX_CLONE_REF_SECS = 30;
 import {
 	DEFAULT_SETTINGS,
 	useSettingsStore,
@@ -17,6 +21,7 @@ import {
 import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
 import {
 	dialogOpenFile,
+	onTtsUnloadStatus,
 	ttsCancel,
 	ttsCloudPreview,
 	ttsInstallCancel,
@@ -47,9 +52,9 @@ import {
 	buildTtsEnablePatch,
 	isTtsModelCached,
 	pickCachedTtsModel,
-	resolveTtsEnabledModelPatch,
 	useTtsInstallGate,
 } from "./use-tts-install-gate";
+import { useTtsEnabledReconciler } from "./use-tts-enabled-reconciler";
 import { useTtsPlayback } from "./use-tts-playback";
 import { useTtsVoiceCatalog } from "./use-tts-voice-catalog";
 
@@ -115,6 +120,15 @@ export function useTtsModelSection() {
 		? pickCachedTtsModel(ttsModels, ttsStatesById)
 		: null;
 	const isCloningModel = (selectedModelInfo?.cloning ?? "none") !== "none";
+	// Cloning models that need the reference-clip TRANSCRIPT (Spark) — the UI collects it
+	// (auto-transcribed with the selected STT model into an editable field).
+	const needsRefText =
+		selectedModelInfo?.cloning === "zero_shot_audio_transcript";
+	// Voice-design models (Qwen3-TTS-VoiceDesign) don't pick from a voice bank —
+	// the voice is *described* by a free-text prompt stored (overloaded) in
+	// `settings.tts.voice`, exactly like cloning overloads it with a ref-audio
+	// path. An empty prompt is the valid default (the model's built-in voice).
+	const isVoiceDesignModel = selectedModelInfo?.voiceDesign === true;
 	const isSupertonicModel =
 		selectedModelInfo?.engine === "supertonic" || model === SUPERTONIC_MODEL_ID;
 	const supertonicLanguage = isSupertonicModel
@@ -124,29 +138,46 @@ export function useTtsModelSection() {
 		? clampSupertonicSpeed(speed)
 		: speed;
 
-	useEffect(() => {
-		const patch = resolveTtsEnabledModelPatch({
-			cloudFallbackAllowed: cloudAllowed,
-			enabled,
-			isCloud,
-			model,
-			models: ttsModels,
-			statesById: ttsStatesById,
-			statesLoaded: ttsStatesLoaded,
-		});
-		if (patch) {
-			update(patch);
-		}
-	}, [
+	// Reconcile a hydrated-but-stale `enabled: true` — extracted hook so the
+	// verify-before-punish behavior (the TTS toggle on→off→on flicker fix) is
+	// unit-testable against the real stores.
+	useTtsEnabledReconciler({
 		cloudAllowed,
 		enabled,
+		installPhase,
 		isCloud,
 		model,
-		ttsModels,
-		ttsStatesById,
-		ttsStatesLoaded,
+		models: ttsModels,
+		statesById: ttsStatesById,
+		statesLoaded: ttsStatesLoaded,
 		update,
-	]);
+	});
+
+	// Truthful "freeing memory" state: the backend emits `tts:unload-status`
+	// around the actual session drop (settings disable / cloud switch), and the
+	// toggle stays LOCKED until the drop confirms — instead of pretending the
+	// memory was freed the instant it flipped. Safety-bounded — the drop is fast.
+	const [unloadingLocalModel, setUnloadingLocalModel] = useState(false);
+	// Cloning reference-transcript state (Spark). `cloneRefText` is persisted in settings; busy/error
+	// are transient upload feedback.
+	const [cloneBusy, setCloneBusy] = useState(false);
+	const [cloneError, setCloneError] = useState<string | null>(null);
+	const cloneRefText = tts?.cloneRefText ?? "";
+	const handleCloneRefTextChange = (nextText: string): void => {
+		update({ cloneRefText: nextText });
+	};
+	useEffect(
+		() =>
+			onTtsUnloadStatus(({ inProgress }) => setUnloadingLocalModel(inProgress)),
+		[],
+	);
+	useEffect(() => {
+		if (!unloadingLocalModel) {
+			return;
+		}
+		const id = window.setTimeout(() => setUnloadingLocalModel(false), 15_000);
+		return () => window.clearTimeout(id);
+	}, [unloadingLocalModel]);
 
 	const handleModelChange = (nextModel: string): void => {
 		update(resolveTtsModelSelectionPatch(nextModel, ttsModels, speed));
@@ -220,11 +251,29 @@ export function useTtsModelSection() {
 		if (nextVoice === TTS_CLONE_ADD) {
 			void (async () => {
 				const picked = await dialogOpenFile([
-					{ name: "Audio", extensions: ["wav"] },
+					{ name: "Audio", extensions: ["wav", "mp3", "flac", "m4a", "ogg"] },
 				]);
-				if (typeof picked === "string") {
-					update({ voice: picked });
+				if (typeof picked !== "string") {
+					return;
 				}
+				// Transcript-needing cloners (Spark): validate the clip length and auto-transcribe
+				// the reference with the selected STT model before adopting it.
+				if (needsRefText) {
+					setCloneError(null);
+					setCloneBusy(true);
+					const res = await commands.ttsTranscribeReference(
+						picked,
+						MAX_CLONE_REF_SECS,
+					);
+					setCloneBusy(false);
+					if (res.status === "error") {
+						setCloneError(res.error);
+						return;
+					}
+					update({ voice: picked, cloneRefText: res.data.trim() });
+					return;
+				}
+				update({ voice: picked });
 			})();
 			return;
 		}
@@ -241,6 +290,12 @@ export function useTtsModelSection() {
 		const nextLang = meta?.language ?? deriveLanguage(nextVoice);
 		update({ voice: nextVoice, lang: nextLang });
 		previewVoice(nextVoice, nextLang);
+	};
+
+	// Voice-design prompt is stored (overloaded) in `voice`. Empty is allowed and
+	// is the default (the model's built-in voice) — never coerce or reject it.
+	const handleVoiceDesignPromptChange = (nextPrompt: string): void => {
+		update({ voice: nextPrompt });
 	};
 
 	const handleLanguageChange = (nextLang: string): void => {
@@ -372,6 +427,7 @@ export function useTtsModelSection() {
 		openDetachedTtsPicker: (rect: DOMRect) =>
 			openModelPickerAtRect(rect, { pickerKind: "tts" }),
 		isSupertonicModel,
+		isVoiceDesignModel,
 		playback,
 		isLoading,
 		isSpeaking,
@@ -386,11 +442,18 @@ export function useTtsModelSection() {
 		previewOpenRouterVoice,
 		handleModelChange,
 		handleVoiceChange,
+		handleVoiceDesignPromptChange,
+		needsRefText,
+		cloneRefText,
+		cloneBusy,
+		cloneError,
+		handleCloneRefTextChange,
 		handleLanguageChange,
 		handleSpeedChange,
 		handleSpeedReset,
 		voicePlaceholder,
 		installing,
+		unloadingLocalModel,
 		handleCancelInstall,
 		handleEnabledToggle,
 		handleSourceChange,

@@ -1,7 +1,8 @@
-import { Cancel01Icon, PlayIcon } from "@hugeicons/core-free-icons";
+import { PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { computeModelExclusionConfig } from "@/widgets/model-picker";
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "use-intl";
 import { type LlmPreviewConfig, runLlmPreview } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { useMountEffect } from "@/shared/lib/use-mount-effect";
@@ -9,12 +10,12 @@ import {
 	CreatableCombobox,
 	type CreatableComboboxItem,
 } from "@/shared/ui/creatable-combobox";
-import { DialogTitle } from "@/shared/ui/dialog";
+import { DialogHeader } from "@/shared/ui/dialog";
 import { FormControl } from "@/shared/ui/form-control";
-import { IconButton } from "@/shared/ui/icon-button";
 import { Modal } from "@/shared/ui/modal";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Switcher } from "@/shared/ui/switcher";
+import { resolvePlaygroundLocalModel } from "../lib/llm-settings-helpers";
 import type { LlmFeatureDraft } from "../lib/llm-settings-panel-test-helpers";
 import {
 	cloneLlmConfiguration,
@@ -124,6 +125,9 @@ function PlaygroundModelPicker({
 		openrouterCatalogState,
 		openrouterApiKey,
 	} = model;
+	// Shared "Source" label so the playground's provider row matches the
+	// settings tabs (options are the translated Local/Cloud strings).
+	const tSource = useTranslations("integrations");
 
 	const handleProvider = (provider: LlmProvider) => {
 		onChange({ provider });
@@ -154,18 +158,23 @@ function PlaygroundModelPicker({
 	};
 
 	return (
-		<div className="flex flex-col">
-			<div className="col-span-2">
-				<FormControl label={t("provider")} tooltip={t("providerTooltip")}>
-					<Switcher
-						onChange={(v) => handleProvider(v as LlmProvider)}
-						options={providerOpts}
-						value={draft.provider}
-					/>
-				</FormControl>
-			</div>
+		<div className="flex flex-col divide-y divide-divider">
+			<FormControl
+				label={tSource("sourceLabel")}
+				layout="row"
+				tooltip={t("providerTooltip")}
+			>
+				<Switcher
+					className="w-52"
+					fullWidth
+					onChange={(v) => handleProvider(v as LlmProvider)}
+					options={providerOpts}
+					value={draft.provider}
+				/>
+			</FormControl>
 			<ProviderSection
 				beginOllamaSwap={() => undefined}
+				dense
 				fallbackExclusion={computeModelExclusionConfig(draft.openrouterModel)}
 				featureSnapshot={featureSnapshot}
 				librarySearch={model.librarySearchProps}
@@ -292,6 +301,28 @@ function PlaygroundModalBody({
 		}
 	});
 
+	// Auto-select an installed model whenever the Local (Ollama) provider is
+	// active so the playground opens ready-to-run instead of gated on a manual
+	// pick. The catalog scan is async, so this reacts to the model list
+	// resolving as well as to a provider flip. A previously-selected model that's
+	// still installed is kept; one that was since deleted is swapped for the
+	// nearest install; an empty selection defaults to the first install. The
+	// resulting pick is remembered by the session-write effect above (it mirrors
+	// every draft change to localStorage). Converges: once `model` names a valid
+	// install the resolver returns null and the effect stops patching.
+	useEffect(() => {
+		if (draft.provider !== "ollama") {
+			return;
+		}
+		const next = resolvePlaygroundLocalModel(
+			model.ollamaCatalogState.models,
+			draft.model,
+		);
+		if (next !== null) {
+			setDraft((prev) => ({ ...prev, model: next }));
+		}
+	}, [draft.provider, draft.model, model.ollamaCatalogState.models]);
+
 	// The preview runs the composed config directly — it does NOT require the
 	// dictation/transforms feature to be toggled on (the server applies the
 	// explicit override regardless). So the only gate is having a usable model
@@ -320,28 +351,28 @@ function PlaygroundModalBody({
 
 	return (
 		<div className="flex w-[44rem] max-w-[94vw] flex-col">
-			<header className="flex shrink-0 items-center gap-2 px-6 pt-6 pb-3">
-				<HugeiconsIcon className="text-accent" icon={PlayIcon} size={18} />
-				<DialogTitle className="min-w-0 flex-1 truncate">
-					{t("playgroundModalTitle")}
-				</DialogTitle>
-				<IconButton
-					aria-label={tc("cancel")}
-					className="ml-auto bg-surface-4 ring-1 ring-divider hover:bg-surface-5"
-					icon={<HugeiconsIcon icon={Cancel01Icon} size={16} />}
-					onClick={onClose}
-				/>
-			</header>
+			<DialogHeader
+				className="shrink-0 px-6 pt-6 pb-3"
+				closeLabel={tc("close")}
+				icon={<HugeiconsIcon icon={PlayIcon} size={18} />}
+				onClose={onClose}
+				title={t("playgroundModalTitle")}
+			/>
 			{/* The viewport carries the max-height + overflow so the body scrolls
 			    even though the popup is content-sized (a `flex-1` child of a
 			    `max-h` popup never gets a definite height to scroll within). */}
 			<ScrollArea viewportClassName="max-h-[76vh] px-6 pb-6" verticalOnly>
-				<div className="flex flex-col gap-4">
+				{/* One hairline-divided column — the same row language the settings
+				    panel's feature blocks use (divide-y + self-padded py-3.5 rows)
+				    instead of the old gap-4 stack. */}
+				<div className="flex flex-col divide-y divide-divider">
 					<FormControl
 						label={t("playgroundConfigLabel")}
+						layout="row"
 						tooltip={t("playgroundConfigHint")}
 					>
 						<CreatableCombobox
+							className="w-64"
 							createLabel={(name) => t("modifierPresetCreate", { name })}
 							deleteAriaLabel={t("playgroundDeletePreset")}
 							emptyLabel={t("modifierPresetEmpty")}
@@ -365,8 +396,10 @@ function PlaygroundModalBody({
 					<div
 						aria-disabled={!hasModel || undefined}
 						className={cn(
-							"flex flex-col gap-4",
-							!hasModel && "pointer-events-none opacity-40",
+							"flex flex-col divide-y divide-divider",
+							// settings-dim (not opacity-40) so the divide-y hairlines
+							// stay crisp while the group greys out.
+							!hasModel && "settings-dim pointer-events-none",
 						)}
 					>
 						{/* Re-key on `selection` so the preset list's internal level/lang

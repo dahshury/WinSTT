@@ -41,11 +41,11 @@ function installNativeBridgeStub(): void {
 		invoke: async (channel: string) => {
 			if (channel === IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR) {
 				recordStart();
-				return undefined;
+				return;
 			}
 			if (channel === IPC.AUDIO_STOP_MICROPHONE_LEVEL_MONITOR) {
 				recordStop();
-				return undefined;
+				return;
 			}
 			if (
 				channel === IPC.AUDIO_GET_DEVICES ||
@@ -72,7 +72,9 @@ function installNativeBridgeStub(): void {
 			};
 		},
 		secureInvoke: async () => undefined,
-		send: () => {},
+		send: () => {
+			/* no-op */
+		},
 	} satisfies typeof window.nativeBridge;
 }
 

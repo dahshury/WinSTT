@@ -3,10 +3,19 @@
 //   (<onnx-asr>/src/onnx_asr/models/moonshine.py) — the 3-graph structure,
 //   greedy KV decode loop, and the SentencePiece byte-fallback `_decode_text`.
 //
-// Near-clone of `whisper.rs` (same ort host-copy KV-cache decode, present.* → past.* carry,
-// the "keep prev when present is 0-length" merge) MINUS the mel front-end (Moonshine takes
-// RAW 16 kHz f32 audio) and MINUS Whisper's prompt/timestamps/cross-attention. The tokenizer
-// is a DIFFERENT beast (SentencePiece byte-fallback BPE, NOT Whisper's GPT-2 byte-BPE).
+// Near-clone of `whisper.rs` (same ort **device-resident** IoBinding KV-cache decode, present.* →
+// past.* carry) MINUS the mel front-end (Moonshine takes RAW 16 kHz f32 audio) and MINUS Whisper's
+// prompt/timestamps/cross-attention. The tokenizer is a DIFFERENT beast (SentencePiece byte-fallback
+// BPE, NOT Whisper's GPT-2 byte-BPE).
+//
+// PERF: like whisper.rs, decode binds the encoder output + carried KV **device-resident** via ort's
+// IoBinding — the encoder `last_hidden_state` is bound once (never copied to host) and rebound as
+// both decoders' `encoder_hidden_states`, and the `present.*` KV is carried as session-owned device
+// `DynValue`s rebound as the next step's `past_key_values.*` (no per-step host round-trip / clone).
+// Moonshine is CPU-forced (see `load()`), so today IoBinding simply binds host memory — still a win
+// (drops the per-step `.to_vec()` of 12-24 KV tensors + the whole-state `HashMap::clone`) and
+// EP-agnostic if the CPU force is ever lifted. Only `input_ids` goes host→device and `logits` comes
+// host-side for argmax — exactly as `whisper.rs` / onnx-asr do.
 //
 // Graph layout (verified against the cached onnx-community/moonshine-tiny-ONNX graphs via
 // onnx.load; matches moonshine.py's docstring exactly):
@@ -24,13 +33,13 @@
 // decoder. We gate every one of those on the graph actually declaring the input (session.inputs()
 // name probe) so both layouts load through the same code — exactly like moonshine.py.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 
+use ort::memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType};
+use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
-use ort::session::{Session, SessionInputValue};
-use ort::value::{Tensor, TensorRef};
+use ort::value::{DynValue, Tensor};
 
 use super::{
     Accelerator, EngineConfig, EngineKind, SttError, SttResult, TranscribeOptions, Transcriber,
@@ -45,15 +54,6 @@ const MAX_LENGTH: usize = 448;
 
 /// SentencePiece "underscore" — the visible substitute for an ASCII space in a token piece.
 const SP_SPACE: char = '\u{2581}';
-
-/// A host-side ORT tensor extracted from a decoder output: its (signed) shape + flat f32 data.
-/// Used for the decoder logits and every carried `past_key_values.*` KV-cache entry, replacing the
-/// bare `(Vec<i64>, Vec<f32>)` tuples (and the `type_complexity` lints they triggered).
-#[derive(Clone)]
-struct OwnedTensor {
-    shape: Vec<i64>,
-    data: Vec<f32>,
-}
 
 /// A loaded Moonshine engine (`EngineKind::Moonshine`). Holds the three ORT sessions, the parsed
 /// SentencePiece tokenizer, and the per-load capability flags / cached graph layout.
@@ -70,6 +70,12 @@ pub struct MoonshineEngine {
     present_output_names: Vec<String>,
     /// Sorted `present.*` past-step decoder output names (12 tensors: decoder K/V only).
     past_present_names: Vec<String>,
+    /// Step-0 carry map: `(present output name, index into past_input_names)`, precomputed at load
+    /// so the hot loop carries `present.X`→`past_key_values.X` without a per-step name scan.
+    present_carry: Vec<(String, usize)>,
+    /// Past-step carry map (decoder-K/V present names → past index); the encoder K/V isn't re-emitted
+    /// by `decoder_with_past_model`, so only these ~12 entries are overwritten each cached step.
+    past_present_carry: Vec<(String, usize)>,
     /// Encoder `attention_mask` input name, if the export declares one (newer re-exports).
     encoder_mask_name: Option<String>,
     /// Step-0 decoder `encoder_attention_mask` input name, if declared.
@@ -79,6 +85,11 @@ pub struct MoonshineEngine {
     /// Past-step decoder `encoder_hidden_states` input name, if declared (re-exports recompute
     /// cross-attention every step instead of caching it).
     past_enc_hidden_name: Option<String>,
+    /// Device the sessions run on, for binding the encoder output + KV-cache device-resident
+    /// (mirrors whisper.rs). Always CPU today (Moonshine is CPU-forced); then IoBinding just binds
+    /// host memory. EP-agnostic if the CPU force is ever lifted.
+    device: AllocationDevice,
+    device_id: i32,
     ready: bool,
 }
 
@@ -145,6 +156,27 @@ impl MoonshineEngine {
             .collect();
         past_present_names.sort_by_key(|n| kv_sort_key(n));
 
+        // Precompute `present.X` → index-in-`past_input_names` carry maps (once, not per step). A
+        // malformed export whose `present.*` has no matching `past_key_values.*` input is rejected
+        // at load rather than mid-decode.
+        let carry_map = |present: &[String]| -> SttResult<Vec<(String, usize)>> {
+            present
+                .iter()
+                .map(|pn| {
+                    let past_name = pn.replacen("present.", "past_key_values.", 1);
+                    past_input_names
+                        .iter()
+                        .position(|n| *n == past_name)
+                        .map(|idx| (pn.clone(), idx))
+                        .ok_or_else(|| {
+                            SttError::Inference(format!("no past input for {past_name}"))
+                        })
+                })
+                .collect()
+        };
+        let present_carry = carry_map(&present_output_names)?;
+        let past_present_carry = carry_map(&past_present_names)?;
+
         log::debug!(
             "[moonshine] past_kv={} present0={} present_past={} bos={} eos={} \
 			 enc_mask={:?} dec_enc_mask={:?} past_enc_mask={:?} past_enc_hidden={:?}",
@@ -160,6 +192,11 @@ impl MoonshineEngine {
         );
 
         // CPU-forced (see above) → report CPU as the active provider, not the requested device.
+        // The IoBinding device MUST track the ACTUAL session allocator, so resolve it from the same
+        // CPU-forced provider list the sessions were built with (not `cfg.providers`) — else we'd
+        // bind device outputs to a GPU the CPU sessions don't run on. `moonshine_device` is the
+        // EP-agnostic map (like `cohere_device`), correct if the CPU force is ever lifted.
+        let (device, device_id) = moonshine_device(&[Accelerator::Cpu]);
         let providers = [Accelerator::Cpu].iter().map(provider_label).collect();
 
         Ok(Self {
@@ -172,237 +209,283 @@ impl MoonshineEngine {
             past_input_names,
             present_output_names,
             past_present_names,
+            present_carry,
+            past_present_carry,
             encoder_mask_name,
             decoder_enc_mask_name,
             past_enc_mask_name,
             past_enc_hidden_name,
+            device,
+            device_id,
             ready: true,
         })
     }
 
-    /// Run the encoder once over the whole utterance. Moonshine eats the RAW waveform —
-    /// `(1, num_samples)` straight through, no mel, no fixed window. Returns the device-host
-    /// `last_hidden_state` as `(shape, f32 data)`.
-    fn encode(&mut self, audio: &[f32]) -> SttResult<(Vec<i64>, Vec<f32>)> {
+    /// Device `MemoryInfo` for binding the encoder output + KV-cache resident on the session's
+    /// device (CPU today; Moonshine is CPU-forced). Cheap to build; one per encode + one per step.
+    fn device_mem(&self) -> SttResult<MemoryInfo> {
+        MemoryInfo::new(
+            self.device,
+            self.device_id,
+            AllocatorType::Device,
+            MemoryType::Default,
+        )
+        .map_err(|e| SttError::Inference(format!("device mem info: {e}")))
+    }
+
+    /// Run the encoder once over the whole utterance → **device-resident** `last_hidden_state`
+    /// (`bind_output_to_device`, never copied to host). Moonshine eats the RAW waveform —
+    /// `(1, num_samples)` straight through, no mel, no fixed window. The returned `DynValue` is
+    /// rebound as both decoders' `encoder_hidden_states` every step with no host round-trip.
+    fn encode(&mut self, audio: &[f32]) -> SttResult<DynValue> {
         let n = audio.len();
         let input = Tensor::from_array(([1usize, n], audio.to_vec().into_boxed_slice()))
             .map_err(|e| SttError::Inference(format!("encoder input_values: {e}")))?;
-        let mut named: Vec<(Cow<'_, str>, SessionInputValue<'_>)> = Vec::with_capacity(2);
-        named.push((
-            Cow::Borrowed("input_values"),
-            SessionInputValue::from(input),
-        ));
-        if let Some(mask_name) = &self.encoder_mask_name {
-            let mask = Tensor::from_array(([1usize, n], vec![1i64; n].into_boxed_slice()))
-                .map_err(|e| SttError::Inference(format!("encoder attention_mask: {e}")))?;
-            named.push((Cow::Owned(mask_name.clone()), SessionInputValue::from(mask)));
-        }
-        let outputs = self
+        // Built before the encoder borrow so the mask outlives the binding through `run_binding`.
+        let mask = if self.encoder_mask_name.is_some() {
+            Some(
+                Tensor::from_array(([1usize, n], vec![1i64; n].into_boxed_slice()))
+                    .map_err(|e| SttError::Inference(format!("encoder attention_mask: {e}")))?,
+            )
+        } else {
+            None
+        };
+        let dev_mem = self.device_mem()?;
+        let mut binding = self
             .encoder
-            .run(named)
-            .map_err(|e| SttError::Inference(format!("encoder run: {e}")))?;
-        let hidden = outputs
-            .get("last_hidden_state")
-            .ok_or_else(|| SttError::Inference("encoder produced no last_hidden_state".into()))?;
-        let (shape, data) = hidden
-            .try_extract_tensor::<f32>()
-            .map_err(|e| SttError::Inference(format!("encoder output extract: {e}")))?;
-        Ok((shape.to_vec(), data.to_vec()))
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("encoder binding: {e}")))?;
+        binding
+            .bind_input("input_values", &input)
+            .map_err(|e| SttError::Inference(format!("bind input_values: {e}")))?;
+        if let (Some(mask_name), Some(mask)) = (&self.encoder_mask_name, &mask) {
+            binding
+                .bind_input(mask_name.as_str(), mask)
+                .map_err(|e| SttError::Inference(format!("bind encoder attention_mask: {e}")))?;
+        }
+        binding
+            .bind_output_to_device("last_hidden_state", &dev_mem)
+            .map_err(|e| SttError::Inference(format!("bind last_hidden_state: {e}")))?;
+        let mut outputs = self
+            .encoder
+            .run_binding(&binding)
+            .map_err(|e| SttError::Inference(format!("encoder run_binding: {e}")))?;
+        // DML/CUDA run_binding is async w.r.t. the device stream — block before handing the device
+        // value to the decoder (no-op on CPU). Matches whisper.rs.
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("encoder synchronize: {e}")))?;
+        outputs
+            .remove("last_hidden_state")
+            .ok_or_else(|| SttError::Inference("encoder produced no last_hidden_state".into()))
     }
 
     /// Greedy autoregressive decode for one waveform. Returns the full token sequence
     /// (prompt + generated, INCLUDING the trailing eos). Port of `moonshine.py::_decode_greedy`.
-    fn decode_greedy(&mut self, enc_shape: &[i64], enc_data: &[f32]) -> SttResult<Vec<i64>> {
+    ///
+    /// The KV cache is carried **device-resident** in `past` (parallel to `past_input_names`):
+    /// step 0's `decoder_model` seeds all 24 entries (decoder + encoder K/V); each cached step's
+    /// `decoder_with_past_model` re-emits only the 12 decoder-self-attn `present.*`, so we overwrite
+    /// those indices and KEEP the static encoder K/V. No entry ever round-trips through the host.
+    fn decode_greedy(&mut self, encoder_out: &DynValue) -> SttResult<Vec<i64>> {
         let bos = self.tokenizer.bos_id;
         let eos = self.tokenizer.eos_id;
-        let enc_shape_usize: Vec<usize> = enc_shape.iter().map(|&d| d.max(0) as usize).collect();
-        // All-ones cross-attention mask over the encoder time axis — only fed to graphs that
-        // declare `encoder_attention_mask`. Built once, reused every step.
-        let enc_frames = enc_shape.get(1).copied().unwrap_or(0).max(0) as usize;
+        // Encoder time axis (frames) for the optional all-ones cross-attention mask; read from the
+        // device value's shape metadata (no host copy). last_hidden_state is (1, enc_T, 288).
+        let enc_frames = encoder_dim1(encoder_out) as usize;
+
+        let dev_mem = self.device_mem()?;
+        let cpu_mem = MemoryInfo::new(
+            AllocationDevice::CPU,
+            0,
+            AllocatorType::Device,
+            MemoryType::CPUOutput,
+        )
+        .map_err(|e| SttError::Inference(format!("cpu mem info: {e}")))?;
 
         let mut tokens: Vec<i64> = vec![bos];
 
-        // ── step 0: decoder_model.onnx (no past) seeds the KV cache ──
-        let (logits0, state) =
-            self.first_decode_step(&enc_shape_usize, enc_data, &tokens, enc_frames)?;
-        let mut next = argmax_last(&logits0.data, &logits0.shape);
+        // ── step 0: decoder_model.onnx (no past) seeds the KV cache device-resident ──
+        let (mut next, mut past) =
+            self.first_decode_step(encoder_out, &tokens, enc_frames, &dev_mem, &cpu_mem)?;
         tokens.push(next);
-        // Carried KV cache host-side: name → (shape, data). Seeded by step 0's present.* outputs.
-        let mut state = state;
 
         while tokens.len() < MAX_LENGTH && next != eos {
-            let (logits, new_state) =
-                self.past_decode_step(next, &state, enc_data, &enc_shape_usize, enc_frames)?;
-            next = argmax_last(&logits.data, &logits.shape);
-            // EOS-sticky: once we emitted eos we stop (loop guard), but keep the value consistent.
+            next = self.past_decode_step(
+                encoder_out,
+                next,
+                &mut past,
+                enc_frames,
+                &dev_mem,
+                &cpu_mem,
+            )?;
             tokens.push(next);
-            state = new_state;
         }
 
         Ok(tokens)
     }
 
-    /// Run `decoder_model.onnx` (step 0, no past). Returns `(logits, state)` where `state` maps
-    /// each `past_key_values.*` name → its carried-forward KV-cache `OwnedTensor`.
+    /// Run `decoder_model.onnx` (step 0, no past). Binds the device-resident encoder output +
+    /// `logits`→host / all 24 `present.*`→device in a fresh binding, argmaxes the last-position
+    /// logits, and returns `(next_token, past)` where `past` is the carried KV as device
+    /// `DynValue`s parallel to `past_input_names` (`present.X` → `past_key_values.X` by name).
     fn first_decode_step(
         &mut self,
-        enc_shape_usize: &[usize],
-        enc_data: &[f32],
+        encoder_out: &DynValue,
         prompt: &[i64],
         enc_frames: usize,
-    ) -> SttResult<(OwnedTensor, HashMap<String, OwnedTensor>)> {
+        dev_mem: &MemoryInfo,
+        cpu_mem: &MemoryInfo,
+    ) -> SttResult<(i64, Vec<Option<DynValue>>)> {
         let input_ids =
             Tensor::from_array(([1usize, prompt.len()], prompt.to_vec().into_boxed_slice()))
                 .map_err(|e| SttError::Inference(format!("decoder input_ids: {e}")))?;
-        let enc_hidden = TensorRef::from_array_view((enc_shape_usize.to_vec(), enc_data))
-            .map_err(|e| SttError::Inference(format!("decoder enc_hidden: {e}")))?;
-
-        let mut named: Vec<(Cow<'_, str>, SessionInputValue<'_>)> = Vec::with_capacity(3);
-        named.push((
-            Cow::Borrowed("input_ids"),
-            SessionInputValue::from(input_ids),
-        ));
-        named.push((
-            Cow::Borrowed("encoder_hidden_states"),
-            SessionInputValue::from(enc_hidden),
-        ));
-        if let Some(mask_name) = &self.decoder_enc_mask_name {
-            let mask = Tensor::from_array((
+        // Held here so it outlives the binding through `run_binding`.
+        let enc_mask = self.decoder_enc_mask_name.as_ref().map(|_| {
+            Tensor::from_array((
                 [1usize, enc_frames],
                 vec![1i64; enc_frames].into_boxed_slice(),
             ))
-            .map_err(|e| SttError::Inference(format!("decoder enc mask: {e}")))?;
-            named.push((Cow::Owned(mask_name.clone()), SessionInputValue::from(mask)));
-        }
+            .map_err(|e| SttError::Inference(format!("decoder enc mask: {e}")))
+        });
+        let enc_mask = enc_mask.transpose()?;
 
-        let outputs = self
+        let mut binding = self
             .decoder
-            .run(named)
-            .map_err(|e| SttError::Inference(format!("decoder run (step 0): {e}")))?;
-
-        let logits = {
-            let v = outputs
-                .get("logits")
-                .ok_or_else(|| SttError::Inference("decoder produced no logits".into()))?;
-            let (s, d) = v
-                .try_extract_tensor::<f32>()
-                .map_err(|e| SttError::Inference(format!("logits extract: {e}")))?;
-            OwnedTensor {
-                shape: s.to_vec(),
-                data: d.to_vec(),
-            }
-        };
-
-        // present.{layer}.{decoder|encoder}.{key|value} → past_key_values.<same suffix>.
-        let mut state: HashMap<String, OwnedTensor> =
-            HashMap::with_capacity(self.present_output_names.len());
-        for present_name in &self.present_output_names {
-            let v = outputs.get(present_name.as_str()).ok_or_else(|| {
-                SttError::Inference(format!("decoder produced no {present_name}"))
-            })?;
-            let (s, d) = v
-                .try_extract_tensor::<f32>()
-                .map_err(|e| SttError::Inference(format!("{present_name} extract: {e}")))?;
-            let past_name = present_name.replacen("present.", "past_key_values.", 1);
-            state.insert(
-                past_name,
-                OwnedTensor {
-                    shape: s.to_vec(),
-                    data: d.to_vec(),
-                },
-            );
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("decoder binding: {e}")))?;
+        binding
+            .bind_input("input_ids", &input_ids)
+            .map_err(|e| SttError::Inference(format!("bind input_ids: {e}")))?;
+        binding
+            .bind_input("encoder_hidden_states", encoder_out)
+            .map_err(|e| SttError::Inference(format!("bind encoder_hidden_states: {e}")))?;
+        if let (Some(mask_name), Some(mask)) = (&self.decoder_enc_mask_name, &enc_mask) {
+            binding
+                .bind_input(mask_name.as_str(), mask)
+                .map_err(|e| SttError::Inference(format!("bind decoder enc mask: {e}")))?;
+        }
+        binding
+            .bind_output_to_device("logits", cpu_mem)
+            .map_err(|e| SttError::Inference(format!("bind logits: {e}")))?;
+        for pname in &self.present_output_names {
+            binding
+                .bind_output_to_device(pname.as_str(), dev_mem)
+                .map_err(|e| SttError::Inference(format!("bind {pname}: {e}")))?;
         }
 
-        Ok((logits, state))
+        let mut outputs = self
+            .decoder
+            .run_binding(&binding)
+            .map_err(|e| SttError::Inference(format!("decoder run (step 0): {e}")))?;
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("decoder synchronize: {e}")))?;
+
+        let next = argmax_from_outputs(&outputs)?;
+
+        // Carry present.{layer}.{decoder|encoder}.{key|value} → past_key_values.<same suffix> as
+        // DEVICE values (session-owned, survive the binding drop → rebind next step). Parallel to
+        // `past_input_names`; every entry is populated on step 0. The `present_carry` map is
+        // precomputed at load so this borrows nothing off `self` (which `outputs` holds mutably).
+        let mut past: Vec<Option<DynValue>> =
+            (0..self.past_input_names.len()).map(|_| None).collect();
+        for (present_name, idx) in &self.present_carry {
+            past[*idx] = Some(outputs.remove(present_name.as_str()).ok_or_else(|| {
+                SttError::Inference(format!("decoder produced no {present_name}"))
+            })?);
+        }
+        drop(outputs);
+        drop(binding);
+
+        Ok((next, past))
     }
 
     /// Run `decoder_with_past_model.onnx` for one autoregressive step. Feeds the last token + the
-    /// full KV state; carries the new decoder-self-attn present.* back, KEEPS the static encoder
-    /// K/V from `state`. Returns `(logits, new_state)`.
+    /// full device-resident KV state; binds `logits`→host / the 12 decoder-self-attn `present.*`
+    /// →device, argmaxes, and overwrites ONLY those decoder-K/V entries in `past` (the static
+    /// encoder K/V from step 0 is kept — the past-step graph doesn't re-emit it). Returns the next
+    /// token; `past` is mutated in place. Nothing round-trips through the host.
     fn past_decode_step(
         &mut self,
+        encoder_out: &DynValue,
         next_token: i64,
-        state: &HashMap<String, OwnedTensor>,
-        enc_data: &[f32],
-        enc_shape_usize: &[usize],
+        past: &mut [Option<DynValue>],
         enc_frames: usize,
-    ) -> SttResult<(OwnedTensor, HashMap<String, OwnedTensor>)> {
+        dev_mem: &MemoryInfo,
+        cpu_mem: &MemoryInfo,
+    ) -> SttResult<i64> {
         let input_ids = Tensor::from_array(([1usize, 1usize], vec![next_token].into_boxed_slice()))
             .map_err(|e| SttError::Inference(format!("past input_ids: {e}")))?;
-
-        let mut named: Vec<(Cow<'_, str>, SessionInputValue<'_>)> =
-            Vec::with_capacity(self.past_input_names.len() + 3);
-        named.push((
-            Cow::Borrowed("input_ids"),
-            SessionInputValue::from(input_ids),
-        ));
-        // Only fed when the re-export declares them.
-        if let Some(mask_name) = &self.past_enc_mask_name {
-            let mask = Tensor::from_array((
+        // Held here so it outlives the binding through `run_binding`.
+        let enc_mask = self.past_enc_mask_name.as_ref().map(|_| {
+            Tensor::from_array((
                 [1usize, enc_frames],
                 vec![1i64; enc_frames].into_boxed_slice(),
             ))
-            .map_err(|e| SttError::Inference(format!("past enc mask: {e}")))?;
-            named.push((Cow::Owned(mask_name.clone()), SessionInputValue::from(mask)));
+            .map_err(|e| SttError::Inference(format!("past enc mask: {e}")))
+        });
+        let enc_mask = enc_mask.transpose()?;
+
+        let mut binding = self
+            .decoder_with_past
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("decoder_with_past binding: {e}")))?;
+        binding
+            .bind_input("input_ids", &input_ids)
+            .map_err(|e| SttError::Inference(format!("bind past input_ids: {e}")))?;
+        // Only fed when the re-export declares them.
+        if let (Some(mask_name), Some(mask)) = (&self.past_enc_mask_name, &enc_mask) {
+            binding
+                .bind_input(mask_name.as_str(), mask)
+                .map_err(|e| SttError::Inference(format!("bind past enc mask: {e}")))?;
         }
         if let Some(hidden_name) = &self.past_enc_hidden_name {
-            let enc_hidden = TensorRef::from_array_view((enc_shape_usize.to_vec(), enc_data))
-                .map_err(|e| SttError::Inference(format!("past enc_hidden: {e}")))?;
-            named.push((
-                Cow::Owned(hidden_name.clone()),
-                SessionInputValue::from(enc_hidden),
-            ));
+            binding
+                .bind_input(hidden_name.as_str(), encoder_out)
+                .map_err(|e| SttError::Inference(format!("bind past enc_hidden: {e}")))?;
         }
-        // Build owned past_key_values.* tensors from the carried state.
-        for name in &self.past_input_names {
-            let kv = state
-                .get(name)
+        // past_key_values.* : device value carried from the previous step.
+        for (i, name) in self.past_input_names.iter().enumerate() {
+            let v = past[i]
+                .as_ref()
                 .ok_or_else(|| SttError::Inference(format!("missing carried KV {name}")))?;
-            let usize_shape: Vec<usize> = kv.shape.iter().map(|&x| x.max(0) as usize).collect();
-            let t = Tensor::from_array((usize_shape, kv.data.clone().into_boxed_slice()))
-                .map_err(|e| SttError::Inference(format!("past kv {name}: {e}")))?;
-            named.push((Cow::Owned(name.clone()), SessionInputValue::from(t)));
+            binding
+                .bind_input(name.as_str(), v)
+                .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+        }
+        binding
+            .bind_output_to_device("logits", cpu_mem)
+            .map_err(|e| SttError::Inference(format!("bind past logits: {e}")))?;
+        for pname in &self.past_present_names {
+            binding
+                .bind_output_to_device(pname.as_str(), dev_mem)
+                .map_err(|e| SttError::Inference(format!("bind {pname}: {e}")))?;
         }
 
-        let outputs = self
+        let mut outputs = self
             .decoder_with_past
-            .run(named)
+            .run_binding(&binding)
             .map_err(|e| SttError::Inference(format!("decoder_with_past run: {e}")))?;
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("decoder_with_past synchronize: {e}")))?;
 
-        let logits = {
-            let v = outputs
-                .get("logits")
-                .ok_or_else(|| SttError::Inference("past decoder produced no logits".into()))?;
-            let (s, d) = v
-                .try_extract_tensor::<f32>()
-                .map_err(|e| SttError::Inference(format!("past logits extract: {e}")))?;
-            OwnedTensor {
-                shape: s.to_vec(),
-                data: d.to_vec(),
-            }
-        };
+        let next = argmax_from_outputs(&outputs)?;
 
-        // Carry over: start from the previous state (keeps the static encoder K/V) and overwrite
-        // only the decoder-self-attn present.* the past-step graph re-emits.
-        let mut new_state = state.clone();
-        for present_name in &self.past_present_names {
-            let v = outputs.get(present_name.as_str()).ok_or_else(|| {
+        // Overwrite only the decoder-self-attn present.* the past-step graph re-emits (the static
+        // encoder K/V stays as seeded in step 0). Extracted values are session-owned and survive the
+        // binding drop. Uses the precomputed `past_present_carry` map (borrows only that field, not
+        // all of `self`, which `outputs` holds mutably via `self.decoder_with_past`).
+        for (present_name, idx) in &self.past_present_carry {
+            past[*idx] = Some(outputs.remove(present_name.as_str()).ok_or_else(|| {
                 SttError::Inference(format!("past decoder produced no {present_name}"))
-            })?;
-            let (s, d) = v
-                .try_extract_tensor::<f32>()
-                .map_err(|e| SttError::Inference(format!("{present_name} extract: {e}")))?;
-            let past_name = present_name.replacen("present.", "past_key_values.", 1);
-            new_state.insert(
-                past_name,
-                OwnedTensor {
-                    shape: s.to_vec(),
-                    data: d.to_vec(),
-                },
-            );
+            })?);
         }
+        drop(outputs);
+        drop(binding);
 
-        Ok((logits, new_state))
+        Ok(next)
     }
 }
 
@@ -427,8 +510,8 @@ impl Transcriber for MoonshineEngine {
         if audio.is_empty() {
             return Ok(Transcription::default());
         }
-        let (enc_shape, enc_data) = self.encode(audio)?;
-        let tokens = self.decode_greedy(&enc_shape, &enc_data)?;
+        let encoder_out = self.encode(audio)?;
+        let tokens = self.decode_greedy(&encoder_out)?;
         // Strip the leading bos before rendering (moonshine.py: `tokens[0, 1:]`).
         let body: &[i64] = if tokens.first().copied() == Some(self.tokenizer.bos_id) {
             &tokens[1..]
@@ -618,9 +701,10 @@ impl MoonshineTokenizer {
 // Session construction + ORT helpers (provider/argmax/KV helpers are shared in `super`)
 // ---------------------------------------------------------------------------
 
-/// Build one ORT session, CPU-ONLY (see `load()`: the host-copy KV decode loses to CPU on DML
-/// for this tiny model). Moonshine keeps full optimization (no fp16 EXTENDED downgrade — it isn't
-/// in INT8_PREFERRED / DML_INCOMPATIBLE and the default export is fp32).
+/// Build one ORT session, CPU-ONLY (see `load()`: the KV decode loses to CPU on DML for this tiny
+/// model — the per-step device launch/transfer overhead dominates). Moonshine keeps full
+/// optimization (no fp16 EXTENDED downgrade — it isn't in INT8_PREFERRED / DML_INCOMPATIBLE and the
+/// default export is fp32).
 fn build_session(path: &Path, intra: usize) -> SttResult<Session> {
     let mut builder = configure_session(
         GraphOptimizationLevel::All,
@@ -641,6 +725,40 @@ fn input_named(session: &Session, name: &str) -> Option<String> {
         .iter()
         .find(|o| o.name() == name)
         .map(|o| o.name().to_string())
+}
+
+/// The `AllocationDevice` (+ id) the sessions run on, for IoBinding the encoder output + KV-cache
+/// resident on it (like `cohere_device` / whisper's `device_for_providers`). Derived from the FIRST
+/// requested accelerator; Moonshine is CPU-forced so this is CPU today, but the map stays EP-agnostic
+/// (DirectML/CUDA → that device) if the force is ever lifted. (No WEBGPU arm yet.)
+fn moonshine_device(providers: &[Accelerator]) -> (AllocationDevice, i32) {
+    match providers.first() {
+        Some(Accelerator::DirectMl) => (AllocationDevice::DIRECTML, 0),
+        Some(Accelerator::Cuda) => (AllocationDevice::CUDA, 0),
+        _ => (AllocationDevice::CPU, 0),
+    }
+}
+
+/// The encoder time-axis length (dim 1) of the device-resident `last_hidden_state`, read from the
+/// value's shape metadata (no host copy). Used to size the optional all-ones cross-attention mask.
+fn encoder_dim1(v: &DynValue) -> i64 {
+    match v.dtype() {
+        ort::value::ValueType::Tensor { shape, .. } => shape.get(1).copied().unwrap_or(0).max(0),
+        _ => 0,
+    }
+}
+
+/// Extract the (host-bound) `logits` from a bound decode step and argmax its last position → next
+/// token. Kept host-side transiently (the only value that leaves the device each step, exactly like
+/// `whisper.rs`); the KV cache stays device-resident.
+fn argmax_from_outputs(outputs: &ort::session::SessionOutputs<'_>) -> SttResult<i64> {
+    let v = outputs
+        .get("logits")
+        .ok_or_else(|| SttError::Inference("decoder produced no logits".into()))?;
+    let (shape, data) = v
+        .try_extract_tensor::<f32>()
+        .map_err(|e| SttError::Inference(format!("logits extract: {e}")))?;
+    Ok(argmax_last(data, shape))
 }
 
 /// argmax over the LAST decoder position of a `(1, seq, vocab)` logits tensor. Empty → 0.

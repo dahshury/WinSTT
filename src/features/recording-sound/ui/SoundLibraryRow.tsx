@@ -165,20 +165,21 @@ function RowName({ active, name }: RowNameProps): ReactNode {
 	// Selection drives the same weight + tone shift the FF radio/checkbox labels
 	// use: muted by default, foreground + semibold when active.
 	return (
-		<span
-			className={cn(
-				"min-w-0 flex-1 truncate text-left text-body transition-[color,font-variation-settings] duration-150",
-				active ? "text-foreground" : "text-foreground-muted",
-			)}
-			style={{
-				fontVariationSettings: active
-					? fontWeights.semibold
-					: fontWeights.normal,
-			}}
-			title={name}
-		>
-			{name}
-		</span>
+		<Tooltip content={name}>
+			<span
+				className={cn(
+					"min-w-0 flex-1 truncate text-left text-body transition-[color,font-variation-settings] duration-150",
+					active ? "text-foreground" : "text-foreground-muted",
+				)}
+				style={{
+					fontVariationSettings: active
+						? fontWeights.semibold
+						: fontWeights.normal,
+				}}
+			>
+				{name}
+			</span>
+		</Tooltip>
 	);
 }
 

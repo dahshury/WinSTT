@@ -41,8 +41,23 @@ export interface OllamaLibrarySearchProps {
 	catalog: readonly OllamaLibraryHit[];
 	/** Scraper failure reason — surfaces inline in the Library area. */
 	error?: string | null;
+	/** Trigger a per-slug homepage scrape (description / capabilities / pulls /
+	 *  updated) for typed tags not in the recommended catalog. Idempotent once
+	 *  cached. */
+	fetchHit: (model: string) => void;
 	/** Trigger a per-model tag scrape. Idempotent once cached. */
 	fetchTags: (model: string) => void;
+	/** Per-base-slug homepage-hit state keyed by lower-cased base slug. */
+	hitsByModel: Readonly<
+		Record<
+			string,
+			{
+				error?: string | null;
+				hit: OllamaLibraryHit | null;
+				isLoading: boolean;
+			}
+		>
+	>;
 	isLoaded: boolean;
 	isLoading: boolean;
 	/** Legacy catalog loader; this selector intentionally does not call it. */
@@ -151,6 +166,10 @@ export interface TriggerPullSummary {
 
 export type OllamaTagsState =
 	| OllamaLibrarySearchProps["tagsByModel"][string]
+	| undefined;
+
+export type OllamaHitState =
+	| OllamaLibrarySearchProps["hitsByModel"][string]
 	| undefined;
 
 /** Everything one maker group's rows need, bundled so the section signature

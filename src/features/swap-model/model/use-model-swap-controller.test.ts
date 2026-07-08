@@ -588,7 +588,6 @@ describe("runIssueSwap", () => {
 						nativeStreaming: true,
 					} as never;
 				}
-				return undefined;
 			}) as never,
 			kind: "main",
 			previous: "prev",
@@ -625,7 +624,6 @@ describe("runIssueSwap", () => {
 						nativeStreaming: true,
 					} as never;
 				}
-				return undefined;
 			}) as never,
 			kind: "main",
 			previous: "prev",
@@ -666,7 +664,6 @@ describe("runIssueSwap", () => {
 						nativeStreaming: true,
 					} as never;
 				}
-				return undefined;
 			}) as never,
 			kind: "main",
 			previous: "prev",
@@ -753,7 +750,6 @@ describe("runIssueSwap", () => {
 						nativeStreaming: true,
 					} as never;
 				}
-				return undefined;
 			}) as never,
 			kind: "realtime",
 			previous: "prev-rt",
@@ -791,7 +787,6 @@ describe("runIssueSwap", () => {
 						nativeStreaming: true,
 					} as never;
 				}
-				return undefined;
 			}) as never,
 			kind: "realtime",
 			previous: "streaming-zipformer-en",

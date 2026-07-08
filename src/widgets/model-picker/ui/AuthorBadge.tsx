@@ -1,5 +1,6 @@
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
+import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 
 export interface AuthorBadgeProps {
@@ -8,6 +9,13 @@ export interface AuthorBadgeProps {
 	icon?: IconSvgElement;
 	/** Author / maker / publisher display name, e.g. "Google", "NVIDIA". */
 	label: string;
+	/**
+	 * A ready-made logo element (e.g. an inline brand SVG from `brandLogoFor`),
+	 * for makers that ship a React component rather than a `/provider-icons`
+	 * asset — like ElevenLabs. Takes precedence over `logoSrc` / `icon`; the
+	 * caller sizes it (aim for `size-5` to match the image/glyph paths).
+	 */
+	logoNode?: ReactNode;
 	/** Already resolved logo URL (run local asset paths through `publicAsset`). */
 	logoSrc?: string | null;
 	/** Dimmed variant — the outgoing model in a swap transition. */
@@ -25,6 +33,7 @@ export function AuthorBadge({
 	className,
 	icon,
 	label,
+	logoNode,
 	logoSrc,
 	muted = false,
 }: AuthorBadgeProps) {
@@ -38,7 +47,16 @@ export function AuthorBadge({
 				className,
 			)}
 		>
-			{logoSrc ? (
+			{logoNode ? (
+				<span
+					className={cn(
+						"flex size-5 shrink-0 items-center justify-center [&>svg]:size-5",
+						muted && "opacity-60",
+					)}
+				>
+					{logoNode}
+				</span>
+			) : logoSrc ? (
 				<img
 					alt=""
 					className={cn(

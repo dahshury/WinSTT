@@ -17,6 +17,7 @@ import { appDataUsage, removeAppDataCategory } from "@/shared/api/ipc-client";
 import type { SettingsTranslateFn } from "@/shared/i18n/translation-types";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 /** Category glyphs reuse the model-footprint / settings vocabulary so the
  *  storage view reads with the same language as the rest of the app. */
@@ -119,15 +120,16 @@ function UsageRow({
 				</div>
 			</div>
 			{isRemovable(entry.key) ? (
-				<button
-					aria-label={t("appDataUsageRemoveAria", { item: label })}
-					className="-mr-1 shrink-0 cursor-pointer rounded-xs p-1 text-foreground-muted outline-none transition-colors hover:text-error focus-visible:ring-1 focus-visible:ring-accent"
-					onClick={() => onRemove(entry)}
-					title={t("appDataUsageRemoveAria", { item: label })}
-					type="button"
-				>
-					<HugeiconsIcon aria-hidden="true" icon={Delete02Icon} size={15} />
-				</button>
+				<Tooltip content={t("appDataUsageRemoveAria", { item: label })}>
+					<button
+						aria-label={t("appDataUsageRemoveAria", { item: label })}
+						className="-mr-1 shrink-0 cursor-pointer rounded-xs p-1 text-foreground-muted outline-none transition-colors hover:text-error focus-visible:ring-1 focus-visible:ring-accent"
+						onClick={() => onRemove(entry)}
+						type="button"
+					>
+						<HugeiconsIcon aria-hidden="true" icon={Delete02Icon} size={15} />
+					</button>
+				</Tooltip>
 			) : null}
 		</div>
 	);

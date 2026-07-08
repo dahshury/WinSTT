@@ -15,7 +15,7 @@ import {
 	variantDisplayName,
 } from "@/widgets/model-picker/stt/lib/family-helpers";
 import { formatModelName } from "@/widgets/model-picker/lib/model-selector-utils";
-import { type CSSProperties, type ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { TranslateFn } from "@/shared/i18n/translation-types";
 import {
 	providerDisplayName,
@@ -26,7 +26,7 @@ import { useCatalogStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import type { OpenRouterSttModel } from "@/shared/api/models";
 import { createProviderIconResolver } from "@/shared/lib/provider-icon-resolver";
-import { surfaceHoverBg, useSurface } from "@/shared/lib/surface";
+import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Tooltip } from "@/shared/ui/tooltip";
 import {
 	MODEL_PICKER_TRIGGER_SLOT,
@@ -36,6 +36,9 @@ import { FOOTER_TOOLTIP_DELAY } from "./FooterMenuChip";
 
 interface FooterModelChipProps {
 	ariaLabel: string;
+	/** Flags the selected model as a cloud model — badges the leading glyph with
+	 *  a small cloud sign instead of adding a separate labelled pill. */
+	cloud?: boolean;
 	icon?: IconSvgElement;
 	label: string;
 	/** Public path to the model maker's brand logo. When set, the logo is
@@ -50,31 +53,54 @@ interface FooterModelChipProps {
  *  for the family, the logo is painted in the footer's dim gray via a CSS alpha
  *  mask (the logo's own colors are discarded — only its silhouette shows), so
  *  it matches the surrounding monochrome footer. Otherwise the family's
- *  HugeIcon is shown in the same gray. */
+ *  HugeIcon is shown in the same gray.
+ *
+ *  `cloud` badges the glyph with a tiny cloud sign notched into its bottom-right
+ *  corner (punched out with the bar's own surface color) — the compact,
+ *  wordless cloud/local cue. When there's no logo to badge the glyph already IS
+ *  the cloud icon, so the corner badge is skipped. */
 function FooterModelGlyph({
+	cloud,
 	icon,
 	logoSrc,
 }: {
+	cloud?: boolean;
 	icon: IconSvgElement;
 	logoSrc?: string | undefined;
 }): ReactNode {
-	if (logoSrc) {
-		return (
-			<span
-				aria-hidden="true"
-				className="size-[11px] shrink-0 bg-foreground-dim [mask-image:var(--footer-model-logo)] [mask-position:center] [mask-repeat:no-repeat] [mask-size:contain] [-webkit-mask-image:var(--footer-model-logo)] [-webkit-mask-position:center] [-webkit-mask-repeat:no-repeat] [-webkit-mask-size:contain]"
-				data-logo-src={logoSrc}
-				style={{ "--footer-model-logo": `url("${logoSrc}")` } as CSSProperties}
-			/>
-		);
-	}
-	return (
+	const barLevel = useSurface();
+	const glyph = logoSrc ? (
+		<span
+			aria-hidden="true"
+			className="size-[11px] shrink-0 bg-foreground-dim [mask-image:var(--footer-model-logo)] [mask-position:center] [mask-repeat:no-repeat] [mask-size:contain] [-webkit-mask-image:var(--footer-model-logo)] [-webkit-mask-position:center] [-webkit-mask-repeat:no-repeat] [-webkit-mask-size:contain]"
+			data-logo-src={logoSrc}
+			style={{ "--footer-model-logo": `url("${logoSrc}")` } as CSSProperties}
+		/>
+	) : (
 		<HugeiconsIcon
 			aria-hidden="true"
 			color="var(--color-foreground-dim)"
-			icon={icon}
+			icon={cloud ? AiCloud01Icon : icon}
 			size={11}
 		/>
+	);
+	if (!(cloud && logoSrc)) {
+		return glyph;
+	}
+	return (
+		<span className="relative inline-flex shrink-0">
+			{glyph}
+			<span
+				aria-hidden="true"
+				className={`-right-1 -bottom-1 absolute inline-flex items-center justify-center rounded-full ${surfaceBg(barLevel)}`}
+			>
+				<HugeiconsIcon
+					color="var(--color-foreground-dim)"
+					icon={AiCloud01Icon}
+					size={8}
+				/>
+			</span>
+		</span>
 	);
 }
 
@@ -129,6 +155,7 @@ function resolveOpenrouterFooterModel(
 
 function FooterModelChip({
 	ariaLabel,
+	cloud,
 	label,
 	tooltip,
 	icon = AiAudioIcon,
@@ -146,7 +173,11 @@ function FooterModelChip({
 				onClick={openModelPicker}
 				type="button"
 			>
-				<FooterModelGlyph icon={icon} logoSrc={logoSrc} />
+				<FooterModelGlyph
+					cloud={cloud ?? false}
+					icon={icon}
+					logoSrc={logoSrc}
+				/>
 				<span className="min-w-0 truncate">{label}</span>
 				<HugeiconsIcon
 					aria-hidden="true"
@@ -216,6 +247,11 @@ export function ActiveModelChip({
 		return (
 			<FooterModelChip
 				ariaLabel={tModel("model")}
+				// The cloud cue is a small sign badged onto the maker logo (or the
+				// cloud fallback glyph) — it shows even for OpenRouter models whose
+				// maker logo is otherwise indistinguishable from the matching local
+				// model, without the width of a labelled pill.
+				cloud
 				icon={AiCloud01Icon}
 				label={cloudDisplay?.label ?? label}
 				logoSrc={cloudDisplay?.logoSrc}

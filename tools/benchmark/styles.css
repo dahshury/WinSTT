@@ -1,0 +1,11 @@
+/* Reuse the app's full design system (tokens, @theme utilities, fonts), then
+   add this tool's own directory as a Tailwind content source so classes used
+   here are generated too (the app globals.css only @sources the app tree). */
+@import "../../src/app/styles/fonts.css";
+@import "../../src/app/styles/globals.css";
+@source ".";
+
+body {
+	background: var(--color-surface-1, #0f1115);
+	color: var(--color-foreground, #e7e9ee);
+}

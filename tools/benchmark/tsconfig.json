@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "vite/client"],
+    "paths": {
+      "@/bindings": ["../../src/bindings.ts"],
+      "@/*": ["../../src/*"],
+      "@test/*": ["../../test/*"]
+    }
+  },
+  "include": ["../../src", ".", "../lib/postprocess"]
+}

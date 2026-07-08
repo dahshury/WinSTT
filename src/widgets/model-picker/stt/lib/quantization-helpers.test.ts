@@ -17,7 +17,6 @@ function model(overrides: Partial<ModelInfo> = {}): ModelInfo {
 		previewCapable: true,
 		nativeStreaming: false,
 		finalReuseSafe: true,
-		supportsRealtime: true,
 		onnxModelName: "model.onnx",
 		description: "",
 		availableQuantizations: ["", "int8"],

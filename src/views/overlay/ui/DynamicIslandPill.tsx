@@ -130,8 +130,13 @@ function DynamicIslandPillContent({
 
 	if (isProcessing) {
 		return (
+			// Center the rotating-word + timer cluster within the island. The
+			// cluster is comfortably narrower than the shell, so symmetric
+			// padding + `justify-center` keeps it visually centered while the
+			// centering slack (~35px on each side) already clears the absolute
+			// X cancel button in the top-right corner — no asymmetric `pr` needed.
 			<div
-				className="px-5 pt-2 pr-10 pb-3"
+				className="flex justify-center px-5 pt-2 pb-3"
 				data-overlay-processing-content="true"
 				style={{ fontSize: textFontSize }}
 			>

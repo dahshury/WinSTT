@@ -8,7 +8,7 @@ export function matchingTypedModelTag(
 	tagsState: OllamaTagsState,
 ): OllamaLibraryTag | undefined {
 	if (!info) {
-		return undefined;
+		return;
 	}
 	return tagsState?.tags.find((tag) =>
 		isSameOllamaTag(info.modelName, tag.name),

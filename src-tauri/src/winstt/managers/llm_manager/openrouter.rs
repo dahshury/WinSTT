@@ -72,6 +72,17 @@ fn openrouter_models_url(output_modality: Option<&str>) -> reqwest::Url {
     url
 }
 
+/// Parse one rate out of the catalog `pricing` object (values are USD-per-unit
+/// strings, e.g. `"0.0000006"`).
+fn pricing_rate(pricing: &serde_json::Value, key: &str) -> f64 {
+    pricing
+        .get(key)
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .filter(|n| n.is_finite() && *n >= 0.0)
+        .unwrap_or(0.0)
+}
+
 impl LlmManager {
     fn remember_openrouter_supported_parameters(&self, models: &[OpenRouterModelInfo]) {
         let Ok(mut cache) = self.openrouter_supported_parameters.lock() else {
@@ -82,6 +93,50 @@ impl LlmManager {
                 cache.insert(model.id.clone(), params.clone());
             }
         }
+        drop(cache);
+        let Ok(mut pricing_cache) = self.openrouter_pricing.lock() else {
+            return;
+        };
+        for model in models {
+            if let Some(pricing) = &model.pricing {
+                pricing_cache.insert(
+                    model.id.clone(),
+                    super::OpenRouterPricingRates {
+                        prompt: pricing_rate(pricing, "prompt"),
+                        completion: pricing_rate(pricing, "completion"),
+                        request: pricing_rate(pricing, "request"),
+                    },
+                );
+            }
+        }
+    }
+
+    fn cached_openrouter_pricing(&self, model: &str) -> Option<super::OpenRouterPricingRates> {
+        let cache = self.openrouter_pricing.lock().ok()?;
+        cache.get(model).copied().or_else(|| {
+            // Chat selections may carry a `:variant` suffix the catalog lists
+            // separately; fall back to the base id's rates.
+            model
+                .rsplit_once(':')
+                .and_then(|(base, _)| cache.get(base).copied())
+        })
+    }
+
+    /// Pricing rates for `model`, scanning the catalog once when the cache is
+    /// cold (e.g. a dictation before any picker/model scan this session).
+    async fn openrouter_pricing_for(
+        &self,
+        api_key: &str,
+        model: &str,
+    ) -> Option<super::OpenRouterPricingRates> {
+        if let Some(rates) = self.cached_openrouter_pricing(model) {
+            return Some(rates);
+        }
+        let scan = self.scan_openrouter(api_key).await;
+        if scan.error.is_some() || scan.models.is_empty() {
+            return None;
+        }
+        self.cached_openrouter_pricing(model)
     }
 
     fn cached_openrouter_supported_parameters(&self, model: &str) -> Option<Vec<String>> {
@@ -167,6 +222,10 @@ impl LlmManager {
             if let Some(provider) = eb.get("provider") {
                 map.insert("provider".to_string(), provider.clone());
             }
+            // Usage accounting: the final stream chunk then carries NATIVE
+            // token counts (what OpenRouter actually bills on), which the
+            // cost computation below multiplies by the catalog rates.
+            map.insert("usage".to_string(), serde_json::json!({ "include": true }));
         }
 
         // Strict `{ "text": "..." }` structured-output envelope (mirrors
@@ -215,16 +274,21 @@ impl LlmManager {
             Some(rid) => self.cancelled.cancel_token(rid),
             None => tokio_util::sync::CancellationToken::new(),
         };
-        let result = crate::cloud_llm::run_chat_stream(
-            target,
-            request,
-            chat_options,
-            cancel.clone(),
-            |delta| {
-                if let Some(sink) = sink.as_ref() {
-                    sink.on_delta(delta);
-                }
-            },
+        let result = crate::winstt::cloud_metrics::timed(
+            "openrouter",
+            "llm_chat",
+            crate::cloud_llm::run_chat_stream(
+                target,
+                request,
+                chat_options,
+                cancel.clone(),
+                |delta| {
+                    if let Some(sink) = sink.as_ref() {
+                        sink.on_delta(delta);
+                    }
+                },
+            ),
+            String::clone,
         )
         .await;
         if let Some(rid) = request_id {
@@ -233,7 +297,36 @@ impl LlmManager {
         if cancel.is_cancelled() {
             return Err(llm::OPENROUTER_CANCELLED.to_string());
         }
-        let (content, _tokens) = result?;
+        let (content, usage) = result?;
+
+        // Convert the stream's native token accounting into per-run USD cost
+        // (tokens × catalog rates + any per-request fee) and park it on the
+        // usage ledger for the dictation/transform pipeline to collect.
+        // `openrouter/auto` routes to an undisclosed model, so no rate applies.
+        if let (Some(rid), Some(usage)) = (request_id, usage.as_ref()) {
+            let prompt_tokens = usage.prompt_tokens.map(i64::from);
+            let completion_tokens = usage.completion_tokens.map(i64::from);
+            let cost_usd = if model == "openrouter/auto" {
+                None
+            } else {
+                self.openrouter_pricing_for(api_key, &model)
+                    .await
+                    .map(|rates| {
+                        prompt_tokens.unwrap_or(0) as f64 * rates.prompt
+                            + completion_tokens.unwrap_or(0) as f64 * rates.completion
+                            + rates.request
+                    })
+            };
+            self.record_llm_usage(
+                rid,
+                super::LlmRunUsage {
+                    model: model.clone(),
+                    prompt_tokens,
+                    completion_tokens,
+                    cost_usd,
+                },
+            );
+        }
 
         Ok(extract_openrouter_text(&content, fallback))
     }
@@ -264,7 +357,15 @@ impl LlmManager {
         if !api_key.is_empty() {
             rb = rb.bearer_auth(api_key);
         }
-        let resp = match rb.send().await {
+        let started = std::time::Instant::now();
+        let sent = rb.send().await;
+        crate::winstt::cloud_metrics::record(
+            "openrouter",
+            "llm_models",
+            started.elapsed(),
+            sent.as_ref().err().map(|e| e.to_string()).as_deref(),
+        );
+        let resp = match sent {
             Ok(r) => r,
             Err(e) => {
                 return OpenRouterScan {

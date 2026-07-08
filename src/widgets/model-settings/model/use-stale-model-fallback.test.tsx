@@ -19,8 +19,7 @@ type StatesById = Record<string, ModelStateEntry>;
 function model(
 	overrides: Partial<ModelInfo> & Pick<ModelInfo, "id">,
 ): ModelInfo {
-	const previewCapable =
-		overrides.previewCapable ?? overrides.supportsRealtime ?? false;
+	const previewCapable = overrides.previewCapable ?? false;
 	return {
 		displayName: overrides.displayName ?? overrides.id,
 		backend: overrides.backend ?? "onnx_asr",
@@ -31,7 +30,6 @@ function model(
 		previewCapable,
 		nativeStreaming: overrides.nativeStreaming ?? false,
 		finalReuseSafe: overrides.finalReuseSafe ?? previewCapable,
-		supportsRealtime: previewCapable,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [],

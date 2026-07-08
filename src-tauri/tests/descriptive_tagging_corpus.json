@@ -1,0 +1,352 @@
+[
+  {
+    "id": 0,
+    "class": "positive",
+    "utterance": "please update the context manager to add a retry loop",
+    "expected_basename": "context_manager.rs"
+  },
+  {
+    "id": 1,
+    "class": "positive",
+    "utterance": "open the workspace index so I can check the enumeration",
+    "expected_basename": "workspace_index.rs"
+  },
+  {
+    "id": 2,
+    "class": "positive",
+    "utterance": "let's refactor the secret scrub code to redact api keys",
+    "expected_basename": "secret_scrub.rs"
+  },
+  {
+    "id": 3,
+    "class": "positive",
+    "utterance": "go to the file reference resolver and tighten the matching",
+    "expected_basename": "file_reference_resolver.rs"
+  },
+  {
+    "id": 4,
+    "class": "positive",
+    "utterance": "add a new field to the settings schema for the timeout",
+    "expected_basename": "settings_schema.rs"
+  },
+  {
+    "id": 5,
+    "class": "positive",
+    "utterance": "the download manager keeps stalling, look at its progress logic",
+    "expected_basename": "download_manager.rs"
+  },
+  {
+    "id": 6,
+    "class": "positive",
+    "utterance": "check the realtime manager for the stale audio guard",
+    "expected_basename": "realtime_manager.rs"
+  },
+  {
+    "id": 7,
+    "class": "positive",
+    "utterance": "the ollama manager should warm up the model before use",
+    "expected_basename": "ollama_manager.rs"
+  },
+  {
+    "id": 8,
+    "class": "positive",
+    "utterance": "wire the wakeword manager into the startup path",
+    "expected_basename": "wakeword_manager.rs"
+  },
+  {
+    "id": 9,
+    "class": "positive",
+    "utterance": "the loopback manager needs to handle device hot plug",
+    "expected_basename": "loopback_manager.rs"
+  },
+  {
+    "id": 10,
+    "class": "positive",
+    "utterance": "look at the llm manager to fix the toggle lifecycle",
+    "expected_basename": "llm_manager.rs"
+  },
+  {
+    "id": 11,
+    "class": "positive",
+    "utterance": "the tts manager should follow the model device",
+    "expected_basename": "tts_manager.rs"
+  },
+  {
+    "id": 12,
+    "class": "positive",
+    "utterance": "fix the ax tree walker in the context capture",
+    "expected_basename": "ax_tree.rs"
+  },
+  {
+    "id": 13,
+    "class": "positive",
+    "utterance": "the prompt sections builder drops the focused field",
+    "expected_basename": "prompt_sections.rs"
+  },
+  {
+    "id": 14,
+    "class": "positive",
+    "utterance": "update the clipboard snapshot to preserve full fidelity",
+    "expected_basename": "clipboard_snapshot.rs"
+  },
+  {
+    "id": 15,
+    "class": "positive",
+    "utterance": "the file transcribe manager queue is backing up",
+    "expected_basename": "file_transcribe_manager.rs"
+  },
+  {
+    "id": 16,
+    "class": "positive",
+    "utterance": "look into the cloud stt manager for the openrouter path",
+    "expected_basename": "cloud_stt_manager.rs"
+  },
+  {
+    "id": 17,
+    "class": "positive",
+    "utterance": "the tts download manager pack got double nested",
+    "expected_basename": "tts_download_manager.rs"
+  },
+  {
+    "id": 18,
+    "class": "positive",
+    "utterance": "edit the caret join module to skip already tagged spans",
+    "expected_basename": "caret_join.rs",
+    "hard": true
+  },
+  {
+    "id": 19,
+    "class": "negative",
+    "utterance": "fix the login flow before we ship",
+    "expected_basename": null
+  },
+  {
+    "id": 20,
+    "class": "negative",
+    "utterance": "improve the error handling around downloads",
+    "expected_basename": null
+  },
+  {
+    "id": 21,
+    "class": "negative",
+    "utterance": "the main logic needs a cleanup pass",
+    "expected_basename": null
+  },
+  {
+    "id": 22,
+    "class": "negative",
+    "utterance": "add a dark mode toggle to the header",
+    "expected_basename": null
+  },
+  {
+    "id": 23,
+    "class": "negative",
+    "utterance": "just open the manager",
+    "expected_basename": null
+  },
+  {
+    "id": 24,
+    "class": "negative",
+    "utterance": "check the config please",
+    "expected_basename": null
+  },
+  {
+    "id": 25,
+    "class": "negative",
+    "utterance": "look at the module again",
+    "expected_basename": null
+  },
+  {
+    "id": 26,
+    "class": "negative",
+    "utterance": "the whole thing is too slow, profile it",
+    "expected_basename": null
+  },
+  {
+    "id": 27,
+    "class": "negative",
+    "utterance": "rename this variable to something clearer",
+    "expected_basename": null
+  },
+  {
+    "id": 28,
+    "class": "negative",
+    "utterance": "the button color is wrong on mobile",
+    "expected_basename": null
+  },
+  {
+    "id": 29,
+    "class": "negative",
+    "utterance": "the auth is broken again",
+    "expected_basename": null
+  },
+  {
+    "id": 30,
+    "class": "negative",
+    "utterance": "reduce the memory usage during transcription",
+    "expected_basename": null
+  },
+  {
+    "id": 31,
+    "class": "negative",
+    "utterance": "the settings feel cluttered, simplify them",
+    "expected_basename": null
+  },
+  {
+    "id": 32,
+    "class": "negative",
+    "utterance": "we need better logging everywhere",
+    "expected_basename": null
+  },
+  {
+    "id": 33,
+    "class": "ambiguous",
+    "utterance": "update the tests file to cover the new case",
+    "expected_basename": null
+  },
+  {
+    "id": 34,
+    "class": "ambiguous",
+    "utterance": "the mod file is missing an export",
+    "expected_basename": null
+  },
+  {
+    "id": 35,
+    "class": "ambiguous",
+    "utterance": "check the index file for the off by one",
+    "expected_basename": null
+  },
+  {
+    "id": 36,
+    "class": "ambiguous",
+    "utterance": "the manager is leaking a handle",
+    "expected_basename": null
+  },
+  {
+    "id": 37,
+    "class": "ambiguous",
+    "utterance": "look at the types file",
+    "expected_basename": null
+  },
+  {
+    "id": 38,
+    "class": "ambiguous",
+    "utterance": "the config file has a bad default",
+    "expected_basename": null
+  },
+  {
+    "id": 39,
+    "class": "ambiguous",
+    "utterance": "open the policy file",
+    "expected_basename": null
+  },
+  {
+    "id": 40,
+    "class": "ambiguous",
+    "utterance": "the utils file has a helper we can reuse",
+    "expected_basename": null
+  },
+
+  {
+    "id": 41,
+    "class": "positive",
+    "utterance": "the native streaming path keeps dropping partial tokens",
+    "expected_basename": "native_streaming.rs"
+  },
+  {
+    "id": 42,
+    "class": "ambiguous",
+    "utterance": "open the tray menu and add a separator",
+    "expected_basename": null
+  },
+  {
+    "id": 43,
+    "class": "positive",
+    "utterance": "the workspace index enumeration is missing untracked files, fix it",
+    "expected_basename": "workspace_index.rs"
+  },
+  {
+    "id": 44,
+    "class": "negative",
+    "utterance": "the retry logic needs an exponential backoff",
+    "expected_basename": null
+  },
+  {
+    "id": 45,
+    "class": "negative",
+    "utterance": "improve the error handling in the pipeline",
+    "expected_basename": null
+  },
+  {
+    "id": 46,
+    "class": "negative",
+    "utterance": "open the store",
+    "expected_basename": null
+  },
+  {
+    "id": 47,
+    "class": "negative",
+    "utterance": "check the provider again",
+    "expected_basename": null
+  },
+  {
+    "id": 48,
+    "class": "negative",
+    "utterance": "the dialog is misaligned on small screens",
+    "expected_basename": null
+  },
+  {
+    "id": 49,
+    "class": "negative",
+    "utterance": "the progress logic keeps stalling on slow networks",
+    "expected_basename": null
+  },
+  {
+    "id": 50,
+    "class": "negative",
+    "utterance": "we should cache the model warm up between runs",
+    "expected_basename": null
+  },
+  {
+    "id": 51,
+    "class": "ambiguous",
+    "utterance": "edit the sort state to persist the last order",
+    "expected_basename": null
+  },
+  {
+    "id": 52,
+    "class": "ambiguous",
+    "utterance": "the settings store lost my last device on restart",
+    "expected_basename": null
+  },
+  {
+    "id": 53,
+    "class": "ambiguous",
+    "utterance": "the device picker keeps reordering the connected mics",
+    "expected_basename": null
+  },
+  {
+    "id": 54,
+    "class": "ambiguous",
+    "utterance": "the audio visualizer stutters during long recordings",
+    "expected_basename": null
+  },
+  {
+    "id": 55,
+    "class": "positive",
+    "utterance": "look at the audio display code again",
+    "expected_basename": "AudioDisplay.tsx"
+  },
+  {
+    "id": 56,
+    "class": "ambiguous",
+    "utterance": "the manager keeps leaking a file handle somewhere",
+    "expected_basename": null
+  },
+  {
+    "id": 57,
+    "class": "positive",
+    "utterance": "the listen events handler misses the diarization toggle",
+    "expected_basename": "listen_events.rs"
+  }
+]

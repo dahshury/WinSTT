@@ -2,7 +2,9 @@ import { useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
+import { IPC } from "@/shared/api/ipc-channels";
 import {
+	ipcOn,
 	onFullSentence,
 	onNoAudioDetected,
 	onRealtimeText,
@@ -13,6 +15,13 @@ import {
 	onTranscriptionFailed,
 	onVadStart,
 } from "@/shared/api/ipc-client";
+
+/** Payload of `stt:pipeline-unavailable` — a cloud STT pipeline that can't run offline. */
+interface PipelineUnavailablePayload {
+	reason?: string;
+}
+/** How long the offline "no internet & no local model" pill stays up (matches the backend hide). */
+const OFFLINE_NOTICE_HOLD_MS = 4000;
 
 const COMPLETED_SESSION_CLEAR_MS = 1200;
 let completedSessionClearTimer: ReturnType<typeof setTimeout> | null = null;
@@ -191,6 +200,24 @@ export function useTranscriptionFeed(): void {
 			clearEphemeral();
 		});
 
+		// Offline graceful degradation: the selected cloud STT model is unreachable
+		// and no local model is installed to fall back to. Surface it as an error
+		// ephemeral so the overlay pill reveals (even with no active recording) and
+		// says "no internet & no local model" instead of failing silently.
+		const unsubUnavailable = ipcOn(IPC.STT_PIPELINE_UNAVAILABLE, (data) => {
+			const reason = (data as PipelineUnavailablePayload).reason;
+			const message =
+				reason === "offline_no_local"
+					? t("offlineNoLocalModel")
+					: t("transcriptionFailed");
+			voiceActivitySeenRef.current = false;
+			clearCompletedSessionTimer();
+			setRealtimeText("");
+			setRecordingActive(false);
+			setTranscribing(false);
+			showEphemeral(message, OFFLINE_NOTICE_HOLD_MS, "error");
+		});
+
 		return () => {
 			unsubStart();
 			unsubStop();
@@ -201,6 +228,7 @@ export function useTranscriptionFeed(): void {
 			unsubNoAudio();
 			unsubTranscriptionFailed();
 			unsubAborted();
+			unsubUnavailable();
 		};
 	}, [
 		addFinalSentence,

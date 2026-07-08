@@ -49,6 +49,22 @@ export function isOllamaFilterState(
 	);
 }
 
+/**
+ * Embedding models (e.g. `nomic-embed-text`, capabilities `["embedding"]`)
+ * emit vectors, not text — they can't drive post-processing, so the LLM picker
+ * hides them even when installed (Ollama or another tool often pulls one the
+ * user never chose). A model is excluded only when it ADVERTISES `embedding`
+ * WITHOUT a `completion` capability; models whose capabilities are unknown are
+ * kept, so we never hide a legitimate generator on an older Ollama build.
+ */
+export function isEmbeddingOnlyOllamaModel(model: OllamaModel): boolean {
+	const caps = model.capabilities;
+	if (!caps || caps.length === 0) {
+		return false;
+	}
+	return caps.includes("embedding") && !caps.includes("completion");
+}
+
 /** Minimal shape of the host's fit lookup — kept structural so this lib stays
  *  free of the UI-layer `OllamaFitInfo` type (FSD: a lib slice must not reach
  *  up into `ui`). The selector's `systemFit` is structurally compatible. */

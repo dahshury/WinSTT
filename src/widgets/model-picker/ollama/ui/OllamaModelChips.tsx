@@ -4,11 +4,16 @@ import {
 	AlertCircleIcon,
 	BinaryCodeIcon,
 	Brain01Icon,
+	CodeIcon,
+	FlashIcon,
+	Image01Icon,
+	Mic01Icon,
 	StarIcon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { useTranslations } from "use-intl";
+import { isLiteOllamaModel } from "@/entities/llm-catalog";
 import type { OpenRouterEndpoint } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { Tooltip as ContentTooltip } from "@/shared/ui/tooltip";
@@ -17,6 +22,7 @@ import {
 	resolveProviderIcon,
 } from "../../lib/provider-icons";
 import { AuthorBadge } from "../../ui/AuthorBadge";
+import { MakerLogo } from "../../ui/MakerLogo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/Tooltip";
 import { EndpointFeatureIcons } from "../../ui/EndpointFeatureIcons";
 import {
@@ -38,23 +44,13 @@ import type { OllamaFitInfo } from "./ollama-selector-types";
  *  card carries its maker mark, mirroring the OpenRouter picker. Falls back to a
  *  gray initials chip when the publisher has no logo. */
 export function OllamaMakerIcon({ slug }: { slug: string }) {
-	const icon = resolveProviderIcon(slug);
-	if (icon) {
-		return (
-			<img
-				alt=""
-				className="size-4 shrink-0 rounded-[3px] object-cover"
-				height={16}
-				src={icon}
-				width={16}
-			/>
-		);
-	}
 	// No bundled logo → neutral initials chip (never the misleading OpenRouter "O").
 	return (
-		<span className="flex size-4 shrink-0 items-center justify-center rounded-[3px] bg-foreground/[0.08] font-semibold text-[9px] text-foreground-muted uppercase">
-			{getOllamaPublisherBySlug(slug).label.charAt(0) || "?"}
-		</span>
+		<MakerLogo
+			fallback={getOllamaPublisherBySlug(slug).label.charAt(0) || "?"}
+			fallbackClassName="font-semibold text-[9px] uppercase"
+			src={resolveProviderIcon(slug)}
+		/>
 	);
 }
 
@@ -68,6 +64,45 @@ export function PublisherChip({ family }: { family: string }) {
 	);
 }
 
+const COMPACT_CAPABILITY_CHIP_CLASSES =
+	"inline-flex size-5 shrink-0 cursor-default items-center justify-center rounded-md border border-border/60 bg-foreground/[0.04] text-foreground-muted transition-[transform,box-shadow,color] duration-150 hover:scale-105 hover:shadow-sm";
+
+function CompactCapabilityChip({
+	icon,
+	label,
+	tooltip,
+}: {
+	icon: IconSvgElement;
+	label: string;
+	tooltip: ReactNode;
+}) {
+	return (
+		<Tooltip>
+			<TooltipTrigger
+				render={(props) => (
+					<span
+						{...(props as ComponentPropsWithoutRef<"span">)}
+						aria-label={label}
+						className={COMPACT_CAPABILITY_CHIP_CLASSES}
+					>
+						<HugeiconsIcon
+							aria-hidden="true"
+							className="size-2.5"
+							icon={icon}
+						/>
+					</span>
+				)}
+			/>
+			<TooltipContent className="max-w-xs" side="top">
+				<p className="font-semibold text-body-sm">{label}</p>
+				<p className="text-foreground-muted text-xs-tight leading-relaxed">
+					{tooltip}
+				</p>
+			</TooltipContent>
+		</Tooltip>
+	);
+}
+
 /**
  * Reasoning-capability marker. Renders when the model's `capabilities`
  * array (fetched from Ollama's `/api/show`) advertises `thinking`. Rendered
@@ -77,12 +112,23 @@ export function PublisherChip({ family }: { family: string }) {
  */
 function ThinkingChip({
 	capabilities,
+	compact = false,
 }: {
 	capabilities: readonly string[] | undefined;
+	compact?: boolean;
 }) {
 	const t = useTranslations("modelPicker");
 	if (!normalizedCapabilitySet(capabilities).has("thinking")) {
 		return null;
+	}
+	if (compact) {
+		return (
+			<CompactCapabilityChip
+				icon={Brain01Icon}
+				label={t("reasoning")}
+				tooltip={t("reasoningTip")}
+			/>
+		);
 	}
 	return (
 		<Tooltip>
@@ -115,9 +161,11 @@ const OLLAMA_TOOL_CAPABILITY_ENDPOINT = {
 function OllamaToolCapabilityBadge({
 	capabilities,
 	className,
+	compact = false,
 }: {
 	capabilities: readonly string[] | null | undefined;
 	className?: string;
+	compact?: boolean;
 }) {
 	if (!supportsOllamaToolCalling(capabilities)) {
 		return null;
@@ -126,20 +174,34 @@ function OllamaToolCapabilityBadge({
 		<EndpointFeatureIcons
 			className={cn("gap-1", className)}
 			endpoint={OLLAMA_TOOL_CAPABILITY_ENDPOINT}
-			flat
+			flat={!compact}
 			maxIcons={1}
-			showLabels
+			showLabels={!compact}
 			size="sm"
 		/>
 	);
 }
 
+function capabilityIcon(label: string): IconSvgElement {
+	switch (label.toLowerCase()) {
+		case "vision":
+			return Image01Icon;
+		case "audio":
+			return Mic01Icon;
+		case "fill-in-middle":
+			return CodeIcon;
+		default:
+			return BinaryCodeIcon;
+	}
+}
+
 function CapabilityChips({
 	capabilities,
+	compact = false,
 }: {
 	capabilities: readonly string[] | undefined;
+	compact?: boolean;
 }) {
-	const t = useTranslations("modelPicker");
 	const labels = visibleCapabilities(capabilities, { excludeTools: true });
 	if (labels.length === 0) {
 		return null;
@@ -147,41 +209,68 @@ function CapabilityChips({
 	return (
 		<>
 			{labels.map((label) => (
-				<Tooltip key={label}>
-					<TooltipTrigger
-						render={(props) => (
-							<span
-								{...(props as ComponentPropsWithoutRef<"span">)}
-								className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/60 px-1.5 py-px font-medium text-[9.5px] text-foreground-muted leading-none"
-							>
-								<HugeiconsIcon className="size-2.5" icon={BinaryCodeIcon} />
-								{label}
-							</span>
-						)}
-					/>
-					<TooltipContent>{t("ollamaCapabilityTip")}</TooltipContent>
-				</Tooltip>
+				<CapabilityChip compact={compact} key={label} label={label} />
 			))}
 		</>
 	);
 }
 
+function CapabilityChip({
+	compact,
+	label,
+}: {
+	compact: boolean;
+	label: string;
+}) {
+	const t = useTranslations("modelPicker");
+	if (compact) {
+		return (
+			<CompactCapabilityChip
+				icon={capabilityIcon(label)}
+				label={label}
+				tooltip={t("ollamaCapabilityTip")}
+			/>
+		);
+	}
+	return (
+		<Tooltip>
+			<TooltipTrigger
+				render={(props) => (
+					<span
+						{...(props as ComponentPropsWithoutRef<"span">)}
+						className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/60 px-1.5 py-px font-medium text-[9.5px] text-foreground-muted leading-none"
+					>
+						<HugeiconsIcon className="size-2.5" icon={BinaryCodeIcon} />
+						{label}
+					</span>
+				)}
+			/>
+			<TooltipContent>{t("ollamaCapabilityTip")}</TooltipContent>
+		</Tooltip>
+	);
+}
+
 export function InstalledCapabilityBadges({
 	capabilities,
+	compact = false,
 }: {
 	capabilities: readonly string[] | undefined;
+	compact?: boolean;
 }): ReactNode {
 	const hasThinking = normalizedCapabilitySet(capabilities).has("thinking");
 	const hasTools = supportsOllamaToolCalling(capabilities);
 	const labels = visibleCapabilities(capabilities, { excludeTools: true });
-	if (!hasThinking && !hasTools && labels.length === 0) {
+	if (!(hasThinking || hasTools) && labels.length === 0) {
 		return null;
 	}
 	return (
 		<>
-			<OllamaToolCapabilityBadge capabilities={capabilities} />
-			<ThinkingChip capabilities={capabilities} />
-			<CapabilityChips capabilities={capabilities} />
+			<OllamaToolCapabilityBadge
+				capabilities={capabilities}
+				compact={compact}
+			/>
+			<ThinkingChip capabilities={capabilities} compact={compact} />
+			<CapabilityChips capabilities={capabilities} compact={compact} />
 		</>
 	);
 }
@@ -215,6 +304,36 @@ export function WontFitChip({ fit }: { fit: OllamaFitInfo | undefined }) {
 				)}
 			/>
 			<TooltipContent side="top">{tooltip}</TooltipContent>
+		</Tooltip>
+	);
+}
+
+/** Quiet neutral "Lite" pill for sub-4B models: they run the reduced
+ *  `{text}`-only post-processing schema (see `isLiteOllamaModel`), which skips
+ *  dictionary auto-learning, history tags, and privacy markers in exchange for
+ *  reliable instruction-following at low VRAM. Grayscale like the capability
+ *  chips — informational, not a warning. */
+export function LiteTierChip({ model }: { model: string }) {
+	const t = useTranslations("modelPicker");
+	if (!isLiteOllamaModel(model)) {
+		return null;
+	}
+	return (
+		<Tooltip>
+			<TooltipTrigger
+				render={(props) => (
+					<span
+						{...(props as ComponentPropsWithoutRef<"span">)}
+						className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/60 px-1.5 py-px font-medium text-[9.5px] text-foreground-muted leading-none"
+					>
+						<HugeiconsIcon className="size-2.5" icon={FlashIcon} />
+						{t("liteTier")}
+					</span>
+				)}
+			/>
+			<TooltipContent className="max-w-xs" side="top">
+				{t("liteTierTip")}
+			</TooltipContent>
 		</Tooltip>
 	);
 }

@@ -781,7 +781,9 @@ impl DownloadManager {
                 // cached file as fully done against its seeded size so a resume/partial download's
                 // bar starts at the correct baseline instead of reading 0/size for already-present
                 // files; an unseeded file (size unknown) is just tracked as before.
-                if tauri::async_runtime::block_on(resolver::is_file_cached(&model, repo_path)) {
+                if tauri::async_runtime::block_on(resolver::is_file_cached(
+                    &model, repo_path, quant,
+                )) {
                     match plan_sizes.get(repo_path) {
                         Some(&sz) => agg.update_file(repo_path, sz, sz),
                         None => agg.mark_file_cached(repo_path),
@@ -836,7 +838,7 @@ impl DownloadManager {
                             });
                         let handler: hf_hub::progress::Progress = reporter.into();
                         match tauri::async_runtime::block_on(resolver::download_planned_file(
-                            &model, repo_path, false, handler,
+                            &model, repo_path, quant, false, handler,
                         )) {
                             Ok(_) => {
                                 agg.mark_file_complete(repo_path);
@@ -911,7 +913,10 @@ impl DownloadManager {
     ) -> StreamOutcome {
         use tauri::async_runtime::block_on;
 
-        let Some((owner, name)) = resolver::resolve_repo(model) else {
+        // The SET's quant drives repo resolution so a per-quant override (int8 → Masterx) routes the
+        // whole streaming download — graphs AND shared metadata — to one repo.
+        let quant = Quantization::parse(quantization).unwrap_or(Quantization::Default);
+        let Some((owner, name)) = resolver::resolve_repo_for_quant(model, quant) else {
             return StreamOutcome::Failed;
         };
         let Some(encoded_path) = encoded_repo_path(repo_path) else {
@@ -973,7 +978,7 @@ impl DownloadManager {
                 log::warn!("[stt-download] ref write failed {model}@{quantization}: {e}");
                 return StreamOutcome::Failed;
             }
-            if !block_on(resolver::is_file_cached(model, repo_path)) {
+            if !block_on(resolver::is_file_cached(model, repo_path, quant)) {
                 return StreamOutcome::Failed;
             }
             agg.update_file(repo_path, size, size);
@@ -1047,7 +1052,7 @@ impl DownloadManager {
         // Self-check: hf-hub's OWN cache-only resolve must now find what we placed (correct commit
         // ref + snapshot file, and — for `.onnx` — complete external-data shards). If not, fall back
         // to a real hf-hub fetch rather than claim a success the model loader can't load.
-        if !block_on(resolver::is_file_cached(model, repo_path)) {
+        if !block_on(resolver::is_file_cached(model, repo_path, quant)) {
             log::warn!(
                 "[stt-download] streamed file failed cache self-check {model}@{quantization} {repo_path} — falling back to hf-hub"
             );

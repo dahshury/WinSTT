@@ -362,7 +362,7 @@ function SettingsPanel({
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
         <div style={{ color: C.fg, fontSize: 22, fontWeight: 760 }}>{title}</div>
-        <Dot color={C.success} />
+        <Dot color={C.muted} />
       </div>
       {children}
     </Card>
@@ -511,7 +511,7 @@ export function MainDemo() {
               <TranscriptLine text="Draft the reply and keep the tone concise." from={34} duration={52} />
             </div>
           </div>
-          <MiniFooter hotkey="LCtrl+LMeta" mic="Microphone Array" model="tiny / DirectML" />
+          <MiniFooter hotkey="LCtrl+LWin" mic="System default" model="parakeet-tdt-0.6b-v3" />
         </div>
       </AppWindow>
     </Stage>
@@ -817,7 +817,7 @@ export function TranscribeFileDemo() {
             label="interview.srt"
             sub="timestamped"
             badge="SRT"
-            color={C.success}
+            color={C.teal}
             style={{
               opacity: output,
               transform: `scale(${0.88 + springIn(frame, 124, 180) * 0.12})`
@@ -916,19 +916,20 @@ export function OverlayDemo({ kind }: { kind: "floating" | "island" }) {
             style={{
               position: "absolute",
               left: "50%",
-              bottom: 32,
+              bottom: 30,
               display: "flex",
-              gap: 12,
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 8,
               opacity: open,
               transform: `translateX(-50%) translateY(${mapRange(frame, [8, 24], [26, 0])}px)`
             }}
           >
-            <Pill accent={accent}>
-              <Bars count={6} height={34} width={6} />
-              <span style={{ fontFamily: C.mono, color: C.fg2 }}>00:04</span>
-            </Pill>
-            <Pill accent={accent} style={{ minWidth: 390 }}>
+            <Pill accent={accent} style={{ maxWidth: 460 }}>
               <TypeText text={text} from={34} duration={52} />
+            </Pill>
+            <Pill accent={accent} style={{ padding: "10px 20px" }}>
+              <Bars count={7} height={30} width={5} />
             </Pill>
           </div>
         ) : (
@@ -986,10 +987,10 @@ export function ModelPickerFlow() {
   const progress = ramp(frame, 62, 150, Easing.bezier(0.45, 0, 0.55, 1));
   return (
     <Stage label="Model picker">
-      <AppWindow title="Settings - Model" style={{ width: 960, height: 560 }}>
+      <AppWindow title="Settings - Transcription" style={{ width: 960, height: 560 }}>
         <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", height: "100%" }}>
           <div style={{ borderRight: `1px solid ${C.divider}`, padding: 20, display: "flex", flexDirection: "column", gap: 10 }}>
-            {["Whisper", "Moonshine", "Canary", "Cloud"].map((item, i) => (
+            {["Whisper", "Moonshine", "NeMo", "Cohere"].map((item, i) => (
               <SmallButton key={item} active={i === 0} style={{ justifyContent: "flex-start" }}>{item}</SmallButton>
             ))}
           </div>
@@ -1025,10 +1026,10 @@ export function AudioVadFlow() {
           <div style={{ position: "relative", height: 300 }}>
             <NodeBox x={0} y={104} title="Audio frames" sub="16 kHz mono buffer" active color={C.teal} />
             <NodeBox x={250} y={38} title="WebRTC VAD" sub="fast silence gate" active={frame > 40} color={C.accent} />
-            <NodeBox x={250} y={172} title="Silero VAD" sub="neural voice check" active={frame > 76} color={C.success} />
-            <NodeBox x={512} y={104} title="Endpoint" sub="speech only when both agree" active={frame > 112} color={C.success} />
+            <NodeBox x={250} y={172} title="Silero VAD" sub="neural voice check" active={frame > 76} color={C.teal} />
+            <NodeBox x={512} y={104} title="Endpoint" sub="speech only when both agree" active={frame > 112} color={C.teal} />
             <FlowPacket path={[[174, 145], [250, 79], [512, 145]]} start={20} duration={100} color={C.accent} />
-            <FlowPacket path={[[174, 145], [250, 213], [512, 145]]} start={46} duration={100} color={C.success} />
+            <FlowPacket path={[[174, 145], [250, 213], [512, 145]]} start={46} duration={100} color={C.teal} />
           </div>
         </div>
       </Card>
@@ -1068,9 +1069,8 @@ export function IntegrationsSecrets() {
         <div style={{ marginTop: 30, display: "grid", gridTemplateColumns: "420px 1fr", gap: 36 }}>
           <SettingsPanel title="External integrations" width={420}>
             <SettingRowMini label="Ollama endpoint" value="http://localhost:11434" active />
-            <SettingRowMini label="OpenAI API key" value="Verified" active={frame > 44} accent={C.success} />
-            <SettingRowMini label="ElevenLabs API key" value="Cloud STT ready" active={frame > 78} accent={C.success} />
-            <SettingRowMini label="OpenRouter API key" value="LLM cleanup ready" active={frame > 112} accent={C.success} />
+            <SettingRowMini label="OpenRouter API key" value="LLM cleanup ready" active={frame > 48} accent={C.success} />
+            <SettingRowMini label="ElevenLabs API key" value="Cloud STT ready" active={frame > 92} accent={C.success} />
           </SettingsPanel>
           <div style={{ position: "relative", height: 330 }}>
             <NodeBox x={0} y={120} title="Renderer UI" sub="status only" active />
@@ -1146,7 +1146,7 @@ export function HistoryPlayback() {
                         width: 15,
                         height: 15,
                         borderRadius: 4,
-                        background: lit ? `rgba(74,131,255,${0.08 + level * 0.13})` : C.surface3,
+                        background: lit ? `rgba(88,208,234,${0.08 + level * 0.13})` : C.surface3,
                         border: `1px solid ${C.borderSoft}`
                       }}
                     />
@@ -1157,14 +1157,14 @@ export function HistoryPlayback() {
             <Card style={{ padding: 18, background: C.surface2 }}>
               <Label>Playback row</Label>
               <div style={{ marginTop: 16, display: "flex", gap: 14, alignItems: "center" }}>
-                <SmallButton active>Play</SmallButton>
+                <SmallButton>Play</SmallButton>
                 <div style={{ color: C.fg, fontSize: 23, lineHeight: 1.5 }}>
                   {words.map((word, i) => (
                     <span
                       key={word}
                       style={{
-                        background: i <= activeWord ? C.accentSoft : "transparent",
-                        color: i <= activeWord ? C.fg : C.fg2,
+                        background: i === activeWord ? "rgba(238,243,255,0.14)" : "transparent",
+                        color: i === activeWord ? C.fg : C.fg2,
                         borderRadius: 5,
                         padding: "1px 4px",
                         marginRight: 3
@@ -1174,9 +1174,6 @@ export function HistoryPlayback() {
                     </span>
                   ))}
                 </div>
-              </div>
-              <div style={{ marginTop: 24, height: 6, borderRadius: 999, background: C.surface4, overflow: "hidden" }}>
-                <div style={{ width: `${karaoke * 100}%`, height: "100%", background: C.accent }} />
               </div>
             </Card>
           </div>

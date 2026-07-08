@@ -94,6 +94,14 @@ fn accel_runtime(accel: Accelerator) -> (&'static str, bool, Vec<String>) {
                 "CPUExecutionProvider".into(),
             ],
         ),
+        Accelerator::WebGpu => (
+            "webgpu",
+            true,
+            vec![
+                "WebGpuExecutionProvider".into(),
+                "CPUExecutionProvider".into(),
+            ],
+        ),
     }
 }
 

@@ -35,6 +35,10 @@ export interface SwitcherProps<T extends string = string> {
 	fullWidth?: boolean;
 	onChange: (value: T) => void;
 	options: readonly SwitcherOption<T>[];
+	/** "sm" renders a compact, short segment (18px line-box) for inline use
+	 *  inside a text row — e.g. the modifier Low/Medium/High tier — so the row
+	 *  height matches sibling rows that have no switcher. Defaults to "md". */
+	size?: "md" | "sm";
 	value: T;
 }
 
@@ -106,6 +110,7 @@ export function Switcher<T extends string = string>({
 	fullWidth,
 	columns,
 	className,
+	size = "md",
 }: SwitcherProps<T>) {
 	// Grid mode: lay the options out in `columns` equal tracks instead of a single
 	// row. Static class names (not an interpolated `grid-cols-${n}`) so Tailwind's
@@ -158,7 +163,6 @@ export function Switcher<T extends string = string>({
 	// on the first extra interaction. setRects also short-circuits when the
 	// next rect map is value-equal so an idle resize tick can't trigger a
 	// no-op re-render.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: optionsKey is the intentional cache key — biome can't see that the queried `[data-switcher-index]` items change when options change, so it thinks the dep is unused; removing it would leave the observer stuck on the original option set
 	useEffect(() => {
 		const container = containerRef.current;
 		if (!container) {
@@ -275,7 +279,7 @@ export function Switcher<T extends string = string>({
 									: {})}
 								transition={{
 									...springs.moderate,
-									opacity: { duration: 0.08 },
+									opacity: { duration: springs.fast.duration },
 								}}
 							/>
 						) : null}
@@ -295,7 +299,7 @@ export function Switcher<T extends string = string>({
 									"pointer-events-none absolute rounded-sm ring-1 ring-divider ring-inset",
 									hoverBgClass,
 								)}
-								exit={{ opacity: 0, transition: { duration: 0.08 } }}
+								exit={{ opacity: 0, transition: springs.fast.exit }}
 								initial={{
 									left: hoverRect.left,
 									top: hoverRect.top,
@@ -303,7 +307,10 @@ export function Switcher<T extends string = string>({
 									height: hoverRect.height,
 									opacity: 0,
 								}}
-								transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
+								transition={{
+									...springs.fast,
+									opacity: { duration: springs.fast.duration },
+								}}
 							/>
 						) : null}
 					</AnimatePresence>
@@ -318,9 +325,12 @@ export function Switcher<T extends string = string>({
 									height: focusRect.height + 4,
 								}}
 								className="pointer-events-none absolute z-overlay rounded-sm border border-accent"
-								exit={{ opacity: 0, transition: { duration: 0.06 } }}
+								exit={{ opacity: 0, transition: springs.fast.exit }}
 								initial={false}
-								transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
+								transition={{
+									...springs.fast,
+									opacity: { duration: springs.fast.duration },
+								}}
 							/>
 						) : null}
 					</AnimatePresence>
@@ -360,6 +370,7 @@ export function Switcher<T extends string = string>({
 								);
 							}}
 							option={opt}
+							size={size}
 						/>
 					))}
 

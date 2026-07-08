@@ -174,6 +174,23 @@ impl TtsDownloadManager {
                 entry.hf_repo, p
             )
         };
+        // Qwen3-TTS Voice Design pulls weights + config/tokenizer from TWO repos, so
+        // it emits fully-qualified (url, local) pairs directly (the shared `url()`
+        // only knows `entry.hf_repo`). See PORT_SPEC §1 + BUILD_PLAN "Wiring".
+        if matches!(entry.engine, TtsEngineId::Qwen3Tts) {
+            return self.qwen3_tts_manifest(entry, quant, &dir);
+        }
+        // Orpheus pulls the LLM from `entry.hf_repo` and the SNAC vocoder from a SECOND repo
+        // (onnx-community/snac_24khz-ONNX), so it emits fully-qualified (url, local) pairs.
+        if matches!(entry.engine, TtsEngineId::Orpheus) {
+            return self.orpheus_manifest(entry, &dir);
+        }
+        // Spark pulls the LLM/vocoder/tokenizer from `entry.hf_repo` (Fhrozen) and the zero-shot
+        // CLONING graphs from a SECOND repo (DgDev91/SparkTTS-ONNX), so it also emits fully-qualified
+        // pairs. The 4 cloning graphs land flat in the cache dir for `SparkEngine::load_cloning`.
+        if matches!(entry.engine, TtsEngineId::Spark) {
+            return self.spark_manifest(entry, &dir);
+        }
         // (hf_path, local_relative)
         let pairs: Vec<(String, String)> = match entry.engine {
             TtsEngineId::Kitten => {
@@ -275,11 +292,155 @@ impl TtsDownloadManager {
                 v.push(("default_voice.wav".into(), "default_voice.wav".into()));
                 v
             }
+            // Handled above via early return (two-repo / multi-repo, fully-qualified URLs).
+            TtsEngineId::Qwen3Tts => unreachable!("qwen3-tts manifest is built above"),
+            TtsEngineId::Orpheus => unreachable!("orpheus manifest is built above"),
+            TtsEngineId::Spark => unreachable!("spark manifest is built above"),
         };
         pairs
             .into_iter()
             .map(|(hf, local)| (url(&hf), dir.join(local)))
             .collect()
+    }
+
+    /// Qwen3-TTS Voice Design manifest (PORT_SPEC §1 + BUILD_PLAN "Wiring"):
+    ///   - ONNX weights from `entry.hf_repo` (onnx-community) under the quant subdir
+    ///     `cpu_int4|cpu_fp16|cpu_fp32` at repo ROOT → local `<subdir>/<file>`.
+    ///     int4 = 6 single-file `.onnx` + `manifest.json`; fp16/fp32 ADD the
+    ///     talker's external `talker_cache.onnx.data` sidecar.
+    ///   - config/tokenizer from the SEPARATE `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`
+    ///     repo → local dir ROOT (config.json, generation_config.json,
+    ///     tokenizer_config.json, vocab.json, merges.txt).
+    fn qwen3_tts_manifest(
+        &self,
+        entry: &TtsModelEntry,
+        quant: &str,
+        dir: &Path,
+    ) -> Vec<(String, PathBuf)> {
+        let subdir = match quant {
+            "fp16" => "cpu_fp16",
+            "fp32" => "cpu_fp32",
+            // int4 is the default/maintained recipe (also covers an empty quant).
+            _ => "cpu_int4",
+        };
+        let weights_url = |p: &str| {
+            format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                entry.hf_repo, p
+            )
+        };
+        // The Qwen config/tokenizer repo (public, ungated) — NOT `entry.hf_repo`.
+        let config_url = |f: &str| {
+            format!("https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/resolve/main/{f}")
+        };
+
+        let mut pairs: Vec<(String, PathBuf)> = Vec::new();
+
+        // Six generation sub-models + the wiring manifest, under the quant subdir.
+        for onnx in [
+            "text_embed.onnx",
+            "codec_embed.onnx",
+            "talker_cache.onnx",
+            "code_predictor.onnx",
+            "residual_embed.onnx",
+            "tok_decoder.onnx",
+        ] {
+            pairs.push((
+                weights_url(&format!("{subdir}/{onnx}")),
+                dir.join(subdir).join(onnx),
+            ));
+        }
+        // fp16/fp32 ship the talker's weights as an external-data sidecar next to it;
+        // int4 is single-file (no `.onnx.data`). See PORT_SPEC §1.
+        if subdir != "cpu_int4" {
+            let sidecar = "talker_cache.onnx.data";
+            pairs.push((
+                weights_url(&format!("{subdir}/{sidecar}")),
+                dir.join(subdir).join(sidecar),
+            ));
+        }
+        pairs.push((
+            weights_url(&format!("{subdir}/manifest.json")),
+            dir.join(subdir).join("manifest.json"),
+        ));
+
+        // Config + tokenizer from the Qwen repo → dir ROOT (self-contained model dir).
+        for f in [
+            "config.json",
+            "generation_config.json",
+            "tokenizer_config.json",
+            "vocab.json",
+            "merges.txt",
+        ] {
+            pairs.push((config_url(f), dir.join(f)));
+        }
+
+        pairs
+    }
+
+    /// Orpheus manifest: q4 Llama (+ external data shards) + tokenizer from `entry.hf_repo`, and the
+    /// SNAC 24 kHz vocoder decoder from the SEPARATE `onnx-community/snac_24khz-ONNX` repo. Local
+    /// layout: `onnx/` (LLM, so `.onnx_data` sidecars resolve) + `snac/decoder_model.onnx` + root
+    /// `tokenizer.json` — matching `OrpheusLocalEngine`'s fixed load paths.
+    fn orpheus_manifest(&self, entry: &TtsModelEntry, dir: &Path) -> Vec<(String, PathBuf)> {
+        let llm_url = |p: &str| {
+            format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                entry.hf_repo, p
+            )
+        };
+        let snac_url = |p: &str| {
+            format!("https://huggingface.co/onnx-community/snac_24khz-ONNX/resolve/main/{p}")
+        };
+        let mut pairs: Vec<(String, PathBuf)> = Vec::new();
+        for f in [
+            "onnx/model_q4.onnx",
+            "onnx/model_q4.onnx_data",
+            "onnx/model_q4.onnx_data_1",
+        ] {
+            pairs.push((llm_url(f), dir.join(f)));
+        }
+        pairs.push((llm_url("tokenizer.json"), dir.join("tokenizer.json")));
+        pairs.push((
+            snac_url("onnx/decoder_model.onnx"),
+            dir.join("snac").join("decoder_model.onnx"),
+        ));
+        pairs
+    }
+
+    /// Spark manifest: Qwen0.5B LLM + BiCodec vocoder + tokenizer from `entry.hf_repo` (Fhrozen),
+    /// plus the 4 zero-shot CLONING graphs from `DgDev91/SparkTTS-ONNX` (wav2vec2 fp16 + mel +
+    /// speaker + encoder-quantizer) flattened into the cache dir for `SparkEngine::load_cloning`.
+    fn spark_manifest(&self, entry: &TtsModelEntry, dir: &Path) -> Vec<(String, PathBuf)> {
+        let base_url = |p: &str| {
+            format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                entry.hf_repo, p
+            )
+        };
+        let clone_url =
+            |p: &str| format!("https://huggingface.co/DgDev91/SparkTTS-ONNX/resolve/main/{p}");
+        let mut pairs: Vec<(String, PathBuf)> = vec![
+            (
+                base_url("LLM/onnx/model_q4.onnx"),
+                dir.join("model_q4.onnx"),
+            ),
+            (base_url("bicodec.onnx"), dir.join("bicodec.onnx")),
+            (base_url("LLM/tokenizer.json"), dir.join("tokenizer.json")),
+            (
+                base_url("LLM/tokenizer_config.json"),
+                dir.join("tokenizer_config.json"),
+            ),
+        ];
+        for f in [
+            "wav2vec2_model_fp16.onnx",
+            "mel_spectrogram.onnx",
+            "speaker_encoder_tokenizer.onnx",
+            "bicodec_encoder_quantizer.onnx",
+        ] {
+            pairs.push((clone_url(f), dir.join(f)));
+        }
+        pairs
     }
 
     /// Per-quant cache state: all files present → cached; some bytes → partial.

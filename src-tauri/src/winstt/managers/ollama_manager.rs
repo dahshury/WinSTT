@@ -26,7 +26,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
 use crate::winstt::commands::ollama_library::{
-    OllamaLibraryCatalogResult, OllamaLibrarySearchResult, OllamaLibraryTagsResult,
+    OllamaLibraryCatalogResult, OllamaLibraryHit, OllamaLibrarySearchResult,
+    OllamaLibraryTagsResult,
 };
 use crate::winstt::commands::ollama_pull::LlmWarmupStatus;
 use crate::winstt::sync_ext::MutexExt;
@@ -58,6 +59,9 @@ pub struct OllamaManager {
     fetch_gate: Semaphore,
     search_cache: Mutex<HashMap<String, CacheEntry<OllamaLibrarySearchResult>>>,
     tags_cache: Mutex<HashMap<String, CacheEntry<OllamaLibraryTagsResult>>>,
+    /// Per-slug model-homepage scrape (description / capabilities / pulls / updated)
+    /// for typed tags that aren't in the recommended catalog.
+    hit_cache: Mutex<HashMap<String, CacheEntry<OllamaLibraryHit>>>,
     catalog_cache: Mutex<Option<CacheEntry<OllamaLibraryCatalogResult>>>,
     /// Models whose in-flight pull was cancelled — the streaming pull drain polls this.
     pull_cancelled: Mutex<HashSet<String>>,
@@ -79,6 +83,7 @@ impl OllamaManager {
             fetch_gate: Semaphore::new(MAX_CONCURRENT_FETCHES),
             search_cache: Mutex::new(HashMap::new()),
             tags_cache: Mutex::new(HashMap::new()),
+            hit_cache: Mutex::new(HashMap::new()),
             catalog_cache: Mutex::new(None),
             pull_cancelled: Mutex::new(HashSet::new()),
             last_warmup_status: Mutex::new(None),
@@ -137,6 +142,28 @@ impl OllamaManager {
             CacheEntry {
                 value,
                 expires_at: Instant::now() + CACHE_TTL,
+            },
+        );
+    }
+
+    pub(crate) fn cache_get_hit(&self, key: &str) -> Option<OllamaLibraryHit> {
+        let mut map = self.hit_cache.lock_recover();
+        match map.get(key) {
+            Some(e) if e.expires_at > Instant::now() => Some(e.value.clone()),
+            Some(_) => {
+                map.remove(key);
+                None
+            }
+            None => None,
+        }
+    }
+
+    pub(crate) fn cache_set_hit(&self, key: String, value: OllamaLibraryHit) {
+        self.hit_cache.lock_recover().insert(
+            key,
+            CacheEntry {
+                value,
+                expires_at: Instant::now() + CATALOG_TTL,
             },
         );
     }

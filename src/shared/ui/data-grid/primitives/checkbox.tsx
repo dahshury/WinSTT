@@ -12,26 +12,27 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentProps, KeyboardEvent, MouseEvent } from "react";
 import { cn } from "@/shared/lib/cn";
 
-export interface CheckboxProps extends Omit<
-	ComponentProps<typeof BaseCheckbox.Root>,
-	| "checked"
-	| "defaultChecked"
-	| "indeterminate"
-	| "onCheckedChange"
-	| "onClick"
-	| "onDoubleClick"
-	| "onKeyDown"
-	| "onMouseDown"
-	| "render"
-> {
+export interface CheckboxProps
+	extends Omit<
+		ComponentProps<typeof BaseCheckbox.Root>,
+		| "checked"
+		| "defaultChecked"
+		| "indeterminate"
+		| "onCheckedChange"
+		| "onClick"
+		| "onDoubleClick"
+		| "onKeyDown"
+		| "onMouseDown"
+		| "render"
+	> {
 	checked?: boolean | "indeterminate" | undefined;
 	onCheckedChange?: ((checked: boolean) => void) | undefined;
 	// Method syntax (bivariant) so the grid's button-typed handlers assign onto
 	// the base-ui span without element-type variance errors.
-	onClick?(event: MouseEvent): void;
-	onDoubleClick?(event: MouseEvent): void;
-	onKeyDown?(event: KeyboardEvent): void;
-	onMouseDown?(event: MouseEvent): void;
+	onClick?: (event: MouseEvent) => void;
+	onDoubleClick?: (event: MouseEvent) => void;
+	onKeyDown?: (event: KeyboardEvent) => void;
+	onMouseDown?: (event: MouseEvent) => void;
 }
 
 export function Checkbox({

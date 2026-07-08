@@ -10,6 +10,10 @@ import type {
 } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+import {
+	rankGroupsBySearch,
+	type SearchRankable,
+} from "@/shared/lib/model-search";
 import { type GroupRailItem, RailIconChip } from "../../core/GroupRail";
 import {
 	ALL_AUTHORS_RAIL_ID,
@@ -157,6 +161,14 @@ const STT_SELECTOR_UI_STORAGE_KEYS: Record<
 	realtime: "winstt:model-picker:stt-realtime-ui",
 };
 const selectedModelMetadataCache = new Map<string, ModelInfo>();
+
+/** Test-only: clear the module-level selected-model metadata cache. Keyed by
+ *  `${kind}:${value}`, it persists across renders (and, in a single-process test
+ *  run, across test FILES). Many tests reuse `value="tiny"`, so a prior file's
+ *  entry bleeds in and yields stale quant/footprint. Reset in `beforeEach`. */
+export function _resetSelectedModelMetadataCacheForTests(): void {
+	selectedModelMetadataCache.clear();
+}
 const DEFAULT_PERSISTED_STT_SELECTOR_UI_STATE: PersistedSttSelectorUiState = {
 	activeRailId: ALL_AUTHORS_RAIL_ID,
 	filters: {
@@ -235,9 +247,19 @@ function matchesQuery(model: ModelInfo, query: string): boolean {
 	return matchesFuzzySearch(buildModelSearchCorpus(model), query);
 }
 
+/** Relevance projection for ranked search — maker (author) + name fields earn
+ *  the exact/prefix/substring tiers; visibility is still Base UI's `filter`. */
+function sttSearchRankable(model: ModelInfo): SearchRankable {
+	return {
+		maker: getAuthorLabel(model.family),
+		names: [model.displayName, model.id],
+	};
+}
+
 function SttModelSelectorDetachedTrigger({
 	models,
 	value,
+	currentQuantization,
 	disabled = false,
 	downloadProgress = null,
 	isLoading = false,
@@ -245,6 +267,7 @@ function SttModelSelectorDetachedTrigger({
 	prefilter,
 	kind = "main",
 	onOpenDetached,
+	statesById,
 }: SttModelSelectorProps) {
 	const prefilteredModels = applyPrefilter(models, prefilter);
 	const precisionModels = mergeStreamingPrecisionModels(prefilteredModels);
@@ -262,6 +285,7 @@ function SttModelSelectorDetachedTrigger({
 	return (
 		<SttModelSelectorTriggerButton
 			catalog={baseModels}
+			currentQuantization={currentQuantization}
 			disabled={disabled || isLoading}
 			downloadProgress={downloadProgress}
 			kind={kind}
@@ -270,7 +294,9 @@ function SttModelSelectorDetachedTrigger({
 			}
 			open={false}
 			placeholder={placeholder}
+			selectedId={value || undefined}
 			selectedModel={selectedModel ?? undefined}
+			statesById={statesById}
 		/>
 	);
 }
@@ -398,6 +424,7 @@ function useSttModelSelectorPanelState({
 	const effectiveTrigger = externalOpen ? (
 		<SttModelSelectorTriggerButton
 			catalog={baseModels}
+			currentQuantization={currentQuantization}
 			disabled={disabled || isLoading}
 			downloadProgress={downloadProgress}
 			kind={kind}
@@ -406,7 +433,9 @@ function useSttModelSelectorPanelState({
 			}
 			open={false}
 			placeholder={placeholder}
+			selectedId={value || undefined}
 			selectedModel={selectedModel ?? undefined}
+			statesById={statesById}
 		/>
 	) : (
 		trigger
@@ -463,9 +492,21 @@ function useSttModelSelectorPanelState({
 	const authorGroups = shouldBuildList
 		? groupModelsByAuthor(menuFilteredModels)
 		: [];
+	// During an active search, order groups + their items best-match-first so the
+	// closest hit leads (mirrors the OpenRouter picker). An explicit sort takes
+	// precedence — its flat SORTED column has its own ordering.
+	const rankedAuthorGroups =
+		hasSearch && sort === null
+			? rankGroupsBySearch(
+					authorGroups,
+					search,
+					sttSearchRankable,
+					(group, items) => ({ ...group, items }),
+				)
+			: authorGroups;
 	const allGroups: SttListGroup[] =
 		sort === null
-			? withFavoritesGroup(authorGroups, isFavorite)
+			? withFavoritesGroup(rankedAuthorGroups, isFavorite)
 			: [
 					{
 						value: SORTED_GROUP_VALUE,

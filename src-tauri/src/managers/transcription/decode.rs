@@ -204,6 +204,35 @@ impl TranscriptionManager {
             {
                 Ok(text) => text,
                 Err(e) => {
+                    // Offline graceful degradation: a network/timeout cloud failure registers a
+                    // connectivity watch synchronously (emit_cloud_failure), so `provider_appears_
+                    // offline` is TRUE here exactly for the "no internet" case (auth/rate-limit
+                    // never look offline). Rather than lose the utterance, salvage it on a local
+                    // model if one is cached — the renderer separately auto-reverts the persisted
+                    // source to Local off the same `cloud:connectivity` offline event.
+                    let provider = crate::winstt::cloud_stt::provider_of(desired);
+                    let offline =
+                        provider.is_some_and(crate::winstt::cloud_stt::provider_appears_offline);
+                    if offline {
+                        if let Some(local_id) =
+                            crate::winstt::stt::fallback::resolve_local_stt_fallback(
+                                &self.app_handle,
+                            )
+                        {
+                            warn!(
+                                "[stt][{request_id}] cloud provider offline for '{desired}'; \
+                                 salvaging this utterance on local model '{local_id}'"
+                            );
+                            return self.transcribe_with_selected_model(&local_id, audio);
+                        }
+                        // No local model to fall back to — tell the overlay so it can show an
+                        // "offline, no local model" pill instead of only a background toast.
+                        crate::winstt::stt::fallback::emit_stt_pipeline_unavailable(
+                            &self.app_handle,
+                            "offline_no_local",
+                            provider.map(|p| p.id()),
+                        );
+                    }
                     error!(
                         "[stt][{request_id}] cloud transcription failed for model '{desired}': {e}"
                     );

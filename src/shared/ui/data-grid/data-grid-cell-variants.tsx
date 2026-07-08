@@ -109,58 +109,56 @@ export function ShortTextCell<TData>({
 	};
 
 	const onWrapperKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-		{
-			if (isEditing) {
-				if (event.key === "Enter") {
-					event.preventDefault();
-					const currentValue = cellRef.current?.textContent ?? "";
-					if (currentValue !== initialValue) {
-						tableMeta?.onDataUpdate?.({
-							rowIndex,
-							columnId,
-							value: currentValue,
-						});
-					}
-					tableMeta?.onCellEditingStop?.({ moveToNextRow: true });
-				} else if (event.key === "Tab") {
-					event.preventDefault();
-					const currentValue = cellRef.current?.textContent ?? "";
-					if (currentValue !== initialValue) {
-						tableMeta?.onDataUpdate?.({
-							rowIndex,
-							columnId,
-							value: currentValue,
-						});
-					}
-					tableMeta?.onCellEditingStop?.({
-						direction: event.shiftKey ? "left" : "right",
+		if (isEditing) {
+			if (event.key === "Enter") {
+				event.preventDefault();
+				const currentValue = cellRef.current?.textContent ?? "";
+				if (currentValue !== initialValue) {
+					tableMeta?.onDataUpdate?.({
+						rowIndex,
+						columnId,
+						value: currentValue,
 					});
-				} else if (event.key === "Escape") {
-					event.preventDefault();
-					setValue(initialValue);
-					cellRef.current?.blur();
 				}
-			} else if (
-				isFocused &&
-				event.key.length === 1 &&
-				!event.ctrlKey &&
-				!event.metaKey
-			) {
-				// Handle typing to pre-fill the value when editing starts
-				setValue(event.key);
-
-				queueMicrotask(() => {
-					if (cellRef.current && cellRef.current.contentEditable === "true") {
-						cellRef.current.textContent = event.key;
-						const range = document.createRange();
-						const selection = window.getSelection();
-						range.selectNodeContents(cellRef.current);
-						range.collapse(false);
-						selection?.removeAllRanges();
-						selection?.addRange(range);
-					}
+				tableMeta?.onCellEditingStop?.({ moveToNextRow: true });
+			} else if (event.key === "Tab") {
+				event.preventDefault();
+				const currentValue = cellRef.current?.textContent ?? "";
+				if (currentValue !== initialValue) {
+					tableMeta?.onDataUpdate?.({
+						rowIndex,
+						columnId,
+						value: currentValue,
+					});
+				}
+				tableMeta?.onCellEditingStop?.({
+					direction: event.shiftKey ? "left" : "right",
 				});
+			} else if (event.key === "Escape") {
+				event.preventDefault();
+				setValue(initialValue);
+				cellRef.current?.blur();
 			}
+		} else if (
+			isFocused &&
+			event.key.length === 1 &&
+			!event.ctrlKey &&
+			!event.metaKey
+		) {
+			// Handle typing to pre-fill the value when editing starts
+			setValue(event.key);
+
+			queueMicrotask(() => {
+				if (cellRef.current && cellRef.current.contentEditable === "true") {
+					cellRef.current.textContent = event.key;
+					const range = document.createRange();
+					const selection = window.getSelection();
+					range.selectNodeContents(cellRef.current);
+					range.collapse(false);
+					selection?.removeAllRanges();
+					selection?.addRange(range);
+				}
+			});
 		}
 	};
 
@@ -186,7 +184,7 @@ export function ShortTextCell<TData>({
 		}
 	}, [isEditing, value]);
 
-	const displayValue = !isEditing ? (value ?? "") : "";
+	const displayValue = isEditing ? "" : (value ?? "");
 
 	return (
 		<DataGridCellWrapper<TData>
@@ -339,27 +337,25 @@ export function LongTextCell<TData>({
 	};
 
 	const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-		{
-			if (event.key === "Escape") {
-				event.preventDefault();
-				onCancel();
-			} else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-				event.preventDefault();
-				onSave();
-			} else if (event.key === "Tab") {
-				event.preventDefault();
-				// Save any pending changes
-				if (value !== initialValue) {
-					tableMeta?.onDataUpdate?.({ rowIndex, columnId, value });
-				}
-				tableMeta?.onCellEditingStop?.({
-					direction: event.shiftKey ? "left" : "right",
-				});
-				return;
+		if (event.key === "Escape") {
+			event.preventDefault();
+			onCancel();
+		} else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+			event.preventDefault();
+			onSave();
+		} else if (event.key === "Tab") {
+			event.preventDefault();
+			// Save any pending changes
+			if (value !== initialValue) {
+				tableMeta?.onDataUpdate?.({ rowIndex, columnId, value });
 			}
-			// Stop propagation to prevent grid navigation
-			event.stopPropagation();
+			tableMeta?.onCellEditingStop?.({
+				direction: event.shiftKey ? "left" : "right",
+			});
+			return;
 		}
+		// Stop propagation to prevent grid navigation
+		event.stopPropagation();
 	};
 
 	return (
@@ -443,37 +439,35 @@ export function NumberCell<TData>({
 	};
 
 	const onWrapperKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-		{
-			if (isEditing) {
-				if (event.key === "Enter") {
-					event.preventDefault();
-					const numValue = value === "" ? null : Number(value);
-					if (numValue !== initialValue) {
-						tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: numValue });
-					}
-					tableMeta?.onCellEditingStop?.({ moveToNextRow: true });
-				} else if (event.key === "Tab") {
-					event.preventDefault();
-					const numValue = value === "" ? null : Number(value);
-					if (numValue !== initialValue) {
-						tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: numValue });
-					}
-					tableMeta?.onCellEditingStop?.({
-						direction: event.shiftKey ? "left" : "right",
-					});
-				} else if (event.key === "Escape") {
-					event.preventDefault();
-					setValue(String(initialValue ?? ""));
-					inputRef.current?.blur();
+		if (isEditing) {
+			if (event.key === "Enter") {
+				event.preventDefault();
+				const numValue = value === "" ? null : Number(value);
+				if (numValue !== initialValue) {
+					tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: numValue });
 				}
-			} else if (isFocused) {
-				// Handle Backspace to start editing with empty value
-				if (event.key === "Backspace") {
-					setValue("");
-				} else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
-					// Handle typing to pre-fill the value when editing starts
-					setValue(event.key);
+				tableMeta?.onCellEditingStop?.({ moveToNextRow: true });
+			} else if (event.key === "Tab") {
+				event.preventDefault();
+				const numValue = value === "" ? null : Number(value);
+				if (numValue !== initialValue) {
+					tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: numValue });
 				}
+				tableMeta?.onCellEditingStop?.({
+					direction: event.shiftKey ? "left" : "right",
+				});
+			} else if (event.key === "Escape") {
+				event.preventDefault();
+				setValue(String(initialValue ?? ""));
+				inputRef.current?.blur();
+			}
+		} else if (isFocused) {
+			// Handle Backspace to start editing with empty value
+			if (event.key === "Backspace") {
+				setValue("");
+			} else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+				// Handle typing to pre-fill the value when editing starts
+				setValue(event.key);
 			}
 		}
 	};
@@ -566,59 +560,57 @@ export function UrlCell<TData>({
 	};
 
 	const onWrapperKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-		{
-			if (isEditing) {
-				if (event.key === "Enter") {
-					event.preventDefault();
-					const currentValue = cellRef.current?.textContent?.trim() ?? "";
-					if (!readOnly && currentValue !== initialValue) {
-						tableMeta?.onDataUpdate?.({
-							rowIndex,
-							columnId,
-							value: currentValue || null,
-						});
-					}
-					tableMeta?.onCellEditingStop?.({ moveToNextRow: true });
-				} else if (event.key === "Tab") {
-					event.preventDefault();
-					const currentValue = cellRef.current?.textContent?.trim() ?? "";
-					if (!readOnly && currentValue !== initialValue) {
-						tableMeta?.onDataUpdate?.({
-							rowIndex,
-							columnId,
-							value: currentValue || null,
-						});
-					}
-					tableMeta?.onCellEditingStop?.({
-						direction: event.shiftKey ? "left" : "right",
+		if (isEditing) {
+			if (event.key === "Enter") {
+				event.preventDefault();
+				const currentValue = cellRef.current?.textContent?.trim() ?? "";
+				if (!readOnly && currentValue !== initialValue) {
+					tableMeta?.onDataUpdate?.({
+						rowIndex,
+						columnId,
+						value: currentValue || null,
 					});
-				} else if (event.key === "Escape") {
-					event.preventDefault();
-					setValue(initialValue ?? "");
-					cellRef.current?.blur();
 				}
-			} else if (
-				isFocused &&
-				!readOnly &&
-				event.key.length === 1 &&
-				!event.ctrlKey &&
-				!event.metaKey
-			) {
-				// Handle typing to pre-fill the value when editing starts
-				setValue(event.key);
-
-				queueMicrotask(() => {
-					if (cellRef.current && cellRef.current.contentEditable === "true") {
-						cellRef.current.textContent = event.key;
-						const range = document.createRange();
-						const selection = window.getSelection();
-						range.selectNodeContents(cellRef.current);
-						range.collapse(false);
-						selection?.removeAllRanges();
-						selection?.addRange(range);
-					}
+				tableMeta?.onCellEditingStop?.({ moveToNextRow: true });
+			} else if (event.key === "Tab") {
+				event.preventDefault();
+				const currentValue = cellRef.current?.textContent?.trim() ?? "";
+				if (!readOnly && currentValue !== initialValue) {
+					tableMeta?.onDataUpdate?.({
+						rowIndex,
+						columnId,
+						value: currentValue || null,
+					});
+				}
+				tableMeta?.onCellEditingStop?.({
+					direction: event.shiftKey ? "left" : "right",
 				});
+			} else if (event.key === "Escape") {
+				event.preventDefault();
+				setValue(initialValue ?? "");
+				cellRef.current?.blur();
 			}
+		} else if (
+			isFocused &&
+			!readOnly &&
+			event.key.length === 1 &&
+			!event.ctrlKey &&
+			!event.metaKey
+		) {
+			// Handle typing to pre-fill the value when editing starts
+			setValue(event.key);
+
+			queueMicrotask(() => {
+				if (cellRef.current && cellRef.current.contentEditable === "true") {
+					cellRef.current.textContent = event.key;
+					const range = document.createRange();
+					const selection = window.getSelection();
+					range.selectNodeContents(cellRef.current);
+					range.collapse(false);
+					selection?.removeAllRanges();
+					selection?.addRange(range);
+				}
+			});
 		}
 	};
 
@@ -665,7 +657,7 @@ export function UrlCell<TData>({
 		}
 	}, [isEditing, value]);
 
-	const displayValue = !isEditing ? (value ?? "") : "";
+	const displayValue = isEditing ? "" : (value ?? "");
 	const urlHref = displayValue ? getUrlHref(displayValue) : "";
 	const isDangerousUrl = displayValue && !urlHref;
 
@@ -742,7 +734,9 @@ export function CheckboxCell<TData>({
 	}
 
 	const onCheckedChange = (checked: boolean) => {
-		if (readOnly) return;
+		if (readOnly) {
+			return;
+		}
 		setValue(checked);
 		tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: checked });
 	};
@@ -826,7 +820,9 @@ export function SelectCell<TData>({
 	}
 
 	const onValueChange = (newValue: string) => {
-		if (readOnly) return;
+		if (readOnly) {
+			return;
+		}
 		setValue(newValue);
 		tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: newValue });
 		tableMeta?.onCellEditingStop?.();
@@ -962,7 +958,9 @@ export function MultiSelectCell<TData>({
 	}
 
 	const onValueChange = (value: string) => {
-		if (readOnly) return;
+		if (readOnly) {
+			return;
+		}
 		let newValues: string[] = [];
 		setSelectedValues((curr) => {
 			newValues = curr.includes(value)
@@ -978,7 +976,9 @@ export function MultiSelectCell<TData>({
 	};
 
 	const removeValue = (valueToRemove: string, event?: React.MouseEvent) => {
-		if (readOnly) return;
+		if (readOnly) {
+			return;
+		}
 		event?.stopPropagation();
 		event?.preventDefault();
 		let newValues: string[] = [];
@@ -993,7 +993,9 @@ export function MultiSelectCell<TData>({
 	};
 
 	const clearAll = () => {
-		if (readOnly) return;
+		if (readOnly) {
+			return;
+		}
 		setSelectedValues([]);
 		tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: [] });
 		queueMicrotask(() => inputRef.current?.focus());
@@ -1035,7 +1037,9 @@ export function MultiSelectCell<TData>({
 			event.preventDefault();
 			let newValues: string[] | null = null;
 			setSelectedValues((curr) => {
-				if (curr.length === 0) return curr;
+				if (curr.length === 0) {
+					return curr;
+				}
 				newValues = curr.slice(0, -1);
 				return newValues;
 			});
@@ -1220,7 +1224,9 @@ export function DateCell<TData>({
 	const selectedDate = value ? (parseLocalDate(value) ?? undefined) : undefined;
 
 	const onDateSelect = (date: Date | undefined) => {
-		if (!date || readOnly) return;
+		if (!date || readOnly) {
+			return;
+		}
 
 		// Format using local date components to avoid timezone issues
 		const formattedDate = formatDateToString(date);
@@ -1281,7 +1287,9 @@ export function DateCell<TData>({
 							// eslint-disable-next-line react-doctor/rendering-hydration-mismatch-time -- client-only Tauri app, no SSR/hydration; new Date() is a defaultMonth fallback
 							defaultMonth={selectedDate ?? new Date()}
 							selected={selectedDate}
-							onSelect={onDateSelect}
+							onSelect={(value) =>
+								onDateSelect(value instanceof Date ? value : undefined)
+							}
 						/>
 					</PopoverContent>
 				)}
@@ -1691,7 +1699,9 @@ export function FileCell<TData>({
 	};
 
 	const addFiles = async (newFiles: File[], skipUpload = false) => {
-		if (readOnly || isPending) return;
+		if (readOnly || isPending) {
+			return;
+		}
 		dispatch({ type: "clearError" });
 
 		if (maxFiles && files.length + newFiles.length > maxFiles) {
@@ -1743,7 +1753,22 @@ export function FileCell<TData>({
 		}
 
 		if (filesToValidate.length > 0) {
-			if (!skipUpload) {
+			if (skipUpload) {
+				const newFilesData: FileCellData[] = filesToValidate.map((f) => ({
+					id: crypto.randomUUID() as string,
+					name: f.name,
+					size: f.size,
+					type: f.type,
+					url: URL.createObjectURL(f),
+				}));
+				const updatedFiles = [...files, ...newFilesData];
+				dispatch({ type: "appendFiles", files: updatedFiles });
+				tableMeta?.onDataUpdate?.({
+					rowIndex,
+					columnId,
+					value: updatedFiles,
+				});
+			} else {
 				const tempFiles = filesToValidate.map((f) => ({
 					id: crypto.randomUUID() as string,
 					name: f.name,
@@ -1772,7 +1797,7 @@ export function FileCell<TData>({
 						toast.error(
 							error instanceof Error
 								? error.message
-								: `Failed to upload ${filesToValidate.length} file${filesToValidate.length !== 1 ? "s" : ""}`,
+								: `Failed to upload ${filesToValidate.length} file${filesToValidate.length === 1 ? "" : "s"}`,
 						);
 						dispatch({ type: "uploadFailed", uploadingIds });
 						return;
@@ -1798,31 +1823,20 @@ export function FileCell<TData>({
 
 				dispatch({ type: "finishUpload", files: finalFiles });
 				tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: finalFiles });
-			} else {
-				const newFilesData: FileCellData[] = filesToValidate.map((f) => ({
-					id: crypto.randomUUID() as string,
-					name: f.name,
-					size: f.size,
-					type: f.type,
-					url: URL.createObjectURL(f),
-				}));
-				const updatedFiles = [...files, ...newFilesData];
-				dispatch({ type: "appendFiles", files: updatedFiles });
-				tableMeta?.onDataUpdate?.({
-					rowIndex,
-					columnId,
-					value: updatedFiles,
-				});
 			}
 		}
 	};
 
 	const removeFile = async (fileId: string) => {
-		if (readOnly || isPending) return;
+		if (readOnly || isPending) {
+			return;
+		}
 		dispatch({ type: "clearError" });
 
 		const fileToRemove = files.find((f) => f.id === fileId);
-		if (!fileToRemove) return;
+		if (!fileToRemove) {
+			return;
+		}
 
 		dispatch({ type: "startDelete", fileIds: [fileId] });
 
@@ -1854,7 +1868,9 @@ export function FileCell<TData>({
 	};
 
 	const clearAll = async () => {
-		if (readOnly || isPending) return;
+		if (readOnly || isPending) {
+			return;
+		}
 		dispatch({ type: "clearError" });
 
 		const fileIds = files.map((f) => f.id);
@@ -2015,15 +2031,16 @@ export function FileCell<TData>({
 		}
 	};
 
-	React.useEffect(() => {
-		return () => {
+	React.useEffect(
+		() => () => {
 			for (const file of files) {
 				if (file.url) {
 					URL.revokeObjectURL(file.url);
 				}
 			}
-		};
-	}, [files]);
+		},
+		[files],
+	);
 
 	const lineCount = getLineCount(rowHeight);
 

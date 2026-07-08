@@ -74,7 +74,7 @@ export function TitleBar() {
 						className="mr-1.5 size-4"
 						draggable={false}
 						height={16}
-						src={publicAsset("/icon.ico")}
+						src={publicAsset("/icon-32.png")}
 						width={16}
 					/>
 					<span className="font-mono font-semibold text-foreground-secondary text-xs-tight uppercase tracking-widest">

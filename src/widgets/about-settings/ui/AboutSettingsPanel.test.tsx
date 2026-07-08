@@ -36,21 +36,21 @@ describe("AboutSettingsPanel", () => {
 				if (channel === IPC.UPDATER_CHECK_NOW) {
 					return { triggered: false };
 				}
-				return;
+				return undefined;
 			},
 			secureInvoke: async (channel: string, payload?: unknown) => {
 				secureInvokeCalls.push({ channel, payload });
 				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
 					return [];
 				}
-				return;
+				return undefined;
 			},
 		};
 		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
 			if (cmd === "about_get_app_info") {
 				return { version: "1.2.3", copyright: "Copyright WinSTT" };
 			}
-			return;
+			return undefined;
 		};
 
 		try {
@@ -99,7 +99,7 @@ describe("AboutSettingsPanel", () => {
 			expect(
 				Boolean(
 					startupHeading.compareDocumentPosition(diagnosticsHeading) &
-					Node.DOCUMENT_POSITION_FOLLOWING,
+						Node.DOCUMENT_POSITION_FOLLOWING,
 				),
 			).toBe(true);
 		} finally {
@@ -120,20 +120,19 @@ describe("AboutSettingsPanel", () => {
 			...previousNativeBridge,
 			invoke: async (channel: string, ...args: unknown[]) => {
 				nativeInvokeCalls.push({ channel, args });
-				return;
 			},
 			secureInvoke: async (channel: string) => {
 				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
 					return [{ status: "not-available", timestamp: 1 }];
 				}
-				return;
+				return undefined;
 			},
 		};
 		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
 			if (cmd === "about_get_app_info") {
 				return { version: "1.2.3", copyright: "Copyright WinSTT" };
 			}
-			return;
+			return undefined;
 		};
 
 		try {
@@ -183,7 +182,7 @@ describe("AboutSettingsPanel", () => {
 				if (channel === IPC.DIAG_OPEN_LOGS_FOLDER) {
 					return { ok: true, path: "C:\\logs" };
 				}
-				return;
+				return undefined;
 			},
 		};
 		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
@@ -193,7 +192,7 @@ describe("AboutSettingsPanel", () => {
 			if (cmd === "diag_save_bundle") {
 				return { ok: true, path: "C:\\winstt-diag.zip" };
 			}
-			return;
+			return undefined;
 		};
 
 		try {
@@ -238,7 +237,7 @@ describe("AboutSettingsPanel", () => {
 				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
 					return [{ status: "not-available", timestamp: 1 }];
 				}
-				return;
+				return undefined;
 			},
 		};
 		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
@@ -261,7 +260,7 @@ describe("AboutSettingsPanel", () => {
 					},
 				];
 			}
-			return;
+			return undefined;
 		};
 
 		try {
@@ -310,14 +309,14 @@ describe("AboutSettingsPanel", () => {
 				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
 					return [{ status: "not-available", timestamp: 1 }];
 				}
-				return;
+				return undefined;
 			},
 		};
 		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
 			if (cmd === "about_get_app_info") {
 				return { version: "1.2.3", copyright: "Copyright WinSTT" };
 			}
-			return;
+			return undefined;
 		};
 
 		try {

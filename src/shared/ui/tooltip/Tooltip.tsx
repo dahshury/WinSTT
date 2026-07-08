@@ -1,11 +1,7 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { Z_INDEX } from "@/shared/config/z-index";
-import {
-	SurfaceProvider,
-	surfaceClasses,
-	useSurface,
-} from "@/shared/lib/surface";
+import { SurfaceProvider, surfaceClasses } from "@/shared/lib/surface";
 
 export interface TooltipProps {
 	/** The trigger element — must accept forwarded props via cloneElement */
@@ -30,6 +26,16 @@ export interface TooltipProps {
 	sideOffset?: number;
 }
 
+/**
+ * Tooltips are pinned to ONE fixed surface instead of the usual substrate+N
+ * elevation: they are transient topmost chrome, and deriving their level from
+ * the local substrate made "the same tooltip" render lighter or darker in
+ * different corners of the app — the exact inconsistency this component exists
+ * to prevent. Level 7 keeps ~24% L headroom under `foreground` text while the
+ * level-7 shadow recipe supplies the hairline outline + top highlight.
+ */
+const POPUP_LEVEL = 7;
+
 function TooltipBody({
 	content,
 	children,
@@ -40,9 +46,6 @@ function TooltipBody({
 	footer?: string | undefined;
 	side?: TooltipProps["side"];
 }) {
-	const substrate = useSurface();
-	const popupLevel = Math.min(substrate + 2, 8);
-	const popupShadow = Math.max(popupLevel, 6);
 	return (
 		<TooltipPrimitive.Root>
 			<TooltipPrimitive.Trigger
@@ -51,18 +54,18 @@ function TooltipBody({
 				} as Record<string, unknown>)}
 			/>
 			<TooltipPrimitive.Portal>
-				<SurfaceProvider value={popupLevel}>
+				<SurfaceProvider value={POPUP_LEVEL}>
 					<TooltipPrimitive.Positioner
 						side={side}
 						sideOffset={sideOffset}
 						style={{ zIndex: Z_INDEX.tooltip }}
 					>
 						<TooltipPrimitive.Popup
-							className={`max-w-[260px] whitespace-pre-line origin-(--transform-origin) rounded-md ${surfaceClasses(popupLevel, popupShadow)} px-2.5 py-1.5 font-sans text-[11.5px] text-foreground-secondary leading-[16px] transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 data-[instant]:transition-none`}
+							className={`max-w-[260px] whitespace-pre-line origin-(--transform-origin) rounded-lg ${surfaceClasses(POPUP_LEVEL)} px-3 py-2 font-sans text-[11.5px] text-foreground leading-[16px] transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 data-[instant]:transition-none`}
 						>
 							{content}
 							{footer ? (
-								<span className="mt-1.5 block border-divider-strong border-t pt-1.5 text-[10.5px] text-foreground-muted leading-[14px]">
+								<span className="mt-1.5 block border-divider-strong border-t pt-1.5 text-[10.5px] text-foreground-secondary leading-[14px]">
 									{footer}
 								</span>
 							) : null}

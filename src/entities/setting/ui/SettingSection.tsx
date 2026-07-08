@@ -5,6 +5,7 @@ import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, useSurface } from "@/shared/lib/surface";
 import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import { Toggle } from "@/shared/ui/toggle";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 export interface SettingSectionProps {
 	/**
@@ -42,6 +43,8 @@ export interface SettingSectionProps {
 	/** Optional help text shown in an info-icon tooltip next to the section title. */
 	tooltip?: string;
 	toggleDisabled?: boolean;
+	/** Shown on hover over a DISABLED toggle to explain why it can't be flipped. */
+	toggleDisabledTooltip?: ReactNode;
 	/** When provided, renders a toggle switch on the trailing edge of the header. */
 	toggled?: boolean;
 }
@@ -76,6 +79,7 @@ export function SettingSection({
 	onToggle,
 	tooltip,
 	toggleDisabled,
+	toggleDisabledTooltip,
 }: SettingSectionProps) {
 	const substrate = useSurface();
 	const contentLevel = Math.min(substrate + 1, 8);
@@ -127,12 +131,25 @@ export function SettingSection({
 					{headerAction ? <div className="shrink-0">{headerAction}</div> : null}
 					{hasToggle && (
 						<div className="shrink-0">
-							<Toggle
-								aria-label={`Toggle ${title}`}
-								checked={toggled ?? false}
-								disabled={toggleDisabled}
-								onCheckedChange={onToggle}
-							/>
+							{toggleDisabled && toggleDisabledTooltip ? (
+								<Tooltip content={toggleDisabledTooltip}>
+									<span className="inline-flex">
+										<Toggle
+											aria-label={`Toggle ${title}`}
+											checked={toggled ?? false}
+											disabled={toggleDisabled}
+											onCheckedChange={onToggle}
+										/>
+									</span>
+								</Tooltip>
+							) : (
+								<Toggle
+									aria-label={`Toggle ${title}`}
+									checked={toggled ?? false}
+									disabled={toggleDisabled}
+									onCheckedChange={onToggle}
+								/>
+							)}
 						</div>
 					)}
 				</header>

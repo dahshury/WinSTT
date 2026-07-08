@@ -11,7 +11,11 @@ import {
 } from "@/entities/llm-catalog";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";
-import { writePersistedSelectorState } from "@/shared/lib/persisted-selector-state";
+import {
+	isStringArray,
+	readPersistedSelectorState,
+	writePersistedSelectorState,
+} from "@/shared/lib/persisted-selector-state";
 import type { PresetCarrier } from "../lib/llm-settings-panel-test-helpers";
 
 type LlmProvider = AppSettingsOutput["llm"]["dictation"]["provider"];
@@ -70,6 +74,11 @@ export interface PlaygroundSession {
 const STORAGE_KEY = "winstt:llm-configurations";
 const LEGACY_STORAGE_KEY = "winstt:llm-playground-presets";
 const SESSION_KEY = "winstt:llm-playground-session";
+// Ids of the built-in configurations already seeded into a user's list. Tracked
+// separately from the list itself so a built-in is seeded exactly ONCE: deleting
+// it keeps it gone (the id stays recorded here), while a brand-new built-in
+// shipped in a later app update — whose id is absent here — still gets seeded.
+const SEEDED_BUILTINS_KEY = "winstt:llm-configurations-seeded-builtins";
 
 /** Deep-ish clone so editing a draft (or applying a config) never mutates a
  *  stored configuration or the live settings snapshot it was seeded from.
@@ -165,6 +174,34 @@ export function matchPostProcessingProfileId(
 		matchFullConfigurationId(config, configs) ||
 		matchConfigurationId(config, configs)
 	);
+}
+
+/** True when two configurations are equivalent for post-processing (same
+ *  provider/model, tone, modifiers and request-tuning). `enabled` is excluded —
+ *  the visible toggle owns on/off, not profile content. Drives the "modified"
+ *  (dirty) state that reveals the save/reset actions on the active preset. */
+export function configurationsEqual(
+	a: LlmConfiguration,
+	b: LlmConfiguration,
+): boolean {
+	return configurationSignature(a) === configurationSignature(b);
+}
+
+/** Coerce a config's provider back to local when it targets a cloud provider
+ *  whose API key is absent. A saved preset can point at OpenRouter (e.g. it was
+ *  created while a key was installed, since removed); applying it verbatim would
+ *  strand the feature on an unusable provider with no key-entry affordance at the
+ *  call site. Only the provider is swapped to `ollama` — tone/modifiers and the
+ *  stored model fields are kept, so re-adding the key and re-applying restores the
+ *  cloud target. Ollama and Apple Intelligence are local and always available. */
+export function withAvailableLlmProvider(
+	config: LlmConfiguration,
+	openrouterApiKey: string,
+): LlmConfiguration {
+	if (config.provider === "openrouter" && openrouterApiKey.trim() === "") {
+		return { ...config, provider: "ollama" };
+	}
+	return config;
 }
 
 export function postProcessingPatchFromConfiguration(
@@ -269,7 +306,7 @@ export function reorderSavedConfigurations(
 		return [...configs];
 	}
 	const source = configs.find((config) => config.id === id);
-	if (!source || !configs.some((config) => config.id === targetId)) {
+	if (!(source && configs.some((config) => config.id === targetId))) {
 		return [...configs];
 	}
 	const withoutSource = configs.filter((config) => config.id !== id);
@@ -287,21 +324,152 @@ export function reorderSavedConfigurations(
 	];
 }
 
+// ── Shipped (built-in) configurations ─────────────────────────────────
+// Curated presets that ship with the app and appear pre-configured on first
+// load, so common dictation targets are usable without the user assembling a
+// tone + modifier stack by hand. Each has a stable `builtin:` id (seeded once —
+// see `SEEDED_BUILTINS_KEY`) and, like any saved configuration, can be applied,
+// edited, renamed, or deleted afterwards.
+
+/** A shipped configuration distinguished only by its tone + modifier stack.
+ *  Provider/model are left at the neutral defaults on purpose: applying a
+ *  configuration from the tone row never touches that half, and a shipped preset
+ *  must not assume a model the user hasn't installed. Modifier entries follow the
+ *  canonical `INDEPENDENT_PRESETS` order (summarize, concise, reorder,
+ *  restructure, rewordForClarity, translate) after the leading tone. */
+function builtinConfiguration(
+	id: string,
+	name: string,
+	presets: BuiltinPresetEntry[],
+): SavedConfiguration {
+	return {
+		id,
+		name,
+		config: {
+			enabled: false,
+			maxOutputTokens: null,
+			model: "",
+			openrouterFallbackModel: "",
+			openrouterModel: "",
+			provider: "ollama",
+			reasoningEffort: "medium",
+			thinkingEffort: "off",
+			verbosity: "medium",
+			presets,
+			customModifiers: [],
+		},
+	};
+}
+
+/** Configurations shipped with the app, offered in every Configuration combobox
+ *  once seeded. Append future presets here — each new id is seeded on the next
+ *  load without disturbing configs the user already reordered or deleted. */
+export const BUILTIN_CONFIGURATIONS: readonly SavedConfiguration[] = [
+	// Dictating a prompt to an AI assistant: the Polish base cleans the speech,
+	// then Concise (high) + Reorder + Restructure + Reword for Clarity turn a
+	// rambling spoken request into a tight, well-ordered, unambiguous prompt.
+	builtinConfiguration("builtin:ai-prompt", "AI Prompt", [
+		{ key: "neutral" },
+		{ key: "concise", level: "high" },
+		{ key: "reorder" },
+		{ key: "restructure" },
+		{ key: "rewordForClarity" },
+	]),
+	// Chatting with a person: a warm, conversational Friendly tone, trimmed of
+	// filler and reworded to read naturally as a short message. No lists or
+	// summarizing — a casual chat is neither bulleted nor content-dropped.
+	builtinConfiguration("builtin:casual-chat", "Casual Chat", [
+		{ key: "friendly" },
+		{ key: "concise", level: "medium" },
+		{ key: "rewordForClarity" },
+	]),
+	// A formal email: professional Formal wording, led by its purpose (Reorder),
+	// action items broken into lists (Restructure), clean phrasing (Reword), and
+	// filler trimmed (Concise). No summarize — an email must not drop content.
+	builtinConfiguration("builtin:formal-email", "Formal Email", [
+		{ key: "formal" },
+		{ key: "concise", level: "medium" },
+		{ key: "reorder" },
+		{ key: "restructure" },
+		{ key: "rewordForClarity" },
+	]),
+	// Note taking: condense the dictation to its key points (Summarize), group
+	// them logically (Reorder), and shape them into bullet/numbered structure
+	// (Restructure) — the essence of notes. Plain Polish tone, no restyling.
+	builtinConfiguration("builtin:note-taking", "Note Taking", [
+		{ key: "neutral" },
+		{ key: "summarize", level: "medium" },
+		{ key: "reorder" },
+		{ key: "restructure" },
+	]),
+];
+
+function loadSeededBuiltinIds(): Set<string> {
+	return new Set(
+		readPersistedSelectorState(SEEDED_BUILTINS_KEY, isStringArray, []),
+	);
+}
+
+function persistSeededBuiltinIds(ids: readonly string[]): void {
+	writePersistedSelectorState(SEEDED_BUILTINS_KEY, ids);
+}
+
+/** Append built-in configurations that have never been seeded into the loaded
+ *  list. A built-in already recorded in `seededIds` is skipped even when it is no
+ *  longer present (the user deleted it), so shipped presets are added exactly once
+ *  and stay gone once removed. New built-ins are appended after the user's own
+ *  entries to preserve their ordering. Pure — the caller persists the results. */
+export function seedBuiltinConfigurations(
+	loaded: readonly SavedConfiguration[],
+	seededIds: ReadonlySet<string>,
+	builtins: readonly SavedConfiguration[] = BUILTIN_CONFIGURATIONS,
+): {
+	changed: boolean;
+	configurations: SavedConfiguration[];
+	seededIds: string[];
+} {
+	const existingIds = new Set(loaded.map((c) => c.id));
+	const nextSeeded = new Set(seededIds);
+	const additions: SavedConfiguration[] = [];
+	for (const builtin of builtins) {
+		if (nextSeeded.has(builtin.id)) {
+			continue;
+		}
+		nextSeeded.add(builtin.id);
+		if (!existingIds.has(builtin.id)) {
+			additions.push({
+				...builtin,
+				config: cloneLlmConfiguration(builtin.config),
+			});
+		}
+	}
+	return {
+		changed: additions.length > 0 || nextSeeded.size !== seededIds.size,
+		configurations:
+			additions.length > 0 ? [...loaded, ...additions] : [...loaded],
+		seededIds: [...nextSeeded],
+	};
+}
+
 /** Load saved configurations from localStorage. Returns [] on any read/parse
  *  error — configurations are a non-critical convenience, never block the UI.
  *  Merges the legacy playground-presets key so older presets remain visible even
- *  after the shared key has already been created. */
+ *  after the shared key has already been created, then seeds any not-yet-seeded
+ *  built-in (shipped) configurations. */
 function loadConfigurations(): SavedConfiguration[] {
 	try {
 		const primary = parseSavedConfigurations(localStorage.getItem(STORAGE_KEY));
 		const legacy = parseSavedConfigurations(
 			localStorage.getItem(LEGACY_STORAGE_KEY),
 		);
-		const configs = mergeSavedConfigurations(primary, legacy);
-		if (legacy.length > 0 && configs.length > primary.length) {
-			persistConfigurations(configs);
+		const merged = mergeSavedConfigurations(primary, legacy);
+		const seeded = seedBuiltinConfigurations(merged, loadSeededBuiltinIds());
+		const legacyMigrated = legacy.length > 0 && merged.length > primary.length;
+		if (seeded.changed || legacyMigrated) {
+			persistConfigurations(seeded.configurations);
+			persistSeededBuiltinIds(seeded.seededIds);
 		}
-		return configs;
+		return seeded.configurations;
 	} catch {
 		// localStorage unavailable / quota / parse failure — start empty.
 		return [];
@@ -326,6 +494,9 @@ interface ConfigurationsState {
 	/** Save `config` under `name` and return the new id. */
 	saveConfiguration: (name: string, config: LlmConfiguration) => string;
 	setActiveConfiguration: (id: string | null) => void;
+	/** Overwrite an existing saved config's content in place (id + name kept) and
+	 *  make it active — the "save changes to this preset" path. */
+	updateConfiguration: (id: string, config: LlmConfiguration) => void;
 }
 
 /**
@@ -371,6 +542,13 @@ export const useLlmConfigurationsStore = create<ConfigurationsState>()(
 						? null
 						: get().activeConfigurationId,
 			});
+			persistConfigurations(next);
+		},
+		updateConfiguration: (id, config) => {
+			const next = get().configurations.map((c) =>
+				c.id === id ? { ...c, config: cloneLlmConfiguration(config) } : c,
+			);
+			set({ configurations: next, activeConfigurationId: id });
 			persistConfigurations(next);
 		},
 	}),

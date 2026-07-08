@@ -3,7 +3,6 @@ title: Quick Start
 description: Download, launch, and dictate your first sentence in under two minutes — no Python, no accounts, no setup.
 ---
 
-import { latestReleaseUrl } from "@/lib/site";
 import { QuickStartShowcase } from "@/components/quick-start-showcase";
 
 Go from a fresh download to text at your cursor in five steps — the onboarding wizard
@@ -32,11 +31,12 @@ models and never leaves your machine.
 
 <StepFlow>
   <Step title="Download the app">
-    Download the latest alpha package from the
-    <a href={latestReleaseUrl}>GitHub Release</a>. Current releases include a macOS
-    Apple Silicon DMG, Linux AppImage/deb/rpm packages, and Windows portable builds.
-    Not sure which one? See [Install](/docs/install) for platform notes and system
-    requirements.
+    Open the download menu and choose the package type for your desktop OS. It
+    detects macOS, Linux, or Windows and only shows the matching release binaries.
+    Not sure which one? See [Install](/docs/install) for platform notes and
+    system requirements.
+
+    <LatestDownloadMenu />
   </Step>
 
   <Step title="Launch — onboarding picks local vs cloud and tests your mic">

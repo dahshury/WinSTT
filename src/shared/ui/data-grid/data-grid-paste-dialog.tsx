@@ -26,7 +26,9 @@ export function DataGridPasteDialog<TData>({
 	const onPasteDialogOpenChange = tableMeta?.onPasteDialogOpenChange;
 	const onCellsPaste = tableMeta?.onCellsPaste;
 
-	if (!pasteDialog.open) return null;
+	if (!pasteDialog.open) {
+		return null;
+	}
 
 	return (
 		<PasteDialog
@@ -38,8 +40,7 @@ export function DataGridPasteDialog<TData>({
 }
 
 interface PasteDialogProps
-	extends
-		Pick<TableMeta<unknown>, "onPasteDialogOpenChange" | "onCellsPaste">,
+	extends Pick<TableMeta<unknown>, "onPasteDialogOpenChange" | "onCellsPaste">,
 		Required<Pick<TableMeta<unknown>, "pasteDialog">> {}
 
 function PasteDialog({

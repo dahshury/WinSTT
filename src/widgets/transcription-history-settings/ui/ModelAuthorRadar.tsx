@@ -2,6 +2,18 @@ import type { AuthorSlice } from "../lib/author-usage";
 
 interface ModelAuthorRadarProps {
 	slices: AuthorSlice[];
+	/** Accessible name for the whole chart. Defaults to the usage-by-maker label. */
+	ariaLabel?: string;
+	/**
+	 * Renders each axis's hover title. Defaults to `label · count (pct%)` for the
+	 * usage radar; the cost radar passes a `$`-formatting variant. `count` carries
+	 * the axis magnitude (a run count for usage, a USD amount for cost).
+	 */
+	formatTitle?: (slice: AuthorSlice) => string;
+}
+
+function defaultTitle(slice: AuthorSlice): string {
+	return `${slice.label} · ${slice.count} (${slice.pct}%)`;
 }
 
 const SIZE = 190;
@@ -38,7 +50,11 @@ function ringPoints(axes: { angle: number }[], radius: number): string {
  * logo stays visible (unlike the pie, whose slivers couldn't hold a mark).
  * Renders nothing below {@link MIN_AXES} makers or when no maker carries a logo.
  */
-export function ModelAuthorRadar({ slices }: ModelAuthorRadarProps) {
+export function ModelAuthorRadar({
+	slices,
+	ariaLabel = "Transcription usage by model maker",
+	formatTitle = defaultTitle,
+}: ModelAuthorRadarProps) {
 	if (slices.length < MIN_AXES || slices.every((s) => !s.logoSrc)) {
 		return null;
 	}
@@ -59,7 +75,7 @@ export function ModelAuthorRadar({ slices }: ModelAuthorRadarProps) {
 
 	return (
 		<svg
-			aria-label="Transcription usage by model maker"
+			aria-label={ariaLabel}
 			className="shrink-0"
 			height={SIZE}
 			role="img"
@@ -69,7 +85,6 @@ export function ModelAuthorRadar({ slices }: ModelAuthorRadarProps) {
 			{Array.from({ length: GRID_LEVELS }, (_, level) => (
 				<polygon
 					fill="none"
-					// biome-ignore lint/suspicious/noArrayIndexKey: fixed grid levels
 					key={level}
 					points={ringPoints(axes, (RADIUS * (level + 1)) / GRID_LEVELS)}
 					stroke="var(--color-divider)"
@@ -99,7 +114,7 @@ export function ModelAuthorRadar({ slices }: ModelAuthorRadarProps) {
 			/>
 			{axes.map(({ slice, vx, vy, lx, ly }) => (
 				<g key={slice.key}>
-					<title>{`${slice.label} · ${slice.count} (${slice.pct}%)`}</title>
+					<title>{formatTitle(slice)}</title>
 					<circle cx={vx} cy={vy} fill="var(--color-activity)" r={DOT_R} />
 					{slice.logoSrc ? (
 						// White-silhouette the mixed-fill provider marks so they read

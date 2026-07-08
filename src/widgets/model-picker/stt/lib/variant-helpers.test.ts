@@ -19,7 +19,6 @@ function model(over: Partial<ModelInfo> = {}): ModelInfo {
 		previewCapable: true,
 		nativeStreaming: false,
 		finalReuseSafe: false,
-		supportsRealtime: true,
 		onnxModelName: "x/y",
 		description: "",
 		availableQuantizations: [""],

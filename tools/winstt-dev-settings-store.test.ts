@@ -35,14 +35,18 @@ afterEach(async () => {
 
 describe("resolveWinsttAppDataDir", () => {
 	test("uses platform app-data conventions plus the Tauri identifier", () => {
-		expect(resolveWinsttAppDataDir({ APPDATA: "C:\\Users\\me\\AppData\\Roaming" }, "C:\\Users\\me", "win32")).toBe(
-			"C:\\Users\\me\\AppData\\Roaming\\com.winstt.winstt"
-		);
+		expect(
+			resolveWinsttAppDataDir(
+				{ APPDATA: "C:\\Users\\me\\AppData\\Roaming" },
+				"C:\\Users\\me",
+				"win32",
+			),
+		).toBe("C:\\Users\\me\\AppData\\Roaming\\com.winstt.winstt");
 		expect(resolveWinsttAppDataDir({}, "/Users/me", "darwin")).toBe(
-			"/Users/me/Library/Application Support/com.winstt.winstt"
+			"/Users/me/Library/Application Support/com.winstt.winstt",
 		);
 		expect(resolveWinsttAppDataDir({}, "/home/me", "linux")).toBe(
-			"/home/me/.local/share/com.winstt.winstt"
+			"/home/me/.local/share/com.winstt.winstt",
 		);
 	});
 });
@@ -62,7 +66,7 @@ describe("dev settings store", () => {
 					},
 					llm: { openrouterApiKey: "enc:v1:sealed-existing-key" },
 				},
-			})
+			}),
 		);
 
 		const loaded = await readDevSettings();
@@ -79,7 +83,10 @@ describe("dev settings store", () => {
 			llm: { openrouterApiKey: SECRET_PRESENT_SENTINEL },
 		});
 
-		const stored = JSON.parse(await readFile(path, "utf8")) as Record<string, Record<string, unknown>>;
+		const stored = JSON.parse(await readFile(path, "utf8")) as Record<
+			string,
+			Record<string, unknown>
+		>;
 		expect(stored[SETTINGS_KEY]).toMatchObject({
 			dictionary: [{ id: "term-1", term: "central" }],
 			llm: { openrouterApiKey: "enc:v1:sealed-existing-key" },

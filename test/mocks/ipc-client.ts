@@ -538,56 +538,66 @@ export function ipcClientMock(): Record<string, unknown> {
 
 		// LLM
 		fetchOllamaModels: () =>
-			invokeOrDefault<unknown>(IPC.LLM_SCAN_MODELS, {
-				models: [],
-				reachable: false,
-				error: "IPC unavailable",
-			}),
-		detectOllama: () =>
-			invokeOrDefault<unknown>(IPC.LLM_DETECT_OLLAMA, { installed: false }),
-		startOllama: () =>
-			invokeOrDefault<unknown>(IPC.LLM_START_OLLAMA, {
-				started: false,
-				error: "IPC unavailable",
-			}),
-		fetchOpenRouterModels: () =>
-			invokeOrDefault<unknown>(IPC.LLM_SCAN_OPENROUTER_MODELS, {
-				models: [],
-				reachable: false,
-				error: "IPC unavailable",
-			}),
-		fetchOpenRouterSttModels: () =>
-			invokeOrDefault<unknown>(IPC.STT_SCAN_OPENROUTER_MODELS, {
-				models: [],
-				reachable: false,
-				error: "IPC unavailable",
-			}),
-		fetchOpenRouterTtsModels: () =>
-			invokeOrDefault<unknown>(IPC.TTS_SCAN_OPENROUTER_MODELS, {
-				models: [],
-				reachable: false,
-				error: "IPC unavailable",
-			}),
-		processWithLlm: (text: string) =>
-			invokeOrDefault<string>(IPC.LLM_PROCESS_TEXT, text, { text }),
-		applyTransform: (transformId: string) =>
-			invokeOrDefault<unknown>(
-				IPC.TRANSFORMS_APPLY,
-				{ transformId, before: "", after: "", source: "empty" },
-				{ transformId },
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.ollamaRefreshModels()),
+				{ models: [], reachable: false, error: "IPC unavailable" },
 			),
-		previewTransform: (text: string, systemPrompt: string) =>
-			invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, {
+		detectOllama: () =>
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.ollamaDetect()),
+				{ installed: false },
+			),
+		startOllama: () =>
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.ollamaStart()),
+				{ started: false, error: "IPC unavailable" },
+			),
+		fetchOpenRouterModels: () =>
+			commandOrDefault<unknown>(
+				async () =>
+					unwrapCommandResult(await commands.openrouterRefreshModels()),
+				{ models: [], reachable: false, error: "IPC unavailable" },
+			),
+		fetchOpenRouterSttModels: () =>
+			commandOrDefault<unknown>(
+				async () =>
+					unwrapCommandResult(await commands.openrouterRefreshSttModels()),
+				{ models: [], reachable: false, error: "IPC unavailable" },
+			),
+		fetchOpenRouterTtsModels: () =>
+			commandOrDefault<unknown>(
+				async () =>
+					unwrapCommandResult(await commands.openrouterRefreshTtsModels()),
+				{ models: [], reachable: false, error: "IPC unavailable" },
+			),
+		processWithLlm: (text: string) =>
+			commandOrDefault<string>(
+				async () => unwrapCommandResult(await commands.processText(text, "")),
 				text,
-				systemPrompt,
-			}),
+			),
+		applyTransform: (transformId: string) =>
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.applyTransform()),
+				{ transformId, before: "", after: "", source: "empty" },
+			),
+		previewTransform: (text: string, _systemPrompt: string) =>
+			commandOrDefault<string>(
+				async () =>
+					unwrapCommandResult(
+						await commands.applyTransformPreview(text, "transforms", null),
+					),
+				text,
+			),
 		onPreviewReady: (cb: (payload: unknown) => void) =>
 			onCast(IPC.STT_PREVIEW_READY, cb),
 		confirmPaste: (text: string) =>
-			invokeOrDefault<void>(IPC.PREVIEW_CONFIRM_PASTE, undefined, {
-				text,
-			}),
-		cancelPreview: () => invokeOrDefault<void>(IPC.PREVIEW_CANCEL, undefined),
+			commandOrDefault<void>(async () => {
+				unwrapCommandResult(await commands.confirmPaste(text));
+			}, undefined),
+		cancelPreview: () =>
+			commandOrDefault<void>(async () => {
+				unwrapCommandResult(await commands.cancelPreview());
+			}, undefined),
 		onTransformApplied: (cb: (p: unknown) => void) =>
 			onCast(IPC.TRANSFORMS_APPLIED, cb),
 		onTransformFailed: (cb: (p: unknown) => void) =>
@@ -607,22 +617,19 @@ export function ipcClientMock(): Record<string, unknown> {
 			);
 		},
 		pullOllamaModel: (model: string) =>
-			invokeOrDefault<unknown>(
-				IPC.LLM_PULL_MODEL,
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.ollamaPull(model)),
 				{ success: false, model: "", error: "IPC unavailable" },
-				{ model },
 			),
 		cancelOllamaModelPull: (model: string) =>
-			invokeOrDefault<{ cancelled: boolean }>(
-				IPC.LLM_CANCEL_PULL_MODEL,
+			commandOrDefault<{ cancelled: boolean }>(
+				async () => unwrapCommandResult(await commands.ollamaCancelPull(model)),
 				{ cancelled: false },
-				{ model },
 			),
 		deleteOllamaModel: (model: string) =>
-			invokeOrDefault<unknown>(
-				IPC.LLM_DELETE_MODEL,
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.ollamaDelete(model)),
 				{ success: false, model: "", error: "IPC unavailable" },
-				{ model },
 			),
 		searchOllamaLibrary: (query: string, page = 0) =>
 			commandOrDefault<unknown>(
@@ -631,19 +638,31 @@ export function ipcClientMock(): Record<string, unknown> {
 				{ hits: [], hasMore: false, page, query },
 			),
 		fetchOllamaLibraryTags: (model: string) =>
-			invokeOrDefault<unknown>(
-				IPC.LLM_FETCH_OLLAMA_TAGS,
+			commandOrDefault<unknown>(
+				async () =>
+					unwrapCommandResult(await commands.ollamaRefreshTags(model)),
 				{ model, tags: [] },
-				{ model },
+			),
+		fetchOllamaModelHit: (model: string) =>
+			commandOrDefault<unknown>(
+				async () =>
+					unwrapCommandResult(await commands.ollamaRefreshModelHit(model)),
+				{ name: model },
 			),
 		fetchOllamaLibraryCatalog: () =>
-			invokeOrDefault<unknown>(IPC.LLM_FETCH_OLLAMA_LIBRARY, { hits: [] }),
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.ollamaRefreshLibrary()),
+				{ hits: [] },
+			),
 		onOllamaPullProgress: (cb: (p: unknown) => void) =>
 			onCast(IPC.LLM_PULL_PROGRESS, cb),
 		onLlmProcessingStart: (cb: () => void) => on(IPC.LLM_PROCESSING_START, cb),
 		onLlmProcessingEnd: (cb: () => void) => on(IPC.LLM_PROCESSING_END, cb),
 		getLlmWarmupStatus: () =>
-			invokeOrDefault<unknown>(IPC.LLM_GET_WARMUP_STATUS, null),
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.llmWarmupStatus()),
+				null,
+			),
 		retryLlmWarmup: () =>
 			commandOrDefault<unknown>(
 				async () => unwrapCommandResult(await commands.llmRetryWarmup()),
@@ -651,21 +670,30 @@ export function ipcClientMock(): Record<string, unknown> {
 			),
 		onLlmWarmupStatus: (cb: (status: unknown) => void) =>
 			onCast(IPC.LLM_WARMUP_STATUS, cb),
+		onLlmUnloadStatus: (cb: (status: unknown) => void) =>
+			onCast(IPC.LLM_UNLOAD_STATUS, cb),
 		onLlmReasoningDelta: (cb: (payload: { delta: string }) => void) =>
 			onCast(IPC.LLM_REASONING_DELTA, cb),
 		onLlmLearnedProperNouns: (
 			cb: (payload: { nouns: readonly string[] }) => void,
 		) => onCast(IPC.LLM_LEARNED_PROPER_NOUNS, cb),
-		runLlmPreview: (
+		runLlmPreview: async (
 			text: string,
 			feature: "dictation" | "transforms",
 			config?: unknown,
-		) =>
-			invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, {
-				text,
-				feature,
-				config,
-			}),
+		) => {
+			if (!hasBridge()) {
+				return text;
+			}
+			// Mirrors the real module: critical-reject semantics, errors propagate.
+			return unwrapCommandResult(
+				await commands.applyTransformPreview(
+					text,
+					feature,
+					(config as never) ?? null,
+				),
+			);
+		},
 
 		// Diarization (runtime toggle + speaker segments)
 		sttRequestDiarizationToggle: (enabled: boolean) =>
@@ -751,7 +779,7 @@ export function ipcClientMock(): Record<string, unknown> {
 
 		// TTS — voice catalog + lifecycle (synthesis + playback + install)
 		listTtsVoices: () =>
-			invokeOrDefault<unknown>(IPC.TTS_LIST_VOICES, {
+			commandOrDefault<unknown>(() => commands.ttsListVoices(null), {
 				languages: [],
 				voices: [],
 				unavailable: true,
@@ -761,17 +789,27 @@ export function ipcClientMock(): Record<string, unknown> {
 				unavailable: true,
 			}),
 		initTts: () =>
-			invokeOrDefault<{ ready: boolean }>(IPC.TTS_INIT, { ready: false }),
+			commandOrDefault<{ ready: boolean }>(
+				async () => unwrapCommandResult(await commands.ttsInit()),
+				{ ready: false },
+			),
 		ttsSpeak: (payload: {
 			text: string;
 			voice?: string;
 			lang?: string;
 			speed?: number;
 		}) =>
-			invokeOrDefault<{ requestId: string }>(
-				IPC.TTS_SPEAK,
+			commandOrDefault<{ requestId: string }>(
+				async () =>
+					unwrapCommandResult(
+						await commands.ttsSpeak(
+							payload.text,
+							payload.voice ?? null,
+							payload.lang ?? null,
+							payload.speed ?? null,
+						),
+					),
 				{ requestId: "" },
-				payload,
 			),
 		ttsSpeakSelection: () =>
 			commandOrDefault<unknown>(
@@ -785,18 +823,39 @@ export function ipcClientMock(): Record<string, unknown> {
 					source: "empty",
 				},
 			),
-		ttsCancel: (requestId?: string) => send(IPC.TTS_CANCEL, { requestId }),
+		ttsCancel: (requestId?: string) =>
+			void commandOrDefault<void>(
+				() => commands.ttsCancel(requestId ?? null),
+				undefined,
+			),
 		ttsRequestPlaybackPause: (reason = "media-session") =>
-			send(IPC.TTS_REQUEST_PLAYBACK_PAUSE, { reason }),
+			void commandOrDefault<void>(
+				() => commands.ttsPausePlayback(reason),
+				undefined,
+			),
 		ttsRequestPlaybackResume: (reason = "media-session") =>
-			send(IPC.TTS_REQUEST_PLAYBACK_RESUME, { reason }),
-		ttsInstallPause: () => send(IPC.TTS_INSTALL_PAUSE, {}),
-		ttsInstallResume: () => send(IPC.TTS_INSTALL_RESUME, {}),
-		ttsInstallCancel: () => send(IPC.TTS_INSTALL_CANCEL, {}),
+			void commandOrDefault<void>(
+				() => commands.ttsResumePlayback(reason),
+				undefined,
+			),
+		ttsInstallPause: () =>
+			void commandOrDefault<void>(() => commands.ttsInstallPause(), undefined),
+		ttsInstallResume: () =>
+			void commandOrDefault<void>(async () => {
+				unwrapCommandResult(await commands.ttsInstallResume());
+			}, undefined),
+		ttsInstallCancel: () =>
+			void commandOrDefault<void>(() => commands.ttsInstallCancel(), undefined),
 		ttsReportPlaybackStarted: (requestId: string) =>
-			send(IPC.TTS_REPORT_PLAYBACK_STARTED, { requestId }),
+			void commandOrDefault<void>(
+				() => commands.ttsReportPlaybackStarted(requestId),
+				undefined,
+			),
 		ttsReportPlaybackEnded: (requestId: string) =>
-			send(IPC.TTS_REPORT_PLAYBACK_ENDED, { requestId }),
+			void commandOrDefault<void>(
+				() => commands.ttsReportPlaybackEnded(requestId),
+				undefined,
+			),
 		onTtsStarted: (cb: (payload: unknown) => void) =>
 			onCast(IPC.TTS_STARTED, cb),
 		onTtsChunk: (cb: (payload: unknown) => void) => onCast(IPC.TTS_CHUNK, cb),
@@ -821,6 +880,8 @@ export function ipcClientMock(): Record<string, unknown> {
 			onCast(IPC.TTS_MODEL_DOWNLOAD_COMPLETE, cb),
 		onTtsInstallStatus: (cb: (payload: unknown) => void) =>
 			onCast(IPC.TTS_INSTALL_STATUS, cb),
+		onTtsUnloadStatus: (cb: (payload: unknown) => void) =>
+			onCast(IPC.TTS_UNLOAD_STATUS, cb),
 		onTtsInstallFailed: (cb: (payload: unknown) => void) =>
 			onCast(IPC.TTS_INSTALL_FAILED, cb),
 		onTtsInstallPaused: (cb: () => void) =>
@@ -972,58 +1033,73 @@ export function ipcClientMock(): Record<string, unknown> {
 			onCast(IPC.FILE_QUEUE_ACTIVE, cb),
 
 		// ── TTS catalog / cloud / install (Tauri-port additions) ──
-		ttsSetSpeed: (speed: number) => send(IPC.TTS_SET_SPEED, { speed }),
+		ttsSetSpeed: (speed: number) =>
+			void commandOrDefault<void>(() => commands.ttsSetSpeed(speed), undefined),
 		ttsListModels: () => invokeOrDefault<unknown[]>(IPC.TTS_LIST_MODELS, []),
 		ttsListModelsWithState: () =>
-			invokeOrDefault<unknown>(IPC.TTS_LIST_MODELS_WITH_STATE, null),
+			commandOrDefault<unknown>(() => commands.ttsListModelsWithState(), null),
 		fetchTtsModelsWithState: () =>
-			invokeOrDefault<unknown>(IPC.TTS_LIST_MODELS_WITH_STATE, null),
+			commandOrDefault<unknown>(() => commands.ttsListModelsWithState(), null),
 		ttsPredownloadModel: (modelId: string, quantization: string) =>
-			invokeOrDefault<void>(IPC.TTS_PREDOWNLOAD, undefined, {
-				modelId,
-				quantization,
-			}),
-		ttsDownloadPause: (modelId: string, quantization: string) =>
-			invokeOrDefault<void>(IPC.TTS_DOWNLOAD_PAUSE, undefined, {
-				modelId,
-				quantization,
-			}),
-		ttsDownloadResume: (modelId: string, quantization: string) =>
-			invokeOrDefault<void>(IPC.TTS_DOWNLOAD_RESUME, undefined, {
-				modelId,
-				quantization,
-			}),
-		ttsDownloadCancel: (modelId: string, quantization: string) =>
-			invokeOrDefault<void>(IPC.TTS_DOWNLOAD_CANCEL, undefined, {
-				modelId,
-				quantization,
-			}),
-		ttsDeleteModel: (modelId: string, quantization: string) =>
-			invokeOrDefault<void>(IPC.TTS_DELETE_MODEL, undefined, {
-				modelId,
-				quantization,
-			}),
-		ttsCloudListVoices: () =>
-			invokeOrDefault<unknown>(IPC.TTS_CLOUD_LIST_VOICES, {
-				voices: [],
-				unavailable: true,
-			}),
-		ttsCloudPreview: (payload: { previewUrl: string }) =>
-			invokeOrDefault<unknown>(
-				IPC.TTS_CLOUD_PREVIEW,
-				{ requestId: "" },
-				payload,
+			commandOrDefault<void>(
+				() => commands.ttsPredownloadModel(modelId, quantization),
+				undefined,
 			),
-		ttsOpenRouterPreview: (payload: { previewUrl?: string }) =>
-			invokeOrDefault<unknown>(
-				IPC.TTS_OPENROUTER_PREVIEW,
+		ttsDownloadPause: (modelId: string, quantization: string) =>
+			commandOrDefault<void>(
+				() => commands.ttsDownloadPause(modelId, quantization),
+				undefined,
+			),
+		ttsDownloadResume: (modelId: string, quantization: string) =>
+			commandOrDefault<void>(
+				() => commands.ttsDownloadResume(modelId, quantization),
+				undefined,
+			),
+		ttsDownloadCancel: (modelId: string, quantization: string) =>
+			commandOrDefault<void>(
+				() => commands.ttsDownloadCancel(modelId, quantization),
+				undefined,
+			),
+		ttsDeleteModel: (modelId: string, quantization: string) =>
+			commandOrDefault<void>(async () => {
+				unwrapCommandResult(
+					await commands.ttsDeleteModel(modelId, quantization),
+				);
+			}, undefined),
+		ttsCloudListVoices: () =>
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.ttsListCloudVoices()),
+				{ voices: [], unavailable: true },
+			),
+		ttsCloudPreview: (payload: { previewUrl: string }) =>
+			commandOrDefault<unknown>(
+				async () =>
+					unwrapCommandResult(
+						await commands.ttsPreviewCloud(payload.previewUrl),
+					),
 				{ requestId: "" },
-				payload,
+			),
+		ttsOpenRouterPreview: (payload: {
+			model?: string;
+			voice?: string;
+			speed?: number;
+		}) =>
+			commandOrDefault<unknown>(
+				async () =>
+					unwrapCommandResult(
+						await commands.ttsPreviewOpenrouter(
+							payload.model ?? "",
+							payload.voice ?? "",
+							payload.speed ?? null,
+						),
+					),
+				{ requestId: "" },
 			),
 		ttsCloudSubscription: () =>
-			invokeOrDefault<unknown>(IPC.TTS_CLOUD_SUBSCRIPTION, {
-				creditsExhausted: false,
-			}),
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.ttsCloudSubscription()),
+				{ creditsExhausted: false },
+			),
 		onTtsModelCacheChanged: (cb: (modelId: string) => void) =>
 			on(IPC.TTS_CATALOG_MODEL_CACHE_CHANGED, (data) => {
 				const d = data as { modelId?: unknown };

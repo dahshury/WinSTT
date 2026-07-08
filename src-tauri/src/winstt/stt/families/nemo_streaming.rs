@@ -6,18 +6,50 @@
 //! shared `ort` provider routing, so DirectML can be selected on Windows.
 
 use ndarray::{Array2, ArrayD, Axis, IxDyn, s};
+use ort::memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::Session;
-use ort::value::Tensor;
+use ort::value::{DynValue, Tensor};
 
 use super::frontend;
 use super::streaming::{self, StreamCursor};
 use super::support::*;
 use crate::winstt::stt::{
-    EngineConfig, EngineKind, NativeStreamUpdate, SttError, SttResult, TranscribeOptions,
-    Transcriber, Transcription,
+    Accelerator, EngineConfig, EngineKind, NativeStreamUpdate, SttError, SttResult,
+    TranscribeOptions, Transcriber, Transcription,
 };
 
 const MAX_SYMBOLS_PER_FRAME: usize = 10;
+
+/// Map the active provider list to the ORT allocation device for binding the carried encoder
+/// cache device-resident (CPU when no GPU EP; then IoBinding simply binds host memory, still
+/// correct + ~same speed). Mirrors whisper's `device_for_providers` / cohere's `cohere_device`.
+fn nemo_stream_device(providers: &[Accelerator]) -> (AllocationDevice, i32) {
+    match providers.first() {
+        Some(Accelerator::Cuda) => (AllocationDevice::CUDA, 0),
+        Some(Accelerator::DirectMl) => (AllocationDevice::DIRECTML, 0),
+        _ => (AllocationDevice::CPU, 0),
+    }
+}
+
+/// Bind a carried cache input: the device `DynValue` from the previous chunk when present, else the
+/// host zero-tensor built for a fresh stream's first chunk. Exactly one of `carried`/`empty` is Some.
+fn bind_cache_input<T: ort::value::ValueTypeMarker + ?Sized>(
+    binding: &mut ort::session::IoBinding,
+    name: &str,
+    carried: Option<&DynValue>,
+    empty: Option<&ort::value::Value<T>>,
+) -> SttResult<()> {
+    match (carried, empty) {
+        (Some(v), _) => binding.bind_input(name, v),
+        (None, Some(t)) => binding.bind_input(name, t),
+        (None, None) => {
+            return Err(SttError::Inference(format!(
+                "nemo stream cache '{name}' has neither carried nor empty tensor"
+            )));
+        }
+    }
+    .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))
+}
 
 type DecoderState = (ArrayD<f32>, ArrayD<f32>);
 
@@ -42,15 +74,70 @@ pub struct NativeNemoStreamingEngine {
     decoder_state_shape_1: Vec<usize>,
     decoder_input_names: Vec<String>,
     decoder_output_names: Vec<String>,
+    /// Language/prompt selector for `EncDecRNNTBPEModelWithPrompt` exports (e.g. multilingual
+    /// Nemotron-3.5): the value bound to the encoder's 6th `prompt_index` input. `None` for
+    /// non-prompt exports (English Nemotron) whose encoder has only the 5 standard inputs.
+    prompt_index: Option<i64>,
+    /// ORT allocation device the sessions run on, for binding the carried encoder cache resident.
+    device: AllocationDevice,
+    device_id: i32,
     stream: NemoStreamState,
 }
 
+/// Per-stream carried state. The three encoder cache tensors are carried DEVICE-RESIDENT across
+/// feature chunks: `None` on a fresh stream (the empty zero-cache is built host-side for the first
+/// chunk only), then each chunk's `*_next` encoder outputs are kept as session-owned device
+/// `DynValue`s and rebound as the next chunk's inputs — no per-chunk host round-trip. The RNN-T
+/// predictor state stays host-side (`decoder_state`): it is carried per-TOKEN inside a chunk (not
+/// per-chunk) and only conditionally on emission, so the device-resident payoff is marginal and the
+/// host path keeps the token loop's exact semantics.
 struct NemoStreamState {
     cursor: StreamCursor,
-    cache_last_channel: ArrayD<f32>,
-    cache_last_time: ArrayD<f32>,
-    cache_last_channel_len: ArrayD<i64>,
+    cache_last_channel: Option<DynValue>,
+    cache_last_time: Option<DynValue>,
+    cache_last_channel_len: Option<DynValue>,
     decoder_state: DecoderState,
+}
+
+/// True for a `<...>`-framed special/language token (`<en-US>`, `<unk>`, `<blk>`, …) that the
+/// prompt-conditioned multilingual decoder can emit but that must NEVER reach the transcript. A
+/// whole-symbol frame — real BPE subwords never start with `<` AND end with `>`.
+fn is_framed_special_token(sym: &str) -> bool {
+    sym.len() >= 2 && sym.starts_with('<') && sym.ends_with('>')
+}
+
+/// Resolve the encoder `prompt_index` for a prompt-based multilingual streaming model
+/// (`EncDecRNNTBPEModelWithPrompt`). Looks `language` up in the `prompt_dictionary` metadata
+/// (exact, case-insensitive, then the base language before a `-`, e.g. `en` from `en-US`); returns
+/// `auto_prompt_id` (whole-utterance auto-detect) when the language is `None`/blank/unknown.
+fn resolve_prompt_index(
+    metadata: &std::collections::BTreeMap<String, String>,
+    language: Option<&str>,
+) -> i64 {
+    let auto = metadata
+        .get("auto_prompt_id")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    let Some(lang) = language.map(str::trim).filter(|s| !s.is_empty()) else {
+        return auto;
+    };
+    let Some(dict) = metadata
+        .get("prompt_dictionary")
+        .and_then(|s| serde_json::from_str::<std::collections::BTreeMap<String, i64>>(s).ok())
+    else {
+        return auto;
+    };
+    let want = lang.to_ascii_lowercase();
+    let base = want.split('-').next().unwrap_or(&want);
+    dict.iter()
+        .find(|(k, _)| k.to_ascii_lowercase() == want)
+        .or_else(|| {
+            dict.iter().find(|(k, _)| {
+                let kl = k.to_ascii_lowercase();
+                kl == base || kl.split('-').next() == Some(base)
+            })
+        })
+        .map_or(auto, |(_, &v)| v)
 }
 
 impl NativeNemoStreamingEngine {
@@ -100,8 +187,19 @@ impl NativeNemoStreamingEngine {
         let decoder_state_shape_0 = vec![pred_layers, 1, pred_hidden];
         let decoder_state_shape_1 = vec![pred_layers, 1, pred_hidden];
 
+        // Multilingual prompt models (`EncDecRNNTBPEModelWithPrompt`, e.g. Nemotron-3.5) expose a 6th
+        // encoder input `prompt_index` selecting the language/prompt. Resolve it from the requested
+        // language via the model's `prompt_dictionary` (falling back to `auto_prompt_id` = whole-
+        // utterance auto-detect) when the input is present; plain exports (English Nemotron) omit the
+        // input, so we leave it `None` and bind nothing.
+        let prompt_index = node_input_names(&encoder)
+            .iter()
+            .any(|n| n == "prompt_index")
+            .then(|| resolve_prompt_index(&metadata, cfg.language.as_deref()));
+
         let vocab = Vocab::load(file(&cfg.resolved, "vocab")?, false, true)?;
         let mel_fb = frontend::build_nemo_mel_filterbank(feature_dim);
+        let (device, device_id) = nemo_stream_device(&cfg.providers);
         let mut engine = Self {
             encoder,
             decoder,
@@ -123,6 +221,9 @@ impl NativeNemoStreamingEngine {
             decoder_state_shape_1,
             decoder_input_names,
             decoder_output_names,
+            prompt_index,
+            device,
+            device_id,
             stream: NemoStreamState::empty(),
         };
         engine.stream = engine.fresh_stream_state();
@@ -140,14 +241,26 @@ impl NativeNemoStreamingEngine {
     fn fresh_stream_state(&self) -> NemoStreamState {
         NemoStreamState {
             cursor: StreamCursor::new(),
-            cache_last_channel: ArrayD::<f32>::zeros(IxDyn(&self.cache_last_channel_shape)),
-            cache_last_time: ArrayD::<f32>::zeros(IxDyn(&self.cache_last_time_shape)),
-            cache_last_channel_len: ArrayD::<i64>::zeros(IxDyn(&[1])),
+            // Device-resident encoder cache starts empty; the first chunk binds host zero-tensors.
+            cache_last_channel: None,
+            cache_last_time: None,
+            cache_last_channel_len: None,
             decoder_state: (
                 ArrayD::<f32>::zeros(IxDyn(&self.decoder_state_shape_0)),
                 ArrayD::<f32>::zeros(IxDyn(&self.decoder_state_shape_1)),
             ),
         }
+    }
+
+    /// Device `MemoryInfo` for binding the carried encoder cache resident (CPU when no GPU EP).
+    fn device_mem(&self) -> SttResult<MemoryInfo> {
+        MemoryInfo::new(
+            self.device,
+            self.device_id,
+            AllocatorType::Device,
+            MemoryType::Default,
+        )
+        .map_err(|e| SttError::Inference(format!("nemo stream device mem info: {e}")))
     }
 
     fn process_available_chunks(&mut self, finalize: bool) -> SttResult<bool> {
@@ -189,6 +302,11 @@ impl NativeNemoStreamingEngine {
         self.decode_encoder_out(&encoder_out)
     }
 
+    /// Run one feature chunk through the streaming encoder, carrying the three cache tensors
+    /// DEVICE-RESIDENT via IoBinding: the `*_next` cache outputs are bound to the device and kept as
+    /// session-owned `DynValue`s (rebound as the next chunk's `cache_*` inputs) instead of copied to
+    /// host and re-fed every chunk. Only `audio_signal`/`length` (fresh per chunk) go host→device and
+    /// the `outputs` tensor comes back host-side for the CPU decoder loop — same graph, same values.
     fn run_encoder(&mut self, chunk: &Array2<f32>) -> SttResult<Array2<f32>> {
         let t = chunk.nrows();
         let tr = chunk.t().as_standard_layout().into_owned();
@@ -198,29 +316,124 @@ impl NativeNemoStreamingEngine {
         let x_tensor = Tensor::from_array(x)
             .map_err(|e| SttError::Inference(format!("nemo stream enc tensor: {e}")))?;
         let len_tensor = tensor_i64_1d(vec![t as i64])?;
-        let cache_last_channel = Tensor::from_array(self.stream.cache_last_channel.clone())
-            .map_err(|e| SttError::Inference(format!("cache_last_channel tensor: {e}")))?;
-        let cache_last_time = Tensor::from_array(self.stream.cache_last_time.clone())
-            .map_err(|e| SttError::Inference(format!("cache_last_time tensor: {e}")))?;
-        let cache_last_channel_len = Tensor::from_array(self.stream.cache_last_channel_len.clone())
-            .map_err(|e| SttError::Inference(format!("cache len tensor: {e}")))?;
 
-        let outputs = self
+        let dev_mem = self.device_mem()?;
+        let cpu_mem = MemoryInfo::new(
+            AllocationDevice::CPU,
+            0,
+            AllocatorType::Device,
+            MemoryType::CPUOutput,
+        )
+        .map_err(|e| SttError::Inference(format!("nemo stream cpu mem info: {e}")))?;
+
+        // Empty host zero-caches for a fresh stream (first chunk); held here so they outlive the
+        // binding through `run_binding`. From chunk 2 on, `state.cache_*` holds the device values.
+        let empty_channel = match &self.stream.cache_last_channel {
+            Some(_) => None,
+            None => Some(
+                Tensor::from_array(ArrayD::<f32>::zeros(IxDyn(&self.cache_last_channel_shape)))
+                    .map_err(|e| SttError::Inference(format!("cache_last_channel tensor: {e}")))?,
+            ),
+        };
+        let empty_time = match &self.stream.cache_last_time {
+            Some(_) => None,
+            None => Some(
+                Tensor::from_array(ArrayD::<f32>::zeros(IxDyn(&self.cache_last_time_shape)))
+                    .map_err(|e| SttError::Inference(format!("cache_last_time tensor: {e}")))?,
+            ),
+        };
+        let empty_len = match &self.stream.cache_last_channel_len {
+            Some(_) => None,
+            None => Some(
+                Tensor::from_array(ArrayD::<i64>::zeros(IxDyn(&[1])))
+                    .map_err(|e| SttError::Inference(format!("cache len tensor: {e}")))?,
+            ),
+        };
+
+        // Prompt/language selector for multilingual exports — held here so it outlives `run_binding`.
+        let prompt_tensor = match self.prompt_index {
+            Some(id) => Some(tensor_i64_1d(vec![id])?),
+            None => None,
+        };
+
+        let mut binding = self
             .encoder
-            .run(ort::inputs![
-                "audio_signal" => x_tensor,
-                "length" => len_tensor,
-                "cache_last_channel" => cache_last_channel,
-                "cache_last_time" => cache_last_time,
-                "cache_last_channel_len" => cache_last_channel_len,
-            ])
-            .map_err(|e| SttError::Inference(format!("nemo stream encoder run: {e}")))?;
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("nemo stream enc binding: {e}")))?;
+        binding
+            .bind_input("audio_signal", &x_tensor)
+            .map_err(|e| SttError::Inference(format!("bind audio_signal: {e}")))?;
+        binding
+            .bind_input("length", &len_tensor)
+            .map_err(|e| SttError::Inference(format!("bind length: {e}")))?;
+        if let Some(prompt) = &prompt_tensor {
+            binding
+                .bind_input("prompt_index", prompt)
+                .map_err(|e| SttError::Inference(format!("bind prompt_index: {e}")))?;
+        }
+        bind_cache_input(
+            &mut binding,
+            "cache_last_channel",
+            self.stream.cache_last_channel.as_ref(),
+            empty_channel.as_ref(),
+        )?;
+        bind_cache_input(
+            &mut binding,
+            "cache_last_time",
+            self.stream.cache_last_time.as_ref(),
+            empty_time.as_ref(),
+        )?;
+        bind_cache_input(
+            &mut binding,
+            "cache_last_channel_len",
+            self.stream.cache_last_channel_len.as_ref(),
+            empty_len.as_ref(),
+        )?;
+        // outputs → host (CPU decoder loop consumes it); the three `*_next` caches → device (carried).
+        binding
+            .bind_output_to_device("outputs", &cpu_mem)
+            .map_err(|e| SttError::Inference(format!("bind outputs: {e}")))?;
+        for name in [
+            "cache_last_channel_next",
+            "cache_last_time_next",
+            "cache_last_channel_next_len",
+        ] {
+            binding
+                .bind_output_to_device(name, &dev_mem)
+                .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+        }
 
-        let enc = out_to_f32(&outputs["outputs"])?;
-        self.stream.cache_last_channel = out_to_f32(&outputs["cache_last_channel_next"])?;
-        self.stream.cache_last_time = out_to_f32(&outputs["cache_last_time_next"])?;
-        self.stream.cache_last_channel_len = out_to_i64(&outputs["cache_last_channel_next_len"])?;
+        let mut outputs = self
+            .encoder
+            .run_binding(&binding)
+            .map_err(|e| SttError::Inference(format!("nemo stream encoder run: {e}")))?;
+        // DML/CUDA run_binding is async w.r.t. the device stream — sync before reading host `outputs`
+        // and before carrying the device `*_next` caches, else we race the still-running kernels.
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("nemo stream enc synchronize: {e}")))?;
+
+        // Encoder output → host (scoped so the borrow ends before the cache `remove`s take `outputs`).
+        let enc = {
+            let v = outputs.get("outputs").ok_or_else(|| {
+                SttError::Inference("nemo stream encoder produced no outputs".into())
+            })?;
+            out_to_f32(v)?
+        };
+        // Carry the three `*_next` caches → device (session-owned; survive the binding drop).
+        self.stream.cache_last_channel = outputs.remove("cache_last_channel_next");
+        self.stream.cache_last_time = outputs.remove("cache_last_time_next");
+        self.stream.cache_last_channel_len = outputs.remove("cache_last_channel_next_len");
+        if self.stream.cache_last_channel.is_none()
+            || self.stream.cache_last_time.is_none()
+            || self.stream.cache_last_channel_len.is_none()
+        {
+            return Err(SttError::Inference(
+                "nemo stream encoder produced no cache_*_next outputs".into(),
+            ));
+        }
         drop(outputs);
+        drop(binding);
 
         let enc3 = enc
             .into_dimensionality::<ndarray::Ix3>()
@@ -326,9 +539,12 @@ impl NativeNemoStreamingEngine {
 
     fn current_text(&self) -> String {
         let blank_id = self.blank_id;
-        self.stream
-            .cursor
-            .decode_text(&self.vocab, |id, _sym| id != blank_id)
+        self.stream.cursor.decode_text(&self.vocab, |id, sym| {
+            // Drop the blank AND any `<...>`-framed special/language token — the prompt-conditioned
+            // multilingual decoder (Nemotron-3.5) emits language tags like `<en-US>` / `<unk>` that
+            // must never reach the transcript.
+            id != blank_id && !is_framed_special_token(sym)
+        })
     }
 }
 
@@ -336,9 +552,9 @@ impl NemoStreamState {
     fn empty() -> Self {
         Self {
             cursor: StreamCursor::new(),
-            cache_last_channel: ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1, 1])),
-            cache_last_time: ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1, 1])),
-            cache_last_channel_len: ArrayD::<i64>::zeros(IxDyn(&[1])),
+            cache_last_channel: None,
+            cache_last_time: None,
+            cache_last_channel_len: None,
             decoder_state: (
                 ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1])),
                 ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1])),
@@ -428,6 +644,7 @@ mod tests {
             },
             providers: vec![crate::winstt::stt::Accelerator::DirectMl],
             whisper_fp16_workaround: false,
+            language: None,
         };
         assert!(NativeNemoStreamingEngine::supports(&cfg));
     }
@@ -436,5 +653,43 @@ mod tests {
     fn metadata_parser_reports_missing_keys() {
         let meta = BTreeMap::new();
         assert!(meta_usize(&meta, "window_size", "NeMo streaming").is_err());
+    }
+
+    #[test]
+    fn framed_special_tokens_are_stripped() {
+        // Language tags + specials the multilingual decoder emits (must be dropped).
+        for t in [
+            "<en-US>", "<ja-JP>", "<ar-AR>", "<unk>", "<blk>", "<s>", "<>",
+        ] {
+            assert!(super::is_framed_special_token(t), "{t} should be framed");
+        }
+        // Real content subwords (must be kept).
+        for t in ["Real", "Madrid", " team", ".", "<", ">", "a<b", "3<5"] {
+            assert!(!super::is_framed_special_token(t), "{t} must be kept");
+        }
+    }
+
+    #[test]
+    fn prompt_index_resolves_language_via_dictionary() {
+        let mut meta = BTreeMap::new();
+        meta.insert("auto_prompt_id".to_string(), "101".to_string());
+        meta.insert(
+            "prompt_dictionary".to_string(),
+            r#"{"en": 0, "en-US": 0, "ar": 7, "ja-JP": 10, "auto": 101}"#.to_string(),
+        );
+        // None / blank -> auto-detect.
+        assert_eq!(super::resolve_prompt_index(&meta, None), 101);
+        assert_eq!(super::resolve_prompt_index(&meta, Some("  ")), 101);
+        // Exact + case-insensitive.
+        assert_eq!(super::resolve_prompt_index(&meta, Some("ar")), 7);
+        assert_eq!(super::resolve_prompt_index(&meta, Some("EN")), 0);
+        // Base-language fallback ("ja" matches "ja-JP").
+        assert_eq!(super::resolve_prompt_index(&meta, Some("ja")), 10);
+        // Unknown language -> auto.
+        assert_eq!(super::resolve_prompt_index(&meta, Some("zz")), 101);
+        // Missing dictionary -> auto.
+        let mut bare = BTreeMap::new();
+        bare.insert("auto_prompt_id".to_string(), "42".to_string());
+        assert_eq!(super::resolve_prompt_index(&bare, Some("ar")), 42);
     }
 }

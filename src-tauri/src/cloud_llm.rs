@@ -1,10 +1,6 @@
-//! genai-backed cloud LLM transport, shared by the two cloud code paths:
-//!   - `crate::llm_client` — the multi-provider post-processing path in
-//!     `actions.rs` (OpenAI / Z.AI / OpenRouter / Anthropic / Groq / Cerebras /
-//!     AWS Bedrock-Mantle / Custom).
-//!   - `winstt::managers::llm_manager::openrouter_chat` — the dictation /
-//!     transform path (OpenRouter only, now STREAMED so reasoning deltas reach
-//!     the pill).
+//! genai-backed cloud LLM transport for
+//! `winstt::managers::llm_manager::openrouter_chat` — the dictation /
+//! transform path (OpenRouter, STREAMED so reasoning deltas reach the pill).
 //!
 //! Local Ollama is intentionally NOT routed here. genai's Ollama adapter speaks
 //! only `/api/chat`, `/api/embed`, `/api/tags`, hard-codes `format:"json"`, and
@@ -12,11 +8,6 @@
 //! side-channel schema, `keep_alive`, the `think` knob, warmup/unload, or
 //! `/api/show`/`/api/pull`/`/api/delete`. The native REST client in
 //! `winstt::ollama_client` therefore stays authoritative for the local path.
-//!
-//! Provider → adapter mapping: `anthropic` uses genai's NATIVE Anthropic
-//! Messages API (`/v1/messages`, with `x-api-key` + `anthropic-version` and a
-//! model-derived `max_tokens` supplied automatically); every other provider
-//! uses the OpenAI-compatible adapter pointed at its own `base_url`.
 
 use std::sync::OnceLock;
 
@@ -37,18 +28,6 @@ pub const CANCELLED: &str = "winstt:cloud-llm-cancelled";
 fn client() -> &'static Client {
     static CLIENT: OnceLock<Client> = OnceLock::new();
     CLIENT.get_or_init(Client::default)
-}
-
-/// Map a WinSTT `PostProcessProvider` id to a genai adapter. Anthropic is the
-/// only provider that gets its native protocol; all OpenAI-compatible providers
-/// (incl. OpenRouter, Groq, Z.AI, Cerebras, Bedrock-Mantle, Custom) share the
-/// OpenAI adapter pointed at their own `base_url` — byte-for-byte the same wire
-/// shape the hand-rolled client produced.
-pub fn adapter_kind_for(provider_id: &str) -> AdapterKind {
-    match provider_id {
-        "anthropic" => AdapterKind::Anthropic,
-        _ => AdapterKind::OpenAI,
-    }
 }
 
 /// Ensure the base URL ends with a single `/`. The OpenAI adapter composes the
@@ -84,30 +63,11 @@ pub fn service_target(
     }
 }
 
-/// Non-streamed chat. Returns `(content, completion_tokens)` mirroring the old
-/// `send_chat_completion_with_schema` contract: `content` is `None` when the
-/// response carried no text; `completion_tokens` is the provider-reported output
-/// token count (absent → `None`). `Err` on transport / HTTP / decode failure so
-/// callers can fall through (e.g. structured → legacy in `actions.rs`).
-pub async fn run_chat(
-    target: ServiceTarget,
-    request: ChatRequest,
-    options: ChatOptions,
-) -> Result<(Option<String>, Option<i64>), String> {
-    let resp = client()
-        .exec_chat(target, request, Some(&options))
-        .await
-        .map_err(|e| e.to_string())?;
-    let tokens = resp.usage.completion_tokens.map(i64::from);
-    let content = resp.into_first_text();
-    Ok((content, tokens))
-}
-
 /// Streamed chat. Accumulates assistant text chunks into the returned `String`,
 /// forwards each reasoning/thinking delta to `on_reasoning` (drives the
-/// `llm:reasoning-delta` pill), and reports captured output tokens from the
-/// stream-end usage. Requires `options.with_capture_usage(true)` for the token
-/// count to be populated.
+/// `llm:reasoning-delta` pill), and reports the captured stream-end usage
+/// (prompt + completion tokens — the cost-accounting inputs). Requires
+/// `options.with_capture_usage(true)` for the usage to be populated.
 ///
 /// `cancel` aborts the request mid-flight: both the initial connect and every
 /// inter-chunk wait are `select!`ed against `cancel.cancelled()`, so a cancel
@@ -120,7 +80,7 @@ pub async fn run_chat_stream(
     options: ChatOptions,
     cancel: CancellationToken,
     mut on_reasoning: impl FnMut(&str),
-) -> Result<(String, Option<i64>), String> {
+) -> Result<(String, Option<genai::chat::Usage>), String> {
     use futures_util::StreamExt;
 
     let mut resp = tokio::select! {
@@ -132,7 +92,7 @@ pub async fn run_chat_stream(
     };
 
     let mut content = String::new();
-    let mut tokens: Option<i64> = None;
+    let mut usage: Option<genai::chat::Usage> = None;
     loop {
         tokio::select! {
             biased;
@@ -142,48 +102,18 @@ pub async fn run_chat_stream(
                 match event.map_err(|e| e.to_string())? {
                     ChatStreamEvent::Chunk(chunk) => content.push_str(&chunk.content),
                     ChatStreamEvent::ReasoningChunk(chunk) => on_reasoning(&chunk.content),
-                    ChatStreamEvent::End(end) => {
-                        if let Some(usage) = end.captured_usage {
-                            tokens = usage.completion_tokens.map(i64::from);
-                        }
-                    }
+                    ChatStreamEvent::End(end) => usage = end.captured_usage,
                     _ => {}
                 }
             }
         }
     }
-    Ok((content, tokens))
+    Ok((content, usage))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn anthropic_maps_to_native_adapter() {
-        assert!(matches!(
-            adapter_kind_for("anthropic"),
-            AdapterKind::Anthropic
-        ));
-    }
-
-    #[test]
-    fn other_providers_map_to_openai_compat() {
-        for id in [
-            "openai",
-            "openrouter",
-            "groq",
-            "zai",
-            "cerebras",
-            "bedrock_mantle",
-            "custom",
-        ] {
-            assert!(
-                matches!(adapter_kind_for(id), AdapterKind::OpenAI),
-                "provider {id} should use the OpenAI-compat adapter"
-            );
-        }
-    }
 
     #[test]
     fn base_url_gets_one_trailing_slash() {

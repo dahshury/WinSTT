@@ -21,10 +21,8 @@ interface InvokeCall {
 }
 
 let invokeCalls: InvokeCall[] = [];
-let invokeImpl: (
-	channel: string,
-	...args: unknown[]
-) => Promise<unknown> = async () => undefined;
+let invokeImpl: (channel: string, ...args: unknown[]) => Promise<unknown> =
+	async () => undefined;
 
 function installFakeBridge(): void {
 	invokeCalls = [];

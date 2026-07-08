@@ -1,10 +1,10 @@
 export { useDownloadListener } from "./api/use-download-listener";
-export {
-	type ProgressSnapshotFields,
-	type QuantCacheSeedSource,
-	type QuantDownloadAction,
-	type QuantDownloadSeed,
-	type QuantDownloadSnapshot,
+export type {
+	ProgressSnapshotFields,
+	QuantCacheSeedSource,
+	QuantDownloadAction,
+	QuantDownloadSeed,
+	QuantDownloadSnapshot,
 } from "@/shared/lib/download-progress-core";
 export {
 	aggregateDownloadEntries,

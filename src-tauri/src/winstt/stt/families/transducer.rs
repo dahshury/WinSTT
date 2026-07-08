@@ -14,14 +14,29 @@
 use std::time::{Duration, Instant};
 
 use ndarray::{Array1, Array2, ArrayD, Axis};
+use ort::memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::Session;
 use ort::value::Tensor;
 
 use super::super::{
-    EngineConfig, EngineKind, SttError, SttResult, TranscribeOptions, Transcriber, Transcription,
+    Accelerator, EngineConfig, EngineKind, SttError, SttResult, TranscribeOptions, Transcriber,
+    Transcription,
 };
 use super::frontend;
 use super::support::*;
+
+/// The `AllocationDevice` (+ id) the transducer sessions run on, for IoBinding the Kaldi decoder's
+/// `decoder_out` device-resident and rebinding it straight into the joiner without a host round-trip
+/// (mirrors `whisper::device_for_providers` / the whisper KV-cache binding). Derived from the FIRST
+/// requested accelerator: DirectML/CUDA → that device; everything else (incl. Rocm/CoreML/OpenVINO,
+/// which route to a CPU fallback) → CPU, where IoBinding simply binds host memory (still correct).
+fn transducer_device(providers: &[Accelerator]) -> (AllocationDevice, i32) {
+    match providers.first() {
+        Some(Accelerator::DirectMl) => (AllocationDevice::DIRECTML, 0),
+        Some(Accelerator::Cuda) => (AllocationDevice::CUDA, 0),
+        _ => (AllocationDevice::CPU, 0),
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum TransducerKind {
@@ -66,16 +81,26 @@ pub struct TransducerEngine {
     mel_fb: Array2<f32>,
     model_name: String,
     providers: Vec<String>,
+    /// Device the sessions run on, for binding the Kaldi decoder's `decoder_out` device-resident and
+    /// rebinding it into the joiner with no host round-trip. `CPU` when no GPU EP is active (then
+    /// IoBinding just binds host memory). Only the Kaldi decode/joiner path uses this.
+    device: AllocationDevice,
+    device_id: i32,
 }
 
 impl TransducerEngine {
     pub(crate) fn load(cfg: &EngineConfig, tkind: TransducerKind) -> SttResult<TransducerEngine> {
+        let session_start = std::time::Instant::now();
         let encoder = build_session(file(&cfg.resolved, "encoder")?, &cfg.providers)?;
+        crate::log_model_duration("transducer encoder session", session_start);
         let decoder_key = match tkind {
             TransducerKind::KaldiStateless | TransducerKind::GigaamRnnt => "decoder",
             TransducerKind::NemoRnnt | TransducerKind::NemoTdt => "decoder_joint",
         };
+        let session_start = std::time::Instant::now();
         let decoder = build_session(file(&cfg.resolved, decoder_key)?, &cfg.providers)?;
+        crate::log_model_duration("transducer decoder session", session_start);
+        let (device, device_id) = transducer_device(&cfg.providers);
         let joiner = match tkind {
             TransducerKind::KaldiStateless => Some(build_session(
                 file(&cfg.resolved, "joiner")?,
@@ -121,6 +146,8 @@ impl TransducerEngine {
             mel_fb,
             model_name: cfg.model_name.clone(),
             providers: providers_to_strings(&cfg.providers),
+            device,
+            device_id,
         })
     }
 
@@ -261,13 +288,53 @@ impl TransducerEngine {
         let y_tensor = Tensor::from_array(ctx2)
             .map_err(|e| SttError::Inference(format!("kaldi y tensor: {e}")))?;
 
-        let dec_out = self
-            .decoder
-            .run(ort::inputs![ "y" => y_tensor ])
-            .map_err(|e| SttError::Inference(format!("kaldi decoder run: {e}")))?;
-        let decoder_out = out_to_f32(&dec_out["decoder_out"])?;
+        // Device/host `MemoryInfo` (CPU when no GPU EP, so this path stays correct + ~free there).
+        let dev_mem = MemoryInfo::new(
+            self.device,
+            self.device_id,
+            AllocatorType::Device,
+            MemoryType::Default,
+        )
+        .map_err(|e| SttError::Inference(format!("kaldi device mem: {e}")))?;
+        let cpu_mem = MemoryInfo::new(
+            AllocationDevice::CPU,
+            0,
+            AllocatorType::Device,
+            MemoryType::CPUOutput,
+        )
+        .map_err(|e| SttError::Inference(format!("kaldi cpu mem: {e}")))?;
 
-        // joiner(encoder_out=(1,D), decoder_out) → logit
+        // Decoder: bind `decoder_out` DEVICE-resident so it feeds straight into the joiner without a
+        // host round-trip (mirrors the whisper KV-cache: a bound output rebound as the next graph's
+        // input). The (1,2) `y` context is the only host→device upload here.
+        let decoder_out: ort::value::DynValue = {
+            let mut binding = self
+                .decoder
+                .create_binding()
+                .map_err(|e| SttError::Inference(format!("kaldi decoder binding: {e}")))?;
+            binding
+                .bind_input("y", &y_tensor)
+                .map_err(|e| SttError::Inference(format!("kaldi bind y: {e}")))?;
+            binding
+                .bind_output_to_device("decoder_out", &dev_mem)
+                .map_err(|e| SttError::Inference(format!("kaldi bind decoder_out: {e}")))?;
+            let mut outputs = self
+                .decoder
+                .run_binding(&binding)
+                .map_err(|e| SttError::Inference(format!("kaldi decoder run_binding: {e}")))?;
+            // DML/CUDA run_binding is async w.r.t. the device stream; sync before the joiner consumes
+            // the device value (no-op on CPU). Matches the whisper encoder/decoder sync.
+            binding
+                .synchronize_outputs()
+                .map_err(|e| SttError::Inference(format!("kaldi decoder synchronize: {e}")))?;
+            outputs.remove("decoder_out").ok_or_else(|| {
+                SttError::Inference("kaldi decoder produced no decoder_out".into())
+            })?
+        };
+
+        // joiner(encoder_out=(1,D), decoder_out) → logit. The encoder ROW changes every frame (the
+        // joiner sees one row of the (T,D) encoder output), so it is uploaded per frame; `decoder_out`
+        // is the device value carried straight from the decoder above. `logit` → host for the argmax.
         let enc_row = enc_frame
             .view()
             .into_shape_with_order((1, enc_frame.len()))
@@ -275,16 +342,33 @@ impl TransducerEngine {
             .to_owned();
         let enc_tensor = Tensor::from_array(enc_row)
             .map_err(|e| SttError::Inference(format!("kaldi enc tensor: {e}")))?;
-        let dec_tensor = Tensor::from_array(decoder_out)
-            .map_err(|e| SttError::Inference(format!("kaldi dec tensor: {e}")))?;
         let joiner = self
             .joiner
             .as_mut()
             .ok_or(SttError::Unsupported("kaldi transducer missing joiner"))?;
-        let joint = joiner
-            .run(ort::inputs![ "encoder_out" => enc_tensor, "decoder_out" => dec_tensor ])
-            .map_err(|e| SttError::Inference(format!("kaldi joiner run: {e}")))?;
-        let logit = out_to_f32(&joint["logit"])?;
+        let mut binding = joiner
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("kaldi joiner binding: {e}")))?;
+        binding
+            .bind_input("encoder_out", &enc_tensor)
+            .map_err(|e| SttError::Inference(format!("kaldi bind encoder_out: {e}")))?;
+        binding
+            .bind_input("decoder_out", &decoder_out)
+            .map_err(|e| SttError::Inference(format!("kaldi bind decoder_out (joiner): {e}")))?;
+        binding
+            .bind_output_to_device("logit", &cpu_mem)
+            .map_err(|e| SttError::Inference(format!("kaldi bind logit: {e}")))?;
+        let outputs = joiner
+            .run_binding(&binding)
+            .map_err(|e| SttError::Inference(format!("kaldi joiner run_binding: {e}")))?;
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("kaldi joiner synchronize: {e}")))?;
+        let logit = out_to_f32(
+            outputs
+                .get("logit")
+                .ok_or_else(|| SttError::Inference("kaldi joiner produced no logit".into()))?,
+        )?;
         Ok((logit.iter().copied().collect(), -1))
     }
 

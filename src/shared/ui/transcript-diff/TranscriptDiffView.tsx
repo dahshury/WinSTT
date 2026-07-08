@@ -9,6 +9,7 @@ import { Fragment } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import type { TranscriptDiffResult } from "@/shared/lib/transcript-diff";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 /**
  * Strings the diff view renders. Kept as props (not a fixed i18n namespace) so
@@ -85,24 +86,25 @@ function ReviewToggle({
 			? "text-success bg-success/15 ring-success/40"
 			: "text-error bg-error/15 ring-error/40";
 	return (
-		<BaseButton
-			aria-label={label}
-			aria-pressed={active}
-			className={cn(
-				"inline-flex size-5 shrink-0 items-center justify-center rounded-full ring-1 transition-colors",
-				active
-					? accent
-					: "text-foreground-muted ring-transparent hover:bg-foreground/10 hover:text-foreground",
-			)}
-			onClick={onClick}
-			title={label}
-			type="button"
-		>
-			<HugeiconsIcon
-				icon={kind === "accept" ? Tick02Icon : Cancel01Icon}
-				size={12}
-			/>
-		</BaseButton>
+		<Tooltip content={label}>
+			<BaseButton
+				aria-label={label}
+				aria-pressed={active}
+				className={cn(
+					"inline-flex size-5 shrink-0 items-center justify-center rounded-full ring-1 transition-colors",
+					active
+						? accent
+						: "text-foreground-muted ring-transparent hover:bg-foreground/10 hover:text-foreground",
+				)}
+				onClick={onClick}
+				type="button"
+			>
+				<HugeiconsIcon
+					icon={kind === "accept" ? Tick02Icon : Cancel01Icon}
+					size={12}
+				/>
+			</BaseButton>
+		</Tooltip>
 	);
 }
 
@@ -130,35 +132,43 @@ function DiffChangeChip({
 				"inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-foreground/[0.04] px-1.5 py-1 text-[11px] leading-none ring-1 ring-divider ring-inset",
 				rejected && "opacity-60",
 			)}
-			title={
-				change.kind === "insert"
-					? change.after
-					: change.kind === "delete"
-						? change.before
-						: `${change.before} → ${change.after}`
-			}
 		>
-			{change.before ? (
-				<span className="min-w-0 max-w-[9rem] truncate rounded bg-error-dim/40 px-1 text-error line-through decoration-error/70">
-					{before}
-				</span>
-			) : (
-				<span className="text-foreground-muted">{before}</span>
-			)}
-			<span className="shrink-0 text-foreground-muted">→</span>
-			{change.after ? (
-				<span
-					className={cn(
-						"min-w-0 max-w-[9rem] truncate rounded bg-success-dim/50 px-1 text-success",
-						rejected &&
-							"bg-foreground/5 text-foreground-muted line-through decoration-foreground-muted/60",
+			{/* The full-text tooltip triggers on the text run only — the review
+			    toggles carry their own tooltips, so nesting them inside this
+			    trigger would stack two popups. */}
+			<Tooltip
+				content={
+					change.kind === "insert"
+						? change.after
+						: change.kind === "delete"
+							? change.before
+							: `${change.before} → ${change.after}`
+				}
+			>
+				<span className="inline-flex min-w-0 items-center gap-1">
+					{change.before ? (
+						<span className="min-w-0 max-w-[9rem] truncate rounded bg-error-dim/40 px-1 text-error line-through decoration-error/70">
+							{before}
+						</span>
+					) : (
+						<span className="text-foreground-muted">{before}</span>
 					)}
-				>
-					{after}
+					<span className="shrink-0 text-foreground-muted">→</span>
+					{change.after ? (
+						<span
+							className={cn(
+								"min-w-0 max-w-[9rem] truncate rounded bg-success-dim/50 px-1 text-success",
+								rejected &&
+									"bg-foreground/5 text-foreground-muted line-through decoration-foreground-muted/60",
+							)}
+						>
+							{after}
+						</span>
+					) : (
+						<span className="text-foreground-muted">{after}</span>
+					)}
 				</span>
-			) : (
-				<span className="text-foreground-muted">{after}</span>
-			)}
+			</Tooltip>
 			{review ? (
 				<span className="ml-0.5 flex shrink-0 items-center gap-0.5">
 					<ReviewToggle

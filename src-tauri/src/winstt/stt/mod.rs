@@ -21,6 +21,8 @@ use std::path::PathBuf;
 pub mod backend;
 /// On-disk HF-cache probe (per-model per-quant cached/partial/not_cached) for the picker badges.
 pub mod cache_probe;
+/// Offline graceful-degradation helpers (local-model fallback + pipeline-unavailable event).
+pub mod fallback;
 /// Non-Whisper families: CTC (SenseVoice/GigaAM/Dolphin/Kaldi), RNNT/TDT (Parakeet/zipformer), AED (Canary/Cohere).
 pub mod families;
 /// Rule-based post-STT formatting that is deterministic and model-capability gated.
@@ -106,8 +108,9 @@ mod quant_resolve;
 pub use device::{Accelerator, Quantization, providers_for_accelerator, resolve_accelerator};
 pub use engine_kind::EngineKind;
 pub use quant_resolve::{
-    ctc_greedy_collapse, fit_aware_auto_quant, override_dml_to_cpu_for_kind, pick_intra_op_threads,
-    resolve_quantization_auto, vocab_is_uppercase,
+    cohere_export_dml_safe, ctc_greedy_collapse, fit_aware_auto_quant, onnx_graph_contains_op,
+    override_dml_to_cpu_for_kind, pick_intra_op_threads, resolve_quantization_auto,
+    vocab_is_uppercase,
 };
 // Crate-internal session/provider helpers — keep `pub(crate)` (NOT `pub`) to avoid widening the
 // public API surface (used by whisper.rs / moonshine.rs / families.rs via `super::`).
@@ -293,6 +296,12 @@ pub struct EngineConfig {
     /// Whether this load needs the Whisper fp16 `ORT_ENABLE_EXTENDED` downgrade
     /// (gated on the whisper family AND fp16 — see 03_stt_engine.md §6.2).
     pub whisper_fp16_workaround: bool,
+    /// Load-time language selection for prompt-based streaming models
+    /// (`EncDecRNNTBPEModelWithPrompt` / Nemotron-3.5): the engine maps it to the encoder's
+    /// `prompt_index` via the model's `prompt_dictionary` metadata. `None` = whole-utterance
+    /// auto-detect (`auto_prompt_id`). Ignored by every other engine (they take language
+    /// per-transcribe via `TranscribeOptions`).
+    pub language: Option<String>,
 }
 
 /// Factory: build the right `Transcriber` for a resolved model. Dispatch table in

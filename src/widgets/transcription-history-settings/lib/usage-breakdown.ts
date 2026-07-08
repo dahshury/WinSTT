@@ -1,3 +1,8 @@
+import {
+	bareCloudModelId,
+	isCloudModelId,
+	modelChipLogo,
+} from "@/entities/cloud-stt-provider";
 import { historyTagLabel } from "@/entities/transcription-history";
 import type { TranscriptionHistoryEntry } from "../model/history-store";
 
@@ -9,6 +14,10 @@ export interface UsageBucket {
 	count: number;
 	/** Share of the counted entries, `0`–`100`, rounded to a whole percent. */
 	pct: number;
+	/** Maker brand logo (resolved public URL) for a model bucket, or `null`. */
+	logo?: string | null;
+	/** True when the bucket's model runs on a cloud provider (badges the mark). */
+	cloud?: boolean;
 }
 
 export interface UsageBreakdown {
@@ -32,6 +41,8 @@ interface Tally {
 	key: string;
 	label: string;
 	count: number;
+	logo?: string | null;
+	cloud?: boolean;
 }
 
 function pct(count: number, total: number): number {
@@ -48,25 +59,23 @@ function toBuckets(
 	total: number,
 	otherLabel: string,
 ): UsageBucket[] {
+	const toBucket = (t: Tally): UsageBucket => ({
+		key: t.key,
+		label: t.label,
+		count: t.count,
+		pct: pct(t.count, total),
+		logo: t.logo ?? null,
+		cloud: t.cloud ?? false,
+	});
 	const sorted = tallies.toSorted((a, b) => b.count - a.count);
 	if (sorted.length <= MAX_VISIBLE) {
-		return sorted.map((t) => ({
-			key: t.key,
-			label: t.label,
-			count: t.count,
-			pct: pct(t.count, total),
-		}));
+		return sorted.map(toBucket);
 	}
 	const head = sorted.slice(0, MAX_VISIBLE - 1);
 	const tail = sorted.slice(MAX_VISIBLE - 1);
 	const tailCount = tail.reduce((sum, t) => sum + t.count, 0);
 	return [
-		...head.map((t) => ({
-			key: t.key,
-			label: t.label,
-			count: t.count,
-			pct: pct(t.count, total),
-		})),
+		...head.map(toBucket),
 		{
 			key: OTHER_KEY,
 			label: otherLabel,
@@ -92,8 +101,12 @@ function modelUsage(
 	}
 	const tallies: Tally[] = [...counts].map(([model, count]) => ({
 		key: model,
-		label: model,
+		// Strip the `openrouter:` / `elevenlabs:` cloud prefix — the maker logo +
+		// cloud sign carry the provenance, not the raw prefix in the label.
+		label: bareCloudModelId(model),
 		count,
+		logo: modelChipLogo(model),
+		cloud: isCloudModelId(model),
 	}));
 	return toBuckets(tallies, total, otherLabel);
 }

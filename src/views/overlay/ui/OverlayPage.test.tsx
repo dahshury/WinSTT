@@ -1047,7 +1047,7 @@ describe("OverlayPage", () => {
 		});
 		useTranscriptionStore.setState({
 			currentRealtime: "previous session text",
-			ephemeral: { text: "no audio detected", timestamp: 0 },
+			ephemeral: { kind: "info", text: "no audio detected", timestamp: 0 },
 			isRecordingActive: false,
 		});
 		const { container } = renderOverlay();
@@ -1269,7 +1269,7 @@ describe("OverlayPage", () => {
 		act(() => {
 			useTranscriptionStore.setState({
 				currentRealtime: "",
-				ephemeral: { text: "ephemeral preview", timestamp: 0 },
+				ephemeral: { kind: "info", text: "ephemeral preview", timestamp: 0 },
 				isRecordingActive: true,
 			});
 		});
@@ -1333,7 +1333,7 @@ describe("OverlayPage", () => {
 		act(() => {
 			useTranscriptionStore.setState({
 				currentRealtime: "previous session text",
-				ephemeral: { text: "no audio detected", timestamp: 0 },
+				ephemeral: { kind: "info", text: "no audio detected", timestamp: 0 },
 				isRecordingActive: true,
 				isTranscribing: true,
 				processingPhase: "uploading",

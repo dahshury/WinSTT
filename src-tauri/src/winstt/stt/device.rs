@@ -71,6 +71,7 @@ pub enum Accelerator {
     CoreMl,
     Rocm,
     OpenVino,
+    WebGpu,
 }
 
 /// Resolve `model.device` to the primary STT accelerator for this target.
@@ -190,6 +191,12 @@ pub(crate) fn execution_providers(
                     out.push(ort::ep::OpenVINO::default().build());
                 }
             }
+            Accelerator::WebGpu => {
+                #[cfg(feature = "webgpu")]
+                {
+                    out.push(ort::ep::WebGPU::default().build());
+                }
+            }
             _ => {}
         }
     }
@@ -206,6 +213,7 @@ pub(crate) fn provider_label(a: &Accelerator) -> String {
         Accelerator::CoreMl => "CoreMLExecutionProvider",
         Accelerator::Rocm => "ROCMExecutionProvider",
         Accelerator::OpenVino => "OpenVINOExecutionProvider",
+        Accelerator::WebGpu => "WebGpuExecutionProvider",
     }
     .to_string()
 }

@@ -139,8 +139,9 @@ const ROUTE_EVENTS_WITHOUT_BACKEND_EMITTER = new Set<string>([
 	// Clamshell lid open/close is handled internally (mic-swap); never pushed.
 	"lid:closed",
 	"lid:opened",
-	// Model catalogs are pulled via invoke commands, not pushed as events.
-	"llm:catalog",
+	// The STT catalog is pulled via invoke commands, not pushed as an event.
+	// (`llm:catalog` left this list 2026-07: `ollama_refresh_models` now
+	// broadcasts it so every window converges after a scan/delete/pull.)
 	"stt:model-catalog",
 	// Only diarization-toggle started/completed are emitted; -failed never fires.
 	"stt:diarization-toggle-failed",
@@ -185,7 +186,7 @@ describe("IPC emit coverage (renderer ROUTE ↔ backend emits)", () => {
 		const missing = [...route]
 			.filter(
 				(ev) =>
-					!emittable.has(ev) && !ROUTE_EVENTS_WITHOUT_BACKEND_EMITTER.has(ev),
+					!(emittable.has(ev) || ROUTE_EVENTS_WITHOUT_BACKEND_EMITTER.has(ev)),
 			)
 			.sort();
 		// A non-empty list = the renderer listens on a string the backend never
@@ -199,8 +200,9 @@ describe("IPC emit coverage (renderer ROUTE ↔ backend emits)", () => {
 		const orphaned = [...names]
 			.filter(
 				(ev) =>
-					!listened.has(ev) &&
-					!BACKEND_EVENTS_WITHOUT_FRONTEND_LISTENER.has(ev),
+					!(
+						listened.has(ev) || BACKEND_EVENTS_WITHOUT_FRONTEND_LISTENER.has(ev)
+					),
 			)
 			.sort();
 		// A non-empty list = the backend emits a canonical event no renderer route

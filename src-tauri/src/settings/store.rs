@@ -6,7 +6,7 @@ use tauri_plugin_store::StoreExt;
 use super::defaults::*;
 use super::types::{
     AppSettings, AutoSubmitKey, ClipboardHandling, ModelUnloadTimeout, OrtAcceleratorSetting,
-    PasteMethod, PostProcessProvider, ShortcutBinding, WhisperAcceleratorSetting,
+    PasteMethod, ShortcutBinding, WhisperAcceleratorSetting,
 };
 
 pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
@@ -30,26 +30,6 @@ pub fn get_default_settings() -> AppSettings {
             description: "Converts your speech into text.".to_string(),
             default_binding: default_shortcut.to_string(),
             current_binding: default_shortcut.to_string(),
-        },
-    );
-    #[cfg(target_os = "windows")]
-    let default_post_process_shortcut = "ctrl+shift+space";
-    #[cfg(target_os = "macos")]
-    let default_post_process_shortcut = "option+shift+space";
-    #[cfg(target_os = "linux")]
-    let default_post_process_shortcut = "ctrl+shift+space";
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let default_post_process_shortcut = "alt+shift+space";
-
-    bindings.insert(
-        "transcribe_with_post_process".to_string(),
-        ShortcutBinding {
-            id: "transcribe_with_post_process".to_string(),
-            name: "Transcribe with Post-Processing".to_string(),
-            description: "Converts your speech into text and applies AI post-processing."
-                .to_string(),
-            default_binding: default_post_process_shortcut.to_string(),
-            current_binding: default_post_process_shortcut.to_string(),
         },
     );
     bindings.insert(
@@ -127,13 +107,6 @@ pub fn get_default_settings() -> AppSettings {
         clipboard_handling: ClipboardHandling::default(),
         auto_submit: default_auto_submit(),
         auto_submit_key: AutoSubmitKey::default(),
-        post_process_enabled: default_post_process_enabled(),
-        post_process_provider_id: default_post_process_provider_id(),
-        post_process_providers: default_post_process_providers(),
-        post_process_api_keys: default_post_process_api_keys(),
-        post_process_models: default_post_process_models(),
-        post_process_prompts: default_post_process_prompts(),
-        post_process_selected_prompt_id: None,
         mute_while_recording: false,
         append_trailing_space: false,
         show_tray_icon: default_show_tray_icon(),
@@ -142,14 +115,6 @@ pub fn get_default_settings() -> AppSettings {
         whisper_accelerator: WhisperAcceleratorSetting::default(),
         ort_accelerator: OrtAcceleratorSetting::default(),
         whisper_gpu_device: default_whisper_gpu_device(),
-    }
-}
-
-impl AppSettings {
-    pub fn active_post_process_provider(&self) -> Option<&PostProcessProvider> {
-        self.post_process_providers
-            .iter()
-            .find(|provider| provider.id == self.post_process_provider_id)
     }
 }
 
@@ -173,7 +138,6 @@ pub fn load_legacy_app_settings(app: &AppHandle) -> Option<AppSettings> {
             for (key, binding) in default_settings.bindings {
                 settings.bindings.entry(key).or_insert(binding);
             }
-            ensure_post_process_defaults(&mut settings);
             Some(settings)
         }
         Err(e) => {
@@ -207,7 +171,6 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
             entry.insert(binding);
         }
     }
-    ensure_post_process_defaults(&mut settings);
     settings
 }
 
@@ -247,43 +210,12 @@ pub fn get_stored_binding(app: &AppHandle, id: &str) -> ShortcutBinding {
 
 #[cfg(test)]
 mod tests {
-    use super::super::types::SecretMap;
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn default_settings_disable_auto_submit() {
         let settings = get_default_settings();
         assert!(!settings.auto_submit);
         assert_eq!(settings.auto_submit_key, AutoSubmitKey::Enter);
-    }
-
-    #[test]
-    fn debug_output_redacts_api_keys() {
-        let mut settings = get_default_settings();
-        settings
-            .post_process_api_keys
-            .insert("openai".to_string(), "sk-proj-secret-key-12345".to_string());
-        settings.post_process_api_keys.insert(
-            "anthropic".to_string(),
-            "sk-ant-secret-key-67890".to_string(),
-        );
-        settings
-            .post_process_api_keys
-            .insert("empty_provider".to_string(), "".to_string());
-
-        let debug_output = format!("{:?}", settings);
-
-        assert!(!debug_output.contains("sk-proj-secret-key-12345"));
-        assert!(!debug_output.contains("sk-ant-secret-key-67890"));
-        assert!(debug_output.contains("[REDACTED]"));
-    }
-
-    #[test]
-    fn secret_map_debug_redacts_values() {
-        let map = SecretMap::new(HashMap::from([("key".into(), "secret".into())]));
-        let out = format!("{:?}", map);
-        assert!(!out.contains("secret"));
-        assert!(out.contains("[REDACTED]"));
     }
 }

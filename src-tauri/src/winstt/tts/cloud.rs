@@ -1,12 +1,19 @@
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::types::{
-    ChunkSink, SentenceAudio, SynthesisChunk, TtsEngine, TtsError, TtsResult, VoiceInfo,
-    clamp_cloud_speed,
+    ChunkSink, SentenceAudio, SynthesisChunk, TtsEngine, TtsError, TtsResult, TtsSessionUsage,
+    VoiceInfo, clamp_cloud_speed,
 };
 
 const MAX_PREVIEW_BYTES: usize = 10 * 1024 * 1024;
+
+/// Best-effort USD per character for ElevenLabs TTS. ElevenLabs bills plan
+/// credits (~1 credit/char on the multilingual models) and returns no billed
+/// amount per request; this converts characters to dollars at the Creator-plan
+/// effective rate ($22 / 100k credits) so History can show an ESTIMATED cost.
+pub const ELEVENLABS_TTS_USD_PER_CHAR: f64 = 22.0 / 100_000.0;
 
 // ---------------------------------------------------------------------------
 // Cloud ElevenLabs engine (reqwest)
@@ -128,48 +135,61 @@ pub fn classify_cloud_status(status: u16, detail_status: Option<&str>) -> String
     }
 }
 
+/// Typed ElevenLabs error envelope. `detail` arrives object-shaped, as a bare
+/// string, as a FastAPI validation array, or not at all depending on the edge —
+/// the untagged enum captures all three shapes so the classifier never walks
+/// untyped `serde_json::Value`s.
+#[derive(Debug, serde::Deserialize)]
+struct ElevenLabsErrorBody {
+    detail: Option<ErrorDetail>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum ErrorDetail {
+    Object(ErrorDetailObject),
+    Text(String),
+    Items(Vec<ErrorDetailItem>),
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ErrorDetailObject {
+    status: Option<String>,
+    message: Option<String>,
+}
+
+/// One FastAPI validation-array entry (`{"type", "msg"}` / `{"status", "message"}`).
+#[derive(Debug, serde::Deserialize)]
+struct ErrorDetailItem {
+    status: Option<String>,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    msg: Option<String>,
+    message: Option<String>,
+}
+
+fn parse_error_detail(body: &str) -> Option<ErrorDetail> {
+    serde_json::from_str::<ElevenLabsErrorBody>(body)
+        .ok()?
+        .detail
+}
+
 /// Pull the `detail.status` discriminator out of an ElevenLabs error body, if
-/// present. ElevenLabs can return object-shaped detail payloads, string detail
-/// payloads, FastAPI validation arrays, or an empty body depending on the edge.
+/// present.
 pub fn parse_detail_status(body: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(body).ok()?;
-    let detail = value.get("detail")?;
-    if let Some(status) = detail.get("status").and_then(|value| value.as_str()) {
-        return Some(status.to_string());
+    match parse_error_detail(body)? {
+        ErrorDetail::Object(object) => object.status,
+        ErrorDetail::Text(_) => None,
+        ErrorDetail::Items(items) => items.into_iter().find_map(|item| item.status.or(item.kind)),
     }
-    if let Some(items) = detail.as_array() {
-        for item in items {
-            if let Some(status) = item.get("status").and_then(|value| value.as_str()) {
-                return Some(status.to_string());
-            }
-            if let Some(kind) = item.get("type").and_then(|value| value.as_str()) {
-                return Some(kind.to_string());
-            }
-        }
-    }
-    None
 }
 
 pub fn parse_detail_message(body: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(body).ok()?;
-    let detail = value.get("detail")?;
-    if let Some(message) = detail.get("message").and_then(|value| value.as_str()) {
-        return Some(message.to_string());
+    match parse_error_detail(body)? {
+        ErrorDetail::Object(object) => object.message,
+        ErrorDetail::Text(message) => Some(message),
+        ErrorDetail::Items(items) => items.into_iter().find_map(|item| item.msg.or(item.message)),
     }
-    if let Some(message) = detail.as_str() {
-        return Some(message.to_string());
-    }
-    if let Some(items) = detail.as_array() {
-        for item in items {
-            if let Some(message) = item.get("msg").and_then(|value| value.as_str()) {
-                return Some(message.to_string());
-            }
-            if let Some(message) = item.get("message").and_then(|value| value.as_str()) {
-                return Some(message.to_string());
-            }
-        }
-    }
-    None
 }
 
 pub fn classify_cloud_error_body(status: u16, body: &str) -> String {
@@ -196,45 +216,53 @@ pub struct CloudVoice {
     pub preview_url: Option<String>,
 }
 
+/// Typed `/v2/voices` response. Entries are held as raw values and decoded
+/// per-entry so one malformed voice is skipped instead of discarding the whole
+/// catalog (parity with the old lenient hand-walk).
+#[derive(Debug, serde::Deserialize)]
+struct VoicesResponse {
+    #[serde(default)]
+    voices: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct VoiceEntry {
+    voice_id: String,
+    #[serde(default)]
+    name: String,
+    labels: Option<VoiceLabels>,
+    category: Option<String>,
+    preview_url: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct VoiceLabels {
+    language: Option<String>,
+}
+
+impl From<VoiceEntry> for CloudVoice {
+    fn from(entry: VoiceEntry) -> Self {
+        Self {
+            id: entry.voice_id,
+            name: entry.name,
+            language: entry.labels.and_then(|labels| labels.language),
+            category: entry.category,
+            preview_url: entry.preview_url,
+        }
+    }
+}
+
 /// Parse a `/v2/voices` JSON body into `CloudVoice`s.
 pub fn parse_cloud_voices(body: &str) -> Vec<CloudVoice> {
-    let v: serde_json::Value = match serde_json::from_str(body) {
-        Ok(v) => v,
+    let response: VoicesResponse = match serde_json::from_str(body) {
+        Ok(response) => response,
         Err(_) => return Vec::new(),
     };
-    let arr = match v.get("voices").and_then(|x| x.as_array()) {
-        Some(a) => a,
-        None => return Vec::new(),
-    };
-    arr.iter()
-        .filter_map(|entry| {
-            let id = entry.get("voice_id")?.as_str()?.to_string();
-            let name = entry
-                .get("name")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string();
-            let language = entry
-                .get("labels")
-                .and_then(|l| l.get("language"))
-                .and_then(|x| x.as_str())
-                .map(|s| s.to_string());
-            let category = entry
-                .get("category")
-                .and_then(|x| x.as_str())
-                .map(|s| s.to_string());
-            let preview_url = entry
-                .get("preview_url")
-                .and_then(|x| x.as_str())
-                .map(|s| s.to_string());
-            Some(CloudVoice {
-                id,
-                name,
-                language,
-                category,
-                preview_url,
-            })
-        })
+    response
+        .voices
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value::<VoiceEntry>(entry).ok())
+        .map(CloudVoice::from)
         .collect()
 }
 
@@ -250,17 +278,24 @@ pub struct ElevenLabsEngine {
     model_id: String,
     settings: CloudVoiceSettings,
     ready: AtomicBool,
+    /// Per-session billing telemetry (characters + estimated USD) drained by
+    /// the manager via `take_session_usage` after each read-aloud.
+    usage: Mutex<TtsSessionUsage>,
 }
 
 impl ElevenLabsEngine {
     pub fn new(api_key: String, model_id: String, settings: CloudVoiceSettings) -> Self {
         let ready = AtomicBool::new(!api_key.is_empty());
         Self {
-            client: reqwest::Client::new(),
+            // Shared pooled client (cheap Arc clone): engines are rebuilt on
+            // settings changes, and per-engine pools would re-handshake TLS to
+            // api.elevenlabs.io every time.
+            client: crate::winstt::net::http_client().clone(),
             api_key,
             model_id,
             settings,
             ready,
+            usage: Mutex::new(TtsSessionUsage::default()),
         }
     }
 
@@ -271,21 +306,31 @@ impl ElevenLabsEngine {
         if self.api_key.is_empty() {
             return Err(TtsError::Cloud("ElevenLabs API key not configured".into()));
         }
-        let resp = block_on(
-            self.client
+        let fetch = async {
+            let resp = self
+                .client
                 .get(ELEVENLABS_VOICES_URL)
                 .header("xi-api-key", &self.api_key)
                 .timeout(Duration::from_secs(30))
-                .send(),
-        )
-        .map_err(|e| TtsError::Cloud(format!("ElevenLabs voices request failed: {e}")))?;
-        let status = resp.status().as_u16();
-        let body = block_on(resp.text())
-            .map_err(|e| TtsError::Cloud(format!("ElevenLabs voices read failed: {e}")))?;
-        if !(200..300).contains(&status) {
-            return Err(TtsError::Cloud(classify_cloud_error_body(status, &body)));
-        }
-        Ok(parse_cloud_voices(&body))
+                .send()
+                .await
+                .map_err(|e| TtsError::Cloud(format!("ElevenLabs voices request failed: {e}")))?;
+            let status = resp.status().as_u16();
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| TtsError::Cloud(format!("ElevenLabs voices read failed: {e}")))?;
+            if !(200..300).contains(&status) {
+                return Err(TtsError::Cloud(classify_cloud_error_body(status, &body)));
+            }
+            Ok(parse_cloud_voices(&body))
+        };
+        block_on(crate::winstt::cloud_metrics::timed(
+            "elevenlabs",
+            "tts_voices",
+            fetch,
+            |e: &TtsError| e.to_string(),
+        ))
     }
 
     /// Fetch a CDN preview mp3 for a voice (no character credits). Refuses any
@@ -293,22 +338,33 @@ impl ElevenLabsEngine {
     pub fn fetch_preview(&self, preview_url: &str) -> TtsResult<Vec<u8>> {
         use tauri::async_runtime::block_on;
         let url = validate_preview_url(preview_url).map_err(TtsError::Cloud)?;
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| TtsError::Cloud(format!("preview client failed: {e}")))?;
-        let resp = block_on(client.get(url).timeout(Duration::from_secs(30)).send())
-            .map_err(|e| TtsError::Cloud(format!("preview fetch failed: {e}")))?;
-        if !resp.status().is_success() {
-            return Err(TtsError::Cloud(format!("preview HTTP {}", resp.status())));
-        }
-        if resp
-            .content_length()
-            .is_some_and(|len| len > MAX_PREVIEW_BYTES as u64)
-        {
-            return Err(TtsError::Cloud("preview clip is too large".into()));
-        }
-        block_on(read_preview_limited(resp))
+        // No-redirect client: a redirect would bypass validate_preview_url's
+        // host/IP trust-boundary check.
+        let client = crate::winstt::net::no_redirect_client().map_err(TtsError::Cloud)?;
+        let fetch = async {
+            let resp = client
+                .get(url)
+                .timeout(Duration::from_secs(30))
+                .send()
+                .await
+                .map_err(|e| TtsError::Cloud(format!("preview fetch failed: {e}")))?;
+            if !resp.status().is_success() {
+                return Err(TtsError::Cloud(format!("preview HTTP {}", resp.status())));
+            }
+            if resp
+                .content_length()
+                .is_some_and(|len| len > MAX_PREVIEW_BYTES as u64)
+            {
+                return Err(TtsError::Cloud("preview clip is too large".into()));
+            }
+            read_preview_limited(resp).await
+        };
+        block_on(crate::winstt::cloud_metrics::timed(
+            "elevenlabs",
+            "tts_preview",
+            fetch,
+            |e: &TtsError| e.to_string(),
+        ))
     }
 }
 
@@ -438,6 +494,20 @@ impl ElevenLabsEngine {
     /// One-shot ElevenLabs convert -> mp3 bytes. Async so it can be raced against a
     /// cancel signal: dropping this future aborts the in-flight reqwest POST.
     async fn fetch_mp3(&self, req: &CloudSynthesisRequest, voice: &str) -> TtsResult<Vec<u8>> {
+        crate::winstt::cloud_metrics::timed(
+            "elevenlabs",
+            "tts_speech",
+            self.fetch_mp3_inner(req, voice),
+            |e: &TtsError| e.to_string(),
+        )
+        .await
+    }
+
+    async fn fetch_mp3_inner(
+        &self,
+        req: &CloudSynthesisRequest,
+        voice: &str,
+    ) -> TtsResult<Vec<u8>> {
         let resp = self
             .client
             .post(build_cloud_url(voice))
@@ -458,6 +528,14 @@ impl ElevenLabsEngine {
             .await
             .map_err(|e| TtsError::Cloud(format!("ElevenLabs read failed: {e}")))?
             .to_vec();
+        // Billing telemetry: ElevenLabs returns no billed amount, so
+        // accumulate the characters synthesized and the published-rate
+        // estimate for the manager's History row.
+        if let Ok(mut usage) = self.usage.lock() {
+            let characters = req.text.chars().count() as i64;
+            usage.characters += characters;
+            usage.estimated_cost_usd += characters as f64 * ELEVENLABS_TTS_USD_PER_CHAR;
+        }
         Ok(bytes)
     }
 }
@@ -515,6 +593,12 @@ impl TtsEngine for ElevenLabsEngine {
     fn list_voices(&self) -> Vec<VoiceInfo> {
         // Cloud voices come from a live GET /v2/voices fetch, not the static catalog.
         Vec::new()
+    }
+
+    fn take_session_usage(&self) -> Option<TtsSessionUsage> {
+        let mut usage = self.usage.lock().ok()?;
+        let taken = std::mem::take(&mut *usage);
+        if taken.is_empty() { None } else { Some(taken) }
     }
 
     fn is_ready(&self) -> bool {

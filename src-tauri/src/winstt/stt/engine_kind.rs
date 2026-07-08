@@ -99,7 +99,13 @@ impl EngineKind {
     /// `nemo`/`gigaam`/`t-one`/`kaldi`/`sense_voice`/`dolphin` families after testing ONE
     /// AED model, but only these actually fail on DML:
     ///   * `NemoAed` (Canary): conformer-encoder `Reshape` kernel crash (MLOperatorAuthorImpl).
-    ///   * `CohereAsr`: `MultiHeadAttention` kernel crash.
+    ///   * `CohereAsr`: the DML `com.microsoft.MultiHeadAttention` kernel faults on the
+    ///     cross-attention (`encoder_attn`) node — but ONLY for exports that bake in that fused
+    ///     contrib op (onnx-community). This flag is therefore CONSERVATIVE/pre-resolve: it pins
+    ///     Cohere to CPU before the files are on disk. Hand-decomposed exports (Masterx: plain
+    ///     MatMul/Softmax, zero `MultiHeadAttention` nodes) run correctly and ~2.7× FASTER than CPU
+    ///     on DirectML, so `backend::resolve_catalog` probes the resolved graph
+    ///     (`cohere_export_dml_safe`) and RESTORES the GPU EP when it's MHA-free.
     ///   * `KaldiTransducer` (zipformer/vosk), `SenseVoiceCtc`, `DolphinCtc`: silent hang/crash.
     ///   * Streaming Zipformer2 remains CPU-pinned like the offline Zipformer graph until DirectML
     ///     stability is proven for that cache-heavy graph. Streaming NeMo CTC/RNN-T use WinSTT's

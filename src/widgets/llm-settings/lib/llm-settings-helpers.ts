@@ -5,6 +5,8 @@
  * hooks, no side effects) makes them exhaustively unit-testable.
  */
 
+import { canonicalOllamaTag, isSameOllamaTag } from "@/shared/lib/ollama-tag";
+
 /**
  * Determine whether the submit button in the API-key dialog should be enabled.
  * Returns true when the trimmed key is non-empty.
@@ -94,4 +96,85 @@ export function applyOllamaModelReplacementIfNeeded(
 	if (replacement) {
 		update({ model: replacement });
 	}
+}
+
+/** The base (family) portion of an Ollama tag — everything before the first
+ *  `:` of the canonical `name:tag` form, lowercased. `llama3.2:3b` → `llama3.2`. */
+function ollamaTagBase(name: string): string {
+	return canonicalOllamaTag(name).toLowerCase().split(":")[0] ?? "";
+}
+
+/** Length of the shared leading run of two strings. */
+function commonPrefixLength(a: string, b: string): number {
+	const max = Math.min(a.length, b.length);
+	let i = 0;
+	while (i < max && a[i] === b[i]) {
+		i++;
+	}
+	return i;
+}
+
+/**
+ * The installed model "nearest" to a target name — used when the model the user
+ * last had selected was since deleted, so we swap to the closest survivor rather
+ * than an arbitrary one. Ranking: same family/base wins outright (a deleted
+ * `llama3.2:3b` prefers the installed `llama3.2:1b` over an unrelated `phi`),
+ * then the longest shared name prefix, ties broken by list order (so `models[0]`
+ * is the stable fallback). Returns `null` only when nothing is installed.
+ */
+export function pickNearestOllamaModel(
+	models: readonly { name: string }[],
+	target: string,
+): string | null {
+	const first = models[0];
+	if (!first) {
+		return null;
+	}
+	const targetCanon = canonicalOllamaTag(target).toLowerCase();
+	const targetBase = ollamaTagBase(target);
+	let best = first.name;
+	let bestScore = -1;
+	for (const m of models) {
+		const sameBase = ollamaTagBase(m.name) === targetBase ? 1 : 0;
+		const prefix = commonPrefixLength(
+			canonicalOllamaTag(m.name).toLowerCase(),
+			targetCanon,
+		);
+		// Same-base dominates any prefix overlap between different families.
+		const score = sameBase * 100_000 + prefix;
+		if (score > bestScore) {
+			bestScore = score;
+			best = m.name;
+		}
+	}
+	return best;
+}
+
+/**
+ * Which installed Ollama model the "Local" playground should select, or `null`
+ * to leave the current selection alone. Encodes the playground's auto-select
+ * policy:
+ *   1. A remembered selection that's still installed wins (previously chosen).
+ *   2. A remembered selection that was since deleted → the nearest install.
+ *   3. No selection yet → default to the first install so the picker is never
+ *      empty when at least one model exists.
+ * Returns `null` when nothing is installed (nothing to pick) or the current
+ * selection is already a valid install (no change needed).
+ */
+export function resolvePlaygroundLocalModel(
+	models: readonly { name: string }[],
+	current: string,
+): string | null {
+	const first = models[0];
+	if (!first) {
+		return null;
+	}
+	const trimmed = current.trim();
+	if (!trimmed) {
+		return first.name;
+	}
+	if (models.some((m) => isSameOllamaTag(m.name, trimmed))) {
+		return null;
+	}
+	return pickNearestOllamaModel(models, trimmed);
 }

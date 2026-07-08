@@ -1,6 +1,11 @@
-// Source: docs.rs/sherpa-onnx/1.13.2 (KeywordSpotter / KeywordSpotterConfig /
-//         OnlineModelConfig / OnlineTransducerModelConfig / OnlineStream / KeywordResult),
-//         verified 2026-05-31 via docs.rs source (src/kws.rs, src/online_asr.rs).
+// Wake-word keyword spotting. The detector is a NATIVE ort port of sherpa-onnx's
+// KWS algorithm (wakeword/ort_detector.rs — modified beam search + keyword
+// context graph over the streaming zipformer2 transducer). The sherpa-onnx FFI
+// crate was dropped in 2026-07: its shared c-api DLL carried a SECOND
+// onnxruntime.dll into every install just for this feature. The model bundle,
+// keywords-content format (`<bpe tokens> :boost #threshold @label`), sensitivity
+// mapping, and config defaults (max_active_paths 4, num_trailing_blanks 1,
+// keywords_score boost, keywords_threshold floor) are unchanged.
 // WinSTT reference (behavior parity target):
 //   server/src/recorder/infrastructure/porcupine_detector.py
 //   server/src/recorder/infrastructure/oww_detector.py
@@ -9,38 +14,7 @@
 //   frontend/src/shared/config/settings-schema.ts (general.wakeWord/wakeWordSensitivity/wakeWordTimeout)
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// REAL sherpa-onnx 1.13.2 KWS API (the ONLY thing that changed vs the sherpa-rs draft):
-//   pub struct KeywordSpotterConfig {
-//       pub feat_config: sys::FeatureConfig,           // { sample_rate: i32, feature_dim: i32 }
-//       pub model_config: OnlineModelConfig,           // transducer { encoder/decoder/joiner: Option<String> }, tokens, provider…
-//       pub max_active_paths: i32,                     // default 4
-//       pub num_trailing_blanks: i32,                  // default 1
-//       pub keywords_score: f32,                       // default 1.0 (== Porcupine :boost)
-//       pub keywords_threshold: f32,                   // default 0.25 (GLOBAL #threshold floor)
-//       pub keywords_file: Option<String>,             // path to keywords.txt
-//       pub keywords_buf: Option<String>,              // OR inline keywords content (we use this)
-//   }
-//   impl Default for KeywordSpotterConfig { /* sr=16000, dim=80, paths=4, blanks=1, score=1.0, thr=0.25 */ }
-//   KeywordSpotter::create(&KeywordSpotterConfig) -> Option<Self>          (Send + Sync + Drop)
-//   KeywordSpotter::create_stream(&self) -> OnlineStream                   (uses config keywords)
-//   KeywordSpotter::create_stream_with_keywords(&self, &str) -> OnlineStream (inline keyword content)
-//   KeywordSpotter::is_ready(&self, &OnlineStream) -> bool
-//   KeywordSpotter::decode(&self, &OnlineStream)
-//   KeywordSpotter::get_result(&self, &OnlineStream) -> Option<KeywordResult>
-//   KeywordSpotter::reset(&self, &OnlineStream)
-//   OnlineStream::accept_waveform(&self, sample_rate: i32, samples: &[f32])
-//   OnlineStream::input_finished(&self)
-//   pub struct KeywordResult { keyword: String, tokens: String, tokens_arr: Vec<String>,
-//                              timestamps: Vec<f32>, start_time: f32, json: String }
-//
-// Canonical streaming loop (from the crate's module example):
-//   stream.accept_waveform(sr, samples);
-//   while kws.is_ready(&stream) { kws.decode(&stream); }
-//   if let Some(r) = kws.get_result(&stream) { /* r.keyword non-empty == HIT */ }
-//   kws.reset(&stream);   // re-arm after a hit
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// DESIGN NOTE — why sherpa-onnx KWS replaces Porcupine + openWakeWord
+// DESIGN NOTE — why sherpa-style KWS replaces Porcupine + openWakeWord
 // ─────────────────────────────────────────────────────────────────────────────
 // WinSTT's Python server had THREE wake-word backends behind `IWakeWordDetector`:
 //   • PorcupineDetector  (pvporcupine 1.9.x — 14 built-in keywords, no access key)
@@ -50,19 +24,11 @@
 // three to ONE open-vocabulary zipformer-transducer keyword spotter. Benefits:
 //   1. Open vocabulary — ANY phrase ("computer", "hey winstt", "take a note")
 //      becomes a wake word by tokenizing it into the keywords content.
-//   2. One ONNX runtime (sherpa-onnx) for KWS + diarization — no Picovoice native
-//      blob, no OWW's pinned-onnxruntime resolver patch.
+//   2. One ONNX runtime (the app's own ort) for KWS — no Picovoice native
+//      blob, no OWW's pinned-onnxruntime resolver patch, no sherpa FFI DLLs.
 //   3. Offline, no access key, vendor-agnostic (matches the torch-free posture).
 // The trade-off (a global threshold, see UX CAVEAT below) is handled by emitting
 // a PER-KEYWORD `#threshold` suffix in the generated keywords content.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// COMPILE NOTE — no `#[cfg(feature = "sherpa")]` gate any more.
-// The draft gated the live detector behind a `sherpa` cargo feature; Cargo.toml
-// declares `sherpa-onnx = "1.13.2"` UNCONDITIONALLY (no such feature, and we may
-// not edit Cargo.toml), so the detector compiles unconditionally. The deterministic
-// helpers (presets / keyword-file builder / sensitivity mapping) never touched the
-// FFI and keep their own unit tests.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // MODULE LAYOUT — this root file owns the shared `WakeWordResult` type + the
@@ -71,7 +37,9 @@
 //   • presets          — preset registry, runtime-engine routing, phrase resolution
 //   • tokenize         — keyword-content builder + sensitivity→threshold + BPE/char tokenization
 //   • config           — provider enum, KWS/legacy path structs, WakeWordConfig
-//   • sherpa_detector  — live sherpa-onnx 1.13.2 KeywordSpotter detector
+//   • ort_detector     — native ORT keyword spotter (port of sherpa-onnx's KWS
+//                        algorithm; replaced the sherpa-onnx FFI detector so
+//                        wake-word shares the app's single ONNX Runtime)
 //   • legacy_porcupine — runtime-loaded pvporcupine 1.9.5 FFI detector
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -80,8 +48,8 @@ use std::path::Path;
 
 mod config;
 mod legacy_porcupine;
+mod ort_detector;
 mod presets;
-mod sherpa_detector;
 mod tokenize;
 
 pub use config::{
@@ -90,11 +58,11 @@ pub use config::{
     LegacyPorcupinePaths, WakeWordConfig, WakeWordProvider,
 };
 pub use legacy_porcupine::LegacyPorcupineDetector;
+pub use ort_detector::WakeWordDetector;
 pub use presets::{
     LEGACY_PORCUPINE_KEYWORDS, WAKE_WORD_PRESETS, WakeWordPreset, WakeWordRuntimeEngine,
     is_legacy_porcupine_keyword, resolve_phrase, wakeword_runtime_engine_for_name,
 };
-pub use sherpa_detector::WakeWordDetector;
 pub use tokenize::{
     KeywordSpec, THRESHOLD_MAX, THRESHOLD_MIN, build_keyword_content,
     build_keyword_content_with_vocabulary, build_keywords_file, keyword_label,
@@ -167,13 +135,6 @@ fn path_string(path: &Path) -> anyhow::Result<String> {
     path.to_str()
         .map(str::to_string)
         .ok_or_else(|| anyhow::anyhow!("KWS model path is not valid UTF-8: {}", path.display()))
-}
-
-/// Lossy path → String for the OPTIONAL keywords-file path (existence already
-/// implied by the manager; we don't hard-fail keyword-file rendering the way we
-/// do for required model files).
-fn path_string_lossy(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -570,11 +531,6 @@ mod tests {
     }
 
     // ── path helpers (no model files required) ─────────────────────────────
-
-    #[test]
-    fn path_string_lossy_round_trips_ascii() {
-        assert_eq!(path_string_lossy(Path::new("keywords.txt")), "keywords.txt");
-    }
 
     #[test]
     fn path_string_rejects_missing_required_file() {

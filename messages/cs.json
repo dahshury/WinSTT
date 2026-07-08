@@ -251,7 +251,46 @@
     "retentionDays3": "Po 3 dnech",
     "retentionWeeks2": "Po 2 týdnech",
     "retentionMonths3": "Po 3 měsících",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "Historie přepisů",
+    "enabledTooltip": "Když je zapnuto, WinSTT zaznamenává vaše přepisy, transformace a předčítání, aby tento přehled mohl zobrazovat statistiky a výdaje. Vypnutím zastavíte sběr nových dat.",
+    "disabledHint": "Historie je vypnutá — WinSTT nezaznamenává novou aktivitu. Stávající data zůstanou zachována, dokud je neodstraníte.",
+    "deleteAllTitle": "Odstranit celou historii?",
+    "deleteAllDescription": "Všechny zaznamenané přepisy, transformace, předčítání a uložené nahrávky budou trvale odstraněny. Tuto akci nelze vrátit zpět.",
+    "deleteAllButton": "Odstranit všechna data",
+    "clearTtsButton": "Vymazat předčítání",
+    "clearTtsTitle": "Vymazat celou historii předčítání?",
+    "clearTtsDescription": "Všechna uložená předčítání a zvuk budou odstraněny. Tuto akci nelze vrátit zpět.",
+    "combinedTableTitle": "Historie",
+    "filterDateRange": "Časové období",
+    "filterAllTime": "Celé období",
+    "heatmapEarlier": "Dříve",
+    "heatmapLater": "Později",
+    "spendingTitle": "Výdaje",
+    "spendingTotalLabel": "Celkové výdaje",
+    "spendingByModalityTitle": "Výdaje podle typu",
+    "spendingByProviderTitle": "Výdaje podle poskytovatele",
+    "spendingByModelTitle": "Výdaje podle modelu",
+    "spendingByMakerTitle": "Výdaje podle výrobce",
+    "spendingEstimatedHint": "Některé údaje jsou odhadované tam, kde nebyly nahlášeny přesné ceny.",
+    "costSpeechToText": "Převod řeči na text",
+    "costTextToSpeech": "Převod textu na řeč",
+    "costLanguageModel": "Jazykový model",
+    "colCharacters": "Znaky",
+    "cloudLabel": "Cloud",
+    "colCost": "Cena cloudu",
+    "costEstimated": "Odhad",
+    "costTotal": "Celkem",
+    "kindSpeechToText": "Převod řeči na text",
+    "kindTextToSpeech": "Převod textu na řeč",
+    "durationLlmProcessing": "Zpracování AI",
+    "durationNotRecorded": "Nezaznamenáno",
+    "durationNotRun": "Nespuštěno",
+    "durationRecording": "Nahrávání",
+    "durationSpeechToText": "Přepis",
+    "durationTotalProcessing": "Doba zpracování",
+    "colTtsModel": "Model hlasu",
+    "colVoice": "Hlas"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "Záložní OCR obrazovky",
+    "contextScreenOcrCaption": "Číst text na obrazovce poblíž kurzoru jako doplňkový kontext",
+    "contextScreenOcrTooltip": "Když kontextové vnímání nedokáže přečíst zaměřené pole přímo, WinSTT se uchýlí k načtení (OCR) oblasti obrazovky kolem kurzoru, aby zachytil okolní text. Je to pomalejší a méně přesné než přímé čtení pole — vypnutím tuto zálohu přeskočíte."
   },
   "model": {
     "initialPrompt": "Počáteční výzva",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "Sekundy ticha pro předčasné zahájení",
     "earlyTranscriptionTooltip": "Zahájit přepis dříve, než jste zcela přestali mluvit, spuštěno po tomto počtu sekund ticha. Zkracuje prodlevu mezi mluvením a zobrazením finálního textu. Nastavte na 0 pro vypnutí.",
     "realtimeModel": "Model v reálném čase",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "Model v reálném čase",
     "realtimeModelCaption": "Menší model pro živý náhled",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "Minimální čas mezi aktualizacemi živého přepisu. Nižší hodnoty poskytují častější aktualizace, ale využívají více výpočetního výkonu. Zvyšte při trhání nebo vysokém využití CPU při diktování.",
     "llm": "Velký jazykový model",
     "deviceAutoLabel": "Auto",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "Vypnout přepis slovo po slově?",
+    "realtimeOffWordByWordDescription": "Tento model přepisuje slovo po slově, jak mluvíte. Vypnutím reálného času se přepne na přepis až poté, co domluvíte.",
+    "realtimeOffWordByWordConfirm": "Vypnout"
   },
   "audio": {
     "inputDevice": "Vstupní zařízení",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "Okamžitě",
     "microphoneReleaseSec30": "30 sekund",
     "microphoneReleaseMin1": "1 minuta",
-    "microphoneReleaseMin5": "5 minut"
+    "microphoneReleaseMin5": "5 minut",
+    "devicePriorityHandle": "Přetažením změníte pořadí priority"
   },
   "quality": {
     "enableRealtime": "Povolit v reálném čase",
@@ -717,7 +766,8 @@
     "waiting": "Čekání na řeč...",
     "serverOffline": "Server offline",
     "noAudioDetected": "(žádný zvuk nezjištěn)",
-    "transcriptionFailed": "(přepis selhal)"
+    "transcriptionFailed": "(přepis selhal)",
+    "offlineNoLocalModel": "Bez internetu · žádný místní model"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "Přesto instalovat",
     "unfitSelectTitle": "Použít tento velký model?",
     "unfitSelectDescription": "„{model}” je větší, než může váš hardware pohodlně spustit (~{required} potřeba, {available} dostupné). Může běžet velmi pomalu nebo se nepodařit načíst. Přesto použít?",
-    "unfitSelectAnyway": "Přesto použít"
+    "unfitSelectAnyway": "Přesto použít",
+    "dictionaryAutoAddLiteModel": "Není k dispozici u lite modelů — přepněte na větší model pro automatické přidávání oprav do slovníku."
   },
   "tts": {
     "title": "Převod textu na řeč",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "Přidejte a ověřte API klíč ElevenLabs v části Integrace pro použití cloudových hlasů.",
     "cloudLoadingVoices": "Načítání hlasů…",
     "cloudNoVoices": "Pro tento účet ElevenLabs nebyly nalezeny žádné hlasy.",
-    "cloudError": "Hlasy ElevenLabs nelze načíst."
+    "cloudError": "Hlasy ElevenLabs nelze načíst.",
+    "voiceDesignLabel": "Popis hlasu",
+    "voiceDesignTooltip": "Popište slovy hlas, který chcete — barvu, věk, přízvuk, emoci — a model syntetizuje odpovídající hlas místo výběru z přednastavené banky.",
+    "voiceDesignButtonPlaceholder": "Navrhnout hlas",
+    "voiceDesignDialogTitle": "Navrhnout hlas",
+    "voiceDesignDialogDescription": "Popište hlas v jedné nebo dvou větách. Ponecháte-li prázdné, použije se výchozí hlas modelu.",
+    "voiceDesignPromptLabel": "Popis hlasu",
+    "voiceDesignPromptPlaceholder": "např. vřelý vypravěč s hlubokým hlasem a mírným britským přízvukem",
+    "voiceDesignPromptEmptyHint": "Ponecháte-li prázdné, použije se vestavěný hlas modelu.",
+    "voiceDesignCancel": "Zrušit",
+    "voiceDesignSave": "Uložit",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "Něco se pokazilo",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "Omezení rychlosti od {provider}",
     "toastRateLimitedRetry": "Zkuste to znovu za {seconds} s",
     "toastProviderError": "Chyba STT {provider}: {message}",
-    "openIntegrations": "Otevřít integrace"
+    "openIntegrations": "Otevřít integrace",
+    "toastTtsOfflineNoLocal": "Bez internetu a bez místního hlasu — čtení nahlas není dostupné."
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "Lite",
+    "liteTierTip": "Menší a rychlejší varianta s nižší přesností — ideální pro rychlé úlohy na omezeném hardwaru."
   },
   "dataGrid": {
     "addRow": "Add row",

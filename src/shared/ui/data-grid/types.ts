@@ -90,9 +90,7 @@ declare module "@tanstack/react-table" {
 		onRowSelect?:
 			| ((rowId: string, checked: boolean, shiftKey: boolean) => void)
 			| undefined;
-		onDataUpdate?:
-			| ((params: CellUpdate | Array<CellUpdate>) => void)
-			| undefined;
+		onDataUpdate?: ((params: CellUpdate | CellUpdate[]) => void) | undefined;
 		onRowsDelete?: ((rowIndices: number[]) => void | Promise<void>) | undefined;
 		onColumnClick?: ((columnId: string) => void) | undefined;
 		onCellClick?:

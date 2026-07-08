@@ -3,6 +3,7 @@ import { providerOf } from "@/entities/cloud-stt-provider";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import { useLlmProcessingStore } from "@/features/llm-processing";
+import { springs } from "@/shared/lib/springs";
 import {
 	getProcessingStartedAt,
 	ThinkingIndicator,
@@ -100,7 +101,7 @@ export function TranscriptionThinking() {
 					<m.div
 						animate={{ opacity: 1 }}
 						className="pointer-events-none absolute inset-0 z-overlay flex items-center justify-center px-4"
-						exit={{ opacity: 0, transition: { duration: 0.12 } }}
+						exit={{ opacity: 0, transition: springs.moderate.exit }}
 						initial={{ opacity: 0 }}
 						key="main-thinking"
 					>

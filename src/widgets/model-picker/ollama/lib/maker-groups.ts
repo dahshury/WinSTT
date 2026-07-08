@@ -14,6 +14,11 @@ import type {
 } from "@/shared/api/models";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import {
+	bestRelevance,
+	orderByRelevance,
+	type SearchRankable,
+} from "@/shared/lib/model-search";
+import {
 	formatOllamaDisplayName,
 	getOllamaFamily,
 	getOllamaPublisher,
@@ -106,6 +111,59 @@ export function buildMakerGroups(opts: {
 				getOllamaPublisherBySlug(b.slug).label,
 			),
 		);
+}
+
+function installedModelRankable(m: OllamaModel): SearchRankable {
+	return {
+		maker: getOllamaPublisher(getOllamaFamily(m)).label,
+		names: [m.name, formatOllamaDisplayName(m.name)],
+	};
+}
+
+function recommendedModelRankable(m: RecommendedOllamaModel): SearchRankable {
+	return {
+		maker: getOllamaPublisher(
+			(m.family ?? familySlugFromName(m.name)).toLowerCase(),
+		).label,
+		names: [m.name, m.displayName],
+	};
+}
+
+/**
+ * Order maker groups + their installed/recommended rows best-match-first for an
+ * active query, so the closest hit leads instead of the alphabetical default
+ * (mirrors the STT / TTS / OpenRouter pickers). A blank query returns the groups
+ * unchanged. `library` hits are left as-is — they resolve through the exact-tag
+ * card, not broad catalog ranking. The caller keeps the UNRANKED groups for the
+ * maker rail so the sidebar order stays stable while the list body ranks.
+ */
+export function rankMakerGroupsBySearch(
+	groups: readonly MakerGroup[],
+	query: string,
+): MakerGroup[] {
+	if (!query.trim()) {
+		return [...groups];
+	}
+	return groups
+		.map((group, index) => {
+			const installed = orderByRelevance(
+				group.installed,
+				query,
+				installedModelRankable,
+			);
+			const recommended = orderByRelevance(
+				group.recommended,
+				query,
+				recommendedModelRankable,
+			);
+			const best = Math.min(
+				bestRelevance(installed, query, installedModelRankable),
+				bestRelevance(recommended, query, recommendedModelRankable),
+			);
+			return { best, group: { ...group, installed, recommended }, index };
+		})
+		.sort((a, b) => a.best - b.best || a.index - b.index)
+		.map((entry) => entry.group);
 }
 
 /** Build the maker-grouped view. Search filters installed/recommended rows only;

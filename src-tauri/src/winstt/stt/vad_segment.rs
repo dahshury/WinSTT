@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use crate::audio_toolkit::vad::{SileroVad, VAD_FRAME_SAMPLES, VoiceActivityDetector};
 
-use super::{TranscribeOptions, Transcriber};
+use super::{TranscribeOptions, Transcriber, WordResult};
 
 const SR: usize = 16_000;
 const MAX_RETAINED_SILENCE: usize = SR * 200 / 1000;
@@ -480,6 +480,89 @@ pub fn vad_segment_decode(
         }
     }
     Ok(parts.join(" "))
+}
+
+/// Per-word timings for an arbitrarily long recording, in the ORIGINAL audio timeline.
+///
+/// The history karaoke highlight plays back the saved WAV, so the returned start/end seconds must
+/// index that exact waveform. Whisper truncates every decode to a 30 s mel window (`mel.rs`
+/// `audio.len().min(N_SAMPLES)`), so aligning a >30 s clip in one shot leaves every word past 30 s
+/// with NO timing and the highlight stalls on the last word it timed. This reuses the same
+/// Silero-VAD chunker as [`vad_segment_decode`] — cut on silence into `<= max_chunk_s` chunks — but
+/// decodes each chunk WITH word timestamps and offsets the per-word times by the chunk's start, so
+/// the union of chunks spans the whole recording.
+///
+/// Unlike the decode path it deliberately does NOT compact silences: compaction removes samples and
+/// would warp the timeline the WAV is played on, so the highlight would drift. Gaps therefore count
+/// toward the chunk cap here — a chunk is still `<= max_chunk_s`, which is all Whisper's window
+/// needs.
+///
+/// Short clips (`<= max_chunk_s`) take a single `engine.transcribe` — byte-identical to the old
+/// one-shot aligner path, so the common short history clip is completely unchanged.
+pub fn vad_segment_align_words(
+    engine: &mut dyn Transcriber,
+    audio: &[f32],
+    max_chunk_s: f32,
+    vad: &mut SileroVad,
+    opts: &TranscribeOptions,
+) -> super::SttResult<Vec<WordResult>> {
+    let max_chunk = (max_chunk_s * SR as f32) as usize;
+    // Short enough for one Whisper window → single pass (unchanged aligner behavior).
+    if audio.len() <= max_chunk {
+        return Ok(engine.transcribe(audio, opts)?.words.unwrap_or_default());
+    }
+
+    // Chunk plan on the ORIGINAL timeline (no compaction → the emitted times stay in WAV time).
+    let mask = speech_mask(vad, audio);
+    let raw = find_segments(&mask, VAD_FRAME_SAMPLES, audio.len());
+    if raw.is_empty() {
+        // Offline segmenter found no speech though the clip is long — decode once so we still
+        // return the first-window words rather than nothing.
+        return Ok(engine.transcribe(audio, opts)?.words.unwrap_or_default());
+    }
+
+    let pad = SR * 30 / 1000; // 480
+    let min_speech = (SR * 250 / 1000).saturating_sub(2 * pad); // 3040
+    // PACK-TO-CAP (same rationale as `vad_segment_decode`): merge across every thinking-pause and
+    // let ONLY the max-chunk cap force a split, so each chunk hands the aligner long coherent
+    // context on a real region boundary.
+    let min_silence = max_chunk;
+    let merged = merge_segments(
+        &raw,
+        audio.len(),
+        max_chunk.saturating_sub(2 * pad),
+        min_speech,
+        min_silence,
+        pad,
+    );
+    let merged = coalesce_short_chunks(merged, max_chunk, MIN_DECODE_CHUNK);
+    if merged.is_empty() {
+        return Ok(engine.transcribe(audio, opts)?.words.unwrap_or_default());
+    }
+
+    // Decode each chunk with word timestamps; shift each chunk's words into the original timeline
+    // by the chunk's start offset. Concatenation is naturally ordered (chunk starts ascend); the
+    // downstream `map_timings_to_text` monotonic clamp absorbs any small overlap from short-chunk
+    // expansion.
+    let mut out: Vec<WordResult> = Vec::new();
+    for (s, e) in merged {
+        let (s, e) = if e.saturating_sub(s) < MIN_DECODE_CHUNK {
+            expand_short_chunk(s, e, audio.len(), MIN_DECODE_CHUNK)
+        } else {
+            (s, e)
+        };
+        let offset = s as f32 / SR as f32;
+        let words = engine
+            .transcribe(&audio[s..e], opts)?
+            .words
+            .unwrap_or_default();
+        out.extend(words.into_iter().map(|mut w| {
+            w.start += offset;
+            w.end += offset;
+            w
+        }));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

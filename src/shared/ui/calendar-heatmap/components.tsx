@@ -2,7 +2,7 @@ import { Button as BaseButton } from "@base-ui/react/button";
 import { Input } from "@base-ui/react/input";
 import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type ChangeEvent, type ReactNode } from "react";
+import type { ChangeEvent, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -130,7 +130,9 @@ function DayCell({
 			cn("text-foreground", surfaceBg(todayLevel)),
 		isToday && "ring-1 ring-border ring-inset",
 		stateClass,
-		disabled && "cursor-not-allowed text-foreground-muted opacity-30",
+		// Muted but still legible — opacity-30 made no-data days vanish into the
+		// dark surface; the muted token alone already reads as "inactive".
+		disabled && "cursor-not-allowed text-foreground-muted opacity-70",
 	);
 
 	const inner = (

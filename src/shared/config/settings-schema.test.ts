@@ -393,6 +393,23 @@ describe("audioSettingsSchema defaults (lock-down)", () => {
 		expect(audioSettingsSchema.parse({}).postSpeechSilenceDuration).toBe(0.7);
 	});
 
+	test("inputDevicePriority defaults to [] and survives malformed input via catch", () => {
+		expect(audioSettingsSchema.parse({}).inputDevicePriority).toEqual([]);
+		// `.catch([])` — a corrupted persist (wrong type) must not wipe the section.
+		expect(
+			audioSettingsSchema.parse({ inputDevicePriority: 42 })
+				.inputDevicePriority,
+		).toEqual([]);
+	});
+
+	test("inputDevicePriority preserves the stored order", () => {
+		expect(
+			audioSettingsSchema.parse({
+				inputDevicePriority: ["USB Mic", "Built-in"],
+			}).inputDevicePriority,
+		).toEqual(["USB Mic", "Built-in"]);
+	});
+
 	test("minGapBetweenRecordings defaults to 0", () => {
 		expect(audioSettingsSchema.parse({}).minGapBetweenRecordings).toBe(0);
 	});

@@ -28,7 +28,6 @@ function model(id: string, family: FamilyKey, sizeLabel = "39M"): ModelInfo {
 		previewCapable: true,
 		nativeStreaming: false,
 		finalReuseSafe: false,
-		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
@@ -175,6 +174,20 @@ describe("SenseVoice family bundling", () => {
 		expect(bundles[0]?.baseId).toBe("sense-voice-small");
 		expect(bundles[0]?.variants).toHaveLength(1);
 	});
+
+	test("Cohere Arabic rides under the multilingual Transcribe as a variant", () => {
+		const bundles = bundleVariants([
+			model("cohere-transcribe", "cohere", "2B"),
+			model("cohere-transcribe-arabic", "cohere", "2B"),
+		]);
+		expect(bundles).toHaveLength(1);
+		expect(bundles[0]?.baseId).toBe("cohere-transcribe");
+		// Multilingual base is primary; the Arabic fine-tune is the sibling.
+		expect(bundles[0]?.variants.map((v) => v.id)).toEqual([
+			"cohere-transcribe",
+			"cohere-transcribe-arabic",
+		]);
+	});
 });
 
 describe("variantDisplayName", () => {
@@ -221,9 +234,10 @@ describe("variantDisplayName", () => {
 		expect(variantDisplayName(named("Whisper Tiny (EN)", "whisper"))).toBe(
 			"Tiny",
 		);
+		// "Streaming" is dropped too — the streaming badge already marks it.
 		expect(
 			variantDisplayName(named("Streaming Zipformer (English)", "kaldi")),
-		).toBe("Streaming Zipformer");
+		).toBe("Zipformer");
 		expect(
 			variantDisplayName(
 				named("Lite-Whisper Large v3 Turbo (Accelerated)", "lite-whisper"),

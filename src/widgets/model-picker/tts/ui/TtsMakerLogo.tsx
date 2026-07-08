@@ -1,6 +1,6 @@
 import { HugeiconsIcon } from "@hugeicons/react";
-import { cn } from "@/shared/lib/cn";
 import { publicAsset } from "@/shared/lib/public-asset";
+import { MakerLogo } from "../../ui/MakerLogo";
 import {
 	getEngineConfig,
 	getEngineLogoSrc,
@@ -8,10 +8,10 @@ import {
 } from "../lib/tts-helpers";
 
 /**
- * The maker's brand logo for a TTS engine — a square `<img>` of the official
- * mark when the engine ships one, else the neutral gray glyph chip (same chrome
- * as `NeutralHeaderIcon`). One component shared by the card `makerIcon` slot,
- * the group header, and the trigger so the maker mark is identical everywhere.
+ * The maker's brand logo for a TTS engine — the official mark when the engine
+ * ships one, else the neutral gray glyph chip. A thin wrapper over the shared
+ * {@link MakerLogo} so the card `makerIcon` slot, the group header, and the
+ * trigger render the maker mark identically to the STT and Ollama pickers.
  */
 export function TtsMakerLogo({
 	className,
@@ -21,25 +21,13 @@ export function TtsMakerLogo({
 	engine: TtsEngineKey | string;
 }) {
 	const logoSrc = getEngineLogoSrc(engine);
-	if (logoSrc) {
-		return (
-			<img
-				alt=""
-				className={cn("size-4 shrink-0 rounded-[4px] object-cover", className)}
-				height={16}
-				src={publicAsset(logoSrc)}
-				width={16}
-			/>
-		);
-	}
 	return (
-		<span
-			className={cn(
-				"flex size-4 shrink-0 items-center justify-center rounded bg-foreground/[0.06] text-foreground-muted",
-				className,
-			)}
-		>
-			<HugeiconsIcon className="size-3" icon={getEngineConfig(engine).icon} />
-		</span>
+		<MakerLogo
+			className={className}
+			fallback={
+				<HugeiconsIcon className="size-3" icon={getEngineConfig(engine).icon} />
+			}
+			src={logoSrc ? publicAsset(logoSrc) : null}
+		/>
 	);
 }

@@ -8,8 +8,8 @@ import { type RefObject, useEffect, useState } from "react";
 import { springs } from "@/shared/lib/springs";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import {
-	type HighlightRect,
 	findDataAttributeElement,
+	type HighlightRect,
 	highlightRectsEqual,
 	measureHighlightRect,
 } from "@/shared/ui/menu-highlight/highlight-geometry";
@@ -65,7 +65,6 @@ export function SoundLibraryHighlight({
 	// Re-find + re-measure the selected row whenever selection changes or the row
 	// set changes (rename/add/remove reflow). A ResizeObserver on the container
 	// and each row covers the open-animation scale settling and any reflow.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: rowsKey is the intentional re-arm key — biome can't see the queried [data-sound-row] rows change when it changes
 	useEffect(() => {
 		const container = containerRef.current;
 		if (!container) {
@@ -106,10 +105,13 @@ export function SoundLibraryHighlight({
 						}}
 						aria-hidden="true"
 						className={`pointer-events-none absolute rounded-lg ring-1 ring-foreground/[0.06] ring-inset ${surfaceBg(pillLevel)}`}
-						exit={{ opacity: 0, transition: { duration: 0.12 } }}
+						exit={{ opacity: 0, transition: springs.moderate.exit }}
 						initial={false}
 						key="sound-selected"
-						transition={{ ...springs.moderate, opacity: { duration: 0.08 } }}
+						transition={{
+							...springs.moderate,
+							opacity: { duration: springs.fast.duration },
+						}}
 					/>
 				) : null}
 			</AnimatePresence>

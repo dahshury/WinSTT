@@ -45,6 +45,12 @@ export function TtsModelSection() {
 		onTtsDownloadAction,
 		openDetachedTtsPicker,
 		isSupertonicModel,
+		isVoiceDesignModel,
+		needsRefText,
+		cloneRefText,
+		cloneBusy,
+		cloneError,
+		handleCloneRefTextChange,
 		playback,
 		isLoading,
 		isSpeaking,
@@ -59,11 +65,13 @@ export function TtsModelSection() {
 		previewOpenRouterVoice,
 		handleModelChange,
 		handleVoiceChange,
+		handleVoiceDesignPromptChange,
 		handleLanguageChange,
 		handleSpeedChange,
 		handleSpeedReset,
 		voicePlaceholder,
 		installing,
+		unloadingLocalModel,
 		handleCancelInstall,
 		handleEnabledToggle,
 		handleSourceChange,
@@ -77,7 +85,11 @@ export function TtsModelSection() {
 			icon={AiVoiceGeneratorIcon}
 			onToggle={handleEnabledToggle}
 			title={t("title")}
-			toggleDisabled={installing}
+			// The toggle shows the user's choice immediately but LOCKS while the
+			// voice model warms into / drains out of memory — the dimmed body +
+			// locked toggle ARE the pending signal (no spinner); both release
+			// only when the backend confirms the transition finished.
+			toggleDisabled={installing || unloadingLocalModel}
 			toggled={enabled}
 		>
 			<div className="flex flex-col">
@@ -164,6 +176,7 @@ export function TtsModelSection() {
 								onSpeedChange={handleSpeedChange}
 								onSpeedReset={handleSpeedReset}
 								onVoiceChange={handleVoiceChange}
+								onVoiceDesignPromptChange={handleVoiceDesignPromptChange}
 								previewVoice={previewVoice}
 								previewVoiceId={previewVoiceId}
 								speed={effectiveSpeed}
@@ -176,9 +189,42 @@ export function TtsModelSection() {
 										? SUPERTONIC_DEFAULT_VOICE
 										: DEFAULT_SETTINGS.tts.voice
 								}
+								voiceDesign={isVoiceDesignModel}
 								voiceGroups={voiceGroups}
 								voicePlaceholder={voicePlaceholder}
 							/>
+							{needsRefText &&
+							voice !== "" &&
+							voice !== "female" &&
+							voice !== "male" ? (
+								<div className="flex flex-col gap-1.5">
+									<label
+										className="text-xs font-medium text-foreground-muted"
+										htmlFor="tts-clone-ref-text"
+									>
+										{t("cloneRefLabel")}
+									</label>
+									<textarea
+										className="min-h-[4.5rem] w-full resize-y rounded-md border border-border bg-surface-1 px-2.5 py-2 text-sm text-foreground outline-none focus:border-accent"
+										disabled={cloneBusy}
+										id="tts-clone-ref-text"
+										onChange={(e) => handleCloneRefTextChange(e.target.value)}
+										placeholder={
+											cloneBusy
+												? t("cloneRefTranscribing")
+												: t("cloneRefPlaceholder")
+										}
+										value={cloneRefText}
+									/>
+									{cloneError ? (
+										<span className="text-xs text-danger">{cloneError}</span>
+									) : (
+										<span className="text-xs text-foreground-muted">
+											{t("cloneRefHint")}
+										</span>
+									)}
+								</div>
+							) : null}
 						</>
 					)}
 				</div>

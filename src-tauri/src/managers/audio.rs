@@ -341,6 +341,19 @@ pub struct AudioRecordingManager {
     realtime_audio_signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
 }
 
+/// Position of the first entry in `priority` (mic NAMES, highest-priority
+/// first — the drag-sorted order from the device pickers) that is present in
+/// `names`, the freshly enumerated input-device names. Matching mirrors the
+/// renderer's dedup key: trimmed, case-insensitive.
+fn choose_priority_device_position(names: &[&str], priority: &[String]) -> Option<usize> {
+    priority.iter().find_map(|wanted| {
+        let key = wanted.trim().to_lowercase();
+        names
+            .iter()
+            .position(|name| name.trim().to_lowercase() == key)
+    })
+}
+
 impl AudioRecordingManager {
     /* ---------- construction ------------------------------------------------ */
 
@@ -450,7 +463,20 @@ impl AudioRecordingManager {
 
         match list_input_devices() {
             Ok(devices) => {
-                let chosen = if let Some(index) = selected_index {
+                // Preference order (drag-sorted in the pickers) wins when set: the
+                // highest-priority CONNECTED name is used even if `input_device_index`
+                // still points at a lower entry. Resolved fresh on every stream open,
+                // so replugging a preferred mic takes effect on the next recording.
+                // Clamshell mode keeps precedence over the preference order.
+                let priority_pick = if use_clamshell_mic {
+                    None
+                } else {
+                    let names: Vec<&str> = devices.iter().map(|d| d.name.as_str()).collect();
+                    choose_priority_device_position(&names, &settings.audio.input_device_priority)
+                };
+                let chosen = if let Some(position) = priority_pick {
+                    Some(position)
+                } else if let Some(index) = selected_index {
                     let found = devices
                         .iter()
                         .position(|device| device_matches_index(device, index));
@@ -960,6 +986,38 @@ mod tests {
         settings.general.manual_toggle_stop = manual_toggle_stop;
         settings.audio.post_speech_silence_duration = post_speech_silence_duration;
         settings
+    }
+
+    #[test]
+    fn priority_picks_first_connected_entry() {
+        let names = ["Realtek Mic Array", "USB Blue Yeti", "Webcam C920"];
+        let priority = vec!["AirPods Pro".to_string(), "USB Blue Yeti".to_string()];
+
+        // "AirPods Pro" is not connected → the next entry wins.
+        assert_eq!(choose_priority_device_position(&names, &priority), Some(1));
+    }
+
+    #[test]
+    fn priority_matches_names_trimmed_and_case_insensitively() {
+        let names = ["  USB Blue Yeti "];
+        let priority = vec!["usb blue yeti".to_string()];
+
+        assert_eq!(choose_priority_device_position(&names, &priority), Some(0));
+    }
+
+    #[test]
+    fn priority_returns_none_when_empty_or_nothing_connected() {
+        let names = ["Realtek Mic Array"];
+
+        assert_eq!(choose_priority_device_position(&names, &[]), None);
+        assert_eq!(
+            choose_priority_device_position(&names, &["Gone Mic".to_string()]),
+            None
+        );
+        assert_eq!(
+            choose_priority_device_position(&[], &["Gone Mic".to_string()]),
+            None
+        );
     }
 
     #[test]

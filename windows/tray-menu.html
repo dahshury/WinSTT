@@ -4,31 +4,34 @@
 		<meta charset="UTF-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<style>
-			html, body, #root {
-				width: 100%;
-				height: 100%;
-				margin: 0;
-				overflow: hidden;
-				background: transparent !important;
-			}
+		html,
+		body,
+		#root {
+			width: 100%;
+			height: 100%;
+			margin: 0;
+			overflow: hidden;
+			background: transparent !important;
+		}
 		</style>
 		<title>WinSTT — Tray Menu</title>
 	</head>
 	<body>
 		<div id="root"></div>
 		<script>
-			(function () {
-				var root = document.getElementById("root");
-				if (!root || root.firstChild) {
-					return;
-				}
-				var shell = document.createElement("div");
-				shell.setAttribute("data-winstt-startup-shell", "");
-				shell.setAttribute("aria-hidden", "true");
-				shell.style.cssText =
-					"min-height:100%;pointer-events:none;background:inherit;";
-				root.appendChild(shell);
-			})();
+		"use strict";
+		(() => {
+			var root = document.getElementById("root");
+			if (!root || root.firstChild) {
+				return;
+			}
+			var shell = document.createElement("div");
+			shell.setAttribute("data-winstt-startup-shell", "");
+			shell.setAttribute("aria-hidden", "true");
+			shell.style.cssText =
+				"min-height:100%;pointer-events:none;background:inherit;";
+			root.appendChild(shell);
+		})();
 		</script>
 		<script type="module" async src="/src/entries/tray-menu.tsx"></script>
 	</body>

@@ -4,6 +4,12 @@ import type { TranscriptionItem } from "./transcription";
 interface EphemeralMessage {
 	text: string;
 	timestamp: number;
+	/**
+	 * `"error"` messages (e.g. the offline "no internet & no local model" notice)
+	 * force the overlay pill to reveal even with no active recording — a plain
+	 * `"info"` message only augments an already-revealed pill. Defaults to `"info"`.
+	 */
+	kind: "info" | "error";
 }
 
 export type TranscriptionProcessingPhase = "transcribing" | "uploading";
@@ -45,7 +51,11 @@ interface TranscriptionState {
 		active: boolean,
 		phase?: TranscriptionProcessingPhase,
 	) => void;
-	showEphemeral: (text: string, holdMs?: number) => void;
+	showEphemeral: (
+		text: string,
+		holdMs?: number,
+		kind?: EphemeralMessage["kind"],
+	) => void;
 	transcribingStartedAt: number | null;
 }
 
@@ -114,10 +124,10 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 				transcribingStartedAt: null,
 			};
 		}),
-	showEphemeral: (text, holdMs = EPHEMERAL_HOLD_MS) => {
+	showEphemeral: (text, holdMs = EPHEMERAL_HOLD_MS, kind = "info") => {
 		clearEphemeralTimer();
 		const timestamp = Date.now();
-		set({ ephemeral: { text, timestamp } });
+		set({ ephemeral: { text, timestamp, kind } });
 		if (holdMs > 0) {
 			ephemeralTimer = setTimeout(() => {
 				set((state) =>

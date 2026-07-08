@@ -91,7 +91,7 @@ export function OnboardingPage() {
 							className="size-4"
 							draggable={false}
 							height={16}
-							src={publicAsset("/icon.ico")}
+							src={publicAsset("/icon-32.png")}
 							width={16}
 						/>
 						<span className="font-mono text-foreground-secondary text-xs-tight uppercase tracking-[0.18em]">

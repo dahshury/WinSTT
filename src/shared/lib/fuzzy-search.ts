@@ -53,7 +53,7 @@ function pushVersionAliases(tokens: string[], token: string): boolean {
 
 function pushLetterNumberParts(tokens: string[], token: string): void {
 	const match = LETTER_NUMBER_RE.exec(token);
-	if (!match?.[1] || !match[2]) {
+	if (!(match?.[1] && match[2])) {
 		return;
 	}
 	tokens.push(match[1], match[2]);

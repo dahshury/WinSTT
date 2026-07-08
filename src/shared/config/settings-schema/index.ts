@@ -17,6 +17,7 @@ export * from "./audio";
 export * from "./core";
 export * from "./general";
 export * from "./llm";
+export * from "./secrets";
 export * from "./tts";
 
 function objectRecord(value: unknown): Record<string, unknown> | null {

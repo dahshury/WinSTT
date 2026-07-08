@@ -15,18 +15,19 @@ describe("Badge", () => {
 		expect(node.className).toContain("bg-accent");
 	});
 
-	test.each(["default", "secondary", "outline"] as const)(
-		"applies variant class for %s",
-		(variant) => {
-			render(
-				<Badge data-testid="b" variant={variant}>
-					x
-				</Badge>,
-			);
-			const node = screen.getByTestId("b");
-			expect(node.className.length).toBeGreaterThan(0);
-		},
-	);
+	test.each([
+		"default",
+		"secondary",
+		"outline",
+	] as const)("applies variant class for %s", (variant) => {
+		render(
+			<Badge data-testid="b" variant={variant}>
+				x
+			</Badge>,
+		);
+		const node = screen.getByTestId("b");
+		expect(node.className.length).toBeGreaterThan(0);
+	});
 
 	test("merges user-supplied className with built-ins", () => {
 		render(

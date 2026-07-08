@@ -14,11 +14,13 @@ describe("FOOTER_TOOLTIP_DELAY", () => {
 });
 
 describe("resolveGpuChipConfig", () => {
-	test("GPU branch yields the GpuIcon, 'GPU' label and success colour", () => {
+	test("GPU branch yields the GpuIcon, 'GPU' label and grayscale colour", () => {
 		const cfg = resolveGpuChipConfig(true);
 		expect(cfg.icon).toBe(GpuIcon);
 		expect(cfg.label).toBe("GPU");
-		expect(cfg.colorClass).toBe("text-success");
+		// No-green status: GPU chip is grayscale (brighter than the dim CPU chip),
+		// never text-success.
+		expect(cfg.colorClass).toBe("text-foreground");
 	});
 
 	test("CPU branch yields the CpuIcon, 'CPU' label and dim colour", () => {

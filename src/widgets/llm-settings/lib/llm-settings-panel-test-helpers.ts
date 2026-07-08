@@ -1,4 +1,6 @@
 import {
+	AiCloud01Icon,
+	AiComputerIcon,
 	AppleIcon,
 	BookOpen01Icon,
 	LockIcon,
@@ -24,7 +26,7 @@ import {
 import type { OllamaModel } from "@/shared/api/models";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { DEFAULT_TARGET_LANG } from "@/shared/lib/languages";
-import { brandLogoFor } from "@/shared/ui/brand-logo";
+import { isSameOllamaTag } from "@/shared/lib/ollama-tag";
 
 type ToneKey = (typeof TONE_GROUP)[number];
 
@@ -412,6 +414,17 @@ export interface ProviderOptsContext {
 	 * STT Source "Cloud" option's hint).
 	 */
 	openrouterNeedsKey?: boolean;
+	/**
+	 * Label for the local (Ollama) segment. Defaults to the provider brand name;
+	 * callers pass the shared "Local" source string so the switcher reads
+	 * identically to the STT/TTS Source toggle (local ⇒ on-device engine).
+	 */
+	localLabel?: string;
+	/**
+	 * Label for the cloud (OpenRouter) segment. Defaults to the provider brand
+	 * name; callers pass the shared "Cloud" source string for the same parity.
+	 */
+	cloudLabel?: string;
 }
 
 export interface ProviderOption {
@@ -457,13 +470,13 @@ export function buildProviderOpts(
 	const opts: ProviderOption[] = [
 		{
 			value: "ollama",
-			label: t("providerOllama"),
-			iconNode: brandLogoFor("ollama"),
+			label: ctx.localLabel ?? t("providerOllama"),
+			icon: AiComputerIcon,
 		},
 		{
 			value: "openrouter",
-			label: t("providerOpenRouter"),
-			iconNode: brandLogoFor("openrouter"),
+			label: ctx.cloudLabel ?? t("providerOpenRouter"),
+			icon: AiCloud01Icon,
 			// LOCK the cloud provider until a key is configured — full parity with
 			// the STT Source "Cloud" option (disabled + lock badge whose footer
 			// points the user at the key). A bare `tooltip` was insufficient: a
@@ -518,7 +531,7 @@ export function pickReplacementOllamaModel(
 	if (!current) {
 		return null;
 	}
-	const stillInstalled = models.some((m) => m.name === current);
+	const stillInstalled = models.some((m) => isSameOllamaTag(m.name, current));
 	if (stillInstalled) {
 		return null;
 	}
@@ -549,8 +562,11 @@ export function resolveOllamaModelReconcilePatch(
 	if (provider !== "ollama") {
 		return null;
 	}
+	// Alias-aware: a selection saved as `tinyllama` must count as installed when
+	// the scan reports `tinyllama:latest` (same artifact) — an exact-string miss
+	// here silently swaps the user's chosen model for `models[0]`.
 	const currentInstalled =
-		current.length > 0 && models.some((m) => m.name === current);
+		current.length > 0 && models.some((m) => isSameOllamaTag(m.name, current));
 	if (currentInstalled) {
 		return null;
 	}
@@ -651,7 +667,9 @@ function isCurrentOllamaModelInstalled(deps: FeatureToggleDeps): boolean {
 	if (!deps.ollamaLoaded) {
 		return true;
 	}
-	return deps.ollamaModels.some((m) => m.name === deps.currentOllamaModel);
+	return deps.ollamaModels.some((m) =>
+		isSameOllamaTag(m.name, deps.currentOllamaModel),
+	);
 }
 
 function maybeScanOllama(deps: FeatureToggleDeps): void {

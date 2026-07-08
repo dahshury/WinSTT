@@ -175,6 +175,12 @@ export function CloudSttErrorToasts() {
 				push("network", p.message ?? t("toastNetworkError"), p, false);
 			}
 		});
+		// Cloud TTS is offline AND no local voice is installed to fall back to —
+		// read-aloud has no overlay pill, so surface it as a toast.
+		const offTtsUnavailable = ipcOn(IPC.TTS_UNAVAILABLE, (data) => {
+			const p = data as CloudErrorPayload;
+			push("network", t("toastTtsOfflineNoLocal"), p, false);
+		});
 
 		return () => {
 			offAuth();
@@ -183,6 +189,7 @@ export function CloudSttErrorToasts() {
 			offRate();
 			offProvider();
 			offConnectivity();
+			offTtsUnavailable();
 		};
 	}, [t]);
 

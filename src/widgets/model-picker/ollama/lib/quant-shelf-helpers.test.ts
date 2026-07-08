@@ -77,6 +77,22 @@ describe("pruneToShownQuants", () => {
 		]);
 	});
 
+	it("surfaces QAT builds as shelf badges — the lightest faithful pull where offered", () => {
+		// gemma4's -it-qat builds (e2b 4.3GB vs 7.2GB q4_K_M, e4b 6.1GB vs
+		// 9.6GB) were previously pruned, hiding the only variants that fit
+		// comfortably in 8–12GB VRAM.
+		const tags = [
+			tag({ name: "gemma4:e4b-it-qat" }),
+			tag({ name: "gemma4:e4b-it-q4_K_M", quantization: "Q4_K_M" }),
+			tag({ name: "gemma4:e4b-mlx" }), // Apple-only → still dropped
+		];
+		expect(pruneToShownQuants(tags, noKeep).map((t) => t.name)).toEqual([
+			"gemma4:e4b-it-qat",
+			"gemma4:e4b-it-q4_K_M",
+		]);
+		expect(quantBadgeLabel(tag({ name: "gemma4:e4b-it-qat" }))).toBe("QAT");
+	});
+
 	it("still keeps a bare default the user already has on disk / is pulling (forceKeep)", () => {
 		const tags = [
 			tag({ name: "qwen3.5:4b" }),

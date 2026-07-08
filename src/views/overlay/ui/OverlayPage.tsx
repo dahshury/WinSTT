@@ -103,8 +103,7 @@ export function OverlayPage() {
 			wordByWordPasting,
 		});
 	const showLiveTranscription =
-		!isListenMode &&
-		!suppressWordByWordPillPreview &&
+		!(isListenMode || suppressWordByWordPillPreview) &&
 		(liveDisplay === "in-pill" || liveDisplay === "both");
 
 	const realtime = useTranscriptionStore((s) => s.currentRealtime);
@@ -135,6 +134,10 @@ export function OverlayPage() {
 	// Editable preview-before-pasting pill open (recording is done, paste held).
 	const isPreviewActive = useTranscriptPreviewStore((s) => s.isActive);
 	const hasEphemeral = ephemeral !== null;
+	// An "error" ephemeral (the offline "no internet & no local model" notice)
+	// force-reveals the pill even with no active recording — an info ephemeral
+	// only augments an already-revealed pill.
+	const isOfflineNotice = ephemeral?.kind === "error";
 	const sttSessionActive =
 		!isListenMode &&
 		(isRecordingActive ||
@@ -173,7 +176,10 @@ export function OverlayPage() {
 			isRecordingActive,
 			isSpeaking,
 		}) ||
-			isPreviewActive);
+			isPreviewActive ||
+			// The offline error notice must reveal the pill with no recording behind
+			// it (the record-start gate skipped capture) — it carries its own message.
+			isOfflineNotice);
 	// Sticky once-on: hold the pill mounted for the rest of the active session
 	// even if `currentRealtime` momentarily empties between realtime chunks.
 	// Without this, the AnimatePresence around chip + bubble unmounts on every

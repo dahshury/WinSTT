@@ -89,7 +89,9 @@ for (const route of ROUTES) {
 
 		if (failing.length > 0) {
 			// biome-ignore lint/suspicious/noConsole: surface the actionable detail.
-			console.log(`\n[a11y:${route.name}] FAILING:\n${formatViolations(failing)}`);
+			console.log(
+				`\n[a11y:${route.name}] FAILING:\n${formatViolations(failing)}`,
+			);
 		}
 
 		expect(

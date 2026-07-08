@@ -251,7 +251,46 @@
     "retentionDays3": "לאחר 3 ימים",
     "retentionWeeks2": "לאחר שבועיים",
     "retentionMonths3": "לאחר 3 חודשים",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "היסטוריית תמלולים",
+    "enabledTooltip": "כשמופעל, WinSTT מתעד את התמלולים, ההמרות והקראות שלך כדי שלוח המחוונים יוכל להציג סטטיסטיקות והוצאות. כבה כדי להפסיק לאסוף נתונים חדשים.",
+    "disabledHint": "ההיסטוריה כבויה — WinSTT אינו מתעד פעילות חדשה. הנתונים הקיימים נשמרים עד שתמחק אותם.",
+    "deleteAllTitle": "למחוק את כל ההיסטוריה?",
+    "deleteAllDescription": "כל התמלולים, ההמרות, ההקראות וההקלטות השמורות יוסרו לצמיתות. לא ניתן לבטל פעולה זו.",
+    "deleteAllButton": "מחק את כל הנתונים",
+    "clearTtsButton": "נקה הקראות",
+    "clearTtsTitle": "לנקות את כל היסטוריית ההקראות?",
+    "clearTtsDescription": "כל ההקראות (טקסט-לדיבור) והשמע השמורים יוסרו. לא ניתן לבטל פעולה זו.",
+    "combinedTableTitle": "היסטוריה",
+    "filterDateRange": "טווח תאריכים",
+    "filterAllTime": "כל הזמן",
+    "heatmapEarlier": "מוקדם יותר",
+    "heatmapLater": "מאוחר יותר",
+    "spendingTitle": "הוצאות",
+    "spendingTotalLabel": "סך ההוצאות",
+    "spendingByModalityTitle": "הוצאות לפי סוג",
+    "spendingByProviderTitle": "הוצאות לפי ספק",
+    "spendingByModelTitle": "הוצאות לפי מודל",
+    "spendingByMakerTitle": "הוצאות לפי יצרן",
+    "spendingEstimatedHint": "חלק מהנתונים מוערכים כאשר לא דווח תמחור מדויק.",
+    "costSpeechToText": "דיבור-לטקסט",
+    "costTextToSpeech": "טקסט-לדיבור",
+    "costLanguageModel": "מודל שפה",
+    "colCharacters": "תווים",
+    "cloudLabel": "ענן",
+    "colCost": "עלות ענן",
+    "costEstimated": "מוערך",
+    "costTotal": "סה״כ",
+    "kindSpeechToText": "דיבור-לטקסט",
+    "kindTextToSpeech": "טקסט-לדיבור",
+    "durationLlmProcessing": "עיבוד AI",
+    "durationNotRecorded": "לא תועד",
+    "durationNotRun": "לא הופעל",
+    "durationRecording": "הקלטה",
+    "durationSpeechToText": "תמלול",
+    "durationTotalProcessing": "זמן עיבוד",
+    "colTtsModel": "מודל קול",
+    "colVoice": "קול"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "זיהוי טקסט מהמסך (OCR) כגיבוי",
+    "contextScreenOcrCaption": "קריאת טקסט מהמסך ליד הסמן כהקשר נוסף",
+    "contextScreenOcrTooltip": "כאשר מודעות ההקשר אינה מצליחה לקרוא ישירות את השדה הממוקד, WinSTT נסוגה לקריאה (OCR) של אזור המסך סביב הסמן כדי לקלוט טקסט סמוך. זה איטי ופחות מדויק מקריאה ישירה של השדה — כבה זאת כדי לדלג על מנגנון הגיבוי."
   },
   "model": {
     "initialPrompt": "פרומפט ראשוני",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "שניות שקט להתחלת תמלול מוקדם",
     "earlyTranscriptionTooltip": "התחל לתמלל לפני שסיימת לדבר לחלוטין, מופעל לאחר שניות שקט אלה. מפחית את ההשהיה בין הדיבור לראיית הטקסט הסופי. הגדר ל-0 להשבתה.",
     "realtimeModel": "מודל Realtime",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "מודל Realtime",
     "realtimeModelCaption": "מודל קטן יותר לתצוגה מקדימה חיה",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "זמן מינימלי בין עדכוני תמלול חי. ערכים נמוכים יותר נותנים עדכונים תכופים יותר אך משתמשים ביותר עוצמת עיבוד. הגדל אם אתה חווה גמגומים או שימוש גבוה ב-CPU בזמן הכתבה.",
     "llm": "מודל שפה גדול",
     "deviceAutoLabel": "אוטומטי",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "לכבות תמלול מילה-מילה בזמן אמת?",
+    "realtimeOffWordByWordDescription": "מודל זה מתמלל מילה-מילה בזמן אמת בזמן הדיבור. כיבוי הזמן-אמת מעביר אותו לתמלול רק לאחר שתפסיק לדבר.",
+    "realtimeOffWordByWordConfirm": "כבה"
   },
   "audio": {
     "inputDevice": "מכשיר קלט",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "מיידי",
     "microphoneReleaseSec30": "30 שניות",
     "microphoneReleaseMin1": "דקה",
-    "microphoneReleaseMin5": "5 דקות"
+    "microphoneReleaseMin5": "5 דקות",
+    "devicePriorityHandle": "גרור כדי לשנות סדר עדיפויות"
   },
   "quality": {
     "enableRealtime": "הפעל Realtime",
@@ -717,7 +766,8 @@
     "waiting": "ממתין לדיבור...",
     "serverOffline": "השרת לא מקוון",
     "noAudioDetected": "(לא זוהה שמע)",
-    "transcriptionFailed": "(תמלול נכשל)"
+    "transcriptionFailed": "(תמלול נכשל)",
+    "offlineNoLocalModel": "אין אינטרנט · אין מודל מקומי"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "התקן בכל זאת",
     "unfitSelectTitle": "להשתמש במודל גדול זה?",
     "unfitSelectDescription": "\"{model}\" גדול יותר ממה שהחומרה שלך יכולה להריץ בנוחות (~{required} נדרש, {available} זמין). הוא עלול לפעול לאט מאוד או להיכשל בטעינה. להשתמש בו בכל זאת?",
-    "unfitSelectAnyway": "השתמש בכל זאת"
+    "unfitSelectAnyway": "השתמש בכל זאת",
+    "dictionaryAutoAddLiteModel": "לא זמין במודלים קלים — עבור למודל גדול יותר כדי להוסיף תיקוני מילון אוטומטית."
   },
   "tts": {
     "title": "טקסט לדיבור",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "הוסף ואמת מפתח API של ElevenLabs באינטגרציות לשימוש בקולות ענן.",
     "cloudLoadingVoices": "טוען קולות…",
     "cloudNoVoices": "לא נמצאו קולות עבור חשבון ElevenLabs זה.",
-    "cloudError": "לא ניתן היה לטעון קולות ElevenLabs."
+    "cloudError": "לא ניתן היה לטעון קולות ElevenLabs.",
+    "voiceDesignLabel": "תיאור קול",
+    "voiceDesignTooltip": "תאר במילים את הקול הרצוי — גוון, גיל, מבטא, רגש — והמודל יסנתז קול תואם במקום לבחור מבנק קולות מוגדר מראש.",
+    "voiceDesignButtonPlaceholder": "תיאור קול",
+    "voiceDesignDialogTitle": "תיאור קול",
+    "voiceDesignDialogDescription": "תאר את הקול במשפט או שניים. השאר ריק כדי להשתמש בקול ברירת המחדל של המודל.",
+    "voiceDesignPromptLabel": "תיאור הקול",
+    "voiceDesignPromptPlaceholder": "לדוגמה: מספר חם בעל קול נמוך עם מבטא בריטי קל",
+    "voiceDesignPromptEmptyHint": "השאר ריק כדי לחזור לקול המובנה של המודל.",
+    "voiceDesignCancel": "ביטול",
+    "voiceDesignSave": "שמירה",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "משהו השתבש",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "הוגבל קצב על ידי {provider}",
     "toastRateLimitedRetry": "נסה שוב בעוד {seconds} שניות",
     "toastProviderError": "שגיאת STT של {provider}: {message}",
-    "openIntegrations": "פתח אינטגרציות"
+    "openIntegrations": "פתח אינטגרציות",
+    "toastTtsOfflineNoLocal": "אין אינטרנט ואין קול מקומי מותקן — ההקראה אינה זמינה."
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "קל",
+    "liteTierTip": "גרסה קטנה ומהירה יותר עם דיוק מופחת — מתאימה למשימות מהירות בחומרה מוגבלת."
   },
   "dataGrid": {
     "addRow": "Add row",

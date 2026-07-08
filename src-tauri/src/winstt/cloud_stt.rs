@@ -153,7 +153,20 @@ pub struct CloudTranscription {
     pub text: String,
     pub language: Option<String>,
     pub duration_seconds: Option<f64>,
+    /// What this upload cost, in USD. OpenRouter reports the exact billed
+    /// amount in the response (`usage.cost`, requested via `usage.include`);
+    /// ElevenLabs reports nothing, so its value is estimated from the billed
+    /// audio duration × the published Scribe rate and flagged as such.
+    pub cost_usd: Option<f64>,
+    /// `true` when `cost_usd` is a client-side estimate rather than a
+    /// provider-billed amount.
+    pub cost_is_estimate: bool,
 }
+
+/// Published ElevenLabs Scribe API rate in USD per hour of billed audio.
+/// ElevenLabs bills in plan credits and returns no per-request cost, so this
+/// is the best-effort dollar conversion used for the History estimate.
+pub const ELEVENLABS_SCRIBE_USD_PER_HOUR: f64 = 0.40;
 
 /// Provider hard limits (uncompressed audio BYTES). Bail BEFORE shipping
 /// bytes. Mirrors PROVIDER_AUDIO_LIMIT_BYTES.
@@ -194,6 +207,19 @@ pub fn parse_retry_after(value: Option<&str>) -> Option<f64> {
     }
 }
 
+/// Typed ElevenLabs `{"detail":{"status"}}` error envelope (the object-shaped
+/// variant — string/array-shaped `detail` bodies fail the parse, which reads
+/// the same as "no status", matching the old `Value` walk).
+#[derive(Debug, serde::Deserialize)]
+struct ElevenLabsErrorBody {
+    detail: Option<ElevenLabsErrorDetail>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ElevenLabsErrorDetail {
+    status: Option<String>,
+}
+
 /// True when an ElevenLabs 401 body signals a valid-but-scoped key (status
 /// `missing_permissions` inside `detail`). Mirrors isElevenLabsScopedKeyValid:
 /// the credential is still valid for what it IS scoped to, so verify/auth
@@ -202,15 +228,11 @@ pub fn is_elevenlabs_scoped_key_valid(status: u16, body: &str) -> bool {
     if status != 401 {
         return false;
     }
-    serde_json::from_str::<serde_json::Value>(body)
+    serde_json::from_str::<ElevenLabsErrorBody>(body)
         .ok()
-        .and_then(|v| {
-            v.get("detail")
-                .and_then(|d| d.get("status"))
-                .and_then(|s| s.as_str())
-                .map(|s| s == "missing_permissions")
-        })
-        .unwrap_or(false)
+        .and_then(|body| body.detail)
+        .and_then(|detail| detail.status)
+        .is_some_and(|detail_status| detail_status == "missing_permissions")
 }
 
 /// Classify a failed HTTP response (status + body + headers) into a typed
@@ -388,6 +410,31 @@ fn connectivity_watch_registry() -> &'static Mutex<HashSet<&'static str>> {
     ACTIVE.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// Whether we last saw `provider` as OFFLINE — i.e. a network/timeout cloud failure
+/// registered a connectivity watch for it that hasn't yet observed the host come back.
+///
+/// `emit_cloud_failure` inserts the provider into the watch registry SYNCHRONOUSLY (before
+/// spawning the poll) for the `Network`/`Timeout` codes only, and `trigger_connectivity_watch`
+/// removes it once any HTTP response is reachable again. So this reads TRUE exactly while the
+/// provider is believed unreachable — the cheap, probe-free offline signal the record-start gate
+/// and the salvage path branch on (auth/rate-limit/provider errors never register a watch, so they
+/// never look "offline"). It's a best-effort hint, not a fresh probe: the FIRST offline attempt
+/// arms the watch (so it still reads online until that first failure lands).
+pub fn provider_appears_offline(provider: CloudSttProvider) -> bool {
+    connectivity_watch_registry()
+        .lock()
+        .map(|active| active.contains(provider.id()))
+        .unwrap_or(false)
+}
+
+/// Whether ANY cloud provider is currently believed offline (any active connectivity watch).
+pub fn any_cloud_provider_offline() -> bool {
+    connectivity_watch_registry()
+        .lock()
+        .map(|active| !active.is_empty())
+        .unwrap_or(false)
+}
+
 /// Trigger-based provider connectivity monitor. It starts only after a
 /// network-like cloud failure, polls the provider host briefly, and emits an
 /// online event once any HTTP response is reachable again. HTTP 4xx still means
@@ -415,15 +462,13 @@ pub fn trigger_connectivity_watch(app: &AppHandle, provider: CloudSttProvider) {
             }),
         );
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .expect("reqwest TLS init");
+        let client = crate::winstt::net::http_client();
         let mut restored = false;
         for _ in 0..24 {
             tokio::time::sleep(Duration::from_secs(5)).await;
             if client
                 .get(connectivity_probe_url(provider))
+                .timeout(Duration::from_secs(5))
                 .send()
                 .await
                 .is_ok()
@@ -620,40 +665,67 @@ pub fn samples_to_wav_bytes(samples: &[f32]) -> Result<Vec<u8>, CloudSttError> {
     Ok(cursor.into_inner())
 }
 
+/// Typed union of the provider transcription response shapes. OpenAI
+/// verbose_json: { text, language, duration }. ElevenLabs: { text,
+/// language_code?, ... }. OpenRouter: { text, usage: { seconds, ... } }.
+/// Unknown fields are ignored; every field is optional so a minimal `{ text }`
+/// body still parses.
+#[derive(Debug, Default, serde::Deserialize)]
+struct TranscriptionResponse {
+    #[serde(default)]
+    text: String,
+    language: Option<String>,
+    language_code: Option<String>,
+    duration: Option<f64>,
+    usage: Option<TranscriptionUsage>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TranscriptionUsage {
+    seconds: Option<f64>,
+    /// Exact billed USD amount — populated by OpenRouter when the request opts
+    /// into usage accounting (`"usage": {"include": true}`).
+    cost: Option<f64>,
+}
+
 /// Parse a provider transcription JSON body into the common payload.
-/// OpenAI verbose_json: { text, language, duration }. ElevenLabs:
-/// { text, language_code?, ... }. OpenRouter: { text, usage: { seconds, ... } }.
 /// Mirrors buildTranscribeResult.
 pub fn parse_transcription_json(
     provider: CloudSttProvider,
     json: &serde_json::Value,
 ) -> CloudTranscription {
-    let text = json
-        .get("text")
-        .and_then(|t| t.as_str())
-        .unwrap_or_default()
-        .to_string();
+    let response: TranscriptionResponse = serde_json::from_value(json.clone()).unwrap_or_default();
     let language = match provider {
         // OpenRouter's dedicated endpoint returns only text + usage; no language
         // field is documented, so this is best-effort and usually None.
-        CloudSttProvider::OpenRouter => json.get("language").and_then(|l| l.as_str()),
-        CloudSttProvider::ElevenLabs => json
-            .get("language_code")
-            .or_else(|| json.get("language"))
-            .and_then(|l| l.as_str()),
-    }
-    .map(str::to_string);
-    let duration_seconds = match provider {
-        CloudSttProvider::OpenRouter => json
-            .get("usage")
-            .and_then(|u| u.get("seconds"))
-            .and_then(|d| d.as_f64()),
-        _ => json.get("duration").and_then(|d| d.as_f64()),
+        CloudSttProvider::OpenRouter => response.language,
+        CloudSttProvider::ElevenLabs => response.language_code.or(response.language),
+    };
+    let (duration_seconds, cost_usd, cost_is_estimate) = match provider {
+        CloudSttProvider::OpenRouter => {
+            let usage = response.usage;
+            (
+                usage.as_ref().and_then(|usage| usage.seconds),
+                usage.as_ref().and_then(|usage| usage.cost),
+                false,
+            )
+        }
+        CloudSttProvider::ElevenLabs => {
+            // No billed amount in the response; estimate from the billed audio
+            // duration × the published Scribe hourly rate.
+            let cost = response
+                .duration
+                .filter(|s| s.is_finite() && *s > 0.0)
+                .map(|s| s / 3600.0 * ELEVENLABS_SCRIBE_USD_PER_HOUR);
+            (response.duration, cost, true)
+        }
     };
     CloudTranscription {
-        text,
+        text: response.text,
         language,
         duration_seconds,
+        cost_usd,
+        cost_is_estimate,
     }
 }
 
@@ -911,6 +983,37 @@ mod tests {
         assert_eq!(out.text, "hello from openrouter");
         assert_eq!(out.duration_seconds, Some(9.2));
         assert_eq!(out.language, None);
+        // No usage-accounting cost in the body → no cost, never an estimate.
+        assert_eq!(out.cost_usd, None);
+        assert!(!out.cost_is_estimate);
+    }
+
+    #[test]
+    fn parse_openrouter_billed_cost_is_exact() {
+        // With `usage: {include: true}` in the request, OpenRouter returns the
+        // exact billed amount alongside the seconds.
+        let json = serde_json::json!({
+            "text": "hello",
+            "usage": { "seconds": 2.0, "cost": 0.0002 }
+        });
+        let out = parse_transcription_json(CloudSttProvider::OpenRouter, &json);
+        assert_eq!(out.cost_usd, Some(0.0002));
+        assert!(!out.cost_is_estimate);
+    }
+
+    #[test]
+    fn parse_elevenlabs_cost_is_estimated_from_duration() {
+        let json = serde_json::json!({ "text": "salut", "duration": 7.2 });
+        let out = parse_transcription_json(CloudSttProvider::ElevenLabs, &json);
+        let expected = 7.2 / 3600.0 * ELEVENLABS_SCRIBE_USD_PER_HOUR;
+        assert!((out.cost_usd.expect("estimate") - expected).abs() < 1e-12);
+        assert!(out.cost_is_estimate);
+        // No duration → no estimate.
+        let none = parse_transcription_json(
+            CloudSttProvider::ElevenLabs,
+            &serde_json::json!({ "text": "salut" }),
+        );
+        assert_eq!(none.cost_usd, None);
     }
 
     #[test]

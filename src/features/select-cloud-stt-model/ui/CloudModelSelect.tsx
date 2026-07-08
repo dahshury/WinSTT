@@ -3,7 +3,7 @@
 import { OpenRouterModelSelector } from "@/widgets/model-picker";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type MouseEvent, useLayoutEffect } from "react";
+import { type MouseEvent, type ReactNode, useLayoutEffect } from "react";
 import { useTranslations } from "use-intl";
 import {
 	CLOUD_CATALOG,
@@ -28,6 +28,8 @@ import { SearchableSelect } from "@/shared/ui/searchable-select";
 import type { SelectOption, SelectOptionGroup } from "@/shared/ui/select";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { MODEL_TRIGGER_GLASS_CLASSES } from "@/shared/ui/switching-trigger";
+import { Tooltip } from "@/shared/ui/tooltip";
+import { CloudSelectedSummary } from "./CloudSelectedSummary";
 
 interface CloudModelSelectProps {
 	disabled?: boolean;
@@ -56,45 +58,45 @@ interface CloudModelSelectProps {
 }
 
 /** Glass-card trigger button for the detached cloud picker — mirrors the STT /
- *  TTS detached triggers. Shows the selected cloud model's label (resolved by
- *  the parent from the live option list) or the placeholder. */
+ *  TTS detached triggers. Renders the selected cloud model as a rich summary
+ *  card (maker logo + name/variant + spec badge, via {@link CloudSelectedSummary})
+ *  so its collapsed state reads exactly like the Ollama and STT pickers. */
 function CloudModelSelectTrigger({
 	disabled,
 	disabledTooltip,
-	label,
-	placeholder,
+	summary,
 	onActivate,
 }: {
 	disabled: boolean;
 	disabledTooltip: string | undefined;
-	label: string | undefined;
-	placeholder: string;
+	summary: ReactNode;
 	onActivate: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
-	return (
+	const trigger = (
 		<Button
 			aria-expanded={false}
 			className={MODEL_TRIGGER_GLASS_CLASSES}
 			data-slot="cloud-model-selector-trigger"
 			disabled={disabled}
 			onClick={onActivate}
-			title={disabled ? disabledTooltip : undefined}
 			type="button"
 		>
-			<span
-				className={
-					label
-						? "flex min-w-0 flex-1 items-center truncate font-medium text-body text-foreground leading-tight tracking-tight"
-						: "flex min-w-0 flex-1 items-center font-medium text-body text-foreground-muted italic tracking-tight"
-				}
-			>
-				{label ?? placeholder}
-			</span>
+			{summary}
 			<HugeiconsIcon
 				className="ms-2 size-4 shrink-0 text-foreground-muted"
 				icon={ArrowDown01Icon}
 			/>
 		</Button>
+	);
+	if (!(disabled && disabledTooltip)) {
+		return trigger;
+	}
+	// A disabled button swallows pointer events, so the tooltip triggers from a
+	// wrapping span instead of the button itself.
+	return (
+		<Tooltip content={disabledTooltip}>
+			<span className="flex w-full min-w-0">{trigger}</span>
+		</Tooltip>
 	);
 }
 
@@ -185,16 +187,21 @@ export function CloudModelSelect({
 	);
 	const openrouterModels = useOpenRouterSttCatalogStore((s) => s.models);
 	const openrouterScanning = useOpenRouterSttCatalogStore((s) => s.isScanning);
+	const openrouterLoaded = useOpenRouterSttCatalogStore((s) => s.isLoaded);
 	const scanOpenrouterModels = useOpenRouterSttCatalogStore(
 		(s) => s.scanModels,
 	);
 
 	const openrouterConfigured = openrouterKey.trim().length > 0;
+	// Pre-warm the live catalog once. The store already guards re-entrancy, but
+	// gating on `isLoaded` stops this effect from re-invoking the scan on every
+	// remount (each settings-panel open / detached-trigger render) — the picker's
+	// own `onOpen` still lazily refreshes if the catalog is somehow still empty.
 	useLayoutEffect(() => {
-		if (!disabled && openrouterConfigured) {
+		if (!disabled && openrouterConfigured && !openrouterLoaded) {
 			fireAndForget(scanOpenrouterModels(), "cloud-stt.scanOpenrouterModels");
 		}
-	}, [disabled, openrouterConfigured, scanOpenrouterModels]);
+	}, [disabled, openrouterConfigured, openrouterLoaded, scanOpenrouterModels]);
 
 	const isProviderConfigured = (provider: CloudSttProvider): boolean =>
 		provider === "openrouter"
@@ -256,7 +263,7 @@ export function CloudModelSelect({
 	const effectiveSelectedId = hasValidSelection
 		? selectedId
 		: (fallbackSelection ?? "");
-	if (!disabled && !hasValidSelection && fallbackSelection) {
+	if (!(disabled || hasValidSelection) && fallbackSelection) {
 		queueMicrotask(() => {
 			onSelect(fallbackSelection);
 		});
@@ -283,17 +290,26 @@ export function CloudModelSelect({
 				</div>
 			);
 		}
+		const configureKey = (
+			<Button
+				className="self-start text-warning text-xs underline-offset-2 hover:underline"
+				disabled={disabled}
+				onClick={windowOpenSettings}
+				type="button"
+			>
+				{t("configureKey")} →
+			</Button>
+		);
 		return (
 			<div className="flex flex-col gap-2">
-				<Button
-					className="self-start text-warning text-xs underline-offset-2 hover:underline"
-					disabled={disabled}
-					onClick={windowOpenSettings}
-					title={disabled ? disabledTooltip : undefined}
-					type="button"
-				>
-					{t("configureKey")} →
-				</Button>
+				{disabled && disabledTooltip ? (
+					// Disabled buttons swallow pointer events — trigger from a wrapper.
+					<Tooltip content={disabledTooltip}>
+						<span className="inline-flex self-start">{configureKey}</span>
+					</Tooltip>
+				) : (
+					configureKey
+				)}
 			</div>
 		);
 	}
@@ -301,17 +317,21 @@ export function CloudModelSelect({
 	// Detached-open mode (Settings panel): render a trigger button that opens the
 	// floating cloud picker window instead of the inline combobox/picker.
 	if (onOpenDetached) {
-		const selectedOption = options.find((o) => o.id === effectiveSelectedId);
 		return (
 			<div className="flex flex-col gap-2">
 				<CloudModelSelectTrigger
 					disabled={disabled}
 					disabledTooltip={disabledTooltip}
-					label={selectedOption?.label}
 					onActivate={(event) =>
 						onOpenDetached(event.currentTarget.getBoundingClientRect())
 					}
-					placeholder={t("cloudModels")}
+					summary={
+						<CloudSelectedSummary
+							models={openrouterPickerModels}
+							placeholder={t("cloudModels")}
+							selectedId={effectiveSelectedId}
+						/>
+					}
 				/>
 				<span className="text-2xs text-foreground-muted">
 					{t("cloudHelper")}

@@ -1,8 +1,17 @@
 "use client";
 
 import { Combobox } from "@base-ui/react/combobox";
-import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import {
+	ArrowDown01Icon,
+	BinaryCodeIcon,
+	Brain01Icon,
+	CodeIcon,
+	GpuIcon,
+	Image01Icon,
+	Mic01Icon,
+	Wrench01Icon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, MouseEvent, ReactNode } from "react";
 import type { OllamaModel } from "@/shared/api/models";
 import { Button } from "@/shared/ui/button";
@@ -14,31 +23,187 @@ import {
 	SwitchingFromToRow,
 	SwitchingPill,
 } from "@/shared/ui/switching-trigger";
-import { TruncatedText } from "../../ui/TruncatedText";
 import {
+	SelectedModelSummary,
+	type SelectedModelMetaItem,
+} from "../../ui/SelectedModelSummary";
+import {
+	formatOllamaDisplayNameParts,
 	formatOllamaDisplayName,
+	formatOllamaSize,
 	getOllamaFamily,
 } from "../lib/family-helpers";
-import { InstalledCapabilityBadges, PublisherChip } from "./OllamaModelChips";
-import type { TriggerPullSummary } from "./ollama-selector-types";
+import {
+	normalizedCapabilitySet,
+	supportsOllamaToolCalling,
+	visibleCapabilities,
+} from "../lib/ollama-description-helpers";
+import { PublisherChip } from "./OllamaModelChips";
+import type {
+	OllamaFitInfo,
+	TriggerPullSummary,
+} from "./ollama-selector-types";
 
 // ── Trigger ───────────────────────────────────────────────────────────
 
-function SelectedTriggerContent({ model }: { model: OllamaModel }) {
+function normalizeOllamaMetaToken(
+	value: string | null | undefined,
+): string | null {
+	const trimmed = value?.trim();
+	return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveOllamaMemoryBytes(
+	model: OllamaModel,
+	getFit: ((sizeBytes: number) => OllamaFitInfo) | undefined,
+): { bytes: number | null; description: string } {
+	const modelSize =
+		typeof model.size === "number" && model.size > 0 ? model.size : null;
+	if (modelSize === null) {
+		return {
+			bytes: null,
+			description:
+				"Ollama did not report enough local size data to estimate VRAM usage.",
+		};
+	}
+	const fit = getFit?.(modelSize);
+	if (fit && fit.requiredBytes > 0) {
+		return {
+			bytes: fit.requiredBytes,
+			description:
+				"Estimated runtime VRAM usage, including Ollama's loading headroom.",
+		};
+	}
+	return {
+		bytes: modelSize,
+		description:
+			"Estimated from the installed model size because live fit data is unavailable.",
+	};
+}
+
+function ollamaCapabilityIcon(label: string): IconSvgElement {
+	switch (label.toLowerCase()) {
+		case "vision":
+			return Image01Icon;
+		case "audio":
+			return Mic01Icon;
+		case "fill-in-middle":
+			return CodeIcon;
+		default:
+			return BinaryCodeIcon;
+	}
+}
+
+/** Alternate the capability glyphs between the two cool accents so a row of
+ *  them reads as distinct facts rather than one flat block. */
+function ollamaCapabilityTone(label: string): "accent" | "teal" {
+	switch (label.toLowerCase()) {
+		case "audio":
+		case "fill-in-middle":
+			return "teal";
+		default:
+			return "accent";
+	}
+}
+
+/** Icon-only capability segments (tools / reasoning / vision / audio / …) folded
+ *  into the same connected spec badge as the quant + memory facts, so they read
+ *  as one badge at a uniform height instead of a separate, smaller chip cluster. */
+function ollamaCapabilityMeta(
+	rawCapabilities: readonly string[] | null | undefined,
+): SelectedModelMetaItem[] {
+	const capabilities = rawCapabilities ?? undefined;
+	const items: SelectedModelMetaItem[] = [];
+	if (supportsOllamaToolCalling(capabilities)) {
+		items.push({
+			key: "cap-tools",
+			label: "",
+			icon: Wrench01Icon,
+			tone: "accent",
+			title: "Tools",
+			description: "Supports function / tool calling.",
+		});
+	}
+	if (normalizedCapabilitySet(capabilities).has("thinking")) {
+		items.push({
+			key: "cap-thinking",
+			label: "",
+			icon: Brain01Icon,
+			tone: "teal",
+			title: "Reasoning",
+			description: "Supports step-by-step reasoning.",
+		});
+	}
+	for (const label of visibleCapabilities(capabilities, {
+		excludeTools: true,
+	})) {
+		if (label.toLowerCase() === "thinking") {
+			continue;
+		}
+		items.push({
+			key: `cap-${label}`,
+			label: "",
+			icon: ollamaCapabilityIcon(label),
+			tone: ollamaCapabilityTone(label),
+			title: label.charAt(0).toUpperCase() + label.slice(1),
+			description: "Model capability.",
+		});
+	}
+	return items;
+}
+
+function selectedOllamaMeta(
+	model: OllamaModel,
+	getFit: ((sizeBytes: number) => OllamaFitInfo) | undefined,
+): SelectedModelMetaItem[] {
+	const parts = formatOllamaDisplayNameParts(model.name);
+	const quantization = normalizeOllamaMetaToken(
+		model.details?.quantizationLevel ?? parts.quantization,
+	);
+	const memory = resolveOllamaMemoryBytes(model, getFit);
+	const memoryLabel =
+		memory.bytes === null ? null : formatOllamaSize(memory.bytes);
+	const items: SelectedModelMetaItem[] = [];
+	if (quantization) {
+		items.push({
+			key: "quant",
+			label: quantization,
+			icon: BinaryCodeIcon,
+			tone: "warning",
+			title: "Quantization",
+			description: `Selected Ollama quantization: ${quantization}.`,
+		});
+	}
+	if (memoryLabel && memoryLabel !== "—") {
+		items.push({
+			key: "memory",
+			label: memoryLabel,
+			icon: GpuIcon,
+			tone: "success",
+			title: "Estimated VRAM usage",
+			description: memory.description,
+		});
+	}
+	items.push(...ollamaCapabilityMeta(model.capabilities));
+	return items;
+}
+
+function SelectedTriggerContent({
+	model,
+	getFit,
+}: {
+	getFit: ((sizeBytes: number) => OllamaFitInfo) | undefined;
+	model: OllamaModel;
+}) {
 	const family = getOllamaFamily(model);
+	const parts = formatOllamaDisplayNameParts(model.name);
 	return (
-		<div className="flex min-w-0 flex-1 items-center gap-2">
-			<PublisherChip family={family} />
-			<TruncatedText
-				className="flex-1 font-medium text-foreground"
-				text={formatOllamaDisplayName(model.name)}
-			/>
-			{model.capabilities?.length ? (
-				<div className="flex shrink-0 items-center gap-1">
-					<InstalledCapabilityBadges capabilities={model.capabilities} />
-				</div>
-			) : null}
-		</div>
+		<SelectedModelSummary
+			leading={<PublisherChip family={family} />}
+			meta={selectedOllamaMeta(model, getFit)}
+			metaPlacement="right"
+			name={parts}
+		/>
 	);
 }
 
@@ -111,6 +276,7 @@ interface OllamaTriggerProps {
 	disabled: boolean;
 	fromModel: OllamaModel | undefined;
 	fromName: string | undefined;
+	getFit?: ((sizeBytes: number) => OllamaFitInfo) | undefined;
 	isLoading: boolean;
 	isSwitching: boolean;
 	placeholder: string;
@@ -174,7 +340,9 @@ function OllamaBody({
 	// trigger "losing" its content. Keep showing the selection; the scan is
 	// silent. The loading placeholder only surfaces when nothing is picked yet.
 	if (props.selected) {
-		return <SelectedTriggerContent model={props.selected} />;
+		return (
+			<SelectedTriggerContent getFit={props.getFit} model={props.selected} />
+		);
 	}
 	if (props.isLoading) {
 		return (

@@ -28,6 +28,7 @@ export function CommandInput({
 		<div
 			className="flex items-center gap-2 border-divider border-b px-2.5"
 			// eslint-disable-next-line react-doctor/no-unknown-property -- cmdk targets this exact attribute via its [cmdk-input-wrapper] CSS selectors; renaming/removing it breaks Command input styling
+			// biome-ignore lint/suspicious/noUnknownAttribute: cmdk styles the input wrapper via its [cmdk-input-wrapper] selector; this attribute is required by the library.
 			cmdk-input-wrapper=""
 		>
 			<SearchIcon className="size-4 shrink-0 text-foreground-muted" />

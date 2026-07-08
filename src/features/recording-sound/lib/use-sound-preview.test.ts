@@ -104,7 +104,7 @@ function installStub(): void {
 			if (channel === IPC.SOUND_LIBRARY_READ_FILE) {
 				return readBytes;
 			}
-			return;
+			return undefined;
 		},
 	};
 }

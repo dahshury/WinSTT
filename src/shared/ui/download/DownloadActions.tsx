@@ -14,6 +14,7 @@ import {
 } from "motion/react";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
+import { springs } from "@/shared/lib/springs";
 import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { DownloadActionButton } from "./DownloadActionButton";
@@ -172,18 +173,14 @@ export function DownloadActions({
 									opacity: 0,
 									y: -3,
 									filter: "blur(2px)",
-									transition: { duration: 0.12 },
+									transition: springs.moderate.exit,
 								}
 					}
 					initial={
 						reduceMotion ? false : { opacity: 0, y: 3, filter: "blur(2px)" }
 					}
 					key={phase}
-					transition={
-						reduceMotion
-							? { duration: 0 }
-							: { duration: 0.16, ease: [0.22, 1, 0.36, 1] }
-					}
+					transition={reduceMotion ? { duration: 0 } : springs.moderate}
 				>
 					{content}
 				</m.div>

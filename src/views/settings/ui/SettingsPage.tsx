@@ -17,13 +17,14 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
 	lazy,
+	type ReactNode,
+	type RefObject,
 	Suspense,
 	useCallback,
 	useDeferredValue,
 	useEffect,
 	useRef,
 	useState,
-	type ReactNode,
 } from "react";
 import { useTranslations } from "use-intl";
 import {
@@ -39,11 +40,19 @@ import {
 	type SettingsHydrationStatus,
 	useSettingsHydrationStore,
 } from "@/features/update-settings";
-import { settingsWindowReady, windowCloseSelf } from "@/shared/api/ipc-client";
+import { IPC } from "@/shared/api/ipc-channels";
+import {
+	ipcOn,
+	settingsWindowReady,
+	windowCloseSelf,
+} from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { Elevated, SurfaceProvider } from "@/shared/lib/surface";
 import { useTouchActivation } from "@/shared/lib/use-touch-activation";
-import { useEscapeToClose } from "@/shared/lib/window-effects";
+import {
+	useEscapeToClose,
+	useTransparentBody,
+} from "@/shared/lib/window-effects";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { useEncoderModel } from "@/widgets/dictionary-settings";
 import { useSettingsSearchKeywords } from "../lib/settings-search";
@@ -149,7 +158,7 @@ const ProcessingTab = lazy(async () => {
 		loadProcessingExtras(),
 	]);
 	return {
-		default: function ProcessingTab() {
+		default() {
 			return (
 				<>
 					<LlmSettingsPanel />
@@ -163,7 +172,7 @@ const ProcessingTab = lazy(async () => {
 const OutputTab = lazy(async () => {
 	const { OutputSettingsPanel, PlaybackSettingsPanel } = await loadOutput();
 	return {
-		default: function OutputTab() {
+		default() {
 			return (
 				<>
 					<OutputSettingsPanel />
@@ -203,7 +212,7 @@ function VocabularyTab(): ReactNode {
 	// The non-LLM path can act only when the feature is on AND the model is present.
 	const encoderActive = encoderEnabled && model.state === "present";
 	const disabled =
-		!llmCleanupEnabled && !encoderActive && model.state !== "loading";
+		!(llmCleanupEnabled || encoderActive) && model.state !== "loading";
 	return (
 		<>
 			{llmCleanupEnabled ? null : (
@@ -299,6 +308,16 @@ function SettingsReadySignal() {
 	return null;
 }
 
+/** Mounts only once its sibling lazy panel has resolved (Suspense reveals all
+ *  children together), signalling that real tab content is in the DOM — the
+ *  reveal gate for the transparent settings window. */
+function PanelMountBeacon({ onMounted }: { onMounted: () => void }) {
+	useEffect(() => {
+		onMounted();
+	}, [onMounted]);
+	return null;
+}
+
 function SettingsPanelFallback() {
 	return (
 		<div
@@ -334,7 +353,36 @@ function SettingsHydrationPanel({
 	);
 }
 
-type SettingsWindowMotionPhase = "closed" | "open" | "closing";
+type SettingsWindowMotionPhase = "closed" | "resetting" | "open" | "closing";
+
+// How long before the fade-out's END the backend hide is requested. By then the
+// close ease (--modal-ease, a strong ease-out) has already dropped the content
+// to near-zero opacity, and the head start absorbs the IPC round-trip + OS hide
+// latency that otherwise held a fully-faded (dark) window on screen for a few
+// frames after the animation finished.
+const CLOSE_HIDE_OVERLAP_MS = 40;
+
+// After a backend "window shown" replay, ignore the window focus/visibility
+// fallbacks for this long — they can fire a few ms later on the same show and
+// would restart the enter animation mid-flight.
+const SHOWN_REPLAY_SUPPRESS_MS = 500;
+
+// If the content-ready gate hasn't opened this long after a reveal was
+// requested, reveal anyway: a broken panel chunk or a hydration stall must
+// degrade to "window appears with whatever is there", never "window never
+// appears" (the OS window is transparent, so until the reveal the user sees
+// NOTHING — there is no frame to stare at, but there must be an upper bound).
+const REVEAL_FAILSAFE_MS = 1500;
+
+// An enter animation that started less than this long ago is "in flight": the
+// shown-event replay must yield to it instead of restarting it. This is the
+// FIRST-OPEN case: WebView2 freezes rAFs while the prewarmed window is hidden,
+// so the prewarm-time reveal's rAF chain thaws exactly at show and plays the
+// enter animation at the right moment — replaying on top of it snapped the
+// half-faded card back to invisible and faded it in again (a visible double
+// animation / flicker). Comfortably longer than --modal-open-dur (240ms) plus
+// the show→event latency, and far shorter than any real prewarm-to-open gap.
+const ENTER_ANIMATION_FRESH_MS = 600;
 
 function modalCloseDurationMs(): number {
 	const reducedMotion = window.matchMedia?.(
@@ -362,20 +410,32 @@ function settingsMotionClassName(phase: SettingsWindowMotionPhase): string {
 			return "is-open";
 		case "closing":
 			return "is-closing";
+		case "resetting":
+			return "is-resetting";
 		case "closed":
 			return "";
 	}
 }
 
-function useSettingsWindowMotion(onClosed: () => void): {
+function useSettingsWindowMotion(
+	onClosed: () => void,
+	contentReady: boolean,
+): {
 	motionClassName: string;
 	requestClose: () => void;
+	shellRef: RefObject<HTMLDivElement | null>;
 } {
+	const shellRef = useRef<HTMLDivElement | null>(null);
 	const [phase, setPhase] = useState<SettingsWindowMotionPhase>("closed");
 	const phaseRef = useRef<SettingsWindowMotionPhase>("closed");
 	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const openFrameRef = useRef<number | null>(null);
 	const waitingForReopenRef = useRef(false);
+	const lastShownReplayRef = useRef(Number.NEGATIVE_INFINITY);
+	const enterStartedAtRef = useRef(Number.NEGATIVE_INFINITY);
+	const contentReadyRef = useRef(contentReady);
+	const pendingRevealRef = useRef(false);
+	const failsafeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const setMotionPhase = useCallback((next: SettingsWindowMotionPhase) => {
 		phaseRef.current = next;
@@ -399,32 +459,137 @@ function useSettingsWindowMotion(onClosed: () => void): {
 	const playOpen = useCallback(() => {
 		clearCloseTimer();
 		clearOpenFrame();
-		setMotionPhase("closed");
+		// "resetting" (not "closed") commits the start state with transitions
+		// DISABLED: replaying from a visually-open shell must snap to opacity 0,
+		// not start a reverse fade that the `is-open` re-add would catch mid-dip.
+		setMotionPhase("resetting");
 		openFrameRef.current = requestAnimationFrame(() => {
-			openFrameRef.current = null;
-			setMotionPhase("open");
+			// Force a style flush of the committed start state. A webview that was
+			// suspended while hidden otherwise coalesces the resetting→open class
+			// flip into a single recalc after it resumes, sees no style change,
+			// and SKIPS the transition — the content pops in unanimated.
+			shellRef.current?.getBoundingClientRect();
+			openFrameRef.current = requestAnimationFrame(() => {
+				openFrameRef.current = null;
+				// Stamped at rAF EXECUTION time: if the chain was frozen while the
+				// window was hidden, this reads as "just now" at show — exactly the
+				// signal the shown-event handler needs to leave it alone.
+				enterStartedAtRef.current = performance.now();
+				setMotionPhase("open");
+			});
 		});
 	}, [clearCloseTimer, clearOpenFrame, setMotionPhase]);
 
+	const clearRevealFailsafe = useCallback(() => {
+		if (failsafeTimerRef.current !== null) {
+			clearTimeout(failsafeTimerRef.current);
+			failsafeTimerRef.current = null;
+		}
+	}, []);
+
+	// Content-ready gate in front of playOpen. The OS window is TRANSPARENT, so
+	// nothing is visible until the enter animation runs — deferring the reveal
+	// until the active tab's panel has actually mounted guarantees the window
+	// never appears without its content. The failsafe bounds the wait.
+	const requestReveal = useCallback(() => {
+		if (contentReadyRef.current) {
+			pendingRevealRef.current = false;
+			clearRevealFailsafe();
+			playOpen();
+			return;
+		}
+		pendingRevealRef.current = true;
+		if (failsafeTimerRef.current === null) {
+			failsafeTimerRef.current = setTimeout(() => {
+				failsafeTimerRef.current = null;
+				if (pendingRevealRef.current) {
+					pendingRevealRef.current = false;
+					playOpen();
+				}
+			}, REVEAL_FAILSAFE_MS);
+		}
+	}, [clearRevealFailsafe, playOpen]);
+
 	useEffect(() => {
-		playOpen();
+		contentReadyRef.current = contentReady;
+		if (contentReady && pendingRevealRef.current) {
+			pendingRevealRef.current = false;
+			clearRevealFailsafe();
+			playOpen();
+		}
+	}, [clearRevealFailsafe, contentReady, playOpen]);
+
+	useEffect(() => {
+		requestReveal();
 		return () => {
 			clearCloseTimer();
 			clearOpenFrame();
+			clearRevealFailsafe();
 		};
-	}, [clearCloseTimer, clearOpenFrame, playOpen]);
+	}, [clearCloseTimer, clearOpenFrame, clearRevealFailsafe, requestReveal]);
+
+	// The AUTHORITATIVE replay trigger: Rust emits SETTINGS_WINDOW_SHOWN on
+	// every settings `open_window`, right after show. It fires on every open
+	// path (including ones the renderer never saw close, e.g. a native Alt+F4
+	// hide), so the enter animation replays on every open — the focus/visibility
+	// listeners below are only a fallback for environments without the event.
+	// Payload = whether the window was ALREADY visible when open was invoked:
+	//  - already open and steady → nothing to do (never restart the animation
+	//    over live content);
+	//  - already visible but mid-close-fade → playOpen cancels the pending
+	//    close timer (the hide would otherwise land right after the re-open and
+	//    vanish the window the user just asked for) and repairs to open;
+	//  - was hidden → full enter replay.
+	useEffect(
+		() =>
+			ipcOn(IPC.SETTINGS_WINDOW_SHOWN, (wasVisible) => {
+				lastShownReplayRef.current = performance.now();
+				waitingForReopenRef.current = false;
+				if (wasVisible === true && phaseRef.current === "open") {
+					return;
+				}
+				// An enter animation is already pending or just started — leave it
+				// alone. This is the FIRST open: the prewarm reveal's rAF chain was
+				// frozen while the window was hidden and thaws exactly at show,
+				// playing the enter animation at the right moment; replaying on top
+				// of it restarts the fade mid-flight (a visible double-animation
+				// flicker). A completed enter older than the freshness window (e.g.
+				// prewarm finished while the webview kept rendering, or a stale
+				// `is-open` after a native-only close) still replays.
+				const enterInFlight =
+					openFrameRef.current !== null ||
+					(phaseRef.current === "open" &&
+						performance.now() - enterStartedAtRef.current <
+							ENTER_ANIMATION_FRESH_MS);
+				if (enterInFlight) {
+					return;
+				}
+				requestReveal();
+			}),
+		[requestReveal],
+	);
 
 	useEffect(() => {
 		const markClosed = () => {
 			waitingForReopenRef.current = true;
+			pendingRevealRef.current = false;
+			clearRevealFailsafe();
 			clearCloseTimer();
 			clearOpenFrame();
 			setMotionPhase("closed");
 		};
 		const maybeReplayOpen = () => {
+			// The backend shown-event already (re)started the animation for this
+			// show; a trailing focus/visibility echo must not restart it.
+			if (
+				performance.now() - lastShownReplayRef.current <
+				SHOWN_REPLAY_SUPPRESS_MS
+			) {
+				return;
+			}
 			if (waitingForReopenRef.current || phaseRef.current === "closed") {
 				waitingForReopenRef.current = false;
-				playOpen();
+				requestReveal();
 			}
 		};
 		const handleVisibilityChange = () => {
@@ -440,25 +605,41 @@ function useSettingsWindowMotion(onClosed: () => void): {
 			document.removeEventListener("visibilitychange", handleVisibilityChange);
 			window.removeEventListener("focus", maybeReplayOpen);
 		};
-	}, [clearCloseTimer, clearOpenFrame, playOpen, setMotionPhase]);
+	}, [
+		clearCloseTimer,
+		clearOpenFrame,
+		clearRevealFailsafe,
+		requestReveal,
+		setMotionPhase,
+	]);
 
 	const requestClose = useCallback(() => {
 		if (phaseRef.current === "closing" || phaseRef.current === "closed") {
 			return;
 		}
+		pendingRevealRef.current = false;
+		clearRevealFailsafe();
 		clearOpenFrame();
 		setMotionPhase("closing");
-		closeTimerRef.current = setTimeout(() => {
-			closeTimerRef.current = null;
-			setMotionPhase("closed");
-			waitingForReopenRef.current = true;
-			onClosed();
-		}, modalCloseDurationMs());
-	}, [clearOpenFrame, onClosed, setMotionPhase]);
+		// Request the native hide slightly BEFORE the fade-out completes: the
+		// tail is visually gone already (and the OS window is transparent, so
+		// once opacity hits 0 nothing remains on screen either way), and the
+		// head start absorbs the IPC + OS hide latency.
+		closeTimerRef.current = setTimeout(
+			() => {
+				closeTimerRef.current = null;
+				setMotionPhase("closed");
+				waitingForReopenRef.current = true;
+				onClosed();
+			},
+			Math.max(0, modalCloseDurationMs() - CLOSE_HIDE_OVERLAP_MS),
+		);
+	}, [clearOpenFrame, clearRevealFailsafe, onClosed, setMotionPhase]);
 
 	return {
 		motionClassName: settingsMotionClassName(phase),
 		requestClose,
+		shellRef,
 	};
 }
 
@@ -497,8 +678,20 @@ export function SettingsPage() {
 	// panel on screen while the next one's (prefetched, microtask-fast) chunk
 	// resolves — no blank fallback flash on the swap.
 	const contentTab = useDeferredValue(activeTab);
-	const { motionClassName, requestClose } =
-		useSettingsWindowMotion(windowCloseSelf);
+	// The OS window is fully transparent — html/body must be too, or WebView2
+	// paints an opaque page background behind the rounded card.
+	useTransparentBody();
+	// Reveal gate: the window (= the CSS card) must never become visible before
+	// real tab content is in the DOM. Sticky — panels are kept alive after the
+	// first mount, so later opens are ready by construction.
+	const [panelMounted, setPanelMounted] = useState(false);
+	const markPanelMounted = useCallback(() => setPanelMounted(true), []);
+	const contentReady =
+		(canRenderSettings && panelMounted) || hydrationStatus === "error";
+	const { motionClassName, requestClose, shellRef } = useSettingsWindowMotion(
+		windowCloseSelf,
+		contentReady,
+	);
 	const closeActivation = useTouchActivation(requestClose);
 	useEscapeToClose(requestClose);
 
@@ -623,109 +816,122 @@ export function SettingsPage() {
 
 	return (
 		<SurfaceProvider value={1}>
-			<div
-				className={cn(
-					"t-modal noise-overlay settings-window-shell flex h-dvh min-h-dvh bg-surface-1",
-					motionClassName,
-				)}
-			>
-				{/* Keep the settings shell visible while backend settings hydrate. */}
-				<Tabs.Root
-					className="flex flex-1 overflow-hidden"
-					onValueChange={(v) => setActiveTab(String(v))}
-					orientation="vertical"
-					value={activeTab}
+			{/* Transparent viewport: the OS window is an invisible rect; the p-5
+			    gutter reserves room for the card's shadow. The shell card below IS
+			    the visible "window" — frame and content animate as one unit, so
+			    the window can never appear before (or outlive) its content. */}
+			<div className="flex h-dvh min-h-dvh p-5">
+				<div
+					className={cn(
+						"t-modal noise-overlay settings-window-shell relative flex min-w-0 flex-1 overflow-hidden rounded-[1.35rem] shadow-settings-window ring-1 ring-divider-strong",
+						motionClassName,
+					)}
+					ref={shellRef}
 				>
-					<SettingsSidebar links={links} onPrefetch={prefetchSettingsTab} />
-					{/* Content card — rounded, bordered, and elevated above the shared
+					{/* Keep the settings shell visible while backend settings hydrate. */}
+					<Tabs.Root
+						className="flex flex-1 overflow-hidden"
+						onValueChange={(v) => setActiveTab(String(v))}
+						orientation="vertical"
+						value={activeTab}
+					>
+						<SettingsSidebar links={links} onPrefetch={prefetchSettingsTab} />
+						{/* Content card — rounded, bordered, and elevated above the shared
 						    settings background. */}
-					<div className="settings-content-frame relative min-w-0 flex-1 py-2 pe-2">
-						{/* Drag strip — the thin surface-1 margin above the content card. The
+						<div className="settings-content-frame relative min-w-0 flex-1 py-2 pe-2">
+							{/* Drag strip — the thin surface-1 margin above the content card. The
 							    window is frameless, so this gives the right (content) side a grab
 							    handle that lines up with the sidebar's own top drag strip, making
 							    the whole top edge draggable. */}
-						<div
-							aria-hidden="true"
-							className="titlebar-drag absolute inset-x-0 top-0 z-titlebar h-1.5"
-						/>
-						<Elevated
-							className="settings-content-card relative flex h-full flex-col overflow-hidden rounded-[1.35rem] ring-1 ring-divider-strong"
-							offset={2}
-							shadowLevel={5}
-						>
-							{/* Close button — floats in the top-right corner so it's the only
+							<div
+								aria-hidden="true"
+								className="titlebar-drag absolute inset-x-0 top-0 z-titlebar h-1.5"
+							/>
+							<Elevated
+								className="settings-content-card relative flex h-full flex-col overflow-hidden rounded-[1.35rem] ring-1 ring-divider-strong"
+								offset={2}
+								shadowLevel={5}
+							>
+								{/* Close button — floats in the top-right corner so it's the only
 								    chrome painted over the tab content. There's no full-width header
 								    BAND reserving an empty strip above the content anymore: the
 								    scroll area fills the card to the top and gets a normal symmetric
-								    inset (matching the px/pb below). The button rides its own plain
+								    inset (matching the px/pb below). Scrolled content dissolves at the
+									    card edges instead of hard-clipping: `settings-scroll-edge-fade`
+									    masks the viewport with fade distances equal to its pt/pb
+									    paddings (keep them in sync), so nothing fades at rest but text
+									    melts into the edge while scrolling. The button rides its own plain
 								    client pixels — never inside a `drag` region — so it stays
 								    clickable incl. touch (Tauri #4746). Window-move is handled by the
 								    sidebar wordmark grab handle and the thin surface-1 drag strip
 								    above the card; no title text — the active tab's name lives in the
 								    sidebar rail. Every tab's first section leads with a left-aligned
 								    title, so the corner button never sits over a section's controls. */}
-							<BaseButton
-								aria-label={t("close")}
-								className="titlebar-no-drag group absolute end-1.5 top-1.5 z-titlebar flex size-7 shrink-0 items-center justify-center rounded-full bg-surface-4 text-foreground-muted outline-none transition-colors duration-150 hover:bg-error/85 hover:text-on-error focus-visible:ring-2 focus-visible:ring-accent"
-								type="button"
-								{...closeActivation}
-							>
-								<HugeiconsIcon
-									className="transition-transform duration-150 ease-out group-hover:scale-110"
-									icon={Cancel01Icon}
-									size={15}
-								/>
-							</BaseButton>
-							<ScrollArea
-								className="min-h-0 flex-1"
-								rubberBandOnTouch
-								verticalOnly
-								verticalScrollbarClassName="mb-3 me-1"
-								viewportClassName="px-7 pt-6 pb-5"
-							>
-								{/* Page header — the active tab's name + one-line summary lead
+								<BaseButton
+									aria-label={t("close")}
+									className="titlebar-no-drag group absolute end-1.5 top-1.5 z-titlebar flex size-7 shrink-0 items-center justify-center rounded-full bg-surface-4 text-foreground-muted outline-none transition-colors duration-150 hover:bg-error/85 hover:text-on-error focus-visible:ring-2 focus-visible:ring-accent"
+									type="button"
+									{...closeActivation}
+								>
+									<HugeiconsIcon
+										className="transition-transform duration-150 ease-out group-hover:scale-110"
+										icon={Cancel01Icon}
+										size={15}
+									/>
+								</BaseButton>
+								<ScrollArea
+									className="min-h-0 flex-1"
+									revealScrollbarOnHover={false}
+									rubberBandOnTouch
+									verticalOnly
+									verticalScrollbarClassName="mb-3 me-1"
+									viewportClassName="settings-scroll-edge-fade px-7 pt-6 pb-5"
+								>
+									{/* Page header — the active tab's name + one-line summary lead
 									    the content column, giving each page a clear top-level title
 									    above its section headings (the sidebar rail alone is easy to
 									    lose track of). The title keeps clear of the floating close
 									    button via pe-10. */}
-								{canRenderSettings && contentLink ? (
-									<header className="flex flex-col gap-1.5 pb-0">
-										<h2 className="min-w-0 pe-10 font-semibold text-[22px] text-foreground leading-tight tracking-[-0.02em]">
-											{contentLink.label}
-										</h2>
-										{contentLink.tooltip ? (
-											<p className="max-w-xl text-body-sm text-foreground-muted">
-												{contentLink.tooltip}
-											</p>
-										) : null}
-									</header>
-								) : null}
-								{/* The panel is focusable (tabIndex 0) for a11y; its content is
+									{canRenderSettings && contentLink ? (
+										<header className="titlebar-drag flex flex-col gap-1.5 pb-0">
+											<h2 className="min-w-0 pe-10 font-semibold text-[22px] text-foreground leading-tight tracking-[-0.02em]">
+												{contentLink.label}
+											</h2>
+											{contentLink.tooltip ? (
+												<p className="max-w-xl text-body-sm text-foreground-muted">
+													{contentLink.tooltip}
+												</p>
+											) : null}
+										</header>
+									) : null}
+									{/* The panel is focusable (tabIndex 0) for a11y; its content is
 									    individually focusable, so suppress the UA focus ring that would
 									    otherwise draw a bright rectangle around the whole tab. */}
-								<Tabs.Panel className="outline-none" value={activeTab}>
-									{canRenderSettings ? (
-										<Suspense fallback={<SettingsPanelFallback />}>
-											<SettingsPanelContent tab={contentTab} />
-										</Suspense>
-									) : (
-										<SettingsHydrationPanel
-											error={hydrationError}
-											status={hydrationStatus}
-										/>
-									)}
-								</Tabs.Panel>
-							</ScrollArea>
-						</Elevated>
-					</div>
-				</Tabs.Root>
-				{shouldSignalReady ? <SettingsReadySignal /> : null}
-				{canRenderSettings ? <LlmModelPickerHost /> : null}
-				{canRenderSettings ? (
-					<Suspense fallback={null}>
-						<TtsModelPickerHost />
-					</Suspense>
-				) : null}
+									<Tabs.Panel className="outline-none" value={activeTab}>
+										{canRenderSettings ? (
+											<Suspense fallback={<SettingsPanelFallback />}>
+												<SettingsPanelContent tab={contentTab} />
+												<PanelMountBeacon onMounted={markPanelMounted} />
+											</Suspense>
+										) : (
+											<SettingsHydrationPanel
+												error={hydrationError}
+												status={hydrationStatus}
+											/>
+										)}
+									</Tabs.Panel>
+								</ScrollArea>
+							</Elevated>
+						</div>
+					</Tabs.Root>
+					{shouldSignalReady ? <SettingsReadySignal /> : null}
+					{canRenderSettings ? <LlmModelPickerHost /> : null}
+					{canRenderSettings ? (
+						<Suspense fallback={null}>
+							<TtsModelPickerHost />
+						</Suspense>
+					) : null}
+				</div>
 			</div>
 		</SurfaceProvider>
 	);

@@ -158,8 +158,9 @@ pub const CLOUD_MAX_SPEED: f32 = 1.2;
 pub const MAX_SYNTHESIS_CHARS: usize = 8000;
 
 /// Clamp a local speed request into the generic local range (0.5..2.0).
+/// Non-finite input (NaN propagates through `f32::clamp`) falls back to 1.0.
 pub fn clamp_speed(speed: f32) -> f32 {
-    speed.clamp(MIN_SPEED, MAX_SPEED)
+    clamp_speed_to_range(speed, (MIN_SPEED, MAX_SPEED))
 }
 
 /// Clamp a speed request into a specific engine's `(min, max)` range, guarding
@@ -174,8 +175,10 @@ pub fn clamp_speed_to_range(speed: f32, (min, max): (f32, f32)) -> f32 {
 }
 
 /// Clamp a cloud (ElevenLabs) speed request into the supported range.
+/// Non-finite input falls back to 1.0 — a NaN would otherwise survive
+/// `f32::clamp` and serialize as `null` in the provider request body.
 pub fn clamp_cloud_speed(speed: f32) -> f32 {
-    speed.clamp(CLOUD_MIN_SPEED, CLOUD_MAX_SPEED)
+    clamp_speed_to_range(speed, (CLOUD_MIN_SPEED, CLOUD_MAX_SPEED))
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +223,28 @@ pub trait ChunkSink: Send {
     fn is_cancelled(&self) -> bool;
 }
 
+/// Cloud usage accumulated across one read-aloud session's per-sentence
+/// requests, consumed by the manager to persist the run's History cost row.
+#[derive(Debug, Default, Clone)]
+pub struct TtsSessionUsage {
+    /// Characters synthesized (per-sentence input lengths summed) — the unit
+    /// most TTS providers bill on.
+    pub characters: i64,
+    /// OpenRouter `X-Generation-Id` values, one per completed sentence
+    /// request. Resolved to the exact billed cost via `/generation` after the
+    /// session.
+    pub generation_ids: Vec<String>,
+    /// Estimated USD accumulated by providers that report no billed amount
+    /// (ElevenLabs: characters × published rate).
+    pub estimated_cost_usd: f64,
+}
+
+impl TtsSessionUsage {
+    pub fn is_empty(&self) -> bool {
+        self.characters == 0 && self.generation_ids.is_empty()
+    }
+}
+
 /// The streaming TTS engine port. ONE impl per backend (`KokoroLocalEngine`
 /// local, `ElevenLabsEngine` cloud). Methods are blocking — the host runs them
 /// on a dedicated thread so the UI loop never stalls on download / session create.
@@ -255,6 +280,14 @@ pub trait TtsEngine: Send + Sync {
         };
         sink.push(chunk);
         Ok(())
+    }
+
+    /// Take (and reset) the cloud usage accumulated since the last take. The
+    /// manager calls this once per read-aloud session (the synth lock keeps
+    /// sessions serialized). `None` for local engines — synthesis on the
+    /// user's machine bills nothing.
+    fn take_session_usage(&self) -> Option<TtsSessionUsage> {
+        None
     }
 
     /// The `(min, max)` speed-multiplier range this engine actually supports.

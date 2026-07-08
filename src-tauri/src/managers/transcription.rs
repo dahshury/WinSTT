@@ -171,6 +171,27 @@ pub struct ModelStateEvent {
     pub error: Option<String>,
 }
 
+/// Outcome of one [`TranscriptionManager::warmup`] attempt — lets the swap
+/// orchestrator's [`TranscriptionManager::wait_until_warm`] decide whether the
+/// engine is settled (warm / failed / nothing local) or still in flux (another
+/// warm or a recovery reload in flight) and worth re-checking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SttWarmupOutcome {
+    /// The dummy-silence decode ran and the model is marked warm.
+    Warmed,
+    /// The model was already warm — nothing to do.
+    AlreadyWarm,
+    /// No current model, or nothing local to warm (cloud id / failed load).
+    NothingToWarm,
+    /// Another warmup holds the flag, a real decode holds the engine (that
+    /// decode IS the warm), or a degenerate-decode recovery reload is running —
+    /// the state will settle shortly; re-check.
+    InFlight,
+    /// The dummy decode failed and no recovery is running; waiting longer will
+    /// not make the engine warmer.
+    Failed,
+}
+
 enum LoadedEngine {
     /// WinSTT unified ort-ONNX engine. This is the only local STT execution path; unknown
     /// model ids are rejected before load.

@@ -112,6 +112,10 @@ pub fn capture_selection_text(app: &AppHandle) -> String {
 }
 
 fn capture_via_clipboard(app: &AppHandle) -> TransformCapture {
+    // Full-fidelity snapshot (raw formats on Windows, text+image elsewhere) so a
+    // copied image / file list survives the Ctrl+C sandwich; the plain-text read
+    // below only feeds the change-detection polling.
+    let snapshot = crate::clipboard_snapshot::capture(app);
     let original = read_clipboard(app).unwrap_or_default();
 
     // Simulate Ctrl+C in the focused app. A failure here (no Enigo state) just
@@ -125,7 +129,7 @@ fn capture_via_clipboard(app: &AppHandle) -> TransformCapture {
     // No fresh selection landed in the clipboard — restore whatever was there and
     // report empty (mirrors clipboardCaptureFailed → restoreClipboard → EMPTY).
     if captured == original || captured.trim().is_empty() {
-        restore_clipboard(app, &original);
+        crate::clipboard_snapshot::restore(app, &snapshot);
         return TransformCapture::empty();
     }
 
@@ -133,7 +137,7 @@ fn capture_via_clipboard(app: &AppHandle) -> TransformCapture {
     // (crate::clipboard::paste) runs its OWN clipboard sandwich, so the captured
     // selection never has to live on the clipboard past this point — the user's
     // clipboard is left exactly as it was before the transform.
-    restore_clipboard(app, &original);
+    crate::clipboard_snapshot::restore(app, &snapshot);
     TransformCapture {
         scope: TransformCaptureScope::Selection,
         source: TransformSource::Clipboard,
@@ -215,16 +219,6 @@ fn wait_for_clipboard_change(app: &AppHandle, original: &str) -> String {
 fn read_clipboard(app: &AppHandle) -> Option<String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
     app.clipboard().read_text().ok()
-}
-
-/// Write `original` back to the clipboard if it held something (mirrors
-/// `restoreClipboard` — an empty original is left untouched).
-fn restore_clipboard(app: &AppHandle, original: &str) {
-    if original.is_empty() {
-        return;
-    }
-    use tauri_plugin_clipboard_manager::ClipboardExt;
-    let _ = app.clipboard().write_text(original.to_string());
 }
 
 fn replace_unique_occurrence(haystack: &str, needle: &str, replacement: &str) -> Option<String> {

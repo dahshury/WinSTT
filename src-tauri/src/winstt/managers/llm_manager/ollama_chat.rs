@@ -12,14 +12,20 @@ use crate::winstt::llm::{
 };
 use crate::winstt::ollama_client::{OllamaCapabilities, OllamaModelInfo, PullOutcome};
 
-/// Classify a chat error as "the model failed to LOAD" — the Ollama runner
-/// crashed (`HTTP 5xx` / process `terminated`, e.g. it doesn't fit in VRAM) or
-/// the stream `stalled` with no output. Such a failure will recur on the very
-/// next call, so the caller marks the model crashed and the following dictation
-/// skips it (fails soft INSTANTLY instead of paying the ~16-28s crash again). A
-/// user cancellation or a transient transport blip is NOT a load crash.
+/// Classify a chat error as "the model failed to LOAD / cannot run here" — the
+/// Ollama runner crashed (`HTTP 5xx` / process `terminated`, e.g. it doesn't
+/// fit in VRAM), the stream `stalled` with no output, or the whole request
+/// `timed out` at the 120s ceiling (a CPU-offloaded big model prefilling the
+/// dictation prompt at single-digit tok/s — it will be exactly as slow on the
+/// very next call). Such a failure recurs on the next call, so the caller marks
+/// the model crashed and the following dictation skips it (fails soft INSTANTLY
+/// instead of paying the ceiling again). A user cancellation or a transient
+/// transport blip is NOT a load crash.
 fn ollama_err_is_load_crash(err: &str) -> bool {
-    err.contains("HTTP 5") || err.contains("terminated") || err.contains("stalled")
+    err.contains("HTTP 5")
+        || err.contains("terminated")
+        || err.contains("stalled")
+        || err.contains("timed out")
 }
 
 fn ensure_ollama_stream_has_content(state: &llm::OllamaStreamState) -> Result<(), String> {
@@ -105,7 +111,12 @@ impl LlmManager {
             )
             .await;
         match &result {
-            Ok(_) => self.mark_ollama_model_warm(endpoint, model),
+            Ok(_) => {
+                self.mark_ollama_model_warm(endpoint, model);
+                // This dictation's own prompt is now in llama.cpp's prefix
+                // cache — no redundant warm-up prime needed this residency.
+                self.note_dictation_prompt_cached(endpoint, model);
+            }
             Err(e) if ollama_err_is_load_crash(e) => {
                 self.mark_ollama_model_crashed(endpoint, model);
             }
@@ -355,6 +366,11 @@ mod tests {
         ));
         assert!(ollama_err_is_load_crash("Ollama chat stalled after 30s"));
         assert!(ollama_err_is_load_crash("Ollama HTTP 503: busy"));
+        // Request-ceiling timeout = prefill too slow on this hardware; will
+        // recur next call, so back the model off too.
+        assert!(ollama_err_is_load_crash(
+            "Ollama chat request timed out after 120s (model too slow on this hardware)"
+        ));
         // A user cancellation or a transient transport blip is NOT a load crash
         // (don't poison the backoff for those).
         assert!(!ollama_err_is_load_crash("Ollama chat cancelled"));

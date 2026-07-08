@@ -144,11 +144,11 @@ function inferScreenshotPreset({
   variant = "default",
 }: Pick<ScreenshotProps, "src" | "aspect" | "focus" | "fit" | "variant">) {
   const stem = mediaStem(src);
-  const tallPanel =
-    stem.startsWith("settings-") ||
-    stem === "model-dropdown" ||
-    stem === "onboarding" ||
-    stem === "section-llm";
+  // model-dropdown / onboarding are genuinely tall captures we crop to their
+  // top slice. The settings-* and section-llm shots are pre-cropped to their
+  // focused region at capture time, so they render at natural aspect (like the
+  // sec-* strips) — forcing a 16/10 cover here would re-crop and distort them.
+  const tallPanel = stem === "model-dropdown" || stem === "onboarding";
 
   const resolvedAspect =
     aspect ??

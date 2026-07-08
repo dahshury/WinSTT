@@ -109,6 +109,46 @@ try {
         -Path (Join-Path $RepoRoot "src-tauri\target\release\winstt_context.exe") `
         -Destination (Join-Path $BinDir "winstt-context.exe")
 
+    # Stage the native runtime DLLs winstt.exe needs at runtime (DirectML for the ORT
+    # DML EP — a load-time import — plus the MSVC CRT). tauri.windows.conf.json maps
+    # binaries/runtime/*.dll into the install dir next to winstt.exe; without them the
+    # installed app cannot start on a machine without a dev toolchain. The sidecar build
+    # above already compiled the dependency graph, so the ort build script has placed
+    # DirectML.dll in target\release. (tauri-portable.ps1 reuses this stage. sherpa-onnx
+    # DLLs are gone — wake-word KWS runs natively on ort since the 2026-07 port.)
+    $ReleaseDir = Join-Path $RepoRoot "src-tauri\target\release"
+    $RuntimeDir = Join-Path $BinDir "runtime"
+    if (Test-Path -LiteralPath $RuntimeDir) {
+        Remove-Item -LiteralPath $RuntimeDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
+    $RuntimeDlls = @(
+        "DirectML.dll"
+    )
+    foreach ($Dll in $RuntimeDlls) {
+        $Source = Join-Path $ReleaseDir $Dll
+        if (-not (Test-Path -LiteralPath $Source)) {
+            throw "Missing native runtime DLL: $Source (expected from the ort/sherpa-onnx build scripts)"
+        }
+        Copy-Item -Force -LiteralPath $Source -Destination (Join-Path $RuntimeDir $Dll)
+    }
+    # App-local MSVC CRT: winstt.exe imports MSVCP140/MSVCP140_1; do not assume the
+    # target machine has the VC++ redistributable installed.
+    if (-not $env:VCToolsRedistDir) {
+        throw "VCToolsRedistDir not set by vcvars64 - cannot stage MSVC CRT DLLs"
+    }
+    $CrtDir = Get-ChildItem -Path (Join-Path $env:VCToolsRedistDir "x64") -Filter "Microsoft.VC*.CRT" -Directory |
+        Select-Object -First 1
+    if ($null -eq $CrtDir) {
+        throw "No Microsoft.VC*.CRT directory under $env:VCToolsRedistDir\x64"
+    }
+    foreach ($Dll in @("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+        $Source = Join-Path $CrtDir.FullName $Dll
+        if (Test-Path -LiteralPath $Source) {
+            Copy-Item -Force -LiteralPath $Source -Destination (Join-Path $RuntimeDir $Dll)
+        }
+    }
+
     bun run tauri build @BuildArgs
     if ($LASTEXITCODE -ne 0) {
         throw "Tauri build failed with exit code $LASTEXITCODE"

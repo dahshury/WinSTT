@@ -90,7 +90,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 		((item: TItem, query: string) =>
 			matchesFuzzySearch(itemToStringLabel?.(item) ?? String(item), query));
 	const popupStateClass =
-		!inline && !effectiveOpen ? "is-closing" : effectiveOpen ? "is-open" : "";
+		inline || effectiveOpen ? (effectiveOpen ? "is-open" : "") : "is-closing";
 	const renderPanelControls = inline || effectiveOpen;
 	const [hasRenderedCollection, setHasRenderedCollection] = useState(false);
 

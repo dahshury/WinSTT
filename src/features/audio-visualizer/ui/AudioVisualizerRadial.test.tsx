@@ -14,16 +14,19 @@ describe("AudioVisualizerRadial", () => {
 		expect(container.firstElementChild).not.toBeNull();
 	});
 
-	test.each(["icon", "sm", "md", "lg", "xl"] as const)(
-		"renders without throwing at size=%s",
-		(size) => {
-			const { container, unmount } = render(
-				<AudioVisualizerRadial size={size} />,
-			);
-			expect(container.firstElementChild).not.toBeNull();
-			unmount();
-		},
-	);
+	test.each([
+		"icon",
+		"sm",
+		"md",
+		"lg",
+		"xl",
+	] as const)("renders without throwing at size=%s", (size) => {
+		const { container, unmount } = render(
+			<AudioVisualizerRadial size={size} />,
+		);
+		expect(container.firstElementChild).not.toBeNull();
+		unmount();
+	});
 });
 
 describe("resolveRadialBarCount", () => {

@@ -513,7 +513,7 @@ export function GridMeter({ accent = C.accent }: { accent?: string }) {
 						style={{
 							width: 18,
 							height: 18,
-							borderRadius: 5,
+							borderRadius: "50%",
 							background: active ? accent : "rgba(255,255,255,0.06)",
 							opacity: active ? 0.42 + Math.max(0, v) * 0.58 : 1,
 							boxShadow: active ? `0 0 18px ${accent}44` : "none",

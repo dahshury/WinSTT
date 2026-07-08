@@ -1,4 +1,4 @@
-﻿import { useEffect } from "react";
+﻿import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	CLOUD_PROVIDERS,
@@ -17,9 +17,14 @@ import { useSettingsStore } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
 import { isQuantDownloading } from "@/features/model-download";
+import { resolveRealtimeLanguageGuardPatch } from "@/features/realtime-preview-fallback";
 import { useModelSwapController } from "@/features/swap-model";
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import { isRealtimeEnabled } from "@/shared/lib/realtime-enabled";
+import {
+	isRealtimeEnabled,
+	realtimeMasterTogglePatch,
+} from "@/shared/lib/realtime-enabled";
+import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import {
 	buildLanguageOptions,
 	deriveLanguageCandidates,
@@ -48,6 +53,14 @@ import {
 	SwapDialogs,
 } from "./model-settings-sections";
 import { RealtimeModelSection } from "./RealtimeModelSection";
+
+// Hardcoded English like the sibling listen-mode tooltip below and the
+// language-guard copy in DisplayControls — these operational tooltips aren't
+// in the i18n catalog yet.
+const REALTIME_LISTEN_TOOLTIP =
+	"Listen mode always transcribes with the realtime streaming model, so it can't be turned off here.";
+const REALTIME_LANGUAGE_TOOLTIP =
+	"The selected realtime model cannot stream the current source language.";
 
 function useModelSettingsPanelRender() {
 	const global = useSettingsStore((s) => s.settings.global);
@@ -90,9 +103,16 @@ function useModelSettingsPanelRender() {
 		llmDictationEnabled,
 		wordByWordPasting,
 	});
+	// Listen mode ALWAYS transcribes through the realtime streaming model, so
+	// the section stays usable (and the master switch pinned ON) regardless of
+	// the display settings the derived state reads.
+	const realtimeSectionActive = realtimeEnabled || isListenMode;
+	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
+	const [confirmRealtimeOffOpen, setConfirmRealtimeOffOpen] = useState(false);
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
 	const gpuAvailable = gpuInfo.length > 0;
 	const t = useTranslations("model");
+	const tCommon = useTranslations("common");
 	const deviceOpts = buildDeviceOpts(t);
 	const deviceValue: DeviceValue = gpuAvailable
 		? (settings?.device ?? "auto")
@@ -119,6 +139,43 @@ function useModelSettingsPanelRender() {
 		refreshModelState();
 		refreshLive();
 	}, [refreshModelState, refreshLive]);
+
+	// Mirrors AppearanceSettingsPanel: when no cached realtime path can serve
+	// the selected source languages, enabling realtime would be instantly
+	// reverted by the language guard — disable the master switch instead of
+	// letting it fight the guard.
+	const realtimeLanguageUnavailable =
+		resolveRealtimeLanguageGuardPatch({
+			catalogLoaded,
+			catalogModels,
+			currentMainModel: settings?.model,
+			currentRealtimeModel: settings?.realtimeModel,
+			liveTranscriptionDisplay: "both",
+			realtimeEnabled: true,
+			sourceLanguageSelection: settings,
+			statesById,
+			statesLoaded: modelStatesLoaded,
+			wordByWordPasting: false,
+		}) !== null;
+	const realtimeToggleDisabled = isListenMode || realtimeLanguageUnavailable;
+	const realtimeToggleDisabledTooltip = isListenMode
+		? REALTIME_LISTEN_TOOLTIP
+		: realtimeLanguageUnavailable
+			? REALTIME_LANGUAGE_TOOLTIP
+			: undefined;
+	const handleRealtimeMasterToggle = (next: boolean): void => {
+		if (!next && wordByWordPasting) {
+			// Turning realtime off also turns off word-by-word pasting (it is a
+			// realtime consumer) — confirm before silently changing paste behavior.
+			setConfirmRealtimeOffOpen(true);
+			return;
+		}
+		updateGeneral(realtimeMasterTogglePatch(next));
+	};
+	const confirmRealtimeOff = (): void => {
+		updateGeneral(realtimeMasterTogglePatch(false));
+		setConfirmRealtimeOffOpen(false);
+	};
 
 	const selectedModel = settings?.model ?? "tiny";
 	const selectedIsCloud = providerOf(selectedModel) !== null;
@@ -210,7 +267,6 @@ function useModelSettingsPanelRender() {
 				return;
 			}
 			update({ languageCandidates: [] });
-			return;
 		}
 	}, [
 		langOpts,
@@ -342,8 +398,11 @@ function useModelSettingsPanelRender() {
 				catalogLoaded={catalogLoaded}
 				catalogModels={catalogModels}
 				currentQuantization={currentQuantization}
-				disabled={!realtimeEnabled}
+				disabled={!realtimeSectionActive}
 				disabledTooltip={t("realtimeDisabledTooltip")}
+				onToggle={handleRealtimeMasterToggle}
+				toggleDisabled={realtimeToggleDisabled}
+				toggleDisabledTooltip={realtimeToggleDisabledTooltip}
 				downloadProgress={realtimeDownloadProgress}
 				getFitAssessment={getFitAssessment}
 				handleRealtimeModelChange={handleRealtimePick}
@@ -358,6 +417,11 @@ function useModelSettingsPanelRender() {
 				onDownloadSnapshot={handleDownloadSnapshot}
 				quality={quality}
 				sourceLanguageSelection={settings}
+				langOpts={langOpts}
+				realtimeLanguage={settings?.realtimeLanguage ?? ""}
+				onRealtimeLanguageChange={(realtimeLanguage) =>
+					update({ realtimeLanguage })
+				}
 				settings={settings}
 				statesById={statesById}
 				systemInfo={systemInfo}
@@ -387,6 +451,15 @@ function useModelSettingsPanelRender() {
 				statesById={statesById}
 				systemInfo={systemInfo}
 				t={t}
+			/>
+			<ConfirmDialog
+				cancelLabel={tCommon("cancel")}
+				confirmLabel={t("realtimeOffWordByWordConfirm")}
+				description={t("realtimeOffWordByWordDescription")}
+				onConfirm={confirmRealtimeOff}
+				onOpenChange={setConfirmRealtimeOffOpen}
+				open={confirmRealtimeOffOpen}
+				title={t("realtimeOffWordByWordTitle")}
 			/>
 		</div>
 	);

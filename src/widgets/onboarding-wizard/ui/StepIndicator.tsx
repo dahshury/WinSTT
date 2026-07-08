@@ -2,6 +2,7 @@ import { Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { AnimatePresence, m } from "motion/react";
 import { cn } from "@/shared/lib/cn";
+import { springs } from "@/shared/lib/springs";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import type { OnboardingStepId } from "../model/wizard-store";
 
@@ -80,10 +81,15 @@ export function StepIndicator({
 								<m.span
 									animate={{ opacity: 1, width: "auto", x: 0 }}
 									className="overflow-hidden whitespace-nowrap pr-1 pl-1.5 text-accent"
-									exit={{ opacity: 0, width: 0, x: -4 }}
+									exit={{
+										opacity: 0,
+										width: 0,
+										x: -4,
+										transition: springs.moderate.exit,
+									}}
 									initial={{ opacity: 0, width: 0, x: 4 }}
 									key="current-label"
-									transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+									transition={springs.moderate}
 								>
 									{step.label}
 								</m.span>
@@ -127,22 +133,22 @@ function StepBox({
 				status === "upcoming" && cn(upcomingBox, "ring-1 ring-divider-strong"),
 			)}
 			layout
-			transition={{
-				type: "spring",
-				stiffness: 520,
-				damping: 34,
-				mass: 0.55,
-			}}
+			transition={springs.moderate}
 		>
 			<AnimatePresence initial={false} mode="wait">
 				{status === "complete" ? (
 					<m.span
 						animate={{ opacity: 1, rotate: 0, scale: 1 }}
 						className="inline-flex"
-						exit={{ opacity: 0, rotate: -20, scale: 0.4 }}
+						exit={{
+							opacity: 0,
+							rotate: -20,
+							scale: 0.4,
+							transition: springs.moderate.exit,
+						}}
 						initial={{ opacity: 0, rotate: -35, scale: 0.35 }}
 						key="complete"
-						transition={{ type: "spring", stiffness: 620, damping: 28 }}
+						transition={springs.moderate}
 					>
 						<HugeiconsIcon icon={Tick02Icon} size={10} strokeWidth={3} />
 					</m.span>

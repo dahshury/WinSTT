@@ -2,14 +2,10 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use specta::Type;
 use std::collections::HashMap;
-use std::fmt;
 
 // Serde `#[serde(default = "default_*")]` attribute paths on `AppSettings` resolve
 // against this module, so the private default fns must be in scope here.
 use super::defaults::*;
-
-pub const APPLE_INTELLIGENCE_PROVIDER_ID: &str = "apple_intelligence";
-pub const APPLE_INTELLIGENCE_DEFAULT_MODEL_ID: &str = "Apple Intelligence";
 
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
@@ -85,26 +81,6 @@ pub struct ShortcutBinding {
     pub description: String,
     pub default_binding: String,
     pub current_binding: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
-pub struct LLMPrompt {
-    pub id: String,
-    pub name: String,
-    pub prompt: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
-pub struct PostProcessProvider {
-    pub id: String,
-    pub label: String,
-    pub base_url: String,
-    #[serde(default)]
-    pub allow_base_url_edit: bool,
-    #[serde(default)]
-    pub models_endpoint: Option<String>,
-    #[serde(default)]
-    pub supports_structured_output: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
@@ -344,42 +320,6 @@ impl Default for OrtAcceleratorSetting {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(transparent)]
-pub struct SecretMap(HashMap<String, String>);
-
-impl SecretMap {
-    // Tuple-struct field is module-private; sibling submodules (defaults.rs, tests)
-    // construct via this in-module constructor rather than the tuple syntax.
-    pub(super) fn new(map: HashMap<String, String>) -> Self {
-        SecretMap(map)
-    }
-}
-
-impl fmt::Debug for SecretMap {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let redacted: HashMap<&String, &str> = self
-            .0
-            .iter()
-            .map(|(k, v)| (k, if v.is_empty() { "" } else { "[REDACTED]" }))
-            .collect();
-        redacted.fmt(f)
-    }
-}
-
-impl std::ops::Deref for SecretMap {
-    type Target = HashMap<String, String>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for SecretMap {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
 /* still useful for composing the initial JSON in the store ------------ */
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 pub struct AppSettings {
@@ -420,20 +360,11 @@ pub struct AppSettings {
     pub auto_submit: bool,
     #[serde(default)]
     pub auto_submit_key: AutoSubmitKey,
-    #[serde(default = "default_post_process_enabled")]
-    pub post_process_enabled: bool,
-    #[serde(default = "default_post_process_provider_id")]
-    pub post_process_provider_id: String,
-    #[serde(default = "default_post_process_providers")]
-    pub post_process_providers: Vec<PostProcessProvider>,
-    #[serde(default = "default_post_process_api_keys")]
-    pub post_process_api_keys: SecretMap,
-    #[serde(default = "default_post_process_models")]
-    pub post_process_models: HashMap<String, String>,
-    #[serde(default = "default_post_process_prompts")]
-    pub post_process_prompts: Vec<LLMPrompt>,
-    #[serde(default)]
-    pub post_process_selected_prompt_id: Option<String>,
+    // NOTE: the legacy `post_process_*` fields (enabled/provider catalog/API
+    // keys/models/prompts) were removed with the legacy post-processing path —
+    // LLM post-processing is configured solely via `WinsttSettings.llm`. Older
+    // stores that still carry those keys deserialize fine (unknown keys are
+    // ignored).
     #[serde(default)]
     pub mute_while_recording: bool,
     #[serde(default)]

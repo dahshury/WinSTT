@@ -49,7 +49,7 @@ function installNativeBridgeStub(): void {
 				fetchInvokes.push(channel);
 				return catalogPayload;
 			}
-			return;
+			return undefined;
 		},
 		secureInvoke: async () => undefined,
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
@@ -113,7 +113,6 @@ describe("useCatalogStore.setModels", () => {
 		expect(state.models[0]?.previewCapable).toBe(true);
 		expect(state.models[0]?.nativeStreaming).toBe(false);
 		expect(state.models[0]?.finalReuseSafe).toBe(false);
-		expect(state.models[0]?.supportsRealtime).toBe(true);
 		expect(state.isLoaded).toBe(true);
 	});
 
@@ -141,7 +140,6 @@ describe("useCatalogStore.setModels", () => {
 		useCatalogStore.getState().setModels([legacyRaw]);
 		const model = useCatalogStore.getState().models[0];
 		expect(model?.previewCapable).toBe(true);
-		expect(model?.supportsRealtime).toBe(true);
 		expect(model?.nativeStreaming).toBe(false);
 		expect(model?.finalReuseSafe).toBe(false);
 	});
@@ -226,15 +224,14 @@ describe("initCatalogStore", () => {
 });
 
 describe("zod enum guards (mutation guards on enum entries)", () => {
-	test.each(TranscriberBackendSchema.options)(
-		"backend enum accepts %s",
-		(backend) => {
-			useCatalogStore.setState({ models: [], isLoaded: false });
-			useCatalogStore.getState().setModels([{ ...validRaw, backend }]);
-			expect(useCatalogStore.getState().models).toHaveLength(1);
-			expect(useCatalogStore.getState().models[0]?.backend).toBe(backend);
-		},
-	);
+	test.each(
+		TranscriberBackendSchema.options,
+	)("backend enum accepts %s", (backend) => {
+		useCatalogStore.setState({ models: [], isLoaded: false });
+		useCatalogStore.getState().setModels([{ ...validRaw, backend }]);
+		expect(useCatalogStore.getState().models).toHaveLength(1);
+		expect(useCatalogStore.getState().models[0]?.backend).toBe(backend);
+	});
 
 	test.each(ModelFamilySchema.options)("family enum accepts %s", (family) => {
 		useCatalogStore.setState({ models: [], isLoaded: false });

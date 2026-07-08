@@ -18,6 +18,7 @@ import type {
 	IntegrationCloudProvider,
 } from "@/shared/api/models";
 import { verifyCredentialCommand } from "../api/verify-credential";
+import { isProbedSecretCurrent } from "@/shared/config/settings-schema";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { useSurface } from "@/shared/lib/surface";
 import { brandLogoFor } from "@/shared/ui/brand-logo";
@@ -120,7 +121,14 @@ export function ProviderIntegrationSection({
 		} catch (err) {
 			const currentKey =
 				useSettingsStore.getState().settings.integrations[provider].apiKey;
-			if (myReqId !== reqIdRef.current || currentKey !== key) {
+			// A stored key masked to the SECRET_PRESENT sentinel by a backend
+			// save/broadcast that raced this probe is the same key we verified,
+			// now sealed — not a stale signal. Only a request-id bump (fresh
+			// keystroke / removal) invalidates the probe.
+			if (
+				myReqId !== reqIdRef.current ||
+				!isProbedSecretCurrent(currentKey, key)
+			) {
 				return;
 			}
 			const message = err instanceof Error ? err.message : String(err);
@@ -134,7 +142,13 @@ export function ProviderIntegrationSection({
 
 		const currentKey =
 			useSettingsStore.getState().settings.integrations[provider].apiKey;
-		if (myReqId !== reqIdRef.current || currentKey !== key) {
+		// See the catch-block note: the sentinel-masked key is still the key we
+		// verified, so a backend save/broadcast that raced the probe is not a
+		// stale signal — only a request-id bump is.
+		if (
+			myReqId !== reqIdRef.current ||
+			!isProbedSecretCurrent(currentKey, key)
+		) {
 			return;
 		}
 

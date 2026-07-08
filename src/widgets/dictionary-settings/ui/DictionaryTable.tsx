@@ -26,8 +26,12 @@ const acceptDictionaryData = (newData: readonly DictionaryEntry[]) => {
 	const seen = new Set<string>();
 	for (const row of newData) {
 		const key = normalizeDictionaryTerm(row.term);
-		if (!key) continue;
-		if (seen.has(key)) return false;
+		if (!key) {
+			continue;
+		}
+		if (seen.has(key)) {
+			return false;
+		}
 		seen.add(key);
 	}
 	return true;

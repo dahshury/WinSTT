@@ -392,6 +392,23 @@ pub fn diag_clear_observability_timeline() -> usize {
     observability::clear_issues()
 }
 
+/// `diag_cloud_metrics` - per-(provider, operation) cloud latency/outcome
+/// aggregates (count, avg/min/max ms, error count + last error). Complements
+/// the issue timeline with the latency side of every cloud round-trip.
+#[tauri::command]
+#[specta::specta]
+pub fn diag_cloud_metrics() -> Vec<crate::winstt::cloud_metrics::CloudOpStats> {
+    crate::winstt::cloud_metrics::snapshot()
+}
+
+/// `diag_clear_cloud_metrics` - reset the cloud latency aggregates. Returns the
+/// number of (provider, operation) rows removed.
+#[tauri::command]
+#[specta::specta]
+pub fn diag_clear_cloud_metrics() -> usize {
+    crate::winstt::cloud_metrics::clear()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

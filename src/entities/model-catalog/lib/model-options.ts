@@ -156,12 +156,12 @@ const CANONICAL_REALTIME_MODEL_IDS = new Set<string>([
 	"streaming-nemo-rnnt-en-1040ms-int8",
 	"streaming-parakeet-unified-en-1120ms",
 	"streaming-parakeet-unified-en-1120ms-int8",
-	"streaming-nemotron-en-1120ms",
-	"streaming-nemotron-en-1120ms-int8",
 ]);
 
+// The multilingual Nemotron-3.5 (`streaming-nemotron-3.5-multi-*`) is a single shipped row, not one
+// of these collapse-to-canonical export families, so it is intentionally absent here.
 const STREAMING_EXPORT_VARIANT_RE =
-	/^streaming-(?:nemo-(?:ctc|rnnt)-en(?:-\d+ms)?(?:-int8)?|parakeet-unified-en-\d+ms(?:-int8)?|nemotron-en-\d+ms(?:-int8)?)$/;
+	/^streaming-(?:nemo-(?:ctc|rnnt)-en(?:-\d+ms)?(?:-int8)?|parakeet-unified-en-\d+ms(?:-int8)?)$/;
 
 /**
  * The sherpa/NeMo streaming catalog contains one HF repo per chunk size and

@@ -22,10 +22,13 @@ import {
 	settingsLoad,
 	webviewDiagLog,
 } from "@/shared/api/ipc-client";
+import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
 import { usePostProcessingProfileSwap } from "@/widgets/llm-settings/model/use-post-processing-profile-swap";
+import { useRecordingModeCycle } from "@/widgets/recording-settings";
 
 const STARTUP_READY_PROBE_TIMEOUT_MS = 2500;
 let startupReadyPromise: Promise<void> | null = null;
+let startupProbesPromise: Promise<void> | null = null;
 
 function wait(ms: number): Promise<"timeout"> {
 	return new Promise((resolve) => {
@@ -33,21 +36,35 @@ function wait(ms: number): Promise<"timeout"> {
 	});
 }
 
-async function waitForStartupProbes(): Promise<void> {
-	const probes = Promise.allSettled([
-		settingsLoad(),
-		audioGetDevices(),
-		fetchRuntimeInfo(),
-	]);
-	const result = await Promise.race([
-		probes,
-		wait(STARTUP_READY_PROBE_TIMEOUT_MS),
-	]);
-	if (result === "timeout") {
-		const message = `[IpcProvider] startup probes exceeded ${STARTUP_READY_PROBE_TIMEOUT_MS}ms; releasing renderer readiness gate`;
-		console.warn(message);
-		webviewDiagLog("main", "warn", message);
+/** Fire the three startup IPC probes. Called once at module evaluation so the
+ * round trips overlap React's mount instead of queueing behind it; the mount
+ * effect then awaits the same shared promise, so the backend readiness signal
+ * still means "React tree mounted AND first IPC settled". */
+function startStartupProbes(): Promise<void> {
+	if (startupProbesPromise) {
+		return startupProbesPromise;
 	}
+	startupProbesPromise = (async () => {
+		const probes = Promise.allSettled([
+			settingsLoad(),
+			audioGetDevices(),
+			fetchRuntimeInfo(),
+		]);
+		const result = await Promise.race([
+			probes,
+			wait(STARTUP_READY_PROBE_TIMEOUT_MS),
+		]);
+		if (result === "timeout") {
+			const message = `[IpcProvider] startup probes exceeded ${STARTUP_READY_PROBE_TIMEOUT_MS}ms; releasing renderer readiness gate`;
+			console.warn(message);
+			webviewDiagLog("main", "warn", message);
+		}
+	})();
+	return startupProbesPromise;
+}
+
+if (typeof window !== "undefined" && hasTauriRuntime()) {
+	void startStartupProbes();
 }
 
 function signalRendererStartupReady(): Promise<void> {
@@ -55,7 +72,7 @@ function signalRendererStartupReady(): Promise<void> {
 		return startupReadyPromise;
 	}
 	startupReadyPromise = (async () => {
-		await waitForStartupProbes();
+		await startStartupProbes();
 		await notifyRendererReady();
 	})().catch((error: unknown) => {
 		startupReadyPromise = null;
@@ -81,6 +98,7 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 	useFileTranscriptionListener();
 	useListenMode();
 	usePostProcessingProfileSwap();
+	useRecordingModeCycle();
 	useDeviceSwitchFeedback();
 	useVadCalibration();
 	useAudioDeviceMonitor();

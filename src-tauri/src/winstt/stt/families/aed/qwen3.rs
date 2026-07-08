@@ -15,12 +15,39 @@
 //
 // KV cache is two STACKED f32 tensors `[layers, batch, kv_heads, seq, head_dim]` (not per-layer
 // named like Granite/Whisper). Conservatively CPU-pinned on non-CUDA GPUs (EngineKind policy).
+//
+// PERF/CORRECTNESS NOTE: decode carries the audio embeds + the two stacked KV tensors
+// (`present_keys`/`present_values`) **device-resident** via ort's IoBinding, mirroring whisper.rs /
+// cohere.rs. The prior host path `out_to_f32`'d the encoder output AND both KV tensors back to the
+// host every step and re-fed them (`Tensor::from_array`) — a full host↔device round-trip of the KV
+// cache per token. Keeping them on-device binds them once and rebinds the previous step's
+// `present_*` device outputs directly as the next step's `past_*` inputs (no host clone). Only the
+// per-token `input_embeds` (host lookup from `embed_tokens.bin`) goes host→device and `logits` comes
+// host-side for argmax. A fresh binding is created per step (mirrors the per-`run` semantics); the
+// device `present_*` outputs are extracted as session-owned `DynValue`s (survive the binding drop)
+// and rebound next step. EP-agnostic: `qwen3_device()` maps the active provider to the allocation
+// device (CPU today → IoBinding just binds host memory, same result, near-free).
 
 use ndarray::{Array1, Array3, ArrayD};
+use ort::memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::Session;
-use ort::value::Tensor;
+use ort::value::{DynValue, Tensor};
 
 use super::*;
+use crate::winstt::stt::Accelerator;
+
+/// The `AllocationDevice` (+ id) the sessions run on, for binding the audio embeds + KV-cache
+/// resident on it (mirrors whisper's `device_for_providers` / cohere's `cohere_device`). Derived
+/// from the FIRST requested accelerator; everything that isn't a device GPU EP → CPU, where
+/// IoBinding simply binds host memory. Qwen3 is CPU-pinned on non-CUDA GPUs by EngineKind policy, so
+/// in practice this is CPU or CUDA today.
+fn qwen3_device(providers: &[Accelerator]) -> (AllocationDevice, i32) {
+    match providers.first() {
+        Some(Accelerator::Cuda) => (AllocationDevice::CUDA, 0),
+        Some(Accelerator::DirectMl) => (AllocationDevice::DIRECTML, 0),
+        _ => (AllocationDevice::CPU, 0),
+    }
+}
 
 pub(in crate::winstt::stt::families) struct Qwen3AsrEngine {
     encoder: Session,
@@ -45,6 +72,10 @@ pub(in crate::winstt::stt::families) struct Qwen3AsrEngine {
     max_decode_length: usize,
     model_name: String,
     providers: Vec<String>,
+    /// Device the sessions run on, for binding the audio embeds + KV-cache device-resident
+    /// (`CPU` when no device GPU EP is active; then IoBinding just binds host memory).
+    device: AllocationDevice,
+    device_id: i32,
 }
 
 impl Qwen3AsrEngine {
@@ -106,6 +137,8 @@ impl Qwen3AsrEngine {
             .first()
             .map_or_else(|| "audio_features".to_string(), |o| o.name().to_string());
 
+        let (device, device_id) = qwen3_device(&cfg.providers);
+
         Ok(Qwen3AsrEngine {
             encoder,
             decoder_init,
@@ -125,31 +158,75 @@ impl Qwen3AsrEngine {
             max_decode_length: 440,
             model_name: cfg.model_name.clone(),
             providers: providers_to_strings(&cfg.providers),
+            device,
+            device_id,
         })
     }
 
-    fn encode_audio(&mut self, audio: &[f32]) -> SttResult<Array3<f32>> {
+    /// Device `MemoryInfo` for binding the audio embeds + KV-cache resident on the session's device
+    /// (CPU when no device GPU EP). Cheap to build; one per encode + one per decode step.
+    fn device_mem(&self) -> SttResult<MemoryInfo> {
+        MemoryInfo::new(
+            self.device,
+            self.device_id,
+            AllocatorType::Device,
+            MemoryType::Default,
+        )
+        .map_err(|e| SttError::Inference(format!("qwen3 device mem info: {e}")))
+    }
+
+    /// Host `MemoryInfo` for binding the logits back to the CPU for argmax.
+    fn host_mem() -> SttResult<MemoryInfo> {
+        MemoryInfo::new(
+            AllocationDevice::CPU,
+            0,
+            AllocatorType::Device,
+            MemoryType::CPUOutput,
+        )
+        .map_err(|e| SttError::Inference(format!("qwen3 cpu mem info: {e}")))
+    }
+
+    /// Encode mel features once → **device-resident** audio embeds (`bind_output_to_device`, never
+    /// copied to host). Mirrors whisper's `encode`. The returned `DynValue` is rebound as
+    /// `decoder_init`'s `audio_features` input with no host round-trip. `audio_len` is read from the
+    /// output's runtime shape (dim 1) — the number of `<|audio_pad|>` placeholders the prompt needs.
+    fn encode_audio(&mut self, audio: &[f32]) -> SttResult<(DynValue, usize)> {
         let mel = crate::winstt::stt::mel::MelExtractor::new(128);
         let (feats, n_mels, n_frames) = mel.extract(audio);
         let x = Array3::from_shape_vec((1, n_mels, n_frames), feats)
             .map_err(|e| SttError::Inference(format!("qwen3 mel reshape: {e}")))?;
         let mel_tensor = Tensor::from_array(x)
             .map_err(|e| SttError::Inference(format!("qwen3 mel tensor: {e}")))?;
-        let inputs: Vec<(
-            std::borrow::Cow<'_, str>,
-            ort::session::SessionInputValue<'_>,
-        )> = vec![(
-            std::borrow::Cow::Owned(self.enc_input.clone()),
-            ort::session::SessionInputValue::from(mel_tensor),
-        )];
-        let outputs = self
+        let dev_mem = self.device_mem()?;
+        let mut binding = self
             .encoder
-            .run(inputs)
-            .map_err(|e| SttError::Inference(format!("qwen3 encoder run: {e}")))?;
-        let audio_features = out_to_f32(&outputs[self.enc_output.as_str()])?
-            .into_dimensionality::<ndarray::Ix3>()
-            .map_err(|e| SttError::Inference(format!("qwen3 audio_features dim: {e}")))?;
-        Ok(audio_features)
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("qwen3 encoder binding: {e}")))?;
+        binding
+            .bind_input(self.enc_input.as_str(), &mel_tensor)
+            .map_err(|e| SttError::Inference(format!("qwen3 bind {}: {e}", self.enc_input)))?;
+        binding
+            .bind_output_to_device(self.enc_output.as_str(), &dev_mem)
+            .map_err(|e| SttError::Inference(format!("qwen3 bind {}: {e}", self.enc_output)))?;
+        let mut outputs = self
+            .encoder
+            .run_binding(&binding)
+            .map_err(|e| SttError::Inference(format!("qwen3 encoder run_binding: {e}")))?;
+        // DML/CUDA run_binding is async w.r.t. the device stream — block until the encoder output is
+        // written before handing the device value to the decoder (else we read stale memory).
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("qwen3 encoder synchronize: {e}")))?;
+        let audio_features = outputs.remove(self.enc_output.as_str()).ok_or_else(|| {
+            SttError::Inference("qwen3 encoder produced no audio_features".into())
+        })?;
+        let audio_len = match audio_features.dtype() {
+            ort::value::ValueType::Tensor { shape, .. } => {
+                shape.get(1).copied().unwrap_or(0).max(0) as usize
+            }
+            _ => 0,
+        };
+        Ok((audio_features, audio_len))
     }
 
     fn build_prompt_ids(&self, audio_len: usize) -> SttResult<(Vec<i64>, usize)> {
@@ -222,56 +299,134 @@ impl Transcriber for Qwen3AsrEngine {
         if audio.is_empty() {
             return Ok(Transcription::default());
         }
-        let audio_features = self.encode_audio(audio)?;
-        let audio_len = audio_features.shape()[1];
+        let (audio_features, audio_len) = self.encode_audio(audio)?;
         if audio_len == 0 {
             return Ok(Transcription::default());
         }
         let (prompt_ids, audio_offset) = self.build_prompt_ids(audio_len)?;
         let seq = prompt_ids.len();
 
-        let init_out = self
-            .decoder_init
-            .run(ort::inputs![
-                "input_ids" => Tensor::from_array(
-                    Array1::from_vec(prompt_ids)
-                        .into_shape_with_order((1, seq))
-                        .map_err(|e| SttError::Inference(format!("qwen3 input_ids: {e}")))?)
-                    .map_err(|e| SttError::Inference(format!("qwen3 input_ids tensor: {e}")))?,
-                "position_ids" => tensor_i64((1, seq), (0..seq as i64).collect())?,
-                "audio_features" => Tensor::from_array(audio_features)
-                    .map_err(|e| SttError::Inference(format!("qwen3 audio_features tensor: {e}")))?,
-                "audio_offset" => tensor_i64_1d(vec![audio_offset as i64])?,
-            ])
-            .map_err(|e| SttError::Inference(format!("qwen3 decoder_init run: {e}")))?;
+        let dev_mem = self.device_mem()?;
+        let cpu_mem = Self::host_mem()?;
 
-        let mut current = Self::argmax_logits(&out_to_f32(&init_out["logits"])?)?;
-        let mut past_keys = out_to_f32(&init_out["present_keys"])?;
-        let mut past_values = out_to_f32(&init_out["present_values"])?;
-        drop(init_out);
+        // ── decoder_init: splice audio embeds at `audio_offset`, produce logits + initial KV ──
+        // Bind the device-resident audio embeds (no host copy) and pull `present_keys`/`present_values`
+        // out as device `DynValue`s to carry into the step loop; logits come back host-side for argmax.
+        let input_ids = Tensor::from_array(
+            Array1::from_vec(prompt_ids)
+                .into_shape_with_order((1, seq))
+                .map_err(|e| SttError::Inference(format!("qwen3 input_ids: {e}")))?,
+        )
+        .map_err(|e| SttError::Inference(format!("qwen3 input_ids tensor: {e}")))?;
+        let position_ids = tensor_i64((1, seq), (0..seq as i64).collect())?;
+        let audio_offset_t = tensor_i64_1d(vec![audio_offset as i64])?;
 
+        let mut current;
+        let mut past_keys: DynValue;
+        let mut past_values: DynValue;
+        {
+            let mut binding = self
+                .decoder_init
+                .create_binding()
+                .map_err(|e| SttError::Inference(format!("qwen3 decoder_init binding: {e}")))?;
+            binding
+                .bind_input("input_ids", &input_ids)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind input_ids: {e}")))?;
+            binding
+                .bind_input("position_ids", &position_ids)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind position_ids: {e}")))?;
+            binding
+                .bind_input("audio_features", &audio_features)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind audio_features: {e}")))?;
+            binding
+                .bind_input("audio_offset", &audio_offset_t)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind audio_offset: {e}")))?;
+            binding
+                .bind_output_to_device("logits", &cpu_mem)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind init logits: {e}")))?;
+            binding
+                .bind_output_to_device("present_keys", &dev_mem)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind init present_keys: {e}")))?;
+            binding
+                .bind_output_to_device("present_values", &dev_mem)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind init present_values: {e}")))?;
+            let mut init_out = self
+                .decoder_init
+                .run_binding(&binding)
+                .map_err(|e| SttError::Inference(format!("qwen3 decoder_init run: {e}")))?;
+            binding
+                .synchronize_outputs()
+                .map_err(|e| SttError::Inference(format!("qwen3 decoder_init synchronize: {e}")))?;
+            current =
+                Self::argmax_logits(&out_to_f32(init_out.get("logits").ok_or_else(|| {
+                    SttError::Inference("qwen3 decoder_init no logits".into())
+                })?)?)?;
+            past_keys = init_out
+                .remove("present_keys")
+                .ok_or_else(|| SttError::Inference("qwen3 decoder_init no present_keys".into()))?;
+            past_values = init_out.remove("present_values").ok_or_else(|| {
+                SttError::Inference("qwen3 decoder_init no present_values".into())
+            })?;
+        }
+
+        // ── Greedy step loop: `input_embeds` looked up host-side per token; KV carried device-resident.
+        // Each step rebinds the previous step's `present_*` device outputs as `past_*` inputs (no host
+        // clone), extracts the new `present_*` device values, and argmaxes host-side logits.
         let mut generated = Vec::new();
         for pos in (seq as i64..).take(self.max_decode_length) {
             if self.eos.contains(&current) {
                 break;
             }
             generated.push(current);
-            let embeds = self.embed_row(current)?;
-            let step_out = self
+            let embeds = Tensor::from_array(self.embed_row(current)?)
+                .map_err(|e| SttError::Inference(format!("qwen3 step embeds: {e}")))?;
+            let pos_ids = tensor_i64((1, 1), vec![pos])?;
+
+            let mut binding = self
                 .decoder_step
-                .run(ort::inputs![
-                    "input_embeds" => Tensor::from_array(embeds)
-                        .map_err(|e| SttError::Inference(format!("qwen3 step embeds: {e}")))?,
-                    "position_ids" => tensor_i64((1, 1), vec![pos])?,
-                    "past_keys" => Tensor::from_array(past_keys)
-                        .map_err(|e| SttError::Inference(format!("qwen3 past_keys: {e}")))?,
-                    "past_values" => Tensor::from_array(past_values)
-                        .map_err(|e| SttError::Inference(format!("qwen3 past_values: {e}")))?,
-                ])
+                .create_binding()
+                .map_err(|e| SttError::Inference(format!("qwen3 decoder_step binding: {e}")))?;
+            binding
+                .bind_input("input_embeds", &embeds)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind input_embeds: {e}")))?;
+            binding
+                .bind_input("position_ids", &pos_ids)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind step position_ids: {e}")))?;
+            binding
+                .bind_input("past_keys", &past_keys)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind past_keys: {e}")))?;
+            binding
+                .bind_input("past_values", &past_values)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind past_values: {e}")))?;
+            binding
+                .bind_output_to_device("logits", &cpu_mem)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind step logits: {e}")))?;
+            binding
+                .bind_output_to_device("present_keys", &dev_mem)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind step present_keys: {e}")))?;
+            binding
+                .bind_output_to_device("present_values", &dev_mem)
+                .map_err(|e| SttError::Inference(format!("qwen3 bind step present_values: {e}")))?;
+            let mut step_out = self
+                .decoder_step
+                .run_binding(&binding)
                 .map_err(|e| SttError::Inference(format!("qwen3 decoder_step run: {e}")))?;
-            current = Self::argmax_logits(&out_to_f32(&step_out["logits"])?)?;
-            past_keys = out_to_f32(&step_out["present_keys"])?;
-            past_values = out_to_f32(&step_out["present_values"])?;
+            binding
+                .synchronize_outputs()
+                .map_err(|e| SttError::Inference(format!("qwen3 decoder_step synchronize: {e}")))?;
+            current =
+                Self::argmax_logits(&out_to_f32(step_out.get("logits").ok_or_else(|| {
+                    SttError::Inference("qwen3 decoder_step no logits".into())
+                })?)?)?;
+            // Carry present_* → past_* as DEVICE values: session-owned, survive the binding drop, so
+            // they rebind next step with no host round-trip. Assign only AFTER the logits read so the
+            // borrow of `step_out` from `.get("logits")` has ended.
+            past_keys = step_out
+                .remove("present_keys")
+                .ok_or_else(|| SttError::Inference("qwen3 decoder_step no present_keys".into()))?;
+            past_values = step_out.remove("present_values").ok_or_else(|| {
+                SttError::Inference("qwen3 decoder_step no present_values".into())
+            })?;
         }
 
         // Drop the `language <Lang><asr_text>` auto-detect preamble: keep only tokens after the

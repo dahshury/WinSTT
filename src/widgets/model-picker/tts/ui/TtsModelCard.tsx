@@ -4,6 +4,7 @@ import {
 	Copy01Icon,
 	GlobeIcon,
 	HardDriveDownloadIcon,
+	MagicWand01Icon,
 	UserMultiple02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -20,7 +21,11 @@ import {
 	type QuantShelfEntry,
 } from "../../core/model-card/QuantShelf";
 import { resolveQuantDownloadState } from "../../core/model-card/quant-shelf-state";
-import { cloningLabel, ttsLanguageMeta } from "../lib/tts-helpers";
+import {
+	cloningLabel,
+	ttsLanguageMeta,
+	voiceDesignLabel,
+} from "../lib/tts-helpers";
 
 // Re-export the shelf download types from their canonical home so existing
 // importers of `./TtsModelCard` (selector, list) keep working unchanged after
@@ -294,6 +299,25 @@ function CloningChip({ model }: { model: TtsModelInfo }): ReactNode {
 	);
 }
 
+/** The voice-design capability chip, rendered into `ModelCard.badges` when the
+ *  model is a voice-design model (Qwen3-TTS-VoiceDesign). Styled identically to
+ *  {@link CloningChip} — same accent pill — but with a distinct wand glyph so the
+ *  two capabilities read apart at a glance. `null` unless `model.voiceDesign`. */
+function VoiceDesignChip({ model }: { model: TtsModelInfo }): ReactNode {
+	if (!model.voiceDesign) {
+		return null;
+	}
+	const design = voiceDesignLabel();
+	return (
+		<Tooltip content={design.tooltip} side="top">
+			<span className="inline-flex shrink-0 items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 font-medium text-[10px] text-accent">
+				<HugeiconsIcon className="size-3" icon={MagicWand01Icon} />
+				{design.label}
+			</span>
+		</Tooltip>
+	);
+}
+
 export interface TtsModelCardProps {
 	/** Currently-effective precision for the selected model — drives the active
 	 *  precision badge highlight. */
@@ -362,10 +386,19 @@ export function TtsModelCard({
 	});
 	const bytes = formatBytes(downloadSizeBytes ?? 0);
 	const metaEntries = buildMetaEntries(model, bytes);
-	const cloningChip = <CloningChip model={model} />;
+	// Both capability chips ride in `badges` (the ModelCard wraps them in its
+	// wrapping pill container). A model can in principle advertise more than one;
+	// pass `undefined` only when it advertises none so the container stays hidden.
+	const hasBadges = model.cloning !== "none" || model.voiceDesign;
+	const capabilityBadges = hasBadges ? (
+		<>
+			<CloningChip model={model} />
+			<VoiceDesignChip model={model} />
+		</>
+	) : undefined;
 	return (
 		<ModelCard
-			badges={model.cloning !== "none" ? cloningChip : undefined}
+			badges={capabilityBadges}
 			data-model-id={model.id}
 			description={model.description}
 			favorite={

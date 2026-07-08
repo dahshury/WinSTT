@@ -5,10 +5,10 @@ description: Symptom-to-fix table for the issues people actually hit — blank w
 
 Match your symptom in the table below, then jump to the section for the full fix. Almost every reported issue resolves here; when one doesn't, [Debug Mode](/docs/debug-mode) gathers the logs you'll attach to a bug report.
 
-<Screenshot src="tray-menu" alt="The WinSTT tray menu with settings, diagnostics, and Quit entries." label="Tray menu" caption="Right-click the tray icon for quick access to settings, logs, diagnostics, and Quit." />
+<Screenshot src="tray-menu" alt="The WinSTT tray menu with settings, diagnostics, and Quit entries." label="Tray menu" caption="Right-click the tray icon for quick access to Settings, Copy Last Transcript, Transcribe File, Check for Updates, and Quit." />
 
 <Callout type="info" title="Attach a diagnostic bundle to every report">
-  **Settings → Advanced → Save Diagnostic Bundle…** writes one zip with the available app logs, system info, and redacted diagnostics. It shortcuts at least three rounds of back-and-forth — see [Debug Mode](/docs/debug-mode).
+  **Settings → About → Diagnostics → Save Diagnostic Bundle** writes one zip with the available app logs, system info, and redacted diagnostics. It shortcuts at least three rounds of back-and-forth — see [Debug Mode](/docs/debug-mode).
 </Callout>
 
 ## Symptom → fix
@@ -210,7 +210,7 @@ For terminals, VMs, or RDP where the host clipboard isn't reachable, switch **Se
 
 <StepFlow>
   <Step title="Capture a diagnostic bundle">
-    **Settings → Advanced → Save Diagnostic Bundle…**
+    **Settings → About → Diagnostics → Save Diagnostic Bundle**
   </Step>
   <Step title="Reproduce with --debug">
     So the app logs carry the verbose trace — see [Debug Mode](/docs/debug-mode).

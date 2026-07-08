@@ -4,6 +4,8 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
+	priorityFromReorderedOptions,
+	promoteDeviceNameToTop,
 	useInputDevicePickerModel,
 	useInputDevices,
 } from "@/entities/audio-device";
@@ -18,7 +20,12 @@ import { cn } from "@/shared/lib/cn";
 import { surfaceClasses } from "@/shared/lib/surface";
 import { useEscapeToClose } from "@/shared/lib/window-effects";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
-import { SelectOptionContent, StopBubble } from "@/shared/ui/select";
+import {
+	OptionDragHandle,
+	SelectOptionContent,
+	SortableOptionRows,
+	StopBubble,
+} from "@/shared/ui/select";
 
 // This detached tray picker shares the same popup level used by the settings
 // Select for the mic control: settings section content sits at surface-2, the
@@ -57,15 +64,6 @@ function close(): void {
 	windowCloseNamed("device-picker");
 }
 
-const handleSelect = async (id: string) => {
-	const next = id === "default" ? null : Number.parseInt(id, 10);
-	const settings = await settingsLoad();
-	await settingsSave({
-		audio: { ...settings.audio, inputDeviceIndex: next },
-	});
-	close();
-};
-
 /**
  * Renderer half of the detached input-device picker. The tray menu is a tiny
  * popup; expanding the device list inside it ballooned the window off-screen.
@@ -81,23 +79,32 @@ const handleSelect = async (id: string) => {
  * selected pill can find the active device) and a `highlightedId` state stamps
  * `data-highlighted` on hover/focus (so the hover pill glides, exactly like Base
  * UI's `data-highlighted` does inside `Select`).
+ *
+ * Device rows carry a trailing grip handle: drag-sorting them persists
+ * `settings.audio.inputDevicePriority` (device names, highest first), and the
+ * effective mic auto-follows the topmost CONNECTED entry. Clicking a device
+ * promotes it to the top of that list; clicking "System default" clears it.
  */
 export function DevicePickerWindow() {
 	const t = useTranslations("audio");
 	const { devices, defaultDevice } = useInputDevices();
 	const [inputDeviceIndex, setInputDeviceIndex] = useState<number | null>(null);
+	const [inputDevicePriority, setInputDevicePriority] = useState<string[]>([]);
 	const [highlightedId, setHighlightedId] = useState<string | null>(null);
+	const [dragSorting, setDragSorting] = useState(false);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const listRef = useRef<HTMLDivElement | null>(null);
 	useEscapeToClose(close);
 
 	useEffect(() => {
-		settingsLoad().then((s) =>
-			setInputDeviceIndex(s.audio?.inputDeviceIndex ?? null),
-		);
-		return onSettingsChanged((s) =>
-			setInputDeviceIndex(s.audio?.inputDeviceIndex ?? null),
-		);
+		settingsLoad().then((s) => {
+			setInputDeviceIndex(s.audio?.inputDeviceIndex ?? null);
+			setInputDevicePriority(s.audio?.inputDevicePriority ?? []);
+		});
+		return onSettingsChanged((s) => {
+			setInputDeviceIndex(s.audio?.inputDeviceIndex ?? null);
+			setInputDevicePriority(s.audio?.inputDevicePriority ?? []);
+		});
 	}, []);
 
 	// Report the live content size so the main process can hug the window to
@@ -122,9 +129,42 @@ export function DevicePickerWindow() {
 		defaultDeviceName: defaultDevice?.name,
 		devices,
 		inputDeviceIndex,
+		inputDevicePriority,
 		monitorOpen: shown,
 		systemDefaultLabel: t("systemDefault"),
 	});
+
+	const handleSelect = async (id: string) => {
+		const settings = await settingsLoad();
+		const priority = settings.audio?.inputDevicePriority ?? [];
+		const next = id === "default" ? null : Number.parseInt(id, 10);
+		const name = deviceOptions.find((o) => o.id === id)?.label;
+		// A click must win over the preference order: promote the chosen device
+		// to the top (or clear the order entirely for "System default").
+		const nextPriority =
+			id === "default"
+				? []
+				: priority.length > 0 && name
+					? promoteDeviceNameToTop(priority, name)
+					: priority;
+		await settingsSave({
+			audio: {
+				...settings.audio,
+				inputDeviceIndex: next,
+				inputDevicePriority: nextPriority,
+			},
+		});
+		close();
+	};
+
+	const persistPriority = async (orderedIds: string[]) => {
+		const names = priorityFromReorderedOptions(deviceOptions, orderedIds);
+		setInputDevicePriority(names); // optimistic — keeps the rows where dropped
+		const settings = await settingsLoad();
+		await settingsSave({
+			audio: { ...settings.audio, inputDevicePriority: names },
+		});
+	};
 
 	return (
 		<div className="flex h-screen w-screen items-end overflow-hidden">
@@ -140,46 +180,65 @@ export function DevicePickerWindow() {
 				    carry `data-menu-option` and scroll inside the panel together with it. */}
 				<div className="relative" ref={listRef}>
 					<MenuHighlightLayer containerRef={listRef} value={currentDeviceId} />
-					{deviceOptions.map((opt) => {
-						const active = opt.id === currentDeviceId;
-						return (
-							<BaseButton
-								aria-pressed={active}
-								className={cn(
-									"relative z-raised mx-1 flex w-[calc(100%-0.5rem)] cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2.5 text-left text-body text-foreground leading-normal outline-none",
-									active ? "font-medium text-foreground" : "text-foreground",
-								)}
-								data-menu-option={opt.id}
-								key={opt.id}
-								onBlur={() =>
-									setHighlightedId((cur) => (cur === opt.id ? null : cur))
-								}
-								onClick={() => handleSelect(opt.id)}
-								onFocus={() => setHighlightedId(opt.id)}
-								onMouseEnter={() => setHighlightedId(opt.id)}
-								onMouseLeave={() =>
-									setHighlightedId((cur) => (cur === opt.id ? null : cur))
-								}
-								type="button"
-								{...(highlightedId === opt.id
-									? { "data-highlighted": "" }
-									: {})}
-							>
-								<SelectOptionContent active={active} option={opt} />
-								{active ? (
-									<HugeiconsIcon
-										aria-hidden="true"
-										className="shrink-0 text-accent"
-										icon={Tick02Icon}
-										size={16}
-									/>
-								) : null}
-								{opt.trailing ? (
-									<StopBubble className="shrink-0">{opt.trailing}</StopBubble>
-								) : null}
-							</BaseButton>
-						);
-					})}
+					<SortableOptionRows
+						onReorder={(orderedIds) => persistPriority(orderedIds)}
+						onSortingChange={setDragSorting}
+						options={deviceOptions}
+						renderRow={(opt) => {
+							const active = opt.id === currentDeviceId;
+							return (
+								<div
+									className="relative z-raised mx-1 flex w-[calc(100%-0.5rem)] select-none items-center rounded-lg pl-2 text-body text-foreground leading-normal"
+									data-menu-option={opt.id}
+									onBlur={() =>
+										setHighlightedId((cur) => (cur === opt.id ? null : cur))
+									}
+									onFocus={() => setHighlightedId(opt.id)}
+									onMouseEnter={() => {
+										if (!dragSorting) {
+											setHighlightedId(opt.id);
+										}
+									}}
+									onMouseLeave={() =>
+										setHighlightedId((cur) => (cur === opt.id ? null : cur))
+									}
+									{...(highlightedId === opt.id && !dragSorting
+										? { "data-highlighted": "" }
+										: {})}
+								>
+									{opt.sortable ? (
+										<OptionDragHandle label={t("devicePriorityHandle")} />
+									) : (
+										<span aria-hidden="true" className="size-5 shrink-0" />
+									)}
+									<BaseButton
+										aria-pressed={active}
+										className={cn(
+											"flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg py-2.5 pr-3 pl-2 text-left outline-none",
+											active ? "font-medium" : "",
+										)}
+										onClick={() => handleSelect(opt.id)}
+										type="button"
+									>
+										<SelectOptionContent active={active} option={opt} />
+										{active ? (
+											<HugeiconsIcon
+												aria-hidden="true"
+												className="shrink-0 text-accent"
+												icon={Tick02Icon}
+												size={16}
+											/>
+										) : null}
+										{opt.trailing ? (
+											<StopBubble className="shrink-0">
+												{opt.trailing}
+											</StopBubble>
+										) : null}
+									</BaseButton>
+								</div>
+							);
+						}}
+					/>
 				</div>
 			</div>
 		</div>

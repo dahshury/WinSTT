@@ -21,6 +21,9 @@ export const modelSettingsSchema = z.object({
 	// CLI default the backend spawn passes (`--model tiny`).
 	model: z.string().default("tiny"),
 	realtimeModel: z.string().default("tiny"),
+	// Forced language for a multilingual/prompt realtime model (Nemotron-3.5), independent of the
+	// main model's `language`. "" = auto-detect. Only surfaced when the realtime model is multilingual.
+	realtimeLanguage: z.string().default("").catch(""),
 	language: z.string().default("en"),
 	autoDetectLanguage: z.boolean().default(false).catch(false),
 	languageCandidates: z.array(z.string()).default([]).catch([]),

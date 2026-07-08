@@ -15,6 +15,7 @@ import {
 	type VerifyResponse,
 	verifyCredentialCommand,
 } from "@/features/verify-credentials";
+import { isProbedSecretCurrent } from "@/shared/config/settings-schema";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { useSurface } from "@/shared/lib/surface";
 import { OllamaLogo, OpenRouterLogo } from "@/shared/ui/brand-logo";
@@ -143,9 +144,16 @@ export function IntegrationsSettingsPanel() {
 			(response) => ({ ok: true as const, response }),
 			(err: unknown) => ({ ok: false as const, err }),
 		);
+		// The stored key having been masked to the SECRET_PRESENT sentinel by a
+		// backend save/broadcast that raced this probe is NOT a stale signal — it
+		// is the very key we just verified, now sealed. Only a request-id bump
+		// (fresh keystroke / removal) marks the probe stale.
 		const isStale =
 			myReqId !== openrouterReqIdRef.current ||
-			useSettingsStore.getState().settings.llm.openrouterApiKey !== key;
+			!isProbedSecretCurrent(
+				useSettingsStore.getState().settings.llm.openrouterApiKey,
+				key,
+			);
 		const next = computeOpenrouterNextStatus(isStale, settled);
 		if (next) {
 			setOpenrouterStatus(next);

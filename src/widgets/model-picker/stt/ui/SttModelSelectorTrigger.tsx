@@ -1,11 +1,25 @@
 "use client";
 
 import { Combobox } from "@base-ui/react/combobox";
-import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
+import {
+	ArrowDown01Icon,
+	BinaryCodeIcon,
+	GlobeIcon,
+	HardDriveDownloadIcon,
+	LiveStreaming02Icon,
+	NeuralNetworkIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, MouseEvent } from "react";
 import { useTranslations } from "use-intl";
-import { type ModelInfo, useModelSwapStore } from "@/entities/model-catalog";
+import {
+	type ModelInfo,
+	resolveEffectiveQuant,
+	useModelSwapStore,
+} from "@/entities/model-catalog";
+import { estimateForQuant } from "@/entities/system-resources";
+import type { ModelStateEntry } from "@/shared/api/ipc-client";
+import { formatBytes } from "@/shared/lib/format-bytes";
 import { Button } from "@/shared/ui/button";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import {
@@ -18,11 +32,22 @@ import {
 import { publicAsset } from "@/shared/lib/public-asset";
 import { AuthorBadge } from "../../ui/AuthorBadge";
 import {
+	SelectedModelSummary,
+	type SelectedModelMetaItem,
+	type SelectedModelNameParts,
+} from "../../ui/SelectedModelSummary";
+import {
 	getAuthorLabel,
 	getFamilyConfig,
 	variantDisplayName,
 } from "../lib/family-helpers";
-import { findDisplayModelByBackingId } from "../lib/streaming-precision-merge";
+import { formatLanguages } from "../lib/language-names";
+import {
+	activeLatencyModel,
+	findDisplayModelByBackingId,
+	type PrecisionRoutedSttModel,
+} from "../lib/streaming-precision-merge";
+import { variantMeta } from "../lib/variant-helpers";
 
 export interface SttModelSelectorTriggerProps {
 	/** Models known to the parent picker. Used to resolve the previous-model
@@ -60,7 +85,10 @@ export interface SttModelSelectorTriggerProps {
 	kind: "main" | "realtime";
 	open: boolean;
 	placeholder: string;
+	currentQuantization: string;
+	selectedId: string | undefined;
 	selectedModel: ModelInfo | undefined;
+	statesById: Record<string, ModelStateEntry>;
 }
 
 /** Author/maker chip — the shared {@link AuthorBadge} fed from the STT family
@@ -83,20 +111,179 @@ function AuthorChip({
 	);
 }
 
+const STT_VERSION_VARIANT_RE =
+	/^(?<main>.+?)\s+(?<variant>v\d+(?:\.\d+)?(?:\s+(?:Turbo|Flash))?)$/i;
+const STT_SIZE_VARIANT_RE =
+	/^(?<main>.+?)\s+(?<variant>\d+(?:\.\d+)?[MB]\s+\S.+)$/i;
+const STT_TURBO_VARIANT_RE = /^(?<main>.+?)\s+(?<variant>Turbo)$/i;
+
+function splitSttVariantName(label: string): SelectedModelNameParts {
+	const trimmed = label.trim();
+	for (const re of [
+		STT_VERSION_VARIANT_RE,
+		STT_SIZE_VARIANT_RE,
+		STT_TURBO_VARIANT_RE,
+	]) {
+		const match = re.exec(trimmed);
+		const main = match?.groups?.["main"]?.trim();
+		const variant = match?.groups?.["variant"]?.trim();
+		if (main && variant) {
+			return { full: trimmed, main, variant };
+		}
+	}
+	return { full: trimmed, main: trimmed };
+}
+
+function sttNameParts(label: string): SelectedModelNameParts {
+	const parts = splitSttVariantName(label);
+	return parts.main.length > 0 ? parts : { full: label, main: label };
+}
+
+function quantLabel(quantization: string): string {
+	if (quantization === "") {
+		return "FP32";
+	}
+	return quantization.toUpperCase();
+}
+
+function selectedQuantLabel(
+	effectiveQuantization: string,
+	currentQuantization: string,
+): string {
+	if (currentQuantization === "auto") {
+		if (effectiveQuantization === "auto") {
+			return "Auto";
+		}
+		return `Auto: ${quantLabel(effectiveQuantization)}`;
+	}
+	return quantLabel(effectiveQuantization);
+}
+
+function positiveSize(value: number | null | undefined): number | null {
+	return typeof value === "number" && value > 0 ? value : null;
+}
+
+function selectedSttBytes(
+	model: ModelInfo,
+	state: ModelStateEntry | undefined,
+	effectiveQuantization: string,
+	currentQuantization: string,
+): number | null {
+	if (state && state.estimated_bytes > 0) {
+		return estimateForQuant(state.estimated_bytes, effectiveQuantization);
+	}
+	return (
+		positiveSize(model.sizeBytesByQuantization[effectiveQuantization]) ??
+		positiveSize(model.sizeBytesByQuantization[currentQuantization]) ??
+		positiveSize(model.sizeBytesByQuantization[""])
+	);
+}
+
+function selectedSttMeta(
+	model: ModelInfo,
+	state: ModelStateEntry | undefined,
+	currentQuantization: string,
+): SelectedModelMetaItem[] {
+	const effectiveQuantization = resolveEffectiveQuant(
+		state,
+		currentQuantization,
+	);
+	const bytes = selectedSttBytes(
+		model,
+		state,
+		effectiveQuantization,
+		currentQuantization,
+	);
+	const sizeLabel = formatBytes(bytes);
+	const { multilingual } = variantMeta(model);
+	const items: SelectedModelMetaItem[] = [];
+	// Capability facts first (icon-only), then the numeric spec facts — one
+	// connected badge, aligned to the trigger's right edge (shares the Ollama
+	// picker's badge strategy).
+	if (multilingual) {
+		items.push({
+			key: "multilingual",
+			label: "",
+			icon: GlobeIcon,
+			tone: "teal",
+			title: "Multilingual",
+			// Same roster the in-list card tooltip shows.
+			description:
+				model.languages.length > 0
+					? `Supports ${model.languages.length} languages: ${formatLanguages(model.languages)}`
+					: "Transcribes many languages, not just English.",
+		});
+	}
+	// Only NATIVELY streaming models — the realtime slot no longer accepts
+	// "fast enough" offline models (the legacy always-true preview flag would
+	// over-mark, e.g. Parakeet TDT, which never appears in the realtime selector).
+	if (model.nativeStreaming) {
+		items.push({
+			key: "streaming",
+			label: "",
+			icon: LiveStreaming02Icon,
+			tone: "accent",
+			title: "Streaming",
+			description: "Feeds live audio into a stateful streaming decoder.",
+		});
+	}
+	if (model.sizeLabel) {
+		items.push({
+			key: "params",
+			label: model.sizeLabel,
+			icon: NeuralNetworkIcon,
+			title: "Parameters",
+			description: `${model.sizeLabel} parameters`,
+		});
+	}
+	items.push({
+		key: "quant",
+		label: selectedQuantLabel(effectiveQuantization, currentQuantization),
+		icon: BinaryCodeIcon,
+		tone: "warning",
+		title: "Selected quantization",
+	});
+	if (sizeLabel) {
+		items.push({
+			key: "memory",
+			label: sizeLabel,
+			icon: HardDriveDownloadIcon,
+			tone: "success",
+			title:
+				state && state.estimated_bytes > 0
+					? "Estimated runtime memory"
+					: "Model size",
+		});
+	}
+	return items;
+}
+
 function SelectedContent({
 	selectedModel,
 	peers,
+	currentQuantization,
+	selectedId,
+	statesById,
 }: {
+	currentQuantization: string;
 	selectedModel: ModelInfo;
+	selectedId: string | undefined;
+	statesById: Record<string, ModelStateEntry>;
 	peers?: readonly ModelInfo[] | undefined;
 }) {
+	const activeModel = activeLatencyModel(
+		selectedModel as PrecisionRoutedSttModel,
+		selectedId,
+	);
+	const activeState =
+		statesById[activeModel.id] ?? statesById[selectedModel.id];
 	return (
-		<div className="flex min-w-0 flex-1 items-center gap-2">
-			<AuthorChip family={selectedModel.family} />
-			<span className="truncate font-medium text-body text-foreground leading-tight tracking-tight">
-				{variantDisplayName(selectedModel, peers)}
-			</span>
-		</div>
+		<SelectedModelSummary
+			leading={<AuthorChip family={selectedModel.family} />}
+			meta={selectedSttMeta(activeModel, activeState, currentQuantization)}
+			metaPlacement="right"
+			name={sttNameParts(variantDisplayName(selectedModel, peers))}
+		/>
 	);
 }
 
@@ -145,19 +332,25 @@ function SttModelLabel({
  *  per-quant progress fill regardless. */
 function DownloadingBody({
 	ariaLabel,
+	currentQuantization,
 	selectedModel,
+	selectedId,
 	toModel,
 	percent,
 	count = 1,
 	averagePercent = null,
 	peers,
+	statesById,
 }: {
 	ariaLabel: string | undefined;
 	averagePercent?: number | null;
 	count?: number;
+	currentQuantization: string;
 	peers?: readonly ModelInfo[] | undefined;
 	percent: number | null;
+	selectedId: string | undefined;
 	selectedModel: ModelInfo | undefined;
+	statesById: Record<string, ModelStateEntry>;
 	toModel: ModelInfo | undefined;
 }) {
 	const t = useTranslations("modelPicker");
@@ -177,7 +370,13 @@ function DownloadingBody({
 			data-slot="downloading-body"
 		>
 			{selectedModel ? (
-				<SelectedContent peers={peers} selectedModel={selectedModel} />
+				<SelectedContent
+					currentQuantization={currentQuantization}
+					peers={peers}
+					selectedId={selectedId}
+					selectedModel={selectedModel}
+					statesById={statesById}
+				/>
 			) : (
 				<span className="font-medium text-body text-foreground-muted italic tracking-tight">
 					{t("noModel")}
@@ -198,6 +397,7 @@ function TriggerBody({
 	isSwitching,
 	isDownloadingTarget,
 	isBackgroundDownload,
+	currentQuantization,
 	downloadPercent,
 	downloadCount,
 	downloadAveragePercent,
@@ -205,11 +405,14 @@ function TriggerBody({
 	fromModel,
 	toModel,
 	selectedModel,
+	selectedId,
 	placeholder,
 	ariaLabel,
 	peers,
+	statesById,
 }: {
 	ariaLabel: string | undefined;
+	currentQuantization: string;
 	/** Catalog of known models — lets {@link variantDisplayName} keep the size
 	 *  token when two would collide (Canary 180M Flash vs Canary 1B Flash). */
 	peers?: readonly ModelInfo[] | undefined;
@@ -235,7 +438,9 @@ function TriggerBody({
 	isDownloadingTarget: boolean;
 	isSwitching: boolean;
 	placeholder: string;
+	selectedId: string | undefined;
 	selectedModel: ModelInfo | undefined;
+	statesById: Record<string, ModelStateEntry>;
 	toModel: ModelInfo | undefined;
 }) {
 	if (isSwitching && isDownloadingTarget) {
@@ -244,9 +449,12 @@ function TriggerBody({
 				ariaLabel={ariaLabel}
 				averagePercent={downloadAveragePercent}
 				count={downloadCount}
+				currentQuantization={currentQuantization}
 				peers={peers}
 				percent={downloadPercent}
+				selectedId={selectedId}
 				selectedModel={selectedModel}
+				statesById={statesById}
 				toModel={toModel}
 			/>
 		);
@@ -257,9 +465,12 @@ function TriggerBody({
 				ariaLabel={ariaLabel}
 				averagePercent={downloadAveragePercent}
 				count={downloadCount}
+				currentQuantization={currentQuantization}
 				peers={peers}
 				percent={downloadPercent}
+				selectedId={selectedId}
 				selectedModel={selectedModel}
+				statesById={statesById}
 				toModel={downloadingModel}
 			/>
 		);
@@ -282,7 +493,15 @@ function TriggerBody({
 		);
 	}
 	if (selectedModel) {
-		return <SelectedContent peers={peers} selectedModel={selectedModel} />;
+		return (
+			<SelectedContent
+				currentQuantization={currentQuantization}
+				peers={peers}
+				selectedId={selectedId}
+				selectedModel={selectedModel}
+				statesById={statesById}
+			/>
+		);
 	}
 	return (
 		<span className="font-medium text-body text-foreground-muted italic tracking-tight">
@@ -449,6 +668,7 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 			/>
 			<TriggerBody
 				ariaLabel={ariaLabel}
+				currentQuantization={rest.currentQuantization}
 				downloadAveragePercent={downloadAveragePercent}
 				downloadCount={downloadCount}
 				downloadingModel={downloadingModel}
@@ -459,7 +679,9 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 				isSwitching={isSwitching}
 				peers={catalog}
 				placeholder={rest.placeholder}
+				selectedId={rest.selectedId}
 				selectedModel={rest.selectedModel}
+				statesById={rest.statesById}
 				toModel={toModel}
 			/>
 			{isTriggerActive ? (

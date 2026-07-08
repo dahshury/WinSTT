@@ -1,5 +1,6 @@
 import {
 	AiChat02Icon,
+	AiCloud01Icon,
 	AiEditingIcon,
 	AiVoiceGeneratorIcon,
 	Books02Icon,
@@ -12,6 +13,7 @@ import type { CSSProperties, ReactNode } from "react";
 import type { StatusBarTranslateFn } from "@/shared/i18n/translation-types";
 import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
+import { surfaceBg } from "@/shared/lib/surface";
 import type {
 	BreakdownDevice,
 	BreakdownRow,
@@ -86,14 +88,57 @@ function ModelLogo({
 			className="size-3.5 shrink-0 self-center bg-foreground-secondary [mask-image:var(--breakdown-logo)] [mask-position:center] [mask-repeat:no-repeat] [mask-size:contain] [-webkit-mask-image:var(--breakdown-logo)] [-webkit-mask-position:center] [-webkit-mask-repeat:no-repeat] [-webkit-mask-size:contain]"
 			data-logo-src={src}
 			style={{ "--breakdown-logo": `url("${src}")` } as CSSProperties}
-			title={title ?? undefined}
 		/>
 	);
 }
 
+/** The footprint panel these rows live in ({@link ModelFootprintWindow}) sits at
+ *  surface level 5 — the cloud badge punches its disc out with that surface so
+ *  the sign notches cleanly into the maker logo. */
+const PANEL_SURFACE = 5;
+
+/**
+ * A cloud row's leading mark: the maker logo (or a bare cloud glyph when no
+ * brand mark is bundled) badged with a small cloud sign, mirroring the model
+ * chip elsewhere. A logo-less cloud row already reads as cloud, so it isn't
+ * double-badged. Non-cloud rows just render their logo.
+ */
+function ModelMark({ row }: { row: BreakdownRow }): ReactNode {
+	const mark = row.logoSrc ? (
+		<ModelLogo src={row.logoSrc} title={row.maker} />
+	) : row.cloud ? (
+		<HugeiconsIcon
+			aria-hidden="true"
+			className="size-3.5 shrink-0 self-center text-foreground-secondary"
+			icon={AiCloud01Icon}
+		/>
+	) : null;
+	if (!mark) {
+		return null;
+	}
+	if (!(row.cloud && row.logoSrc)) {
+		return mark;
+	}
+	return (
+		<span className="relative inline-flex shrink-0 self-center">
+			{mark}
+			<span
+				aria-hidden="true"
+				className={cn(
+					"-right-1 -bottom-1 absolute inline-flex items-center justify-center rounded-full text-foreground-secondary",
+					surfaceBg(PANEL_SURFACE),
+				)}
+			>
+				<HugeiconsIcon icon={AiCloud01Icon} size={8} />
+			</span>
+		</span>
+	);
+}
+
 /** One icon-led metric on a model's meta line: a dim glyph that carries the
- *  unit (VRAM / RAM / disk) plus the bare size, with the full phrase on the
- *  title for hover + screen readers. Mirrors the model-picker card meta. */
+ *  unit (VRAM / RAM / disk) plus the bare size, with the full phrase kept
+ *  sr-only. This whole breakdown already renders INSIDE a styled popup, so a
+ *  native `title` here would stack an OS tooltip over it. */
 function MetaFigure({
 	icon,
 	size,
@@ -106,7 +151,7 @@ function MetaFigure({
 	tone: string;
 }): ReactNode {
 	return (
-		<span className={cn("flex items-center gap-1", tone)} title={title}>
+		<span className={cn("flex items-center gap-1", tone)}>
 			<HugeiconsIcon
 				aria-hidden="true"
 				className="shrink-0 text-foreground-dim"
@@ -114,6 +159,7 @@ function MetaFigure({
 				size={11}
 			/>
 			<span className="tabular-nums">{size}</span>
+			<span className="sr-only">{title}</span>
 		</span>
 	);
 }
@@ -137,7 +183,7 @@ function ModelEntry({
 	return (
 		<div className="flex flex-col gap-0.5">
 			<div className="flex min-w-0 items-center gap-1.5">
-				{row.logoSrc ? <ModelLogo src={row.logoSrc} title={row.maker} /> : null}
+				<ModelMark row={row} />
 				<span className="truncate text-[12px] text-foreground">{row.name}</span>
 				{row.live ? (
 					<span className="shrink-0 text-[8.5px] text-accent uppercase tracking-wide">
@@ -214,10 +260,10 @@ function Row({
 	row: BreakdownRow;
 	t: StatusBarTranslateFn;
 }): ReactNode {
-	return row.name !== null ? (
-		<ModelEntry row={row} t={t} />
-	) : (
+	return row.name === null ? (
 		<StatusEntry row={row} t={t} />
+	) : (
+		<ModelEntry row={row} t={t} />
 	);
 }
 
@@ -326,10 +372,9 @@ export function GpuModelBreakdown({
 						<div className="flex flex-col gap-1" key={section.key}>
 							<div className="flex items-center justify-between gap-2">
 								<div className="flex min-w-0 items-center gap-1.5">
-									<span
-										className="flex shrink-0"
-										title={t(SECTION_LABEL[section.key])}
-									>
+									{/* No title — the label is visible right beside the glyph, and
+									    this block already sits inside a styled popup. */}
+									<span className="flex shrink-0">
 										<HugeiconsIcon
 											className="text-foreground-dim"
 											disableSecondaryOpacity={true}

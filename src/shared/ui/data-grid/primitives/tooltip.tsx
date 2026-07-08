@@ -57,7 +57,9 @@ export function TooltipContent({
 			>
 				<TooltipPrimitive.Popup
 					className={cn(
-						"max-w-[260px] whitespace-pre-line rounded-md border border-border bg-surface-6 px-2.5 py-1.5 font-sans text-[11.5px] text-foreground-secondary leading-[16px] shadow-overlay",
+						// Mirrors src/shared/ui/tooltip/Tooltip.tsx — tooltips are pinned to
+						// surface-7 app-wide so they read identically everywhere.
+						"max-w-[260px] whitespace-pre-line rounded-lg bg-surface-7 px-3 py-2 font-sans text-[11.5px] text-foreground leading-[16px] shadow-surface-7",
 						className,
 					)}
 				>

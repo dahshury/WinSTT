@@ -24,20 +24,17 @@ if (-not $SkipBuild) {
     }
 }
 
-$RequiredFiles = @(
-    "winstt.exe",
-    "DirectML.dll",
-    "onnxruntime.dll",
-    "onnxruntime_providers_shared.dll",
-    "sherpa-onnx-c-api.dll",
-    "sherpa-onnx-cxx-api.dll"
-)
+$WinsttExe = Join-Path $ReleaseDir "winstt.exe"
+if (-not (Test-Path -LiteralPath $WinsttExe)) {
+    throw "Missing release artifact: $WinsttExe"
+}
 
-foreach ($File in $RequiredFiles) {
-    $Path = Join-Path $ReleaseDir $File
-    if (-not (Test-Path -LiteralPath $Path)) {
-        throw "Missing release artifact: $Path"
-    }
+# Runtime DLLs are staged once by tauri-build.ps1 (same set the NSIS bundle ships via
+# tauri.windows.conf.json): DirectML + the MSVC CRT.
+$RuntimeDir = Join-Path $RepoRoot "src-tauri\binaries\runtime"
+$RuntimeDlls = @(Get-ChildItem -Path $RuntimeDir -Filter "*.dll" -File -ErrorAction SilentlyContinue)
+if ($RuntimeDlls.Count -eq 0) {
+    throw "No staged runtime DLLs in $RuntimeDir - run tools\windows\tauri-build.ps1 first"
 }
 
 $Resources = Join-Path $ReleaseDir "resources"
@@ -61,10 +58,17 @@ New-Item -ItemType Directory -Path $PortableDir | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $ReleaseDir "winstt.exe") -Destination (Join-Path $PortableDir "WinSTT.exe") -Force
 Copy-Item -LiteralPath $NsisExe.FullName -Destination $PortableExe -Force
-foreach ($File in $RequiredFiles | Where-Object { $_ -ne "winstt.exe" }) {
-    Copy-Item -LiteralPath (Join-Path $ReleaseDir $File) -Destination (Join-Path $PortableDir $File) -Force
+foreach ($Dll in $RuntimeDlls) {
+    Copy-Item -LiteralPath $Dll.FullName -Destination (Join-Path $PortableDir $Dll.Name) -Force
 }
 Copy-Item -LiteralPath $Resources -Destination (Join-Path $PortableDir "resources") -Recurse -Force
+# Context-awareness sidecar (staged by tauri-build.ps1; resolved as $RESOURCE/binaries/winstt-context.exe).
+$Sidecar = Join-Path $RepoRoot "src-tauri\binaries\winstt-context.exe"
+if (-not (Test-Path -LiteralPath $Sidecar)) {
+    throw "Missing context sidecar: $Sidecar - run tools\windows\tauri-build.ps1 first"
+}
+New-Item -ItemType Directory -Path (Join-Path $PortableDir "binaries") -Force | Out-Null
+Copy-Item -LiteralPath $Sidecar -Destination (Join-Path $PortableDir "binaries\winstt-context.exe") -Force
 Set-Content -LiteralPath (Join-Path $PortableDir "portable") -Value "WinSTT Portable Mode" -NoNewline -Encoding ASCII
 New-Item -ItemType Directory -Path (Join-Path $PortableDir "Data") -Force | Out-Null
 

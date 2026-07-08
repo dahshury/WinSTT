@@ -251,7 +251,46 @@
     "retentionDays3": "بعد 3 أيام",
     "retentionWeeks2": "بعد أسبوعين",
     "retentionMonths3": "بعد 3 أشهر",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "سجل التفريغ",
+    "enabledTooltip": "عند التفعيل، يسجّل WinSTT عمليات التفريغ والتحويلات وعمليات القراءة الصوتية لتُظهر هذه اللوحة الإحصائيات والتكاليف. أوقفه لإيقاف جمع بيانات جديدة.",
+    "disabledHint": "السجل متوقف — لا يسجّل WinSTT أي نشاط جديد. تُحفظ البيانات الحالية حتى تحذفها.",
+    "deleteAllTitle": "حذف كل السجل؟",
+    "deleteAllDescription": "ستُحذف نهائيًا كل عمليات التفريغ والتحويلات وعمليات القراءة الصوتية والتسجيلات المحفوظة. لا يمكن التراجع عن هذا.",
+    "deleteAllButton": "حذف كل البيانات",
+    "clearTtsButton": "مسح القراءة الصوتية",
+    "clearTtsTitle": "مسح كل سجل القراءة الصوتية؟",
+    "clearTtsDescription": "ستُحذف كل عمليات تحويل النص إلى كلام والملفات الصوتية المحفوظة. لا يمكن التراجع عن هذا.",
+    "combinedTableTitle": "السجل",
+    "filterDateRange": "النطاق الزمني",
+    "filterAllTime": "كل الأوقات",
+    "heatmapEarlier": "أقدم",
+    "heatmapLater": "أحدث",
+    "spendingTitle": "التكاليف",
+    "spendingTotalLabel": "إجمالي التكلفة",
+    "spendingByModalityTitle": "التكلفة حسب النوع",
+    "spendingByProviderTitle": "التكلفة حسب المزوّد",
+    "spendingByModelTitle": "التكلفة حسب النموذج",
+    "spendingByMakerTitle": "التكلفة حسب الصانع",
+    "spendingEstimatedHint": "بعض الأرقام تقديرية حيث لم يُبلَّغ عن التسعير الدقيق.",
+    "costSpeechToText": "تحويل الكلام إلى نص",
+    "costTextToSpeech": "تحويل النص إلى كلام",
+    "costLanguageModel": "نموذج لغوي",
+    "colCharacters": "الأحرف",
+    "cloudLabel": "سحابي",
+    "colCost": "تكلفة السحابة",
+    "costEstimated": "تقديري",
+    "costTotal": "الإجمالي",
+    "kindSpeechToText": "تحويل الكلام إلى نص",
+    "kindTextToSpeech": "تحويل النص إلى كلام",
+    "durationLlmProcessing": "معالجة الذكاء الاصطناعي",
+    "durationNotRecorded": "غير مسجّل",
+    "durationNotRun": "لم يُشغَّل",
+    "durationRecording": "التسجيل",
+    "durationSpeechToText": "التفريغ",
+    "durationTotalProcessing": "وقت المعالجة",
+    "colTtsModel": "نموذج الصوت",
+    "colVoice": "الصوت"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "احتياطي نص الشاشة (OCR)",
+    "contextScreenOcrCaption": "قراءة النص المعروض قرب المؤشر كسياق إضافي",
+    "contextScreenOcrTooltip": "عندما يتعذّر على إدراك السياق قراءة الحقل المركّز مباشرةً، يلجأ WinSTT إلى قراءة (التعرّف الضوئي على النص) منطقة الشاشة المحيطة بالمؤشر لالتقاط النص القريب. هذه الطريقة أبطأ وأقل دقة من القراءة المباشرة للحقل — أوقفها لتخطّي هذا البديل."
   },
   "model": {
     "initialPrompt": "المحث الأولي",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "ثوانٍ من الصمت لبدء النسخ مبكرًا",
     "earlyTranscriptionTooltip": "بدء النسخ قبل التوقف الكامل عن الكلام، يتم تفعيله بعد هذا العدد من ثواني الصمت. يقلل التأخير بين التحدث ورؤية النص النهائي. اضبطه على 0 للتعطيل.",
     "realtimeModel": "نموذج الوقت الفعلي",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "نموذج الوقت الفعلي",
     "realtimeModelCaption": "نموذج أصغر للمعاينة المباشرة",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "الحد الأدنى للوقت بين تحديثات النسخ المباشرة. القيم الأقل تعطي تحديثات أكثر تكرارًا لكنها تستخدم قدرة معالجة أكثر. قم بزيادتها إذا واجهت تقطعًا أو استخدامًا عاليًا لـ CPU أثناء الإملاء.",
     "llm": "نموذج لغوي كبير",
     "deviceAutoLabel": "تلقائي",
-    "deviceCpuLabel": "وحدة المعالجة المركزية"
+    "deviceCpuLabel": "وحدة المعالجة المركزية",
+    "realtimeOffWordByWordTitle": "إيقاف النسخ الفوري كلمة بكلمة؟",
+    "realtimeOffWordByWordDescription": "يقوم هذا النموذج بنسخ الكلام كلمة بكلمة أثناء حديثك. إيقاف الوضع الفوري يجعله ينسخ فقط بعد توقّفك عن الكلام.",
+    "realtimeOffWordByWordConfirm": "إيقاف"
   },
   "audio": {
     "inputDevice": "جهاز الإدخال",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "فوري",
     "microphoneReleaseSec30": "30 ثانية",
     "microphoneReleaseMin1": "دقيقة واحدة",
-    "microphoneReleaseMin5": "5 دقائق"
+    "microphoneReleaseMin5": "5 دقائق",
+    "devicePriorityHandle": "اسحب لإعادة ترتيب الأولوية"
   },
   "quality": {
     "enableRealtime": "تفعيل الوقت الفعلي",
@@ -717,7 +766,8 @@
     "waiting": "في انتظار الكلام...",
     "serverOffline": "الخادم غير متصل",
     "noAudioDetected": "(لم يتم اكتشاف صوت)",
-    "transcriptionFailed": "(فشل التفريغ)"
+    "transcriptionFailed": "(فشل التفريغ)",
+    "offlineNoLocalModel": "لا يوجد إنترنت · لا يوجد نموذج محلي"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "تثبيت على أي حال",
     "unfitSelectTitle": "استخدام هذا النموذج الكبير؟",
     "unfitSelectDescription": "\"{model}\" أكبر مما يمكن لجهازك تشغيله بسلاسة (~{required} مطلوبة، {available} متاحة). قد يصبح بطيئاً جداً أو يفشل في التحميل. هل تريد استخدامه رغم ذلك؟",
-    "unfitSelectAnyway": "استخدام على أي حال"
+    "unfitSelectAnyway": "استخدام على أي حال",
+    "dictionaryAutoAddLiteModel": "غير متاح على النماذج الخفيفة — بدّل إلى نموذج أكبر لإضافة تصحيحات القاموس تلقائيًا."
   },
   "tts": {
     "title": "تحويل النص إلى كلام",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "أضِف مفتاح واجهة برمجة تطبيقات ElevenLabs وتحقق منه في التكاملات لاستخدام الأصوات السحابية.",
     "cloudLoadingVoices": "جارٍ تحميل الأصوات…",
     "cloudNoVoices": "لم يتم العثور على أصوات لحساب ElevenLabs هذا.",
-    "cloudError": "تعذّر تحميل أصوات ElevenLabs."
+    "cloudError": "تعذّر تحميل أصوات ElevenLabs.",
+    "voiceDesignLabel": "تصميم الصوت",
+    "voiceDesignTooltip": "صِف الصوت الذي تريده بالكلمات — الطابع الصوتي والعمر واللهجة والانفعال — فيقوم النموذج بتوليد صوت مطابق بدلاً من الاختيار من مكتبة أصوات جاهزة.",
+    "voiceDesignButtonPlaceholder": "تصميم الصوت",
+    "voiceDesignDialogTitle": "تصميم الصوت",
+    "voiceDesignDialogDescription": "صِف الصوت في جملة أو جملتين. اتركه فارغًا لاستخدام الصوت الافتراضي للنموذج.",
+    "voiceDesignPromptLabel": "وصف الصوت",
+    "voiceDesignPromptPlaceholder": "مثال: راوٍ دافئ بنبرة منخفضة ولهجة بريطانية خفيفة",
+    "voiceDesignPromptEmptyHint": "اتركه فارغًا للرجوع إلى الصوت المدمج في النموذج.",
+    "voiceDesignCancel": "إلغاء",
+    "voiceDesignSave": "حفظ",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "حدث خطأ ما",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "تم تجاوز الحد المسموح به من {provider}",
     "toastRateLimitedRetry": "حاول مرة أخرى بعد {seconds} ثانية",
     "toastProviderError": "خطأ STT من {provider}: {message}",
-    "openIntegrations": "فتح التكاملات"
+    "openIntegrations": "فتح التكاملات",
+    "toastTtsOfflineNoLocal": "لا يوجد إنترنت ولا صوت محلي مثبَّت — القراءة الصوتية غير متاحة."
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "خفيف",
+    "liteTierTip": "نسخة أصغر وأسرع بدقة أقل — الأنسب للمهام السريعة على العتاد المحدود."
   },
   "dataGrid": {
     "addRow": "Add row",

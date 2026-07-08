@@ -1,6 +1,6 @@
 ---
 title: Text-to-Speech (reference)
-description: The Text-to-Speech settings section — enable, pick a voice and speed, set a speak hotkey, and download the on-demand Kokoro voice pack.
+description: The Text-to-Speech settings section — enable, pick a voice and speed, and download the on-demand Kokoro voice pack.
 ---
 
 The **Text-to-Speech** section turns selected text into speech with the local Kokoro-82M ONNX model — 54 voices across 9 languages, all on-device.
@@ -14,10 +14,10 @@ The **Text-to-Speech** section turns selected text into speech with the local Ko
 
 <Screenshot
   src="section-tts"
-  alt="The Text-to-Speech settings section with an enable toggle, a voice picker, a speed slider, and a speak hotkey field."
+  alt="The Text-to-Speech settings section with an enable toggle, a voice picker, and a speed slider."
   chrome="card"
   label="Settings — Text-to-Speech"
-  caption="Enable, pick a voice and speed, and bind a speak hotkey — all in one panel."
+  caption="Enable, then pick a voice and speed — all in one panel."
 />
 
 This page is the quick settings reference. For the full walkthrough — voice catalog, previews, playback flow, and troubleshooting — see the [Text-to-Speech guide](/docs/text-to-speech).
@@ -43,12 +43,6 @@ This page is the quick settings reference. For the full walkthrough — voice ca
   Synthesis playback speed, **0.5x to 2.0x** in 0.1 steps, shown as `1.0x`. Applied by the
   Kokoro session itself (not post-processing), so pitch stays natural. A reset button
   appears when the value is non-default.
-</SettingRow>
-
-<SettingRow label="Speak hotkey" settingKey="tts.hotkey" default="(unset)">
-  A uiohook key combo that reads the current text selection aloud. Set it from the
-  [Hotkeys](/docs/settings/general) capture field; leave it empty to trigger TTS only from
-  the tray or the preview buttons.
 </SettingRow>
 
 <Callout type="info" title="9 languages, local only">

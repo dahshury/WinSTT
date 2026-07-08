@@ -369,9 +369,43 @@ impl SttBackend for WinsttSttBackend {
         let resolved =
             resolve_result.map_err(|e| anyhow::anyhow!("resolve {}: {}", model_id, e))?;
 
+        // Cohere's blanket DML→CPU pin (`is_dml_incompatible`) is CONSERVATIVE: it fires before the
+        // files are on disk, because the crash is specific to exports that bake in the fused
+        // `MultiHeadAttention` contrib op (onnx-community). A hand-decomposed export (Masterx) has no
+        // such node and runs correctly — and ~2.7× faster than CPU — on DirectML. Now that the graph
+        // is resolved, probe it and RESTORE the GPU EP when the export is proven MHA-free.
+        if kind == stt::EngineKind::CohereAsr
+            && primary == stt::Accelerator::DirectMl
+            && providers.first() == Some(&stt::Accelerator::Cpu)
+            && stt::cohere_export_dml_safe(&resolved)
+        {
+            log::info!(
+                "[stt] cohere export '{model_id}' is MultiHeadAttention-free — restoring DirectML EP"
+            );
+            providers = stt::providers_for_accelerator(primary);
+        }
+
         let whisper_fp16_workaround =
             matches!(entry.family, crate::winstt::catalog::Family::Whisper)
                 && effective == Quantization::Fp16;
+
+        // Load-time language for prompt-based streaming models (Nemotron-3.5). The realtime slot
+        // carries its OWN language picker (`model.realtime_language`); a prompt model in the main
+        // slot follows the main language. Blank = whole-utterance auto-detect. Ignored by every
+        // other engine (they take language per-transcribe).
+        let nonblank = |s: &str| {
+            let t = s.trim();
+            (!t.is_empty()).then(|| t.to_string())
+        };
+        let realtime_id =
+            crate::winstt::catalog::canonical_model_id(&settings.model.realtime_model);
+        let language = if model_id == realtime_id {
+            nonblank(&settings.model.realtime_language)
+        } else if settings.model.auto_detect_language {
+            None
+        } else {
+            nonblank(&settings.model.language)
+        };
 
         let config = EngineConfig {
             model_name: model_id.to_string(),
@@ -380,6 +414,7 @@ impl SttBackend for WinsttSttBackend {
             resolved,
             providers,
             whisper_fp16_workaround,
+            language,
         };
 
         Ok(ResolvedSpec {
@@ -457,7 +492,20 @@ impl SttBackend for WinsttSttBackend {
                 Some(p.to_string())
             }
         };
-        let (language, language_candidates) = model_language_options(&ws.model);
+        let (language, mut language_candidates) = model_language_options(&ws.model);
+        // Cohere's `<|unklang|>` target slot biases the OUTPUT to the model's home language (Arabic on
+        // the arabic checkpoint), so genuine auto-detect needs the engine to score candidate languages.
+        // When the user left the candidate set empty, seed it from the catalog's declared languages so
+        // the CohereEngine can run its detection pass. Scoped to Cohere auto-detect — other families are
+        // untouched.
+        if language.is_none()
+            && language_candidates.is_empty()
+            && crate::winstt::catalog::find(&ws.model.model)
+                .is_some_and(|e| matches!(e.family, crate::winstt::catalog::Family::Cohere))
+        {
+            language_candidates =
+                crate::winstt::commands::catalog_data::languages_for(&ws.model.model);
+        }
         let opts = TranscribeOptions {
             language,
             language_candidates,
@@ -733,7 +781,7 @@ impl SttBackend for WinsttSttBackend {
 /// Catalog family → engine decode archetype. Returns `None` for families whose engine isn't
 /// dispatched / validated yet so the swap surfaces a precise error instead of silently doing
 /// nothing.
-fn engine_kind_for(
+pub(crate) fn engine_kind_for(
     entry: &crate::winstt::catalog::ModelEntry,
 ) -> Option<crate::winstt::stt::EngineKind> {
     use crate::winstt::stt::EngineKind;
@@ -852,7 +900,10 @@ fn build_segmentation_vad(app: &AppHandle) -> Result<SileroVad> {
 static SEGMENTATION_VAD: std::sync::OnceLock<std::sync::Mutex<Option<SileroVad>>> =
     std::sync::OnceLock::new();
 
-fn with_segmentation_vad<R>(app: &AppHandle, f: impl FnOnce(&mut SileroVad) -> R) -> Result<R> {
+pub(crate) fn with_segmentation_vad<R>(
+    app: &AppHandle,
+    f: impl FnOnce(&mut SileroVad) -> R,
+) -> Result<R> {
     let cell = SEGMENTATION_VAD.get_or_init(|| std::sync::Mutex::new(None));
     // Poison recovery is safe here: `reset()` below restores a well-defined state even if
     // a previous holder panicked mid-inference.

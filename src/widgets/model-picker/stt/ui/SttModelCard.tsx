@@ -490,7 +490,10 @@ function LatencyShelf({
 					<ButtonGroup
 						aria-label={`Streaming latency ${latencyLabel} for ${model.displayName}`}
 						className={cn(
-							"rounded-md ring-1 ring-inset",
+							// 5px to match the inner badges (rounded-sm): the inset ring is a
+							// box-shadow, so a flush child with a tighter radius pokes past the
+							// group corner. Equal radii keep the ring flush to the fill.
+							"rounded-sm ring-1 ring-inset",
 							isRecommended ? "ring-accent/60" : "ring-border",
 						)}
 						key={`${variant.latencyMs}:${variant.model.id}`}
@@ -696,12 +699,9 @@ export function SttModelCard({
 		fitAssessment,
 	);
 	// Broken custom drops surface the scanner's error verbatim — much more
-	// useful than a generic "couldn't load" toast. The label itself is
-	// already shown; the tooltip explains *why* the card is greyed out.
-	const title =
-		isUnavailable && model.errorMessage
-			? `Unavailable: ${model.errorMessage}`
-			: undefined;
+	// useful than a generic "couldn't load" toast. `errorMessage` renders both
+	// inline under the name and on the Broken badge's styled tooltip; no native
+	// title attribute (tooltips are unified on the shared styled Tooltip).
 	// STT is the canonical adapter over the shared universal `ModelCard`: the
 	// quant precision controls drop into the recessed `shelf`, the bundle
 	// expand chevron into `actions`, and the rest maps 1:1. All STT-specific
@@ -754,7 +754,6 @@ export function SttModelCard({
 					/>
 				</div>
 			}
-			title={title}
 			unavailable={isUnavailable}
 			value={model}
 		/>

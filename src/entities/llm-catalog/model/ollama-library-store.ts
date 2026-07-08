@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
 	fetchOllamaLibraryCatalog,
 	fetchOllamaLibraryTags,
+	fetchOllamaModelHit,
 } from "@/shared/api/ipc-client";
 import type {
 	OllamaLibraryHit,
@@ -15,10 +16,20 @@ interface TagsState {
 	tags: readonly OllamaLibraryTag[];
 }
 
+interface HitState {
+	error: string | null;
+	hit: OllamaLibraryHit | null;
+	isLoading: boolean;
+}
+
 interface OllamaLibraryStoreState {
 	catalog: readonly OllamaLibraryHit[];
 	error: string | null;
+	fetchHit: (model: string) => Promise<void>;
 	fetchTags: (model: string) => Promise<void>;
+	/** Per-base-slug homepage scrape (description / capabilities / pulls /
+	 *  updated) for typed tags not in the recommended catalog. */
+	hitsByModel: Readonly<Record<string, HitState>>;
 	isLoaded: boolean;
 	isLoading: boolean;
 	loadCatalog: () => Promise<void>;
@@ -36,6 +47,14 @@ interface CatalogReadyState {
  *  "skip the request" to the caller. */
 export function tagsCacheKey(model: string): string {
 	return model.trim().toLowerCase();
+}
+
+/** Hit cache key is the BASE slug (tag stripped) so every tag of a model shares
+ *  one homepage scrape: `gpt-oss:20b` and `gpt-oss:120b` → `gpt-oss`. */
+export function hitCacheKey(model: string): string {
+	const trimmed = model.trim().toLowerCase();
+	const colon = trimmed.indexOf(":");
+	return colon > 0 ? trimmed.slice(0, colon) : trimmed;
 }
 
 /** True when an in-flight catalog request would overlap an existing one or
@@ -57,6 +76,13 @@ export function shouldSkipTagsFetch(existing: TagsState | undefined): boolean {
 	return Boolean(
 		existing?.isLoading || (existing?.tags.length && !existing.error),
 	);
+}
+
+/** Gate for `fetchHit` — same semantics as {@link shouldSkipTagsFetch}: skip a
+ *  duplicate in-flight scrape or a non-error cached hit, but allow retrying an
+ *  errored one. */
+export function shouldSkipHitFetch(existing: HitState | undefined): boolean {
+	return Boolean(existing?.isLoading || (existing?.hit && !existing.error));
 }
 
 function buildCatalogReadyState(result: {
@@ -99,6 +125,24 @@ function upsertTagsByModel(
 	return { ...tagsByModel, [key]: entry };
 }
 
+function buildPendingHitEntry(existing: HitState | undefined): HitState {
+	return { isLoading: true, error: null, hit: existing?.hit ?? null };
+}
+
+function buildSettledHitEntry(hit: OllamaLibraryHit): HitState {
+	// The Rust fetch never rejects — an unreachable homepage yields `{ name }`
+	// with no description/capabilities, which the card renders as size-only.
+	return { isLoading: false, error: null, hit };
+}
+
+function upsertHitsByModel(
+	hitsByModel: Readonly<Record<string, HitState>>,
+	key: string,
+	entry: HitState,
+): Readonly<Record<string, HitState>> {
+	return { ...hitsByModel, [key]: entry };
+}
+
 /**
  * Holds the full Ollama library scraped from `ollama.com/library` (currently
  * ~230 models), plus per-model tag-scrape state. The catalog is pulled once
@@ -113,6 +157,7 @@ export const useOllamaLibraryStore = create<OllamaLibraryStoreState>(
 		isLoaded: false,
 		isLoading: false,
 		tagsByModel: {},
+		hitsByModel: {},
 
 		loadCatalog: async () => {
 			if (shouldSkipCatalogLoad(get())) {
@@ -146,6 +191,32 @@ export const useOllamaLibraryStore = create<OllamaLibraryStoreState>(
 					s.tagsByModel,
 					key,
 					buildSettledTagsEntry(result),
+				),
+			}));
+		},
+
+		fetchHit: async (model: string) => {
+			const key = hitCacheKey(model);
+			if (!key) {
+				return;
+			}
+			const existing = get().hitsByModel[key];
+			if (shouldSkipHitFetch(existing)) {
+				return;
+			}
+			set((s) => ({
+				hitsByModel: upsertHitsByModel(
+					s.hitsByModel,
+					key,
+					buildPendingHitEntry(existing),
+				),
+			}));
+			const hit = await fetchOllamaModelHit(model);
+			set((s) => ({
+				hitsByModel: upsertHitsByModel(
+					s.hitsByModel,
+					key,
+					buildSettledHitEntry(hit),
 				),
 			}));
 		},

@@ -59,6 +59,24 @@ pub(super) fn apply_model_runtime_settings(
             unload_loaded_stt_model_async(app);
         }
     }
+
+    // Prompt-based realtime models (Nemotron-3.5) bind the encoder `prompt_index` at LOAD, so a
+    // change to the realtime language must reload the realtime engine to re-bind it. Only fires when
+    // the realtime model itself is unchanged (a model change already reloads via the swap controller).
+    if realtime_language_changed(previous, next) {
+        let rt = next.model.realtime_model.trim();
+        if !rt.is_empty() {
+            crate::winstt::commands::swap_events::perform_model_reload(app, "realtime", rt);
+        }
+    }
+}
+
+/// True when only the realtime LANGUAGE changed (same realtime model). Drives a targeted realtime
+/// reload so the new `prompt_index` takes effect without touching the main engine.
+fn realtime_language_changed(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
+    !next.model.realtime_model.trim().is_empty()
+        && previous.model.realtime_model == next.model.realtime_model
+        && previous.model.realtime_language != next.model.realtime_language
 }
 
 /// True when the STT model id CHANGED to a cloud provider id (`openrouter:` /
@@ -120,6 +138,15 @@ fn reload_stt_model_async(app: &AppHandle, model: &str, keep_warm: bool) {
     crate::winstt::commands::swap_events::perform_model_reload(app, "main", model);
 }
 
+/// True when the CURRENT settings still want a warm LOCAL STT engine. The queued
+/// unload thread re-checks this so a rapid settings flip-back (e.g. cloud→local,
+/// or immediate→finite timeout) can't let a stale eviction land after the warm
+/// that re-loaded the model.
+fn local_stt_engine_wanted(settings: &WinsttSettings) -> bool {
+    should_keep_stt_model_warm_for_settings(settings)
+        && crate::winstt::cloud_stt::provider_of(&settings.model.model).is_none()
+}
+
 fn unload_loaded_stt_model_async(app: &AppHandle) {
     let Some(transcription) =
         app.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
@@ -130,9 +157,27 @@ fn unload_loaded_stt_model_async(app: &AppHandle) {
         return;
     }
     let tm = Arc::clone(transcription.inner());
+    let app = app.clone();
     std::thread::spawn(move || {
+        // The settings snapshot that scheduled this unload is stale by now —
+        // only the CURRENT settings decide whether the local engine may drop.
+        let current = crate::winstt::settings_store::read_settings_raw(&app);
+        if local_stt_engine_wanted(&current) {
+            log::info!(
+                "[settings] STT unload skipped — current settings want the local model warm"
+            );
+            return;
+        }
         if let Err(err) = tm.unload_model() {
             log::warn!("[settings] failed to unload STT model after load-input change: {err}");
+        }
+        // Self-heal: the user may have flipped back to "keep warm" between the
+        // re-check above and the drop. The CURRENT settings win — reload + warm
+        // now instead of leaving a cold engine behind an enabled-looking state.
+        let after = crate::winstt::settings_store::read_settings_raw(&app);
+        if local_stt_engine_wanted(&after) {
+            log::info!("[settings] STT re-warm after unload — settings flipped back mid-drop");
+            warm_stt_model_async(&app);
         }
     });
 }
@@ -187,13 +232,41 @@ fn local_tts_engine_wanted(settings: &WinsttSettings) -> bool {
 
 /// Drop the active local TTS session off-thread (cancels any in-flight read-aloud,
 /// which is the right call when the user just turned TTS off).
+///
+/// Emits `tts:unload-status` (inProgress true → false) around the drop so the
+/// toggle row can show a truthful "freeing memory" state, and re-validates the
+/// CURRENT settings first: a rapid disable→enable must not let the queued drop
+/// land after the re-enable's warm-up and evict the session again.
 fn unload_local_tts_async(app: &AppHandle) {
     let Some(tts) = app.try_state::<Arc<crate::winstt::managers::TtsManager>>() else {
         return;
     };
     let mgr = Arc::clone(tts.inner());
+    let app = app.clone();
     std::thread::spawn(move || {
+        use tauri::Emitter;
+        let current = crate::winstt::settings_store::read_settings_raw(&app);
+        if local_tts_engine_wanted(&current) {
+            log::info!("[tts] unload skipped — current settings want the local voice loaded");
+            return;
+        }
+        let _ = app.emit(
+            "tts:unload-status",
+            serde_json::json!({ "inProgress": true }),
+        );
         mgr.unload_active_local_model_for_cleanup("tts disabled");
+        let _ = app.emit(
+            "tts:unload-status",
+            serde_json::json!({ "inProgress": false }),
+        );
+        // Self-heal: a re-enable that landed between the re-check above and the
+        // drop must not leave an enabled toggle with a cold engine — re-warm now
+        // (the warm-up is claim-guarded and idempotent).
+        let after = crate::winstt::settings_store::read_settings_raw(&app);
+        if local_tts_engine_wanted(&after) {
+            log::info!("[tts] re-warm after unload — settings flipped back mid-drop");
+            warm_tts_async(&app);
+        }
     });
 }
 
@@ -201,7 +274,7 @@ fn unload_local_tts_async(app: &AppHandle) {
 /// feature is toggled OFF. Unlike STT/TTS it has no idle watcher, so without this
 /// the session would sit in the global engine cell until the app exits.
 pub(super) fn apply_encoder_dict_runtime_settings(
-    _app: &AppHandle,
+    app: &AppHandle,
     previous: &WinsttSettings,
     next: &WinsttSettings,
 ) {
@@ -216,6 +289,14 @@ pub(super) fn apply_encoder_dict_runtime_settings(
             crate::winstt::encoder_dict::clear_loaded();
             log::info!("[encoder-dict] session dropped (feature disabled)");
         });
+    }
+    // Enable edge: preload + warm the mmBERT session now so the FIRST dictation
+    // with the dictionary on doesn't pay the cold load. The widget's preload
+    // command covers the settings UI path; this settings-diff hook makes the
+    // guarantee hold for every writer (onboarding, profiles, direct patches).
+    // `preload_async` is idempotent and a no-op when the model isn't downloaded.
+    if !previous.general.encoder_dictionary_enabled && next.general.encoder_dictionary_enabled {
+        crate::winstt::encoder_dict::preload_async(app);
     }
 }
 
@@ -603,6 +684,27 @@ mod tests {
         // Unchanged id, or already-cloud staying cloud, is not a fresh switch.
         assert!(!stt_switched_to_cloud(&local, &local));
         assert!(!stt_switched_to_cloud(&to_eleven, &to_eleven));
+    }
+
+    #[test]
+    fn queued_stt_unload_is_vetoed_when_current_settings_want_a_warm_local_model() {
+        use crate::winstt::settings_schema::ModelUnloadTimeout;
+
+        // Local model + keep-warm policy → the queued unload must be skipped
+        // (the user flipped back while the unload thread was queued).
+        let mut warm_local = WinsttSettings::default();
+        warm_local.model.model = "dolphin-base-ctc".into();
+        assert!(local_stt_engine_wanted(&warm_local));
+
+        // Cloud model → no local engine wanted → unload proceeds.
+        let mut cloud = warm_local.clone();
+        cloud.model.model = "elevenlabs:scribe_v1".into();
+        assert!(!local_stt_engine_wanted(&cloud));
+
+        // "Immediately" policy → nothing should stay warm → unload proceeds.
+        let mut immediate = warm_local;
+        immediate.global.model_unload_timeout = ModelUnloadTimeout::Immediately;
+        assert!(!local_stt_engine_wanted(&immediate));
     }
 
     #[test]

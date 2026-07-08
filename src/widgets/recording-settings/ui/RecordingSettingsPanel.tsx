@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsStore, useSettingsTabStore } from "@/entities/setting";
@@ -13,6 +13,7 @@ import {
 	wakewordResumeModelDownload,
 	wakewordStartModelDownload,
 } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
 import { isRealtimeEnabled } from "@/shared/lib/realtime-enabled";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { recordingModePatch } from "../lib/recording-settings-helpers";
@@ -48,14 +49,28 @@ export function RecordingSettingsPanel() {
 	const updateLlmDictation = useSettingsStore((s) => s.updateLlmDictation);
 	const setActiveSettingsTab = useSettingsTabStore((s) => s.setActiveTab);
 	const recordingMode = general?.recordingMode ?? "ptt";
+	// `recordingMode` (live) drives the switcher pill so it flips the instant the
+	// user clicks — the store write is synchronous, nothing waits on the backend.
+	// Every mode-CONDITIONAL sub-section is driven off a deferred copy instead, so
+	// the expensive mount/unmount of Input/VAD/Endpoint sections (device
+	// enumeration, mic-level streams, motion) renders off the urgent path in a
+	// concurrent, interruptible pass — the pill paints first, then the sections
+	// swap. Mirrors SettingsPage's `useDeferredValue(activeTab)` tab-swap pattern.
+	const contentMode = useDeferredValue(recordingMode);
+	// True only while the deferred pass is catching up to a just-clicked mode.
+	// Used to dim + freeze the still-old sections so the brief swap reads as
+	// "updating" rather than a stutter.
+	const isSwitching = contentMode !== recordingMode;
 	const wakewordEnablePendingRef = useRef(false);
 	const [wakewordDialogOpen, setWakewordDialogOpen] = useState(false);
 	const [wakewordEnablePending, setWakewordEnablePending] = useState(false);
 	const [listenModelDialogOpen, setListenModelDialogOpen] = useState(false);
 	const finalizeWakewordEnable = (next: WakewordModelStatusPayload): void => {
 		if (
-			!wakewordEnablePendingRef.current ||
-			!wakewordStatusWithRuntimeFallback(next, general?.wakeWord).available
+			!(
+				wakewordEnablePendingRef.current &&
+				wakewordStatusWithRuntimeFallback(next, general?.wakeWord).available
+			)
 		) {
 			return;
 		}
@@ -118,7 +133,7 @@ export function RecordingSettingsPanel() {
 	// PTT defines the boundary via key release; Listen runs continuous loopback
 	// capture where endpoint tuning is more noise than signal.
 	const smartEndpointApplicable =
-		recordingMode === "toggle" || recordingMode === "wakeword";
+		contentMode === "toggle" || contentMode === "wakeword";
 
 	// Sentence-pause sliders are only relevant when silence_timing is driving
 	// post_speech_silence_duration — that's toggle mode with manual-stop off
@@ -127,8 +142,8 @@ export function RecordingSettingsPanel() {
 	const manualToggleStop = general?.manualToggleStop ?? false;
 	const recordingSoundEnabled = general?.recordingSound ?? true;
 	const sentencePausesApplicable =
-		(recordingMode === "toggle" && !manualToggleStop) ||
-		recordingMode === "wakeword";
+		(contentMode === "toggle" && !manualToggleStop) ||
+		contentMode === "wakeword";
 
 	const startWakewordDownload = () => {
 		wakewordEnablePendingRef.current = true;
@@ -154,6 +169,7 @@ export function RecordingSettingsPanel() {
 		<div className="flex flex-col">
 			<RecordingModeSection
 				audio={audio}
+				contentMode={contentMode}
 				general={general}
 				prepareListenMode={prepareListenMode}
 				recordingMode={recordingMode}
@@ -189,54 +205,64 @@ export function RecordingSettingsPanel() {
 				title="Listen mode needs a realtime model"
 			/>
 
-			{/* ── Input Device (hidden in Listen mode — loopback device is used instead) */}
-			{recordingMode !== "listen" && (
-				<InputDeviceSection audio={audio} t={ta} update={updateAudio} />
-			)}
-			{recordingMode !== "listen" && (
-				<RecordingSoundSection
-					enabled={recordingSoundEnabled}
-					general={general}
-					t={t}
-					tCommon={tc}
-					update={updateGeneral}
-				/>
-			)}
-
-			{/* ── Voice Activity Detection (only meaningful when VAD drives endpoints) */}
-			{(recordingMode === "listen" || recordingMode === "wakeword") && (
-				<VadSection audio={audio} ta={ta} updateAudio={updateAudio} />
-			)}
-
-			{/* ── Smart Endpoint (Toggle / Wake Word only, realtime required).
-			   Realtime is derived from the live-transcription display picker
-			   (see `isRealtimeEnabled`); when no display surface is active
-			   the engine isn't running, so Smart Endpoint has nothing to gate.
-			   showRecordingOverlay + liveTranscriptionDisplay live on the
-			   Appearance tab — read as plain store values here. */}
-			{isRealtimeEnabled({
-				showRecordingOverlay: general?.showRecordingOverlay ?? true,
-				liveTranscriptionDisplay: general?.liveTranscriptionDisplay ?? "both",
-				llmDictationEnabled,
-				wordByWordPasting: general?.wordByWordPasting ?? false,
-			}) &&
-				smartEndpointApplicable && (
-					<SmartEndpointSection
-						onToggle={handleSmartEndpointToggle}
-						q={q}
-						t={tq}
-						update={update}
+			{/* Mode-dependent sections render off `contentMode` (the deferred mode)
+			   and dim + freeze while the switch settles, so the heavy mount/unmount
+			   never blocks the switcher pill and the swap reads as "updating". */}
+			<div
+				className={cn(
+					"flex flex-col transition-opacity duration-150",
+					isSwitching && "pointer-events-none opacity-60",
+				)}
+			>
+				{/* ── Input Device (hidden in Listen mode — loopback device is used instead) */}
+				{contentMode !== "listen" && (
+					<InputDeviceSection audio={audio} t={ta} update={updateAudio} />
+				)}
+				{contentMode !== "listen" && (
+					<RecordingSoundSection
+						enabled={recordingSoundEnabled}
+						general={general}
+						t={t}
+						tCommon={tc}
+						update={updateGeneral}
 					/>
 				)}
 
-			{/* ── Sentence pauses (toggle/wakeword only, hidden when smart endpoint
-			   handles them automatically or manual-toggle bypasses silence detection) */}
-			{sentencePausesApplicable && !(q?.smartEndpoint ?? false) && (
-				<SentencePauseSection q={q} t={tq} update={update} />
-			)}
+				{/* ── Voice Activity Detection (only meaningful when VAD drives endpoints) */}
+				{(contentMode === "listen" || contentMode === "wakeword") && (
+					<VadSection audio={audio} ta={ta} updateAudio={updateAudio} />
+				)}
 
-			{/* ── Advanced — mic-release behavior */}
-			<AdvancedSection audio={audio} t={ta} update={updateAudio} />
+				{/* ── Smart Endpoint (Toggle / Wake Word only, realtime required).
+				   Realtime is derived from the live-transcription display picker
+				   (see `isRealtimeEnabled`); when no display surface is active
+				   the engine isn't running, so Smart Endpoint has nothing to gate.
+				   showRecordingOverlay + liveTranscriptionDisplay live on the
+				   Appearance tab — read as plain store values here. */}
+				{isRealtimeEnabled({
+					showRecordingOverlay: general?.showRecordingOverlay ?? true,
+					liveTranscriptionDisplay: general?.liveTranscriptionDisplay ?? "both",
+					llmDictationEnabled,
+					wordByWordPasting: general?.wordByWordPasting ?? false,
+				}) &&
+					smartEndpointApplicable && (
+						<SmartEndpointSection
+							onToggle={handleSmartEndpointToggle}
+							q={q}
+							t={tq}
+							update={update}
+						/>
+					)}
+
+				{/* ── Sentence pauses (toggle/wakeword only, hidden when smart endpoint
+				   handles them automatically or manual-toggle bypasses silence detection) */}
+				{sentencePausesApplicable && !(q?.smartEndpoint ?? false) && (
+					<SentencePauseSection q={q} t={tq} update={update} />
+				)}
+
+				{/* ── Advanced — mic-release behavior */}
+				<AdvancedSection audio={audio} t={ta} update={updateAudio} />
+			</div>
 		</div>
 	);
 }

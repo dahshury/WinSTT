@@ -73,6 +73,36 @@ static MIGRATIONS: &[M<'_>] = &[
     // rows written before this shipped and on renderer-driven manual adds where
     // no engine context is available.
     M::up("ALTER TABLE transcription_history ADD COLUMN stt_model TEXT;"),
+    // Wall-clock time spent in the final speech-to-text decode/finalization
+    // after recording stopped. NULL on rows written before this shipped and on
+    // renderer-driven manual adds.
+    M::up("ALTER TABLE transcription_history ADD COLUMN stt_processing_ms INTEGER;"),
+    // USD billed for the cloud STT upload that produced this transcription.
+    // NULL for local decodes and legacy rows. `stt_cost_is_estimate` marks
+    // providers that report no billed amount (ElevenLabs), where the value is
+    // derived from duration × published rate instead.
+    M::up("ALTER TABLE transcription_history ADD COLUMN stt_cost_usd REAL;"),
+    M::up(
+        "ALTER TABLE transcription_history ADD COLUMN stt_cost_is_estimate BOOLEAN NOT NULL DEFAULT 0;",
+    ),
+    // Text-to-speech read-aloud runs, so the History tab can list TTS next to
+    // STT with per-run cloud cost. `model` is the engine id (`<provider>:<id>`
+    // for cloud, the local model key otherwise); `cost_usd` is NULL for local
+    // synthesis and for cloud runs whose cost could not be resolved.
+    M::up(
+        "CREATE TABLE IF NOT EXISTS tts_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            text TEXT NOT NULL,
+            model TEXT NOT NULL,
+            voice TEXT,
+            characters INTEGER NOT NULL,
+            processing_ms INTEGER,
+            cost_usd REAL,
+            cost_is_estimate BOOLEAN NOT NULL DEFAULT 0
+        );",
+    ),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -126,6 +156,36 @@ pub struct HistoryEntry {
     /// a catalog key (e.g. `tiny`) or a `provider:model` cloud-STT id. `None`
     /// on legacy rows (column added later) and renderer-driven manual adds.
     pub stt_model: Option<String>,
+    /// Wall-clock time spent by the STT model finalizing this transcription.
+    /// `None` for legacy rows and renderer-driven manual adds.
+    pub stt_processing_ms: Option<i64>,
+    /// USD billed for the cloud STT upload. `None` for local decodes and rows
+    /// written before cost tracking shipped.
+    pub stt_cost_usd: Option<f64>,
+    /// `true` when `stt_cost_usd` is a client-side estimate (providers that
+    /// report no billed amount) rather than a provider-billed figure.
+    pub stt_cost_is_estimate: bool,
+}
+
+/// One text-to-speech read-aloud run, persisted so the History tab lists TTS
+/// next to STT with per-run cloud cost.
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub struct TtsHistoryDbEntry {
+    pub id: i64,
+    pub timestamp: i64,
+    pub title: String,
+    pub text: String,
+    /// Engine id: `<provider>:<id>` for cloud synthesis, the local model key
+    /// otherwise.
+    pub model: String,
+    pub voice: Option<String>,
+    /// Characters synthesized (the unit most TTS providers bill on).
+    pub characters: i64,
+    pub processing_ms: Option<i64>,
+    /// USD billed for the run. `None` for local synthesis and cloud runs whose
+    /// cost could not be resolved.
+    pub cost_usd: Option<f64>,
+    pub cost_is_estimate: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -286,6 +346,26 @@ impl HistoryManager {
             history_tag: row.get("history_tag")?,
             privacy_markers_json: row.get("privacy_markers_json")?,
             stt_model: row.get("stt_model")?,
+            stt_processing_ms: row.get("stt_processing_ms")?,
+            stt_cost_usd: row.get("stt_cost_usd")?,
+            stt_cost_is_estimate: row.get("stt_cost_is_estimate")?,
+        })
+    }
+
+    pub(super) fn map_tts_history_entry(
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<TtsHistoryDbEntry> {
+        Ok(TtsHistoryDbEntry {
+            id: row.get("id")?,
+            timestamp: row.get("timestamp")?,
+            title: row.get("title")?,
+            text: row.get("text")?,
+            model: row.get("model")?,
+            voice: row.get("voice")?,
+            characters: row.get("characters")?,
+            processing_ms: row.get("processing_ms")?,
+            cost_usd: row.get("cost_usd")?,
+            cost_is_estimate: row.get("cost_is_estimate")?,
         })
     }
 
@@ -305,5 +385,90 @@ impl HistoryManager {
 
     pub fn recordings_dir(&self) -> &std::path::Path {
         &self.recordings_dir
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn migrated_conn() -> Connection {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut conn)
+            .expect("apply migrations");
+        conn
+    }
+
+    #[test]
+    fn migrations_validate() {
+        Migrations::new(MIGRATIONS.to_vec())
+            .validate()
+            .expect("migrations are internally consistent");
+    }
+
+    #[test]
+    fn stt_cost_columns_roundtrip() {
+        let conn = migrated_conn();
+        conn.execute(
+            "INSERT INTO transcription_history (
+                file_name, timestamp, saved, title, transcription_text,
+                stt_model, stt_cost_usd, stt_cost_is_estimate
+            ) VALUES ('a.wav', 1, 0, 't', 'hello', 'openrouter:openai/whisper-1', 0.0002, 0)",
+            [],
+        )
+        .expect("insert row");
+        let entry = conn
+            .query_row(
+                "SELECT * FROM transcription_history WHERE id = 1",
+                [],
+                HistoryManager::map_history_entry,
+            )
+            .expect("map row");
+        assert_eq!(entry.stt_cost_usd, Some(0.0002));
+        assert!(!entry.stt_cost_is_estimate);
+        // Legacy-shaped insert (no cost columns) maps to no-cost, not an error.
+        conn.execute(
+            "INSERT INTO transcription_history (
+                file_name, timestamp, saved, title, transcription_text
+            ) VALUES ('b.wav', 2, 0, 't', 'local')",
+            [],
+        )
+        .expect("insert legacy row");
+        let legacy = conn
+            .query_row(
+                "SELECT * FROM transcription_history WHERE id = 2",
+                [],
+                HistoryManager::map_history_entry,
+            )
+            .expect("map legacy row");
+        assert_eq!(legacy.stt_cost_usd, None);
+        assert!(!legacy.stt_cost_is_estimate);
+    }
+
+    #[test]
+    fn tts_history_roundtrip() {
+        let conn = migrated_conn();
+        conn.execute(
+            "INSERT INTO tts_history (
+                timestamp, title, text, model, voice, characters,
+                processing_ms, cost_usd, cost_is_estimate
+            ) VALUES (5, 'run', 'read me', 'openrouter:hexgrad/kokoro-82m', 'af_alloy', 55, 1800, 0.0000341, 0)",
+            [],
+        )
+        .expect("insert tts row");
+        let entry = conn
+            .query_row(
+                "SELECT * FROM tts_history WHERE id = 1",
+                [],
+                HistoryManager::map_tts_history_entry,
+            )
+            .expect("map tts row");
+        assert_eq!(entry.model, "openrouter:hexgrad/kokoro-82m");
+        assert_eq!(entry.voice.as_deref(), Some("af_alloy"));
+        assert_eq!(entry.characters, 55);
+        assert_eq!(entry.processing_ms, Some(1800));
+        assert_eq!(entry.cost_usd, Some(0.0000341));
+        assert!(!entry.cost_is_estimate);
     }
 }

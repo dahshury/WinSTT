@@ -37,7 +37,9 @@ export interface PopupSurfaceLevels {
  */
 export function usePopupSurfaceLevels({
 	selfElevate = true,
-}: { selfElevate?: boolean } = {}): PopupSurfaceLevels {
+}: {
+	selfElevate?: boolean;
+} = {}): PopupSurfaceLevels {
 	const surface = useSurface();
 	const substrate = selfElevate ? surfaceStep(surface) : surface;
 	const triggerLevel = surfaceStep(substrate);

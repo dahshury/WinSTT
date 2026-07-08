@@ -149,6 +149,11 @@ pub mod windows;
 /// collect_commands![]; needs `.manage(TrayMenuAnchor::default())`.
 pub mod tray_menu;
 
+/// `tray-indicator` pill window: shows the current recording mode / post-processing
+/// preset over the notification-area corner on a global-hotkey switch. Registered in
+/// lib.rs collect_commands![] (`tray_indicator_show` / `tray_indicator_hide`).
+pub mod tray_indicator_window;
+
 // ── slice: onboarding wizard finish ──
 /// `onboarding_finish` — persists the MAIN-owned onboarding flags
 /// (general.onboarded / onboardedAt / onboardedTrack), broadcasts

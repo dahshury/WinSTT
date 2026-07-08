@@ -147,7 +147,9 @@ function Sortable<T>(props: SortableProps<T>) {
 	const onDragStart = (event: DragStartEvent) => {
 		sortableProps.onDragStart?.(event);
 
-		if (event.activatorEvent.defaultPrevented) return;
+		if (event.activatorEvent.defaultPrevented) {
+			return;
+		}
 
 		setActiveId(event.active.id);
 	};
@@ -155,7 +157,9 @@ function Sortable<T>(props: SortableProps<T>) {
 	const onDragEnd = (event: DragEndEvent) => {
 		sortableProps.onDragEnd?.(event);
 
-		if (event.activatorEvent.defaultPrevented) return;
+		if (event.activatorEvent.defaultPrevented) {
+			return;
+		}
 
 		const { active, over } = event;
 		if (over && active.id !== over?.id) {
@@ -178,7 +182,9 @@ function Sortable<T>(props: SortableProps<T>) {
 	const onDragCancel = (event: DragEndEvent) => {
 		sortableProps.onDragCancel?.(event);
 
-		if (event.activatorEvent.defaultPrevented) return;
+		if (event.activatorEvent.defaultPrevented) {
+			return;
+		}
 
 		setActiveId(null);
 	};
@@ -354,7 +360,7 @@ function SortableItem(props: SortableItemProps) {
 	const inSortableContent = React.use(SortableContentContext);
 	const inSortableOverlay = React.use(SortableOverlayContext);
 
-	if (!inSortableContent && !inSortableOverlay) {
+	if (!(inSortableContent || inSortableOverlay)) {
 		throw new Error(
 			`\`${ITEM_NAME}\` must be used within \`${CONTENT_NAME}\` or \`${OVERLAY_NAME}\``,
 		);
@@ -377,9 +383,13 @@ function SortableItem(props: SortableItemProps) {
 	} = useSortable({ id: value, disabled: disabled ?? false });
 
 	const composedRef = useComposedRefs(ref, (node) => {
-		if (disabled) return;
+		if (disabled) {
+			return;
+		}
 		setNodeRef(node);
-		if (asHandle) setActivatorNodeRef(node);
+		if (asHandle) {
+			setActivatorNodeRef(node);
+		}
 	});
 
 	const composedStyle: React.CSSProperties = {
@@ -441,7 +451,9 @@ function SortableItemHandle(props: SortableItemHandleProps) {
 	const isDisabled = disabled ?? itemContext.disabled;
 
 	const composedRef = useComposedRefs(ref, (node) => {
-		if (!isDisabled) return;
+		if (!isDisabled) {
+			return;
+		}
 		itemContext.setActivatorNodeRef(node);
 	});
 
@@ -482,10 +494,8 @@ const dropAnimation: DropAnimation = {
 	}),
 };
 
-interface SortableOverlayProps extends Omit<
-	React.ComponentProps<typeof DragOverlay>,
-	"children"
-> {
+interface SortableOverlayProps
+	extends Omit<React.ComponentProps<typeof DragOverlay>, "children"> {
 	container?: Element | DocumentFragment | null;
 	children?:
 		| ((params: { value: UniqueIdentifier }) => React.ReactNode)
@@ -505,7 +515,9 @@ function SortableOverlay(props: SortableOverlayProps) {
 	const container =
 		containerProp ?? (mounted ? globalThis.document?.body : null);
 
-	if (!container) return null;
+	if (!container) {
+		return null;
+	}
 
 	return ReactDOM.createPortal(
 		<DragOverlay

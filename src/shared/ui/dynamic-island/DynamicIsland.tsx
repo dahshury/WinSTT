@@ -9,6 +9,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { springs } from "@/shared/lib/springs";
 
 /**
  * DynamicIsland — composable, animated capsule primitives for adaptive
@@ -194,12 +195,7 @@ function useDynamicIslandSize(): ContextValue {
  * ref so step-array identity changes on subsequent renders don't restart
  * the queue — the schedule is a one-shot, mount-time behavior.
  */
-const shellTransition = {
-	type: "spring" as const,
-	stiffness: 420,
-	damping: 32,
-	mass: 1,
-};
+const shellTransition = springs.slow;
 
 export interface DynamicIslandProps extends Omit<HTMLMotionProps<"div">, "id"> {
 	children?: ReactNode;
@@ -328,7 +324,11 @@ export function DynamicIsland({
 
 	const baseClasses = [
 		"relative overflow-hidden bg-overlay-surface text-overlay-foreground",
-		"shadow-overlay ring-1 ring-overlay-foreground/[0.06] ring-inset",
+		// No drop shadow: the island hangs flush from the top bezel (`flatTop`),
+		// so the generic floating-panel `shadow-overlay` (a 40px soft halo meant
+		// for dropdowns/dialogs) pooled below it as a detached smudge over the
+		// desktop. The inset ring alone defines the edge for a clean docked look.
+		"ring-1 ring-overlay-foreground/[0.06] ring-inset",
 		isVisible ? null : "pointer-events-none",
 	].filter(Boolean);
 	if (className) {
@@ -387,10 +387,10 @@ export function DynamicIsland({
 						<m.div
 							animate={{ opacity: 1 }}
 							className="absolute inset-0"
-							exit={{ opacity: 0 }}
+							exit={{ opacity: 0, transition: springs.moderate.exit }}
 							initial={{ opacity: 0 }}
 							key={state.size}
-							transition={{ duration: 0.16 }}
+							transition={springs.moderate}
 						>
 							{children}
 						</m.div>

@@ -19,7 +19,8 @@ interface TagsResult {
 
 const catalogState: { value: CatalogResult } = { value: { hits: [] } };
 const tagsState: { value: TagsResult } = { value: { model: "", tags: [] } };
-const callCounts = { catalog: 0, tags: 0 };
+const hitState: { value: OllamaLibraryHit } = { value: { name: "" } };
+const callCounts = { catalog: 0, tags: 0, hit: 0 };
 
 mock.module("@/shared/api/ipc-client", () => ({
 	...ipcClientMock(),
@@ -34,13 +35,20 @@ mock.module("@/shared/api/ipc-client", () => ({
 		await Promise.resolve();
 		return { ...tagsState.value, model };
 	},
+	fetchOllamaModelHit: async (model: string) => {
+		callCounts.hit++;
+		await Promise.resolve();
+		return { ...hitState.value, name: hitState.value.name || model };
+	},
 }));
 
 const {
 	useOllamaLibraryStore,
 	tagsCacheKey,
+	hitCacheKey,
 	shouldSkipCatalogLoad,
 	shouldSkipTagsFetch,
+	shouldSkipHitFetch,
 } = await import("./ollama-library-store");
 
 const INITIAL_STATE = useOllamaLibraryStore.getInitialState();
@@ -49,8 +57,10 @@ function resetStore(): void {
 	useOllamaLibraryStore.setState(INITIAL_STATE, true);
 	catalogState.value = { hits: [] };
 	tagsState.value = { model: "", tags: [] };
+	hitState.value = { name: "" };
 	callCounts.catalog = 0;
 	callCounts.tags = 0;
+	callCounts.hit = 0;
 }
 
 afterEach(resetStore);
@@ -115,6 +125,68 @@ describe("shouldSkipTagsFetch", () => {
 				tags: [{ name: "latest" }],
 			}),
 		).toBe(true);
+	});
+});
+
+describe("hitCacheKey", () => {
+	test("strips the tag so every tag of a model shares one base-slug key", () => {
+		expect(hitCacheKey("GPT-OSS:20b")).toBe("gpt-oss");
+		expect(hitCacheKey("gpt-oss:120b")).toBe("gpt-oss");
+	});
+
+	test("passes through a bare slug (no colon) trimmed + lowercased", () => {
+		expect(hitCacheKey("  Qwen3  ")).toBe("qwen3");
+	});
+});
+
+describe("shouldSkipHitFetch", () => {
+	test("false when there is no existing entry", () => {
+		expect(shouldSkipHitFetch(undefined)).toBe(false);
+	});
+
+	test("false when a prior attempt errored (allows retry)", () => {
+		expect(
+			shouldSkipHitFetch({ isLoading: false, error: "boom", hit: null }),
+		).toBe(false);
+	});
+
+	test("true when a non-error hit is already cached", () => {
+		expect(
+			shouldSkipHitFetch({
+				isLoading: false,
+				error: null,
+				hit: { name: "gpt-oss" },
+			}),
+		).toBe(true);
+	});
+});
+
+describe("useOllamaLibraryStore.fetchHit", () => {
+	test("stores the scraped hit under the base-slug key", async () => {
+		hitState.value = {
+			name: "gpt-oss",
+			description: "OpenAI open-weight models",
+			capabilities: ["tools", "thinking"],
+		};
+		await useOllamaLibraryStore.getState().fetchHit("gpt-oss:20b");
+		const entry = useOllamaLibraryStore.getState().hitsByModel["gpt-oss"];
+		expect(entry?.isLoading).toBe(false);
+		expect(entry?.hit?.description).toBe("OpenAI open-weight models");
+		expect(entry?.hit?.capabilities).toEqual(["tools", "thinking"]);
+		expect(callCounts.hit).toBe(1);
+	});
+
+	test("dedupes across tags of the same model (one scrape per base slug)", async () => {
+		hitState.value = { name: "gpt-oss", description: "d" };
+		await useOllamaLibraryStore.getState().fetchHit("gpt-oss:20b");
+		await useOllamaLibraryStore.getState().fetchHit("gpt-oss:120b");
+		expect(callCounts.hit).toBe(1);
+	});
+
+	test("ignores empty / whitespace-only input", async () => {
+		await useOllamaLibraryStore.getState().fetchHit("   ");
+		expect(callCounts.hit).toBe(0);
+		expect(useOllamaLibraryStore.getState().hitsByModel).toEqual({});
 	});
 });
 

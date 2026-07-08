@@ -172,7 +172,7 @@ describe("useTranscriptionFeed", () => {
 				},
 			],
 			currentRealtime: "live listen words",
-			ephemeral: { text: "status", timestamp: 1 },
+			ephemeral: { kind: "info", text: "status", timestamp: 1 },
 		});
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
@@ -201,7 +201,7 @@ describe("useTranscriptionFeed", () => {
 				},
 			],
 			currentRealtime: "words still forming",
-			ephemeral: { text: "status", timestamp: 1 },
+			ephemeral: { kind: "info", text: "status", timestamp: 1 },
 		});
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
@@ -306,7 +306,7 @@ describe("useTranscriptionFeed", () => {
 				},
 			],
 			currentRealtime: "leftover from last press",
-			ephemeral: { text: "no audio detected", timestamp: 0 },
+			ephemeral: { kind: "info", text: "no audio detected", timestamp: 0 },
 			isRecordingActive: false,
 			isTranscribing: true,
 			processingPhase: "uploading",
@@ -433,7 +433,7 @@ describe("useTranscriptionFeed", () => {
 			isRecordingActive: true,
 			isTranscribing: false,
 			currentRealtime: "live preview",
-			ephemeral: { text: "stale", timestamp: 0 },
+			ephemeral: { kind: "info", text: "stale", timestamp: 0 },
 			processingPhase: null,
 			transcribingStartedAt: null,
 		});

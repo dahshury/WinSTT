@@ -30,7 +30,6 @@ const fixture: ModelInfo[] = [
 		previewCapable: true,
 		nativeStreaming: true,
 		finalReuseSafe: false,
-		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
@@ -52,7 +51,6 @@ const fixture: ModelInfo[] = [
 		previewCapable: false,
 		nativeStreaming: false,
 		finalReuseSafe: false,
-		supportsRealtime: false,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
@@ -74,7 +72,6 @@ const fixture: ModelInfo[] = [
 		previewCapable: true,
 		nativeStreaming: true,
 		finalReuseSafe: true,
-		supportsRealtime: true,
 		onnxModelName: "model.onnx",
 		description: "",
 		availableQuantizations: ["", "int8"],
@@ -280,11 +277,12 @@ describe("isSelectableRealtimeModel", () => {
 				realtime("streaming-parakeet-unified-en-1120ms-int8"),
 			),
 		).toBe(true);
+		// The multilingual Nemotron-3.5 is a single shipped row (not a collapse-to-canonical export
+		// family), so it always reads as canonical/visible.
 		expect(
-			isCanonicalRealtimeModel(realtime("streaming-nemotron-en-1120ms")),
-		).toBe(true);
-		expect(
-			isCanonicalRealtimeModel(realtime("streaming-nemotron-en-1120ms-int8")),
+			isCanonicalRealtimeModel(
+				realtime("streaming-nemotron-3.5-multi-1120ms-int8"),
+			),
 		).toBe(true);
 
 		expect(isCanonicalRealtimeModel(realtime("streaming-nemo-rnnt-en"))).toBe(
@@ -297,12 +295,6 @@ describe("isSelectableRealtimeModel", () => {
 			isCanonicalRealtimeModel(
 				realtime("streaming-parakeet-unified-en-560ms-int8"),
 			),
-		).toBe(false);
-		expect(
-			isCanonicalRealtimeModel(realtime("streaming-nemotron-en-560ms")),
-		).toBe(false);
-		expect(
-			isCanonicalRealtimeModel(realtime("streaming-nemotron-en-80ms-int8")),
 		).toBe(false);
 	});
 });

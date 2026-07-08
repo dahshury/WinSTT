@@ -178,8 +178,10 @@ function sourceSupportsReasoning(source: FeatureSource): boolean {
 function buildSupportedParamsSet(source: FeatureSource): Set<string> {
 	const supportedParamsSet = new Set<string>(source.supported_parameters ?? []);
 	if (
-		!supportedParamsSet.has("reasoning") &&
-		!supportedParamsSet.has("include_reasoning") &&
+		!(
+			supportedParamsSet.has("reasoning") ||
+			supportedParamsSet.has("include_reasoning")
+		) &&
 		hasImplicitReasoningSupport(source)
 	) {
 		supportedParamsSet.add("reasoning");

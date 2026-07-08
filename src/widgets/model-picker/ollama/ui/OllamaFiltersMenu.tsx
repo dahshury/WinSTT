@@ -9,13 +9,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
-import {
-	FilterCheckboxSection,
-	FilterMenuPopover,
-	SectionDivider,
-	SortChipsSection,
-	type FilterFlagConfig,
-} from "../../ui/FilterPopoverParts";
+import { FilterMenu, type FilterFlagConfig } from "../../ui/FilterPopoverParts";
 import {
 	EMPTY_OLLAMA_FILTER_STATE,
 	type OllamaFilterFlag,
@@ -48,7 +42,7 @@ const SORT_ICON: Record<OllamaSortKey, IconSvgElement> = {
 	params: Atom01Icon,
 };
 
-const FILTER_FLAGS: ReadonlyArray<FilterFlagConfig<OllamaFilterFlag>> = [
+const FILTER_FLAGS: readonly FilterFlagConfig<OllamaFilterFlag>[] = [
 	{
 		key: "installedOnly",
 		icon: CheckmarkCircle02Icon,
@@ -80,40 +74,32 @@ export function OllamaFiltersMenu({
 		filters,
 		flags.map((flag) => flag.key),
 	);
-	const count = activeFilters + (sort === null ? 0 : 1);
-	const canClear = activeFilters > 0 || sort !== null;
-	const clear = () => {
-		onFiltersChange(EMPTY_OLLAMA_FILTER_STATE);
-		onSortChange(null);
-	};
 
 	return (
-		<FilterMenuPopover
-			canClear={canClear}
+		<FilterMenu
+			activeFilterCount={activeFilters}
 			clearLabel={t("clearAll")}
-			count={count}
 			dataSlot="ollama-filters-menu-content"
+			filters={filters}
+			flags={flags}
 			label={t("sortAndFilter")}
-			onClear={clear}
+			onClearAll={() => {
+				onFiltersChange(EMPTY_OLLAMA_FILTER_STATE);
+				onSortChange(null);
+			}}
+			onToggleFlag={(flag) =>
+				onFiltersChange({ ...filters, [flag]: !filters[flag] })
+			}
+			sort={{
+				hint: t("flattenInstalled"),
+				icons: SORT_ICON,
+				keys: OLLAMA_SORT_KEYS,
+				labels: OLLAMA_SORT_CHIP_LABEL,
+				onChange: onSortChange,
+				sortByLabel: t("sortBy"),
+				value: sort,
+			}}
 			widthClass="w-[260px]"
-		>
-			<SortChipsSection
-				hint={t("flattenInstalled")}
-				icons={SORT_ICON}
-				keys={OLLAMA_SORT_KEYS}
-				labels={OLLAMA_SORT_CHIP_LABEL}
-				onChange={onSortChange}
-				sortByLabel={t("sortBy")}
-				value={sort}
-			/>
-			<SectionDivider />
-			<FilterCheckboxSection
-				filters={filters}
-				flags={flags}
-				onToggle={(flag) =>
-					onFiltersChange({ ...filters, [flag]: !filters[flag] })
-				}
-			/>
-		</FilterMenuPopover>
+		/>
 	);
 }

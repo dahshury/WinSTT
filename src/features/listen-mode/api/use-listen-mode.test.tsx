@@ -102,7 +102,6 @@ const streamingModel: ModelInfo = {
 	sizeLabel: "100M",
 	speedScore: 0.9,
 	supportsLanguageDetection: false,
-	supportsRealtime: true,
 };
 
 const streamingModelState = {
@@ -214,7 +213,9 @@ function makeApi() {
 				);
 			};
 		},
-	};
+		// The mock overrides `invoke` with a narrower channel-only signature for
+		// the loopback commands under test; the rest comes from the real bridge.
+	} as typeof originalApi;
 }
 
 beforeEach(() => {
@@ -310,7 +311,7 @@ function seedTranscription(text = "stale transcript") {
 	useTranscriptionStore.setState({
 		items: [{ id: "old", type: "final", text, timestamp: 1 }],
 		currentRealtime: "stale realtime",
-		ephemeral: { text: "stale status", timestamp: 1 },
+		ephemeral: { kind: "info", text: "stale status", timestamp: 1 },
 		isRecordingActive: true,
 		isTranscribing: true,
 		processingPhase: "transcribing",

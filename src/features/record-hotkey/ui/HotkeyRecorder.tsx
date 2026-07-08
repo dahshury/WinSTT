@@ -73,7 +73,7 @@ function ComboParts({
 				className={`${CHIP_BASE} ${CHIP_HINT}`}
 				initial={{ opacity: 0, y: 2 }}
 				key="hint"
-				transition={{ duration: 0.18, ease: "easeOut" }}
+				transition={springs.moderate}
 			>
 				{text}
 			</motion.span>
@@ -122,7 +122,10 @@ function RecordingBadge({ label }: { label: string }) {
 			exit={{ opacity: 0, x: 8, width: 0 }}
 			initial={{ opacity: 0, x: 8, width: 0 }}
 			key="recording-badge"
-			transition={{ ...springs.moderate, opacity: { duration: 0.12 } }}
+			transition={{
+				...springs.moderate,
+				opacity: { duration: springs.moderate.exit.duration },
+			}}
 		>
 			<motion.span
 				animate={{ opacity: [0.55, 1, 0.55], scale: [0.9, 1.1, 0.9] }}
@@ -172,7 +175,7 @@ function ConflictMessage({ message }: { message: string }) {
 			initial={{ opacity: 0, y: -2 }}
 			key="conflict"
 			role="alert"
-			transition={{ duration: 0.16, ease: "easeOut" }}
+			transition={springs.moderate}
 		>
 			{message}
 		</motion.div>

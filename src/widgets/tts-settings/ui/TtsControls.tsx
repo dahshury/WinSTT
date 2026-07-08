@@ -6,6 +6,7 @@ import {
 } from "@/shared/ui/searchable-select";
 import { Slider } from "@/shared/ui/slider";
 import { TtsPreviewButton } from "./TtsPreviewButton";
+import { VoiceDesignField } from "./VoiceDesignField";
 
 export interface TtsControlsProps {
 	activeRequestId: string | null;
@@ -28,6 +29,12 @@ export interface TtsControlsProps {
 	t: TranslateFn;
 	voice: string;
 	voiceDefault?: string | undefined;
+	/** True when the selected model is a voice-design model — swaps the voice
+	 *  dropdown for the "Design voice" prompt affordance. */
+	voiceDesign?: boolean | undefined;
+	/** Persist the voice-design prompt (the overloaded `voice` field). Only used
+	 *  when `voiceDesign` is true. */
+	onVoiceDesignPromptChange?: ((prompt: string) => void) | undefined;
 	voiceGroups: SelectOptionGroup[];
 	voicePlaceholder: string;
 }
@@ -57,6 +64,8 @@ export function TtsControls({
 	t,
 	voice,
 	voiceDefault = DEFAULT_SETTINGS.tts.voice,
+	voiceDesign = false,
+	onVoiceDesignPromptChange,
 	voiceGroups,
 	voicePlaceholder,
 }: TtsControlsProps) {
@@ -66,47 +75,63 @@ export function TtsControls({
 	);
 	return (
 		<>
-			<SettingField
-				isDefault={voice === voiceDefault}
-				label={t("voice")}
-				layout="row"
-				onReset={() => onVoiceChange(voiceDefault)}
-				tooltip={voicePlaceholder}
-			>
-				<SearchableSelect
-					className="w-52"
-					groups={voiceGroups}
-					inputTrailing={
-						<TtsPreviewButton
-							activeRequestId={activeRequestId}
-							compact={true}
-							isLoading={isLoading}
-							isSpeaking={isSpeaking}
-							langForVoice={langForVoice}
-							previewVoice={previewVoice}
-							previewVoiceId={previewVoiceId}
-							t={t}
-							targetVoiceId={voice}
-						/>
+			{voiceDesign ? (
+				// Voice-design models describe the voice with a prompt (stored in the
+				// overloaded `voice` field) instead of picking from a bank — swap the
+				// dropdown for the "Design voice" affordance.
+				<VoiceDesignField
+					onPromptChange={
+						onVoiceDesignPromptChange ??
+						(() => {
+							/* no-op */
+						})
 					}
-					onChange={onVoiceChange}
-					placeholder={t("noVoicesYet")}
-					renderItemTrailing={(option) => (
-						<TtsPreviewButton
-							activeRequestId={activeRequestId}
-							compact={true}
-							isLoading={isLoading}
-							isSpeaking={isSpeaking}
-							langForVoice={langForVoice}
-							previewVoice={previewVoice}
-							previewVoiceId={previewVoiceId}
-							t={t}
-							targetVoiceId={option.id}
-						/>
-					)}
-					value={voice}
+					prompt={voice}
+					t={t}
 				/>
-			</SettingField>
+			) : (
+				<SettingField
+					isDefault={voice === voiceDefault}
+					label={t("voice")}
+					layout="row"
+					onReset={() => onVoiceChange(voiceDefault)}
+					tooltip={voicePlaceholder}
+				>
+					<SearchableSelect
+						className="w-52"
+						groups={voiceGroups}
+						inputTrailing={
+							<TtsPreviewButton
+								activeRequestId={activeRequestId}
+								compact={true}
+								isLoading={isLoading}
+								isSpeaking={isSpeaking}
+								langForVoice={langForVoice}
+								previewVoice={previewVoice}
+								previewVoiceId={previewVoiceId}
+								t={t}
+								targetVoiceId={voice}
+							/>
+						}
+						onChange={onVoiceChange}
+						placeholder={t("noVoicesYet")}
+						renderItemTrailing={(option) => (
+							<TtsPreviewButton
+								activeRequestId={activeRequestId}
+								compact={true}
+								isLoading={isLoading}
+								isSpeaking={isSpeaking}
+								langForVoice={langForVoice}
+								previewVoice={previewVoice}
+								previewVoiceId={previewVoiceId}
+								t={t}
+								targetVoiceId={option.id}
+							/>
+						)}
+						value={voice}
+					/>
+				</SettingField>
+			)}
 			{showLanguageSelect ? (
 				<SettingField
 					isDefault={language === languageDefault}

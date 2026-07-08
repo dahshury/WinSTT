@@ -133,6 +133,17 @@ export interface RecommendedOllamaModel {
 	description: string;
 	/** Free-form tags, e.g. `fast`, `tiny`, `instruct`. */
 	tags?: string[];
+	/**
+	 * What the model's thinking ACTUALLY supports — catalog knowledge that
+	 * Ollama's API does not expose (`/api/show` reports the same `thinking`
+	 * capability for all three behaviours):
+	 *   - `"levels"`    — tunes trace length via `think:"low"|"medium"|"high"`
+	 *                     and cannot stop reasoning (gpt-oss).
+	 *   - `"always-on"` — always reasons; `think:false` only stops tag parsing.
+	 * Omitted → derived from live capabilities (boolean-toggle when the model
+	 * advertises `thinking`, none otherwise).
+	 */
+	thinking?: "levels" | "always-on";
 }
 
 // ── OpenRouter ──────────────────────────────────────────────────────────────
@@ -213,10 +224,8 @@ export type OpenRouterVariant =
  * shapes and `variant` to its literal union; `endpoints` is renderer-only
  * (absent at runtime today, defensively read as `?? []`).
  */
-export interface OpenRouterModel extends Pick<
-	OpenRouterModelPayload,
-	"id" | "name"
-> {
+export interface OpenRouterModel
+	extends Pick<OpenRouterModelPayload, "id" | "name"> {
 	architecture?: OpenRouterArchitecture;
 	context_length?: number;
 	description?: string;
@@ -247,10 +256,8 @@ export interface OpenRouterScanResult {
  * `OpenRouterSttModelPayload` with the card metadata needed by the shared
  * OpenRouter picker.
  */
-export interface OpenRouterSttModel extends Pick<
-	OpenRouterSttModelPayload,
-	"id" | "name"
-> {
+export interface OpenRouterSttModel
+	extends Pick<OpenRouterSttModelPayload, "id" | "name"> {
 	accuracy_score: number;
 	description?: string;
 	endpoints?: OpenRouterEndpoint[];
@@ -269,10 +276,8 @@ export interface OpenRouterSttScanResult {
  * A speech (TTS) model from OpenRouter `/api/v1/models?output_modalities=speech`.
  * Lean `{ id, name }` for the cloud TTS picker.
  */
-export interface OpenRouterTtsModel extends Pick<
-	OpenRouterTtsModelPayload,
-	"id" | "name"
-> {
+export interface OpenRouterTtsModel
+	extends Pick<OpenRouterTtsModelPayload, "id" | "name"> {
 	description?: string;
 	pricing?: OpenRouterPricing;
 	quality_score: number;

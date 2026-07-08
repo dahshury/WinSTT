@@ -99,6 +99,113 @@ describe("useSttSourceSwitch", () => {
 		expect(result.current.source).toBe("cloud");
 	});
 
+	test("flipping to Cloud restores the last chosen cloud model when its provider is still keyed", () => {
+		// Both providers keyed. A previously-settled OpenRouter model is remembered
+		// in localStorage → flipping back to Cloud must land on THAT concrete id at
+		// once, not the first keyed provider's (ElevenLabs) default.
+		setKeys("sk-eleven", "sk-or-key");
+		window.localStorage.setItem(
+			"winstt:last-cloud-stt-model",
+			"openrouter:openai/whisper-1",
+		);
+		const { result, onModelChange } = renderSwitch({
+			selectedModel: "tiny",
+			initialSourceIsCloud: false,
+		});
+		act(() => result.current.onSourceChange("cloud"));
+		expect(onModelChange).toHaveBeenCalledWith("openrouter:openai/whisper-1");
+	});
+
+	test("flipping to Cloud falls back to the default when no last cloud model is stored", () => {
+		setKeys("sk-eleven", "");
+		window.localStorage.removeItem("winstt:last-cloud-stt-model");
+		const { result, onModelChange } = renderSwitch({
+			selectedModel: "tiny",
+			initialSourceIsCloud: false,
+		});
+		act(() => result.current.onSourceChange("cloud"));
+		expect(onModelChange).toHaveBeenCalledWith("elevenlabs:scribe_v1");
+	});
+
+	test("flipping to Cloud ignores a stored last cloud model whose provider lost its key", () => {
+		// OpenRouter remembered but only ElevenLabs keyed → the stale id can't be
+		// restored; fall back to the first keyed provider's default.
+		setKeys("sk-eleven", "");
+		window.localStorage.setItem(
+			"winstt:last-cloud-stt-model",
+			"openrouter:openai/whisper-1",
+		);
+		const { result, onModelChange } = renderSwitch({
+			selectedModel: "tiny",
+			initialSourceIsCloud: false,
+		});
+		act(() => result.current.onSourceChange("cloud"));
+		expect(onModelChange).toHaveBeenCalledWith("elevenlabs:scribe_v1");
+	});
+
+	test("persists the settled cloud model so it can be restored later", () => {
+		setKeys("sk-eleven", "");
+		renderSwitch({
+			selectedModel: "elevenlabs:scribe_v1_experimental",
+			initialSourceIsCloud: true,
+		});
+		expect(window.localStorage.getItem("winstt:last-cloud-stt-model")).toBe(
+			"elevenlabs:scribe_v1_experimental",
+		);
+	});
+
+	test("does NOT persist a local model as the last cloud model", () => {
+		setKeys("sk-eleven", "");
+		window.localStorage.setItem(
+			"winstt:last-cloud-stt-model",
+			"elevenlabs:scribe_v1",
+		);
+		renderSwitch({ selectedModel: "tiny", initialSourceIsCloud: false });
+		// The local selection must not overwrite the remembered cloud model.
+		expect(window.localStorage.getItem("winstt:last-cloud-stt-model")).toBe(
+			"elevenlabs:scribe_v1",
+		);
+	});
+
+	test("cloudSelectedId is the persisted model once it is a cloud id", () => {
+		setKeys("sk-eleven", "");
+		const { result } = renderSwitch({
+			selectedModel: "elevenlabs:scribe_v1_experimental",
+			initialSourceIsCloud: true,
+		});
+		expect(result.current.cloudSelectedId).toBe(
+			"elevenlabs:scribe_v1_experimental",
+		);
+	});
+
+	test("exposes the optimistic cloud id on flip so the picker shows it before the model round-trips", () => {
+		// selectedModel stays local through the flip (the persisted round-trip lags);
+		// cloudSelectedId must already be the chosen default so the trigger never
+		// flashes the empty "Select cloud model" placeholder.
+		setKeys("sk-eleven", "");
+		const { result } = renderSwitch({
+			selectedModel: "tiny",
+			initialSourceIsCloud: false,
+		});
+		expect(result.current.cloudSelectedId).toBe("");
+		act(() => result.current.onSourceChange("cloud"));
+		expect(result.current.cloudSelectedId).toBe("elevenlabs:scribe_v1");
+	});
+
+	test("optimistic cloud id restores the last chosen cloud model", () => {
+		setKeys("sk-eleven", "sk-or-key");
+		window.localStorage.setItem(
+			"winstt:last-cloud-stt-model",
+			"openrouter:openai/whisper-1",
+		);
+		const { result } = renderSwitch({
+			selectedModel: "tiny",
+			initialSourceIsCloud: false,
+		});
+		act(() => result.current.onSourceChange("cloud"));
+		expect(result.current.cloudSelectedId).toBe("openrouter:openai/whisper-1");
+	});
+
 	test("flipping to Cloud does NOT clobber an already-valid keyed cloud selection", () => {
 		setKeys("sk-eleven", "");
 		const { result, onModelChange } = renderSwitch({

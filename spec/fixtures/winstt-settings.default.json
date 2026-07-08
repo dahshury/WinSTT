@@ -4,6 +4,7 @@
     "clamshellMicrophone": null,
     "extraRecordingBufferMs": 0,
     "inputDeviceIndex": null,
+    "inputDevicePriority": [],
     "microphoneRelease": "immediate",
     "minGapBetweenRecordings": 0.0,
     "postSpeechSilenceDuration": 0.7,
@@ -31,10 +32,12 @@
       "dashlane.exe",
       "lastpass.exe"
     ],
+    "contextScreenOcr": false,
     "customWakeWords": [],
     "encoderDictionaryEnabled": true,
     "fileTranscriptionFormat": "txt",
     "fileTranscriptionSaveLocation": "auto",
+    "historyEnabled": true,
     "historyMaxEntries": 1000,
     "liveTranscriptionDisplay": "both",
     "loopbackDeviceIndex": null,
@@ -155,6 +158,7 @@
     "languageCandidates": [],
     "model": "tiny",
     "onnxQuantization": "auto",
+    "realtimeLanguage": "",
     "realtimeModel": "tiny",
     "translateToEnglish": false
   },
@@ -176,6 +180,7 @@
   },
   "snippets": [],
   "tts": {
+    "cloneRefText": "",
     "cloud": {
       "model": "eleven_multilingual_v2",
       "openrouterModel": "",
@@ -192,6 +197,7 @@
     "hotkey": "LCtrl+Space",
     "lang": "en-us",
     "model": "kokoro-82m",
+    "quantization": "",
     "source": "local",
     "speed": 1.0,
     "voice": "af_heart"

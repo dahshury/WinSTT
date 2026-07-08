@@ -2,9 +2,14 @@ import { create } from "zustand";
 import type {
 	TransformHistoryEntry,
 	TranscriptionHistoryEntry,
+	TtsHistoryEntry,
 } from "@/shared/api/ipc-client";
 
-export type { TransformHistoryEntry, TranscriptionHistoryEntry };
+export type {
+	TransformHistoryEntry,
+	TranscriptionHistoryEntry,
+	TtsHistoryEntry,
+};
 
 interface HistoryRowWithId {
 	id: string;
@@ -30,16 +35,22 @@ function removeById<TEntry extends HistoryRowWithId>(
 interface HistoryState {
 	addEntry: (entry: TranscriptionHistoryEntry) => void;
 	addTransformEntry: (entry: TransformHistoryEntry) => void;
+	addTtsEntry: (entry: TtsHistoryEntry) => void;
 	clear: () => void;
 	clearTransforms: () => void;
+	clearTts: () => void;
 	entries: TranscriptionHistoryEntry[];
 	isLoaded: boolean;
 	removeEntry: (id: string) => void;
 	removeTransformEntry: (id: string) => void;
+	removeTtsEntry: (id: string) => void;
 	setAll: (entries: TranscriptionHistoryEntry[]) => void;
 	setTransformAll: (entries: TransformHistoryEntry[]) => void;
+	setTtsAll: (entries: TtsHistoryEntry[]) => void;
 	transformEntries: TransformHistoryEntry[];
 	transformsLoaded: boolean;
+	ttsEntries: TtsHistoryEntry[];
+	ttsLoaded: boolean;
 }
 
 export const useTranscriptionHistoryStore = create<HistoryState>()((set) => ({
@@ -47,9 +58,12 @@ export const useTranscriptionHistoryStore = create<HistoryState>()((set) => ({
 	isLoaded: false,
 	transformEntries: [],
 	transformsLoaded: false,
+	ttsEntries: [],
+	ttsLoaded: false,
 	setAll: (entries) => set({ entries, isLoaded: true }),
 	setTransformAll: (transformEntries) =>
 		set({ transformEntries, transformsLoaded: true }),
+	setTtsAll: (ttsEntries) => set({ ttsEntries, ttsLoaded: true }),
 	addEntry: (entry) =>
 		set((state) => {
 			const entries = appendUniqueById(state.entries, entry);
@@ -65,6 +79,19 @@ export const useTranscriptionHistoryStore = create<HistoryState>()((set) => ({
 				return state;
 			}
 			return { transformEntries };
+		}),
+	addTtsEntry: (entry) =>
+		set((state) => {
+			// Upsert: the backend re-emits the same row once the provider's
+			// billed cost resolves (generation records can lag minutes), so a
+			// repeated id replaces the earlier cost-less row in place.
+			const index = state.ttsEntries.findIndex((e) => e.id === entry.id);
+			if (index >= 0) {
+				const ttsEntries = [...state.ttsEntries];
+				ttsEntries[index] = entry;
+				return { ttsEntries };
+			}
+			return { ttsEntries: [...state.ttsEntries, entry] };
 		}),
 	removeEntry: (id) =>
 		set((state) => {
@@ -82,6 +109,15 @@ export const useTranscriptionHistoryStore = create<HistoryState>()((set) => ({
 			}
 			return { transformEntries: next };
 		}),
+	removeTtsEntry: (id) =>
+		set((state) => {
+			const next = removeById(state.ttsEntries, id);
+			if (next.length === state.ttsEntries.length) {
+				return state;
+			}
+			return { ttsEntries: next };
+		}),
 	clear: () => set({ entries: [] }),
 	clearTransforms: () => set({ transformEntries: [] }),
+	clearTts: () => set({ ttsEntries: [] }),
 }));

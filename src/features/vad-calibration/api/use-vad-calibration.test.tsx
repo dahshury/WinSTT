@@ -27,7 +27,7 @@ function installNativeBridgeStub(): void {
 			if (channel === IPC.AUDIO_GET_DEVICES) {
 				return audioGetDevicesImpl();
 			}
-			return;
+			return undefined;
 		},
 		secureInvoke: async () => undefined,
 		on: () => () => undefined,

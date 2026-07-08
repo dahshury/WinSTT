@@ -14,7 +14,7 @@ on:
       - "bunfig.toml"
       - "knip.json"
       - "eslint.config.*"
-      - ".prettierrc*"
+      - "biome.jsonc"
       - "tsconfig*"
       - ".github/workflows/ci.yml"
   pull_request:
@@ -29,7 +29,7 @@ on:
       - "bunfig.toml"
       - "knip.json"
       - "eslint.config.*"
-      - ".prettierrc*"
+      - "biome.jsonc"
       - "tsconfig*"
       - ".github/workflows/ci.yml"
 
@@ -72,7 +72,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Lint (ESLint)
+      # Biome (lint + format, via Ultracite) over src/ + repo config, plus the
+      # slim ESLint pass that keeps `i18next/no-literal-string` (no Biome
+      # equivalent). `bun run lint` = `biome check . && eslint src`, so this one
+      # step also enforces formatting — no separate Prettier check needed.
+      - name: Lint + format (Biome + i18n ESLint)
         run: bun run lint
 
       - name: TypeScript typecheck
@@ -86,12 +90,6 @@ jobs:
 
       - name: Dead-code check
         run: bun run check:deadcode
-
-      # Prettier check scoped to the renderer. We don't reuse the
-      # `format:check` script because it also runs `cargo fmt` (covered by
-      # rust-ci.yml) which isn't set up on this Bun-only runner.
-      - name: Format check
-        run: bunx prettier --check src
 
       # i18n key parity across all 20 locale baselines vs messages/en.json.
       # Default mode (no --strict) only fails on missing keys, not on

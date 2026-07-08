@@ -251,7 +251,46 @@
     "retentionDays3": "3 天后",
     "retentionWeeks2": "2 周后",
     "retentionMonths3": "3 个月后",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "转录历史",
+    "enabledTooltip": "开启后，WinSTT 会记录你的转录、转换和朗读运行，以便此仪表板显示统计和花费。关闭可停止收集新数据。",
+    "disabledHint": "历史已关闭 — WinSTT 未记录新活动。现有数据将保留，直至你删除。",
+    "deleteAllTitle": "删除所有历史？",
+    "deleteAllDescription": "所有已记录的转录、转换、朗读运行和已保存的录音将被永久删除。此操作无法撤销。",
+    "deleteAllButton": "删除所有数据",
+    "clearTtsButton": "清除朗读",
+    "clearTtsTitle": "清除所有朗读历史？",
+    "clearTtsDescription": "所有已保存的文本转语音运行和音频将被删除。此操作无法撤销。",
+    "combinedTableTitle": "历史",
+    "filterDateRange": "日期范围",
+    "filterAllTime": "全部时间",
+    "heatmapEarlier": "更早",
+    "heatmapLater": "更晚",
+    "spendingTitle": "花费",
+    "spendingTotalLabel": "总花费",
+    "spendingByModalityTitle": "按类型花费",
+    "spendingByProviderTitle": "按提供商花费",
+    "spendingByModelTitle": "按模型花费",
+    "spendingByMakerTitle": "按厂商花费",
+    "spendingEstimatedHint": "部分数据在缺少确切定价时为估算值。",
+    "costSpeechToText": "语音转文本",
+    "costTextToSpeech": "文本转语音",
+    "costLanguageModel": "语言模型",
+    "colCharacters": "字符数",
+    "cloudLabel": "云端",
+    "colCost": "云端费用",
+    "costEstimated": "估算",
+    "costTotal": "总计",
+    "kindSpeechToText": "语音转文本",
+    "kindTextToSpeech": "文本转语音",
+    "durationLlmProcessing": "AI 处理",
+    "durationNotRecorded": "未记录",
+    "durationNotRun": "未运行",
+    "durationRecording": "录音",
+    "durationSpeechToText": "转录",
+    "durationTotalProcessing": "处理时间",
+    "colTtsModel": "语音模型",
+    "colVoice": "音色"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "屏幕文本 OCR（回退）",
+    "contextScreenOcrCaption": "读取光标附近的屏幕文本作为额外上下文",
+    "contextScreenOcrTooltip": "当上下文感知无法直接读取焦点输入框时，WinSTT 会退而读取（OCR）光标周围的屏幕区域，以获取附近的文本。这比直接读取输入框更慢、更不精确——关闭它可跳过此后备方案。"
   },
   "model": {
     "initialPrompt": "初始提示",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "触发提前转录的静音秒数",
     "earlyTranscriptionTooltip": "在您完全停止说话之前开始转录，在静音达到此秒数后触发。减少说话和看到最终文本之间的延迟。设为 0 以禁用。",
     "realtimeModel": "实时模型",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "实时模型",
     "realtimeModelCaption": "用于实时预览的较小模型",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "实时转录更新之间的最短时间。较低的值提供更频繁的更新，但会使用更多处理能力。如果听写时出现卡顿或 CPU 使用率过高，请增加此值。",
     "llm": "大语言模型",
     "deviceAutoLabel": "自动",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "关闭实时逐字转录？",
+    "realtimeOffWordByWordDescription": "此模型会在您说话时逐字实时转录。关闭实时模式后，将改为仅在您停止说话后进行转录。",
+    "realtimeOffWordByWordConfirm": "关闭"
   },
   "audio": {
     "inputDevice": "输入设备",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "立即",
     "microphoneReleaseSec30": "30 秒",
     "microphoneReleaseMin1": "1 分钟",
-    "microphoneReleaseMin5": "5 分钟"
+    "microphoneReleaseMin5": "5 分钟",
+    "devicePriorityHandle": "拖动以重新排序优先级"
   },
   "quality": {
     "enableRealtime": "启用实时转录",
@@ -717,7 +766,8 @@
     "waiting": "等待语音输入...",
     "serverOffline": "服务器离线",
     "noAudioDetected": "（未检测到音频）",
-    "transcriptionFailed": "（转录失败）"
+    "transcriptionFailed": "（转录失败）",
+    "offlineNoLocalModel": "无网络 · 无本地模型"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "仍要安装",
     "unfitSelectTitle": "使用这个大型模型？",
     "unfitSelectDescription": "\"{model}\" 比您的硬件能够流畅运行的大小更大（需要约 {required}，可用 {available}）。它可能运行非常缓慢或无法加载。仍要使用吗？",
-    "unfitSelectAnyway": "仍要使用"
+    "unfitSelectAnyway": "仍要使用",
+    "dictionaryAutoAddLiteModel": "精简版模型不支持——请切换到更大的模型以自动添加词典更正。"
   },
   "tts": {
     "title": "文本转语音",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "在“集成”中添加并验证 ElevenLabs API 密钥以使用云端语音。",
     "cloudLoadingVoices": "正在加载语音…",
     "cloudNoVoices": "未找到此 ElevenLabs 账户的语音。",
-    "cloudError": "无法加载 ElevenLabs 语音。"
+    "cloudError": "无法加载 ElevenLabs 语音。",
+    "voiceDesignLabel": "语音设计",
+    "voiceDesignTooltip": "用文字描述您想要的语音——音色、年龄、口音、情感——模型会合成匹配的语音，而不是从预设库中选择。",
+    "voiceDesignButtonPlaceholder": "设计语音",
+    "voiceDesignDialogTitle": "设计语音",
+    "voiceDesignDialogDescription": "用一两句话描述语音。留空则使用模型的默认语音。",
+    "voiceDesignPromptLabel": "语音描述",
+    "voiceDesignPromptPlaceholder": "例如：温暖、低沉的旁白，带一点英式口音",
+    "voiceDesignPromptEmptyHint": "留空则回退到模型的内置语音。",
+    "voiceDesignCancel": "取消",
+    "voiceDesignSave": "保存",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "出了点问题",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "受 {provider} 速率限制",
     "toastRateLimitedRetry": "请在 {seconds} 秒后重试",
     "toastProviderError": "{provider} STT 错误：{message}",
-    "openIntegrations": "打开集成"
+    "openIntegrations": "打开集成",
+    "toastTtsOfflineNoLocal": "无网络且未安装本地语音 — 无法朗读。"
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "精简版",
+    "liteTierTip": "更小、更快的变体，准确率有所降低——适合在有限硬件上执行快速任务。"
   },
   "dataGrid": {
     "addRow": "Add row",

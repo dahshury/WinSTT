@@ -1,8 +1,7 @@
 import {
-	computeModelExclusionConfig,
+	type computeModelExclusionConfig,
 	OllamaModelSelector,
 	OpenRouterModelSelector,
-	ReasoningEffortDropdown,
 } from "@/widgets/model-picker";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
@@ -13,8 +12,13 @@ import {
 } from "@/shared/lib/model-picker-ui-storage-keys";
 import { FormControl } from "@/shared/ui/form-control";
 import { Toggle } from "@/shared/ui/toggle";
-import { RECOMMENDED_OLLAMA_MODELS } from "@/entities/llm-catalog";
+import {
+	isLiteOllamaModel,
+	ollamaThinkingMode,
+	RECOMMENDED_OLLAMA_MODELS,
+} from "@/entities/llm-catalog";
 import type { LlmFeatureDraft } from "../lib/llm-settings-panel-test-helpers";
+import { OllamaThinkingControl } from "./OllamaThinkingControl";
 import type {
 	OllamaCatalogState,
 	OllamaModel,
@@ -97,23 +101,31 @@ export function DictionaryAutoAddControl({
 		(m) => m.name === featureSnapshot.model,
 	);
 	const hasSelectedModel = selectedModel != null;
-	const caption = hasSelectedModel
-		? t("dictionaryAutoAddCaption")
-		: t("dictionaryAutoAddSelectModel");
+	// Lite-tier models run the `{text}`-only response schema, which has no
+	// learning fields — the backend skips extraction entirely, so the toggle
+	// is disabled with an explanation rather than silently doing nothing. The
+	// persisted setting is left untouched: switching back to a 4B+ model
+	// restores the user's previous choice.
+	const liteModel = isLiteOllamaModel(featureSnapshot.model);
+	const disabled = !hasSelectedModel || liteModel;
+	const caption = liteModel
+		? t("dictionaryAutoAddLiteModel")
+		: hasSelectedModel
+			? t("dictionaryAutoAddCaption")
+			: t("dictionaryAutoAddSelectModel");
 	return (
 		<div className="col-span-2">
 			<FormControl
 				caption={caption}
-				disabled={!hasSelectedModel}
+				disabled={disabled}
 				label={t("dictionaryAutoAddLabel")}
 				labelAddon={
 					<Toggle
 						aria-label={t("dictionaryAutoAddLabel")}
 						checked={
-							hasSelectedModel &&
-							featureSnapshot.dictionaryAutoAddEnabled === true
+							!disabled && featureSnapshot.dictionaryAutoAddEnabled === true
 						}
-						disabled={!hasSelectedModel}
+						disabled={disabled}
 						onCheckedChange={(checked) =>
 							updateAny({ dictionaryAutoAddEnabled: checked })
 						}
@@ -171,8 +183,20 @@ function OllamaSection(props: OllamaSectionProps) {
 		thinkingEffort,
 	} = props;
 	const selectedModel = ollamaModels.find((m) => m.name === model);
-	const supportsThinking =
-		selectedModel?.capabilities?.includes("thinking") ?? false;
+	// One control per behaviour: GPT-OSS gets Low/Medium/High (it can't stop
+	// reasoning, so there is no Off), hybrid models get a plain On/Off toggle
+	// (levels are no-ops on the wire), and dedicated reasoning models get a
+	// read-only "Always on". Support comes from the catalog first (Ollama's API
+	// doesn't expose it), then live capabilities. See ollama-thinking.ts.
+	const thinkingMode = ollamaThinkingMode(model, selectedModel?.capabilities);
+	// NOTE: deliberately NO write-normalization of the stored effort here. An
+	// earlier version rewrote a stored "off" to "low" while a levels model
+	// (gpt-oss) was selected — but the effort setting is SHARED per feature, so
+	// that write leaked across model switches: pick gpt-oss once and a hybrid
+	// model selected later inherited thinking ON that the user never chose.
+	// Instead the stored value is left alone; the levels control DISPLAYS a
+	// stored "off" as Low, and the backend clamps it to the wire-supported
+	// "low" for levels models (`thinking_flag_for` in ollama_request.rs).
 	return (
 		<>
 			<FormControl label={t("model")} tooltip={t("modelTooltip")}>
@@ -224,20 +248,26 @@ function OllamaSection(props: OllamaSectionProps) {
 				/>
 			</FormControl>
 
-			{supportsThinking ? (
+			{thinkingMode === "none" ? null : (
 				<FormControl
-					label="Thinking effort"
+					label={thinkingMode === "always-on" ? "Thinking" : "Thinking effort"}
 					layout={dense ? "row" : "stacked"}
-					tooltip="Reasoning models can spend more or less time thinking before answering. Higher effort improves accuracy on hard inputs but adds latency. Off disables thinking entirely."
+					tooltip={
+						thinkingMode === "always-on"
+							? "This model always reasons before answering and can't be turned off. Pick a non-reasoning model if you want faster, direct output."
+							: thinkingMode === "toggle"
+								? "Turn the model's reasoning on or off. On thinks before answering — more accurate on hard inputs, but slower."
+								: "This model always reasons before answering; the level tunes how long it thinks. Low keeps the trace minimal and fastest, High is most thorough but slowest."
+					}
 				>
-					<ReasoningEffortDropdown
-						ariaLabel="Thinking effort"
-						fullWidth={!dense}
+					<OllamaThinkingControl
+						dense={dense ?? false}
+						mode={thinkingMode}
 						onChange={setThinkingEffort}
 						value={thinkingEffort}
 					/>
 				</FormControl>
-			) : null}
+			)}
 
 			<ErrorBanner message={ollamaError} />
 			<OllamaReachabilityWarning

@@ -108,6 +108,22 @@ describe("buildRuntimeBreakdown — STT", () => {
 		const input = baseInput({ isGpu: false });
 		expect(firstRow(input, "stt").device).toBe("cpu");
 	});
+
+	test("cloud STT is a cloud row — bare id, no quant, no local device", () => {
+		const input = baseInput({
+			mainModelId: "openrouter:microsoft/mai-transcribe-1.5",
+			sttQuant: "",
+			resolveCloud: () => ({ logoSrc: "/microsoft.svg", maker: "microsoft" }),
+		});
+		const row = firstRow(input, "stt");
+		expect(row.cloud).toBe(true);
+		expect(row.name).toBe("microsoft/mai-transcribe-1.5");
+		// No local quantization badge (the FP32 bug) and no VRAM/RAM device tag.
+		expect(row.detail).toBeNull();
+		expect(row.device).toBeNull();
+		expect(row.memBytes).toBeNull();
+		expect(row.logoSrc).toBe("/microsoft.svg");
+	});
 });
 
 describe("buildRuntimeBreakdown — TTS", () => {
@@ -115,19 +131,22 @@ describe("buildRuntimeBreakdown — TTS", () => {
 		expect(firstRow(baseInput(), "tts").status).toBe("off");
 	});
 
-	test("cloud source reports the provider with no local footprint", () => {
+	test("cloud source is a cloud row (bare model id, no local footprint)", () => {
 		const input = baseInput({
 			tts: {
 				enabled: true,
 				source: "cloud",
-				modelId: "x",
+				modelId: "elevenlabs:scribe_v1",
 				cloudProvider: "elevenlabs",
 			},
 		});
 		const row = firstRow(input, "tts");
-		expect(row.status).toBe("cloud");
-		expect(row.detail).toBe("elevenlabs");
+		expect(row.cloud).toBe(true);
+		expect(row.name).toBe("scribe_v1");
+		expect(row.status).toBeNull();
+		expect(row.detail).toBeNull();
 		expect(row.memBytes).toBeNull();
+		expect(row.device).toBeNull();
 	});
 
 	test("local model reports disk size as the footprint", () => {
@@ -225,8 +244,10 @@ describe("buildRuntimeBreakdown — Post-processing", () => {
 			},
 		});
 		const row = firstRow(input, "post");
-		expect(row.status).toBe("cloud");
-		expect(row.detail).toBe("openai/gpt-4o-mini");
+		expect(row.cloud).toBe(true);
+		expect(row.name).toBe("openai/gpt-4o-mini");
+		expect(row.status).toBeNull();
+		expect(row.detail).toBeNull();
 	});
 
 	test("Apple Intelligence cleanup is an on-device row", () => {

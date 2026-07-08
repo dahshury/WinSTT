@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import {
 	type TransformHistoryEntry,
 	type TranscriptionHistoryEntry,
+	type TtsHistoryEntry,
 	useTranscriptionHistoryStore,
 } from "./history-store";
 
@@ -21,6 +22,19 @@ function makeTransformEntry(id: string): TransformHistoryEntry {
 	return {
 		...makeEntry(id),
 		source: "uia",
+	};
+}
+
+function makeTtsEntry(id: string): TtsHistoryEntry {
+	return {
+		characters: 42,
+		costUsd: 0.0003,
+		id,
+		model: "openrouter:hexgrad/kokoro-82m",
+		text: `spoken-${id}`,
+		timestamp: 1000,
+		voice: "af_alloy",
+		wordCount: 2,
 	};
 }
 
@@ -113,5 +127,56 @@ describe("useTranscriptionHistoryStore", () => {
 		expect(useTranscriptionHistoryStore.getState().transformEntries).toEqual(
 			[],
 		);
+	});
+});
+
+describe("tts history slice", () => {
+	beforeEach(() => {
+		useTranscriptionHistoryStore.setState({
+			ttsEntries: [],
+			ttsLoaded: false,
+		});
+	});
+
+	test("setTtsAll replaces tts entries and flips ttsLoaded to true", () => {
+		useTranscriptionHistoryStore
+			.getState()
+			.setTtsAll([makeTtsEntry("a"), makeTtsEntry("b")]);
+		const state = useTranscriptionHistoryStore.getState();
+		expect(state.ttsEntries.map((e) => e.id)).toEqual(["a", "b"]);
+		expect(state.ttsLoaded).toBe(true);
+	});
+
+	test("addTtsEntry appends new rows and upserts repeated ids in place", () => {
+		const entry = makeTtsEntry("tts");
+		useTranscriptionHistoryStore.getState().addTtsEntry(entry);
+		// The backend re-emits the same id once the billed cost resolves; the
+		// updated row must replace the cost-less one instead of duplicating.
+		useTranscriptionHistoryStore
+			.getState()
+			.addTtsEntry({ ...entry, costUsd: 0.001 });
+		const rows = useTranscriptionHistoryStore.getState().ttsEntries;
+		expect(rows.map((e) => e.id)).toEqual(["tts"]);
+		expect(rows[0]?.costUsd).toBe(0.001);
+	});
+
+	test("removeTtsEntry removes only the matching tts row", () => {
+		useTranscriptionHistoryStore
+			.getState()
+			.setTtsAll([makeTtsEntry("a"), makeTtsEntry("b")]);
+		useTranscriptionHistoryStore.getState().removeTtsEntry("a");
+		expect(
+			useTranscriptionHistoryStore.getState().ttsEntries.map((e) => e.id),
+		).toEqual(["b"]);
+	});
+
+	test("clearTts empties only tts entries", () => {
+		useTranscriptionHistoryStore.getState().setAll([makeEntry("transcript")]);
+		useTranscriptionHistoryStore.getState().setTtsAll([makeTtsEntry("tts")]);
+		useTranscriptionHistoryStore.getState().clearTts();
+		expect(
+			useTranscriptionHistoryStore.getState().entries.map((e) => e.id),
+		).toEqual(["transcript"]);
+		expect(useTranscriptionHistoryStore.getState().ttsEntries).toEqual([]);
 	});
 });

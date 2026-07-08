@@ -85,7 +85,7 @@ function restoreScrollAnchor(
 	virtualItems: ReturnType<typeof buildVirtualItems>,
 	anchor: ScrollAnchor | null,
 ): void {
-	if (!handle || !anchor || virtualItems.length === 0) {
+	if (!(handle && anchor) || virtualItems.length === 0) {
 		return;
 	}
 	const index = virtualItems.findIndex(

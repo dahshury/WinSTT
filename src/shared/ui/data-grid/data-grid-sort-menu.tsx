@@ -40,9 +40,8 @@ const SORT_ORDERS = [
 	{ label: "Desc", value: "desc" },
 ];
 
-interface DataGridSortMenuProps<TData> extends React.ComponentProps<
-	typeof PopoverContent
-> {
+interface DataGridSortMenuProps<TData>
+	extends React.ComponentProps<typeof PopoverContent> {
 	table: Table<TData>;
 	disabled?: boolean;
 }
@@ -70,7 +69,9 @@ export function DataGridSortMenu<TData>({
 		const availableColumns: { id: string; label: string }[] = [];
 
 		for (const column of table.getAllColumns()) {
-			if (!column.getCanSort()) continue;
+			if (!column.getCanSort()) {
+				continue;
+			}
 
 			const label = column.columnDef.meta?.label ?? column.id;
 			labels.set(column.id, label);
@@ -88,7 +89,9 @@ export function DataGridSortMenu<TData>({
 
 	const onSortAdd = () => {
 		const firstColumn = columns[0];
-		if (!firstColumn) return;
+		if (!firstColumn) {
+			return;
+		}
 
 		onSortingChange((prevSorting) => [
 			...prevSorting,
@@ -98,7 +101,9 @@ export function DataGridSortMenu<TData>({
 
 	const onSortUpdate = (sortId: string, updates: Partial<ColumnSort>) => {
 		onSortingChange((prevSorting) => {
-			if (!prevSorting) return prevSorting;
+			if (!prevSorting) {
+				return prevSorting;
+			}
 			return prevSorting.map((sort) =>
 				sort.id === sortId ? { ...sort, ...updates } : sort,
 			);

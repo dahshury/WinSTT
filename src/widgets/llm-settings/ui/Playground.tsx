@@ -73,7 +73,9 @@ const INPUT_MIN_ROWS = 4;
 const INPUT_MAX_ROWS = 10;
 
 function textareaHeightLimit(ref: HTMLTextAreaElement | null): number {
-	if (!ref) return 120;
+	if (!ref) {
+		return 120;
+	}
 	const computed = getComputedStyle(ref);
 	const lineHeight = Number.parseFloat(computed.lineHeight);
 	if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
@@ -146,7 +148,9 @@ export function Playground({
 	};
 
 	const handleMouseDown = (event: MouseEvent<HTMLDivElement>) => {
-		if (disabled || running) return;
+		if (disabled || running) {
+			return;
+		}
 		const target = event.target as HTMLElement;
 		if (target === textareaRef.current) {
 			return;
@@ -192,7 +196,7 @@ export function Playground({
 	);
 
 	return (
-		<div className="flex flex-col">
+		<div className="flex flex-col divide-y divide-divider">
 			<FormControl label={t("playgroundSample")} tooltip={t("playgroundHint")}>
 				<SurfaceProvider value={inputLevel}>
 					{/* react-doctor-disable-next-line react-doctor/no-static-element-interactions -- pointer-only focus-proxy wrapper: onMouseDown skips interactive descendants and just redirects empty-area clicks to the textarea, which is itself keyboard-reachable; adding role+tabIndex would create a spurious tab stop. */}

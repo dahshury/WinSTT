@@ -35,9 +35,16 @@ const TASKBAR_MARGIN: f64 = 8.0;
 /// Gap between the popup's bottom edge and the trigger that opened it. Mirrors
 /// `ANCHOR_GAP` in the reference pickers.
 const ANCHOR_GAP: f64 = 6.0;
-// Keep in sync with `--dropdown-close-dur` in `src/app/styles/globals.css` and
-// `MODEL_PICKER_CLOSE_MS` in the detached model-picker renderer.
-const MODEL_PICKER_CLOSE_MS: u64 = 150;
+/// How long after the close starts the OS window is actually hidden. MUST stay
+/// longer than the renderer's 120ms close fade (`MODEL_PICKER_CLOSE_MS` in the
+/// detached model-picker renderer / `--dropdown-close-dur` in globals.css) so
+/// the fully-faded (transparent) frame is composited BEFORE the hide: WebView2
+/// re-presents the last composited frame when the window is next shown, and if
+/// that frame still holds the visible panel it flashes at the PREVIOUS
+/// trigger's position on the next open. The window ignores cursor events for
+/// this whole grace (set at close start), so the extra ~140ms of invisible
+/// backdrop cannot swallow clicks.
+const MODEL_PICKER_HIDE_DELAY_MS: u64 = 260;
 const MODEL_PICKER_ANCHOR_REEMIT_MS: &[u64] = &[75, 250, 700];
 /// Smallest usable model-picker height before we pin it to the screen top.
 const MODEL_MIN_HEIGHT: f64 = 160.0;
@@ -87,6 +94,22 @@ fn outer_position_logical(window: &tauri::WebviewWindow) -> (f64, f64) {
     window
         .outer_position()
         .map_or((0.0, 0.0), |p| (p.x as f64 / scale, p.y as f64 / scale))
+}
+
+/// CLIENT-AREA origin of a window in LOGICAL px. Trigger rects arrive in the
+/// opener's viewport (client) coordinates, so anchors must be offset from the
+/// client origin — NOT `outer_position`, which on Windows includes the
+/// invisible `WS_THICKFRAME` resize border that decorationless-but-shadowed
+/// windows (settings/onboarding) carry (~7px left + ~1px top at 200% DPI).
+/// Using the outer origin shifted every settings-opened picker that far off
+/// its combobox. Falls back to the outer origin if the platform can't report
+/// the client origin.
+fn client_origin_logical(window: &tauri::WebviewWindow) -> (f64, f64) {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    window.inner_position().map_or_else(
+        |_| outer_position_logical(window),
+        |p| (p.x as f64 / scale, p.y as f64 / scale),
+    )
 }
 
 // ── Centering (plain windows) ───────────────────────────────────────────────
@@ -185,6 +208,12 @@ fn compute_x_axis(anchor: PickerAnchor, width: f64, work_x: f64, work_w: f64) ->
     desired_x.max(work_x).min(max_x.max(work_x))
 }
 
+/// Fraction of the panel width around its center within which the trigger's
+/// center maps to a `-center` transform origin. Settings comboboxes produce a
+/// panel of exactly the trigger's width, so the scale should emanate from the
+/// middle of the shared edge, not a corner.
+const ORIGIN_CENTER_BAND: f64 = 0.25;
+
 fn compute_transform_origin(anchor: PickerAnchor, panel: &PanelBounds) -> &'static str {
     let anchor_center_x = (anchor.screen_left + anchor.screen_right) / 2.0;
     let anchor_center_y = (anchor.screen_top + anchor.screen_bottom) / 2.0;
@@ -195,15 +224,20 @@ fn compute_transform_origin(anchor: PickerAnchor, panel: &PanelBounds) -> &'stat
     } else {
         "bottom"
     };
-    let horizontal = if anchor_center_x < panel_center_x {
+    let horizontal = if (anchor_center_x - panel_center_x).abs() <= panel.width * ORIGIN_CENTER_BAND
+    {
+        "center"
+    } else if anchor_center_x < panel_center_x {
         "left"
     } else {
         "right"
     };
     match (vertical, horizontal) {
         ("top", "left") => "top-left",
+        ("top", "center") => "top-center",
         ("top", "right") => "top-right",
         ("bottom", "left") => "bottom-left",
+        ("bottom", "center") => "bottom-center",
         _ => "bottom-right",
     }
 }
@@ -239,12 +273,21 @@ fn compute_panel(
 
 pub(super) fn close_model_picker_with_animation(app: &AppHandle, window: &tauri::WebviewWindow) {
     let seq = MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    // Mark the grace so `resize_window` won't re-place (and thereby re-show)
+    // the still-visible window before the delayed hide lands. Cleared on the
+    // next anchored open.
+    with_picker_state("model-picker", |s| s.closing = true);
     let _ = app.emit("model-picker:closing", serde_json::Value::Null);
+    // The backdrop's job is done the instant the close starts: let every
+    // further click fall through to whatever is underneath while the fade
+    // plays and the transparent post-fade frame is composited (see
+    // `MODEL_PICKER_HIDE_DELAY_MS`). Re-enabled on the next open.
+    let _ = window.set_ignore_cursor_events(true);
 
     let app2 = app.clone();
     let window2 = window.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(MODEL_PICKER_CLOSE_MS));
+        std::thread::sleep(std::time::Duration::from_millis(MODEL_PICKER_HIDE_DELAY_MS));
         if MODEL_PICKER_SEQ.load(Ordering::SeqCst) != seq {
             return;
         }
@@ -253,7 +296,46 @@ pub(super) fn close_model_picker_with_animation(app: &AppHandle, window: &tauri:
                 return;
             }
             let _ = window2.hide();
-            with_picker_state("model-picker", |s| s.anchor = None);
+            with_picker_state("model-picker", |s| {
+                s.anchor = None;
+                s.closing = false;
+            });
+        });
+    });
+}
+
+/// Where the picker is parked for its startup compositor warmup — far enough
+/// off-screen that the (600×560 seed) window can never peek into the desktop.
+const MODEL_PICKER_WARMUP_PARK: f64 = -9999.0;
+/// How long the warmup keeps the window shown off-screen. Long enough for
+/// WebView2 to create its composition surface and present a few frames.
+const MODEL_PICKER_WARMUP_MS: u64 = 800;
+
+/// One-time compositor warmup at startup. The picker window is pre-CREATED
+/// hidden, but WebView2 only builds its composition surface on the first show —
+/// so the FIRST user open paid a several-hundred-ms cold-composite during which
+/// the whole open animation elapsed invisibly (the renderer's double-rAF reveal
+/// gate can't detect this: rAF keeps ticking even in a hidden WebView2 window).
+/// Show the window once, parked off-screen and non-focusable, then hide it
+/// again so the first real open behaves like every subsequent one.
+pub(super) fn warm_model_picker_compositor(app: &AppHandle, window: &tauri::WebviewWindow) {
+    let seq = MODEL_PICKER_SEQ.load(Ordering::SeqCst);
+    let _ = window.set_focusable(false);
+    let _ = window.set_position(LogicalPosition::new(
+        MODEL_PICKER_WARMUP_PARK,
+        MODEL_PICKER_WARMUP_PARK,
+    ));
+    let _ = window.show();
+    let app2 = app.clone();
+    let window2 = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(MODEL_PICKER_WARMUP_MS));
+        let _ = app2.run_on_main_thread(move || {
+            let _ = window2.set_focusable(true);
+            // A real open landed during the warmup — the window is theirs now.
+            if MODEL_PICKER_SEQ.load(Ordering::SeqCst) == seq {
+                let _ = window2.hide();
+            }
         });
     });
 }
@@ -273,6 +355,7 @@ fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pic
     // Treat open as a repair/re-anchor operation. This cancels any delayed hide
     // from a close animation before it can race a fresh click.
     let seq = MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    with_picker_state("model-picker", |s| s.closing = false);
     let work = work_area_for_point(app, (anchor.screen_left, anchor.screen_top));
     let (work_x, work_y, work_w, work_h) = work;
     // Match the picker to the width of the trigger combobox that opened it. The
@@ -301,6 +384,12 @@ fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pic
         },
     });
 
+    // A close leaves the backdrop click-through (see
+    // `close_model_picker_with_animation`); restore input before showing. The
+    // startup compositor warmup leaves the window non-focusable — restore that
+    // too in case an open lands mid-warmup.
+    let _ = window.set_ignore_cursor_events(false);
+    let _ = window.set_focusable(true);
     let _ = window.show();
     let _ = window.set_always_on_top(true);
     let _ = window.set_focus();
@@ -450,7 +539,7 @@ pub(super) fn anchor_from_rect(
     width: f64,
     height: f64,
 ) -> PickerAnchor {
-    let (ox, oy) = outer_position_logical(opener);
+    let (ox, oy) = client_origin_logical(opener);
     let screen_left = ox + x;
     let screen_top = oy + y;
     PickerAnchor {
@@ -619,6 +708,27 @@ mod tests {
         );
         assert_eq!(panel.x, 0.0);
         assert_eq!(panel.origin, "bottom-left");
+    }
+
+    #[test]
+    fn panel_origin_centers_when_panel_matches_trigger_width() {
+        // Settings combobox case: the panel is exactly the trigger's width and
+        // right-aligned to it, so the trigger's center == the panel's center →
+        // the animation should emanate from the middle of the shared edge.
+        let anchor = PickerAnchor {
+            screen_left: 400.0,
+            screen_right: 1000.0,
+            screen_top: 40.0,
+            screen_bottom: 92.0,
+        };
+        let panel = compute_panel(
+            anchor,
+            (600.0, 560.0),
+            (0.0, 0.0, 1920.0, 1080.0),
+            MODEL_MIN_HEIGHT,
+        );
+        assert_eq!(panel.y, anchor.screen_bottom + ANCHOR_GAP);
+        assert_eq!(panel.origin, "top-center");
     }
 
     #[test]

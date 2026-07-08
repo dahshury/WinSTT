@@ -159,12 +159,10 @@ describe("useTtsModelDownloads", () => {
 			model: "kokoro",
 			quantization: "fp16",
 			progress: 1,
-			downloadedBytes: 1_200,
-			totalBytes: 1_000,
+			downloadedBytes: 1200,
+			totalBytes: 1000,
 		});
 
-		expect(result.current.getSnapshot("kokoro", "fp16")?.totalBytes).toBe(
-			1_200,
-		);
+		expect(result.current.getSnapshot("kokoro", "fp16")?.totalBytes).toBe(1200);
 	});
 });

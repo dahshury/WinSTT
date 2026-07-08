@@ -69,11 +69,12 @@ export function EditView() {
 			</StaggerReveal>
 			<div className="flex items-center justify-between gap-2">
 				<div className="flex min-w-0 flex-col gap-1.5">
+					{/* No hover hint needed: the PreviewInfoPill below already shows
+					    `disabledReason` whenever the button is disabled. */}
 					<Button
 						className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-foreground-muted text-sm transition-colors hover:text-foreground disabled:opacity-40"
 						disabled={!enhanceEnabled}
 						onClick={openEnhance}
-						title={enhanceEnabled ? undefined : disabledReason}
 					>
 						<HugeiconsIcon icon={AiMagicIcon} size={15} />
 						{tp("enhance")}

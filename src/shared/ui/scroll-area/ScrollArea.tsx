@@ -1,5 +1,5 @@
 import { ScrollArea as BaseScrollArea } from "@base-ui/react/scroll-area";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
 	ComponentPropsWithoutRef,
 	CSSProperties,
@@ -34,6 +34,14 @@ export interface ScrollAreaProps extends ComponentPropsWithoutRef<"div"> {
 	 * of jamming against an edge when it fades in.
 	 */
 	verticalScrollbarClassName?: string;
+	/**
+	 * When `false`, the scrollbar reveals ONLY while actively scrolling (or
+	 * dragging the thumb) — hovering the content no longer surfaces it. Base UI
+	 * flags `data-hovering` for the whole scroll-area root, so the default
+	 * hover-reveal makes the bar look permanently present in a region the pointer
+	 * always sits inside (e.g. a settings window). Defaults to `true`.
+	 */
+	revealScrollbarOnHover?: boolean;
 	/** Class applied to the inner viewport (the scrollable region). */
 	viewportClassName?: string;
 	/** Ref to the inner viewport — use for programmatic scrolling. */
@@ -42,12 +50,21 @@ export interface ScrollAreaProps extends ComponentPropsWithoutRef<"div"> {
 	viewportStyle?: CSSProperties;
 }
 
-// Auto-hiding overlay thumb: invisible at rest, fades in ONLY while actively
-// scrolling (not on hover). Per-side margins (not the `m-*` shorthand) so a
-// caller can override a single side through `verticalScrollbarClassName` without
-// a shorthand-vs-longhand specificity clash in tailwind-merge.
+// Fluid Functionalism-style overlay thumb: a comfortable 10px target with a
+// quiet 4px resting thumb that widens and darkens on hover. Base UI keeps the
+// scrollbar mounted while scrollable and supplies data-hovering/data-scrolling.
 const VERTICAL_SCROLLBAR_CLASS =
-	"mt-0.5 mb-0.5 me-0.5 flex w-1.5 justify-center rounded bg-transparent opacity-0 transition-opacity delay-150 duration-150 data-[scrolling]:opacity-100 data-[scrolling]:delay-0";
+	"group/scrollbar absolute top-0 end-0 z-overlay flex h-full w-2.5 touch-none select-none opacity-0 transition-opacity delay-[160ms] duration-[120ms] ease-out data-[scrolling]:opacity-100 data-[scrolling]:delay-0 data-[scrolling]:duration-[160ms]";
+const HORIZONTAL_SCROLLBAR_CLASS =
+	"group/scrollbar absolute bottom-0 start-0 z-overlay flex h-2.5 w-full touch-none select-none flex-col opacity-0 transition-opacity delay-[160ms] duration-[120ms] ease-out data-[scrolling]:opacity-100 data-[scrolling]:delay-0 data-[scrolling]:duration-[160ms]";
+// Hover-reveal fragment, merged onto the base scrollbar class unless the caller
+// opts out via `revealScrollbarOnHover={false}` (scroll-only reveal).
+const SCROLLBAR_HOVER_REVEAL_CLASS =
+	"data-[hovering]:opacity-100 data-[hovering]:delay-0 data-[hovering]:duration-[160ms]";
+const VERTICAL_THUMB_CLASS =
+	"relative mx-auto my-1 h-[var(--scroll-area-thumb-height)] w-1 rounded-full bg-foreground-muted/35 transition-[background-color,width] duration-[160ms] ease-in-out group-hover/scrollbar:w-1.5 group-hover/scrollbar:bg-foreground-muted/55 active:!bg-foreground-secondary/70";
+const HORIZONTAL_THUMB_CLASS =
+	"relative mx-1 my-auto h-1 w-[var(--scroll-area-thumb-width)] rounded-full bg-foreground-muted/35 transition-[background-color,height] duration-[160ms] ease-in-out group-hover/scrollbar:h-1.5 group-hover/scrollbar:bg-foreground-muted/55 active:!bg-foreground-secondary/70";
 
 const RUBBER_BAND_MAX_OFFSET = 56;
 const RUBBER_BAND_RELEASE_MS = 420;
@@ -82,6 +99,38 @@ function getMaxScrollTop(viewport: HTMLElement) {
 	return Math.max(0, viewport.scrollHeight - viewport.clientHeight);
 }
 
+function hasTouchPrimaryPointer() {
+	if (typeof window === "undefined") {
+		return false;
+	}
+	if (window.matchMedia) {
+		return window.matchMedia("(pointer: coarse)").matches;
+	}
+	return navigator.maxTouchPoints > 0;
+}
+
+function useTouchPrimary() {
+	const [isTouchPrimary, setIsTouchPrimary] = useState(hasTouchPrimaryPointer);
+
+	useEffect(() => {
+		if (typeof window === "undefined" || !window.matchMedia) {
+			return;
+		}
+		const pointerQuery = window.matchMedia("(pointer: coarse)");
+		const finePointerQuery = window.matchMedia("(any-pointer: fine)");
+		const update = () => setIsTouchPrimary(hasTouchPrimaryPointer());
+		pointerQuery.addEventListener("change", update);
+		finePointerQuery.addEventListener("change", update);
+		update();
+		return () => {
+			pointerQuery.removeEventListener("change", update);
+			finePointerQuery.removeEventListener("change", update);
+		};
+	}, []);
+
+	return isTouchPrimary;
+}
+
 function useTouchRubberBand(
 	enabled: boolean,
 	viewportRef: RefObject<HTMLDivElement | null>,
@@ -93,7 +142,7 @@ function useTouchRubberBand(
 		}
 		const viewport = viewportRef.current;
 		const content = contentRef.current;
-		if (!viewport || !content) {
+		if (!(viewport && content)) {
 			return;
 		}
 
@@ -227,6 +276,7 @@ export function ScrollArea({
 	children,
 	className,
 	rubberBandOnTouch = true,
+	revealScrollbarOnHover = true,
 	viewportClassName,
 	viewportStyle,
 	viewportRef,
@@ -236,16 +286,56 @@ export function ScrollArea({
 }: ScrollAreaProps) {
 	const localViewportRef = useRef<HTMLDivElement>(null);
 	const rubberBandContentRef = useRef<HTMLDivElement>(null);
-	useTouchRubberBand(rubberBandOnTouch, localViewportRef, rubberBandContentRef);
+	const isTouchPrimary = useTouchPrimary();
+	useTouchRubberBand(
+		rubberBandOnTouch && !isTouchPrimary,
+		localViewportRef,
+		rubberBandContentRef,
+	);
 	const resolvedViewportStyle = {
 		...(verticalOnly ? { overflowX: "hidden" as const } : null),
 		...(rubberBandOnTouch ? { overscrollBehaviorY: "contain" as const } : null),
 		...viewportStyle,
 	};
 
+	if (isTouchPrimary) {
+		const touchViewportStyle = {
+			...(verticalOnly ? { overflowX: "hidden" as const } : null),
+			...viewportStyle,
+		};
+
+		return (
+			<div
+				aria-roledescription="scroll area"
+				className={cn("relative overflow-hidden", className)}
+				data-slot="scroll-area"
+				role="group"
+				{...rest}
+			>
+				<div
+					className={cn(
+						"h-full w-full rounded-[inherit]",
+						verticalOnly ? "overflow-y-auto" : "overflow-auto",
+						viewportClassName,
+					)}
+					data-rubber-band={rubberBandOnTouch ? undefined : "off"}
+					data-slot="scroll-area-viewport"
+					ref={(node) => {
+						localViewportRef.current = node;
+						assignRef(viewportRef, node);
+					}}
+					style={touchViewportStyle}
+				>
+					{children}
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<BaseScrollArea.Root
 			className={cn("relative overflow-hidden", className)}
+			data-slot="scroll-area"
 			{...rest}
 		>
 			<BaseScrollArea.Viewport
@@ -255,6 +345,7 @@ export function ScrollArea({
 				)}
 				data-rubber-band={rubberBandOnTouch ? undefined : "off"}
 				data-rubber-band-managed={rubberBandOnTouch ? "local" : undefined}
+				data-slot="scroll-area-viewport"
 				ref={(node) => {
 					localViewportRef.current = node;
 					assignRef(viewportRef, node);
@@ -274,18 +365,33 @@ export function ScrollArea({
 				)}
 			</BaseScrollArea.Viewport>
 			<BaseScrollArea.Scrollbar
-				className={cn(VERTICAL_SCROLLBAR_CLASS, verticalScrollbarClassName)}
+				className={cn(
+					VERTICAL_SCROLLBAR_CLASS,
+					revealScrollbarOnHover && SCROLLBAR_HOVER_REVEAL_CLASS,
+					verticalScrollbarClassName,
+				)}
+				data-slot="scroll-area-scrollbar"
 				orientation="vertical"
 			>
-				<BaseScrollArea.Thumb className="w-full rounded bg-foreground-muted/40" />
+				<BaseScrollArea.Thumb
+					className={VERTICAL_THUMB_CLASS}
+					data-slot="scroll-area-thumb"
+				/>
 			</BaseScrollArea.Scrollbar>
 			{verticalOnly ? null : (
 				<>
 					<BaseScrollArea.Scrollbar
-						className="m-0.5 flex h-1.5 items-center rounded bg-transparent opacity-0 transition-opacity delay-150 duration-150 data-[scrolling]:opacity-100 data-[scrolling]:delay-0"
+						className={cn(
+							HORIZONTAL_SCROLLBAR_CLASS,
+							revealScrollbarOnHover && SCROLLBAR_HOVER_REVEAL_CLASS,
+						)}
+						data-slot="scroll-area-scrollbar"
 						orientation="horizontal"
 					>
-						<BaseScrollArea.Thumb className="h-full rounded bg-foreground-muted/40" />
+						<BaseScrollArea.Thumb
+							className={HORIZONTAL_THUMB_CLASS}
+							data-slot="scroll-area-thumb"
+						/>
 					</BaseScrollArea.Scrollbar>
 					<BaseScrollArea.Corner />
 				</>

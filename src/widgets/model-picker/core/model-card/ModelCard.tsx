@@ -71,8 +71,6 @@ export interface ModelCardProps {
 	/** Recessed bottom shelf for picker-specific controls (precision badges,
 	 *  download actions, …). */
 	shelf?: ReactNode;
-	/** Native title tooltip on the card element. */
-	title?: string | undefined;
 	/** Trailing action(s) after the favourite star (e.g. delete). */
 	trailing?: ReactNode;
 	unavailable?: boolean;
@@ -215,7 +213,6 @@ export function ModelCard({
 	as = "combobox-item",
 	value,
 	className,
-	title,
 	"data-model-id": dataModelId,
 	makerIcon,
 	name,
@@ -303,7 +300,6 @@ export function ModelCard({
 				className={cardClass}
 				data-model-id={dataModelId}
 				disabled={unavailable}
-				title={title}
 				value={value as never}
 			>
 				{body}
@@ -312,7 +308,7 @@ export function ModelCard({
 	}
 	if (bodyClickable) {
 		return (
-			<div className={cardClass} data-model-id={dataModelId} title={title}>
+			<div className={cardClass} data-model-id={dataModelId}>
 				<button
 					aria-label={`Select ${name}`}
 					className="absolute inset-0 rounded-lg border-0 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/70"
@@ -326,7 +322,7 @@ export function ModelCard({
 		);
 	}
 	return (
-		<div className={cardClass} data-model-id={dataModelId} title={title}>
+		<div className={cardClass} data-model-id={dataModelId}>
 			{body}
 		</div>
 	);

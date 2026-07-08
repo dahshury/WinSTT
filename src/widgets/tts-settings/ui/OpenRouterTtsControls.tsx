@@ -81,7 +81,7 @@ function voiceGroupLabel(groupKey: string): string {
 
 function voiceGroupBadge(groupKey: string): string | undefined {
 	if (groupKey === "voices") {
-		return undefined;
+		return;
 	}
 	return groupKey.slice(0, 3).toUpperCase();
 }
@@ -183,7 +183,7 @@ export function OpenRouterTtsControls({
 			>
 				<SearchableSelect
 					className="w-72"
-					disabled={!selectedModel || !hasVoices}
+					disabled={!(selectedModel && hasVoices)}
 					groups={voiceGroups}
 					inputTrailing={
 						selectedModel && selectedVoice ? (

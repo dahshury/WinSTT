@@ -1,14 +1,18 @@
 import { Tooltip } from "@base-ui/react/tooltip";
-import { domAnimation, LazyMotion, m, MotionConfig } from "motion/react";
+import { domAnimation, LazyMotion, MotionConfig, m } from "motion/react";
 import type { ReactNode } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import { useVisualizerStore } from "@/features/audio-visualizer";
 import { shouldUseListenSurface } from "@/features/listen-mode";
-import { CloudKeyRevertNotice } from "@/features/revert-cloud-on-key-removal";
+import {
+	CloudKeyRevertNotice,
+	useCloudOfflineAutoRevert,
+} from "@/features/revert-cloud-on-key-removal";
 import { CloudSttErrorToasts } from "@/features/show-cloud-stt-errors";
 import { SwapFailureToast } from "@/features/swap-notifications";
 import { TransformToast } from "@/features/transform-notifications";
+import { springs } from "@/shared/lib/springs";
 import { SurfaceProvider } from "@/shared/lib/surface";
 import { ErrorBoundary } from "../providers/ErrorBoundary";
 import { IntlProvider } from "../providers/IntlProvider";
@@ -29,6 +33,10 @@ export function RootLayout({ children }: { children: ReactNode }) {
 		isSpeaking,
 		liveText,
 	});
+	// Persist a switch to Local whenever a cloud provider goes offline and a local
+	// model is installed (the user-chosen offline behavior). Lives in the main
+	// window because that's where dictation runs and the connectivity event lands.
+	useCloudOfflineAutoRevert();
 
 	return (
 		<IntlProvider>
@@ -44,7 +52,7 @@ export function RootLayout({ children }: { children: ReactNode }) {
 									animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
 									className="noise-overlay flex h-screen flex-col bg-surface-1"
 									initial={{ opacity: 0, y: 6, filter: "blur(2px)" }}
-									transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+									transition={springs.slow}
 								>
 									{!listenSurfaceActive && <TitleBar />}
 									<main className="flex-1 overflow-hidden">

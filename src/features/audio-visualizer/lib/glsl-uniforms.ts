@@ -40,7 +40,7 @@ function isVectorType(
 	return (
 		!t.includes("v") &&
 		Array.isArray(v) &&
-		v.length > Number.parseInt(t.charAt(0))
+		v.length > Number.parseInt(t.charAt(0), 10)
 	);
 }
 
@@ -132,7 +132,5 @@ export const insertStringAtIndex = (
 	index: number,
 ) =>
 	index > 0
-		? currentString.substring(0, index) +
-			string +
-			currentString.substring(index)
+		? currentString.slice(0, index) + string + currentString.slice(index)
 		: string + currentString;

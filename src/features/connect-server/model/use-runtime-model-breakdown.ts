@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { modelChipLogo, modelMakerToken } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
 import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
@@ -35,7 +36,7 @@ function findOllamaModel(
 	name: string,
 ): OllamaModel | undefined {
 	if (name === "") {
-		return undefined;
+		return;
 	}
 	return models.find(
 		(m) =>
@@ -115,6 +116,12 @@ export function useRuntimeModelBreakdown(isGpu: boolean): BreakdownSection[] {
 		sttQuant: modelSettings?.onnxQuantization ?? "auto",
 		getSttModel: (id) => sttById.get(id),
 		getSttState: (id) => sttStates[id],
+		// Cloud models aren't in any local catalog — resolve their maker logo
+		// from the id so the breakdown can lead with the brand mark + cloud sign.
+		resolveCloud: (id) => ({
+			logoSrc: modelChipLogo(id),
+			maker: modelMakerToken(id) || null,
+		}),
 		tts: {
 			enabled: ttsSettings?.enabled ?? false,
 			source: ttsSettings?.source ?? "local",

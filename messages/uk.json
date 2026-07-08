@@ -251,7 +251,46 @@
     "retentionDays3": "Через 3 дні",
     "retentionWeeks2": "Через 2 тижні",
     "retentionMonths3": "Через 3 місяці",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "Історія транскрипцій",
+    "enabledTooltip": "Коли увімкнено, WinSTT записує ваші транскрипції, перетворення та озвучування, щоб ця панель могла показувати статистику й витрати. Вимкніть, щоб припинити збір нових даних.",
+    "disabledHint": "Історію вимкнено — WinSTT не записує нову активність. Наявні дані зберігаються, доки ви їх не видалите.",
+    "deleteAllTitle": "Видалити всю історію?",
+    "deleteAllDescription": "Усі записані транскрипції, перетворення, озвучування та збережені записи буде остаточно видалено. Цю дію не можна скасувати.",
+    "deleteAllButton": "Видалити всі дані",
+    "clearTtsButton": "Очистити озвучування",
+    "clearTtsTitle": "Очистити всю історію озвучування?",
+    "clearTtsDescription": "Усі збережені запуски синтезу мовлення та аудіо буде видалено. Цю дію не можна скасувати.",
+    "combinedTableTitle": "Історія",
+    "filterDateRange": "Діапазон дат",
+    "filterAllTime": "Увесь час",
+    "heatmapEarlier": "Раніше",
+    "heatmapLater": "Пізніше",
+    "spendingTitle": "Витрати",
+    "spendingTotalLabel": "Загальні витрати",
+    "spendingByModalityTitle": "Витрати за типом",
+    "spendingByProviderTitle": "Витрати за постачальником",
+    "spendingByModelTitle": "Витрати за моделлю",
+    "spendingByMakerTitle": "Витрати за виробником",
+    "spendingEstimatedHint": "Деякі значення оцінено там, де точну вартість не було повідомлено.",
+    "costSpeechToText": "Мовлення в текст",
+    "costTextToSpeech": "Текст у мовлення",
+    "costLanguageModel": "Мовна модель",
+    "colCharacters": "Символи",
+    "cloudLabel": "Хмара",
+    "colCost": "Вартість хмари",
+    "costEstimated": "Оцінено",
+    "costTotal": "Усього",
+    "kindSpeechToText": "Мовлення в текст",
+    "kindTextToSpeech": "Текст у мовлення",
+    "durationLlmProcessing": "Обробка ШІ",
+    "durationNotRecorded": "Не записано",
+    "durationNotRun": "Не запускалося",
+    "durationRecording": "Запис",
+    "durationSpeechToText": "Транскрипція",
+    "durationTotalProcessing": "Час обробки",
+    "colTtsModel": "Модель голосу",
+    "colVoice": "Голос"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "Резервне розпізнавання тексту екрана (OCR)",
+    "contextScreenOcrCaption": "Зчитувати текст на екрані біля курсора як додатковий контекст",
+    "contextScreenOcrTooltip": "Коли контекстна обізнаність не може зчитати активне поле напряму, WinSTT переходить до розпізнавання (OCR) області екрана навколо курсора, щоб уловити прилеглий текст. Це повільніше й менш точно, ніж пряме зчитування поля — вимкніть, щоб пропустити цей резервний варіант."
   },
   "model": {
     "initialPrompt": "Початковий запит",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "Секунди тиші для початку ранньої транскрипції",
     "earlyTranscriptionTooltip": "Починати транскрипцію до повної зупинки мовлення, після цієї кількості секунд тиші. Зменшує затримку між мовленням і появою фінального тексту. Встановіть 0 для вимкнення.",
     "realtimeModel": "Модель реального часу",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "Модель реального часу",
     "realtimeModelCaption": "Менша модель для живого перегляду",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "Мінімальний час між оновленнями живої транскрипції. Менші значення дають більш часті оновлення, але використовують більше процесорних ресурсів. Збільшіть при заїканнях або високому завантаженні CPU під час диктування.",
     "llm": "Велика мовна модель",
     "deviceAutoLabel": "Авто",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "Вимкнути транскрипцію слово за словом?",
+    "realtimeOffWordByWordDescription": "Ця модель транскрибує слово за словом під час мовлення. Вимкнення реального часу переведе її на транскрипцію лише після того, як ви зупинитеся.",
+    "realtimeOffWordByWordConfirm": "Вимкнути"
   },
   "audio": {
     "inputDevice": "Пристрій введення",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "Негайно",
     "microphoneReleaseSec30": "30 секунд",
     "microphoneReleaseMin1": "1 хвилина",
-    "microphoneReleaseMin5": "5 хвилин"
+    "microphoneReleaseMin5": "5 хвилин",
+    "devicePriorityHandle": "Перетягніть, щоб змінити пріоритет"
   },
   "quality": {
     "enableRealtime": "Увімкнути реальний час",
@@ -717,7 +766,8 @@
     "waiting": "Очікування мовлення...",
     "serverOffline": "Сервер офлайн",
     "noAudioDetected": "(аудіо не виявлено)",
-    "transcriptionFailed": "(транскрипція не вдалася)"
+    "transcriptionFailed": "(транскрипція не вдалася)",
+    "offlineNoLocalModel": "Немає інтернету · немає локальної моделі"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "Встановити все одно",
     "unfitSelectTitle": "Використовувати цю велику модель?",
     "unfitSelectDescription": "«{model}» більший, ніж ваше обладнання може комфортно запустити (~{required} потрібно, {available} доступно). Вона може працювати дуже повільно або не завантажитися. Використати все одно?",
-    "unfitSelectAnyway": "Використати все одно"
+    "unfitSelectAnyway": "Використати все одно",
+    "dictionaryAutoAddLiteModel": "Недоступно на lite-моделях — перейдіть на більшу модель, щоб автоматично додавати виправлення до словника."
   },
   "tts": {
     "title": "Синтез мовлення",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "Додайте та підтвердіть API-ключ ElevenLabs в інтеграціях для використання хмарних голосів.",
     "cloudLoadingVoices": "Завантаження голосів…",
     "cloudNoVoices": "Голосів для цього облікового запису ElevenLabs не знайдено.",
-    "cloudError": "Не вдалося завантажити голоси ElevenLabs."
+    "cloudError": "Не вдалося завантажити голоси ElevenLabs.",
+    "voiceDesignLabel": "Опис голосу",
+    "voiceDesignTooltip": "Опишіть словами бажаний голос — тембр, вік, акцент, емоцію — і модель синтезує відповідний голос замість вибору з готового набору.",
+    "voiceDesignButtonPlaceholder": "Створити голос",
+    "voiceDesignDialogTitle": "Створити голос",
+    "voiceDesignDialogDescription": "Опишіть голос одним-двома реченнями. Залиште порожнім, щоб використати стандартний голос моделі.",
+    "voiceDesignPromptLabel": "Опис голосу",
+    "voiceDesignPromptPlaceholder": "напр. теплий низький диктор із легким британським акцентом",
+    "voiceDesignPromptEmptyHint": "Залиште порожнім, щоб повернутися до вбудованого голосу моделі.",
+    "voiceDesignCancel": "Скасувати",
+    "voiceDesignSave": "Зберегти",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "Щось пішло не так",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "Перевищено ліміт запитів від {provider}",
     "toastRateLimitedRetry": "Спробуйте через {seconds}с",
     "toastProviderError": "Помилка STT {provider}: {message}",
-    "openIntegrations": "Відкрити інтеграції"
+    "openIntegrations": "Відкрити інтеграції",
+    "toastTtsOfflineNoLocal": "Немає інтернету та не встановлено локальний голос — озвучення недоступне."
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "Lite",
+    "liteTierTip": "Менший і швидший варіант зі зниженою точністю — найкраще для швидких задач на обмеженому обладнанні."
   },
   "dataGrid": {
     "addRow": "Add row",

@@ -7,10 +7,12 @@ import {
 } from "@testing-library/react";
 
 const { IntlProvider } = await import("@/app/providers/IntlProvider");
-const { DEFAULT_SETTINGS, useSettingsStore } =
-	await import("@/entities/setting");
-const { OnboardingCapabilitiesStep } =
-	await import("./OnboardingCapabilitiesStep");
+const { DEFAULT_SETTINGS, useSettingsStore } = await import(
+	"@/entities/setting"
+);
+const { OnboardingCapabilitiesStep } = await import(
+	"./OnboardingCapabilitiesStep"
+);
 
 interface TauriInvocation {
 	args?: unknown;

@@ -5,7 +5,7 @@ import type {
 	VisibilityState,
 } from "@tanstack/react-table";
 import type { VirtualItem } from "@tanstack/react-virtual";
-import * as React from "react";
+import type * as React from "react";
 import { DataGridCell } from "@/shared/ui/data-grid/data-grid-cell";
 import { useComposedRefs } from "@/shared/ui/data-grid/lib/compose-refs";
 import {
@@ -68,7 +68,9 @@ export function DataGridRow<TData>({
 	const virtualRowIndex = virtualItem.index;
 
 	const onRowChange = (node: HTMLDivElement | null) => {
-		if (typeof virtualRowIndex === "undefined") return;
+		if (typeof virtualRowIndex === "undefined") {
+			return;
+		}
 
 		if (node) {
 			measureElement(node);

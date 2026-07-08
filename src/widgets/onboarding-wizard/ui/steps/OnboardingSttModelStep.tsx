@@ -107,7 +107,7 @@ export function OnboardingSttModelStep() {
 							(selectedQuantization || "") as OnnxQuantization
 						}
 						downloadProgress={downloadProgress}
-						isLoading={!catalogLoaded || !modelStatesLoaded}
+						isLoading={!(catalogLoaded && modelStatesLoaded)}
 						kind="main"
 						models={catalogModels}
 						onChange={noopChange}
@@ -159,7 +159,7 @@ function ModelReadinessCard({
 	selectedName: string;
 	targetQuantization: string;
 }) {
-	const loading = !catalogLoaded || !modelStatesLoaded || !selectedName;
+	const loading = !(catalogLoaded && modelStatesLoaded && selectedName);
 	const statusLabel = resolveStatusLabel({
 		busyDownloading,
 		cacheState,

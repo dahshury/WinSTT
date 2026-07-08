@@ -65,6 +65,14 @@ export interface SearchableSelectProps {
 	 * without selecting (or closing) the combobox.
 	 */
 	renderItemTrailing?: (option: SelectOption) => ReactNode;
+	/**
+	 * Trigger height preset. `sm` shrinks the trigger to an 18px line-box (text
+	 * `11px`, compact chevron) so it fits inside a compact row without growing
+	 * it — the exact height the `size="sm"` Switcher uses. Used by the Translate
+	 * modifier's language picker so that row stays as tall as the level-switcher
+	 * rows. The popup list is unaffected. Defaults to `md` (combobox height).
+	 */
+	size?: "md" | "sm" | undefined;
 	value: string;
 }
 
@@ -280,8 +288,10 @@ export function SearchableSelect({
 	defaultOpen = false,
 	inputTrailing,
 	renderItemTrailing,
+	size = "md",
 }: SearchableSelectProps) {
 	const t = useTranslations("common");
+	const isSm = size === "sm";
 	// Grouped mode flattens to a single list for the selected-value lookup +
 	// the Combobox value contract; the popup still renders grouped.
 	const flatOptions = groups
@@ -377,7 +387,13 @@ export function SearchableSelect({
 						</span>
 					) : null}
 					<Combobox.Input
-						className={`flex h-8 w-full cursor-pointer items-center rounded-lg ${surfaceClasses(inputLevel)} ring-1 ring-divider ${inputTrailing ? "pr-16" : "pr-7"} pl-2.5 font-inherit text-body text-foreground leading-normal outline-none focus:cursor-text focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 disabled:cursor-not-allowed disabled:opacity-40`}
+						className={cn(
+							"flex w-full cursor-pointer items-center rounded-lg font-inherit text-foreground leading-normal outline-none focus:cursor-text focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 disabled:cursor-not-allowed disabled:opacity-40",
+							surfaceClasses(inputLevel),
+							"ring-1 ring-divider",
+							isSm ? "h-[18px] pl-2 text-[11px]" : "h-8 pl-2.5 text-body",
+							inputTrailing ? "pr-16" : isSm ? "pr-6" : "pr-7",
+						)}
 						placeholder={placeholder}
 						style={
 							decorationPadding > 0
@@ -392,9 +408,12 @@ export function SearchableSelect({
 					) : null}
 					<Combobox.Trigger
 						aria-label="Open popup"
-						className="absolute top-1/2 right-1.5 flex size-5 shrink-0 -translate-y-1/2 cursor-pointer items-center justify-center rounded-xs border-none bg-transparent p-0 text-foreground-dim"
+						className={cn(
+							"absolute top-1/2 flex shrink-0 -translate-y-1/2 cursor-pointer items-center justify-center rounded-xs border-none bg-transparent p-0 text-foreground-dim",
+							isSm ? "right-1 size-4" : "right-1.5 size-5",
+						)}
 					>
-						<HugeiconsIcon icon={ArrowDown01Icon} size={14} />
+						<HugeiconsIcon icon={ArrowDown01Icon} size={isSm ? 12 : 14} />
 					</Combobox.Trigger>
 				</div>
 

@@ -254,6 +254,14 @@ export const generalSettingsSchema = z.object({
 	// Toggle-mode only in the UI (long-form dictation is where multi-speaker
 	// conversations actually happen); the server still runs the same pipeline
 	// regardless of recording mode. First-run downloads ~32 MB of ONNX models.
+	// Tier-2 OCR fallback for context awareness. When on AND context capture
+	// found no usable text (canvas apps, remote desktops, games -- surfaces the
+	// accessibility tree returns nothing for), the pinned window is screenshotted
+	// and OCR'd on-device with Windows.Media.Ocr, feeding the recognized text to
+	// the SAME local LLM cleanup step the accessibility text uses. Default off --
+	// screenshot capture is the industry-unanimous opt-in tier; the text never
+	// leaves the machine. Never runs on password fields.
+	contextScreenOcr: z.boolean().default(false).catch(false),
 	speakerDiarization: z.boolean().default(false),
 	// Opt-out toggle for Sentry crash/error reporting. Defaults to `true` —
 	// installers ship with reporting on so we collect the early-adopter crash
@@ -305,6 +313,12 @@ export const generalSettingsSchema = z.object({
 	// active. Only effective when the loaded main STT model is a native-streaming
 	// realtime model; mutually exclusive with preview-before-pasting.
 	wordByWordPasting: z.boolean().default(false).catch(false),
+	// Master switch for transcription history. When off, nothing is persisted:
+	// no history rows, no transform rows, no saved WAV recordings — the History
+	// tab collapses to this switch plus a purge action. Existing data stays on
+	// disk until the user deletes it explicitly (opting out must not destroy
+	// data without a separate confirmed action).
+	historyEnabled: z.boolean().default(true).catch(true),
 	// Cap on the number of transcription history entries persisted to disk.
 	// Larger histories slow the settings panel (rendering + load), so the
 	// upper bound is 10000; lower bound 10 keeps the UI useful. The main

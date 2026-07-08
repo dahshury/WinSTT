@@ -6,12 +6,13 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tauri::AppHandle;
 use tauri::Manager;
-use tauri::{AppHandle, Emitter};
 
 use crate::managers::audio::AudioRecordingManager;
 
 mod misc_actions;
+mod pinned_foreground;
 mod post_process;
 mod transcribe;
 
@@ -81,25 +82,6 @@ impl Drop for FinishGuard {
     }
 }
 
-pub(super) struct LlmProcessingGuard {
-    app: AppHandle,
-}
-
-impl LlmProcessingGuard {
-    pub(super) fn new(app: &AppHandle) -> Self {
-        crate::tray::on_llm_thinking_start(app);
-        let _ = app.emit("llm:processing-start", ());
-        Self { app: app.clone() }
-    }
-}
-
-impl Drop for LlmProcessingGuard {
-    fn drop(&mut self) {
-        let _ = self.app.emit("llm:processing-end", ());
-        crate::tray::on_llm_thinking_stop(&self.app);
-    }
-}
-
 // Shortcut Action Trait
 pub trait ShortcutAction: Send + Sync {
     fn start(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str);
@@ -111,13 +93,7 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     let mut map = HashMap::new();
     map.insert(
         "transcribe".to_string(),
-        Arc::new(TranscribeAction {
-            post_process: false,
-        }) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "transcribe_with_post_process".to_string(),
-        Arc::new(TranscribeAction { post_process: true }) as Arc<dyn ShortcutAction>,
+        Arc::new(TranscribeAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "cancel".to_string(),

@@ -135,7 +135,7 @@ no hotkey; it runs as soon as the mode is active and a loopback device is select
 the **realtime model only**, and caps each utterance at 15 seconds so the feed never stalls
 on a long monologue.
 
-<Screenshot src="settings-general-listen" alt="The General tab in Listen mode, showing the loopback device picker and the Speaker Diarization toggle that replace the microphone controls." label="Settings — General (Listen)" chrome="card" caption="Microphone controls swap for a loopback picker and a diarization toggle." />
+<Screenshot src="settings-general-listen" alt="The Recording tab in Listen mode: the standard microphone Input Device controls are hidden, since Listen captures a WASAPI loopback source instead." label="Settings — Recording (Listen)" chrome="card" caption="In Listen mode the microphone Input Device controls are hidden; Speaker Diarization lives on the Transcription tab." />
 
 <SettingRow label="Loopback Device" settingKey="general.loopbackDeviceIndex" default="null" startupOnly>
   The WASAPI loopback (system-audio) device to capture from. You need a loopback source
@@ -144,8 +144,9 @@ on a long monologue.
 </SettingRow>
 
 <SettingRow label="Speaker Diarization" settingKey="general.speakerDiarization" default="false">
-  Labels each line of the subtitle feed with a speaker (Speaker 1, Speaker 2…). Toggles
-  **at runtime** — no restart, and it even applies to an in-flight session.
+  Labels each line of the subtitle feed with a speaker (Speaker 1, Speaker 2…). Lives on
+  the **Transcription** tab (it only appears in Listen mode). Toggles **at runtime** — no
+  restart, and it even applies to an in-flight session.
 </SettingRow>
 
 <Callout type="warn" title="A loopback device is required">

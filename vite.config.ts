@@ -199,6 +199,7 @@ export default defineConfig(({ command }) => {
 					settings: resolve(rootDir, "windows/settings.html"),
 					overlay: resolve(rootDir, "windows/overlay.html"),
 					"tray-menu": resolve(rootDir, "windows/tray-menu.html"),
+					"tray-indicator": resolve(rootDir, "windows/tray-indicator.html"),
 					"model-picker": resolve(rootDir, "windows/model-picker.html"),
 					"device-picker": resolve(rootDir, "windows/device-picker.html"),
 					"model-footprint": resolve(rootDir, "windows/model-footprint.html"),

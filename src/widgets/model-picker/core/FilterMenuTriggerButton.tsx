@@ -5,6 +5,7 @@ import { FilterIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef } from "react";
 import { cn } from "@/shared/lib/cn";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 export interface FilterMenuTriggerButtonProps {
 	buttonProps: ComponentPropsWithoutRef<"button">;
@@ -36,31 +37,32 @@ export function FilterMenuTriggerButton({
 	const isActive = count > 0;
 	const triggerLabel = activeFilterTriggerLabel(label, count);
 	return (
-		<BaseButton
-			{...buttonProps}
-			aria-label={triggerLabel}
-			className={cn(
-				"relative inline-flex size-7 items-center justify-center rounded-sm border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent",
-				isActive
-					? "border-accent/40 bg-accent/10 text-accent hover:bg-accent/15"
-					: "border-transparent bg-transparent text-foreground-secondary hover:bg-surface-hover",
-				className,
-			)}
-			data-active-filters={count > 0 ? count : undefined}
-			title={triggerLabel}
-			type="button"
-		>
-			<HugeiconsIcon aria-hidden="true" className="size-4" icon={icon} />
-			{count > 0 ? (
-				<span
-					className={cn(
-						"absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full",
-						"border border-divider bg-accent px-1 font-semibold text-[9px] text-on-accent tabular-nums leading-none",
-					)}
-				>
-					{displayCount(count)}
-				</span>
-			) : null}
-		</BaseButton>
+		<Tooltip content={triggerLabel}>
+			<BaseButton
+				{...buttonProps}
+				aria-label={triggerLabel}
+				className={cn(
+					"relative inline-flex size-7 items-center justify-center rounded-sm border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent",
+					isActive
+						? "border-accent/40 bg-accent/10 text-accent hover:bg-accent/15"
+						: "border-transparent bg-transparent text-foreground-secondary hover:bg-surface-hover",
+					className,
+				)}
+				data-active-filters={count > 0 ? count : undefined}
+				type="button"
+			>
+				<HugeiconsIcon aria-hidden="true" className="size-4" icon={icon} />
+				{count > 0 ? (
+					<span
+						className={cn(
+							"absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full",
+							"border border-divider bg-accent px-1 font-semibold text-[9px] text-on-accent tabular-nums leading-none",
+						)}
+					>
+						{displayCount(count)}
+					</span>
+				) : null}
+			</BaseButton>
+		</Tooltip>
 	);
 }

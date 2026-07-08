@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	isPillVisible,
 	isRealtimeEnabled,
+	realtimeMasterTogglePatch,
 	shouldSuppressPillPreviewForWordByWordPaste,
 } from "./realtime-enabled";
 
@@ -171,5 +172,43 @@ describe("shouldSuppressPillPreviewForWordByWordPaste", () => {
 				llmDictationEnabled: true,
 			}),
 		).toBe(true);
+	});
+});
+
+describe("realtimeMasterTogglePatch", () => {
+	test("ON restores the default display surfaces and nothing else", () => {
+		// The overlay setting must be left alone: "both" already enables the
+		// in-app panel regardless of overlay state, and clobbering the user's
+		// overlay choice would be a hidden cross-setting write.
+		expect(realtimeMasterTogglePatch(true)).toEqual({
+			liveTranscriptionDisplay: "both",
+		});
+	});
+
+	test("OFF removes every realtime consumer so the derived state flips", () => {
+		// Word-by-word pasting is a realtime consumer (isRealtimeEnabled
+		// short-circuits true on it) — leaving it on would keep the engine
+		// loaded and the switch stuck ON.
+		expect(realtimeMasterTogglePatch(false)).toEqual({
+			liveTranscriptionDisplay: "none",
+			wordByWordPasting: false,
+		});
+	});
+
+	test("round-trips through isRealtimeEnabled regardless of overlay", () => {
+		for (const overlay of [true, false]) {
+			expect(
+				isRealtimeEnabled({
+					showRecordingOverlay: overlay,
+					...realtimeMasterTogglePatch(true),
+				}),
+			).toBe(true);
+			expect(
+				isRealtimeEnabled({
+					showRecordingOverlay: overlay,
+					...realtimeMasterTogglePatch(false),
+				}),
+			).toBe(false);
+		}
 	});
 });

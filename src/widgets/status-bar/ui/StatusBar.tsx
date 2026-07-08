@@ -8,7 +8,9 @@ import { Mic01Icon } from "@hugeicons/core-free-icons";
 import { variantDisplayName } from "@/widgets/model-picker/stt/lib/family-helpers";
 import { useTranslations } from "use-intl";
 import {
+	applyDeviceSelection,
 	buildInputDeviceOptions,
+	priorityFromReorderedOptions,
 	useInputDevices,
 } from "@/entities/audio-device";
 import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
@@ -26,6 +28,9 @@ import { FOOTER_TOOLTIP_DELAY, FooterMenuChip } from "./FooterMenuChip";
 import { ActiveModelChip } from "./FooterModelChip";
 import { FooterDownloadChip, ModelSwapChip } from "./FooterStatusChips";
 
+/** Stable fallback so the zustand selector doesn't fabricate a new `[]` per render. */
+const EMPTY_PRIORITY: readonly string[] = [];
+
 export function StatusBar() {
 	const currentModel = useSettingsStore((s) => s.settings.model?.model);
 	const recordingMode = useSettingsStore(
@@ -33,6 +38,9 @@ export function StatusBar() {
 	);
 	const inputDeviceIndex = useSettingsStore(
 		(s) => s.settings.audio?.inputDeviceIndex,
+	);
+	const inputDevicePriority = useSettingsStore(
+		(s) => s.settings.audio?.inputDevicePriority ?? EMPTY_PRIORITY,
 	);
 	const updateAudio = useSettingsStore((s) => s.updateAudioSettings);
 	const isListening = useListenStore((s) => s.isListening);
@@ -61,15 +69,31 @@ export function StatusBar() {
 			inputDeviceIndex ?? null,
 			defaultLabel,
 			defaultDevice?.name,
+			inputDevicePriority,
 		);
 	const currentDeviceName =
-		inputDeviceIndex == null
+		currentDeviceId === "default"
 			? (defaultDevice?.name ?? tAudio("systemDefault"))
 			: currentDeviceLabel;
 
+	// Same semantics as the settings picker: clicking promotes the device to
+	// the top of a non-empty preference order (so the click always wins);
+	// "System default" clears the order.
 	const handleDeviceChange = (v: string) =>
+		applyDeviceSelection({
+			id: v,
+			onChange: (idx) => updateAudio({ inputDeviceIndex: idx }),
+			onPriorityChange: (p) => updateAudio({ inputDevicePriority: p }),
+			options: deviceOptions,
+			priority: inputDevicePriority,
+		});
+
+	const handleDeviceReorder = (orderedIds: string[]) =>
 		updateAudio({
-			inputDeviceIndex: v === "default" ? null : Number.parseInt(v, 10),
+			inputDevicePriority: priorityFromReorderedOptions(
+				deviceOptions,
+				orderedIds,
+			),
 		});
 
 	const tIntegrations = useTranslations("integrations");
@@ -120,7 +144,9 @@ export function StatusBar() {
 						icon={Mic01Icon}
 						label={abbreviateDevice(currentDeviceName)}
 						onChange={handleDeviceChange}
+						onReorder={handleDeviceReorder}
 						options={deviceOptions}
+						reorderHandleLabel={tAudio("devicePriorityHandle")}
 						tooltip={currentDeviceName}
 						value={currentDeviceId}
 					/>

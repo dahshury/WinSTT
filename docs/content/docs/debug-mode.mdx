@@ -1,11 +1,11 @@
 ---
 title: Debug Mode
-description: Gather logs and a one-click diagnostic bundle so a maintainer can fix a bug fast — straight from the tray menu.
+description: Gather logs and a one-click diagnostic bundle so a maintainer can fix a bug fast — straight from Settings → About → Diagnostics.
 ---
 
-When something goes wrong, the fastest path to a fix is attaching a diagnostic bundle to your bug report. WinSTT zips its logs plus a system summary into one file from the tray menu — no command line required.
+When something goes wrong, the fastest path to a fix is attaching a diagnostic bundle to your bug report. WinSTT zips its logs plus a system summary into one file from **Settings → About → Diagnostics** — no command line required.
 
-<Screenshot src="tray-menu" alt="The WinSTT tray menu with Open Logs Folder and Save Diagnostic Bundle entries near the bottom, above Quit." label="Tray menu" caption="Right-click the tray icon. Open Logs Folder and Save Diagnostic Bundle sit just above Quit." />
+<Screenshot src="tray-menu" alt="The WinSTT tray menu with Show Window, Settings, Copy Last Transcript, a recording-mode switcher, the input-device picker, Transcribe File, Check for Updates, and Quit." label="Tray menu" caption="Right-click the tray icon for quick actions. The diagnostic controls live in Settings → About → Diagnostics." />
 
 ## What gets logged
 
@@ -21,7 +21,7 @@ WinSTT writes rolling logs in its app log folder. They are written at **verbose*
   caption="Every log that can land in the bundle, and how each one rotates."
 />
 
-Installed builds store logs under the WinSTT app-data log folder; portable builds use their local `Data/logs` folder. Use **Open Logs Folder** from the tray or About panel instead of guessing the path.
+Installed builds store logs under the WinSTT app-data log folder; portable builds use their local `Data/logs` folder. Use **Open Logs Folder** from **Settings → About → Diagnostics** instead of guessing the path.
 
 <Callout type="success" title="The log does not contain your audio">
   Audio frames are processed in memory and discarded; only summary statistics
@@ -32,7 +32,7 @@ Installed builds store logs under the WinSTT app-data log folder; portable build
 
 ## Gather a diagnostic bundle
 
-Two entries near the bottom of the tray menu do everything. Right-click the WinSTT tray icon to open it.
+Two actions in **Settings → About → Diagnostics** do everything. Open Settings and go to the About tab.
 
 <SettingRow label="Open Logs Folder">
   Opens the active log directory in File Explorer so you can inspect the current logs
@@ -50,7 +50,7 @@ Two entries near the bottom of the tray menu do everything. Right-click the WinS
     recent — `debug.log` rolls at 5 MB, so older context can age out of the file.
   </Step>
   <Step title="Save the bundle">
-    Right-click the tray icon, then click **Save Diagnostic Bundle**. A save dialog
+    In **Settings → About → Diagnostics**, click **Save Diagnostic Bundle**. A save dialog
     opens, pre-filled with `winstt-diag-<timestamp>.zip` on your Desktop. Pick a
     location and confirm.
   </Step>
@@ -95,7 +95,7 @@ Application log:
     ["settings", "Settings persistence. Look here when a setting appears to revert."],
     ["hotkey", "Global hotkey registration. A register false line means another app claimed the chord."],
     ["diag-bundle", "The bundle generator itself."],
-    ["tray-menu", "Tray actions, including Open Logs Folder."],
+    ["tray-menu", "Tray-menu window placement and lifecycle (show, reanchor, hide)."],
   ]}
   caption="Application-log scopes — filter on these to narrow a search."
 />

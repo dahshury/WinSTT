@@ -33,7 +33,7 @@ function DynamicTransformIslandPill({
 		>
 			{renderContent ? (
 				<div
-					className="px-5 pt-2 pb-3"
+					className="flex justify-center px-5 pt-2 pb-3"
 					data-overlay-processing-content="true"
 					data-overlay-processing-kind="transform"
 					data-overlay-transform-content="true"

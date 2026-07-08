@@ -12,6 +12,5 @@ import { type EffectCallback, useEffect } from "react";
  * re-run when something changes, use `useEffect` with real dependencies instead.
  */
 export function useMountEffect(effect: EffectCallback): void {
-	// biome-ignore lint/correctness/useExhaustiveDependencies: mount-only by design — the empty deps are this primitive's entire contract
 	useEffect(effect, []); // react-doctor-disable-line react-doctor/exhaustive-deps -- mount-only by design; the empty deps are this primitive's entire contract
 }

@@ -13,11 +13,13 @@ import {
 	ttsSpeedPresets,
 } from "@/shared/config/tts-speed";
 import { formatTime } from "@/shared/lib/format-time";
-import { Spinner } from "@/shared/ui/spinner";
+import { springs } from "@/shared/lib/springs";
 import {
 	DynamicIsland,
 	DynamicIslandProvider,
 } from "@/shared/ui/dynamic-island";
+import { MediaSeekBar } from "@/shared/ui/media-seek-bar";
+import { Spinner } from "@/shared/ui/spinner";
 import {
 	discardTts,
 	getTtsLevel,
@@ -34,7 +36,6 @@ import {
 	OVERLAY_PANEL_CLOSE_MS,
 	useDelayedUnmount,
 } from "./overlay-shell.shared";
-import { TtsSeekBar } from "./TtsSeekBar";
 import { TtsVolumeControl } from "./TtsVolumeControl";
 
 /**
@@ -157,7 +158,6 @@ function SpeedButton({
 			aria-label={`Reading speed ${label}, tap to change`}
 			className={`pointer-events-auto flex h-[18px] shrink-0 items-center justify-center rounded-full px-1.5 font-medium text-[10px] text-overlay-foreground/75 tabular-nums transition-colors hover:text-overlay-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-overlay-foreground/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
 			onClick={() => ttsSetSpeed(nextTtsSpeedPreset(speed, presets))}
-			title={`Reading speed ${label}`}
 			type="button"
 		>
 			{label}
@@ -266,12 +266,13 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 						<span className="w-8 shrink-0 text-right font-mono tabular-nums">
 							{fmt(currentTime)}
 						</span>
-						<TtsSeekBar
+						<MediaSeekBar
 							bufferedEnd={bufferedEnd}
 							className="flex-1"
 							currentTime={currentTime}
 							duration={duration}
 							onSeek={seekTts}
+							tone="overlay"
 						/>
 						<span className="w-8 shrink-0 font-mono tabular-nums">
 							{fmt(duration)}
@@ -285,26 +286,26 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 
 // Panel-reveal for the TTS island (transitions.dev "panel reveal", from the
 // top): slides down from the top bezel, cross-fading opacity and blur on one
-// ease. Asymmetric durations (slower open, snappier close) mirror Apple's notch
-// feel. The island is ALWAYS mounted and animates between `open`/`closed` — a
-// property transition on a persistent element ALWAYS plays both directions,
-// unlike an AnimatePresence unmount-exit (which can be dropped by React 19's
-// unmount timing AND, sliding up into the top-edge clip, reads as an instant
-// vanish). `y` is a % of the island's own height.
-const TTS_PANEL_EASE = [0.22, 1, 0.36, 1] as const;
+// spring. Asymmetric durations (slower open, snappier close) mirror Apple's
+// notch feel — the slow tier's enter/exit pair encodes exactly that. The island
+// is ALWAYS mounted and animates between `open`/`closed` — a property
+// transition on a persistent element ALWAYS plays both directions, unlike an
+// AnimatePresence unmount-exit (which can be dropped by React 19's unmount
+// timing AND, sliding up into the top-edge clip, reads as an instant vanish).
+// `y` is a % of the island's own height.
 const TTS_PANEL_CLOSED_Y = "-50%";
 const ttsPanelVariants: Variants = {
 	closed: {
 		y: TTS_PANEL_CLOSED_Y,
 		opacity: 0,
 		filter: "blur(2px)",
-		transition: { duration: 0.35, ease: TTS_PANEL_EASE },
+		transition: springs.slow.exit,
 	},
 	open: {
 		y: 0,
 		opacity: 1,
 		filter: "blur(0px)",
-		transition: { duration: 0.4, ease: TTS_PANEL_EASE },
+		transition: springs.slow,
 	},
 };
 

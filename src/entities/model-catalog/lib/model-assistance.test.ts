@@ -16,7 +16,6 @@ const baseModel: ModelInfo = {
 	previewCapable: true,
 	nativeStreaming: false,
 	finalReuseSafe: false,
-	supportsRealtime: true,
 	onnxModelName: null,
 	description: "",
 	availableQuantizations: [""],

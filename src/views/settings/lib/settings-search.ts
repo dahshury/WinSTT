@@ -128,11 +128,13 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			"theme visualizer overlay appearance display language live transcription",
 		].join(" "),
 		history: [
+			tHist("enabledTitle"),
 			tHist("summaryTitle"),
 			tHist("heatmapTitle"),
 			tHist("tableTitle"),
 			tHist("summaryTotalWords"),
 			tHist("summarySpeakingTime"),
+			"privacy disable history opt out",
 		].join(" "),
 		integrations: [
 			ti("title"),

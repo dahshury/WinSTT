@@ -34,18 +34,18 @@ export function AboutActionRow({
 				<span className="font-medium text-body text-foreground leading-tight">
 					{title}
 				</span>
-				{summary !== undefined ? (
+				{summary === undefined ? null : (
 					<span className="text-body-sm text-foreground-muted leading-snug">
 						{summary}
 					</span>
-				) : null}
+				)}
 			</div>
 			<AboutActionButton
 				icon={icon}
 				onClick={onClick}
 				variant={destructive ? "danger" : "neutral"}
-				{...(disabled !== undefined ? { disabled } : {})}
-				{...(iconClassName !== undefined ? { iconClassName } : {})}
+				{...(disabled === undefined ? {} : { disabled })}
+				{...(iconClassName === undefined ? {} : { iconClassName })}
 			>
 				{buttonLabel}
 			</AboutActionButton>

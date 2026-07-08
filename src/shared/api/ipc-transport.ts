@@ -49,7 +49,6 @@ const CRITICAL_REJECT_CHANNELS: ReadonlySet<string> = new Set<string>([
 	IPC.STT_RELOAD_MODEL,
 	IPC.SETTINGS_REMOVE_APPLICATION_DATA,
 	IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS,
-	IPC.TRANSFORMS_PREVIEW,
 ]);
 
 const CRITICAL_LOG_ONLY_CHANNELS: ReadonlySet<string> = new Set<string>([
@@ -411,111 +410,24 @@ const COMMAND_INVOKERS: Partial<
 	// (features/verify-credentials) calls `commands.verifyCredential` directly.
 
 	// ── TTS ──
-	[IPC.TTS_SPEAK]: (a) =>
-		commands.ttsSpeak(
-			a["text"] as string,
-			(a["voice"] as string | null | undefined) ?? null,
-			(a["lang"] as string | null | undefined) ?? null,
-			(a["speed"] as number | null | undefined) ?? null,
-		),
-	[IPC.TTS_CANCEL]: (a) =>
-		commands.ttsCancel((a["requestId"] as string | null | undefined) ?? null),
-	[IPC.TTS_SET_SPEED]: (a) => commands.ttsSetSpeed(a["speed"] as number),
-	[IPC.TTS_INIT]: () => commands.ttsInit(),
-	[IPC.TTS_LIST_VOICES]: (a) =>
-		commands.ttsListVoices((a["modelId"] as string | null | undefined) ?? null),
-	[IPC.TTS_CLOUD_LIST_VOICES]: () => commands.ttsListCloudVoices(),
-	[IPC.TTS_CLOUD_PREVIEW]: (a) =>
-		commands.ttsPreviewCloud(a["previewUrl"] as string),
-	[IPC.TTS_CLOUD_SUBSCRIPTION]: () => commands.ttsCloudSubscription(),
 	[IPC.TTS_DOWNLOAD_ESTIMATE]: () => commands.ttsDownloadEstimate(),
-	[IPC.TTS_INSTALL_PAUSE]: () => commands.ttsInstallPause(),
-	[IPC.TTS_INSTALL_RESUME]: () => commands.ttsInstallResume(),
-	[IPC.TTS_INSTALL_CANCEL]: () => commands.ttsInstallCancel(),
-	[IPC.TTS_REQUEST_PLAYBACK_PAUSE]: (a) =>
-		commands.ttsPausePlayback(
-			(a["reason"] as string | null | undefined) ?? null,
-		),
-	[IPC.TTS_REQUEST_PLAYBACK_RESUME]: (a) =>
-		commands.ttsResumePlayback(
-			(a["reason"] as string | null | undefined) ?? null,
-		),
-	[IPC.TTS_REPORT_PLAYBACK_STARTED]: (a) =>
-		commands.ttsReportPlaybackStarted(a["requestId"] as string),
-	[IPC.TTS_REPORT_PLAYBACK_ENDED]: (a) =>
-		commands.ttsReportPlaybackEnded(a["requestId"] as string),
 	[IPC.TTS_LIST_MODELS]: () => commands.ttsListModels(),
-	[IPC.TTS_LIST_MODELS_WITH_STATE]: () => commands.ttsListModelsWithState(),
-	[IPC.TTS_PREDOWNLOAD]: (a) =>
-		commands.ttsPredownloadModel(
-			a["modelId"] as string,
-			a["quantization"] as string,
-		),
-	[IPC.TTS_DOWNLOAD_PAUSE]: (a) =>
-		commands.ttsDownloadPause(
-			a["modelId"] as string,
-			a["quantization"] as string,
-		),
-	[IPC.TTS_DOWNLOAD_RESUME]: (a) =>
-		commands.ttsDownloadResume(
-			a["modelId"] as string,
-			a["quantization"] as string,
-		),
-	[IPC.TTS_DOWNLOAD_CANCEL]: (a) =>
-		commands.ttsDownloadCancel(
-			a["modelId"] as string,
-			a["quantization"] as string,
-		),
-	[IPC.TTS_DELETE_MODEL]: (a) =>
-		commands.ttsDeleteModel(
-			a["modelId"] as string,
-			a["quantization"] as string,
-		),
 
 	// ── LLM / Ollama / OpenRouter ──
-	[IPC.LLM_SCAN_MODELS]: () => commands.ollamaRefreshModels(),
-	[IPC.LLM_SCAN_OPENROUTER_MODELS]: () => commands.openrouterRefreshModels(),
-	[IPC.STT_SCAN_OPENROUTER_MODELS]: () => commands.openrouterRefreshSttModels(),
-	[IPC.TTS_SCAN_OPENROUTER_MODELS]: () => commands.openrouterRefreshTtsModels(),
-	[IPC.LLM_DETECT_OLLAMA]: () => commands.ollamaDetect(),
-	[IPC.LLM_START_OLLAMA]: () => commands.ollamaStart(),
-	[IPC.LLM_PULL_MODEL]: (a) => commands.ollamaPull(a["model"] as string),
-	[IPC.LLM_CANCEL_PULL_MODEL]: (a) =>
-		commands.ollamaCancelPull(a["model"] as string),
-	[IPC.LLM_DELETE_MODEL]: (a) => commands.ollamaDelete(a["model"] as string),
-	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: () => commands.ollamaRefreshLibrary(),
-	[IPC.LLM_FETCH_OLLAMA_TAGS]: (a) =>
-		commands.ollamaRefreshTags(a["model"] as string),
-	[IPC.LLM_GET_WARMUP_STATUS]: () => commands.llmWarmupStatus(),
 
 	// ── Transforms ──
-	[IPC.LLM_PROCESS_TEXT]: (a) =>
-		commands.processText(
-			a["text"] as string,
-			(a["context"] as string | undefined) ?? "",
-		),
-	[IPC.LLM_PROCESS_TEXT_CUSTOM]: (a) =>
-		commands.processText(
-			a["text"] as string,
-			(a["context"] as string | undefined) ?? "",
-		),
 
-	[IPC.TRANSFORMS_APPLY]: () => commands.applyTransform(),
-	[IPC.TRANSFORMS_PREVIEW]: (a) =>
-		commands.applyTransformPreview(
-			a["text"] as string,
-			a["feature"] as string,
-			(a["config"] as never | undefined) ?? null,
-		),
 	[IPC.TRANSFORM_HISTORY_GET_ALL]: () => commands.transformHistoryGetAll(),
 	[IPC.TRANSFORM_HISTORY_CLEAR]: () => commands.transformHistoryClear(),
 	[IPC.TRANSFORM_HISTORY_DELETE]: (a) =>
 		commands.transformHistoryDelete(a["id"] as string),
 
+	// ── TTS history ──
+	[IPC.TTS_HISTORY_GET_ALL]: () => commands.ttsHistoryGetAll(),
+	[IPC.TTS_HISTORY_CLEAR]: () => commands.ttsHistoryClear(),
+	[IPC.TTS_HISTORY_DELETE]: (a) => commands.ttsHistoryDelete(a["id"] as string),
+
 	// ── Preview-before-pasting ──
-	[IPC.PREVIEW_CONFIRM_PASTE]: (a) =>
-		commands.confirmPaste(a["text"] as string),
-	[IPC.PREVIEW_CANCEL]: () => commands.cancelPreview(),
 
 	// ── File transcription queue ──
 	[IPC.FILE_QUEUE_ENQUEUE]: (a) =>

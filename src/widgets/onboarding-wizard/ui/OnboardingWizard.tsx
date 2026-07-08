@@ -26,6 +26,7 @@ import { useTranslations } from "use-intl";
 import { commands } from "@/bindings";
 import { openSettingsToSection } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
+import { springs } from "@/shared/lib/springs";
 import { SurfaceProvider, useSurface } from "@/shared/lib/surface";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import {
@@ -64,12 +65,7 @@ const STEP_ICONS: Record<OnboardingStepId, IconSvgElement> = {
 	overview: BookOpen02Icon,
 };
 
-const STEP_SPRING = {
-	type: "spring",
-	stiffness: 460,
-	damping: 38,
-	mass: 0.8,
-} as const;
+const STEP_SPRING = springs.slow;
 
 const STEP_BODY_VARIANTS = {
 	initial: ({
@@ -104,7 +100,7 @@ const STEP_BODY_VARIANTS = {
 		opacity: reduceMotion ? 1 : 0,
 		x: reduceMotion ? 0 : direction > 0 ? -12 : 12,
 		filter: reduceMotion ? "blur(0px)" : "blur(3px)",
-		transition: { duration: reduceMotion ? 0 : 0.14, ease: [0.22, 1, 0.36, 1] },
+		transition: reduceMotion ? { duration: 0 } : springs.slow.exit,
 	}),
 } satisfies Variants;
 
@@ -131,9 +127,7 @@ const STEP_HEADER_VARIANTS = {
 		y: 0,
 		x: 0,
 		filter: "blur(0px)",
-		transition: reduceMotion
-			? { duration: 0 }
-			: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
+		transition: reduceMotion ? { duration: 0 } : springs.slow,
 	}),
 	exit: ({
 		direction,
@@ -146,7 +140,7 @@ const STEP_HEADER_VARIANTS = {
 		y: reduceMotion ? 0 : -3,
 		x: reduceMotion ? 0 : direction > 0 ? -5 : 5,
 		filter: reduceMotion ? "blur(0px)" : "blur(2px)",
-		transition: { duration: reduceMotion ? 0 : 0.12, ease: "easeInOut" },
+		transition: reduceMotion ? { duration: 0 } : springs.slow.exit,
 	}),
 } satisfies Variants;
 

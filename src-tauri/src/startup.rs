@@ -58,6 +58,31 @@ pub(crate) fn startup_profile_enabled() -> bool {
     env_flag_enabled("WINSTT_PROFILE_STARTUP")
 }
 
+/// Process-start anchor for absolute startup timing. Set once at the top of
+/// `run()`; every later phase can then report "ms since launch" instead of
+/// only per-thread relative deltas.
+static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+pub(crate) fn mark_process_start() {
+    let _ = PROCESS_START.set(Instant::now());
+}
+
+/// Log `label` with elapsed-since-`run()` when startup profiling is enabled.
+/// The reveal gate spans several threads (renderer paint, renderer boot IPC,
+/// STT warmup thread, ready-watcher), so absolute timestamps are the only way
+/// to line the signals up in one timeline.
+pub(crate) fn log_since_launch(label: &str) {
+    if !startup_profile_enabled() {
+        return;
+    }
+    if let Some(start) = PROCESS_START.get() {
+        log::info!(
+            "[startup] {label}: {} ms since launch",
+            start.elapsed().as_millis()
+        );
+    }
+}
+
 pub(crate) fn model_profile_enabled() -> bool {
     env_flag_enabled("WINSTT_PROFILE_MODELS") || startup_profile_enabled()
 }
@@ -98,6 +123,22 @@ where
     // defaults and add Chromium quiet-logging flags. This suppresses WebView2's
     // benign shutdown stderr line:
     // `Failed to unregister class Chrome_WidgetWin_0. Error = 1412`.
+    //
+    // WINSTT_REMOTE_DEBUG_PORT (diagnostics only): wry always calls
+    // `set_additional_browser_arguments`, so the documented
+    // WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS env var is silently ignored — this
+    // opt-in is the only way to get a CDP port on the real app for live
+    // renderer inspection. Pair it with WEBVIEW2_USER_DATA_FOLDER pointing at a
+    // scratch profile; see memory reference_live_visual_verification_cdp.
+    if let Ok(port) = std::env::var("WINSTT_REMOTE_DEBUG_PORT")
+        && !port.trim().is_empty()
+    {
+        let args = format!(
+            "{WEBVIEW2_BROWSER_ARGS} --remote-debugging-port={}",
+            port.trim()
+        );
+        return builder.additional_browser_args(&args);
+    }
     builder.additional_browser_args(WEBVIEW2_BROWSER_ARGS)
 }
 

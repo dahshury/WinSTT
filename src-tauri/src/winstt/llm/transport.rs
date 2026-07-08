@@ -6,12 +6,21 @@
 // self-contained, provider-config concerns.)
 
 use std::net::IpAddr;
+use std::time::Duration;
 
 /// Sink for live reasoning/answer deltas (the recording pill). The Ollama
 /// transport calls this per chunk. Implemented in the manager as a thin
 /// `app.emit("llm:reasoning-delta", …)` wrapper.
 pub trait ReasoningSink: Send {
     fn on_delta(&self, delta: &str);
+}
+
+/// Clamp the persisted `settings.llm.timeout` (ms, schema range 1000..30000)
+/// into a `Duration`. Every cloud LLM round-trip (dictation/transform OpenRouter
+/// attempts and the legacy post-process path) wraps its request in this ceiling
+/// so a stalled provider can never hang the transcription→paste pipeline.
+pub fn llm_request_timeout(timeout_ms: i64) -> Duration {
+    Duration::from_millis(timeout_ms.clamp(1_000, 30_000) as u64)
 }
 
 // ─────────────────────── OpenRouter extra-body ────────────────────────

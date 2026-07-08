@@ -12,7 +12,10 @@ const PORT = process.env.CDP_PORT ?? "9222";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const ALL_LOGINS = [
-	["Google / Gmail", "https://accounts.google.com/ServiceLogin?continue=https://mail.google.com/mail/u/0/"],
+	[
+		"Google / Gmail",
+		"https://accounts.google.com/ServiceLogin?continue=https://mail.google.com/mail/u/0/",
+	],
 	["Discord", "https://discord.com/login"],
 	["X (Twitter)", "https://x.com/i/flow/login"],
 	["Facebook / Messenger", "https://www.facebook.com/login/"],
@@ -25,48 +28,97 @@ const ALL_LOGINS = [
 // Pass app ids/labels as argv to open only a subset (default: all).
 const wanted = process.argv.slice(2).map((a) => a.toLowerCase());
 const LOGINS = wanted.length
-	? ALL_LOGINS.filter(([name]) => wanted.some((w) => name.toLowerCase().includes(w)))
+	? ALL_LOGINS.filter(([name]) =>
+			wanted.some((w) => name.toLowerCase().includes(w)),
+		)
 	: ALL_LOGINS;
 
 function getJSON(p) {
 	return new Promise((res, rej) => {
-		http.get(`http://127.0.0.1:${PORT}${p}`, (r) => {
-			let d = "";
-			r.on("data", (c) => (d += c));
-			r.on("end", () => { try { res(JSON.parse(d)); } catch (e) { rej(e); } });
-		}).on("error", rej);
+		http
+			.get(`http://127.0.0.1:${PORT}${p}`, (r) => {
+				let d = "";
+				r.on("data", (c) => (d += c));
+				r.on("end", () => {
+					try {
+						res(JSON.parse(d));
+					} catch (e) {
+						rej(e);
+					}
+				});
+			})
+			.on("error", rej);
 	});
 }
 
 async function main() {
 	const v = await getJSON("/json/version");
 	const ws = new WS(v.webSocketDebuggerUrl, { maxPayload: 1e8 });
-	await new Promise((res, rej) => { ws.on("open", res); ws.on("error", rej); });
-	let id = 0; const pend = new Map(); const ls = [];
+	await new Promise((res, rej) => {
+		ws.on("open", res);
+		ws.on("error", rej);
+	});
+	let id = 0;
+	const pend = new Map();
+	const ls = [];
 	ws.on("message", (raw) => {
 		const m = JSON.parse(raw);
-		if (m.id && pend.has(m.id)) { const { r } = pend.get(m.id); pend.delete(m.id); r(m.result); }
-		else if (m.method) { for (const l of ls) l(m); }
+		if (m.id && pend.has(m.id)) {
+			const { r } = pend.get(m.id);
+			pend.delete(m.id);
+			r(m.result);
+		} else if (m.method) {
+			for (const l of ls) l(m);
+		}
 	});
 	const send = (method, params = {}, s) => {
-		const i = ++id; const msg = { id: i, method, params }; if (s) msg.sessionId = s;
-		ws.send(JSON.stringify(msg)); return new Promise((r) => pend.set(i, { r }));
+		const i = ++id;
+		const msg = { id: i, method, params };
+		if (s) msg.sessionId = s;
+		ws.send(JSON.stringify(msg));
+		return new Promise((r) => pend.set(i, { r }));
 	};
-	const waitAttach = (t) => new Promise((r) => {
-		const cb = (m) => { if (m.method === "Target.attachedToTarget" && m.params.targetInfo.targetId === t) { ls.splice(ls.indexOf(cb), 1); r(m.params.sessionId); } };
-		ls.push(cb);
-	});
+	const waitAttach = (t) =>
+		new Promise((r) => {
+			const cb = (m) => {
+				if (
+					m.method === "Target.attachedToTarget" &&
+					m.params.targetInfo.targetId === t
+				) {
+					ls.splice(ls.indexOf(cb), 1);
+					r(m.params.sessionId);
+				}
+			};
+			ls.push(cb);
+		});
 
 	await send("Target.setDiscoverTargets", { discover: true });
 
 	// Open the first login in a fresh window we can position on-screen.
-	const first = await send("Target.createTarget", { url: LOGINS[0][1], newWindow: true });
+	const first = await send("Target.createTarget", {
+		url: LOGINS[0][1],
+		newWindow: true,
+	});
 	const firstTarget = first.targetId;
 	// Position + maximize the window.
-	const win = await send("Browser.getWindowForTarget", { targetId: firstTarget });
+	const win = await send("Browser.getWindowForTarget", {
+		targetId: firstTarget,
+	});
 	const windowId = win.windowId;
-	await send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal", left: 40, top: 40, width: 1500, height: 950 } });
-	await send("Browser.setWindowBounds", { windowId, bounds: { windowState: "maximized" } });
+	await send("Browser.setWindowBounds", {
+		windowId,
+		bounds: {
+			windowState: "normal",
+			left: 40,
+			top: 40,
+			width: 1500,
+			height: 950,
+		},
+	});
+	await send("Browser.setWindowBounds", {
+		windowId,
+		bounds: { windowState: "maximized" },
+	});
 	// bringToFront on the page so it renders + raises.
 	const ap = waitAttach(firstTarget);
 	await send("Target.attachToTarget", { targetId: firstTarget, flatten: true });
@@ -81,9 +133,13 @@ async function main() {
 	}
 
 	console.log("Capture browser is on-screen with these login tabs:");
-	for (const [name, url] of LOGINS) console.log("  - " + name + "  (" + url + ")");
+	for (const [name, url] of LOGINS)
+		console.log("  - " + name + "  (" + url + ")");
 	console.log("\nWindowId:", windowId);
 	ws.close();
 }
 
-main().catch((e) => { console.error("show-login failed:", e.message); process.exit(1); });
+main().catch((e) => {
+	console.error("show-login failed:", e.message);
+	process.exit(1);
+});

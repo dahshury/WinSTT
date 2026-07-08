@@ -9,8 +9,8 @@ import { cn } from "@/shared/lib/cn";
 import { springs } from "@/shared/lib/springs";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import {
-	type HighlightRect,
 	findDataAttributeElement,
+	type HighlightRect,
 	highlightRectsEqual,
 	measureHighlightRect,
 } from "./highlight-geometry";
@@ -171,10 +171,13 @@ export function MenuHighlightLayer({
 							"pointer-events-none absolute rounded-lg ring-1 ring-foreground/[0.06] ring-inset",
 							selectedBgClass,
 						)}
-						exit={{ opacity: 0, transition: { duration: 0.12 } }}
+						exit={{ opacity: 0, transition: springs.moderate.exit }}
 						initial={false}
 						key="menu-selected"
-						transition={{ ...springs.moderate, opacity: { duration: 0.08 } }}
+						transition={{
+							...springs.moderate,
+							opacity: { duration: springs.fast.duration },
+						}}
 					/>
 				) : null}
 			</AnimatePresence>
@@ -194,7 +197,7 @@ export function MenuHighlightLayer({
 							"pointer-events-none absolute rounded-lg ring-1 ring-divider ring-inset",
 							hoverBgClass,
 						)}
-						exit={{ opacity: 0, transition: { duration: 0.06 } }}
+						exit={{ opacity: 0, transition: springs.fast.exit }}
 						initial={{
 							top: (hoverOrigin ?? highlightedRect).top,
 							left: (hoverOrigin ?? highlightedRect).left,
@@ -203,7 +206,10 @@ export function MenuHighlightLayer({
 							opacity: 0,
 						}}
 						key="menu-hover"
-						transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
+						transition={{
+							...springs.fast,
+							opacity: { duration: springs.fast.duration },
+						}}
 					/>
 				) : null}
 			</AnimatePresence>

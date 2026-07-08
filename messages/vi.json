@@ -251,7 +251,46 @@
     "retentionDays3": "Sau 3 ngày",
     "retentionWeeks2": "Sau 2 tuần",
     "retentionMonths3": "Sau 3 tháng",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "Lịch sử phiên âm",
+    "enabledTooltip": "Khi bật, WinSTT ghi lại các bản phiên âm, biến đổi và lần đọc to của bạn để bảng điều khiển này hiển thị thống kê và chi phí. Tắt để ngừng thu thập dữ liệu mới.",
+    "disabledHint": "Lịch sử đang tắt — WinSTT không ghi lại hoạt động mới. Dữ liệu hiện có được giữ cho đến khi bạn xóa.",
+    "deleteAllTitle": "Xóa toàn bộ lịch sử?",
+    "deleteAllDescription": "Tất cả bản phiên âm, biến đổi, lần đọc to và bản ghi âm đã lưu sẽ bị xóa vĩnh viễn. Không thể hoàn tác thao tác này.",
+    "deleteAllButton": "Xóa toàn bộ dữ liệu",
+    "clearTtsButton": "Xóa lịch sử đọc to",
+    "clearTtsTitle": "Xóa toàn bộ lịch sử đọc to?",
+    "clearTtsDescription": "Tất cả lần chuyển văn bản thành giọng nói và âm thanh đã lưu sẽ bị xóa. Không thể hoàn tác thao tác này.",
+    "combinedTableTitle": "Lịch sử",
+    "filterDateRange": "Khoảng ngày",
+    "filterAllTime": "Toàn thời gian",
+    "heatmapEarlier": "Trước đó",
+    "heatmapLater": "Sau đó",
+    "spendingTitle": "Chi phí",
+    "spendingTotalLabel": "Tổng chi phí",
+    "spendingByModalityTitle": "Chi phí theo loại",
+    "spendingByProviderTitle": "Chi phí theo nhà cung cấp",
+    "spendingByModelTitle": "Chi phí theo mô hình",
+    "spendingByMakerTitle": "Chi phí theo nhà sản xuất",
+    "spendingEstimatedHint": "Một số số liệu là ước tính khi không có giá chính xác được báo cáo.",
+    "costSpeechToText": "Chuyển giọng nói thành văn bản",
+    "costTextToSpeech": "Chuyển văn bản thành giọng nói",
+    "costLanguageModel": "Mô hình ngôn ngữ",
+    "colCharacters": "Ký tự",
+    "cloudLabel": "Đám mây",
+    "colCost": "Chi phí đám mây",
+    "costEstimated": "Ước tính",
+    "costTotal": "Tổng",
+    "kindSpeechToText": "Chuyển giọng nói thành văn bản",
+    "kindTextToSpeech": "Chuyển văn bản thành giọng nói",
+    "durationLlmProcessing": "Xử lý AI",
+    "durationNotRecorded": "Không ghi lại",
+    "durationNotRun": "Chưa chạy",
+    "durationRecording": "Ghi âm",
+    "durationSpeechToText": "Phiên âm",
+    "durationTotalProcessing": "Thời gian xử lý",
+    "colTtsModel": "Mô hình giọng nói",
+    "colVoice": "Giọng nói"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "OCR màn hình (dự phòng)",
+    "contextScreenOcrCaption": "Đọc văn bản trên màn hình gần con trỏ để làm ngữ cảnh bổ sung",
+    "contextScreenOcrTooltip": "Khi tính năng nhận biết ngữ cảnh không thể đọc trực tiếp trường đang focus, WinSTT sẽ chuyển sang đọc (OCR) vùng màn hình quanh con trỏ để lấy văn bản lân cận. Cách này chậm hơn và kém chính xác hơn so với đọc trực tiếp trường — tắt để bỏ qua phương án dự phòng này."
   },
   "model": {
     "initialPrompt": "Prompt ban đầu",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "Giây im lặng để bắt đầu sớm",
     "earlyTranscriptionTooltip": "Bắt đầu chuyển đổi trước khi bạn dừng nói hoàn toàn, được kích hoạt sau số giây im lặng này. Giảm độ trễ giữa lúc nói và lúc thấy văn bản cuối cùng. Đặt thành 0 để tắt.",
     "realtimeModel": "Mô hình thời gian thực",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "Mô hình thời gian thực",
     "realtimeModelCaption": "Mô hình nhỏ hơn để xem trước trực tiếp",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "Thời gian tối thiểu giữa các lần cập nhật chuyển đổi trực tiếp. Giá trị thấp hơn cho cập nhật thường xuyên hơn nhưng dùng nhiều sức mạnh xử lý hơn. Tăng lên nếu bạn gặp giật hoặc mức sử dụng CPU cao trong khi đọc chính tả.",
     "llm": "Mô hình ngôn ngữ lớn",
     "deviceAutoLabel": "Tự động",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "Tắt phiên âm từng từ?",
+    "realtimeOffWordByWordDescription": "Mô hình này phiên âm từng từ khi bạn nói. Tắt thời gian thực sẽ chuyển sang chỉ phiên âm sau khi bạn dừng nói.",
+    "realtimeOffWordByWordConfirm": "Tắt"
   },
   "audio": {
     "inputDevice": "Thiết bị đầu vào",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "Ngay lập tức",
     "microphoneReleaseSec30": "30 giây",
     "microphoneReleaseMin1": "1 phút",
-    "microphoneReleaseMin5": "5 phút"
+    "microphoneReleaseMin5": "5 phút",
+    "devicePriorityHandle": "Kéo để sắp xếp lại ưu tiên"
   },
   "quality": {
     "enableRealtime": "Bật thời gian thực",
@@ -717,7 +766,8 @@
     "waiting": "Đang chờ giọng nói...",
     "serverOffline": "Server ngoại tuyến",
     "noAudioDetected": "(không phát hiện âm thanh)",
-    "transcriptionFailed": "(chuyển đổi thất bại)"
+    "transcriptionFailed": "(chuyển đổi thất bại)",
+    "offlineNoLocalModel": "Không có internet · không có mô hình cục bộ"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "Vẫn cài đặt",
     "unfitSelectTitle": "Dùng mô hình lớn này?",
     "unfitSelectDescription": "\"{model}\" lớn hơn phần cứng của bạn có thể chạy thoải mái (~{required} cần, {available} khả dụng). Nó có thể chạy rất chậm hoặc không tải được. Vẫn dùng?",
-    "unfitSelectAnyway": "Vẫn dùng"
+    "unfitSelectAnyway": "Vẫn dùng",
+    "dictionaryAutoAddLiteModel": "Không khả dụng trên mô hình lite — chuyển sang mô hình lớn hơn để tự động thêm chỉnh sửa từ điển."
   },
   "tts": {
     "title": "Chuyển văn bản thành giọng nói",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "Thêm và xác minh khóa API ElevenLabs trong Tích hợp để dùng giọng đám mây.",
     "cloudLoadingVoices": "Đang tải giọng nói…",
     "cloudNoVoices": "Không tìm thấy giọng nói nào cho tài khoản ElevenLabs này.",
-    "cloudError": "Không thể tải giọng nói ElevenLabs."
+    "cloudError": "Không thể tải giọng nói ElevenLabs.",
+    "voiceDesignLabel": "Thiết kế giọng nói",
+    "voiceDesignTooltip": "Mô tả giọng nói bạn muốn bằng lời — âm sắc, độ tuổi, giọng vùng miền, cảm xúc — và mô hình sẽ tổng hợp một giọng nói phù hợp thay vì chọn từ ngân hàng giọng có sẵn.",
+    "voiceDesignButtonPlaceholder": "Thiết kế giọng nói",
+    "voiceDesignDialogTitle": "Thiết kế giọng nói",
+    "voiceDesignDialogDescription": "Mô tả giọng nói trong một hai câu. Để trống để dùng giọng mặc định của mô hình.",
+    "voiceDesignPromptLabel": "Mô tả giọng nói",
+    "voiceDesignPromptPlaceholder": "ví dụ: một người dẫn chuyện ấm áp, trầm giọng với chút giọng Anh",
+    "voiceDesignPromptEmptyHint": "Để trống để quay lại giọng nói tích hợp sẵn của mô hình.",
+    "voiceDesignCancel": "Hủy",
+    "voiceDesignSave": "Lưu",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "Có lỗi xảy ra",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "Bị giới hạn tốc độ bởi {provider}",
     "toastRateLimitedRetry": "Thử lại sau {seconds}s",
     "toastProviderError": "Lỗi STT {provider}: {message}",
-    "openIntegrations": "Mở Tích hợp"
+    "openIntegrations": "Mở Tích hợp",
+    "toastTtsOfflineNoLocal": "Không có internet và chưa cài giọng cục bộ — không thể đọc to."
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "Lite",
+    "liteTierTip": "Biến thể nhỏ hơn, nhanh hơn nhưng độ chính xác giảm — phù hợp cho tác vụ nhanh trên phần cứng hạn chế."
   },
   "dataGrid": {
     "addRow": "Add row",

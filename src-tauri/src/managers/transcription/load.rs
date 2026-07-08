@@ -4,8 +4,8 @@
 //! module root; all shared free helpers / types / guards live in [`super`].
 
 use super::{
-    LoadedEngine, LoadingGuard, ModelStateEvent, TranscriptionManager, WarmingGuard,
-    is_degenerate_decode_error,
+    LoadedEngine, LoadingGuard, ModelStateEvent, SttWarmupOutcome, TranscriptionManager,
+    WarmingGuard, is_degenerate_decode_error,
 };
 use crate::winstt::stt::BackendRoute;
 use anyhow::Result;
@@ -307,8 +307,10 @@ impl TranscriptionManager {
     /// dominant cause of the port feeling ~10x slower than the reference on the first dictation). Mirrors
     /// the reference server's `RecorderService.warmup` (decodes `np.zeros(16000)` at boot). The
     /// WinSTT ort/DirectML engine pays cold-JIT, so we warm it best-effort; a warmup failure must
-    /// never break dictation.
-    pub fn warmup(&self) {
+    /// never break dictation. Returns the attempt's [`SttWarmupOutcome`] so
+    /// [`Self::wait_until_warm`] can distinguish "settled" from "re-check shortly";
+    /// fire-and-forget callers just ignore it.
+    pub fn warmup(&self) -> SttWarmupOutcome {
         let warmup_started = std::time::Instant::now();
         // Wait out any in-flight LOAD (we must not warm a half-built engine), but do NOT hold
         // `is_loading` for the warm decode — that was the bug: a real dictation that raced in
@@ -317,14 +319,14 @@ impl TranscriptionManager {
         // separate `warming` flag and yield the engine to any real decode via `try_lock`.
         self.wait_for_loading_to_finish();
         let Some(model_id) = self.get_current_model() else {
-            return;
+            return SttWarmupOutcome::NothingToWarm;
         };
         if self.is_model_warm(&model_id) {
             debug!("[stt] warmup skipped — model '{model_id}' is already warm");
-            return;
+            return SttWarmupOutcome::AlreadyWarm;
         }
         if !self.is_model_loaded() {
-            return; // cloud id, or load failed — nothing local to warm
+            return SttWarmupOutcome::NothingToWarm; // cloud id, or load failed — nothing local to warm
         }
 
         if self
@@ -333,7 +335,7 @@ impl TranscriptionManager {
             .is_err()
         {
             debug!("[stt] warmup skipped — another warmup is already running");
-            return;
+            return SttWarmupOutcome::InFlight;
         }
         // Clear `warming` on EVERY exit path (early return / panic) via RAII.
         let warming_guard = WarmingGuard(&self.warming);
@@ -347,7 +349,7 @@ impl TranscriptionManager {
             Ok(g) => g,
             Err(std::sync::TryLockError::WouldBlock) => {
                 debug!("[stt] warmup yielded — a real decode is using the engine");
-                return;
+                return SttWarmupOutcome::InFlight;
             }
             Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
         };
@@ -401,15 +403,47 @@ impl TranscriptionManager {
                     .model_id(model_id.clone())
                     .severity("error")
                     .record(Some(&self.app_handle));
+                    return SttWarmupOutcome::Failed;
                 }
+                // Recovery reload succeeded and spawned its own detached warmup —
+                // the state settles shortly.
+                return SttWarmupOutcome::InFlight;
             }
-            return;
+            return SttWarmupOutcome::Failed;
         }
 
         self.mark_model_warmed_if_current(&model_id);
         self.touch_activity();
         log::info!("[stt] engine warmup complete for '{model_id}'");
         crate::log_model_duration(&format!("stt warmup '{model_id}'"), warmup_started);
+        SttWarmupOutcome::Warmed
+    }
+
+    /// Block until the engine for `model_id` is compute-warm, driving the warmup
+    /// ourselves when nobody else is. Used by the swap orchestrator so
+    /// `stt:model-swap-completed` (the picker's "Switching…" chip) means "ready
+    /// to dictate at full speed" — the first post-swap decode must not pay the
+    /// cold DirectML kernel JIT. Best-effort with a deadline: it bails when the
+    /// warm settles as failed, when another swap supersedes this model, or when
+    /// there is nothing local to warm, so a broken engine can never wedge the
+    /// picker chip.
+    pub fn wait_until_warm(&self, model_id: &str, deadline: std::time::Duration) {
+        let started = std::time::Instant::now();
+        while started.elapsed() < deadline {
+            if self.get_current_model().as_deref() != Some(model_id) {
+                return; // superseded — the newer swap's orchestrator owns the wait
+            }
+            match self.warmup() {
+                SttWarmupOutcome::Warmed
+                | SttWarmupOutcome::AlreadyWarm
+                | SttWarmupOutcome::NothingToWarm
+                | SttWarmupOutcome::Failed => return,
+                SttWarmupOutcome::InFlight => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+        }
+        warn!("[stt] wait_until_warm timed out for '{model_id}' — completing the swap anyway");
     }
 
     /// Load a WinSTT-catalog model through the unified ort-ONNX engine (the proven STT benchmark

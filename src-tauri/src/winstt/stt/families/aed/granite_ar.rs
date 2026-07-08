@@ -4,13 +4,36 @@
 // into the `<|audio|>` slots, run `prompt_encode` once, then greedily decode token-by-token with the
 // `decode_step` graph carrying past/present KV. `<|startofcontext|>` is UNTRAINED → no prompt
 // injection (enforced by EngineKind::supports_initial_prompt()==false upstream).
+//
+// PERF: the greedy KV-cache loop binds the carried KV **device-resident** via ort's IoBinding
+// (mirrors whisper.rs). `prompt_encode` emits the initial `present.*` KV bound to the device; every
+// `decode_step` re-binds the prior step's `present.*` device values as `past_key_values.*` and its
+// own `present.*`→device, so the growing cache never round-trips through the host — only `logits`
+// come back host-side for the argmax. The old path `carry_present`'d all 40+ KV tensors to owned
+// host `ndarray`s every token (a full clone per layer per step) and re-fed them; keeping them on the
+// device removes that per-step host↔device copy (a small win on CPU, the prerequisite for a GPU-EP
+// win). `AllocationDevice` comes from the active provider (`granite_device`); CPU today, so this is
+// correct + ~free on CPU too. EXACT tokens/EOS/output preserved: same graphs, same inputs, same
+// argmax — only HOW the KV is carried changed (host clone → device-resident bind).
 
-use std::collections::BTreeMap;
-
+use ort::memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::Session;
-use ort::value::Tensor;
+use ort::value::{DynValue, Tensor};
 
 use super::*;
+use crate::winstt::stt::Accelerator;
+
+/// `(AllocationDevice, device_id)` for binding the carried KV resident on the session's device.
+/// CPU when no GPU EP is active — then IoBinding simply binds host memory (still correct, ~same
+/// speed as the old host path). Mirrors whisper's `device_for_providers` / cohere's device map.
+/// (WEBGPU_BUFFER intentionally omitted — added later.)
+fn granite_device(providers: &[Accelerator]) -> (AllocationDevice, i32) {
+    match providers.first() {
+        Some(Accelerator::DirectMl) => (AllocationDevice::DIRECTML, 0),
+        Some(Accelerator::Cuda) => (AllocationDevice::CUDA, 0),
+        _ => (AllocationDevice::CPU, 0),
+    }
+}
 
 pub(in crate::winstt::stt::families) struct GraniteArEngine {
     encoder: Session,
@@ -22,8 +45,10 @@ pub(in crate::winstt::stt::families) struct GraniteArEngine {
     eos_token_id: i64,
     past_input_names: Vec<String>,
     present_output_names: Vec<String>,
-    past_is_fp16: bool,
     max_decode_length: usize,
+    /// Device the sessions run on, for binding the carried KV device-resident (CPU when no GPU EP).
+    device: AllocationDevice,
+    device_id: i32,
     model_name: String,
     providers: Vec<String>,
 }
@@ -41,8 +66,7 @@ impl GraniteArEngine {
             .map_or(100257, i64::from);
         let past_input_names = filter_sorted_inputs(&decode_step, "past_key_values.");
         let present_output_names = filter_sorted_outputs(&decode_step, "present.");
-        let (_, _, past_is_fp16) =
-            node_past_shape(&decode_step, "past_key_values.").unwrap_or((4, 128, false));
+        let (device, device_id) = granite_device(&cfg.providers);
 
         Ok(GraniteArEngine {
             encoder,
@@ -54,8 +78,9 @@ impl GraniteArEngine {
             eos_token_id,
             past_input_names,
             present_output_names,
-            past_is_fp16,
             max_decode_length: 1024,
+            device,
+            device_id,
             model_name: cfg.model_name.clone(),
             providers: providers_to_strings(&cfg.providers),
         })
@@ -149,90 +174,175 @@ impl GraniteArEngine {
             .map_err(|e| SttError::Inference(format!("granite ar splice shape: {e}")))
     }
 
+    /// Device `MemoryInfo` for binding the carried KV resident on the session's device (CPU when no
+    /// GPU EP). Cheap to build; one per run_prompt + one per decode step.
+    fn device_mem(&self) -> SttResult<MemoryInfo> {
+        MemoryInfo::new(
+            self.device,
+            self.device_id,
+            AllocatorType::Device,
+            MemoryType::Default,
+        )
+        .map_err(|e| SttError::Inference(format!("granite device mem info: {e}")))
+    }
+
+    /// Host `MemoryInfo` for the logits (argmax reads them on the CPU).
+    fn cpu_mem() -> SttResult<MemoryInfo> {
+        MemoryInfo::new(
+            AllocationDevice::CPU,
+            0,
+            AllocatorType::Device,
+            MemoryType::CPUOutput,
+        )
+        .map_err(|e| SttError::Inference(format!("granite cpu mem info: {e}")))
+    }
+
+    /// Argmax the last-position logits of a bound run (host), preserving the exact fp16→f32 promote
+    /// + last-step-row selection of the old `argmax_1d(&last_step_row(&out_to_f32(logits)?))` path.
+    fn argmax_bound_logits(outputs: &ort::session::SessionOutputs<'_>) -> SttResult<i64> {
+        let logits = outputs
+            .get("logits")
+            .ok_or_else(|| SttError::Inference("granite decode produced no logits".into()))?;
+        let logits = out_to_f32(logits)?;
+        Ok(argmax_1d(&last_step_row(&logits)?).0 as i64)
+    }
+
+    /// Carry every `present.*` output → the next step's `past_key_values.*` as DEVICE-resident
+    /// OrtValues (in canonical `past_input_names` order). Extracted values are session-owned and
+    /// survive the binding drop, so they rebind next step with no host round-trip. Every Granite KV
+    /// grows each step (a causal-LM cache, not reused cross-attn), so every present is non-empty.
+    fn carry_present_device(
+        outputs: &mut ort::session::SessionOutputs<'_>,
+        present_names: &[String],
+    ) -> SttResult<Vec<DynValue>> {
+        let mut carried = Vec::with_capacity(present_names.len());
+        for pname in present_names {
+            let v = outputs.remove(pname.as_str()).ok_or_else(|| {
+                SttError::Inference(format!("granite decode produced no {pname}"))
+            })?;
+            carried.push(v);
+        }
+        Ok(carried)
+    }
+
+    /// Run `prompt_encode` once → (first generated token, initial device-resident KV cache).
+    /// The KV `present.*` outputs are bound to the device and carried directly (no host clone).
     fn run_prompt(
         &mut self,
         inputs_embeds: ndarray::Array3<f32>,
-    ) -> SttResult<(i64, BTreeMap<String, KvTensor>)> {
+    ) -> SttResult<(i64, Vec<DynValue>)> {
         let n = inputs_embeds.shape()[1];
-        let outputs = self
+        let embeds = Tensor::from_array(inputs_embeds)
+            .map_err(|e| SttError::Inference(format!("granite prompt embeds tensor: {e}")))?;
+        let position_ids = tensor_i64((1, n), (0..n as i64).collect())?;
+        let attention_mask = Tensor::from_array(causal_attention_mask(n))
+            .map_err(|e| SttError::Inference(format!("granite prompt mask tensor: {e}")))?;
+        let dev_mem = self.device_mem()?;
+        let cpu_mem = Self::cpu_mem()?;
+
+        let mut binding = self
             .prompt_encode
-            .run(ort::inputs![
-                "inputs_embeds" => Tensor::from_array(inputs_embeds)
-                    .map_err(|e| SttError::Inference(format!("granite prompt embeds tensor: {e}")))?,
-                "position_ids" => tensor_i64((1, n), (0..n as i64).collect())?,
-                "attention_mask" => Tensor::from_array(causal_attention_mask(n))
-                    .map_err(|e| SttError::Inference(format!("granite prompt mask tensor: {e}")))?
-            ])
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("granite prompt binding: {e}")))?;
+        binding
+            .bind_input("inputs_embeds", &embeds)
+            .map_err(|e| SttError::Inference(format!("bind prompt inputs_embeds: {e}")))?;
+        binding
+            .bind_input("position_ids", &position_ids)
+            .map_err(|e| SttError::Inference(format!("bind prompt position_ids: {e}")))?;
+        binding
+            .bind_input("attention_mask", &attention_mask)
+            .map_err(|e| SttError::Inference(format!("bind prompt attention_mask: {e}")))?;
+        binding
+            .bind_output_to_device("logits", &cpu_mem)
+            .map_err(|e| SttError::Inference(format!("bind prompt logits: {e}")))?;
+        for pname in &self.present_output_names {
+            binding
+                .bind_output_to_device(pname.as_str(), &dev_mem)
+                .map_err(|e| SttError::Inference(format!("bind prompt {pname}: {e}")))?;
+        }
+
+        let mut outputs = self
+            .prompt_encode
+            .run_binding(&binding)
             .map_err(|e| SttError::Inference(format!("granite prompt_encode run: {e}")))?;
-        let logits = out_to_f32(&outputs["logits"])?;
-        let next = argmax_1d(&last_step_row(&logits)?).0 as i64;
-        let state = carry_present(
-            &outputs,
-            &self.past_input_names,
-            &self.present_output_names,
-            self.past_is_fp16,
-        )?;
+        // DML/CUDA run_binding is async w.r.t. the device stream: block before reading host logits /
+        // carrying the device present.* (no-op on CPU). Matches the implicit per-step sync the old
+        // host path got from `.to_owned()` on every output.
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("granite prompt synchronize: {e}")))?;
+
+        let next = Self::argmax_bound_logits(&outputs)?;
+        let state = Self::carry_present_device(&mut outputs, &self.present_output_names)?;
         Ok((next, state))
     }
 
+    /// One greedy KV-cache decode step: embed the last token, bind the carried device KV as
+    /// `past_key_values.*` + this step's `present.*`→device, run + sync, argmax logits (host), and
+    /// carry the new `present.*` device values forward. Returns (next token, next device KV cache).
     fn run_decode_step(
         &mut self,
         token: i64,
         past_len: usize,
-        state: &BTreeMap<String, KvTensor>,
-    ) -> SttResult<(i64, BTreeMap<String, KvTensor>)> {
+        state: &[DynValue],
+    ) -> SttResult<(i64, Vec<DynValue>)> {
         let token_embeds = run_embed_tokens(&mut self.embed_tokens, &[token], "granite ar step")?;
-        let mut inputs: Vec<(
-            std::borrow::Cow<'_, str>,
-            ort::session::SessionInputValue<'_>,
-        )> = Vec::with_capacity(3 + self.past_input_names.len());
-        inputs.push((
-            std::borrow::Cow::Borrowed("inputs_embeds"),
-            ort::session::SessionInputValue::from(
-                Tensor::from_array(token_embeds)
-                    .map_err(|e| SttError::Inference(format!("granite step embed tensor: {e}")))?,
-            ),
-        ));
-        inputs.push((
-            std::borrow::Cow::Borrowed("position_ids"),
-            ort::session::SessionInputValue::from(tensor_i64((1, 1), vec![past_len as i64])?),
-        ));
-        inputs.push((
-            std::borrow::Cow::Borrowed("attention_mask"),
-            ort::session::SessionInputValue::from(
-                Tensor::from_array(ndarray::Array4::<f32>::zeros((1, 1, 1, past_len + 1)))
-                    .map_err(|e| SttError::Inference(format!("granite step mask tensor: {e}")))?,
-            ),
-        ));
-        for name in &self.past_input_names {
-            let kv = state.get(name).ok_or_else(|| {
-                SttError::Inference(format!("missing Granite KV state for {name}"))
-            })?;
-            let value = match kv {
-                KvTensor::F32(a) => ort::session::SessionInputValue::from(
-                    Tensor::from_array(a.clone())
-                        .map_err(|e| SttError::Inference(format!("granite kv f32 {name}: {e}")))?,
-                ),
-                KvTensor::F16(a) => ort::session::SessionInputValue::from(
-                    Tensor::from_array(a.clone())
-                        .map_err(|e| SttError::Inference(format!("granite kv f16 {name}: {e}")))?,
-                ),
-            };
-            inputs.push((std::borrow::Cow::Owned(name.clone()), value));
+        let embeds = Tensor::from_array(token_embeds)
+            .map_err(|e| SttError::Inference(format!("granite step embed tensor: {e}")))?;
+        let position_ids = tensor_i64((1, 1), vec![past_len as i64])?;
+        let attention_mask =
+            Tensor::from_array(ndarray::Array4::<f32>::zeros((1, 1, 1, past_len + 1)))
+                .map_err(|e| SttError::Inference(format!("granite step mask tensor: {e}")))?;
+        let dev_mem = self.device_mem()?;
+        let cpu_mem = Self::cpu_mem()?;
+
+        if state.len() != self.past_input_names.len() {
+            return Err(SttError::Inference(format!(
+                "granite KV state has {} tensors but decoder expects {}",
+                state.len(),
+                self.past_input_names.len()
+            )));
         }
 
-        let outputs = self
+        let mut binding = self
             .decode_step
-            .run(inputs)
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("granite step binding: {e}")))?;
+        binding
+            .bind_input("inputs_embeds", &embeds)
+            .map_err(|e| SttError::Inference(format!("bind step inputs_embeds: {e}")))?;
+        binding
+            .bind_input("position_ids", &position_ids)
+            .map_err(|e| SttError::Inference(format!("bind step position_ids: {e}")))?;
+        binding
+            .bind_input("attention_mask", &attention_mask)
+            .map_err(|e| SttError::Inference(format!("bind step attention_mask: {e}")))?;
+        // past_key_values.* : the prior step's present.* device values, carried resident.
+        for (name, value) in self.past_input_names.iter().zip(state.iter()) {
+            binding
+                .bind_input(name.as_str(), value)
+                .map_err(|e| SttError::Inference(format!("bind step {name}: {e}")))?;
+        }
+        binding
+            .bind_output_to_device("logits", &cpu_mem)
+            .map_err(|e| SttError::Inference(format!("bind step logits: {e}")))?;
+        for pname in &self.present_output_names {
+            binding
+                .bind_output_to_device(pname.as_str(), &dev_mem)
+                .map_err(|e| SttError::Inference(format!("bind step {pname}: {e}")))?;
+        }
+
+        let mut outputs = self
+            .decode_step
+            .run_binding(&binding)
             .map_err(|e| SttError::Inference(format!("granite decode_step run: {e}")))?;
-        let logits = out_to_f32(&outputs["logits"])?;
-        let next = argmax_1d(&last_step_row(&logits)?).0 as i64;
-        let next_state = carry_present(
-            &outputs,
-            &self.past_input_names,
-            &self.present_output_names,
-            self.past_is_fp16,
-        )?;
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("granite step synchronize: {e}")))?;
+
+        let next = Self::argmax_bound_logits(&outputs)?;
+        let next_state = Self::carry_present_device(&mut outputs, &self.present_output_names)?;
         Ok((next, next_state))
     }
 

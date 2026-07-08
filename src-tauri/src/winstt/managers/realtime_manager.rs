@@ -4,6 +4,11 @@
 // window of the in-flight recording for the live-preview overlay, driving the
 // already-ported `RealtimeAccumulator` (committed-watermark + RealtimeSTT stabilizer).
 //
+// For NATIVE-STREAMING engines the worker is more than a preview: it feeds the stream
+// during EVERY recording (preview shown or not), because the incremental decode is the
+// final transcription — on release, `try_reuse_realtime` drains the stream tail instead
+// of batch-decoding the whole take. Only the preview events are gated on visibility.
+//
 // FRAMING CONTRACT (differs from the Python audio_buffer, intentionally):
 //   The Python worker counts FRAMES = audio CHUNKS, with
 //   `frames_per_second = sample_rate / buffer_size`. This Rust port counts
@@ -357,29 +362,15 @@ impl RealtimeManager {
             return TickAction::Sleep(Duration::from_millis(10));
         }
 
-        // Gate the WHOLE decode path on effective-realtime (live preview actually shown).
-        // When disabled, idle exactly like the not-recording branch but WITHOUT resetting
-        // (a recording is in progress and may re-enable mid-session). Mirrors the Python
-        // worker only running when realtime is configured. Use the secret-agnostic
-        // `read_settings_raw` here (NOT `read_settings`): this is the hot recording loop and
-        // none of the fields it reads are secrets, so we must not trigger per-tick secret
-        // decryption (reg.exe spawns) on the live path.
+        // Use the secret-agnostic `read_settings_raw` here (NOT `read_settings`): this is
+        // the hot recording loop and none of the fields it reads are secrets, so we must not
+        // trigger per-tick secret decryption (reg.exe spawns) on the live path.
         let settings = read_settings_raw(&self.app);
-        // The in-app preview panel lives inside the main WinSTT window, so it's only visible
-        // when one of our windows holds focus. During normal dictation the user is typing into
-        // ANOTHER app (WinSTT unfocused), so feeding the realtime model purely for that hidden
-        // panel is wasted work — gate it on focus. The pill overlay (in-pill/both with the
-        // overlay shown) and word-by-word pasting stay live regardless; see
-        // `effective_realtime_with_focus`.
-        if !effective_realtime_with_focus(&settings, any_window_focused(&self.app)) {
-            // Realtime is off this tick → keep the recorder mirror disabled (free) and idle.
-            self.audio.set_realtime_enabled(false);
-            return TickAction::Sleep(Duration::from_millis(10));
-        }
-
-        // Realtime IS shown for this recording → ensure the recorder is mirroring audio into
-        // `live_audio` so our snapshots see the growing window. Cheap, idempotent.
-        self.audio.set_realtime_enabled(true);
+        // Whether the live preview is actually SHOWN this tick. The in-app preview panel
+        // lives inside the main WinSTT window, so it's only visible when one of our windows
+        // holds focus; the pill overlay (in-pill/both with the overlay shown) and
+        // word-by-word pasting count regardless — see `effective_realtime_with_focus`.
+        let preview_shown = effective_realtime_with_focus(&settings, any_window_focused(&self.app));
 
         let generation = self.audio.recording_generation();
         self.handle_recording_edge(state, generation);
@@ -387,18 +378,14 @@ impl RealtimeManager {
             return TickAction::Sleep(Duration::from_millis(10));
         };
 
-        // ── readiness gate (port of _realtime_ready) ──
-        let init_after =
-            Duration::from_secs_f64(settings.quality.init_realtime_after_seconds.max(0.0));
-        if seen_at.elapsed() < init_after {
-            return TickAction::Sleep(Duration::from_millis(1));
-        }
-
-        // ── NATIVE-STREAMING fast path (T-One / sherpa Zipformer+NeMo) ──
-        // Resolve once per recording. The engine carries cache state across chunks, so native
-        // streaming feeds only new samples and blocks on recorder progress below. While the
-        // engine is still loading/contended, idle briefly instead of starting speculative
-        // window re-decodes.
+        // ── NATIVE-STREAMING resolution (T-One / sherpa Zipformer+NeMo) ──
+        // Resolve once per recording, BEFORE the preview gate: a native-streaming MAIN engine
+        // transcribes while the user speaks even with no preview shown — the incremental feed
+        // IS the final transcription (release only drains the stream tail via
+        // `try_reuse_realtime` instead of batch-decoding the whole take), so gating it on a
+        // visible preview would throw the model's streaming ability away. The engine carries
+        // cache state across chunks, so the native path feeds only new samples and blocks on
+        // recorder progress below.
         if state.native_decided.is_none() {
             state.native_decided = self.transcription.realtime_native_streaming();
             if state.native_decided == Some(true) {
@@ -408,12 +395,38 @@ impl RealtimeManager {
                 state.last_native_emit_text.clear();
             }
         }
+
+        // Gate the WINDOW-REDECODE path (and the engine-ready probe) on the preview actually
+        // being shown: re-decoding a growing window purely for a hidden panel is wasted work.
+        // When disabled, idle like the not-recording branch but WITHOUT resetting (a recording
+        // is in progress and may re-enable mid-session — e.g. the user focuses the app).
+        if state.native_decided != Some(true) && !preview_shown {
+            // Realtime is off this tick → keep the recorder mirror disabled (free) and idle.
+            self.audio.set_realtime_enabled(false);
+            return TickAction::Sleep(Duration::from_millis(10));
+        }
+
+        // The preview is shown OR a native stream is being fed → ensure the recorder is
+        // mirroring audio into `live_audio` so our snapshots see the growing window. Cheap,
+        // idempotent — and the mirror tail-syncs against the full recording buffer, so
+        // enabling it late still catches up from the head of the take.
+        self.audio.set_realtime_enabled(true);
+
+        // ── readiness gate (port of _realtime_ready) ──
+        let init_after =
+            Duration::from_secs_f64(settings.quality.init_realtime_after_seconds.max(0.0));
+        if seen_at.elapsed() < init_after {
+            return TickAction::Sleep(Duration::from_millis(1));
+        }
+
+        // Engine still loading/contended → idle briefly instead of starting speculative
+        // window re-decodes.
         if state.native_decided.is_none() {
             return TickAction::Sleep(ENGINE_READY_PROBE_INTERVAL);
         }
 
         if state.native_decided == Some(true) {
-            return self.process_native_stream_tick(state, &settings, generation);
+            return self.process_native_stream_tick(state, &settings, generation, preview_shown);
         }
 
         self.process_window_redecode_tick(state, &settings, generation)
@@ -449,11 +462,16 @@ impl RealtimeManager {
     /// Native-streaming fast path (T-One / sherpa Zipformer+NeMo). Feeds only the new samples past
     /// `fed_len` to the engine's cache and emits the incremental update. Returns the `TickAction`
     /// for the loop (continue, or a short back-off sleep while a batch decode holds the engine).
+    ///
+    /// Runs even when the live preview is hidden (`emit_preview == false`): the feed itself is the
+    /// main transcription for streaming engines (final paste drains the stream tail), so only the
+    /// preview EVENTS are gated on visibility.
     fn process_native_stream_tick(
         &self,
         state: &mut RealtimeLoopState,
         settings: &crate::winstt::settings_schema::WinsttSettings,
         generation: u64,
+        emit_preview: bool,
     ) -> TickAction {
         if !self
             .audio
@@ -495,7 +513,7 @@ impl RealtimeManager {
                     return TickAction::Continue;
                 }
                 self.maybe_word_by_word_paste(generation, settings, &text, is_final);
-                if is_final || text != state.last_native_emit_text {
+                if emit_preview && (is_final || text != state.last_native_emit_text) {
                     state.last_native_emit_text = text.clone();
                     SttEvents::realtime_stabilized_with_final(&self.app, &text, is_final);
                     SttEvents::realtime_text_with_final(&self.app, &text, is_final);

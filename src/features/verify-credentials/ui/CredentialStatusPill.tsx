@@ -2,6 +2,7 @@ import type { TranslateFn } from "@/shared/i18n/translation-types";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg } from "@/shared/lib/surface";
 import { Spinner } from "@/shared/ui/spinner";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 export type CredentialStatusKind =
 	| "idle"
@@ -50,23 +51,27 @@ export function CredentialStatusPill({
 		);
 	}
 	if (status.status === "invalid") {
-		return (
-			<span
-				className="rounded-sm bg-error/15 px-1.5 py-0.5 text-2xs text-error"
-				title={status.lastError}
-			>
+		const pill = (
+			<span className="rounded-sm bg-error/15 px-1.5 py-0.5 text-2xs text-error">
 				{t("invalid")}
 			</span>
 		);
+		return status.lastError ? (
+			<Tooltip content={status.lastError}>{pill}</Tooltip>
+		) : (
+			pill
+		);
 	}
 	if (status.status === "offline") {
-		return (
-			<span
-				className="rounded-sm bg-warning/15 px-1.5 py-0.5 text-2xs text-warning"
-				title={status.lastError}
-			>
+		const pill = (
+			<span className="rounded-sm bg-warning/15 px-1.5 py-0.5 text-2xs text-warning">
 				{t("couldNotVerify")}
 			</span>
+		);
+		return status.lastError ? (
+			<Tooltip content={status.lastError}>{pill}</Tooltip>
+		) : (
+			pill
 		);
 	}
 	return null;

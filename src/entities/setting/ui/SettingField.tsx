@@ -86,7 +86,7 @@ export function SettingField({
 
 	const atDefault =
 		isDefault ??
-		(defaultValue !== undefined ? Object.is(value, defaultValue) : true);
+		(defaultValue === undefined ? true : Object.is(value, defaultValue));
 	const showReset = onReset !== undefined && !hideReset;
 
 	const controlTooltip =

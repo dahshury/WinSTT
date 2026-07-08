@@ -13,6 +13,9 @@ import type { AudioDevice } from "../model/audio-device";
 import {
 	buildInputDeviceOptions,
 	inputDeviceIconForName,
+	priorityFromReorderedOptions,
+	promoteDeviceNameToTop,
+	resolveEffectivePriorityDeviceIndex,
 } from "./device-options";
 
 function makeDevice(
@@ -178,5 +181,160 @@ describe("buildInputDeviceOptions", () => {
 		// IDs come from device's own index when no selection.
 		const ids = result.deviceOptions.map((o) => o.id);
 		expect(ids).toEqual(["default", "0", "1"]);
+	});
+
+	test("orders device rows by the priority list, unlisted devices keep enumeration order", () => {
+		const devices = [
+			makeDevice(0, "Built-in Mic"),
+			makeDevice(1, "USB Headset"),
+			makeDevice(2, "Webcam Mic"),
+		];
+		const result = buildInputDeviceOptions(
+			devices,
+			null,
+			"System Default",
+			null,
+			["Webcam Mic", "USB Headset"],
+		);
+		expect(result.deviceOptions.map((o) => o.label)).toEqual([
+			"System Default",
+			"Webcam Mic",
+			"USB Headset",
+			"Built-in Mic",
+		]);
+		// The pinned default row is not sortable; device rows are.
+		expect(result.deviceOptions[0]?.sortable).toBeUndefined();
+		expect(result.deviceOptions[1]?.sortable).toBe(true);
+	});
+
+	test("priority ordering matches names case-insensitively and trimmed", () => {
+		const devices = [makeDevice(0, "Built-in Mic"), makeDevice(1, "USB Mic")];
+		const result = buildInputDeviceOptions(
+			devices,
+			null,
+			"System Default",
+			null,
+			["  usb mic  "],
+		);
+		expect(result.deviceOptions.map((o) => o.label)).toEqual([
+			"System Default",
+			"USB Mic",
+			"Built-in Mic",
+		]);
+	});
+
+	test("marks ONLY the top connected priority device as selected, even when the index points elsewhere", () => {
+		const devices = [
+			makeDevice(0, "Built-in Mic"),
+			makeDevice(1, "USB Mic"),
+			makeDevice(2, "Webcam Mic"),
+		];
+		// Persisted index says Webcam (2), but USB is higher in the priority
+		// list and connected — the recorder will open USB, so the UI must mark
+		// USB and nothing else.
+		const result = buildInputDeviceOptions(devices, 2, "System Default", null, [
+			"Unplugged Mic",
+			"USB Mic",
+			"Webcam Mic",
+		]);
+		expect(result.currentDeviceId).toBe("1");
+		expect(result.currentDeviceLabel).toBe("USB Mic");
+	});
+
+	test("falls back to the explicit index, then default, when no priority entry is connected", () => {
+		const devices = [makeDevice(0, "Built-in Mic")];
+		const withIndex = buildInputDeviceOptions(
+			devices,
+			0,
+			"System Default",
+			null,
+			["Unplugged Mic"],
+		);
+		expect(withIndex.currentDeviceId).toBe("0");
+
+		const withoutIndex = buildInputDeviceOptions(
+			devices,
+			null,
+			"System Default",
+			null,
+			["Unplugged Mic"],
+		);
+		expect(withoutIndex.currentDeviceId).toBe("default");
+	});
+
+	test("empty priority list preserves enumeration order", () => {
+		const devices = [makeDevice(0, "B Mic"), makeDevice(1, "A Mic")];
+		const result = buildInputDeviceOptions(devices, null, "System Default");
+		expect(result.deviceOptions.map((o) => o.label)).toEqual([
+			"System Default",
+			"B Mic",
+			"A Mic",
+		]);
+	});
+});
+
+describe("resolveEffectivePriorityDeviceIndex", () => {
+	test("returns the index of the first connected priority entry", () => {
+		const devices = [makeDevice(3, "Built-in Mic"), makeDevice(7, "USB Mic")];
+		expect(
+			resolveEffectivePriorityDeviceIndex(devices, [
+				"AirPods Pro", // not connected → skipped
+				"usb mic", // case-insensitive match
+				"Built-in Mic",
+			]),
+		).toBe(7);
+	});
+
+	test("returns null when the list is empty or nothing is connected", () => {
+		const devices = [makeDevice(0, "Built-in Mic")];
+		expect(resolveEffectivePriorityDeviceIndex(devices, [])).toBeNull();
+		expect(
+			resolveEffectivePriorityDeviceIndex(devices, ["Gone Mic"]),
+		).toBeNull();
+		expect(resolveEffectivePriorityDeviceIndex([], ["Gone Mic"])).toBeNull();
+	});
+});
+
+describe("promoteDeviceNameToTop", () => {
+	test("moves an existing entry to the front, keeping the rest in order", () => {
+		expect(promoteDeviceNameToTop(["A", "B", "C"], "B")).toEqual([
+			"B",
+			"A",
+			"C",
+		]);
+	});
+
+	test("prepends a missing entry and dedupes case-insensitively", () => {
+		expect(promoteDeviceNameToTop(["a mic", "B"], "A Mic")).toEqual([
+			"A Mic",
+			"B",
+		]);
+		expect(promoteDeviceNameToTop([], "New Mic")).toEqual(["New Mic"]);
+	});
+});
+
+describe("priorityFromReorderedOptions", () => {
+	test("maps ordered option ids back to device names, dropping the default row", () => {
+		const devices = [makeDevice(0, "Built-in Mic"), makeDevice(1, "USB Mic")];
+		const { deviceOptions } = buildInputDeviceOptions(
+			devices,
+			null,
+			"System Default",
+		);
+		expect(
+			priorityFromReorderedOptions(deviceOptions, ["default", "1", "0"]),
+		).toEqual(["USB Mic", "Built-in Mic"]);
+	});
+
+	test("ignores unknown ids (row disappeared mid-drag)", () => {
+		const devices = [makeDevice(0, "Built-in Mic")];
+		const { deviceOptions } = buildInputDeviceOptions(
+			devices,
+			null,
+			"System Default",
+		);
+		expect(priorityFromReorderedOptions(deviceOptions, ["9", "0"])).toEqual([
+			"Built-in Mic",
+		]);
 	});
 });

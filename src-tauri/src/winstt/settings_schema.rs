@@ -388,6 +388,11 @@ pub struct ModelSettings {
     /// Realtime/live-preview model (must support realtime). HOT-SWAP.
     #[serde(default = "ModelSettings::default_realtime_model")]
     pub realtime_model: String,
+    /// Forced language for a multilingual/prompt realtime model (Nemotron-3.5), independent of the
+    /// main model's `language`. `""` = whole-utterance auto-detect. HOT-SWAP (reloads the realtime
+    /// engine so the encoder `prompt_index` is re-bound).
+    #[serde(default)]
+    pub realtime_language: String,
     /// Forced decode language (`""` = auto-detect). HOT-SWAP.
     #[serde(default = "ModelSettings::default_language")]
     pub language: String,
@@ -453,6 +458,7 @@ impl Default for ModelSettings {
         Self {
             model: Self::default_model(),
             realtime_model: Self::default_realtime_model(),
+            realtime_language: String::new(),
             language: Self::default_language(),
             auto_detect_language: false,
             language_candidates: Vec::new(),
@@ -596,6 +602,13 @@ pub struct AudioSettings {
     /// Mic index; `null` = system default. HOT-SWAP.
     #[serde(default)]
     pub input_device_index: Option<i64>,
+    /// Microphone preference order (cpal device NAMES, highest first). When
+    /// non-empty, the first CONNECTED entry wins on every stream open,
+    /// overriding `input_device_index` (which the renderer keeps re-pointed at
+    /// the same effective device). Empty = plain index selection. HOT-SWAP.
+    /// Zod `.catch([])`.
+    #[serde(default)]
+    pub input_device_priority: Vec<String>,
     /// Capture sample rate. STARTUP (CLI).
     #[serde(default = "AudioSettings::default_sample_rate")]
     pub sample_rate: i64,
@@ -670,6 +683,7 @@ impl Default for AudioSettings {
     fn default() -> Self {
         Self {
             input_device_index: None,
+            input_device_priority: Vec::new(),
             sample_rate: Self::default_sample_rate(),
             buffer_size: Self::default_buffer_size(),
             silero_sensitivity: Self::default_silero_sensitivity(),
@@ -822,6 +836,14 @@ pub struct GeneralSettings {
     /// Seeded with common password managers. Zod `.catch(<same seed>)`.
     #[serde(default = "GeneralSettings::default_context_deny_list")]
     pub context_deny_list: Vec<String>,
+    /// Tier-2 OCR fallback (report R3): when context awareness captured no usable
+    /// text (canvas apps, remote desktops, games — surfaces UIA returns nothing
+    /// for), screenshot the PINNED window and OCR it ON-DEVICE. DEFAULT FALSE:
+    /// screenshot capture is the industry-unanimous opt-in tier. The recognized
+    /// text never leaves the machine — it feeds only the local LLM cleanup step,
+    /// exactly like the UIA text. HOT-SWAP (read per-capture from settings).
+    #[serde(default)]
+    pub context_screen_ocr: bool,
     /// Per-utterance speaker diarization (~32 MB models, first-run download).
     /// HOT-SWAP (runtime toggle via diarization-toggle method).
     #[serde(default)]
@@ -861,6 +883,11 @@ pub struct GeneralSettings {
     /// with preview-before-pasting. Zod `.catch(false)`.
     #[serde(default)]
     pub word_by_word_pasting: bool,
+    /// Master switch for transcription history. When false, nothing is persisted:
+    /// no history rows, no transform rows, no WAV recordings. Existing data stays on
+    /// disk until deleted explicitly. HOT-SWAP. Zod `.catch(true)`.
+    #[serde(default = "GeneralSettings::default_history_enabled")]
+    pub history_enabled: bool,
     /// Cap on persisted history entries. Range 10..10000. HOT-SWAP. Zod `.catch(1000)`.
     #[serde(default = "GeneralSettings::default_history_max_entries")]
     pub history_max_entries: i64,
@@ -922,6 +949,9 @@ impl GeneralSettings {
     }
     fn default_visualizer_aura_color_shift() -> i64 {
         5
+    }
+    fn default_history_enabled() -> bool {
+        true
     }
     fn default_history_max_entries() -> i64 {
         1000
@@ -1054,6 +1084,7 @@ impl Default for GeneralSettings {
             context_app_mode: ContextAppMode::default(),
             context_allow_list: Vec::new(),
             context_deny_list: Self::default_context_deny_list(),
+            context_screen_ocr: false,
             speaker_diarization: false,
             send_crash_reports: true,
             receive_prerelease_updates: false,
@@ -1065,6 +1096,7 @@ impl Default for GeneralSettings {
             auto_submit_key: AutoSubmitKey::default(),
             preview_before_pasting: false,
             word_by_word_pasting: false,
+            history_enabled: Self::default_history_enabled(),
             history_max_entries: Self::default_history_max_entries(),
             recording_retention: RecordingRetention::default(),
             word_correction_threshold: Self::default_word_correction_threshold(),
@@ -1263,7 +1295,9 @@ pub struct LlmSettings {
     pub dictation: LlmDictation,
     #[serde(default)]
     pub transforms: LlmTransforms,
-    /// Client request timeout (ms). Range 1000..30000. Persisted but NOT applied at network layer.
+    /// Client request timeout (ms). Range 1000..30000. Applied (via
+    /// `llm::llm_request_timeout`) to every cloud LLM round-trip: the
+    /// dictation/transform OpenRouter attempts and the legacy post-process path.
     #[serde(default = "LlmSettings::default_timeout")]
     pub timeout: i64,
 }
@@ -1387,9 +1421,22 @@ pub struct TtsSettings {
     /// `voice` below is the voice WITHIN this model. Cloud source ignores this.
     #[serde(default = "TtsSettings::default_model")]
     pub model: String,
+    /// ONNX weights quant/precision for the selected local model (mirrors
+    /// `model.onnxQuantization` for STT). Free-string gated by the catalog per
+    /// model; empty → the model's default quant. Currently only Qwen3-TTS Voice
+    /// Design ships a quant ladder (`int4`|`fp16`|`fp32`); other engines ignore it.
+    /// HOT-SWAP (the engine is rebuilt when the fingerprint changes).
+    #[serde(default)]
+    pub quantization: String,
     /// Voice catalog id WITHIN the selected model.
     #[serde(default = "TtsSettings::default_voice")]
     pub voice: String,
+    /// Reference-clip transcript for cloning models that need it (`cloning ==
+    /// zero_shot_audio_transcript`, e.g. Spark). Auto-filled by transcribing the uploaded
+    /// reference clip with the selected STT model, then user-editable. Empty otherwise.
+    /// HOT-SWAP (the Spark engine is rebuilt when this changes).
+    #[serde(default)]
+    pub clone_ref_text: String,
     #[serde(default = "TtsSettings::default_lang")]
     pub lang: String,
     /// 0.4..2.0 multiplier (Supertonic slider reaches 0.4; other engines 0.5).
@@ -1434,7 +1481,9 @@ impl Default for TtsSettings {
         Self {
             enabled: false,
             model: Self::default_model(),
+            quantization: String::new(),
             voice: Self::default_voice(),
+            clone_ref_text: String::new(),
             lang: Self::default_lang(),
             speed: Self::default_speed(),
             hotkey: Self::default_hotkey(),
@@ -1891,6 +1940,7 @@ mod tests {
 
         // audio
         assert_eq!(s.audio.input_device_index, None);
+        assert!(s.audio.input_device_priority.is_empty());
         assert_eq!(s.audio.sample_rate, 16_000);
         assert_eq!(s.audio.buffer_size, 512);
         assert_eq!(s.audio.silero_sensitivity, 0.7);
@@ -1927,6 +1977,7 @@ mod tests {
         assert_eq!(s.general.visualizer_grid_speed, 6);
         assert_eq!(s.general.visualizer_aura_shape, VisualizerAuraShape::Circle);
         assert!(s.general.send_crash_reports);
+        assert!(s.general.history_enabled);
         assert_eq!(s.general.history_max_entries, 1000);
         assert_eq!(s.general.recording_retention, RecordingRetention::Cap);
         assert_eq!(s.general.word_correction_threshold, 0.18);

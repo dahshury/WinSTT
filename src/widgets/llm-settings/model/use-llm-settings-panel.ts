@@ -13,6 +13,7 @@ import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import { fetchOllamaModels, retryLlmWarmup } from "@/shared/api/ipc-client";
 import { detectAppleIntelligencePlatform } from "@/shared/lib/apple-intelligence-platform";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
+import { isSameOllamaTag } from "@/shared/lib/ollama-tag";
 import { useWarmupStatusFeed } from "../api/use-warmup-status-feed";
 import {
 	buildLevelOpts,
@@ -76,6 +77,10 @@ export function useLlmSettingsPanel() {
 	};
 	const t = useTranslations("llm");
 	const tc = useTranslations("common");
+	// Shared Source-toggle strings ("Local" / "Cloud"), reused so the provider
+	// switcher reads identically to the STT/TTS Source toggle in every locale
+	// instead of showing verbose brand labels.
+	const tSource = useTranslations("integrations");
 
 	// Subscribe to main-process warmup-status broadcasts so the per-feature
 	// banners can surface "Ollama not running" / "model missing" / "model
@@ -156,8 +161,10 @@ export function useLlmSettingsPanel() {
 			isLoaded: s.isLoaded,
 			isLoading: s.isLoading,
 			tagsByModel: s.tagsByModel,
+			hitsByModel: s.hitsByModel,
 			loadCatalog: s.loadCatalog,
 			fetchTags: s.fetchTags,
+			fetchHit: s.fetchHit,
 		})),
 	);
 	const librarySearchProps: import("@/widgets/model-picker").OllamaModelSelectorProps["librarySearch"] =
@@ -167,11 +174,15 @@ export function useLlmSettingsPanel() {
 			isLoaded: libraryState.isLoaded,
 			isLoading: libraryState.isLoading,
 			tagsByModel: libraryState.tagsByModel,
+			hitsByModel: libraryState.hitsByModel,
 			loadCatalog: () => {
 				fireAndForget(libraryState.loadCatalog(), "llm-settings.loadCatalog");
 			},
 			fetchTags: (m) => {
 				fireAndForget(libraryState.fetchTags(m), "llm-settings.fetchTags");
+			},
+			fetchHit: (m) => {
+				fireAndForget(libraryState.fetchHit(m), "llm-settings.fetchHit");
 			},
 		};
 
@@ -325,7 +336,7 @@ export function useLlmSettingsPanel() {
 	): Partial<LlmFeatureDraft> => {
 		const currentValid =
 			currentModel.length > 0 &&
-			ollamaModels.some((m) => m.name === currentModel);
+			ollamaModels.some((m) => isSameOllamaTag(m.name, currentModel));
 		if (currentValid) {
 			return { enabled: true };
 		}
@@ -398,6 +409,8 @@ export function useLlmSettingsPanel() {
 		appleIntelligenceSupported: applePlatform === "apple-silicon",
 		appleIntelligenceUnavailableOnIntel: applePlatform === "intel-mac",
 		openrouterNeedsKey: openrouterApiKey.trim().length === 0,
+		localLabel: tSource("sourceLocal"),
+		cloudLabel: tSource("sourceCloud"),
 	});
 
 	const ollamaCatalogState: OllamaCatalogState = {

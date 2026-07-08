@@ -183,6 +183,18 @@ fn perform_model_swap_inner(
 
         match load_result {
             Ok(()) => {
+                if let Some(tm) =
+                    app.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
+                {
+                    // Hold the "Switching…" chip until the engine is COMPUTE-warm
+                    // (the load path detaches a dummy-silence warm decode; DirectML
+                    // kernel JIT can take seconds) — `completed` must mean "the
+                    // first dictation runs at full speed", not merely "weights are
+                    // in memory". Best-effort: bounded, and it bails on failure /
+                    // supersession so a broken engine can't wedge the chip.
+                    tm.inner()
+                        .wait_until_warm(&name, std::time::Duration::from_secs(120));
+                }
                 // Push the reconciled runtime snapshot BEFORE completed (the renderer reads the new
                 // active model off runtime-info, then clears the chip on completed).
                 if let Some(tm) =

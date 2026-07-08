@@ -1,5 +1,6 @@
 import type { ContextDebugReport } from "@/shared/api/context-debug-types";
 import { cn } from "@/shared/lib/cn";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 // --- Summary chips ------------------------------------------------------
 
@@ -76,12 +77,11 @@ function Chip({
 			<span className="text-[10px] text-foreground-dim uppercase tracking-wide">
 				{label}
 			</span>
-			<span
-				className={cn("truncate font-mono text-[11px]", toneClass(tone))}
-				title={value}
-			>
-				{value}
-			</span>
+			<Tooltip content={value}>
+				<span className={cn("truncate font-mono text-[11px]", toneClass(tone))}>
+					{value}
+				</span>
+			</Tooltip>
 		</div>
 	);
 }

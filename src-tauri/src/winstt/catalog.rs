@@ -21,13 +21,13 @@
 //   * Canary/Cohere `<|startofcontext|>` prompt slot is UNTRAINED — no initial-prompt bias for
 //     them (handled in the engine slice, NOT here — noted for cross-reference).
 //
-// The const `STT_CATALOG` below has exactly 73 entries (whisper 15, moonshine 10, granite 2,
-// nemo 34, kaldi 4, gigaam 2, cohere 1, sense_voice 1, t-one 1, dolphin 1, qwen3 2). Every entry is
+// The const `STT_CATALOG` below has exactly 67 entries (whisper 15, moonshine 10, granite 2,
+// nemo 27, kaldi 4, gigaam 2, cohere 2, sense_voice 1, t-one 1, dolphin 1, qwen3 2). Every entry is
 // preview-capable in WinSTT today; native streaming and final-reuse policy are derived from
 // `EngineKind`, not this legacy field.
 //
 // This module is split into two siblings behind a stable re-export surface:
-//   * `data`   — the `ModelEntry` row shape + the verbatim 73-row `STT_CATALOG` const.
+//   * `data`   — the `ModelEntry` row shape + the verbatim 75-row `STT_CATALOG` const.
 //   * `policy` — `Family`/`Accelerator` + the deterministic precision/EP resolution policy.
 // Every previously public path (`crate::winstt::catalog::X`) is preserved via the globs below.
 
@@ -44,11 +44,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_total_count_is_73() {
+    fn catalog_total_count_is_67() {
         assert_eq!(
             STT_CATALOG.len(),
-            73,
-            "catalog.json ships exactly 73 STT models"
+            67,
+            "catalog.json ships exactly 67 STT models"
         );
     }
 
@@ -57,10 +57,10 @@ mod tests {
         let count = |f: Family| STT_CATALOG.iter().filter(|m| m.family == f).count();
         assert_eq!(count(Family::Whisper), 15, "whisper count");
         assert_eq!(count(Family::Moonshine), 10, "moonshine count");
-        assert_eq!(count(Family::Nemo), 34, "nemo count");
+        assert_eq!(count(Family::Nemo), 27, "nemo count");
         assert_eq!(count(Family::Kaldi), 4, "kaldi count");
         assert_eq!(count(Family::GigaAm), 2, "gigaam count");
-        assert_eq!(count(Family::Cohere), 1, "cohere count");
+        assert_eq!(count(Family::Cohere), 2, "cohere count");
         assert_eq!(count(Family::Granite), 2, "granite count");
         assert_eq!(count(Family::SenseVoice), 1, "sense_voice count");
         assert_eq!(count(Family::TOne), 1, "t-one count");
@@ -72,7 +72,7 @@ mod tests {
             "custom never appears in the shipped catalog"
         );
         // The family counts must sum to the catalog total.
-        let summed = 15 + 10 + 34 + 4 + 2 + 1 + 2 + 1 + 1 + 1 + 2;
+        let summed = 15 + 10 + 27 + 4 + 2 + 2 + 2 + 1 + 1 + 1 + 2;
         assert_eq!(summed, STT_CATALOG.len());
     }
 
@@ -124,37 +124,33 @@ mod tests {
                 "streaming-parakeet-unified-en-560ms-int8",
             ),
             (
-                "streaming-nemotron-en-80ms",
-                "streaming-nemotron-en-80ms-int8",
-            ),
-            (
-                "streaming-nemotron-en-160ms",
-                "streaming-nemotron-en-160ms-int8",
-            ),
-            (
-                "streaming-nemotron-en-560ms",
-                "streaming-nemotron-en-560ms-int8",
-            ),
-            (
-                "streaming-nemotron-en-1120ms",
-                "streaming-nemotron-en-1120ms-int8",
-            ),
-            (
-                "streaming-nemotron-en-80ms-int8",
-                "streaming-nemotron-en-80ms-int8",
-            ),
-            (
-                "streaming-nemotron-en-160ms-int8",
-                "streaming-nemotron-en-160ms-int8",
-            ),
-            (
-                "streaming-nemotron-en-560ms-int8",
-                "streaming-nemotron-en-560ms-int8",
+                "streaming-nemotron-3.5-multi-1120ms-int8",
+                "streaming-nemotron-3.5-multi-1120ms-int8",
             ),
         ] {
             assert_eq!(canonical_model_id(alias), canonical);
             assert_eq!(find(alias).unwrap().id, canonical);
             assert_eq!(find(canonical).unwrap().id, canonical);
+        }
+    }
+
+    #[test]
+    fn deleted_english_nemotron_ids_migrate_to_multilingual() {
+        for old in [
+            "streaming-nemotron-en-80ms",
+            "streaming-nemotron-en-1120ms",
+            "streaming-nemotron-en-1120ms-int8",
+            "streaming-nemotron-3.5-multi-560ms-int8",
+        ] {
+            assert_eq!(
+                canonical_model_id(old),
+                "streaming-nemotron-3.5-multi-1120ms-int8"
+            );
+            // A persisted old selection resolves to the live replacement row.
+            assert_eq!(
+                find(old).unwrap().id,
+                "streaming-nemotron-3.5-multi-1120ms-int8"
+            );
         }
     }
 
@@ -165,8 +161,8 @@ mod tests {
             "Streaming NeMo FastConformer RNN-T"
         );
         assert_eq!(
-            display_name_for_id("streaming-nemotron-en-1120ms"),
-            "Streaming Nemotron"
+            display_name_for_id("streaming-nemotron-3.5-multi-1120ms-int8"),
+            "Streaming Nemotron 3.5"
         );
         assert_eq!(display_name_for_id("tiny.en"), "Whisper Tiny");
     }

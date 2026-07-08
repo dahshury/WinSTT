@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { asInvalid } from "@test/lib/cast";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import type { TranslateFn } from "@/shared/i18n/translation-types";
 import * as helpers from "../lib/llm-settings-panel-test-helpers";
 import type { FeatureToggleDeps } from "../lib/llm-settings-panel-test-helpers";
+import {
+	type LlmConfiguration,
+	type SavedConfiguration,
+	useLlmConfigurationsStore,
+} from "../model/configurations";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 
 // `readLlmSnapshot` accepts a forgiving partial input at runtime (it re-defaults
@@ -15,11 +20,45 @@ type LlmSettings = NonNullable<Parameters<typeof helpers.readLlmSnapshot>[0]>;
 
 beforeEach(() => {
 	useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+	useLlmConfigurationsStore.setState({
+		activeConfigurationId: null,
+		configurations: [],
+	});
 });
 
 afterEach(() => {
 	useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+	useLlmConfigurationsStore.setState({
+		activeConfigurationId: null,
+		configurations: [],
+	});
 });
+
+function savedConfiguration(
+	id: string,
+	name: string,
+	patch: Partial<LlmConfiguration>,
+): SavedConfiguration {
+	const base = DEFAULT_SETTINGS.llm.dictation;
+	return {
+		id,
+		name,
+		config: {
+			customModifiers: base.customModifiers.map((m) => ({ ...m })),
+			enabled: base.enabled,
+			maxOutputTokens: base.maxOutputTokens,
+			model: base.model,
+			openrouterFallbackModel: base.openrouterFallbackModel,
+			openrouterModel: base.openrouterModel,
+			presets: base.presets.map((p) => ({ ...p })),
+			provider: base.provider,
+			reasoningEffort: base.reasoningEffort,
+			thinkingEffort: base.thinkingEffort,
+			verbosity: base.verbosity,
+			...patch,
+		},
+	};
+}
 
 describe("LlmSettingsPanel", () => {
 	test("renders without crashing", () => {
@@ -31,7 +70,7 @@ describe("LlmSettingsPanel", () => {
 		expect(container.firstElementChild).not.toBeNull();
 	});
 
-	test("disables profile presets while post-processing is off and shows one title", () => {
+	test("disables profile presets and playground while post-processing is off and shows one title", () => {
 		render(
 			<IntlProvider>
 				<LlmSettingsPanel />
@@ -46,6 +85,52 @@ describe("LlmSettingsPanel", () => {
 				) as HTMLInputElement
 			).disabled,
 		).toBe(true);
+		expect(
+			(screen.getByRole("button", { name: "Playground" }) as HTMLButtonElement)
+				.disabled,
+		).toBe(true);
+		expect(
+			(
+				screen.getByRole("button", {
+					name: "Previous preset",
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+		expect(
+			(
+				screen.getByRole("button", {
+					name: "Next preset",
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+	});
+
+	test("enables the playground button while post-processing is on", () => {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				llm: {
+					...DEFAULT_SETTINGS.llm,
+					openrouterApiKey: "sk-test",
+					dictation: {
+						...DEFAULT_SETTINGS.llm.dictation,
+						enabled: true,
+						openrouterModel: "openai/gpt-4o-mini",
+						provider: "openrouter",
+					},
+				},
+			},
+		});
+		render(
+			<IntlProvider>
+				<LlmSettingsPanel />
+			</IntlProvider>,
+		);
+
+		expect(
+			(screen.getByRole("button", { name: "Playground" }) as HTMLButtonElement)
+				.disabled,
+		).toBe(false);
 	});
 
 	test("orders header actions as playground, presets, then toggle", () => {
@@ -64,15 +149,74 @@ describe("LlmSettingsPanel", () => {
 		expect(
 			Boolean(
 				playground.compareDocumentPosition(preset) &
-				Node.DOCUMENT_POSITION_FOLLOWING,
+					Node.DOCUMENT_POSITION_FOLLOWING,
 			),
 		).toBe(true);
 		expect(
 			Boolean(
 				preset.compareDocumentPosition(toggle) &
-				Node.DOCUMENT_POSITION_FOLLOWING,
+					Node.DOCUMENT_POSITION_FOLLOWING,
 			),
 		).toBe(true);
+	});
+
+	test("navigates post-processing profiles from the header buttons", () => {
+		const first = savedConfiguration("first", "First", {
+			openrouterModel: "openrouter/first",
+			presets: [{ key: "formal" }],
+			provider: "openrouter",
+		});
+		const second = savedConfiguration("second", "Second", {
+			openrouterModel: "openrouter/second",
+			presets: [{ key: "technical" }],
+			provider: "openrouter",
+		});
+		useLlmConfigurationsStore.setState({
+			activeConfigurationId: "first",
+			configurations: [first, second],
+		});
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				llm: {
+					...DEFAULT_SETTINGS.llm,
+					openrouterApiKey: "sk-test",
+					dictation: {
+						...DEFAULT_SETTINGS.llm.dictation,
+						enabled: true,
+						openrouterModel: "openrouter/first",
+						presets: [{ key: "formal" }],
+						provider: "openrouter",
+					},
+				},
+			},
+		});
+		render(
+			<IntlProvider>
+				<LlmSettingsPanel />
+			</IntlProvider>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Next preset" }));
+
+		expect(
+			useSettingsStore.getState().settings.llm.dictation.openrouterModel,
+		).toBe("openrouter/second");
+		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
+			true,
+		);
+		expect(useLlmConfigurationsStore.getState().activeConfigurationId).toBe(
+			"second",
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Previous preset" }));
+
+		expect(
+			useSettingsStore.getState().settings.llm.dictation.openrouterModel,
+		).toBe("openrouter/first");
+		expect(useLlmConfigurationsStore.getState().activeConfigurationId).toBe(
+			"first",
+		);
 	});
 
 	test("forces LLM features off in listen mode without overwriting saved settings", () => {
@@ -385,14 +529,11 @@ describe("LlmSettingsPanel helpers — shouldScanOpenRouter", () => {
 		["openrouter", "key", true, false],
 		["ollama", "key", false, false],
 	];
-	test.each(cases)(
-		"provider=%s key=%s loaded=%s -> %s",
-		(provider, key, loaded, expected) => {
-			expect(helpers.shouldScanOpenRouter(provider, key, loaded)).toBe(
-				expected,
-			);
-		},
-	);
+	test.each(
+		cases,
+	)("provider=%s key=%s loaded=%s -> %s", (provider, key, loaded, expected) => {
+		expect(helpers.shouldScanOpenRouter(provider, key, loaded)).toBe(expected);
+	});
 });
 
 // Tests assert on the `mock(...)`-returned spies; the helper signature accepts

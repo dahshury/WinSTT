@@ -11,11 +11,23 @@
 
 use std::collections::BTreeMap;
 
-use ndarray::{Array2, ArrayD, Axis};
+use ndarray::Array2;
+use ort::memory::{AllocationDevice, Allocator, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::Session;
-use ort::value::{Tensor, TensorRef};
+use ort::value::{DynValue, Tensor, ValueType};
 
 use super::*;
+use crate::winstt::stt::Accelerator;
+
+/// Seq (dim 2) length of a KV-cache tensor value's runtime shape, read from metadata (no host copy).
+/// Cohere KV is declared `(batch, num_heads, seq, head_dim)`; a 0-length `present.*` means the graph's
+/// reused (cross-attn) branch echoed nothing, so the prior device-resident value is kept.
+fn kv_seq_len(v: &DynValue) -> i64 {
+    match v.dtype() {
+        ValueType::Tensor { shape, .. } => shape.get(2).copied().unwrap_or(0),
+        _ => 0,
+    }
+}
 
 pub struct CohereEngine {
     encoder: Session,
@@ -33,11 +45,36 @@ pub struct CohereEngine {
     mel_fb: Array2<f32>,
     model_name: String,
     providers: Vec<String>,
+    // Device-resident KV-cache binding (mirrors WhisperEngine): the EP's allocation device (CPU
+    // when the model runs on the CPU EP — cohere is CPU-pinned today — but DIRECTML/CUDA/WEBGPU_BUFFER
+    // when a GPU EP is active). The decode loop binds `present.*` outputs here so the KV never
+    // round-trips through the host between steps. On CPU this is correct and ~free.
+    device: AllocationDevice,
+    device_id: i32,
+}
+
+/// EP allocation device for the KV-cache IoBinding (parallels `whisper::ort_shapes::device_for_providers`).
+/// Fused-attention exports (onnx-community) stay CPU-pinned (their `MultiHeadAttention` crashes on
+/// DirectML), but decomposed exports (Masterx) are restored to DirectML by `resolve_catalog`, so this
+/// resolves to `DIRECTML` for those and the decode loop's KV cache is device-resident on the GPU with
+/// no further change. CUDA / WebGPU map the same way.
+fn cohere_device(providers: &[Accelerator]) -> (AllocationDevice, i32) {
+    match providers.first() {
+        Some(Accelerator::Cuda) => (AllocationDevice::CUDA, 0),
+        Some(Accelerator::DirectMl) => (AllocationDevice::DIRECTML, 0),
+        _ => (AllocationDevice::CPU, 0),
+    }
 }
 
 pub(in crate::winstt::stt::families) const COHERE_LANGUAGES: &[&str] = &[
     "ar", "de", "el", "en", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt", "vi", "zh",
 ];
+
+/// Max candidate languages to score in the auto-detect pass. A specialised bilingual checkpoint
+/// (arabic: en+ar) needs detection because its `<|unklang|>` target is biased; the fully-multilingual
+/// checkpoint's unklang target is unbiased, so above this many candidates we skip detection and let
+/// `<|unklang|>`/`<|unklang|>` do it in one pass (avoids N decode probes for the 14-language model).
+const MAX_DETECT_LANGS: usize = 6;
 
 impl CohereEngine {
     pub fn load(cfg: &EngineConfig) -> SttResult<CohereEngine> {
@@ -90,6 +127,7 @@ impl CohereEngine {
         let past_input_names = filter_sorted_inputs(&decoder, "past_key_values.");
         let present_output_names = filter_sorted_outputs(&decoder, "present.");
         let (num_heads, head_dim, past_is_fp16) = cohere_past_shape(&decoder)?;
+        let (device, device_id) = cohere_device(&cfg.providers);
 
         Ok(CohereEngine {
             encoder,
@@ -107,7 +145,20 @@ impl CohereEngine {
             mel_fb: frontend::build_nemo_mel_filterbank(128),
             model_name: cfg.model_name.clone(),
             providers: providers_to_strings(&cfg.providers),
+            device,
+            device_id,
         })
+    }
+
+    /// EP `MemoryInfo` for KV-cache-resident outputs (CPU when no GPU EP → the current cohere path).
+    fn device_mem(&self) -> SttResult<MemoryInfo> {
+        MemoryInfo::new(
+            self.device,
+            self.device_id,
+            AllocatorType::Device,
+            MemoryType::Default,
+        )
+        .map_err(|e| SttError::Inference(format!("cohere device mem info: {e}")))
     }
 
     fn resolve_lang_token(&self, language: Option<&str>) -> String {
@@ -120,16 +171,22 @@ impl CohereEngine {
         }
     }
 
-    fn build_prompt(&self, language: Option<&str>, punctuation: bool) -> SttResult<Vec<i64>> {
+    /// Build the prompt token ids with explicit `source_lang` / `target_lang` slots. Transcription
+    /// is `source == target`; a detection probe uses `source = <|unklang|>` with a concrete target.
+    fn build_prompt_tokens(
+        &self,
+        source: &str,
+        target: &str,
+        punctuation: bool,
+    ) -> SttResult<Vec<i64>> {
         let pnc = if punctuation { "<|pnc|>" } else { "<|nopnc|>" };
-        let lang = self.resolve_lang_token(language);
         let toks = [
             "\u{2581}",
             "<|startofcontext|>",
             "<|startoftranscript|>",
             "<|emo:undefined|>",
-            lang.as_str(),
-            lang.as_str(),
+            source,
+            target,
             pnc,
             "<|noitn|>",
             "<|notimestamp|>",
@@ -146,47 +203,9 @@ impl CohereEngine {
         Ok(prompt)
     }
 
-    /// Encode → owned `(T, 1024)` last_hidden_state (we keep it host-side as f32; the engine is
-    /// CPU-forced so device IoBinding is not required for correctness).
-    fn encode(&mut self, audio: &[f32]) -> SttResult<Array2<f32>> {
-        // Cohere (Conformer AED) uses the SAME 128-mel time-first featurizer as NeMo
-        // (Slaney 128-mel, preemphasis 0.97, n_fft=512/win=400/hop=160 Hann, per-feature
-        // norm over time) — faithful to onnx-asr's Cohere featurizer. The old 80-mel kaldi
-        // `compute_fbank` frontend produced wrong numerics and garbled output.
-        let fbank = frontend::nemo_features(audio, &self.mel_fb);
-        let t = fbank.nrows();
-        let feat_dim = fbank.ncols();
-        let x = fbank
-            .into_shape_with_order((1, t, feat_dim))
-            .map_err(|e| SttError::Inference(format!("cohere enc reshape: {e}")))?;
-        let tensor = Tensor::from_array(x)
-            .map_err(|e| SttError::Inference(format!("cohere enc tensor: {e}")))?;
-        let outputs = self
-            .encoder
-            .run(ort::inputs![ "input_features" => tensor ])
-            .map_err(|e| SttError::Inference(format!("cohere encoder run: {e}")))?;
-        let hidden = out_to_f32(&outputs["last_hidden_state"])?;
-        let hidden3 = hidden
-            .into_dimensionality::<ndarray::Ix3>()
-            .map_err(|e| SttError::Inference(format!("cohere hidden dim: {e}")))?;
-        Ok(hidden3.index_axis_move(Axis(0), 0).to_owned())
-    }
-
-    /// Build empty KV-cache tensors `(1, num_heads, 0, head_dim)` in the decoder's declared dtype.
-    /// The fp16 seed is the §6.5 fix: a float32 empty cache on an fp16 decoder trips ORT's input
-    /// type check on the very first step.
-    fn empty_state(&self) -> SttResult<BTreeMap<String, KvTensor>> {
-        let shape = ndarray::IxDyn(&[1, self.num_heads, 0, self.head_dim]);
-        let mut map = BTreeMap::new();
-        for name in &self.past_input_names {
-            let kv = if self.past_is_fp16 {
-                KvTensor::F16(ArrayD::<F16>::from_elem(shape.clone(), F16::from_f32(0.0)))
-            } else {
-                KvTensor::F32(ArrayD::<f32>::zeros(shape.clone()))
-            };
-            map.insert(name.clone(), kv);
-        }
-        Ok(map)
+    fn build_prompt(&self, language: Option<&str>, punctuation: bool) -> SttResult<Vec<i64>> {
+        let lang = self.resolve_lang_token(language);
+        self.build_prompt_tokens(&lang, &lang, punctuation)
     }
 
     fn decode_text(&self, tokens: &[i64]) -> String {
@@ -215,6 +234,195 @@ impl CohereEngine {
         flush(&mut byte_buf, &mut out);
         out.strip_prefix(' ').unwrap_or(&out).to_string()
     }
+
+    /// Greedy autoregressive decode (beam=1, matches Cohere generation_config) with a DEVICE-RESIDENT
+    /// KV cache via IoBinding (mirrors WhisperEngine): each step binds the carried `present.*` device
+    /// values back as `past_key_values.*` and binds the new `present.*` straight to the device, so the
+    /// 32 KV tensors never round-trip through the host between tokens. Returns the generated token ids
+    /// and the mean per-token log-prob of the greedy path (the logits head is already `log_softmax`, so
+    /// this is a language-detection confidence signal). `past[i] == None` is the (1,H,0,D) empty cache
+    /// on step 0.
+    fn decode(
+        &mut self,
+        encoder_out: &DynValue,
+        cpu_mem: &MemoryInfo,
+        dev_mem: &MemoryInfo,
+        prompt: Vec<i64>,
+        max_tokens: usize,
+    ) -> SttResult<(Vec<i64>, f32)> {
+        let prompt_len = prompt.len();
+        let present_names = self.present_output_names.clone();
+        let mut past: Vec<Option<DynValue>> =
+            (0..self.past_input_names.len()).map(|_| None).collect();
+        let mut generated: Vec<i64> = Vec::new();
+        let mut next_input: Vec<i64> = prompt;
+        let mut logprob_sum = 0.0f32;
+        let mut logprob_n = 0usize;
+
+        for step in 0..max_tokens {
+            let in_len = next_input.len();
+            // Mask covers the prompt plus every token generated so far; from
+            // step 1 on the single new token sits at position attn_len - 1.
+            let attn_len = prompt_len + step;
+            let position_ids: Vec<i64> = if step == 0 {
+                (0..in_len as i64).collect()
+            } else {
+                vec![(attn_len - 1) as i64]
+            };
+            // Host per-step scalars/masks (tiny): full prompt on step 0, then the single new token.
+            let input_ids = tensor_i64((1, in_len), next_input.clone())?;
+            let attention_mask = tensor_i64((1, attn_len), vec![1i64; attn_len])?;
+            let position = tensor_i64((1, position_ids.len()), position_ids)?;
+            let num_logits_to_keep = scalar_i64(1)?;
+
+            // Empty (1,H,0,D) host tensors for every `None` past entry (step 0), dtype-matched to the
+            // decoder's declared KV type (§6.5). Held in these Vecs so they outlive `run_binding`.
+            let empty_shape = [1usize, self.num_heads, 0usize, self.head_dim];
+            let mut empties_f32: Vec<Tensor<f32>> = Vec::new();
+            let mut empties_f16: Vec<Tensor<F16>> = Vec::new();
+            for p in &past {
+                if p.is_none() {
+                    if self.past_is_fp16 {
+                        empties_f16.push(
+                            Tensor::<F16>::new(&Allocator::default(), empty_shape)
+                                .map_err(|e| SttError::Inference(format!("empty kv f16: {e}")))?,
+                        );
+                    } else {
+                        empties_f32.push(
+                            Tensor::<f32>::new(&Allocator::default(), empty_shape)
+                                .map_err(|e| SttError::Inference(format!("empty kv f32: {e}")))?,
+                        );
+                    }
+                }
+            }
+
+            let mut binding = self
+                .decoder
+                .create_binding()
+                .map_err(|e| SttError::Inference(format!("cohere decoder binding: {e}")))?;
+            binding
+                .bind_input("input_ids", &input_ids)
+                .map_err(|e| SttError::Inference(format!("bind input_ids: {e}")))?;
+            binding
+                .bind_input("attention_mask", &attention_mask)
+                .map_err(|e| SttError::Inference(format!("bind attention_mask: {e}")))?;
+            binding
+                .bind_input("position_ids", &position)
+                .map_err(|e| SttError::Inference(format!("bind position_ids: {e}")))?;
+            binding
+                .bind_input("num_logits_to_keep", &num_logits_to_keep)
+                .map_err(|e| SttError::Inference(format!("bind num_logits_to_keep: {e}")))?;
+            binding
+                .bind_input("encoder_hidden_states", encoder_out)
+                .map_err(|e| SttError::Inference(format!("bind encoder_hidden_states: {e}")))?;
+            let mut f32_iter = empties_f32.iter();
+            let mut f16_iter = empties_f16.iter();
+            for (i, name) in self.past_input_names.iter().enumerate() {
+                match &past[i] {
+                    Some(v) => binding
+                        .bind_input(name.as_str(), v)
+                        .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?,
+                    None => {
+                        if self.past_is_fp16 {
+                            let empty = f16_iter.next().ok_or_else(|| {
+                                SttError::Inference("missing empty f16 KV tensor".into())
+                            })?;
+                            binding.bind_input(name.as_str(), empty).map_err(|e| {
+                                SttError::Inference(format!("bind empty {name}: {e}"))
+                            })?;
+                        } else {
+                            let empty = f32_iter.next().ok_or_else(|| {
+                                SttError::Inference("missing empty f32 KV tensor".into())
+                            })?;
+                            binding.bind_input(name.as_str(), empty).map_err(|e| {
+                                SttError::Inference(format!("bind empty {name}: {e}"))
+                            })?;
+                        }
+                    }
+                }
+            }
+            // logits → host (argmax); present.* → device (carried resident to the next step).
+            binding
+                .bind_output_to_device("logits", cpu_mem)
+                .map_err(|e| SttError::Inference(format!("bind logits: {e}")))?;
+            for pname in &present_names {
+                binding
+                    .bind_output_to_device(pname.as_str(), dev_mem)
+                    .map_err(|e| SttError::Inference(format!("bind {pname}: {e}")))?;
+            }
+
+            let mut outputs = self
+                .decoder
+                .run_binding(&binding)
+                .map_err(|e| SttError::Inference(format!("cohere decoder run_binding: {e}")))?;
+            // GPU EPs run_binding async w.r.t. the device stream; sync before the host logits read and
+            // before carrying the device `present.*` (harmless no-op on CPU). Mirrors WhisperEngine.
+            binding
+                .synchronize_outputs()
+                .map_err(|e| SttError::Inference(format!("cohere decoder sync: {e}")))?;
+
+            let (next, logprob) = {
+                let logits = outputs.get("logits").ok_or_else(|| {
+                    SttError::Inference("cohere decoder produced no logits".into())
+                })?;
+                let arr = out_to_f32(logits)?; // fp16 → f32 promote (§6.5)
+                let last = last_step_row(&arr)?;
+                let (idx, lp) = argmax_1d(&last); // lp is already a log-prob (log_softmax head)
+                (idx as i64, lp)
+            };
+            logprob_sum += logprob;
+            logprob_n += 1;
+            if next == self.eos_token_id {
+                break;
+            }
+            generated.push(next);
+
+            // Carry present.* → past.* as DEVICE values (session-owned, survive the binding drop →
+            // rebind next step with no host copy). Keep the prior value when a `present.*` is 0-length
+            // (the reused cross-attn branch), so the resident encoder KV is never clobbered.
+            for (i, pname) in present_names.iter().enumerate() {
+                if let Some(v) = outputs.remove(pname.as_str())
+                    && kv_seq_len(&v) != 0
+                {
+                    past[i] = Some(v);
+                }
+            }
+
+            next_input = vec![next];
+        }
+
+        let mean_logprob = if logprob_n > 0 {
+            logprob_sum / logprob_n as f32
+        } else {
+            f32::NEG_INFINITY
+        };
+        Ok((generated, mean_logprob))
+    }
+
+    /// Auto-detect the spoken language among `candidates` (ISO codes). `<|unklang|>` in the SOURCE
+    /// slot detects the spoken language correctly, but the concrete TARGET language that actually
+    /// matches the speech yields the most confident (highest mean log-prob) short decode — so we
+    /// score each candidate over a short prefix and pick the best. Returns the winning code, or None
+    /// if nothing scored (caller falls back to `<|unklang|>`/`<|unklang|>`).
+    fn detect_language(
+        &mut self,
+        encoder_out: &DynValue,
+        cpu_mem: &MemoryInfo,
+        dev_mem: &MemoryInfo,
+        candidates: &[String],
+    ) -> SttResult<Option<String>> {
+        const DETECT_TOKENS: usize = 24;
+        let mut best: Option<(String, f32)> = None;
+        for cand in candidates {
+            let target = format!("<|{cand}|>");
+            let prompt = self.build_prompt_tokens("<|unklang|>", &target, true)?;
+            let (_, score) = self.decode(encoder_out, cpu_mem, dev_mem, prompt, DETECT_TOKENS)?;
+            if best.as_ref().is_none_or(|(_, b)| score > *b) {
+                best = Some((cand.clone(), score));
+            }
+        }
+        Ok(best.map(|(lang, _)| lang))
+    }
 }
 
 impl Transcriber for CohereEngine {
@@ -235,116 +443,84 @@ impl Transcriber for CohereEngine {
         if audio.is_empty() {
             return Ok(Transcription::default());
         }
-        let encoder_hidden = self.encode(audio)?; // (T, 1024), kept host-side
-        let enc_t = encoder_hidden.nrows();
-        let enc_d = encoder_hidden.ncols();
-        // Pre-flatten the encoder hidden state ONCE (row-major → (1, T, D)) so the decode loop can
-        // BORROW it each token via TensorRef instead of rebuilding + cloning the full [T,D] array
-        // every step (the dominant per-token host cost — the same waste fixed in CanaryEngine).
-        let enc_flat: Vec<f32> = encoder_hidden.iter().copied().collect();
-        let enc_shape = [1usize, enc_t, enc_d];
-        let prompt = self.build_prompt(opts.language.as_deref(), true)?;
-        let prompt_len = prompt.len();
 
-        // Greedy autoregressive decode (beam=1, matches Cohere generation_config). The 32 past/present
-        // KV tensors are carried HOST-SIDE (dtype-matched f32/f16 per §6.5). This is correct but
-        // re-feeds the host arrays each step; device-side IoBinding can replace it after benchmark
-        // coverage proves the fast path.
-        let mut state = self.empty_state()?;
-        let mut generated: Vec<i64> = Vec::new();
-        let mut next_input: Vec<i64> = prompt;
-        let mut attn_len = prompt_len;
-        let mut pos_start = 0i64;
+        // ── Encoder → DEVICE-resident hidden state (bound once, reused every decode step) ──
+        // Cohere (Conformer AED) uses the SAME 128-mel time-first NeMo featurizer (Slaney 128-mel,
+        // preemphasis 0.97, n_fft=512/win=400/hop=160 Hann, per-feature norm). We bind `input_features`
+        // (host) and pull `last_hidden_state` to the EP device, so the decoder cross-attends to a
+        // resident tensor instead of re-uploading the host array every token.
+        let fbank = frontend::nemo_features(audio, &self.mel_fb);
+        let t = fbank.nrows();
+        let feat_dim = fbank.ncols();
+        let x = fbank
+            .into_shape_with_order((1, t, feat_dim))
+            .map_err(|e| SttError::Inference(format!("cohere enc reshape: {e}")))?;
+        let input_features = Tensor::from_array(x)
+            .map_err(|e| SttError::Inference(format!("cohere enc tensor: {e}")))?;
 
-        #[expect(
-            clippy::explicit_counter_loop,
-            reason = "attn_len starts at prompt_len (not 0) and is incremented only after the EOS early-break, so it is the attention length used in tensor shapes, not a plain loop counter"
-        )]
-        for step in 0..self.max_decode_length {
-            let in_len = next_input.len();
-            let position_ids: Vec<i64> = if step == 0 {
-                (0..in_len as i64).collect()
-            } else {
-                vec![pos_start]
-            };
+        let dev_mem = self.device_mem()?;
+        let cpu_mem = MemoryInfo::new(
+            AllocationDevice::CPU,
+            0,
+            AllocatorType::Device,
+            MemoryType::CPUOutput,
+        )
+        .map_err(|e| SttError::Inference(format!("cohere cpu mem info: {e}")))?;
 
-            // Named inputs with the encoder hidden state BORROWED (zero-copy) via TensorRef instead
-            // of rebuilt+cloned per token; the KV stays allocator-backed (it is 0-length on step 0,
-            // which TensorRef's raw-data path rejects). The borrowed lifetime means building the vec
-            // inline (push_tensor/push_past_kv are 'static-typed).
-            let mut inputs: Vec<(
-                std::borrow::Cow<'_, str>,
-                ort::session::SessionInputValue<'_>,
-            )> = Vec::with_capacity(5 + self.past_input_names.len());
-            inputs.push((
-                std::borrow::Cow::Borrowed("input_ids"),
-                ort::session::SessionInputValue::from(tensor_i64((1, in_len), next_input.clone())?),
-            ));
-            inputs.push((
-                std::borrow::Cow::Borrowed("attention_mask"),
-                ort::session::SessionInputValue::from(tensor_i64(
-                    (1, attn_len),
-                    vec![1i64; attn_len],
-                )?),
-            ));
-            inputs.push((
-                std::borrow::Cow::Borrowed("position_ids"),
-                ort::session::SessionInputValue::from(tensor_i64(
-                    (1, position_ids.len()),
-                    position_ids,
-                )?),
-            ));
-            inputs.push((
-                std::borrow::Cow::Borrowed("num_logits_to_keep"),
-                ort::session::SessionInputValue::from(scalar_i64(1)?),
-            ));
-            let enc_ref = TensorRef::from_array_view((enc_shape.as_slice(), enc_flat.as_slice()))
-                .map_err(|e| SttError::Inference(format!("cohere enc view: {e}")))?;
-            inputs.push((
-                std::borrow::Cow::Borrowed("encoder_hidden_states"),
-                ort::session::SessionInputValue::from(enc_ref),
-            ));
-            for name in &self.past_input_names {
-                let kv = state
-                    .get(name)
-                    .ok_or_else(|| SttError::Inference(format!("missing KV state for {name}")))?;
-                let value = match kv {
-                    KvTensor::F32(a) => ort::session::SessionInputValue::from(
-                        Tensor::from_array(a.clone())
-                            .map_err(|e| SttError::Inference(format!("kv f32 {name}: {e}")))?,
-                    ),
-                    KvTensor::F16(a) => ort::session::SessionInputValue::from(
-                        Tensor::from_array(a.clone())
-                            .map_err(|e| SttError::Inference(format!("kv f16 {name}: {e}")))?,
-                    ),
-                };
-                inputs.push((std::borrow::Cow::Owned(name.clone()), value));
+        let encoder_out: DynValue = {
+            let mut binding = self
+                .encoder
+                .create_binding()
+                .map_err(|e| SttError::Inference(format!("cohere encoder binding: {e}")))?;
+            binding
+                .bind_input("input_features", &input_features)
+                .map_err(|e| SttError::Inference(format!("bind input_features: {e}")))?;
+            binding
+                .bind_output_to_device("last_hidden_state", &dev_mem)
+                .map_err(|e| SttError::Inference(format!("bind last_hidden_state: {e}")))?;
+            let mut out = self
+                .encoder
+                .run_binding(&binding)
+                .map_err(|e| SttError::Inference(format!("cohere encoder run_binding: {e}")))?;
+            binding
+                .synchronize_outputs()
+                .map_err(|e| SttError::Inference(format!("cohere encoder sync: {e}")))?;
+            out.remove("last_hidden_state").ok_or_else(|| {
+                SttError::Inference("cohere encoder produced no last_hidden_state".into())
+            })?
+        };
+
+        // Resolve the transcription language. Explicit choice → source == target == choice. Auto-detect
+        // → <|unklang|> in the TARGET slot biases the OUTPUT to the model's home language (Arabic on the
+        // arabic checkpoint), so a real auto-detect first SCORES the candidate languages by decode
+        // log-prob (§detect_language) and transcribes source == target == the detected one. With no
+        // usable candidate set we keep <|unklang|>/<|unklang|> — correct on the fully-multilingual
+        // checkpoint, whose unklang target is not biased.
+        let language: Option<String> = match opts.language.as_deref() {
+            Some(l) => Some(l.to_string()),
+            None => {
+                let cands: Vec<String> = opts
+                    .language_candidates
+                    .iter()
+                    .map(|s| s.to_lowercase())
+                    .filter(|s| self.token_to_id.contains_key(&format!("<|{s}|>")))
+                    .collect();
+                if (2..=MAX_DETECT_LANGS).contains(&cands.len()) {
+                    self.detect_language(&encoder_out, &cpu_mem, &dev_mem, &cands)?
+                } else {
+                    None
+                }
             }
+        };
 
-            let outputs = self
-                .decoder
-                .run(inputs)
-                .map_err(|e| SttError::Inference(format!("cohere decoder run: {e}")))?;
-
-            let logits = out_to_f32(&outputs["logits"])?; // fp16 → f32 promote (§6.5)
-            let last = last_step_row(&logits)?;
-            let next = argmax_1d(&last).0 as i64;
-            if next == self.eos_token_id {
-                break;
-            }
-            generated.push(next);
-
-            state = carry_present(
-                &outputs,
-                &self.past_input_names,
-                &self.present_output_names,
-                self.past_is_fp16,
-            )?;
-            next_input = vec![next];
-            attn_len += 1;
-            pos_start = (prompt_len + step) as i64;
-        }
-
+        let prompt = self.build_prompt(language.as_deref(), true)?;
+        let (generated, _) = self.decode(
+            &encoder_out,
+            &cpu_mem,
+            &dev_mem,
+            prompt,
+            self.max_decode_length,
+        )?;
         let text = self.decode_text(&generated);
         Ok(Transcription {
             text,

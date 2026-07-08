@@ -1,11 +1,11 @@
 import { Button as BaseButton } from "@base-ui/react/button";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import {
-	type ChangeEvent,
-	type ComponentPropsWithoutRef,
-	type ReactNode,
-	type Ref,
+import type {
+	ChangeEvent,
+	ComponentPropsWithoutRef,
+	ReactNode,
+	Ref,
 } from "react";
 import { cn } from "@/shared/lib/cn";
 import { TextField } from "./TextField";

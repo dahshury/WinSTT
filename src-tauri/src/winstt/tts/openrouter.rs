@@ -1,9 +1,10 @@
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::types::{
-    ChunkSink, SentenceAudio, SynthesisChunk, TtsEngine, TtsError, TtsResult, VoiceInfo,
-    clamp_cloud_speed,
+    ChunkSink, SentenceAudio, SynthesisChunk, TtsEngine, TtsError, TtsResult, TtsSessionUsage,
+    VoiceInfo, clamp_cloud_speed,
 };
 
 // ---------------------------------------------------------------------------
@@ -131,17 +132,24 @@ pub fn normalize_speech_audio(bytes: Vec<u8>, content_type: &str) -> Vec<u8> {
     bytes
 }
 
+/// Typed OpenRouter error envelope (`{"error":{"message","code"}}`).
+#[derive(Debug, serde::Deserialize)]
+struct OpenRouterErrorBody {
+    error: Option<OpenRouterErrorDetail>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenRouterErrorDetail {
+    message: Option<String>,
+}
+
 /// Human-readable reason for a failed `/audio/speech` call. OpenRouter error
 /// bodies are `{"error":{"message","code"}}`.
 pub fn classify_openrouter_speech_status(status: u16, body: &str) -> String {
-    let msg = serde_json::from_str::<serde_json::Value>(body)
+    let msg = serde_json::from_str::<OpenRouterErrorBody>(body)
         .ok()
-        .and_then(|v| {
-            v.get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(|m| m.as_str())
-                .map(str::to_string)
-        });
+        .and_then(|body| body.error)
+        .and_then(|error| error.message);
     match (status, msg) {
         (401 | 403, _) => "OpenRouter: invalid API key".to_string(),
         (429, _) => "OpenRouter: rate limited".to_string(),
@@ -155,16 +163,34 @@ pub struct OpenRouterTtsEngine {
     api_key: String,
     model_id: String,
     ready: AtomicBool,
+    /// Per-session billing telemetry: characters synthesized + the
+    /// `X-Generation-Id` of every completed `/audio/speech` request. The
+    /// manager drains it via `take_session_usage` after each read-aloud and
+    /// resolves the ids to exact billed cost via `/generation`.
+    usage: Mutex<TtsSessionUsage>,
 }
 
 impl OpenRouterTtsEngine {
     pub fn new(api_key: String, model_id: String) -> Self {
         let ready = AtomicBool::new(!api_key.is_empty());
         Self {
-            client: reqwest::Client::new(),
+            // Shared pooled client (cheap Arc clone) — same pool as the cloud
+            // STT uploads and verify probes that hit openrouter.ai.
+            client: crate::winstt::net::http_client().clone(),
             api_key,
             model_id,
             ready,
+            usage: Mutex::new(TtsSessionUsage::default()),
+        }
+    }
+
+    fn record_usage(&self, characters: i64, generation_id: Option<String>) {
+        let Ok(mut usage) = self.usage.lock() else {
+            return;
+        };
+        usage.characters += characters;
+        if let Some(id) = generation_id.filter(|id| !id.is_empty()) {
+            usage.generation_ids.push(id);
         }
     }
 
@@ -201,6 +227,22 @@ impl OpenRouterTtsEngine {
         speed: f32,
         format: &str,
     ) -> TtsResult<(Vec<u8>, String)> {
+        crate::winstt::cloud_metrics::timed(
+            "openrouter",
+            "tts_speech",
+            self.request_speech_inner(voice, text, speed, format),
+            |e: &TtsError| e.to_string(),
+        )
+        .await
+    }
+
+    async fn request_speech_inner(
+        &self,
+        voice: &str,
+        text: &str,
+        speed: f32,
+        format: &str,
+    ) -> TtsResult<(Vec<u8>, String)> {
         let body = build_openrouter_speech_body(&self.model_id, voice, text, speed, format);
         let resp = self
             .client
@@ -225,11 +267,20 @@ impl OpenRouterTtsEngine {
                 status, &body,
             )));
         }
+        // Billing telemetry: the response carries no usage body (it's raw
+        // audio), but its `X-Generation-Id` header resolves to the exact
+        // billed cost via `/generation` once the session ends.
+        let generation_id = resp
+            .headers()
+            .get("x-generation-id")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
         let bytes = resp
             .bytes()
             .await
             .map_err(|e| TtsError::Cloud(format!("OpenRouter speech read failed: {e}")))?
             .to_vec();
+        self.record_usage(text.chars().count() as i64, generation_id);
         Ok((bytes, content_type))
     }
 
@@ -311,6 +362,12 @@ impl TtsEngine for OpenRouterTtsEngine {
         // The manager/UI consume OpenRouter's model-level supported_voices
         // catalog. Engine trait voices stay empty because they are model-scoped.
         Vec::new()
+    }
+
+    fn take_session_usage(&self) -> Option<TtsSessionUsage> {
+        let mut usage = self.usage.lock().ok()?;
+        let taken = std::mem::take(&mut *usage);
+        if taken.is_empty() { None } else { Some(taken) }
     }
 
     fn is_ready(&self) -> bool {

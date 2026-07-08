@@ -7,13 +7,13 @@ mod autostart;
 mod bootstrap;
 pub mod cli;
 mod clipboard;
+mod clipboard_snapshot;
 mod cloud_llm;
 mod command_auth;
 mod commands;
 mod commands_registry;
 mod helpers;
 mod input;
-mod llm_client;
 mod managers;
 pub mod portable;
 mod settings;
@@ -266,6 +266,7 @@ fn spawn_stt_boot_warmup(
 ) {
     let app_handle_for_stt = app_handle.clone();
     let profile_stt = startup_profile_enabled();
+    startup::log_since_launch("STT boot/warmup thread spawned");
     std::thread::spawn(move || {
         let started = Instant::now();
         // Onboarding owns this launch: stay model-free until the user finishes and
@@ -297,24 +298,25 @@ fn spawn_stt_boot_warmup(
     });
 }
 
-fn initialize_core_logic(
+/// Headless model-runtime boot: manager construction + registration and the
+/// STT/VAD/wakeword warmup spawns. Runs BEFORE the main webview is created —
+/// the reveal gate waits on the STT load+warmup (the long pole by seconds), so
+/// every millisecond spent ahead of `spawn_stt_boot_warmup` delays the window.
+/// Nothing in here touches a window or webview.
+///
+/// Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
+/// The frontend is responsible for calling the `initialize_enigo` command
+/// after onboarding completes. This avoids triggering permission dialogs
+/// on macOS before the user is ready.
+fn initialize_model_runtime(
     app_handle: &AppHandle,
     startup: &mut StartupProfiler,
 ) -> Result<(), String> {
-    // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
-    // The frontend is responsible for calling the `initialize_enigo` command
-    // after onboarding completes. This avoids triggering permission dialogs
-    // on macOS before the user is ready.
-
-    // SINGLE-STORE: seed WinSTT settings defaults + run the one-time migration of
-    // the legacy `settings_store.json` into the embedded `WinsttSettings.core`
-    // BEFORE any manager reads settings. `crate::settings::get_settings` now derives
-    // its `AppSettings` view from `core`, so this must run first or early readers
-    // (e.g. `apply_accelerator_settings`) would see defaults instead of the
-    // migrated user values.
-    winstt::commands::settings::seed_defaults(app_handle);
-    advance_startup_phase(startup, app_handle, "settings defaults seeded");
-    winstt::model_watchdog::install();
+    // The watchdog spawns a detached PowerShell (~250 ms) — that cost sat on
+    // the serial path in front of the STT warmup spawn, so run it off-thread.
+    // It only has to be up before the first Ollama model is TRACKED, which
+    // happens seconds later (LLM warmups start after the STT boot completes).
+    std::thread::spawn(winstt::model_watchdog::install);
     advance_startup_phase(startup, app_handle, "model cleanup watchdog installed");
 
     // Decide up-front whether the first-run wizard owns this launch (same predicate
@@ -423,6 +425,17 @@ fn initialize_core_logic(
     signal_handle::setup_windows_ctrl_handler();
     advance_startup_phase(startup, app_handle, "signal handlers installed");
 
+    Ok(())
+}
+
+/// Desktop-shell integration that needs (or follows) the main window: tray
+/// icon + menu (the initial tray theme is read from the main window), macOS
+/// activation policy, and launch-at-login sync. Split from the model runtime
+/// so the STT warmup spawn no longer waits behind any of it.
+fn initialize_desktop_integration(
+    app_handle: &AppHandle,
+    startup: &mut StartupProfiler,
+) -> Result<(), String> {
     // Apply macOS Accessory policy if starting hidden and tray is available.
     // If the tray icon is disabled, keep the dock icon so the user can reopen.
     #[cfg(target_os = "macos")]
@@ -530,9 +543,72 @@ fn initialize_core_logic(
     Ok(())
 }
 
-fn continue_startup_after_splash_paint(app_handle: AppHandle, cli_args: CliArgs) {
-    let mut startup = StartupProfiler::new();
+/// Settings-store seeding, the cheap headless singletons, then the model
+/// runtime. Runs on the deferred startup thread BEFORE the splash-paint wait
+/// (unless `WINSTT_STARTUP_LEGACY_BOOT`) so the STT load+warmup — the reveal
+/// gate's long pole — overlaps WebView2 startup instead of queueing behind it.
+fn run_headless_boot(
+    app_handle: &AppHandle,
+    cli_args: &CliArgs,
+    startup: &mut StartupProfiler,
+) -> Result<(), String> {
+    // SINGLE-STORE: seed WinSTT settings defaults + run the one-time migration of
+    // the legacy `settings_store.json` into the embedded `WinsttSettings.core`
+    // BEFORE any manager reads settings. `crate::settings::get_settings` now derives
+    // its `AppSettings` view from `core`, so this must run first or early readers
+    // (e.g. `apply_accelerator_settings`) would see defaults instead of the
+    // migrated user values.
+    winstt::commands::settings::seed_defaults(app_handle);
+    advance_startup_phase(startup, app_handle, "settings defaults seeded");
+
+    let mut settings = winstt::commands::settings::read_settings_raw(app_handle).core;
+    if cli_args.debug {
+        settings.debug_mode = true;
+        settings.log_level = settings::LogLevel::Trace;
+    }
+    let tauri_log_level: tauri_plugin_log::LogLevel = settings.log_level.into();
+    let file_log_level: log::Level = tauri_log_level.into();
+    FILE_LOG_LEVEL.store(file_log_level.to_level_filter() as u8, Ordering::Relaxed);
+    app_handle.manage(TranscriptionCoordinator::new(app_handle.clone()));
+    advance_startup_phase(
+        startup,
+        app_handle,
+        "settings loaded and coordinator registered",
+    );
+
+    crate::winstt::audio_device_watcher::install_audio_device_watcher(app_handle);
+    advance_startup_phase(startup, app_handle, "audio device watcher scheduled");
+
+    initialize_model_runtime(app_handle, startup)
+}
+
+/// Shared abort path for a failed headless boot / desktop integration: record
+/// the issue, drop the splash, and exit instead of leaving a window-less app.
+fn abort_startup(app_handle: &AppHandle, err: String) {
+    log::error!("[startup] core logic initialization failed: {err}");
+    crate::winstt::observability::IssueBuilder::new(
+        "startup",
+        "core_initialization",
+        "WinSTT core startup failed",
+    )
+    .detail(err)
+    .severity("error")
+    .record(Some(app_handle));
+    splash::close_splash_window(app_handle);
+    request_app_exit(app_handle, "Core logic initialization failed");
+}
+
+fn continue_startup_after_splash_paint(
+    app_handle: AppHandle,
+    cli_args: CliArgs,
+    mut startup: StartupProfiler,
+    headless_boot: Result<(), String>,
+) {
     advance_startup_phase(&mut startup, &app_handle, "splash painted");
+    if let Err(err) = headless_boot {
+        abort_startup(&app_handle, err);
+        return;
+    }
     wait_for_renderer_dev_server(&mut startup, &app_handle);
 
     // Create main window programmatically so we can set data_directory
@@ -580,37 +656,8 @@ fn continue_startup_after_splash_paint(app_handle: AppHandle, cli_args: CliArgs)
     restore_main_window_position(&app_handle, &main_window);
     advance_startup_phase(&mut startup, &app_handle, "main webview built");
 
-    let mut settings = winstt::commands::settings::read_settings_raw(&app_handle).core;
-    if cli_args.debug {
-        settings.debug_mode = true;
-        settings.log_level = settings::LogLevel::Trace;
-    }
-
-    let tauri_log_level: tauri_plugin_log::LogLevel = settings.log_level.into();
-    let file_log_level: log::Level = tauri_log_level.into();
-    FILE_LOG_LEVEL.store(file_log_level.to_level_filter() as u8, Ordering::Relaxed);
-    app_handle.manage(TranscriptionCoordinator::new(app_handle.clone()));
-    advance_startup_phase(
-        &mut startup,
-        &app_handle,
-        "settings loaded and coordinator registered",
-    );
-
-    crate::winstt::audio_device_watcher::install_audio_device_watcher(&app_handle);
-    advance_startup_phase(&mut startup, &app_handle, "audio device watcher scheduled");
-
-    if let Err(err) = initialize_core_logic(&app_handle, &mut startup) {
-        log::error!("[startup] core logic initialization failed: {err}");
-        crate::winstt::observability::IssueBuilder::new(
-            "startup",
-            "core_initialization",
-            "WinSTT core startup failed",
-        )
-        .detail(err)
-        .severity("error")
-        .record(Some(&app_handle));
-        splash::close_splash_window(&app_handle);
-        request_app_exit(&app_handle, "Core logic initialization failed");
+    if let Err(err) = initialize_desktop_integration(&app_handle, &mut startup) {
+        abort_startup(&app_handle, err);
         return;
     }
     advance_startup_phase(&mut startup, &app_handle, "core logic initialized");
@@ -638,7 +685,7 @@ fn continue_startup_after_splash_paint(app_handle: AppHandle, cli_args: CliArgs)
     let should_show_onboarding = !visibility_settings.general.onboarded;
     let should_hide = visibility_settings.general.start_minimized || cli_args.start_hidden;
     let should_force_show = should_force_show_permissions_window(&app_handle);
-    let tray_available = settings.show_tray_icon && !cli_args.no_tray;
+    let tray_available = visibility_settings.core.show_tray_icon && !cli_args.no_tray;
     let will_show_main =
         !should_show_onboarding && (should_force_show || !should_hide || !tray_available);
     advance_startup_phase(&mut startup, &app_handle, "startup visibility decided");
@@ -686,6 +733,7 @@ fn continue_startup_after_splash_paint(app_handle: AppHandle, cli_args: CliArgs)
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
+    startup::mark_process_start();
     // Detect portable mode before anything else
     portable::init();
     shortcut::announce_packaged_hotkey_owner();
@@ -785,10 +833,28 @@ pub fn run(cli_args: CliArgs) {
             let app_handle_for_startup = app_handle;
             let cli_args_for_startup = cli_args;
             std::thread::spawn(move || {
+                let mut startup = StartupProfiler::new();
+                startup::log_since_launch("deferred startup thread running");
+                // Headless model-runtime boot FIRST, while the splash webview is
+                // still painting: the reveal gate's long pole is the STT
+                // load+warmup, and none of this touches a window — the two now
+                // overlap instead of serializing. The splash-paint wait still
+                // gates the WEBVIEW half (window creation competes with the
+                // splash for the shared WebView2 browser process).
+                let headless_boot = run_headless_boot(
+                    &app_handle_for_startup,
+                    &cli_args_for_startup,
+                    &mut startup,
+                );
                 if should_show_splash {
                     let _ = splash::wait_until_painted();
                 }
-                continue_startup_after_splash_paint(app_handle_for_startup, cli_args_for_startup);
+                continue_startup_after_splash_paint(
+                    app_handle_for_startup,
+                    cli_args_for_startup,
+                    startup,
+                    headless_boot,
+                );
             });
             Ok(())
         })

@@ -798,8 +798,8 @@ mod tests {
         // note on `catalog::canonical_model_id`. An already-int8 id is canonical
         // (idempotent), so the parsed `<n>ms` token is the feed window.
         assert_eq!(
-            listen_native_stream_feed_samples(Some("streaming-nemotron-en-80ms-int8")),
-            samples_for_millis(80)
+            listen_native_stream_feed_samples(Some("streaming-nemotron-3.5-multi-1120ms-int8")),
+            samples_for_millis(1120)
         );
         assert_eq!(
             listen_native_stream_feed_samples(Some("streaming-parakeet-unified-en-560ms-int8")),

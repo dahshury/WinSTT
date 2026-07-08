@@ -4,15 +4,6 @@ description: Download the right WinSTT package for macOS, Linux, or Windows. No 
 ---
 
 import {
-  latestLinuxAppImageUrl,
-  latestLinuxDebUrl,
-  latestLinuxRpmUrl,
-  latestMacosAppleSiliconDmgUrl,
-  latestReleaseUrl,
-  latestWindowsInstallerUrl,
-  latestWindowsPortableZipUrl,
-} from "@/lib/site";
-import {
   DesktopShowcaseCard,
   ShowcaseInstaller,
   ShowcasePortable,
@@ -54,14 +45,10 @@ with a Start-menu shortcut. You can switch between them anytime.
 </Callout>
 
 <Callout type="success" title="Current alpha downloads">
-  All platform packages are published on the
-  <a href={latestReleaseUrl}>current GitHub Release</a>.
+  Use the download menu to get the current package for your desktop OS. WinSTT
+  detects macOS, Linux, or Windows and only lists the matching binaries.
 
-  - macOS Apple Silicon: <a href={latestMacosAppleSiliconDmgUrl}>DMG</a>
-  - Linux x64: <a href={latestLinuxAppImageUrl}>AppImage</a>,{" "}
-    <a href={latestLinuxDebUrl}>deb</a>, or <a href={latestLinuxRpmUrl}>rpm</a>
-  - Windows x64: <a href={latestWindowsInstallerUrl}>WinSTT.exe</a> or{" "}
-    <a href={latestWindowsPortableZipUrl}>portable zip</a>
+  <LatestDownloadMenu />
 </Callout>
 
 <StatGrid>
@@ -101,9 +88,8 @@ with a Start-menu shortcut. You can switch between them anytime.
 
 <StepFlow>
   <Step title="Download the package">
-    Use the direct links above, or open the
-    <a href={latestReleaseUrl}>current alpha GitHub Release</a> and pick the asset
-    for your platform.
+    Use the OS-aware download menu above and choose the package type that fits
+    how you want to run WinSTT.
   </Step>
   <Step title="Launch the app">
     On macOS, open the DMG and launch WinSTT. On Linux, run the AppImage or install

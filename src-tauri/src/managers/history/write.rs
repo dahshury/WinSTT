@@ -12,7 +12,9 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use tauri_specta::Event;
 
-use super::{HistoryEntry, HistoryManager, HistoryUpdatePayload, TransformHistoryDbEntry};
+use super::{
+    HistoryEntry, HistoryManager, HistoryUpdatePayload, TransformHistoryDbEntry, TtsHistoryDbEntry,
+};
 
 impl HistoryManager {
     /// Save a new history entry to the database.
@@ -33,6 +35,9 @@ impl HistoryManager {
         history_tag: Option<String>,
         privacy_markers_json: Option<String>,
         stt_model: Option<String>,
+        stt_processing_ms: Option<i64>,
+        stt_cost_usd: Option<f64>,
+        stt_cost_is_estimate: bool,
     ) -> Result<HistoryEntry> {
         let timestamp = Utc::now().timestamp();
         let title = self.format_timestamp_title(timestamp);
@@ -52,8 +57,11 @@ impl HistoryManager {
                 dictionary_fixes,
                 history_tag,
                 privacy_markers_json,
-                stt_model
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                stt_model,
+                stt_processing_ms,
+                stt_cost_usd,
+                stt_cost_is_estimate
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 &file_name,
                 timestamp,
@@ -68,6 +76,9 @@ impl HistoryManager {
                 &history_tag,
                 &privacy_markers_json,
                 &stt_model,
+                stt_processing_ms,
+                stt_cost_usd,
+                stt_cost_is_estimate,
             ],
         )?;
 
@@ -86,6 +97,9 @@ impl HistoryManager {
             history_tag,
             privacy_markers_json,
             stt_model,
+            stt_processing_ms,
+            stt_cost_usd,
+            stt_cost_is_estimate,
         };
 
         debug!("Saved history entry with id {}", entry.id);
@@ -151,6 +165,108 @@ impl HistoryManager {
         Ok(entry)
     }
 
+    /// Save a text-to-speech read-aloud run. `model` is the engine id
+    /// (`<provider>:<id>` for cloud, the local model key otherwise); `cost_usd`
+    /// is `None` for local synthesis and unresolved cloud costs.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "TTS history persistence mirrors the row fields written to SQLite"
+    )]
+    pub fn save_tts_entry(
+        &self,
+        text: String,
+        model: String,
+        voice: Option<String>,
+        characters: i64,
+        processing_ms: Option<i64>,
+        cost_usd: Option<f64>,
+        cost_is_estimate: bool,
+    ) -> Result<TtsHistoryDbEntry> {
+        let timestamp = Utc::now().timestamp();
+        let title = self.format_timestamp_title(timestamp);
+
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO tts_history (
+                timestamp,
+                title,
+                text,
+                model,
+                voice,
+                characters,
+                processing_ms,
+                cost_usd,
+                cost_is_estimate
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                timestamp,
+                &title,
+                &text,
+                &model,
+                &voice,
+                characters,
+                processing_ms,
+                cost_usd,
+                cost_is_estimate,
+            ],
+        )?;
+
+        let entry = TtsHistoryDbEntry {
+            id: conn.last_insert_rowid(),
+            timestamp,
+            title,
+            text,
+            model,
+            voice,
+            characters,
+            processing_ms,
+            cost_usd,
+            cost_is_estimate,
+        };
+
+        debug!("Saved TTS history entry with id {}", entry.id);
+
+        self.cleanup_old_entries()?;
+
+        Ok(entry)
+    }
+
+    /// Fill in a TTS run's billed cost once the provider's generation records
+    /// become queryable (OpenRouter ingests them with a lag, sometimes
+    /// minutes). Returns the refreshed row for the update event.
+    pub fn update_tts_entry_cost(
+        &self,
+        id: i64,
+        cost_usd: f64,
+        cost_is_estimate: bool,
+    ) -> Result<TtsHistoryDbEntry> {
+        let conn = self.get_connection()?;
+        let updated = conn.execute(
+            "UPDATE tts_history SET cost_usd = ?1, cost_is_estimate = ?2 WHERE id = ?3",
+            params![cost_usd, cost_is_estimate, id],
+        )?;
+        if updated == 0 {
+            return Err(anyhow!("TTS history entry {} not found", id));
+        }
+        let entry = conn.query_row(
+            "SELECT id, timestamp, title, text, model, voice, characters, processing_ms, cost_usd, cost_is_estimate
+             FROM tts_history WHERE id = ?1",
+            params![id],
+            Self::map_tts_history_entry,
+        )?;
+        debug!("Updated TTS history entry {} cost", id);
+        Ok(entry)
+    }
+
+    pub fn delete_tts_entry(&self, id: i64) -> Result<bool> {
+        let conn = self.get_connection()?;
+        let deleted = conn.execute("DELETE FROM tts_history WHERE id = ?1", params![id])?;
+        if deleted > 0 {
+            debug!("Deleted TTS history entry with id: {}", id);
+        }
+        Ok(deleted > 0)
+    }
+
     /// Update an existing history entry with new transcription results (used by retry).
     #[expect(
         clippy::too_many_arguments,
@@ -196,7 +312,7 @@ impl HistoryManager {
 
         let entry = conn
             .query_row(
-                "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model
+                "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate
                  FROM transcription_history WHERE id = ?1",
                 params![id],
                 Self::map_history_entry,

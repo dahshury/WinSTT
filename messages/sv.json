@@ -251,7 +251,46 @@
     "retentionDays3": "Efter 3 dagar",
     "retentionWeeks2": "Efter 2 veckor",
     "retentionMonths3": "Efter 3 månader",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "Transkriberingshistorik",
+    "enabledTooltip": "När detta är på registrerar WinSTT dina transkriberingar, omvandlingar och uppläsningar så att den här panelen kan visa statistik och kostnader. Stäng av för att sluta samla in nya data.",
+    "disabledHint": "Historiken är av — WinSTT registrerar inga nya aktiviteter. Befintliga data behålls tills du raderar dem.",
+    "deleteAllTitle": "Radera all historik?",
+    "deleteAllDescription": "Alla registrerade transkriberingar, omvandlingar, uppläsningar och sparade inspelningar tas bort permanent. Detta kan inte ångras.",
+    "deleteAllButton": "Radera alla data",
+    "clearTtsButton": "Rensa uppläsningar",
+    "clearTtsTitle": "Rensa all uppläsningshistorik?",
+    "clearTtsDescription": "Alla sparade text-till-tal-körningar och ljud tas bort. Detta kan inte ångras.",
+    "combinedTableTitle": "Historik",
+    "filterDateRange": "Datumintervall",
+    "filterAllTime": "All tid",
+    "heatmapEarlier": "Tidigare",
+    "heatmapLater": "Senare",
+    "spendingTitle": "Kostnader",
+    "spendingTotalLabel": "Total kostnad",
+    "spendingByModalityTitle": "Kostnad per typ",
+    "spendingByProviderTitle": "Kostnad per leverantör",
+    "spendingByModelTitle": "Kostnad per modell",
+    "spendingByMakerTitle": "Kostnad per tillverkare",
+    "spendingEstimatedHint": "Vissa siffror är uppskattade där exakt prissättning inte rapporterades.",
+    "costSpeechToText": "Tal-till-text",
+    "costTextToSpeech": "Text-till-tal",
+    "costLanguageModel": "Språkmodell",
+    "colCharacters": "Tecken",
+    "cloudLabel": "Moln",
+    "colCost": "Molnkostnad",
+    "costEstimated": "Uppskattad",
+    "costTotal": "Totalt",
+    "kindSpeechToText": "Tal-till-text",
+    "kindTextToSpeech": "Text-till-tal",
+    "durationLlmProcessing": "AI-bearbetning",
+    "durationNotRecorded": "Ej registrerad",
+    "durationNotRun": "Ej körd",
+    "durationRecording": "Inspelning",
+    "durationSpeechToText": "Transkribering",
+    "durationTotalProcessing": "Bearbetningstid",
+    "colTtsModel": "Röstmodell",
+    "colVoice": "Röst"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "Skärm-OCR (reserv)",
+    "contextScreenOcrCaption": "Läs text på skärmen nära markören som extra kontext",
+    "contextScreenOcrTooltip": "När kontextmedvetenhet inte kan läsa det fokuserade fältet direkt använder WinSTT en reservlösning som läser (OCR) skärmområdet runt markören för att fånga upp närliggande text. Det är långsammare och mindre exakt än en direkt fältläsning – stäng av det för att hoppa över reservlösningen."
   },
   "model": {
     "initialPrompt": "Inledande prompt",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "Sekunder av tystnad för att starta tidigt",
     "earlyTranscriptionTooltip": "Börja transkribera innan du har slutat tala helt, utlöst efter detta antal sekunder av tystnad. Minskar fördröjningen mellan tal och att se den slutliga texten. Sätt till 0 för att inaktivera.",
     "realtimeModel": "Realtidsmodell",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "Realtidsmodell",
     "realtimeModelCaption": "Mindre modell för live-förhandsgranskning",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "Minsta tid mellan live-transkriberings­uppdateringar. Lägre värden ger mer frekventa uppdateringar men använder mer processorkraft. Öka om du upplever hackighet eller hög CPU-användning under diktering.",
     "llm": "Stor språkmodell",
     "deviceAutoLabel": "Auto",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "Stäng av realtidstranskribering ord för ord?",
+    "realtimeOffWordByWordDescription": "Den här modellen strömmar transkriberingen ord för ord medan du talar. Om du stänger av realtid byts den till att transkribera först när du slutar tala.",
+    "realtimeOffWordByWordConfirm": "Stäng av"
   },
   "audio": {
     "inputDevice": "Inmatningsenhet",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "Omedelbart",
     "microphoneReleaseSec30": "30 sekunder",
     "microphoneReleaseMin1": "1 minut",
-    "microphoneReleaseMin5": "5 minuter"
+    "microphoneReleaseMin5": "5 minuter",
+    "devicePriorityHandle": "Dra för att ändra prioritetsordning"
   },
   "quality": {
     "enableRealtime": "Aktivera realtid",
@@ -717,7 +766,8 @@
     "waiting": "Väntar på tal...",
     "serverOffline": "Servern offline",
     "noAudioDetected": "(inget ljud identifierat)",
-    "transcriptionFailed": "(transkribering misslyckades)"
+    "transcriptionFailed": "(transkribering misslyckades)",
+    "offlineNoLocalModel": "Ingen internet · ingen lokal modell"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "Installera ändå",
     "unfitSelectTitle": "Använd den här stora modellen?",
     "unfitSelectDescription": "\"{model}\" är större än vad din hårdvara bekvämt kan köra (~{required} behövs, {available} tillgängligt). Den kan köras mycket långsamt eller misslyckas med att läsa in. Använd den ändå?",
-    "unfitSelectAnyway": "Använd ändå"
+    "unfitSelectAnyway": "Använd ändå",
+    "dictionaryAutoAddLiteModel": "Inte tillgängligt på lite-modeller – byt till en större modell för att automatiskt lägga till ordlistekorrigeringar."
   },
   "tts": {
     "title": "Text-till-tal",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "Lägg till och verifiera en ElevenLabs API-nyckel i Integrationer för att använda molnröster.",
     "cloudLoadingVoices": "Läser in röster…",
     "cloudNoVoices": "Inga röster hittades för det här ElevenLabs-kontot.",
-    "cloudError": "Kunde inte läsa in ElevenLabs-röster."
+    "cloudError": "Kunde inte läsa in ElevenLabs-röster.",
+    "voiceDesignLabel": "Röstbeskrivning",
+    "voiceDesignTooltip": "Beskriv rösten du vill ha i ord – klangfärg, ålder, accent, känsla – så syntetiserar modellen en matchande röst i stället för att välja från en förinställd röstbank.",
+    "voiceDesignButtonPlaceholder": "Beskriv röst",
+    "voiceDesignDialogTitle": "Beskriv röst",
+    "voiceDesignDialogDescription": "Beskriv rösten i en mening eller två. Lämna tomt för att använda modellens standardröst.",
+    "voiceDesignPromptLabel": "Röstbeskrivning",
+    "voiceDesignPromptPlaceholder": "t.ex. en varm berättarröst med låg tonhöjd och lätt brittisk accent",
+    "voiceDesignPromptEmptyHint": "Lämna tomt för att falla tillbaka på modellens inbyggda röst.",
+    "voiceDesignCancel": "Avbryt",
+    "voiceDesignSave": "Spara",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "Något gick fel",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "Hastighetsbegränsad av {provider}",
     "toastRateLimitedRetry": "Försök igen om {seconds}s",
     "toastProviderError": "{provider} STT-fel: {message}",
-    "openIntegrations": "Öppna integrationer"
+    "openIntegrations": "Öppna integrationer",
+    "toastTtsOfflineNoLocal": "Ingen internet och ingen lokal röst installerad — uppläsning är inte tillgänglig."
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "Lite",
+    "liteTierTip": "En mindre och snabbare variant med lägre noggrannhet – bäst för snabba uppgifter på begränsad hårdvara."
   },
   "dataGrid": {
     "addRow": "Add row",

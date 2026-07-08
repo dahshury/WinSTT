@@ -7,14 +7,14 @@ WinSTT runs four global hotkeys that work even when its window isn't focused: on
 
 ## Where the controls live
 
-The hotkey recorder UI sits in the **Audio** tab, under the input-device picker — that's where you record or rebind the push-to-talk key and read the live shortcuts legend. The re-paste and read-aloud bindings are recorded in the same recorder; the transform binding is set on the **LLM** tab next to the composed transform.
+The hotkey recorder UI sits in the **Shortcuts** tab — that's where you record or rebind the push-to-talk key and read the live shortcuts legend. The re-paste, read-aloud, and transform bindings are recorded in the same recorder, alongside push-to-talk.
 
 <Screenshot
   src="sec-audio-hotkeys"
-  alt="The Hotkey Configuration section of the Audio tab: the push-to-talk recorder with its current combo, and the live shortcuts legend beneath it."
+  alt="The Hotkey Configuration section of the Shortcuts tab: the push-to-talk recorder with its current combo, and the live shortcuts legend beneath it."
   chrome="card"
-  label="Audio tab — hotkey recorder"
-  caption="The push-to-talk recorder and the live shortcuts legend, on the Audio tab."
+  label="Shortcuts tab — hotkey recorder"
+  caption="The push-to-talk recorder and the live shortcuts legend, on the Shortcuts tab."
 />
 
 Every binding is a uiohook-style combo string — physical-key tokens joined with `+`, with left/right-specific modifiers (`LCtrl`, `RCtrl`, `LShift`, `RShift`, `LAlt`, `RAlt`, `LMeta`). Because each token names a specific physical key, picking `LMeta` over a generic `Meta` cuts down on conflicts.
@@ -107,7 +107,8 @@ Every binding is a uiohook-style combo string — physical-key tokens joined wit
   (the feature is off until you bind it). A suggested combo is{" "}
   <Combo keys="LCtrl+LShift+T" />. Single-shot per hold: it fires once, then
   re-arms only after you release a key, so auto-repeat can't run the LLM dozens
-  of times. Set it on the **LLM** tab next to the composed transform.
+  of times. Record it on the **Shortcuts** tab alongside the other global
+  hotkeys.
 </SettingRow>
 
 ## During dictation
@@ -130,7 +131,7 @@ Two extra actions are available while dictating. The mode cycle uses the push-to
 />
 
 Hold the hotkey and tap <Kbd>↑</Kbd> to advance one link in the mode chain
-(<ModeBadge mode="ptt" /> → <ModeBadge mode="toggle" /> → <ModeBadge mode="listen" /> → <ModeBadge mode="wakeword" /> → back to <ModeBadge mode="ptt" />). Press <Kbd>Escape</Kbd> to cancel whatever is in flight — useful when you misspoke and want to abandon the result before it pastes. The shortcuts legend on the Audio tab highlights the mode you're currently in and shows these two rows (plus the two TTS rows when TTS is enabled).
+(<ModeBadge mode="ptt" /> → <ModeBadge mode="toggle" /> → <ModeBadge mode="listen" /> → <ModeBadge mode="wakeword" /> → back to <ModeBadge mode="ptt" />). Press <Kbd>Escape</Kbd> to cancel whatever is in flight — useful when you misspoke and want to abandon the result before it pastes. The shortcuts legend on the Shortcuts tab highlights the mode you're currently in and shows these two rows (plus the two TTS rows when TTS is enabled).
 
 ## Combo format
 

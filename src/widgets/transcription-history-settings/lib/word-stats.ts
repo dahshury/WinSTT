@@ -88,11 +88,11 @@ export function dayRangeBounds(
  * keeps "selection in progress" (only `from` set) from collapsing the table
  * mid-pick.
  */
-export function filterEntriesByDateRange(
-	entries: TranscriptionHistoryEntry[],
+export function filterEntriesByDateRange<TEntry extends { timestamp: number }>(
+	entries: TEntry[],
 	from: Date | null,
 	to: Date | null,
-): TranscriptionHistoryEntry[] {
+): TEntry[] {
 	const bounds = dayRangeBounds(from, to);
 	if (bounds === null) {
 		return entries;
@@ -102,15 +102,15 @@ export function filterEntriesByDateRange(
 }
 
 const rangeCache = new WeakMap<
-	TranscriptionHistoryEntry[],
-	Map<string, TranscriptionHistoryEntry[]>
+	{ timestamp: number }[],
+	Map<string, { timestamp: number }[]>
 >();
 
-function cachedDateRange(
-	entries: TranscriptionHistoryEntry[],
+function cachedDateRange<TEntry extends { timestamp: number }>(
+	entries: TEntry[],
 	fromTs: number,
 	toTs: number,
-): TranscriptionHistoryEntry[] {
+): TEntry[] {
 	const key = `${fromTs}:${toTs}`;
 	let byRange = rangeCache.get(entries);
 	if (!byRange) {
@@ -119,7 +119,7 @@ function cachedDateRange(
 	}
 	const cached = byRange.get(key);
 	if (cached) {
-		return cached;
+		return cached as TEntry[];
 	}
 	const filtered = entries.filter(
 		(e) => e.timestamp >= fromTs && e.timestamp <= toTs,
@@ -384,6 +384,48 @@ export function formatProcessingDuration(ms: number): string | null {
  * numbers above. Returns `null` for non-positive input so the caller drops the
  * chip (the provider reported no usable token count).
  */
+/**
+ * Compact USD formatter for the history cost chips. Typical per-run cloud
+ * costs are fractions of a cent, so sub-cent values keep four decimals
+ * ($0.0002); larger values tighten progressively toward whole cents. Values
+ * below a hundredth of a cent floor at "<$0.0001" instead of rounding to a
+ * misleading zero. Returns `null` for non-finite / negative input.
+ */
+export function formatUsd(value: number): string | null {
+	if (!Number.isFinite(value) || value < 0) {
+		return null;
+	}
+	if (value === 0) {
+		return "$0.00";
+	}
+	if (value < 0.0001) {
+		return "<$0.0001";
+	}
+	const digits = value < 0.01 ? 4 : value < 1 ? 3 : 2;
+	return `$${value.toFixed(digits)}`;
+}
+
+/**
+ * Even tighter USD formatter for the footer cost chip, which must fit on the
+ * single-line meta strip. Trims one more decimal than {@link formatUsd} (three
+ * places sub-cent instead of four) and floors tiny values at "<$0.001" — the
+ * chip is an at-a-glance approximation; the exact per-stage figures live in its
+ * hover tooltip. Returns `null` for non-finite / negative input.
+ */
+export function formatUsdCompact(value: number): string | null {
+	if (!Number.isFinite(value) || value < 0) {
+		return null;
+	}
+	if (value === 0) {
+		return "$0";
+	}
+	if (value < 0.001) {
+		return "<$0.001";
+	}
+	const digits = value < 0.01 ? 3 : value < 1 ? 2 : value < 100 ? 2 : 0;
+	return `$${value.toFixed(digits)}`;
+}
+
 export function formatTokensPerSecond(value: number): string | null {
 	if (!Number.isFinite(value) || value <= 0) {
 		return null;

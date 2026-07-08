@@ -1,11 +1,12 @@
-import * as React from "react";
+import type * as React from "react";
 import { useComposedRefs } from "@/shared/ui/data-grid/lib/compose-refs";
 import { getCellKey } from "@/shared/ui/data-grid/lib/data-grid";
 import { cn } from "@/shared/lib/cn";
 import type { DataGridCellProps } from "@/shared/ui/data-grid/types";
 
 interface DataGridCellWrapperProps<TData>
-	extends DataGridCellProps<TData>, React.ComponentProps<"div"> {}
+	extends DataGridCellProps<TData>,
+		React.ComponentProps<"div"> {}
 
 export function DataGridCellWrapper<TData>({
 	tableMeta,
@@ -30,7 +31,9 @@ export function DataGridCellWrapper<TData>({
 	const cellMapRef = tableMeta?.cellMapRef;
 
 	const onCellChange = (node: HTMLDivElement | null) => {
-		if (!cellMapRef) return;
+		if (!cellMapRef) {
+			return;
+		}
 
 		const cellKey = getCellKey(rowIndex, columnId);
 
@@ -71,7 +74,9 @@ export function DataGridCellWrapper<TData>({
 	const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
 		onKeyDownProp?.(event);
 
-		if (event.defaultPrevented) return;
+		if (event.defaultPrevented) {
+			return;
+		}
 
 		if (
 			event.key === "ArrowUp" ||

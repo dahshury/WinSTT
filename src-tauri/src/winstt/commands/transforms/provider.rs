@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tauri::AppHandle;
 
 use crate::winstt::llm::{self, ThinkingEffort as LlmEffort};
-use crate::winstt::managers::LlmManager;
+use crate::winstt::managers::{LlmManager, LlmRunUsage};
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::{LlmProvider, WinsttSettings};
 
@@ -18,11 +18,12 @@ use super::convert::openrouter_options;
 // ── provider routing (mirrors llm.rs::process_transform → runProcessText) ───────
 
 /// Run the composed transforms `system_prompt` over `text` on the feature's
-/// CONFIGURED provider. Returns the transformed text on success, or `Err(reason)`
-/// on a hard provider failure (the caller surfaces it via `transforms:failed`).
+/// CONFIGURED provider. Returns the transformed text (plus the cloud usage/cost
+/// telemetry when the provider reported it) on success, or `Err(reason)` on a
+/// hard provider failure (the caller surfaces it via `transforms:failed`).
 ///
 /// Routing mirrors `runProcessText` in llm.ts exactly:
-///   - Apple Intelligence → soft-fail to the original text in this command path.
+///   - Apple Intelligence → the native on-device Swift bridge.
 ///   - OpenRouter → OpenAI-compatible structured-output chat with fallback model.
 ///   - Ollama → the all-Rust streaming `/api/chat` path.
 #[expect(
@@ -38,11 +39,26 @@ pub(super) async fn run_transform_provider(
     text: &str,
     effort: LlmEffort,
     model: &str,
-) -> Result<String, String> {
+) -> Result<(String, Option<LlmRunUsage>), String> {
     match settings.llm.transforms.base.provider {
-        // Apple Intelligence soft-fails here until the native provider is wired
-        // into the unified transform pipeline.
-        LlmProvider::AppleIntelligence => Ok(text.to_string()),
+        LlmProvider::AppleIntelligence => crate::winstt::commands::llm::apple_intelligence_chat(
+            system_prompt,
+            user_prompt,
+            settings.llm.transforms.base.max_output_tokens,
+        )
+        .map(|answer| (answer, None))
+        .inspect_err(|err| {
+            record_transform_issue(
+                app,
+                "apple_intelligence",
+                "Apple Intelligence transform failed",
+                err,
+                "apple_intelligence",
+                "",
+                &mgr.next_request_id(),
+                &[],
+            );
+        }),
         LlmProvider::Openrouter => {
             let api_key = settings.llm.openrouter_api_key.clone();
             let selection = settings.llm.transforms.base.openrouter_model.clone();
@@ -56,7 +72,7 @@ pub(super) async fn run_transform_provider(
             // OpenRouter's structured-output path already returns the fallback
             // text on a total failure (never throws across the boundary), so the
             // pipeline can paste-replace with the original on a dead provider.
-            Ok(run_openrouter_with_fallback(
+            let answer = run_openrouter_with_fallback(
                 app,
                 mgr,
                 &api_key,
@@ -68,7 +84,9 @@ pub(super) async fn run_transform_provider(
                 &request_id,
                 openrouter_options(&settings.llm.transforms.base),
             )
-            .await)
+            .await;
+            let usage = mgr.take_llm_usage(&request_id);
+            Ok((answer, usage))
         }
         LlmProvider::Ollama => {
             let endpoint = settings.llm.endpoint.clone();
@@ -85,7 +103,7 @@ pub(super) async fn run_transform_provider(
                 )
                 .await
             {
-                Ok(answer) => Ok(answer),
+                Ok(answer) => Ok((answer, None)),
                 Err(err) => {
                     record_transform_issue(
                         app,

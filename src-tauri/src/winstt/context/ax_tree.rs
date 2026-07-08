@@ -6,12 +6,14 @@ use crate::helpers::regex::static_regex;
 static JSON_TAG_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"<[^>]+>"));
 static JSON_ROLE_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"^</?\s*([a-z][a-z0-9]*)"));
 static JSON_NAME_ATTR_RE: Lazy<Regex> = Lazy::new(|| static_regex(r#"\bname="([^"]*)""#));
-static JSON_FOCUS_ATTR_RE: Lazy<Regex> = Lazy::new(|| static_regex(r#"\bfocus="1""#));
+
+// The `focus="1"` attribute is parsed off the wire by the sidecar but no longer
+// consumed here: the generic formatter (report R2) prunes by role only and never
+// scopes to the focus path, so the node no longer carries a `focused` flag.
 
 #[derive(Debug, Clone)]
 pub(super) struct JsonAxNode {
     pub(super) children: Vec<usize>,
-    pub(super) focused: bool,
     pub(super) name: String,
     pub(super) role: String,
     pub(super) text: String,
@@ -27,7 +29,6 @@ impl JsonAxTree {
         Self {
             nodes: vec![JsonAxNode {
                 children: Vec::new(),
-                focused: false,
                 name: String::new(),
                 role: "root".to_string(),
                 text: String::new(),
@@ -44,7 +45,6 @@ impl JsonAxTree {
 }
 
 struct JsonParsedTag {
-    focused: bool,
     is_close: bool,
     name: String,
     role: String,
@@ -84,7 +84,6 @@ fn json_classify_tag(tag: &str) -> Option<JsonParsedTag> {
         .map(|m| json_unescape_entities(m.as_str()))
         .unwrap_or_default();
     Some(JsonParsedTag {
-        focused: JSON_FOCUS_ATTR_RE.is_match(tag),
         is_close: tag.starts_with("</"),
         name,
         role,
@@ -107,7 +106,6 @@ fn json_apply_tag(tree: &mut JsonAxTree, stack: &mut Vec<usize>, tag: &str) {
         parent,
         JsonAxNode {
             children: Vec::new(),
-            focused: parsed.focused,
             name: parsed.name,
             role: parsed.role,
             text: String::new(),

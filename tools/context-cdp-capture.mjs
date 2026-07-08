@@ -42,11 +42,29 @@ const execFileAsync = promisify(execFile);
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = process.env.CDP_PORT ?? "9222";
-const CONTEXT_EXE = path.join(REPO, "src-tauri", "target", "debug", "winstt_context.exe");
-const SMOKE_EXE = path.join(REPO, "src-tauri", "target", "debug", "context_prompt_smoke.exe");
+const CONTEXT_EXE = path.join(
+	REPO,
+	"src-tauri",
+	"target",
+	"debug",
+	"winstt_context.exe",
+);
+const SMOKE_EXE = path.join(
+	REPO,
+	"src-tauri",
+	"target",
+	"debug",
+	"examples",
+	"context_prompt_smoke.exe",
+);
 const RESOLVE_HWND = path.join(REPO, "tools", "windows", "resolve-hwnd.ps1");
 const ENSURE_PS1 = path.join(REPO, "tools", "windows", "chrome-cdp-ensure.ps1");
-const FOREGROUND_PS1 = path.join(REPO, "tools", "windows", "foreground-hwnd.ps1");
+const FOREGROUND_PS1 = path.join(
+	REPO,
+	"tools",
+	"windows",
+	"foreground-hwnd.ps1",
+);
 const OUT = path.join(REPO, "artifacts", "context-cdp");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -551,7 +569,8 @@ async function cdpComposerRect(cdp, session, sel, contextId) {
 		const r = await evalIn(cdp, session, rectExpr, contextId);
 		rect = r?.result?.value ?? null;
 	} catch {}
-	if (process.env.FG_DEBUG) process.stderr.write(`    [composer] rect=${JSON.stringify(rect)}\n`);
+	if (process.env.FG_DEBUG)
+		process.stderr.write(`    [composer] rect=${JSON.stringify(rect)}\n`);
 	return rect;
 }
 
@@ -646,7 +665,13 @@ function hostOf(url) {
 	}
 }
 
-async function evalIn(cdp, session, expression, contextId, awaitPromise = false) {
+async function evalIn(
+	cdp,
+	session,
+	expression,
+	contextId,
+	awaitPromise = false,
+) {
 	const params = { expression, returnByValue: true, awaitPromise };
 	if (contextId != null) params.contextId = contextId;
 	return cdp.send("Runtime.evaluate", params, session);
@@ -661,15 +686,21 @@ async function resolvePageContext(cdp, session, host) {
 	// Retry: the real-origin context may not exist yet on a slow boot, so replay
 	// contexts a few times until location confirms we're on the app host.
 	for (let attempt = 0; attempt < 8; attempt++) {
-		const loc = await evalIn(cdp, session, "location.href", ctxId).catch(() => null);
+		const loc = await evalIn(cdp, session, "location.href", ctxId).catch(
+			() => null,
+		);
 		if ((loc?.result?.value || "").includes(host)) return ctxId; // context is correct
 
 		// Stale about:blank context pinned — replay contexts and grab the real one.
 		let found = null;
 		const cb = (m) => {
-			if (m.sessionId === session && m.method === "Runtime.executionContextCreated") {
+			if (
+				m.sessionId === session &&
+				m.method === "Runtime.executionContextCreated"
+			) {
 				const c = m.params.context;
-				if (c.auxData?.isDefault && (c.origin || "").includes(host)) found = c.id;
+				if (c.auxData?.isDefault && (c.origin || "").includes(host))
+					found = c.id;
 			}
 		};
 		cdp.on(cb);
@@ -679,7 +710,9 @@ async function resolvePageContext(cdp, session, host) {
 		cdp.listeners = cdp.listeners.filter((l) => l !== cb);
 		if (found != null) {
 			ctxId = found;
-			const loc1 = await evalIn(cdp, session, "location.href", ctxId).catch(() => null);
+			const loc1 = await evalIn(cdp, session, "location.href", ctxId).catch(
+				() => null,
+			);
 			if ((loc1?.result?.value || "").includes(host)) return ctxId;
 		}
 		// True about:blank zombie (no real-origin context exists): the SPA's
@@ -688,7 +721,9 @@ async function resolvePageContext(cdp, session, host) {
 		if (attempt >= 1) {
 			ctxId = null;
 			await clearStuckServiceWorkers(cdp).catch(() => {});
-			await cdp.send("Page.reload", { ignoreCache: true }, session).catch(() => {});
+			await cdp
+				.send("Page.reload", { ignoreCache: true }, session)
+				.catch(() => {});
 			await sleep(3000);
 		}
 		await sleep(600);
@@ -716,9 +751,12 @@ async function clearStuckServiceWorkers(cdp) {
 			const attached = cdp.waitEvent(
 				"Target.attachedToTarget",
 				(m) => m.params.targetInfo.targetId === sw.id,
-				5000
+				5000,
 			);
-			await cdp.send("Target.attachToTarget", { targetId: sw.id, flatten: true });
+			await cdp.send("Target.attachToTarget", {
+				targetId: sw.id,
+				flatten: true,
+			});
 			const ev = await attached;
 			const session = ev?.params.sessionId;
 			if (session) {
@@ -726,18 +764,20 @@ async function clearStuckServiceWorkers(cdp) {
 					.send(
 						"Runtime.evaluate",
 						{
-							expression: "self.registration ? self.registration.unregister() : 0",
+							expression:
+								"self.registration ? self.registration.unregister() : 0",
 							awaitPromise: true,
 							returnByValue: true,
 						},
-						session
+						session,
 					)
 					.catch(() => {});
 			}
 		} catch {}
 		await cdp.send("Target.closeTarget", { targetId: sw.id }).catch(() => {});
 	}
-	if (sws.length) process.stdout.write(`  (cleared ${sws.length} stuck service worker(s))\n`);
+	if (sws.length)
+		process.stdout.write(`  (cleared ${sws.length} stuck service worker(s))\n`);
 }
 
 async function runExe(exe, args) {
@@ -750,7 +790,9 @@ async function runExe(exe, args) {
 		});
 		return stdout;
 	} catch (e) {
-		process.stderr.write(`  ! ${path.basename(exe)} ${args.join(" ")} failed: ${e.message}\n`);
+		process.stderr.write(
+			`  ! ${path.basename(exe)} ${args.join(" ")} failed: ${e.message}\n`,
+		);
 		return e.stdout || "";
 	}
 }
@@ -803,7 +845,12 @@ async function foregroundAndClickComposer(hwnd, rect) {
 	// keeps the CDP layout size and the CSS point maps 1:1 onto the widget client area
 	// (verified: the absolute point lands the composer; a fraction-of-window-rect does not).
 	if (rect && Number.isFinite(rect.x) && Number.isFinite(rect.y)) {
-		args.push("-ClickX", String(Math.round(rect.x)), "-ClickY", String(Math.round(rect.y)));
+		args.push(
+			"-ClickX",
+			String(Math.round(rect.x)),
+			"-ClickY",
+			String(Math.round(rect.y)),
+		);
 	}
 	const out = await runExe("powershell.exe", args);
 	const v = out.trim().split(/\r?\n/).pop()?.trim() ?? "";
@@ -846,11 +893,14 @@ async function captureApp(cdp, id) {
 	process.stdout.write(`\n▶ ${id} — ${app.url}\n`);
 
 	// Open in a new window.
-	const { targetId } = await cdp.send("Target.createTarget", { url: app.url, newWindow: true });
+	const { targetId } = await cdp.send("Target.createTarget", {
+		url: app.url,
+		newWindow: true,
+	});
 	const attached = cdp.waitEvent(
 		"Target.attachedToTarget",
 		(m) => m.params.targetInfo.targetId === targetId,
-		8000
+		8000,
 	);
 	await cdp.send("Target.attachToTarget", { targetId, flatten: true });
 	const ev = await attached;
@@ -870,12 +920,14 @@ async function captureApp(cdp, id) {
 	// Pin the correct execution context (recovers the about:blank race) — every
 	// evaluate below threads this contextId so recipes never run in a dead world.
 	const ctxId = await resolvePageContext(cdp, session, hostOf(app.url));
-	if (ctxId != null) process.stdout.write(`  (recovered page context #${ctxId})\n`);
+	if (ctxId != null)
+		process.stdout.write(`  (recovered page context #${ctxId})\n`);
 
 	let focusResult = null;
 	try {
 		const r = await evalIn(cdp, session, app.focus, ctxId, true);
-		focusResult = r?.result?.value ?? r?.exceptionDetails?.exception?.description ?? null;
+		focusResult =
+			r?.result?.value ?? r?.exceptionDetails?.exception?.description ?? null;
 	} catch (e) {
 		focusResult = `focus error: ${e.message}`;
 	}
@@ -899,9 +951,16 @@ async function captureApp(cdp, id) {
 	// Screenshot for diagnosis (CDP renders regardless of OS focus).
 	await mkdir(dir, { recursive: true });
 	try {
-		const shot = await cdp.send("Page.captureScreenshot", { format: "png" }, session);
+		const shot = await cdp.send(
+			"Page.captureScreenshot",
+			{ format: "png" },
+			session,
+		);
 		if (shot?.data) {
-			await writeFile(path.join(dir, "screenshot.png"), Buffer.from(shot.data, "base64"));
+			await writeFile(
+				path.join(dir, "screenshot.png"),
+				Buffer.from(shot.data, "base64"),
+			);
 		}
 	} catch {}
 
@@ -973,7 +1032,9 @@ async function captureApp(cdp, id) {
 			captureError: "hwnd_unresolved_app_window_did_not_render",
 		});
 		selRaw = "{}";
-		process.stdout.write("  ! hwnd unresolved — emitting empty snapshot (no foreground fallback)\n");
+		process.stdout.write(
+			"  ! hwnd unresolved — emitting empty snapshot (no foreground fallback)\n",
+		);
 	}
 	await writeFile(rawPath, treeRaw, "utf8");
 	await writeFile(path.join(dir, "selection.json"), selRaw, "utf8");
@@ -985,7 +1046,12 @@ async function captureApp(cdp, id) {
 		const { stdout } = await execFileAsync(
 			SMOKE_EXE,
 			["--input", rawPath, "--label", app.label, "--require-prompt-json"],
-			{ timeout: 8000, windowsHide: true, maxBuffer: 8 * 1024 * 1024, encoding: "utf8" }
+			{
+				timeout: 8000,
+				windowsHide: true,
+				maxBuffer: 8 * 1024 * 1024,
+				encoding: "utf8",
+			},
 		);
 		smokeOut = stdout;
 	} catch (e) {
@@ -1021,7 +1087,7 @@ async function captureApp(cdp, id) {
 		`  ${id}: replyReady=${summary.replyContextReady} usable=${summary.contextPayloadUsable} ` +
 			`composer=${summary.focusedFieldLooksComposer} focusMiss=${summary.focusMissLike} ` +
 			`hwnd=${summary.hwnd} domFocused=${ensureResult?.focused ?? "?"} active=${ensureResult?.activeLabel ?? ""}\n` +
-			`  keys=[${summary.promptKeys.join(",")}] warnings=[${summary.warnings.join(",")}]\n`
+			`  keys=[${summary.promptKeys.join(",")}] warnings=[${summary.warnings.join(",")}]\n`,
 	);
 	return summary;
 }
@@ -1034,11 +1100,21 @@ async function ensureAlive() {
 	try {
 		const { stdout } = await execFileAsync(
 			"powershell.exe",
-			["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ENSURE_PS1, "-Port", String(PORT)],
-			{ timeout: 45000, windowsHide: true, encoding: "utf8" }
+			[
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				ENSURE_PS1,
+				"-Port",
+				String(PORT),
+			],
+			{ timeout: 45000, windowsHide: true, encoding: "utf8" },
 		);
 		const out = stdout.trim();
-		process.stdout.write(`  [ensure] capture browser: ${out.split(/\r?\n/).pop()}\n`);
+		process.stdout.write(
+			`  [ensure] capture browser: ${out.split(/\r?\n/).pop()}\n`,
+		);
 		if (/PROFILE_MISSING|FAILED/.test(out)) {
 			throw new Error(`capture browser not available: ${out}`);
 		}
@@ -1055,13 +1131,17 @@ async function main() {
 
 	await ensureAlive();
 	const version = await getJSON("/json/version");
-	const ws = new WebSocket(version.webSocketDebuggerUrl, { maxPayload: 256 * 1024 * 1024 });
+	const ws = new WebSocket(version.webSocketDebuggerUrl, {
+		maxPayload: 256 * 1024 * 1024,
+	});
 	await new Promise((res, rej) => {
 		ws.on("open", res);
 		ws.on("error", rej);
 	});
 	const cdp = new CDP(ws);
-	await cdp.send("Target.setDiscoverTargets", { discover: true }).catch(() => {});
+	await cdp
+		.send("Target.setDiscoverTargets", { discover: true })
+		.catch(() => {});
 
 	const results = [];
 	for (const id of list) {
@@ -1078,9 +1158,15 @@ async function main() {
 			results.push({ id, error: e.message });
 		}
 	}
-	await writeFile(path.join(OUT, "summary.json"), JSON.stringify(results.filter(Boolean), null, 2), "utf8");
+	await writeFile(
+		path.join(OUT, "summary.json"),
+		JSON.stringify(results.filter(Boolean), null, 2),
+		"utf8",
+	);
 	ws.close();
-	process.stdout.write(`\nDone. ${results.filter(Boolean).length} app(s) → ${OUT}\n`);
+	process.stdout.write(
+		`\nDone. ${results.filter(Boolean).length} app(s) → ${OUT}\n`,
+	);
 }
 
 main().catch((e) => {

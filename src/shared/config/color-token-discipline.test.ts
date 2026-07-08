@@ -29,7 +29,7 @@ const TOKEN_SOURCE_FILES = new Set([
 
 const BLOCK_COMMENT_PATTERN = /\/\*[\s\S]*?\*\/|<!--[\s\S]*?-->/g;
 const TOKEN_DECLARATION_PATTERN = /^\s*--[a-z0-9-]+\s*:[\s\S]*?;/gim;
-const COLOR_PATTERNS: Array<[label: string, pattern: RegExp]> = [
+const COLOR_PATTERNS: [label: string, pattern: RegExp][] = [
 	["hex color", /#[0-9a-fA-F]{3,8}\b/g],
 	["color function", /\b(?:rgba?|hsla?|oklch)\(/g],
 	[
@@ -73,10 +73,10 @@ function isTestFile(rel: string): boolean {
 
 function shouldScan(file: string): boolean {
 	const rel = relativeNormalized(file);
-	return (
-		!isTestFile(rel) &&
-		!BRIDGE_FILES.has(rel) &&
-		!SKIP_PREFIXES.some((prefix) => rel.startsWith(prefix))
+	return !(
+		isTestFile(rel) ||
+		BRIDGE_FILES.has(rel) ||
+		SKIP_PREFIXES.some((prefix) => rel.startsWith(prefix))
 	);
 }
 

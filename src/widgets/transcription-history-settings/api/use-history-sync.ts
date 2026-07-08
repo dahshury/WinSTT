@@ -1,11 +1,15 @@
 import { useEffect } from "react";
+import { useSettingsStore } from "@/entities/setting";
 import {
 	fetchTranscriptionHistory,
 	fetchTransformHistory,
+	fetchTtsHistory,
 	onTranscriptionHistoryAdded,
 	onTranscriptionHistoryDeleted,
 	onTransformHistoryAdded,
 	onTransformHistoryDeleted,
+	onTtsHistoryAdded,
+	onTtsHistoryDeleted,
 } from "@/shared/api/ipc-client";
 import { useTranscriptionHistoryStore } from "../model/history-store";
 
@@ -22,8 +26,28 @@ export function useTranscriptionHistorySync(): void {
 	const removeTransformEntry = useTranscriptionHistoryStore(
 		(s) => s.removeTransformEntry,
 	);
+	const setTtsAll = useTranscriptionHistoryStore((s) => s.setTtsAll);
+	const addTtsEntry = useTranscriptionHistoryStore((s) => s.addTtsEntry);
+	const removeTtsEntry = useTranscriptionHistoryStore((s) => s.removeTtsEntry);
+	const historyEnabled = useSettingsStore(
+		(s) => s.settings.general?.historyEnabled ?? true,
+	);
 
 	useEffect(() => {
+		// History master switch off: drop the in-memory copies (no data exposure
+		// in the renderer) and skip fetch + live subscriptions entirely. Loaded
+		// flags reset to false so flipping the switch back on re-hydrates below.
+		if (!historyEnabled) {
+			useTranscriptionHistoryStore.setState({
+				entries: [],
+				isLoaded: false,
+				transformEntries: [],
+				transformsLoaded: false,
+				ttsEntries: [],
+				ttsLoaded: false,
+			});
+			return;
+		}
 		let cancelled = false;
 		// Fetch ONCE per window. This hook is mounted at the settings-window root
 		// (SettingsBootstrap), so it stays alive across tab switches and the live
@@ -33,7 +57,7 @@ export function useTranscriptionHistorySync(): void {
 		// reference-keyed stats cache and forces a full recompute. Guarding on the
 		// already-hydrated flags keeps the array identity stable so revisits hit
 		// the warm caches instead.
-		const { isLoaded, transformsLoaded } =
+		const { isLoaded, transformsLoaded, ttsLoaded } =
 			useTranscriptionHistoryStore.getState();
 		if (!isLoaded) {
 			fetchTranscriptionHistory().then((entries) => {
@@ -49,6 +73,13 @@ export function useTranscriptionHistorySync(): void {
 				}
 			});
 		}
+		if (!ttsLoaded) {
+			fetchTtsHistory().then((entries) => {
+				if (!cancelled) {
+					setTtsAll(entries);
+				}
+			});
+		}
 		const unsubAdded = onTranscriptionHistoryAdded((entry) => {
 			addEntry(entry);
 		});
@@ -61,19 +92,31 @@ export function useTranscriptionHistorySync(): void {
 		const unsubTransformDeleted = onTransformHistoryDeleted((payload) => {
 			removeTransformEntry(payload.id);
 		});
+		const unsubTtsAdded = onTtsHistoryAdded((entry) => {
+			addTtsEntry(entry);
+		});
+		const unsubTtsDeleted = onTtsHistoryDeleted((payload) => {
+			removeTtsEntry(payload.id);
+		});
 		return () => {
 			cancelled = true;
 			unsubAdded();
 			unsubDeleted();
 			unsubTransformAdded();
 			unsubTransformDeleted();
+			unsubTtsAdded();
+			unsubTtsDeleted();
 		};
 	}, [
+		historyEnabled,
 		setAll,
 		addEntry,
 		removeEntry,
 		setTransformAll,
 		addTransformEntry,
 		removeTransformEntry,
+		setTtsAll,
+		addTtsEntry,
+		removeTtsEntry,
 	]);
 }

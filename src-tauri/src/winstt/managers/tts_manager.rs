@@ -40,8 +40,10 @@ use crate::winstt::settings_store::{read_settings, read_settings_raw};
 use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::tts::catalog::{self, TtsEngineId};
 use crate::winstt::tts::local_engines::{
-    CHATTERBOX_VOICES, ChatterboxLocalEngine, KITTEN_VOICES, KittenLocalEngine, PiperLocalEngine,
-    SUPERTONIC_VOICES, SupertonicLocalEngine, piper_voice_infos,
+    CHATTERBOX_VOICES, ChatterboxLocalEngine, KITTEN_VOICES, KittenLocalEngine,
+    ORPHEUS_VOICE_INFOS, OrpheusLocalEngine, PiperLocalEngine, QWEN3TTS_VOICES,
+    Qwen3TtsLocalEngine, SPARK_VOICE_INFOS, SUPERTONIC_VOICES, SparkLocalEngine,
+    SupertonicLocalEngine, piper_voice_infos,
 };
 use crate::winstt::tts::phonemize::{
     ESPEAK_RUNTIME_COMPONENT_ID, ESPEAK_RUNTIME_COMPONENT_LABEL, ensure_espeak_runtime,
@@ -140,6 +142,26 @@ fn effective_cloud_provider(s: &WinsttSettings) -> TtsCloudProvider {
     }
 }
 
+/// Plain-string event (mirrors `tts:failed`): cloud TTS is unreachable AND no local voice pack is
+/// installed to fall back to. The renderer localizes `reason` and surfaces an offline notice.
+pub const TTS_UNAVAILABLE: &str = "tts:unavailable";
+
+/// The smallest fully-cached local TTS model to fall back to when cloud is offline, or `None` when
+/// no local voice pack is installed. Synchronous — TTS cache state is a plain on-disk file check
+/// (`TtsDownloadManager::is_present`), no HF scan needed.
+fn resolve_local_tts_fallback(app: &AppHandle) -> Option<String> {
+    let dl = app.state::<Arc<TtsDownloadManager>>();
+    let mut best: Option<(u64, &'static str)> = None;
+    for entry in catalog::TTS_CATALOG {
+        for q in entry.quants {
+            if dl.is_present(entry.id, q.id) && best.is_none_or(|(size, _)| q.size_bytes < size) {
+                best = Some((q.size_bytes, entry.id));
+            }
+        }
+    }
+    best.map(|(_, id)| id.to_string())
+}
+
 struct ActiveTtsUseGuard<'a> {
     manager: &'a TtsManager,
     source: TtsSource,
@@ -189,7 +211,10 @@ impl TtsManager {
             ),
             idle_watcher_started: AtomicBool::new(false),
             lifecycle: ModelSwapCoordinator::new(),
-            http: reqwest::Client::new(),
+            // Shared pooled client (cheap Arc clone) — voice catalog /
+            // subscription fetches ride the same ElevenLabs connections as the
+            // synthesis engines.
+            http: crate::winstt::net::http_client().clone(),
         }
     }
 
@@ -354,8 +379,8 @@ impl TtsManager {
     }
 
     /// Fingerprint the engine-relevant settings so `ensure_engine` rebuilds only
-    /// when the source / key / model / device actually changes (voice/lang/speed
-    /// are passed per-call to the engine, so they don't force a rebuild).
+    /// when the source / key / model / device / quant actually changes (voice/lang/
+    /// speed are passed per-call to the engine, so they don't force a rebuild).
     fn engine_fingerprint_from(settings: &WinsttSettings) -> (TtsSource, String) {
         let device_tag = match settings.model.device {
             DeviceType::Cpu => "cpu",
@@ -364,7 +389,16 @@ impl TtsManager {
         match settings.tts.source {
             SettingsTtsSource::Local => (
                 TtsSource::Local,
-                format!("local|{}|{device_tag}", settings.tts.model),
+                // Quant is part of the fingerprint so a quant swap (only Qwen3-TTS
+                // ships a ladder today) rebuilds the engine; other engines carry an
+                // empty quant, leaving their fingerprint unchanged. `clone_ref_text` is
+                // included so editing a Spark clone reference transcript rebuilds the
+                // engine (it's a construction-time field); empty for every other engine,
+                // so their fingerprint is unaffected.
+                format!(
+                    "local|{}|{device_tag}|{}|{}",
+                    settings.tts.model, settings.tts.quantization, settings.tts.clone_ref_text
+                ),
             ),
             SettingsTtsSource::Cloud => match effective_cloud_provider(settings) {
                 TtsCloudProvider::Elevenlabs => (
@@ -413,6 +447,32 @@ impl TtsManager {
             Some(TtsEngineId::Chatterbox) => {
                 Arc::new(ChatterboxLocalEngine::new(self.model_cache_dir(&model_id)))
             }
+            // Qwen3-TTS Voice Design: the persisted `tts.quantization` selects the
+            // weights precision (int4|fp16|fp32); empty falls back to the catalog's
+            // default quant (int4). The engine treats `tts.voice` as the design prompt.
+            Some(TtsEngineId::Qwen3Tts) => {
+                let quant = if settings.tts.quantization.is_empty() {
+                    catalog::find(&model_id)
+                        .map_or("int4", catalog::TtsModelEntry::default_quant)
+                        .to_string()
+                } else {
+                    settings.tts.quantization.clone()
+                };
+                Arc::new(Qwen3TtsLocalEngine::new(
+                    self.model_cache_dir(&model_id),
+                    quant,
+                ))
+            }
+            // Orpheus (3B Llama → SNAC) + Spark (Qwen0.5B → BiCodec): CPU-pinned LLM-codec
+            // engines that load their ONNX from the per-model cache dir populated by the
+            // download manager. `tts.voice` = preset voice id (Orpheus) / gender (Spark).
+            Some(TtsEngineId::Orpheus) => {
+                Arc::new(OrpheusLocalEngine::new(self.model_cache_dir(&model_id)))
+            }
+            Some(TtsEngineId::Spark) => Arc::new(SparkLocalEngine::new(
+                self.model_cache_dir(&model_id),
+                settings.tts.clone_ref_text.clone(),
+            )),
             // Kokoro (and any unknown id) → the existing Kokoro engine + cache.
             _ => Arc::new(KokoroLocalEngine::new(self.local_config_from(settings))),
         }
@@ -602,6 +662,12 @@ impl TtsManager {
             Some(TtsEngineId::Piper) => piper_voice_infos(),
             Some(TtsEngineId::Supertonic) => SUPERTONIC_VOICES.to_vec(),
             Some(TtsEngineId::Chatterbox) => CHATTERBOX_VOICES.to_vec(),
+            // Voice Design has no preset voices — one "Default" entry; the real voice
+            // comes from the prompt stored in `tts.voice` (the UI swaps the voice
+            // dropdown for a "Design voice" prompt affordance).
+            Some(TtsEngineId::Qwen3Tts) => QWEN3TTS_VOICES.to_vec(),
+            Some(TtsEngineId::Orpheus) => ORPHEUS_VOICE_INFOS.to_vec(),
+            Some(TtsEngineId::Spark) => SPARK_VOICE_INFOS.to_vec(),
             _ => KOKORO_VOICE_CATALOG.to_vec(),
         };
         let voices = voices_src
@@ -639,6 +705,7 @@ impl TtsManager {
                 error: Some("ElevenLabs API key not configured".to_string()),
             };
         }
+        let started = std::time::Instant::now();
         let result = self
             .http
             .get(ELEVENLABS_VOICES_URL)
@@ -646,6 +713,12 @@ impl TtsManager {
             .timeout(std::time::Duration::from_secs(10))
             .send()
             .await;
+        crate::winstt::cloud_metrics::record(
+            "elevenlabs",
+            "tts_voices",
+            started.elapsed(),
+            result.as_ref().err().map(|e| e.to_string()).as_deref(),
+        );
         let resp = match result {
             Ok(r) => r,
             Err(e) => {
@@ -695,6 +768,7 @@ impl TtsManager {
                 credits_exhausted: false,
             };
         }
+        let started = std::time::Instant::now();
         let result = self
             .http
             .get(ELEVENLABS_SUBSCRIPTION_URL)
@@ -702,6 +776,12 @@ impl TtsManager {
             .timeout(std::time::Duration::from_secs(10))
             .send()
             .await;
+        crate::winstt::cloud_metrics::record(
+            "elevenlabs",
+            "tts_subscription",
+            started.elapsed(),
+            result.as_ref().err().map(|e| e.to_string()).as_deref(),
+        );
         let resp = match result {
             Ok(r) if r.status().is_success() => r,
             _ => {
@@ -711,7 +791,16 @@ impl TtsManager {
                 };
             }
         };
-        let json: serde_json::Value = match resp.json().await {
+        /// Typed `/v1/user/subscription` body — just the fields the tier gate reads.
+        #[derive(serde::Deserialize)]
+        struct SubscriptionResponse {
+            tier: Option<String>,
+            character_count: Option<u64>,
+            character_limit: Option<u64>,
+            #[serde(default)]
+            can_extend_character_limit: bool,
+        }
+        let sub: SubscriptionResponse = match resp.json().await {
             Ok(v) => v,
             Err(e) => {
                 // Keep the fail-soft default (never wrongly block cloud TTS), but surface
@@ -723,20 +812,12 @@ impl TtsManager {
                 };
             }
         };
-        let tier = json
-            .get("tier")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        let used = json.get("character_count").and_then(|v| v.as_u64());
-        let limit = json.get("character_limit").and_then(|v| v.as_u64());
-        let can_extend = json
-            .get("can_extend_character_limit")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let credits_exhausted =
-            matches!((used, limit), (Some(u), Some(l)) if u >= l) && !can_extend;
+        let credits_exhausted = matches!(
+            (sub.character_count, sub.character_limit),
+            (Some(u), Some(l)) if u >= l
+        ) && !sub.can_extend_character_limit;
         CloudSubscriptionPayload {
-            tier,
+            tier: sub.tier,
             credits_exhausted,
         }
     }
@@ -1019,6 +1100,19 @@ impl TtsManager {
         );
     }
 
+    /// Offline + no-local notice: cloud TTS is unreachable and there is no cached local voice to
+    /// fall back to. The renderer localizes `reason` and shows an offline notice on the island.
+    fn emit_tts_unavailable(&self, provider: CloudSttProvider, reason: &str) {
+        let _ = self.app.emit(
+            TTS_UNAVAILABLE,
+            serde_json::json!({
+                "pipeline": "tts",
+                "reason": reason,
+                "provider": provider.id(),
+            }),
+        );
+    }
+
     // ── lifecycle emit ──────────────────────────────────────────────────────
 
     /// Emit a plain lifecycle event with the EXACT WinSTT IPC shape (camelCase
@@ -1073,6 +1167,56 @@ impl TtsManager {
                 serde_json::json!({ "requestId": request_id, "reason": "TTS is disabled in settings" }),
             );
             return;
+        }
+
+        // ── Offline pre-gate (mirrors the STT record-start gate) ──────────
+        // A cloud TTS whose provider is currently believed offline either falls back to a cached
+        // local voice (so read-aloud keeps working with no internet), or — with no local model
+        // installed — surfaces an offline notice instead of a doomed cloud round-trip. Proactive:
+        // only fires once the provider is KNOWN offline (a prior failure armed the connectivity
+        // watch, which also drives the renderer's auto-revert of `tts.source` to Local).
+        let mut settings = settings;
+        let mut voice = voice;
+        if matches!(settings.tts.source, SettingsTtsSource::Cloud) {
+            let provider = match effective_cloud_provider(&settings) {
+                TtsCloudProvider::Elevenlabs => CloudSttProvider::ElevenLabs,
+                TtsCloudProvider::Openrouter => CloudSttProvider::OpenRouter,
+            };
+            if crate::winstt::cloud_stt::provider_appears_offline(provider) {
+                match resolve_local_tts_fallback(&self.app) {
+                    Some(local_model) => {
+                        log::warn!(
+                            "cloud TTS provider '{}' offline; falling back to local model '{local_model}'",
+                            provider.id()
+                        );
+                        settings.tts.source = SettingsTtsSource::Local;
+                        settings.tts.model = local_model;
+                        // Ignore the cloud voice id — use the local model's default voice.
+                        voice = "";
+                    }
+                    None => {
+                        self.drop_request(request_id);
+                        self.emit_event(
+                            "tts:started",
+                            serde_json::json!({ "requestId": request_id }),
+                        );
+                        self.emit_tts_unavailable(provider, "offline_no_local");
+                        self.record_failure(
+                            "synthesis",
+                            "TTS request could not start",
+                            request_id,
+                            "cloud provider offline and no local voice installed",
+                            Some("cloud"),
+                            None,
+                        );
+                        self.emit_event(
+                            "tts:failed",
+                            serde_json::json!({ "requestId": request_id, "reason": "offline_no_local" }),
+                        );
+                        return;
+                    }
+                }
+            }
         }
 
         let started = std::time::Instant::now();
@@ -1237,6 +1381,18 @@ impl TtsManager {
         }
         self.drop_request(request_id);
         let elapsed_ms = started.elapsed().as_millis() as u64;
+        // Persist the run to TTS history (with cloud cost when available) —
+        // drains the engine's per-session usage even when history is off so a
+        // later run can't inherit this one's billing telemetry.
+        self.persist_tts_history_run(
+            &settings,
+            source,
+            &eff_voice,
+            text,
+            elapsed_ms,
+            engine.as_ref(),
+            result.is_ok(),
+        );
         match &result {
             Ok(()) => {
                 self.lifecycle.mark_warm(engine_key);
@@ -1271,6 +1427,114 @@ impl TtsManager {
                 );
             }
         }
+    }
+
+    /// Persist one finished read-aloud run to `tts_history`. Local runs record
+    /// characters only (no cost); cloud runs record whatever actually billed —
+    /// including cancelled/failed sessions whose earlier sentences completed.
+    /// OpenRouter costs resolve EXACTLY via `/generation` (per-sentence
+    /// generation ids); ElevenLabs costs are published-rate estimates.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "persistence mirrors the read-aloud session's fields"
+    )]
+    fn persist_tts_history_run(
+        &self,
+        settings: &WinsttSettings,
+        source: TtsSource,
+        voice: &str,
+        text: &str,
+        elapsed_ms: u64,
+        engine: &dyn TtsEngine,
+        completed: bool,
+    ) {
+        // Drain FIRST (even when history is off) so the engine's session
+        // accumulator never leaks into the next run.
+        let usage = engine.take_session_usage();
+        if !read_settings_raw(&self.app).general.history_enabled {
+            return;
+        }
+        let model = match source {
+            TtsSource::Local => settings.tts.model.clone(),
+            TtsSource::Cloud => match effective_cloud_provider(settings) {
+                TtsCloudProvider::Elevenlabs => {
+                    format!("elevenlabs:{}", settings.tts.cloud.model)
+                }
+                TtsCloudProvider::Openrouter => {
+                    format!("openrouter:{}", settings.tts.cloud.openrouter_model)
+                }
+            },
+        };
+        let (characters, estimated_cost, generation_ids) = match usage {
+            Some(usage) => (
+                usage.characters,
+                usage.estimated_cost_usd,
+                usage.generation_ids,
+            ),
+            // Local engines report no usage; record the full text only when
+            // the session completed (a cancelled local run billed nothing and
+            // its rendered share is unknown).
+            None if completed => (text.chars().count() as i64, 0.0, Vec::new()),
+            None => return,
+        };
+        if characters == 0 && generation_ids.is_empty() {
+            return;
+        }
+
+        let app = self.app.clone();
+        let api_key = settings.llm.openrouter_api_key.clone();
+        let text = text.to_string();
+        let voice = (!voice.trim().is_empty()).then(|| voice.to_string());
+        tauri::async_runtime::spawn(async move {
+            // Persist the row NOW (with the client-side estimate when that's
+            // all the provider gives); the exact OpenRouter cost is filled in
+            // by the patient lookup below — generation records can take
+            // minutes to become queryable, and the row shouldn't wait.
+            let (cost_usd, cost_is_estimate) = if estimated_cost > 0.0 {
+                (Some(estimated_cost), true)
+            } else {
+                (None, false)
+            };
+            let Some(hm) = app.try_state::<Arc<crate::managers::history::HistoryManager>>() else {
+                log::warn!("[tts] history manager unavailable; TTS run not persisted");
+                return;
+            };
+            let entry = match hm.save_tts_entry(
+                text,
+                model,
+                voice,
+                characters,
+                Some(elapsed_ms.min(i64::MAX as u64) as i64),
+                cost_usd,
+                cost_is_estimate,
+            ) {
+                Ok(entry) => {
+                    crate::winstt::commands::history::emit_tts_history_added(&app, &entry);
+                    entry
+                }
+                Err(err) => {
+                    log::warn!("[tts] failed to save TTS history entry: {err}");
+                    return;
+                }
+            };
+            if generation_ids.is_empty() {
+                return;
+            }
+            if let Some((total, all_resolved)) =
+                resolve_openrouter_generation_costs(&api_key, &generation_ids).await
+            {
+                let hm = hm.inner().clone();
+                match hm.update_tts_entry_cost(entry.id, total, !all_resolved) {
+                    Ok(updated) => {
+                        // Re-emit as an upsert: the store replaces the row by id.
+                        crate::winstt::commands::history::emit_tts_history_added(&app, &updated);
+                    }
+                    Err(err) => {
+                        log::warn!("[tts] failed to update TTS history entry cost: {err}");
+                    }
+                }
+            }
+        });
     }
 
     fn openrouter_preview_bytes(&self, model: &str, voice: &str, speed: f32) -> TtsResult<Vec<u8>> {
@@ -1397,6 +1661,65 @@ impl TtsManager {
     pub fn app(&self) -> &AppHandle {
         &self.app
     }
+}
+
+/// How long to keep polling OpenRouter for a session's generation records.
+/// The records are ingested asynchronously on OpenRouter's side and have been
+/// observed to lag several MINUTES behind the request, so the schedule backs
+/// off patiently instead of hammering: ~2s → 5s → 10s → 30s → 60s → 2m → 5m.
+const GENERATION_LOOKUP_DELAYS_SECS: &[u64] = &[2, 5, 10, 30, 60, 120, 300];
+
+/// Resolve OpenRouter generation ids to their exact billed USD via
+/// `GET /api/v1/generation?id=…`, summing across the session's sentences.
+/// Returns `(total, all_resolved)` — a partial sum (some ids never resolved)
+/// is surfaced as an estimate — or `None` when nothing resolved.
+async fn resolve_openrouter_generation_costs(
+    api_key: &str,
+    generation_ids: &[String],
+) -> Option<(f64, bool)> {
+    if api_key.trim().is_empty() {
+        return None;
+    }
+    let client = crate::winstt::net::http_client();
+    let mut costs: Vec<Option<f64>> = vec![None; generation_ids.len()];
+    for delay_secs in GENERATION_LOOKUP_DELAYS_SECS {
+        tokio::time::sleep(Duration::from_secs(*delay_secs)).await;
+        for (idx, id) in generation_ids.iter().enumerate() {
+            if costs[idx].is_some() {
+                continue;
+            }
+            let resp = client
+                .get(format!("https://openrouter.ai/api/v1/generation?id={id}"))
+                .bearer_auth(api_key)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await;
+            let Ok(resp) = resp else { continue };
+            if !resp.status().is_success() {
+                continue;
+            }
+            let Ok(json) = resp.json::<serde_json::Value>().await else {
+                continue;
+            };
+            costs[idx] = json
+                .get("data")
+                .and_then(|d| d.get("total_cost"))
+                .and_then(|c| c.as_f64())
+                .filter(|c| c.is_finite() && *c >= 0.0);
+        }
+        if costs.iter().all(|c| c.is_some()) {
+            break;
+        }
+    }
+    let resolved = costs.iter().flatten().count();
+    if resolved == 0 {
+        for id in generation_ids {
+            log::warn!("[tts] OpenRouter generation {id} cost lookup failed");
+        }
+        return None;
+    }
+    let total: f64 = costs.iter().flatten().sum();
+    Some((total, resolved == generation_ids.len()))
 }
 
 #[cfg(test)]

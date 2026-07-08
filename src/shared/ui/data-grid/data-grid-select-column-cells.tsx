@@ -28,7 +28,6 @@ function DataGridSelectHitbox({
 			)}
 		>
 			{children}
-			{/* biome-ignore lint/a11y/noLabelWithoutControl: label is associated to the checkbox via htmlFor; this is an empty overlay click-target whose visible label lives in children */}
 			{/* eslint-disable-next-line react-doctor/label-has-associated-control -- label is programmatically tied to the checkbox via htmlFor (id); it is an empty overlay click-target, the visible/accessible label is on the Checkbox itself */}
 			<label
 				htmlFor={htmlFor}
@@ -41,10 +40,8 @@ function DataGridSelectHitbox({
 	);
 }
 
-interface DataGridSelectCheckboxProps extends Omit<
-	React.ComponentProps<typeof Checkbox>,
-	"id"
-> {
+interface DataGridSelectCheckboxProps
+	extends Omit<React.ComponentProps<typeof Checkbox>, "id"> {
 	rowNumber?: number | undefined;
 	hitboxSize?: HitboxSize | undefined;
 	debug?: boolean | undefined;
@@ -101,10 +98,8 @@ function DataGridSelectCheckbox({
 	);
 }
 
-interface DataGridSelectHeaderProps<TData> extends Pick<
-	HeaderContext<TData, unknown>,
-	"table"
-> {
+interface DataGridSelectHeaderProps<TData>
+	extends Pick<HeaderContext<TData, unknown>, "table"> {
 	hitboxSize?: HitboxSize;
 	readOnly?: boolean;
 	debug?: boolean;
@@ -141,10 +136,8 @@ export function DataGridSelectHeader<TData>({
 	);
 }
 
-interface DataGridSelectCellProps<TData> extends Pick<
-	CellContext<TData, unknown>,
-	"row" | "table"
-> {
+interface DataGridSelectCellProps<TData>
+	extends Pick<CellContext<TData, unknown>, "row" | "table"> {
 	hitboxSize?: HitboxSize;
 	enableRowMarkers?: boolean;
 	readOnly?: boolean;
@@ -172,7 +165,7 @@ export function DataGridSelectCell<TData>({
 		}
 	};
 
-	const onClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+	const onClick = (event: React.MouseEvent<Element>) => {
 		if (event.shiftKey) {
 			event.preventDefault();
 			meta?.onRowSelect?.(row.id, !row.getIsSelected(), true);

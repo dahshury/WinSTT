@@ -21,6 +21,10 @@ pub mod catalog;
 /// Shared in-flight request cancel registry (cloud STT / LLM / TTS).
 pub mod cancel_registry;
 
+/// Generic context term extraction (proper nouns + code identifiers from the
+/// Tier-1 snapshot) feeding the session vocabulary-biasing path. Pure string logic.
+pub mod context_terms;
+
 /// Cleanup service: FS deletion, HF-cache scan, OS cleanup-script staging, and the
 /// model-uninstall settings patch behind the `remove_*` cleanup commands.
 pub mod cleanup;
@@ -40,6 +44,10 @@ pub mod model_swap;
 /// Out-of-process hard-exit cleanup for loopback Ollama models WinSTT loaded.
 pub mod model_watchdog;
 
+/// Per-provider cloud latency/outcome aggregates (`[cloud-metrics]` log lines +
+/// the `diag_cloud_metrics` snapshot command).
+pub mod cloud_metrics;
+
 /// Local-only operational issue timeline for user-visible diagnostics and support bundles.
 pub mod observability;
 
@@ -51,6 +59,9 @@ pub mod realtime_stabilizer;
 pub mod snippets;
 
 // ───────────────────────── reqwest / windows-feature ─────────────────────────
+/// Shared pooled `reqwest::Client`s for every cloud API surface (STT/TTS/verify).
+pub mod net;
+
 /// Cloud STT: reqwest multipart to OpenAI/ElevenLabs.
 pub mod cloud_stt;
 /// Context-awareness: winstt-context.exe sidecar wrapper + deny-list.

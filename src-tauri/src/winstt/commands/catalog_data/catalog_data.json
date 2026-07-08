@@ -987,10 +987,16 @@
       "wer": 6.7,
       "rtfx": 150,
       "available_quantizations": [
-        ""
+        "",
+        "fp16",
+        "q4",
+        "bnb4"
       ],
       "size_bytes_by_quantization": {
-        "": 6490000000
+        "": 6490000000,
+        "fp16": 1815335624,
+        "q4": 797258751,
+        "bnb4": 744834847
       }
     },
     {
@@ -1635,9 +1641,23 @@
       "wer": 0.0,
       "rtfx": 1000,
       "available_quantizations": [
-        ""
+        "",
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
       ],
-      "size_bytes_by_quantization": {}
+      "size_bytes_by_quantization": {
+        "": 557988939,
+        "fp16": 189315222,
+        "q4": 161910319,
+        "bnb4": 161910319,
+        "int8": 182991741,
+        "uint8": 182991810,
+        "q4f16": 98381948
+      }
     },
     {
       "id": "moonshine-tiny-fr",
@@ -1654,9 +1674,23 @@
       "wer": 0.0,
       "rtfx": 1000,
       "available_quantizations": [
-        ""
+        "",
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
       ],
-      "size_bytes_by_quantization": {}
+      "size_bytes_by_quantization": {
+        "": 328254331,
+        "fp16": 131165240,
+        "q4": 143451922,
+        "bnb4": 141276688,
+        "int8": 67266028,
+        "uint8": 67266028,
+        "q4f16": 81124575
+      }
     },
     {
       "id": "cohere-transcribe",
@@ -1688,14 +1722,42 @@
       "available_quantizations": [
         "",
         "fp16",
+        "int8",
         "q4",
         "q4f16"
       ],
       "size_bytes_by_quantization": {
         "": 5066516727,
         "fp16": 2433508136,
+        "int8": 2124236889,
         "q4": 2126516259,
         "q4f16": 1535058724
+      }
+    },
+    {
+      "id": "cohere-transcribe-arabic",
+      "display_name": "Cohere Transcribe Arabic",
+      "family": "cohere",
+      "languages": [
+        "ar",
+        "en"
+      ],
+      "supports_language_detection": true,
+      "supports_realtime": true,
+      "onnx_model_name": "Masterx/cohere-transcribe-arabic-07-2026-ONNX",
+      "description": "Arabic + English specialised Cohere Transcribe (2B); highest-accuracy open Arabic ASR.",
+      "param_count": 2000000000,
+      "wer": 0,
+      "rtfx": 270,
+      "available_quantizations": [
+        "",
+        "int8",
+        "q4"
+      ],
+      "size_bytes_by_quantization": {
+        "": 8315079574,
+        "int8": 2126020212,
+        "q4": 2209640089
       }
     },
     {
@@ -1761,9 +1823,36 @@
       "display_name": "Qwen3-ASR 0.6B",
       "family": "qwen3",
       "languages": [
-        "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it", "ko",
-        "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv", "da", "fi",
-        "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro"
+        "zh",
+        "en",
+        "yue",
+        "ar",
+        "de",
+        "fr",
+        "es",
+        "pt",
+        "id",
+        "it",
+        "ko",
+        "ru",
+        "th",
+        "vi",
+        "ja",
+        "tr",
+        "hi",
+        "ms",
+        "nl",
+        "sv",
+        "da",
+        "fi",
+        "pl",
+        "cs",
+        "fil",
+        "fa",
+        "el",
+        "hu",
+        "mk",
+        "ro"
       ],
       "supports_language_detection": true,
       "supports_realtime": true,
@@ -1784,9 +1873,36 @@
       "display_name": "Qwen3-ASR 1.7B",
       "family": "qwen3",
       "languages": [
-        "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it", "ko",
-        "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv", "da", "fi",
-        "pl", "cs", "fil", "fa", "el", "hu", "mk", "ro"
+        "zh",
+        "en",
+        "yue",
+        "ar",
+        "de",
+        "fr",
+        "es",
+        "pt",
+        "id",
+        "it",
+        "ko",
+        "ru",
+        "th",
+        "vi",
+        "ja",
+        "tr",
+        "hi",
+        "ms",
+        "nl",
+        "sv",
+        "da",
+        "fi",
+        "pl",
+        "cs",
+        "fil",
+        "fa",
+        "el",
+        "hu",
+        "mk",
+        "ro"
       ],
       "supports_language_detection": true,
       "supports_realtime": true,
@@ -1821,9 +1937,11 @@
       "wer": 7.2,
       "rtfx": 850,
       "available_quantizations": [
+        "",
         "int8"
       ],
       "size_bytes_by_quantization": {
+        "": 937617178,
         "int8": 159383552
       }
     },
@@ -2369,171 +2487,45 @@
       }
     },
     {
-      "id": "streaming-nemotron-en-80ms",
-      "display_name": "Streaming Nemotron 80ms (English)",
+      "id": "streaming-nemotron-3.5-multi-1120ms-int8",
+      "display_name": "Streaming Nemotron 3.5 1120ms (Multilingual)",
       "family": "nemo",
       "languages": [
-        "en"
+        "en",
+        "zh",
+        "ja",
+        "ko",
+        "ar",
+        "ru",
+        "de",
+        "fr",
+        "es",
+        "pt",
+        "it",
+        "nl",
+        "pl",
+        "tr",
+        "hi",
+        "vi",
+        "uk",
+        "el",
+        "cs",
+        "sv"
       ],
-      "supports_language_detection": false,
+      "supports_language_detection": true,
       "supports_realtime": true,
-      "onnx_model_name": "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-2026-04-25",
-      "description": "Native streaming English Nemotron transducer 80 ms fp32 export with cached online decoding.",
+      "onnx_model_name": "Masterx/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-2026-06-11",
+      "description": "Multilingual (100+ languages) cache-aware streaming Nemotron 3.5 transducer, 1120 ms, with whole-utterance language auto-detect. fp32 (best accuracy) + int8. Supersedes the English Nemotron.",
       "param_count": 600000000,
       "wer": 0.0,
       "rtfx": 0.0,
       "available_quantizations": [
-        ""
-      ],
-      "size_bytes_by_quantization": {
-        "": 2514389188
-      }
-    },
-    {
-      "id": "streaming-nemotron-en-160ms",
-      "display_name": "Streaming Nemotron 160ms (English)",
-      "family": "nemo",
-      "languages": [
-        "en"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-2026-04-25",
-      "description": "Native streaming English Nemotron transducer 160 ms fp32 export with cached online decoding.",
-      "param_count": 600000000,
-      "wer": 0.0,
-      "rtfx": 0.0,
-      "available_quantizations": [
-        ""
-      ],
-      "size_bytes_by_quantization": {
-        "": 2514389190
-      }
-    },
-    {
-      "id": "streaming-nemotron-en-560ms",
-      "display_name": "Streaming Nemotron 560ms (English)",
-      "family": "nemo",
-      "languages": [
-        "en"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-2026-04-25",
-      "description": "Native streaming English Nemotron transducer 560 ms fp32 export with cached online decoding.",
-      "param_count": 600000000,
-      "wer": 0.0,
-      "rtfx": 0.0,
-      "available_quantizations": [
-        ""
-      ],
-      "size_bytes_by_quantization": {
-        "": 2514389190
-      }
-    },
-    {
-      "id": "streaming-nemotron-en-1120ms",
-      "display_name": "Streaming Nemotron 1120ms (English)",
-      "family": "nemo",
-      "languages": [
-        "en"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-2026-04-25",
-      "description": "Native streaming English Nemotron transducer 1120 ms fp32 export with cached online decoding.",
-      "param_count": 600000000,
-      "wer": 0.0,
-      "rtfx": 0.0,
-      "available_quantizations": [
-        ""
-      ],
-      "size_bytes_by_quantization": {
-        "": 2514389193
-      }
-    },
-    {
-      "id": "streaming-nemotron-en-80ms-int8",
-      "display_name": "Streaming Nemotron (English)",
-      "family": "nemo",
-      "languages": [
-        "en"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-int8-2026-04-25",
-      "description": "Native streaming English Nemotron transducer 80 ms int8 export with cached online decoding.",
-      "param_count": 600000000,
-      "wer": 0.0,
-      "rtfx": 0.0,
-      "available_quantizations": [
+        "",
         "int8"
       ],
       "size_bytes_by_quantization": {
-        "int8": 661910462
-      }
-    },
-    {
-      "id": "streaming-nemotron-en-160ms-int8",
-      "display_name": "Streaming Nemotron 160ms INT8 (English)",
-      "family": "nemo",
-      "languages": [
-        "en"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-int8-2026-04-25",
-      "description": "Native streaming English Nemotron transducer 160 ms int8 export with cached online decoding.",
-      "param_count": 600000000,
-      "wer": 0.0,
-      "rtfx": 0.0,
-      "available_quantizations": [
-        "int8"
-      ],
-      "size_bytes_by_quantization": {
-        "int8": 661910464
-      }
-    },
-    {
-      "id": "streaming-nemotron-en-560ms-int8",
-      "display_name": "Streaming Nemotron 560ms INT8 (English)",
-      "family": "nemo",
-      "languages": [
-        "en"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25",
-      "description": "Native streaming English Nemotron transducer 560 ms int8 export with cached online decoding.",
-      "param_count": 600000000,
-      "wer": 0.0,
-      "rtfx": 0.0,
-      "available_quantizations": [
-        "int8"
-      ],
-      "size_bytes_by_quantization": {
-        "int8": 661910464
-      }
-    },
-    {
-      "id": "streaming-nemotron-en-1120ms-int8",
-      "display_name": "Streaming Nemotron 1120ms INT8 (English)",
-      "family": "nemo",
-      "languages": [
-        "en"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25",
-      "description": "Native streaming English Nemotron transducer 1120 ms int8 export with cached online decoding.",
-      "param_count": 600000000,
-      "wer": 0.0,
-      "rtfx": 0.0,
-      "available_quantizations": [
-        "int8"
-      ],
-      "size_bytes_by_quantization": {
-        "int8": 661910467
+        "": 2594042285,
+        "int8": 681877630
       }
     },
     {
@@ -2794,10 +2786,12 @@
       "wer": 11.0,
       "rtfx": 1500,
       "available_quantizations": [
-        ""
+        "",
+        "int8"
       ],
       "size_bytes_by_quantization": {
-        "": 262925195
+        "": 262925195,
+        "int8": 70345135
       }
     }
   ]

@@ -25,7 +25,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $sidecar = Join-Path $repoRoot "examples\winstt-electron\frontend\electron\native\bin\winstt-context.exe"
-$smokeExe = Join-Path $repoRoot "src-tauri\target\debug\context_prompt_smoke.exe"
+$smokeExe = Join-Path $repoRoot "src-tauri\target\debug\examples\context_prompt_smoke.exe"
 
 if (-not (Test-Path $sidecar)) { throw "Native context helper not found: $sidecar" }
 if (-not (Test-Path $smokeExe)) { throw "Prompt smoke exe not found (build it first): $smokeExe" }

@@ -15,6 +15,7 @@ import {
 	pullOllamaModel,
 } from "@/shared/api/ipc-client";
 import { OllamaPullProgressStatusSchema } from "@/shared/api/schema.zod";
+import { isSameOllamaTag } from "@/shared/lib/ollama-tag";
 import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
 
 export type { OllamaModel };
@@ -206,6 +207,36 @@ function withoutKey<V>(
 	return next;
 }
 
+/**
+ * Every key in `record` that names the same Ollama artifact as `model`.
+ * A model can be pulled under several tag spellings at once (`smollm2` vs
+ * `smollm2:latest`, or a digest-alias like `gemma4:e2b` vs
+ * `gemma4:e2b-it-q4_K_M`) — the daemon runs ONE download but the app tracks
+ * one entry (and one streaming request) per spelling. Pause/guard logic must
+ * act on the whole identity group, not one exact string, or cancelling one
+ * spelling leaves the sibling stream downloading and the badge stuck on
+ * "downloading" — the pause button appears to do nothing.
+ */
+function aliasKeys<V>(record: Record<string, V>, model: string): string[] {
+	return Object.keys(record).filter((key) => isSameOllamaTag(key, model));
+}
+
+/** Drop every alias of `model` from a record without mutating the original. */
+function withoutAliases<V>(
+	record: Record<string, V>,
+	model: string,
+): Record<string, V> {
+	const keys = aliasKeys(record, model);
+	if (keys.length === 0) {
+		return record;
+	}
+	const next = { ...record };
+	for (const key of keys) {
+		delete next[key];
+	}
+	return next;
+}
+
 /** Build the next paused-pulls map when a pull is cancelled — snapshot the
  *  last known active progress so the UI can render "I was at 60% before stopping". */
 function recordPausedSnapshot(
@@ -274,15 +305,29 @@ function applyCancelled(
 }
 
 /** State transition for terminal success/error — clear the active pull and
- *  any paused state for the same model (partial bytes are consumed or moot). */
+ *  any paused state for the same model (partial bytes are consumed or moot).
+ *  Alias-wide: a success frame under `smollm2` must also clear a paused
+ *  `smollm2:latest` snapshot — same artifact, now fully on disk. */
 function applyTerminalClear(
 	slices: PullSlices,
 	model: string,
 ): Partial<PullSlices> {
 	return {
-		pulls: withoutKey(slices.pulls, model),
-		pausedPulls: withoutKey(slices.pausedPulls, model),
+		pulls: withoutAliases(slices.pulls, model),
+		pausedPulls: withoutAliases(slices.pausedPulls, model),
 	};
+}
+
+/**
+ * True for the backend's LEADING pull frame — `ollama_pull` (llm.rs) emits
+ * `{status:"pulling", statusText:"starting"}` exactly once when an invoke
+ * begins streaming. It is the one frame that can distinguish "a NEW/RESUMED
+ * pull just started (possibly in another window)" from "a straggler frame of
+ * the stream the user just paused" (stragglers are `downloading` / per-digest
+ * `pulling <sha>` frames, never the leading one).
+ */
+function isLeadingPullFrame(progress: OllamaPullProgress): boolean {
+	return progress.status === "pulling" && progress.statusText === "starting";
 }
 
 /** State transition for any non-terminal progress — upsert the active pull
@@ -293,23 +338,41 @@ function applyActiveProgress(
 	progress: OllamaPullProgress,
 ): Partial<PullSlices> {
 	const existing = slices.pulls[progress.model];
-	if (!existing && slices.pausedPulls[progress.model]) {
+	const pausedAliasKeys = aliasKeys(slices.pausedPulls, progress.model);
+	// Alias-wide paused check: a late frame from a sibling stream of the same
+	// artifact (`smollm2` vs `smollm2:latest`) must not resurrect a pull the
+	// user just paused. The LEADING frame is exempt: it announces a fresh
+	// invoke, so a resume clicked in the detached picker revives the paused
+	// entry in EVERY window — otherwise the settings trigger kept showing the
+	// model as paused and never rendered the re-download's progress.
+	if (
+		!existing &&
+		pausedAliasKeys.length > 0 &&
+		!isLeadingPullFrame(progress)
+	) {
 		return {};
 	}
+	// Seed a revived pull from the paused snapshot (via mergePullProgress's
+	// max) so the badge/trigger resumes at the paused percent instead of
+	// flashing 0% until the first byte-carrying frame arrives.
+	const pausedKey = pausedAliasKeys[0];
+	const revivedFrom =
+		!existing && pausedKey
+			? slices.pausedPulls[pausedKey]?.progress
+			: undefined;
 	const nextPulls = {
 		...slices.pulls,
 		[progress.model]: {
-			progress: mergePullProgress(existing?.progress, progress),
+			progress: mergePullProgress(existing?.progress ?? revivedFrom, progress),
 			startedAt: existing?.startedAt ?? Date.now(),
 		},
 	};
-	const hadPaused = slices.pausedPulls[progress.model] != null;
-	if (!hadPaused) {
+	if (pausedAliasKeys.length === 0) {
 		return { pulls: nextPulls };
 	}
 	return {
 		pulls: nextPulls,
-		pausedPulls: withoutKey(slices.pausedPulls, progress.model),
+		pausedPulls: withoutAliases(slices.pausedPulls, progress.model),
 	};
 }
 
@@ -335,7 +398,14 @@ function seedPullProgress(
 	paused: PausedPullState | undefined,
 ): OllamaPullProgress {
 	if (paused) {
-		return { ...paused.progress, status: "pulling", statusText: "resuming" };
+		// `model` overrides the snapshot's spelling — a resume can be issued
+		// under a different alias than the one that paused.
+		return {
+			...paused.progress,
+			model,
+			status: "pulling",
+			statusText: "resuming",
+		};
 	}
 	return { model, status: "pulling", statusText: "starting" };
 }
@@ -346,7 +416,14 @@ function buildStartPullState(
 	slices: PullSlices,
 	model: string,
 ): Partial<PullSlices> {
-	const paused = slices.pausedPulls[model];
+	// Resume may name a different spelling than the one that paused
+	// (`smollm2:latest` paused, resume issued as `smollm2`) — seed from any
+	// aliasing snapshot and clear the whole identity group.
+	const pausedKey =
+		slices.pausedPulls[model] === undefined
+			? aliasKeys(slices.pausedPulls, model)[0]
+			: model;
+	const paused = pausedKey ? slices.pausedPulls[pausedKey] : undefined;
 	const seededProgress = seedPullProgress(model, paused);
 	const nextPulls = {
 		...slices.pulls,
@@ -357,7 +434,7 @@ function buildStartPullState(
 	}
 	return {
 		pulls: nextPulls,
-		pausedPulls: withoutKey(slices.pausedPulls, model),
+		pausedPulls: withoutAliases(slices.pausedPulls, model),
 	};
 }
 
@@ -427,7 +504,10 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	},
 	pullModel: async (model) => {
 		const { pulls, pausedPulls } = get();
-		if (pulls[model]) {
+		// Alias-wide guard: `smollm2` and `smollm2:latest` are one download at
+		// the daemon — starting both gives two streaming requests the pause
+		// button can only stop one of (the badge keeps showing the survivor).
+		if (aliasKeys(pulls, model).length > 0) {
 			return { success: false, error: "Already pulling" };
 		}
 		set(buildStartPullState({ pulls, pausedPulls }, model));
@@ -441,19 +521,28 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 		// Optimistically move the active pull into pausedPulls so the badge flips to
 		// "partial" immediately. Ollama doesn't reliably emit a trailing "cancelled"
 		// progress frame on abort, so we can't depend on `applyCancelled` firing.
+		//
+		// Alias-wide: the same artifact can have several streaming pulls under
+		// different spellings (`smollm2` + `smollm2:latest`). Each backend loop
+		// polls the cancel flag under ITS exact invoked name, so every alias key
+		// must be cancelled — stopping only one leaves the sibling stream (and
+		// the daemon download) running while the badge stays on "downloading".
 		const { pulls, pausedPulls } = get();
-		const existing = pulls[model];
-		if (existing) {
-			set({
-				pulls: withoutKey(pulls, model),
-				pausedPulls: recordPausedSnapshot(
-					pausedPulls,
-					model,
-					existing.progress,
-				),
-			});
+		const keys = aliasKeys(pulls, model);
+		if (keys.length > 0) {
+			let nextPulls = pulls;
+			let nextPaused = pausedPulls;
+			for (const key of keys) {
+				const existing = nextPulls[key];
+				if (existing) {
+					nextPulls = withoutKey(nextPulls, key);
+					nextPaused = recordPausedSnapshot(nextPaused, key, existing.progress);
+				}
+			}
+			set({ pulls: nextPulls, pausedPulls: nextPaused });
 		}
-		await cancelOllamaModelPull(model);
+		const cancelNames = keys.length > 0 ? keys : [model];
+		await Promise.all(cancelNames.map((name) => cancelOllamaModelPull(name)));
 	},
 	/**
 	 * Resume a previously-paused pull. Semantically distinct from `pullModel`

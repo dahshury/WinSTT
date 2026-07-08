@@ -130,15 +130,19 @@ pub const GPU_COMPATIBLE_QUANTIZATIONS: &[&str] = &["", "fp16", "fp16w"];
 
 pub fn canonical_model_id(id: &str) -> &str {
     match id {
-        // The April 2026 sherpa-onnx Nemotron bundles documented upstream are int8. The
-        // non-int8 HF repos currently contain only tiny placeholder/incomplete graphs despite
-        // the old catalog advertising them as fp32, so old non-int8 selections are routed to the
-        // matching real int8 latency bundle. Concrete latency rows must NOT collapse to 1120ms:
-        // listen mode exposes latency as the speed-vs-accuracy control.
-        "streaming-nemotron-en-80ms" => "streaming-nemotron-en-80ms-int8",
-        "streaming-nemotron-en-160ms" => "streaming-nemotron-en-160ms-int8",
-        "streaming-nemotron-en-560ms" => "streaming-nemotron-en-560ms-int8",
-        "streaming-nemotron-en-1120ms" => "streaming-nemotron-en-1120ms-int8",
+        // The English-only Nemotron (April 2026) was REPLACED by the multilingual Nemotron-3.5
+        // (June 2026), which includes English plus 100+ languages. Migrate every persisted old
+        // English-Nemotron selection (all latencies + precisions) — and the interim 560ms 3.5 id —
+        // to the shipped 1120 ms multilingual int8 bundle so a returning user keeps a working choice.
+        "streaming-nemotron-en-80ms"
+        | "streaming-nemotron-en-160ms"
+        | "streaming-nemotron-en-560ms"
+        | "streaming-nemotron-en-1120ms"
+        | "streaming-nemotron-en-80ms-int8"
+        | "streaming-nemotron-en-160ms-int8"
+        | "streaming-nemotron-en-560ms-int8"
+        | "streaming-nemotron-en-1120ms-int8"
+        | "streaming-nemotron-3.5-multi-560ms-int8" => "streaming-nemotron-3.5-multi-1120ms-int8",
         // Granite Speech 4.1-2b was REPLACED by the 4.1-2b-plus re-export (same AR architecture +
         // graph layout, better training data). Migrate any persisted old-id selection so a user who
         // had the previous model keeps a working choice instead of falling back to `tiny`.
@@ -182,6 +186,7 @@ const LANGUAGE_DISPLAY_QUALIFIERS: &[&str] = &[
     "uk",
     "vietnamese",
     "vi",
+    "multilingual",
 ];
 
 fn is_streaming_latency_token(token: &str) -> bool {
@@ -258,6 +263,7 @@ pub enum Accelerator {
     Rocm,
     CoreMl,
     OpenVino,
+    WebGpu,
     Cpu,
 }
 
@@ -274,7 +280,11 @@ impl Accelerator {
     pub const fn is_non_cuda_gpu(self) -> bool {
         matches!(
             self,
-            Accelerator::DirectMl | Accelerator::Rocm | Accelerator::CoreMl | Accelerator::OpenVino
+            Accelerator::DirectMl
+                | Accelerator::Rocm
+                | Accelerator::CoreMl
+                | Accelerator::OpenVino
+                | Accelerator::WebGpu
         )
     }
 }

@@ -86,8 +86,7 @@ function hasCachedCompatibleRealtime(
 	args: RealtimePreviewFallbackArgs,
 ): boolean {
 	if (
-		!args.catalogLoaded ||
-		!args.statesLoaded ||
+		!(args.catalogLoaded && args.statesLoaded) ||
 		args.catalogModels.length === 0
 	) {
 		return true;
@@ -135,9 +134,7 @@ export function resolveRealtimePreviewFallbackPatch(
 	args: RealtimePreviewFallbackArgs,
 ): RealtimePreviewFallbackPatch | null {
 	if (
-		!args.realtimeEnabled ||
-		!args.catalogLoaded ||
-		!args.statesLoaded ||
+		!(args.realtimeEnabled && args.catalogLoaded && args.statesLoaded) ||
 		args.catalogModels.length === 0
 	) {
 		return null;

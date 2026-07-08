@@ -44,6 +44,7 @@ import {
 	useSurface,
 } from "@/shared/lib/surface";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import { Tooltip } from "@/shared/ui/tooltip";
 import { AboutActionRow } from "./AboutActionRow";
 import type { AboutT } from "./types";
 
@@ -224,17 +225,18 @@ function IssueCopyButton({ issue }: { issue: ObservabilityIssue }): ReactNode {
 	const label = copied ? OBSERVABILITY_COPY.copied : OBSERVABILITY_COPY.copy;
 
 	return (
-		<Button
-			aria-label={label}
-			className={cn(
-				"flex items-center gap-1 px-2 py-1 text-xs transition-colors",
-				copied ? "text-accent" : "hover:text-accent",
-			)}
-			onClick={handleCopy}
-			title={label}
-		>
-			<HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} size={14} />
-		</Button>
+		<Tooltip content={label}>
+			<Button
+				aria-label={label}
+				className={cn(
+					"flex items-center gap-1 px-2 py-1 text-xs transition-colors",
+					copied ? "text-accent" : "hover:text-accent",
+				)}
+				onClick={handleCopy}
+			>
+				<HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} size={14} />
+			</Button>
+		</Tooltip>
 	);
 }
 
@@ -327,7 +329,6 @@ function ObservabilityActionGroupButtons({
 				className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 px-2 font-medium text-body text-error leading-normal transition-colors duration-150 hover:bg-error-dim/40 disabled:cursor-not-allowed disabled:opacity-50"
 				disabled={busy || !canClear}
 				onClick={onClear}
-				title={OBSERVABILITY_COPY.clearAllTitle}
 			>
 				<HugeiconsIcon
 					aria-hidden="true"

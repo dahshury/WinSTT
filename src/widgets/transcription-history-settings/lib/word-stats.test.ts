@@ -6,6 +6,7 @@ import {
 	dayRangeBounds,
 	filterEntriesByDateRange,
 	formatDuration,
+	formatUsd,
 	formatWpm,
 	intensityLevel,
 	isEmptyIntensity,
@@ -345,5 +346,31 @@ describe("formatWpm", () => {
 	test("shows one decimal under 100 WPM, no decimals at or above", () => {
 		expect(formatWpm(45.678)).toBe("45.7");
 		expect(formatWpm(120.6)).toBe("121");
+	});
+});
+
+describe("formatUsd", () => {
+	test("rejects non-finite and negative values", () => {
+		expect(formatUsd(Number.NaN)).toBeNull();
+		expect(formatUsd(Number.POSITIVE_INFINITY)).toBeNull();
+		expect(formatUsd(-0.01)).toBeNull();
+	});
+
+	test("floors sub-hundredth-of-a-cent values instead of rounding to zero", () => {
+		expect(formatUsd(0.000_04)).toBe("<$0.0001");
+	});
+
+	test("keeps four decimals for sub-cent costs", () => {
+		expect(formatUsd(0.0002)).toBe("$0.0002");
+		expect(formatUsd(0.0042)).toBe("$0.0042");
+	});
+
+	test("tightens precision as values grow", () => {
+		expect(formatUsd(0.023)).toBe("$0.023");
+		expect(formatUsd(1.5)).toBe("$1.50");
+	});
+
+	test("renders zero as whole dollars", () => {
+		expect(formatUsd(0)).toBe("$0.00");
 	});
 });

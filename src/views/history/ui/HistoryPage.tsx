@@ -28,9 +28,12 @@ import {
 import { COPY_FEEDBACK_MS, copyToClipboard } from "@/shared/lib/clipboard";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { useSpeechActivityRef } from "@/shared/lib/use-speech-activity-ref";
 import { useLongPress } from "@/shared/lib/use-long-press";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { StaggerReveal } from "@/shared/ui/stagger-reveal";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 function subscribeBroadcasts(callbacks: {
 	onAdded: (entry: HistoryEntry) => void;
@@ -143,6 +146,10 @@ export function HistoryPage() {
 
 	const [playingId, setPlayingId] = useState<number | null>(null);
 	const [audioUrl, setAudioUrl] = useState<string | null>(null);
+	const [animatedEntryIds, setAnimatedEntryIds] = useState<Set<number>>(
+		() => new Set(),
+	);
+	const speechActivityRef = useSpeechActivityRef();
 	const entryLevel = Math.min(useSurface() + 1, 8);
 
 	useEffect(() => {
@@ -154,7 +161,19 @@ export function HistoryPage() {
 			}
 		});
 		const unsubscribe = subscribeBroadcasts({
-			onAdded: insertRow,
+			onAdded: (entry) => {
+				insertRow(entry);
+				if (speechActivityRef.current) {
+					setAnimatedEntryIds((current) => {
+						if (current.has(entry.id)) {
+							return current;
+						}
+						const next = new Set(current);
+						next.add(entry.id);
+						return next;
+					});
+				}
+			},
 			onDeleted: removeRow,
 			onToggled: toggleRowInStore,
 		});
@@ -162,7 +181,14 @@ export function HistoryPage() {
 			cancelled = true;
 			unsubscribe();
 		};
-	}, [replaceFirstPage, insertRow, removeRow, toggleRowInStore, setLoading]);
+	}, [
+		replaceFirstPage,
+		insertRow,
+		removeRow,
+		toggleRowInStore,
+		setLoading,
+		speechActivityRef,
+	]);
 
 	const loadNext = (): void => {
 		setLoading(true);
@@ -223,6 +249,7 @@ export function HistoryPage() {
 					const text = effectiveText(entry);
 					const tagLabel = historyTagLabel(entry.historyTag);
 					const sensitive = hasPrivacyMarkers(entry.privacyMarkers);
+					const animateEntry = animatedEntryIds.has(entry.id);
 					return (
 						<li
 							className={cn(
@@ -231,62 +258,87 @@ export function HistoryPage() {
 							)}
 							key={entry.id}
 						>
-							<div className="flex items-center justify-between text-xs">
-								<span className="text-foreground-secondary">
-									{formatEntryTimestamp(entry)}
-								</span>
-								<div className="flex flex-wrap items-center justify-end gap-1">
-									{tagLabel ? (
-										<Badge variant="secondary">{tagLabel}</Badge>
-									) : null}
-									{sensitive ? (
-										<Badge variant="outline">{SENSITIVE_HISTORY_LABEL}</Badge>
-									) : null}
-									<div className="flex gap-1">
-										<Button
-											className="flex items-center gap-1 px-2 py-1 text-xs"
-											onClick={() => handlePlay(entry.id)}
-											title="Play recording"
-										>
-											<HugeiconsIcon icon={PlayIcon} size={14} />
-										</Button>
-										<Button
-											className={`flex items-center gap-1 px-2 py-1 text-xs ${
-												entry.saved ? "text-warning" : ""
-											}`}
-											onClick={() => handleToggle(entry.id)}
-											title={
-												entry.saved ? "Unpin" : "Pin (preserve from retention)"
-											}
-										>
-											<HugeiconsIcon icon={FavouriteIcon} size={14} />
-										</Button>
-										<Button
-											className="flex items-center gap-1 px-2 py-1 text-xs hover:text-error"
-											onClick={() => handleDelete(entry.id)}
-											title="Delete"
-										>
-											<HugeiconsIcon icon={Delete02Icon} size={14} />
-										</Button>
+							<StaggerReveal
+								active={animateEntry}
+								contentClassName="flex flex-col gap-1"
+								onComplete={() =>
+									setAnimatedEntryIds((current) => {
+										if (!current.has(entry.id)) {
+											return current;
+										}
+										const next = new Set(current);
+										next.delete(entry.id);
+										return next;
+									})
+								}
+							>
+								<div className="flex items-center justify-between text-xs">
+									<span className="text-foreground-secondary">
+										{formatEntryTimestamp(entry)}
+									</span>
+									<div className="flex flex-wrap items-center justify-end gap-1">
+										{tagLabel ? (
+											<Badge variant="secondary">{tagLabel}</Badge>
+										) : null}
+										{sensitive ? (
+											<Badge variant="outline">{SENSITIVE_HISTORY_LABEL}</Badge>
+										) : null}
+										<div className="flex gap-1">
+											<Tooltip content="Play recording">
+												<Button
+													aria-label="Play recording"
+													className="flex items-center gap-1 px-2 py-1 text-xs"
+													onClick={() => handlePlay(entry.id)}
+												>
+													<HugeiconsIcon icon={PlayIcon} size={14} />
+												</Button>
+											</Tooltip>
+											<Tooltip
+												content={
+													entry.saved
+														? "Unpin"
+														: "Pin (preserve from retention)"
+												}
+											>
+												<Button
+													aria-label={entry.saved ? "Unpin" : "Pin"}
+													className={`flex items-center gap-1 px-2 py-1 text-xs ${
+														entry.saved ? "text-warning" : ""
+													}`}
+													onClick={() => handleToggle(entry.id)}
+												>
+													<HugeiconsIcon icon={FavouriteIcon} size={14} />
+												</Button>
+											</Tooltip>
+											<Tooltip content="Delete">
+												<Button
+													aria-label="Delete"
+													className="flex items-center gap-1 px-2 py-1 text-xs hover:text-error"
+													onClick={() => handleDelete(entry.id)}
+												>
+													<HugeiconsIcon icon={Delete02Icon} size={14} />
+												</Button>
+											</Tooltip>
+										</div>
 									</div>
 								</div>
-							</div>
-							<LongPressTranscript text={text} />
-							{playingId === entry.id && audioUrl ? (
-								<audio
-									aria-label="Transcription recording playback"
-									autoPlay
-									controls
-									src={audioUrl}
-								>
-									<track
-										default
-										kind="captions"
-										label="No captions available"
-										srcLang="en"
-									/>
-								</audio>
-							) : null}
+								<LongPressTranscript text={text} />
+								{playingId === entry.id && audioUrl ? (
+									<audio
+										aria-label="Transcription recording playback"
+										autoPlay
+										controls
+										src={audioUrl}
+									>
+										<track
+											default
+											kind="captions"
+											label="No captions available"
+											srcLang="en"
+										/>
+									</audio>
+								) : null}
+							</StaggerReveal>
 						</li>
 					);
 				})}

@@ -2,7 +2,9 @@ export function formatDate(
 	date: Date | string | number | undefined,
 	opts: Intl.DateTimeFormatOptions = {},
 ) {
-	if (!date) return "";
+	if (!date) {
+		return "";
+	}
 
 	try {
 		// eslint-disable-next-line react-doctor/js-hoist-intl -- formatter options are derived per-call from the `opts` argument (month/day/year/...spread), so it cannot be hoisted to a single module-level constant without changing behavior
@@ -12,7 +14,7 @@ export function formatDate(
 			year: opts.year ?? "numeric",
 			...opts,
 		}).format(new Date(date));
-	} catch (_err) {
+	} catch {
 		return "";
 	}
 }

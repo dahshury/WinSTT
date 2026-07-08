@@ -293,7 +293,9 @@ function filterShortcutGroups(
 	groups: ShortcutGroup[],
 	input: string,
 ): ShortcutGroup[] {
-	if (!input.trim()) return groups;
+	if (!input.trim()) {
+		return groups;
+	}
 
 	const query = input.toLowerCase();
 	return groups.reduce<ShortcutGroup[]>((acc, group) => {
@@ -310,9 +312,9 @@ function filterShortcutGroups(
 }
 
 const IS_MAC =
-	typeof navigator !== "undefined"
-		? /Mac|iPhone|iPad|iPod/.test(navigator.userAgent)
-		: false;
+	typeof navigator === "undefined"
+		? false
+		: /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
 
 const MOD_KEY = IS_MAC ? "⌘" : "Ctrl";
 

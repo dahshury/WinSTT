@@ -79,6 +79,18 @@ export function providerOf(modelId: string): CloudSttProvider | null {
 	return null;
 }
 
+/** True when a stored model id runs on a cloud provider (carries the
+ *  `openrouter:` / `elevenlabs:` prefix). */
+export function isCloudModelId(modelId: string): boolean {
+	return providerOf(modelId) !== null;
+}
+
+/** Strip the `openrouter:` / `elevenlabs:` cloud prefix so the UI shows the bare
+ *  model id — the cloud sign, not the prefix, marks it as cloud. */
+export function bareCloudModelId(modelId: string): string {
+	return modelId.replace(/^(?:openrouter|elevenlabs):/, "");
+}
+
 /**
  * Resolve the chosen default model in a provider's catalog: the entry flagged
  * `isDefault`, or the first entry as a fallback. Returns `null` when the

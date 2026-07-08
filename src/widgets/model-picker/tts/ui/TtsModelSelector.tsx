@@ -1,7 +1,14 @@
 "use client";
 
 import { Combobox } from "@base-ui/react/combobox";
-import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
+import {
+	ArrowDown01Icon,
+	BinaryCodeIcon,
+	Copy01Icon,
+	GlobeIcon,
+	HardDriveDownloadIcon,
+	UserMultiple02Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
 	type ComponentPropsWithoutRef,
@@ -12,7 +19,12 @@ import {
 	useState,
 } from "react";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
+import { formatBytes } from "@/shared/lib/format-bytes";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+import {
+	rankGroupsBySearch,
+	type SearchRankable,
+} from "@/shared/lib/model-search";
 import { Button } from "@/shared/ui/button";
 import { MODEL_TRIGGER_GLASS_CLASSES } from "@/shared/ui/switching-trigger";
 import {
@@ -35,11 +47,13 @@ import { publicAsset } from "@/shared/lib/public-asset";
 import { STT_PICKER_WIDTH_CLASS } from "../../stt/lib/dimensions";
 import {
 	buildTtsSearchCorpus,
+	cloningLabel,
 	getEngineConfig,
 	getEngineLabel,
 	getEngineLogoSrc,
 	getEngineMaker,
 	groupModelsByEngine,
+	ttsLanguageMeta,
 	type TtsListGroup,
 	withTtsFavoritesGroup,
 } from "../lib/tts-helpers";
@@ -48,10 +62,14 @@ import {
 	TtsDeleteQuantConfirmDialog,
 } from "./TtsDeleteQuantConfirmDialog";
 import { AuthorBadge } from "../../ui/AuthorBadge";
-import { TtsModelList } from "./TtsModelList";
 import {
-	type QuantDownloadAction,
-	type QuantDownloadSnapshot,
+	SelectedModelSummary,
+	type SelectedModelMetaItem,
+} from "../../ui/SelectedModelSummary";
+import { TtsModelList } from "./TtsModelList";
+import type {
+	QuantDownloadAction,
+	QuantDownloadSnapshot,
 } from "./TtsModelCard";
 
 type TtsModelChange = (modelId: string, quantization?: string) => void;
@@ -193,15 +211,90 @@ function buildRailItems(
 	return items;
 }
 
-/** Default glass-card-ish trigger — selected engine glyph + display name, or the
- *  placeholder. Deliberately lighter than the STT trigger (no swap/download
- *  in-flight states) since TTS model swaps are instantaneous. */
+/** The connected spec badge for the closed TTS trigger — the TTS analogue of the
+ *  STT / Ollama meta: capability glyphs (multilingual, voice cloning) lead as
+ *  icon-only segments, then the numeric facts (voices · quant · size). Voices is
+ *  the TTS-distinctive count that stands in for the STT picker's parameter chip. */
+function selectedTtsMeta(
+	model: TtsModelInfo,
+	currentQuantization: string,
+	state: TtsModelState | undefined,
+): SelectedModelMetaItem[] {
+	const effectiveQuant =
+		currentQuantization === ""
+			? (state?.effectiveQuantization ?? model.availableQuantizations[0] ?? "")
+			: currentQuantization;
+	const bytes =
+		model.sizeBytesByQuantization[effectiveQuant] ??
+		model.sizeBytesByQuantization[currentQuantization] ??
+		state?.estimatedBytes ??
+		null;
+	const sizeLabel = bytes && bytes > 0 ? formatBytes(bytes) : null;
+	const items: SelectedModelMetaItem[] = [];
+	if (model.languages.length > 1) {
+		items.push({
+			key: "multilingual",
+			label: "",
+			icon: GlobeIcon,
+			tone: "teal",
+			title: "Multilingual",
+			description: ttsLanguageMeta(model.languages).tooltip,
+		});
+	}
+	const cloning = cloningLabel(model.cloning);
+	if (cloning) {
+		items.push({
+			key: "cloning",
+			label: "",
+			icon: Copy01Icon,
+			tone: "accent",
+			title: cloning.label,
+			description: cloning.tooltip,
+		});
+	}
+	const voiceLabel =
+		model.numVoices === 1 ? "1 voice" : `${model.numVoices} voices`;
+	items.push({
+		key: "voices",
+		label: voiceLabel,
+		icon: UserMultiple02Icon,
+		title: "Voices",
+		description: `${voiceLabel} bundled with this model`,
+	});
+	items.push({
+		key: "quant",
+		label: effectiveQuant === "" ? "Auto" : effectiveQuant.toUpperCase(),
+		icon: BinaryCodeIcon,
+		tone: "warning",
+		title: "Selected quantization",
+	});
+	if (sizeLabel) {
+		items.push({
+			key: "size",
+			label: sizeLabel,
+			icon: HardDriveDownloadIcon,
+			tone: "success",
+			title: "Download size",
+			description: `Download size: ${sizeLabel}`,
+		});
+	}
+	return items;
+}
+
+/** Default glass-card-ish trigger — engine chip + display name + the connected
+ *  spec badge (right-aligned), sharing the STT / Ollama badge strategy. Still
+ *  lighter than the STT trigger (no swap/download in-flight states) since TTS
+ *  model swaps are instantaneous. */
 function TtsTriggerBody({
 	selectedModel,
 	placeholder,
+	currentQuantization,
+	state,
 }: {
+	currentQuantization: string;
 	placeholder: string;
 	selectedModel: TtsModelInfo | undefined;
+	state: TtsModelState | undefined;
 }) {
 	if (!selectedModel) {
 		return (
@@ -212,31 +305,40 @@ function TtsTriggerBody({
 	}
 	const engineLogo = getEngineLogoSrc(selectedModel.engine);
 	return (
-		<span className="flex min-w-0 flex-1 items-center gap-2">
-			<AuthorBadge
-				icon={getEngineConfig(selectedModel.engine).icon}
-				label={getEngineLabel(selectedModel.engine)}
-				logoSrc={engineLogo ? publicAsset(engineLogo) : null}
-			/>
-			<span className="truncate font-medium text-body text-foreground leading-tight tracking-tight">
-				{selectedModel.displayName}
-			</span>
-		</span>
+		<SelectedModelSummary
+			leading={
+				<AuthorBadge
+					icon={getEngineConfig(selectedModel.engine).icon}
+					label={getEngineLabel(selectedModel.engine)}
+					logoSrc={engineLogo ? publicAsset(engineLogo) : null}
+				/>
+			}
+			meta={selectedTtsMeta(selectedModel, currentQuantization, state)}
+			metaPlacement="right"
+			name={{
+				full: selectedModel.displayName,
+				main: selectedModel.displayName,
+			}}
+		/>
 	);
 }
 
 function TtsTriggerButton({
 	buttonProps,
+	currentQuantization,
 	disabled,
 	open,
 	placeholder,
 	selectedModel,
+	state,
 }: {
 	buttonProps: ComponentPropsWithoutRef<"button">;
+	currentQuantization: string;
 	disabled: boolean;
 	open: boolean;
 	placeholder: string;
 	selectedModel: TtsModelInfo | undefined;
+	state: TtsModelState | undefined;
 }) {
 	return (
 		<Button
@@ -248,7 +350,12 @@ function TtsTriggerButton({
 			disabled={disabled}
 			type="button"
 		>
-			<TtsTriggerBody placeholder={placeholder} selectedModel={selectedModel} />
+			<TtsTriggerBody
+				currentQuantization={currentQuantization}
+				placeholder={placeholder}
+				selectedModel={selectedModel}
+				state={state}
+			/>
 			<HugeiconsIcon
 				className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"
 				icon={ArrowDown01Icon}
@@ -258,15 +365,19 @@ function TtsTriggerButton({
 }
 
 function DefaultTrigger({
+	currentQuantization,
 	disabled,
 	open,
 	placeholder,
 	selectedModel,
+	state,
 }: {
+	currentQuantization: string;
 	disabled: boolean;
 	open: boolean;
 	placeholder: string;
 	selectedModel: TtsModelInfo | undefined;
+	state: TtsModelState | undefined;
 }) {
 	return (
 		<Combobox.Trigger
@@ -274,10 +385,12 @@ function DefaultTrigger({
 			render={(p) => (
 				<TtsTriggerButton
 					buttonProps={p as ComponentPropsWithoutRef<"button">}
+					currentQuantization={currentQuantization}
 					disabled={disabled}
 					open={open}
 					placeholder={placeholder}
 					selectedModel={selectedModel}
+					state={state}
 				/>
 			)}
 		/>
@@ -289,31 +402,45 @@ function DefaultTrigger({
  *  opens the detached picker BrowserWindow on click instead of an in-window
  *  popup (mirrors `SttModelSelectorTriggerButton`). */
 function TtsModelSelectorTriggerButton({
+	currentQuantization,
 	onActivate,
 	disabled,
 	placeholder,
 	selectedModel,
+	state,
 }: {
+	currentQuantization: string;
 	onActivate: (event: MouseEvent<HTMLButtonElement>) => void;
 	disabled: boolean;
 	placeholder: string;
 	selectedModel: TtsModelInfo | undefined;
+	state: TtsModelState | undefined;
 }) {
 	return (
 		<TtsTriggerButton
 			buttonProps={{ type: "button", onClick: onActivate }}
+			currentQuantization={currentQuantization}
 			disabled={disabled}
 			open={false}
 			placeholder={placeholder}
 			selectedModel={selectedModel}
+			state={state}
 		/>
 	);
 }
 
 // Text search delegated to Base UI's filtering pipeline (groups + keyboard).
-const filter = (model: TtsModelInfo, query: string) => {
-	return matchesFuzzySearch(buildTtsSearchCorpus(model), query);
-};
+const filter = (model: TtsModelInfo, query: string) =>
+	matchesFuzzySearch(buildTtsSearchCorpus(model), query);
+
+/** Relevance projection for ranked search — engine label (maker) + name fields
+ *  earn the exact/prefix/substring tiers; visibility stays Base UI's `filter`. */
+function ttsSearchRankable(model: TtsModelInfo): SearchRankable {
+	return {
+		maker: getEngineLabel(model.engine),
+		names: [model.displayName, model.id],
+	};
+}
 
 /**
  * Top-level TTS voice/model picker — the TTS analogue of `SttModelSelector`.
@@ -391,8 +518,18 @@ function TtsModelSelectorPanel({
 	}, [activeRailId]);
 
 	const engineGroups = shouldBuildList ? groupModelsByEngine(models) : [];
+	// During an active search, order engines + their voices best-match-first so
+	// the closest hit leads (mirrors the STT / OpenRouter pickers).
+	const rankedEngineGroups = hasSearch
+		? rankGroupsBySearch(
+				engineGroups,
+				search,
+				ttsSearchRankable,
+				(group, items) => ({ ...group, items }),
+			)
+		: engineGroups;
 	const allGroups: TtsListGroup[] = withTtsFavoritesGroup(
-		engineGroups,
+		rankedEngineGroups,
 		isFavorite,
 	);
 	// A text query spans ALL authors: it overrides the selected rail so e.g.
@@ -500,10 +637,14 @@ function TtsModelSelectorPanel({
 						? undefined
 						: (trigger ?? (
 								<DefaultTrigger
+									currentQuantization={currentQuantization}
 									disabled={disabled || isLoading}
 									open={open}
 									placeholder={placeholder}
 									selectedModel={selectedModel ?? undefined}
+									state={
+										selectedModel ? statesById[selectedModel.id] : undefined
+									}
 								/>
 							))
 				}
@@ -524,20 +665,24 @@ function TtsModelSelectorPanel({
 function TtsModelSelectorDetachedTrigger({
 	models,
 	value,
+	currentQuantization,
 	disabled = false,
 	isLoading = false,
 	placeholder = "Select a voice model",
 	onOpenDetached,
+	statesById,
 }: TtsModelSelectorProps) {
 	const selectedModel = models.find((m) => m.id === value) ?? null;
 	return (
 		<TtsModelSelectorTriggerButton
+			currentQuantization={currentQuantization}
 			disabled={disabled || isLoading}
 			onActivate={(event) =>
 				onOpenDetached?.(event.currentTarget.getBoundingClientRect())
 			}
 			placeholder={placeholder}
 			selectedModel={selectedModel ?? undefined}
+			state={selectedModel ? statesById[selectedModel.id] : undefined}
 		/>
 	);
 }

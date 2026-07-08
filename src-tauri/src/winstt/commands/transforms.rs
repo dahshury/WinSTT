@@ -51,10 +51,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::managers::history::HistoryManager;
 use crate::winstt::context::{ContextMode, ContextReader};
-use crate::winstt::llm::{
-    self, PresetEntry as LlmPresetEntry, PresetKey as LlmPresetKey, build_dictation_system_prompt,
-    build_system_prompt,
-};
+use crate::winstt::llm::{self, PresetEntry as LlmPresetEntry, PresetKey as LlmPresetKey};
 use crate::winstt::managers::{ContextManager, LlmManager};
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::{
@@ -158,9 +155,13 @@ fn preview_user_prompt(feature: &str, presets: &[LlmPresetEntry], text: &str) ->
     }
 }
 
-fn preview_system_prompt(settings: &WinsttSettings, presets: &[LlmPresetEntry]) -> String {
+fn preview_system_prompt(
+    settings: &WinsttSettings,
+    presets: &[LlmPresetEntry],
+    tier_model: Option<&str>,
+) -> String {
     let vocab = llm_commands::build_vocab(settings);
-    let mut prompt = build_dictation_system_prompt(presets, "", &vocab);
+    let mut prompt = llm::build_dictation_system_prompt_for_model(presets, "", &vocab, tier_model);
     if preview_requires_visible_change(presets) {
         prompt.push_str(
             "\n\nPlayground preview: Non-neutral tone/modifier instructions are active. \
@@ -304,14 +305,27 @@ fn selected_transform_model(settings: &WinsttSettings) -> Option<String> {
     }
 }
 
-fn transform_llm_meta(settings: &WinsttSettings, processing_ms: i64) -> Option<String> {
-    selected_transform_model(settings).map(|model| {
+fn transform_llm_meta(
+    settings: &WinsttSettings,
+    processing_ms: i64,
+    llm_usage: Option<&crate::winstt::managers::LlmRunUsage>,
+) -> Option<String> {
+    // Prefer the model the chat actually ran on (the fallback model when the
+    // primary failed over) so the footer's cost matches the model chip.
+    let model = llm_usage
+        .map(|usage| usage.model.clone())
+        .filter(|m| !m.trim().is_empty())
+        .or_else(|| selected_transform_model(settings))?;
+    Some(
         serde_json::json!({
             "model": model,
             "processingMs": processing_ms,
+            "tokens": llm_usage.and_then(|usage| usage.completion_tokens),
+            "promptTokens": llm_usage.and_then(|usage| usage.prompt_tokens),
+            "costUsd": llm_usage.and_then(|usage| usage.cost_usd),
         })
-        .to_string()
-    })
+        .to_string(),
+    )
 }
 
 fn persist_transform_history(
@@ -319,15 +333,20 @@ fn persist_transform_history(
     settings: &WinsttSettings,
     result: &TransformApplyResult,
     processing_ms: i64,
+    llm_usage: Option<&crate::winstt::managers::LlmRunUsage>,
 ) {
     if result.before.trim().is_empty() && result.after.trim().is_empty() {
+        return;
+    }
+    if !settings.general.history_enabled {
+        log::debug!("transforms: history disabled; transform not persisted");
         return;
     }
     let Some(history_manager) = app.try_state::<Arc<HistoryManager>>() else {
         log::warn!("transforms: history manager not initialized; transform history not saved");
         return;
     };
-    let meta = transform_llm_meta(settings, processing_ms);
+    let meta = transform_llm_meta(settings, processing_ms, llm_usage);
     match history_manager.save_transform_entry(
         result.before.clone(),
         result.after.clone(),
@@ -432,7 +451,14 @@ pub async fn run_transform_pipeline(app: &AppHandle) -> TransformApplyResult {
         &settings.llm.transforms.presets,
         &settings.llm.transforms.custom_modifiers,
     );
-    let system_prompt = build_system_prompt(&presets);
+    let system_prompt = llm::build_system_prompt_tiered(
+        &presets,
+        llm_commands::ollama_tier_model(
+            settings.llm.transforms.base.provider,
+            &settings.llm.transforms.base.model,
+        )
+        .is_some_and(llm::is_lite_ollama_model),
+    );
     let user_prompt = llm::transforms_user_prompt_for_presets(&presets, &selected);
     let effort = to_llm_effort(settings.llm.transforms.base.thinking_effort);
     let model = settings.llm.transforms.base.model.clone();
@@ -441,7 +467,7 @@ pub async fn run_transform_pipeline(app: &AppHandle) -> TransformApplyResult {
     // return the original-as-before so the toast surfaces the message (mirrors
     // `runLlm`'s catch → broadcast `transforms:failed` → rethrow).
     let processing_started = Instant::now();
-    let transformed = match run_transform_provider(
+    let (transformed, llm_usage) = match run_transform_provider(
         app,
         &mgr,
         &settings,
@@ -495,7 +521,7 @@ pub async fn run_transform_pipeline(app: &AppHandle) -> TransformApplyResult {
         after: normalize_llm_text_output(&transformed),
         source: capture.source,
     };
-    persist_transform_history(app, &settings, &result, processing_ms);
+    persist_transform_history(app, &settings, &result, processing_ms, llm_usage.as_ref());
     emit_applied(app, &result);
     result
 }
@@ -574,27 +600,35 @@ pub async fn apply_transform_preview(
         openrouter_fallback,
         openrouter_request_options,
         requires_visible_change,
+        max_output_tokens,
     ) = if let Some(cfg) = config {
         let presets = transforms_presets(&cfg.presets, &cfg.custom_modifiers);
         let requires_visible_change = preview_requires_visible_change(&presets);
-        let sys = preview_system_prompt(&settings, &presets);
-        let user = preview_user_prompt(&feature, &presets, &text);
         let eff = parse_effort(&cfg.thinking_effort);
         let model = if cfg.model.trim().is_empty() {
             saved_model(&settings, is_dictation)
         } else {
             cfg.model.clone()
         };
+        let provider = parse_provider(&cfg.provider, &settings, is_dictation);
+        let sys = preview_system_prompt(
+            &settings,
+            &presets,
+            llm_commands::ollama_tier_model(provider, &model),
+        );
+        let user = preview_user_prompt(&feature, &presets, &text);
+        let max_output_tokens = cfg.max_output_tokens.filter(|v| *v > 0);
         (
             sys,
             user,
             eff,
             model,
-            parse_provider(&cfg.provider, &settings, is_dictation),
+            provider,
             cfg.openrouter_model.clone(),
             cfg.openrouter_fallback_model.clone(),
             openrouter_options_from_preview(&cfg),
             requires_visible_change,
+            max_output_tokens,
         )
     } else {
         let base = if is_dictation {
@@ -615,7 +649,11 @@ pub async fn apply_transform_preview(
         };
         let presets = transforms_presets(presets_src, customs_src);
         let requires_visible_change = preview_requires_visible_change(&presets);
-        let sys = preview_system_prompt(&settings, &presets);
+        let sys = preview_system_prompt(
+            &settings,
+            &presets,
+            llm_commands::ollama_tier_model(base.provider, &base.model),
+        );
         let user = preview_user_prompt(&feature, &presets, &text);
         (
             sys,
@@ -627,6 +665,7 @@ pub async fn apply_transform_preview(
             base.openrouter_fallback_model.clone(),
             openrouter_options(base),
             requires_visible_change,
+            base.max_output_tokens.filter(|v| *v > 0),
         )
     };
 
@@ -643,7 +682,13 @@ pub async fn apply_transform_preview(
     // model call cannot masquerade as an intentional no-op.
     let preview_result = tokio::time::timeout(PLAYGROUND_PREVIEW_TIMEOUT, async {
         match provider {
-            LlmProvider::AppleIntelligence => Ok(text.clone()),
+            // The playground surfaces provider failures instead of a silent
+            // pass-through — a broken Apple bridge must not look like a no-op.
+            LlmProvider::AppleIntelligence => llm_commands::apple_intelligence_chat(
+                &system_prompt,
+                &user_prompt,
+                max_output_tokens,
+            ),
             LlmProvider::Openrouter => {
                 let api_key = settings.llm.openrouter_api_key.clone();
                 let request_id = mgr.next_request_id();
@@ -837,9 +882,10 @@ mod tests {
     fn preview_system_prompt_uses_dictation_post_processing_layers() {
         let settings = WinsttSettings::default();
         let presets = transforms_presets(&settings.llm.dictation.presets, &[]);
-        let prompt = preview_system_prompt(&settings, &presets);
+        let prompt = preview_system_prompt(&settings, &presets, None);
 
-        assert!(prompt.contains("How to interpret the dictation:"));
+        assert!(prompt.contains("How to interpret the dictation"));
+        assert!(prompt.contains("An INSTRUCTION aimed at you"));
         assert!(prompt.contains("Output only the transformed text"));
         assert!(prompt.contains("Non-neutral tone/modifier instructions are active"));
     }
@@ -852,7 +898,7 @@ mod tests {
             level: None,
             target_lang: None,
         }];
-        let prompt = preview_system_prompt(&settings, &presets);
+        let prompt = preview_system_prompt(&settings, &presets, None);
 
         assert!(preview_requires_visible_change(&presets));
         assert!(prompt.contains("Non-neutral tone/modifier instructions are active"));
@@ -866,8 +912,8 @@ mod tests {
             target_lang: None,
         }];
         let dictation = preview_user_prompt("dictation", &plain_presets, "hello");
-        assert!(dictation.contains("Text to transform:\nhello"));
-        assert!(dictation.contains("style guide above"));
+        assert!(dictation.contains("Dictation:\nhello"));
+        assert!(dictation.contains("interpretation rules in the system prompt"));
 
         let transforms = preview_user_prompt("transforms", &plain_presets, "hello");
         assert!(transforms.contains("Text:\nhello"));

@@ -103,6 +103,12 @@ export const IPC = {
 	// Settings (main → renderer)
 	SETTINGS_CHANGED: "settings:changed",
 	SETTINGS_SAVE_ERROR: "settings:save-error",
+	// Main → renderer: the settings window was just shown from hidden. The
+	// keep-alive settings webview replays its enter animation on this signal —
+	// window `focus`/`visibilitychange` are NOT reliably delivered by WebView2
+	// across a native hide/show cycle, so an explicit event is the only
+	// deterministic "you are on screen now" trigger.
+	SETTINGS_WINDOW_SHOWN: "settings:window-shown",
 
 	// Window controls (renderer → main)
 	WINDOW_MINIMIZE: "window:minimize",
@@ -243,6 +249,12 @@ export const IPC = {
 	STT_CLOUD_RATE_LIMITED: "stt:cloud-rate-limited",
 	STT_CLOUD_PROVIDER_ERROR: "stt:cloud-provider-error",
 	CLOUD_CONNECTIVITY: "cloud:connectivity",
+	// Offline graceful-degradation notices (main → renderer). Fired when a cloud
+	// pipeline is unreachable AND no local model is installed to fall back to, so
+	// the overlay/toast can say "no internet & no local model" instead of failing
+	// silently. STT drives the overlay error pill; TTS drives a toast.
+	STT_PIPELINE_UNAVAILABLE: "stt:pipeline-unavailable",
+	TTS_UNAVAILABLE: "tts:unavailable",
 
 	// Transforms (renderer → main)
 	TRANSFORMS_APPLY: "transforms:apply",
@@ -262,6 +274,15 @@ export const IPC = {
 	TRANSFORM_HISTORY_DELETE: "transform-history:delete",
 	TRANSFORM_HISTORY_ADDED: "transform-history:added",
 	TRANSFORM_HISTORY_DELETED: "transform-history:deleted",
+
+	// TTS history (renderer ↔ main) — read-aloud runs persisted with the same
+	// retention settings, listed in the History tab beside STT with per-run
+	// cloud cost.
+	TTS_HISTORY_GET_ALL: "tts-history:get-all",
+	TTS_HISTORY_CLEAR: "tts-history:clear",
+	TTS_HISTORY_DELETE: "tts-history:delete",
+	TTS_HISTORY_ADDED: "tts-history:added",
+	TTS_HISTORY_DELETED: "tts-history:deleted",
 
 	// Preview-before-pasting (renderer → main)
 	PREVIEW_CONFIRM_PASTE: "preview:confirm-paste",
@@ -350,6 +371,9 @@ export const IPC = {
 	// Install-phase ping (engine pack → voice model → ready) so the
 	// progress UI can label which part of the on-demand install is running.
 	TTS_INSTALL_STATUS: "tts:install-status",
+	// Local TTS session drop lifecycle (settings disable / cloud switch):
+	// inProgress=true when the drop starts, false when the memory is freed.
+	TTS_UNLOAD_STATUS: "tts:unload-status",
 	// Eager warm-up failed (engine pack download / ONNX session load went
 	// south). Distinct from TTS_FAILED, which is per-utterance. Drives the
 	// install-error banner in the Settings → TTS section.
@@ -388,6 +412,11 @@ export const IPC = {
 	// Accept/Decline pill. Skipped if the array is empty.
 	LLM_LEARNED_PROPER_NOUNS: "llm:learned-proper-nouns",
 	LLM_PROFILE_SWAP: "llm:profile-swap",
+	// Main → renderer: the transcribe (PTT) hotkey was held while ArrowUp was
+	// pressed. The main window advances the recording mode (ptt → toggle → listen
+	// → wakeword → ptt) and persists it; the tray-indicator pill reacts to the
+	// resulting settings change.
+	RECORDING_MODE_CYCLE: "recording:mode-cycle",
 	// Warmup status — invoke pulls the last snapshot on mount, broadcast
 	// fires whenever the periodic probe in main runs. Main-side wiring is
 	// still WIP; until it lands, the invoke handler is missing and the
@@ -395,6 +424,10 @@ export const IPC = {
 	// hidden.
 	LLM_GET_WARMUP_STATUS: "llm:get-warmup-status",
 	LLM_WARMUP_STATUS: "llm:warmup-status",
+	// Disable-side twin of LLM_WARMUP_STATUS: fires with inProgress=true when a
+	// settings-driven VRAM eviction batch starts and false once every named
+	// model was processed, so the toggle can show a truthful "unloading" state.
+	LLM_UNLOAD_STATUS: "llm:unload-status",
 	UPDATER_GET_STATUS_HISTORY: "updater:get-status-history",
 	UPDATER_CLEAR_STATUS_HISTORY: "updater:clear-status-history",
 	UPDATER_STATUS: "updater:status",
@@ -560,6 +593,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.SETTINGS_LOAD]: ["invoke"],
 	[IPC.SETTINGS_CHANGED]: ["on"],
 	[IPC.SETTINGS_SAVE_ERROR]: ["on"],
+	[IPC.SETTINGS_WINDOW_SHOWN]: ["on"],
 
 	// Window controls
 	[IPC.WINDOW_MINIMIZE]: ["send"],
@@ -634,22 +668,22 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.SOUND_LIBRARY_READ_FILE]: ["invoke"],
 
 	// LLM (renderer → main)
-	[IPC.LLM_SCAN_MODELS]: ["invoke"],
-	[IPC.LLM_PROCESS_TEXT]: ["invoke"],
-	[IPC.LLM_DETECT_OLLAMA]: ["invoke"],
-	[IPC.LLM_START_OLLAMA]: ["invoke"],
-	[IPC.LLM_SCAN_OPENROUTER_MODELS]: ["invoke"],
-	[IPC.LLM_PULL_MODEL]: ["invoke"],
-	[IPC.LLM_CANCEL_PULL_MODEL]: ["invoke"],
-	[IPC.LLM_DELETE_MODEL]: ["invoke"],
-	[IPC.LLM_PROCESS_TEXT_CUSTOM]: ["invoke"],
-	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: ["invoke"],
-	[IPC.LLM_FETCH_OLLAMA_TAGS]: ["invoke"],
+	[IPC.LLM_SCAN_MODELS]: [],
+	[IPC.LLM_PROCESS_TEXT]: [],
+	[IPC.LLM_DETECT_OLLAMA]: [],
+	[IPC.LLM_START_OLLAMA]: [],
+	[IPC.LLM_SCAN_OPENROUTER_MODELS]: [],
+	[IPC.LLM_PULL_MODEL]: [],
+	[IPC.LLM_CANCEL_PULL_MODEL]: [],
+	[IPC.LLM_DELETE_MODEL]: [],
+	[IPC.LLM_PROCESS_TEXT_CUSTOM]: [],
+	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: [],
+	[IPC.LLM_FETCH_OLLAMA_TAGS]: [],
 
 	// Cloud STT / TTS OpenRouter model discovery (credential VERIFY now goes
 	// through the typed `verifyCredentialCommand` wrapper — no channel here).
-	[IPC.STT_SCAN_OPENROUTER_MODELS]: ["invoke"],
-	[IPC.TTS_SCAN_OPENROUTER_MODELS]: ["invoke"],
+	[IPC.STT_SCAN_OPENROUTER_MODELS]: [],
+	[IPC.TTS_SCAN_OPENROUTER_MODELS]: [],
 
 	// Cloud STT error events (main → renderer)
 	[IPC.STT_CLOUD_AUTH_FAILED]: ["on"],
@@ -658,10 +692,12 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_CLOUD_RATE_LIMITED]: ["on"],
 	[IPC.STT_CLOUD_PROVIDER_ERROR]: ["on"],
 	[IPC.CLOUD_CONNECTIVITY]: ["on"],
+	[IPC.STT_PIPELINE_UNAVAILABLE]: ["on"],
+	[IPC.TTS_UNAVAILABLE]: ["on"],
 
 	// Transforms
-	[IPC.TRANSFORMS_APPLY]: ["invoke"],
-	[IPC.TRANSFORMS_PREVIEW]: ["invoke"],
+	[IPC.TRANSFORMS_APPLY]: [],
+	[IPC.TRANSFORMS_PREVIEW]: [],
 	[IPC.TRANSFORMS_APPLIED]: ["on"],
 	[IPC.TRANSFORMS_FAILED]: ["on"],
 	[IPC.TRANSFORMS_PROCESSING_START]: ["on"],
@@ -672,36 +708,43 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TRANSFORM_HISTORY_ADDED]: ["on"],
 	[IPC.TRANSFORM_HISTORY_DELETED]: ["on"],
 
+	// TTS history
+	[IPC.TTS_HISTORY_GET_ALL]: ["invoke"],
+	[IPC.TTS_HISTORY_CLEAR]: ["invoke"],
+	[IPC.TTS_HISTORY_DELETE]: ["invoke"],
+	[IPC.TTS_HISTORY_ADDED]: ["on"],
+	[IPC.TTS_HISTORY_DELETED]: ["on"],
+
 	// Preview-before-pasting
-	[IPC.PREVIEW_CONFIRM_PASTE]: ["invoke"],
-	[IPC.PREVIEW_CANCEL]: ["invoke"],
+	[IPC.PREVIEW_CONFIRM_PASTE]: [],
+	[IPC.PREVIEW_CANCEL]: [],
 	[IPC.STT_PREVIEW_READY]: ["on"],
 
 	// TTS (renderer → main)
-	[IPC.TTS_SPEAK]: ["invoke"],
-	[IPC.TTS_CANCEL]: ["send"],
-	[IPC.TTS_SET_SPEED]: ["send"],
-	[IPC.TTS_REQUEST_PLAYBACK_PAUSE]: ["send"],
-	[IPC.TTS_REQUEST_PLAYBACK_RESUME]: ["send"],
-	[IPC.TTS_INIT]: ["invoke"],
-	[IPC.TTS_LIST_VOICES]: ["invoke"],
-	[IPC.TTS_CLOUD_LIST_VOICES]: ["invoke"],
-	[IPC.TTS_CLOUD_PREVIEW]: ["invoke"],
+	[IPC.TTS_SPEAK]: [],
+	[IPC.TTS_CANCEL]: [],
+	[IPC.TTS_SET_SPEED]: [],
+	[IPC.TTS_REQUEST_PLAYBACK_PAUSE]: [],
+	[IPC.TTS_REQUEST_PLAYBACK_RESUME]: [],
+	[IPC.TTS_INIT]: [],
+	[IPC.TTS_LIST_VOICES]: [],
+	[IPC.TTS_CLOUD_LIST_VOICES]: [],
+	[IPC.TTS_CLOUD_PREVIEW]: [],
 	[IPC.TTS_OPENROUTER_PREVIEW]: [],
-	[IPC.TTS_CLOUD_SUBSCRIPTION]: ["invoke"],
+	[IPC.TTS_CLOUD_SUBSCRIPTION]: [],
 	[IPC.TTS_DOWNLOAD_ESTIMATE]: ["invoke"],
-	[IPC.TTS_INSTALL_PAUSE]: ["send"],
-	[IPC.TTS_INSTALL_RESUME]: ["send"],
-	[IPC.TTS_INSTALL_CANCEL]: ["send"],
-	[IPC.TTS_REPORT_PLAYBACK_STARTED]: ["send"],
-	[IPC.TTS_REPORT_PLAYBACK_ENDED]: ["send"],
+	[IPC.TTS_INSTALL_PAUSE]: [],
+	[IPC.TTS_INSTALL_RESUME]: [],
+	[IPC.TTS_INSTALL_CANCEL]: [],
+	[IPC.TTS_REPORT_PLAYBACK_STARTED]: [],
+	[IPC.TTS_REPORT_PLAYBACK_ENDED]: [],
 	[IPC.TTS_LIST_MODELS]: ["invoke"],
-	[IPC.TTS_LIST_MODELS_WITH_STATE]: ["invoke"],
-	[IPC.TTS_PREDOWNLOAD]: ["invoke"],
-	[IPC.TTS_DOWNLOAD_PAUSE]: ["invoke"],
-	[IPC.TTS_DOWNLOAD_RESUME]: ["invoke"],
-	[IPC.TTS_DOWNLOAD_CANCEL]: ["invoke"],
-	[IPC.TTS_DELETE_MODEL]: ["invoke"],
+	[IPC.TTS_LIST_MODELS_WITH_STATE]: [],
+	[IPC.TTS_PREDOWNLOAD]: [],
+	[IPC.TTS_DOWNLOAD_PAUSE]: [],
+	[IPC.TTS_DOWNLOAD_RESUME]: [],
+	[IPC.TTS_DOWNLOAD_CANCEL]: [],
+	[IPC.TTS_DELETE_MODEL]: [],
 
 	// TTS events (main → renderer)
 	[IPC.TTS_STARTED]: ["on"],
@@ -717,6 +760,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_MODEL_DOWNLOAD_PROGRESS]: ["on"],
 	[IPC.TTS_MODEL_DOWNLOAD_COMPLETE]: ["on"],
 	[IPC.TTS_INSTALL_STATUS]: ["on"],
+	[IPC.TTS_UNLOAD_STATUS]: ["on"],
 	[IPC.TTS_INSTALL_FAILED]: ["on"],
 	[IPC.TTS_INSTALL_PAUSED]: ["on"],
 	[IPC.TTS_INSTALL_RESUMED]: ["on"],
@@ -732,6 +776,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.LLM_REASONING_DELTA]: ["on"],
 	[IPC.LLM_LEARNED_PROPER_NOUNS]: ["on"],
 	[IPC.LLM_PROFILE_SWAP]: ["on"],
+	[IPC.RECORDING_MODE_CYCLE]: ["on"],
 
 	// Updater
 	[IPC.UPDATER_GET_STATUS_HISTORY]: ["invoke", "secure"],
@@ -759,8 +804,9 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.HISTORY_ROW_TOGGLED]: ["on"],
 
 	// LLM warmup status
-	[IPC.LLM_GET_WARMUP_STATUS]: ["invoke"],
+	[IPC.LLM_GET_WARMUP_STATUS]: [],
 	[IPC.LLM_WARMUP_STATUS]: ["on"],
+	[IPC.LLM_UNLOAD_STATUS]: ["on"],
 
 	// Speaker diarization (server → main → renderer)
 	[IPC.STT_DIARIZATION_TOGGLE_STARTED]: ["on"],

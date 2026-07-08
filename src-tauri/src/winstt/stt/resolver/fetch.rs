@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
-use super::globs::{file_globs, glob_match, pick_kaldi_tiebreak, resolve_repo};
+use super::globs::{file_globs, glob_match, pick_kaldi_tiebreak, resolve_repo_for_quant};
 use super::sidecars::{is_sidecar_for, verify_external_data_complete};
 use crate::winstt::stt::{EngineKind, Quantization, ResolvedModel, SttError, SttResult};
 
@@ -221,9 +221,10 @@ fn resolve_local_dir(
 async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<ResolvedModel> {
     use hf_hub::HFClient;
 
-    let (owner, name) = resolve_repo(&req.model_id).ok_or_else(|| {
-        SttError::Resolve(format!("unknown model alias / repo: {}", req.model_id))
-    })?;
+    let (owner, name) =
+        resolve_repo_for_quant(&req.model_id, req.effective_quant).ok_or_else(|| {
+            SttError::Resolve(format!("unknown model alias / repo: {}", req.model_id))
+        })?;
 
     let client = HFClient::new().map_err(|e| SttError::Resolve(format!("hf client init: {e}")))?;
     let repo = client.model(owner.clone(), name.clone());
@@ -346,9 +347,10 @@ async fn download_one(
 async fn resolve_cached_offline(req: &ResolveRequest) -> SttResult<ResolvedModel> {
     use hf_hub::HFClient;
 
-    let (owner, name) = resolve_repo(&req.model_id).ok_or_else(|| {
-        SttError::Resolve(format!("unknown model alias / repo: {}", req.model_id))
-    })?;
+    let (owner, name) =
+        resolve_repo_for_quant(&req.model_id, req.effective_quant).ok_or_else(|| {
+            SttError::Resolve(format!("unknown model alias / repo: {}", req.model_id))
+        })?;
     let repo_key = format!("{owner}/{name}").to_ascii_lowercase();
 
     // Walk the local cache only — `scan_cache()` is a filesystem scan, no HTTP. A scan error or an
@@ -462,7 +464,7 @@ pub async fn plan_quant_download(
 ) -> SttResult<Vec<String>> {
     use hf_hub::HFClient;
 
-    let (owner, name) = resolve_repo(model_id)
+    let (owner, name) = resolve_repo_for_quant(model_id, quant)
         .ok_or_else(|| SttError::Resolve(format!("unknown model alias / repo: {model_id}")))?;
     let client = HFClient::new().map_err(|e| SttError::Resolve(format!("hf client init: {e}")))?;
     let repo = client.model(owner.clone(), name.clone());
@@ -533,6 +535,7 @@ pub async fn plan_quant_download(
 pub async fn download_planned_file(
     model_id: &str,
     repo_path: &str,
+    quant: Quantization,
     cache_only: bool,
     progress: impl Into<hf_hub::progress::Progress>,
 ) -> SttResult<PathBuf> {
@@ -540,7 +543,10 @@ pub async fn download_planned_file(
 
     let repo_path = validate_repo_path(repo_path)
         .map_err(|e| SttError::Resolve(format!("unsafe repo path: {e}")))?;
-    let (owner, name) = resolve_repo(model_id)
+    // Resolve the repo for the SET's quant (not the individual file's suffix) so shared metadata
+    // (tokenizer/config, which carry no suffix) follows the same repo as the graphs — e.g. int8 →
+    // Masterx routes the WHOLE int8 set, tokenizer included. Non-overridden quants resolve as before.
+    let (owner, name) = resolve_repo_for_quant(model_id, quant)
         .ok_or_else(|| SttError::Resolve(format!("unknown model alias / repo: {model_id}")))?;
     let client = HFClient::new().map_err(|e| SttError::Resolve(format!("hf client init: {e}")))?;
     let repo = client.model(owner, name);
@@ -557,12 +563,12 @@ pub async fn download_planned_file(
 /// True iff `repo_path` is already present + complete in the HF cache (used to skip already-cached
 /// files when resuming a partial per-quant download). A cache-only `download_file` succeeds iff the
 /// file is cached; we then verify external-data completeness for `.onnx`.
-pub async fn is_file_cached(model_id: &str, repo_path: &str) -> bool {
+pub async fn is_file_cached(model_id: &str, repo_path: &str, quant: Quantization) -> bool {
     struct Noop;
     impl hf_hub::progress::ProgressHandler for Noop {
         fn on_progress(&self, _e: &hf_hub::progress::ProgressEvent) {}
     }
-    match download_planned_file(model_id, repo_path, true, Noop).await {
+    match download_planned_file(model_id, repo_path, quant, true, Noop).await {
         Ok(p) => {
             if repo_path.ends_with(".onnx") {
                 verify_external_data_complete(&p)

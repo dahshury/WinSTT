@@ -30,6 +30,10 @@ use crate::command_auth;
 use crate::winstt::commands::settings::read_settings;
 
 const ORIGINAL_DEFAULT_SOUND_RESOURCE: &str = "resources/recording_sound_default.wav";
+/// Bundled error earcon played on a genuine transcription failure. Deliberately
+/// NOT part of `BUILTIN_RECORDING_SOUND_FILES` — it is a fixed system alert, not a
+/// user-selectable recording chime, so it never appears in the sound selector.
+const ERROR_SOUND_RESOURCE: &str = "resources/error_sound.wav";
 const BUILTIN_SOUND_PREFIX: &str = "builtin:";
 const BUILTIN_RECORDING_SOUND_FILES: &[&str] = &["marimba_start.wav"];
 
@@ -504,6 +508,28 @@ pub fn play_recording_chime(app: &AppHandle) {
     std::thread::spawn(move || {
         if let Err(e) = crate::audio_feedback::play_audio_file(&path, selected_device, 1.0) {
             log::error!("Failed to play recording chime '{}': {e}", path.display());
+        }
+    });
+}
+
+/// Play the bundled error earcon NATIVELY (rodio), off the caller's path.
+///
+/// Fired on a genuine terminal transcription failure ([`SttEvents::transcription_failed`]).
+/// Mirrors [`play_recording_chime`]'s native-playback rationale (a global hotkey
+/// gives the webview no user-activation gesture, and WebView2 throttles a hidden
+/// window's `AudioContext`), and routes to the same `selected_output_device` at
+/// full volume. Unlike the recording chime it is NOT gated on `general.recording_sound`:
+/// it is an error alert, not the start-of-recording chime, so it always sounds.
+///
+/// Fire-and-forget on a worker thread: rodio's `sink.sleep_until_end()` blocks.
+pub fn play_error_sound(app: &AppHandle) {
+    let Some(path) = resource_path(app, ERROR_SOUND_RESOURCE) else {
+        return;
+    };
+    let selected_device = crate::settings::get_settings(app).selected_output_device;
+    std::thread::spawn(move || {
+        if let Err(e) = crate::audio_feedback::play_audio_file(&path, selected_device, 1.0) {
+            log::error!("Failed to play error sound '{}': {e}", path.display());
         }
     });
 }

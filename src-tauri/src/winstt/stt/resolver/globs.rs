@@ -114,6 +114,38 @@ fn is_valid_hf_repo_component(s: &str) -> bool {
 /// The catalog's `onnx_model_name` is itself either a slashed repo (Whisper/Cohere/Sense/Vosk) or a
 /// `MODEL_REPOS` alias (Moonshine/NeMo/GigaAM), so we recurse through it once: a slash splits
 /// directly, an alias falls to step 2. The single-level guard (`!= model`) prevents any self-loop.
+/// Per-(model, quant) repo override: a specific precision that lives in a DIFFERENT repo than the
+/// model's default `onnx_model_name`. Used for the multilingual `cohere-transcribe` int8, which we
+/// host on `Masterx/...` because onnx-community hasn't merged the int8 PR — so int8 resolves (download
+/// AND cache) from Masterx while fp32/fp16/q4/q4f16 stay on onnx-community. Keyed by BOTH the catalog
+/// id (cache-probe path) and the `onnx_model_name` (engine-load path). A model/quant not listed here
+/// is unaffected — `resolve_repo_for_quant` == `resolve_repo` for everything else.
+const QUANT_REPO_OVERRIDES: &[(&str, Quantization, &str)] = &[
+    (
+        "cohere-transcribe",
+        Quantization::Int8,
+        "Masterx/cohere-transcribe-03-2026-ONNX",
+    ),
+    (
+        "onnx-community/cohere-transcribe-03-2026-ONNX",
+        Quantization::Int8,
+        "Masterx/cohere-transcribe-03-2026-ONNX",
+    ),
+];
+
+/// Like `resolve_repo`, but applies the per-quant repo override first (see `QUANT_REPO_OVERRIDES`).
+/// Every resolution site that knows the target quantization uses this so a per-precision repo split is
+/// honored consistently across download, offline-cache resolve, and the picker's cache probe.
+pub fn resolve_repo_for_quant(model: &str, quant: Quantization) -> Option<(String, String)> {
+    if let Some((_, _, repo)) = QUANT_REPO_OVERRIDES
+        .iter()
+        .find(|(m, q, _)| *m == model && *q == quant)
+    {
+        return resolve_repo(repo);
+    }
+    resolve_repo(model)
+}
+
 pub fn resolve_repo(model: &str) -> Option<(String, String)> {
     if let Some((owner, name)) = model.split_once('/') {
         // SSRF / path-traversal guard: a slashed id is taken verbatim and later

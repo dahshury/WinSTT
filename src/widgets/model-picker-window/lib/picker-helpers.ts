@@ -1,7 +1,3 @@
-import {
-	resolveEffectiveQuant,
-	STT_PICKER_WIDTH_PX,
-} from "@/widgets/model-picker";
 import { providerOf } from "@/entities/cloud-stt-provider/model/catalog";
 import type { ModelStatesById as StatesById } from "@/entities/model-catalog";
 import type { useQuantActions } from "@/features/model-download";
@@ -10,6 +6,11 @@ import type { FitAssessmentEntry } from "@/shared/api/ipc-client";
 import { ipcSend } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { isRecord } from "@/shared/lib/is-record";
+import {
+	resolveEffectiveQuant,
+	STT_PICKER_WIDTH_PX,
+} from "@/widgets/model-picker";
+
 export type {
 	CatalogModels,
 	ModelStatesById as StatesById,
@@ -28,11 +29,19 @@ export const DESIRED_WIDTH = STT_PICKER_WIDTH_PX;
 export const DESIRED_HEIGHT = 560;
 const OPENROUTER_PICKER_WIDTH = 580;
 const OLLAMA_PICKER_WIDTH = 620;
-const LLM_PICKER_HEIGHT = 620;
+// Sized to show exactly three model cards (Ollama/OpenRouter) — a hair shorter
+// than the previous 620 so the fourth maker group's header no longer peeks in
+// under the third card.
+const LLM_PICKER_HEIGHT = 580;
 export const PANEL_HEIGHT = "h-full";
-// Keep in sync with `MODEL_PICKER_CLOSE_MS` in `src-tauri/.../windows.rs` and
-// `--dropdown-close-dur` in `src/app/styles/globals.css`.
-export const MODEL_PICKER_CLOSE_MS = 150;
+// Duration of the close FADE (keep in sync with `--dropdown-close-dur` in
+// `src/app/styles/globals.css` and `MODEL_PICKER_CLOSE_MS` in
+// `src-tauri/.../windows/placement.rs`). The Rust side hides the OS window a
+// beat LATER (`MODEL_PICKER_HIDE_DELAY_MS`) so the fully-faded transparent
+// frame is actually composited before the hide — otherwise the last frame
+// WebView2 holds is the visible panel, which flashes at the OLD trigger's
+// position the next time the window is shown.
+export const MODEL_PICKER_CLOSE_MS = 120;
 
 export function isPrimaryInlineModelList(element: HTMLElement): boolean {
 	return (
@@ -42,10 +51,15 @@ export function isPrimaryInlineModelList(element: HTMLElement): boolean {
 }
 
 // Window-local rect (CSS px) for the visible panel inside the full-screen
-// backdrop window. Null until the main process reports it.
+// backdrop window. Null until the main process reports it. The `-center`
+// origins are emitted when the trigger is horizontally centered on the panel
+// (the settings comboboxes, whose width the panel matches exactly), so the
+// open/close scale emanates from the middle of the shared edge.
 export type PanelOrigin =
+	| "bottom-center"
 	| "bottom-left"
 	| "bottom-right"
+	| "top-center"
 	| "top-left"
 	| "top-right";
 
@@ -58,7 +72,12 @@ export interface PanelRect {
 	y: number;
 }
 
-export type PanelPhase = "hidden" | "open" | "closing";
+// `pre-open` = anchored + positioned but not yet revealed: the panel holds its
+// pre-animation state until the window's compositor has actually painted a
+// frame at the new position (double-rAF), so the open animation is never
+// swallowed by WebView2's show-resume lag and never starts on a stale frame
+// composited at the previous trigger's position.
+export type PanelPhase = "hidden" | "pre-open" | "open" | "closing";
 
 export type DetachedLlmFeature = "dictation" | "transforms";
 

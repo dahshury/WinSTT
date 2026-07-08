@@ -2,6 +2,8 @@ import {
 	AiBrain02Icon,
 	ArrangeIcon,
 	BrushIcon,
+	ArrowLeft01Icon,
+	ArrowRight01Icon,
 	Delete02Icon,
 	LanguageSkillIcon,
 	Layout01Icon,
@@ -27,7 +29,12 @@ import {
 import { useSettingsStore } from "@/entities/setting";
 import { generateId } from "@/shared/lib/generate-id";
 import { findLanguage, LANGUAGES } from "@/shared/lib/languages";
-import { surfaceClasses, useSurface } from "@/shared/lib/surface";
+import { cn } from "@/shared/lib/cn";
+import {
+	surfaceClasses,
+	surfaceHoverBg,
+	useSurface,
+} from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import {
@@ -46,10 +53,11 @@ import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import { Modal } from "@/shared/ui/modal";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
-import type { SelectOption } from "@/shared/ui/select";
+import { type SelectOption, usePopupSurfaceLevels } from "@/shared/ui/select";
 import { Switcher } from "@/shared/ui/switcher";
 import { TextField } from "@/shared/ui/text-field";
 import { Toggle } from "@/shared/ui/toggle";
+import { Tooltip } from "@/shared/ui/tooltip";
 import {
 	DEFAULT_LEVEL,
 	getLevel,
@@ -65,11 +73,14 @@ import {
 	toggleIndependent,
 } from "../lib/llm-settings-panel-test-helpers";
 import {
+	configurationsEqual,
 	type LlmConfiguration,
 	matchPostProcessingProfileId,
 	postProcessingPatchFromConfiguration,
 	useLlmConfigurationsStore,
+	withAvailableLlmProvider,
 } from "../model/configurations";
+import { iconForPostProcessingProfileId } from "../model/profile-icons";
 import type { LlmSettingsPanelModel } from "../model/use-llm-settings-panel";
 import { seedDraftFromFeature } from "./modifier-presets-state";
 import type { TranslateFn } from "./types";
@@ -313,14 +324,15 @@ function CustomModifierRow({
 			trailing={
 				<div className="flex items-center gap-1">
 					{modifier.levelsEnabled ? (
-						// `inline` drops ElevatedSurface's p-1.5 gutter so the L/M/H
-						// control stays as short as the row (no row-height growth);
-						// w-64 keeps it compact instead of stretching the row.
+						// `size="sm"` keeps the L/M/H control within the row's line-box
+						// (no row-height growth vs a modifier without levels); w-52
+						// keeps it compact instead of stretching the row.
 						<Switcher
-							className="w-64"
+							className="w-52"
 							fullWidth
 							onChange={(v) => onLevelChange(modifier.id, v as PresetLevel)}
 							options={levelOpts}
+							size="sm"
 							value={modifier.level ?? DEFAULT_LEVEL}
 						/>
 					) : null}
@@ -398,51 +410,42 @@ function ModifierDialog({
 
 	return (
 		<Modal isOpen={isOpen} onClose={onClose}>
-			<div className="flex w-[28rem] max-w-[90vw] flex-col gap-4 p-6">
+			<div className="flex w-[28rem] max-w-[90vw] flex-col p-6">
 				<DialogTitle>
 					{isEdit ? t("modifierEditTitle") : t("modifierAddTitle")}
 				</DialogTitle>
-				<label className="flex flex-col gap-1.5" htmlFor="modifier-name-input">
-					<span className="text-foreground-secondary text-sm">
-						{t("modifierName")}
-					</span>
-					<TextField
-						id="modifier-name-input"
-						onChange={(e) => setName(e.target.value)}
-						placeholder={t("modifierNamePlaceholder")}
-						value={name}
-					/>
-				</label>
-				<label
-					className="flex flex-col gap-1.5"
-					htmlFor="modifier-prompt-input"
-				>
-					<span className="text-foreground-secondary text-sm">
-						{t("modifierPrompt")}
-					</span>
-					<textarea
-						aria-label={t("modifierPrompt")}
-						className={`min-h-[120px] w-full resize-y rounded-lg p-2.5 text-body text-foreground caret-accent outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${surfaceClasses(inputLevel)}`}
-						id="modifier-prompt-input"
-						onChange={(e) => setPrompt(e.target.value)}
-						placeholder={t("modifierPromptPlaceholder")}
-						value={prompt}
-					/>
-				</label>
-				<div className="flex items-center justify-between gap-3">
-					<div className="flex flex-col">
-						<span className="text-foreground text-sm">
-							{t("modifierLevels")}
-						</span>
-						<span className="text-foreground-muted text-xs">
-							{t("modifierLevelsCaption")}
-						</span>
-					</div>
-					<Toggle
-						aria-label={t("modifierLevels")}
-						checked={levelsEnabled}
-						onCheckedChange={setLevelsEnabled}
-					/>
+				{/* Same hairline-divided, self-padded row column the settings panels
+				    use — text inputs stacked, the compact toggle as a one-liner row. */}
+				<div className="flex flex-col divide-y divide-divider">
+					<FormControl label={t("modifierName")}>
+						<TextField
+							id="modifier-name-input"
+							onChange={(e) => setName(e.target.value)}
+							placeholder={t("modifierNamePlaceholder")}
+							value={name}
+						/>
+					</FormControl>
+					<FormControl label={t("modifierPrompt")}>
+						<textarea
+							aria-label={t("modifierPrompt")}
+							className={`min-h-[120px] w-full resize-y rounded-lg p-2.5 text-body text-foreground caret-accent outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${surfaceClasses(inputLevel)}`}
+							id="modifier-prompt-input"
+							onChange={(e) => setPrompt(e.target.value)}
+							placeholder={t("modifierPromptPlaceholder")}
+							value={prompt}
+						/>
+					</FormControl>
+					<FormControl
+						caption={t("modifierLevelsCaption")}
+						label={t("modifierLevels")}
+						layout="row"
+					>
+						<Toggle
+							aria-label={t("modifierLevels")}
+							checked={levelsEnabled}
+							onCheckedChange={setLevelsEnabled}
+						/>
+					</FormControl>
 				</div>
 				<DialogFooter>
 					<DialogActionButton onClick={onClose} variant="neutral">
@@ -599,25 +602,28 @@ function IndependentPresetList({
 					trailing = rowLocked ? (
 						<InfoTooltip content={t("translateLockedBySttTooltip")} />
 					) : (
-						<ElevatedSurface inline>
-							<div className="w-44">
-								<SearchableSelect
-									disabled={!checked}
-									onChange={handleLang}
-									options={languageOptsFor(displayedLang)}
-									placeholder={t("translateLanguagePlaceholder")}
-									value={displayedLang}
-								/>
-							</div>
-						</ElevatedSurface>
+						// Bare + `size="sm"`: the picker self-elevates (no wrapping
+						// ElevatedSurface) and its 18px-tall trigger matches the
+						// leveled rows' `size="sm"` switcher, so the Translate row
+						// stays exactly as tall as the others.
+						<SearchableSelect
+							className="w-44"
+							disabled={!checked}
+							onChange={handleLang}
+							options={languageOptsFor(displayedLang)}
+							placeholder={t("translateLanguagePlaceholder")}
+							size="sm"
+							value={displayedLang}
+						/>
 					);
 				} else if (hasLevel) {
 					trailing = (
 						<Switcher
-							className="w-64"
+							className="w-52"
 							fullWidth
 							onChange={(v) => handleLevel(v as PresetLevel)}
 							options={checked ? levelOpts : disabledLevelOpts}
+							size="sm"
 							value={displayedLevel}
 						/>
 					);
@@ -748,13 +754,40 @@ export function PostProcessingProfilesCombobox({
 	const setActiveConfiguration = useLlmConfigurationsStore(
 		(s) => s.setActiveConfiguration,
 	);
+	const updateConfiguration = useLlmConfigurationsStore(
+		(s) => s.updateConfiguration,
+	);
+	const openrouterKey = useSettingsStore(
+		(s) => s.settings.llm.openrouterApiKey,
+	);
 	const draft = seedDraftFromFeature(snapshot);
 	const matchedId = matchPostProcessingProfileId(draft, configurations);
+	// The applied preset is "modified" once the live settings diverge from the
+	// config it was applied from — that dirty row exposes Save (overwrite) and
+	// Reset (revert) actions inside the dropdown. Compare against the key-gated
+	// form so a keyless OpenRouter preset (which applies as its local fallback)
+	// isn't perpetually "dirty" and its Reset actually clears.
+	const activeConfig =
+		configurations.find((c) => c.id === activeConfigurationId) ?? null;
+	const activeModified =
+		activeConfig != null &&
+		!configurationsEqual(
+			withAvailableLlmProvider(activeConfig.config, openrouterKey),
+			draft,
+		);
+	const { triggerLevel } = usePopupSurfaceLevels({ selfElevate: false });
+	// Nav arrows cycle prev/next between saved presets, so they need at least two
+	// to do anything. With 0 or 1 preset there is nothing to cycle to — leaving
+	// them enabled would let a click re-apply the lone preset and silently swap the
+	// live provider/model (e.g. onto an OpenRouter cloud config).
+	const navigationDisabled = disabled || configurations.length < 2;
 
 	const items: CreatableComboboxItem[] = configurations.map((c) => ({
 		id: c.id,
 		label: c.name,
+		icon: iconForPostProcessingProfileId(c.id),
 		deletable: true,
+		modified: activeModified && c.id === activeConfigurationId,
 	}));
 
 	const applyConfiguration = (id: string) => {
@@ -762,8 +795,42 @@ export function PostProcessingProfilesCombobox({
 		if (!cfg) {
 			return;
 		}
-		update(postProcessingPatchFromConfiguration(cfg.config));
+		// Gate cloud providers behind their key so selecting / navigating to / or
+		// resetting to an OpenRouter preset can't silently strand dictation on a
+		// keyless cloud provider — it falls back to local instead.
+		update(
+			postProcessingPatchFromConfiguration(
+				withAvailableLlmProvider(cfg.config, openrouterKey),
+			),
+		);
 		setActiveConfiguration(id);
+	};
+
+	const applyConfigurationAtOffset = (offset: -1 | 1) => {
+		if (configurations.length < 2) {
+			return;
+		}
+		const currentIndex = configurations.findIndex((c) => c.id === matchedId);
+		const activeIndex = configurations.findIndex(
+			(c) => c.id === activeConfigurationId,
+		);
+		const fallbackIndex = offset > 0 ? 0 : configurations.length - 1;
+		const startIndex =
+			currentIndex >= 0
+				? currentIndex
+				: activeIndex >= 0
+					? activeIndex
+					: offset > 0
+						? -1
+						: 0;
+		const nextIndex =
+			startIndex >= 0
+				? (startIndex + offset + configurations.length) % configurations.length
+				: fallbackIndex;
+		const next = configurations[nextIndex];
+		if (next) {
+			applyConfiguration(next.id);
+		}
 	};
 
 	const handleCreate = (rawName: string) => {
@@ -780,22 +847,81 @@ export function PostProcessingProfilesCombobox({
 		}
 	};
 
+	// Overwrite the preset with the current live settings (clears the dirty state).
+	const handleSaveActive = (id: string) => {
+		updateConfiguration(id, draft);
+	};
+
+	// Revert the live settings back to the preset's saved state.
+	const handleResetActive = (id: string) => {
+		applyConfiguration(id);
+	};
+
+	// Each arrow carries the SAME filled surface as the middle combobox (fill +
+	// elevation shadow via surfaceClasses at the same level), so the three read as
+	// equally "poppy" segments of one bar instead of flat/disabled-looking cutouts.
+	// Hover lifts one surface level; hairline dividers separate the segments.
+	const navButtonBase = cn(
+		"h-8 w-9 shrink-0 text-foreground-dim transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40",
+		surfaceClasses(triggerLevel),
+		surfaceHoverBg(Math.min(triggerLevel + 1, 8)),
+	);
+
 	return (
-		<CreatableCombobox
-			className="w-64 max-w-[40vw]"
-			createLabel={(name) => t("modifierPresetCreate", { name })}
-			deleteAriaLabel={t("playgroundDeletePreset")}
-			disabled={disabled}
-			emptyLabel={t("modifierPresetEmpty")}
-			items={items}
-			onCreate={handleCreate}
-			onDelete={handleDelete}
-			onReorder={moveConfiguration}
-			onSelect={applyConfiguration}
-			placeholder={t("modifierPresetPlaceholder")}
-			reorderAriaLabel={(item) => `Drag ${item.label} to reorder`}
-			value={matchedId}
-		/>
+		<div
+			aria-label="Post-processing preset navigation"
+			className="flex min-w-0 items-center"
+			role="group"
+		>
+			<Tooltip content="Previous preset">
+				<Button
+					aria-label="Previous preset"
+					className={cn(
+						navButtonBase,
+						"rounded-l-lg border-divider-strong border-e",
+					)}
+					disabled={navigationDisabled}
+					onClick={() => applyConfigurationAtOffset(-1)}
+				>
+					<HugeiconsIcon aria-hidden="true" icon={ArrowLeft01Icon} size={15} />
+				</Button>
+			</Tooltip>
+			<CreatableCombobox
+				className="w-64 min-w-0 max-w-[40vw]"
+				createLabel={(name) => t("modifierPresetCreate", { name })}
+				deleteAriaLabel={t("playgroundDeletePreset")}
+				disabled={disabled}
+				emptyLabel={t("modifierPresetEmpty")}
+				hideSelectedCheck
+				inputClassName="rounded-none focus-visible:ring-inset focus-visible:ring-offset-0"
+				items={items}
+				leadingReorderHandle
+				onCreate={handleCreate}
+				onDelete={handleDelete}
+				onReorder={moveConfiguration}
+				onReset={handleResetActive}
+				onSave={handleSaveActive}
+				onSelect={applyConfiguration}
+				placeholder={t("modifierPresetPlaceholder")}
+				reorderAriaLabel={(item) => `Drag ${item.label} to reorder`}
+				resetAriaLabel="Reset to saved settings"
+				saveAriaLabel="Overwrite preset with current settings"
+				value={matchedId}
+			/>
+			<Tooltip content="Next preset">
+				<Button
+					aria-label="Next preset"
+					className={cn(
+						navButtonBase,
+						"rounded-r-lg border-divider-strong border-s",
+					)}
+					disabled={navigationDisabled}
+					onClick={() => applyConfigurationAtOffset(1)}
+				>
+					<HugeiconsIcon aria-hidden="true" icon={ArrowRight01Icon} size={15} />
+				</Button>
+			</Tooltip>
+		</div>
 	);
 }
 

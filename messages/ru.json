@@ -251,7 +251,46 @@
     "retentionDays3": "Через 3 дня",
     "retentionWeeks2": "Через 2 недели",
     "retentionMonths3": "Через 3 месяца",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "История транскрипций",
+    "enabledTooltip": "Когда включено, WinSTT записывает ваши транскрипции, преобразования и озвучивания, чтобы эта панель могла показывать статистику и расходы. Отключите, чтобы прекратить сбор новых данных.",
+    "disabledHint": "История отключена — WinSTT не записывает новую активность. Существующие данные сохраняются, пока вы их не удалите.",
+    "deleteAllTitle": "Удалить всю историю?",
+    "deleteAllDescription": "Все записанные транскрипции, преобразования, озвучивания и сохранённые записи будут удалены навсегда. Это действие необратимо.",
+    "deleteAllButton": "Удалить все данные",
+    "clearTtsButton": "Очистить озвучивания",
+    "clearTtsTitle": "Очистить всю историю озвучиваний?",
+    "clearTtsDescription": "Все сохранённые запуски синтеза речи и аудио будут удалены. Это действие необратимо.",
+    "combinedTableTitle": "История",
+    "filterDateRange": "Диапазон дат",
+    "filterAllTime": "За всё время",
+    "heatmapEarlier": "Раньше",
+    "heatmapLater": "Позже",
+    "spendingTitle": "Расходы",
+    "spendingTotalLabel": "Всего расходов",
+    "spendingByModalityTitle": "Расходы по типам",
+    "spendingByProviderTitle": "Расходы по провайдерам",
+    "spendingByModelTitle": "Расходы по моделям",
+    "spendingByMakerTitle": "Расходы по разработчикам",
+    "spendingEstimatedHint": "Некоторые значения оценочные, где точная цена не была указана.",
+    "costSpeechToText": "Речь в текст",
+    "costTextToSpeech": "Текст в речь",
+    "costLanguageModel": "Языковая модель",
+    "colCharacters": "Символы",
+    "cloudLabel": "Облако",
+    "colCost": "Стоимость облака",
+    "costEstimated": "Оценочно",
+    "costTotal": "Всего",
+    "kindSpeechToText": "Речь в текст",
+    "kindTextToSpeech": "Текст в речь",
+    "durationLlmProcessing": "Обработка ИИ",
+    "durationNotRecorded": "Не записано",
+    "durationNotRun": "Не выполнялось",
+    "durationRecording": "Запись",
+    "durationSpeechToText": "Транскрипция",
+    "durationTotalProcessing": "Время обработки",
+    "colTtsModel": "Голосовая модель",
+    "colVoice": "Голос"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "Резервное распознавание текста экрана (OCR)",
+    "contextScreenOcrCaption": "Считывать текст на экране рядом с курсором как дополнительный контекст",
+    "contextScreenOcrTooltip": "Когда учёт контекста не может прочитать активное поле напрямую, WinSTT переходит к распознаванию текста на экране (OCR) вокруг курсора, чтобы захватить ближайший текст. Это медленнее и менее точно, чем прямое чтение поля — отключите, чтобы пропустить этот запасной вариант."
   },
   "model": {
     "initialPrompt": "Начальный промпт",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "Секунды тишины для раннего запуска",
     "earlyTranscriptionTooltip": "Начинать расшифровку до полной остановки речи, запускаемую после указанного количества секунд тишины. Сокращает задержку между речью и появлением финального текста. Установите 0 для отключения.",
     "realtimeModel": "Модель реального времени",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "Модель реального времени",
     "realtimeModelCaption": "Меньшая модель для живого предпросмотра",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "Минимальное время между обновлениями живой расшифровки. Меньшие значения дают более частые обновления, но требуют больше вычислительных ресурсов. Увеличьте при заикании или высокой нагрузке на CPU во время диктовки.",
     "llm": "Большая языковая модель",
     "deviceAutoLabel": "Авто",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "Отключить потоковую транскрипцию по словам?",
+    "realtimeOffWordByWordDescription": "Эта модель выводит транскрипцию слово за словом по мере вашей речи. Отключение режима реального времени переключит её на транскрибирование только после того, как вы остановитесь.",
+    "realtimeOffWordByWordConfirm": "Отключить"
   },
   "audio": {
     "inputDevice": "Устройство ввода",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "Сразу",
     "microphoneReleaseSec30": "30 секунд",
     "microphoneReleaseMin1": "1 минута",
-    "microphoneReleaseMin5": "5 минут"
+    "microphoneReleaseMin5": "5 минут",
+    "devicePriorityHandle": "Перетащите, чтобы изменить приоритет"
   },
   "quality": {
     "enableRealtime": "Включить реальное время",
@@ -717,7 +766,8 @@
     "waiting": "Ожидание речи...",
     "serverOffline": "Сервер недоступен",
     "noAudioDetected": "(аудио не обнаружено)",
-    "transcriptionFailed": "(расшифровка не удалась)"
+    "transcriptionFailed": "(расшифровка не удалась)",
+    "offlineNoLocalModel": "Нет интернета · нет локальной модели"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "Всё равно установить",
     "unfitSelectTitle": "Использовать эту большую модель?",
     "unfitSelectDescription": "«{model}» больше, чем ваше оборудование может комфортно запустить (~{required} требуется, {available} доступно). Она может работать очень медленно или не загрузиться. Использовать всё равно?",
-    "unfitSelectAnyway": "Всё равно использовать"
+    "unfitSelectAnyway": "Всё равно использовать",
+    "dictionaryAutoAddLiteModel": "Недоступно на облегчённых моделях — переключитесь на более крупную модель, чтобы автоматически добавлять исправления в словарь."
   },
   "tts": {
     "title": "Синтез речи",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "Добавьте и верифицируйте API-ключ ElevenLabs в Интеграциях для использования облачных голосов.",
     "cloudLoadingVoices": "Загрузка голосов…",
     "cloudNoVoices": "Голоса для этого аккаунта ElevenLabs не найдены.",
-    "cloudError": "Не удалось загрузить голоса ElevenLabs."
+    "cloudError": "Не удалось загрузить голоса ElevenLabs.",
+    "voiceDesignLabel": "Описание голоса",
+    "voiceDesignTooltip": "Опишите нужный голос словами — тембр, возраст, акцент, эмоцию — и модель синтезирует подходящий голос вместо выбора из набора готовых.",
+    "voiceDesignButtonPlaceholder": "Создать голос",
+    "voiceDesignDialogTitle": "Создание голоса",
+    "voiceDesignDialogDescription": "Опишите голос в одном-двух предложениях. Оставьте пустым, чтобы использовать голос модели по умолчанию.",
+    "voiceDesignPromptLabel": "Описание голоса",
+    "voiceDesignPromptPlaceholder": "например, тёплый рассказчик с низким голосом и лёгким британским акцентом",
+    "voiceDesignPromptEmptyHint": "Оставьте пустым, чтобы использовать встроенный голос модели.",
+    "voiceDesignCancel": "Отмена",
+    "voiceDesignSave": "Сохранить",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "Что-то пошло не так",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "Превышен лимит запросов {provider}",
     "toastRateLimitedRetry": "Попробуйте через {seconds}с",
     "toastProviderError": "Ошибка STT {provider}: {message}",
-    "openIntegrations": "Открыть интеграции"
+    "openIntegrations": "Открыть интеграции",
+    "toastTtsOfflineNoLocal": "Нет интернета и не установлен локальный голос — озвучивание недоступно."
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "Облегчённая",
+    "liteTierTip": "Меньшая и более быстрая версия с пониженной точностью — лучше всего для быстрых задач на слабом оборудовании."
   },
   "dataGrid": {
     "addRow": "Add row",

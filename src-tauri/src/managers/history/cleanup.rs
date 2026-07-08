@@ -27,12 +27,14 @@ impl HistoryManager {
             RecordingRetention::Cap => {
                 let limit = clamp_history_limit(settings.general.history_max_entries);
                 self.cleanup_by_count(limit)?;
-                self.cleanup_transforms_by_count(limit)
+                self.cleanup_transforms_by_count(limit)?;
+                self.cleanup_tts_by_count(limit)
             }
             _ => {
                 // Use time-based logic
                 self.cleanup_by_time(retention_period)?;
-                self.cleanup_transforms_by_time(retention_period)
+                self.cleanup_transforms_by_time(retention_period)?;
+                self.cleanup_tts_by_time(retention_period)
             }
         }
     }
@@ -138,6 +140,55 @@ impl HistoryManager {
         Ok(())
     }
 
+    fn cleanup_tts_by_count(&self, limit: usize) -> Result<()> {
+        let conn = self.get_connection()?;
+        let mut stmt =
+            conn.prepare("SELECT id FROM tts_history ORDER BY timestamp DESC, id DESC")?;
+        let ids = stmt
+            .query_map([], |row| row.get::<_, i64>("id"))?
+            .collect::<rusqlite::Result<Vec<i64>>>()?;
+
+        if ids.len() > limit {
+            let mut deleted_count = 0;
+            for id in &ids[limit..] {
+                deleted_count +=
+                    conn.execute("DELETE FROM tts_history WHERE id = ?1", params![id])?;
+            }
+            if deleted_count > 0 {
+                debug!(
+                    "Cleaned up {} old TTS history entries by count",
+                    deleted_count
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn cleanup_tts_by_time(&self, retention_period: RecordingRetention) -> Result<()> {
+        let now = Utc::now().timestamp();
+        let cutoff_timestamp = match retention_period {
+            RecordingRetention::Days3 => now - (3 * 24 * 60 * 60),
+            RecordingRetention::Weeks2 => now - (2 * 7 * 24 * 60 * 60),
+            RecordingRetention::Months3 => now - (3 * 30 * 24 * 60 * 60),
+            RecordingRetention::Never | RecordingRetention::Cap => return Ok(()),
+        };
+
+        let conn = self.get_connection()?;
+        let deleted_count = conn.execute(
+            "DELETE FROM tts_history WHERE timestamp < ?1",
+            params![cutoff_timestamp],
+        )?;
+        if deleted_count > 0 {
+            debug!(
+                "Cleaned up {} old TTS history entries based on retention period",
+                deleted_count
+            );
+        }
+
+        Ok(())
+    }
+
     fn cleanup_by_time(&self, retention_period: RecordingRetention) -> Result<()> {
         let conn = self.get_connection()?;
 
@@ -236,7 +287,10 @@ mod tests {
                 dictionary_fixes INTEGER,
                 history_tag TEXT,
                 privacy_markers_json TEXT,
-                stt_model TEXT
+                stt_model TEXT,
+                stt_processing_ms INTEGER,
+                stt_cost_usd REAL,
+                stt_cost_is_estimate BOOLEAN NOT NULL DEFAULT 0
             );",
         )
         .expect("create transcription_history table");

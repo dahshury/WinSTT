@@ -12,11 +12,13 @@
 }
 
 .editable-list-combobox-popup[data-open] {
-	animation: editable-list-combobox-popup-in 150ms ease-out;
+	animation: editable-list-combobox-popup-in 160ms ease-out;
 }
 
+/* Exit runs a tier quicker than the entrance and eases in (builds momentum
+   on the way out) so dismissal reads crisp instead of replaying the enter. */
 .editable-list-combobox-popup[data-ending-style] {
-	animation: editable-list-combobox-popup-out 150ms ease-out forwards;
+	animation: editable-list-combobox-popup-out 120ms ease-in forwards;
 }
 
 @keyframes editable-list-combobox-popup-in {

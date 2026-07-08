@@ -28,7 +28,7 @@ export interface HistoryStatsResponse {
 // dedicated-worker global we touch and cast `self` to it — avoids a lib switch.
 interface WorkerScope {
 	onmessage: ((event: MessageEvent<HistoryStatsRequest>) => void) | null;
-	postMessage(message: HistoryStatsResponse): void;
+	postMessage: (message: HistoryStatsResponse) => void;
 }
 
 const ctx = self as unknown as WorkerScope;

@@ -69,11 +69,12 @@ describe("GpuModelBreakdown", () => {
 			},
 		]);
 		expect(screen.getByText("Whisper Large v3")).toBeDefined();
-		// Memory + disk now render as icon + bare size; the unit lives on the title.
+		// Memory + disk render as icon + bare size; the full phrase is sr-only
+		// (no native title — the breakdown itself sits inside a styled popup).
 		expect(screen.getByText("1.2 GB")).toBeDefined();
 		expect(screen.getByText("800 MB")).toBeDefined();
-		expect(screen.getByTitle(/1\.2 GB VRAM/)).toBeDefined();
-		expect(screen.getByTitle(/800 MB disk/)).toBeDefined();
+		expect(screen.getByText(/1\.2 GB VRAM/)).toBeDefined();
+		expect(screen.getByText(/800 MB disk/)).toBeDefined();
 	});
 
 	test("tags CPU-only footprints (encoder dictionary) as RAM and hides the redundant disk figure", () => {
@@ -94,9 +95,9 @@ describe("GpuModelBreakdown", () => {
 				],
 			},
 		]);
-		// Icon + bare size visible; "RAM" lives on the title (CPU device → CpuIcon).
+		// Icon + bare size visible; the "RAM" phrase is sr-only (CPU device → CpuIcon).
 		expect(screen.getByText("310 MB")).toBeDefined();
-		expect(screen.getByTitle(/310 MB RAM/)).toBeDefined();
+		expect(screen.getByText(/310 MB RAM/)).toBeDefined();
 		// memBytes === diskBytes, so no separate disk figure is rendered at all.
 		expect(screen.queryByText(/disk/)).toBeNull();
 	});

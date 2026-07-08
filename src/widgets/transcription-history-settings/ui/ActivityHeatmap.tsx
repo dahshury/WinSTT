@@ -251,7 +251,9 @@ export function ActivityHeatmap({
 	}
 
 	return (
-		<div className="flex w-full flex-col gap-3">
+		// Same width cap as the ContributionGraph above so the two activity views
+		// read as one aligned column instead of the calendar sprawling wall-to-wall.
+		<div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div className="flex items-center gap-2">
 					<span className="text-foreground-muted text-xs-tight">
@@ -283,11 +285,9 @@ export function ActivityHeatmap({
 
 			<CalendarHeatmap
 				calendarSystem={calendarSystem}
-				cellSize="2.5rem"
-				className="p-0"
+				className="mx-auto w-fit p-0"
 				datesPerVariant={datesPerVariant}
 				disabled={isDisabled}
-				fillWidth
 				formatTooltip={formatTooltip}
 				mode="range"
 				month={month}

@@ -1,8 +1,8 @@
 import { confirmPaste, type LlmPreviewConfig } from "@/shared/api/ipc-client";
-import {
-	type CustomModifier,
-	type PresetEntry,
-	type PresetKey,
+import type {
+	CustomModifier,
+	PresetEntry,
+	PresetKey,
 } from "@/shared/lib/preset-prompts";
 import type { useSettingsStore } from "@/entities/setting";
 import { useTranscriptPreviewStore } from "../model/preview-store";

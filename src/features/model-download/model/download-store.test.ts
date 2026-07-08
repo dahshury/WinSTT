@@ -244,12 +244,12 @@ describe("useDownloadStore", () => {
 	test("setQuantDownloadProgress keeps total bytes at least downloaded bytes", () => {
 		useDownloadStore.getState().setQuantDownloadProgress("m", "int8", {
 			progress: 1,
-			downloadedBytes: 1_200,
-			totalBytes: 1_000,
+			downloadedBytes: 1200,
+			totalBytes: 1000,
 		});
 		expect(
 			useDownloadStore.getState().quantDownloads["m@int8"]?.totalBytes,
-		).toBe(1_200);
+		).toBe(1200);
 	});
 });
 

@@ -20,6 +20,7 @@ import {
 	computeRecommendedVisible,
 	isCatalogBackedModel,
 	type MakerGroup,
+	rankMakerGroupsBySearch,
 } from "../lib/maker-groups";
 
 function installed(name: string): OllamaModel {
@@ -56,6 +57,52 @@ function hit(name: string): OllamaLibraryHit {
 function group(groups: MakerGroup[], slug: string): MakerGroup | undefined {
 	return groups.find((g) => g.slug === slug);
 }
+
+describe("rankMakerGroupsBySearch", () => {
+	it("returns groups unchanged for a blank query", () => {
+		const groups = buildMakerGroups({
+			installed: [],
+			recommended: [
+				recommended("gemma3:4b", "gemma"),
+				recommended("llama3:8b", "llama"),
+			],
+			library: [],
+		});
+		expect(rankMakerGroupsBySearch(groups, "  ")).toEqual(groups);
+	});
+
+	it("promotes the maker group holding the closest match", () => {
+		const groups = buildMakerGroups({
+			installed: [],
+			recommended: [
+				recommended("gemma3:4b", "gemma"),
+				recommended("llama3:8b", "llama"),
+			],
+			library: [],
+		});
+		// Default order is alphabetical by publisher label (Google before Meta).
+		const defaultFirst = groups[0];
+		const ranked = rankMakerGroupsBySearch(groups, "llama");
+		expect(ranked[0]?.recommended.some((m) => m.name.includes("llama"))).toBe(
+			true,
+		);
+		expect(ranked[0]?.slug).not.toBe(defaultFirst?.slug);
+	});
+
+	it("orders rows within a maker group best-match-first", () => {
+		const groups = buildMakerGroups({
+			installed: [],
+			recommended: [
+				recommended("gemma3-distill:4b", "gemma"),
+				recommended("gemma3:4b", "gemma"),
+			],
+			library: [],
+		});
+		const ranked = rankMakerGroupsBySearch(groups, "gemma3:4b");
+		const google = ranked.find((g) => g.recommended.length === 2);
+		expect(google?.recommended[0]?.name).toBe("gemma3:4b");
+	});
+});
 
 describe("buildMakerGroups", () => {
 	it("puts a recommended model under its maker next to an installed sibling", () => {

@@ -251,7 +251,46 @@
     "retentionDays3": "3日後",
     "retentionWeeks2": "2週間後",
     "retentionMonths3": "3か月後",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "文字起こし履歴",
+    "enabledTooltip": "オンにすると、WinSTT が文字起こし・変換・読み上げの実行を記録し、このダッシュボードで統計とコストを表示できます。オフにすると新しいデータの収集を停止します。",
+    "disabledHint": "履歴はオフです — WinSTT は新しいアクティビティを記録していません。既存のデータは削除するまで保持されます。",
+    "deleteAllTitle": "すべての履歴を削除しますか？",
+    "deleteAllDescription": "記録されたすべての文字起こし、変換、読み上げの実行、および保存された録音が完全に削除されます。この操作は元に戻せません。",
+    "deleteAllButton": "すべてのデータを削除",
+    "clearTtsButton": "読み上げをクリア",
+    "clearTtsTitle": "すべての読み上げ履歴をクリアしますか？",
+    "clearTtsDescription": "保存されたすべての読み上げの実行と音声が削除されます。この操作は元に戻せません。",
+    "combinedTableTitle": "履歴",
+    "filterDateRange": "日付範囲",
+    "filterAllTime": "全期間",
+    "heatmapEarlier": "以前",
+    "heatmapLater": "以降",
+    "spendingTitle": "コスト",
+    "spendingTotalLabel": "合計コスト",
+    "spendingByModalityTitle": "種類別コスト",
+    "spendingByProviderTitle": "プロバイダー別コスト",
+    "spendingByModelTitle": "モデル別コスト",
+    "spendingByMakerTitle": "メーカー別コスト",
+    "spendingEstimatedHint": "正確な料金が取得できなかった項目は推定値です。",
+    "costSpeechToText": "音声認識",
+    "costTextToSpeech": "音声合成",
+    "costLanguageModel": "言語モデル",
+    "colCharacters": "文字数",
+    "cloudLabel": "クラウド",
+    "colCost": "クラウドコスト",
+    "costEstimated": "推定",
+    "costTotal": "合計",
+    "kindSpeechToText": "音声認識",
+    "kindTextToSpeech": "音声合成",
+    "durationLlmProcessing": "AI処理",
+    "durationNotRecorded": "未記録",
+    "durationNotRun": "未実行",
+    "durationRecording": "録音",
+    "durationSpeechToText": "文字起こし",
+    "durationTotalProcessing": "処理時間",
+    "colTtsModel": "音声モデル",
+    "colVoice": "ボイス"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "画面テキストOCR（フォールバック）",
+    "contextScreenOcrCaption": "カーソル付近の画面上のテキストを追加のコンテキストとして読み取ります",
+    "contextScreenOcrTooltip": "コンテキスト認識がフォーカス中のフィールドを直接読み取れない場合、WinSTTはカーソル周辺の画面領域を読み取り(OCR)して近くのテキストを取得します。フィールドの直接読み取りより低速で精度も劣ります。フォールバックを省略するにはオフにしてください。"
   },
   "model": {
     "initialPrompt": "初期プロンプト",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "早期開始するための無音秒数",
     "earlyTranscriptionTooltip": "発話が完全に終わる前に文字起こしを開始し、この秒数の無音後にトリガーされます。発話から最終テキスト表示までの遅延を短縮します。0 に設定すると無効になります。",
     "realtimeModel": "リアルタイムモデル",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "リアルタイムモデル",
     "realtimeModelCaption": "ライブプレビュー用の小さいモデル",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "ライブ文字起こしの更新間隔の最小時間。短いほど更新が頻繁になりますが、より多くの処理能力を使用します。口述中にカクつきや CPU 使用率が高い場合は増やしてください。",
     "llm": "大規模言語モデル",
     "deviceAutoLabel": "自動",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "単語ごとのストリーミングをオフにしますか?",
+    "realtimeOffWordByWordDescription": "このモデルは話すのに合わせて単語ごとに文字起こしをストリーミングします。リアルタイムをオフにすると、発話を停止した後にのみ文字起こしする方式に切り替わります。",
+    "realtimeOffWordByWordConfirm": "オフにする"
   },
   "audio": {
     "inputDevice": "入力デバイス",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "即時",
     "microphoneReleaseSec30": "30秒",
     "microphoneReleaseMin1": "1分",
-    "microphoneReleaseMin5": "5分"
+    "microphoneReleaseMin5": "5分",
+    "devicePriorityHandle": "ドラッグして優先順位を並べ替え"
   },
   "quality": {
     "enableRealtime": "リアルタイムを有効化",
@@ -717,7 +766,8 @@
     "waiting": "発話を待っています...",
     "serverOffline": "サーバーオフライン",
     "noAudioDetected": "（音声が検出されませんでした）",
-    "transcriptionFailed": "（文字起こし失敗）"
+    "transcriptionFailed": "（文字起こし失敗）",
+    "offlineNoLocalModel": "インターネットなし · ローカルモデルなし"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "インストールする",
     "unfitSelectTitle": "この大きいモデルを使用しますか？",
     "unfitSelectDescription": "「{model}」はハードウェアが快適に実行できるより大きいです（必要: 約 {required}、空き: {available}）。非常に遅く動作したり、読み込みに失敗する可能性があります。使用しますか？",
-    "unfitSelectAnyway": "使用する"
+    "unfitSelectAnyway": "使用する",
+    "dictionaryAutoAddLiteModel": "liteモデルでは利用できません。辞書の修正を自動追加するには、より大きいモデルに切り替えてください。"
   },
   "tts": {
     "title": "テキスト読み上げ",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "クラウド音声を使用するには、連携設定で ElevenLabs API キーを追加して確認してください。",
     "cloudLoadingVoices": "音声を読み込み中…",
     "cloudNoVoices": "この ElevenLabs アカウントの音声が見つかりませんでした。",
-    "cloudError": "ElevenLabs の音声を読み込めませんでした。"
+    "cloudError": "ElevenLabs の音声を読み込めませんでした。",
+    "voiceDesignLabel": "音声デザイン",
+    "voiceDesignTooltip": "音色、年齢、アクセント、感情など、望む音声を言葉で記述すると、モデルがプリセットのバンクから選ぶのではなく、それに合った音声を合成します。",
+    "voiceDesignButtonPlaceholder": "音声をデザイン",
+    "voiceDesignDialogTitle": "音声をデザイン",
+    "voiceDesignDialogDescription": "音声を1〜2文で記述してください。空欄のままにするとモデルの既定の音声を使用します。",
+    "voiceDesignPromptLabel": "音声の説明",
+    "voiceDesignPromptPlaceholder": "例: わずかに英国訛りのある、温かく低音のナレーター",
+    "voiceDesignPromptEmptyHint": "空欄のままにするとモデルの内蔵音声にフォールバックします。",
+    "voiceDesignCancel": "キャンセル",
+    "voiceDesignSave": "保存",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "問題が発生しました",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "{provider} によりレート制限されています",
     "toastRateLimitedRetry": "{seconds}秒後に再試行してください",
     "toastProviderError": "{provider} STT エラー: {message}",
-    "openIntegrations": "連携設定を開く"
+    "openIntegrations": "連携設定を開く",
+    "toastTtsOfflineNoLocal": "インターネットがなく、ローカル音声もインストールされていません — 読み上げは利用できません。"
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "Lite",
+    "liteTierTip": "精度を抑えた、より小型・高速なモデルです。限られたハードウェアでの簡単なタスクに最適です。"
   },
   "dataGrid": {
     "addRow": "Add row",

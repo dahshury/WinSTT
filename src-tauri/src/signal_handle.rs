@@ -33,8 +33,10 @@ pub fn setup_signal_handler(app_handle: AppHandle, mut signals: Signals) {
     debug!("Signal handlers registered (SIGUSR1, SIGUSR2)");
     thread::spawn(move || {
         for sig in signals.forever() {
+            // Post-processing now runs whenever the dictation LLM feature is
+            // enabled, so both signals drive the same transcribe toggle.
             let (binding_id, signal_name) = match sig {
-                SIGUSR1 => ("transcribe_with_post_process", "SIGUSR1"),
+                SIGUSR1 => ("transcribe", "SIGUSR1"),
                 SIGUSR2 => ("transcribe", "SIGUSR2"),
                 _ => continue,
             };

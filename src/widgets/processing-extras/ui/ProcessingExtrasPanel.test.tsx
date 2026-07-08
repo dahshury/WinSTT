@@ -39,7 +39,6 @@ function sttModel(overrides: Partial<ModelInfo>): ModelInfo {
 		previewCapable: true,
 		nativeStreaming: false,
 		finalReuseSafe: false,
-		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
@@ -237,5 +236,28 @@ describe("ProcessingExtrasPanel context-awareness scope", () => {
 			".pointer-events-none",
 		);
 		expect(wrapper).toBeNull();
+	});
+
+	test("screen-OCR fallback defaults off and its row renders", () => {
+		renderContextAwarenessSection();
+		// The OCR row label is present, and the setting starts off.
+		expect(getVisibleText("Screen text (OCR) fallback")).toBeDefined();
+		expect(storedGeneral().contextScreenOcr).toBe(false);
+	});
+
+	test("toggling the screen-OCR fallback flips the stored setting", () => {
+		renderContextAwarenessSection();
+		// Two switches render here: [0] the section-header enable toggle, [1] the
+		// screen-OCR fallback in the body. Flip the OCR one and assert only it moves.
+		const switches = Array.from(document.querySelectorAll('[role="switch"]'));
+		expect(switches.length).toBeGreaterThanOrEqual(2);
+		const ocrSwitch = switches[1] as HTMLElement;
+		expect(ocrSwitch.getAttribute("aria-checked")).toBe("false");
+
+		fireEvent.click(ocrSwitch);
+
+		expect(storedGeneral().contextScreenOcr).toBe(true);
+		// The context-awareness enable flag is untouched by the OCR toggle.
+		expect(storedGeneral().contextAwareness).toBe(true);
 	});
 });

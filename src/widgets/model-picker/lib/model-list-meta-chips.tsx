@@ -32,7 +32,7 @@ import {
 } from "./model-list-content-virtualized-utils/items";
 import {
 	formatContextLength,
-	getPricingTier,
+	type getPricingTier,
 	type getVariantClasses,
 	getVariantIcon,
 } from "./model-selector-display-utils";
@@ -224,7 +224,7 @@ function durationUnitHourlyMultiplier(unit: TranscriptionDurationUnit): number {
 		case "min":
 			return 60;
 		case "s":
-			return 3_600;
+			return 3600;
 	}
 }
 

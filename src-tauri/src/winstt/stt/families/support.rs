@@ -633,21 +633,7 @@ pub(super) fn dms_shape(decoder: &Session) -> Vec<usize> {
 //
 // `ort::inputs![]` is fixed-arity; the Cohere decoder needs 5 fixed inputs + N past_key_values.*
 // (dtype-matched f32/f16). `Session::run` accepts `Vec<(Cow<str>, SessionInputValue)>` via
-// `Into<SessionInputs>`, so we build that vector explicitly.
-
-pub(super) type NamedInput = (
-    std::borrow::Cow<'static, str>,
-    ort::session::SessionInputValue<'static>,
-);
-
-/// A KV-cache tensor that is either f32 or f16 (matches the decoder's declared past dtype).
-///
-/// Defined here in the shared layer (not with the AED engines) because the `carry_present` helper
-/// below operates on it; the `aed` engines re-use it via `super::support`.
-pub(super) enum KvTensor {
-    F32(ArrayD<f32>),
-    F16(ArrayD<F16>),
-}
+// `Into<SessionInputs>`, so the AED engines build that vector explicitly inline.
 
 pub(super) fn tensor_i64(shape: (usize, usize), data: Vec<i64>) -> SttResult<Tensor<i64>> {
     let arr = ndarray::Array2::from_shape_vec(shape, data)
@@ -677,30 +663,4 @@ pub(super) fn tensor_i32(shape: (usize, usize), data: Vec<i32>) -> SttResult<Ten
     let arr = ndarray::Array2::from_shape_vec(shape, data)
         .map_err(|e| SttError::Inference(format!("i32 array: {e}")))?;
     Tensor::from_array(arr).map_err(|e| SttError::Inference(format!("i32 tensor: {e}")))
-}
-
-/// Carry present.* outputs into the next step's past_key_values.* (dtype-preserving).
-pub(super) fn carry_present(
-    outputs: &ort::session::SessionOutputs<'_>,
-    past_names: &[String],
-    present_names: &[String],
-    is_fp16: bool,
-) -> SttResult<BTreeMap<String, KvTensor>> {
-    let mut next = BTreeMap::new();
-    for (past, present) in past_names.iter().zip(present_names.iter()) {
-        let val = &outputs[present.as_str()];
-        let kv = if is_fp16 {
-            let arr = val
-                .try_extract_array::<F16>()
-                .map_err(|e| SttError::Inference(format!("carry present f16 {present}: {e}")))?;
-            KvTensor::F16(arr.to_owned())
-        } else {
-            let arr = val
-                .try_extract_array::<f32>()
-                .map_err(|e| SttError::Inference(format!("carry present f32 {present}: {e}")))?;
-            KvTensor::F32(arr.to_owned())
-        };
-        next.insert(past.clone(), kv);
-    }
-    Ok(next)
 }

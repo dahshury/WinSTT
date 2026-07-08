@@ -29,6 +29,15 @@ export const audioSettingsSchema = z.object({
 		.record(z.string(), z.number().min(0).max(1))
 		.default({})
 		.catch({}),
+	// Microphone preference order, as CPAL device NAMES (highest priority
+	// first). Names — not indices — survive replug/enumeration reshuffles.
+	// When non-empty, the effective microphone is the first entry that is
+	// currently connected: the backend resolves it on every stream open, and
+	// the renderer mirrors the same rule into `inputDeviceIndex` on hot-plug
+	// so the pickers stay truthful. Empty = feature off (plain
+	// `inputDeviceIndex` selection). `.catch([])` keeps older builds without
+	// this key from wiping the whole audio section.
+	inputDevicePriority: z.array(z.string()).default([]).catch([]),
 	// CPAL input device index of the alternate microphone activated when the
 	// laptop lid is closed (clamshell mode). When non-null, the backend
 	// watches the platform lid state; on close it opens this input index,

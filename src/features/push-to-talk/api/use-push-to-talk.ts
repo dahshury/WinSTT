@@ -95,7 +95,7 @@ export function usePushToTalk(): void {
 	// The backend also arms the WinSTT key at init, so the hotkey is
 	// live before this effect even runs; this effect just keeps it in sync on key changes.
 	useEffect(() => {
-		if (!onboarded || !pushToTalkKey) {
+		if (!(onboarded && pushToTalkKey)) {
 			return;
 		}
 		setAccelerator(pushToTalkKey);
@@ -189,11 +189,13 @@ export function usePushToTalk(): void {
 	// The recorder stopped (PTT release, VAD silence in toggle/listen/wakeword, or a
 	// manual stop). Return the badge to idle — this is the authoritative "no longer
 	// recording" signal across every mode (and a safety net for PTT).
-	useEffect(() => {
-		return onRecordingStop(() => {
-			setMicPhase("idle");
-		});
-	}, [setMicPhase]);
+	useEffect(
+		() =>
+			onRecordingStop(() => {
+				setMicPhase("idle");
+			}),
+		[setMicPhase],
+	);
 
 	// User-initiated cancel (overlay X button, Escape). The server
 	// already aborted the recorder + released the mic; mirror that into the

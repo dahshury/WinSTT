@@ -39,7 +39,7 @@ function HeroCard({ icon, label, children, index }: HeroCardProps) {
 	return (
 		<div
 			className={`flex flex-col gap-2.5 overflow-hidden rounded-lg border border-divider ${cardBg} p-3 opacity-0 shadow-surface-2`}
-			style={{ animation: `fade-in 320ms ease-out ${index * 70}ms forwards` }}
+			style={{ animation: `fade-in 240ms ease-out ${index * 40}ms forwards` }}
 		>
 			<div className="flex items-center gap-2">
 				<div

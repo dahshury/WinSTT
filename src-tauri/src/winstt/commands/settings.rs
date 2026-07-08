@@ -73,7 +73,8 @@ use crate::winstt::settings_store::{
 // NOT re-exported here — re-exporting an unused path would trip `-D warnings`.
 pub(crate) use self::learning::auto_apply_dictation_learning;
 pub(crate) use self::runtime::{
-    core_timeout_from_winstt, enabled_ollama_models, should_warm_tts, warm_tts_async,
+    core_timeout_from_winstt, enabled_ollama_models, ollama_models_for_enabled_features,
+    should_warm_tts, warm_tts_async,
 };
 pub(crate) use self::wakeword::{
     disarm_wakeword_runtime_for_onboarding, rearm_wakeword_runtime_if_active,
@@ -310,11 +311,6 @@ fn has_unsealed_secret(value: &str) -> bool {
 fn has_unsealed_secrets(settings: &WinsttSettings) -> bool {
     has_unsealed_secret(&settings.llm.openrouter_api_key)
         || has_unsealed_secret(&settings.integrations.elevenlabs.api_key)
-        || settings
-            .core
-            .post_process_api_keys
-            .values()
-            .any(|value| has_unsealed_secret(value))
 }
 
 /// Did any WinSTT-tree global hotkey's accelerator OR enable flag change between two
@@ -1772,12 +1768,6 @@ mod tests {
 
         settings.llm.openrouter_api_key = "enc:v1:feedface".into();
         assert!(!has_unsealed_secrets(&settings));
-
-        settings
-            .core
-            .post_process_api_keys
-            .insert("openai".into(), "sk-legacy".into());
-        assert!(has_unsealed_secrets(&settings));
     }
 
     #[test]

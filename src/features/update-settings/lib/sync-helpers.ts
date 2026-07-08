@@ -356,9 +356,11 @@ function mergeChangedValue(
 	lastSavedValue: unknown,
 ): MergePick {
 	if (
-		!isPlainRecord(decodedValue) ||
-		!isPlainRecord(currentValue) ||
-		!isPlainRecord(lastSavedValue)
+		!(
+			isPlainRecord(decodedValue) &&
+			isPlainRecord(currentValue) &&
+			isPlainRecord(lastSavedValue)
+		)
 	) {
 		return { value: currentValue, preserved: true };
 	}
@@ -409,11 +411,15 @@ export const LOCAL_CACHE_COLLECTION_KEYS = ["dictionary", "snippets"] as const;
 const COLLECTION_TEXT_FIELDS = ["term", "trigger", "expansion"] as const;
 
 function isMeaningfulCollectionEntry(entry: unknown): boolean {
-	if (!entry || typeof entry !== "object") return true;
+	if (!entry || typeof entry !== "object") {
+		return true;
+	}
 	const record = entry as Record<string, unknown>;
 	const present = COLLECTION_TEXT_FIELDS.filter((field) => field in record);
 	// Unknown shape (no recognised text fields) — keep it rather than guess.
-	if (present.length === 0) return true;
+	if (present.length === 0) {
+		return true;
+	}
 	return present.some(
 		(field) =>
 			typeof record[field] === "string" &&
@@ -513,6 +519,6 @@ export function deriveIpcLoadUpdate(
 	);
 	return {
 		merged: migrated.merged,
-		nextFromIpcLoad: !preserved && !migrated.migrated,
+		nextFromIpcLoad: !(preserved || migrated.migrated),
 	};
 }

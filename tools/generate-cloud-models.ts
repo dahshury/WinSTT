@@ -54,21 +54,28 @@ const SOURCES: Source[] = [
 	},
 ];
 
-const OPENAI_JS_PATH = resolve(ROOT, "node_modules/@ai-sdk/openai/dist/index.js");
+const OPENAI_JS_PATH = resolve(
+	ROOT,
+	"node_modules/@ai-sdk/openai/dist/index.js",
+);
 
 /** Pull the single-quoted string literals out of a `type X = '...' | '...' | (string & {});` union. */
 function extractUnionLiterals(dts: string, typeName: string): string[] {
-	const declaration = new RegExp(`type\\s+${typeName}\\s*=\\s*([^;]+);`).exec(dts);
+	const declaration = new RegExp(`type\\s+${typeName}\\s*=\\s*([^;]+);`).exec(
+		dts,
+	);
 	if (declaration === null || declaration[1] === undefined) {
 		throw new Error(
-			`generate-cloud-models: could not find \`type ${typeName}\` — did the @ai-sdk package layout change?`
+			`generate-cloud-models: could not find \`type ${typeName}\` — did the @ai-sdk package layout change?`,
 		);
 	}
 	const literals = [...declaration[1].matchAll(/'([^']+)'/g)]
 		.map((m) => m[1])
 		.filter((id): id is string => id !== undefined);
 	if (literals.length === 0) {
-		throw new Error(`generate-cloud-models: \`${typeName}\` yielded no string literals.`);
+		throw new Error(
+			`generate-cloud-models: \`${typeName}\` yielded no string literals.`,
+		);
 	}
 	return literals;
 }
@@ -84,31 +91,41 @@ function extractUnionLiterals(dts: string, typeName: string): string[] {
  *   response_format: ["gpt-4o-transcribe","gpt-4o-mini-transcribe"].includes(this.modelId) ? "json" : "verbose_json"
  */
 function extractOpenAiJsonFormatIds(js: string): Set<string> {
-	const match = /response_format:\s*\[([\s\S]*?)\]\s*\.includes\(this\.modelId\)/.exec(js);
+	const match =
+		/response_format:\s*\[([\s\S]*?)\]\s*\.includes\(this\.modelId\)/.exec(js);
 	if (match === null || match[1] === undefined) {
 		throw new Error(
-			"generate-cloud-models: could not find the OpenAI response_format json list in @ai-sdk/openai/dist/index.js — did its transcription implementation change?"
+			"generate-cloud-models: could not find the OpenAI response_format json list in @ai-sdk/openai/dist/index.js — did its transcription implementation change?",
 		);
 	}
 	const ids = [...match[1].matchAll(/"([^"]+)"/g)]
 		.map((m) => m[1])
 		.filter((id): id is string => id !== undefined);
 	if (ids.length === 0) {
-		throw new Error("generate-cloud-models: the OpenAI response_format json list was empty.");
+		throw new Error(
+			"generate-cloud-models: the OpenAI response_format json list was empty.",
+		);
 	}
 	return new Set(ids);
 }
 
 function buildIdMap(): Record<"openai" | "elevenlabs", string[]> {
-	const out: Record<"openai" | "elevenlabs", string[]> = { openai: [], elevenlabs: [] };
+	const out: Record<"openai" | "elevenlabs", string[]> = {
+		openai: [],
+		elevenlabs: [],
+	};
 	for (const { provider, typeName, dtsPath } of SOURCES) {
 		const dts = readFileSync(dtsPath, "utf8");
 		out[provider] = extractUnionLiterals(dts, typeName);
 	}
 	// Drop OpenAI ids the AI SDK would transcribe with an incompatible
 	// response_format (see extractOpenAiJsonFormatIds).
-	const jsonIds = extractOpenAiJsonFormatIds(readFileSync(OPENAI_JS_PATH, "utf8"));
-	out.openai = out.openai.filter((id) => jsonIds.has(id) || /^whisper/i.test(id));
+	const jsonIds = extractOpenAiJsonFormatIds(
+		readFileSync(OPENAI_JS_PATH, "utf8"),
+	);
+	out.openai = out.openai.filter(
+		(id) => jsonIds.has(id) || /^whisper/i.test(id),
+	);
 	return out;
 }
 
@@ -136,11 +153,14 @@ ${fmt(ids.elevenlabs)}
 
 function main(): void {
 	const ids = buildIdMap();
-	const outPath = resolve(ROOT, "src/entities/cloud-stt-provider/model/cloud-models.generated.ts");
+	const outPath = resolve(
+		ROOT,
+		"src/entities/cloud-stt-provider/model/cloud-models.generated.ts",
+	);
 	writeFileSync(outPath, renderFile(ids), "utf8");
 	const total = ids.openai.length + ids.elevenlabs.length;
 	console.log(
-		`Wrote ${total} cloud model ids (${ids.openai.length} openai, ${ids.elevenlabs.length} elevenlabs) → ${outPath}`
+		`Wrote ${total} cloud model ids (${ids.openai.length} openai, ${ids.elevenlabs.length} elevenlabs) → ${outPath}`,
 	);
 }
 

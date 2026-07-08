@@ -1,10 +1,11 @@
 import {
 	AiMicIcon,
 	Analytics01Icon,
-	CalendarAnalysisIcon,
+	Archive02Icon,
 	CalendarClockIcon,
 	CalendarDaysIcon,
 	CalendarRangeIcon,
+	Coins01Icon,
 	DatabaseSettingIcon,
 	Delete02Icon,
 	InfinityIcon,
@@ -25,9 +26,11 @@ import {
 import {
 	clearTranscriptionHistory,
 	clearTransformHistory,
+	clearTtsHistory,
 } from "@/shared/api/ipc-client";
 import { publicAsset } from "@/shared/lib/public-asset";
 import { Button } from "@/shared/ui/button";
+import { ButtonGroup } from "@/shared/ui/button-group";
 import type { DateRange } from "@/shared/ui/calendar-heatmap";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { NumberStepper } from "@/shared/ui/number-stepper";
@@ -39,22 +42,40 @@ import {
 	getAuthorLabel,
 	getFamilyConfig,
 } from "@/widgets/model-picker/stt/lib/family-helpers";
+import {
+	makerFromModelId,
+	resolveProviderIcon,
+} from "@/shared/lib/provider-icons";
 import { useHistoryStats } from "../api/use-history-stats";
 import { computeAuthorUsage, type ResolvedAuthor } from "../lib/author-usage";
+import { computeCostAnalytics, type ResolveMaker } from "../lib/cost-analytics";
 import { computeStreak } from "../lib/streak";
 import { computeUsage } from "../lib/usage-breakdown";
 import { buildHeatmap, filterEntriesByDateRange } from "../lib/word-stats";
 import { useTranscriptionHistoryStore } from "../model/history-store";
-import { ActivityHeatmap } from "./ActivityHeatmap";
 import { ContributionGraph } from "./ContributionGraph";
+import { DateRangeFilter } from "./DateRangeFilter";
 import { HistoryHero } from "./HistoryHero";
 import { HistoryTable } from "./HistoryTable";
 import { ModelAuthorRadar } from "./ModelAuthorRadar";
+import { SpendingSection } from "./SpendingSection";
 import { StreakBanner } from "./StreakBanner";
 import { CATEGORY_ICONS, UsageBars } from "./UsageBreakdown";
 import { VoiceProfile } from "./VoiceProfile";
 
 type RetentionValue = "never" | "cap" | "days3" | "weeks2" | "months3";
+
+/**
+ * One segment of the History section's clear-actions ButtonGroup. Matches the
+ * app's connected-group segments (h-7, px-3, medium xs-tight, neutral idle) and
+ * layers the destructive hover on top. The shared `Button` already supplies the
+ * flex/centering/focus-ring and `disabled:opacity-40` + `disabled:cursor-default`,
+ * and the connected group flattens the radius/border — so a disabled (empty)
+ * action reads as a dim, non-interactive segment while an armed one lights red on
+ * hover.
+ */
+const CLEAR_ACTION_SEGMENT_CLASS =
+	"h-7 gap-1.5 px-3 font-medium text-foreground-secondary text-xs-tight transition-colors hover:bg-error hover:text-on-error";
 
 /**
  * Build a `sttModel` → maker+logo resolver from the STT catalog. History stores
@@ -82,6 +103,57 @@ function buildAuthorResolver(
 	};
 }
 
+const ELEVENLABS_LABEL = "ElevenLabs";
+
+// Proper casing for the common cost makers; anything else title-cases its raw
+// vendor token. Keeps the cost-by-maker radar's labels tidy without needing a
+// catalog entry (LLM and TTS makers aren't in the STT catalog).
+const MAKER_LABELS: Record<string, string> = {
+	anthropic: "Anthropic",
+	cohere: "Cohere",
+	deepseek: "DeepSeek",
+	elevenlabs: ELEVENLABS_LABEL,
+	google: "Google",
+	hexgrad: "Kokoro",
+	"meta-llama": "Meta",
+	microsoft: "Microsoft",
+	mistralai: "Mistral",
+	openai: "OpenAI",
+	qwen: "Qwen",
+	"x-ai": "xAI",
+};
+
+function makerLabel(token: string): string {
+	return (
+		MAKER_LABELS[token] ??
+		(token.length > 0 ? token.charAt(0).toUpperCase() + token.slice(1) : token)
+	);
+}
+
+/**
+ * Resolve ANY stored model id (cloud STT/TTS `provider:model`, or a bare
+ * OpenRouter LLM id) to its maker + brand logo for the cost-by-maker radar.
+ * Unlike {@link buildAuthorResolver} (STT-catalog only), this keys off the raw
+ * vendor token so LLM and TTS makers resolve too; unknown tokens return `null`
+ * and fold into the radar's "Other" spoke.
+ */
+function buildCostMakerResolver(): ResolveMaker {
+	return (modelId) => {
+		if (modelId.startsWith("elevenlabs:")) {
+			return {
+				author: ELEVENLABS_LABEL,
+				logoSrc: resolveProviderIcon("elevenlabs"),
+			};
+		}
+		const bare = modelId.replace(/^openrouter:/, "");
+		const token = makerFromModelId(bare);
+		if (!token) {
+			return null;
+		}
+		return { author: makerLabel(token), logoSrc: resolveProviderIcon(token) };
+	};
+}
+
 /**
  * Placeholder grid shown while the worker computes the hero / voice-profile
  * stats on a cold open. Mirrors the real grids' columns so the layout doesn't
@@ -101,7 +173,6 @@ function StatsSkeleton({
 			{Array.from({ length: count }, (_, i) => (
 				<div
 					className={`animate-pulse rounded-lg bg-surface-elevated ${itemClassName}`}
-					// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length static placeholder
 					key={i}
 				/>
 			))}
@@ -131,13 +202,20 @@ export function TranscriptionHistoryPanel() {
 	const transformEntries = useTranscriptionHistoryStore(
 		(s) => s.transformEntries,
 	);
+	const ttsEntries = useTranscriptionHistoryStore((s) => s.ttsEntries);
 	const clearLocal = useTranscriptionHistoryStore((s) => s.clear);
 	const clearTransformLocal = useTranscriptionHistoryStore(
 		(s) => s.clearTransforms,
 	);
+	const clearTtsLocal = useTranscriptionHistoryStore((s) => s.clearTts);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [confirmTransformsOpen, setConfirmTransformsOpen] = useState(false);
+	const [confirmTtsOpen, setConfirmTtsOpen] = useState(false);
+	const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
 	const [selectedRange, setSelectedRange] = useState<DateRange | null>(null);
+	const historyEnabled = useSettingsStore(
+		(s) => s.settings.general?.historyEnabled ?? true,
+	);
 	const historyMaxEntries = useSettingsStore(
 		(s) => s.settings.general?.historyMaxEntries ?? 1000,
 	);
@@ -165,6 +243,11 @@ export function TranscriptionHistoryPanel() {
 		selectedRange?.from ?? null,
 		selectedRange?.to ?? null,
 	);
+	const filteredTtsEntries = filterEntriesByDateRange(
+		ttsEntries,
+		selectedRange?.from ?? null,
+		selectedRange?.to ?? null,
+	);
 	const combinedHistoryEntries = [
 		...filteredEntries.map((entry) => ({
 			entry,
@@ -173,6 +256,20 @@ export function TranscriptionHistoryPanel() {
 		...filteredTransformEntries.map((entry) => ({
 			entry,
 			kind: "transform" as const,
+		})),
+		// TTS runs ride the same table: reshape the run into the row shape the
+		// table renders (no recording, so duration stays 0) and carry the full
+		// run alongside for the TTS-specific chips (model / voice / cost).
+		...filteredTtsEntries.map((entry) => ({
+			entry: {
+				durationMs: 0,
+				id: entry.id,
+				text: entry.text,
+				timestamp: entry.timestamp,
+				wordCount: entry.wordCount,
+			},
+			kind: "tts" as const,
+			tts: entry,
 		})),
 	];
 	// The two diff/tokenize-heavy stats are computed off the main thread; the
@@ -194,6 +291,19 @@ export function TranscriptionHistoryPanel() {
 		buildAuthorResolver(catalogModels),
 		usageOtherLabel,
 	);
+	// Cloud-spend analytics over the SAME date-filtered window (STT + TTS runs).
+	// `total === 0` for local-only histories, which hides the whole section.
+	const costAnalytics = computeCostAnalytics(
+		filteredEntries,
+		filteredTtsEntries,
+		buildCostMakerResolver(),
+		{
+			languageModel: t("costLanguageModel"),
+			other: usageOtherLabel,
+			speechToText: t("costSpeechToText"),
+			textToSpeech: t("costTextToSpeech"),
+		},
+	);
 	// Streak and the year-long contribution graph are all-time habit views, so
 	// they read the full history rather than the selected date range.
 	const streak = computeStreak(entries);
@@ -210,9 +320,85 @@ export function TranscriptionHistoryPanel() {
 		clearTransformHistory().then(() => clearTransformLocal());
 	};
 
+	const handleClearTts = () => {
+		clearTtsHistory().then(() => clearTtsLocal());
+	};
+
+	// Off-state purge: opting out stops collection but never destroys data
+	// silently — this explicit, confirmed action is the only way old rows,
+	// transforms, read-aloud runs, and recordings leave the disk.
+	const handleDeleteAll = () => {
+		Promise.all([
+			clearTranscriptionHistory(),
+			clearTransformHistory(),
+			clearTtsHistory(),
+		]).then(() => {
+			clearLocal();
+			clearTransformLocal();
+			clearTtsLocal();
+		});
+	};
+
+	const masterSection = (
+		<SettingSection
+			icon={Archive02Icon}
+			onToggle={(v) => updateGeneral({ historyEnabled: v })}
+			title={t("enabledTitle")}
+			toggled={historyEnabled}
+			tooltip={t("enabledTooltip")}
+		>
+			{historyEnabled ? null : (
+				<div className="flex flex-wrap items-center justify-between gap-3 py-2">
+					<p className="min-w-0 flex-1 text-foreground-muted text-xs-tight">
+						{t("disabledHint")}
+					</p>
+					<ConfirmDialog
+						confirmLabel={t("clearConfirm")}
+						description={t("deleteAllDescription")}
+						onConfirm={handleDeleteAll}
+						onOpenChange={setConfirmDeleteAllOpen}
+						open={confirmDeleteAllOpen}
+						title={t("deleteAllTitle")}
+					/>
+					{/* Single action, but wrapped in the same connected ButtonGroup so
+					    it reads as the app's standard segmented chip — identical to the
+					    clear-actions group in the enabled state. */}
+					<ButtonGroup connected>
+						<Button
+							className={CLEAR_ACTION_SEGMENT_CLASS}
+							onClick={() => setConfirmDeleteAllOpen(true)}
+						>
+							<HugeiconsIcon icon={Delete02Icon} size={14} />
+							{t("deleteAllButton")}
+						</Button>
+					</ButtonGroup>
+				</div>
+			)}
+		</SettingSection>
+	);
+
+	if (!historyEnabled) {
+		return <div className="flex flex-col">{masterSection}</div>;
+	}
+
 	return (
 		<div className="flex flex-col">
-			<SettingSection icon={Analytics01Icon} title={t("summaryTitle")}>
+			{masterSection}
+
+			{/* Everything from here down follows the date-range filter in this
+			    section's header. The interactive calendar lives inside that
+			    popover chip — it's a filter control, not a dashboard view. */}
+			<SettingSection
+				headerAction={
+					<DateRangeFilter
+						entries={entries}
+						onRangeChange={setSelectedRange}
+						selectedRange={selectedRange}
+					/>
+				}
+				icon={Analytics01Icon}
+				title={t("summaryTitle")}
+			>
 				<div className="py-2">
 					{statsLoading ? (
 						<StatsSkeleton
@@ -223,6 +409,29 @@ export function TranscriptionHistoryPanel() {
 					) : (
 						<HistoryHero dailyWords={dailyWords} stats={stats} />
 					)}
+				</div>
+			</SettingSection>
+
+			<SettingSection icon={VoiceIdIcon} title={t("profileTitle")}>
+				<div className="flex flex-col gap-4 py-2">
+					{statsLoading ? (
+						<StatsSkeleton
+							className="grid grid-cols-2 gap-2"
+							count={4}
+							itemClassName="h-16"
+						/>
+					) : (
+						<VoiceProfile stats={voiceProfile} />
+					)}
+					{/* All-time habit pulse: streak + year-long contribution graph.
+					    Unlike the profile stats above (which follow the date-range
+					    filter), this pair deliberately reads the full history — it
+					    answers "am I keeping the habit up", not "what happened in
+					    this window". */}
+					<div className="flex flex-col gap-4 border-border border-t pt-4">
+						<StreakBanner streak={streak} />
+						<ContributionGraph entries={entries} />
+					</div>
 				</div>
 			</SettingSection>
 
@@ -245,35 +454,20 @@ export function TranscriptionHistoryPanel() {
 				</SettingSection>
 			) : null}
 
-			<SettingSection icon={CalendarAnalysisIcon} title={t("heatmapTitle")}>
-				<div className="flex flex-col gap-4 py-2">
-					<StreakBanner streak={streak} />
-					<ContributionGraph entries={entries} />
-					<ActivityHeatmap
-						entries={entries}
-						onRangeChange={setSelectedRange}
-						selectedRange={selectedRange}
-					/>
-				</div>
-			</SettingSection>
-
-			<SettingSection icon={VoiceIdIcon} title={t("profileTitle")}>
-				<div className="py-2">
-					{statsLoading ? (
-						<StatsSkeleton
-							className="grid grid-cols-2 gap-2"
-							count={4}
-							itemClassName="h-16"
-						/>
-					) : (
-						<VoiceProfile stats={voiceProfile} />
-					)}
-				</div>
-			</SettingSection>
+			{/* Cloud-spend analytics — only when the filtered window has cloud
+			    cost (local-only histories skip it entirely). Scoped by the same
+			    calendar picker as every section above. */}
+			{costAnalytics.total > 0 ? (
+				<SettingSection icon={Coins01Icon} title={t("spendingTitle")}>
+					<SpendingSection analytics={costAnalytics} />
+				</SettingSection>
+			) : null}
 
 			<SettingSection
 				headerAction={
 					<div className="flex flex-wrap items-center justify-end gap-1.5">
+						{/* Controlled confirm dialogs — portal-rendered, no inline layout,
+						    so they sit outside the joined ButtonGroup below. */}
 						<ConfirmDialog
 							confirmLabel={t("clearConfirm")}
 							description={t("clearDescription")}
@@ -282,14 +476,6 @@ export function TranscriptionHistoryPanel() {
 							open={confirmOpen}
 							title={t("clearTitle")}
 						/>
-						<Button
-							className="flex items-center gap-1.5 bg-surface-elevated px-3 py-1.5 text-foreground-secondary text-xs-tight hover:bg-error hover:text-on-error disabled:opacity-50"
-							disabled={entries.length === 0}
-							onClick={() => setConfirmOpen(true)}
-						>
-							<HugeiconsIcon icon={Delete02Icon} size={14} />
-							{t("clearButton")}
-						</Button>
 						<ConfirmDialog
 							confirmLabel={t("clearConfirm")}
 							description={t("clearTransformsDescription")}
@@ -298,19 +484,47 @@ export function TranscriptionHistoryPanel() {
 							open={confirmTransformsOpen}
 							title={t("clearTransformsTitle")}
 						/>
-						<Button
-							className="flex items-center gap-1.5 bg-surface-elevated px-3 py-1.5 text-foreground-secondary text-xs-tight hover:bg-error hover:text-on-error disabled:opacity-50"
-							disabled={transformEntries.length === 0}
-							onClick={() => setConfirmTransformsOpen(true)}
-						>
-							<HugeiconsIcon icon={Delete02Icon} size={14} />
-							{t("clearTransformsButton")}
-						</Button>
+						<ConfirmDialog
+							confirmLabel={t("clearConfirm")}
+							description={t("clearTtsDescription")}
+							onConfirm={handleClearTts}
+							onOpenChange={setConfirmTtsOpen}
+							open={confirmTtsOpen}
+							title={t("clearTtsTitle")}
+						/>
+						{/* The three clear actions read as ONE segmented control (the app's
+						    standard connected button group), not three loose boxes. */}
+						<ButtonGroup connected>
+							<Button
+								className={CLEAR_ACTION_SEGMENT_CLASS}
+								disabled={entries.length === 0}
+								onClick={() => setConfirmOpen(true)}
+							>
+								<HugeiconsIcon icon={Delete02Icon} size={14} />
+								{t("clearButton")}
+							</Button>
+							<Button
+								className={CLEAR_ACTION_SEGMENT_CLASS}
+								disabled={transformEntries.length === 0}
+								onClick={() => setConfirmTransformsOpen(true)}
+							>
+								<HugeiconsIcon icon={Delete02Icon} size={14} />
+								{t("clearTransformsButton")}
+							</Button>
+							<Button
+								className={CLEAR_ACTION_SEGMENT_CLASS}
+								disabled={ttsEntries.length === 0}
+								onClick={() => setConfirmTtsOpen(true)}
+							>
+								<HugeiconsIcon icon={Delete02Icon} size={14} />
+								{t("clearTtsButton")}
+							</Button>
+						</ButtonGroup>
 					</div>
 				}
 				boxed
 				icon={ListViewIcon}
-				title={`${t("tableTitle")} / ${t("transformTableTitle")}`}
+				title={t("combinedTableTitle")}
 			>
 				<div className="py-2">
 					<HistoryTable entries={combinedHistoryEntries} />

@@ -1,6 +1,13 @@
+import { Button as BaseButton } from "@base-ui/react/button";
+import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { useState } from "react";
 import { useTranslations } from "use-intl";
 import { useLocaleStore } from "@/shared/i18n";
+import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { NAV_BUTTON_CLASS } from "@/shared/ui/calendar-heatmap";
+import { Tooltip } from "@/shared/ui/tooltip";
 import {
 	buildHeatmap,
 	type DayBucket,
@@ -22,9 +29,11 @@ const VARIANT_BG = [
 	"bg-activity",
 ];
 
-// Mon / Wed / Fri rows get a label, like a GitHub contribution graph — labeling
-// all seven crowds the 9px cells.
-const WEEKDAY_LABEL_ROWS = new Set([1, 3, 5]);
+// One "page" of the rolling year: ~4 months of week columns. Cells flex to
+// fill the panel width, so fewer columns per page = bigger, readable cells —
+// the paging chevrons cover the rest of the year.
+const WEEKS_PER_PAGE = 18;
+
 const WEEKDAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
 
 function formatMonth(date: Date, locale: string): string {
@@ -52,8 +61,6 @@ interface Column {
 	 * where the positional index would not.
 	 */
 	key: string;
-	/** Short month name shown above the column when the month changes here. */
-	monthLabel: string;
 }
 
 function keyedColumnCells(col: Column): {
@@ -67,10 +74,9 @@ function keyedColumnCells(col: Column): {
 }
 
 /** Group the rolling-year buckets into Sunday-started week columns. */
-function toColumns(buckets: DayBucket[], locale: string): Column[] {
+function toColumns(buckets: DayBucket[]): Column[] {
 	const columns: Column[] = [];
 	let cells: (DayBucket | null)[] = [];
-	let lastMonth = -1;
 
 	const firstDow = buckets[0]?.date.getDay() ?? 0;
 	for (let i = 0; i < firstDow; i++) {
@@ -82,16 +88,8 @@ function toColumns(buckets: DayBucket[], locale: string): Column[] {
 			cells.push(null);
 		}
 		const firstReal = cells.find((c): c is DayBucket => c !== null);
-		let monthLabel = "";
-		if (firstReal) {
-			const month = firstReal.date.getMonth();
-			if (month !== lastMonth) {
-				monthLabel = formatMonth(firstReal.date, locale);
-				lastMonth = month;
-			}
-		}
 		const key = firstReal ? firstReal.dayKey : `pad-${columns.length}`;
-		columns.push({ cells, key, monthLabel });
+		columns.push({ cells, key });
 		cells = [];
 	};
 
@@ -107,20 +105,15 @@ function toColumns(buckets: DayBucket[], locale: string): Column[] {
 	return columns;
 }
 
-const columnsCache = new WeakMap<DayBucket[], Map<string, Column[]>>();
+const columnsCache = new WeakMap<DayBucket[], Column[]>();
 
-function cachedColumns(buckets: DayBucket[], locale: string): Column[] {
-	let byLocale = columnsCache.get(buckets);
-	if (!byLocale) {
-		byLocale = new Map();
-		columnsCache.set(buckets, byLocale);
-	}
-	const cached = byLocale.get(locale);
+function cachedColumns(buckets: DayBucket[]): Column[] {
+	const cached = columnsCache.get(buckets);
 	if (cached) {
 		return cached;
 	}
-	const columns = toColumns(buckets, locale);
-	byLocale.set(locale, columns);
+	const columns = toColumns(buckets);
+	columnsCache.set(buckets, columns);
 	return columns;
 }
 
@@ -145,27 +138,73 @@ function cachedWeekdayNames(locale: string): string[] {
 }
 
 /**
+ * Short month name per visible column: the first column is always labeled for
+ * context, then every column where the month changes.
+ */
+function visibleMonthLabels(visible: Column[], locale: string): string[] {
+	let lastMonth = -1;
+	return visible.map((col) => {
+		const firstReal = col.cells.find((c): c is DayBucket => c !== null);
+		if (!firstReal) {
+			return "";
+		}
+		const month = firstReal.date.getMonth();
+		if (month === lastMonth) {
+			return "";
+		}
+		lastMonth = month;
+		return formatMonth(firstReal.date, locale);
+	});
+}
+
+interface ColumnSlot {
+	/** `null` for the invisible pads that keep the earliest page full-width. */
+	col: Column | null;
+	key: string;
+	label: string;
+}
+
+/**
  * A GitHub-style contribution heatmap of the last year of dictation activity —
  * the at-a-glance "are you keeping it up" view that pairs with the streak
  * banner. Read-only: date-range filtering lives in the interactive calendar
- * below it. Intensity is anchored to the busiest day so a quiet stretch still
- * shows texture.
+ * below it. Shows ~4 months at a time with cells that flex to fill the panel
+ * width; the chevrons page back through the rest of the rolling year.
+ * Intensity is anchored to the busiest day of the WHOLE year, so paging never
+ * rescales the ramp.
  */
 export function ContributionGraph({ entries }: ContributionGraphProps) {
 	const t = useTranslations("history");
 	const locale = useLocaleStore((s) => s.locale);
 	const emptyBg = surfaceBg(Math.min(useSurface() + 2, 8));
+	// Pages back from the latest window (0 = the most recent ~4 months).
+	const [pageBack, setPageBack] = useState(0);
 
 	const buckets = buildHeatmap(entries);
-	const columns = cachedColumns(buckets, locale);
+	const columns = cachedColumns(buckets);
 	const weekdays = cachedWeekdayNames(locale);
 
+	const totalPages = Math.max(1, Math.ceil(columns.length / WEEKS_PER_PAGE));
+	const page = Math.min(pageBack, totalPages - 1);
+	const end = columns.length - page * WEEKS_PER_PAGE;
+	const visible = columns.slice(Math.max(0, end - WEEKS_PER_PAGE), end);
+	const labels = visibleMonthLabels(visible, locale);
+
+	// Pad the earliest (possibly short) page with invisible leading columns so
+	// cell size stays identical across pages.
+	const slots: ColumnSlot[] = [
+		...Array.from({ length: WEEKS_PER_PAGE - visible.length }, (_, i) => ({
+			col: null,
+			key: `pad-col-${i}`,
+			label: "",
+		})),
+		...visible.map((col, i) => ({ col, key: col.key, label: labels[i] ?? "" })),
+	];
+
 	let max = 0;
-	for (const col of columns) {
-		for (const cell of col.cells) {
-			if (cell && cell.wordCount > max) {
-				max = cell.wordCount;
-			}
+	for (const bucket of buckets) {
+		if (bucket.wordCount > max) {
+			max = bucket.wordCount;
 		}
 	}
 
@@ -177,54 +216,97 @@ export function ContributionGraph({ entries }: ContributionGraphProps) {
 		return `${date} · ${cell.wordCount.toLocaleString()} ${t("heatmapWords")}`;
 	};
 
+	const renderColumn = (slot: ColumnSlot) => (
+		<div className="flex min-w-0 flex-1 flex-col gap-[3px]" key={slot.key}>
+			{slot.col === null
+				? WEEKDAY_KEYS.map((dow) => (
+						<div className="aspect-square w-full" key={`${slot.key}-${dow}`} />
+					))
+				: keyedColumnCells(slot.col).map(({ cell, key }) => {
+						if (cell === null) {
+							return <div className="aspect-square w-full" key={key} />;
+						}
+						const level = intensityLevel(cell.wordCount, max);
+						const bg = level === 0 ? emptyBg : VARIANT_BG[level - 1];
+						return (
+							<Tooltip content={cellTitle(cell)} key={cell.dayKey}>
+								<div className={`aspect-square w-full rounded-[4px] ${bg}`} />
+							</Tooltip>
+						);
+					})}
+		</div>
+	);
+
 	return (
-		<div className="overflow-x-auto pb-1">
-			<div className="inline-flex min-w-max flex-col gap-1">
-				<div className="flex">
-					<div className="w-7 shrink-0" />
-					{columns.map((col) => (
-						<div
-							className="w-[11px] shrink-0 whitespace-nowrap text-[9px] text-foreground-muted leading-none"
-							key={`m-${col.key}`}
-						>
-							{col.monthLabel}
+		// max-w caps the aspect-square cells at ~36px so an ultra-wide settings
+		// window doesn't inflate the grid into a wall of tiles; centering keeps
+		// the nav chevrons hugging the grid edges.
+		<div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5">
+			<div className="flex items-center">
+				<div className="flex w-9 shrink-0 items-center">
+					<BaseButton
+						aria-label={t("heatmapEarlier")}
+						className={cn(
+							NAV_BUTTON_CLASS,
+							"disabled:pointer-events-none disabled:opacity-20",
+						)}
+						disabled={page >= totalPages - 1}
+						onClick={() => setPageBack(page + 1)}
+						type="button"
+					>
+						<HugeiconsIcon
+							className="rtl:-scale-x-100"
+							icon={ArrowLeft01Icon}
+							size={14}
+						/>
+					</BaseButton>
+				</div>
+				<div className="flex min-w-0 flex-1 gap-[3px]">
+					{slots.map((slot) => (
+						<div className="relative h-4 min-w-0 flex-1" key={`m-${slot.key}`}>
+							{slot.label ? (
+								<span className="absolute start-0 whitespace-nowrap text-foreground-muted text-xs-tight">
+									{slot.label}
+								</span>
+							) : null}
 						</div>
 					))}
 				</div>
-
-				<div className="flex">
-					<div className="mr-0 flex w-7 shrink-0 flex-col gap-[2px] pr-1.5 text-right">
-						{weekdays.map((name, dow) => (
-							<div
-								className="h-[9px] text-[9px] text-foreground-muted leading-[9px]"
-								key={name}
-							>
-								{WEEKDAY_LABEL_ROWS.has(dow) ? name : ""}
-							</div>
-						))}
-					</div>
-
-					<div className="flex gap-[2px]">
-						{columns.map((col) => (
-							<div className="flex flex-col gap-[2px]" key={col.key}>
-								{keyedColumnCells(col).map(({ cell, key }) => {
-									if (cell === null) {
-										return <div className="h-[9px] w-[9px]" key={key} />;
-									}
-									const level = intensityLevel(cell.wordCount, max);
-									const bg = level === 0 ? emptyBg : VARIANT_BG[level - 1];
-									return (
-										<div
-											className={`h-[9px] w-[9px] rounded-[2px] ${bg}`}
-											key={cell.dayKey}
-											title={cellTitle(cell)}
-										/>
-									);
-								})}
-							</div>
-						))}
-					</div>
+				<div className="flex w-9 shrink-0 items-center justify-end">
+					<BaseButton
+						aria-label={t("heatmapLater")}
+						className={cn(
+							NAV_BUTTON_CLASS,
+							"disabled:pointer-events-none disabled:opacity-20",
+						)}
+						disabled={page === 0}
+						onClick={() => setPageBack(page - 1)}
+						type="button"
+					>
+						<HugeiconsIcon
+							className="rtl:-scale-x-100"
+							icon={ArrowRight01Icon}
+							size={14}
+						/>
+					</BaseButton>
 				</div>
+			</div>
+
+			<div className="flex">
+				<div className="flex w-9 shrink-0 flex-col gap-[3px] overflow-hidden pe-2">
+					{weekdays.map((name) => (
+						<div
+							className="flex flex-1 items-center justify-end whitespace-nowrap text-2xs text-foreground-muted"
+							key={name}
+						>
+							{name}
+						</div>
+					))}
+				</div>
+				<div className="flex min-w-0 flex-1 gap-[3px]">
+					{slots.map(renderColumn)}
+				</div>
+				<div className="w-9 shrink-0" />
 			</div>
 		</div>
 	);

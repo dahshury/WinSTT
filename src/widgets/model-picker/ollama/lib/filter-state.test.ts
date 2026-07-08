@@ -5,6 +5,7 @@ import {
 	filterInstalledOllamaModels,
 	filterRecommendedOllamaModels,
 	installedModelFitsHardware,
+	isEmbeddingOnlyOllamaModel,
 	isOllamaFilterState,
 	type OllamaFilterState,
 	ollamaActiveFilterCount,
@@ -32,6 +33,39 @@ function recommended(
 const filters = (overrides: Partial<OllamaFilterState>): OllamaFilterState => ({
 	...EMPTY_OLLAMA_FILTER_STATE,
 	...overrides,
+});
+
+describe("isEmbeddingOnlyOllamaModel", () => {
+	it("excludes an embedding-only model (nomic-embed-text)", () => {
+		expect(
+			isEmbeddingOnlyOllamaModel(
+				model({ name: "nomic-embed-text:latest", capabilities: ["embedding"] }),
+			),
+		).toBe(true);
+	});
+
+	it("keeps a generator that also embeds (has completion)", () => {
+		expect(
+			isEmbeddingOnlyOllamaModel(
+				model({ name: "x:1b", capabilities: ["completion", "embedding"] }),
+			),
+		).toBe(false);
+	});
+
+	it("keeps normal generation models", () => {
+		expect(
+			isEmbeddingOnlyOllamaModel(
+				model({ name: "gemma4:e4b", capabilities: ["completion", "tools"] }),
+			),
+		).toBe(false);
+	});
+
+	it("keeps models with unknown/empty capabilities (older Ollama)", () => {
+		expect(isEmbeddingOnlyOllamaModel(model({ name: "old:1b" }))).toBe(false);
+		expect(
+			isEmbeddingOnlyOllamaModel(model({ name: "old:1b", capabilities: [] })),
+		).toBe(false);
+	});
 });
 
 /** Fit lookup that fails any model at or above `limit` bytes. */

@@ -2,6 +2,7 @@
 
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
 import { cn } from "@/shared/lib/cn";
+import { springs } from "@/shared/lib/springs";
 import { formatMaker } from "../lib/model-selector-utils";
 import type { ModelVariant } from "../lib/model-variant-utils";
 import {
@@ -28,10 +29,10 @@ export interface ActiveFiltersBarProps {
 	selectedVariant: ModelVariant | "none" | null;
 }
 
-const FADE_TRANSITION = { duration: 0.15, ease: "easeOut" } as const;
+const FADE_TRANSITION = springs.moderate;
 const FADE_EXIT = {
 	opacity: 0,
-	transition: { duration: 0.3, ease: "easeIn" },
+	transition: springs.moderate.exit,
 } as const;
 
 function AnimatedBadge({

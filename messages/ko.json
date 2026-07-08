@@ -251,7 +251,46 @@
     "retentionDays3": "3일 후",
     "retentionWeeks2": "2주 후",
     "retentionMonths3": "3개월 후",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "변환 기록",
+    "enabledTooltip": "켜면 WinSTT가 변환, 변형, 읽어주기 실행 내역을 기록하여 이 대시보드에서 통계와 지출을 볼 수 있습니다. 끄면 새 데이터 수집을 중단합니다.",
+    "disabledHint": "기록이 꺼져 있습니다 — WinSTT가 새 활동을 기록하지 않습니다. 기존 데이터는 삭제하기 전까지 유지됩니다.",
+    "deleteAllTitle": "모든 기록을 삭제할까요?",
+    "deleteAllDescription": "기록된 모든 변환, 변형, 읽어주기 실행 내역과 저장된 녹음이 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
+    "deleteAllButton": "모든 데이터 삭제",
+    "clearTtsButton": "읽어주기 지우기",
+    "clearTtsTitle": "모든 읽어주기 기록을 지울까요?",
+    "clearTtsDescription": "저장된 모든 음성 합성 실행 내역과 오디오가 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
+    "combinedTableTitle": "기록",
+    "filterDateRange": "기간",
+    "filterAllTime": "전체 기간",
+    "heatmapEarlier": "이전",
+    "heatmapLater": "이후",
+    "spendingTitle": "지출",
+    "spendingTotalLabel": "총 지출",
+    "spendingByModalityTitle": "유형별 지출",
+    "spendingByProviderTitle": "제공업체별 지출",
+    "spendingByModelTitle": "모델별 지출",
+    "spendingByMakerTitle": "제작사별 지출",
+    "spendingEstimatedHint": "정확한 가격이 보고되지 않은 경우 일부 수치는 추정값입니다.",
+    "costSpeechToText": "음성-텍스트 변환",
+    "costTextToSpeech": "텍스트-음성 변환",
+    "costLanguageModel": "언어 모델",
+    "colCharacters": "문자 수",
+    "cloudLabel": "클라우드",
+    "colCost": "클라우드 비용",
+    "costEstimated": "추정값",
+    "costTotal": "합계",
+    "kindSpeechToText": "음성-텍스트 변환",
+    "kindTextToSpeech": "텍스트-음성 변환",
+    "durationLlmProcessing": "AI 처리",
+    "durationNotRecorded": "기록 안 됨",
+    "durationNotRun": "실행 안 됨",
+    "durationRecording": "녹음",
+    "durationSpeechToText": "변환",
+    "durationTotalProcessing": "처리 시간",
+    "colTtsModel": "음성 모델",
+    "colVoice": "음성"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "화면 텍스트 OCR (대체)",
+    "contextScreenOcrCaption": "커서 주변의 화면 텍스트를 추가 문맥으로 읽기",
+    "contextScreenOcrTooltip": "문맥 인식이 포커스된 필드를 직접 읽지 못할 때, WinSTT는 커서 주변 화면 영역을 읽어(OCR) 인근 텍스트를 가져오는 방식으로 대체합니다. 직접 필드 읽기보다 느리고 정확도가 떨어집니다. 이 대체 동작을 건너뛰려면 끄세요."
   },
   "model": {
     "initialPrompt": "초기 프롬프트",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "조기 시작까지의 무음 시간(초)",
     "earlyTranscriptionTooltip": "말하기를 완전히 멈추기 전에 이 초 수의 무음이 발생하면 전사를 시작합니다. 말하기와 최종 텍스트 확인 사이의 지연을 줄입니다. 0으로 설정하면 비활성화됩니다.",
     "realtimeModel": "실시간 모델",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "실시간 모델",
     "realtimeModelCaption": "실시간 미리 보기를 위한 소형 모델",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "실시간 전사 업데이트 사이의 최소 시간입니다. 값이 낮을수록 더 자주 업데이트되지만 처리 능력을 더 많이 사용합니다. 받아쓰기 중 끊김이나 CPU 사용량이 높으면 늘려보세요.",
     "llm": "대형 언어 모델",
     "deviceAutoLabel": "자동",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "실시간 단어별 전사를 끌까요?",
+    "realtimeOffWordByWordDescription": "이 모델은 말하는 동안 전사를 단어별로 스트리밍합니다. 실시간을 끄면 말을 멈춘 뒤에만 전사하도록 전환됩니다.",
+    "realtimeOffWordByWordConfirm": "끄기"
   },
   "audio": {
     "inputDevice": "입력 장치",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "즉시",
     "microphoneReleaseSec30": "30초",
     "microphoneReleaseMin1": "1분",
-    "microphoneReleaseMin5": "5분"
+    "microphoneReleaseMin5": "5분",
+    "devicePriorityHandle": "드래그하여 우선순위 재정렬"
   },
   "quality": {
     "enableRealtime": "실시간 활성화",
@@ -717,7 +766,8 @@
     "waiting": "음성을 기다리는 중...",
     "serverOffline": "서버 오프라인",
     "noAudioDetected": "(오디오가 감지되지 않음)",
-    "transcriptionFailed": "(전사 실패)"
+    "transcriptionFailed": "(전사 실패)",
+    "offlineNoLocalModel": "인터넷 없음 · 로컬 모델 없음"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "그래도 설치",
     "unfitSelectTitle": "이 큰 모델을 사용하시겠습니까?",
     "unfitSelectDescription": "\"{model}\"은(는) 하드웨어가 원활하게 실행하기에 너무 큽니다(약 {required} 필요, {available} 사용 가능). 매우 느리게 실행되거나 로드에 실패할 수 있습니다. 그래도 사용하시겠습니까?",
-    "unfitSelectAnyway": "그래도 사용"
+    "unfitSelectAnyway": "그래도 사용",
+    "dictionaryAutoAddLiteModel": "lite 모델에서는 사용할 수 없습니다. 사전 교정을 자동 추가하려면 더 큰 모델로 전환하세요."
   },
   "tts": {
     "title": "텍스트 음성 변환 (TTS)",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "클라우드 음성을 사용하려면 연동 설정에서 ElevenLabs API 키를 추가하고 인증하세요.",
     "cloudLoadingVoices": "음성 불러오는 중…",
     "cloudNoVoices": "이 ElevenLabs 계정에서 음성을 찾을 수 없습니다.",
-    "cloudError": "ElevenLabs 음성을 불러올 수 없습니다."
+    "cloudError": "ElevenLabs 음성을 불러올 수 없습니다.",
+    "voiceDesignLabel": "음성 설명",
+    "voiceDesignTooltip": "음색, 나이, 억양, 감정 등 원하는 음성을 말로 설명하면, 모델이 사전 설정된 보이스 뱅크에서 고르는 대신 그에 맞는 음성을 합성합니다.",
+    "voiceDesignButtonPlaceholder": "음성 설계",
+    "voiceDesignDialogTitle": "음성 설계",
+    "voiceDesignDialogDescription": "음성을 한두 문장으로 설명하세요. 비워두면 모델의 기본 음성을 사용합니다.",
+    "voiceDesignPromptLabel": "음성 설명",
+    "voiceDesignPromptPlaceholder": "예: 약간의 영국식 억양을 가진 따뜻하고 낮은 음색의 내레이터",
+    "voiceDesignPromptEmptyHint": "비워두면 모델의 내장 음성으로 대체됩니다.",
+    "voiceDesignCancel": "취소",
+    "voiceDesignSave": "저장",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "문제가 발생했습니다",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "{provider}에 의해 요청이 제한되었습니다",
     "toastRateLimitedRetry": "{seconds}초 후 다시 시도하세요",
     "toastProviderError": "{provider} STT 오류: {message}",
-    "openIntegrations": "연동 열기"
+    "openIntegrations": "연동 열기",
+    "toastTtsOfflineNoLocal": "인터넷이 없고 로컬 음성이 설치되지 않았습니다 — 읽어주기를 사용할 수 없습니다."
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "Lite",
+    "liteTierTip": "정확도를 낮춘 더 작고 빠른 변형입니다. 제한된 하드웨어에서 빠른 작업에 가장 적합합니다."
   },
   "dataGrid": {
     "addRow": "Add row",

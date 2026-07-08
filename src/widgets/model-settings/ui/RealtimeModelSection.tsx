@@ -14,7 +14,9 @@ import {
 } from "@/entities/setting";
 import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import type { SelectOption } from "@/shared/ui/select";
 import { FormControl } from "@/shared/ui/form-control";
+import { LanguageMultiCombobox } from "@/shared/ui/language-multi-combobox";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import type {
 	CatalogModels,
@@ -40,6 +42,14 @@ interface RealtimeModelSectionProps {
 	disabled: boolean;
 	/** Reason shown on the greyed controls when `disabled` is true. */
 	disabledTooltip: string;
+	/** Master switch handler — writes the underlying consumer settings (see
+	 *  `realtimeMasterTogglePatch`); the switch itself stores nothing. */
+	onToggle: (next: boolean) => void;
+	/** True when the switch can't be flipped (listen mode always streams;
+	 *  language guard would immediately revert an enable). */
+	toggleDisabled: boolean;
+	/** Reason shown on hover over the disabled switch. */
+	toggleDisabledTooltip: string | undefined;
 	getFitAssessment: GetFitAssessment;
 	handleRealtimeModelChange: (
 		modelId: string,
@@ -68,6 +78,11 @@ interface RealtimeModelSectionProps {
 	) => import("@/features/model-download").QuantDownloadState | undefined;
 	quality: QualitySettings | undefined;
 	sourceLanguageSelection: SourceLanguageSelection | undefined;
+	/** Language options for the realtime language picker (same list the main model uses). */
+	langOpts: SelectOption[];
+	/** Forced language for a multilingual realtime model (`""` = auto-detect). */
+	realtimeLanguage: string;
+	onRealtimeLanguageChange: (language: string) => void;
 	settings: ModelSettings | undefined;
 	statesById: StatesById;
 	systemInfo: SystemInfo;
@@ -75,11 +90,13 @@ interface RealtimeModelSectionProps {
 	updateQuality: UpdateQualityFn;
 }
 
-// Always rendered when the parent decides realtime is on — there is no
-// on/off toggle here anymore. The realtime engine's lifecycle is derived
-// from `general.liveTranscriptionDisplay` (see `isRealtimeEnabled`); without
-// a display surface the engine wouldn't have any observable output, so the
-// section itself is gated by the parent instead.
+// The section header carries a VIRTUAL master switch: realtime enablement
+// stays derived from its consumers (`general.liveTranscriptionDisplay` +
+// word-by-word pasting, see `isRealtimeEnabled`) — no separate stored flag.
+// The switch reads that derived state and writes the consumers themselves
+// (`realtimeMasterTogglePatch` in the parent), so the Model tab finally has
+// one visible on/off for "is the realtime engine loaded" without introducing
+// a redundant setting or an invalid "on with no consumer" combination.
 export function RealtimeModelSection({
 	t,
 	settings,
@@ -92,6 +109,9 @@ export function RealtimeModelSection({
 	currentQuantization,
 	disabled,
 	disabledTooltip,
+	onToggle,
+	toggleDisabled,
+	toggleDisabledTooltip,
 	downloadProgress,
 	getFitAssessment,
 	isSwapping,
@@ -105,6 +125,9 @@ export function RealtimeModelSection({
 	mainModelCanNativeStream,
 	updateIntervalApplies,
 	sourceLanguageSelection,
+	langOpts,
+	realtimeLanguage,
+	onRealtimeLanguageChange,
 }: RealtimeModelSectionProps): ReactNode {
 	// The realtime slot is normally a separate native-streaming preview engine.
 	// When the main model itself can natively stream, it owns this slot too.
@@ -119,11 +142,22 @@ export function RealtimeModelSection({
 	// owns the realtime slot (auto-reuse) or because realtime has no enabled
 	// output surface (`disabled`). Both collapse onto the same picker state.
 	const selectorDisabled = mainModelCanNativeStream || disabled;
+	// The realtime language picker only makes sense for a multilingual realtime model (e.g. the
+	// Nemotron-3.5 prompt model); English-only streaming models auto-transcribe and hide it.
+	const realtimeInfo = catalogModels.find(
+		(m) => m.id === displayedRealtimeModelId,
+	);
+	const realtimeMultilingual = realtimeInfo?.supportsLanguageDetection ?? false;
+	const realtimeLanguageValue = realtimeLanguage ? [realtimeLanguage] : [];
 	return (
 		<SettingSection
 			boxed
 			icon={Activity03Icon}
+			onToggle={onToggle}
 			title={t("realtimePreviewSection")}
+			toggleDisabled={toggleDisabled}
+			toggleDisabledTooltip={toggleDisabledTooltip}
+			toggled={!disabled}
 		>
 			<div className="flex flex-col divide-y divide-divider">
 				<div>
@@ -171,6 +205,36 @@ export function RealtimeModelSection({
 						/>
 					</FormControl>
 				</div>
+				{realtimeMultilingual ? (
+					<div>
+						<FormControl
+							controlTooltip={disabled ? disabledTooltip : undefined}
+							disabled={selectorDisabled}
+							label={t("realtimeLanguage")}
+							tooltip={t("realtimeLanguageTooltip")}
+						>
+							<LanguageMultiCombobox
+								ariaLabel={t("realtimeLanguage")}
+								disabled={selectorDisabled}
+								emptyLabel={t("languageNoResults")}
+								onChange={(value) => {
+									if (selectorDisabled) {
+										return;
+									}
+									// Prompt models take a single language; keep the most recently
+									// picked one ("" = auto-detect when cleared).
+									onRealtimeLanguageChange(value.at(-1) ?? "");
+								}}
+								options={langOpts}
+								placeholder={t("realtimeLanguageAuto")}
+								removeLabel={(language) => t("languageRemove", { language })}
+								selectedCountLabel={(count) => `${count}`}
+								selectedHeading={t("languageSelectedHeading")}
+								value={realtimeLanguageValue}
+							/>
+						</FormControl>
+					</div>
+				) : null}
 				{updateIntervalApplies ? (
 					<SettingField
 						disabled={disabled}

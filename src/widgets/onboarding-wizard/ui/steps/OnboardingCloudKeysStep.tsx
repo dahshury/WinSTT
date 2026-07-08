@@ -16,12 +16,14 @@ import {
 import type { CloudSttProvider } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
+import { springs } from "@/shared/lib/springs";
 import { brandLogoFor } from "@/shared/ui/brand-logo";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Spinner } from "@/shared/ui/spinner";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { PasswordField } from "@/shared/ui/text-field";
+import { Tooltip } from "@/shared/ui/tooltip";
 import { useOnboardingWizardStore } from "../../model/wizard-store";
 
 interface ProviderMeta {
@@ -284,9 +286,14 @@ function StatusPill({ status, apiKey }: StatusPillProps) {
 	const t = useTranslations("onboarding");
 	const motionProps = {
 		animate: { opacity: 1, scale: 1, y: 0 },
-		exit: { opacity: 0, scale: 0.94, y: -3 },
+		exit: {
+			opacity: 0,
+			scale: 0.94,
+			y: -3,
+			transition: springs.moderate.exit,
+		},
 		initial: { opacity: 0, scale: 0.92, y: 3 },
-		transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] },
+		transition: springs.moderate,
 	} as const;
 	if (status.status === "verifying") {
 		return (
@@ -322,25 +329,33 @@ function StatusPill({ status, apiKey }: StatusPillProps) {
 		);
 	}
 	if (status.status === "invalid") {
-		return (
+		const badge = (
 			<m.span
 				className="inline-flex items-center rounded-sm bg-error/15 px-1.5 py-0.5 font-medium text-2xs text-error uppercase tracking-wider ring-1 ring-error/30"
-				title={status.lastError}
 				{...motionProps}
 			>
 				{t("statusInvalidKey")}
 			</m.span>
 		);
+		return status.lastError ? (
+			<Tooltip content={status.lastError}>{badge}</Tooltip>
+		) : (
+			badge
+		);
 	}
 	if (status.status === "offline") {
-		return (
+		const badge = (
 			<m.span
 				className="inline-flex items-center rounded-sm bg-warning/15 px-1.5 py-0.5 font-medium text-2xs text-warning uppercase tracking-wider ring-1 ring-warning/30"
-				title={status.lastError}
 				{...motionProps}
 			>
 				{t("statusUnreachable")}
 			</m.span>
+		);
+		return status.lastError ? (
+			<Tooltip content={status.lastError}>{badge}</Tooltip>
+		) : (
+			badge
 		);
 	}
 	return null;

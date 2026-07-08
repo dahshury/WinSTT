@@ -65,6 +65,13 @@ const LLM_WARMUP_PASS_KEY: &str = "llm:warmup-pass";
 // and any switch contention; steady-state refresh stays on the 60s loop.
 const OLLAMA_WARM_TRIGGER_ATTEMPTS: u32 = 8;
 const OLLAMA_WARM_TRIGGER_RETRY_DELAY: Duration = Duration::from_millis(1500);
+// A warm-up `/api/generate` that takes at least this long indicates the model
+// was COLD (a fresh llama.cpp instance with an empty prompt cache) — re-prime
+// the dictation prompt prefix even if this process primed a previous residency
+// (an external eviction/Ollama restart reset the server-side cache). A
+// keep-alive refresh of an already-resident model returns in well under a
+// second (~0.3-0.7s observed) and skips the redundant re-prime.
+const OLLAMA_COLD_LOAD_PRIME_THRESHOLD: Duration = Duration::from_millis(1000);
 
 /// Thin emit sink that forwards live reasoning deltas to the renderer pill.
 /// Mirrors the `llm:reasoning-delta` plain-string event (07_* §4b).
@@ -100,9 +107,43 @@ pub struct LlmManager {
     shutting_down: AtomicBool,
     /// Coalesces Ollama warmup passes and tracks models this process warmed.
     lifecycle: ModelSwapCoordinator,
+    /// Models (by `llm_model_key`) whose dictation prompt-prefix has been primed
+    /// into llama.cpp's KV cache this residency — by a warm-up prime or a real
+    /// dictation. Cleared on eviction so a reload re-primes; a COLD load also
+    /// re-primes regardless (an external eviction resets the server-side cache).
+    primed_prompts: Mutex<std::collections::HashSet<String>>,
     /// OpenRouter `supported_parameters` from the latest model scan. The chat
     /// path uses this to avoid sending unsupported model-specific controls.
     openrouter_supported_parameters: Mutex<HashMap<String, Vec<String>>>,
+    /// OpenRouter per-model pricing rates from the latest model scan, used to
+    /// convert the chat stream's native token usage into per-run USD cost.
+    openrouter_pricing: Mutex<HashMap<String, OpenRouterPricingRates>>,
+    /// request_id → usage of that request's most recent completed OpenRouter
+    /// chat. The dictation/transform pipelines take their entry right after the
+    /// call returns; entries from callers that never collect (previews,
+    /// benchmarks) are dropped by the size cap.
+    llm_usage_ledger: Mutex<HashMap<String, LlmRunUsage>>,
+}
+
+/// OpenRouter pricing rates in USD per unit (per token for prompt/completion,
+/// per request for `request`), parsed from the catalog's `pricing` object.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OpenRouterPricingRates {
+    pub prompt: f64,
+    pub completion: f64,
+    pub request: f64,
+}
+
+/// Usage + cost of one completed cloud LLM chat, surfaced in the History
+/// footer. Cost is computed from OpenRouter's native token accounting × the
+/// catalog pricing — the documented billing formula (OpenRouter occasionally
+/// applies small discounts, so treat it as accurate to ~1%).
+#[derive(Debug, Clone, Default)]
+pub struct LlmRunUsage {
+    pub model: String,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -113,7 +154,9 @@ pub struct LlmChatOutput {
 
 impl LlmManager {
     pub fn new(app: &AppHandle) -> Self {
-        let client = reqwest::Client::new();
+        // Shared pooled cloud client (cheap Arc clone) — OpenRouter catalog
+        // scans ride the same connections as cloud STT/TTS.
+        let client = crate::winstt::net::http_client().clone();
         // Ollama is ALWAYS a loopback endpoint, so it must NEVER go through a
         // system/VPN proxy. The default client honors HTTP(S)_PROXY/WinINET proxy
         // settings, which on a dev/corp machine can swallow 127.0.0.1 — the
@@ -138,8 +181,33 @@ impl LlmManager {
             ollama_keep_alive_timeout: crate::settings::AtomicModelUnloadTimeout::new(timeout),
             shutting_down: AtomicBool::new(false),
             lifecycle: ModelSwapCoordinator::new(),
+            primed_prompts: Mutex::new(std::collections::HashSet::new()),
             openrouter_supported_parameters: Mutex::new(HashMap::new()),
+            openrouter_pricing: Mutex::new(HashMap::new()),
+            llm_usage_ledger: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Take (and clear) the usage recorded for `request_id`'s most recent
+    /// completed OpenRouter chat. `None` for local providers and failed runs.
+    pub fn take_llm_usage(&self, request_id: &str) -> Option<LlmRunUsage> {
+        self.llm_usage_ledger
+            .lock()
+            .ok()
+            .and_then(|mut ledger| ledger.remove(request_id))
+    }
+
+    fn record_llm_usage(&self, request_id: &str, usage: LlmRunUsage) {
+        let Ok(mut ledger) = self.llm_usage_ledger.lock() else {
+            return;
+        };
+        // Callers that never collect (previews, benchmarks) would otherwise
+        // grow the ledger forever; it only needs to survive the gap between a
+        // chat returning and its pipeline reading the entry.
+        if ledger.len() >= 64 {
+            ledger.clear();
+        }
+        ledger.insert(request_id.to_string(), usage);
     }
 
     pub fn next_request_id(&self) -> String {

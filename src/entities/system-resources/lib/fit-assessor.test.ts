@@ -106,6 +106,28 @@ describe("assessDictationFitClient", () => {
 		expect(result.reasons).toContain("exceeds_vram");
 	});
 
+	test("a full GPU (free=0) never reports a confident 'ok' — downgraded to tight", () => {
+		const result = assessDictationFitClient("tiny", {
+			statesById: {
+				tiny: entryOf({ id: "tiny", estimated_bytes: 500_000_000 }),
+			},
+			candidateQuant: "",
+			requestedDevice: null,
+			loaded: {
+				mainId: null,
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
+			// 24 GB card but reported fully used — a small model would "fit" against
+			// total capacity, but we can't confirm the busy card has room.
+			live: liveOf({ gpus: [gpuOf({ total: 24 * GB, free: 0 })] }),
+		});
+		expect(result.target).toBe("gpu");
+		expect(result.severity).toBe("warning");
+		expect(result.reasons).toContain("tight_vram");
+	});
+
 	test("routes int8 to CPU even on a GPU host", () => {
 		const result = assessDictationFitClient("tiny", {
 			statesById: {

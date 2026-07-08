@@ -770,3 +770,206 @@ describe("useLlmCatalogStore.deleteModel", () => {
 		expect(result.success).toBe(true);
 	});
 });
+
+describe("useLlmCatalogStore — alias-aware pull lifecycle", () => {
+	const activePull = (model: string) => ({
+		progress: { model, status: "downloading" as const, percent: 10 },
+		startedAt: Date.now(),
+	});
+
+	test("pullModel refuses to start when an alias spelling is already pulling", async () => {
+		// `smollm2` and `smollm2:latest` are ONE artifact at the daemon — a second
+		// streaming pull under the sibling spelling made pause whack-a-mole (the
+		// badge alias-matches whichever stream survives the cancel).
+		useLlmCatalogStore.setState({
+			pulls: { smollm2: activePull("smollm2") },
+		});
+		const result = await useLlmCatalogStore
+			.getState()
+			.pullModel("smollm2:latest");
+		expect(result.success).toBe(false);
+		expect(result.error).toBe("Already pulling");
+	});
+
+	test("cancelPull pauses and IPC-cancels EVERY alias spelling", async () => {
+		ipcOverrides.cancelCalls.length = 0;
+		useLlmCatalogStore.setState({
+			pulls: {
+				smollm2: activePull("smollm2"),
+				"smollm2:latest": activePull("smollm2:latest"),
+			},
+		});
+
+		await useLlmCatalogStore.getState().cancelPull("smollm2:latest");
+
+		const state = useLlmCatalogStore.getState();
+		expect(Object.keys(state.pulls)).toEqual([]);
+		expect(Object.keys(state.pausedPulls).sort()).toEqual([
+			"smollm2",
+			"smollm2:latest",
+		]);
+		expect(ipcOverrides.cancelCalls.sort()).toEqual([
+			"smollm2",
+			"smollm2:latest",
+		]);
+	});
+
+	test("a late frame from an alias stream cannot resurrect a paused pull", () => {
+		useLlmCatalogStore.setState({
+			pulls: {},
+			pausedPulls: {
+				"smollm2:latest": {
+					pausedAt: Date.now(),
+					progress: {
+						model: "smollm2:latest",
+						status: "downloading",
+						percent: 40,
+					},
+				},
+			},
+		});
+
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "smollm2",
+			status: "downloading",
+			percent: 41,
+		});
+
+		const state = useLlmCatalogStore.getState();
+		expect(Object.keys(state.pulls)).toEqual([]);
+		expect(Object.keys(state.pausedPulls)).toEqual(["smollm2:latest"]);
+	});
+
+	test("a terminal success frame clears paused alias snapshots too", () => {
+		useLlmCatalogStore.setState({
+			pulls: { smollm2: activePull("smollm2") },
+			pausedPulls: {
+				"smollm2:latest": {
+					pausedAt: Date.now(),
+					progress: {
+						model: "smollm2:latest",
+						status: "downloading",
+						percent: 40,
+					},
+				},
+			},
+		});
+
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "smollm2",
+			status: "success",
+			percent: 100,
+		});
+
+		const state = useLlmCatalogStore.getState();
+		expect(Object.keys(state.pulls)).toEqual([]);
+		expect(Object.keys(state.pausedPulls)).toEqual([]);
+	});
+
+	test("resuming under a different alias seeds from the paused snapshot and clears it", async () => {
+		useLlmCatalogStore.setState({
+			pulls: {},
+			pausedPulls: {
+				"smollm2:latest": {
+					pausedAt: Date.now(),
+					progress: {
+						model: "smollm2:latest",
+						status: "downloading",
+						percent: 60,
+					},
+				},
+			},
+		});
+		let seeded: {
+			model: string;
+			percent?: number;
+			statusText?: string;
+		} | null = null;
+		const unsub = useLlmCatalogStore.subscribe((state) => {
+			const entry = state.pulls["smollm2"];
+			if (entry && seeded === null) {
+				seeded = entry.progress;
+			}
+		});
+		await useLlmCatalogStore.getState().pullModel("smollm2");
+		unsub();
+		const captured = seeded as unknown as {
+			model: string;
+			percent?: number;
+			statusText?: string;
+		};
+		expect(captured).not.toBeNull();
+		expect(captured.model).toBe("smollm2");
+		expect(captured.percent).toBe(60);
+		expect(captured.statusText).toBe("resuming");
+		// The paused alias snapshot must not linger once the resume is live.
+		expect(
+			useLlmCatalogStore.getState().pausedPulls["smollm2:latest"],
+		).toBeUndefined();
+	});
+});
+
+describe("useLlmCatalogStore — cross-window resume revival", () => {
+	const pausedAt40 = (model: string) => ({
+		pausedAt: Date.now(),
+		progress: { model, status: "downloading" as const, percent: 40 },
+	});
+
+	test("the backend's leading 'starting' frame revives a paused pull", () => {
+		// Resume clicked in the DETACHED PICKER window: this window only sees the
+		// broadcast frames. The leading frame must flip paused → downloading here
+		// too, or the settings trigger never shows the re-download's progress.
+		useLlmCatalogStore.setState({
+			pulls: {},
+			pausedPulls: { smollm2: pausedAt40("smollm2") },
+		});
+
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "smollm2",
+			status: "pulling",
+			statusText: "starting",
+		});
+
+		const state = useLlmCatalogStore.getState();
+		expect(Object.keys(state.pausedPulls)).toEqual([]);
+		const revived = state.pulls["smollm2"];
+		expect(revived).toBeDefined();
+		// Seeded from the paused snapshot — no 0% flash before byte frames land.
+		expect(revived?.progress.percent).toBe(40);
+		expect(revived?.progress.status).toBe("pulling");
+	});
+
+	test("a leading frame under an alias spelling revives the paused sibling", () => {
+		useLlmCatalogStore.setState({
+			pulls: {},
+			pausedPulls: { "smollm2:latest": pausedAt40("smollm2:latest") },
+		});
+
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "smollm2",
+			status: "pulling",
+			statusText: "starting",
+		});
+
+		const state = useLlmCatalogStore.getState();
+		expect(Object.keys(state.pausedPulls)).toEqual([]);
+		expect(state.pulls["smollm2"]?.progress.percent).toBe(40);
+	});
+
+	test("non-leading 'pulling <digest>' stragglers still cannot revive", () => {
+		useLlmCatalogStore.setState({
+			pulls: {},
+			pausedPulls: { smollm2: pausedAt40("smollm2") },
+		});
+
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "smollm2",
+			status: "pulling",
+			statusText: "pulling b709d81508a0",
+		});
+
+		const state = useLlmCatalogStore.getState();
+		expect(Object.keys(state.pulls)).toEqual([]);
+		expect(Object.keys(state.pausedPulls)).toEqual(["smollm2"]);
+	});
+});

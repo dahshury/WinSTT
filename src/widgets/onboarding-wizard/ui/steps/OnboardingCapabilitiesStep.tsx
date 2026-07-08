@@ -13,18 +13,14 @@ import { commands } from "@/bindings";
 import { useSettingsStore } from "@/entities/setting";
 import type { RecordingMode } from "@/shared/config/recording-mode-color";
 import { cn } from "@/shared/lib/cn";
+import { springs } from "@/shared/lib/springs";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
 import { OnboardingDictationDemo } from "./OnboardingDictationDemo";
 
-const CARD_SPRING = {
-	type: "spring",
-	stiffness: 360,
-	damping: 32,
-	mass: 0.8,
-} as const;
+const CARD_SPRING = springs.slow;
 
 /**
  * Overlay & visuals step.

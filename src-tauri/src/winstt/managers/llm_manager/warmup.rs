@@ -10,15 +10,18 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
 
 use super::{
-    LLM_WARMUP_PASS_KEY, LlmManager, OLLAMA_BOOT_WAIT, OLLAMA_EVICT_TIMEOUT,
-    OLLAMA_LOAD_FAIL_BACKOFF, OLLAMA_RECENT_WARM_SKIP, OLLAMA_WARM_TRIGGER_ATTEMPTS,
-    OLLAMA_WARM_TRIGGER_RETRY_DELAY, OLLAMA_WARMUP_INTERVAL, OLLAMA_WARMUP_TIMEOUT,
+    LLM_WARMUP_PASS_KEY, LlmManager, OLLAMA_BOOT_WAIT, OLLAMA_COLD_LOAD_PRIME_THRESHOLD,
+    OLLAMA_EVICT_TIMEOUT, OLLAMA_LOAD_FAIL_BACKOFF, OLLAMA_RECENT_WARM_SKIP,
+    OLLAMA_WARM_TRIGGER_ATTEMPTS, OLLAMA_WARM_TRIGGER_RETRY_DELAY, OLLAMA_WARMUP_INTERVAL,
+    OLLAMA_WARMUP_TIMEOUT,
 };
 use crate::winstt::commands::ollama_pull::{
     LlmWarmupModelStatus, LlmWarmupOutcome, LlmWarmupStatus,
     clear_warmup_status as clear_last_warmup_status, set_warmup_status,
 };
-use crate::winstt::commands::settings::enabled_ollama_models;
+use crate::winstt::commands::settings::{
+    enabled_ollama_models, ollama_models_for_enabled_features,
+};
 use crate::winstt::llm::validate_loopback_ollama_endpoint;
 use crate::winstt::model_watchdog;
 use crate::winstt::ollama_client::OllamaLoadResult;
@@ -44,6 +47,20 @@ fn llm_model_from_key<'a>(key: &'a str, endpoint: &str) -> Option<&'a str> {
 
 fn is_loopback_ollama_endpoint(endpoint: &str) -> bool {
     validate_loopback_ollama_endpoint(endpoint).is_ok()
+}
+
+/// Payload for the `llm:unload-status` event — the disable-side twin of
+/// `LlmWarmupStatus`. `in_progress: true` fires when an eviction batch starts,
+/// `false` once every named model has been processed (evicted or skipped), so
+/// the toggle row can hold a truthful "freeing memory" state instead of
+/// pretending the VRAM was released the instant the switch flipped.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmUnloadStatus {
+    endpoint: String,
+    in_progress: bool,
+    models: Vec<String>,
+    timestamp: f64,
 }
 
 /// Drive `pass` up to `attempts` times, returning `true` the moment it succeeds
@@ -328,6 +345,7 @@ impl LlmManager {
             .unload_model(endpoint, model, OLLAMA_EVICT_TIMEOUT)
             .await;
         model_watchdog::untrack_ollama_model(endpoint, model);
+        self.clear_prompt_primed(&llm_model_key(endpoint, model));
         crate::log_model_duration(&format!("ollama unload '{model}'"), started);
     }
 
@@ -363,6 +381,7 @@ impl LlmManager {
                 .await;
             model_watchdog::untrack_ollama_model(&endpoint, &model);
             self.lifecycle.clear_warm(&llm_model_key(&endpoint, &model));
+            self.clear_prompt_primed(&llm_model_key(&endpoint, &model));
             log::info!("[llm] unloaded Ollama model '{model}' from VRAM");
         }
     }
@@ -373,6 +392,12 @@ impl LlmManager {
     /// models the caller names, so a model resident from a prior run (or one this
     /// build never warm-tracked) is still freed when a feature stops using it.
     /// Loopback-only: a remote Ollama the user points WinSTT at is theirs to manage.
+    ///
+    /// Emits `llm:unload-status` (in_progress true → false) around the batch so
+    /// the renderer can show a truthful "freeing memory" state on the toggle,
+    /// and re-validates each model against the CURRENT settings before evicting:
+    /// a rapid disable→enable must never let the queued eviction land after the
+    /// re-enable's warm and pull the model back out from under the user.
     pub async fn unload_ollama_models(&self, models: &[String], per_model_timeout: Duration) {
         let settings = read_settings_raw(&self.app);
         let endpoint = settings.llm.endpoint.clone();
@@ -380,20 +405,84 @@ impl LlmManager {
             "[llm] unload_ollama_models: endpoint='{endpoint}' loopback={} models={models:?}",
             is_loopback_ollama_endpoint(&endpoint)
         );
-        if !is_loopback_ollama_endpoint(&endpoint) {
+        let models: Vec<String> = models
+            .iter()
+            .filter(|model| !model.trim().is_empty())
+            .cloned()
+            .collect();
+        if !is_loopback_ollama_endpoint(&endpoint) || models.is_empty() {
+            // Nothing to evict — still settle any "unloading…" indicator armed
+            // by the renderer for this batch.
+            self.publish_unload_status(&endpoint, false, &models);
             return;
         }
-        for model in models {
-            if model.trim().is_empty() {
-                continue;
-            }
-            self.ollama
-                .unload_model(&endpoint, model, per_model_timeout)
+        self.publish_unload_status(&endpoint, true, &models);
+        for model in &models {
+            self.unload_ollama_model_checked(&endpoint, model, per_model_timeout)
                 .await;
-            model_watchdog::untrack_ollama_model(&endpoint, model);
-            self.lifecycle.clear_warm(&llm_model_key(&endpoint, model));
-            log::info!("[llm] unloaded Ollama model '{model}' from VRAM (feature disabled)");
         }
+        self.publish_unload_status(&endpoint, false, &models);
+    }
+
+    /// One settings-driven eviction, serialized against an in-flight warm of the
+    /// same model and re-validated against the CURRENT settings:
+    /// - If a warm pass holds this model's lifecycle claim (the user re-enabled
+    ///   while the eviction was queued), wait — bounded — instead of racing our
+    ///   `keep_alive: 0` against its load.
+    /// - The settings snapshot that scheduled the unload is stale by definition;
+    ///   only evict if no enabled feature uses the model RIGHT NOW.
+    async fn unload_ollama_model_checked(
+        &self,
+        endpoint: &str,
+        model: &str,
+        per_model_timeout: Duration,
+    ) {
+        let model_key = llm_model_key(endpoint, model);
+        let deadline = tokio::time::Instant::now() + per_model_timeout;
+        let _claim = loop {
+            if let Some(claim) = self.lifecycle.try_claim(model_key.clone()) {
+                break Some(claim);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                // Proceed unclaimed after the bounded wait: Ollama serializes
+                // work per model, so a late keep_alive:0 still applies in order,
+                // and the settings re-check below keeps a wanted model resident.
+                break None;
+            }
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        };
+        let current = read_settings_raw(&self.app);
+        if ollama_models_for_enabled_features(&current)
+            .iter()
+            .any(|in_use| in_use == model)
+        {
+            log::info!(
+                "[llm] unload '{model}': skipped — an enabled feature re-claimed it while the eviction was queued"
+            );
+            return;
+        }
+        // Clear the warm mark BEFORE the eviction request so a concurrent warm
+        // trigger can't read a stale "recently warm" mark, skip its load, and
+        // leave the toggle on with a cold model.
+        self.lifecycle.clear_warm(&model_key);
+        self.clear_prompt_primed(&model_key);
+        self.ollama
+            .unload_model(endpoint, model, per_model_timeout)
+            .await;
+        model_watchdog::untrack_ollama_model(endpoint, model);
+        log::info!("[llm] unloaded Ollama model '{model}' from VRAM (feature disabled)");
+    }
+
+    fn publish_unload_status(&self, endpoint: &str, in_progress: bool, models: &[String]) {
+        let _ = self.app.emit(
+            "llm:unload-status",
+            LlmUnloadStatus {
+                endpoint: endpoint.to_string(),
+                in_progress,
+                models: models.to_vec(),
+                timestamp: warmup_timestamp(),
+            },
+        );
     }
 
     pub(super) fn mark_ollama_model_warm(&self, endpoint: &str, model: &str) {
@@ -447,19 +536,6 @@ impl LlmManager {
         }
 
         let model_key = llm_model_key(endpoint, model);
-        if self
-            .lifecycle
-            .is_warm_within(&model_key, OLLAMA_RECENT_WARM_SKIP)
-        {
-            log::info!(
-                "[llm] warm '{model}': already warm within {OLLAMA_RECENT_WARM_SKIP:?}, skipping load"
-            );
-            return LlmWarmupModelStatus {
-                model: model.to_string(),
-                outcome: LlmWarmupOutcome::Ok,
-                error_body: None,
-            };
-        }
         // Back off after a recent load CRASH (e.g. the runner died because the
         // model can't fit in VRAM): re-warming it every 60s would just churn the
         // GPU with repeated ~28s crashing loads. A real dictation still tries it
@@ -478,19 +554,39 @@ impl LlmManager {
             };
         }
         let Some(_claim) = self.lifecycle.try_claim(model_key.clone()) else {
-            log::info!("[llm] warm '{model}': a load for this model is already in flight");
+            // A load OR a settings-driven eviction of this model is in flight.
+            // Report Loading (retryable) so the trigger loop re-checks once the
+            // claim frees up — if the holder was an eviction, the model is cold
+            // afterwards and the retry warms it back.
+            log::info!("[llm] warm '{model}': a load/unload for this model is already in flight");
             return LlmWarmupModelStatus {
                 model: model.to_string(),
                 outcome: LlmWarmupOutcome::Loading,
                 error_body: None,
             };
         };
+        // Checked AFTER the claim so it can't race a queued eviction: the unload
+        // path clears the warm mark before it evicts, both under this claim, so
+        // whatever we read here is settled truth, not a stale mark about to drop.
+        if self
+            .lifecycle
+            .is_warm_within(&model_key, OLLAMA_RECENT_WARM_SKIP)
+        {
+            log::info!(
+                "[llm] warm '{model}': already warm within {OLLAMA_RECENT_WARM_SKIP:?}, skipping load"
+            );
+            return LlmWarmupModelStatus {
+                model: model.to_string(),
+                outcome: LlmWarmupOutcome::Ok,
+                error_body: None,
+            };
+        }
 
         log::info!("[llm] warm '{model}': loading into VRAM (keep_alive={keep_alive})");
         let started = Instant::now();
         match self
             .ollama
-            .warmup_model(endpoint, model, keep_alive, OLLAMA_WARMUP_TIMEOUT)
+            .warmup_model(endpoint, model, keep_alive.clone(), OLLAMA_WARMUP_TIMEOUT)
             .await
         {
             OllamaLoadResult::Ok => {
@@ -500,6 +596,34 @@ impl LlmManager {
                     started.elapsed().as_millis()
                 );
                 crate::log_model_duration(&format!("ollama warmup '{model}'"), started);
+                // The model is resident and usable NOW — settle the enable
+                // gate's "Loading…" immediately, BEFORE the prompt-prefix
+                // prime below. The prime is a pure first-dictation latency
+                // optimization, but its prefill can take tens of seconds on a
+                // big partially-offloaded model (measured 38.6s for
+                // gpt-oss:20b on a 12 GB card); holding the toggle through
+                // load+prime (~57s) made enabling look broken, so the user
+                // gave up / restarted mid-warm. The pass's final publish
+                // re-confirms Ok afterwards.
+                self.publish_warmup_status(LlmWarmupStatus {
+                    endpoint: endpoint.to_string(),
+                    in_progress: true,
+                    models: vec![LlmWarmupModelStatus {
+                        model: model.to_string(),
+                        outcome: LlmWarmupOutcome::Ok,
+                        error_body: None,
+                    }],
+                    ollama_installed: true,
+                    reachable: true,
+                    timestamp: warmup_timestamp(),
+                });
+                // Residency alone is not "first dictation runs at full speed":
+                // the empty-prompt generate caches NO prompt tokens, so the
+                // first real chat still paid the full system-prompt prefill
+                // (~1.5s measured) that later chats skip via llama.cpp's prefix
+                // cache. Prime it now, under this model's claim.
+                self.prime_dictation_prompt(endpoint, model, keep_alive, started.elapsed())
+                    .await;
                 LlmWarmupModelStatus {
                     model: model.to_string(),
                     outcome: LlmWarmupOutcome::Ok,
@@ -540,18 +664,128 @@ impl LlmManager {
         }
     }
 
+    /// Prime llama.cpp's prompt-prefix (KV) cache with the REAL dictation chat
+    /// scaffolding (empty transcript, empty context — the transcript sits at the
+    /// very END of the user prompt, so real requests share the whole prefix).
+    /// Skipped when this residency was already primed AND the warm generate was
+    /// fast (an already-resident keep-alive refresh); a slow generate means a
+    /// COLD load, whose fresh llama.cpp instance has an empty cache regardless
+    /// of our marker. Only the dictation feature's model is primed — that is
+    /// the PTT hot path; a transform's first run primes its own prefix.
+    /// Non-fatal: a failed prime just means the first dictation pays the
+    /// prefill itself.
+    async fn prime_dictation_prompt(
+        &self,
+        endpoint: &str,
+        model: &str,
+        keep_alive: serde_json::Value,
+        load_elapsed: Duration,
+    ) {
+        let model_key = llm_model_key(endpoint, model);
+        let cold_load = load_elapsed >= OLLAMA_COLD_LOAD_PRIME_THRESHOLD;
+        if !cold_load && self.is_prompt_primed(&model_key) {
+            return;
+        }
+        let settings = read_settings_raw(&self.app);
+        let dictation = &settings.llm.dictation;
+        if !dictation.enabled
+            || dictation.base.provider != crate::winstt::settings_schema::LlmProvider::Ollama
+            || dictation.base.model.trim() != model
+        {
+            return;
+        }
+        let caps = self
+            .ollama_capabilities(endpoint, model)
+            .await
+            .unwrap_or_default();
+        let inputs = crate::winstt::commands::llm::dictation_prompt_prime_inputs(&settings);
+        let mut body = crate::winstt::llm::build_ollama_chat_body_with_keep_alive(
+            model,
+            &inputs.system_prompt,
+            &inputs.user_prompt,
+            0,
+            caps.supports_thinking,
+            inputs.effort,
+            keep_alive,
+        );
+        crate::winstt::llm::add_ollama_side_effect_schema_instruction(
+            &mut body,
+            inputs.dictionary_auto_add_enabled,
+        );
+        // One-token, non-streaming: the point is the PREFILL, not the answer.
+        body["stream"] = serde_json::Value::Bool(false);
+        if let Some(options) = body
+            .get_mut("options")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            options.insert("num_predict".to_string(), serde_json::json!(1));
+        }
+        let started = Instant::now();
+        match self
+            .ollama
+            .prime_chat(endpoint, &body, OLLAMA_WARMUP_TIMEOUT)
+            .await
+        {
+            Ok(()) => {
+                self.mark_prompt_primed(&model_key);
+                log::info!(
+                    "[llm] prime '{model}': dictation prompt prefix cached in {}ms",
+                    started.elapsed().as_millis()
+                );
+                crate::log_model_duration(&format!("ollama prompt prime '{model}'"), started);
+            }
+            Err(err) => log::warn!(
+                "[llm] prime '{model}': prompt-prefix prime failed (first dictation pays the prefill): {err}"
+            ),
+        }
+    }
+
+    fn is_prompt_primed(&self, model_key: &str) -> bool {
+        self.primed_prompts
+            .lock()
+            .is_ok_and(|primed| primed.contains(model_key))
+    }
+
+    fn mark_prompt_primed(&self, model_key: &str) {
+        if let Ok(mut primed) = self.primed_prompts.lock() {
+            primed.insert(model_key.to_string());
+        }
+    }
+
+    fn clear_prompt_primed(&self, model_key: &str) {
+        if let Ok(mut primed) = self.primed_prompts.lock() {
+            primed.remove(model_key);
+        }
+    }
+
+    /// A real dictation over Ollama just completed — its own prompt is now in
+    /// llama.cpp's prefix cache, so the periodic keep-alive refresh must not
+    /// burn a redundant prime for this residency.
+    pub(super) fn note_dictation_prompt_cached(&self, endpoint: &str, model: &str) {
+        self.mark_prompt_primed(&llm_model_key(endpoint, model));
+    }
+
     /// A per-model warmup outcome that the short on-trigger/boot retry could
-    /// plausibly fix: ONLY a transport failure (`Unreachable`) — Ollama still
-    /// starting up, or a momentary connection blip — which clears in a second or
-    /// two. An HTTP error (`LoadFailed`, e.g. the runner crashing because the
-    /// model does not fit in VRAM: `GGML_SCHED_MAX_SPLIT_INPUTS` / process
-    /// terminated) will NOT recover on an immediate retry — hammering it 8× just
-    /// churns the GPU with ~28s crashing loads back-to-back. Let those (and
-    /// `ModelNotFound`/`Ok`/`Skipped`/`Loading`) end the pass; the 60s periodic
+    /// plausibly fix:
+    /// - `Unreachable` — a transport failure (Ollama still starting up, or a
+    ///   momentary connection blip) that clears in a second or two.
+    /// - `Loading` — this model's lifecycle claim was held by another in-flight
+    ///   load OR a settings-driven eviction. If the holder was an eviction
+    ///   (rapid disable→enable), the model is COLD once the claim frees, so the
+    ///   pass must re-check; retrying costs nothing (no load happens while the
+    ///   claim is contended).
+    ///
+    /// An HTTP error (`LoadFailed`, e.g. the runner crashing because the model
+    /// does not fit in VRAM) will NOT recover on an immediate retry — hammering
+    /// it 8× just churns the GPU with ~28s crashing loads back-to-back. Let
+    /// those (and `ModelNotFound`/`Ok`/`Skipped`) end the pass; the 60s periodic
     /// loop still re-attempts later, so a genuinely-transient HTTP blip recovers
     /// without the immediate storm.
     fn warmup_outcome_is_retryable(outcome: &LlmWarmupOutcome) -> bool {
-        matches!(outcome, LlmWarmupOutcome::Unreachable)
+        matches!(
+            outcome,
+            LlmWarmupOutcome::Unreachable | LlmWarmupOutcome::Loading
+        )
     }
 
     fn publish_warmup_status(&self, status: LlmWarmupStatus) {
@@ -615,21 +849,27 @@ mod tests {
     }
 
     #[test]
-    fn only_transport_failure_is_retryable() {
-        // ONLY a transport blip (Ollama still starting / momentary connection
-        // loss) is worth the immediate short retry...
+    fn only_transient_outcomes_are_retryable() {
+        // A transport blip (Ollama still starting / momentary connection loss)
+        // is worth the immediate short retry...
         assert!(LlmManager::warmup_outcome_is_retryable(
             &LlmWarmupOutcome::Unreachable
         ));
-        // ...an HTTP error (incl. the runner CRASHING because the model can't fit
+        // ...as is a contended lifecycle claim: the holder may be a
+        // settings-driven EVICTION (rapid disable→enable), after which the model
+        // is cold and only a re-check warms it back. No load happens while the
+        // claim is contended, so retrying is free.
+        assert!(LlmManager::warmup_outcome_is_retryable(
+            &LlmWarmupOutcome::Loading
+        ));
+        // An HTTP error (incl. the runner CRASHING because the model can't fit
         // in VRAM) must NOT be hammered — retrying churns the GPU with repeated
         // ~28s crashing loads; the 60s periodic loop re-attempts instead. A
-        // successful/in-flight/skipped load and a missing model (404) likewise
-        // don't spin the retry loop.
+        // successful/skipped load and a missing model (404) likewise don't spin
+        // the retry loop.
         for terminal in [
             LlmWarmupOutcome::LoadFailed,
             LlmWarmupOutcome::Ok,
-            LlmWarmupOutcome::Loading,
             LlmWarmupOutcome::Skipped,
             LlmWarmupOutcome::ModelNotFound,
         ] {

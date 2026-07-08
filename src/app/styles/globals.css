@@ -3,24 +3,27 @@
 @source "../../../windows";
 @source "../../../src";
 
-/* Transitions.dev shared variables used by reusable animation primitives. */
+/* Transitions.dev shared variables used by reusable animation primitives.
+   Durations sit on the spring-tier scale from src/shared/lib/springs.ts —
+   fast 80ms (exit 60ms), moderate 160ms (exit 120ms), slow 240ms (exit
+   160ms) — so CSS-driven motion stays in step with motion/react springs. */
 :root {
-	--digit-dur: 500ms;
+	--digit-dur: 240ms;
 	--digit-distance: 8px;
-	--digit-stagger: 70ms;
+	--digit-stagger: 40ms;
 	--digit-blur: 2px;
 	--digit-ease: cubic-bezier(0.34, 1.45, 0.64, 1);
 	--digit-dir-x: 0;
 	--digit-dir-y: 1;
-	--text-swap-dur: 150ms;
+	--text-swap-dur: 160ms;
 	--text-swap-translate-y: 4px;
 	--text-swap-blur: 2px;
 	--text-swap-ease: ease-in-out;
-	--icon-swap-dur: 200ms;
+	--icon-swap-dur: 160ms;
 	--icon-swap-blur: 2px;
 	--icon-swap-start-scale: 0.25;
 	--icon-swap-ease: ease-in-out;
-	--resize-dur: 300ms;
+	--resize-dur: 240ms;
 	--resize-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -156,11 +159,6 @@
 	--color-settings-sidebar-icon-hover-bg: oklch(100% 0 0 / 0.07);
 	--color-settings-sidebar-icon-hover-edge: oklch(100% 0 0 / 0.06);
 	--color-settings-sidebar-icon-active-bg: oklch(100% 0 0 / 0.09);
-	--color-settings-sidebar-search-border: oklch(100% 0 0 / 0.08);
-	--color-settings-sidebar-search-top: oklch(24% 0.012 265 / 0.58);
-	--color-settings-sidebar-search-bottom: oklch(16% 0.014 265 / 0.92);
-	--color-settings-sidebar-search-edge: oklch(100% 0 0 / 0.07);
-	--color-settings-sidebar-search-outline: oklch(0% 0 0 / 0.18);
 	--color-settings-sidebar-separator-faint: oklch(100% 0 0 / 0.13);
 	--color-settings-sidebar-separator-mid: oklch(100% 0 0 / 0.2);
 	--color-settings-sidebar-separator-soft: oklch(100% 0 0 / 0.1);
@@ -244,6 +242,12 @@
 	--color-recording-mode-listen: var(--color-success);
 	--color-recording-mode-wakeword: oklch(68% 0.19 48);
 
+	/* History entry kinds: STT rows read blue (the dictation accent), TTS rows
+	   read orange (the wakeword hue) so the two run types scan apart at a
+	   glance in the History tab. */
+	--color-history-stt: var(--color-accent);
+	--color-history-tts: oklch(68% 0.19 48);
+
 	/* STT/LLM/TTS catalog family accents. */
 	--color-model-family-whisper: oklch(74.6% 0.16 232);
 	--color-model-family-lite-whisper: oklch(77.7% 0.15 215);
@@ -263,6 +267,9 @@
 	--color-tts-engine-piper: var(--color-success);
 	--color-tts-engine-supertonic: var(--color-model-family-kaldi);
 	--color-tts-engine-chatterbox: var(--color-teal);
+	--color-tts-engine-qwen3tts: var(--color-model-family-qwen3);
+	--color-tts-engine-orpheus: var(--color-model-family-moonshine);
+	--color-tts-engine-spark: var(--color-model-family-nemo);
 	--color-tts-engine-unknown: var(--color-foreground-muted);
 
 	/* Border — blue-tinted dark edges */
@@ -337,6 +344,12 @@
 	--shadow-model-picker-popup:
 		0 12px 32px -12px oklch(3% 0.02 265 / 0.65),
 		inset 0 1px 0 0 oklch(100% 0 0 / 0.06);
+	/* Settings window card — the WHOLE window visual (the OS window is a
+	   transparent rect with a 20px gutter reserved for this shadow). */
+	--shadow-settings-window:
+		0 10px 28px -10px oklch(3% 0.02 265 / 0.6),
+		0 2px 10px -4px oklch(3% 0.02 265 / 0.5),
+		inset 0 1px 0 0 oklch(100% 0 0 / 0.05);
 	--shadow-model-picker-search: inset 0 1px 0 0 oklch(100% 0 0 / 0.035);
 	--shadow-model-picker-search-focus: inset 0 -1px 0 0 oklch(100% 0 0 / 0.055);
 	--shadow-action-accent:
@@ -364,8 +377,8 @@
 		0 4px 12px 0 oklch(0% 0 0 / 0.3), 0 7px 0 -12px oklch(62% 0.19 260 / 0.7);
 
 	/* Animations — animate-fade-in, animate-slide-in, etc. */
-	--animate-fade-in: fade-in 200ms ease-out;
-	--animate-slide-in: slide-in-right 200ms ease-out;
+	--animate-fade-in: fade-in 160ms ease-out;
+	--animate-slide-in: slide-in-right 160ms ease-out;
 	--animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
 	/* Indeterminate accent bar that sweeps left → right across a container.
 	   Used by the STT model picker trigger to mark an in-flight model swap
@@ -378,7 +391,7 @@
 	   completed-row check. hairline-pulse: a calm breathe on a paused row's
 	   frozen fill so it never reads as idle. All gated by `motion-safe:` at the
 	   call site (see QueueRow.tsx). */
-	--animate-row-in: row-in 220ms ease-out both;
+	--animate-row-in: row-in 160ms ease-out both;
 	--animate-glyph-pop: glyph-pop 240ms ease-out both;
 	--animate-hairline-pulse: hairline-pulse 1.6s ease-in-out infinite;
 
@@ -585,6 +598,30 @@
 			);
 	}
 
+	/* Scroll-edge dissolve for the settings tab scroll viewport. The content
+	   card has no header band, so scrolled text would otherwise hard-clip
+	   against the card's top edge. The fade distances match the viewport's own
+	   padding (pt-6 = 1.5rem, pb-5 = 1.25rem — rem, so they track the root
+	   font scale exactly like Tailwind spacing does): at rest only padding sits
+	   inside the fade zones so nothing reads as washed out, while scrolling
+	   text dissolves into the edge instead of being guillotined by it. */
+	.settings-scroll-edge-fade {
+		mask-image: linear-gradient(
+			180deg,
+			transparent 0,
+			black 1.5rem,
+			black calc(100% - 1.25rem),
+			transparent 100%
+		);
+		-webkit-mask-image: linear-gradient(
+			180deg,
+			transparent 0,
+			black 1.5rem,
+			black calc(100% - 1.25rem),
+			transparent 100%
+		);
+	}
+
 	.model-picker-content-substrate {
 		position: relative;
 		isolation: isolate;
@@ -720,30 +757,22 @@
 		background: var(--color-settings-sidebar-icon-active-bg);
 	}
 
-	/* Clickable field wrapper: compact at rest, expands on hover/focus. */
+	/* Click-to-reveal search: the field fades/slides in over the wordmark.
+	   No overflow clip — the field is a raised surface plate (TextField at
+	   surface-5) and a clipping wrapper would shear its ring + drop shadow. */
 	.settings-sidebar-search {
-		width: 56px;
-		overflow: hidden;
-		transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+		opacity: 0;
+		transform: translateX(-0.375rem);
+		pointer-events: none;
+		transition:
+			opacity 240ms cubic-bezier(0.16, 1, 0.3, 1),
+			transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
 	}
 
-	.settings-sidebar-search:hover,
-	.settings-sidebar-search:focus-within {
-		width: 230px;
-	}
-
-	.settings-sidebar-search-input {
-		height: 2.5rem;
-		border-color: var(--color-settings-sidebar-search-border);
-		border-radius: var(--radius-lg);
-		background: linear-gradient(
-			180deg,
-			var(--color-settings-sidebar-search-top),
-			var(--color-settings-sidebar-search-bottom)
-		) !important;
-		box-shadow:
-			inset 0 1px 0 var(--color-settings-sidebar-search-edge),
-			0 0 0 1px var(--color-settings-sidebar-search-outline) !important;
+	.settings-sidebar-search[data-open="true"] {
+		opacity: 1;
+		transform: none;
+		pointer-events: auto;
 	}
 
 	.settings-sidebar-list {
@@ -784,8 +813,7 @@
 
 	/* The first row's group label loses the tall top inset — the header above
 	   already provides the breathing room. */
-	.settings-sidebar-list
-		> [data-settings-search-result]:first-child
+	.settings-sidebar-list > [data-settings-search-result]:first-child
 		.settings-sidebar-group-label {
 		padding-top: 0.2rem;
 	}
@@ -834,7 +862,7 @@
 		font-weight: 620;
 		letter-spacing: 0;
 		line-height: 1.1;
-		transition: color 0.18s ease;
+		transition: color 160ms ease;
 	}
 
 	.settings-sidebar-tab-collapsed {
@@ -862,7 +890,7 @@
 }
 
 .tray-menu-open-shell.tray-menu-open-enter {
-	animation: tray-menu-open-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
+	animation: tray-menu-open-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
 	will-change: opacity, transform;
 }
 
@@ -1026,18 +1054,18 @@
 
 	@media (pointer: coarse) {
 		:where(
-			button,
-			[role="button"],
-			[role="combobox"],
-			[role="tab"],
-			[role="option"],
-			[role="menuitem"],
-			[role="menuitemcheckbox"],
-			[role="menuitemradio"],
-			[role="checkbox"],
-			[role="radio"],
-			[role="switch"]
-		) {
+				button,
+				[role="button"],
+				[role="combobox"],
+				[role="tab"],
+				[role="option"],
+				[role="menuitem"],
+				[role="menuitemcheckbox"],
+				[role="menuitemradio"],
+				[role="checkbox"],
+				[role="radio"],
+				[role="switch"]
+			) {
 			min-width: 32px;
 			min-height: 32px;
 			touch-action: manipulation;
@@ -1105,22 +1133,16 @@
 		will-change: width, height;
 	}
 
-	/* Scrollbar — auto-hiding, app-wide (matches the settings ScrollArea).
-	   The thumb is invisible at rest and only painted while its element is
-	   actively being scrolled: `installScrollbarAutoHide` stamps
-	   `data-scrollbar-visible` on the scrolled element for ~700ms after each
-	   scroll tick, and the `[data-scrollbar-visible]` rules below light the bar.
-	   On WebView2 / Chromium ≥121 the standard `scrollbar-*` properties win and
-	   the `::-webkit-scrollbar` block is inert — it's kept as a fallback for
-	   older engines (which also resolve hover-to-reveal). The thumb uses a
-	   foreground (not border) token: --color-border sits at the same 19%
-	   lightness as --color-surface-elevated, so a border-colored thumb would be
-	   invisible inside dropdown popups (Select, FooterMenuChip, any Base UI
-	   Menu.Popup); foreground-dim contrasts against every step of the surface
-	   elevation scale. */
+	/* Scrollbar — auto-hiding, app-wide (matches the shared ScrollArea).
+	   The native thumb is transparent at rest, becomes discoverable while its
+	   scroller is hovered, and stays painted while actively scrolling:
+	   `installScrollbarAutoHide` stamps `data-scrollbar-visible` for ~700ms
+	   after each scroll tick. The WebKit fallback uses a 10px hit track with a
+	   narrow content-box thumb, matching the Fluid Functionalism scroll area
+	   pattern used by the Base UI wrapper. */
 	::-webkit-scrollbar {
-		width: 8px;
-		height: 8px;
+		width: 10px;
+		height: 10px;
 	}
 
 	::-webkit-scrollbar-track {
@@ -1128,17 +1150,25 @@
 	}
 
 	::-webkit-scrollbar-thumb {
-		background: transparent;
+		background-color: transparent;
+		background-clip: content-box;
+		border: 3px solid transparent;
 		border-radius: 999px;
+		transition:
+			background-color 160ms ease-in-out,
+			border-width 160ms ease-in-out;
 	}
 
 	[data-scrollbar-visible]::-webkit-scrollbar-thumb,
+	:hover::-webkit-scrollbar-thumb,
 	::-webkit-scrollbar-thumb:hover {
-		background: var(--color-foreground-dim);
+		background-color: var(--color-foreground-dim);
 	}
 
-	[data-scrollbar-visible]::-webkit-scrollbar-thumb:hover {
-		background: var(--color-foreground-muted);
+	[data-scrollbar-visible]::-webkit-scrollbar-thumb:hover,
+	:hover::-webkit-scrollbar-thumb:hover {
+		background-color: var(--color-foreground-muted);
+		border-width: 2px;
 	}
 
 	/* Firefox / standards-track (and Chromium ≥121, which prefers these over the
@@ -1148,7 +1178,8 @@
 		scrollbar-width: thin;
 	}
 
-	[data-scrollbar-visible] {
+	[data-scrollbar-visible],
+	:hover {
 		scrollbar-color: var(--color-foreground-dim) transparent;
 	}
 
@@ -1166,14 +1197,17 @@
 
 	/* Select popup transition - Transitions.dev panel reveal */
 	:root {
-		--panel-open-dur: 400ms;
-		--panel-close-dur: 350ms;
+		--panel-open-dur: 240ms;
+		--panel-close-dur: 160ms;
 		--panel-translate-y: -6px;
 		--panel-blur: 2px;
 		--panel-ease: cubic-bezier(0.22, 1, 0.36, 1);
 	}
 
 	.select-popup {
+		/* Selects sit a tier below full panels (moderate: 160ms in / 120ms out). */
+		--panel-open-dur: 160ms;
+		--panel-close-dur: 120ms;
 		--panel-translate-y: -6px;
 		opacity: 1;
 		filter: blur(0);
@@ -1291,8 +1325,8 @@
 */
 
 :root {
-	--dropdown-open-dur: 250ms;
-	--dropdown-close-dur: 150ms;
+	--dropdown-open-dur: 160ms;
+	--dropdown-close-dur: 120ms;
 	--dropdown-slide-y: -6px;
 	--dropdown-pre-scale: 0.98;
 	--dropdown-closing-scale: 0.99;
@@ -1433,8 +1467,8 @@
 */
 
 :root {
-	--modal-open-dur: 250ms;
-	--modal-close-dur: 150ms;
+	--modal-open-dur: 240ms;
+	--modal-close-dur: 160ms;
 	--modal-scale: 0.96;
 	--modal-scale-close: 0.96;
 	--modal-ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -1462,6 +1496,17 @@
 	transition:
 		transform var(--modal-close-dur) var(--modal-ease),
 		opacity var(--modal-close-dur) var(--modal-ease);
+}
+/* Replay snap: commit the closed START state instantly (no transition) before
+   re-adding `.is-open`. Removing `.is-open` alone STARTS a reverse fade (the
+   base transition applies both ways), so a replay from a visually-open modal
+   would re-add `.is-open` mid-dip and play a barely-visible blip instead of
+   the full enter animation. */
+.t-modal.is-resetting {
+	pointer-events: none;
+	opacity: 0;
+	transform: scale(var(--modal-scale));
+	transition: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1491,8 +1536,8 @@
    page is selected by data-page on .t-page-slide. Page 1 exits left, page 2
    exits right, with a blur + fade. */
 .t-page-slide {
-	--page-slide-dur: 220ms;
-	--page-fade-dur: 220ms;
+	--page-slide-dur: 240ms;
+	--page-fade-dur: 240ms;
 	--page-slide-distance: 8px;
 	--page-blur: 3px;
 	--page-stagger: 0ms;
@@ -1663,7 +1708,7 @@
 		var(--color-secret-reveal-edge) 58%,
 		transparent 100%
 	);
-	animation: t-secret-reveal 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+	animation: t-secret-reveal 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 	will-change: transform, opacity, filter;
 }
 
@@ -1692,7 +1737,7 @@
    Add `.is-shown` to the `.t-stagger` parent to play; `.is-hiding` fades all
    lines out in place (no reverse stagger). */
 .t-stagger {
-	--stagger-dur: 600ms;
+	--stagger-dur: 240ms;
 	--stagger-distance: 12px;
 	--stagger-stagger: 40ms;
 	--stagger-blur: 3px;
@@ -1722,7 +1767,7 @@
 	transform: translateY(0);
 	filter: blur(0);
 	transition:
-		opacity 200ms ease,
+		opacity 160ms ease-in,
 		transform 0s linear,
 		filter 0s linear;
 	transition-delay: 0s;

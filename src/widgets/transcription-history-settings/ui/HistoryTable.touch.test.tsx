@@ -8,7 +8,10 @@ import {
 } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { IPC } from "@/shared/api/ipc-channels";
-import type { TranscriptionHistoryEntry } from "../model/history-store";
+import type {
+	TranscriptionHistoryEntry,
+	TtsHistoryEntry,
+} from "../model/history-store";
 import { HistoryTable, type HistoryTableItem } from "./HistoryTable";
 
 const clipboardDescriptor = Object.getOwnPropertyDescriptor(
@@ -27,6 +30,20 @@ function transcriptionItem(entry: TranscriptionHistoryEntry): HistoryTableItem {
 
 function transformItem(entry: TranscriptionHistoryEntry): HistoryTableItem {
 	return { entry, kind: "transform" };
+}
+
+function ttsItem(entry: TtsHistoryEntry): HistoryTableItem {
+	return {
+		entry: {
+			durationMs: 0,
+			id: entry.id,
+			text: entry.text,
+			timestamp: entry.timestamp,
+			wordCount: entry.wordCount,
+		},
+		kind: "tts",
+		tts: entry,
+	};
 }
 
 afterEach(() => {
@@ -90,6 +107,33 @@ describe("HistoryTable touch gestures", () => {
 });
 
 describe("HistoryTable LLM variant toggle", () => {
+	test("sums STT and LLM processing durations in the transcription footer", async () => {
+		const entry: TranscriptionHistoryEntry = {
+			durationMs: 10_000,
+			id: "entry-llm-duration",
+			llmModel: "qwen2.5:7b",
+			llmProcessingMs: 2000,
+			sttProcessingMs: 5000,
+			text: "processed transcript",
+			timestamp: Date.UTC(2026, 0, 1),
+			wordCount: 2,
+		};
+
+		render(
+			<IntlProvider>
+				<HistoryTable entries={[transcriptionItem(entry)]} />
+			</IntlProvider>,
+		);
+
+		await screen.findByText("processed transcript");
+
+		expect(screen.getByText("7.0s")).not.toBeNull();
+		expect(screen.queryByText("10s")).toBeNull();
+		expect(screen.queryByText("5.0s")).toBeNull();
+		expect(screen.queryByText("2.0s")).toBeNull();
+		expect(screen.getByLabelText("Processing time")).not.toBeNull();
+	});
+
 	test("hides the LLM text toggle when the processed text is unchanged", async () => {
 		const entry: TranscriptionHistoryEntry = {
 			durationMs: 1200,
@@ -198,7 +242,7 @@ describe("HistoryTable LLM variant toggle", () => {
 describe("HistoryTable transform mode", () => {
 	test("uses the provided delete handler, transform icon, and hides audio-only stats", async () => {
 		const onDeleteEntry = mock<
-			(id: string, kind: "transcription" | "transform") => void
+			(id: string, kind: "transcription" | "transform" | "tts") => void
 		>(() => undefined);
 		const entry: TranscriptionHistoryEntry = {
 			durationMs: 0,
@@ -224,5 +268,107 @@ describe("HistoryTable transform mode", () => {
 
 		expect(onDeleteEntry).toHaveBeenCalledWith("transform-row", "transform");
 		expect(screen.queryByTitle("Duration")).toBeNull();
+	});
+});
+
+describe("HistoryTable cloud costs", () => {
+	test("sums STT and LLM costs into one cost chip on transcription rows", async () => {
+		const entry: TranscriptionHistoryEntry = {
+			durationMs: 4000,
+			id: "entry-cost",
+			llmCostUsd: 0.0001,
+			llmModel: "openai/gpt-4o-mini",
+			sttCostUsd: 0.0002,
+			sttCostIsEstimate: false,
+			text: "cloud transcript",
+			timestamp: Date.UTC(2026, 0, 2),
+			wordCount: 2,
+		};
+
+		render(
+			<IntlProvider>
+				<HistoryTable entries={[transcriptionItem(entry)]} />
+			</IntlProvider>,
+		);
+
+		await screen.findByText("cloud transcript");
+		// The chip shows a trimmed approximation (sub-$0.001 floors to "<$0.001");
+		// the exact per-stage figures live in its hover tooltip.
+		expect(screen.getByText("<$0.001")).not.toBeNull();
+		expect(screen.getByLabelText("Cloud cost")).not.toBeNull();
+		// STT rows carry the tinted kind marker.
+		expect(screen.getByText("STT")).not.toBeNull();
+		// The OpenRouter LLM model is flagged as a cloud model.
+		expect(screen.getByRole("img", { name: "Cloud" })).not.toBeNull();
+	});
+
+	test("marks estimated provider costs with a tilde", async () => {
+		const entry: TranscriptionHistoryEntry = {
+			durationMs: 4000,
+			id: "entry-estimate",
+			sttCostUsd: 0.0008,
+			sttCostIsEstimate: true,
+			text: "estimated transcript",
+			timestamp: Date.UTC(2026, 0, 2),
+			wordCount: 2,
+		};
+
+		render(
+			<IntlProvider>
+				<HistoryTable entries={[transcriptionItem(entry)]} />
+			</IntlProvider>,
+		);
+
+		await screen.findByText("estimated transcript");
+		expect(screen.getByText("~<$0.001")).not.toBeNull();
+	});
+
+	test("renders TTS rows with kind marker, voice model, voice, and cost", async () => {
+		const tts: TtsHistoryEntry = {
+			characters: 55,
+			costUsd: 0.000_034_1,
+			id: "tts-1",
+			model: "openrouter:hexgrad/kokoro-82m",
+			processingMs: 1800,
+			text: "read this aloud",
+			timestamp: Date.UTC(2026, 0, 3),
+			voice: "af_alloy",
+			wordCount: 3,
+		};
+
+		render(
+			<IntlProvider>
+				<HistoryTable entries={[ttsItem(tts)]} />
+			</IntlProvider>,
+		);
+
+		await screen.findByText("read this aloud");
+		expect(screen.getByText("TTS")).not.toBeNull();
+		// The `openrouter:` prefix is stripped from the displayed model id — the
+		// cloud sign, not the prefix, marks it as a cloud model.
+		expect(screen.getByText("hexgrad/kokoro-82m")).not.toBeNull();
+		expect(screen.queryByText("openrouter:hexgrad/kokoro-82m")).toBeNull();
+		expect(screen.getByRole("img", { name: "Cloud" })).not.toBeNull();
+		expect(screen.getByText("af_alloy")).not.toBeNull();
+		expect(screen.getByText("<$0.001")).not.toBeNull();
+	});
+
+	test("local runs (no cost data) render no cost chip", async () => {
+		const entry: TranscriptionHistoryEntry = {
+			durationMs: 4000,
+			id: "entry-local",
+			text: "local transcript",
+			timestamp: Date.UTC(2026, 0, 2),
+			wordCount: 2,
+		};
+
+		render(
+			<IntlProvider>
+				<HistoryTable entries={[transcriptionItem(entry)]} />
+			</IntlProvider>,
+		);
+
+		await screen.findByText("local transcript");
+		expect(screen.queryByLabelText("Cloud cost")).toBeNull();
 	});
 });

@@ -57,10 +57,8 @@ export function DropdownMenuTrigger({
 	return <Menu.Trigger {...props}>{children}</Menu.Trigger>;
 }
 
-export interface DropdownMenuContentProps extends Omit<
-	ComponentPropsWithoutRef<"div">,
-	"onScroll"
-> {
+export interface DropdownMenuContentProps
+	extends Omit<ComponentPropsWithoutRef<"div">, "onScroll"> {
 	align?: "start" | "center" | "end";
 	side?: "top" | "bottom" | "left" | "right";
 	sideOffset?: number;
@@ -93,7 +91,11 @@ export function DropdownMenuContent({
 					finalFocus={
 						onCloseAutoFocus
 							? () => {
-									onCloseAutoFocus({ preventDefault: () => {} });
+									onCloseAutoFocus({
+										preventDefault: () => {
+											/* no-op */
+										},
+									});
 									return false;
 								}
 							: undefined
@@ -107,10 +109,8 @@ export function DropdownMenuContent({
 	);
 }
 
-export interface DropdownMenuItemProps extends Omit<
-	ComponentPropsWithoutRef<"div">,
-	"onSelect"
-> {
+export interface DropdownMenuItemProps
+	extends Omit<ComponentPropsWithoutRef<"div">, "onSelect"> {
 	disabled?: boolean | undefined;
 	onSelect?: ((event: Event) => void) | undefined;
 	variant?: "default" | "destructive" | undefined;
@@ -145,10 +145,8 @@ export function DropdownMenuItem({
 	);
 }
 
-export interface DropdownMenuCheckboxItemProps extends Omit<
-	ComponentPropsWithoutRef<"div">,
-	"onSelect"
-> {
+export interface DropdownMenuCheckboxItemProps
+	extends Omit<ComponentPropsWithoutRef<"div">, "onSelect"> {
 	checked?: boolean | undefined;
 	disabled?: boolean | undefined;
 	onSelect?: ((event: Event) => void) | undefined;

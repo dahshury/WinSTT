@@ -5,7 +5,7 @@ import {
 	EqualIcon,
 	MinusIcon,
 } from "@/shared/ui/data-grid/primitives/icons";
-import * as React from "react";
+import type * as React from "react";
 import {
 	Select,
 	SelectContent,
@@ -38,9 +38,8 @@ const rowHeights = [
 	},
 ] as const;
 
-interface DataGridRowHeightMenuProps<TData> extends React.ComponentProps<
-	typeof SelectContent
-> {
+interface DataGridRowHeightMenuProps<TData>
+	extends React.ComponentProps<typeof SelectContent> {
 	table: Table<TData>;
 	disabled?: boolean;
 }

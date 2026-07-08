@@ -275,7 +275,7 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 		set((s) => {
 			const key = quantKey(modelId, quantization);
 			const entry = s.quantDownloads[key];
-			if (!entry || !entry.paused) {
+			if (!entry?.paused) {
 				return s;
 			}
 			return {

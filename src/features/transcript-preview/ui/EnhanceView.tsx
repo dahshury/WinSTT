@@ -255,12 +255,17 @@ export function EnhanceView() {
 
 			{/* Top half — the transcript, the AI-edit diff once a run completes, or
 			    a failure notice when the last run errored. */}
-			{store.enhanceError !== null ? (
-				<EnhanceErrorTopPanel message={store.enhanceError} />
-			) : store.candidate !== null && store.diffBase !== null ? (
-				<DiffReviewTopPanel base={store.diffBase} candidate={store.candidate} />
+			{store.enhanceError === null ? (
+				store.candidate !== null && store.diffBase !== null ? (
+					<DiffReviewTopPanel
+						base={store.diffBase}
+						candidate={store.candidate}
+					/>
+				) : (
+					<TranscriptTopPanel />
+				)
 			) : (
-				<TranscriptTopPanel />
+				<EnhanceErrorTopPanel message={store.enhanceError} />
 			)}
 
 			{/* Bottom half — AI controls, or the reasoning stream while processing. */}

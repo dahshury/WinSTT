@@ -65,8 +65,10 @@ export function useOnboardingOllamaPicker(): OnboardingOllamaPickerProps {
 			isLoaded: s.isLoaded,
 			isLoading: s.isLoading,
 			tagsByModel: s.tagsByModel,
+			hitsByModel: s.hitsByModel,
 			loadCatalog: s.loadCatalog,
 			fetchTags: s.fetchTags,
+			fetchHit: s.fetchHit,
 		})),
 	);
 
@@ -80,11 +82,15 @@ export function useOnboardingOllamaPicker(): OnboardingOllamaPickerProps {
 			isLoaded: library.isLoaded,
 			isLoading: library.isLoading,
 			tagsByModel: library.tagsByModel,
+			hitsByModel: library.hitsByModel,
 			loadCatalog: () => {
 				fireAndForget(library.loadCatalog(), "onboarding.loadCatalog");
 			},
 			fetchTags: (m) => {
 				fireAndForget(library.fetchTags(m), "onboarding.fetchTags");
+			},
+			fetchHit: (m) => {
+				fireAndForget(library.fetchHit(m), "onboarding.fetchHit");
 			},
 		},
 		models,

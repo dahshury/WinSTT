@@ -97,3 +97,11 @@ tts_engine_bench_*.wav
 # Python bytecode caches (e.g. tools/bench spike harnesses)
 __pycache__/
 *.pyc
+
+# Benchmark tool run artifacts (JSON/HTML reports)
+tools/out/
+
+# Local scratch / eval artifacts (not for commit)
+.codex-remote-attachments/
+.tmp_ab_eval/
+.tmp_e2e/

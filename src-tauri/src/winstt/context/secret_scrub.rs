@@ -4,56 +4,16 @@ use regex::Regex;
 use super::json_collapse_inline_ws;
 use crate::helpers::regex::static_regex;
 
-/// A row that carries a one-time / single-use / verification / sign-in security
-/// code (or merely announces one). These ride in OTHER inbox rows of a mail app
-/// (Gmail / Outlook), NEVER in the open email/thread the user is replying to, so
-/// they must never survive into the pruned context. Defense-in-depth on top of
-/// the structural nav-list drop: even if a single OTP-bearing row leaks out of a
-/// landmark, this line filter removes it.
-static JSON_OTP_ROW_RE: Lazy<Regex> = Lazy::new(|| {
-    static_regex(
-        r"(?ix)
-        \b(?:
-            one[-\ ]time\ (?:code|password|passcode|pin)
-            | single[-\ ]use\ (?:code|password|passcode|pin)
-            | verification\ code
-            | security\ code
-            | login\ code
-            | sign[-\ ]?in\ code
-            | your\ .*\ (?:verification|security|login)\ code
-            | otp
-        )\b
-        |
-        # bare 'amazon.eg: Sign-in' style sign-in-notice row subjects.
-        :\s*sign[-\ ]?in\b
-    ",
-    )
-});
-
-/// True when a row is a one-time / verification / sign-in security-code line that
-/// must be scrubbed from any mail context (see `JSON_OTP_ROW_RE`). Bounded to a
-/// single row's worth of text (<=200 chars): a page-spanning flat mail blob will
-/// also contain such a phrase, but dropping the WHOLE blob on a single buried
-/// match would discard the open thread too — the blob path scrubs those phrases
-/// separately (see `json_scrub_mail_blob`).
-pub(super) fn json_is_otp_or_signin_row(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.chars().count() <= 200 && JSON_OTP_ROW_RE.is_match(trimmed)
-}
-
 // ───────────────── unconditional final OTP / secret-code scrub ─────────────────
 //
-// PRIVACY-CRITICAL. The per-row `json_is_otp_or_signin_row` filter above only
-// fires on the paths that iterate ROW-BY-ROW (the mail-blob scrubber, the
-// nav-list pruner). The window-dump fallback (`format_context_for_prompt`'s
-// final `JsonPromptSection::text("screen", raw_axHtml)` branch) emits the whole
-// `<doc>` as a SINGLE line — so a buried `... verification OTP is: 17042 ...`
-// never gets seen by the per-row filter and leaks. This pass is the LAST gate:
-// it runs on the assembled output strings (screen / beforeCaret / afterCaret /
-// fieldText / selection / clipboard / screenOcr) inside `json_serialize_context`
-// — i.e. no matter which branch produced them — and is intentionally
-// keyword-anchored so it cannot over-redact ordinary numbers (prices, years,
-// counts, phone numbers) that sit in normal conversation.
+// PRIVACY-CRITICAL. This is the LAST gate: it runs on every assembled output
+// string (screen / beforeCaret / afterCaret / fieldText / selection / clipboard
+// / screenOcr) inside `json_serialize_context` — no matter which section
+// produced them — and is intentionally keyword-anchored so it cannot over-redact
+// ordinary numbers (prices, years, counts, phone numbers) that sit in normal
+// conversation. A buried `... verification OTP is: 17042 ...` inside a single
+// flattened `screen` line is broken into sentence-sized segments below so it is
+// still caught.
 //
 // Two complementary rules, applied per SEGMENT (a segment is a line, further
 // split on sentence terminators so one giant single-line blob is still broken

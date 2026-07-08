@@ -68,7 +68,7 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 
 	const onRowAdd = () => {
 		const current = dataRef.current;
-		const last = current[current.length - 1];
+		const last = current.at(-1);
 		if (last && isEmptyRow(last)) {
 			tableRef.current?.setPageIndex(lastPageIndex(current.length));
 			return {

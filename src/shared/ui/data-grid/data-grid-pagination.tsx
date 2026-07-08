@@ -52,7 +52,9 @@ export function DataGridPagination<TData>({
 }: DataGridPaginationProps<TData>) {
 	const t = useTranslations("dataGrid");
 	const pageCount = table.getPageCount();
-	if (pageCount <= 1) return null;
+	if (pageCount <= 1) {
+		return null;
+	}
 	const { pageIndex } = table.getState().pagination;
 	const items = getPaginationItems(pageIndex, pageCount);
 

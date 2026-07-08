@@ -1,6 +1,6 @@
 [package]
 name = "winstt"
-version = "0.1.3-alpha.4"
+version = "0.1.3-alpha.5"
 description = "WinSTT — local-first speech-to-text"
 authors = ["WinSTT contributors"]
 edition = "2024"
@@ -89,7 +89,12 @@ tokio = "1.43.0"
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 vad-rs = { git = "https://github.com/cjpais/vad-rs", rev = "2a412ed858695b9251f3f5a1a20d95b59fa7c498", default-features = false }
 enigo = "0.6.1"
-rodio = "0.22.2"
+# Chime/recording-sound playback only (audio_feedback.rs). Default features pull the
+# FULL symphonia 0.5 decoder suite (flac/mp4+aac/vorbis) — a second copy next to our
+# direct symphonia 0.6 — but the sound library only ever accepts .wav/.mp3
+# (commands/sound.rs), so keep just those decoders. "dither" keeps bit-depth
+# conversion behavior identical to the old default build.
+rodio = { version = "0.22.2", default-features = false, features = ["playback", "wav", "mp3", "dither"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "multipart", "rustls"] }
 futures-util = "0.3"
 # Multi-provider cloud LLM transport (OpenAI/OpenRouter/Anthropic-native/Groq/Z.AI/Bedrock/…).
@@ -119,16 +124,15 @@ hf-hub = "1.0.0-rc.1"            # HF snapshot resolver for STT model files (res
 globset = "0.4.18"               # STT resolver POSIX glob matching (`**`, `*`, `?`) without custom recursion
 prost = "0.13"                   # ONNX-proto edit for the fp16 decoder patch (03_stt_engine.md §6.1)
 tokenizers = { version = "0.22.1", default-features = false, features = ["onig"] }  # DistilBERT + custom models
-sentencepiece-rs = "0.2.2"        # Pure-Rust SentencePiece `.model` reader for sherpa KWS keyword tokenization
+sentencepiece-rs = "0.2.2"        # Pure-Rust SentencePiece `.model` reader for KWS keyword tokenization
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }        # diag bundle
 symphonia = { version = "0.6.0", default-features = false, features = ["wav", "pcm", "adpcm", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
 base85 = "2.0.0"                 # Whisper alignment-heads table (RFC1924)
 base64 = "0.22"                  # base64-encode the WAV body for OpenRouter's JSON /audio/transcriptions endpoint
 half = "2"                       # f16 tensor element type (matches ort's half)
-# sherpa-onnx ships only /MT (static-CRT) Windows libs; the `static` default clashes with Rust's /MD
-# CRT (LNK2038/LNK2005). Use `shared` → link sherpa-onnx as a DLL so its /MT CRT stays isolated.
-# Ship sherpa-onnx.dll alongside the exe (it lands in target/<profile>/ via the build).
-sherpa-onnx = { version = "1.13.2", default-features = false, features = ["shared"] }  # KWS wake word
+# sherpa-onnx DROPPED (2026-07): its shared c-api DLL carried a SECOND onnxruntime.dll
+# into every install just for wake-word KWS. The keyword spotter is now a native port
+# on OUR ort (wakeword/ort_detector.rs) — same zipformer2 model bundle, same algorithm.
 # TTS: kokoroxide DROPPED (pins yanked ort ^1.16, conflicts with our ort 2.0.0-rc.12).
 # Instead we run the Kokoro-82M ONNX on OUR ort 2.0.0-rc.12 + an espeak-ng phonemizer
 # (same runtime as STT; WinSTT is open-source so espeak-ng GPL-v3 is fine).
@@ -157,12 +161,22 @@ tauri-plugin-updater = "2.10.0"
 [target.'cfg(windows)'.dependencies]
 ort = { version = "=2.0.0-rc.12", features = ["directml"] }
 wasapi = "0.23.0"  # WASAPI loopback capture for listen mode
+# Workspace-wide IDE `@file` tagging (context/workspace_index.rs, Windows-only):
+# a gitignore-aware file walk (12x fewer files than a raw walk: 1,909 tracked vs
+# 24,003 raw in this repo) to map a spoken filename to a real workspace file, and
+# URL-decoding of the `file:///…` folder URIs in Cursor/Code workspaceStorage.
+ignore = "0.4.27"
+percent-encoding = "2.3"
 windows-core = "0.61.2"
 windows = { version = "0.61.3", features = [
   "Win32_Media_Audio_Endpoints",
   "Win32_Media_Audio",
   "Win32_System_Com_StructuredStorage",
   "Win32_System_Com",
+  # Raw clipboard snapshot/restore (clipboard_snapshot.rs): preserve images/files
+  # across the paste pipeline's clipboard sandwich, not just text.
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
   "Win32_System_Variant",
   "Win32_System_ProcessStatus",
   "Win32_System_Threading",
@@ -173,6 +187,9 @@ windows = { version = "0.61.3", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Storage_FileSystem",
+  # PrintWindow (Tier-2 OCR fallback window capture) lives under the Xps
+  # namespace in the windows crate; pairs with Gdi BitBlt/GetDIBits.
+  "Win32_Storage_Xps",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
@@ -181,6 +198,15 @@ windows = { version = "0.61.3", features = [
   "Win32_UI_Accessibility",
   "Win32_Graphics_Dxgi",
   "Win32_System_Console",
+  # Tier-2 OCR fallback (report R3): capture the pinned window and run
+  # Windows.Media.Ocr on-device. WinRT projections for the OCR engine, the
+  # SoftwareBitmap it consumes, the IBuffer used to build it, and the user
+  # profile language pick.
+  "Media_Ocr",
+  "Graphics_Imaging",
+  "Storage_Streams",
+  "Globalization",
+  "Foundation",
 ] }
 winreg = "0.55"
 

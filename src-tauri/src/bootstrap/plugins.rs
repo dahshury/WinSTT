@@ -23,14 +23,13 @@ pub(crate) fn install_runtime_plugins(
 
     #[cfg(not(debug_assertions))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-        if args.iter().any(|a| a == "--toggle-transcription") {
+        if args
+            .iter()
+            .any(|a| a == "--toggle-transcription" || a == "--toggle-post-process")
+        {
+            // `--toggle-post-process` is kept as an alias: post-processing now
+            // runs whenever the dictation LLM feature is enabled.
             crate::signal_handle::send_transcription_input(app, "transcribe", "CLI");
-        } else if args.iter().any(|a| a == "--toggle-post-process") {
-            crate::signal_handle::send_transcription_input(
-                app,
-                "transcribe_with_post_process",
-                "CLI",
-            );
         } else if args.iter().any(|a| a == "--cancel") {
             crate::utils::cancel_current_operation(app);
         } else {

@@ -37,6 +37,29 @@ function setScrollMetrics(
 	});
 }
 
+function withTouchPrimaryPointer(run: () => void) {
+	const original = window.matchMedia;
+	Object.defineProperty(window, "matchMedia", {
+		configurable: true,
+		value: (query: string) => ({
+			addEventListener: () => undefined,
+			dispatchEvent: () => false,
+			matches: query === "(pointer: coarse)",
+			media: query,
+			onchange: null,
+			removeEventListener: () => undefined,
+		}),
+	});
+	try {
+		run();
+	} finally {
+		Object.defineProperty(window, "matchMedia", {
+			configurable: true,
+			value: original,
+		});
+	}
+}
+
 describe("ScrollArea", () => {
 	test("renders children inside a scroll viewport", () => {
 		render(
@@ -78,6 +101,28 @@ describe("ScrollArea", () => {
 		const viewport = contentLayer.parentElement as HTMLElement;
 		expect(viewport.className).toContain("[scrollbar-width:none]");
 		expect(viewport.className).toContain("[&::-webkit-scrollbar]:hidden");
+	});
+
+	test("falls back to native overflow on touch-primary pointers", () => {
+		withTouchPrimaryPointer(() => {
+			const { container } = render(
+				<ScrollArea verticalOnly>
+					<div data-testid="touch-content">x</div>
+				</ScrollArea>,
+			);
+			const root = container.firstElementChild as HTMLElement;
+			const viewport = screen.getByTestId("touch-content")
+				.parentElement as HTMLElement;
+
+			expect(root.getAttribute("role")).toBe("group");
+			expect(root.getAttribute("data-slot")).toBe("scroll-area");
+			expect(viewport.getAttribute("data-slot")).toBe("scroll-area-viewport");
+			expect(viewport.className).toContain("overflow-y-auto");
+			expect(viewport.className).not.toContain("[scrollbar-width:none]");
+			expect(
+				root.querySelector('[data-slot="scroll-area-scrollbar"]'),
+			).toBeNull();
+		});
 	});
 
 	test("forwards a viewportRef so callers can imperatively scroll", () => {

@@ -40,7 +40,9 @@ export function useContextPlayground(): ContextPlaygroundController {
 
 	useEffect(() => {
 		let cancelled = false;
-		let unsubscribe = () => {};
+		let unsubscribe = () => {
+			/* replaced once the async subscription resolves */
+		};
 		void Promise.all([
 			// eslint-disable-next-line react-hooks-js/todo -- dynamic import is intentional code-splitting; compiler cannot lower it but behavior is correct
 			import("@/shared/api/ipc-channels"),

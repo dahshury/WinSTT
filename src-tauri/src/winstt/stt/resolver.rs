@@ -68,6 +68,25 @@ mod tests {
     use crate::winstt::stt::{EngineKind, Quantization};
 
     #[test]
+    fn quant_override_routes_cohere_int8_to_masterx() {
+        // int8 for the multilingual model routes to the Masterx fallback repo…
+        assert_eq!(
+            resolve_repo_for_quant("cohere-transcribe", Quantization::Int8),
+            Some(("Masterx".into(), "cohere-transcribe-03-2026-ONNX".into()))
+        );
+        // …while every other precision stays on the default (onnx-community) repo…
+        assert_eq!(
+            resolve_repo_for_quant("cohere-transcribe", Quantization::Q4),
+            resolve_repo("cohere-transcribe")
+        );
+        // …and unrelated models are never touched by the override.
+        assert_eq!(
+            resolve_repo_for_quant("tiny", Quantization::Int8),
+            resolve_repo("tiny")
+        );
+    }
+
+    #[test]
     fn alias_resolves_to_owner_name() {
         assert_eq!(
             resolve_repo("nemo-parakeet-tdt-0.6b-v3"),

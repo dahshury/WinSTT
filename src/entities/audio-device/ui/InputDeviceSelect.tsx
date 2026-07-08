@@ -1,7 +1,11 @@
 import { useState } from "react";
 import type { IconSvgElement } from "@hugeicons/react";
 import { Select, type SelectOption } from "@/shared/ui/select";
-import { buildInputDeviceOptions } from "../lib/device-options";
+import {
+	buildInputDeviceOptions,
+	priorityFromReorderedOptions,
+	promoteDeviceNameToTop,
+} from "../lib/device-options";
 import type { AudioDevice } from "../model/audio-device";
 import { useInputDevices } from "../model/use-input-devices";
 import {
@@ -20,6 +24,9 @@ export interface InputDevicePickerModelOptions {
 	defaultDeviceName?: string | null | undefined;
 	devices: readonly AudioDevice[];
 	inputDeviceIndex: number | null;
+	/** Preference order (device names, highest first) — device rows are
+	 *  displayed in this order, listed names before unlisted devices. */
+	inputDevicePriority?: readonly string[];
 	monitorOpen: boolean;
 	systemDefaultLabel: string;
 }
@@ -28,6 +35,7 @@ export function useInputDevicePickerModel({
 	defaultDeviceName,
 	devices,
 	inputDeviceIndex,
+	inputDevicePriority = [],
 	monitorOpen,
 	systemDefaultLabel,
 }: InputDevicePickerModelOptions): InputDevicePickerModel {
@@ -40,6 +48,7 @@ export function useInputDevicePickerModel({
 			inputDeviceIndex,
 			defaultLabel,
 			defaultDeviceName,
+			inputDevicePriority,
 		);
 	const levels = useMicrophoneLevels(
 		monitorOpen,
@@ -66,12 +75,54 @@ export function useInputDevicePickerModel({
 	};
 }
 
+/**
+ * Selection semantics shared by the settings Select and the detached tray
+ * picker. Clicking is still an explicit "use this one", but it must not fight
+ * the preference order: while a priority list exists, the effective mic is
+ * always its top-most connected entry, so a click promotes the chosen device
+ * to the top (and "System default" opts out by clearing the list).
+ */
+export function applyDeviceSelection({
+	id,
+	onChange,
+	onPriorityChange,
+	options,
+	priority,
+}: {
+	id: string;
+	onChange: (inputDeviceIndex: number | null) => void;
+	onPriorityChange?: ((priority: string[]) => void) | undefined;
+	options: readonly SelectOption[];
+	priority: readonly string[];
+}): void {
+	if (id === "default") {
+		onChange(null);
+		if (onPriorityChange && priority.length > 0) {
+			onPriorityChange([]);
+		}
+		return;
+	}
+	onChange(Number.parseInt(id, 10));
+	const name = options.find((o) => o.id === id)?.label;
+	if (onPriorityChange && name && priority.length > 0) {
+		onPriorityChange(promoteDeviceNameToTop(priority, name));
+	}
+}
+
 export interface InputDeviceSelectProps {
 	"aria-label"?: string;
 	className?: string | undefined;
 	disabled?: boolean;
 	inputDeviceIndex: number | null;
+	/** Preference order (device names, highest first). */
+	inputDevicePriority?: readonly string[];
 	onChange: (inputDeviceIndex: number | null) => void;
+	/** When provided, device rows become drag-sortable and the new
+	 *  name order is reported here (also updated by clicks — see
+	 *  `applyDeviceSelection`). */
+	onPriorityChange?: (priority: string[]) => void;
+	/** Accessible label for the row drag handle. */
+	reorderHandleLabel?: string;
 	systemDefaultLabel: string;
 }
 
@@ -80,7 +131,10 @@ export function InputDeviceSelect({
 	className,
 	disabled,
 	inputDeviceIndex,
+	inputDevicePriority = [],
 	onChange,
+	onPriorityChange,
+	reorderHandleLabel,
 	systemDefaultLabel,
 }: InputDeviceSelectProps) {
 	const { devices, defaultDevice } = useInputDevices();
@@ -89,6 +143,7 @@ export function InputDeviceSelect({
 		defaultDeviceName: defaultDevice?.name,
 		devices,
 		inputDeviceIndex,
+		inputDevicePriority,
 		monitorOpen: open,
 		systemDefaultLabel,
 	});
@@ -96,14 +151,29 @@ export function InputDeviceSelect({
 	return (
 		<Select
 			className={className}
-			onChange={(value) =>
-				onChange(value === "default" ? null : Number.parseInt(value, 10))
+			onChange={(id) =>
+				applyDeviceSelection({
+					id,
+					onChange,
+					onPriorityChange,
+					options: deviceOptions,
+					priority: inputDevicePriority,
+				})
 			}
 			onOpenChange={setOpen}
 			options={deviceOptions}
 			value={currentDeviceId}
 			{...(ariaLabel === undefined ? {} : { "aria-label": ariaLabel })}
 			{...(disabled === undefined ? {} : { disabled })}
+			{...(onPriorityChange === undefined
+				? {}
+				: {
+						onReorder: (orderedIds: string[]) =>
+							onPriorityChange(
+								priorityFromReorderedOptions(deviceOptions, orderedIds),
+							),
+					})}
+			{...(reorderHandleLabel === undefined ? {} : { reorderHandleLabel })}
 		/>
 	);
 }

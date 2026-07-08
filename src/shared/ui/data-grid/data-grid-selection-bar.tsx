@@ -25,7 +25,9 @@ export function DataGridSelectionBar<TData>({
 	const t = useTranslations("dataGrid");
 	const selectedRows = table.getSelectedRowModel().rows;
 	const count = selectedRows.length;
-	if (count === 0) return null;
+	if (count === 0) {
+		return null;
+	}
 
 	const clear = () => table.resetRowSelection();
 	const deleteSelected = () => {

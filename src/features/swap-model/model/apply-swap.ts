@@ -226,11 +226,13 @@ function applyRealtimeSwap(
 	}
 	const realtimeInfo = args.getModel(args.value);
 	if (
-		!realtimeInfo ||
-		!isRealtimeCompatibleWithCurrentMain(
-			realtimeInfo,
-			args.currentMainModel,
-			args.getModel,
+		!(
+			realtimeInfo &&
+			isRealtimeCompatibleWithCurrentMain(
+				realtimeInfo,
+				args.currentMainModel,
+				args.getModel,
+			)
 		)
 	) {
 		return false;

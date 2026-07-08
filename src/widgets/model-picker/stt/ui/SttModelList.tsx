@@ -22,6 +22,7 @@ import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { FavoritesGroupLabel } from "../../core/model-card/FavoritesGroupLabel";
 import { GROUP_HEADER_CLASSES } from "../../core/model-card/card-constants";
+import { MakerLogo } from "../../ui/MakerLogo";
 import { publicAsset } from "@/shared/lib/public-asset";
 import {
 	bundleVariants,
@@ -103,19 +104,11 @@ function AuthorLabel({ family }: { family: FamilyKey }) {
 			className={GROUP_HEADER_CLASSES}
 			data-rail-section={family}
 		>
-			{config.logoSrc ? (
-				<img
-					alt={`${author} logo`}
-					className="size-4 shrink-0 rounded-[3px] object-contain"
-					height={16}
-					src={publicAsset(config.logoSrc)}
-					width={16}
-				/>
-			) : (
-				<span className="flex size-4 items-center justify-center rounded bg-foreground/[0.06] text-foreground-muted">
-					<HugeiconsIcon className="size-3" icon={config.icon} />
-				</span>
-			)}
+			<MakerLogo
+				alt={`${author} logo`}
+				fallback={<HugeiconsIcon className="size-3" icon={config.icon} />}
+				src={config.logoSrc ? publicAsset(config.logoSrc) : null}
+			/>
 			<span className="font-semibold text-[10px] text-foreground-muted uppercase tracking-[0.12em]">
 				{author}
 			</span>

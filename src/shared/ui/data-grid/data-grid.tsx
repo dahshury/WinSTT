@@ -1,5 +1,5 @@
 import { Plus } from "@/shared/ui/data-grid/primitives/icons";
-import * as React from "react";
+import type * as React from "react";
 import { useTranslations } from "use-intl";
 import { DataGridColumnHeader } from "@/shared/ui/data-grid/data-grid-column-header";
 import { DataGridContextMenu } from "@/shared/ui/data-grid/data-grid-context-menu";
@@ -23,8 +23,7 @@ function onDataGridContextMenu(event: React.MouseEvent<HTMLDivElement>) {
 }
 
 interface DataGridProps<TData>
-	extends
-		Omit<ReturnType<typeof useDataGrid<TData>>, "dir">,
+	extends Omit<ReturnType<typeof useDataGrid<TData>>, "dir">,
 		Omit<React.ComponentProps<"div">, "contextMenu"> {
 	dir?: Direction;
 	height?: number;
@@ -73,7 +72,9 @@ export function DataGrid<TData>({
 	};
 
 	const onFooterCellKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-		if (!onRowAddRef.current) return;
+		if (!onRowAddRef.current) {
+			return;
+		}
 
 		if (event.key === "Enter" || event.key === " ") {
 			event.preventDefault();
@@ -203,7 +204,9 @@ export function DataGrid<TData>({
 				>
 					{virtualItems.map((virtualItem) => {
 						const row = rows[virtualItem.index];
-						if (!row) return null;
+						if (!row) {
+							return null;
+						}
 
 						const cellSelectionKeys =
 							cellSelectionMap?.get(virtualItem.index) ??

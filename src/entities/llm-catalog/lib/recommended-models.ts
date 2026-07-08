@@ -20,6 +20,19 @@ const GB = 1_000_000_000;
  *     SmolLM on Ollama — all three library sizes (135m, 360m, 1.7b) are offered.
  *   - gemma4 is offered at the current local sizes requested from Ollama:
  *     `e2b`, `e4b`, and full `12b`.
+ *   - NVIDIA: only **nemotron-3-nano:4b** is curated — the newest-gen small pick
+ *     (2.8 GB, 256K ctx, thinking-toggleable). Every other Nemotron is out: the
+ *     70B `nemotron`, `nemotron3` (33B multimodal), `nemotron-3-super` (120B MoE),
+ *     `-ultra`, and `nemotron-cascade-2` (30B MoE, 24 GB) all blow the RAM budget,
+ *     and `nemotron-mini` is a superseded 2024 4K-context distill.
+ *   - Mistral: **ministral-3** is the newest small-capable line (Dec 2025, 256K
+ *     ctx), offered at all three budget-fitting local sizes `3b`/`8b`/`14b`.
+ *     `mistral-small3.2` (24B, 15 GB) and `magistral` (reasoning) are over budget;
+ *     `mistral` (7B v0.3) and `mistral-nemo` (12B) are older gens.
+ *   - OpenAI: **gpt-oss:20b** (13.8 GB, MoE ~3.6B active) is the ONE over-budget
+ *     exception — a deliberate GPU-class pick for users with the VRAM. It sits
+ *     last (largest) and relies on the picker's fit warning to gate it on smaller
+ *     machines. The bigger `gpt-oss:120b` stays out.
  *   - Reasoning/"thinking" models are excluded by default (a `<think>` preamble
  *     is pure latency for short rewrites), except explicit requested picks.
  *
@@ -76,6 +89,9 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		description:
 			"Liquid AI LFM2.5 Thinking 1.2B. Compact hybrid reasoning model with a 125K context window for longer cleanup and rewrite tasks.",
 		tags: ["fast", "instruct"],
+		// Dedicated reasoning build: `think:false` only stops tag PARSING (the
+		// `<think>` block leaks into content) — reasoning itself can't be disabled.
+		thinking: "always-on",
 	},
 	{
 		name: "smollm2:1.7b",
@@ -118,6 +134,26 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		tags: ["instruct", "recommended"],
 	},
 	{
+		name: "qwen3.5:2b",
+		displayName: "Qwen 3.5 2B",
+		family: "qwen",
+		paramSize: "2B",
+		sizeBytes: Math.round(2.7 * GB),
+		description:
+			"Alibaba Qwen 3.5 2B. Fills the gap between 0.8B and 4B — strong instruction-following per GB for low-VRAM GPUs.",
+		tags: ["fast", "instruct"],
+	},
+	{
+		name: "nemotron-3-nano:4b",
+		displayName: "Nemotron 3 Nano 4B",
+		family: "nemotron",
+		paramSize: "4B",
+		sizeBytes: Math.round(2.8 * GB),
+		description:
+			"NVIDIA Nemotron 3 Nano 4B, the newest generation. Unified reasoning/non-reasoning model — leave Thinking effort off for fast rewrites, with a 256K context window.",
+		tags: ["instruct"],
+	},
+	{
 		name: "ministral-3:3b",
 		displayName: "Ministral 3 3B",
 		family: "mistral",
@@ -158,6 +194,16 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		tags: ["instruct"],
 	},
 	{
+		name: "ministral-3:8b",
+		displayName: "Ministral 3 8B",
+		family: "mistral",
+		paramSize: "8B",
+		sizeBytes: Math.round(6.0 * GB),
+		description:
+			"Mistral AI Ministral 3 8B. The mid-size edge model — noticeably stronger rewrites than the 3B while still fitting a low-VRAM GPU, with a 256K context window.",
+		tags: ["instruct"],
+	},
+	{
 		name: "qwen3.5:9b",
 		displayName: "Qwen 3.5 9B",
 		family: "qwen",
@@ -166,6 +212,16 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		description:
 			"Alibaba Qwen 3.5 9B. The highest quality that still runs comfortably in 16 GB RAM.",
 		tags: ["instruct", "recommended"],
+	},
+	{
+		name: "ministral-3:14b",
+		displayName: "Ministral 3 14B",
+		family: "mistral",
+		paramSize: "14B",
+		sizeBytes: Math.round(9.1 * GB),
+		description:
+			"Mistral AI Ministral 3 14B. The largest Ministral 3 — best instruction-following quality in the family; needs a GPU or 16 GB RAM.",
+		tags: ["instruct"],
 	},
 	{
 		name: "gemma4:e2b",
@@ -196,6 +252,19 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		description:
 			"Google Gemma 4 12B, the full local workstation model. Highest-quality curated Gemma 4 choice with a 256K context window.",
 		tags: ["instruct", "recommended"],
+	},
+	{
+		name: "gpt-oss:20b",
+		displayName: "GPT-OSS 20B",
+		family: "gpt",
+		paramSize: "20B",
+		sizeBytes: Math.round(13.8 * GB),
+		description:
+			"OpenAI GPT-OSS 20B, an open-weight MoE (~3.6B active) with adjustable reasoning effort and a 128K context window. The largest curated pick — GPU-class; the picker's fit warning gates it on smaller machines.",
+		tags: ["instruct"],
+		// Measured live: `think:false` still reasons at the DEFAULT trace length
+		// (~2k chars) — only the low/medium/high strings are actually supported.
+		thinking: "levels",
 	},
 ];
 

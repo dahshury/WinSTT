@@ -3,8 +3,9 @@ import { ArrowDown01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { cn } from "@/shared/lib/cn";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { ReactNode } from "react";
-import { useRef } from "react";
+import type { HTMLAttributes, ReactNode, Ref } from "react";
+import { useRef, useState } from "react";
+import { OptionDragHandle, SortableOptionRows } from "./sortable-option-rows";
 import { SurfaceProvider, surfaceClasses } from "@/shared/lib/surface";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 import { GroupHeaderContent } from "./group-header";
@@ -22,6 +23,10 @@ export interface SelectOption {
 	icon?: IconSvgElement;
 	id: string;
 	label: string;
+	/** When true (and the Select has `onReorder`), the row can be drag-sorted
+	 *  via a leading grip handle. Rows without it (e.g. a pinned "system
+	 *  default" row) stay put. */
+	sortable?: boolean;
 	/** Optional compact content rendered at the far end of popup rows only. */
 	trailing?: ReactNode;
 }
@@ -66,8 +71,16 @@ export interface SelectProps {
 	groups?: readonly SelectOptionGroup[];
 	onChange: (value: string) => void;
 	onOpenChange?: (open: boolean) => void;
+	/**
+	 * Enables drag-to-sort on rows marked `sortable` (flat `options` mode
+	 * only). Rows grow a leading grip handle; after a drop this is called
+	 * with the sortable rows' ids in their new display order.
+	 */
+	onReorder?: (orderedIds: string[]) => void;
 	/** Flat options. Ignored when `groups` is provided. */
 	options?: readonly SelectOption[];
+	/** Accessible label for the per-row drag handle (reorder mode). */
+	reorderHandleLabel?: string;
 	value: string;
 }
 
@@ -105,16 +118,47 @@ export function SelectOptionContent({
 // against (it scans the radio-group subtree, so rows nested inside a
 // `Menu.Group` are found exactly like flat ones). Group headers deliberately
 // carry no such attribute, so they are never measured as selectable rows.
-function SelectRow({ option, value }: { option: SelectOption; value: string }) {
+function SelectRow({
+	className,
+	handleLabel,
+	option,
+	reorderable,
+	value,
+	...sortableProps
+}: {
+	handleLabel?: string | undefined;
+	option: SelectOption;
+	reorderable?: boolean;
+	value: string;
+} & HTMLAttributes<HTMLDivElement> & {
+		ref?: Ref<HTMLDivElement> | undefined;
+	}) {
 	const active = option.id === value;
+	// In reorder mode the row is rendered inside `SortableItem asChild`, which
+	// clones it with dnd-kit's ref/style/attribute props — `sortableProps`
+	// forwards those onto the RadioItem so the row itself is the draggable.
+	// The leading handle is ALWAYS visible on sortable rows (hover-reveal made
+	// the list look unsortable); non-sortable rows in the same list (the pinned
+	// "system default") get an equal-width spacer so labels stay aligned.
 	return (
 		<Menu.RadioItem
-			className="relative z-raised mx-1 flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2.5 text-body text-foreground leading-normal outline-none data-[checked]:font-medium data-[checked]:text-foreground data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
+			{...sortableProps}
+			className={cn(
+				"relative z-raised mx-1 flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2.5 text-body text-foreground leading-normal outline-none data-[checked]:font-medium data-[checked]:text-foreground data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50",
+				className,
+			)}
 			closeOnClick
 			data-menu-option={option.id}
 			disabled={option.disabled}
 			value={option.id}
 		>
+			{reorderable ? (
+				option.sortable ? (
+					<OptionDragHandle className="-ml-1" label={handleLabel} />
+				) : (
+					<span aria-hidden="true" className="-ml-1 size-5 shrink-0" />
+				)
+			) : null}
 			<SelectOptionContent active={active} option={option} />
 			{active ? (
 				<HugeiconsIcon
@@ -156,10 +200,17 @@ export function Select({
 	value,
 	onChange,
 	onOpenChange,
+	onReorder,
+	reorderHandleLabel,
 	"aria-label": ariaLabel,
 	className,
 	disabled,
 }: SelectProps) {
+	// While a row is being drag-sorted, menu items go pointer-events-none so
+	// Base UI can't interpret the drop's pointerup over a row as a selection
+	// (which would switch the value AND close the popup mid-sort). dnd-kit
+	// tracks the drag on window listeners, so it is unaffected.
+	const [dragSorting, setDragSorting] = useState(false);
 	// Grouped mode flattens for the trigger's selected-value lookup; the popup
 	// still renders grouped.
 	const flat = groups ? groups.flatMap((g) => [...g.options]) : (options ?? []);
@@ -214,7 +265,10 @@ export function Select({
 								className={`select-popup min-w-[var(--anchor-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-lg ${surfaceClasses(popupLevel, popupShadow)} py-1.5 [max-height:min(15rem,var(--available-height))] [max-width:var(--available-width)]`}
 							>
 								<Menu.RadioGroup
-									className="relative"
+									className={cn(
+										"relative",
+										dragSorting && "[&_[data-menu-option]]:pointer-events-none",
+									)}
 									onValueChange={(v: string) => onChange(v)}
 									ref={radioGroupRef}
 									value={value}
@@ -223,26 +277,38 @@ export function Select({
 										containerRef={radioGroupRef}
 										value={value}
 									/>
-									{groups
-										? groups.map((group) => (
-												<Menu.Group className="flex flex-col" key={group.value}>
-													<SelectGroupHeader
-														badge={group.badge}
-														icon={group.icon}
-														label={group.label}
-													/>
-													{group.options.map((opt) => (
-														<SelectRow
-															key={opt.id}
-															option={opt}
-															value={value}
-														/>
-													))}
-												</Menu.Group>
-											))
-										: flat.map((opt) => (
-												<SelectRow key={opt.id} option={opt} value={value} />
-											))}
+									{groups ? (
+										groups.map((group) => (
+											<Menu.Group className="flex flex-col" key={group.value}>
+												<SelectGroupHeader
+													badge={group.badge}
+													icon={group.icon}
+													label={group.label}
+												/>
+												{group.options.map((opt) => (
+													<SelectRow key={opt.id} option={opt} value={value} />
+												))}
+											</Menu.Group>
+										))
+									) : onReorder ? (
+										<SortableOptionRows
+											onReorder={onReorder}
+											onSortingChange={setDragSorting}
+											options={flat}
+											renderRow={(opt) => (
+												<SelectRow
+													handleLabel={reorderHandleLabel}
+													option={opt}
+													reorderable
+													value={value}
+												/>
+											)}
+										/>
+									) : (
+										flat.map((opt) => (
+											<SelectRow key={opt.id} option={opt} value={value} />
+										))
+									)}
 								</Menu.RadioGroup>
 							</Menu.Popup>
 						</Menu.Positioner>

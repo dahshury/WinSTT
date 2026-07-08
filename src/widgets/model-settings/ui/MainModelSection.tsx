@@ -1,8 +1,12 @@
 import { AiMicIcon } from "@hugeicons/core-free-icons";
 import { SttModelSelector } from "@/widgets/model-picker";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { useTranslations } from "use-intl";
-import { providerOf } from "@/entities/cloud-stt-provider";
+import {
+	providerOf,
+	useOpenRouterSttCatalogStore,
+} from "@/entities/cloud-stt-provider";
+import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import {
 	isVisibleSttModel,
 	resolveLocalDefault,
@@ -168,23 +172,33 @@ function SourceArea({
 }: SourceAreaProps): ReactNode {
 	const { hasAnyCloudKey, initialSourceIsCloud, isCloud, isSwapping } = flags;
 	const goToIntegrations = useSettingsTabStore((s) => s.setActiveTab);
-	const { source, sourceOpts, onSourceChange } = useSttSourceSwitch({
-		hasAnyCloudKey,
-		initialSourceIsCloud,
-		onConfigureCloud: () => goToIntegrations("integrations"),
-		onModelChange: handleModelChange,
-		pickLocalDefault: () => resolveLocalDefault(catalogModels, statesById),
-		selectedModel,
-	});
+	const { cloudSelectedId, source, sourceOpts, onSourceChange } =
+		useSttSourceSwitch({
+			hasAnyCloudKey,
+			initialSourceIsCloud,
+			onConfigureCloud: () => goToIntegrations("integrations"),
+			onModelChange: handleModelChange,
+			pickLocalDefault: () => resolveLocalDefault(catalogModels, statesById),
+			selectedModel,
+		});
+	// While the server is loading a model's weights (a swap in flight), lock BOTH
+	// the source switch and the model picker until it settles — flipping source or
+	// picking another model mid-load would race the in-progress swap. Listen-mode
+	// (`disabled`) is the hard lock and carries an explanatory tooltip; the swap
+	// lock is transient and needs none (the local picker trigger already renders
+	// its own "Switching to …" state).
+	const controlsLocked = disabled || isSwapping;
 	const sourceOptions = disabled
 		? sourceOpts.map((option) => ({
 				...option,
 				disabled: true,
 				...(disabledTooltip ? { tooltip: disabledTooltip } : {}),
 			}))
-		: sourceOpts;
+		: isSwapping
+			? sourceOpts.map((option) => ({ ...option, disabled: true }))
+			: sourceOpts;
 	const handleSourceChange = (next: typeof source): void => {
-		if (disabled) {
+		if (controlsLocked) {
 			return;
 		}
 		onSourceChange(next);
@@ -193,7 +207,7 @@ function SourceArea({
 		modelId: string,
 		quantization?: OnnxQuantization,
 	): void => {
-		if (disabled) {
+		if (controlsLocked) {
 			return;
 		}
 		handleModelChange(modelId, quantization);
@@ -202,7 +216,7 @@ function SourceArea({
 		<>
 			<div>
 				<FormControl
-					disabled={disabled}
+					disabled={controlsLocked}
 					controlTooltip={disabledTooltip}
 					label={tIntegrations("sourceLabel")}
 					layout="row"
@@ -226,13 +240,13 @@ function SourceArea({
 				>
 					{source === "cloud" ? (
 						<CloudModelSelect
-							disabled={disabled}
+							disabled={controlsLocked}
 							disabledTooltip={disabledTooltip}
 							onOpenDetached={(rect) =>
 								openModelPickerAtRect(rect, { pickerKind: "stt-cloud" })
 							}
 							onSelect={(id) => handleSelectedModelChange(id)}
-							selectedId={isCloud ? selectedModel : ""}
+							selectedId={cloudSelectedId}
 						/>
 					) : (
 						<SttModelSelector
@@ -300,6 +314,23 @@ export function MainModelSection({
 	const hasAnyCloudKey =
 		integrations.elevenlabs.apiKey.trim().length > 0 ||
 		openrouterKey.trim().length > 0;
+	// Pre-warm the live OpenRouter STT catalog while the user is still on the
+	// Local tab, so flipping to Cloud resolves the default/last cloud model's
+	// name instantly instead of showing the empty "Select cloud model"
+	// placeholder for the ~1s the scan takes. The store guards re-entrancy; the
+	// `isLoaded` gate stops this from re-scanning on every render.
+	const openrouterConfigured = openrouterKey.trim().length > 0;
+	const openrouterCatalogLoaded = useOpenRouterSttCatalogStore(
+		(s) => s.isLoaded,
+	);
+	const scanOpenrouterModels = useOpenRouterSttCatalogStore(
+		(s) => s.scanModels,
+	);
+	useEffect(() => {
+		if (openrouterConfigured && !openrouterCatalogLoaded) {
+			fireAndForget(scanOpenrouterModels(), "main-model.prewarmOpenrouterStt");
+		}
+	}, [openrouterConfigured, openrouterCatalogLoaded, scanOpenrouterModels]);
 	const isCloud = providerOf(selectedModel) !== null;
 	// The Cloud tab is only reachable when at least one provider key is
 	// configured. Persisted cloud selections without a key are flipped back

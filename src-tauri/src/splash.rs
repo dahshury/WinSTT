@@ -44,6 +44,9 @@ const SPLASH_MAX_LIFETIME_MS: u64 = 60_000;
 /// fallback and stays well below `SPLASH_MAX_LIFETIME_MS` so the hard backstop
 /// never wins the handoff race.
 const READY_TIMEOUT_MS: u64 = 15_000;
+/// Ready-watcher poll interval. Previously 100 ms, which added up to a tenth
+/// of a second of dead air between "everything is ready" and the reveal.
+const READY_WATCHER_POLL_MS: u64 = 25;
 const SPLASH_CLOSE_ANIMATION_MS: u64 = 180;
 const SPLASH_PAINT_WAIT_TIMEOUT_MS: u64 = 5_000;
 const STARTUP_PROGRESS_TOTAL_PHASES: usize = 32;
@@ -135,8 +138,15 @@ fn apply_startup_progress_to_splash(app: &AppHandle, payload: &serde_json::Value
 }
 
 fn replay_startup_progress(app: &AppHandle) {
+    crate::startup::log_since_launch("splash page painted");
     SPLASH_PAGE_READY.store(true, Ordering::SeqCst);
-    let payload = startup_progress_payload("Starting WinSTT", 0, 0);
+    // The headless model boot now runs while the splash is still painting, so
+    // several phases may already be done by the time the splash page can
+    // execute script — replay the CURRENT phase, not a hardcoded zero, or the
+    // bar would sit at 0% and then jump.
+    let phase = STARTUP_PROGRESS_PHASE.load(Ordering::SeqCst);
+    let payload =
+        startup_progress_payload("Starting WinSTT", phase, startup_percent_for_phase(phase));
     apply_startup_progress_to_splash(app, &payload, false);
 }
 
@@ -223,6 +233,7 @@ pub fn mark_renderer_painted(app: &AppHandle) {
         return;
     }
     RENDERER_PAINTED.store(true, Ordering::SeqCst);
+    crate::startup::log_since_launch("main renderer painted");
     emit_startup_progress(app, "main renderer painted");
 }
 
@@ -234,6 +245,7 @@ pub fn mark_renderer_boot_done(app: &AppHandle) {
         return;
     }
     RENDERER_BOOT_DONE.store(true, Ordering::SeqCst);
+    crate::startup::log_since_launch("main renderer bootstrap ready");
     emit_startup_progress(app, "main renderer bootstrap ready");
 }
 
@@ -245,6 +257,7 @@ pub fn mark_stt_boot_done(app: &AppHandle) {
         return;
     }
     STT_BOOT_DONE.store(true, Ordering::SeqCst);
+    crate::startup::log_since_launch("STT boot/warmup complete");
     emit_startup_progress(app, "STT boot/warmup complete");
 }
 
@@ -292,7 +305,7 @@ pub fn spawn_ready_watcher(app: &AppHandle, show_window: bool) {
                 timed_out = true;
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(READY_WATCHER_POLL_MS));
         }
         if timed_out {
             log::warn!(
@@ -302,6 +315,11 @@ pub fn spawn_ready_watcher(app: &AppHandle, show_window: bool) {
                 snapshot.stt_boot_done
             );
         }
+        crate::startup::log_since_launch(if timed_out {
+            "reveal dispatched (timeout fallback)"
+        } else {
+            "reveal dispatched"
+        });
         emit_startup_complete(
             &app,
             if timed_out {

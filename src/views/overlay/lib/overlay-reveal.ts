@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { type DynamicIslandSize } from "@/shared/ui/dynamic-island";
+import type { DynamicIslandSize } from "@/shared/ui/dynamic-island";
 
 /**
  * Pure mapping from the renderer's live state to a Dynamic-Island size

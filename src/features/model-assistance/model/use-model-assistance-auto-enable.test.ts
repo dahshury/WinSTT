@@ -29,7 +29,6 @@ function assistanceModel(id = "crisper-whisper"): ModelInfo {
 		previewCapable: true,
 		nativeStreaming: false,
 		finalReuseSafe: false,
-		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],

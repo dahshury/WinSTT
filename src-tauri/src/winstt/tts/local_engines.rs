@@ -10,7 +10,10 @@ use std::sync::{Arc, Mutex};
 
 use super::chatterbox::{CHATTERBOX_SAMPLE_RATE, ChatterboxConfig, ChatterboxEngine};
 use super::kitten::{KITTEN_SAMPLE_RATE, KittenConfig, KittenEngine};
+use super::orpheus::{ORPHEUS_SAMPLE_RATE, OrpheusEngine};
 use super::piper::{PiperConfig, PiperEngine};
+use super::qwen3_tts::{QWEN3TTS_SAMPLE_RATE, Qwen3TtsEngine};
+use super::spark::{SPARK_SAMPLE_RATE, SparkEngine};
 use super::supertonic::{
     SUPERTONIC_DEFAULT_VOICE, SUPERTONIC_SAMPLE_RATE, SUPERTONIC_SPEED_MAX, SUPERTONIC_SPEED_MIN,
     SupertonicConfig, SupertonicEngine,
@@ -257,6 +260,16 @@ pub const CHATTERBOX_VOICES: &[VoiceInfo] = &[VoiceInfo {
     id: "default",
     label: "Default voice (or clone from a clip)",
     language: "en-us",
+    gender: Gender::Female,
+}];
+
+/// Qwen3-TTS Voice Design has NO preset voices: the voice is described by a
+/// natural-language prompt (stored in `tts.voice`). We surface a single "Default"
+/// entry as the empty-prompt affordance (empty prompt → model's default voice).
+pub const QWEN3TTS_VOICES: &[VoiceInfo] = &[VoiceInfo {
+    id: "",
+    label: "Default voice (or describe one with a prompt)",
+    language: "en",
     gender: Gender::Female,
 }];
 
@@ -531,5 +544,308 @@ impl TtsEngine for ChatterboxLocalEngine {
     }
     fn shutdown(&self) {
         self.engine.shutdown();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Qwen3-TTS Voice Design (autoregressive LLM-codec; voice via text prompt)
+// ---------------------------------------------------------------------------
+
+pub struct Qwen3TtsLocalEngine {
+    engine: Qwen3TtsEngine,
+}
+impl Qwen3TtsLocalEngine {
+    /// `quant` selects the on-disk weights subdir (`int4`|`fp16`|`fp32`; the
+    /// engine maps it to `cpu_int4`|`cpu_fp16`|`cpu_fp32`). Passed through from the
+    /// manager's `tts.quantization` (default `int4`).
+    pub fn new(cache_dir: PathBuf, quant: String) -> Self {
+        Self {
+            engine: Qwen3TtsEngine::new(cache_dir, quant),
+        }
+    }
+}
+impl TtsEngine for Qwen3TtsLocalEngine {
+    fn synthesize_sentence(
+        &self,
+        text: &str,
+        voice: &str,
+        lang: &str,
+        speed: f32,
+    ) -> TtsResult<SentenceAudio> {
+        // Voice Design overloads `voice` as the design PROMPT (the natural-language
+        // voice description), exactly as Chatterbox overloads `voice` for the ref-clip
+        // path. An empty prompt is valid — the model picks a neutral default voice.
+        let samples = self
+            .engine
+            .synthesize(text, voice, lang, speed)
+            .map_err(|e| TtsError::Engine(e.to_string()))?;
+        Ok(SentenceAudio::F32le {
+            samples,
+            sample_rate: QWEN3TTS_SAMPLE_RATE,
+        })
+    }
+    fn list_voices(&self) -> Vec<VoiceInfo> {
+        QWEN3TTS_VOICES.to_vec()
+    }
+    fn is_ready(&self) -> bool {
+        self.engine.is_ready()
+    }
+    fn warm_up(&self) -> TtsResult<()> {
+        self.engine
+            .warm_up()
+            .map_err(|e| TtsError::Engine(e.to_string()))
+    }
+    fn shutdown(&self) {
+        self.engine.shutdown();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Orpheus (3B Llama → SNAC codec; 8 preset English voices w/ emotion tags)
+// ---------------------------------------------------------------------------
+
+/// The 8 fine-tuned Orpheus voices (canopylabs card). `tara` is the recommended default.
+pub const ORPHEUS_VOICE_INFOS: &[VoiceInfo] = &[
+    VoiceInfo {
+        id: "tara",
+        label: "Tara",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "leah",
+        label: "Leah",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "jess",
+        label: "Jess",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "mia",
+        label: "Mia",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "zoe",
+        label: "Zoe",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "leo",
+        label: "Leo",
+        language: "en",
+        gender: Gender::Male,
+    },
+    VoiceInfo {
+        id: "dan",
+        label: "Dan",
+        language: "en",
+        gender: Gender::Male,
+    },
+    VoiceInfo {
+        id: "zac",
+        label: "Zac",
+        language: "en",
+        gender: Gender::Male,
+    },
+];
+
+pub struct OrpheusLocalEngine {
+    cache_dir: PathBuf,
+    engine: Mutex<Option<OrpheusEngine>>,
+}
+impl OrpheusLocalEngine {
+    pub fn new(cache_dir: PathBuf) -> Self {
+        Self {
+            cache_dir,
+            engine: Mutex::new(None),
+        }
+    }
+    fn ensure_loaded(&self) -> TtsResult<()> {
+        let mut guard = self
+            .engine
+            .lock()
+            .map_err(|_| TtsError::Engine("orpheus lock poisoned".into()))?;
+        if guard.is_none() {
+            let eng = OrpheusEngine::load(
+                &self.cache_dir.join("onnx/model_q4.onnx"),
+                &self.cache_dir.join("snac/decoder_model.onnx"),
+                &self.cache_dir.join("tokenizer.json"),
+            )
+            .map_err(|e| TtsError::Engine(e.to_string()))?;
+            *guard = Some(eng);
+        }
+        Ok(())
+    }
+}
+impl TtsEngine for OrpheusLocalEngine {
+    fn synthesize_sentence(
+        &self,
+        text: &str,
+        voice: &str,
+        _lang: &str,
+        _speed: f32,
+    ) -> TtsResult<SentenceAudio> {
+        self.ensure_loaded()?;
+        let mut guard = self
+            .engine
+            .lock()
+            .map_err(|_| TtsError::Engine("orpheus lock poisoned".into()))?;
+        let eng = guard
+            .as_mut()
+            .ok_or_else(|| TtsError::Engine("orpheus not loaded".into()))?;
+        let samples = eng
+            .synthesize(text, voice, 0.6)
+            .map_err(|e| TtsError::Engine(e.to_string()))?;
+        Ok(SentenceAudio::F32le {
+            samples,
+            sample_rate: ORPHEUS_SAMPLE_RATE,
+        })
+    }
+    fn list_voices(&self) -> Vec<VoiceInfo> {
+        ORPHEUS_VOICE_INFOS.to_vec()
+    }
+    fn is_ready(&self) -> bool {
+        self.engine.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+    fn warm_up(&self) -> TtsResult<()> {
+        self.ensure_loaded()
+    }
+    fn shutdown(&self) {
+        if let Ok(mut g) = self.engine.lock() {
+            *g = None;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Spark-TTS (Qwen0.5B → BiCodec; voice creation by gender)
+// ---------------------------------------------------------------------------
+
+/// Spark voice-creation presets — the timbre is generated; gender steers it.
+pub const SPARK_VOICE_INFOS: &[VoiceInfo] = &[
+    VoiceInfo {
+        id: "female",
+        label: "Female",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "male",
+        label: "Male",
+        language: "en",
+        gender: Gender::Male,
+    },
+];
+
+pub struct SparkLocalEngine {
+    cache_dir: PathBuf,
+    /// Reference-clip transcript (settings.tts.clone_ref_text) — used when `voice` is a ref path.
+    clone_ref_text: String,
+    engine: Mutex<Option<SparkEngine>>,
+}
+impl SparkLocalEngine {
+    pub fn new(cache_dir: PathBuf, clone_ref_text: String) -> Self {
+        Self {
+            cache_dir,
+            clone_ref_text,
+            engine: Mutex::new(None),
+        }
+    }
+    fn ensure_loaded(&self) -> TtsResult<()> {
+        let mut guard = self
+            .engine
+            .lock()
+            .map_err(|_| TtsError::Engine("spark lock poisoned".into()))?;
+        if guard.is_none() {
+            let mut eng = SparkEngine::load(
+                &self.cache_dir.join("model_q4.onnx"),
+                &self.cache_dir.join("bicodec.onnx"),
+                &self.cache_dir.join("tokenizer.json"),
+            )
+            .map_err(|e| TtsError::Engine(e.to_string()))?;
+            // Attach the cloning graphs when present (downloaded by the Spark manifest).
+            let w2v = self.cache_dir.join("wav2vec2_model_fp16.onnx");
+            if w2v.exists() {
+                eng.load_cloning(
+                    &w2v,
+                    &self.cache_dir.join("mel_spectrogram.onnx"),
+                    &self.cache_dir.join("speaker_encoder_tokenizer.onnx"),
+                    &self.cache_dir.join("bicodec_encoder_quantizer.onnx"),
+                )
+                .map_err(|e| TtsError::Engine(e.to_string()))?;
+            }
+            *guard = Some(eng);
+        }
+        Ok(())
+    }
+}
+impl TtsEngine for SparkLocalEngine {
+    fn synthesize_sentence(
+        &self,
+        text: &str,
+        voice: &str,
+        _lang: &str,
+        _speed: f32,
+    ) -> TtsResult<SentenceAudio> {
+        self.ensure_loaded()?;
+        // A `voice` that resolves to an existing file is a CLONE reference clip; a preset
+        // ("female"/"male"/"") is voice creation.
+        let ref_path =
+            (!voice.is_empty() && std::path::Path::new(voice).is_file()).then(|| voice.to_string());
+        let ref16k = match &ref_path {
+            Some(p) => Some(
+                crate::winstt::managers::transcode::decode_audio_to_pcm(std::path::Path::new(p))
+                    .map_err(TtsError::Engine)?,
+            ),
+            None => None,
+        };
+        let mut guard = self
+            .engine
+            .lock()
+            .map_err(|_| TtsError::Engine("spark lock poisoned".into()))?;
+        let eng = guard
+            .as_mut()
+            .ok_or_else(|| TtsError::Engine("spark not loaded".into()))?;
+        let samples = match ref16k {
+            Some(ref16k) => {
+                if !eng.cloning_ready() {
+                    return Err(TtsError::Engine(
+                        "Spark cloning graphs not downloaded for this model".into(),
+                    ));
+                }
+                eng.synthesize_clone(text, &ref16k, &self.clone_ref_text)
+                    .map_err(|e| TtsError::Engine(e.to_string()))?
+            }
+            None => {
+                let gender = if voice.is_empty() { "female" } else { voice };
+                eng.synthesize(text, gender)
+                    .map_err(|e| TtsError::Engine(e.to_string()))?
+            }
+        };
+        Ok(SentenceAudio::F32le {
+            samples,
+            sample_rate: SPARK_SAMPLE_RATE,
+        })
+    }
+    fn list_voices(&self) -> Vec<VoiceInfo> {
+        SPARK_VOICE_INFOS.to_vec()
+    }
+    fn is_ready(&self) -> bool {
+        self.engine.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+    fn warm_up(&self) -> TtsResult<()> {
+        self.ensure_loaded()
+    }
+    fn shutdown(&self) {
+        if let Ok(mut g) = self.engine.lock() {
+            *g = None;
+        }
     }
 }

@@ -8,8 +8,8 @@ import {
 import {
 	createContext,
 	type HTMLAttributes,
-	type PointerEvent as ReactPointerEvent,
 	type ReactNode,
+	type PointerEvent as ReactPointerEvent,
 	type Ref,
 	use,
 	useEffect,
@@ -45,7 +45,8 @@ function useCheckboxGroupCtx(): CheckboxGroupContextValue {
 	return ctx;
 }
 
-export interface CheckboxGroupProps extends HTMLAttributes<HTMLFieldSetElement> {
+export interface CheckboxGroupProps
+	extends HTMLAttributes<HTMLFieldSetElement> {
 	checkedIndices: Set<number>;
 	children: ReactNode;
 	/** Paint the standalone settings frame (self-elevated bg + p-1.5 gutter +
@@ -226,7 +227,6 @@ export function CheckboxGroup({
 						ref={ref}
 						{...props}
 					>
-						{/* biome-ignore lint/a11y/noStaticElementInteractions: presentational wrapper for proximity tracking; the parent <fieldset> carries the semantic grouping, the CheckboxItem children carry the interactive semantics */}
 						<div
 							className="relative flex flex-col"
 							onBlur={(e) => {
@@ -308,12 +308,12 @@ export function CheckboxGroup({
 												selectedBgClass,
 												selectedShadowClass,
 											)}
-											exit={{ opacity: 0, transition: { duration: 0.12 } }}
+											exit={{ opacity: 0, transition: springs.moderate.exit }}
 											initial={false}
 											key={`group-${group.id}`}
 											transition={{
 												...springs.moderate,
-												opacity: { duration: 0.08 },
+												opacity: { duration: springs.fast.duration },
 											}}
 										/>
 									);
@@ -334,7 +334,7 @@ export function CheckboxGroup({
 											"pointer-events-none absolute rounded-lg ring-1 ring-divider ring-inset",
 											hoverBgClass,
 										)}
-										exit={{ opacity: 0, transition: { duration: 0.06 } }}
+										exit={{ opacity: 0, transition: springs.fast.exit }}
 										initial={{
 											top: activeRect.top,
 											left: activeRect.left,
@@ -345,7 +345,7 @@ export function CheckboxGroup({
 										key={session}
 										transition={{
 											...springs.fast,
-											opacity: { duration: 0.08 },
+											opacity: { duration: springs.fast.duration },
 										}}
 									/>
 								) : null}
@@ -361,11 +361,11 @@ export function CheckboxGroup({
 											height: focusRect.height + 4,
 										}}
 										className="pointer-events-none absolute z-overlay rounded-[10px] border border-accent"
-										exit={{ opacity: 0, transition: { duration: 0.06 } }}
+										exit={{ opacity: 0, transition: springs.fast.exit }}
 										initial={false}
 										transition={{
 											...springs.fast,
-											opacity: { duration: 0.08 },
+											opacity: { duration: springs.fast.duration },
 										}}
 									/>
 								) : null}
@@ -459,7 +459,6 @@ export function CheckboxItem({
 	return (
 		// Row text clicks focus the visible checkbox without scrolling; direct
 		// checkbox clicks still go through Base UI's own controlled path.
-		// biome-ignore lint/a11y/noStaticElementInteractions: full-row activation mirrors a native checkbox label; the Base UI checkbox owns the a11y semantics
 		// react-doctor-disable-next-line react-doctor/no-static-element-interactions -- pointer-forwarding label-proxy wrapper: onPointerUp skips the interactive checkbox descendant and just redirects row-text clicks to the Base UI Checkbox.Root, which already carries role="checkbox", aria-label, and full keyboard support; adding role+tabIndex would create a spurious competing tab stop.
 		// react-doctor-disable-next-line react-doctor/click-events-have-key-events -- same label-proxy wrapper: keyboard activation is owned by the inner Checkbox.Root; the row only forwards pointer events to mirror a native checkbox label.
 		<div
@@ -522,12 +521,15 @@ export function CheckboxItem({
 								<motion.path
 									animate={{
 										pathLength: 1,
-										transition: { duration: 0.08, ease: "easeOut" },
+										transition: {
+											duration: springs.fast.duration,
+											ease: "easeOut",
+										},
 									}}
 									d="M6 12L10 16L18 8"
 									exit={{
 										pathLength: 0,
-										transition: { duration: 0.04, ease: "easeIn" },
+										transition: { ...springs.fast.exit, ease: "easeIn" },
 									}}
 									initial={{ pathLength: 0 }}
 								/>
@@ -596,8 +598,6 @@ export function CheckboxItem({
 				// fire before the root and swallow the inner control's own
 				// React onClick entirely (the switcher would never change).
 				// Synthetic bubbling runs the inner handler first, then this.
-				// biome-ignore lint/a11y/noNoninteractiveElementInteractions: presentational wrapper; interactive semantics live on the inner control and the row
-				// biome-ignore lint/a11y/noStaticElementInteractions: the handlers are a propagation barrier only — not an interactive affordance; a11y semantics live on the inner control and the row
 				<span
 					className="shrink-0"
 					onClick={(e) => e.stopPropagation()}

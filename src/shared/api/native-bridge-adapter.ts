@@ -86,6 +86,10 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.STT_RECORDING_START]: { kind: "event", event: "stt:recording-start" },
 	[IPC.STT_CAPTURE_ACTIVE]: { kind: "event", event: "stt:capture-active" },
 	[IPC.STT_RECORDING_STOP]: { kind: "event", event: "stt:recording-stop" },
+	[IPC.RECORDING_MODE_CYCLE]: {
+		kind: "event",
+		event: "recording:mode-cycle",
+	},
 	[IPC.STT_VAD_START]: { kind: "event", event: "stt:vad-start" },
 	[IPC.STT_VAD_STOP]: { kind: "event", event: "stt:vad-stop" },
 	[IPC.STT_TRANSCRIPTION_START]: {
@@ -167,6 +171,11 @@ const ROUTE: Partial<Record<string, Route>> = {
 	// ── Settings ──
 	[IPC.SETTINGS_CHANGED]: { kind: "event", event: "settings:changed" },
 	[IPC.SETTINGS_SAVE_ERROR]: { kind: "event", event: "settings:save-error" },
+	// Main → renderer: settings window shown from hidden (enter-animation replay).
+	[IPC.SETTINGS_WINDOW_SHOWN]: {
+		kind: "event",
+		event: "settings:window-shown",
+	},
 
 	// ── Hotkey ──
 	[IPC.HOTKEY_PRESSED]: { kind: "event", event: "hotkey:pressed" },
@@ -264,6 +273,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 		event: "tts:model-download-complete",
 	},
 	[IPC.TTS_INSTALL_STATUS]: { kind: "event", event: "tts:install-status" },
+	[IPC.TTS_UNLOAD_STATUS]: { kind: "event", event: "tts:unload-status" },
 	[IPC.TTS_INSTALL_FAILED]: { kind: "event", event: "tts:install-failed" },
 	[IPC.TTS_INSTALL_PAUSED]: { kind: "event", event: "tts:install-paused" },
 	[IPC.TTS_INSTALL_RESUMED]: { kind: "event", event: "tts:install-resumed" },
@@ -294,6 +304,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 	},
 	[IPC.LLM_PROFILE_SWAP]: { kind: "event", event: "llm:profile-swap" },
 	[IPC.LLM_WARMUP_STATUS]: { kind: "event", event: "llm:warmup-status" },
+	[IPC.LLM_UNLOAD_STATUS]: { kind: "event", event: "llm:unload-status" },
 
 	// ── Transforms (slice 13) ──
 	// Transform commands are typed in COMMAND_INVOKERS; the adapter keeps the
@@ -316,6 +327,14 @@ const ROUTE: Partial<Record<string, Route>> = {
 		kind: "event",
 		event: "transform-history:deleted",
 	},
+	[IPC.TTS_HISTORY_ADDED]: {
+		kind: "event",
+		event: "tts-history:added",
+	},
+	[IPC.TTS_HISTORY_DELETED]: {
+		kind: "event",
+		event: "tts-history:deleted",
+	},
 
 	// Preview commands are typed in COMMAND_INVOKERS; the adapter keeps the
 	// finalized transcript event.
@@ -328,6 +347,11 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.STT_CLOUD_RATE_LIMITED]: { kind: "event", event: "stt:cloud-error" },
 	[IPC.STT_CLOUD_PROVIDER_ERROR]: { kind: "event", event: "stt:cloud-error" },
 	[IPC.CLOUD_CONNECTIVITY]: { kind: "event", event: "cloud:connectivity" },
+	[IPC.STT_PIPELINE_UNAVAILABLE]: {
+		kind: "event",
+		event: "stt:pipeline-unavailable",
+	},
+	[IPC.TTS_UNAVAILABLE]: { kind: "event", event: "tts:unavailable" },
 
 	// ── File transcription (slice 07/08) ──
 	[IPC.FILE_TRANSCRIPTION_PROGRESS]: {
@@ -591,7 +615,7 @@ export function installNativeBridge(): void {
 
 		on(channel: string, callback: (...args: unknown[]) => void): () => void {
 			const route = ROUTE[channel];
-			if (!route || route.kind !== "event") {
+			if (route?.kind !== "event") {
 				return () => {
 					/* no event source for this channel */
 				};

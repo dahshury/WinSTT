@@ -1,4 +1,4 @@
-// The static STT catalog: the `ModelEntry` row shape + the verbatim 73-row `STT_CATALOG`
+// The static STT catalog: the `ModelEntry` row shape + the verbatim 67-row `STT_CATALOG`
 // const ported from `catalog.json`. Pure data, no policy. The precision/EP resolution policy
 // that consumes these rows lives in the sibling `policy` module.
 
@@ -29,11 +29,11 @@ pub struct ModelEntry {
     pub supports_realtime: bool,
 }
 
-/// The full STT catalog: 73 shipped models. Verbatim from `catalog.json` (id / display_name /
+/// The full STT catalog: 67 shipped models. Verbatim from `catalog.json` (id / display_name /
 /// family / onnx_model_name / available_quantizations / param_count / supports_realtime).
 ///
-/// Counts (asserted in tests): whisper 15, moonshine 10, nemo 34, kaldi 4, gigaam 2,
-/// cohere 1, granite 2, sense_voice 1, t-one 1, dolphin 1, qwen3 2.
+/// Counts (asserted in tests): whisper 15, moonshine 10, nemo 27, kaldi 4, gigaam 2,
+/// cohere 2, granite 2, sense_voice 1, t-one 1, dolphin 1, qwen3 2.
 pub const STT_CATALOG: &[ModelEntry] = &[
     // ── Whisper family (15) ──────────────────────────────────────────────────────────────
     ModelEntry {
@@ -140,7 +140,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         display_name: "CrisperWhisper",
         family: Family::Whisper,
         onnx_model_name: "onnx-community/CrisperWhisper-ONNX",
-        available_quantizations: &[""],
+        available_quantizations: &["", "fp16", "q4", "bnb4"],
         param_count: 1_543_304_960,
         supports_realtime: true,
     },
@@ -249,7 +249,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         display_name: "Moonshine Tiny (UK)",
         family: Family::Moonshine,
         onnx_model_name: "moonshine-tiny-uk",
-        available_quantizations: &[""],
+        available_quantizations: &["", "fp16", "q4", "bnb4", "int8", "uint8", "q4f16"],
         param_count: 27_600_000,
         supports_realtime: true,
     },
@@ -258,17 +258,35 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         display_name: "Moonshine Tiny (FR)",
         family: Family::Moonshine,
         onnx_model_name: "moonshine-tiny-fr",
-        available_quantizations: &[""],
+        available_quantizations: &["", "fp16", "q4", "bnb4", "int8", "uint8", "q4f16"],
         param_count: 27_600_000,
         supports_realtime: true,
     },
-    // ── Cohere family (1) ────────────────────────────────────────────────────────────────
+    // ── Cohere family (2) ────────────────────────────────────────────────────────────────
     ModelEntry {
         id: "cohere-transcribe",
         display_name: "Cohere Transcribe",
         family: Family::Cohere,
         onnx_model_name: "cohere-transcribe",
-        available_quantizations: &["", "fp16", "q4", "q4f16"],
+        // int8 lives on Masterx (resolver QUANT_REPO_OVERRIDES) — onnx-community hasn't merged the int8
+        // PR yet; the other precisions resolve from onnx-community/cohere-transcribe-03-2026-ONNX.
+        available_quantizations: &["", "fp16", "int8", "q4", "q4f16"],
+        param_count: 2_000_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "cohere-transcribe-arabic",
+        display_name: "Cohere Transcribe Arabic",
+        family: Family::Cohere,
+        // Same CohereAsr architecture as cohere-transcribe (48-layer Conformer encoder + 8-layer
+        // merged-KV decoder), Arabic + English specialised weights. ONNX export in the onnx-community
+        // merged layout; runs through the existing CohereEngine unchanged.
+        onnx_model_name: "Masterx/cohere-transcribe-arabic-07-2026-ONNX",
+        // fp32 (best accuracy, and fastest on the CPU EP cohere is pinned to) + int8 (8-bit, ~2.1 GB,
+        // accuracy between fp32 and q4) + q4 (smallest ~2.2 GB). fp16/q4f16 are omitted — the CPU EP
+        // up-casts fp16→fp32 (slower + larger), so auto-quant never picks them for cohere
+        // (quant_resolve.rs). The 7.6 GB fp32 encoder needed HF `lfs-enable-largefiles` (>5 GB).
+        available_quantizations: &["", "int8", "q4"],
         param_count: 2_000_000_000,
         supports_realtime: true,
     },
@@ -318,7 +336,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         display_name: "SenseVoice Small",
         family: Family::SenseVoice,
         onnx_model_name: "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
-        available_quantizations: &["int8"],
+        available_quantizations: &["", "int8"],
         param_count: 234_000_000,
         supports_realtime: true,
     },
@@ -533,74 +551,20 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         supports_realtime: true,
     },
     ModelEntry {
-        id: "streaming-nemotron-en-80ms",
-        display_name: "Streaming Nemotron 80ms (English)",
+        // Nemotron-3.5: multilingual (100+ langs) cache-aware streaming RNN-T. SUPERSEDES the
+        // English-only Nemotron (2026-04-25). Same sherpa encoder/decoder/joiner layout, plus a 6th
+        // `prompt_index` encoder input for language selection (bound by the NemoRnntStreaming engine
+        // to the metadata `auto_prompt_id` = auto-detect, or a user-picked language via the realtime
+        // language picker + the encoder's `prompt_dictionary`). The sherpa maintainer publishes this
+        // model int8-only (no fp32 export); 1120 ms matches the English Nemotron's canonical latency.
+        id: "streaming-nemotron-3.5-multi-1120ms-int8",
+        display_name: "Streaming Nemotron 3.5 1120ms (Multilingual)",
         family: Family::Nemo,
-        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-2026-04-25",
-        available_quantizations: &[""],
-        param_count: 600_000_000,
-        supports_realtime: true,
-    },
-    ModelEntry {
-        id: "streaming-nemotron-en-160ms",
-        display_name: "Streaming Nemotron 160ms (English)",
-        family: Family::Nemo,
-        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-2026-04-25",
-        available_quantizations: &[""],
-        param_count: 600_000_000,
-        supports_realtime: true,
-    },
-    ModelEntry {
-        id: "streaming-nemotron-en-560ms",
-        display_name: "Streaming Nemotron 560ms (English)",
-        family: Family::Nemo,
-        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-2026-04-25",
-        available_quantizations: &[""],
-        param_count: 600_000_000,
-        supports_realtime: true,
-    },
-    ModelEntry {
-        id: "streaming-nemotron-en-1120ms",
-        display_name: "Streaming Nemotron 1120ms (English)",
-        family: Family::Nemo,
-        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-2026-04-25",
-        available_quantizations: &[""],
-        param_count: 600_000_000,
-        supports_realtime: true,
-    },
-    ModelEntry {
-        id: "streaming-nemotron-en-80ms-int8",
-        display_name: "Streaming Nemotron (English)",
-        family: Family::Nemo,
-        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-int8-2026-04-25",
-        available_quantizations: &["int8"],
-        param_count: 600_000_000,
-        supports_realtime: true,
-    },
-    ModelEntry {
-        id: "streaming-nemotron-en-160ms-int8",
-        display_name: "Streaming Nemotron 160ms INT8 (English)",
-        family: Family::Nemo,
-        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-int8-2026-04-25",
-        available_quantizations: &["int8"],
-        param_count: 600_000_000,
-        supports_realtime: true,
-    },
-    ModelEntry {
-        id: "streaming-nemotron-en-560ms-int8",
-        display_name: "Streaming Nemotron 560ms INT8 (English)",
-        family: Family::Nemo,
-        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25",
-        available_quantizations: &["int8"],
-        param_count: 600_000_000,
-        supports_realtime: true,
-    },
-    ModelEntry {
-        id: "streaming-nemotron-en-1120ms-int8",
-        display_name: "Streaming Nemotron 1120ms INT8 (English)",
-        family: Family::Nemo,
-        onnx_model_name: "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25",
-        available_quantizations: &["int8"],
+        // Masterx repo ships BOTH fp32 (encoder.onnx + encoder.data) and int8, self-exported from
+        // nvidia/nemotron-3.5-asr-streaming-0.6b via sherpa-onnx's export_onnx.py (the upstream
+        // csukuangfj2 package is int8-only). fp32 is the higher-accuracy default.
+        onnx_model_name: "Masterx/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-2026-06-11",
+        available_quantizations: &["", "int8"],
         param_count: 600_000_000,
         supports_realtime: true,
     },
@@ -685,7 +649,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         display_name: "Zipformer English",
         family: Family::Kaldi,
         onnx_model_name: "zipformer-en",
-        available_quantizations: &[""],
+        available_quantizations: &["", "int8"],
         param_count: 70_000_000,
         supports_realtime: true,
     },

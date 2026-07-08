@@ -16,6 +16,7 @@ import { useTranslations } from "use-intl";
 import type { FileQueueItem, FileQueueStatus } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg } from "@/shared/lib/surface";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 // One status glyph per state. The active row's spinner and the complete row's
 // pop are the only motion here — gated by `motion-safe:` so reduced-motion
@@ -222,7 +223,7 @@ export function QueueRow({
 			aria-current={isActive ? "step" : undefined}
 			className={cn(
 				"group relative flex h-9 items-center gap-2.5 px-3",
-				"motion-safe:animate-[row-in_220ms_ease-out_both]",
+				"motion-safe:animate-[row-in_160ms_ease-out_both]",
 				"transition-[background-color] duration-200 ease-out",
 				isActive
 					? cn(
@@ -245,15 +246,16 @@ export function QueueRow({
 				className="flex min-w-0 flex-1 items-center gap-2"
 				value={determinate ? pct : null}
 			>
-				<Progress.Label
-					className={cn(
-						"min-w-0 flex-1 truncate text-[12px] leading-none tracking-tight",
-						labelClass(item.status),
-					)}
-					title={item.fileName}
-				>
-					{item.fileName}
-				</Progress.Label>
+				<Tooltip content={item.fileName}>
+					<Progress.Label
+						className={cn(
+							"min-w-0 flex-1 truncate text-[12px] leading-none tracking-tight",
+							labelClass(item.status),
+						)}
+					>
+						{item.fileName}
+					</Progress.Label>
+				</Tooltip>
 
 				<RowStatusText item={item} pct={pct} />
 

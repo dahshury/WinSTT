@@ -25,7 +25,7 @@ export function defaultTagBodyClick(
 	defaultTag: string,
 ): (() => void) | undefined {
 	if (findRecordKeyByOllamaTag(deps.pulls, defaultTag) !== undefined) {
-		return undefined;
+		return;
 	}
 	const installedName = findInstalledOllamaTag(deps.installedNames, defaultTag);
 	if (installedName !== undefined) {

@@ -41,44 +41,44 @@ mkdirSync(nixDir, { recursive: true });
 
 // Compute sha256 of the current bun.lock
 const currentHash = new Bun.CryptoHasher("sha256")
-  .update(readFileSync(lockFile))
-  .digest("hex");
+	.update(readFileSync(lockFile))
+	.digest("hex");
 
 // Read the previously stored hash (empty if first run)
 const storedHash = existsSync(hashFile)
-  ? readFileSync(hashFile, "utf-8").trim()
-  : "";
+	? readFileSync(hashFile, "utf-8").trim()
+	: "";
 
 // If hashes match, bun.nix is up to date — nothing to do
 if (currentHash === storedHash) process.exit(0);
 
 // bun.lock has changed — regenerate the Nix dependency file
 console.log(
-  `[check-nix-deps] bun.lock has changed, regenerating ${nixFile}...`,
+	`[check-nix-deps] bun.lock has changed, regenerating ${nixFile}...`,
 );
 
 const result = Bun.spawnSync(["bunx", "bun2nix", "-o", nixFile], {
-  cwd: root,
-  stdio: ["inherit", "inherit", "inherit"],
+	cwd: root,
+	stdio: ["inherit", "inherit", "inherit"],
 });
 
 if (result.exitCode !== 0) {
-  console.warn(
-    "[check-nix-deps] Warning: bunx bun2nix failed. .nix/bun.nix may be outdated.",
-  );
-  console.warn(
-    "[check-nix-deps] Nix users: run `bunx bun2nix -o .nix/bun.nix` manually.",
-  );
-  console.warn(
-    "[check-nix-deps] Non-Nix users: this is safe to ignore, CI will catch it.",
-  );
-  // Exit 0 so that `bun install` is not blocked for non-Nix developers.
-  // CI validates bun.nix independently.
-  process.exit(0);
+	console.warn(
+		"[check-nix-deps] Warning: bunx bun2nix failed. .nix/bun.nix may be outdated.",
+	);
+	console.warn(
+		"[check-nix-deps] Nix users: run `bunx bun2nix -o .nix/bun.nix` manually.",
+	);
+	console.warn(
+		"[check-nix-deps] Non-Nix users: this is safe to ignore, CI will catch it.",
+	);
+	// Exit 0 so that `bun install` is not blocked for non-Nix developers.
+	// CI validates bun.nix independently.
+	process.exit(0);
 }
 
 writeFileSync(hashFile, currentHash + "\n");
 console.log(`[check-nix-deps] Updated ${nixFile}`);
 console.log(
-  "[check-nix-deps] Don't forget to commit: .nix/bun.nix .nix/bun-lock-hash",
+	"[check-nix-deps] Don't forget to commit: .nix/bun.nix .nix/bun-lock-hash",
 );

@@ -3,7 +3,7 @@ title: General
 description: Recording mode, audio feedback, display language, the visualizer and recording overlay, live-transcription placement, and startup behavior.
 ---
 
-The **General** tab is where you choose how recording is triggered, how WinSTT looks while
+The **Recording** tab is where you choose how recording is triggered, how WinSTT looks while
 you dictate, and how it starts at sign-in. It is the busiest settings tab — and several
 controls appear or hide depending on the recording mode you pick.
 
@@ -19,7 +19,7 @@ controls appear or hide depending on the recording mode you pick.
 This section sets the trigger strategy and the feedback you get while dictating. The first
 control swaps the rest of the section in and out.
 
-<Screenshot src="sec-general-recording" alt="The Recording section: the four-way recording-mode switcher, the System Audio Reduction ducking slider, and the Recording Sound toggle with its Sound Library." chrome="card" caption="The Recording section — mode switcher, volume ducking, and the recording-sound library." />
+<Screenshot src="sec-general-recording" alt="The Recording section: the four-way recording-mode switcher and the Recording Sound toggle with its Sound Library." chrome="card" caption="The Recording section — mode switcher and the recording-sound library." />
 
 <SettingRow label="Recording Mode" settingKey="general.recordingMode" default="ptt">
   A four-way switcher: <ModeBadge mode="ptt" /> <ModeBadge mode="toggle" />{" "}
@@ -41,13 +41,13 @@ control swaps the rest of the section in and out.
   video, or anything playing through your speakers.
 </SettingRow>
 
-<Screenshot src="settings-general-listen" alt="The General tab in Listen mode — the loopback device picker and the Speaker Diarization toggle replace the microphone controls." chrome="card" caption="Listen mode swaps the mic controls for a loopback device picker and a diarization toggle." />
+<Screenshot src="settings-general-listen" alt="The Recording tab in Listen mode — the loopback device picker and the Speaker Diarization toggle replace the microphone controls." chrome="card" caption="Listen mode swaps the mic controls for a loopback device picker and a diarization toggle." />
 
 ### Wake-word controls (Wakeword mode)
 
 These three controls appear only when the mode is **Wakeword**.
 
-<Screenshot src="settings-general-wakeword" alt="The General tab in Wake Word mode — the wake-word keyword selector, the sensitivity slider, and the detection-timeout control." chrome="card" caption="Wake Word mode exposes the keyword, its sensitivity, and a post-trigger timeout." />
+<Screenshot src="settings-general-wakeword" alt="The Recording tab in Wake Word mode — the wake-word keyword selector, the sensitivity slider, and the detection-timeout control." chrome="card" caption="Wake Word mode exposes the keyword, its sensitivity, and a post-trigger timeout." />
 
 <SettingRow label="Wake Word" settingKey="general.wakeWord" default="alexa">
   A keyword that arms recording when spoken. The list unifies 18 free keywords across two
@@ -76,7 +76,7 @@ These three controls appear only when the mode is **Wakeword**.
 ### Audio feedback
 
 <SettingRow label="System Audio Reduction" settingKey="general.systemAudioReductionWhileDictating" default="0">
-  Hidden in **Listen** mode. A 6-step slider — **Off, 20%, 40%, 60%, 80%, Mute** — that ducks
+  Now lives on the **Output** tab. A 6-step slider — **Off, 20%, 40%, 60%, 80%, Mute** — that ducks
   your speaker volume while you dictate so playback doesn't bleed into the mic. Intermediate
   values drop to `(100 − value)%` of the previous level; the original volume is restored when
   recording stops.

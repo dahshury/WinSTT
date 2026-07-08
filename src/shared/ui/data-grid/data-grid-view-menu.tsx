@@ -19,9 +19,8 @@ import {
 } from "@/shared/ui/data-grid/primitives/popover";
 import { cn } from "@/shared/lib/cn";
 
-interface DataGridViewMenuProps<TData> extends React.ComponentProps<
-	typeof PopoverContent
-> {
+interface DataGridViewMenuProps<TData>
+	extends React.ComponentProps<typeof PopoverContent> {
 	table: Table<TData>;
 	disabled?: boolean;
 }

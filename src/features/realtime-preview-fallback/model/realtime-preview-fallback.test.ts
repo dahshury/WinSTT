@@ -19,7 +19,6 @@ function model(
 		previewCapable: overrides.previewCapable ?? true,
 		nativeStreaming: overrides.nativeStreaming ?? false,
 		finalReuseSafe: overrides.finalReuseSafe ?? true,
-		supportsRealtime: overrides.supportsRealtime ?? true,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [],

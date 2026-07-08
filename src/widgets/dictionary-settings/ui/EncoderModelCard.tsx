@@ -157,7 +157,7 @@ export function EncoderModelCard({
 						{m.state === "paused"
 							? t("encoderPaused")
 							: t("encoderDownloading")}
-						{percent !== null ? ` · ${percent}%` : ""}
+						{percent === null ? "" : ` · ${percent}%`}
 					</span>
 					{bytesLabel ? (
 						<span className="font-mono">

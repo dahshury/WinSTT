@@ -1,9 +1,10 @@
 import { MagicWand01Icon, PencilIcon } from "@hugeicons/core-free-icons";
 import { computeModelExclusionConfig } from "@/widgets/model-picker";
 import { type ReactNode, useEffect, useState } from "react";
+import { useTranslations } from "use-intl";
 import { SettingSubsection } from "@/entities/setting";
+import { onLlmUnloadStatus } from "@/shared/api/ipc-client";
 import { FormControl } from "@/shared/ui/form-control";
-import { Spinner } from "@/shared/ui/spinner";
 import { Switcher } from "@/shared/ui/switcher";
 import {
 	type LlmFeatureDraft,
@@ -208,8 +209,9 @@ function resolveWarmPending(
  *  the backend warmup pass finishes — seconds, or minutes for a big model on a cold
  *  GPU. `beginWarm` arms the moment the enable commits; `isWarming` then tracks the
  *  real load (resolved by the warmup broadcast) so the spinner doesn't vanish the
- *  instant the toggle moves. */
-function useOllamaWarmTracker(opts: {
+ *  instant the toggle moves. Exported so the panel-level master toggle (which owns
+ *  the enable/disable UX since the header redesign) can render the same truth. */
+export function useOllamaWarmTracker(opts: {
 	enabled: boolean;
 	model: string;
 	provider: LlmProvider;
@@ -247,8 +249,75 @@ function useOllamaWarmTracker(opts: {
 	};
 }
 
+/** Pure resolver for the disable-unload spinner — exported for tests. Once
+ *  armed (the user disabled the feature), stays true until the backend's
+ *  `llm:unload-status` broadcast confirms the eviction batch containing the
+ *  model finished. Re-enabling (or leaving the Ollama provider) settles it
+ *  immediately: the warm tracker owns the enable side. */
+export function resolveUnloadPending(
+	pendingModel: string | null,
+	provider: LlmProvider,
+	enabled: boolean,
+): boolean {
+	return pendingModel !== null && provider === "ollama" && !enabled;
+}
+
+/** Disable-side twin of {@link useOllamaWarmTracker}: flipping a feature off
+ *  moves the toggle instantly, but the model only leaves VRAM once the backend's
+ *  eviction (`keep_alive: 0`) completes — the `llm:unload-status` broadcast with
+ *  `inProgress: false` covering the model is the ground truth. `beginUnload`
+ *  arms the moment the disable commits; a 30 s safety timeout bounds a silent
+ *  backend (evictions run with a 5 s per-model budget). */
+export function useOllamaUnloadTracker(opts: {
+	enabled: boolean;
+	provider: LlmProvider;
+}): { beginUnload: (model: string) => void; isUnloading: boolean } {
+	const { enabled, provider } = opts;
+	const [pendingModel, setPendingModel] = useState<string | null>(null);
+
+	const beginUnload = (model: string) => {
+		if (provider !== "ollama" || model.trim().length === 0) {
+			return;
+		}
+		setPendingModel(model);
+	};
+
+	useEffect(
+		() =>
+			onLlmUnloadStatus((status) => {
+				setPendingModel((pending) =>
+					pending !== null &&
+					!status.inProgress &&
+					status.models.includes(pending)
+						? null
+						: pending,
+				);
+			}),
+		[],
+	);
+
+	// Safety: never let the indicator outlive a stuck/silent eviction.
+	useEffect(() => {
+		if (pendingModel === null) {
+			return;
+		}
+		const id = window.setTimeout(() => setPendingModel(null), 30_000);
+		return () => window.clearTimeout(id);
+	}, [pendingModel]);
+
+	return {
+		beginUnload,
+		isUnloading: resolveUnloadPending(pendingModel, provider, enabled),
+	};
+}
+
 interface FeatureBlockComponentProps extends FeatureBlockProps {
 	checkOllamaReachable: () => Promise<boolean>;
+	/** Externally-driven busy state: the panel-level master toggle owns the
+	 *  warm tracker since the header redesign, so it passes "the model is still
+	 *  warming" down — the block's content stays disabled until the model is
+	 *  genuinely ready, with no spinner (the dimmed state IS the signal). */
+	busy?: boolean;
 	caption?: string;
 	children: ReactNode;
 	forceDisabled?: boolean;
@@ -291,6 +360,7 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 		warmupStatus,
 		t,
 		tc,
+		busy = false,
 		children,
 		caption,
 		forceDisabled = false,
@@ -299,6 +369,10 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 		showToggle = true,
 		title,
 	} = props;
+	// "Source" field label, shared with the STT/TTS Source toggle so this row is
+	// visually identical across tabs (the options themselves are the translated
+	// Local/Cloud strings built in the panel hook).
+	const tSource = useTranslations("integrations");
 	const isDictation = feature === "dictation";
 	const effectiveEnabled = forceDisabled ? false : featureSnapshot.enabled;
 	const warmTracker = useOllamaWarmTracker({
@@ -353,21 +427,13 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 		: {};
 	return (
 		<SettingSubsection
-			busy={warmTracker.isWarming}
+			busy={busy || warmTracker.isWarming}
 			caption={
 				caption ??
 				(isDictation ? t("subDictationCaption") : t("subTransformCaption"))
 			}
-			contentDisabled={!showToggle && !effectiveEnabled}
+			contentDisabled={!(showToggle || effectiveEnabled)}
 			headerless={headerless}
-			headerAction={
-				warmTracker.isWarming ? (
-					<span className="flex items-center gap-1.5 text-[11px] text-foreground-secondary">
-						<Spinner className="size-3.5" />
-						{tc("loading")}
-					</span>
-				) : undefined
-			}
 			icon={isDictation ? PencilIcon : MagicWand01Icon}
 			title={
 				title ?? (isDictation ? t("subDictationTitle") : t("subTransformTitle"))
@@ -379,12 +445,14 @@ export function FeatureBlock(props: FeatureBlockComponentProps) {
 			<div className="flex flex-col divide-y divide-divider">
 				<FormControl
 					disabled={forceDisabled}
-					label={t("provider")}
+					label={tSource("sourceLabel")}
 					layout="row"
 					tooltip={t("providerTooltip")}
 					controlTooltip={forceDisabledTooltip}
 				>
 					<Switcher
+						className="w-52"
+						fullWidth
 						onChange={(v) => {
 							if (!forceDisabled) {
 								updateAny({ provider: v as LlmProvider });

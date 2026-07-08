@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+	<g fill="#808080">
+		<polygon points="87,78 113,78 125,100 113,122 87,122 75,100" />
+		<polygon points="94,133 106,133 118,155 82,155" />
+		<polygon points="62,57 44,88 68,88 74,78" />
+		<polygon points="138,57 156,88 132,88 126,78" />
+	</g>
+	<g fill="#fff">
+		<polygon points="63,34 137,34 119,67 81,67" />
+		<polygon points="25,100 62,165 80,133 62,100" />
+		<polygon points="175,100 138,165 120,133 138,100" />
+	</g>
+</svg>

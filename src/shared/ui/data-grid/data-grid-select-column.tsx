@@ -5,10 +5,8 @@ import {
 	type HitboxSize,
 } from "@/shared/ui/data-grid/data-grid-select-column-cells";
 
-interface GetDataGridSelectColumnOptions<TData> extends Omit<
-	Partial<ColumnDef<TData>>,
-	"id" | "header" | "cell"
-> {
+interface GetDataGridSelectColumnOptions<TData>
+	extends Omit<Partial<ColumnDef<TData>>, "id" | "header" | "cell"> {
 	enableRowMarkers?: boolean;
 	readOnly?: boolean;
 	hitboxSize?: HitboxSize;

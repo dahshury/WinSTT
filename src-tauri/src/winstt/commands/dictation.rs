@@ -330,6 +330,7 @@ impl SttEvents {
         crate::winstt::ducking::request_restore();
         crate::tray::on_tray_transcription_stop(app);
         crate::tray::on_tray_idle(app);
+        crate::winstt::commands::sound::play_error_sound(app);
         let _ = app.emit(
             "stt:transcription-failed",
             serde_json::json!({ "message": message }),

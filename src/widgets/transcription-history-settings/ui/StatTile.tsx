@@ -40,7 +40,7 @@ export function StatTile({
 	return (
 		<div
 			className={`group relative overflow-hidden rounded-lg border border-divider ${tileBg} opacity-0 shadow-surface-2 ${hoverClasses}`}
-			style={{ animation: `fade-in 320ms ease-out ${index * 70}ms forwards` }}
+			style={{ animation: `fade-in 240ms ease-out ${index * 40}ms forwards` }}
 		>
 			<div className="flex flex-col gap-2 px-2.5 py-2.5">
 				<div className="flex items-center gap-2">

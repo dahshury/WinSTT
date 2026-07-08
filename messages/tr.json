@@ -251,7 +251,46 @@
     "retentionDays3": "3 günden sonra",
     "retentionWeeks2": "2 haftadan sonra",
     "retentionMonths3": "3 aydan sonra",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "Transkripsiyon geçmişi",
+    "enabledTooltip": "Açık olduğunda, WinSTT transkripsiyonlarınızı, dönüşümlerinizi ve sesli okuma çalıştırmalarınızı kaydeder; böylece bu pano istatistikleri ve harcamaları gösterebilir. Yeni veri toplamayı durdurmak için kapatın.",
+    "disabledHint": "Geçmiş kapalı — WinSTT yeni etkinlik kaydetmiyor. Mevcut veriler siz silene kadar saklanır.",
+    "deleteAllTitle": "Tüm geçmiş silinsin mi?",
+    "deleteAllDescription": "Kaydedilen tüm transkripsiyonlar, dönüşümler, sesli okuma çalıştırmaları ve kayıtlı ses kalıcı olarak kaldırılacak. Bu işlem geri alınamaz.",
+    "deleteAllButton": "Tüm verileri sil",
+    "clearTtsButton": "Sesli okumayı temizle",
+    "clearTtsTitle": "Tüm sesli okuma geçmişi temizlensin mi?",
+    "clearTtsDescription": "Kaydedilen tüm metin-konuşma çalıştırmaları ve ses kaldırılacak. Bu işlem geri alınamaz.",
+    "combinedTableTitle": "Geçmiş",
+    "filterDateRange": "Tarih aralığı",
+    "filterAllTime": "Tüm zamanlar",
+    "heatmapEarlier": "Daha önce",
+    "heatmapLater": "Daha sonra",
+    "spendingTitle": "Harcama",
+    "spendingTotalLabel": "Toplam harcama",
+    "spendingByModalityTitle": "Türe göre harcama",
+    "spendingByProviderTitle": "Sağlayıcıya göre harcama",
+    "spendingByModelTitle": "Modele göre harcama",
+    "spendingByMakerTitle": "Üreticiye göre harcama",
+    "spendingEstimatedHint": "Tam fiyatlandırma bildirilmediği durumlarda bazı rakamlar tahminidir.",
+    "costSpeechToText": "Konuşma-metin",
+    "costTextToSpeech": "Metin-konuşma",
+    "costLanguageModel": "Dil modeli",
+    "colCharacters": "Karakter",
+    "cloudLabel": "Bulut",
+    "colCost": "Bulut maliyeti",
+    "costEstimated": "Tahmini",
+    "costTotal": "Toplam",
+    "kindSpeechToText": "Konuşma-metin",
+    "kindTextToSpeech": "Metin-konuşma",
+    "durationLlmProcessing": "Yapay zeka işleme",
+    "durationNotRecorded": "Kaydedilmedi",
+    "durationNotRun": "Çalıştırılmadı",
+    "durationRecording": "Kayıt",
+    "durationSpeechToText": "Transkripsiyon",
+    "durationTotalProcessing": "İşleme süresi",
+    "colTtsModel": "Ses modeli",
+    "colVoice": "Ses"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "Ekran metni OCR (yedek)",
+    "contextScreenOcrCaption": "İmlecin yakınındaki ekran metnini ek bağlam olarak oku",
+    "contextScreenOcrTooltip": "Bağlam farkındalığı odaktaki alanı doğrudan okuyamadığında, WinSTT yakındaki metni yakalamak için imlecin çevresindeki ekran alanını okumaya (OCR) geri döner. Bu, doğrudan alan okumasına göre daha yavaş ve daha az kesindir — bu yedeği atlamak için kapatın."
   },
   "model": {
     "initialPrompt": "Başlangıç İstemi",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "Erken başlamak için sessizlik süresi (saniye)",
     "earlyTranscriptionTooltip": "Konuşmayı tamamen bitirmeden önce, bu kadar saniye sessizlik sonrasında transkripsiyon başlar. Konuşmak ile son metni görmek arasındaki gecikmeyi azaltır. Devre dışı bırakmak için 0 olarak ayarlayın.",
     "realtimeModel": "Gerçek Zamanlı Model",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "Gerçek Zamanlı Model",
     "realtimeModelCaption": "Canlı önizleme için daha küçük model",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "Canlı transkripsiyon güncellemeleri arasındaki minimum süre. Daha düşük değerler daha sık güncellemeler verir ancak daha fazla işlem gücü kullanır. Dikte sırasında takılma veya yüksek CPU kullanımı yaşıyorsanız artırın.",
     "llm": "Büyük Dil Modeli",
     "deviceAutoLabel": "Otomatik",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "Kelime kelime yazıya dökme kapatılsın mı?",
+    "realtimeOffWordByWordDescription": "Bu model, siz konuşurken transkripsiyonu kelime kelime akıtır. Gerçek zamanlıyı kapatmak, yalnızca durduğunuzda yazıya dökmeye geçirir.",
+    "realtimeOffWordByWordConfirm": "Kapat"
   },
   "audio": {
     "inputDevice": "Giriş Cihazı",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "Anında",
     "microphoneReleaseSec30": "30 saniye",
     "microphoneReleaseMin1": "1 dakika",
-    "microphoneReleaseMin5": "5 dakika"
+    "microphoneReleaseMin5": "5 dakika",
+    "devicePriorityHandle": "Önceliği yeniden sıralamak için sürükleyin"
   },
   "quality": {
     "enableRealtime": "Gerçek Zamanlıyı Etkinleştir",
@@ -717,7 +766,8 @@
     "waiting": "Konuşma bekleniyor...",
     "serverOffline": "Sunucu çevrimdışı",
     "noAudioDetected": "(ses algılanmadı)",
-    "transcriptionFailed": "(transkripsiyon başarısız)"
+    "transcriptionFailed": "(transkripsiyon başarısız)",
+    "offlineNoLocalModel": "İnternet yok · yerel model yok"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "Yine de yükle",
     "unfitSelectTitle": "Bu büyük model kullanılsın mı?",
     "unfitSelectDescription": "\"{model}\" donanımınızın rahatça çalıştırabileceğinden daha büyük (~{required} gerekli, {available} mevcut). Çok yavaş çalışabilir veya yüklenemeyebilir. Yine de kullansın mı?",
-    "unfitSelectAnyway": "Yine de kullan"
+    "unfitSelectAnyway": "Yine de kullan",
+    "dictionaryAutoAddLiteModel": "Lite modellerde kullanılamaz — sözlük düzeltmelerini otomatik eklemek için daha büyük bir modele geçin."
   },
   "tts": {
     "title": "Metinden Konuşmaya",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "Bulut seslerini kullanmak için Entegrasyonlar'a doğrulanmış bir ElevenLabs API anahtarı ekleyin ve doğrulayın.",
     "cloudLoadingVoices": "Sesler yükleniyor…",
     "cloudNoVoices": "Bu ElevenLabs hesabı için ses bulunamadı.",
-    "cloudError": "ElevenLabs sesleri yüklenemedi."
+    "cloudError": "ElevenLabs sesleri yüklenemedi.",
+    "voiceDesignLabel": "Ses tasarımı",
+    "voiceDesignTooltip": "İstediğiniz sesi sözcüklerle tanımlayın — tını, yaş, aksan, duygu — model de hazır bir ses bankasından seçmek yerine buna uygun bir ses sentezler.",
+    "voiceDesignButtonPlaceholder": "Ses tasarla",
+    "voiceDesignDialogTitle": "Ses tasarla",
+    "voiceDesignDialogDescription": "Sesi bir iki cümleyle tanımlayın. Modelin varsayılan sesini kullanmak için boş bırakın.",
+    "voiceDesignPromptLabel": "Ses açıklaması",
+    "voiceDesignPromptPlaceholder": "örn. hafif İngiliz aksanlı, sıcak ve kalın tonlu bir anlatıcı",
+    "voiceDesignPromptEmptyHint": "Modelin yerleşik sesine geri dönmek için boş bırakın.",
+    "voiceDesignCancel": "İptal",
+    "voiceDesignSave": "Kaydet",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "Bir şeyler yanlış gitti",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "{provider} tarafından hız sınırlandırıldı",
     "toastRateLimitedRetry": "{seconds}sn içinde tekrar deneyin",
     "toastProviderError": "{provider} STT hatası: {message}",
-    "openIntegrations": "Entegrasyonları Aç"
+    "openIntegrations": "Entegrasyonları Aç",
+    "toastTtsOfflineNoLocal": "İnternet yok ve yüklü yerel ses yok — sesli okuma kullanılamıyor."
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "Lite",
+    "liteTierTip": "Daha küçük ve daha hızlı, doğruluğu azaltılmış bir sürüm — sınırlı donanımda hızlı görevler için idealdir."
   },
   "dataGrid": {
     "addRow": "Add row",

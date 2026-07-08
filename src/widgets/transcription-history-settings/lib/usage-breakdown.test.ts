@@ -34,8 +34,22 @@ describe("computeUsage", () => {
 		];
 		const { models } = computeUsage(entries, "Other");
 		expect(models).toEqual([
-			{ key: "Whisper Tiny", label: "Whisper Tiny", count: 3, pct: 75 },
-			{ key: "Parakeet TDT", label: "Parakeet TDT", count: 1, pct: 25 },
+			{
+				key: "Whisper Tiny",
+				label: "Whisper Tiny",
+				count: 3,
+				pct: 75,
+				logo: null,
+				cloud: false,
+			},
+			{
+				key: "Parakeet TDT",
+				label: "Parakeet TDT",
+				count: 1,
+				pct: 25,
+				logo: null,
+				cloud: false,
+			},
 		]);
 	});
 
@@ -65,8 +79,22 @@ describe("computeUsage", () => {
 		];
 		const { categories } = computeUsage(entries, "Other");
 		expect(categories).toEqual([
-			{ key: "code", label: "Code", count: 2, pct: 67 },
-			{ key: "email", label: "Email", count: 1, pct: 33 },
+			{
+				key: "code",
+				label: "Code",
+				count: 2,
+				pct: 67,
+				logo: null,
+				cloud: false,
+			},
+			{
+				key: "email",
+				label: "Email",
+				count: 1,
+				pct: 33,
+				logo: null,
+				cloud: false,
+			},
 		]);
 	});
 });

@@ -43,8 +43,9 @@ const helpers = helpersModule;
 // Sibling suites populate it and bun:test never isolates module state, so a
 // leaked non-empty list makes the "no models installed" empty-state test fail
 // purely on file order. Reset to empty before every test in this file.
-const { useLlmCatalogStore } =
-	await import("@/entities/llm-catalog/model/llm-catalog-store");
+const { useLlmCatalogStore } = await import(
+	"@/entities/llm-catalog/model/llm-catalog-store"
+);
 beforeEach(() => {
 	useLlmCatalogStore.setState({ models: [] });
 });
@@ -116,8 +117,9 @@ describe("OllamaModelManagerDialog", () => {
 
 	test("handleSelect calls onModelInstalled and onClose when model is clicked", async () => {
 		// Seed the zustand store with one model so InstalledRow renders
-		const { useLlmCatalogStore } =
-			await import("@/entities/llm-catalog/model/llm-catalog-store");
+		const { useLlmCatalogStore } = await import(
+			"@/entities/llm-catalog/model/llm-catalog-store"
+		);
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -133,8 +135,9 @@ describe("OllamaModelManagerDialog", () => {
 	});
 
 	test("handleSelect with no onModelInstalled still calls onClose", async () => {
-		const { useLlmCatalogStore } =
-			await import("@/entities/llm-catalog/model/llm-catalog-store");
+		const { useLlmCatalogStore } = await import(
+			"@/entities/llm-catalog/model/llm-catalog-store"
+		);
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -157,8 +160,9 @@ describe("OllamaModelManagerDialog", () => {
 	});
 
 	test("ask-delete flow sets pending-delete (shows ConfirmDialog title)", async () => {
-		const { useLlmCatalogStore } =
-			await import("@/entities/llm-catalog/model/llm-catalog-store");
+		const { useLlmCatalogStore } = await import(
+			"@/entities/llm-catalog/model/llm-catalog-store"
+		);
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -181,8 +185,9 @@ describe("OllamaModelManagerDialog", () => {
 	});
 
 	test("handleConfirmDelete calls deleteModel and clears state", async () => {
-		const { useLlmCatalogStore } =
-			await import("@/entities/llm-catalog/model/llm-catalog-store");
+		const { useLlmCatalogStore } = await import(
+			"@/entities/llm-catalog/model/llm-catalog-store"
+		);
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -213,8 +218,9 @@ describe("OllamaModelManagerDialog", () => {
 	});
 
 	test("cancelling delete dialog clears pendingDelete", async () => {
-		const { useLlmCatalogStore } =
-			await import("@/entities/llm-catalog/model/llm-catalog-store");
+		const { useLlmCatalogStore } = await import(
+			"@/entities/llm-catalog/model/llm-catalog-store"
+		);
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});

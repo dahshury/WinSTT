@@ -22,6 +22,7 @@ import { DownloadProgressBar } from "@/shared/ui/download";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { IconButton } from "@/shared/ui/icon-button";
 import { Toggle } from "@/shared/ui/toggle";
+import { Tooltip } from "@/shared/ui/tooltip";
 import type { AboutT } from "./types";
 
 // Brand / product name - a proper noun that is identical in every locale.
@@ -186,13 +187,14 @@ function UpdateStatusBar({
 				</div>
 				<div className="flex min-w-0 flex-1 items-center gap-2 px-4">
 					<StatusDot tone={tone} />
-					<span
-						aria-live="polite"
-						className="min-w-0 truncate text-body text-foreground-secondary"
-						title={statusLabel}
-					>
-						{statusLabel}
-					</span>
+					<Tooltip content={statusLabel}>
+						<span
+							aria-live="polite"
+							className="min-w-0 truncate text-body text-foreground-secondary"
+						>
+							{statusLabel}
+						</span>
+					</Tooltip>
 				</div>
 				<div className="flex shrink-0 items-center justify-center px-2">
 					{isDownloaded ? (
@@ -212,7 +214,7 @@ function UpdateStatusBar({
 								<HugeiconsIcon
 									aria-hidden="true"
 									className={cn(
-										"transition-transform duration-300 ease-out",
+										"transition-transform duration-160 ease-out",
 										disabled
 											? "animate-spin"
 											: "group-hover:-rotate-180 group-active:rotate-0",

@@ -245,12 +245,15 @@ export function SttModelSelectorView(
 					: (trigger ?? (
 							<SttModelSelectorTrigger
 								catalog={baseModels}
+								currentQuantization={currentQuantization}
 								disabled={disabled || isLoading}
 								downloadProgress={downloadProgress}
 								kind={kind}
 								open={open}
 								placeholder={placeholder}
+								selectedId={value || undefined}
 								selectedModel={selectedModel ?? undefined}
+								statesById={statesById}
 							/>
 						))
 			}

@@ -46,7 +46,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder,
+};
 
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::sync_ext::MutexExt;
@@ -57,7 +59,7 @@ mod settings_modal;
 use placement::{
     anchor_from_rect, center_window, close_model_picker_with_animation,
     dispatch_device_picker_dom_event, place_picker, resolve_opener,
-    visible_picker_open_should_toggle,
+    visible_picker_open_should_toggle, warm_model_picker_compositor,
 };
 use settings_modal::close_settings_window;
 
@@ -110,29 +112,34 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         ignore_cursor: false,
         background: None,
     },
-    // Settings — 900×640 frameless, opaque, centered on the main pill. Ported
-    // from main.ts createSettingsWindow(), but reworked into a MODAL CHILD of the
-    // pill (owner = main, set in `ensure_window`): it sits above the pill, can't be
+    // Settings — frameless TRANSPARENT window centered on the main pill; the
+    // renderer draws the entire window visual (rounded card + border + shadow)
+    // and animates it in/out as ONE unit, so the window is invisible until the
+    // renderer reveals fully-ready content (no opaque frame can ever appear
+    // before the tab content). 940×680 = the 900×640 card + a 20px transparent
+    // gutter for the CSS shadow. Reworked into a MODAL CHILD of the pill
+    // (owner = main, set in `ensure_window`): it sits above the pill, can't be
     // dismissed independently, and the pill is input-disabled while it's open
-    // (`set_main_modal`) so the two read as one window. `skip_taskbar: true` keeps a
-    // single taskbar/alt-tab entry (the owner relationship already hides it, this is
-    // explicit). Not `always_on_top` — a modal floats above its OWNER, not all apps.
+    // (`set_main_modal`) so the two read as one window. `skip_taskbar: true`
+    // keeps a single taskbar/alt-tab entry. `shadow: false` — a DWM shadow on a
+    // transparent undecorated window draws a SQUARE outline that ignores the
+    // CSS rounding; the shadow is painted by the renderer instead.
     WindowSpec {
         label: "settings",
         url: "windows/settings.html",
         title: "WinSTT Settings",
-        width: 900.0,
-        height: 640.0,
-        min_width: 900.0,
-        min_height: 640.0,
+        width: 940.0,
+        height: 680.0,
+        min_width: 940.0,
+        min_height: 680.0,
         resizable: false,
         decorations: false,
-        transparent: false,
+        transparent: true,
         always_on_top: false,
         skip_taskbar: true,
-        shadow: true,
+        shadow: false,
         ignore_cursor: false,
-        background: SUBSTRATE,
+        background: None,
     },
     WindowSpec {
         label: "overlay",
@@ -142,6 +149,30 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         height: 240.0,
         min_width: 720.0,
         min_height: 240.0,
+        resizable: false,
+        decorations: false,
+        transparent: true,
+        always_on_top: true,
+        skip_taskbar: true,
+        shadow: false,
+        ignore_cursor: true,
+        background: None,
+    },
+    // Tray-indicator pill — a small transparent, click-through, non-focusable
+    // popup anchored over the notification-area corner. Shows the current recording
+    // mode / post-processing preset on a global-hotkey switch and animates in/out.
+    // Coexists with the `overlay` pill (both can be on screen), so it is its OWN
+    // window. `ignore_cursor: true` (purely informational — never interactive) and
+    // built non-focusable in `ensure_window` so showing it never steals keyboard
+    // focus from the user's active app.
+    WindowSpec {
+        label: "tray-indicator",
+        url: "windows/tray-indicator.html",
+        title: "WinSTT — Mode",
+        width: 320.0,
+        height: 132.0,
+        min_width: 1.0,
+        min_height: 1.0,
         resizable: false,
         decorations: false,
         transparent: true,
@@ -450,6 +481,12 @@ struct PickerState {
     width: f64,
     height: f64,
     mode: PickerMode,
+    /// True from close-animation start until the next anchored open. A picker
+    /// in this grace is still `is_visible()` (the hide is delayed so the faded
+    /// frame composits — see `MODEL_PICKER_HIDE_DELAY_MS`), so placement
+    /// triggers like `resize_window` must NOT re-place it: `place_model_picker`
+    /// re-shows the window and cancels the pending hide, reopening the picker.
+    closing: bool,
 }
 
 static PICKER_STATE: Mutex<Option<HashMap<&'static str, PickerState>>> = Mutex::new(None);
@@ -482,6 +519,7 @@ fn with_picker_state<R>(label: &'static str, f: impl FnOnce(&mut PickerState) ->
         width: w,
         height: h,
         mode: PickerMode::default(),
+        closing: false,
     });
     f(entry)
 }
@@ -531,8 +569,9 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
 
     // The footprint panel is a hover affordance: build it non-focusable so
     // showing it on hover never pulls keyboard focus off the user's active app
-    // (every other window activates on show via `set_focus`).
-    if spec.label == "model-footprint" {
+    // (every other window activates on show via `set_focus`). The tray-indicator
+    // pill is purely informational and must likewise never steal focus.
+    if spec.label == "model-footprint" || spec.label == "tray-indicator" {
         builder = builder.focusable(false);
     }
 
@@ -640,6 +679,15 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
             let _ = window.set_ignore_cursor_events(true);
         }
     }
+
+    // The overlay is the only window that runs with a `SetWindowRgn` hit region,
+    // which drops it into the legacy frame pipeline — without this, clicking the
+    // pill paints the classic caption bar behind it (see the doc comment on
+    // `suppress_overlay_frame_paint`).
+    #[cfg(target_os = "windows")]
+    if spec.label == "overlay" {
+        crate::winstt::commands::overlay::suppress_overlay_frame_paint(&window);
+    }
     Ok(window)
 }
 
@@ -661,6 +709,9 @@ const POST_STARTUP_PREWARM_LABELS: &[&str] = &[
     "model-picker",
     "model-footprint",
     "device-picker",
+    // Prewarmed hidden so its renderer is already subscribed to `settings:changed`
+    // and can show the mode/preset pill instantly on the first hotkey switch.
+    "tray-indicator",
 ];
 
 /// Pre-create hidden secondary windows after the main pill paints, so first
@@ -684,8 +735,14 @@ pub(crate) fn prewarm_windows(app: &AppHandle) {
             }
             let started = Instant::now();
             match ensure_window(&app, spec.label) {
-                Ok(_) => {
+                Ok(window) => {
                     log::debug!("[prewarm] '{}' pre-created (hidden, deferred)", spec.label);
+                    // The picker also needs its COMPOSITOR warmed (an off-screen
+                    // show/hide cycle), or the first user open eats the open
+                    // animation during WebView2's cold-composite.
+                    if spec.label == "model-picker" {
+                        warm_model_picker_compositor(&app, &window);
+                    }
                     if crate::startup_profile_enabled() {
                         log::info!(
                             "[startup] prewarmed window '{}': {} ms",
@@ -899,6 +956,7 @@ pub fn open_window(
     // Plain window: center, then show + focus. The window is opaque (SUBSTRATE
     // background) so it shows cleanly without a white flash; no native opacity
     // animation (see settings_modal.rs for why the layered fade was removed).
+    let was_visible = window.is_visible().unwrap_or(false);
     let show_result = (|| {
         center_window(&app, &window, label == "settings");
         window.show().map_err(|e| e.to_string())?;
@@ -909,6 +967,19 @@ pub fn open_window(
         // Settings closes (close_self_window / close_window / CloseRequested).
         if label == "settings" {
             set_main_modal(&app, true);
+            // Tell the keep-alive settings renderer it just came on screen so it
+            // replays its enter animation. WebView2 does not reliably deliver
+            // `focus`/`visibilitychange` across a native hide/show cycle, so this
+            // explicit signal is the deterministic trigger. Show FIRST so a
+            // suspended webview has resumed before the event (same ordering as
+            // the model-picker anchor emit). The payload says whether the window
+            // was ALREADY visible: a re-invoked open (tray click while open, or
+            // mid-close-fade) must cancel any pending renderer-side hide and
+            // repair to open, but never restart the animation over live content.
+            let _ = app.emit(
+                crate::winstt::commands::events::names::SETTINGS_WINDOW_SHOWN,
+                was_visible,
+            );
         }
         Ok(())
     })();
@@ -1034,11 +1105,17 @@ pub fn resize_window(
     authorize_window_operation(&webview, WindowOperation::Resize, label)?;
 
     if is_picker(label) {
-        with_picker_state(label, |s| {
+        let closing = with_picker_state(label, |s| {
             s.width = width.max(1.0).ceil();
             s.height = height.max(1.0).ceil();
+            s.closing
         });
-        if let Some(window) = app.get_webview_window(label)
+        // Never re-place during the close grace: the window is still visible
+        // (the hide is delayed so the faded frame composits) and
+        // `place_model_picker` would re-show it + cancel the pending hide —
+        // a closed picker that immediately reopens.
+        if !closing
+            && let Some(window) = app.get_webview_window(label)
             && window.is_visible().unwrap_or(false)
         {
             place_picker(&app, label, &window);

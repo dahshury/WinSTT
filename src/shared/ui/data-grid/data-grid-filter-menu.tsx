@@ -55,9 +55,8 @@ const OPERATORS_WITHOUT_VALUE = new Set([
 	"isFalse",
 ]);
 
-interface DataGridFilterMenuProps<TData> extends React.ComponentProps<
-	typeof PopoverContent
-> {
+interface DataGridFilterMenuProps<TData>
+	extends React.ComponentProps<typeof PopoverContent> {
 	table: Table<TData>;
 	disabled?: boolean;
 }
@@ -85,7 +84,9 @@ export function DataGridFilterMenu<TData>({
 		const availableColumns: { id: string; label: string }[] = [];
 
 		for (const column of table.getAllColumns()) {
-			if (!column.getCanFilter()) continue;
+			if (!column.getCanFilter()) {
+				continue;
+			}
 
 			const label = column.columnDef.meta?.label ?? column.id;
 			const variant = column.columnDef.meta?.cell?.variant ?? "short-text";
@@ -107,7 +108,9 @@ export function DataGridFilterMenu<TData>({
 
 	const onFilterAdd = () => {
 		const firstColumn = columns[0];
-		if (!firstColumn) return;
+		if (!firstColumn) {
+			return;
+		}
 
 		const variant = columnVariants.get(firstColumn.id) ?? "short-text";
 		const defaultOperator = getDefaultOperator(variant);
@@ -126,7 +129,9 @@ export function DataGridFilterMenu<TData>({
 
 	const onFilterUpdate = (filterId: string, updates: Partial<ColumnFilter>) => {
 		table.setColumnFilters((prevFilters) => {
-			if (!prevFilters) return prevFilters;
+			if (!prevFilters) {
+				return prevFilters;
+			}
 			return prevFilters.map((filter) =>
 				filter.id === filterId ? { ...filter, ...updates } : filter,
 			);

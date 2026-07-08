@@ -17,6 +17,7 @@ export class ApplicationError extends Error {
 		// not part of the standard `ErrorConstructor` lib — feature-detect through
 		// a narrow local type so this stays sound without pulling in node types.
 		const errorCtor = Error as ErrorConstructor & {
+			// biome-ignore lint/complexity/noBannedTypes: mirrors V8's captureStackTrace signature, whose constructor param is typed as the broad `Function` — `this.constructor` is a `Function` and fits nothing narrower.
 			captureStackTrace?: (target: object, ctor?: Function) => void;
 		};
 		errorCtor.captureStackTrace?.(this, this.constructor);
@@ -64,7 +65,7 @@ function getErrorStack(error: unknown): string | undefined {
 	if (error instanceof Error) {
 		return error.stack;
 	}
-	return;
+	return undefined;
 }
 
 function formatErrorContext(error: unknown): string {

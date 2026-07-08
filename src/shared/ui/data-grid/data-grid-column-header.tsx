@@ -13,7 +13,7 @@ import {
 	PinOffIcon,
 	XIcon,
 } from "@/shared/ui/data-grid/primitives/icons";
-import * as React from "react";
+import type * as React from "react";
 import { useTranslations } from "use-intl";
 
 import {
@@ -32,9 +32,8 @@ import {
 import { getColumnVariant } from "@/shared/ui/data-grid/lib/data-grid";
 import { cn } from "@/shared/lib/cn";
 
-interface DataGridColumnHeaderProps<TData, TValue> extends React.ComponentProps<
-	typeof DropdownMenuTrigger
-> {
+interface DataGridColumnHeaderProps<TData, TValue>
+	extends React.ComponentProps<typeof DropdownMenuTrigger> {
 	header: Header<TData, TValue>;
 	table: Table<TData>;
 }
@@ -76,9 +75,8 @@ export function DataGridColumnHeader<TData, TValue>({
 				const updated = [...prev];
 				updated[existingSortIndex] = newSort;
 				return updated;
-			} else {
-				return [...prev, newSort];
 			}
+			return [...prev, newSort];
 		});
 	};
 
@@ -104,7 +102,9 @@ export function DataGridColumnHeader<TData, TValue>({
 		event: React.PointerEvent<HTMLButtonElement>,
 	) => {
 		onPointerDown?.(event);
-		if (event.defaultPrevented) return;
+		if (event.defaultPrevented) {
+			return;
+		}
 
 		if (event.button !== 0) {
 			return;
@@ -229,10 +229,8 @@ export function DataGridColumnHeader<TData, TValue>({
 
 const DataGridColumnResizer = DataGridColumnResizerImpl;
 
-interface DataGridColumnResizerProps<
-	TData,
-	TValue,
-> extends DataGridColumnHeaderProps<TData, TValue> {
+interface DataGridColumnResizerProps<TData, TValue>
+	extends DataGridColumnHeaderProps<TData, TValue> {
 	label: string;
 }
 

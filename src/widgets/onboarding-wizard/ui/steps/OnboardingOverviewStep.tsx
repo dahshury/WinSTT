@@ -12,13 +12,9 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { domAnimation, LazyMotion, m, useReducedMotion } from "motion/react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
+import { springs } from "@/shared/lib/springs";
 
-const CARD_SPRING = {
-	type: "spring",
-	stiffness: 360,
-	damping: 32,
-	mass: 0.8,
-} as const;
+const CARD_SPRING = springs.slow;
 const MotionBaseButton = m.create(BaseButton);
 
 interface Ability {
@@ -140,7 +136,7 @@ function AbilityLink({
 				"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
 			)}
 			onClick={() => void onOpenSettingsSection(ability.section)}
-			transition={{ type: "spring", stiffness: 420, damping: 32, mass: 0.65 }}
+			transition={springs.slow}
 			type="button"
 			whileHover={{ y: -1 }}
 			whileTap={{ scale: 0.985 }}

@@ -20,8 +20,11 @@ pub mod chatterbox;
 pub mod kitten;
 pub mod kokoro;
 pub mod local_engines;
+pub mod orpheus;
 pub mod phonemize;
 pub mod piper;
+pub mod qwen3_tts;
+pub mod spark;
 pub mod supertonic;
 
 mod cloud;
@@ -29,6 +32,7 @@ mod download;
 mod local;
 mod openrouter;
 mod provider;
+mod sampling;
 mod service;
 mod splitter;
 #[cfg(test)]

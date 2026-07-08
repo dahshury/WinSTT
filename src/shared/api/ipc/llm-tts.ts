@@ -1,21 +1,29 @@
-import { commands, type Result, type SpeakResult } from "@/bindings";
+import {
+	commands,
+	type CloudVoiceCatalogPayload,
+	type CloudVoicePayload,
+	type LlmPreviewConfig as LlmPreviewConfigWire,
+	type Result,
+	type SpeakResult,
+	type TransformApplyResult,
+	type VoiceCatalogPayload,
+} from "@/bindings";
 import type { CustomModifier, PresetEntry } from "@/shared/lib/preset-prompts";
 import { IPC } from "../ipc-channels";
 import {
 	commandOrDefault,
 	hasNativeBridge,
-	invokeOrDefault,
 	noop,
 	on,
 	onCast,
 	onTyped,
-	send,
 } from "../ipc-transport";
 import type {
 	LlmWarmupStatus,
 	OllamaDeleteResult,
 	OllamaDetectResult,
 	OllamaLibraryCatalogResult as OllamaLibraryCatalogResultT,
+	OllamaLibraryHit,
 	OllamaLibraryTagsResult as OllamaLibraryTagsResultT,
 	OllamaModel,
 	OllamaPullProgress,
@@ -70,23 +78,37 @@ const OPENROUTER_TTS_SCAN_FALLBACK: OpenRouterTtsScanResult = {
 };
 
 export const fetchOllamaModels = (): Promise<OllamaScanResult> =>
-	invokeOrDefault<OllamaScanResult>(IPC.LLM_SCAN_MODELS, OLLAMA_SCAN_FALLBACK);
+	commandOrDefault(
+		"ollama_refresh_models",
+		async () => unwrapResult(await commands.ollamaRefreshModels()),
+		OLLAMA_SCAN_FALLBACK,
+	);
 
 export const detectOllama = (): Promise<OllamaDetectResult> =>
-	invokeOrDefault<OllamaDetectResult>(
-		IPC.LLM_DETECT_OLLAMA,
+	commandOrDefault(
+		"ollama_detect",
+		async () =>
+			asDomain<OllamaDetectResult>(unwrapResult(await commands.ollamaDetect())),
 		OLLAMA_DETECT_FALLBACK,
 	);
 
 export const startOllama = (): Promise<{ started: boolean; error?: string }> =>
-	invokeOrDefault<{ started: boolean; error?: string }>(IPC.LLM_START_OLLAMA, {
-		started: false,
-		error: "IPC unavailable",
-	});
+	commandOrDefault(
+		"ollama_start",
+		async () =>
+			asDomain<{ started: boolean; error?: string }>(
+				unwrapResult(await commands.ollamaStart()),
+			),
+		{ started: false, error: "IPC unavailable" },
+	);
 
 export const fetchOpenRouterModels = (): Promise<OpenRouterScanResult> =>
-	invokeOrDefault<OpenRouterScanResult>(
-		IPC.LLM_SCAN_OPENROUTER_MODELS,
+	commandOrDefault(
+		"openrouter_refresh_models",
+		async () =>
+			asDomain<OpenRouterScanResult>(
+				unwrapResult(await commands.openrouterRefreshModels()),
+			),
 		OPENROUTER_SCAN_FALLBACK,
 	);
 
@@ -95,8 +117,12 @@ export const fetchOpenRouterModels = (): Promise<OpenRouterScanResult> =>
  * the cloud STT picker. Uses the shared OpenRouter LLM key on the main side.
  */
 export const fetchOpenRouterSttModels = (): Promise<OpenRouterSttScanResult> =>
-	invokeOrDefault<OpenRouterSttScanResult>(
-		IPC.STT_SCAN_OPENROUTER_MODELS,
+	commandOrDefault(
+		"openrouter_refresh_stt_models",
+		async () =>
+			asDomain<OpenRouterSttScanResult>(
+				unwrapResult(await commands.openrouterRefreshSttModels()),
+			),
 		OPENROUTER_STT_SCAN_FALLBACK,
 	);
 
@@ -105,13 +131,21 @@ export const fetchOpenRouterSttModels = (): Promise<OpenRouterSttScanResult> =>
  * TTS picker. Uses the shared OpenRouter LLM key on the main side.
  */
 export const fetchOpenRouterTtsModels = (): Promise<OpenRouterTtsScanResult> =>
-	invokeOrDefault<OpenRouterTtsScanResult>(
-		IPC.TTS_SCAN_OPENROUTER_MODELS,
+	commandOrDefault(
+		"openrouter_refresh_tts_models",
+		async () =>
+			asDomain<OpenRouterTtsScanResult>(
+				unwrapResult(await commands.openrouterRefreshTtsModels()),
+			),
 		OPENROUTER_TTS_SCAN_FALLBACK,
 	);
 
 export const processWithLlm = (text: string): Promise<string> =>
-	invokeOrDefault<string>(IPC.LLM_PROCESS_TEXT, text, { text });
+	commandOrDefault(
+		"process_text",
+		async () => unwrapResult(await commands.processText(text, "")),
+		text,
+	);
 
 /**
  * Apply the transforms feature's composed preset prompt to whatever the user
@@ -120,17 +154,13 @@ export const processWithLlm = (text: string): Promise<string> =>
  * No per-transform identifier — the configuration lives in
  * `settings.llm.transforms` (presets + customModifiers).
  */
-export interface TransformApplyResult {
-	after: string;
-	before: string;
-	source: "uia" | "clipboard" | "empty";
-}
+export type { TransformApplyResult } from "@/bindings";
 
 export const applyTransform = (): Promise<TransformApplyResult> =>
-	invokeOrDefault<TransformApplyResult>(
-		IPC.TRANSFORMS_APPLY,
+	commandOrDefault(
+		"apply_transform",
+		async () => unwrapResult(await commands.applyTransform()),
 		{ before: "", after: "", source: "empty" as const },
-		{},
 	);
 
 /**
@@ -161,16 +191,24 @@ export interface LlmPreviewConfig {
  * Playground modal. An explicit `config` overrides the feature's saved config
  * so the user can test arbitrary tone/modifier/provider/model combinations.
  */
-export const runLlmPreview = (
+export const runLlmPreview = async (
 	text: string,
 	feature: "dictation" | "transforms",
 	config?: LlmPreviewConfig,
-): Promise<string> =>
-	invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, {
-		text,
-		feature,
-		config,
-	});
+): Promise<string> => {
+	if (!hasNativeBridge()) {
+		return text;
+	}
+	// CRITICAL-REJECT semantics preserved: the playground must SURFACE provider
+	// failures, so errors propagate instead of falling back to the input text.
+	return unwrapResult(
+		await commands.applyTransformPreview(
+			text,
+			feature,
+			config ? asDomain<LlmPreviewConfigWire>(config) : null,
+		),
+	);
+};
 
 // ── Preview-before-pasting ──
 // The finalized transcript is held back from auto-paste; the overlay shows the
@@ -183,10 +221,22 @@ export const onPreviewReady = (
 ) => onCast(IPC.STT_PREVIEW_READY, cb);
 
 export const confirmPaste = (text: string): Promise<void> =>
-	invokeOrDefault<void>(IPC.PREVIEW_CONFIRM_PASTE, undefined, { text });
+	commandOrDefault(
+		"confirm_paste",
+		async () => {
+			unwrapResult(await commands.confirmPaste(text));
+		},
+		undefined,
+	);
 
 export const cancelPreview = (): Promise<void> =>
-	invokeOrDefault<void>(IPC.PREVIEW_CANCEL, undefined);
+	commandOrDefault(
+		"cancel_preview",
+		async () => {
+			unwrapResult(await commands.cancelPreview());
+		},
+		undefined,
+	);
 
 interface TransformAppliedPayload {
 	after: string;
@@ -215,22 +265,8 @@ export const onTransformProcessingEnd = (cb: () => void) =>
 
 // ─── TTS ──────────────────────────────────────────────────────────────
 
-interface TtsVoice {
-	gender: string;
-	id: string;
-	label: string;
-	language: string;
-}
-
-interface TtsLanguage {
-	code: string;
-	label: string;
-}
-
-export interface TtsVoiceCatalog {
-	languages: TtsLanguage[];
-	voices: TtsVoice[];
-}
+/** Generated `VoiceCatalogPayload`, re-exported under the legacy renderer name. */
+export type TtsVoiceCatalog = VoiceCatalogPayload;
 
 export interface TtsSpeakResult {
 	requestId: string;
@@ -241,6 +277,20 @@ function unwrapResult<T>(result: Result<T, string>): T {
 		return result.data;
 	}
 	throw result.error;
+}
+
+/**
+ * Renderer-refined view of a wire payload (and vice versa for request
+ * configs). The generated bindings carry `field: T | null` where the
+ * renderer's domain types (`shared/api/models.ts`) use `field?: T`, and
+ * OpenRouter pricing is refined from `JsonValue` to `OpenRouterPricing`.
+ * Runtime shapes are identical (serde emits `null` for `None`; `null` and
+ * absent read the same through the optional-chaining consumers use), so this
+ * is the ONE visible seam where that trust lives — the channel-based
+ * transport used to apply the same cast invisibly inside `invokeOrDefault<T>`.
+ */
+function asDomain<T>(payload: unknown): T {
+	return payload as T;
 }
 
 export interface TtsChunkPayload {
@@ -297,18 +347,28 @@ export interface TtsInstallFailedPayload {
 	reason: string;
 }
 
-export interface CloudTtsVoice {
-	category: string;
-	id: string;
-	language: string | null;
-	name: string;
-	previewUrl: string | null;
+/** Lifecycle of a settings-driven local TTS session drop. */
+export interface TtsUnloadStatusPayload {
+	inProgress: boolean;
 }
 
-export interface CloudTtsVoiceCatalog {
-	error: string | null;
-	voices: CloudTtsVoice[];
+/**
+ * Disable-side twin of {@link LlmWarmupStatus}: a settings-driven Ollama VRAM
+ * eviction batch. `inProgress: true` when the batch starts, `false` once every
+ * named model has been processed (evicted, or skipped because an enabled
+ * feature re-claimed it).
+ */
+export interface LlmUnloadStatus {
+	endpoint: string;
+	inProgress: boolean;
+	models: string[];
+	timestamp: number;
 }
+
+/** Generated `CloudVoicePayload`, re-exported under the legacy renderer name. */
+export type CloudTtsVoice = CloudVoicePayload;
+/** Generated `CloudVoiceCatalogPayload`, re-exported under the legacy renderer name. */
+export type CloudTtsVoiceCatalog = CloudVoiceCatalogPayload;
 
 const TTS_VOICE_FALLBACK: TtsVoiceCatalog = { voices: [], languages: [] };
 
@@ -322,9 +382,11 @@ const TTS_CLOUD_VOICE_FALLBACK: CloudTtsVoiceCatalog = {
  * cached on the main side, so repeat calls are cheap.
  */
 export const listTtsVoices = (modelId?: string): Promise<TtsVoiceCatalog> =>
-	invokeOrDefault<TtsVoiceCatalog>(IPC.TTS_LIST_VOICES, TTS_VOICE_FALLBACK, {
-		modelId,
-	});
+	commandOrDefault(
+		"tts_list_voices",
+		() => commands.ttsListVoices(modelId ?? null),
+		TTS_VOICE_FALLBACK,
+	);
 
 /**
  * Fetch the live ElevenLabs voice catalog for cloud TTS (GET /v2/voices,
@@ -332,8 +394,9 @@ export const listTtsVoices = (modelId?: string): Promise<TtsVoiceCatalog> =>
  * key; returns `{ voices: [], error }` when the key is missing/invalid.
  */
 export const ttsCloudListVoices = (): Promise<CloudTtsVoiceCatalog> =>
-	invokeOrDefault<CloudTtsVoiceCatalog>(
-		IPC.TTS_CLOUD_LIST_VOICES,
+	commandOrDefault(
+		"tts_list_cloud_voices",
+		async () => unwrapResult(await commands.ttsListCloudVoices()),
 		TTS_CLOUD_VOICE_FALLBACK,
 	);
 
@@ -347,10 +410,11 @@ export const ttsCloudListVoices = (): Promise<CloudTtsVoiceCatalog> =>
 export const ttsCloudPreview = (payload: {
 	previewUrl: string;
 }): Promise<TtsSpeakResult> =>
-	invokeOrDefault<TtsSpeakResult>(
-		IPC.TTS_CLOUD_PREVIEW,
+	commandOrDefault(
+		"tts_preview_cloud",
+		async () =>
+			unwrapResult(await commands.ttsPreviewCloud(payload.previewUrl)),
 		{ requestId: "" },
-		payload,
 	);
 
 /**
@@ -387,12 +451,10 @@ export const ttsCloudSubscription = (): Promise<{
 	creditsExhausted: boolean;
 	tier: string | null;
 }> =>
-	invokeOrDefault<{ creditsExhausted: boolean; tier: string | null }>(
-		IPC.TTS_CLOUD_SUBSCRIPTION,
-		{
-			tier: null,
-			creditsExhausted: false,
-		},
+	commandOrDefault(
+		"tts_cloud_subscription",
+		async () => unwrapResult(await commands.ttsCloudSubscription()),
+		{ tier: null, creditsExhausted: false },
 	);
 
 // ── Multi-provider TTS catalog (model-aware picker) ───────────────────
@@ -420,45 +482,58 @@ export interface TtsModelsWithStatePayload {
 /** Fetch the TTS catalog plus per-model cache state in one round-trip. */
 export const fetchTtsModelsWithState =
 	(): Promise<TtsModelsWithStatePayload | null> =>
-		invokeOrDefault<TtsModelsWithStatePayload | null>(
-			IPC.TTS_LIST_MODELS_WITH_STATE,
+		commandOrDefault(
+			"tts_list_models_with_state",
+			// The generated DTO carries `state` as a plain string; the seam keeps
+			// the renderer-narrowed `CacheState` typing the picker stores rely on.
+			async () =>
+				asDomain<TtsModelsWithStatePayload>(
+					await commands.ttsListModelsWithState(),
+				),
 			null,
 		);
 
 /** Kick off a per-quant download for one `(modelId, quantization)` TTS model. */
 export const ttsPredownloadModel = (modelId: string, quantization: string) =>
-	invokeOrDefault<void>(IPC.TTS_PREDOWNLOAD, undefined, {
-		modelId,
-		quantization,
-	});
+	commandOrDefault(
+		"tts_predownload_model",
+		() => commands.ttsPredownloadModel(modelId, quantization),
+		undefined,
+	);
 
 /** Pause an in-flight TTS model download (partial file survives for resume). */
 export const ttsDownloadPause = (modelId: string, quantization: string) =>
-	invokeOrDefault<void>(IPC.TTS_DOWNLOAD_PAUSE, undefined, {
-		modelId,
-		quantization,
-	});
+	commandOrDefault(
+		"tts_download_pause",
+		() => commands.ttsDownloadPause(modelId, quantization),
+		undefined,
+	);
 
 /** Resume a paused TTS model download. */
 export const ttsDownloadResume = (modelId: string, quantization: string) =>
-	invokeOrDefault<void>(IPC.TTS_DOWNLOAD_RESUME, undefined, {
-		modelId,
-		quantization,
-	});
+	commandOrDefault(
+		"tts_download_resume",
+		() => commands.ttsDownloadResume(modelId, quantization),
+		undefined,
+	);
 
 /** Cancel an in-flight TTS model download. */
 export const ttsDownloadCancel = (modelId: string, quantization: string) =>
-	invokeOrDefault<void>(IPC.TTS_DOWNLOAD_CANCEL, undefined, {
-		modelId,
-		quantization,
-	});
+	commandOrDefault(
+		"tts_download_cancel",
+		() => commands.ttsDownloadCancel(modelId, quantization),
+		undefined,
+	);
 
 /** Delete one cached TTS model from disk. */
 export const ttsDeleteModel = (modelId: string, quantization: string) =>
-	invokeOrDefault<void>(IPC.TTS_DELETE_MODEL, undefined, {
-		modelId,
-		quantization,
-	});
+	commandOrDefault(
+		"tts_delete_model",
+		async () => {
+			unwrapResult(await commands.ttsDeleteModel(modelId, quantization));
+		},
+		undefined,
+	);
 
 export interface TtsCatalogDownloadProgressPayload {
 	downloadedBytes: number;
@@ -503,7 +578,11 @@ export const onTtsModelCacheChanged = (
  * now" button so users can pre-stage the download.
  */
 export const initTts = (): Promise<{ ready: boolean }> =>
-	invokeOrDefault<{ ready: boolean }>(IPC.TTS_INIT, { ready: false });
+	commandOrDefault(
+		"tts_init",
+		async () => unwrapResult(await commands.ttsInit()),
+		{ ready: false },
+	);
 
 /**
  * Speak an arbitrary string. Returns the server-correlated ``requestId``;
@@ -515,7 +594,19 @@ export const ttsSpeak = (payload: {
 	lang?: string;
 	speed?: number;
 }): Promise<TtsSpeakResult> =>
-	invokeOrDefault<TtsSpeakResult>(IPC.TTS_SPEAK, { requestId: "" }, payload);
+	commandOrDefault(
+		"tts_speak",
+		async () =>
+			unwrapResult(
+				await commands.ttsSpeak(
+					payload.text,
+					payload.voice ?? null,
+					payload.lang ?? null,
+					payload.speed ?? null,
+				),
+			),
+		{ requestId: "" },
+	);
 
 /**
  * Capture the active text selection in the focused window and speak it.
@@ -525,7 +616,11 @@ export const ttsSpeak = (payload: {
  */
 /** Cancel one or every active TTS request. */
 export const ttsCancel = (requestId?: string): void => {
-	send(IPC.TTS_CANCEL, { requestId });
+	void commandOrDefault(
+		"tts_cancel",
+		() => commands.ttsCancel(requestId ?? null),
+		undefined,
+	);
 };
 
 /**
@@ -534,15 +629,27 @@ export const ttsCancel = (requestId?: string): void => {
  * to the active source's speed setting.
  */
 export const ttsSetSpeed = (speed: number): void => {
-	send(IPC.TTS_SET_SPEED, { speed });
+	void commandOrDefault(
+		"tts_set_speed",
+		() => commands.ttsSetSpeed(speed),
+		undefined,
+	);
 };
 
 export const ttsRequestPlaybackPause = (reason = "media-session"): void => {
-	send(IPC.TTS_REQUEST_PLAYBACK_PAUSE, { reason });
+	void commandOrDefault(
+		"tts_pause_playback",
+		() => commands.ttsPausePlayback(reason),
+		undefined,
+	);
 };
 
 export const ttsRequestPlaybackResume = (reason = "media-session"): void => {
-	send(IPC.TTS_REQUEST_PLAYBACK_RESUME, { reason });
+	void commandOrDefault(
+		"tts_resume_playback",
+		() => commands.ttsResumePlayback(reason),
+		undefined,
+	);
 };
 
 /**
@@ -551,7 +658,11 @@ export const ttsRequestPlaybackResume = (reason = "media-session"): void => {
  * boundary, preserving the partial file for resume.
  */
 export const ttsInstallPause = (): void => {
-	send(IPC.TTS_INSTALL_PAUSE, {});
+	void commandOrDefault(
+		"tts_install_pause",
+		() => commands.ttsInstallPause(),
+		undefined,
+	);
 };
 
 /**
@@ -559,7 +670,13 @@ export const ttsInstallPause = (): void => {
  * task and the downloader picks up the partial via HTTP Range.
  */
 export const ttsInstallResume = (): void => {
-	send(IPC.TTS_INSTALL_RESUME, {});
+	void commandOrDefault(
+		"tts_install_resume",
+		async () => {
+			unwrapResult(await commands.ttsInstallResume());
+		},
+		undefined,
+	);
 };
 
 /**
@@ -568,7 +685,11 @@ export const ttsInstallResume = (): void => {
  * cleanup either way.
  */
 export const ttsInstallCancel = (): void => {
-	send(IPC.TTS_INSTALL_CANCEL, {});
+	void commandOrDefault(
+		"tts_install_cancel",
+		() => commands.ttsInstallCancel(),
+		undefined,
+	);
 };
 
 /**
@@ -578,7 +699,11 @@ export const ttsInstallCancel = (): void => {
  * another window can flip its "loading" spinner to a stop control.
  */
 export const ttsReportPlaybackStarted = (requestId: string): void => {
-	send(IPC.TTS_REPORT_PLAYBACK_STARTED, { requestId });
+	void commandOrDefault(
+		"tts_report_playback_started",
+		() => commands.ttsReportPlaybackStarted(requestId),
+		undefined,
+	);
 };
 
 /**
@@ -589,7 +714,11 @@ export const ttsReportPlaybackStarted = (requestId: string): void => {
  * earlier server-side synthesis-complete event.
  */
 export const ttsReportPlaybackEnded = (requestId: string): void => {
-	send(IPC.TTS_REPORT_PLAYBACK_ENDED, { requestId });
+	void commandOrDefault(
+		"tts_report_playback_ended",
+		() => commands.ttsReportPlaybackEnded(requestId),
+		undefined,
+	);
 };
 
 export const onTtsStarted = (
@@ -643,6 +772,16 @@ export const onTtsInstallStatus = (
 ): (() => void) =>
 	onCast<TtsInstallStatusPayload>(IPC.TTS_INSTALL_STATUS, callback);
 
+/**
+ * Local TTS session drop lifecycle (settings disable / cloud switch).
+ * `inProgress: true` fires when the drop starts, `false` once the memory is
+ * actually freed — drives the toggle row's truthful "unloading" indicator.
+ */
+export const onTtsUnloadStatus = (
+	callback: (payload: TtsUnloadStatusPayload) => void,
+): (() => void) =>
+	onCast<TtsUnloadStatusPayload>(IPC.TTS_UNLOAD_STATUS, callback);
+
 export const onTtsInstallFailed = (
 	callback: (payload: TtsInstallFailedPayload) => void,
 ): (() => void) =>
@@ -693,24 +832,32 @@ const OLLAMA_DELETE_FALLBACK: OllamaDeleteResult = {
 };
 
 export const pullOllamaModel = (model: string): Promise<OllamaPullResult> =>
-	invokeOrDefault<OllamaPullResult>(IPC.LLM_PULL_MODEL, OLLAMA_PULL_FALLBACK, {
-		model,
-	});
+	commandOrDefault(
+		"ollama_pull",
+		async () =>
+			asDomain<OllamaPullResult>(
+				unwrapResult(await commands.ollamaPull(model)),
+			),
+		OLLAMA_PULL_FALLBACK,
+	);
 
 export const cancelOllamaModelPull = (
 	model: string,
 ): Promise<{ cancelled: boolean }> =>
-	invokeOrDefault<{ cancelled: boolean }>(
-		IPC.LLM_CANCEL_PULL_MODEL,
+	commandOrDefault(
+		"ollama_cancel_pull",
+		async () => unwrapResult(await commands.ollamaCancelPull(model)),
 		{ cancelled: false },
-		{ model },
 	);
 
 export const deleteOllamaModel = (model: string): Promise<OllamaDeleteResult> =>
-	invokeOrDefault<OllamaDeleteResult>(
-		IPC.LLM_DELETE_MODEL,
+	commandOrDefault(
+		"ollama_delete",
+		async () =>
+			asDomain<OllamaDeleteResult>(
+				unwrapResult(await commands.ollamaDelete(model)),
+			),
 		OLLAMA_DELETE_FALLBACK,
-		{ model },
 	);
 
 const OLLAMA_LIBRARY_TAGS_FALLBACK: OllamaLibraryTagsResultT = {
@@ -721,10 +868,26 @@ const OLLAMA_LIBRARY_TAGS_FALLBACK: OllamaLibraryTagsResultT = {
 export const fetchOllamaLibraryTags = (
 	model: string,
 ): Promise<OllamaLibraryTagsResultT> =>
-	invokeOrDefault<OllamaLibraryTagsResultT>(
-		IPC.LLM_FETCH_OLLAMA_TAGS,
+	commandOrDefault(
+		"ollama_refresh_tags",
+		async () =>
+			asDomain<OllamaLibraryTagsResultT>(
+				unwrapResult(await commands.ollamaRefreshTags(model)),
+			),
 		{ ...OLLAMA_LIBRARY_TAGS_FALLBACK, model },
-		{ model },
+	);
+
+/** Per-slug model-homepage scrape (description / capabilities / pulls / updated)
+ *  so a typed tag that isn't in the recommended catalog can fill the same card
+ *  fields. Degrades to `{ name }` when ollama.com is unreachable. */
+export const fetchOllamaModelHit = (model: string): Promise<OllamaLibraryHit> =>
+	commandOrDefault(
+		"ollama_refresh_model_hit",
+		async () =>
+			asDomain<OllamaLibraryHit>(
+				unwrapResult(await commands.ollamaRefreshModelHit(model)),
+			),
+		{ name: model },
 	);
 
 const OLLAMA_LIBRARY_CATALOG_FALLBACK: OllamaLibraryCatalogResultT = {
@@ -733,8 +896,12 @@ const OLLAMA_LIBRARY_CATALOG_FALLBACK: OllamaLibraryCatalogResultT = {
 
 export const fetchOllamaLibraryCatalog =
 	(): Promise<OllamaLibraryCatalogResultT> =>
-		invokeOrDefault<OllamaLibraryCatalogResultT>(
-			IPC.LLM_FETCH_OLLAMA_LIBRARY,
+		commandOrDefault(
+			"ollama_refresh_library",
+			async () =>
+				asDomain<OllamaLibraryCatalogResultT>(
+					unwrapResult(await commands.ollamaRefreshLibrary()),
+				),
 			OLLAMA_LIBRARY_CATALOG_FALLBACK,
 		);
 
@@ -762,8 +929,12 @@ export const onLlmLearnedProperNouns = (
 
 // Warmup status is cached by the backend. Renderer code treats `null` as
 // "no active warmup info, hide the banner".
-export const getLlmWarmupStatus = () =>
-	invokeOrDefault<LlmWarmupStatus | null>(IPC.LLM_GET_WARMUP_STATUS, null);
+export const getLlmWarmupStatus = (): Promise<LlmWarmupStatus | null> =>
+	commandOrDefault(
+		"llm_warmup_status",
+		async () => unwrapResult(await commands.llmWarmupStatus()),
+		null,
+	);
 
 export const retryLlmWarmup = (): Promise<LlmWarmupStatus | null> =>
 	commandOrDefault(
@@ -775,3 +946,7 @@ export const retryLlmWarmup = (): Promise<LlmWarmupStatus | null> =>
 export const onLlmWarmupStatus = (
 	cb: (status: LlmWarmupStatus | null) => void,
 ): (() => void) => onCast(IPC.LLM_WARMUP_STATUS, cb);
+
+export const onLlmUnloadStatus = (
+	cb: (status: LlmUnloadStatus) => void,
+): (() => void) => onCast(IPC.LLM_UNLOAD_STATUS, cb);

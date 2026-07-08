@@ -204,6 +204,11 @@ export interface TranscriptionHistoryEntry {
 	 * LLM ran or the provider didn't report token usage.
 	 */
 	llmTokensPerSecond?: number;
+	/**
+	 * Wall-clock time the STT model spent finalizing this transcription after
+	 * recording stopped. Distinct from `durationMs`, which is audio length.
+	 */
+	sttProcessingMs?: number;
 	/** Pre-LLM text (post-processing applied). Omitted when no LLM ran. */
 	originalText?: string;
 	/** Fixed sensitive-data categories; never raw sensitive values. */
@@ -218,6 +223,21 @@ export interface TranscriptionHistoryEntry {
 	text: string;
 	timestamp: number;
 	wordCount: number;
+	/**
+	 * USD billed for the cloud STT upload that produced this transcription.
+	 * Omitted for local decodes and entries recorded before cost tracking.
+	 */
+	sttCostUsd?: number;
+	/**
+	 * True when `sttCostUsd` is a client-side estimate (the provider reports
+	 * no billed amount) rather than a provider-billed figure.
+	 */
+	sttCostIsEstimate?: boolean;
+	/**
+	 * USD cost of the cloud LLM post-processing pass, from the provider's
+	 * native token accounting × catalog rates. Omitted for local LLMs.
+	 */
+	llmCostUsd?: number;
 }
 
 export const fetchTranscriptionHistory = () =>
@@ -252,6 +272,50 @@ export const deleteTransformHistoryEntry = (id: string) =>
 		{ deleted: false },
 		{ id },
 	);
+
+/** One text-to-speech read-aloud run, listed in the History tab beside STT. */
+export interface TtsHistoryEntry {
+	/** Characters synthesized (the unit most TTS providers bill on). */
+	characters: number;
+	/**
+	 * USD billed for the run. Omitted for local synthesis and cloud runs whose
+	 * cost could not be resolved.
+	 */
+	costUsd?: number;
+	/** True when `costUsd` is a client-side estimate. */
+	costIsEstimate?: boolean;
+	id: string;
+	/** Engine id: `<provider>:<id>` for cloud synthesis, else the local model key. */
+	model: string;
+	/** Wall-clock synthesis time for the whole read-aloud session. */
+	processingMs?: number;
+	/** The text that was read aloud. */
+	text: string;
+	timestamp: number;
+	voice?: string;
+	wordCount: number;
+}
+
+export const fetchTtsHistory = () =>
+	invokeOrDefault<TtsHistoryEntry[]>(IPC.TTS_HISTORY_GET_ALL, []);
+
+export const clearTtsHistory = () =>
+	invokeOrDefault<{ cleared: true }>(IPC.TTS_HISTORY_CLEAR, {
+		cleared: true,
+	});
+
+export const deleteTtsHistoryEntry = (id: string) =>
+	invokeOrDefault<{ deleted: boolean }>(
+		IPC.TTS_HISTORY_DELETE,
+		{ deleted: false },
+		{ id },
+	);
+
+export const onTtsHistoryAdded = (cb: (entry: TtsHistoryEntry) => void) =>
+	onCast<TtsHistoryEntry>(IPC.TTS_HISTORY_ADDED, cb);
+
+export const onTtsHistoryDeleted = (cb: (payload: { id: string }) => void) =>
+	onCast<{ id: string }>(IPC.TTS_HISTORY_DELETED, cb);
 
 /** Load the WAV for an entry as a data URI ready for an `<audio src>`. */
 export const loadTranscriptionHistoryAudio = (id: string) =>

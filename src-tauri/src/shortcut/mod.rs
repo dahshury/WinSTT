@@ -5,15 +5,14 @@
 
 mod accelerator_commands;
 mod handler;
+mod mode_cycle;
 mod modifier_combo;
-mod post_process_commands;
 mod priority;
 mod ptt_release_watchdog;
 mod settings_commands;
 mod tauri_impl;
 
 pub use accelerator_commands::*;
-pub use post_process_commands::*;
 pub use settings_commands::*;
 
 use log::{error, warn};
@@ -106,6 +105,15 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
             binding.id
         );
         return Ok(());
+    }
+
+    // The transcribe (PTT) hotkey drives the "held + ArrowUp" recording-mode cycle
+    // gesture. Arm/refresh the cycle hook to match the CURRENT accelerator here —
+    // this is the single chokepoint hit by both startup (`tauri_impl::init_shortcuts`)
+    // and every rebind (`change_binding`), and it runs BEFORE the modifier-only
+    // early return so it covers both the combo-hook and full-accelerator backends.
+    if binding.id == "transcribe" {
+        mode_cycle::update(app, binding.current_binding.trim());
     }
 
     if modifier_combo::register_if_modifier_only(app, &binding)? {
@@ -229,6 +237,9 @@ fn reconcile_one(app: &AppHandle, id: &str, enabled: bool, accel: &str) {
 
 pub(crate) fn disarm_all_shortcuts(app: &AppHandle) {
     CANCEL_SHORTCUT_REGISTERED.store(false, Ordering::SeqCst);
+    // Tear down the recording-mode cycle gesture hook alongside the other global
+    // shortcuts (e.g. when a packaged instance takes over hotkey ownership).
+    mode_cycle::disable();
 
     for mut binding in settings::get_bindings(app).into_values() {
         if binding.id == "transcribe" {

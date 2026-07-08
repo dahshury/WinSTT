@@ -29,6 +29,10 @@ export interface SwitcherOptionToggleProps<T extends string> {
 	onMouseEnter: () => void;
 	onMouseLeave: () => void;
 	option: SwitcherOption<T>;
+	/** "sm" shrinks the segment so an inline switcher (e.g. the modifier
+	 *  Low/Medium/High tier) fits inside a text-row's line-box without growing
+	 *  the row. Defaults to "md" (combobox-height). */
+	size?: "md" | "sm";
 }
 
 export function SwitcherOptionToggle<T extends string>({
@@ -42,7 +46,16 @@ export function SwitcherOptionToggle<T extends string>({
 	onFocus,
 	onMouseEnter,
 	onMouseLeave,
+	size = "md",
 }: SwitcherOptionToggleProps<T>) {
+	const isSm = size === "sm";
+	// sm keeps the segment within an 18px line-box (matches text-body-sm's
+	// rendered height) so a modifier row with a level switch stays exactly as
+	// tall as one without; md is the default combobox-height segment.
+	const sizeClass = isSm
+		? "h-[18px] gap-1 px-2 text-[11px]"
+		: "h-8 gap-1.5 px-2.5 text-[13px]";
+	const iconSize = isSm ? 12 : 16;
 	const colored = option.color !== undefined;
 	const style: SwitcherCssVars | undefined = colored
 		? { "--switcher-color": option.color }
@@ -68,7 +81,8 @@ export function SwitcherOptionToggle<T extends string>({
 	const toggleEl = (
 		<Toggle
 			className={cn(
-				"relative z-raised inline-flex h-8 items-center justify-center gap-1.5 bg-transparent px-2.5 font-medium text-[13px] outline-none transition-colors focus-visible:outline-none",
+				"relative z-raised inline-flex items-center justify-center bg-transparent font-medium outline-none transition-colors focus-visible:outline-none",
+				sizeClass,
 				textClass,
 				option.disabled && "cursor-not-allowed opacity-60",
 				grid ? "w-full" : fullWidth && "flex-1",
@@ -91,7 +105,7 @@ export function SwitcherOptionToggle<T extends string>({
 					aria-hidden="true"
 					className="shrink-0"
 					icon={option.icon}
-					size={16}
+					size={iconSize}
 				/>
 			) : null}
 			<span className="inline-grid whitespace-nowrap">

@@ -69,7 +69,7 @@ function installStub(): void {
 			if (channel === IPC.SOUND_LIBRARY_REMOVE) {
 				return removeResult;
 			}
-			return;
+			return undefined;
 		},
 	};
 }

@@ -8,7 +8,8 @@
     "tools/**/*.ts",
     "test/**/*.ts",
     "src/widgets/model-picker/index.ts",
-    "src/shared/ui/data-grid/index.ts"
+    "src/shared/ui/data-grid/index.ts",
+    "src/shared/ui/pending/index.ts"
   ],
   "project": ["src/**/*.{ts,tsx}"],
   "ignoreExportsUsedInFile": {
@@ -16,7 +17,9 @@
     "type": true
   },
   "ignoreIssues": {
-    "src/widgets/ollama-model-manager/lib/ollama-model-manager-test-helpers.ts": ["exports"],
+    "src/widgets/ollama-model-manager/lib/ollama-model-manager-test-helpers.ts": [
+      "exports"
+    ],
     "src/bindings.ts": ["exports", "types"],
     "src/shared/api/schema.zod.ts": ["exports", "types"]
   }

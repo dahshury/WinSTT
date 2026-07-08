@@ -57,6 +57,7 @@ import { Switcher } from "@/shared/ui/switcher";
 
 interface TrayMenuState {
 	inputDeviceIndex: number | null;
+	inputDevicePriority: string[];
 	isConnected: boolean;
 	receivePrereleaseUpdates: boolean;
 	recordingMode: RecordingMode;
@@ -68,6 +69,7 @@ type TrayMenuAction =
 			receivePrereleaseUpdates: boolean;
 			recordingMode: RecordingMode;
 			inputDeviceIndex: number | null;
+			inputDevicePriority: string[];
 	  }
 	| { type: "set-connected"; value: boolean }
 	| { type: "set-recording-mode"; value: RecordingMode };
@@ -83,6 +85,7 @@ function trayMenuReducer(
 				receivePrereleaseUpdates: action.receivePrereleaseUpdates,
 				recordingMode: action.recordingMode,
 				inputDeviceIndex: action.inputDeviceIndex,
+				inputDevicePriority: action.inputDevicePriority,
 			};
 		case "set-connected":
 			return { ...state, isConnected: action.value };
@@ -96,6 +99,7 @@ function trayMenuReducer(
 const INITIAL_TRAY_MENU_STATE: TrayMenuState = {
 	recordingMode: "ptt",
 	inputDeviceIndex: null,
+	inputDevicePriority: [],
 	isConnected: false,
 	receivePrereleaseUpdates: false,
 };
@@ -156,6 +160,7 @@ function useTrayMenuRender() {
 	const {
 		recordingMode,
 		inputDeviceIndex,
+		inputDevicePriority,
 		isConnected,
 		receivePrereleaseUpdates,
 	} = state;
@@ -206,6 +211,7 @@ function useTrayMenuRender() {
 					settings.general.receivePrereleaseUpdates ?? false,
 				recordingMode: settings.general.recordingMode,
 				inputDeviceIndex: settings.audio?.inputDeviceIndex ?? null,
+				inputDevicePriority: settings.audio?.inputDevicePriority ?? [],
 			});
 		});
 
@@ -221,6 +227,7 @@ function useTrayMenuRender() {
 				receivePrereleaseUpdates: s.general.receivePrereleaseUpdates ?? false,
 				recordingMode: s.general.recordingMode,
 				inputDeviceIndex: s.audio?.inputDeviceIndex ?? null,
+				inputDevicePriority: s.audio?.inputDevicePriority ?? [],
 			});
 		});
 
@@ -342,6 +349,7 @@ function useTrayMenuRender() {
 		defaultDeviceName: defaultDevice?.name,
 		devices,
 		inputDeviceIndex,
+		inputDevicePriority,
 		monitorOpen: false,
 		systemDefaultLabel: tAudio("systemDefault"),
 	});

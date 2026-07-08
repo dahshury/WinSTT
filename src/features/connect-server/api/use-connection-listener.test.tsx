@@ -15,7 +15,7 @@ function makeApi(invokeImpl?: (channel: string) => unknown) {
 			if (invokeImpl) {
 				return invokeImpl(channel);
 			}
-			return;
+			return undefined;
 		},
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
 			const list = listeners.get(channel) ?? [];
@@ -62,7 +62,7 @@ describe("useConnectionListener", () => {
 			if (channel === IPC.STT_IS_CONNECTED) {
 				return true;
 			}
-			return;
+			return undefined;
 		});
 		renderHook(() => useConnectionListener());
 		await waitFor(() => {

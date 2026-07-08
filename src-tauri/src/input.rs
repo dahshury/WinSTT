@@ -248,10 +248,28 @@ fn send_vk_clicks(vk: VIRTUAL_KEY, count: usize) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn release_current_modifiers() -> Result<Vec<VIRTUAL_KEY>, String> {
-    let released: Vec<VIRTUAL_KEY> = modifier_vks()
+    release_modifiers(&modifier_vks())
+}
+
+/// Streaming variant: release held Ctrl/Shift/Alt but deliberately KEEP the Win key.
+/// Win does not alter KEYEVENTF_UNICODE/WM_CHAR text or VK_BACK, while synthetically
+/// releasing a physically-held Win key lets keyboard auto-repeat re-assert it as a
+/// FRESH Win-down (its logical state was cleared) — re-arming the Start menu so the
+/// user's eventual physical release opened Start after word-by-word dictation.
+/// (With the blocking PTT hook the combo keys never enter the logical key state and
+/// this whole call is a no-op; this guards the polling-fallback path.)
+#[cfg(target_os = "windows")]
+fn release_current_modifiers_except_win() -> Result<Vec<VIRTUAL_KEY>, String> {
+    let non_win: Vec<VIRTUAL_KEY> = modifier_vks()
         .into_iter()
-        .filter(|&vk| vk_is_down(vk))
+        .filter(|&vk| vk != VK_LWIN && vk != VK_RWIN)
         .collect();
+    release_modifiers(&non_win)
+}
+
+#[cfg(target_os = "windows")]
+fn release_modifiers(vks: &[VIRTUAL_KEY]) -> Result<Vec<VIRTUAL_KEY>, String> {
+    let released: Vec<VIRTUAL_KEY> = vks.iter().copied().filter(|&vk| vk_is_down(vk)).collect();
     send_vk_events(&released, KEYEVENTF_KEYUP)?;
     Ok(released)
 }
@@ -406,7 +424,7 @@ pub fn edit_text_streaming(
     #[cfg(target_os = "windows")]
     {
         let _ = enigo;
-        let released = release_current_modifiers()?;
+        let released = release_current_modifiers_except_win()?;
         if !released.is_empty() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }

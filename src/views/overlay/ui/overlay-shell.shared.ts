@@ -1,5 +1,16 @@
-import { type Variants } from "motion/react";
+import type { Variants } from "motion/react";
 import { useEffect, useReducer, useRef, useState } from "react";
+import { exitFallbackMs, springs } from "@/shared/lib/springs";
+// The glass material tokens now live in shared/ui so every floating pill (overlay,
+// TTS island, tray-indicator) draws from ONE source; re-exported here so the
+// overlay's existing `./overlay-shell.shared` imports are unchanged.
+import {
+	BUBBLE_SHADOW,
+	CHIP_SHADOW,
+	GLASS_SURFACE,
+} from "@/shared/ui/glass-pill";
+
+export { BUBBLE_SHADOW, CHIP_SHADOW, GLASS_SURFACE };
 
 export type SizePreset = "xs" | "sm" | "md" | "lg" | "xl";
 
@@ -94,11 +105,11 @@ export const bubbleVariants: Variants = {
 	initial: { opacity: 0 },
 	animate: {
 		opacity: 1,
-		transition: { duration: 0.18, ease: [0.22, 1, 0.36, 1] },
+		transition: springs.moderate,
 	},
 	exit: {
 		opacity: 0,
-		transition: { duration: 0.18, ease: [0.4, 0, 1, 1] },
+		transition: springs.moderate.exit,
 	},
 };
 
@@ -106,11 +117,11 @@ export const chipVariants: Variants = {
 	initial: { opacity: 0 },
 	animate: {
 		opacity: 1,
-		transition: { duration: 0.18, ease: [0.22, 1, 0.36, 1] },
+		transition: springs.moderate,
 	},
 	exit: {
 		opacity: 0,
-		transition: { duration: 0.18, ease: [0.4, 0, 1, 1] },
+		transition: springs.moderate.exit,
 	},
 };
 
@@ -124,14 +135,13 @@ export const breatheVariants: Variants = {
 			repeat: Number.POSITIVE_INFINITY,
 		},
 	},
-	exit: { opacity: 0, transition: { duration: 0.2 } },
+	exit: { opacity: 0, transition: springs.moderate.exit },
 };
 
-export const GLASS_SURFACE =
-	"bg-gradient-to-b from-surface-3/65 to-surface-1/92 ring-1 ring-overlay-foreground/[0.08] ring-inset backdrop-blur-md backdrop-saturate-150";
-export const BUBBLE_SHADOW = "shadow-glass-pill";
-export const CHIP_SHADOW = "shadow-glass-chip";
-export const OVERLAY_PANEL_CLOSE_MS = 380;
+// Deferred-unmount window for panel closes (TTS island / transform island):
+// the slow tier's exit tween plus the shared safety buffer, so the timer stays
+// in step with the motion tokens.
+export const OVERLAY_PANEL_CLOSE_MS = exitFallbackMs(springs.slow);
 
 export function useDelayedUnmount(visible: boolean, exitMs: number): boolean {
 	const [mounted, setMounted] = useState(visible);

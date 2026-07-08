@@ -1,3 +1,7 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { isLiteOllamaModel } from "../src/entities/llm-catalog/lib/lite-model";
 import {
 	buildSystemPrompt,
 	type PresetEntry,
@@ -610,9 +614,10 @@ async function callOllama(
 	system: string,
 	userPrompt: string,
 	id: string,
+	modelOverride?: string,
 ): Promise<string> {
 	const endpoint = process.env["OLLAMA_ENDPOINT"] ?? "http://127.0.0.1:11434";
-	const model = process.env["OLLAMA_MODEL"] ?? "gemma4:e4b";
+	const model = modelOverride ?? process.env["OLLAMA_MODEL"] ?? "gemma4:e4b";
 	const numCtx = Number(process.env["OLLAMA_NUM_CTX"] ?? 16384);
 	const response = await fetch(`${endpoint}/api/chat`, {
 		method: "POST",
@@ -649,7 +654,8 @@ async function callOpenRouter(
 		throw new Error(
 			"OPENROUTER_API_KEY is required for the openrouter provider",
 		);
-	const model = process.env["OPENROUTER_MODEL"] ?? "google/gemini-3.1-flash-lite";
+	const model =
+		process.env["OPENROUTER_MODEL"] ?? "google/gemini-3.1-flash-lite";
 	const response = await fetch(
 		"https://openrouter.ai/api/v1/chat/completions",
 		{
@@ -728,16 +734,24 @@ async function runCase(testCase: RegressionCase, system: string) {
 async function runCapabilityGapCase(
 	testCase: CapabilityGapCase,
 	profile: PresetProfile,
+	opts?: { lite?: boolean; model?: string },
 ) {
-	const system = buildSystemPrompt(profile.presets);
+	const system = buildSystemPrompt(profile.presets, { lite: opts?.lite });
 	const userPrompt = buildUserPromptForPresets(
 		testCase.before,
 		profile.presets,
 	);
+	// An explicit model override (scoreboard mode) always runs over Ollama —
+	// the scoreboard grades LOCAL models regardless of the PROVIDER env.
 	const text =
-		PROVIDER === "openrouter"
+		PROVIDER === "openrouter" && !opts?.model
 			? await callOpenRouter(system, userPrompt, `${profile.id}:${testCase.id}`)
-			: await callOllama(system, userPrompt, `${profile.id}:${testCase.id}`);
+			: await callOllama(
+					system,
+					userPrompt,
+					`${profile.id}:${testCase.id}`,
+					opts?.model,
+				);
 	const actual = normalize(text);
 	const failures = testCase.checks.filter((check) => !check.pass(actual));
 	return { actual, failures, pass: failures.length === 0 };
@@ -761,6 +775,93 @@ const MODEL_LABEL =
 	PROVIDER === "openrouter"
 		? (process.env["OPENROUTER_MODEL"] ?? "google/gemini-3.1-flash-lite")
 		: (process.env["OLLAMA_MODEL"] ?? "gemma4:e4b");
+
+// ── Scoreboard mode ─────────────────────────────────────────────────────────
+// `--scoreboard --models=a,b,c` grades each LOCAL Ollama model across every
+// capability-gap profile and writes per-modifier pass rates to
+// tools/out/llm-capability-scoreboard.json. Each model is graded with the
+// prompt tier the runtime would actually give it (lite below 4B effective —
+// see isLiteOllamaModel), so the numbers reflect real in-app behavior. The
+// output is the evidence base for marking catalog models as verified for
+// specific modifiers. Models must already be pulled (`ollama pull <model>`).
+if (process.argv.includes("--scoreboard")) {
+	const modelsArg = process.argv.find((arg) => arg.startsWith("--models="));
+	const models = (
+		modelsArg?.slice("--models=".length) ??
+		process.env["OLLAMA_MODELS"] ??
+		process.env["OLLAMA_MODEL"] ??
+		"gemma4:e4b"
+	)
+		.split(",")
+		.map((name) => name.trim())
+		.filter(Boolean);
+	const cases = selectedCapabilityCases();
+	const profiles = selectedProfiles();
+	const scoreboard: Array<{
+		model: string;
+		lite: boolean;
+		profiles: Array<{
+			profile: string;
+			passed: number;
+			total: number;
+			failed: string[];
+		}>;
+	}> = [];
+	for (const model of models) {
+		const lite = isLiteOllamaModel(model);
+		console.log(`\n=== ${model} (${lite ? "lite" : "full"} prompt tier) ===`);
+		const perProfile: (typeof scoreboard)[number]["profiles"] = [];
+		for (const profile of profiles) {
+			const applicable = cases.filter((testCase) =>
+				caseAppliesToProfile(testCase, profile),
+			);
+			let passed = 0;
+			const failed: string[] = [];
+			for (const testCase of applicable) {
+				try {
+					const result = await runCapabilityGapCase(testCase, profile, {
+						lite,
+						model,
+					});
+					if (result.pass) {
+						passed += 1;
+					} else {
+						failed.push(testCase.id);
+					}
+				} catch (error) {
+					const message =
+						error instanceof Error ? error.message : String(error);
+					failed.push(`${testCase.id} (error: ${message.slice(0, 120)})`);
+				}
+			}
+			console.log(
+				`${profile.id.padEnd(20)} ${passed}/${applicable.length}${
+					failed.length > 0 ? `  failed: ${failed.join(", ")}` : ""
+				}`,
+			);
+			perProfile.push({
+				profile: profile.id,
+				passed,
+				total: applicable.length,
+				failed,
+			});
+		}
+		scoreboard.push({ model, lite, profiles: perProfile });
+	}
+	const outDir = join(import.meta.dir, "out");
+	const outPath = join(outDir, "llm-capability-scoreboard.json");
+	mkdirSync(outDir, { recursive: true });
+	writeFileSync(
+		outPath,
+		`${JSON.stringify(
+			{ generatedAt: new Date().toISOString(), provider: "ollama", scoreboard },
+			null,
+			"\t",
+		)}\n`,
+	);
+	console.log(`\nScoreboard written to ${outPath}`);
+	process.exit(0);
+}
 
 if (CAPABILITY_GAPS_MODE) {
 	const cases = selectedCapabilityCases();

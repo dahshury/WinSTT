@@ -21,10 +21,8 @@ const tauriCalls: Array<{
 	args: Record<string, unknown> | undefined;
 	cmd: string;
 }> = [];
-let tauriInvokeImpl: (
-	cmd: string,
-	args?: Record<string, unknown>,
-) => unknown = () => undefined;
+let tauriInvokeImpl: (cmd: string, args?: Record<string, unknown>) => unknown =
+	() => undefined;
 
 mock.module("@tauri-apps/api/core", () => ({
 	// `bindings.ts` imports `{ invoke as TAURI_INVOKE, Channel as TAURI_CHANNEL }`.
@@ -88,13 +86,13 @@ function installMockApi(opts?: {
 			if (opts?.invokeImpl) {
 				return opts.invokeImpl(channel, ...args);
 			}
-			return;
+			return undefined;
 		}),
 		secureInvoke: mock(async (channel: string, payload?: unknown) => {
 			if (opts?.secureInvokeImpl) {
 				return opts.secureInvokeImpl(channel, payload);
 			}
-			return;
+			return undefined;
 		}),
 		on: mock((channel: string, cb: (...args: unknown[]) => void) => {
 			const list = listeners.get(channel) ?? [];
@@ -187,12 +185,11 @@ describe("send wrappers (migrated to typed commands)", () => {
 		const maybeWindow = window as Window & { __TAURI_INTERNALS__?: unknown };
 		const previousInternals = maybeWindow.__TAURI_INTERNALS__;
 		const bridgeFetch = mock(
-			async (_input: RequestInfo | URL, _init?: RequestInit) => {
-				return new Response(JSON.stringify({ settings: {} }), {
+			async (_input: RequestInfo | URL, _init?: RequestInit) =>
+				new Response(JSON.stringify({ settings: {} }), {
 					headers: { "Content-Type": "application/json" },
 					status: 200,
-				});
-			},
+				}),
 		);
 
 		try {
@@ -238,8 +235,8 @@ describe("send wrappers (migrated to typed commands)", () => {
 		const maybeWindow = window as Window & { __TAURI_INTERNALS__?: unknown };
 		const previousInternals = maybeWindow.__TAURI_INTERNALS__;
 		const bridgeFetch = mock(
-			async (_input: RequestInfo | URL, _init?: RequestInit) => {
-				return new Response(
+			async (_input: RequestInfo | URL, _init?: RequestInit) =>
+				new Response(
 					JSON.stringify({
 						settings: {
 							dictionary: [{ id: "term-1", term: "central" }],
@@ -249,8 +246,7 @@ describe("send wrappers (migrated to typed commands)", () => {
 						headers: { "Content-Type": "application/json" },
 						status: 200,
 					},
-				);
-			},
+				),
 		);
 
 		try {

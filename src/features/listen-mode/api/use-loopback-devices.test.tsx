@@ -26,7 +26,7 @@ function makeApi(devices: unknown) {
 			if (channel === IPC.LOOPBACK_LIST_DEVICES) {
 				return devices;
 			}
-			return;
+			return undefined;
 		},
 		on: () => () => undefined,
 		send: () => undefined,

@@ -251,7 +251,46 @@
     "retentionDays3": "Após 3 dias",
     "retentionWeeks2": "Após 2 semanas",
     "retentionMonths3": "Após 3 meses",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "Histórico de transcrições",
+    "enabledTooltip": "Quando ativado, o WinSTT regista as suas transcrições, transformações e leituras em voz alta para que este painel possa mostrar estatísticas e gastos. Desative para parar de recolher novos dados.",
+    "disabledHint": "O histórico está desativado — o WinSTT não está a registar nova atividade. Os dados existentes são mantidos até os eliminar.",
+    "deleteAllTitle": "Eliminar todo o histórico?",
+    "deleteAllDescription": "Todas as transcrições, transformações, leituras em voz alta e gravações guardadas serão removidas permanentemente. Esta ação não pode ser desfeita.",
+    "deleteAllButton": "Eliminar todos os dados",
+    "clearTtsButton": "Limpar leitura em voz alta",
+    "clearTtsTitle": "Limpar todo o histórico de leitura em voz alta?",
+    "clearTtsDescription": "Todas as leituras de texto para voz guardadas e o respetivo áudio serão removidos. Esta ação não pode ser desfeita.",
+    "combinedTableTitle": "Histórico",
+    "filterDateRange": "Intervalo de datas",
+    "filterAllTime": "Todo o período",
+    "heatmapEarlier": "Mais antigo",
+    "heatmapLater": "Mais recente",
+    "spendingTitle": "Gastos",
+    "spendingTotalLabel": "Gasto total",
+    "spendingByModalityTitle": "Gastos por tipo",
+    "spendingByProviderTitle": "Gastos por fornecedor",
+    "spendingByModelTitle": "Gastos por modelo",
+    "spendingByMakerTitle": "Gastos por fabricante",
+    "spendingEstimatedHint": "Alguns valores são estimados quando o preço exato não foi comunicado.",
+    "costSpeechToText": "Voz para texto",
+    "costTextToSpeech": "Texto para voz",
+    "costLanguageModel": "Modelo de linguagem",
+    "colCharacters": "Carateres",
+    "cloudLabel": "Nuvem",
+    "colCost": "Custo da nuvem",
+    "costEstimated": "Estimado",
+    "costTotal": "Total",
+    "kindSpeechToText": "Voz para texto",
+    "kindTextToSpeech": "Texto para voz",
+    "durationLlmProcessing": "Processamento de IA",
+    "durationNotRecorded": "Não registado",
+    "durationNotRun": "Não executado",
+    "durationRecording": "Gravação",
+    "durationSpeechToText": "Transcrição",
+    "durationTotalProcessing": "Tempo de processamento",
+    "colTtsModel": "Modelo de voz",
+    "colVoice": "Voz"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "OCR da tela (alternativa)",
+    "contextScreenOcrCaption": "Ler o texto na tela perto do cursor como contexto adicional",
+    "contextScreenOcrTooltip": "Quando o reconhecimento de contexto não consegue ler o campo em foco diretamente, o WinSTT recorre à leitura (OCR) da área da tela ao redor do cursor para captar o texto próximo. É mais lento e menos preciso do que a leitura direta do campo — desative para ignorar essa alternativa."
   },
   "model": {
     "initialPrompt": "Prompt inicial",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "Segundos de silêncio para iniciar antecipadamente",
     "earlyTranscriptionTooltip": "Começa a transcrever antes de parar completamente de falar, ativado após esta quantidade de segundos de silêncio. Reduz o atraso entre falar e ver o texto final. Defina como 0 para desativar.",
     "realtimeModel": "Modelo em tempo real",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "Modelo em tempo real",
     "realtimeModelCaption": "Modelo menor para pré-visualização em tempo real",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "Tempo mínimo entre atualizações de transcrição ao vivo. Valores menores dão atualizações mais frequentes mas usam mais processamento. Aumente se tiver falhas ou uso elevado de CPU durante o ditado.",
     "llm": "Modelo de Linguagem de Grande Escala",
     "deviceAutoLabel": "Auto",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "Desativar a transcrição palavra por palavra?",
+    "realtimeOffWordByWordDescription": "Este modelo transcreve palavra por palavra enquanto você fala. Desativar o tempo real faz com que ele transcreva somente após você parar.",
+    "realtimeOffWordByWordConfirm": "Desativar"
   },
   "audio": {
     "inputDevice": "Dispositivo de entrada",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "Imediato",
     "microphoneReleaseSec30": "30 segundos",
     "microphoneReleaseMin1": "1 minuto",
-    "microphoneReleaseMin5": "5 minutos"
+    "microphoneReleaseMin5": "5 minutos",
+    "devicePriorityHandle": "Arraste para reordenar a prioridade"
   },
   "quality": {
     "enableRealtime": "Ativar tempo real",
@@ -717,7 +766,8 @@
     "waiting": "À espera de fala...",
     "serverOffline": "Servidor offline",
     "noAudioDetected": "(nenhum áudio detetado)",
-    "transcriptionFailed": "(transcrição falhou)"
+    "transcriptionFailed": "(transcrição falhou)",
+    "offlineNoLocalModel": "Sem internet · sem modelo local"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "Instalar mesmo assim",
     "unfitSelectTitle": "Usar este modelo grande?",
     "unfitSelectDescription": "\"{model}\" é maior do que o seu hardware consegue executar confortavelmente (~{required} necessário, {available} disponível). Pode executar muito lentamente ou falhar ao carregar. Usá-lo mesmo assim?",
-    "unfitSelectAnyway": "Usar mesmo assim"
+    "unfitSelectAnyway": "Usar mesmo assim",
+    "dictionaryAutoAddLiteModel": "Indisponível em modelos lite — mude para um modelo maior para adicionar correções ao dicionário automaticamente."
   },
   "tts": {
     "title": "Conversão de texto em voz",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "Adicione e verifique uma chave de API ElevenLabs em Integrações para usar vozes na nuvem.",
     "cloudLoadingVoices": "A carregar vozes…",
     "cloudNoVoices": "Nenhuma voz encontrada para esta conta ElevenLabs.",
-    "cloudError": "Não foi possível carregar as vozes ElevenLabs."
+    "cloudError": "Não foi possível carregar as vozes ElevenLabs.",
+    "voiceDesignLabel": "Design de voz",
+    "voiceDesignTooltip": "Descreva a voz que você quer em palavras — timbre, idade, sotaque, emoção — e o modelo sintetiza uma voz correspondente em vez de escolher de um banco predefinido.",
+    "voiceDesignButtonPlaceholder": "Criar voz",
+    "voiceDesignDialogTitle": "Criar voz",
+    "voiceDesignDialogDescription": "Descreva a voz em uma ou duas frases. Deixe em branco para usar a voz padrão do modelo.",
+    "voiceDesignPromptLabel": "Descrição da voz",
+    "voiceDesignPromptPlaceholder": "ex.: um narrador caloroso e grave com um leve sotaque britânico",
+    "voiceDesignPromptEmptyHint": "Deixe em branco para recorrer à voz integrada do modelo.",
+    "voiceDesignCancel": "Cancelar",
+    "voiceDesignSave": "Salvar",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "Algo correu mal",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "Limite de pedidos atingido por {provider}",
     "toastRateLimitedRetry": "Tente novamente em {seconds}s",
     "toastProviderError": "Erro STT do {provider}: {message}",
-    "openIntegrations": "Abrir Integrações"
+    "openIntegrations": "Abrir Integrações",
+    "toastTtsOfflineNoLocal": "Sem internet e sem voz local instalada — a leitura em voz alta está indisponível."
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "Lite",
+    "liteTierTip": "Uma variante menor e mais rápida com precisão reduzida — ideal para tarefas rápidas em hardware limitado."
   },
   "dataGrid": {
     "addRow": "Add row",

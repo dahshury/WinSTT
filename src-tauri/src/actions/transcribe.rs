@@ -26,6 +26,21 @@ fn samples_to_ms(samples: usize) -> u64 {
     ((samples as u128 * 1000) / AUDIO_SAMPLE_RATE as u128) as u64
 }
 
+/// How long the transient "offline, no local model" overlay pill stays up before the window is
+/// torn back down. Matches the renderer-side auto-dismiss so the two stay roughly aligned.
+const OFFLINE_NOTICE_HIDE_MS: u64 = 4_000;
+
+/// Hide the recording overlay a few seconds after showing an offline-notice pill from the
+/// record-start pre-gate (no recording ran, so nothing else will tear it down). A no-op when the
+/// overlay was never shown (disabled), since `hide_recording_overlay` on a hidden window is inert.
+fn schedule_offline_notice_hide(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(OFFLINE_NOTICE_HIDE_MS));
+        utils::hide_recording_overlay(&app);
+    });
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "history persistence mirrors HistoryManager::save_entry row fields"
@@ -40,12 +55,13 @@ fn persist_history_after_wav(
     transcription_text: String,
     post_process_requested: bool,
     post_processed_text: Option<String>,
-    post_process_prompt: Option<String>,
     llm_meta: Option<String>,
     dictionary_fixes: Option<i64>,
     history_tag: Option<String>,
     privacy_markers_json: Option<String>,
     stt_model: Option<String>,
+    stt_processing_ms: Option<i64>,
+    stt_cost: Option<crate::winstt::managers::CloudSttRunCost>,
 ) {
     tauri::async_runtime::spawn(async move {
         let started = Instant::now();
@@ -104,12 +120,17 @@ fn persist_history_after_wav(
             transcription_text,
             post_process_requested,
             post_processed_text,
-            post_process_prompt,
+            // post_process_prompt: legacy history column — the prompt-template
+            // path was removed; the row stays NULL for new entries.
+            None,
             llm_meta,
             dictionary_fixes,
             history_tag,
             privacy_markers_json,
             stt_model,
+            stt_processing_ms,
+            stt_cost.as_ref().map(|c| c.cost_usd),
+            stt_cost.as_ref().is_some_and(|c| c.cost_is_estimate),
         ) {
             error!("Failed to save history entry: {}", err);
         }
@@ -117,9 +138,7 @@ fn persist_history_after_wav(
 }
 
 // Transcribe Action
-pub(super) struct TranscribeAction {
-    pub(super) post_process: bool,
-}
+pub(super) struct TranscribeAction;
 
 impl ShortcutAction for TranscribeAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
@@ -129,6 +148,15 @@ impl ShortcutAction for TranscribeAction {
             debug!("TranscribeAction::start ignored while onboarding is active");
             return;
         }
+
+        // Pin the foreground window NOW — before any overlay/tray work below can
+        // steal focus — so the LLM context capture (which runs only after the
+        // decode finishes) reads the window the user is dictating INTO, not
+        // wherever they alt-tabbed to during transcription (report R5b). All
+        // recording modes (PTT / toggle / wake-word) reach this start endpoint, so
+        // pinning here covers every mode. The pin is re-validated at capture time
+        // and superseded by the next start.
+        super::pinned_foreground::pin();
 
         // Load model in the background
         let tm = app.state::<Arc<TranscriptionManager>>();
@@ -154,6 +182,39 @@ impl ShortcutAction for TranscribeAction {
             crate::managers::audio::MicrophoneMode::AlwaysOn
         );
         debug!("Microphone mode - always_on: {}", is_always_on);
+
+        // ── Offline pre-gate ──────────────────────────────────────────────
+        // If the selected STT model is a CLOUD model, its provider is currently believed offline
+        // (a prior network failure armed the connectivity watch), AND no local model is cached to
+        // fall back to, then nothing this recording could produce a transcript — the user "insists
+        // on cloud" with no internet and no local model. Skip the doomed capture: no recording, no
+        // misleading start chime. Surface an offline error in the overlay when it is enabled;
+        // `show_recording_overlay` self-gates to a no-op when the overlay is disabled, so in that
+        // case the suppressed chime IS the (only) signal — exactly the requested behavior.
+        let selected_model = crate::winstt::catalog::canonical_model_id(&settings.model.model);
+        if let Some(provider) = crate::winstt::cloud_stt::provider_of(selected_model) {
+            if crate::winstt::cloud_stt::provider_appears_offline(provider)
+                && crate::winstt::stt::fallback::resolve_local_stt_fallback(app).is_none()
+            {
+                warn!(
+                    "STT cloud provider '{}' offline and no local model cached; skipping capture",
+                    provider.id()
+                );
+                crate::transcription_coordinator::finish_dictation_session(session_id);
+                super::pinned_foreground::clear();
+                utils::unregister_cancel_shortcut_if_idle(app);
+                show_recording_overlay(app);
+                crate::winstt::stt::fallback::emit_stt_pipeline_unavailable(
+                    app,
+                    "offline_no_local",
+                    Some(provider.id()),
+                );
+                // Tear the (possibly shown) overlay back down after the transient error pill has
+                // had time to display, so a subsequent successful recording starts clean.
+                schedule_offline_notice_hide(app);
+                return;
+            }
+        }
 
         // Open the microphone CONCURRENTLY with the UI work below. In on-demand mode the
         // cpal/WASAPI stream open is the slowest step of `start` (tens of ms, device
@@ -222,6 +283,7 @@ impl ShortcutAction for TranscribeAction {
         if recording_error.is_none() {
             if crate::transcription_coordinator::is_dictation_session_cancelled(session_id) {
                 rm.cancel_recording();
+                super::pinned_foreground::clear();
                 let _ = cancelled_session_cleanup(app, session_id, "recording start");
                 utils::unregister_cancel_shortcut_if_idle(app);
                 return;
@@ -258,6 +320,10 @@ impl ShortcutAction for TranscribeAction {
             );
         } else {
             crate::transcription_coordinator::finish_dictation_session(session_id);
+            // The recorder never opened, so no context will be captured for this
+            // attempt — drop the pin taken above rather than leaving it to be
+            // re-validated (and superseded) later.
+            super::pinned_foreground::clear();
             utils::unregister_cancel_shortcut_if_idle(app);
             // Starting failed (for example due to blocked microphone permissions).
             // Revert UI state so we don't stay stuck in the recording overlay.
@@ -297,7 +363,6 @@ impl ShortcutAction for TranscribeAction {
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
-        let post_process = self.post_process;
         let session_id = crate::transcription_coordinator::current_dictation_session();
         // Snapshot the recording generation BEFORE `stop_recording` so the realtime-reuse check
         // matches the generation the realtime worker tagged its live decodes with. (Generation is
@@ -389,11 +454,20 @@ impl ShortcutAction for TranscribeAction {
                     // read).
                     let samples = Arc::new(samples);
                     let sample_count = samples.len();
+                    // History master switch, read ONCE per dictation so the WAV
+                    // write and the DB row always agree (no orphan recordings if
+                    // the user flips the toggle mid-transcription).
+                    let history_enabled = crate::winstt::settings_store::read_settings_raw(&ah)
+                        .general
+                        .history_enabled;
                     let file_name = format!("winstt-{}.wav", chrono::Utc::now().timestamp());
                     let wav_path = hm.recordings_dir().join(&file_name);
                     let wav_path_for_verify = wav_path.clone();
                     let samples_for_wav = Arc::clone(&samples);
                     let wav_handle = tauri::async_runtime::spawn_blocking(move || {
+                        if !history_enabled {
+                            return Ok(());
+                        }
                         crate::audio_toolkit::save_wav_file(&wav_path, &samples_for_wav)
                     });
 
@@ -464,16 +538,22 @@ impl ShortcutAction for TranscribeAction {
 
                     match transcription_result {
                         Ok(transcription) => {
+                            let stt_processing_ms = transcription_time
+                                .elapsed()
+                                .as_millis()
+                                .max(1)
+                                .min(i64::MAX as u128)
+                                as i64;
                             // Do NOT log the dictated text — it lands in the persistent
                             // file log. Log only timing + length (privacy).
                             debug!(
-                                "Transcription completed in {:?}: {} chars",
-                                transcription_time.elapsed(),
+                                "Transcription completed in {}ms: {} chars",
+                                stt_processing_ms,
                                 transcription.len()
                             );
 
                             let will_run_post_stt_llm =
-                                post_process || should_run_winstt_dictation_llm_from_app(&ah);
+                                should_run_winstt_dictation_llm_from_app(&ah);
                             if will_run_post_stt_llm {
                                 show_recording_overlay(&ah);
                             }
@@ -482,12 +562,10 @@ impl ShortcutAction for TranscribeAction {
                             }
                             let post_process_started = Instant::now();
                             info!(
-                                "[stt-ui] post_process_start session_id={session_id} raw_chars={} hotkey_post_process={post_process}",
+                                "[stt-ui] post_process_start session_id={session_id} raw_chars={}",
                                 transcription.chars().count()
                             );
-                            let processed =
-                                process_transcription_output(&ah, &transcription, post_process)
-                                    .await;
+                            let processed = process_transcription_output(&ah, &transcription).await;
                             info!(
                                 "[stt-ui] post_process_complete session_id={session_id} duration_ms={} final_chars={} post_processed={}",
                                 post_process_started.elapsed().as_millis(),
@@ -506,24 +584,36 @@ impl ShortcutAction for TranscribeAction {
 
                             let privacy_markers_json =
                                 serde_json::to_string(&processed.privacy_markers).ok();
-                            persist_history_after_wav(
-                                ah.clone(),
-                                Arc::clone(&hm),
-                                wav_handle,
-                                wav_path_for_verify,
-                                sample_count,
-                                file_name,
-                                transcription,
-                                processed.post_process_requested,
-                                processed.post_processed_text.clone(),
-                                processed.post_process_prompt.clone(),
-                                processed.llm_meta.clone(),
-                                processed.dictionary_fixes,
-                                processed.history_tag.clone(),
-                                privacy_markers_json,
-                                // Stamp the row with whichever STT ("main") model is loaded.
-                                tm.get_current_model(),
-                            );
+                            // Cloud decodes record their billed cost on the CloudSttManager
+                            // as they complete; local decodes leave it empty. Take it
+                            // unconditionally so a stale value can never leak into a
+                            // later local run's row.
+                            let stt_cost = ah
+                                .try_state::<Arc<crate::winstt::managers::CloudSttManager>>()
+                                .and_then(|cloud| cloud.take_last_run_cost());
+                            if history_enabled {
+                                persist_history_after_wav(
+                                    ah.clone(),
+                                    Arc::clone(&hm),
+                                    wav_handle,
+                                    wav_path_for_verify,
+                                    sample_count,
+                                    file_name,
+                                    transcription,
+                                    processed.post_process_requested,
+                                    processed.post_processed_text.clone(),
+                                    processed.llm_meta.clone(),
+                                    processed.dictionary_fixes,
+                                    processed.history_tag.clone(),
+                                    privacy_markers_json,
+                                    // Stamp the row with whichever STT ("main") model is loaded.
+                                    tm.get_current_model(),
+                                    Some(stt_processing_ms),
+                                    stt_cost,
+                                );
+                            } else {
+                                debug!("History disabled; skipping WAV + history persistence");
+                            }
 
                             if processed.final_text.is_empty() {
                                 // WinSTT terminal: the engine ran but produced no
@@ -677,6 +767,12 @@ impl ShortcutAction for TranscribeAction {
                             }
                         }
                         Err(err) => {
+                            let stt_processing_ms = transcription_time
+                                .elapsed()
+                                .as_millis()
+                                .max(1)
+                                .min(i64::MAX as u128)
+                                as i64;
                             debug!("Global Shortcut Transcription error: {}", err);
                             // WinSTT terminal: a genuine transcriber error (engine
                             // panic / model not loaded / decode failure) — report it
@@ -691,25 +787,37 @@ impl ShortcutAction for TranscribeAction {
                             );
                             // Save entry with empty text so user can retry, but do not block the
                             // failed-terminal UI on recorder-file persistence.
-                            persist_history_after_wav(
-                                ah.clone(),
-                                Arc::clone(&hm),
-                                wav_handle,
-                                wav_path_for_verify,
-                                sample_count,
-                                file_name,
-                                String::new(),
-                                post_process,
-                                None,
-                                None,
-                                None,
-                                None,
-                                None,
-                                None,
-                                // Record the model that was active when the decode failed
-                                // (may be None if it unloaded).
-                                tm.get_current_model(),
-                            );
+                            if history_enabled {
+                                persist_history_after_wav(
+                                    ah.clone(),
+                                    Arc::clone(&hm),
+                                    wav_handle,
+                                    wav_path_for_verify,
+                                    sample_count,
+                                    file_name,
+                                    String::new(),
+                                    false,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    // Record the model that was active when the decode failed
+                                    // (may be None if it unloaded).
+                                    tm.get_current_model(),
+                                    Some(stt_processing_ms),
+                                    // A failed decode billed nothing; clear any prior
+                                    // cloud cost so it can't leak into a later row.
+                                    {
+                                        if let Some(cloud) = ah.try_state::<Arc<
+                                            crate::winstt::managers::CloudSttManager,
+                                        >>() {
+                                            let _ = cloud.take_last_run_cost();
+                                        }
+                                        None
+                                    },
+                                );
+                            }
                             utils::hide_recording_overlay(&ah);
                             change_tray_icon(&ah, TrayIconState::Idle);
                         }

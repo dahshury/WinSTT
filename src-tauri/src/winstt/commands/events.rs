@@ -54,8 +54,18 @@ pub mod names {
     pub const LLM_LEARNED_PROPER_NOUNS: &str = "llm:learned-proper-nouns";
     /// Cycle to the next saved post-processing profile in renderer-owned order.
     pub const LLM_PROFILE_SWAP: &str = "llm:profile-swap";
+    /// The transcribe (PTT) hotkey was held while ArrowUp was pressed — advance to
+    /// the next recording mode (ptt → toggle → listen → wakeword → ptt). Emitted by
+    /// the WinSTT-owned cycle-gesture keyboard hook; the main renderer owns the
+    /// mode-cycle order and applies + persists the new mode.
+    pub const RECORDING_MODE_CYCLE: &str = "recording:mode-cycle";
     /// Manual "check for updates" trigger (main → renderer fan-out).
     pub const UPDATER_CHECK: &str = "updater:check";
+    /// The settings window was shown by `open_window` (payload: whether it was
+    /// already visible). The keep-alive settings renderer replays its enter
+    /// animation on this — window focus/visibility are not reliably delivered
+    /// by WebView2 across a native hide/show cycle.
+    pub const SETTINGS_WINDOW_SHOWN: &str = "settings:window-shown";
 }
 
 /// Emit the shared `output:paste-error` event. Centralizes the previously

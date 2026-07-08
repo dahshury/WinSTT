@@ -103,9 +103,9 @@ function filterTextOptions(
 	if (!normalized) {
 		return options;
 	}
-	return options.filter((value) => {
-		return matchesFuzzySearch([format(value), value], normalized);
-	});
+	return options.filter((value) =>
+		matchesFuzzySearch([format(value), value], normalized),
+	);
 }
 
 function filterEndpointProviderEntries(
@@ -116,12 +116,9 @@ function filterEndpointProviderEntries(
 	if (!normalized) {
 		return providers;
 	}
-	return providers.filter(([provider]) => {
-		return matchesFuzzySearch(
-			[formatProviderName(provider), provider],
-			normalized,
-		);
-	});
+	return providers.filter(([provider]) =>
+		matchesFuzzySearch([formatProviderName(provider), provider], normalized),
+	);
 }
 
 function OptionCount({ count }: { count: number | undefined }) {

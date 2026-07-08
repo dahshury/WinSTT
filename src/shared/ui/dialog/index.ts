@@ -13,3 +13,4 @@ export {
 	DialogTitle,
 	type DialogTitleProps,
 } from "./Dialog";
+export { DialogHeader, type DialogHeaderProps } from "./DialogHeader";

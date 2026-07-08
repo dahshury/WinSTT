@@ -64,6 +64,7 @@ pub(crate) fn catalog_accelerator(accel: crate::winstt::stt::Accelerator) -> Cat
         crate::winstt::stt::Accelerator::CoreMl => CatalogAccelerator::CoreMl,
         crate::winstt::stt::Accelerator::Rocm => CatalogAccelerator::Rocm,
         crate::winstt::stt::Accelerator::OpenVino => CatalogAccelerator::OpenVino,
+        crate::winstt::stt::Accelerator::WebGpu => CatalogAccelerator::WebGpu,
     }
 }
 
@@ -81,6 +82,36 @@ pub(crate) fn catalog_accelerator(accel: crate::winstt::stt::Accelerator) -> Cat
 pub fn stt_list_models(app: AppHandle) -> Vec<CatalogModelInfo> {
     let accel = picker_accelerator(&app);
     catalog_data::catalog_rows(accel)
+}
+
+/// `tts_transcribe_reference` — validate a cloning reference clip's length and transcribe it with
+/// the currently-loaded STT model. Used by the voice-cloning UI to (1) REJECT clips longer than
+/// `max_secs` and (2) auto-fill the reference transcript (editable afterwards) for cloning models
+/// that need it (Spark). Decodes via the shared symphonia path (wav/mp3/flac/… → 16 kHz mono).
+#[tauri::command]
+#[specta::specta]
+pub fn tts_transcribe_reference(
+    transcription: tauri::State<
+        '_,
+        std::sync::Arc<crate::managers::transcription::TranscriptionManager>,
+    >,
+    path: String,
+    max_secs: f64,
+) -> Result<String, String> {
+    let audio =
+        crate::winstt::managers::transcode::decode_audio_to_pcm(std::path::Path::new(&path))?;
+    let secs = audio.len() as f64 / 16_000.0;
+    if max_secs > 0.0 && secs > max_secs {
+        return Err(format!(
+            "Reference clip is {secs:.0}s — please use one under {max_secs:.0}s."
+        ));
+    }
+    if secs < 1.0 {
+        return Err("Reference clip is too short — use at least ~1 second of clear speech.".into());
+    }
+    transcription
+        .transcribe(&audio)
+        .map_err(|e| format!("transcribe reference: {e}"))
 }
 
 /// `picker_quantizations_for` — the quant suffixes the picker should offer for a

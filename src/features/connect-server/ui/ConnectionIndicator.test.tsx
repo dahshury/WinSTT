@@ -117,10 +117,12 @@ describe("resolveConnectionChip", () => {
 });
 
 describe("resolveGpuChipConfig", () => {
-	test("returns GPU label and success color for isGpu=true", () => {
+	test("returns GPU label and grayscale color for isGpu=true", () => {
 		const cfg = resolveGpuChipConfig(true);
 		expect(cfg.label).toBe("GPU");
-		expect(cfg.colorClass).toContain("success");
+		// No-green status: the GPU chip reads brighter than the dim CPU chip,
+		// never text-success.
+		expect(cfg.colorClass).toBe("text-foreground");
 	});
 	test("returns CPU label and dim color for isGpu=false", () => {
 		const cfg = resolveGpuChipConfig(false);

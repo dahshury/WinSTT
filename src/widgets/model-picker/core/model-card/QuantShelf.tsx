@@ -363,7 +363,11 @@ function QuantBadge({
 		<ButtonGroup
 			aria-label={`Precision ${label} for ${modelDisplayName}`}
 			className={cn(
-				"rounded-md ring-1 ring-inset",
+				// Match the inner badges' 5px radius (rounded-sm): the group's
+				// `ring-inset` is a box-shadow that doesn't inset child content, so a
+				// flush child with a smaller radius than the group protrudes past its
+				// corner. Equal radii let the inset ring hug the badge fill cleanly.
+				"rounded-sm ring-1 ring-inset",
 				isRecommended ? "ring-accent/60" : "ring-border",
 			)}
 		>

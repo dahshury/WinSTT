@@ -100,6 +100,9 @@ interface RowTranscriptProps {
 	activeIndex: number;
 	diff: TranscriptDiffResult | null;
 	displayText: string;
+	/** Seek playback to the word at `index` (its start time). When provided during
+	 *  playback each word becomes a clickable jump target. */
+	onSeekWord?: ((index: number) => void) | undefined;
 	viewFullLabel: string;
 	words: WordTiming[] | null;
 }
@@ -115,6 +118,7 @@ export function RowTranscript({
 	activeIndex,
 	diff,
 	displayText,
+	onSeekWord,
 	viewFullLabel,
 	words,
 }: RowTranscriptProps) {
@@ -203,22 +207,41 @@ export function RowTranscript({
 				? words.map((word, index) => (
 						<Fragment key={`${word.start}-${index}`}>
 							{index > 0 ? " " : null}
-							<span
-								className={
-									index === activeIndex
-										? "rounded-[3px] bg-foreground/15 text-foreground"
-										: undefined
-								}
-							>
-								{word.text}
-							</span>
+							{onSeekWord ? (
+								<button
+									// Inline jump target: reads as text but seeks playback to this
+									// word's start on click/Enter. `type=button` so it never submits;
+									// the separator space stays OUTSIDE the button (keeps the
+									// highlight tight and the click target on the word itself).
+									className={cn(
+										"cursor-pointer rounded-[3px] transition-colors hover:bg-foreground/10",
+										index === activeIndex
+											? "bg-foreground/15 text-foreground"
+											: undefined,
+									)}
+									onClick={() => onSeekWord(index)}
+									type="button"
+								>
+									{word.text}
+								</button>
+							) : (
+								<span
+									className={
+										index === activeIndex
+											? "rounded-[3px] bg-foreground/15 text-foreground"
+											: undefined
+									}
+								>
+									{word.text}
+								</span>
+							)}
 						</Fragment>
 					))
 				: displayText}
 		</p>
 	);
 
-	if (showWords || (!clamped && !diff)) {
+	if (showWords || !(clamped || diff)) {
 		return paragraph;
 	}
 	return (

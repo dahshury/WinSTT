@@ -31,10 +31,12 @@ const {
 	__test_shouldResetSavedIndex,
 	__test_shouldResetSavedOutputDevice,
 } = await import("./use-device-switch-feedback");
-const { _resetInputDevicesCacheForTests } =
-	await import("@/entities/audio-device/model/use-input-devices");
-const { _resetOutputDevicesCacheForTests } =
-	await import("@/entities/audio-device/model/use-output-devices");
+const { _resetInputDevicesCacheForTests } = await import(
+	"@/entities/audio-device/model/use-input-devices"
+);
+const { _resetOutputDevicesCacheForTests } = await import(
+	"@/entities/audio-device/model/use-output-devices"
+);
 
 const originalNativeBridge = window.nativeBridge;
 const originalMediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
@@ -77,7 +79,7 @@ function installNativeBridgeStub(): void {
 			if (channel === IPC.AUDIO_GET_DEVICES) {
 				return audioGetDevicesImpl();
 			}
-			return;
+			return undefined;
 		},
 		secureInvoke: async () => undefined,
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
@@ -283,6 +285,105 @@ describe("useDeviceSwitchFeedback", () => {
 			6,
 		);
 		expect(settingsSaveCalls.length).toBe(0);
+	});
+
+	test("re-points the saved index at the highest-priority connected device", async () => {
+		audioGetDevicesImpl = async () => [
+			{ index: 6, name: "Built-in Mic", isDefault: true },
+			{ index: 9, name: "USB Mic", isDefault: false },
+		];
+		useSettingsStore.setState({
+			settings: {
+				...freshSettings(),
+				audio: {
+					...freshSettings().audio,
+					inputDeviceIndex: 6,
+					inputDevicePriority: ["USB Mic", "Built-in Mic"],
+				},
+			},
+		});
+		renderHookWithProviders();
+		await waitFor(() => {
+			expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(
+				9,
+			);
+		});
+		// Persisted immediately so the backend's live-read sees it.
+		expect(settingsSaveCalls.at(-1)?.audio?.inputDeviceIndex).toBe(9);
+	});
+
+	test("leaves the index alone when the top-priority device is already selected", async () => {
+		audioGetDevicesImpl = async () => [
+			{ index: 6, name: "Built-in Mic", isDefault: true },
+			{ index: 9, name: "USB Mic", isDefault: false },
+		];
+		useSettingsStore.setState({
+			settings: {
+				...freshSettings(),
+				audio: {
+					...freshSettings().audio,
+					inputDeviceIndex: 9,
+					inputDevicePriority: ["USB Mic", "Built-in Mic"],
+				},
+			},
+		});
+		renderHookWithProviders();
+		await new Promise((r) => setTimeout(r, 20));
+		expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(
+			9,
+		);
+		expect(settingsSaveCalls.length).toBe(0);
+	});
+
+	test("orphaned index resolves to the priority device, not to system default", async () => {
+		// The saved index is gone from the list AND a priority entry is
+		// connected: the priority sync owns the re-point; the null-reset path
+		// must stand down (no "System default" flicker).
+		audioGetDevicesImpl = async () => [
+			{ index: 2, name: "Built-in Mic", isDefault: true },
+			{ index: 4, name: "USB Mic", isDefault: false },
+		];
+		useSettingsStore.setState({
+			settings: {
+				...freshSettings(),
+				audio: {
+					...freshSettings().audio,
+					inputDeviceIndex: 42,
+					inputDevicePriority: ["USB Mic"],
+				},
+			},
+		});
+		renderHookWithProviders();
+		await waitFor(() => {
+			expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(
+				4,
+			);
+		});
+		expect(
+			settingsSaveCalls.some((call) => call.audio?.inputDeviceIndex === null),
+		).toBe(false);
+	});
+
+	test("orphaned index still resets to system default when no priority entry is connected", async () => {
+		audioGetDevicesImpl = async () => [
+			{ index: 2, name: "Built-in Mic", isDefault: true },
+		];
+		useSettingsStore.setState({
+			settings: {
+				...freshSettings(),
+				audio: {
+					...freshSettings().audio,
+					inputDeviceIndex: 42,
+					inputDevicePriority: ["Unplugged USB Mic"],
+				},
+			},
+		});
+		renderHookWithProviders();
+		await waitFor(() => {
+			expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(
+				null,
+			);
+		});
 	});
 
 	describe("shouldResetSavedIndex (pure)", () => {

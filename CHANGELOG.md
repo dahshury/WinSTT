@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.1.3-alpha.5] - 2026-07-08
+
+Changes since `v0.1.3-alpha.4`.
+
+### Added
+
+- Added context-aware dictation: caret-split reading with a proximity-bounded visible window, a workspace index and file-reference resolver, generic UIA field context, and shared context terms so instructions route as content vs. commands instead of being echoed verbatim.
+- Added a tray-indicator surface (third floating window) with a recording-mode pill and a PTT-plus-arrow mode-cycle gesture wired through the low-level hook.
+- Added cloud STT provider support with per-run cloud metrics/cost tracking, a cloud selected-summary, cloud error surfacing, and automatic offline-to-local fallback and key-removal revert.
+- Added new LLM→codec TTS engines (Orpheus, Spark, Qwen3-TTS voice-design) alongside shared token sampling, plus an STT fallback path.
+- Added a full-fidelity clipboard snapshot, a pinned-foreground action, and a native networking module for the backend.
+- Added Ollama thinking/lite-model catalog helpers, model-search fuzzy matching, saved-secret settings schema, and expanded onboarding/model-picker coverage.
+
+### Changed
+
+- Ported the wakeword detector from sherpa-onnx to a native ORT detector, removing the sherpa detector path.
+- Migrated linting/formatting from Prettier + ESLint to Biome/Ultracite, dropping `.prettierrc`/`.prettierignore` and slimming ESLint to i18n-only checks.
+- Reworked settings, model picker, tray, overlay, history, TTS, LLM, and Ollama UI and refreshed docs, screenshots, and demo assets to match the current app.
+- Refreshed backend audio, STT, TTS, download, history, and command plumbing while keeping generated Tauri bindings in sync.
+
+### Fixed
+
+- Fixed context-leak edge cases (whole-inbox/OTP bleed into before-caret) with proximity bounds and on-screen range clamping, plus additional PTT, model-selection, overlay, and history edge cases.
+
+### Maintenance
+
+- Bumped the application version from `0.1.3-alpha.4` to `0.1.3-alpha.5` while keeping the alpha release policy.
+- Applied Dependabot updates: `@babel/core` `7.29.7` → `8.0.1` and `@playwright/test` `1.61.0` → `1.61.1`, refreshing `bun.lock`.
+
 ## [0.1.3-alpha.4] - 2026-07-03
 
 Changes since `v0.1.3-alpha.3`.

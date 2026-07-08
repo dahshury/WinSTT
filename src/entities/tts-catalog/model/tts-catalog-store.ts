@@ -29,6 +29,15 @@ export interface TtsModelInfo {
 	/** Voice-cloning capability — see {@link TtsCloning}. */
 	cloning: TtsCloning;
 	description: string;
+	/**
+	 * `true` for a voice-design model (Qwen3-TTS-VoiceDesign): the voice is
+	 *described* with a free-text prompt rather than picked from a bank or
+	 * cloned from a clip. Drives the "Voice design" badge on the card and the
+	 * "Design voice" prompt affordance in TTS settings. `false` for every other
+	 * engine — the field defaults to `false` server-side so older servers that
+	 * don't emit it stay compatible.
+	 */
+	voiceDesign: boolean;
 	displayName: string;
 	/** Stable catalog id (e.g. `kokoro-82m`). Matches `settings.tts.model`. */
 	id: string;
@@ -73,7 +82,10 @@ const rawTtsModelSchema = z.object({
 	languages: z.array(z.string()).default([]),
 	num_voices: z.number().default(0),
 	cloning: TtsCloningSchema.default("none"),
-	sample_rate: z.number().default(24000),
+	// Voice-design capability flag (Qwen3-TTS-VoiceDesign). Default false keeps
+	// the picker compatible with older servers that predate the field.
+	voice_design: z.boolean().default(false),
+	sample_rate: z.number().default(24_000),
 	param_count_m: z.number().default(0),
 	size_label: z.string().default(""),
 	available_quantizations: z.array(z.string()).default([""]),
@@ -103,6 +115,7 @@ function mapTtsModel(raw: RawTtsModelInfo): TtsModelInfo {
 		languages: raw.languages,
 		numVoices: raw.num_voices,
 		cloning: raw.cloning,
+		voiceDesign: raw.voice_design,
 		sampleRate: raw.sample_rate,
 		paramCountM: raw.param_count_m,
 		sizeLabel: raw.size_label,

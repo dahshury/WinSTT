@@ -15,6 +15,7 @@ import {
 import { useSettingsStore } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
+import { springs } from "@/shared/lib/springs";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Select } from "@/shared/ui/select";
@@ -25,12 +26,7 @@ const PASS_THRESHOLD = 0.08;
 /** Bar segments drawn for the live meter — matches the recording overlay's
  *  grain so the visual reads as a sibling, not a one-off. */
 const METER_SEGMENTS = 28;
-const METER_SPRING = {
-	type: "spring",
-	stiffness: 520,
-	damping: 32,
-	mass: 0.35,
-} as const;
+const METER_SPRING = springs.moderate;
 const MotionBaseButton = m.create(BaseButton);
 
 /**
@@ -149,10 +145,7 @@ export function OnboardingMicTestStep() {
 					animate={{ opacity: 1, scale: 1, y: 0 }}
 					initial={reduceMotion ? false : { opacity: 0.86, scale: 0.995, y: 2 }}
 					key={currentDeviceId}
-					transition={{
-						duration: reduceMotion ? 0 : 0.2,
-						ease: [0.22, 1, 0.36, 1],
-					}}
+					transition={reduceMotion ? { duration: 0 } : springs.slow}
 				>
 					<ElevatedSurface inline>
 						<Select
@@ -177,9 +170,14 @@ export function OnboardingMicTestStep() {
 									<m.span
 										animate={{ opacity: 1, scale: 1, y: 0 }}
 										className="inline-flex items-center gap-1 rounded-sm bg-activity/15 px-1.5 py-0.5 text-2xs text-activity ring-1 ring-activity/30"
-										exit={{ opacity: 0, scale: 0.9, y: -2 }}
+										exit={{
+											opacity: 0,
+											scale: 0.9,
+											y: -2,
+											transition: springs.moderate.exit,
+										}}
 										initial={{ opacity: 0, scale: 0.85, y: 3 }}
-										transition={{ type: "spring", stiffness: 620, damping: 28 }}
+										transition={springs.moderate}
 									>
 										<HugeiconsIcon icon={CheckmarkCircle02Icon} size={10} />
 										<span className="font-medium uppercase tracking-wider">
@@ -244,7 +242,9 @@ function Meter({ level, permission }: MeterProps) {
 							permission === "granted" ? Math.min(normalized * 0.28, 0.32) : 0,
 					}}
 					className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_50%,var(--color-activity)_0%,transparent_52%)]"
-					transition={{ duration: reduceMotion ? 0 : 0.16 }}
+					transition={{
+						duration: reduceMotion ? 0 : springs.moderate.duration,
+					}}
 				/>
 				<m.span
 					animate={{
@@ -295,7 +295,7 @@ function Meter({ level, permission }: MeterProps) {
 												delay: i * 0.025,
 												duration: 1.1,
 												ease: "easeInOut",
-												repeat: Infinity,
+												repeat: Number.POSITIVE_INFINITY,
 											}
 										: METER_SPRING
 								}

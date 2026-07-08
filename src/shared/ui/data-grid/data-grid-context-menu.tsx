@@ -5,7 +5,7 @@ import {
 	ScissorsIcon,
 	Trash2Icon,
 } from "@/shared/ui/data-grid/primitives/icons";
-import * as React from "react";
+import type * as React from "react";
 import { useTranslations } from "use-intl";
 import { toast } from "@/shared/ui/data-grid/primitives/toast";
 import {
@@ -24,7 +24,7 @@ import type { CellUpdate, ContextMenuState } from "@/shared/ui/data-grid/types";
 
 interface DataGridContextMenuProps<TData> {
 	tableMeta: TableMeta<TData>;
-	columns: Array<ColumnDef<TData>>;
+	columns: ColumnDef<TData>[];
 	contextMenu: ContextMenuState;
 }
 
@@ -41,7 +41,9 @@ export function DataGridContextMenu<TData>({
 	const onCellsCopy = tableMeta?.onCellsCopy;
 	const onCellsCut = tableMeta?.onCellsCut;
 
-	if (!contextMenu.open) return null;
+	if (!contextMenu.open) {
+		return null;
+	}
 
 	return (
 		<ContextMenu
@@ -60,8 +62,7 @@ export function DataGridContextMenu<TData>({
 }
 
 interface ContextMenuProps<TData>
-	extends
-		Pick<
+	extends Pick<
 			TableMeta<TData>,
 			| "dataGridRef"
 			| "onContextMenuOpenChange"
@@ -74,7 +75,7 @@ interface ContextMenuProps<TData>
 		>,
 		Required<Pick<TableMeta<TData>, "contextMenu">> {
 	tableMeta: TableMeta<TData>;
-	columns: Array<ColumnDef<TData>>;
+	columns: ColumnDef<TData>[];
 }
 
 function ContextMenu<TData>({
@@ -135,10 +136,11 @@ function ContextMenu<TData>({
 		if (
 			!selectionState?.selectedCells ||
 			selectionState.selectedCells.size === 0
-		)
+		) {
 			return;
+		}
 
-		const updates: Array<CellUpdate> = [];
+		const updates: CellUpdate[] = [];
 
 		// Build columnId -> column lookup once before the loop
 		const columnById = new Map<string, (typeof columns)[number]>();
@@ -164,7 +166,7 @@ function ContextMenu<TData>({
 		onDataUpdate?.(updates);
 
 		toast.success(
-			`${updates.length} cell${updates.length !== 1 ? "s" : ""} cleared`,
+			`${updates.length} cell${updates.length === 1 ? "" : "s"} cleared`,
 		);
 	};
 
@@ -174,8 +176,9 @@ function ContextMenu<TData>({
 		if (
 			!selectionState?.selectedCells ||
 			selectionState.selectedCells.size === 0
-		)
+		) {
 			return;
+		}
 
 		const rowIndices = new Set<number>();
 		for (const cellKey of selectionState.selectedCells) {
@@ -188,7 +191,7 @@ function ContextMenu<TData>({
 
 		await onRowsDelete?.(rowIndicesArray);
 
-		toast.success(`${rowCount} row${rowCount !== 1 ? "s" : ""} deleted`);
+		toast.success(`${rowCount} row${rowCount === 1 ? "" : "s"} deleted`);
 	};
 
 	return (

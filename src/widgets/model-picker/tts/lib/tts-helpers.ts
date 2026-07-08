@@ -8,7 +8,7 @@ import {
 import type { IconSvgElement } from "@hugeicons/react";
 import type { TtsModelInfo } from "@/entities/tts-catalog";
 import {
-	FAVORITES_GROUP_VALUE,
+	type FAVORITES_GROUP_VALUE,
 	withFavoritesGroup as withCoreFavoritesGroup,
 } from "../../core/favorites";
 
@@ -81,6 +81,25 @@ const ENGINE_CONFIG: Record<string, TtsEngineConfig> = {
 		logoSrc: "/provider-icons/resemble.svg",
 		chip: "bg-tts-engine-chatterbox/15 text-tts-engine-chatterbox",
 	},
+	qwen3tts: {
+		icon: VoiceIcon,
+		label: "Qwen3-TTS",
+		maker: "Qwen",
+		logoSrc: "/provider-icons/qwen.svg",
+		chip: "bg-tts-engine-qwen3tts/15 text-tts-engine-qwen3tts",
+	},
+	orpheus: {
+		icon: VoiceIcon,
+		label: "Orpheus",
+		maker: "Canopy Labs",
+		chip: "bg-tts-engine-orpheus/15 text-tts-engine-orpheus",
+	},
+	spark: {
+		icon: FlashIcon,
+		label: "Spark-TTS",
+		maker: "SparkAudio",
+		chip: "bg-tts-engine-spark/15 text-tts-engine-spark",
+	},
 };
 
 const DEFAULT_ENGINE_CONFIG: TtsEngineConfig = {
@@ -123,6 +142,23 @@ const ENGINE_SEARCH_ALIASES: Record<string, string[]> = {
 	piper: ["rhasspy", "vits", "lessac", "en-us"],
 	supertonic: ["supertone", "supertonic-3", "multilingual", "webgpu"],
 	chatterbox: ["resemble", "resemble ai", "voice cloning", "multilingual"],
+	qwen3tts: [
+		"qwen",
+		"qwen3",
+		"qwen3-tts",
+		"alibaba",
+		"voice design",
+		"multilingual",
+	],
+	orpheus: ["canopy", "canopy labs", "llama", "emotion", "expressive", "snac"],
+	spark: [
+		"sparkaudio",
+		"spark tts",
+		"bicodec",
+		"qwen",
+		"voice creation",
+		"clone",
+	],
 };
 
 const ttsSearchCorpusCache = new WeakMap<TtsModelInfo, string>();
@@ -246,6 +282,23 @@ export function cloningLabel(cloning: TtsModelInfo["cloning"]): {
 		};
 	}
 	return null;
+}
+
+/**
+ * Human label for a model's voice-design capability — the free-text-prompt
+ * analogue of {@link cloningLabel}. Voice-design models (Qwen3-TTS-VoiceDesign)
+ * synthesize a voice from a described prompt instead of a fixed bank or a cloned
+ * clip, so the chip advertises that the voice is customizable by text. Returned
+ * shape mirrors `cloningLabel` so `TtsModelCard` composes both chips uniformly.
+ */
+export function voiceDesignLabel(): {
+	label: string;
+	tooltip: string;
+} {
+	return {
+		label: "Voice design",
+		tooltip: "Customize the voice with a text prompt",
+	};
 }
 
 /**

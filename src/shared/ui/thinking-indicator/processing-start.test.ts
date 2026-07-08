@@ -7,10 +7,10 @@ describe("getProcessingStartedAt", () => {
 			getProcessingStartedAt({
 				isThinking: true,
 				isTranscribing: true,
-				thinkingStartedAt: 5_000,
-				transcribingStartedAt: 1_000,
+				thinkingStartedAt: 5000,
+				transcribingStartedAt: 1000,
 			}),
-		).toBe(1_000);
+		).toBe(1000);
 	});
 
 	test("falls back to the LLM start when there is no active transcription timestamp", () => {
@@ -18,10 +18,10 @@ describe("getProcessingStartedAt", () => {
 			getProcessingStartedAt({
 				isThinking: true,
 				isTranscribing: false,
-				thinkingStartedAt: 5_000,
+				thinkingStartedAt: 5000,
 				transcribingStartedAt: null,
 			}),
-		).toBe(5_000);
+		).toBe(5000);
 	});
 
 	test("returns null when no processing state is active", () => {
@@ -29,8 +29,8 @@ describe("getProcessingStartedAt", () => {
 			getProcessingStartedAt({
 				isThinking: false,
 				isTranscribing: false,
-				thinkingStartedAt: 5_000,
-				transcribingStartedAt: 1_000,
+				thinkingStartedAt: 5000,
+				transcribingStartedAt: 1000,
 			}),
 		).toBeNull();
 	});

@@ -3,7 +3,7 @@ import {
 	CloudServerIcon,
 	LockIcon,
 } from "@hugeicons/core-free-icons";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	CLOUD_PROVIDERS,
@@ -14,6 +14,31 @@ import { useSettingsStore } from "@/entities/setting";
 import type { SwitcherOption } from "@/shared/ui/switcher";
 
 type SttSource = "local" | "cloud";
+
+/** Remembers the last cloud model the user actually landed on so flipping back
+ *  to Cloud restores THAT concrete id instead of the provider's bare default —
+ *  which, for OpenRouter, is `"openrouter:"` and forces the picker to wait on a
+ *  live catalog scan before it can self-heal to a real row. */
+const LAST_CLOUD_STT_MODEL_STORAGE_KEY = "winstt:last-cloud-stt-model";
+
+function readLastCloudModel(): string | null {
+	try {
+		return (
+			globalThis.localStorage?.getItem(LAST_CLOUD_STT_MODEL_STORAGE_KEY) ?? null
+		);
+	} catch {
+		return null;
+	}
+}
+
+function writeLastCloudModel(modelId: string): void {
+	try {
+		globalThis.localStorage?.setItem(LAST_CLOUD_STT_MODEL_STORAGE_KEY, modelId);
+	} catch {
+		// Ignore storage failures (private-mode quota, disabled storage) — the
+		// default-cloud-model fallback still yields a usable selection.
+	}
+}
 
 interface UseSttSourceSwitchArgs {
 	/** True when at least one cloud provider has an API key — gates the Cloud
@@ -40,6 +65,12 @@ interface UseSttSourceSwitchArgs {
 }
 
 interface UseSttSourceSwitchResult {
+	/** Cloud model id the cloud picker should display RIGHT NOW. Equals the
+	 *  persisted model once it is a cloud id; during the flip-to-Cloud settings
+	 *  round-trip (persisted model still local) it is the optimistic target the
+	 *  switch just chose, so the trigger shows the default/last cloud model
+	 *  immediately instead of an empty "Select cloud model" placeholder. */
+	cloudSelectedId: string;
 	onSourceChange: (next: SttSource) => void;
 	source: SttSource;
 	sourceOpts: SwitcherOption<SttSource>[];
@@ -81,6 +112,21 @@ export function useSttSourceSwitch({
 	const [source, setSource] = useState<SttSource>(
 		initialSourceIsCloud ? "cloud" : "local",
 	);
+	// Optimistic cloud target chosen on flip-to-Cloud, held only for the brief
+	// window before the persisted model round-trips back as a cloud id (after
+	// which `selectedModel` is authoritative and the host re-mounts).
+	const [pendingCloudModel, setPendingCloudModel] = useState<string | null>(
+		null,
+	);
+
+	// Persist the last cloud model the user actually settled on (whether picked
+	// from the selector or resolved by the picker's self-heal) so a later flip
+	// back to Cloud can restore it immediately.
+	useEffect(() => {
+		if (providerOf(selectedModel) !== null) {
+			writeLastCloudModel(selectedModel);
+		}
+	}, [selectedModel]);
 
 	const onSourceChange = (next: SttSource) => {
 		const current = providerOf(selectedModel);
@@ -92,9 +138,25 @@ export function useSttSourceSwitch({
 					: integrations[p].apiKey.trim().length > 0,
 			);
 			const alreadyValid = current !== null && keyed.includes(current);
-			if (!alreadyValid && keyed[0] !== undefined) {
-				onModelChange(defaultCloudModelId(keyed[0]));
+			if (alreadyValid || keyed[0] === undefined) {
+				return;
 			}
+			// Prefer the last chosen cloud model when its provider is still keyed —
+			// it's a concrete id, so the selector lands on it at once instead of
+			// waiting for a live catalog scan to resolve a bare provider default.
+			// Otherwise fall back to the first keyed provider's default.
+			const lastCloud = readLastCloudModel();
+			const lastCloudProvider =
+				lastCloud === null ? null : providerOf(lastCloud);
+			const canRestoreLast =
+				lastCloud !== null &&
+				lastCloudProvider !== null &&
+				keyed.includes(lastCloudProvider);
+			const target = canRestoreLast ? lastCloud : defaultCloudModelId(keyed[0]);
+			// Show it immediately (before the settings round-trip) so the trigger
+			// never flashes the empty placeholder.
+			setPendingCloudModel(target);
+			onModelChange(target);
 			return;
 		}
 		// Flipping to Local: only act when leaving a cloud selection. Land on a
@@ -129,5 +191,12 @@ export function useSttSourceSwitch({
 		},
 	];
 
-	return { onSourceChange, source, sourceOpts };
+	// The persisted model wins once it is a cloud id; until then, fall back to the
+	// optimistic target so the cloud picker shows a real model during the flip.
+	const cloudSelectedId =
+		providerOf(selectedModel) === null
+			? (pendingCloudModel ?? "")
+			: selectedModel;
+
+	return { cloudSelectedId, onSourceChange, source, sourceOpts };
 }

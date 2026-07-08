@@ -342,7 +342,7 @@ function mergeStateForModel(
 	}
 	const base = firstExistingState(statesById, model);
 	if (!base) {
-		return undefined;
+		return;
 	}
 	const cacheByQuantization: Record<string, ModelCacheInfo> = {};
 	for (const quantization of model.availableQuantizations) {
@@ -418,10 +418,11 @@ export function mergeStreamingLatencyStates(
 		const defaultState = statesById[defaultModel.id];
 		const bestState = variants
 			.map((variant) => statesById[variant.model.id])
-			.reduce<
-				ModelStateEntry | undefined
-			>((best, state) => (stateRank(state) > stateRank(best) ? state : best), defaultState);
-		if (!defaultState && !bestState) {
+			.reduce<ModelStateEntry | undefined>(
+				(best, state) => (stateRank(state) > stateRank(best) ? state : best),
+				defaultState,
+			);
+		if (!(defaultState || bestState)) {
 			continue;
 		}
 		out[model.id] = {

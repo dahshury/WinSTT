@@ -4,20 +4,62 @@
 //! the same published ONNX graph layouts, but session creation and provider routing now go through
 //! WinSTT's shared `ort` stack.
 
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use ndarray::{Array2, ArrayD, Axis, IxDyn, s};
-use ort::session::{Session, SessionInputValue};
-use ort::value::Tensor;
+use ort::memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType};
+use ort::session::{IoBinding, Session};
+use ort::value::{DynValue, Tensor, Value, ValueTypeMarker};
 
 use super::frontend;
 use super::streaming::{self, StreamCursor};
 use super::support::*;
 use crate::winstt::stt::{
-    EngineConfig, EngineKind, NativeStreamUpdate, SttError, SttResult, TranscribeOptions,
-    Transcriber, Transcription,
+    Accelerator, EngineConfig, EngineKind, NativeStreamUpdate, SttError, SttResult,
+    TranscribeOptions, Transcriber, Transcription,
 };
+
+/// Map the active provider list to the ORT allocation device for binding carried streaming state
+/// device-resident (CPU when no GPU EP; then IoBinding simply binds host memory, still correct).
+/// Mirrors whisper's `device_for_providers` / cohere's `cohere_device`.
+fn native_stream_device(providers: &[Accelerator]) -> (AllocationDevice, i32) {
+    match providers.first() {
+        Some(Accelerator::Cuda) => (AllocationDevice::CUDA, 0),
+        Some(Accelerator::DirectMl) => (AllocationDevice::DIRECTML, 0),
+        _ => (AllocationDevice::CPU, 0),
+    }
+}
+
+/// Bind a carried state input: the device `DynValue` from the previous chunk when present, else the
+/// host zero-tensor built for a fresh stream's first chunk. Exactly one of `carried`/`empty` is Some.
+fn bind_state_input<T: ValueTypeMarker + ?Sized>(
+    binding: &mut IoBinding,
+    name: &str,
+    carried: Option<&DynValue>,
+    empty: Option<&Value<T>>,
+) -> SttResult<()> {
+    match (carried, empty) {
+        (Some(v), _) => binding.bind_input(name, v),
+        (None, Some(t)) => binding.bind_input(name, t),
+        (None, None) => {
+            return Err(SttError::Inference(format!(
+                "native stream state '{name}' has neither carried nor empty tensor"
+            )));
+        }
+    }
+    .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))
+}
+
+/// Host `MemoryInfo` for outputs that must come back to the CPU decode loop (logits).
+fn cpu_output_mem() -> SttResult<MemoryInfo> {
+    MemoryInfo::new(
+        AllocationDevice::CPU,
+        0,
+        AllocatorType::Device,
+        MemoryType::CPUOutput,
+    )
+    .map_err(|e| SttError::Inference(format!("native stream cpu mem info: {e}")))
+}
 
 pub struct NativeNemoCtcStreamingEngine {
     session: Session,
@@ -34,14 +76,21 @@ pub struct NativeNemoCtcStreamingEngine {
     logits_output: String,
     cache_last_channel_shape: Vec<usize>,
     cache_last_time_shape: Vec<usize>,
+    /// ORT allocation device the session runs on, for binding the carried cache resident.
+    device: AllocationDevice,
+    device_id: i32,
     stream: NemoCtcStreamState,
 }
 
+/// Per-stream carried state. The three encoder cache tensors are carried DEVICE-RESIDENT across
+/// feature chunks: `None` on a fresh stream (the empty zero-cache is built host-side for the first
+/// chunk only), then each chunk's `*_next` outputs are kept as session-owned device `DynValue`s and
+/// rebound as the next chunk's `cache_*` inputs — no per-chunk host round-trip.
 struct NemoCtcStreamState {
     cursor: StreamCursor,
-    cache_last_channel: ArrayD<f32>,
-    cache_last_time: ArrayD<f32>,
-    cache_last_channel_len: ArrayD<i64>,
+    cache_last_channel: Option<DynValue>,
+    cache_last_time: Option<DynValue>,
+    cache_last_channel_len: Option<DynValue>,
 }
 
 impl NativeNemoCtcStreamingEngine {
@@ -84,6 +133,7 @@ impl NativeNemoCtcStreamingEngine {
             });
 
         let vocab = Vocab::load(file(&cfg.resolved, "vocab")?, false, true)?;
+        let (device, device_id) = native_stream_device(&cfg.providers);
         let mut engine = Self {
             session,
             vocab,
@@ -99,6 +149,8 @@ impl NativeNemoCtcStreamingEngine {
             logits_output,
             cache_last_channel_shape,
             cache_last_time_shape,
+            device,
+            device_id,
             stream: NemoCtcStreamState::empty(),
         };
         engine.stream = engine.fresh_stream_state();
@@ -114,10 +166,22 @@ impl NativeNemoCtcStreamingEngine {
     fn fresh_stream_state(&self) -> NemoCtcStreamState {
         NemoCtcStreamState {
             cursor: StreamCursor::new(),
-            cache_last_channel: ArrayD::<f32>::zeros(IxDyn(&self.cache_last_channel_shape)),
-            cache_last_time: ArrayD::<f32>::zeros(IxDyn(&self.cache_last_time_shape)),
-            cache_last_channel_len: ArrayD::<i64>::zeros(IxDyn(&[1])),
+            // Device-resident encoder cache starts empty; the first chunk binds host zero-tensors.
+            cache_last_channel: None,
+            cache_last_time: None,
+            cache_last_channel_len: None,
         }
+    }
+
+    /// Device `MemoryInfo` for binding the carried encoder cache resident (CPU when no GPU EP).
+    fn device_mem(&self) -> SttResult<MemoryInfo> {
+        MemoryInfo::new(
+            self.device,
+            self.device_id,
+            AllocatorType::Device,
+            MemoryType::Default,
+        )
+        .map_err(|e| SttError::Inference(format!("native stream device mem info: {e}")))
     }
 
     fn process_available_chunks(&mut self, finalize: bool) -> SttResult<bool> {
@@ -146,6 +210,12 @@ impl NativeNemoCtcStreamingEngine {
         Ok(processed_any)
     }
 
+    /// Run one feature chunk through the streaming CTC graph, carrying the three encoder cache
+    /// tensors DEVICE-RESIDENT via IoBinding: the `*_next` cache outputs (graph output slots 2/3/4,
+    /// when present) are bound to the device and kept as session-owned `DynValue`s, rebound as the
+    /// next chunk's `cache_*` inputs, instead of copied to host and re-fed each chunk. `logits`
+    /// comes back host-side for the CTC decode. Every graph output is bound (ORT's `RunWithBinding`
+    /// contract): logits + caches as above, any other declared outputs to the device to satisfy it.
     fn run_chunk(&mut self, chunk: &Array2<f32>) -> SttResult<Array2<f32>> {
         if chunk.ncols() != self.feature_dim {
             return Err(SttError::Inference(format!(
@@ -162,12 +232,6 @@ impl NativeNemoCtcStreamingEngine {
         let x_tensor = Tensor::from_array(x)
             .map_err(|e| SttError::Inference(format!("nemo CTC stream tensor: {e}")))?;
         let len_tensor = tensor_i64_1d(vec![chunk.nrows() as i64])?;
-        let cache_last_channel = Tensor::from_array(self.stream.cache_last_channel.clone())
-            .map_err(|e| SttError::Inference(format!("ctc cache_last_channel tensor: {e}")))?;
-        let cache_last_time = Tensor::from_array(self.stream.cache_last_time.clone())
-            .map_err(|e| SttError::Inference(format!("ctc cache_last_time tensor: {e}")))?;
-        let cache_last_channel_len = Tensor::from_array(self.stream.cache_last_channel_len.clone())
-            .map_err(|e| SttError::Inference(format!("ctc cache len tensor: {e}")))?;
 
         let input0 = self
             .input_names
@@ -179,43 +243,125 @@ impl NativeNemoCtcStreamingEngine {
             .get(1)
             .cloned()
             .unwrap_or_else(|| "length".into());
-        let input2 = self
-            .input_names
-            .get(2)
-            .cloned()
-            .unwrap_or_else(|| "cache_last_channel".into());
-        let input3 = self
-            .input_names
-            .get(3)
-            .cloned()
-            .unwrap_or_else(|| "cache_last_time".into());
-        let input4 = self
-            .input_names
-            .get(4)
-            .cloned()
-            .unwrap_or_else(|| "cache_last_channel_len".into());
-        let outputs = self
-            .session
-            .run(ort::inputs![
-                input0.as_str() => x_tensor,
-                input1.as_str() => len_tensor,
-                input2.as_str() => cache_last_channel,
-                input3.as_str() => cache_last_time,
-                input4.as_str() => cache_last_channel_len,
-            ])
-            .map_err(|e| SttError::Inference(format!("nemo CTC stream run: {e}")))?;
+        // Cache input names (slots 2/3/4) — present only on streaming exports; a plain single-graph
+        // CTC export has just [audio_signal, length] and carries no cache (same as before).
+        let cache_in_names: [Option<String>; 3] = [
+            self.input_names.get(2).cloned(),
+            self.input_names.get(3).cloned(),
+            self.input_names.get(4).cloned(),
+        ];
+        let cache_out_names: [Option<String>; 3] = [
+            self.output_names.get(2).cloned(),
+            self.output_names.get(3).cloned(),
+            self.output_names.get(4).cloned(),
+        ];
 
-        let logits = out_to_f32(&outputs[self.logits_output.as_str()])?;
-        if let Some(name) = self.output_names.get(2) {
-            self.stream.cache_last_channel = out_to_f32(&outputs[name.as_str()])?;
+        // Empty host zero-caches for a fresh stream's first chunk; held here so they outlive the
+        // binding through `run_binding`. From chunk 2 on, `state.cache_*` holds the device values.
+        let empty_channel = match &self.stream.cache_last_channel {
+            Some(_) => None,
+            None => Some(
+                Tensor::from_array(ArrayD::<f32>::zeros(IxDyn(&self.cache_last_channel_shape)))
+                    .map_err(|e| {
+                        SttError::Inference(format!("ctc cache_last_channel tensor: {e}"))
+                    })?,
+            ),
+        };
+        let empty_time = match &self.stream.cache_last_time {
+            Some(_) => None,
+            None => Some(
+                Tensor::from_array(ArrayD::<f32>::zeros(IxDyn(&self.cache_last_time_shape)))
+                    .map_err(|e| SttError::Inference(format!("ctc cache_last_time tensor: {e}")))?,
+            ),
+        };
+        let empty_len = match &self.stream.cache_last_channel_len {
+            Some(_) => None,
+            None => Some(
+                Tensor::from_array(ArrayD::<i64>::zeros(IxDyn(&[1])))
+                    .map_err(|e| SttError::Inference(format!("ctc cache len tensor: {e}")))?,
+            ),
+        };
+
+        let dev_mem = self.device_mem()?;
+        let cpu_mem = cpu_output_mem()?;
+
+        let mut binding = self
+            .session
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("nemo CTC stream binding: {e}")))?;
+        binding
+            .bind_input(input0.as_str(), &x_tensor)
+            .map_err(|e| SttError::Inference(format!("bind {input0}: {e}")))?;
+        binding
+            .bind_input(input1.as_str(), &len_tensor)
+            .map_err(|e| SttError::Inference(format!("bind {input1}: {e}")))?;
+        if let Some(name) = &cache_in_names[0] {
+            bind_state_input(
+                &mut binding,
+                name,
+                self.stream.cache_last_channel.as_ref(),
+                empty_channel.as_ref(),
+            )?;
         }
-        if let Some(name) = self.output_names.get(3) {
-            self.stream.cache_last_time = out_to_f32(&outputs[name.as_str()])?;
+        if let Some(name) = &cache_in_names[1] {
+            bind_state_input(
+                &mut binding,
+                name,
+                self.stream.cache_last_time.as_ref(),
+                empty_time.as_ref(),
+            )?;
         }
-        if let Some(name) = self.output_names.get(4) {
-            self.stream.cache_last_channel_len = out_to_i64(&outputs[name.as_str()])?;
+        if let Some(name) = &cache_in_names[2] {
+            bind_state_input(
+                &mut binding,
+                name,
+                self.stream.cache_last_channel_len.as_ref(),
+                empty_len.as_ref(),
+            )?;
+        }
+
+        // Bind EVERY declared output: logits → host; cache-next (slots 2/3/4) → device; anything
+        // else the graph declares → device (computed either way, satisfies the all-bound contract).
+        for name in &self.output_names {
+            if name == &self.logits_output {
+                binding
+                    .bind_output_to_device(name.as_str(), &cpu_mem)
+                    .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+            } else {
+                binding
+                    .bind_output_to_device(name.as_str(), &dev_mem)
+                    .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+            }
+        }
+
+        let mut outputs = self
+            .session
+            .run_binding(&binding)
+            .map_err(|e| SttError::Inference(format!("nemo CTC stream run: {e}")))?;
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("nemo CTC stream synchronize: {e}")))?;
+
+        // logits → host (scoped so the borrow ends before the cache `remove`s take `outputs`).
+        let logits = {
+            let v = outputs
+                .get(self.logits_output.as_str())
+                .ok_or_else(|| SttError::Inference("nemo CTC stream produced no logits".into()))?;
+            out_to_f32(v)?
+        };
+        // Carry the `*_next` caches → device (session-owned; survive the binding drop). Only for the
+        // slots the graph actually declares — a plain CTC export carries nothing (unchanged).
+        if let Some(name) = &cache_out_names[0] {
+            self.stream.cache_last_channel = outputs.remove(name.as_str());
+        }
+        if let Some(name) = &cache_out_names[1] {
+            self.stream.cache_last_time = outputs.remove(name.as_str());
+        }
+        if let Some(name) = &cache_out_names[2] {
+            self.stream.cache_last_channel_len = outputs.remove(name.as_str());
         }
         drop(outputs);
+        drop(binding);
 
         let rank = logits.ndim();
         match rank {
@@ -276,9 +422,9 @@ impl NemoCtcStreamState {
     fn empty() -> Self {
         Self {
             cursor: StreamCursor::new(),
-            cache_last_channel: ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1, 1])),
-            cache_last_time: ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1, 1])),
-            cache_last_channel_len: ArrayD::<i64>::zeros(IxDyn(&[1])),
+            cache_last_channel: None,
+            cache_last_time: None,
+            cache_last_channel_len: None,
         }
     }
 }
@@ -353,14 +499,24 @@ pub struct NativeZipformerStreamingEngine {
     encoder_output_names: Vec<String>,
     state_input_names: Vec<String>,
     state_output_names: Vec<String>,
+    /// Per-state initial (empty) shapes + i64-ness, resolved once at load so a fresh stream's first
+    /// chunk can build the host zero-tensors that seed the device-resident carry.
+    state_shapes: BTreeMap<String, Vec<usize>>,
+    state_is_i64: BTreeMap<String, bool>,
+    /// ORT allocation device the encoder runs on, for binding the carried state resident.
+    device: AllocationDevice,
+    device_id: i32,
     vocab_size: usize,
     stream: ZipformerStreamState,
 }
 
+/// Per-stream carried state. The variadic encoder state tensors are carried DEVICE-RESIDENT across
+/// feature chunks: `states` is empty on a fresh stream (first chunk binds host zero-tensors from
+/// `state_shapes`), then each chunk's encoder state outputs are kept as session-owned device
+/// `DynValue`s (keyed by the matching state INPUT name) and rebound next chunk — no host round-trip.
 struct ZipformerStreamState {
     cursor: StreamCursor,
-    f32_states: BTreeMap<String, ArrayD<f32>>,
-    i64_states: BTreeMap<String, ArrayD<i64>>,
+    states: BTreeMap<String, DynValue>,
 }
 
 impl NativeZipformerStreamingEngine {
@@ -402,13 +558,26 @@ impl NativeZipformerStreamingEngine {
             )));
         }
 
+        // Resolve each state input's initial (empty) shape + dtype ONCE at load, so a fresh stream's
+        // first chunk can seed host zero-tensors before the device-resident carry takes over.
+        let mut state_shapes: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut state_is_i64: BTreeMap<String, bool> = BTreeMap::new();
+        for name in &state_input_names {
+            let shape = input_shape_or(&encoder, name, 1)
+                .ok_or_else(|| SttError::SessionCreate(format!("missing state input {name}")))?;
+            let is_i64 = input_is_i64(&encoder, name) || name == "processed_lens";
+            state_shapes.insert(name.clone(), shape);
+            state_is_i64.insert(name.clone(), is_i64);
+        }
+
         let vocab = Vocab::load(file(&cfg.resolved, "vocab")?, false, true)?;
         let unk_id = vocab
             .id_to_sym
             .iter()
             .find(|(_, s)| s.as_str() == "<unk>")
             .map(|(id, _)| *id);
-        let mut engine = Self {
+        let (device, device_id) = native_stream_device(&cfg.providers);
+        let engine = Self {
             encoder,
             decoder,
             joiner,
@@ -425,10 +594,13 @@ impl NativeZipformerStreamingEngine {
             encoder_output_names,
             state_input_names,
             state_output_names,
+            state_shapes,
+            state_is_i64,
+            device,
+            device_id,
             vocab_size,
             stream: ZipformerStreamState::empty(),
         };
-        engine.stream = engine.fresh_stream_state()?;
         Ok(engine)
     }
 
@@ -440,23 +612,21 @@ impl NativeZipformerStreamingEngine {
             && cfg.resolved.files.contains_key("vocab")
     }
 
-    fn fresh_stream_state(&self) -> SttResult<ZipformerStreamState> {
-        let mut f32_states = BTreeMap::new();
-        let mut i64_states = BTreeMap::new();
-        for name in &self.state_input_names {
-            let shape = input_shape_or(&self.encoder, name, 1)
-                .ok_or_else(|| SttError::SessionCreate(format!("missing state input {name}")))?;
-            if input_is_i64(&self.encoder, name) || name == "processed_lens" {
-                i64_states.insert(name.clone(), ArrayD::<i64>::zeros(IxDyn(&shape)));
-            } else {
-                f32_states.insert(name.clone(), ArrayD::<f32>::zeros(IxDyn(&shape)));
-            }
-        }
-        Ok(ZipformerStreamState {
-            cursor: StreamCursor::new(),
-            f32_states,
-            i64_states,
-        })
+    /// A fresh stream carries no device state yet — the first chunk seeds host zero-tensors from
+    /// `state_shapes`/`state_is_i64`, and from chunk 2 on the device outputs are carried.
+    fn fresh_stream_state(&self) -> ZipformerStreamState {
+        ZipformerStreamState::empty()
+    }
+
+    /// Device `MemoryInfo` for binding the carried encoder state resident (CPU when no GPU EP).
+    fn device_mem(&self) -> SttResult<MemoryInfo> {
+        MemoryInfo::new(
+            self.device,
+            self.device_id,
+            AllocatorType::Device,
+            MemoryType::Default,
+        )
+        .map_err(|e| SttError::Inference(format!("zipformer device mem info: {e}")))
     }
 
     fn process_available_chunks(&mut self, finalize: bool) -> SttResult<bool> {
@@ -481,6 +651,11 @@ impl NativeZipformerStreamingEngine {
         Ok(processed_any)
     }
 
+    /// Run one feature chunk through the streaming encoder, carrying the variadic encoder state
+    /// tensors DEVICE-RESIDENT via IoBinding: each state output is bound to the device and kept as a
+    /// session-owned `DynValue` (keyed by its matching state INPUT name), rebound as the next chunk's
+    /// state input, instead of copied to host and re-fed each chunk. `x` goes host→device and
+    /// `encoder_out` comes back host-side for the CPU joiner loop — same graph, same values.
     fn run_encoder(&mut self, chunk: &Array2<f32>) -> SttResult<Array2<f32>> {
         let x_tensor = Tensor::from_array(
             chunk
@@ -489,57 +664,119 @@ impl NativeZipformerStreamingEngine {
                 .map_err(|e| SttError::Inference(format!("zipformer x reshape: {e}")))?,
         )
         .map_err(|e| SttError::Inference(format!("zipformer x tensor: {e}")))?;
+        let x_name = self
+            .encoder_input_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "x".into());
 
-        let mut inputs: Vec<NamedInput> = Vec::with_capacity(1 + self.state_input_names.len());
-        inputs.push((
-            Cow::Owned(
-                self.encoder_input_names
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| "x".into()),
-            ),
-            SessionInputValue::from(x_tensor),
-        ));
+        // Empty host zero-tensors for a fresh stream's first chunk (dtype-matched per state); held
+        // here so they outlive the binding through `run_binding`. From chunk 2 on `state.states`
+        // holds the device values. Parallel `Vec`s indexed alongside `state_input_names`.
+        let mut empty_f32: Vec<Option<Tensor<f32>>> =
+            Vec::with_capacity(self.state_input_names.len());
+        let mut empty_i64: Vec<Option<Tensor<i64>>> =
+            Vec::with_capacity(self.state_input_names.len());
         for name in &self.state_input_names {
-            if let Some(arr) = self.stream.i64_states.get(name) {
-                let tensor = Tensor::from_array(arr.clone())
-                    .map_err(|e| SttError::Inference(format!("zipformer state {name}: {e}")))?;
-                inputs.push((Cow::Owned(name.clone()), SessionInputValue::from(tensor)));
+            if self.stream.states.contains_key(name) {
+                empty_f32.push(None);
+                empty_i64.push(None);
+                continue;
+            }
+            let shape = self
+                .state_shapes
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| vec![1]);
+            if *self.state_is_i64.get(name).unwrap_or(&false) {
+                empty_f32.push(None);
+                empty_i64.push(Some(
+                    Tensor::from_array(ArrayD::<i64>::zeros(IxDyn(&shape)))
+                        .map_err(|e| SttError::Inference(format!("zipformer state {name}: {e}")))?,
+                ));
             } else {
-                let arr = self.stream.f32_states.get(name).ok_or_else(|| {
-                    SttError::Inference(format!("missing zipformer state input {name}"))
-                })?;
-                let tensor = Tensor::from_array(arr.clone())
-                    .map_err(|e| SttError::Inference(format!("zipformer state {name}: {e}")))?;
-                inputs.push((Cow::Owned(name.clone()), SessionInputValue::from(tensor)));
+                empty_i64.push(None);
+                empty_f32.push(Some(
+                    Tensor::from_array(ArrayD::<f32>::zeros(IxDyn(&shape)))
+                        .map_err(|e| SttError::Inference(format!("zipformer state {name}: {e}")))?,
+                ));
             }
         }
 
-        let outputs = self
+        let dev_mem = self.device_mem()?;
+        let cpu_mem = cpu_output_mem()?;
+
+        let mut binding = self
             .encoder
-            .run(inputs)
-            .map_err(|e| SttError::Inference(format!("zipformer encoder run: {e}")))?;
-        for (input_name, output_name) in self.state_input_names.iter().zip(&self.state_output_names)
-        {
-            if self.stream.i64_states.contains_key(input_name) {
-                self.stream.i64_states.insert(
-                    input_name.clone(),
-                    out_to_i64(&outputs[output_name.as_str()])?,
-                );
-            } else {
-                self.stream.f32_states.insert(
-                    input_name.clone(),
-                    out_to_f32(&outputs[output_name.as_str()])?,
-                );
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("zipformer encoder binding: {e}")))?;
+        binding
+            .bind_input(x_name.as_str(), &x_tensor)
+            .map_err(|e| SttError::Inference(format!("bind {x_name}: {e}")))?;
+        for (i, name) in self.state_input_names.iter().enumerate() {
+            match self.stream.states.get(name) {
+                Some(v) => binding
+                    .bind_input(name.as_str(), v)
+                    .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?,
+                None => {
+                    if let Some(t) = &empty_f32[i] {
+                        binding
+                            .bind_input(name.as_str(), t)
+                            .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+                    } else if let Some(t) = &empty_i64[i] {
+                        binding
+                            .bind_input(name.as_str(), t)
+                            .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+                    } else {
+                        return Err(SttError::Inference(format!(
+                            "missing zipformer state input {name}"
+                        )));
+                    }
+                }
             }
         }
-
+        // Bind EVERY declared output: encoder_out (slot 0) → host; state outputs → device (carried).
         let enc_name = self
             .encoder_output_names
             .first()
-            .map_or("encoder_out", String::as_str);
-        let enc = out_to_f32(&outputs[enc_name])?;
+            .cloned()
+            .unwrap_or_else(|| "encoder_out".into());
+        binding
+            .bind_output_to_device(enc_name.as_str(), &cpu_mem)
+            .map_err(|e| SttError::Inference(format!("bind {enc_name}: {e}")))?;
+        for name in &self.state_output_names {
+            binding
+                .bind_output_to_device(name.as_str(), &dev_mem)
+                .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+        }
+
+        let mut outputs = self
+            .encoder
+            .run_binding(&binding)
+            .map_err(|e| SttError::Inference(format!("zipformer encoder run: {e}")))?;
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("zipformer encoder synchronize: {e}")))?;
+
+        // encoder_out → host (scoped so the borrow ends before the state `remove`s take `outputs`).
+        let enc = {
+            let v = outputs
+                .get(enc_name.as_str())
+                .ok_or_else(|| SttError::Inference("zipformer produced no encoder_out".into()))?;
+            out_to_f32(v)?
+        };
+        // Carry each state output → device, keyed by the matching state INPUT name (session-owned;
+        // survives the binding drop → rebound next chunk).
+        for (input_name, output_name) in self.state_input_names.iter().zip(&self.state_output_names)
+        {
+            let v = outputs.remove(output_name.as_str()).ok_or_else(|| {
+                SttError::Inference(format!("zipformer produced no state output {output_name}"))
+            })?;
+            self.stream.states.insert(input_name.clone(), v);
+        }
         drop(outputs);
+        drop(binding);
+
         let enc3 = enc
             .into_dimensionality::<ndarray::Ix3>()
             .map_err(|e| SttError::Inference(format!("zipformer encoder_out dim: {e}")))?;
@@ -618,8 +855,7 @@ impl ZipformerStreamState {
     fn empty() -> Self {
         Self {
             cursor: StreamCursor::new(),
-            f32_states: BTreeMap::new(),
-            i64_states: BTreeMap::new(),
+            states: BTreeMap::new(),
         }
     }
 }
@@ -673,9 +909,7 @@ impl Transcriber for NativeZipformerStreamingEngine {
     }
 
     fn stream_reset(&mut self) {
-        if let Ok(state) = self.fresh_stream_state() {
-            self.stream = state;
-        }
+        self.stream = self.fresh_stream_state();
     }
 }
 
@@ -703,6 +937,7 @@ mod tests {
             },
             providers: vec![Accelerator::Cpu],
             whisper_fp16_workaround: false,
+            language: None,
         }
     }
 

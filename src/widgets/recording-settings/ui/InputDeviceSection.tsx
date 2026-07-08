@@ -70,16 +70,26 @@ export function InputDeviceSection({
 		<SettingSection boxed icon={Mic02Icon} title={t("inputDevice")}>
 			<div className="flex flex-col divide-y divide-divider">
 				<SettingField
-					isDefault={currentDeviceId === "default"}
+					isDefault={
+						currentDeviceId === "default" &&
+						(audio?.inputDevicePriority ?? []).length === 0
+					}
 					label={t("device")}
 					layout="row"
-					onReset={() => update({ inputDeviceIndex: null })}
+					onReset={() =>
+						update({ inputDeviceIndex: null, inputDevicePriority: [] })
+					}
 					tooltip={t("deviceTooltip")}
 				>
 					<InputDeviceSelect
 						className="w-52"
 						inputDeviceIndex={audio?.inputDeviceIndex ?? null}
+						inputDevicePriority={audio?.inputDevicePriority ?? []}
 						onChange={(inputDeviceIndex) => update({ inputDeviceIndex })}
+						onPriorityChange={(inputDevicePriority) =>
+							update({ inputDevicePriority })
+						}
+						reorderHandleLabel={t("devicePriorityHandle")}
 						systemDefaultLabel={t("systemDefault")}
 					/>
 				</SettingField>

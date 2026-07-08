@@ -128,7 +128,6 @@ export function SubtitleOverlay() {
 
 	// Auto-scroll to bottom in listen mode when content changes.
 	// items.length and liveText are intentional triggers (not used in the body).
-	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional scroll triggers
 	useEffect(() => {
 		if (isListenMode && scrollRef.current) {
 			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -232,19 +231,17 @@ export function SubtitleOverlay() {
 					"linear-gradient(to bottom, transparent 0%, var(--color-subtitle-scrim-bottom) 100%)",
 			}}
 		>
-			{visibleSubtitleItems.map(({ item, opacity }) => {
-				return (
-					<p
-						className="max-w-full text-center font-sans text-body text-foreground leading-snug"
-						data-subtitle-line="true"
-						dir="auto"
-						key={item.id}
-						style={{ opacity, transition: SUBTITLE_EXIT_TRANSITION }}
-					>
-						{item.text}
-					</p>
-				);
-			})}
+			{visibleSubtitleItems.map(({ item, opacity }) => (
+				<p
+					className="max-w-full text-center font-sans text-body text-foreground leading-snug"
+					data-subtitle-line="true"
+					dir="auto"
+					key={item.id}
+					style={{ opacity, transition: SUBTITLE_EXIT_TRANSITION }}
+				>
+					{item.text}
+				</p>
+			))}
 			{liveText ? (
 				<p
 					className="max-w-full text-center font-sans text-body text-foreground/60 italic leading-snug"

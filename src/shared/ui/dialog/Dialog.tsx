@@ -340,7 +340,8 @@ export function DialogDescription({
 
 type DialogActionVariant = "neutral" | "accent" | "danger";
 
-export interface DialogActionButtonProps extends ComponentPropsWithoutRef<"button"> {
+export interface DialogActionButtonProps
+	extends ComponentPropsWithoutRef<"button"> {
 	/** `neutral` = surface-lifted cancel/dismiss; `accent` = brand confirm;
 	 *  `danger` = destructive confirm. Default `neutral`. */
 	variant?: DialogActionVariant;

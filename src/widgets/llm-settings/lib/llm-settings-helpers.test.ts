@@ -6,7 +6,9 @@ import {
 	getOllamaPrimaryLabelKey,
 	isApiKeyValid,
 	ollamaModelSyncNeeded,
+	pickNearestOllamaModel,
 	readInputValue,
+	resolvePlaygroundLocalModel,
 } from "./llm-settings-helpers";
 
 describe("isApiKeyValid", () => {
@@ -128,6 +130,59 @@ describe("ollamaModelSyncNeeded", () => {
 
 	test("returns true when both provider and models changed", () => {
 		expect(ollamaModelSyncNeeded(prev, "openrouter", [])).toBe(true);
+	});
+});
+
+describe("pickNearestOllamaModel", () => {
+	test("returns null when no models are installed", () => {
+		expect(pickNearestOllamaModel([], "llama3.2:3b")).toBeNull();
+	});
+
+	test("prefers a model of the same family over an unrelated one", () => {
+		const models = [{ name: "phi3:mini" }, { name: "llama3.2:1b" }];
+		expect(pickNearestOllamaModel(models, "llama3.2:3b")).toBe("llama3.2:1b");
+	});
+
+	test("falls back to the longest shared prefix across families", () => {
+		const models = [{ name: "phi3:mini" }, { name: "qwen3.5:1.7b" }];
+		expect(pickNearestOllamaModel(models, "qwen3.5:0.8b")).toBe("qwen3.5:1.7b");
+	});
+
+	test("breaks ties by list order (first install wins)", () => {
+		const models = [{ name: "gemma4:e2b" }, { name: "smollm2:135m" }];
+		expect(pickNearestOllamaModel(models, "unrelated:model")).toBe(
+			"gemma4:e2b",
+		);
+	});
+});
+
+describe("resolvePlaygroundLocalModel", () => {
+	test("returns null when nothing is installed", () => {
+		expect(resolvePlaygroundLocalModel([], "")).toBeNull();
+		expect(resolvePlaygroundLocalModel([], "llama3.2:3b")).toBeNull();
+	});
+
+	test("defaults to the first install when nothing is selected", () => {
+		const models = [{ name: "llama3.2:1b" }, { name: "phi3:mini" }];
+		expect(resolvePlaygroundLocalModel(models, "")).toBe("llama3.2:1b");
+		expect(resolvePlaygroundLocalModel(models, "   ")).toBe("llama3.2:1b");
+	});
+
+	test("keeps a previously-selected model that is still installed", () => {
+		const models = [{ name: "llama3.2:1b" }, { name: "phi3:mini" }];
+		expect(resolvePlaygroundLocalModel(models, "phi3:mini")).toBeNull();
+	});
+
+	test("treats a bare tag as installed when the scan reports :latest", () => {
+		const models = [{ name: "tinyllama:latest" }];
+		expect(resolvePlaygroundLocalModel(models, "tinyllama")).toBeNull();
+	});
+
+	test("swaps a deleted selection for the nearest install", () => {
+		const models = [{ name: "phi3:mini" }, { name: "llama3.2:1b" }];
+		expect(resolvePlaygroundLocalModel(models, "llama3.2:3b")).toBe(
+			"llama3.2:1b",
+		);
 	});
 });
 

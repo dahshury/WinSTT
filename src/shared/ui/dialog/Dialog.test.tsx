@@ -20,10 +20,8 @@ describe("DialogFooter", () => {
 	test("unwraps fragments before deciding whether to group actions", () => {
 		render(
 			<DialogFooter>
-				<>
-					<button type="button">Hide</button>
-					<button type="button">Stop</button>
-				</>
+				<button type="button">Hide</button>
+				<button type="button">Stop</button>
 			</DialogFooter>,
 		);
 

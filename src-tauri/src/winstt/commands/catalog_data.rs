@@ -161,6 +161,18 @@ fn streaming_wer_estimate(id: &str) -> Option<f64> {
             4.2
         });
     }
+    if id.starts_with("streaming-nemotron-3.5") {
+        // Multilingual average WER runs a touch higher than the English-only Nemotron.
+        return Some(if id.contains("1120ms") {
+            4.4
+        } else if id.contains("560ms") {
+            4.5
+        } else if id.contains("160ms") {
+            4.6
+        } else {
+            4.7
+        });
+    }
     None
 }
 
@@ -221,6 +233,17 @@ fn streaming_rtfx_estimate(id: &str) -> Option<f64> {
             520.0
         });
     }
+    if id.starts_with("streaming-nemotron-3.5") {
+        return Some(if id.contains("1120ms") {
+            700.0
+        } else if id.contains("560ms") {
+            640.0
+        } else if id.contains("160ms") {
+            560.0
+        } else {
+            520.0
+        });
+    }
     None
 }
 
@@ -255,6 +278,11 @@ fn streaming_description(id: &str) -> Option<&'static str> {
     }
     if id.starts_with("streaming-nemotron-en") {
         return Some("Highest-quality English native stream for reusable final dictation text.");
+    }
+    if id.starts_with("streaming-nemotron-3.5") {
+        return Some(
+            "Multilingual native stream (100+ languages) with automatic language detection.",
+        );
     }
     None
 }
@@ -359,6 +387,7 @@ const LANGUAGE_DISPLAY_QUALIFIERS: &[&str] = &[
     "uk",
     "vietnamese",
     "vi",
+    "multilingual",
 ];
 
 fn display_name_without_language_qualifier(display_name: &str) -> String {
@@ -522,6 +551,7 @@ pub(crate) fn to_state_entry(
         Accelerator::CoreMl => crate::winstt::stt::Accelerator::CoreMl,
         Accelerator::Rocm => crate::winstt::stt::Accelerator::Rocm,
         Accelerator::OpenVino => crate::winstt::stt::Accelerator::OpenVino,
+        Accelerator::WebGpu => crate::winstt::stt::Accelerator::WebGpu,
     };
     let eff = crate::winstt::stt::fit_aware_auto_quant(
         &available,
@@ -611,16 +641,26 @@ pub fn estimated_bytes_for(model_id: &str) -> u64 {
         .map_or(0, |e| estimate_runtime_bytes(e.param_count))
 }
 
+/// The catalog's declared languages (ISO codes) for a model id, or empty if unknown. Used to seed the
+/// Cohere auto-detect candidate set (the engine scores these to pick the spoken language).
+pub fn languages_for(model_id: &str) -> Vec<String> {
+    raw_catalog()
+        .iter()
+        .find(|e| e.id == model_id)
+        .map(|e| e.languages.clone())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn catalog_parses_73_rows() {
+    fn catalog_parses_67_rows() {
         assert_eq!(
             raw_catalog().len(),
-            73,
-            "embedded catalog must carry all 73 shipped models"
+            67,
+            "embedded catalog must carry all 67 shipped models"
         );
     }
 
@@ -792,7 +832,7 @@ mod tests {
             .iter()
             .filter(|r| r.id.starts_with("streaming-"))
             .collect();
-        assert_eq!(streaming_rows.len(), 23);
+        assert_eq!(streaming_rows.len(), 20);
         for row in streaming_rows {
             let id = &row.id;
             assert!(row.preview_capable, "{id} must be preview-capable");
@@ -808,7 +848,7 @@ mod tests {
             .iter()
             .filter(|r| r.id.starts_with("streaming-"))
             .collect();
-        assert_eq!(streaming_rows.len(), 23);
+        assert_eq!(streaming_rows.len(), 20);
         for row in streaming_rows {
             let id = &row.id;
             assert!(
@@ -848,20 +888,21 @@ mod tests {
             "Streaming NeMo FastConformer RNN-T"
         );
 
+        // The English-only Nemotron was removed (superseded by multilingual 3.5); no en rows remain.
         assert!(
             rows.iter()
-                .all(|r| !r.id.starts_with("streaming-nemotron-en-") || r.id.ends_with("-int8")),
-            "non-int8 Nemotron rows should stay hidden until a complete fp32 export is available"
+                .all(|r| !r.id.starts_with("streaming-nemotron-en-")),
+            "English Nemotron rows should be gone after the multilingual 3.5 replacement"
         );
 
         let streaming_nemotron = rows
             .iter()
-            .find(|r| r.id == "streaming-nemotron-en-1120ms-int8")
-            .expect("streaming nemotron row present");
-        assert_eq!(streaming_nemotron.display_name, "Streaming Nemotron");
+            .find(|r| r.id == "streaming-nemotron-3.5-multi-1120ms-int8")
+            .expect("streaming nemotron 3.5 row present");
+        assert_eq!(streaming_nemotron.display_name, "Streaming Nemotron 3.5");
         assert_eq!(
             streaming_nemotron.available_quantizations.as_slice(),
-            ["int8"]
+            ["", "int8"]
         );
 
         let tiny_en = rows

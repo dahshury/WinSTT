@@ -251,7 +251,46 @@
     "retentionDays3": "3 दिन बाद",
     "retentionWeeks2": "2 सप्ताह बाद",
     "retentionMonths3": "3 महीने बाद",
-    "pageTitle": "Transcription history"
+    "pageTitle": "Transcription history",
+    "enabledTitle": "ट्रांसक्रिप्शन इतिहास",
+    "enabledTooltip": "चालू होने पर, WinSTT आपके ट्रांसक्रिप्शन, रूपांतरण और रीड-अलाउड रन रिकॉर्ड करता है ताकि यह डैशबोर्ड आँकड़े और खर्च दिखा सके। नया डेटा एकत्र करना रोकने के लिए इसे बंद करें।",
+    "disabledHint": "इतिहास बंद है — WinSTT नई गतिविधि रिकॉर्ड नहीं कर रहा है। मौजूदा डेटा तब तक रखा जाता है जब तक आप उसे हटा न दें।",
+    "deleteAllTitle": "सारा इतिहास हटाएँ?",
+    "deleteAllDescription": "सभी रिकॉर्ड किए गए ट्रांसक्रिप्शन, रूपांतरण, रीड-अलाउड रन और सहेजी गई रिकॉर्डिंग स्थायी रूप से हटा दी जाएँगी। इसे पूर्ववत नहीं किया जा सकता।",
+    "deleteAllButton": "सारा डेटा हटाएँ",
+    "clearTtsButton": "रीड-अलाउड साफ़ करें",
+    "clearTtsTitle": "सारा रीड-अलाउड इतिहास साफ़ करें?",
+    "clearTtsDescription": "सभी सहेजे गए टेक्स्ट-टू-स्पीच रन और ऑडियो हटा दिए जाएँगे। इसे पूर्ववत नहीं किया जा सकता।",
+    "combinedTableTitle": "इतिहास",
+    "filterDateRange": "तिथि सीमा",
+    "filterAllTime": "सभी समय",
+    "heatmapEarlier": "पहले",
+    "heatmapLater": "बाद में",
+    "spendingTitle": "खर्च",
+    "spendingTotalLabel": "कुल खर्च",
+    "spendingByModalityTitle": "प्रकार अनुसार खर्च",
+    "spendingByProviderTitle": "प्रदाता अनुसार खर्च",
+    "spendingByModelTitle": "मॉडल अनुसार खर्च",
+    "spendingByMakerTitle": "निर्माता अनुसार खर्च",
+    "spendingEstimatedHint": "कुछ आँकड़े अनुमानित हैं जहाँ सटीक मूल्य निर्धारण उपलब्ध नहीं था।",
+    "costSpeechToText": "स्पीच-टू-टेक्स्ट",
+    "costTextToSpeech": "टेक्स्ट-टू-स्पीच",
+    "costLanguageModel": "लैंग्वेज मॉडल",
+    "colCharacters": "अक्षर",
+    "cloudLabel": "क्लाउड",
+    "colCost": "क्लाउड लागत",
+    "costEstimated": "अनुमानित",
+    "costTotal": "कुल",
+    "kindSpeechToText": "स्पीच-टू-टेक्स्ट",
+    "kindTextToSpeech": "टेक्स्ट-टू-स्पीच",
+    "durationLlmProcessing": "AI प्रोसेसिंग",
+    "durationNotRecorded": "रिकॉर्ड नहीं किया गया",
+    "durationNotRun": "नहीं चलाया गया",
+    "durationRecording": "रिकॉर्डिंग",
+    "durationSpeechToText": "ट्रांसक्रिप्शन",
+    "durationTotalProcessing": "प्रोसेसिंग समय",
+    "colTtsModel": "वॉइस मॉडल",
+    "colVoice": "वॉइस"
   },
   "general": {
     "wakeWordCustomLowerAccuracy": "Custom/flexible wake phrases use sherpa-onnx and are lower accuracy than built-in Porcupine phrases.",
@@ -454,7 +493,10 @@
     "wordByWordPastingTooltip": "Streams stable realtime words into the focused app while you speak. Requires live transcription and a native-streaming model selected as the main STT model; final paste is not duplicated.",
     "wordByWordDisablePostProcessingTitle": "Disable dictation post-processing?",
     "wordByWordDisablePostProcessingDescription": "Word-by-Word Pasting streams text before the full transcript is complete, so LLM dictation post-processing cannot run at the same time. Dictation post-processing will be turned off before Word-by-Word Pasting is enabled.",
-    "wordByWordDisablePostProcessingConfirm": "Disable post-processing"
+    "wordByWordDisablePostProcessingConfirm": "Disable post-processing",
+    "contextScreenOcr": "स्क्रीन टेक्स्ट (OCR) फ़ॉलबैक",
+    "contextScreenOcrCaption": "अतिरिक्त संदर्भ के लिए कर्सर के पास स्क्रीन पर मौजूद टेक्स्ट पढ़ें",
+    "contextScreenOcrTooltip": "जब संदर्भ जागरूकता फोकस किए गए फ़ील्ड को सीधे नहीं पढ़ पाती, तो WinSTT आस-पास का टेक्स्ट लेने के लिए कर्सर के आस-पास के स्क्रीन क्षेत्र को पढ़ने (OCR) पर लौट आता है। यह सीधे फ़ील्ड पढ़ने से धीमा और कम सटीक है — फ़ॉलबैक छोड़ने के लिए इसे बंद कर दें।"
   },
   "model": {
     "initialPrompt": "प्रारंभिक प्रॉम्प्ट",
@@ -523,6 +565,9 @@
     "earlyTranscriptionCaption": "जल्दी शुरू करने के लिए मौन के सेकंड",
     "earlyTranscriptionTooltip": "पूरी तरह बोलना बंद करने से पहले ट्रांसक्राइब करना शुरू करें, इतने सेकंड के मौन के बाद ट्रिगर होता है। बोलने और अंतिम टेक्स्ट देखने के बीच की देरी को कम करता है। अक्षम करने के लिए 0 सेट करें।",
     "realtimeModel": "रियलटाइम मॉडल",
+    "realtimeLanguage": "Realtime Language",
+    "realtimeLanguageTooltip": "Force a language for the multilingual realtime model instead of auto-detecting it. Only shown for multilingual streaming models (e.g. Nemotron 3.5).",
+    "realtimeLanguageAuto": "Auto-detect",
     "realtimePreviewSection": "Realtime Preview",
     "realtimeModelSection": "रियलटाइम मॉडल",
     "realtimeModelCaption": "लाइव पूर्वावलोकन के लिए छोटा मॉडल",
@@ -537,7 +582,10 @@
     "updateIntervalTooltip": "लाइव ट्रांसक्रिप्शन अपडेट के बीच न्यूनतम समय। कम मान अधिक बार अपडेट देते हैं लेकिन अधिक प्रोसेसिंग शक्ति का उपयोग करते हैं। यदि डिक्टेशन के दौरान रुकावट या उच्च CPU उपयोग का अनुभव हो तो बढ़ाएं।",
     "llm": "बड़ा भाषा मॉडल",
     "deviceAutoLabel": "ऑटो",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "realtimeOffWordByWordTitle": "रीयल-टाइम शब्द-दर-शब्द ट्रांसक्रिप्शन बंद करें?",
+    "realtimeOffWordByWordDescription": "यह मॉडल आपके बोलते ही शब्द-दर-शब्द ट्रांसक्रिप्शन स्ट्रीम करता है। रीयल-टाइम बंद करने से यह केवल आपके रुकने के बाद ट्रांसक्राइब करने पर स्विच हो जाता है।",
+    "realtimeOffWordByWordConfirm": "बंद करें"
   },
   "audio": {
     "inputDevice": "इनपुट डिवाइस",
@@ -575,7 +623,8 @@
     "microphoneReleaseImmediate": "तुरंत",
     "microphoneReleaseSec30": "30 सेकंड",
     "microphoneReleaseMin1": "1 मिनट",
-    "microphoneReleaseMin5": "5 मिनट"
+    "microphoneReleaseMin5": "5 मिनट",
+    "devicePriorityHandle": "प्राथमिकता क्रम बदलने के लिए खींचें"
   },
   "quality": {
     "enableRealtime": "रियलटाइम सक्षम करें",
@@ -717,7 +766,8 @@
     "waiting": "बोली की प्रतीक्षा...",
     "serverOffline": "सर्वर ऑफ़लाइन",
     "noAudioDetected": "(कोई ऑडियो नहीं मिला)",
-    "transcriptionFailed": "(ट्रांसक्रिप्शन विफल)"
+    "transcriptionFailed": "(ट्रांसक्रिप्शन विफल)",
+    "offlineNoLocalModel": "इंटरनेट नहीं · कोई स्थानीय मॉडल नहीं"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -1006,7 +1056,8 @@
     "unfitInstallAnyway": "फिर भी इंस्टॉल करें",
     "unfitSelectTitle": "क्या यह बड़ा मॉडल उपयोग करें?",
     "unfitSelectDescription": "\"{model}\" आपके हार्डवेयर के आराम से चलाने की क्षमता से बड़ा है (~{required} आवश्यक, {available} उपलब्ध)। यह बहुत धीमा हो सकता है या लोड नहीं हो सकता। फिर भी उपयोग करें?",
-    "unfitSelectAnyway": "फिर भी उपयोग करें"
+    "unfitSelectAnyway": "फिर भी उपयोग करें",
+    "dictionaryAutoAddLiteModel": "छोटे मॉडल पर उपलब्ध नहीं — शब्दकोश सुधार अपने आप जोड़ने के लिए किसी बड़े मॉडल पर स्विच करें।"
   },
   "tts": {
     "title": "टेक्स्ट-टू-स्पीच",
@@ -1066,7 +1117,21 @@
     "cloudNeedsVerifiedKey": "क्लाउड आवाज़ों का उपयोग करने के लिए एकीकरण में एक ElevenLabs API कुंजी जोड़ें और सत्यापित करें।",
     "cloudLoadingVoices": "आवाज़ें लोड हो रही हैं…",
     "cloudNoVoices": "इस ElevenLabs खाते के लिए कोई आवाज़ नहीं मिली।",
-    "cloudError": "ElevenLabs आवाज़ें लोड नहीं हो सकीं।"
+    "cloudError": "ElevenLabs आवाज़ें लोड नहीं हो सकीं।",
+    "voiceDesignLabel": "प्रॉम्प्ट से TTS आवाज़ का वर्णन",
+    "voiceDesignTooltip": "जो आवाज़ आप चाहते हैं उसका शब्दों में वर्णन करें — स्वर, उम्र, लहजा, भाव — और मॉडल किसी प्रीसेट बैंक से चुनने के बजाय एक मेल खाती आवाज़ संश्लेषित करता है।",
+    "voiceDesignButtonPlaceholder": "आवाज़ डिज़ाइन करें",
+    "voiceDesignDialogTitle": "आवाज़ डिज़ाइन करें",
+    "voiceDesignDialogDescription": "आवाज़ का एक-दो वाक्यों में वर्णन करें। मॉडल की डिफ़ॉल्ट आवाज़ उपयोग करने के लिए खाली छोड़ें।",
+    "voiceDesignPromptLabel": "आवाज़ का वर्णन",
+    "voiceDesignPromptPlaceholder": "जैसे, हल्के ब्रिटिश लहजे वाला एक गर्म, धीमी आवाज़ वाला वर्णनकर्ता",
+    "voiceDesignPromptEmptyHint": "मॉडल की अंतर्निहित आवाज़ पर लौटने के लिए खाली छोड़ें।",
+    "voiceDesignCancel": "रद्द करें",
+    "voiceDesignSave": "सहेजें",
+    "cloneRefLabel": "Reference transcript",
+    "cloneRefTranscribing": "Transcribing reference…",
+    "cloneRefPlaceholder": "What the reference clip says (auto-filled from your STT model; edit if needed).",
+    "cloneRefHint": "Auto-transcribed with your selected STT model. Cloning uses this text — correct any errors for the best result."
   },
   "errors": {
     "somethingWentWrong": "कुछ गलत हो गया",
@@ -1153,7 +1218,8 @@
     "toastRateLimited": "{provider} द्वारा दर सीमित",
     "toastRateLimitedRetry": "{seconds} सेकंड में पुनः प्रयास करें",
     "toastProviderError": "{provider} STT त्रुटि: {message}",
-    "openIntegrations": "एकीकरण खोलें"
+    "openIntegrations": "एकीकरण खोलें",
+    "toastTtsOfflineNoLocal": "इंटरनेट नहीं और कोई स्थानीय आवाज़ इंस्टॉल नहीं — पढ़कर सुनाना उपलब्ध नहीं है।"
   },
   "onboarding": {
     "lookingForOllama": "Looking for Ollama on this machine…",
@@ -1345,7 +1411,9 @@
     "deleteQuantTitle": "Delete {quant} weights?",
     "thisQuantFallback": "this",
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
-    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker."
+    "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
+    "liteTier": "छोटा",
+    "liteTierTip": "कम सटीकता वाला एक छोटा, तेज़ वेरिएंट — सीमित हार्डवेयर पर त्वरित कार्यों के लिए सर्वोत्तम।"
   },
   "dataGrid": {
     "addRow": "Add row",

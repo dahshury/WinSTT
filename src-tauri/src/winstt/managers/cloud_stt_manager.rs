@@ -7,6 +7,7 @@
 // calls `transcribe_samples` from `TranscriptionManager::transcribe` when the
 // selected model id carries a cloud prefix (`openai:` / `elevenlabs:`).
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -22,6 +23,14 @@ use crate::winstt::cloud_stt::{
     parse_transcription_json, preflight, samples_to_wav_bytes, split_model_id,
 };
 
+/// Cost telemetry of the most recent successful cloud upload, consumed by the
+/// dictation pipeline when it persists the history row (`take_last_run_cost`).
+#[derive(Debug, Clone)]
+pub struct CloudSttRunCost {
+    pub cost_usd: f64,
+    pub cost_is_estimate: bool,
+}
+
 pub struct CloudSttManager {
     app: AppHandle,
     client: reqwest::Client,
@@ -30,16 +39,41 @@ pub struct CloudSttManager {
     /// Monotonic counter for auto-generated request ids (the live pipeline call
     /// path has no renderer-supplied id; the cancel command supplies its own).
     next_request: AtomicU64,
+    /// Cost of the latest completed upload. Dictations are serialized (one
+    /// final decode at a time), so a take-after-decode read is race-free in
+    /// practice; `take` clears it so a later local decode can't inherit it.
+    last_run_cost: Mutex<Option<CloudSttRunCost>>,
 }
 
 impl CloudSttManager {
     pub fn new(app: &AppHandle) -> Self {
         Self {
             app: app.clone(),
-            client: reqwest::Client::new(),
+            // Shared pooled client (cheap Arc clone) — reuses the same
+            // connection pool as the TTS engines and verify probes.
+            client: crate::winstt::net::http_client().clone(),
             cancelled: CancelRegistry::new(),
             next_request: AtomicU64::new(0),
+            last_run_cost: Mutex::new(None),
         }
+    }
+
+    /// Take (and clear) the cost of the most recent successful cloud upload.
+    pub fn take_last_run_cost(&self) -> Option<CloudSttRunCost> {
+        self.last_run_cost
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+    }
+
+    fn record_run_cost(&self, transcription: &CloudTranscription) {
+        let Ok(mut slot) = self.last_run_cost.lock() else {
+            return;
+        };
+        *slot = transcription.cost_usd.map(|cost_usd| CloudSttRunCost {
+            cost_usd,
+            cost_is_estimate: transcription.cost_is_estimate,
+        });
     }
 
     fn next_request_id(&self) -> String {
@@ -103,7 +137,13 @@ impl CloudSttManager {
             return Err(CloudSttError::new(CloudSttErrorCode::Aborted, "cancelled"));
         }
 
-        let result = self.do_upload(req, &cancel).await;
+        let result = crate::winstt::cloud_metrics::timed(
+            provider.id(),
+            "stt_transcribe",
+            self.do_upload(req, &cancel),
+            |e: &CloudSttError| e.message.clone(),
+        )
+        .await;
         if self.is_cancelled(request_id) {
             self.clear(request_id);
             return Err(CloudSttError::new(CloudSttErrorCode::Aborted, "cancelled"));
@@ -166,6 +206,7 @@ impl CloudSttManager {
 
         let request_id = self.next_request_id();
         let result = self.transcribe(&request_id, req).await?;
+        self.record_run_cost(&result);
         Ok(result.text)
     }
 
@@ -174,9 +215,19 @@ impl CloudSttManager {
         req: CloudTranscribeRequest,
         cancel: &CancellationToken,
     ) -> Result<CloudTranscription, CloudSttError> {
-        let provider = req.provider;
+        // Destructure the owned request so the WAV buffer MOVES into the
+        // multipart part instead of being cloned (utterances are multi-MB).
+        let CloudTranscribeRequest {
+            provider,
+            model_id,
+            api_key,
+            language,
+            media_type,
+            audio_wav,
+        } = req;
         let endpoint = provider.endpoint();
         let timeout = Duration::from_secs(CLOUD_TRANSCRIBE_TIMEOUT_SECS);
+        let language = language.filter(|lang| !lang.is_empty());
 
         // ElevenLabs takes a multipart file upload. OpenRouter's dedicated
         // `/audio/transcriptions` endpoint is OpenAI-compatible but takes a JSON
@@ -184,45 +235,43 @@ impl CloudSttManager {
         // multipart). Both then share the send / status / parse / cancel logic below.
         let rb = match provider {
             CloudSttProvider::ElevenLabs => {
-                let part = reqwest::multipart::Part::bytes(req.audio_wav.clone())
+                let part = reqwest::multipart::Part::bytes(audio_wav)
                     .file_name("audio.wav")
-                    .mime_str(&req.media_type)
+                    .mime_str(&media_type)
                     .map_err(|e| {
                         CloudSttError::new(CloudSttErrorCode::ProviderError, e.to_string())
                     })?;
                 let mut form = reqwest::multipart::Form::new()
                     .part("file", part)
-                    .text("model_id", req.model_id.clone());
-                if let Some(lang) = req.language.clone()
-                    && !lang.is_empty()
-                {
+                    .text("model_id", model_id);
+                if let Some(lang) = language {
                     form = form.text("language_code", lang);
                 }
                 self.client
                     .post(endpoint)
                     .multipart(form)
                     .timeout(timeout)
-                    .header("xi-api-key", &req.api_key)
+                    .header("xi-api-key", &api_key)
             }
             CloudSttProvider::OpenRouter => {
-                let mut b64 = String::with_capacity(
-                    base64::encoded_len(req.audio_wav.len(), true).unwrap_or(0),
-                );
-                STANDARD.encode_string(&req.audio_wav, &mut b64);
+                let mut b64 =
+                    String::with_capacity(base64::encoded_len(audio_wav.len(), true).unwrap_or(0));
+                STANDARD.encode_string(&audio_wav, &mut b64);
                 let mut body = serde_json::json!({
-                    "model": req.model_id,
+                    "model": model_id,
                     "input_audio": { "data": b64, "format": "wav" },
+                    // Opt into usage accounting so the response carries the
+                    // exact billed cost (`usage.cost`) for the History footer.
+                    "usage": { "include": true },
                 });
-                if let Some(lang) = req.language.clone()
-                    && !lang.is_empty()
-                {
+                if let Some(lang) = language {
                     body["language"] = serde_json::Value::String(lang);
                 }
                 self.client
                     .post(endpoint)
                     .json(&body)
                     .timeout(timeout)
-                    .bearer_auth(&req.api_key)
+                    .bearer_auth(&api_key)
             }
         };
 
@@ -283,7 +332,15 @@ impl CloudSttManager {
             CloudSttProvider::OpenRouter => rb.bearer_auth(api_key),
             CloudSttProvider::ElevenLabs => rb.header("xi-api-key", api_key),
         };
-        match rb.send().await {
+        let started = std::time::Instant::now();
+        let sent = rb.send().await;
+        crate::winstt::cloud_metrics::record(
+            provider.id(),
+            "verify",
+            started.elapsed(),
+            sent.as_ref().err().map(|e| e.to_string()).as_deref(),
+        );
+        match sent {
             Ok(resp) => {
                 let status = resp.status().as_u16();
                 let body = resp.text().await.unwrap_or_default();
@@ -301,42 +358,42 @@ impl CloudSttManager {
     }
 }
 
-/// Map the internal taxonomy code to the renderer fan-out token the
-/// `native-bridge-adapter` `shouldDeliver` routes on. `timeout` and
-/// `audio_too_large` have no dedicated WinSTT channel, so they ride the
-/// network / provider channels respectively (matching the reference
-/// `ERROR_CODE_CHANNEL` mapping). `aborted` never reaches here (suppressed
-/// by `should_notify`).
-#[cfg(test)]
-fn fanout_code(code: CloudSttErrorCode) -> &'static str {
-    match code {
-        CloudSttErrorCode::Auth => "auth_failed",
-        CloudSttErrorCode::Network | CloudSttErrorCode::Timeout => "network_error",
-        CloudSttErrorCode::KeyMissing => "key_missing",
-        CloudSttErrorCode::RateLimit => "rate_limited",
-        CloudSttErrorCode::AudioTooLarge | CloudSttErrorCode::ProviderError => "provider_error",
-        // Unreachable (suppressed earlier) — default to provider_error.
-        CloudSttErrorCode::Aborted => "provider_error",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::winstt::cloud_stt::cloud_error_fanout_code;
 
+    /// The fan-out tokens the `native-bridge-adapter` `shouldDeliver` routes on.
+    /// Exercises the REAL mapping (`cloud_error_fanout_code`) rather than a
+    /// test-local copy that could drift from it.
     #[test]
     fn fanout_tokens_match_adapter() {
-        assert_eq!(fanout_code(CloudSttErrorCode::Auth), "auth_failed");
-        assert_eq!(fanout_code(CloudSttErrorCode::Network), "network_error");
-        assert_eq!(fanout_code(CloudSttErrorCode::Timeout), "network_error");
-        assert_eq!(fanout_code(CloudSttErrorCode::KeyMissing), "key_missing");
-        assert_eq!(fanout_code(CloudSttErrorCode::RateLimit), "rate_limited");
         assert_eq!(
-            fanout_code(CloudSttErrorCode::ProviderError),
+            cloud_error_fanout_code(CloudSttErrorCode::Auth),
+            "auth_failed"
+        );
+        assert_eq!(
+            cloud_error_fanout_code(CloudSttErrorCode::Network),
+            "network_error"
+        );
+        assert_eq!(
+            cloud_error_fanout_code(CloudSttErrorCode::Timeout),
+            "network_error"
+        );
+        assert_eq!(
+            cloud_error_fanout_code(CloudSttErrorCode::KeyMissing),
+            "key_missing"
+        );
+        assert_eq!(
+            cloud_error_fanout_code(CloudSttErrorCode::RateLimit),
+            "rate_limited"
+        );
+        assert_eq!(
+            cloud_error_fanout_code(CloudSttErrorCode::ProviderError),
             "provider_error"
         );
         assert_eq!(
-            fanout_code(CloudSttErrorCode::AudioTooLarge),
+            cloud_error_fanout_code(CloudSttErrorCode::AudioTooLarge),
             "provider_error"
         );
     }

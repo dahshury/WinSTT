@@ -367,7 +367,7 @@ The Transforms playground works the same as dictation's, with its own per-transf
 
 Dictation cleanup can read text from the window you're typing into so names and jargon get spelled correctly. These controls live next to the LLM config and **disappear entirely when the dictation LLM is not configured** — the capture pipeline never runs in that case.
 
-<Screenshot src="sec-quality-context" alt="The Context awareness section with a single Context awareness toggle, switched on." chrome="card" label="Settings → Processing → Context awareness" caption="Feeds focused-window text into the LLM cleanup prompt. Off by default — opt in per the in-app dialog." />
+<Screenshot src="sec-quality-context" alt="The Context awareness section with a header toggle switched on, a Context-scope switcher set between Black list and Allow list, and the matching app allow/deny list below." chrome="card" label="Settings → Processing → Context awareness" caption="Feeds focused-window text into the LLM cleanup prompt. Off by default — opt in per the in-app dialog." />
 
 <SettingRow label="Context Awareness" settingKey="general.contextAwareness" default="false">
   Off by default. When on, WinSTT reads the focused window's text immediately before each
@@ -394,7 +394,7 @@ Dictation cleanup can read text from the window you're typing into so names and 
 
 After the final text is produced (and optionally cleaned), WinSTT pastes it at your cursor. This toggle decides whether it also presses a submit key.
 
-<Screenshot src="sec-quality-paste" alt="The Paste Behavior section with the Auto-Submit After Paste toggle, switched off." chrome="card" label="Settings → Processing → Paste behavior" caption="Auto-Submit fires a submit key right after each paste — off by default." />
+<Screenshot src="sec-quality-paste" alt="The Paste Behavior section with the Auto-Submit After Paste toggle, switched off." chrome="card" label="Settings → Output → Paste behavior" caption="Auto-Submit fires a submit key right after each paste — off by default." />
 
 <SettingRow label="Auto-Submit After Paste" settingKey="general.autoSubmit" default="false">
   When on, WinSTT injects a submit key right after each successful paste — so a dictated
@@ -406,7 +406,7 @@ After the final text is produced (and optionally cleaned), WinSTT pastes it at y
 
 When you drop an audio file in for batch transcription, this setting picks the output format. It applies to file jobs only, not live dictation.
 
-<Screenshot src="sec-quality-filetx" alt="The File Transcription section with a Format control toggled between TXT and SRT — TXT selected." chrome="card" label="Settings → Processing → File transcription" caption="Pick the batch-export format: plain TXT or timestamped SRT subtitles." />
+<Screenshot src="sec-quality-filetx" alt="The File Transcription section with a Format control toggled between TXT and SRT — TXT selected." chrome="card" label="Settings → Output → File transcription" caption="Pick the batch-export format: plain TXT or timestamped SRT subtitles." />
 
 <SettingRow label="File Transcription Format" settingKey="general.fileTranscriptionFormat" default="txt">
   **TXT** writes plain text; **SRT** writes SubRip subtitles with timecodes. Full details

@@ -18,7 +18,6 @@ function model(
 		previewCapable: true,
 		nativeStreaming: false,
 		finalReuseSafe: false,
-		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
@@ -95,7 +94,7 @@ describe("SttModelSelector streaming filter", () => {
 			/>,
 		);
 
-		expect(screen.getAllByText("Streaming Parakeet Unified")).toHaveLength(1);
+		expect(screen.getAllByText("Parakeet Unified")).toHaveLength(1);
 		expect(screen.getByLabelText("Download fp32 weights")).toBeDefined();
 		fireEvent.click(screen.getByLabelText("Download int8 weights"));
 		expect(onDownloadAction).toHaveBeenCalledWith(
@@ -137,7 +136,7 @@ describe("SttModelSelector streaming filter", () => {
 			/>,
 		);
 
-		expect(screen.getAllByText("Streaming Nemotron")).toHaveLength(1);
+		expect(screen.getAllByText("Nemotron")).toHaveLength(1);
 		expect(screen.getByLabelText("Download fp32 weights")).toBeDefined();
 		fireEvent.click(screen.getByLabelText("Download int8 weights"));
 		expect(onDownloadAction).toHaveBeenCalledWith(
@@ -192,12 +191,8 @@ describe("SttModelSelector streaming filter", () => {
 			/>,
 		);
 
-		expect(
-			screen.getAllByText("Streaming NeMo FastConformer CTC"),
-		).toHaveLength(1);
-		expect(
-			screen.getAllByText("Streaming NeMo FastConformer RNN-T"),
-		).toHaveLength(1);
+		expect(screen.getAllByText("FastConformer CTC")).toHaveLength(1);
+		expect(screen.getAllByText("FastConformer RNN-T")).toHaveLength(1);
 		fireEvent.click(screen.getAllByLabelText("Download int8 weights")[0]!);
 		expect(onDownloadAction).toHaveBeenCalledWith(
 			"start",

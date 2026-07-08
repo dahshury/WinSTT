@@ -1,5 +1,5 @@
 import { RecordIcon } from "@hugeicons/core-free-icons";
-import { type ReactNode } from "react";
+import type { ReactNode } from "react";
 import {
 	DEFAULT_SETTINGS,
 	SettingField,
@@ -298,6 +298,14 @@ function WakeWordTimeoutControl({
 
 interface RecordingModeSectionProps {
 	audio: AudioSettings | undefined;
+	/**
+	 * Deferred copy of the recording mode (from `useDeferredValue`). Drives the
+	 * mode-CONDITIONAL sub-controls (toggle stop, wake-word controls) so their
+	 * mount/unmount lands in the concurrent pass rather than blocking the live
+	 * switcher. The switcher `value` and the reset button read `recordingMode`
+	 * (live) so the pill and default-state flip the instant the user clicks.
+	 */
+	contentMode: "ptt" | "toggle" | "listen" | "wakeword";
 	general: GeneralSettings | undefined;
 	prepareListenMode: () => boolean;
 	recordingMode: "ptt" | "toggle" | "listen" | "wakeword";
@@ -317,6 +325,7 @@ interface RecordingModeSectionProps {
 // and the recording-sound chime moved to Model/Output tabs respectively.
 export function RecordingModeSection({
 	audio,
+	contentMode,
 	t,
 	ta,
 	general,
@@ -332,7 +341,7 @@ export function RecordingModeSection({
 	const manualToggleStop = general?.manualToggleStop ?? false;
 	const wakewordControlsLocked =
 		!wakewordStatus.available &&
-		(wakewordStatus.downloading || recordingMode === "wakeword");
+		(wakewordStatus.downloading || contentMode === "wakeword");
 	const showWakewordDownloadProgress =
 		!wakewordStatus.available &&
 		(wakewordEnablePending ||
@@ -397,26 +406,26 @@ export function RecordingModeSection({
 					value={recordingMode}
 				/>
 			</div>
-			{recordingMode !== "wakeword" && showWakewordDownloadProgress ? (
+			{contentMode !== "wakeword" && showWakewordDownloadProgress ? (
 				<WakewordDownloadProgress status={wakewordStatus} />
 			) : null}
-			{recordingMode === "toggle" ? (
+			{contentMode === "toggle" ? (
 				<>
 					<ManualToggleStopControl
 						enabled={manualToggleStop}
 						t={t}
 						update={update}
 					/>
-					{!manualToggleStop ? (
+					{manualToggleStop ? null : (
 						<ToggleSilenceStopControl
 							audio={audio}
 							t={ta}
 							update={updateAudio}
 						/>
-					) : null}
+					)}
 				</>
 			) : null}
-			{recordingMode === "wakeword" ? (
+			{contentMode === "wakeword" ? (
 				<>
 					<WakeWordControl
 						customWakeWords={general?.customWakeWords ?? []}

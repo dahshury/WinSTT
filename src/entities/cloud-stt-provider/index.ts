@@ -1,9 +1,12 @@
+export { modelChipLogo, modelMakerToken } from "./lib/model-logo";
 export {
+	bareCloudModelId,
 	CLOUD_CATALOG,
 	CLOUD_PROVIDERS,
 	type CloudModel,
 	defaultCloudModelId,
 	getApiKeyUrl,
+	isCloudModelId,
 	providerDisplayName,
 	providerOf,
 } from "./model/catalog";

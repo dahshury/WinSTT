@@ -12,6 +12,7 @@ const PROVIDER_ICONS: Record<string, string> = {
 	arliai: "/provider-icons/arliai.svg",
 	baidu: "/provider-icons/baidu.svg",
 	bytedance: "/provider-icons/bytedance.svg",
+	canopylabs: "/provider-icons/canopylabs.svg",
 	cognitivecomputations: "/provider-icons/cognitivecomputations.png",
 	cohere: "/provider-icons/cohere.svg",
 	deepcogito: "/provider-icons/deepcogito.svg",
@@ -20,6 +21,7 @@ const PROVIDER_ICONS: Record<string, string> = {
 	essentialai: "/provider-icons/essentialai.svg",
 	google: "/provider-icons/google.svg",
 	gryphe: "/provider-icons/gryphe.png",
+	hexgrad: "/provider-icons/hexgrad.svg",
 	huggingface: "/provider-icons/huggingface.svg",
 	"ibm-granite": "/provider-icons/ibm-granite.svg",
 	inception: "/provider-icons/inception.svg",
@@ -47,6 +49,7 @@ const PROVIDER_ICONS: Record<string, string> = {
 	raifle: "/provider-icons/raifle.png",
 	relace: "/provider-icons/relace.svg",
 	sao10k: "/provider-icons/sao10k.png",
+	sesame: "/provider-icons/sesame.svg",
 	"stepfun-ai": "/provider-icons/stepfun-ai.svg",
 	switchpoint: "/provider-icons/switchpoint.png",
 	tencent: "/provider-icons/tencent.svg",
@@ -77,7 +80,23 @@ function findAliasProviderKey(
 	normalized: string,
 ): string | null {
 	const alias = aliases[normalized];
-	return alias && PROVIDER_ICONS[alias] ? alias : null;
+	if (alias && PROVIDER_ICONS[alias]) {
+		return alias;
+	}
+	// Version-suffixed family ids (`gemma3`, `gemma4`, `llama3.2`, `phi3`) never
+	// match an alias key exactly. Treat an alias as a prefix when the next
+	// character starts a version segment (digit / `-` / `.` / `:`) so those
+	// Ollama families still resolve to their maker's logo (gemma* → google).
+	for (const [key, target] of Object.entries(aliases)) {
+		if (
+			normalized.startsWith(key) &&
+			PROVIDER_ICONS[target] &&
+			/[\d\-.:]/.test(normalized.charAt(key.length))
+		) {
+			return target;
+		}
+	}
+	return null;
 }
 
 function findFuzzyProviderKey(normalized: string): string | null {

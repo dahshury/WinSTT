@@ -13,7 +13,9 @@ import type { SearchState } from "@/shared/ui/data-grid/types";
 
 function onTriggerPointerDown(event: React.PointerEvent<HTMLButtonElement>) {
 	const target = event.target;
-	if (!(target instanceof HTMLElement)) return;
+	if (!(target instanceof HTMLElement)) {
+		return;
+	}
 	if (target.hasPointerCapture(event.pointerId)) {
 		target.releasePointerCapture(event.pointerId);
 	}
@@ -70,7 +72,9 @@ export function DataGridSearch({
 	}, [searchOpen]);
 
 	React.useEffect(() => {
-		if (!searchOpen) return;
+		if (!searchOpen) {
+			return;
+		}
 
 		function onEscape(event: KeyboardEvent) {
 			if (event.key === "Escape") {
@@ -103,7 +107,9 @@ export function DataGridSearch({
 		event.stopPropagation();
 
 		if (event.key === "Enter") {
-			if (event.nativeEvent.isComposing) return;
+			if (event.nativeEvent.isComposing) {
+				return;
+			}
 			event.preventDefault();
 			if (event.shiftKey) {
 				propsRef.current.onNavigateToPrevMatch();
@@ -114,7 +120,9 @@ export function DataGridSearch({
 	}
 
 	function onChange(event: React.ChangeEvent<HTMLInputElement>) {
-		if (isComposingRef.current) return;
+		if (isComposingRef.current) {
+			return;
+		}
 		const value = event.target.value;
 		setHasQuery(value.length > 0);
 		propsRef.current.onSearchQueryChange(value);
@@ -133,7 +141,9 @@ export function DataGridSearch({
 		propsRef.current.onNavigateToNextMatch();
 	}
 
-	if (!searchOpen) return null;
+	if (!searchOpen) {
+		return null;
+	}
 
 	return (
 		<search

@@ -252,7 +252,7 @@ async function measurePage(browser, base, pageDef) {
 				appReadyMs:
 					typeof rootReadyMs === "number"
 						? rootReadyMs
-						: nav?.loadEventEnd ?? performance.now(),
+						: (nav?.loadEventEnd ?? performance.now()),
 				domContentLoadedMs: nav?.domContentLoadedEventEnd ?? 0,
 				loadMs: nav?.loadEventEnd ?? 0,
 				fcpMs: paint?.startTime ?? Number.NaN,
@@ -266,7 +266,9 @@ async function measurePage(browser, base, pageDef) {
 
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
-	const { browser, executablePath } = await launchBrowser(args.browserExecutable);
+	const { browser, executablePath } = await launchBrowser(
+		args.browserExecutable,
+	);
 	const startedAt = new Date().toISOString();
 	const results = [];
 	try {
@@ -292,7 +294,8 @@ async function main() {
 		browserExecutable: executablePath,
 		runs: args.runs,
 		warmup: args.warmup,
-		metric: "navigationStart to first #root DOM commit; cache disabled; 1280x800; reduced motion; UTC; en-US",
+		metric:
+			"navigationStart to first #root DOM commit; cache disabled; 1280x800; reduced motion; UTC; en-US",
 		results,
 		passed: failed.length === 0,
 	};

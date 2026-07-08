@@ -246,16 +246,12 @@ pub fn recording_mode(app: &AppHandle) -> RecordingMode {
 }
 
 /// Open (decrypt) the secret fields on a settings tree in place. Idempotent
-/// on already-plaintext values (legacy passthrough). Covers the three
-/// renderer-facing string secrets AND the embedded `core.post_process_api_keys`
-/// SecretMap (the legacy post-processing LLM keys, now single-store + sealed).
+/// on already-plaintext values (legacy passthrough). Covers the
+/// renderer-facing string secrets.
 fn try_open_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
     settings.llm.openrouter_api_key = try_decrypt_secret(&settings.llm.openrouter_api_key)?;
     settings.integrations.elevenlabs.api_key =
         try_decrypt_secret(&settings.integrations.elevenlabs.api_key)?;
-    for value in settings.core.post_process_api_keys.values_mut() {
-        *value = try_decrypt_secret(value)?;
-    }
     Ok(())
 }
 
@@ -272,22 +268,15 @@ fn try_open_secrets_fail_closed(settings: &mut WinsttSettings) -> Result<(), Str
 fn clear_secret_fields(settings: &mut WinsttSettings) {
     settings.llm.openrouter_api_key.clear();
     settings.integrations.elevenlabs.api_key.clear();
-    for value in settings.core.post_process_api_keys.values_mut() {
-        value.clear();
-    }
 }
 
 /// Seal (encrypt) the secret fields on a settings tree in place, ready for
 /// the store. A value that is already a sealed envelope is left as-is via
-/// `encrypt_secret`'s idempotence. Covers the three renderer-facing string
-/// secrets AND the embedded `core.post_process_api_keys` SecretMap.
+/// `encrypt_secret`'s idempotence. Covers the renderer-facing string secrets.
 pub(crate) fn try_seal_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
     settings.llm.openrouter_api_key = try_encrypt_secret(&settings.llm.openrouter_api_key)?;
     settings.integrations.elevenlabs.api_key =
         try_encrypt_secret(&settings.integrations.elevenlabs.api_key)?;
-    for value in settings.core.post_process_api_keys.values_mut() {
-        *value = try_encrypt_secret(value)?;
-    }
     Ok(())
 }
 
@@ -300,12 +289,6 @@ fn mask_secret_for_renderer(value: &mut String) {
 pub(crate) fn sanitize_settings_for_renderer(settings: &mut WinsttSettings) {
     mask_secret_for_renderer(&mut settings.llm.openrouter_api_key);
     mask_secret_for_renderer(&mut settings.integrations.elevenlabs.api_key);
-    // The embedded legacy post-process API keys never cross to the renderer in
-    // plaintext (the renderer doesn't use `core` at all, but mask defensively so
-    // a future debug surface can't leak them).
-    for value in settings.core.post_process_api_keys.values_mut() {
-        mask_secret_for_renderer(value);
-    }
 }
 
 fn preserve_masked_secret(previous: &str, next: &mut String) {
@@ -543,77 +526,6 @@ mod tests {
         assert_eq!(opened.integrations.elevenlabs.api_key, "xi-el-secret");
     }
 
-    /// The single-store migration's load-bearing new behavior: the embedded legacy
-    /// `core.post_process_api_keys` SecretMap is sealed at rest (DPAPI) on save and
-    /// opened to plaintext on read, exactly like the three string secrets.
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn seal_then_open_round_trips_embedded_post_process_api_keys() {
-        let mut s = WinsttSettings::default();
-        s.core
-            .post_process_api_keys
-            .insert("openai".into(), "sk-pp-openai-secret".into());
-        s.core
-            .post_process_api_keys
-            .insert("groq".into(), "gsk-pp-groq-secret".into());
-        // Empty key must stay empty (no spurious envelope).
-        s.core
-            .post_process_api_keys
-            .insert("custom".into(), String::new());
-
-        let mut sealed = s.clone();
-        try_seal_secrets(&mut sealed).unwrap();
-        assert!(is_encrypted(
-            sealed.core.post_process_api_keys.get("openai").unwrap()
-        ));
-        assert!(is_encrypted(
-            sealed.core.post_process_api_keys.get("groq").unwrap()
-        ));
-        assert_eq!(sealed.core.post_process_api_keys.get("custom").unwrap(), "");
-        // Plaintext must not leak into the on-disk envelope.
-        assert!(
-            !sealed
-                .core
-                .post_process_api_keys
-                .get("openai")
-                .unwrap()
-                .contains("sk-pp-openai-secret")
-        );
-
-        let mut opened = sealed.clone();
-        try_open_secrets(&mut opened).unwrap();
-        assert_eq!(
-            opened.core.post_process_api_keys.get("openai").unwrap(),
-            "sk-pp-openai-secret"
-        );
-        assert_eq!(
-            opened.core.post_process_api_keys.get("groq").unwrap(),
-            "gsk-pp-groq-secret"
-        );
-        assert_eq!(opened.core.post_process_api_keys.get("custom").unwrap(), "");
-    }
-
-    /// The renderer-facing snapshot masks the embedded post-process API keys so
-    /// they never cross IPC in plaintext, while empty keys stay empty.
-    #[test]
-    fn renderer_sanitization_masks_embedded_post_process_keys() {
-        let mut s = WinsttSettings::default();
-        s.core
-            .post_process_api_keys
-            .insert("openai".into(), "sk-pp-secret".into());
-        s.core
-            .post_process_api_keys
-            .insert("custom".into(), String::new());
-
-        sanitize_settings_for_renderer(&mut s);
-
-        assert_eq!(
-            s.core.post_process_api_keys.get("openai").unwrap(),
-            SECRET_PRESENT_SENTINEL
-        );
-        assert_eq!(s.core.post_process_api_keys.get("custom").unwrap(), "");
-    }
-
     #[test]
     fn empty_secret_seals_to_empty() {
         // The default tree has empty secrets — sealing must keep them empty (no
@@ -640,16 +552,12 @@ mod tests {
         s.model.model = "nemo-canary-180m-flash".into();
         s.llm.openrouter_api_key = "sk-or-v1-secret".into();
         s.integrations.elevenlabs.api_key = "enc:v1:not-hex-!!!".into();
-        s.core
-            .post_process_api_keys
-            .insert("openai".into(), "sk-pp-secret".into());
 
         let err = try_open_secrets_fail_closed(&mut s).unwrap_err();
 
         assert!(err.contains("malformed encrypted secret envelope"));
         assert_eq!(s.llm.openrouter_api_key, "");
         assert_eq!(s.integrations.elevenlabs.api_key, "");
-        assert_eq!(s.core.post_process_api_keys.get("openai").unwrap(), "");
         assert_eq!(s.model.model, "nemo-canary-180m-flash");
     }
 
@@ -658,9 +566,6 @@ mod tests {
         let mut s = WinsttSettings::default();
         s.llm.openrouter_api_key = "sk-or-v1-secret".into();
         s.integrations.elevenlabs.api_key = "enc:v1:not-hex-!!!".into();
-        s.core
-            .post_process_api_keys
-            .insert("openai".into(), "sk-pp-secret".into());
 
         let err = try_open_secrets(&mut s).unwrap_err();
         sanitize_settings_for_renderer(&mut s);
@@ -668,10 +573,6 @@ mod tests {
         assert!(err.contains("malformed encrypted secret envelope"));
         assert_eq!(s.llm.openrouter_api_key, SECRET_PRESENT_SENTINEL);
         assert_eq!(s.integrations.elevenlabs.api_key, SECRET_PRESENT_SENTINEL);
-        assert_eq!(
-            s.core.post_process_api_keys.get("openai").unwrap(),
-            SECRET_PRESENT_SENTINEL
-        );
     }
 
     #[test]

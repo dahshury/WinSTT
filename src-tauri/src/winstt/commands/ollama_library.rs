@@ -359,6 +359,71 @@ fn parse_tags_page(html: &str) -> Vec<OllamaLibraryTag> {
     tags
 }
 
+// ── Model-homepage parser (per-slug rich metadata for typed tags) ────────────────
+//
+// The `/library/<slug>/tags` page carries sizes/quants but NOT the description or
+// capabilities — those live on the model homepage `/library/<slug>`, with different
+// markup from the search listing: a `<meta name="description">`, capability badges
+// styled `bg-indigo-50`, and `x-test-*` hooks for the pull count / updated stamp.
+// This lets a typed tag that isn't in the recommended catalog (e.g. `gpt-oss:20b`)
+// fill the same card fields the catalog cards show.
+
+static META_DESC_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r#"(?is)<meta\s+name="description"\s+content="([^"]*)""#));
+// Capability pills render with the `bg-indigo-50` accent (size pills use blue
+// `bg-[#ddf4ff]`), so the accent class disambiguates them from other badges.
+static INDIGO_CAP_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r#"(?i)<span[^>]*bg-indigo-50[^>]*>([a-z][a-z0-9 +-]*)</span>"#));
+static PULL_COUNT_ATTR_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r#"(?i)x-test-pull-count[^>]*>\s*([\d.,]+\s*[KMB]?)"#));
+static UPDATED_ATTR_RE: Lazy<Regex> =
+    Lazy::new(|| static_regex(r#"(?i)x-test-updated[^>]*>\s*([^<]+)"#));
+
+// Ollama's capability vocabulary is small and stable; whitelist it so a stray
+// indigo-styled span can never masquerade as a capability.
+const KNOWN_CAPABILITIES: [&str; 6] = [
+    "tools",
+    "thinking",
+    "vision",
+    "embedding",
+    "insert",
+    "completion",
+];
+
+fn parse_homepage_capabilities(html: &str) -> Option<Vec<String>> {
+    let mut caps: Vec<String> = Vec::new();
+    for c in INDIGO_CAP_RE.captures_iter(html) {
+        let Some(m) = c.get(1) else { continue };
+        let word = strip_tags(m.as_str()).to_lowercase();
+        if KNOWN_CAPABILITIES.contains(&word.as_str()) && !caps.contains(&word) {
+            caps.push(word);
+        }
+    }
+    if caps.is_empty() { None } else { Some(caps) }
+}
+
+fn parse_model_homepage(html: &str, slug: &str) -> OllamaLibraryHit {
+    let description = META_DESC_RE
+        .captures(html)
+        .and_then(|c| c.get(1))
+        .map(|m| decode_entities(m.as_str()).trim().to_string())
+        .filter(|s| !s.is_empty());
+    OllamaLibraryHit {
+        name: slug.to_string(),
+        description,
+        pulls: first_group(&PULL_COUNT_ATTR_RE, html),
+        updated: first_group(&UPDATED_ATTR_RE, html).or_else(|| first_group(&UPDATED_RE, html)),
+        capabilities: parse_homepage_capabilities(html),
+    }
+}
+
+/// Base slug for a typed tag or slug: the part before the first `:` (e.g.
+/// `gpt-oss:20b` → `gpt-oss`). Namespaced `user/model` slugs are returned as-is
+/// and simply 404 on the library homepage (→ graceful empty hit).
+fn homepage_slug(model: &str) -> &str {
+    model.split(':').next().unwrap_or(model).trim()
+}
+
 // ── Scrape entry points ─────────────────────────────────────────────────────────
 
 fn describe_error(err: String) -> String {
@@ -496,6 +561,35 @@ async fn fetch_ollama_library_tags(mgr: &OllamaManager, model: &str) -> OllamaLi
     }
 }
 
+async fn fetch_ollama_model_hit(mgr: &OllamaManager, model: &str) -> OllamaLibraryHit {
+    let slug = homepage_slug(model);
+    if slug.is_empty() {
+        return OllamaLibraryHit::default();
+    }
+    let cache_key = slug.to_lowercase();
+    if let Some(cached) = mgr.cache_get_hit(&cache_key) {
+        return cached;
+    }
+    match fetch_html(
+        mgr,
+        &format!("{OLLAMA_BASE}/library/{}", encode_component(slug)),
+    )
+    .await
+    {
+        Ok(html) => {
+            let hit = parse_model_homepage(&html, slug);
+            mgr.cache_set_hit(cache_key, hit.clone());
+            hit
+        }
+        // Degrade gracefully: keep the slug so the card still renders (size/quants
+        // come from the tags scrape); don't cache a miss so it retries next time.
+        Err(_) => OllamaLibraryHit {
+            name: slug.to_string(),
+            ..Default::default()
+        },
+    }
+}
+
 // ── Commands ────────────────────────────────────────────────────────────────────
 
 /// `ollama_refresh_library` → `LLM_FETCH_OLLAMA_LIBRARY`. Full library catalog in one shot.
@@ -515,6 +609,18 @@ pub async fn ollama_refresh_tags(
     model: String,
 ) -> Result<OllamaLibraryTagsResult, String> {
     Ok(fetch_ollama_library_tags(&ollama_manager, &model).await)
+}
+
+/// `ollama_refresh_model_hit` → `LLM_FETCH_OLLAMA_MODEL_HIT`. Per-slug homepage scrape
+/// (description / capabilities / pulls / updated) so a typed tag that isn't in the
+/// recommended catalog fills the same card fields the catalog cards show.
+#[tauri::command]
+#[specta::specta]
+pub async fn ollama_refresh_model_hit(
+    ollama_manager: State<'_, Arc<OllamaManager>>,
+    model: String,
+) -> Result<OllamaLibraryHit, String> {
+    Ok(fetch_ollama_model_hit(&ollama_manager, &model).await)
 }
 
 /// `ollama_search_library` → `LLM_SEARCH_OLLAMA_LIBRARY`. Paginated search (parity; v1 renderer
@@ -557,5 +663,46 @@ mod tests {
     #[test]
     fn encode_component_spaces() {
         assert_eq!(encode_component("a b"), "a%20b");
+    }
+
+    #[test]
+    fn homepage_slug_strips_tag() {
+        assert_eq!(homepage_slug("gpt-oss:20b"), "gpt-oss");
+        assert_eq!(homepage_slug("qwen3"), "qwen3");
+        assert_eq!(homepage_slug("  gemma4:e4b  "), "gemma4");
+    }
+
+    #[test]
+    fn parse_model_homepage_extracts_rich_metadata() {
+        let html = r##"
+            <meta name="description" content="OpenAI&#39;s open-weight models for reasoning &amp; agents.">
+            <span class="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-indigo-600">tools</span>
+            <span class="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-indigo-600">thinking</span>
+            <span class="inline-flex items-center rounded-md bg-[#ddf4ff] px-2 py-0.5 text-blue-600">20b</span>
+            <span x-test-pull-count>10.7M</span>
+            <span x-test-updated>8 months ago</span>
+        "##;
+        let hit = parse_model_homepage(html, "gpt-oss");
+        assert_eq!(hit.name, "gpt-oss");
+        assert_eq!(
+            hit.description.as_deref(),
+            Some("OpenAI's open-weight models for reasoning & agents.")
+        );
+        assert_eq!(
+            hit.capabilities.as_deref(),
+            Some(&["tools".to_string(), "thinking".to_string()][..])
+        );
+        assert_eq!(hit.pulls.as_deref(), Some("10.7M"));
+        assert_eq!(hit.updated.as_deref(), Some("8 months ago"));
+    }
+
+    #[test]
+    fn parse_model_homepage_drops_non_capability_badges() {
+        // An unknown indigo-styled word and a blue size pill must not be read as caps.
+        let html =
+            r##"<span class="bg-indigo-50">sponsored</span><span class="bg-[#ddf4ff]">20b</span>"##;
+        let hit = parse_model_homepage(html, "foo");
+        assert!(hit.capabilities.is_none());
+        assert_eq!(hit.name, "foo");
     }
 }

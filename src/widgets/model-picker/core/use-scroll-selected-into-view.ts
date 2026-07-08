@@ -2,9 +2,26 @@ import { useEffect, type RefObject } from "react";
 import { scrollModelItemIntoView } from "./model-picker-scroll";
 
 /**
- * Scrolls the currently-selected model row into view once the popup is open and
- * its collection has rendered. Retries across two animation frames and falls
- * back to a short-lived MutationObserver while the virtualized list mounts rows.
+ * Re-centers the active author tile in the group rail. Unlike the model list,
+ * the rail's tiles are present the moment the sidebar renders (no virtualized
+ * mount to wait for), so this fires in the same frame the picker opens. This is
+ * what guarantees the focused author is in view on open — the rail lives in a
+ * slot outside `ModelPicker`, so it can't observe the open state itself, and
+ * its own `activeId` effect never re-fires when the picker is re-opened with an
+ * unchanged selection.
+ */
+function scrollActiveRailTileIntoView(root: HTMLElement): void {
+	const tile = root.querySelector<HTMLElement>(
+		'[data-rail-tab="true"][aria-selected="true"]',
+	);
+	tile?.scrollIntoView({ block: "nearest" });
+}
+
+/**
+ * Scrolls the currently-selected model row (and the active author rail tile)
+ * into view once the popup is open and its collection has rendered. Retries
+ * across two animation frames and falls back to a short-lived MutationObserver
+ * while the virtualized list mounts rows.
  */
 export function useScrollSelectedIntoView(
 	popupNodeRef: RefObject<HTMLElement | null>,
@@ -17,7 +34,7 @@ export function useScrollSelectedIntoView(
 	const { effectiveOpen, renderCollection, selectedItemKey } = options;
 
 	useEffect(() => {
-		if (!effectiveOpen || !renderCollection || !selectedItemKey) {
+		if (!(effectiveOpen && renderCollection)) {
 			return;
 		}
 		const root = popupNodeRef.current;
@@ -38,6 +55,11 @@ export function useScrollSelectedIntoView(
 			}
 		};
 		const tryScroll = (): boolean => {
+			// No selected model → nothing to wait for on the list side; the rail
+			// still gets re-centered below.
+			if (!selectedItemKey) {
+				return true;
+			}
 			const didScroll = scrollModelItemIntoView(root, selectedItemKey);
 			if (didScroll) {
 				disconnectObserver();
@@ -47,6 +69,7 @@ export function useScrollSelectedIntoView(
 
 		firstFrame = requestAnimationFrame(() => {
 			secondFrame = requestAnimationFrame(() => {
+				scrollActiveRailTileIntoView(root);
 				if (tryScroll() || typeof MutationObserver === "undefined") {
 					return;
 				}

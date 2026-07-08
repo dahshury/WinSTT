@@ -161,7 +161,7 @@ describe("useTranscriptionStore", () => {
 				},
 			],
 			currentRealtime: "old text",
-			ephemeral: { text: "old message", timestamp: 1 },
+			ephemeral: { kind: "info", text: "old message", timestamp: 1 },
 			isRecordingActive: false,
 			isTranscribing: true,
 			processingPhase: "uploading",

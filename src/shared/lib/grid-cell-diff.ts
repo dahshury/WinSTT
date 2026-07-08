@@ -16,7 +16,9 @@ export function cellUpdatesBetween<TData extends { id: string }>(
 
 	for (const nextRow of next) {
 		const previousRow = previousById.get(nextRow.id);
-		if (!previousRow) continue;
+		if (!previousRow) {
+			continue;
+		}
 		for (const columnId of columnIds) {
 			const previousValue = (previousRow as Record<string, unknown>)[columnId];
 			const newValue = (nextRow as Record<string, unknown>)[columnId];

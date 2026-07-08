@@ -482,6 +482,9 @@ pub struct TtsModelInfoDto {
     pub languages: Vec<String>,
     pub num_voices: u32,
     pub cloning: String,
+    /// Voice-design capability: the voice is chosen by a text prompt (→ `voiceDesign`
+    /// on the frontend). Drives the picker's VoiceDesign badge + prompt dialog.
+    pub voice_design: bool,
     pub sample_rate: u32,
     pub param_count_m: u32,
     pub size_label: String,
@@ -544,6 +547,7 @@ fn to_model_info(m: &TtsModelEntry) -> TtsModelInfoDto {
         languages: m.languages.iter().map(|s| s.to_string()).collect(),
         num_voices: m.num_voices,
         cloning: m.cloning.as_str().to_string(),
+        voice_design: m.voice_design,
         sample_rate: m.sample_rate,
         param_count_m: m.param_count_m,
         size_label: human_size(default_size),

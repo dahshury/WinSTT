@@ -1,6 +1,6 @@
 import type { ModelInfo } from "@/entities/model-catalog";
 import {
-	FAVORITES_GROUP_VALUE,
+	type FAVORITES_GROUP_VALUE,
 	isFavoritesGroupValue,
 	withFavoritesGroup as withCoreFavoritesGroup,
 } from "../../core/favorites";

@@ -70,13 +70,13 @@ export function AnimatedValueText({
 	}
 	return (
 		<span className={cn("inline-flex flex-wrap items-baseline", className)}>
-			{parts.map((part, index) => {
-				return NUMERIC_SEGMENT_ONLY_RE.test(part) ? (
+			{parts.map((part, index) =>
+				NUMERIC_SEGMENT_ONLY_RE.test(part) ? (
 					<AnimatedNumber key={`${index}-${part}`} value={part} />
 				) : (
 					<span key={`${index}-${part}`}>{part}</span>
-				);
-			})}
+				),
+			)}
 		</span>
 	);
 }

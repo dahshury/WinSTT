@@ -17,13 +17,24 @@
 //   --tree      — Wispr-style: caret split + full UIA subtree axHtml + appExe + url.
 //   --hwnd <DECIMAL> — scope the read to that top-level window HWND (else
 //                      GetForegroundWindow()).
+//   --serve     — persistent warm sidecar: COM/UIA are initialized ONCE, then one
+//                 request per line is read from stdin and one response per line is
+//                 written to stdout. Request:  {"id":N,"mode":"focused|selection|
+//                 split|tree","hwnd":<u64 optional>}. Response: the same snapshot
+//                 fields plus a leading "id", or {"id":N,"error":"bad_request"} for
+//                 an unparseable line. Kills cold-spawn latency from the hot path
+//                 (report R5a). One-shot flags keep working unchanged.
 //
 // Output (stdout, single line, UTF-8 JSON):
 //   {"windowTitle":"...","elementName":"...","focusedText":"...",
 //    "textBefore":"...","textAfter":"...","appExe":"...","url":"...","axHtml":"..."}
+//   (serve mode prepends "id"; a password-focused field appends "isPassword":true
+//    and withholds ALL text fields — window/app metadata only, report R6.)
 //
 // Caps + the 750ms watchdog mirror the C source (MAX_CONTEXT_CHARS = 24000;
 // MAX_AXHTML_CHARS = 150000; TREE_WALK_BUDGET_MS = 600; WATCHDOG_TIMEOUT_MS = 750).
+// In --serve the watchdog is armed PER REQUEST (a wedged UIA call exits the
+// process so the manager respawns; one bad request can't hang the warm server).
 // On non-Windows this is a stub that prints an empty snapshot.
 
 #![cfg_attr(
@@ -39,7 +50,14 @@
 /// Whole-field + caret context budget (chars). Matches MAX_CONTEXT_CHARS.
 const MAX_CONTEXT_CHARS: usize = 24_000;
 /// Tail before the caret (the continuation-deciding slice). CARET_BEFORE_CHARS.
-const CARET_BEFORE_CHARS: i32 = 21_000;
+///
+/// A PROXIMITY bound, deliberately small. Page-hosted fields (Chromium/Gmail)
+/// expose the WHOLE page as one UIA document, so "text before the caret" can be
+/// the entire inbox/chat scrollback. This cap keeps only the caret's near
+/// neighborhood; `read_caret_split` additionally clamps it to the on-screen
+/// (visible) region. The industry-standard "nearby text" scope, not the whole
+/// document — see the context-awareness research (Tier 1, bounded neighborhood).
+const CARET_BEFORE_CHARS: i32 = 2_000;
 /// Lookahead after the caret. CARET_AFTER_CHARS.
 const CARET_AFTER_CHARS: i32 = 2_000;
 /// Total axHtml budget (chars). MAX_AXHTML_CHARS.
@@ -58,6 +76,9 @@ const TREE_WALK_BUDGET_MS: u64 = 600;
 const WATCHDOG_TIMEOUT_MS: u64 = 750;
 /// Below this much captured content text a browser walk is retried once.
 const COLD_TREE_CONTENT_THRESHOLD: usize = 200;
+/// Hard cap on Tier-2 OCR text (chars). Report R3: a bounded background blob,
+/// not a document dump — keeps the LLM payload small on canvas/remote surfaces.
+const MAX_OCR_CHARS: usize = 8_000;
 
 fn main() {
     #[cfg(windows)]
@@ -116,6 +137,13 @@ mod windows_impl {
         split: bool,
         tree: bool,
         hwnd: Option<isize>,
+        /// `--serve`: persistent JSON-per-line loop over stdin/stdout (COM/UIA
+        /// warm once at startup, one request per line). The other flags are the
+        /// one-shot CLI modes; both share the same capture code.
+        serve: bool,
+        /// `--ocr`: opt into the Tier-2 OCR fallback for this one-shot capture
+        /// (the serve path carries it per request instead). Off by default.
+        ocr: bool,
     }
 
     fn parse_cli() -> Cli {
@@ -124,6 +152,8 @@ mod windows_impl {
             split: false,
             tree: false,
             hwnd: None,
+            serve: false,
+            ocr: false,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -131,6 +161,8 @@ mod windows_impl {
                 "--selection" => cli.selection_only = true,
                 "--split" => cli.split = true,
                 "--tree" => cli.tree = true,
+                "--serve" => cli.serve = true,
+                "--ocr" => cli.ocr = true,
                 "--hwnd" => {
                     if let Some(v) = args.next() {
                         // Decimal HWND, matching the C `_strtoui64(.., 10)`.
@@ -147,8 +179,49 @@ mod windows_impl {
         cli
     }
 
+    /// One capture request, resolved from either the one-shot CLI flags or a
+    /// `--serve` stdin line. `id` is echoed back in serve mode (0 for one-shot).
+    #[derive(Clone, Copy)]
+    struct Request {
+        id: u64,
+        mode: Mode,
+        hwnd: Option<isize>,
+        /// Tier-2 OCR fallback opt-in (report R3). When set, and UIA capture
+        /// yielded no usable text, the pinned window is screenshotted and OCR'd
+        /// on-device. Off by default; the manager threads the user's
+        /// `contextScreenOcr` setting into this per request. Ignored for a
+        /// password-focused field (text is withheld end-to-end).
+        ocr: bool,
+    }
+
+    /// The mutually-exclusive capture modes (default = focused).
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Mode {
+        Focused,
+        Selection,
+        Split,
+        Tree,
+    }
+
+    impl Mode {
+        /// Parse the `"mode"` field of a serve request. Unknown → focused.
+        fn parse_mode(s: &str) -> Self {
+            match s {
+                "selection" => Mode::Selection,
+                "split" => Mode::Split,
+                "tree" => Mode::Tree,
+                _ => Mode::Focused,
+            }
+        }
+    }
+
     pub fn run() {
         let cli = parse_cli();
+
+        if cli.serve {
+            serve();
+            return;
+        }
 
         // Hard watchdog: a wedged UIA walk can hang COM. Kill the process after
         // the timeout, mirroring the C ExitProcess(3). main() races it.
@@ -157,7 +230,225 @@ mod windows_impl {
             std::process::exit(3);
         });
 
-        let scope = cli.hwnd.map(|h| HWND(h as *mut _));
+        let mode = if cli.tree {
+            Mode::Tree
+        } else if cli.split {
+            Mode::Split
+        } else if cli.selection_only {
+            Mode::Selection
+        } else {
+            Mode::Focused
+        };
+        let req = Request {
+            id: 0,
+            mode,
+            hwnd: cli.hwnd,
+            ocr: cli.ocr,
+        };
+
+        // COM apartment (single-threaded, like the C COINIT_APARTMENTTHREADED).
+        // SAFETY: Initializes COM for this helper process thread before any UIA COM calls.
+        let co = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+        // RPC_E_CHANGED_MODE is harmless. Any other hard failure → emit metadata only.
+        let com_ok = co.is_ok() || co == windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+
+        let uia = if com_ok {
+            // SAFETY: COM was initialized or already in a compatible mode; the UIA instance is
+            // used only on this thread and released before CoUninitialize.
+            unsafe {
+                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+            }
+            .ok()
+        } else {
+            None
+        };
+
+        // One-shot output keeps the historical 8-field shape (no `id`) so the
+        // parser, smoke harness, and captured fixtures keep matching byte-for-byte.
+        let out = capture_json(uia.as_ref(), req, false);
+
+        // Drop `uia` (Release) before CoUninitialize.
+        drop(uia);
+        if com_ok {
+            // SAFETY: Balances this thread's successful CoInitializeEx call.
+            unsafe { CoUninitialize() };
+        }
+
+        print!("{out}");
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+    }
+
+    /// Persistent `--serve` loop: COM/UIA are initialized ONCE (warm), then one
+    /// JSON request per stdin line is captured and one JSON response per stdout
+    /// line is written. A wedged UIA call is fenced per request by an in-process
+    /// watchdog thread armed around the capture; on fire the whole process exits
+    /// (code 3) and the manager respawns — mirroring the one-shot watchdog, but
+    /// scoped so a single bad request can't hang the warm server forever.
+    fn serve() {
+        use std::io::{BufRead, Write};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        // COM apartment (single-threaded), initialized once for the process life.
+        // SAFETY: Initializes COM for this thread before any UIA COM call; all UIA
+        // work below runs on this same thread.
+        let co = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+        let com_ok = co.is_ok() || co == windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+        // SAFETY: guarded by `com_ok`; the UIA instance is used only on this thread.
+        let uia = if com_ok {
+            unsafe {
+                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+            }
+            .ok()
+        } else {
+            None
+        };
+
+        // Per-request watchdog: the reader thread arms `deadline` before each
+        // capture and disarms it after. A background thread trips ExitProcess if
+        // a capture blows past the budget (a wedged UIA call the parent can't see).
+        let deadline: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+        let armed = Arc::new(AtomicBool::new(false));
+        {
+            let deadline = Arc::clone(&deadline);
+            let armed = Arc::clone(&armed);
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(Duration::from_millis(50));
+                    if armed.load(Ordering::Acquire)
+                        && let Some(d) = *deadline.lock().unwrap_or_else(|e| e.into_inner())
+                        && Instant::now() >= d
+                    {
+                        // A UIA call has wedged this request. Exit so the manager
+                        // respawns a fresh warm server (one retry, then give up).
+                        std::process::exit(3);
+                    }
+                }
+            });
+        }
+
+        let stdin = std::io::stdin();
+        let mut stdout = std::io::stdout();
+        for line in stdin.lock().lines() {
+            let Ok(line) = line else { break };
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            // Frame one request → response, arming the per-request watchdog only
+            // around the (potentially wedging) UIA capture.
+            let response = format_serve_response(line, |req| {
+                *deadline.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Instant::now() + Duration::from_millis(WATCHDOG_TIMEOUT_MS));
+                armed.store(true, Ordering::Release);
+                let body = capture_json(uia.as_ref(), req, true);
+                armed.store(false, Ordering::Release);
+                body
+            });
+            if writeln!(stdout, "{response}").is_err() || stdout.flush().is_err() {
+                break;
+            }
+        }
+
+        drop(uia);
+        if com_ok {
+            // SAFETY: Balances this thread's CoInitializeEx call on loop exit.
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    /// Frame one non-empty `--serve` line into its response string: parse it, and
+    /// on success run `capture(req)` (which produces the id-prefixed snapshot);
+    /// on a malformed line emit a correlated `{"id":N,"error":"bad_request"}`
+    /// (id 0 when unrecoverable) so the manager survives and stays in sync. Split
+    /// out from the loop so the framing + bad-JSON survival is unit-testable
+    /// without COM/UIA or a spawned process.
+    fn format_serve_response<F: FnOnce(Request) -> String>(line: &str, capture: F) -> String {
+        let (id, req) = parse_serve_request(line);
+        match req {
+            Some(req) => capture(req),
+            None => format!("{{\"id\":{id},\"error\":\"bad_request\"}}"),
+        }
+    }
+
+    /// Parse one `--serve` request line: `{"id":N,"mode":"...","hwnd":<u64?>}`.
+    /// Returns `(id, Some(Request))` on success, or `(id_or_0, None)` when the
+    /// line isn't a usable request (the id is still recovered when present so the
+    /// error response can be correlated).
+    fn parse_serve_request(line: &str) -> (u64, Option<Request>) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            return (0, None);
+        };
+        let Some(obj) = value.as_object() else {
+            return (0, None);
+        };
+        let id = obj
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let mode = obj
+            .get("mode")
+            .and_then(serde_json::Value::as_str)
+            .map_or(Mode::Focused, Mode::parse_mode);
+        // hwnd is an optional u64; 0 / missing means "foreground".
+        let hwnd = obj
+            .get("hwnd")
+            .and_then(serde_json::Value::as_u64)
+            .filter(|h| *h > 0)
+            .map(|h| h as isize);
+        // ocr is an optional bool; missing / non-bool → false (opt-in default).
+        let ocr = obj
+            .get("ocr")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        (
+            id,
+            Some(Request {
+                id,
+                mode,
+                hwnd,
+                ocr,
+            }),
+        )
+    }
+
+    /// Tier-2 OCR trigger predicate (report R3). Returns true only when BOTH
+    /// conditions hold, so OCR stays a fallback that can't leak on password
+    /// fields or override a good UIA read:
+    ///   (a) the request opted into OCR (`req.ocr` — the user's `contextScreenOcr`
+    ///       setting, off by default), AND
+    ///   (b) UIA captured NO usable text: every UIA-derived text slice is blank
+    ///       after trimming (focused field, both caret halves, and the tree HTML).
+    /// A password-focused field short-circuits to false — its text is withheld
+    /// end-to-end, and a screenshot could still expose typed-but-masked content,
+    /// so the same guard that blocks UIA reads blocks OCR. Split out as a pure
+    /// function so the trigger logic is unit-tested without COM/UIA/GDI.
+    fn should_run_ocr(
+        ocr_opt_in: bool,
+        is_password: bool,
+        focused_text: &str,
+        context_before: &str,
+        context_after: &str,
+        ax_html: &str,
+    ) -> bool {
+        if !ocr_opt_in || is_password {
+            return false;
+        }
+        // "No usable text": nothing meaningful in any UIA channel. Whitespace-only
+        // reads (e.g. a blank editor) count as empty and still trigger the fallback.
+        focused_text.trim().is_empty()
+            && context_before.trim().is_empty()
+            && context_after.trim().is_empty()
+            && ax_html.trim().is_empty()
+    }
+
+    /// Run one capture request against the (warm) UIA instance and return the
+    /// single-line JSON body. With `include_id` the `"id"` field is prepended
+    /// (serve mode); without it the historical 8-field one-shot shape is emitted.
+    /// `uia == None` (COM/UIA unavailable) still yields metadata-only output.
+    fn capture_json(uia: Option<&IUIAutomation>, req: Request, include_id: bool) -> String {
+        let scope = req.hwnd.map(|h| HWND(h as *mut _));
 
         // Snapshot title + exe up front — useful even when UIA fails.
         let fg: HWND = match scope {
@@ -174,33 +465,31 @@ mod windows_impl {
         let mut context_after = String::new();
         let mut url = String::new();
         let mut ax_html = String::new();
+        let mut ocr_text = String::new();
+        // Set when the focused element is a password field: text is withheld and
+        // this flag is surfaced so downstream never sees (or biases on) secrets.
+        let mut is_password = false;
 
-        // COM apartment (single-threaded, like the C COINIT_APARTMENTTHREADED).
-        // SAFETY: Initializes COM for this helper process thread before any UIA COM calls.
-        let co = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-        // RPC_E_CHANGED_MODE is harmless. Any other hard failure → emit metadata only.
-        let com_ok = co.is_ok() || co == windows::Win32::Foundation::RPC_E_CHANGED_MODE;
-
-        if com_ok {
-            // SAFETY: COM was initialized or already in a compatible mode; the UIA instance is
-            // used only on this thread and released before CoUninitialize.
-            if let Ok(uia) = unsafe {
-                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
-            } {
-                if cli.tree {
-                    read_focused_split(
-                        &uia,
+        if let Some(uia) = uia {
+            match req.mode {
+                Mode::Tree => {
+                    is_password = read_focused_split(
+                        uia,
                         scope,
                         &mut context_before,
                         &mut context_after,
                         &mut focused_text,
                         &mut element_name,
                     );
-                    ax_html = walk_foreground_tree(&uia, fg, is_browser_exe(&app_exe));
-                    url = find_browser_url(&uia, fg, &app_exe);
-                } else if cli.split {
-                    read_focused_split(
-                        &uia,
+                    // The tree walk itself skips password subtrees (walk_tree),
+                    // so axHtml/url stay populated even when the focused field is
+                    // a password — only the focused text is withheld above.
+                    ax_html = walk_foreground_tree(uia, fg, is_browser_exe(&app_exe));
+                    url = find_browser_url(uia, fg, &app_exe);
+                }
+                Mode::Split => {
+                    is_password = read_focused_split(
+                        uia,
                         scope,
                         &mut context_before,
                         &mut context_after,
@@ -212,32 +501,66 @@ mod windows_impl {
                     // uses --split, and the URL is what (a) lets the LLM tell
                     // Gmail from Docs and (b) drives the host-based privacy
                     // deny-list (e.g. *.bankofamerica.com). axHtml stays empty.
-                    url = find_browser_url(&uia, fg, &app_exe);
-                } else {
-                    read_focused_context(
-                        &uia,
+                    url = find_browser_url(uia, fg, &app_exe);
+                }
+                Mode::Focused | Mode::Selection => {
+                    is_password = read_focused_context(
+                        uia,
                         scope,
-                        cli.selection_only,
+                        req.mode == Mode::Selection,
                         &mut focused_text,
                         &mut element_name,
                     );
                 }
             }
-            // Drop `uia` (Release) before CoUninitialize.
-            // SAFETY: Balances this thread's successful CoInitializeEx call.
-            unsafe { CoUninitialize() };
+        }
+
+        // Tier-2 OCR fallback (report R3). Fires ONLY when the opt-in flag is set
+        // AND UIA yielded nothing usable (canvas apps, remote desktops, games —
+        // the surfaces UIA is blind to) AND the focused field is not a password.
+        // The recognized text feeds the SAME local LLM cleanup + biasing channels
+        // as the UIA text; it never reaches the STT prompt and never leaves the
+        // machine (Windows.Media.Ocr is on-device).
+        if should_run_ocr(
+            req.ocr,
+            is_password,
+            &focused_text,
+            &context_before,
+            &context_after,
+            &ax_html,
+        ) {
+            ocr_text = capture_window_ocr(fg);
         }
 
         // Defensive truncation (chars), mirroring the C byte-cap intent.
         truncate_chars(&mut focused_text, MAX_CONTEXT_CHARS);
         truncate_chars(&mut context_before, MAX_CONTEXT_CHARS);
         truncate_chars(&mut context_after, MAX_CONTEXT_CHARS);
+        truncate_chars(&mut ocr_text, MAX_OCR_CHARS);
 
-        // Single-line JSON, key order identical to the C printf.
-        let out = format!(
-            "{{\"windowTitle\":\"{}\",\"elementName\":\"{}\",\"focusedText\":\"{}\",\
+        // Single-line JSON, key order identical to the C printf (one-shot). Serve
+        // mode prepends `id`; `ocrText` (Tier-2 fallback) and `isPassword` are
+        // appended only when set. The parser ignores unknown keys and reads by
+        // name, so the extra fields never disturb existing consumers.
+        let id_prefix = if include_id {
+            format!("\"id\":{},", req.id)
+        } else {
+            String::new()
+        };
+        let ocr_suffix = if ocr_text.is_empty() {
+            String::new()
+        } else {
+            format!(",\"ocrText\":\"{}\"", json_escape(&ocr_text))
+        };
+        let pw_suffix = if is_password {
+            ",\"isPassword\":true"
+        } else {
+            ""
+        };
+        format!(
+            "{{{id_prefix}\"windowTitle\":\"{}\",\"elementName\":\"{}\",\"focusedText\":\"{}\",\
              \"textBefore\":\"{}\",\"textAfter\":\"{}\",\"appExe\":\"{}\",\
-             \"url\":\"{}\",\"axHtml\":\"{}\"}}",
+             \"url\":\"{}\",\"axHtml\":\"{}\"{ocr_suffix}{pw_suffix}}}",
             json_escape(&window_title),
             json_escape(&element_name),
             json_escape(&focused_text),
@@ -246,10 +569,7 @@ mod windows_impl {
             json_escape(&app_exe),
             json_escape(&url),
             json_escape(&ax_html),
-        );
-        print!("{out}");
-        use std::io::Write;
-        let _ = std::io::stdout().flush();
+        )
     }
 
     fn truncate_chars(s: &mut String, max: usize) {
@@ -430,19 +750,41 @@ mod windows_impl {
         }
     }
 
+    /// True when the focused element is a password field. UIA exposes password
+    /// edits as `EditControlType` with the `IsPassword` property set, so the
+    /// property is the authoritative, control-type-agnostic signal (it also
+    /// covers non-Edit password surfaces some frameworks expose). Text of such
+    /// elements is NEVER read: masked characters are worthless and reading them
+    /// risks leaking a secret into the prompt/vocabulary channels. A query
+    /// failure is treated as NOT a password (fail-open on capture) — the tree
+    /// walk keeps its own subtree guard (`walk_tree`).
+    fn is_password_element(elem: &IUIAutomationElement) -> bool {
+        // SAFETY: `elem` is a live UIA element; UIA returns an error for
+        // inaccessible elements, which unwraps to `false` (not a password).
+        unsafe { elem.CurrentIsPassword() }
+            .unwrap_or_default()
+            .as_bool()
+    }
+
     /// Default/selection mode: name + focused text (TextPattern → ValuePattern,
-    /// or selection-only). Mirrors read_focused_context.
+    /// or selection-only). Mirrors read_focused_context. Returns `true` when the
+    /// focused element is a password field — in that case NO text is read and the
+    /// caller surfaces the `isPassword` flag with metadata only.
     fn read_focused_context(
         uia: &IUIAutomation,
         scope: Option<HWND>,
         selection_only: bool,
         out_text: &mut String,
         out_name: &mut String,
-    ) {
+    ) -> bool {
         let Some(focused) = acquire_focused_element(uia, scope) else {
-            return;
+            return false;
         };
         *out_name = read_element_name(&focused);
+        // Password guard: never read Value/Text of a password element.
+        if is_password_element(&focused) {
+            return true;
+        }
         let text = if selection_only {
             read_text_pattern_selection(&focused)
         } else {
@@ -451,10 +793,13 @@ mod windows_impl {
         if let Some(text) = text {
             *out_text = text;
         }
+        false
     }
 
     /// --split / --tree caret read: name + caret-split before/after, falling back
     /// to whole-text into out_text when no caret. Mirrors read_focused_split.
+    /// Returns `true` when the focused element is a password field — NO caret
+    /// text is read in that case.
     fn read_focused_split(
         uia: &IUIAutomation,
         scope: Option<HWND>,
@@ -462,16 +807,71 @@ mod windows_impl {
         out_after: &mut String,
         out_text: &mut String,
         out_name: &mut String,
-    ) {
+    ) -> bool {
         let Some(focused) = acquire_focused_element(uia, scope) else {
-            return;
+            return false;
         };
         *out_name = read_element_name(&focused);
+        // Password guard: never read caret-split text of a password element.
+        if is_password_element(&focused) {
+            return true;
+        }
         if !read_caret_split(&focused, out_before, out_after) {
             // No caret — degrade to the whole-text read.
             if let Some(text) = read_text_pattern(&focused).or_else(|| read_value_pattern(&focused))
             {
                 *out_text = text;
+            }
+        }
+        false
+    }
+
+    /// Pull `range`'s Start endpoint forward to the first ON-SCREEN character
+    /// when it currently precedes the viewport. This bounds beforeCaret to the
+    /// visible neighborhood of the caret instead of the whole document, which is
+    /// what defeats the Gmail/Chromium "entire page is one text document" leak
+    /// (inbox scrollback, OTP emails) that a char cap alone can't stop.
+    ///
+    /// Best-effort: a silent no-op if the provider doesn't implement
+    /// `GetVisibleRanges`, returns no ranges, or the comparison fails. It never
+    /// EXPANDS the range — only moves Start toward the caret (more restrictive).
+    fn clamp_range_start_to_visible(
+        pat: &IUIAutomationTextPattern,
+        range: &IUIAutomationTextRange,
+    ) {
+        // SAFETY: `pat` is a live TextPattern; GetVisibleRanges returns an owned array.
+        let Ok(vis) = (unsafe { pat.GetVisibleRanges() }) else {
+            return;
+        };
+        // SAFETY: `vis` is a live UIA text-range array.
+        if unsafe { vis.Length() }.unwrap_or(0) <= 0 {
+            return;
+        }
+        // First element is the topmost visible range (document order); its Start
+        // is the first on-screen character. SAFETY: index 0 valid (len > 0).
+        let Ok(first) = (unsafe { vis.GetElement(0) }) else {
+            return;
+        };
+        // Only move Start forward: if it is already at/after the visible start,
+        // the char cap was the tighter bound — leave it. SAFETY: both are live
+        // ranges from the same TextPattern document.
+        let before_visible = unsafe {
+            range.CompareEndpoints(
+                TextPatternRangeEndpoint_Start,
+                &first,
+                TextPatternRangeEndpoint_Start,
+            )
+        }
+        .is_ok_and(|cmp| cmp < 0);
+        if before_visible {
+            // SAFETY: same-document live ranges; moving Start to a later point
+            // (or collapsing if it would cross End) is UIA-safe.
+            unsafe {
+                let _ = range.MoveEndpointByRange(
+                    TextPatternRangeEndpoint_Start,
+                    &first,
+                    TextPatternRangeEndpoint_Start,
+                );
             }
         }
     }
@@ -537,9 +937,17 @@ mod windows_impl {
                         TextUnit_Character,
                         -CARET_BEFORE_CHARS,
                     );
-                    if let Ok(text) = tail.GetText(-1) {
-                        *out_before = text.to_string();
-                    }
+                }
+                // The char cap alone is not enough on page-hosted fields:
+                // Chromium's DocumentRange spans the WHOLE page, so the trailing
+                // CARET_BEFORE_CHARS can still be off-screen scrollback (an inbox
+                // list, prior chat turns, OTP emails). Clamp the range start to
+                // the first ON-SCREEN character — "screenshot semantics without
+                // pixels" — so beforeCaret never precedes what the user sees.
+                clamp_range_start_to_visible(&pat, &tail);
+                // SAFETY: `tail` is a live text range; GetText uses UIA's cap.
+                if let Ok(text) = unsafe { tail.GetText(-1) } {
+                    *out_before = text.to_string();
                 }
             }
             got = true;
@@ -1006,5 +1414,546 @@ mod windows_impl {
             && host.split('.').all(|seg| {
                 !seg.is_empty() && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
             })
+    }
+
+    // ─────────────────────────── OCR fallback ─────────────────────────────
+
+    /// Tier-2 OCR (report R3): screenshot the target window and recognize its
+    /// text with on-device `Windows.Media.Ocr`. Only the pinned window is
+    /// captured (never the whole screen). Every failure path — no window, a
+    /// zero-size/oversize client area, a GDI or OCR error — yields an empty
+    /// string so the caller simply omits the `ocrText` field. Nothing leaves the
+    /// machine; the recognized text feeds only the local LLM cleanup + biasing.
+    fn capture_window_ocr(hwnd: HWND) -> String {
+        if hwnd.is_invalid() {
+            return String::new();
+        }
+        match ocr::capture_window_bgra(hwnd) {
+            Some(bitmap) => ocr::recognize(&bitmap).unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+
+    /// Strip empty/whitespace-only lines and join with a single newline, then cap
+    /// at `MAX_OCR_CHARS` (task rule: strip empty lines, hard-cap 8k). Pure so the
+    /// post-processing is unit-tested without an OCR engine.
+    fn tidy_ocr_text(raw: &str) -> String {
+        let mut out = String::new();
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(trimmed);
+        }
+        if out.chars().count() > MAX_OCR_CHARS {
+            out = out.chars().take(MAX_OCR_CHARS).collect();
+        }
+        out
+    }
+
+    mod ocr {
+        use super::tidy_ocr_text;
+
+        use windows::Globalization::Language;
+        use windows::Graphics::Imaging::{BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap};
+        use windows::Media::Ocr::OcrEngine;
+        use windows::Storage::Streams::DataWriter;
+        use windows::Win32::Foundation::{HWND, RECT};
+        use windows::Win32::Graphics::Gdi::{
+            BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CreateCompatibleBitmap,
+            CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ,
+            ReleaseDC, SRCCOPY, SelectObject,
+        };
+        use windows::Win32::Storage::Xps::{PRINT_WINDOW_FLAGS, PrintWindow};
+        use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+        use windows::core::HSTRING;
+
+        /// `PW_RENDERFULLCONTENT` (2): capture DirectComposition / hardware-
+        /// accelerated content (Chromium, games, canvas apps — the exact surfaces
+        /// UIA is blind to). Not exported as a named constant by the windows crate
+        /// at this version, so it's spelled out here.
+        const PW_RENDERFULLCONTENT: PRINT_WINDOW_FLAGS = PRINT_WINDOW_FLAGS(2);
+
+        /// Windows.Media.Ocr's hard input limit. A window larger than this can't be
+        /// recognized, so skip rather than error mid-pipeline. (Baseline engine
+        /// max is 10 000×10 000; we bail well before to keep the capture cheap.)
+        const MAX_CAPTURE_DIMENSION: i32 = 8_192;
+
+        /// A 32-bit top-down BGRA pixel buffer captured from a window, ready to
+        /// wrap in a `SoftwareBitmap`. Owned so it outlives the transient GDI DCs.
+        pub struct WindowBitmap {
+            pixels: Vec<u8>,
+            width: i32,
+            height: i32,
+        }
+
+        /// Screenshot the window's CLIENT area into a top-down BGRA buffer.
+        /// `PrintWindow(PW_RENDERFULLCONTENT)` is the primary path (works for
+        /// occluded / composited windows without stealing focus); a `BitBlt` from
+        /// the window DC is the fallback for windows PrintWindow refuses. Returns
+        /// `None` on any failure or a degenerate (empty / oversize) client area.
+        pub fn capture_window_bgra(hwnd: HWND) -> Option<WindowBitmap> {
+            let (width, height) = client_size(hwnd)?;
+
+            // SAFETY: `hwnd` is a borrowed live window handle; GDI validates it and
+            // every created object is released on all exit paths below.
+            unsafe {
+                let window_dc = GetDC(Some(hwnd));
+                if window_dc.is_invalid() {
+                    return None;
+                }
+                let mem_dc = CreateCompatibleDC(Some(window_dc));
+                if mem_dc.is_invalid() {
+                    ReleaseDC(Some(hwnd), window_dc);
+                    return None;
+                }
+                let bitmap = CreateCompatibleBitmap(window_dc, width, height);
+                if bitmap.is_invalid() {
+                    let _ = DeleteDC(mem_dc);
+                    ReleaseDC(Some(hwnd), window_dc);
+                    return None;
+                }
+                let old = SelectObject(mem_dc, HGDIOBJ(bitmap.0));
+
+                // Primary: PrintWindow with full-content rendering. Fallback: BitBlt
+                // the window DC (loses composited/GPU layers but still captures GDI).
+                // Both render into the bitmap while it's selected into `mem_dc`.
+                let printed = PrintWindow(hwnd, mem_dc, PW_RENDERFULLCONTENT).as_bool();
+                let ok = if printed {
+                    true
+                } else {
+                    BitBlt(mem_dc, 0, 0, width, height, Some(window_dc), 0, 0, SRCCOPY).is_ok()
+                };
+
+                // GetDIBits requires the bitmap to be DESELECTED from its DC, so
+                // restore the DC's original object before reading the pixels out.
+                SelectObject(mem_dc, old);
+
+                let pixels = if ok {
+                    read_dib_bgra(mem_dc, HGDIOBJ(bitmap.0), width, height)
+                } else {
+                    None
+                };
+
+                // Release GDI objects in reverse order of acquisition.
+                let _ = DeleteObject(HGDIOBJ(bitmap.0));
+                let _ = DeleteDC(mem_dc);
+                ReleaseDC(Some(hwnd), window_dc);
+
+                pixels.map(|pixels| WindowBitmap {
+                    pixels,
+                    width,
+                    height,
+                })
+            }
+        }
+
+        /// The window's client-area size, rejecting degenerate or oversize areas.
+        fn client_size(hwnd: HWND) -> Option<(i32, i32)> {
+            let mut rect = RECT::default();
+            // SAFETY: `hwnd` is a borrowed live window handle and `rect` is valid
+            // writable storage for the call.
+            unsafe { GetClientRect(hwnd, &mut rect) }.ok()?;
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            if width <= 0
+                || height <= 0
+                || width > MAX_CAPTURE_DIMENSION
+                || height > MAX_CAPTURE_DIMENSION
+            {
+                return None;
+            }
+            Some((width, height))
+        }
+
+        /// Copy the memory bitmap out as a top-down 32-bit BGRA buffer via
+        /// `GetDIBits` (negative `biHeight` requests top-down rows, which is what
+        /// `SoftwareBitmap` expects). The bitmap must already be DESELECTED from
+        /// `mem_dc` (GetDIBits requires it), which the caller guarantees.
+        ///
+        /// SAFETY: `mem_dc` is a live DC compatible with `bitmap`, `bitmap` is a
+        /// live HBITMAP not currently selected into any DC, and `width`/`height`
+        /// match the bitmap's dimensions.
+        unsafe fn read_dib_bgra(
+            mem_dc: windows::Win32::Graphics::Gdi::HDC,
+            bitmap: HGDIOBJ,
+            width: i32,
+            height: i32,
+        ) -> Option<Vec<u8>> {
+            let stride = (width as usize).checked_mul(4)?;
+            let byte_len = stride.checked_mul(height as usize)?;
+            let mut pixels = vec![0u8; byte_len];
+
+            let mut info = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: width,
+                    // Negative → top-down rows (matches SoftwareBitmap's origin).
+                    biHeight: -height,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+
+            let scanned = unsafe {
+                GetDIBits(
+                    mem_dc,
+                    windows::Win32::Graphics::Gdi::HBITMAP(bitmap.0),
+                    0,
+                    height as u32,
+                    Some(pixels.as_mut_ptr().cast()),
+                    &mut info,
+                    DIB_RGB_COLORS,
+                )
+            };
+            if scanned == 0 {
+                return None;
+            }
+            Some(pixels)
+        }
+
+        /// Recognize text in the captured window via on-device Windows.Media.Ocr.
+        /// The engine is created from the user's profile languages (fallback:
+        /// English); a machine with no OCR language pack installed returns `None`
+        /// and the caller simply omits `ocrText`. Blocks on the async recognize
+        /// (`.get()` pumps the STA), which is fine on the per-request sidecar thread
+        /// under its own watchdog. The result is empty-line-stripped and 8k-capped.
+        pub fn recognize(bitmap: &WindowBitmap) -> Option<String> {
+            let engine = create_engine()?;
+            let software_bitmap = to_software_bitmap(bitmap)?;
+            let result = engine.RecognizeAsync(&software_bitmap).ok()?.get().ok()?;
+            let text: HSTRING = result.Text().ok()?;
+            let tidied = tidy_ocr_text(&text.to_string_lossy());
+            if tidied.is_empty() {
+                None
+            } else {
+                Some(tidied)
+            }
+        }
+
+        /// Prefer the user's profile languages; fall back to English so a
+        /// non-English profile without its OCR pack still recognizes Latin text
+        /// (the on-screen names/identifiers the biasing channel cares about).
+        fn create_engine() -> Option<OcrEngine> {
+            if let Ok(engine) = OcrEngine::TryCreateFromUserProfileLanguages() {
+                return Some(engine);
+            }
+            let english = Language::CreateLanguage(&HSTRING::from("en")).ok()?;
+            if OcrEngine::IsLanguageSupported(&english).ok()? {
+                OcrEngine::TryCreateFromLanguage(&english).ok()
+            } else {
+                None
+            }
+        }
+
+        /// Wrap the BGRA buffer in a WinRT `SoftwareBitmap` (Bgra8, alpha ignored —
+        /// OCR is luminance-based, so the GDI-captured alpha channel is irrelevant).
+        fn to_software_bitmap(bitmap: &WindowBitmap) -> Option<SoftwareBitmap> {
+            let writer = DataWriter::new().ok()?;
+            writer.WriteBytes(&bitmap.pixels).ok()?;
+            let buffer = writer.DetachBuffer().ok()?;
+            SoftwareBitmap::CreateCopyWithAlphaFromBuffer(
+                &buffer,
+                BitmapPixelFormat::Bgra8,
+                bitmap.width,
+                bitmap.height,
+                BitmapAlphaMode::Ignore,
+            )
+            .ok()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn mode_from_str_maps_flags_and_defaults() {
+            assert!(Mode::parse_mode("selection") == Mode::Selection);
+            assert!(Mode::parse_mode("split") == Mode::Split);
+            assert!(Mode::parse_mode("tree") == Mode::Tree);
+            assert!(Mode::parse_mode("focused") == Mode::Focused);
+            // Unknown / empty → focused (the safe default).
+            assert!(Mode::parse_mode("") == Mode::Focused);
+            assert!(Mode::parse_mode("garbage") == Mode::Focused);
+        }
+
+        #[test]
+        fn parse_serve_request_reads_id_mode_hwnd() {
+            let (id, req) = parse_serve_request(r#"{"id":7,"mode":"tree","hwnd":264342}"#);
+            let req = req.expect("valid request");
+            assert_eq!(id, 7);
+            assert_eq!(req.id, 7);
+            assert!(req.mode == Mode::Tree);
+            assert_eq!(req.hwnd, Some(264342));
+        }
+
+        #[test]
+        fn parse_serve_request_defaults_mode_and_omits_hwnd() {
+            let (id, req) = parse_serve_request(r#"{"id":3}"#);
+            let req = req.expect("valid request");
+            assert_eq!(id, 3);
+            assert!(req.mode == Mode::Focused);
+            assert_eq!(req.hwnd, None);
+        }
+
+        #[test]
+        fn parse_serve_request_treats_zero_hwnd_as_foreground() {
+            let (_, req) = parse_serve_request(r#"{"id":1,"mode":"split","hwnd":0}"#);
+            let req = req.expect("valid request");
+            assert!(req.mode == Mode::Split);
+            // hwnd 0 means "use foreground", i.e. no --hwnd scope.
+            assert_eq!(req.hwnd, None);
+        }
+
+        #[test]
+        fn parse_serve_request_rejects_bad_json() {
+            assert!(parse_serve_request("not json at all").1.is_none());
+            assert!(parse_serve_request("{").1.is_none());
+            // A JSON array is not a request object.
+            assert!(parse_serve_request("[1,2,3]").1.is_none());
+        }
+
+        #[test]
+        fn parse_serve_request_recovers_id_from_partial_object() {
+            // Even a request object missing "mode" is usable (defaults to focused);
+            // this asserts the id round-trips for correlation.
+            let (id, req) = parse_serve_request(r#"{"id":42,"extra":"ignored"}"#);
+            assert_eq!(id, 42);
+            assert!(req.is_some());
+        }
+
+        #[test]
+        fn parse_serve_request_reads_ocr_flag() {
+            // Present + true → carried through.
+            let (_, req) = parse_serve_request(r#"{"id":1,"mode":"split","ocr":true}"#);
+            assert!(req.expect("valid").ocr);
+            // Explicit false → false.
+            let (_, req) = parse_serve_request(r#"{"id":1,"mode":"split","ocr":false}"#);
+            assert!(!req.expect("valid").ocr);
+            // Missing → false (opt-in default), and a non-bool value doesn't panic.
+            let (_, req) = parse_serve_request(r#"{"id":1,"mode":"split"}"#);
+            assert!(!req.expect("valid").ocr);
+            let (_, req) = parse_serve_request(r#"{"id":1,"mode":"split","ocr":"yes"}"#);
+            assert!(!req.expect("valid").ocr);
+        }
+
+        #[test]
+        fn should_run_ocr_requires_optin_and_empty_uia() {
+            // Opt-in + nothing from UIA → run OCR.
+            assert!(should_run_ocr(true, false, "", "", "", ""));
+            // Whitespace-only UIA reads still count as empty → run OCR.
+            assert!(should_run_ocr(true, false, "  ", "\n", "\t", "   "));
+        }
+
+        #[test]
+        fn should_run_ocr_never_without_optin() {
+            // No opt-in → never OCR, even with empty UIA.
+            assert!(!should_run_ocr(false, false, "", "", "", ""));
+        }
+
+        #[test]
+        fn should_run_ocr_never_on_password() {
+            // Password-focused field → never OCR, even opted-in with empty UIA
+            // (a screenshot could still expose typed-but-masked content).
+            assert!(!should_run_ocr(true, true, "", "", "", ""));
+        }
+
+        #[test]
+        fn should_run_ocr_skips_when_uia_has_text() {
+            // Any single non-empty UIA channel suppresses the fallback.
+            assert!(!should_run_ocr(true, false, "focused", "", "", ""));
+            assert!(!should_run_ocr(true, false, "", "before", "", ""));
+            assert!(!should_run_ocr(true, false, "", "", "after", ""));
+            assert!(!should_run_ocr(true, false, "", "", "", "<doc/>"));
+        }
+
+        #[test]
+        fn tidy_ocr_text_strips_empty_lines_and_trims() {
+            let raw = "  first line \n\n\t\n  second  \n   \nthird\n";
+            assert_eq!(tidy_ocr_text(raw), "first line\nsecond\nthird");
+            // Entirely blank input → empty string.
+            assert_eq!(tidy_ocr_text("\n  \n\t\n"), "");
+        }
+
+        #[test]
+        fn tidy_ocr_text_caps_at_max_ocr_chars() {
+            // A single very long line is capped at MAX_OCR_CHARS (chars, not bytes).
+            let long = "x".repeat(MAX_OCR_CHARS + 500);
+            let out = tidy_ocr_text(&long);
+            assert_eq!(out.chars().count(), MAX_OCR_CHARS);
+        }
+
+        /// MANUAL live-OCR harness (report R3). Ignored by default: it needs a
+        /// real foreground window AND a Windows OCR language pack, neither of which
+        /// the CI/build host guarantees, and it depends on whatever is on screen.
+        /// Run interactively with a text-heavy window focused:
+        ///
+        ///   cargo test --bin winstt_context -- --ignored ocr_pipeline_live_smoke
+        ///
+        /// It exercises the whole GDI-capture → SoftwareBitmap → Windows.Media.Ocr
+        /// path against the foreground window and asserts the result is well-formed
+        /// (no panic, no line exceeds the char cap). An OCR-less machine yields an
+        /// empty string, which is the correct "no fallback text" outcome — so this
+        /// can't hard-fail on capability; it fails only on a malformed result.
+        #[test]
+        #[ignore = "manual: needs a focused window + installed OCR language pack"]
+        fn ocr_pipeline_live_smoke() {
+            // SAFETY: WinRT OCR needs an initialized COM apartment on this thread.
+            let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            // SAFETY: reads the current foreground window handle; no ownership moves.
+            let fg = unsafe { GetForegroundWindow() };
+            let text = capture_window_ocr(fg);
+            // Empty is legitimate (no OCR pack / blank window); when non-empty it
+            // must respect the 8k cap and carry no blank lines.
+            assert!(text.chars().count() <= MAX_OCR_CHARS);
+            assert!(!text.lines().any(|l| l.trim().is_empty()));
+        }
+
+        /// The `--serve` framing contract, exercised in-process without COM/UIA
+        /// or a spawned binary (so it is deterministic and always runs): three
+        /// lines — a valid request, malformed JSON, another valid request — and
+        /// each yields a correlated response, with the malformed line NOT
+        /// derailing the id sequence. `capture` is faked to echo the id so the
+        /// test isolates framing + bad-JSON survival from the UIA capture.
+        #[test]
+        fn format_serve_response_correlates_and_survives_bad_json() {
+            let fake_capture = |req: Request| format!(r#"{{"id":{},"ok":true}}"#, req.id);
+
+            // 1) Valid request → the capture runs and its (id-bearing) body is
+            //    returned verbatim.
+            let r1 = format_serve_response(r#"{"id":1,"mode":"focused"}"#, fake_capture);
+            let v1: serde_json::Value = serde_json::from_str(&r1).unwrap();
+            assert_eq!(v1.get("id").and_then(serde_json::Value::as_u64), Some(1));
+
+            // 2) Malformed line → correlated error, id 0, and (crucially) it does
+            //    NOT invoke `capture` — the framing recovered on its own.
+            let r2 = format_serve_response("this is not json", |_| {
+                panic!("capture must not run for a malformed line")
+            });
+            let v2: serde_json::Value = serde_json::from_str(&r2).unwrap();
+            assert_eq!(v2.get("id").and_then(serde_json::Value::as_u64), Some(0));
+            assert_eq!(
+                v2.get("error").and_then(serde_json::Value::as_str),
+                Some("bad_request")
+            );
+
+            // 3) The next valid line still frames correctly after the bad one.
+            let r3 = format_serve_response(r#"{"id":2,"mode":"tree"}"#, fake_capture);
+            let v3: serde_json::Value = serde_json::from_str(&r3).unwrap();
+            assert_eq!(v3.get("id").and_then(serde_json::Value::as_u64), Some(2));
+        }
+
+        /// A partial object (missing "mode") is still a valid request that runs
+        /// the capture (defaulting to focused) — it is NOT a `bad_request`.
+        #[test]
+        fn format_serve_response_runs_capture_for_partial_object() {
+            let r = format_serve_response(r#"{"id":5}"#, |req| {
+                assert!(req.mode == Mode::Focused);
+                format!(r#"{{"id":{}}}"#, req.id)
+            });
+            let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+            assert_eq!(v.get("id").and_then(serde_json::Value::as_u64), Some(5));
+            assert!(v.get("error").is_none());
+        }
+
+        /// End-to-end `--serve` smoke against the REAL binary when a `--serve`-
+        /// capable build is on disk. Self-skips (does not fail) when the located
+        /// exe is stale/absent — the in-process test above is the always-run
+        /// contract; this adds a live spawn+survival check when the fresh binary
+        /// is available (e.g. after `cargo build --bin winstt_context`).
+        #[test]
+        fn serve_mode_spawns_and_survives_when_binary_supports_it() {
+            use std::io::{BufRead, BufReader, Write};
+            use std::process::{Command, Stdio};
+            use std::sync::mpsc;
+            use std::time::Duration;
+
+            let exe = option_env!("CARGO_BIN_EXE_winstt_context")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("target/debug/winstt_context.exe")
+                });
+            if !exe.exists() {
+                return;
+            }
+
+            let mut child = match Command::new(&exe)
+                .arg("--serve")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            let mut stdin = child.stdin.take().expect("stdin");
+            let stdout = child.stdout.take().expect("stdout");
+
+            let (tx, rx) = mpsc::channel::<String>();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stdout);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {
+                            if tx.send(line.clone()).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+            let recv = |rx: &mpsc::Receiver<String>| -> Option<serde_json::Value> {
+                let line = rx.recv_timeout(Duration::from_secs(5)).ok()?;
+                serde_json::from_str::<serde_json::Value>(line.trim()).ok()
+            };
+
+            // Probe: a stale (pre-`--serve`) binary prints an id-less one-shot
+            // snapshot then exits. Detect that and self-skip rather than fail.
+            writeln!(stdin, r#"{{"id":1,"mode":"focused"}}"#).unwrap();
+            stdin.flush().unwrap();
+            let Some(r1) = recv(&rx) else {
+                let _ = child.kill();
+                return;
+            };
+            if r1.get("id").and_then(serde_json::Value::as_u64) != Some(1) {
+                // Stale binary without --serve support — skip.
+                let _ = child.kill();
+                let _ = child.wait();
+                return;
+            }
+            assert!(r1.get("windowTitle").is_some(), "snapshot fields present");
+
+            // Malformed line → correlated error, server SURVIVES.
+            writeln!(stdin, "this is not json").unwrap();
+            stdin.flush().unwrap();
+            let r2 = recv(&rx).expect("error response");
+            assert_eq!(r2.get("id").and_then(serde_json::Value::as_u64), Some(0));
+            assert_eq!(
+                r2.get("error").and_then(serde_json::Value::as_str),
+                Some("bad_request")
+            );
+
+            // A third valid request after the bad line proves the loop survived.
+            writeln!(stdin, r#"{{"id":2,"mode":"tree"}}"#).unwrap();
+            stdin.flush().unwrap();
+            let r3 = recv(&rx).expect("third response");
+            assert_eq!(r3.get("id").and_then(serde_json::Value::as_u64), Some(2));
+
+            drop(stdin);
+            let _ = child.wait();
+        }
     }
 }

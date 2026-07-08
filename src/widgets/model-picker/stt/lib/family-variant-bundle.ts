@@ -43,11 +43,15 @@ const TURBO_SUFFIX_RE = /-turbo$/;
  *   - ``moonshine-tiny`` + ``moonshine-tiny-zh`` / ``-ja`` / ``-ko`` / etc.
  *       → ``moonshine-tiny`` (the same encoder-only model, language-tuned).
  *   - ``moonshine-base`` likewise.
+ *   - ``cohere-transcribe`` + ``cohere-transcribe-arabic`` → ``cohere-transcribe``
+ *     (same CohereAsr architecture; the Arabic build is a language fine-tune, so
+ *     it rides under the multilingual base as a variant, not its own card).
  */
 const ARCH_BUNDLE_PREFIXES: readonly string[] = [
 	"nemo-canary",
 	"moonshine-tiny",
 	"moonshine-base",
+	"cohere-transcribe",
 ];
 
 /**

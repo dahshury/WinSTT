@@ -1,0 +1,218 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": ["ultracite/biome/core", "ultracite/biome/react"],
+  // Scope Biome to the renderer app + repo tooling. The docs/ site and
+  // tools/remotion-demos are separate workspaces with their own toolchains;
+  // src-tauri is Rust (cargo fmt). Generated bindings are never hand-authored.
+  "files": {
+    "includes": [
+      "src/**",
+      "tools/**",
+      "scripts/**",
+      "*.{js,mjs,cjs,ts,mts,cts,jsonc}",
+      "package.json",
+      "!!**/node_modules",
+      "!!**/dist",
+      "!!src/bindings.ts",
+      "!!**/*.generated.*",
+      "!!docs",
+      "!!examples",
+      "!!src-tauri",
+      "!!tools/remotion-demos",
+      "!!**/.tmp_e2e",
+      "!!**/.tmp*",
+      "!!public",
+      "!!**/*.svg"
+    ]
+  },
+  // Match the previous Prettier style (.prettierrc: tabs, LF, double quotes,
+  // semicolons, trailing-all) so the switch is a formatter swap, not a repo-wide
+  // restyle. Overrides Ultracite's 2-space / es5-trailing defaults.
+  "formatter": {
+    "indentStyle": "tab"
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "trailingCommas": "all"
+    },
+    // Bun is the test runtime (bun:test + Bun.file); it isn't in Biome's
+    // default browser/Node global set.
+    "globals": ["Bun"]
+  },
+  // The sorting assists reorder object keys, interface members, JSX attributes
+  // and imports across the whole tree — a massive, review-hostile diff (and a
+  // behavioral risk for spread/side-effect-import order). Keep them off; the
+  // linter still runs.
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "off",
+        "useSortedAttributes": "off",
+        "useSortedInterfaceMembers": "off",
+        "useSortedKeys": "off",
+        "useSortedProperties": "off",
+        "useSortedTypeFields": "off",
+        "useSortedPackageJson": "off"
+      }
+    }
+  },
+  // Relax the Ultracite rules that clash with this codebase's deliberate,
+  // established conventions. Everything not listed here stays at Ultracite's
+  // default (mostly error). Grouped by WHY it's off, not just that it is.
+  "linter": {
+    "rules": {
+      "a11y": {
+        // Accessibility is enforced at runtime by the Playwright + axe harness
+        // (`bun run test:a11y`), which understands the composed keyboard/focus
+        // behavior of the design-system primitives (comboboxes, data-grid,
+        // switcher, overlays). Biome's static a11y rules fire on those custom
+        // interactive elements even when they're fully accessible via delegated
+        // handlers/roles, so they're delegated to that harness rather than
+        // duplicated here.
+        "useSemanticElements": "off",
+        "noStaticElementInteractions": "off",
+        "noNoninteractiveElementInteractions": "off",
+        "useKeyWithClickEvents": "off",
+        "useAriaPropsSupportedByRole": "off",
+        "noLabelWithoutControl": "off"
+      },
+      "correctness": {
+        // React hook dependencies are owned by the separate react-doctor pass
+        // (`react-doctor/exhaustive-deps`, with `react-doctor-disable-line`
+        // directives throughout source). Having Biome also enforce it would be
+        // a second, conflicting source of truth.
+        "useExhaustiveDependencies": "off",
+        // A CLS/SEO rule for the web — WinSTT is a Tauri desktop app serving
+        // local/bundled images, so layout-shift-from-network doesn't apply.
+        "useImageSize": "off"
+      },
+      "performance": {
+        // Inline handlers/props in JSX are idiomatic here — the React Compiler
+        // memoizes them, so hoisting by hand is noise (see React Compiler setup).
+        "noJsxPropsBind": "off",
+        // Feature-Sliced Design exposes each slice through an index.ts barrel;
+        // that's the architecture's public-API boundary, not an accident.
+        "noBarrelFile": "off",
+        "noReExportAll": "off",
+        // `import * as x` is used deliberately (namespaced utils, test doubles).
+        "noNamespaceImport": "off",
+        // Hoisting every in-function regex to module scope is a micro-opt not
+        // worth churning ~120 call sites.
+        "useTopLevelRegex": "off",
+        // Sequential awaits in a loop are sometimes intentional (ordered IO).
+        "noAwaitInLoops": "off"
+      },
+      "style": {
+        // Components are PascalCase per FSD; the kebab-case rule would flag the
+        // entire component tree.
+        "useFilenamingConvention": "off",
+        // Re-exporting an imported symbol is the FSD barrel/@x cross-import
+        // pattern.
+        "noExportedImports": "off",
+        // `i++` in for-loops and nested ternaries in JSX are established style.
+        "noIncrementDecrement": "off",
+        "noNestedTernary": "off",
+        // `type` aliases (incl. unions) are used throughout; don't force
+        // interface, and don't churn switch/array-type style.
+        "useConsistentTypeDefinitions": "off",
+        "useDefaultSwitchClause": "off",
+        // Destructuring is a readability preference, not a correctness gate.
+        "useDestructuring": "off",
+        // Reordering hand-tuned CSS to satisfy the cascade-specificity rule
+        // risks visual regressions for no correctness gain — the intended
+        // cascade is deliberate.
+        "noDescendingSpecificity": "off"
+      },
+      "complexity": {
+        // `void promise` marks intentional fire-and-forget (see fireAndForget).
+        "noVoid": "off",
+        // 54 functions exceed the threshold; refactoring them is out of scope
+        // for a tooling swap.
+        "noExcessiveCognitiveComplexity": "off",
+        // Conflicts with tsconfig `noPropertyAccessFromIndexSignature`: this rule
+        // rewrites `x["k"]` → `x.k`, but TS *requires* bracket access for
+        // index-signature members. The two are mutually exclusive; TS wins.
+        "useLiteralKeys": "off",
+        // Conflicts with tsconfig `noImplicitReturns`: this rule strips
+        // `return undefined`, but in a function with other value-returning paths
+        // TS requires the explicit return. TS wins.
+        "noUselessUndefined": "off"
+      },
+      "suspicious": {
+        // `== null` / `!= null` is the intentional null-or-undefined idiom here;
+        // Biome's fix rewrites it to `=== null`, which changes behavior.
+        "noEqualsToNull": "off",
+        // Noisy without full type-flow; its "fix" strips defensive guards.
+        "noUnnecessaryConditions": "off",
+        // Renaming ~50 shadowed bindings is churn with no correctness win here.
+        "noShadow": "off",
+        // Async signatures without await are used for interface conformance.
+        "useAwait": "off",
+        // Bitwise ops are intentional (hashing, bit flags).
+        "noBitwiseOperators": "off",
+        // `cond && <JSX>` guard style is pervasive; revisit as a follow-up.
+        "noLeakedRender": "off",
+        // The lists keyed by index here are positional/static render sets
+        // (level-meter bars, skeleton rows, diff tokens, animated digits) whose
+        // identity IS the position — a stable id would be the index anyway.
+        "noArrayIndexKey": "off"
+      },
+      "nursery": {
+        // Tailwind class sorting fights the intentional twMerge/cn ordering.
+        "useSortedClasses": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      // Tests legitimately assert non-null on values they construct and know are
+      // present — matches the previous ESLint config.
+      "includes": ["**/*.{test,spec}.{ts,tsx}", "**/*test-helpers*.{ts,tsx}"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off",
+            // Tests throw plain strings/objects to exercise error handling, and
+            // use constructor parameter properties in throwaway helper classes.
+            "useThrowOnlyError": "off",
+            "noParameterProperties": "off"
+          },
+          "performance": {
+            // Tests use `delete globalThis.x` to clean up readonly globals
+            // (navigator.clipboard, Audio) between cases — the only correct way,
+            // since those props can be deleted but not assigned. Biome's
+            // noDelete autofix rewrites it to `x = undefined`, which throws
+            // "assign to readonly property".
+            "noDelete": "off"
+          },
+          "suspicious": {
+            // Assertions embed a literal `${...}` to test template handling.
+            "noTemplateCurlyInString": "off",
+            // Tests `.sort()` simple string arrays for order-independent
+            // comparison (or compare against a pre-sorted literal); a numeric
+            // comparator would be wrong for these string sets.
+            "useArraySortCompare": "off"
+          }
+        }
+      }
+    },
+    {
+      // Linting is scoped to the shipped renderer (`src/`), exactly as the
+      // previous setup did (`eslint src`). Everything else — dev/CLI tooling,
+      // root config, HTML entry points, Playwright e2e/a11y specs — is still
+      // FORMATTED by Biome (replacing Prettier) but not linted, so the tooling
+      // swap doesn't impose a new lint surface on code CI never gated. Listed
+      // last so it wins over the test-file override for tools/e2e test files.
+      "includes": [
+        "tools/**",
+        "scripts/**",
+        "tests/**",
+        "windows/**",
+        "*.{js,mjs,cjs,ts,mts,cts}",
+        "*.html"
+      ],
+      "linter": { "enabled": false }
+    }
+  ]
+}

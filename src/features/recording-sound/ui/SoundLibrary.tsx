@@ -85,8 +85,6 @@ export function SoundLibrary({
 			<ElevatedSurface bare={bare} className={containerClass}>
 				{/* Drop target wraps both the scrollable list and the pinned add row so
             a file dropped anywhere on the card is accepted. */}
-				{/* biome-ignore lint/a11y/noStaticElementInteractions: drop target surface — interactive controls live in child rows. */}
-				{/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: drop target surface — interactive controls live in child rows. */}
 				<div
 					className="flex flex-col"
 					onDragLeave={drop.handlers.onDragLeave}
@@ -99,7 +97,7 @@ export function SoundLibrary({
               MAX_CUSTOM_SOUNDS). The selected-pill highlight tracks scroll
               because its geometry is measured in container content space. */}
 					<RadioGroup
-						className="relative flex max-h-[19.5rem] flex-col overflow-y-auto"
+						className="relative flex max-h-[19.5rem] flex-col overflow-x-hidden overflow-y-auto"
 						name="sound-library-row"
 						onValueChange={(id) => {
 							const item = library.items.find((it) => it.id === id);

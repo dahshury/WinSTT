@@ -8,7 +8,7 @@ describe("models type aliases", () => {
 			name: "Microphone",
 			isDefault: true,
 			maxInputChannels: 2,
-			defaultSampleRate: 44100,
+			defaultSampleRate: 44_100,
 		};
 		expect(dev.index).toBe(0);
 	});

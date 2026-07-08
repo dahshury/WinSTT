@@ -44,7 +44,6 @@ function makeModel(overrides: Partial<ModelInfo> = {}): ModelInfo {
 		previewCapable: true,
 		nativeStreaming: false,
 		finalReuseSafe: true,
-		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
@@ -185,18 +184,19 @@ describe("SttModelCard custom-model handling", () => {
 		expect(disabled).not.toBeNull();
 	});
 
-	test("surfaces the error message as the title attribute on broken cards", () => {
-		const { container } = renderCard(
+	test("surfaces the error message inline on broken cards", () => {
+		renderCard(
 			makeModel({
 				available: false,
 				errorMessage: "missing tokenizer.json in my-whisper",
 			}),
 		);
-		// The native title attribute is the OS-level tooltip the user sees
-		// when hovering the greyed-out card. Inline tooltips also work but
-		// the title is the lowest-common-denominator signal.
-		const withTitle = container.querySelector('[title*="Unavailable"]');
-		expect(withTitle).not.toBeNull();
+		// The scanner's error renders as a visible line under the model name
+		// (and again on the Broken badge's styled tooltip) — no native title
+		// attribute, since tooltips are unified on the shared Tooltip.
+		expect(
+			screen.getByText("missing tokenizer.json in my-whisper"),
+		).toBeDefined();
 	});
 
 	test("does not render the PrecisionGroup on a broken card", () => {

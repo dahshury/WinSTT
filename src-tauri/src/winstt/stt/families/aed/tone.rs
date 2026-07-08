@@ -17,11 +17,24 @@
 
 use std::collections::BTreeMap;
 
-use ndarray::{Array1, Array2, ArrayView2, Axis};
+use ndarray::{Array2, ArrayView2, Axis};
+use ort::memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::Session;
-use ort::value::Tensor;
+use ort::value::{DynValue, Tensor};
 
 use super::*;
+use crate::winstt::stt::Accelerator;
+
+/// Map the active provider list to the ORT allocation device for carrying the T-One LSTM state
+/// device-resident (CPU when no GPU EP; then IoBinding simply binds host memory, still correct).
+/// Mirrors whisper's `device_for_providers`.
+fn tone_device(providers: &[Accelerator]) -> (AllocationDevice, i32) {
+    match providers.first() {
+        Some(Accelerator::Cuda) => (AllocationDevice::CUDA, 0),
+        Some(Accelerator::DirectMl) => (AllocationDevice::DIRECTML, 0),
+        _ => (AllocationDevice::CPU, 0),
+    }
+}
 
 /// 16 kHz → 8 kHz one-shot resample via rubato `FftFixedIn` (the same resampler `FrameResampler`
 /// uses; the task allows reusing it). onnx-asr resamples with an ONNX polyphase graph, but a quality
@@ -66,6 +79,9 @@ pub struct ToneEngine {
     state_input: String,
     model_name: String,
     providers: Vec<String>,
+    /// ORT allocation device the session runs on, for carrying the LSTM state resident.
+    device: AllocationDevice,
+    device_id: i32,
     /// Live native-streaming session (the realtime worker feeds chunks via `stream_accept`).
     /// `None` outside an active stream; the batch `transcribe` path uses its own local state.
     stream: Option<ToneStreamingState>,
@@ -73,19 +89,21 @@ pub struct ToneEngine {
 
 /// One T-One streaming session's carried state, lifted out of `transcribe` so the realtime worker
 /// can drive chunks incrementally instead of re-decoding the whole window each tick. `state` is the
-/// opaque f16 LSTM blob carried across chunks; `chunk_idx` drops the warm-up chunk 0; `pending8`
+/// opaque f16 LSTM blob carried across chunks — kept DEVICE-RESIDENT as a session-owned `DynValue`
+/// (`None` before the first chunk, when a host f16 zero-tensor seeds it) so the ~220K-element blob
+/// no longer round-trips to host every chunk. `chunk_idx` drops the warm-up chunk 0; `pending8`
 /// buffers 8 kHz samples not yet forming a full `chunk_size` window (streaming path only).
 struct ToneStreamingState {
-    state: Array1<F16>,
+    state: Option<DynValue>,
     all_logprobs: Vec<Array2<f32>>,
     chunk_idx: usize,
     pending8: Vec<f32>,
 }
 
 impl ToneStreamingState {
-    fn new(state_size: usize) -> Self {
+    fn new() -> Self {
         Self {
-            state: Array1::from_elem(state_size, F16::from_f32(0.0)),
+            state: None,
             all_logprobs: Vec::new(),
             chunk_idx: 0,
             pending8: Vec::new(),
@@ -93,14 +111,24 @@ impl ToneStreamingState {
     }
 }
 
-/// Run ONE `chunk_size`-sample (8 kHz) window through the T-One graph, carrying `st.state`. Drops
-/// the warm-up chunk 0's logprobs (`chunk_idx`), collects the rest. Shared by the offline
-/// `transcribe` driver and the streaming `stream_accept` so both decode identically.
+/// Run ONE `chunk_size`-sample (8 kHz) window through the T-One graph, carrying `st.state`
+/// DEVICE-RESIDENT via IoBinding: the `state_next` f16 LSTM blob is bound to the device and kept as
+/// a session-owned `DynValue` (rebound as the next chunk's `state` input) instead of extracted to a
+/// host `Array1<F16>` and re-fed each chunk. Only `signal` (fresh per chunk) goes host→device and
+/// `logprobs` comes back host-side for the CTC collapse — same graph, same values. Drops the warm-up
+/// chunk 0's logprobs (`chunk_idx`), collects the rest. Shared by the offline `transcribe` driver
+/// and the streaming `stream_accept` so both decode identically.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one-shot IoBinding driver mirrors the T-One graph's input surface"
+)]
 fn tone_run_chunk(
     session: &mut Session,
     signal_input: &str,
     state_input: &str,
     state_size: usize,
+    dev_mem: &MemoryInfo,
+    cpu_mem: &MemoryInfo,
     st: &mut ToneStreamingState,
     chunk8: &[f32],
 ) -> SttResult<()> {
@@ -113,36 +141,78 @@ fn tone_run_chunk(
         .map_err(|e| SttError::Inference(format!("t-one signal reshape: {e}")))?;
     let sig_tensor = Tensor::from_array(sig_arr)
         .map_err(|e| SttError::Inference(format!("t-one signal tensor: {e}")))?;
-    let state_arr = st
-        .state
-        .clone()
-        .into_shape_with_order((1, state_size))
-        .map_err(|e| SttError::Inference(format!("t-one state reshape: {e}")))?;
-    let state_tensor = Tensor::from_array(state_arr)
-        .map_err(|e| SttError::Inference(format!("t-one state tensor: {e}")))?;
-    let outputs = session
-        .run(ort::inputs![
-            signal_input => sig_tensor,
-            state_input => state_tensor,
-        ])
+    // Empty host f16 zero-state for the first chunk; held here so it outlives the binding through
+    // `run_binding`. From chunk 2 on, `st.state` holds the carried device value.
+    let empty_state = match &st.state {
+        Some(_) => None,
+        None => Some(
+            Tensor::from_array(ndarray::Array2::<F16>::from_elem(
+                (1, state_size),
+                F16::from_f32(0.0),
+            ))
+            .map_err(|e| SttError::Inference(format!("t-one state tensor: {e}")))?,
+        ),
+    };
+
+    let mut binding = session
+        .create_binding()
+        .map_err(|e| SttError::Inference(format!("t-one binding: {e}")))?;
+    binding
+        .bind_input(signal_input, &sig_tensor)
+        .map_err(|e| SttError::Inference(format!("bind {signal_input}: {e}")))?;
+    match (&st.state, &empty_state) {
+        (Some(v), _) => binding
+            .bind_input(state_input, v)
+            .map_err(|e| SttError::Inference(format!("bind {state_input}: {e}")))?,
+        (None, Some(t)) => binding
+            .bind_input(state_input, t)
+            .map_err(|e| SttError::Inference(format!("bind {state_input}: {e}")))?,
+        (None, None) => {
+            return Err(SttError::Inference(
+                "t-one state has neither carried nor empty tensor".into(),
+            ));
+        }
+    }
+    // logprobs → host (CTC collapse); state_next → device (carried).
+    binding
+        .bind_output_to_device("logprobs", cpu_mem)
+        .map_err(|e| SttError::Inference(format!("bind logprobs: {e}")))?;
+    binding
+        .bind_output_to_device("state_next", dev_mem)
+        .map_err(|e| SttError::Inference(format!("bind state_next: {e}")))?;
+
+    let mut outputs = session
+        .run_binding(&binding)
         .map_err(|e| SttError::Inference(format!("t-one chunk run: {e}")))?;
-    // state_next is f16 (tone.py:70). Carry it.
-    let next_state = outputs["state_next"]
-        .try_extract_array::<F16>()
-        .map_err(|e| SttError::Inference(format!("t-one state_next extract: {e}")))?;
-    st.state = next_state
-        .to_owned()
-        .into_shape_with_order(state_size)
-        .map_err(|e| SttError::Inference(format!("t-one state_next reshape: {e}")))?;
+    // DML/CUDA run_binding is async w.r.t. the device stream — sync before reading host `logprobs`
+    // and before carrying the device `state_next`, else we race the still-running kernels.
+    binding
+        .synchronize_outputs()
+        .map_err(|e| SttError::Inference(format!("t-one synchronize: {e}")))?;
+
     // DROP the first chunk's logprobs (warm-up); collect the rest (tone.py:86 `np.hstack(res[1:])`).
+    // Read logprobs (host) BEFORE the state_next `remove` takes `outputs`.
     if st.chunk_idx >= 1 {
-        let lp = out_to_f32(&outputs["logprobs"])?; // (1, frames, 35)
+        let lp = {
+            let v = outputs
+                .get("logprobs")
+                .ok_or_else(|| SttError::Inference("t-one produced no logprobs".into()))?;
+            out_to_f32(v)? // (1, frames, 35)
+        };
         let lp3 = lp
             .into_dimensionality::<ndarray::Ix3>()
             .map_err(|e| SttError::Inference(format!("t-one logprobs dim: {e}")))?;
         st.all_logprobs
             .push(lp3.index_axis_move(Axis(0), 0).to_owned()); // (frames, 35)
     }
+    // state_next is f16 (tone.py:70). Carry it → device (session-owned; survives the binding drop).
+    st.state = Some(
+        outputs
+            .remove("state_next")
+            .ok_or_else(|| SttError::Inference("t-one produced no state_next".into()))?,
+    );
+    drop(outputs);
+    drop(binding);
     st.chunk_idx += 1;
     Ok(())
 }
@@ -224,6 +294,7 @@ impl ToneEngine {
             // vocab length (the CTC blank lives just past the real symbols).
             .unwrap_or(vocab.len() as i64);
 
+        let (device, device_id) = tone_device(&cfg.providers);
         Ok(ToneEngine {
             session,
             vocab,
@@ -234,8 +305,30 @@ impl ToneEngine {
             state_input,
             model_name: cfg.model_name.clone(),
             providers: providers_to_strings(&cfg.providers),
+            device,
+            device_id,
             stream: None,
         })
+    }
+
+    /// Device `MemoryInfo` (state_next) + host `MemoryInfo` (logprobs) for one chunk's IoBinding.
+    /// Device is CPU when no GPU EP, so the bind is correct + ~free there too.
+    fn chunk_mem(&self) -> SttResult<(MemoryInfo, MemoryInfo)> {
+        let dev_mem = MemoryInfo::new(
+            self.device,
+            self.device_id,
+            AllocatorType::Device,
+            MemoryType::Default,
+        )
+        .map_err(|e| SttError::Inference(format!("t-one device mem info: {e}")))?;
+        let cpu_mem = MemoryInfo::new(
+            AllocationDevice::CPU,
+            0,
+            AllocatorType::Device,
+            MemoryType::CPUOutput,
+        )
+        .map_err(|e| SttError::Inference(format!("t-one cpu mem info: {e}")))?;
+        Ok((dev_mem, cpu_mem))
     }
 }
 
@@ -275,7 +368,8 @@ impl Transcriber for ToneEngine {
 
         // 3. Per-chunk streaming CTC over a fresh local state (SHARED chunk-run with stream_accept,
         //    so offline and live decode identically). Drop-chunk-0 + state carry live in the helper.
-        let mut st = ToneStreamingState::new(self.state_size);
+        let (dev_mem, cpu_mem) = self.chunk_mem()?;
+        let mut st = ToneStreamingState::new();
         for c in 0..num_chunks {
             let off = c * self.chunk_size;
             tone_run_chunk(
@@ -283,6 +377,8 @@ impl Transcriber for ToneEngine {
                 &self.signal_input,
                 &self.state_input,
                 self.state_size,
+                &dev_mem,
+                &cpu_mem,
                 &mut st,
                 &padded[off..off + self.chunk_size],
             )?;
@@ -311,6 +407,7 @@ impl Transcriber for ToneEngine {
         let w8 = resample_16k_to_8k(pcm);
         let chunk_size = self.chunk_size;
         let state_size = self.state_size;
+        let (dev_mem, cpu_mem) = self.chunk_mem()?;
         let Some(st) = self.stream.as_mut() else {
             return Err(SttError::Inference(
                 "T-One stream state was not initialized".into(),
@@ -324,6 +421,8 @@ impl Transcriber for ToneEngine {
                 &self.signal_input,
                 &self.state_input,
                 state_size,
+                &dev_mem,
+                &cpu_mem,
                 st,
                 &chunk,
             )?;
@@ -340,6 +439,7 @@ impl Transcriber for ToneEngine {
     fn stream_finalize(&mut self) -> SttResult<String> {
         let chunk_size = self.chunk_size;
         let state_size = self.state_size;
+        let (dev_mem, cpu_mem) = self.chunk_mem()?;
         let st = match self.stream.as_mut() {
             Some(s) => s,
             None => return Ok(String::new()),
@@ -357,6 +457,8 @@ impl Transcriber for ToneEngine {
                 &self.signal_input,
                 &self.state_input,
                 state_size,
+                &dev_mem,
+                &cpu_mem,
                 st,
                 &chunk,
             )?;
@@ -368,7 +470,7 @@ impl Transcriber for ToneEngine {
     /// of zeros) so the first REAL chunk is `chunk_idx >= 1` and kept (mirrors the offline leading
     /// pad). Called by the realtime worker on the recording rising edge.
     fn stream_reset(&mut self) {
-        let mut st = ToneStreamingState::new(self.state_size);
+        let mut st = ToneStreamingState::new();
         st.pending8 = vec![0.0f32; self.chunk_size];
         self.stream = Some(st);
     }

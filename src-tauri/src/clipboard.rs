@@ -100,22 +100,17 @@ fn paste_via_clipboard(
     );
     let clipboard = app_handle.clipboard();
     let phase_started = Instant::now();
-    info!("[clipboard] read_original_start");
-    let clipboard_content = clipboard.read_text().unwrap_or_else(|e| {
-        // A transient read failure here means we proceed to write our text and then
-        // "restore" an empty string — permanently clearing whatever the user had.
-        // Keep the empty-default fallback, but surface it so the data loss is diagnosable.
-        warn!(
-            "[clipboard] read_original_failed error={e}; original content may be lost on restore"
-        );
-        String::new()
-    });
+    info!("[clipboard] snapshot_original_start");
+    // Full-fidelity snapshot (raw formats on Windows, text+image elsewhere) so a
+    // copied image / file list survives the sandwich — a text-only save used to
+    // "restore" an empty string over anything that wasn't plain text.
+    let snapshot = crate::clipboard_snapshot::capture(app_handle);
     let elapsed_ms = phase_started.elapsed().as_millis();
     info!(
-        "[clipboard] read_original_complete duration_ms={elapsed_ms} chars={}",
-        clipboard_content.chars().count()
+        "[clipboard] snapshot_original_complete duration_ms={elapsed_ms} {}",
+        snapshot.describe()
     );
-    warn_if_slow_paste_phase("read_original", elapsed_ms);
+    warn_if_slow_paste_phase("snapshot_original", elapsed_ms);
 
     // Write text to clipboard first
     // On Wayland, prefer wl-copy for better compatibility (especially with umlauts)
@@ -178,22 +173,10 @@ fn paste_via_clipboard(
 
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    // Restore original clipboard content
-    // On Wayland, prefer wl-copy for better compatibility
+    // Restore original clipboard content (full snapshot, incl. non-text formats).
     let phase_started = Instant::now();
-    info!(
-        "[clipboard] restore_original_start chars={}",
-        clipboard_content.chars().count()
-    );
-    #[cfg(target_os = "linux")]
-    if is_wayland() && command_available("wl-copy") {
-        let _ = write_clipboard_via_wl_copy(&clipboard_content);
-    } else {
-        let _ = clipboard.write_text(&clipboard_content);
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    let _ = clipboard.write_text(&clipboard_content);
+    info!("[clipboard] restore_original_start {}", snapshot.describe());
+    crate::clipboard_snapshot::restore(app_handle, &snapshot);
     let elapsed_ms = phase_started.elapsed().as_millis();
     info!("[clipboard] restore_original_complete duration_ms={elapsed_ms}");
     warn_if_slow_paste_phase("restore_original", elapsed_ms);
@@ -349,7 +332,7 @@ pub fn get_available_typing_tools() -> Vec<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn command_available(name: &str) -> bool {
+pub(crate) fn command_available(name: &str) -> bool {
     Command::new("which")
         .arg(name)
         .output()
@@ -460,7 +443,7 @@ fn type_text_via_kwtype(text: &str) -> Result<(), ClipboardError> {
 /// Uses Stdio::null() to avoid blocking on repeated calls — wl-copy forks a
 /// daemon that inherits piped fds, causing read_to_end to hang indefinitely.
 #[cfg(target_os = "linux")]
-fn write_clipboard_via_wl_copy(text: &str) -> Result<(), ClipboardError> {
+pub(crate) fn write_clipboard_via_wl_copy(text: &str) -> Result<(), ClipboardError> {
     use std::process::Stdio;
     let status = Command::new("wl-copy")
         .arg("--")

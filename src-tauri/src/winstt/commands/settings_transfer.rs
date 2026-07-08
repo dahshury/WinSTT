@@ -181,9 +181,6 @@ fn redact_secret(value: &mut String) {
 fn redact_export_secrets(settings: &mut WinsttSettings) {
     redact_secret(&mut settings.llm.openrouter_api_key);
     redact_secret(&mut settings.integrations.elevenlabs.api_key);
-    for value in settings.core.post_process_api_keys.values_mut() {
-        redact_secret(value);
-    }
 }
 
 fn preserve_target_secrets(imported: &mut WinsttSettings, current: &WinsttSettings) {
@@ -192,7 +189,6 @@ fn preserve_target_secrets(imported: &mut WinsttSettings, current: &WinsttSettin
     imported.integrations.elevenlabs.verified = current.integrations.elevenlabs.verified;
     imported.integrations.elevenlabs.last_verified_at =
         current.integrations.elevenlabs.last_verified_at;
-    imported.core.post_process_api_keys = current.core.post_process_api_keys.clone();
 }
 
 fn parse_exported_settings(bytes: &[u8]) -> Result<WinsttSettings, String> {
@@ -759,24 +755,12 @@ mod tests {
         let mut settings = WinsttSettings::default();
         settings.llm.openrouter_api_key = "or-secret".into();
         settings.integrations.elevenlabs.api_key = "el-secret".into();
-        settings
-            .core
-            .post_process_api_keys
-            .insert("openrouter".into(), "legacy-secret".into());
 
         redact_export_secrets(&mut settings);
 
         assert_eq!(settings.llm.openrouter_api_key, SECRET_PRESENT_SENTINEL);
         assert_eq!(
             settings.integrations.elevenlabs.api_key,
-            SECRET_PRESENT_SENTINEL
-        );
-        assert_eq!(
-            settings
-                .core
-                .post_process_api_keys
-                .get("openrouter")
-                .unwrap(),
             SECRET_PRESENT_SENTINEL
         );
     }

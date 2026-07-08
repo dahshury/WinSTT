@@ -35,8 +35,18 @@ async function routeAudioToSink(
 
 export interface PlaybackState {
 	activeIndex: number;
+	/** Playhead position (seconds) — drives the seek bar and the paused highlight. */
+	currentTime: number;
+	/** Total recording length (seconds), known once metadata loads. */
+	duration: number;
+	/** True once the recording has been loaded (play pressed at least once), so
+	 *  the row can reveal the media controls and keep them visible when paused. */
+	hasStarted: boolean;
 	loading: boolean;
 	playing: boolean;
+	/** Jump the playhead to `seconds` (word click / seek-bar drag). Highlights and
+	 *  the bar follow immediately, whether playing or paused. */
+	seek: (seconds: number) => void;
 	toggle: () => void;
 	words: WordTiming[] | null;
 }
@@ -79,6 +89,8 @@ export function useHistoryPlayback(
 	const [loading, setLoading] = useState(false);
 	const [words, setWords] = useState<WordTiming[] | null>(null);
 	const [currentTime, setCurrentTime] = useState(0);
+	const [duration, setDuration] = useState(0);
+	const [hasStarted, setHasStarted] = useState(false);
 
 	useEffect(
 		() => () => {
@@ -126,7 +138,19 @@ export function useHistoryPlayback(
 				setCurrentTime(0);
 				stopTicking();
 			};
+			// Duration for the seek bar. WAV metadata resolves near-instantly from
+			// the data URI; guard against the transient `Infinity`/`NaN` browsers
+			// report before the header is parsed.
+			const captureDuration = () => {
+				if (Number.isFinite(el.duration) && el.duration > 0) {
+					setDuration(el.duration);
+				}
+			};
+			el.onloadedmetadata = captureDuration;
+			el.ondurationchange = captureDuration;
+			captureDuration();
 			audioRef.current = el;
+			setHasStarted(true);
 		}
 		await routeAudioToSink(audioRef.current, outputDeviceId);
 		try {
@@ -156,7 +180,36 @@ export function useHistoryPlayback(
 		fireAndForget(beginPlayback(), "history.beginPlayback");
 	};
 
+	// Move the playhead (word click / seek-bar drag). The `<audio>` element is the
+	// source of truth, so set its `currentTime` and mirror it into state right away
+	// — the highlight and bar update instantly even while paused (the rAF loop only
+	// runs during playback). No-op until the recording has been loaded.
+	const seek = (seconds: number) => {
+		const el = audioRef.current;
+		if (!el) {
+			return;
+		}
+		const clamped = Math.max(
+			0,
+			duration > 0 ? Math.min(seconds, duration) : seconds,
+		);
+		el.currentTime = clamped;
+		setCurrentTime(clamped);
+	};
+
+	// Highlight follows the playhead whenever the clip is loaded — not just while
+	// playing — so seeking (or a word click) relights the right word when paused.
 	const activeIndex =
-		playing && words ? findActiveWordIndex(words, currentTime) : -1;
-	return { activeIndex, loading, playing, toggle, words };
+		hasStarted && words ? findActiveWordIndex(words, currentTime) : -1;
+	return {
+		activeIndex,
+		currentTime,
+		duration,
+		hasStarted,
+		loading,
+		playing,
+		seek,
+		toggle,
+		words,
+	};
 }

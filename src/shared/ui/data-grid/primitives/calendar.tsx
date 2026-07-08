@@ -23,7 +23,7 @@ export interface CalendarProps {
 	mode?: "single" | "range";
 	// Method syntax (bivariant) so single-mode `(Date|undefined)` and range-mode
 	// `(DateRange|undefined)` handlers both assign without variance errors.
-	onSelect?(value: Date | DateRange | undefined): void;
+	onSelect?: (value: Date | DateRange | undefined) => void;
 	selected?: Date | DateRange | undefined;
 }
 
@@ -48,7 +48,9 @@ function isSameDay(a: Date | undefined, b: Date | undefined): boolean {
 }
 
 function asRange(value: CalendarProps["selected"]): DateRange | undefined {
-	if (!value || value instanceof Date) return undefined;
+	if (!value || value instanceof Date) {
+		return;
+	}
 	return value;
 }
 
@@ -80,16 +82,24 @@ export function Calendar({
 	];
 
 	function isSelected(day: Date): boolean {
-		if (mode === "single") return isSameDay(day, selected as Date | undefined);
+		if (mode === "single") {
+			return isSameDay(day, selected as Date | undefined);
+		}
 		const range = asRange(selected);
-		if (!range) return false;
+		if (!range) {
+			return false;
+		}
 		return isSameDay(day, range.from) || isSameDay(day, range.to);
 	}
 
 	function isInRange(day: Date): boolean {
-		if (mode !== "range") return false;
+		if (mode !== "range") {
+			return false;
+		}
 		const range = asRange(selected);
-		if (!range?.from || !range?.to) return false;
+		if (!(range?.from && range?.to)) {
+			return false;
+		}
 		return day > range.from && day < range.to;
 	}
 
@@ -165,7 +175,6 @@ export function Calendar({
 							{day.getDate()}
 						</button>
 					) : (
-						// biome-ignore lint/suspicious/noArrayIndexKey: blank leading cells have no stable id
 						<div className="h-7" key={`blank-${index}`} />
 					),
 				)}

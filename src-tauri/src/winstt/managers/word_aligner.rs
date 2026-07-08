@@ -74,9 +74,44 @@ impl WordAligner {
             return_word_timestamps: true,
             ..Default::default()
         };
-        let timed: Vec<WordResult> = match engine.transcribe(audio, &opts) {
-            Ok(t) => t.words.unwrap_or_default(),
-            Err(e) => return Err(format!("word alignment failed: {e}")),
+
+        // LONG AUDIO: Whisper truncates every decode to a 30 s mel window, so a single-shot align of
+        // a >30 s recording times only the first 30 s and the highlight stalls partway through. Route
+        // through the SAME Silero-VAD chunker the long-form final decode uses
+        // (`stt::vad_segment::vad_segment_align_words`) — it cuts the recording on silence into
+        // ≤28 s chunks, aligns each, and offsets each chunk's word times back into the ORIGINAL
+        // (played-back) timeline. Short clips (≤28 s) fall straight through to a single pass, so the
+        // common history clip is unchanged. If the segmentation VAD can't be built, degrade to the
+        // one-shot align (truncates past 30 s, but the transcript/highlight still work up to there).
+        const MAX_ALIGN_CHUNK_S: f32 = 28.0; // headroom under Whisper's 30 s mel wall
+        let timed: Vec<WordResult> = if audio.len() > (MAX_ALIGN_CHUNK_S * 16_000.0) as usize {
+            match stt::backend::with_segmentation_vad(&self.app, |vad| {
+                stt::vad_segment::vad_segment_align_words(
+                    &mut **engine,
+                    audio,
+                    MAX_ALIGN_CHUNK_S,
+                    vad,
+                    &opts,
+                )
+            }) {
+                Ok(Ok(words)) => words,
+                Ok(Err(e)) => return Err(format!("word alignment failed: {e}")),
+                Err(e) => {
+                    // VAD unavailable → documented degrade: one-shot align of the first window.
+                    log::warn!(
+                        "[word-aligner] segmentation VAD unavailable ({e}); long-audio highlight truncates past 30 s"
+                    );
+                    match engine.transcribe(audio, &opts) {
+                        Ok(t) => t.words.unwrap_or_default(),
+                        Err(e) => return Err(format!("word alignment failed: {e}")),
+                    }
+                }
+            }
+        } else {
+            match engine.transcribe(audio, &opts) {
+                Ok(t) => t.words.unwrap_or_default(),
+                Err(e) => return Err(format!("word alignment failed: {e}")),
+            }
         };
 
         // USE-OUR-WORDS: relabel the aligner's timed words onto OUR transcript so the highlight
@@ -152,6 +187,7 @@ impl WordAligner {
             providers: vec![stt::Accelerator::Cpu],
             // Default (fp32) export → no fp16 workaround.
             whisper_fp16_workaround: false,
+            language: None,
         };
 
         match stt::build_engine(cfg) {

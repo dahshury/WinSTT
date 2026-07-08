@@ -35,27 +35,29 @@ export function PlayButton({
 	// neutral wash on hover; playing settles into a soft neutral chip. No accent
 	// — playback state reads through tone alone, not color.
 	return (
-		<BaseButton
-			aria-label={label}
-			className={cn(
-				"inline-flex size-7 shrink-0 items-center justify-center rounded-full transition-colors duration-150 active:scale-95",
-				playing
-					? "bg-foreground/15 text-foreground hover:bg-foreground/25"
-					: "bg-transparent text-foreground-muted hover:bg-foreground/10 hover:text-foreground",
-			)}
-			disabled={loading}
-			onClick={onToggle}
-			type="button"
-		>
-			{loading ? (
-				<Spinner className="size-3.5" />
-			) : (
-				<HugeiconsIcon
-					className="size-3.5"
-					icon={playing ? PauseIcon : PlayIcon}
-				/>
-			)}
-		</BaseButton>
+		<Tooltip content={label}>
+			<BaseButton
+				aria-label={label}
+				className={cn(
+					"inline-flex size-7 shrink-0 items-center justify-center rounded-full transition-colors duration-150 active:scale-95",
+					playing
+						? "bg-foreground/15 text-foreground hover:bg-foreground/25"
+						: "bg-transparent text-foreground-muted hover:bg-foreground/10 hover:text-foreground",
+				)}
+				disabled={loading}
+				onClick={onToggle}
+				type="button"
+			>
+				{loading ? (
+					<Spinner className="size-3.5" />
+				) : (
+					<HugeiconsIcon
+						className="size-3.5"
+						icon={playing ? PauseIcon : PlayIcon}
+					/>
+				)}
+			</BaseButton>
+		</Tooltip>
 	);
 }
 
@@ -122,16 +124,18 @@ export function DeleteButton({
 	onDelete: (id: string) => void;
 }) {
 	return (
-		<BaseButton
-			aria-label="Delete entry"
-			className="inline-flex size-7 items-center justify-center text-foreground-muted transition-[color,background-color,transform] hover:bg-error/15 hover:text-error active:scale-95"
-			onClick={() => {
-				onDelete(entryId);
-			}}
-			type="button"
-		>
-			<HugeiconsIcon className="size-3.5" icon={Delete02Icon} />
-		</BaseButton>
+		<Tooltip content="Delete entry">
+			<BaseButton
+				aria-label="Delete entry"
+				className="inline-flex size-7 items-center justify-center text-foreground-muted transition-[color,background-color,transform] hover:bg-error/15 hover:text-error active:scale-95"
+				onClick={() => {
+					onDelete(entryId);
+				}}
+				type="button"
+			>
+				<HugeiconsIcon className="size-3.5" icon={Delete02Icon} />
+			</BaseButton>
+		</Tooltip>
 	);
 }
 

@@ -7,11 +7,26 @@
 
 use std::collections::BTreeMap;
 
-use ndarray::{Array2, ArrayD};
+use ndarray::Array2;
+use ort::memory::{AllocationDevice, Allocator, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::Session;
-use ort::value::{Tensor, TensorRef};
+use ort::value::{DynValue, Tensor, TensorRef};
 
 use super::*;
+use crate::winstt::stt::Accelerator;
+
+/// The `AllocationDevice` (+ id) the sessions run on, for binding the carried `decoder_mems`
+/// resident on it (mirrors `whisper::device_for_providers` / onnx-asr `get_onnx_device`). Derived
+/// from the FIRST requested accelerator: DirectML/CUDA → that device; everything else (incl.
+/// Rocm/CoreML/OpenVINO, which route to a CPU fallback) → CPU, where IoBinding just binds host
+/// memory (still correct, ~same speed as the old host-clone path).
+fn canary_device(providers: &[Accelerator]) -> (AllocationDevice, i32) {
+    match providers.first() {
+        Some(Accelerator::DirectMl) => (AllocationDevice::DIRECTML, 0),
+        Some(Accelerator::Cuda) => (AllocationDevice::CUDA, 0),
+        _ => (AllocationDevice::CPU, 0),
+    }
+}
 
 pub struct CanaryEngine {
     encoder: Session,
@@ -24,6 +39,11 @@ pub struct CanaryEngine {
     mel_fb: Array2<f32>,
     model_name: String,
     providers: Vec<String>,
+    /// Device the sessions run on, for binding the carried `decoder_mems` device-resident
+    /// (mirrors `whisper::device`). `CPU` when no GPU EP is active; then IoBinding simply binds
+    /// host memory (still correct, ~same speed as the old host-clone path).
+    device: AllocationDevice,
+    device_id: i32,
 }
 
 fn canary_concrete_language(raw: &str) -> Option<&str> {
@@ -105,6 +125,7 @@ impl CanaryEngine {
         ];
         let eos_token_id = need("<|endoftext|>")?;
 
+        let (device, device_id) = canary_device(&cfg.providers);
         Ok(CanaryEngine {
             encoder,
             decoder,
@@ -116,6 +137,8 @@ impl CanaryEngine {
             mel_fb,
             model_name: cfg.model_name.clone(),
             providers: providers_to_strings(&cfg.providers),
+            device,
+            device_id,
         })
     }
 
@@ -174,20 +197,49 @@ impl Transcriber for CanaryEngine {
         let prefix_len = prompt.len();
         let mut batch_tokens: Vec<i64> = prompt;
 
-        // Greedy AED decode with the NeMo `decoder_mems` cache. The decoder returns
-        // `decoder_hidden_states`, which becomes the NEXT step's `decoder_mems` (port of
-        // nemo.py `NemoConformerAED._decode`/`_decoding`). input_ids = full prompt while the mems
-        // are empty (shape[2]==0), then only the last token. EOS breaks BEFORE it's appended.
+        // Greedy AED decode with the NeMo `decoder_mems` cache carried DEVICE-RESIDENT via ort's
+        // IoBinding (mirrors whisper.rs's KV-cache loop). The decoder returns `decoder_hidden_states`,
+        // which becomes the NEXT step's `decoder_mems` input — bound straight back on the device with
+        // NO host clone (the old path `out_to_f32`'d it every step and re-fed the host array). Port of
+        // nemo.py `NemoConformerAED._decode`/`_decoding`. input_ids = full prompt while the mems are
+        // empty (shape[2]==0, i.e. step 0), then only the last token. EOS breaks BEFORE it's appended.
         // (The prior code re-fed zero mems every step → no context after token 0 → output "And".)
         let enc_shape = encoder_embeddings.shape().to_vec();
         let mask_shape = encoder_mask.shape().to_vec();
-        // Initial decoder_mems: (num_layers, 1, 0, hidden) — dms_shape declares mem_len(dim 2)=0.
-        let mut decoder_mems: ArrayD<f32> =
-            ArrayD::<f32>::zeros(ndarray::IxDyn(&dms_shape(&self.decoder)));
+        // Initial decoder_mems shape (num_layers, 1, 0, hidden) — dms_shape declares mem_len(dim 2)=0.
+        let empty_mems_shape = dms_shape(&self.decoder);
+        // Device `MemoryInfo` for the resident carried mems; logits come back to host for argmax.
+        // Both are CPU when no GPU EP, so this path is correct + ~free on CPU too.
+        let dev_mem = MemoryInfo::new(
+            self.device,
+            self.device_id,
+            AllocatorType::Device,
+            MemoryType::Default,
+        )
+        .map_err(|e| SttError::Inference(format!("canary device mem info: {e}")))?;
+        let cpu_mem = MemoryInfo::new(
+            AllocationDevice::CPU,
+            0,
+            AllocatorType::Device,
+            MemoryType::CPUOutput,
+        )
+        .map_err(|e| SttError::Inference(format!("canary cpu mem info: {e}")))?;
+        // Every graph output must be bound. `logits` → host (argmax); the rest (incl.
+        // `decoder_hidden_states`, which we carry) → device. Names introspected once (no per-step alloc).
+        let non_logits_outputs: Vec<String> = self
+            .decoder
+            .outputs()
+            .iter()
+            .map(|o| o.name().to_string())
+            .filter(|n| n != "logits")
+            .collect();
+
+        // Carried mems as a DEVICE-resident value; `None` = the (layers,1,0,hidden) empty step-0 mems.
+        let mut decoder_mems: Option<DynValue> = None;
 
         while batch_tokens.len() < self.max_sequence_length {
-            let mem_len = decoder_mems.shape().get(2).copied().unwrap_or(0);
-            let (input_len, input_ids_data): (usize, Vec<i64>) = if mem_len == 0 {
+            // Step 0 (empty mems) feeds the full prompt; cached steps feed only the last token.
+            let (input_len, input_ids_data): (usize, Vec<i64>) = if decoder_mems.is_none() {
                 (batch_tokens.len(), batch_tokens.clone())
             } else {
                 let last = batch_tokens.last().copied().ok_or_else(|| {
@@ -197,13 +249,9 @@ impl Transcriber for CanaryEngine {
             };
             let input_ids = tensor_i64((1, input_len), input_ids_data)?;
 
-            // Zero-copy: BORROW the static encoder outputs + the current mems as TensorRefs rather
-            // than re-cloning them onto the host EVERY token. `clone_f32_arrayd`/`Tensor::from_array`
-            // were O(tokens) host re-uploads of the UNCHANGING encoder_embeddings/encoder_mask plus
-            // the growing decoder_mems — the dominant cost vs the reference's by-reference numpy onnx-asr
-            // path (Rust was far slower than the reference's ~1.8s on canary-1b-int8 purely from this).
-            // The borrows live only inside `named`, released when `run` consumes it; decoder_mems is
-            // then reassigned from next_mems below.
+            // Zero-copy: BORROW the static encoder outputs as TensorRefs rather than re-cloning them
+            // onto the host EVERY token (they are UNCHANGING across the decode). The borrows live only
+            // inside `binding` / `run_binding`, released when the binding is dropped below.
             let enc_emb = TensorRef::from_array_view((
                 enc_shape.as_slice(),
                 encoder_embeddings.as_slice().ok_or_else(|| {
@@ -218,51 +266,92 @@ impl Transcriber for CanaryEngine {
                     .ok_or_else(|| SttError::Inference("encoder_mask not contiguous".into()))?,
             ))
             .map_err(|e| SttError::Inference(format!("canary enc_mask view: {e}")))?;
-            // decoder_mems is 0-length on the FIRST step (mem_len dim = 0). TensorRef's raw-data
-            // path rejects 0-sized dims (allocator-backed `Tensor::from_array` accepts them — same
-            // gotcha as whisper.rs's empty KV); this carry is small vs the encoder outputs borrowed
-            // above, so keep it as an allocator-backed clone.
-            let mems_tensor = Tensor::from_array(decoder_mems.clone())
-                .map_err(|e| SttError::Inference(format!("canary mems: {e}")))?;
+            // Step-0 empty mems: (layers,1,0,hidden). `Tensor::from_array`'s raw-data path rejects
+            // 0-sized dims, so use the allocator-backed ctor (same gotcha as whisper.rs's empty KV).
+            // Held here so it outlives the binding through `run_binding`.
+            let empty_mems = if decoder_mems.is_none() {
+                Some(
+                    Tensor::<f32>::new(&Allocator::default(), empty_mems_shape.as_slice())
+                        .map_err(|e| SttError::Inference(format!("canary empty mems: {e}")))?,
+                )
+            } else {
+                None
+            };
 
-            let named: Vec<(
-                std::borrow::Cow<'_, str>,
-                ort::session::SessionInputValue<'_>,
-            )> = vec![
-                (
-                    std::borrow::Cow::Borrowed("input_ids"),
-                    ort::session::SessionInputValue::from(input_ids),
-                ),
-                (
-                    std::borrow::Cow::Borrowed("encoder_embeddings"),
-                    ort::session::SessionInputValue::from(enc_emb),
-                ),
-                (
-                    std::borrow::Cow::Borrowed("encoder_mask"),
-                    ort::session::SessionInputValue::from(enc_mask),
-                ),
-                (
-                    std::borrow::Cow::Borrowed("decoder_mems"),
-                    ort::session::SessionInputValue::from(mems_tensor),
-                ),
-            ];
-            let outputs = self
+            // Fresh binding per step (mirrors whisper.rs / onnx-asr's per-`_decode` `io_binding()`):
+            // bind the changing input_ids + the borrowed encoder outputs + the device-resident (or
+            // empty step-0) mems; bind logits to host and every other output (incl.
+            // decoder_hidden_states) to the device so the mems never round-trip through the CPU.
+            let mut binding = self
                 .decoder
-                .run(named)
-                .map_err(|e| SttError::Inference(format!("canary decoder run: {e}")))?;
+                .create_binding()
+                .map_err(|e| SttError::Inference(format!("canary decoder binding: {e}")))?;
+            binding
+                .bind_input("input_ids", &input_ids)
+                .map_err(|e| SttError::Inference(format!("bind input_ids: {e}")))?;
+            binding
+                .bind_input("encoder_embeddings", &enc_emb)
+                .map_err(|e| SttError::Inference(format!("bind encoder_embeddings: {e}")))?;
+            binding
+                .bind_input("encoder_mask", &enc_mask)
+                .map_err(|e| SttError::Inference(format!("bind encoder_mask: {e}")))?;
+            match (&decoder_mems, &empty_mems) {
+                (Some(v), _) => binding
+                    .bind_input("decoder_mems", v)
+                    .map_err(|e| SttError::Inference(format!("bind decoder_mems: {e}")))?,
+                (None, Some(t)) => binding
+                    .bind_input("decoder_mems", t)
+                    .map_err(|e| SttError::Inference(format!("bind empty decoder_mems: {e}")))?,
+                (None, None) => {
+                    return Err(SttError::Inference(
+                        "canary: missing empty decoder_mems tensor".into(),
+                    ));
+                }
+            }
+            binding
+                .bind_output_to_device("logits", &cpu_mem)
+                .map_err(|e| SttError::Inference(format!("bind logits: {e}")))?;
+            for name in &non_logits_outputs {
+                binding
+                    .bind_output_to_device(name.as_str(), &dev_mem)
+                    .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+            }
 
-            let logits = out_to_f32(&outputs["logits"])?;
-            let next_mems = out_to_f32(&outputs["decoder_hidden_states"])?;
-            drop(outputs);
+            let mut outputs = self
+                .decoder
+                .run_binding(&binding)
+                .map_err(|e| SttError::Inference(format!("canary decoder run_binding: {e}")))?;
+            // DML/CUDA run_binding is async w.r.t. the device stream. Block until logits are written
+            // (host read below) and the carried decoder_hidden_states is complete on-device before we
+            // rebind it next step (else host read + device carry race the still-running kernels). No-op
+            // on CPU; matches onnx-asr's implicit per-step sync (`.numpy()` on logits).
+            binding
+                .synchronize_outputs()
+                .map_err(|e| SttError::Inference(format!("canary synchronize: {e}")))?;
 
-            let last = last_step_row(&logits)?;
-            let (best, _) = argmax_1d(&last);
-            let next = best as i64;
+            // logits → host argmax. Scoped so the borrow of `outputs` ends before the `remove` below.
+            let next: i64 = {
+                let logits = out_to_f32(
+                    outputs
+                        .get("logits")
+                        .ok_or_else(|| SttError::Inference("canary produced no logits".into()))?,
+                )?;
+                let last = last_step_row(&logits)?;
+                argmax_1d(&last).0 as i64
+            };
             if next == self.eos_token_id {
                 break;
             }
             batch_tokens.push(next);
-            decoder_mems = next_mems; // carry decoder_hidden_states → decoder_mems
+
+            // Carry decoder_hidden_states (device) → next step's decoder_mems input. The extracted
+            // value is session-owned and survives the binding drop, so it rebinds next step with no
+            // host round-trip. Take it BEFORE dropping `outputs`.
+            decoder_mems = Some(outputs.remove("decoder_hidden_states").ok_or_else(|| {
+                SttError::Inference("canary produced no decoder_hidden_states".into())
+            })?);
+            drop(outputs);
+            drop(binding);
         }
 
         // Decode: strip <|...|> tokens.

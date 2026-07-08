@@ -30,6 +30,7 @@ import {
 	EMPTY_OLLAMA_FILTER_STATE,
 	filterInstalledOllamaModels,
 	filterRecommendedOllamaModels,
+	isEmbeddingOnlyOllamaModel,
 	isOllamaFilterState,
 	type OllamaFilterState,
 } from "../lib/filter-state";
@@ -52,6 +53,7 @@ import {
 	type MakerGroup,
 	makerGroupCount,
 	matchesInstalledQuery,
+	rankMakerGroupsBySearch,
 } from "../lib/maker-groups";
 import { dedupeInstalledOllamaModels } from "../lib/quant-shelf-helpers";
 import { OllamaFiltersMenu } from "./OllamaFiltersMenu";
@@ -121,6 +123,24 @@ function requestTypedTagFetch(
 	scheduledTypedTagFetches.add(baseSlug);
 	queueMicrotask(() => {
 		fetchTags(baseSlug);
+	});
+}
+
+const scheduledTypedHitFetches = new Set<string>();
+
+/** Schedule the per-slug homepage-hit scrape (description / capabilities) for a
+ *  typed tag, mirroring {@link requestTypedTagFetch}. The store dedupes further,
+ *  but this keeps the render pass side-effect-free by deferring to a microtask. */
+function requestTypedModelHitFetch(
+	baseSlug: string | undefined,
+	fetchHit: ((model: string) => void) | undefined,
+): void {
+	if (!(baseSlug && fetchHit) || scheduledTypedHitFetches.has(baseSlug)) {
+		return;
+	}
+	scheduledTypedHitFetches.add(baseSlug);
+	queueMicrotask(() => {
+		fetchHit(baseSlug);
 	});
 }
 
@@ -215,6 +235,7 @@ function OllamaDetachedTrigger({
 	placeholder = DEFAULT_PLACEHOLDER,
 	pulls = EMPTY_PULLS,
 	swap,
+	systemFit,
 	value,
 }: OllamaModelSelectorProps) {
 	const selected = models.find((m) => m.name === value);
@@ -233,6 +254,7 @@ function OllamaDetachedTrigger({
 			disabled={disabled}
 			fromModel={swapFromModel}
 			fromName={swapFromName}
+			getFit={systemFit}
 			isLoading={isLoading}
 			isSwitching={!!swapToName}
 			onActivate={(event) => {
@@ -383,8 +405,16 @@ function useOllamaModelSelectorPanelState({
 	const listQuery = effectiveOpen ? deferredQuery : query;
 	const isQueryPending = effectiveOpen && query !== deferredQuery;
 	const shouldBuildList = effectiveOpen;
+	// Hide embedding-only installed models (e.g. `nomic-embed-text`) — they emit
+	// vectors, not text, so they can't post-process. Keep the current `value` so a
+	// previously-persisted pick still renders in the trigger/list.
 	const dedupedModels = shouldBuildList
-		? dedupeInstalledOllamaModels(models, value)
+		? dedupeInstalledOllamaModels(
+				models.filter(
+					(m) => m.name === value || !isEmbeddingOnlyOllamaModel(m),
+				),
+				value,
+			)
 		: [];
 
 	useEffect(() => {
@@ -494,12 +524,16 @@ function useOllamaModelSelectorPanelState({
 	const typedModelTagsState = typedModelInfo
 		? librarySearch?.tagsByModel[typedModelInfo.baseSlug]
 		: undefined;
+	const typedModelHitState = typedModelInfo
+		? librarySearch?.hitsByModel[typedModelInfo.baseSlug]
+		: undefined;
 	const shouldResolveTypedModel = canPullModels && Boolean(effectiveOpen);
 	const typedModelBaseSlug = shouldResolveTypedModel
 		? typedModelInfo?.baseSlug
 		: undefined;
 	const fetchTypedModelTags = librarySearch?.fetchTags;
 	requestTypedTagFetch(typedModelBaseSlug, fetchTypedModelTags);
+	requestTypedModelHitFetch(typedModelBaseSlug, librarySearch?.fetchHit);
 	const typedModelMatch = matchingTypedModelTag(
 		typedModelInfo,
 		typedModelTagsState,
@@ -536,9 +570,14 @@ function useOllamaModelSelectorPanelState({
 		value,
 	};
 	const allAuthorsSelected = activeRailId === ALL_AUTHORS_RAIL_ID;
+	// Rank the list body best-match-first while searching; the rail keeps the
+	// unranked (alphabetical) `makerGroups` so the sidebar order stays stable.
+	const rankedMakerGroups = hasQuery
+		? rankMakerGroupsBySearch(makerGroups, listQuery)
+		: makerGroups;
 	const visibleMakerGroups = allAuthorsSelected
-		? makerGroups
-		: makerGroups.filter((group) => group.slug === activeRailId);
+		? rankedMakerGroups
+		: rankedMakerGroups.filter((group) => group.slug === activeRailId);
 
 	const body = shouldBuildList ? (
 		<ListBody
@@ -555,6 +594,7 @@ function useOllamaModelSelectorPanelState({
 			}
 			sortedInstalled={sortedInstalled}
 			sortKey={sortKey}
+			typedModelHitState={typedModelHitState}
 			typedModelInfo={typedModelInfo}
 			typedModelMatch={typedModelMatch}
 			typedModelTagsState={typedModelTagsState}
@@ -596,6 +636,7 @@ function useOllamaModelSelectorPanelState({
 			disabled={disabled}
 			fromModel={swapFromModel}
 			fromName={swapFromName}
+			getFit={systemFit}
 			isLoading={isLoading}
 			isSwitching={!!swapToName}
 			onActivate={(event) => {
@@ -613,6 +654,7 @@ function useOllamaModelSelectorPanelState({
 			disabled={disabled}
 			fromModel={swapFromModel}
 			fromName={swapFromName}
+			getFit={systemFit}
 			isLoading={isLoading}
 			isSwitching={!!swapToName}
 			placeholder={placeholder}

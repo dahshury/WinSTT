@@ -1,5 +1,5 @@
 import { cn } from "@/shared/lib/cn";
-import { getPricingTier } from "../model-selector-display-utils";
+import type { getPricingTier } from "../model-selector-display-utils";
 import type { SelectionFlags } from "./header";
 
 const MODEL_CARD_BASE_CLASSES = cn(

@@ -82,10 +82,10 @@ describe("QuantShelf badge events", () => {
 			buildQuantTooltipContent(
 				entry({
 					download: {
-						downloadedBytes: 2_000,
+						downloadedBytes: 2000,
 						paused: false,
 						progress: 100,
-						totalBytes: 1_500,
+						totalBytes: 1500,
 					},
 					downloadSizeBytes: 512,
 					tooltip: "",

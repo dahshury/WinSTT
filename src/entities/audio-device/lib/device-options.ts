@@ -15,6 +15,9 @@ export interface InputDeviceOption {
 	icon: IconSvgElement;
 	id: string;
 	label: string;
+	/** Device rows are drag-sortable in the pickers (the pinned "system
+	 *  default" row is not). */
+	sortable?: boolean;
 }
 
 interface IconRule {
@@ -115,6 +118,14 @@ function resolveDeviceId(
 	return String(isSelected ? inputDeviceIndex : device.index);
 }
 
+/** Canonical identity key for a device name — also the priority-list match
+ *  key, so ordering survives cosmetic case/whitespace differences between
+ *  enumerations. */
+function deviceNameKey(name: string): string {
+	// Stryker disable next-line MethodExpression: equivalent — toUpperCase() normalizes case identically for the dedup key, so swapping to/from upper/lower is unobservable.
+	return name.trim().toLowerCase();
+}
+
 /** Deduplicates devices by name (PyAudio enumerates same mic under multiple host APIs). */
 function dedupeDevicesByName(
 	devices: readonly AudioDevice[],
@@ -124,8 +135,7 @@ function dedupeDevicesByName(
 	const seen = new Set<string>();
 	const opts: InputDeviceOption[] = [];
 	for (const d of devices) {
-		// Stryker disable next-line MethodExpression: equivalent — toUpperCase() normalizes case identically for the dedup key, so swapping to/from upper/lower is unobservable.
-		const key = d.name.trim().toLowerCase();
+		const key = deviceNameKey(d.name);
 		if (seen.has(key)) {
 			continue;
 		}
@@ -134,9 +144,97 @@ function dedupeDevicesByName(
 			icon: inputDeviceIconForName(d.name),
 			id: resolveDeviceId(d, inputDeviceIndex, selectedName),
 			label: d.name,
+			sortable: true,
 		});
 	}
 	return opts;
+}
+
+/**
+ * Orders device rows by the saved preference list: names present in
+ * `priority` first (in priority order), the rest in enumeration order.
+ * Stable so an empty/partial priority list degrades to today's order.
+ */
+function sortOptionsByPriority(
+	opts: readonly InputDeviceOption[],
+	priority: readonly string[],
+): InputDeviceOption[] {
+	if (priority.length === 0) {
+		return [...opts];
+	}
+	const rank = new Map<string, number>();
+	priority.forEach((name, i) => {
+		const key = deviceNameKey(name);
+		if (!rank.has(key)) {
+			rank.set(key, i);
+		}
+	});
+	return [...opts].sort(
+		(a, b) =>
+			(rank.get(deviceNameKey(a.label)) ?? Number.POSITIVE_INFINITY) -
+			(rank.get(deviceNameKey(b.label)) ?? Number.POSITIVE_INFINITY),
+	);
+}
+
+/**
+ * The highest-priority device that is currently connected, or `null` when
+ * the priority list is empty or none of its entries are plugged in. Mirrors
+ * the backend's stream-open resolution (`choose_priority_device_position` in
+ * managers/audio.rs) so every picker can mark the device the recorder will
+ * actually open — and only that one.
+ */
+function resolveEffectivePriorityDevice(
+	devices: readonly AudioDevice[],
+	priority: readonly string[],
+): AudioDevice | null {
+	for (const name of priority) {
+		const key = deviceNameKey(name);
+		const match = devices.find((d) => deviceNameKey(d.name) === key);
+		if (match) {
+			return match;
+		}
+	}
+	return null;
+}
+
+/** Index-only variant for callers that re-point `inputDeviceIndex`. */
+export function resolveEffectivePriorityDeviceIndex(
+	devices: readonly AudioDevice[],
+	priority: readonly string[],
+): number | null {
+	return resolveEffectivePriorityDevice(devices, priority)?.index ?? null;
+}
+
+/**
+ * Moves `name` to the front of the priority list (appending it when absent),
+ * preserving the relative order of the other entries. Used when the user
+ * clicks a device while a preference order exists — the click must win, and
+ * "top of the list" is what winning means.
+ */
+export function promoteDeviceNameToTop(
+	priority: readonly string[],
+	name: string,
+): string[] {
+	const key = deviceNameKey(name);
+	return [name, ...priority.filter((entry) => deviceNameKey(entry) !== key)];
+}
+
+/**
+ * Maps a drag-reordered picker row order (option ids, "default" row included
+ * or not) back to the device-name priority list to persist.
+ */
+export function priorityFromReorderedOptions(
+	options: readonly { id: string; label: string }[],
+	orderedIds: readonly string[],
+): string[] {
+	const byId = new Map(options.map((o) => [o.id, o]));
+	return orderedIds
+		.map((id) => byId.get(id))
+		.filter(
+			(o): o is { id: string; label: string } =>
+				o !== undefined && o.id !== "default",
+		)
+		.map((o) => o.label);
 }
 
 export interface InputDeviceResult {
@@ -166,6 +264,7 @@ export function buildInputDeviceOptions(
 	inputDeviceIndex: number | null,
 	defaultLabel: string,
 	defaultDeviceName?: string | null,
+	inputDevicePriority: readonly string[] = [],
 ): InputDeviceResult {
 	const opts: InputDeviceOption[] = [
 		{
@@ -175,10 +274,34 @@ export function buildInputDeviceOptions(
 		},
 	];
 	const selectedName = resolveSelectedName(devices, inputDeviceIndex);
-	opts.push(...dedupeDevicesByName(devices, inputDeviceIndex, selectedName));
+	opts.push(
+		...sortOptionsByPriority(
+			dedupeDevicesByName(devices, inputDeviceIndex, selectedName),
+			inputDevicePriority,
+		),
+	);
 
-	const currentDeviceId =
-		inputDeviceIndex == null ? "default" : String(inputDeviceIndex);
+	// EXACTLY ONE row is marked selected: the device the recorder will actually
+	// open, mirroring the backend chain (priority top-connected → explicit
+	// index → OS default). Deriving it here — instead of trusting the persisted
+	// index — means a picker can never show a "selected" device that a
+	// higher-priority connected device would beat at recording time.
+	const priorityDevice = resolveEffectivePriorityDevice(
+		devices,
+		inputDevicePriority,
+	);
+	let currentDeviceId: string;
+	if (priorityDevice) {
+		// Look the row up by NAME: the dedup id can be the user's persisted
+		// index rather than the enumeration index for the same physical mic.
+		const key = deviceNameKey(priorityDevice.name);
+		currentDeviceId =
+			opts.find((o) => o.id !== "default" && deviceNameKey(o.label) === key)
+				?.id ?? "default";
+	} else {
+		currentDeviceId =
+			inputDeviceIndex == null ? "default" : String(inputDeviceIndex);
+	}
 	const found = opts.find((o) => o.id === currentDeviceId);
 	return {
 		deviceOptions: opts,

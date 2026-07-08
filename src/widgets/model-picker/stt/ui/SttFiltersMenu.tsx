@@ -14,11 +14,9 @@ import type { IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
 import { LanguageMultiCombobox } from "@/shared/ui/language-multi-combobox";
 import {
-	FilterCheckboxSection,
-	FilterMenuPopover,
+	FilterMenu,
 	SectionDivider,
 	SectionHeader,
-	SortChipsSection,
 	type FilterFlagConfig,
 } from "../../ui/FilterPopoverParts";
 import {
@@ -59,7 +57,7 @@ const SORT_ICON: Record<SttSortKey, IconSvgElement> = {
  *  favour of a tighter, more minimal list — the labels are self-explanatory). */
 type SttFilterFlag = "cachedOnly" | "realtimeOnly" | "fitsHardwareOnly";
 export type LockedSttFilterFlag = SttFilterFlag;
-const FILTER_FLAGS: ReadonlyArray<FilterFlagConfig<SttFilterFlag>> = [
+const FILTER_FLAGS: readonly FilterFlagConfig<SttFilterFlag>[] = [
 	{ key: "cachedOnly", icon: CheckmarkCircle02Icon, label: "Cached only" },
 	{ key: "realtimeOnly", icon: LiveStreaming02Icon, label: "Streaming" },
 	{ key: "fitsHardwareOnly", icon: CpuIcon, label: "Fits hardware" },
@@ -145,14 +143,9 @@ export function SttFiltersMenu({
 	const t = useTranslations("modelPicker");
 	const locked = lockedFilterSet(lockedFilterKeys);
 	const effectiveFilters = applyLockedFilters(filters, locked);
-	// The trigger badge counts filters + the active sort as one combined signal.
 	const activeFilters = activeFilterCount(effectiveFilters);
-	const count = activeFilters + (sort === null ? 0 : 1);
 	const hasLanguageFilterOptions =
 		availableLanguages.length > 0 || effectiveFilters.languages.length > 0;
-	const canClear =
-		activeFilters > lockedActiveFilterCount(effectiveFilters, locked) ||
-		sort !== null;
 	const setLanguages = (languages: string[]) => {
 		onFiltersChange(
 			applyLockedFilters({ ...effectiveFilters, languages }, locked),
@@ -164,41 +157,41 @@ export function SttFiltersMenu({
 	};
 
 	return (
-		<FilterMenuPopover
-			canClear={canClear}
+		<FilterMenu
+			activeFilterCount={activeFilters}
+			// Locked-on flags (e.g. realtime in the realtime picker) can't be cleared.
+			clearableFilterCount={
+				activeFilters - lockedActiveFilterCount(effectiveFilters, locked)
+			}
 			clearLabel={t("clearAll")}
-			count={count}
 			dataSlot="stt-filters-menu-content"
+			filters={effectiveFilters}
+			flags={FILTER_FLAGS}
+			isFlagDisabled={(flag) => locked.has(flag)}
 			label={t("sortAndFilter")}
-			onClear={clear}
+			onClearAll={clear}
+			onToggleFlag={(flag) => {
+				if (locked.has(flag)) {
+					return;
+				}
+				onFiltersChange(
+					applyLockedFilters(
+						{ ...effectiveFilters, [flag]: !effectiveFilters[flag] },
+						locked,
+					),
+				);
+			}}
+			sort={{
+				hint: t("flattenMakers"),
+				icons: SORT_ICON,
+				keys: STT_SORT_KEYS,
+				labels: STT_SORT_CHIP_LABEL,
+				onChange: onSortChange,
+				sortByLabel: t("sortBy"),
+				value: sort,
+			}}
 			widthClass="w-[300px]"
 		>
-			<SortChipsSection
-				hint={t("flattenMakers")}
-				icons={SORT_ICON}
-				keys={STT_SORT_KEYS}
-				labels={STT_SORT_CHIP_LABEL}
-				onChange={onSortChange}
-				sortByLabel={t("sortBy")}
-				value={sort}
-			/>
-			<SectionDivider />
-			<FilterCheckboxSection
-				filters={effectiveFilters}
-				flags={FILTER_FLAGS}
-				isDisabled={(flag) => locked.has(flag)}
-				onToggle={(flag) => {
-					if (locked.has(flag)) {
-						return;
-					}
-					onFiltersChange(
-						applyLockedFilters(
-							{ ...effectiveFilters, [flag]: !effectiveFilters[flag] },
-							locked,
-						),
-					);
-				}}
-			/>
 			{hasLanguageFilterOptions ? <SectionDivider /> : null}
 			{hasLanguageFilterOptions ? (
 				<LanguageFilterSection
@@ -207,6 +200,6 @@ export function SttFiltersMenu({
 					selected={effectiveFilters.languages}
 				/>
 			) : null}
-		</FilterMenuPopover>
+		</FilterMenu>
 	);
 }

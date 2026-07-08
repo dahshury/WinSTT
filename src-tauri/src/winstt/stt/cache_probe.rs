@@ -283,14 +283,16 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
 
     for m in models {
         let mut mqc = ModelQuantCache::default();
-        // Resolve the model's HF repo id; an unknown bare alias has no cache entry → all not_cached.
-        let repo_key =
-            resolver::resolve_repo(&m.id).map(|(o, n)| format!("{o}/{n}").to_ascii_lowercase());
-        let cached = repo_key.as_ref().and_then(|k| repo_files.get(k));
         let kind = engine_kind_for(&m.id, &m.family, &m.onnx_name);
 
         for q in &m.quantizations {
             let quant = Quantization::parse(q).unwrap_or(Quantization::Default);
+            // Resolve the HF repo id PER QUANT: a per-quant override (e.g. the multilingual int8 we
+            // host on Masterx) can place one precision in a different repo than the model default.
+            // An unknown bare alias has no cache entry → not_cached.
+            let repo_key = resolver::resolve_repo_for_quant(&m.id, quant)
+                .map(|(o, n)| format!("{o}/{n}").to_ascii_lowercase());
+            let cached = repo_key.as_ref().and_then(|k| repo_files.get(k));
             let (state, bytes) = match cached {
                 Some(files) => quant_state(&m.id, kind, quant, files),
                 None => (CacheState::NotCached, 0),

@@ -453,6 +453,9 @@ export const onHotkeyReleased = (cb: () => void) => on(IPC.HOTKEY_RELEASED, cb);
 export const onPostProcessingProfileSwap = (cb: () => void) =>
 	on(IPC.LLM_PROFILE_SWAP, () => cb());
 
+export const onRecordingModeCycle = (cb: () => void) =>
+	on(IPC.RECORDING_MODE_CYCLE, () => cb());
+
 export const onHotkeyRecordingUpdate = (cb: (keys: string[]) => void) =>
 	onTyped(IPC.HOTKEY_RECORDING_UPDATE, (d: { keys: string[] }) => d.keys, cb);
 

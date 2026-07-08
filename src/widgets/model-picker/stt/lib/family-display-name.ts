@@ -15,13 +15,11 @@ const LANGUAGE_QUALIFIER_RE =
 /** Collapse the whitespace run a mid-name token strip can leave behind. */
 const COLLAPSE_WHITESPACE_RE = /\s{2,}/g;
 
-/** Strip the leading family label only (e.g. "NeMo Canary 1B Flash" → "Canary 1B Flash"). */
-function stripFamilyLabel(model: ModelInfo): string {
+/** Strip the leading family label from a name (e.g. "NeMo Canary 1B Flash" → "Canary 1B Flash"). */
+function stripFamilyLabel(name: string, model: ModelInfo): string {
 	const familyLabel = getFamilyConfig(model.family).label;
-	const stripped = model.displayName
-		.replace(new RegExp(`^${familyLabel}\\s+`), "")
-		.trim();
-	return stripped.length > 0 ? stripped : model.displayName;
+	const stripped = name.replace(new RegExp(`^${familyLabel}\\s+`), "").trim();
+	return stripped.length > 0 ? stripped : name;
 }
 
 /** Drop parameter-count tokens and collapse the whitespace they leave behind. */
@@ -35,6 +33,27 @@ function stripSizeToken(name: string): string {
 /** Drop language-only suffixes such as "(English)" or "(EN)"; the language badge owns that fact. */
 function stripLanguageQualifier(name: string): string {
 	return name.replace(LANGUAGE_QUALIFIER_RE, "").trim();
+}
+
+/** Leading "Streaming" qualifier (e.g. "Streaming Zipformer"). Natively-streaming
+ *  models carry a dedicated streaming badge, so repeating it in the name is
+ *  redundant. Anchored to the start so a mid-name "streaming" is left intact. */
+const STREAMING_PREFIX_RE = /^streaming\s+/i;
+
+/** Drop a leading "Streaming " token — the streaming badge already marks it. */
+function stripStreamingPrefix(name: string): string {
+	return name.replace(STREAMING_PREFIX_RE, "").trim();
+}
+
+/** The display name with the leading family label, language qualifier, and the
+ *  redundant "Streaming" prefix removed (but NOT the size token — the caller
+ *  decides that per {@link variantDisplayName}'s peer-collision rule). */
+function baseDisplayName(model: ModelInfo): string {
+	// "Streaming" is stripped FIRST so a following family label (e.g. "Streaming
+	// NeMo FastConformer" → "NeMo FastConformer" → "FastConformer") is then
+	// caught by the family strip too.
+	const withoutStreaming = stripStreamingPrefix(model.displayName);
+	return stripLanguageQualifier(stripFamilyLabel(withoutStreaming, model));
 }
 
 /**
@@ -55,7 +74,7 @@ export function variantDisplayName(
 	model: ModelInfo,
 	peers?: readonly ModelInfo[],
 ): string {
-	const withFamily = stripLanguageQualifier(stripFamilyLabel(model));
+	const withFamily = baseDisplayName(model);
 	const withoutSize = stripSizeToken(withFamily);
 	if (withoutSize.length === 0) {
 		return model.displayName;
@@ -64,9 +83,7 @@ export function variantDisplayName(
 		withoutSize !== withFamily &&
 		peers?.some(
 			(p) =>
-				p.id !== model.id &&
-				stripSizeToken(stripLanguageQualifier(stripFamilyLabel(p))) ===
-					withoutSize,
+				p.id !== model.id && stripSizeToken(baseDisplayName(p)) === withoutSize,
 		)
 	) {
 		return withFamily;

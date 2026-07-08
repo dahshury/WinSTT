@@ -16,6 +16,9 @@ pub enum TtsEngineId {
     Piper,
     Supertonic,
     Chatterbox,
+    Qwen3Tts,
+    Orpheus,
+    Spark,
 }
 
 impl TtsEngineId {
@@ -26,6 +29,9 @@ impl TtsEngineId {
             TtsEngineId::Piper => "piper",
             TtsEngineId::Supertonic => "supertonic",
             TtsEngineId::Chatterbox => "chatterbox",
+            TtsEngineId::Qwen3Tts => "qwen3tts",
+            TtsEngineId::Orpheus => "orpheus",
+            TtsEngineId::Spark => "spark",
         }
     }
 }
@@ -36,8 +42,12 @@ impl TtsEngineId {
 pub enum CloningKind {
     /// Fixed preset voices only; no runtime cloning.
     None,
-    /// Zero-shot from a reference clip alone.
+    /// Zero-shot from a reference clip alone (no transcript needed) — e.g. Chatterbox.
     ZeroShotAudio,
+    /// Zero-shot from a reference clip PLUS its transcript — e.g. Spark. The UI must
+    /// collect the reference text (auto-transcribed with the selected STT model into an
+    /// editable field) alongside the clip.
+    ZeroShotAudioText,
 }
 
 impl CloningKind {
@@ -45,7 +55,18 @@ impl CloningKind {
         match self {
             CloningKind::None => "none",
             CloningKind::ZeroShotAudio => "zero_shot_audio",
+            CloningKind::ZeroShotAudioText => "zero_shot_audio_transcript",
         }
+    }
+
+    /// True for any runtime-cloning capability (drives the reference-upload UI).
+    pub fn supports_cloning(self) -> bool {
+        !matches!(self, CloningKind::None)
+    }
+
+    /// True when the clone needs the reference transcript (drives the auto-transcribe field).
+    pub fn needs_reference_text(self) -> bool {
+        matches!(self, CloningKind::ZeroShotAudioText)
     }
 }
 
@@ -73,6 +94,10 @@ pub struct TtsModelEntry {
     /// Built-in preset voice count (0 when cloning-only).
     pub num_voices: u32,
     pub cloning: CloningKind,
+    /// Voice-design capability: the voice is chosen by a natural-language prompt
+    /// (stored in `tts.voice`) rather than a preset list. Drives the picker's
+    /// VoiceDesign badge + the "Design voice" prompt dialog.
+    pub voice_design: bool,
     pub sample_rate: u32,
     /// Parameter count (millions) — drives the RAM/size fit hint.
     pub param_count_m: u32,
@@ -112,6 +137,7 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         ],
         num_voices: 54,
         cloning: CloningKind::None,
+        voice_design: false,
         sample_rate: 24_000,
         param_count_m: 82,
         // fp16 graph (163,234,740) + all 54 voice .bin files (28,725,248) — the full
@@ -137,6 +163,7 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         languages: &["en-us"],
         num_voices: 8,
         cloning: CloningKind::None,
+        voice_design: false,
         sample_rate: 24_000,
         param_count_m: 15,
         // graph (23,804,156) + voices.npz (10,294) + config.json (177).
@@ -165,6 +192,7 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         ],
         num_voices: 48,
         cloning: CloningKind::None,
+        voice_design: false,
         sample_rate: 22_050,
         param_count_m: 20,
         // The "model download" is just the DEFAULT voice (en_US-lessac-medium, ~63 MB);
@@ -191,6 +219,7 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         ],
         num_voices: 10,
         cloning: CloningKind::None,
+        voice_design: false,
         sample_rate: 44_100,
         param_count_m: 100,
         // 4 ONNX graphs + tts/unicode metadata + 10 voice style JSON files.
@@ -214,6 +243,7 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         ],
         num_voices: 1, // ships a bundled default voice (default_voice.wav); also clones from a clip
         cloning: CloningKind::ZeroShotAudio,
+        voice_design: false,
         sample_rate: 24_000,
         param_count_m: 500,
         // q4 backbone (354MB) + embed (68MB) + speech_encoder (591MB) + decoder (534MB) ≈ 1.55 GB.
@@ -224,6 +254,94 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         quality_score: 0.80,
         speed_score: 0.20,
         description: "Clone a voice from a short clip; best for personalized multilingual speech.",
+    },
+    // Qwen3-TTS Voice Design: no preset voices — the voice is described by a
+    // natural-language prompt (stored in `tts.voice`). ONNX weights come from the
+    // onnx-community repo under `<quant_subdir>/` (cpu_int4|cpu_fp16|cpu_fp32) at
+    // repo ROOT; config/tokenizer come from the separate `Qwen/...VoiceDesign`
+    // repo (see PORT_SPEC §1). int4 is first/default (smallest, maintained recipe).
+    // Sizes = onnx-for-quant + 4,458,597 (config/tokenizer). quality/speed left at
+    // 0.5 (unknown → hidden bar); autoregressive LLM so genuinely slow.
+    TtsModelEntry {
+        id: "qwen3-tts-1.7b-voicedesign",
+        engine: TtsEngineId::Qwen3Tts,
+        display_name: "Qwen3-TTS 1.7B Voice Design",
+        maker: "Qwen",
+        hf_repo: "onnx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+        languages: &["en", "zh", "de", "it", "pt", "es", "ja", "ko", "fr", "ru"],
+        num_voices: 0, // no preset voices; voice via prompt
+        cloning: CloningKind::None,
+        voice_design: true,
+        sample_rate: 24_000,
+        param_count_m: 1700,
+        quants: &[
+            TtsQuant {
+                id: "int4",
+                size_bytes: 1_741_193_994,
+            },
+            TtsQuant {
+                id: "fp16",
+                size_bytes: 4_443_562_083,
+            },
+            TtsQuant {
+                id: "fp32",
+                size_bytes: 8_419_484_234,
+            },
+        ],
+        quality_score: 0.5,
+        speed_score: 0.5,
+        description: "Multilingual voice-design TTS; describe the voice with a text prompt.",
+    },
+    // Orpheus — 3B Llama emitting SNAC codec tokens; 8 fine-tuned English voices with inline
+    // emotion tags (<laugh>, <sigh>, …). Weights from onnx-community; the SNAC vocoder is a
+    // SECOND repo (onnx-community/snac_24khz-ONNX), stitched in the download manifest. CPU-pinned.
+    TtsModelEntry {
+        id: "orpheus-3b",
+        engine: TtsEngineId::Orpheus,
+        display_name: "Orpheus 3B",
+        maker: "Canopy Labs",
+        hf_repo: "onnx-community/orpheus-3b-0.1-ft-ONNX",
+        languages: &["en"],
+        num_voices: 8,
+        cloning: CloningKind::None,
+        voice_design: false,
+        sample_rate: 24_000,
+        param_count_m: 3_000,
+        // q4 llm (2,423,656,878) + snac decoder (52,600,822) + tokenizer (15,722,697).
+        quants: &[TtsQuant {
+            id: "q4",
+            size_bytes: 2_491_980_397,
+        }],
+        quality_score: 0.88,
+        speed_score: 0.35,
+        description: "Expressive English voices with inline emotion tags (laugh, sigh, gasp).",
+    },
+    // Spark-TTS — Qwen0.5B + BiCodec. Ships voice CREATION now (gender/pitch/speed presets);
+    // zero-shot cloning (reference clip + transcript) is a follow-up needing the BiCodec encoder
+    // stack. CPU-pinned; must decode greedy (the global-token preamble derails under sampling).
+    TtsModelEntry {
+        id: "spark-tts-0.5b",
+        engine: TtsEngineId::Spark,
+        display_name: "Spark-TTS 0.5B",
+        maker: "SparkAudio",
+        hf_repo: "Fhrozen/Spark-TTS-0.5B-ONNX",
+        languages: &["en", "zh"],
+        num_voices: 2, // Female / Male preset (generated timbre) for creation mode
+        // Zero-shot cloning needs the reference clip's transcript → the UI collects it (auto-
+        // transcribed with the selected STT model). Encoder stack from DgDev91/SparkTTS-ONNX.
+        cloning: CloningKind::ZeroShotAudioText,
+        voice_design: false,
+        sample_rate: 16_000,
+        param_count_m: 500,
+        // Fhrozen q4 LLM + bicodec + tokenizer (1.22 GB) + DgDev91 cloning graphs (wav2vec2 fp16
+        // 631M + encoder 122M + speaker 24M + mel 4.5M ≈ 782M).
+        quants: &[TtsQuant {
+            id: "q4",
+            size_bytes: 2_001_500_000,
+        }],
+        quality_score: 0.68,
+        speed_score: 0.5,
+        description: "Small bilingual (EN/ZH) TTS: pick a gender or clone a voice from a reference clip.",
     },
 ];
 

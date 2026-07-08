@@ -167,7 +167,7 @@ export function installTouchRubberBand(): void {
 	};
 
 	const onTouchMove = (event: TouchEvent) => {
-		if (!active || !viewport || event.touches.length !== 1) {
+		if (!(active && viewport) || event.touches.length !== 1) {
 			return;
 		}
 		const y = event.touches[0]?.clientY ?? startY;

@@ -250,7 +250,7 @@ export function useListenMode(): void {
 			lastNonListenModeRef.current = recordingMode;
 			return;
 		}
-		if (!catalogLoaded || !modelStatesLoaded || listenModelId !== null) {
+		if (!(catalogLoaded && modelStatesLoaded) || listenModelId !== null) {
 			return;
 		}
 		updateGeneral({ recordingMode: lastNonListenModeRef.current });

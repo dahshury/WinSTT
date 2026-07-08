@@ -253,7 +253,7 @@ function pickReplacement(args: PickReplacementArgs): SttSwitchTarget | null {
 
 function sameModelQuantTarget(args: DeletePolicyArgs): SttSwitchTarget | null {
 	const model = args.models.find((candidate) => candidate.id === args.modelId);
-	if (!model || !isVisibleSttModel(model)) {
+	if (!(model && isVisibleSttModel(model))) {
 		return null;
 	}
 	const quantization = pickCachedQuantForModel(
@@ -268,7 +268,7 @@ function resolveMainTarget(
 	args: DeletePolicyArgs,
 ): SttSwitchTarget | undefined {
 	if (!activeQuantMatchesDeletion(args, args.currentMainModel)) {
-		return undefined;
+		return;
 	}
 	const sameModelTarget = sameModelQuantTarget(args);
 	if (sameModelTarget) {
@@ -303,8 +303,8 @@ function resolveRealtimeTarget(
 	mainTarget: SttSwitchTarget | undefined,
 ): SttSwitchTarget | null | undefined {
 	const currentRealtime = args.currentRealtimeModel ?? "";
-	if (!currentRealtime || !activeQuantMatchesDeletion(args, currentRealtime)) {
-		return undefined;
+	if (!(currentRealtime && activeQuantMatchesDeletion(args, currentRealtime))) {
+		return;
 	}
 	const effectiveMainInfo =
 		(mainTarget

@@ -3,7 +3,7 @@ title: Audio
 description: Pick your input and output devices, tune the dual-VAD pipeline that decides when you're speaking, and set how the microphone is held between recordings.
 ---
 
-The **Audio** tab controls how WinSTT captures sound and decides when speech starts and stops — the microphone it listens on, the two voice-activity detectors that gate recording, and the timing knobs around them.
+The **Recording** tab controls how WinSTT captures sound and decides when speech starts and stops — the microphone it listens on, the two voice-activity detectors that gate recording, and the timing knobs around them.
 
 <StatGrid>
   <Stat value="2" label="VAD stages (AND logic)" />
@@ -15,7 +15,7 @@ The **Audio** tab controls how WinSTT captures sound and decides when speech sta
 ## Devices
 
 <MediaGrid cols={2}>
-  <Screenshot src="sec-audio-input" alt="The Audio tab's input section: the microphone Input Device picker above the Silero and WebRTC voice-activity sliders." chrome="card" label="Input section" caption="Input device above the dual-VAD sliders that gate recording." />
+  <Screenshot src="sec-audio-input" alt="The Recording tab's input section: the microphone Input Device picker above the start of the Recording Sound controls." chrome="card" label="Input section" caption="The Input Device picker, above the start of the Recording Sound controls." />
   <Screenshot src="device-picker" alt="An open audio device picker dropdown listing the system default microphone followed by the enumerated capture devices." chrome="card" label="Device picker" caption="The system default lists first, then every enumerated device." />
 </MediaGrid>
 
@@ -26,7 +26,7 @@ The **Audio** tab controls how WinSTT captures sound and decides when speech sta
   instead (see [General](/docs/settings/general)).
 </SettingRow>
 
-<Screenshot src="sec-audio-output" alt="The Audio tab's Output Device picker, where start/stop chimes and text-to-speech play back." chrome="card" label="Output device" caption="The output device for chimes and text-to-speech." maxWidth={620} />
+<Screenshot src="sec-audio-output" alt="The Output Device picker, where start/stop chimes and text-to-speech play back." chrome="card" label="Output device" caption="The output device for chimes and text-to-speech." maxWidth={620} />
 
 <SettingRow label="Output Device" settingKey="general.outputDeviceId" default="System default">
   Where start/stop chimes and text-to-speech play. Only shown when the recording sound or TTS
@@ -129,18 +129,18 @@ buffer back-fills the first syllable so the start of your sentence isn't lost. I
 
 ## Microphone lifecycle
 
-<Screenshot src="sec-audio-advanced" alt="The Audio tab's microphone-lifecycle controls: the Microphone Release dropdown and the Clamshell Microphone swap selector." chrome="card" caption="How long the mic stream stays open, and the clamshell auto-swap." />
+<Screenshot src="sec-audio-advanced" alt="The Recording tab's microphone-lifecycle controls: the Release Microphone dropdown and the Clamshell Microphone swap selector." chrome="card" caption="How long the mic stream stays open, and the clamshell auto-swap." />
 
-<SettingRow label="Microphone Release" settingKey="audio.microphoneRelease" default="immediate" startupOnly>
-  How long the OS audio stream stays open after a recording stops. **Immediately** (default)
+<SettingRow label="Release Microphone" settingKey="audio.microphoneRelease" default="immediate" startupOnly>
+  How long the OS audio stream stays open after a recording stops. **Immediate** (default)
   releases the mic the instant recording ends — the cleanest for the privacy indicator but adds
-  a small re-open cost next time. **Always** keeps the stream open for the fastest start.
+  a small re-open cost next time. **Never** keeps the stream open for the fastest start.
   **30 seconds**, **1 minute**, and **5 minutes** hold it open for that window, then release. The
   source reads this once at construction, so changes only take effect after a server restart.
 </SettingRow>
 
 <Callout type="restart">
-  **Microphone Release** is read when the audio source is built. Changing it needs a server
+  **Release Microphone** is read when the audio source is built. Changing it needs a server
   restart before the new policy takes hold; most other VAD tunings on this tab apply on the next
   segment.
 </Callout>
@@ -154,11 +154,11 @@ buffer back-fills the first syllable so the start of your sentence isn't lost. I
 
 ## A note on the hotkey
 
-The Audio tab also hosts the **hotkey recorder** — the control that captures the key combo for
-your active recording mode. It lives here for proximity to the input device, but every detail of
-binding modes, modifiers, and re-paste lives on its own page.
+The **hotkey recorder** — the control that captures the key combo for your active recording
+mode — lives on the **Shortcuts** tab, not here. Every detail of binding modes, modifiers, and
+re-paste is documented on its own page.
 
-<Screenshot src="sec-audio-hotkeys" alt="The hotkey recorder control on the Audio tab, capturing the key combo for the active recording mode." chrome="card" caption="The hotkey recorder captures the combo for your active recording mode." maxWidth={620} />
+<Screenshot src="sec-audio-hotkeys" alt="The hotkey recorder control on the Shortcuts tab, capturing the key combo for the active recording mode." chrome="card" caption="The hotkey recorder captures the combo for your active recording mode." maxWidth={620} />
 
 <Callout type="info">
   Setting your push-to-talk combo, switching recording modes, and the re-paste shortcut are all

@@ -1,12 +1,15 @@
 import { Combobox } from "@base-ui/react/combobox";
 import {
 	ArrowDown01Icon,
+	ArrowTurnBackwardIcon,
 	Delete02Icon,
 	DragDropVerticalIcon,
+	FloppyDiskIcon,
 	PlusSignIcon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { type DragEvent, useRef, useState } from "react";
+import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceClasses } from "@/shared/lib/surface";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { IconButton } from "@/shared/ui/icon-button";
@@ -21,16 +24,23 @@ import "@/shared/ui/searchable-select/searchable-select.css";
 export interface CreatableComboboxItem {
 	/** When true the row shows an inline delete button (wired to `onDelete`). */
 	deletable?: boolean;
+	/** Optional leading glyph shown before the label (after the reorder handle). */
+	icon?: IconSvgElement | undefined;
 	id: string;
 	label: string;
 	meta?: string | undefined;
+	/** When true this row is "dirty" (live state diverged from what it stores)
+	 *  and reveals the save/reset actions — wired to `onSave` / `onReset`. */
+	modified?: boolean;
 }
 interface Row {
 	deletable: boolean;
+	icon?: IconSvgElement | undefined;
 	id: string;
 	isCreate: boolean;
 	label: string;
 	meta?: string | undefined;
+	modified: boolean;
 }
 type DropPlacement = "before" | "after";
 
@@ -42,7 +52,17 @@ interface CreatableComboboxProps {
 	deleteAriaLabel?: string;
 	disabled?: boolean;
 	emptyLabel: string;
+	/** Drop the selected-row checkmark column to reclaim horizontal space. The
+	 *  selection is still shown by the row's background highlight. */
+	hideSelectedCheck?: boolean;
+	/** Extra classes merged onto the text input. Use to strip the input's own
+	 *  rounding/surface (e.g. `rounded-none bg-transparent shadow-none`) when the
+	 *  combobox is the middle segment of a joined control group. */
+	inputClassName?: string;
 	items: readonly CreatableComboboxItem[];
+	/** Render the drag-reorder handle before the label (leading) instead of in
+	 *  the trailing action cluster. */
+	leadingReorderHandle?: boolean;
 	/** Shown when the typed text doesn't match an existing item. Omit to make
 	 *  the combobox select-only (no create row). */
 	onCreate?: (name: string) => void;
@@ -52,9 +72,15 @@ interface CreatableComboboxProps {
 		targetId: string,
 		placement: DropPlacement,
 	) => void;
+	/** Revert a `modified` row's live state back to what it stores. */
+	onReset?: (id: string) => void;
+	/** Overwrite a `modified` row's stored state with the current live state. */
+	onSave?: (id: string) => void;
 	onSelect: (id: string) => void;
 	placeholder: string;
 	reorderAriaLabel?: (item: CreatableComboboxItem) => string;
+	resetAriaLabel?: string;
+	saveAriaLabel?: string;
 	/** The selected item's id ("" = none). Drives the checkmark and the closed
 	 *  display value. */
 	value: string;
@@ -84,13 +110,20 @@ export function CreatableCombobox({
 	deleteAriaLabel,
 	disabled = false,
 	emptyLabel,
+	hideSelectedCheck = false,
+	inputClassName,
 	items,
+	leadingReorderHandle = false,
 	onCreate,
 	onDelete,
 	onReorder,
+	onReset,
+	onSave,
 	onSelect,
 	placeholder,
 	reorderAriaLabel,
+	resetAriaLabel,
+	saveAriaLabel,
 	value,
 }: CreatableComboboxProps) {
 	const [open, setOpen] = useState(false);
@@ -116,11 +149,21 @@ export function CreatableCombobox({
 			id: i.id,
 			label: i.label,
 			meta: i.meta,
+			icon: i.icon,
 			deletable: Boolean(i.deletable),
+			modified: Boolean(i.modified),
 			isCreate: false,
 		})),
 		...(canCreate
-			? [{ id: CREATE_ID, label: trimmed, deletable: false, isCreate: true }]
+			? [
+					{
+						id: CREATE_ID,
+						label: trimmed,
+						deletable: false,
+						modified: false,
+						isCreate: true,
+					},
+				]
 			: []),
 	];
 	const selectedRow: Row | null = selected
@@ -128,7 +171,9 @@ export function CreatableCombobox({
 				id: selected.id,
 				label: selected.label,
 				meta: selected.meta,
+				icon: selected.icon,
 				deletable: Boolean(selected.deletable),
+				modified: Boolean(selected.modified),
 				isCreate: false,
 			}
 		: null;
@@ -211,7 +256,10 @@ export function CreatableCombobox({
 			>
 				<div className="relative flex w-full items-center">
 					<Combobox.Input
-						className={`h-8 w-full rounded-lg ${surfaceClasses(inputLevel)} ps-2.5 pe-7 font-inherit text-body text-foreground leading-normal outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
+						className={cn(
+							`h-8 w-full rounded-lg ${surfaceClasses(inputLevel)} ps-2.5 pe-7 font-inherit text-body text-foreground leading-normal outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${disabled ? "cursor-not-allowed opacity-40" : ""}`,
+							inputClassName,
+						)}
 						placeholder={placeholder}
 					/>
 					<Combobox.Trigger
@@ -268,12 +316,18 @@ export function CreatableCombobox({
 											<RowContent
 												createLabel={createLabel}
 												deleteAriaLabel={deleteAriaLabel}
+												hideSelectedCheck={hideSelectedCheck}
+												leadingReorderHandle={leadingReorderHandle}
 												onDelete={onDelete}
 												onDragEnd={clearDragState}
 												onDragStart={(event) => handleDragStart(event, row)}
+												onReset={onReset}
+												onSave={onSave}
 												reorderAriaLabel={reorderAriaLabel}
 												reorderable={Boolean(onReorder)}
+												resetAriaLabel={resetAriaLabel}
 												row={row}
+												saveAriaLabel={saveAriaLabel}
 											/>
 										</Combobox.Item>
 									)}
@@ -290,21 +344,33 @@ export function CreatableCombobox({
 function RowContent({
 	createLabel,
 	deleteAriaLabel,
+	hideSelectedCheck,
+	leadingReorderHandle,
 	onDelete,
 	onDragEnd,
 	onDragStart,
+	onReset,
+	onSave,
 	reorderAriaLabel,
 	reorderable,
+	resetAriaLabel,
 	row,
+	saveAriaLabel,
 }: {
 	createLabel: (name: string) => string;
 	deleteAriaLabel?: string | undefined;
+	hideSelectedCheck: boolean;
+	leadingReorderHandle: boolean;
 	onDelete?: ((id: string) => void) | undefined;
 	onDragEnd: () => void;
 	onDragStart: (event: DragEvent<HTMLElement>) => void;
+	onReset?: ((id: string) => void) | undefined;
+	onSave?: ((id: string) => void) | undefined;
 	reorderAriaLabel?: ((item: CreatableComboboxItem) => string) | undefined;
 	reorderable: boolean;
+	resetAriaLabel?: string | undefined;
 	row: Row;
+	saveAriaLabel?: string | undefined;
 }) {
 	if (row.isCreate) {
 		return (
@@ -321,13 +387,52 @@ function RowContent({
 			</>
 		);
 	}
+	// One handle element, placed either leading (before the label) or in the
+	// trailing action cluster. It carries a native HTML5 drag; the surrounding
+	// StopBubble stops the pointer/click from selecting the row (drag still fires).
+	const reorderHandle = reorderable ? (
+		<button
+			aria-label={reorderAriaLabel?.(row) ?? `Drag ${row.label} to reorder`}
+			className="inline-flex size-7 shrink-0 cursor-grab items-center justify-center rounded-full bg-transparent p-0 text-foreground-muted hover:text-foreground-secondary active:cursor-grabbing"
+			draggable
+			onClick={(event) => event.preventDefault()}
+			onDragEnd={onDragEnd}
+			onDragStart={onDragStart}
+			type="button"
+		>
+			<HugeiconsIcon icon={DragDropVerticalIcon} size={14} />
+		</button>
+	) : null;
+	const showSave = Boolean(row.modified && onSave);
+	const showReset = Boolean(row.modified && onReset);
+	const trailingReorder = reorderable && !leadingReorderHandle;
+	const hasTrailing =
+		showSave ||
+		showReset ||
+		trailingReorder ||
+		Boolean(row.deletable && onDelete);
 	return (
 		<>
-			<span className="flex w-3 shrink-0 items-center justify-center">
-				<Combobox.ItemIndicator>
-					<CheckIcon />
-				</Combobox.ItemIndicator>
-			</span>
+			{leadingReorderHandle && reorderHandle ? (
+				<StopBubble className="flex shrink-0 items-center">
+					{reorderHandle}
+				</StopBubble>
+			) : hideSelectedCheck ? null : (
+				<span className="flex w-3 shrink-0 items-center justify-center">
+					<Combobox.ItemIndicator>
+						<CheckIcon />
+					</Combobox.ItemIndicator>
+				</span>
+			)}
+			{row.icon ? (
+				<HugeiconsIcon
+					aria-hidden="true"
+					className="shrink-0 text-foreground-secondary"
+					icon={row.icon}
+					size={15}
+					strokeWidth={1.8}
+				/>
+			) : null}
 			<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
 				{row.label}
 			</span>
@@ -336,23 +441,23 @@ function RowContent({
 					{row.meta}
 				</span>
 			) : null}
-			{reorderable || (row.deletable && onDelete) ? (
+			{hasTrailing ? (
 				<StopBubble className="ml-auto flex shrink-0 items-center gap-0.5">
-					{reorderable ? (
-						<button
-							aria-label={
-								reorderAriaLabel?.(row) ?? `Drag ${row.label} to reorder`
-							}
-							className="inline-flex size-7 cursor-grab items-center justify-center rounded-full bg-transparent p-0 text-foreground-muted hover:text-foreground-secondary active:cursor-grabbing"
-							draggable
-							onClick={(event) => event.preventDefault()}
-							onDragEnd={onDragEnd}
-							onDragStart={onDragStart}
-							type="button"
-						>
-							<HugeiconsIcon icon={DragDropVerticalIcon} size={14} />
-						</button>
+					{showSave && onSave ? (
+						<IconButton
+							aria-label={saveAriaLabel ?? "Save changes"}
+							icon={<HugeiconsIcon icon={FloppyDiskIcon} size={14} />}
+							onClick={() => onSave(row.id)}
+						/>
 					) : null}
+					{showReset && onReset ? (
+						<IconButton
+							aria-label={resetAriaLabel ?? "Reset changes"}
+							icon={<HugeiconsIcon icon={ArrowTurnBackwardIcon} size={14} />}
+							onClick={() => onReset(row.id)}
+						/>
+					) : null}
+					{trailingReorder ? reorderHandle : null}
 					{row.deletable && onDelete ? (
 						<IconButton
 							aria-label={deleteAriaLabel ?? "Delete"}

@@ -63,8 +63,6 @@ export interface ModelInfo {
 	nativeStreaming: boolean;
 	/** Live preview can be reused as the final paste without re-decoding. */
 	finalReuseSafe: boolean;
-	/** @deprecated Use `previewCapable`; this legacy field is a compatibility alias. */
-	supportsRealtime: boolean;
 }
 
 /** Zod schema for server-sent model catalog items (snake_case). */
@@ -138,7 +136,6 @@ function mapModel(raw: RawModelInfo): ModelInfo {
 		previewCapable,
 		nativeStreaming: raw.native_streaming,
 		finalReuseSafe: raw.final_reuse_safe,
-		supportsRealtime: previewCapable,
 		onnxModelName: raw.onnx_model_name,
 		description: raw.description,
 		availableQuantizations: raw.available_quantizations,

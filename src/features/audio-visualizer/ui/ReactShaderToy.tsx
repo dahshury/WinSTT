@@ -215,6 +215,7 @@ function useShaderToyEngine(
 			);
 			return;
 		}
+		// biome-ignore lint/correctness/useHookAtTopLevel: gl.useProgram is the WebGL rendering-context method, not a React hook — the use* name just collides with the hook heuristic.
 		gl.useProgram(shaderProgramRef.current);
 		vertexPositionAttributeRef.current = gl.getAttribLocation(
 			shaderProgramRef.current,
@@ -302,7 +303,8 @@ function useShaderToyEngine(
 				shaderProgramRef.current,
 				UNIFORM_TIME,
 			);
-			gl.uniform1f(timeUniform, (timerRef.current += delta));
+			timerRef.current += delta;
+			gl.uniform1f(timeUniform, timerRef.current);
 		}
 		if (uniformsRef.current["iTimeDelta"]?.isNeeded) {
 			const loc = gl.getUniformLocation(

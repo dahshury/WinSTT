@@ -32,8 +32,8 @@ export async function verifyCredentialCommand(
 	const { ok, code, message } = result.data;
 	return {
 		ok,
-		...(code != null ? { code: code as CloudSttErrorCode } : {}),
-		...(message != null ? { message } : {}),
+		...(code == null ? {} : { code: code as CloudSttErrorCode }),
+		...(message == null ? {} : { message }),
 	};
 }
 

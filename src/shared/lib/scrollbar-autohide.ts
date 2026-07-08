@@ -7,11 +7,11 @@ const IDLE_MS = 700;
 let installed = false;
 
 /**
- * App-wide auto-hiding native scrollbars, matching the settings `ScrollArea`.
+ * App-wide auto-hiding native scrollbars, matching the shared `ScrollArea`.
  *
  * The native thumb is transparent at rest (see `globals.css`) and is only
- * painted while its element is actively being scrolled (mouse wheel, trackpad,
- * keyboard, or dragging the thumb — all of which fire `scroll`). This installs
+ * painted while its element is hovered or actively being scrolled (mouse wheel,
+ * trackpad, keyboard, or dragging the thumb — all of which fire `scroll`). This installs
  * a single capturing listener on the document that stamps
  * `data-scrollbar-visible` on whichever element just scrolled and clears it
  * after a short idle, so the bar fades in while scrolling and disappears once

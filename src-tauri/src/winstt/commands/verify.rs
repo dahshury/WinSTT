@@ -50,6 +50,15 @@ impl VerifiableProvider {
         }
     }
 
+    /// Stable id for logging / cloud metrics.
+    fn id(self) -> &'static str {
+        match self {
+            VerifiableProvider::OpenAi => "openai",
+            VerifiableProvider::ElevenLabs => "elevenlabs",
+            VerifiableProvider::OpenRouter => "openrouter",
+        }
+    }
+
     /// The cheapest auth-checking GET each provider exposes (no quota consumed,
     /// no audio uploaded). Mirrors probeUrlFor() in credentials.ts.
     ///   - OpenAI:     GET /v1/models
@@ -143,7 +152,15 @@ async fn probe(
         .get(provider.probe_url())
         .timeout(Duration::from_secs(VERIFY_TIMEOUT_SECS));
     let rb = apply_auth(rb, provider, api_key);
-    match rb.send().await {
+    let started = std::time::Instant::now();
+    let sent = rb.send().await;
+    crate::winstt::cloud_metrics::record(
+        provider.id(),
+        "verify",
+        started.elapsed(),
+        sent.as_ref().err().map(|e| e.to_string()).as_deref(),
+    );
+    match sent {
         Ok(resp) => {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
@@ -183,8 +200,7 @@ pub async fn verify_integration_credential(
             "API key is empty",
         ));
     }
-    let client = reqwest::Client::new();
-    Ok(probe(&client, provider, api_key.trim()).await)
+    Ok(probe(crate::winstt::net::http_client(), provider, api_key.trim()).await)
 }
 
 #[cfg(test)]

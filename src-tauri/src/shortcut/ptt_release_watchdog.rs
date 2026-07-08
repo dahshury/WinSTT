@@ -105,7 +105,15 @@ mod platform {
                 return;
             }
 
-            if requirements.iter().all(|key| !key.is_down()) {
+            // When the blocking keyboard hook owns the PTT combo, its swallowed
+            // physical events never reach the async key state — GetAsyncKeyState
+            // would report "all up" instantly and kill every session. Ask the hook
+            // for the real physical hold state; fall back to key polling otherwise.
+            let all_up = match super::super::modifier_combo::ptt_hook_combo_key_down() {
+                Some(any_down) => !any_down,
+                None => requirements.iter().all(|key| !key.is_down()),
+            };
+            if all_up {
                 up_polls = up_polls.saturating_add(1);
                 if up_polls >= REQUIRED_UP_POLLS {
                     info!(

@@ -6,6 +6,7 @@ import {
 	useRef,
 } from "react";
 import { cn } from "@/shared/lib/cn";
+import { springs } from "@/shared/lib/springs";
 
 const CIRCLE_A =
 	"M 12 8 C 14.21 8 16 9.79 16 12 C 16 14.21 14.21 16 12 16 C 9.79 16 8 14.21 8 12 C 8 9.79 9.79 8 12 8 Z";
@@ -266,7 +267,8 @@ function tailOf(text: string, max: number): string {
 	return text.slice(-max);
 }
 
-export interface ThinkingIndicatorProps extends ComponentPropsWithoutRef<"output"> {
+export interface ThinkingIndicatorProps
+	extends ComponentPropsWithoutRef<"output"> {
 	/**
 	 * Let the streamed-reasoning band fill its container's width (`w-full`)
 	 * instead of using its intrinsic `clamp(220px,32vw,420px)`. Set when the
@@ -473,20 +475,14 @@ export function ThinkingIndicator({
 								animate={{
 									opacity: 1,
 									y: 0,
-									transition: {
-										duration: 0.24,
-										ease: [0.4, 0, 0.2, 1],
-									},
+									transition: springs.moderate,
 								}}
 								className="shimmer-text col-start-1 row-start-1"
 								data-thinking-current-word="true"
 								exit={{
 									opacity: 0,
 									y: "-80%",
-									transition: {
-										duration: 0.16,
-										ease: [0.4, 0, 0.2, 1],
-									},
+									transition: springs.moderate.exit,
 								}}
 								initial={{ opacity: 0, y: "80%" }}
 								key={current}
@@ -526,11 +522,11 @@ export function ThinkingIndicator({
 							exit={{
 								opacity: 0,
 								height: 0,
-								transition: { duration: 0.2, ease: [0.4, 0, 1, 1] },
+								transition: springs.slow.exit,
 							}}
 							initial={{ opacity: 0, height: 0 }}
 							key="reasoning-band"
-							transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+							transition={springs.slow}
 						>
 							{/* Brand-accent hairline divider — same Docker-blue
 							    treatment as the bubble's top edge, but tighter

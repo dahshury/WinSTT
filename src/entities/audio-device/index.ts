@@ -1,4 +1,9 @@
-export { buildInputDeviceOptions } from "./lib/device-options";
+export {
+	buildInputDeviceOptions,
+	priorityFromReorderedOptions,
+	promoteDeviceNameToTop,
+	resolveEffectivePriorityDeviceIndex,
+} from "./lib/device-options";
 export type { AudioDevice } from "./model/audio-device";
 export { useInputDevices } from "./model/use-input-devices";
 export {
@@ -10,6 +15,7 @@ export {
 	useMicrophoneLevels,
 } from "./ui/MicrophoneLevelMeter";
 export {
+	applyDeviceSelection,
 	InputDeviceSelect,
 	useInputDevicePickerModel,
 	type InputDevicePickerModel,

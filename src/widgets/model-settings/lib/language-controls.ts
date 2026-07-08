@@ -12,15 +12,15 @@ function languageBadge(code: string): string {
 	return code.toUpperCase();
 }
 const ALL_LANG_OPTS: SelectOption[] = LANGUAGES.flatMap((l) =>
-	l.code !== ""
-		? [
+	l.code === ""
+		? []
+		: [
 				{
 					id: l.code,
 					label: l.name,
 					badge: languageBadge(l.code),
 				},
-			]
-		: [],
+			],
 );
 
 export function buildLanguageOptions(

@@ -3,6 +3,7 @@ import defaultMdxComponents from "fumadocs-ui/mdx";
 import type { MDXComponents } from "mdx/types";
 import type { ComponentPropsWithoutRef } from "react";
 import { ComponentPreviewTooltip } from "@/components/component-preview-tooltip";
+import { LatestDownloadMenu } from "@/components/download-menu";
 import {
   BentoCell,
   BentoGrid,
@@ -39,6 +40,7 @@ const winsttComponents = {
   FeatureCard,
   Hero,
   Kbd,
+  LatestDownloadMenu,
   MediaGrid,
   ModeBadge,
   ModeDemo,

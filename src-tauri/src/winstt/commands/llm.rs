@@ -5,8 +5,8 @@
 // and run it over the configured provider: Ollama via the all-Rust streaming
 // path (LlmManager::ollama_dictation/transform), OpenRouter via the OpenAI-
 // compatible /api/v1/chat/completions structured-output path
-// (LlmManager::openrouter_chat, with fallback model). Apple Intelligence
-// currently soft-fails to the original text in this command path.
+// (LlmManager::openrouter_chat, with fallback model), Apple Intelligence via
+// the native Swift bridge (`apple_intelligence_chat`, macOS ARM64).
 //
 // ollama_refresh_models → OllamaScanResult (/api/tags + /api/show enrich).
 // openrouter_refresh_models → OpenRouterScanResult (/api/v1/models with stored key).
@@ -38,9 +38,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::winstt::cloud_stt::{
     CloudSttErrorCode, CloudSttProvider, classify_cloud_failure_message, emit_cloud_failure,
 };
-use crate::winstt::llm::{
-    self, DictationSideEffects, Vocab, build_dictation_system_prompt, build_system_prompt,
-};
+use crate::winstt::llm::{self, DictationSideEffects, Vocab};
 use crate::winstt::managers::LlmManager;
 use crate::winstt::managers::llm_manager::PullOutcome;
 use crate::winstt::observability::IssueBuilder;
@@ -90,6 +88,43 @@ fn normalize_llm_text_output(text: &str) -> String {
         .map(str::trim_end)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Run one Apple Intelligence request over the Swift bridge (macOS ARM64).
+/// This is the ONE Apple provider entry for the unified LLM pipeline —
+/// dictation, transforms, and the playground preview all route here. Non-Apple
+/// builds and unavailable devices return `Err` so each caller applies its own
+/// fail policy (dictation fail-softs to the original text; transforms/preview
+/// surface the failure).
+///
+/// The bridge call is a synchronous on-device inference; callers run inside
+/// async commands, matching how the retired legacy path invoked it.
+pub(crate) fn apple_intelligence_chat(
+    system_prompt: &str,
+    user_prompt: &str,
+    max_output_tokens: Option<i64>,
+) -> Result<String, String> {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        if !crate::apple_intelligence::check_apple_intelligence_availability() {
+            return Err("Apple Intelligence is not available on this device".to_string());
+        }
+        let max_tokens = max_output_tokens.unwrap_or(0).clamp(0, i64::from(i32::MAX)) as i32;
+        let answer = crate::apple_intelligence::process_text_with_system_prompt(
+            system_prompt,
+            user_prompt,
+            max_tokens,
+        )?;
+        if answer.trim().is_empty() {
+            return Err("Apple Intelligence returned an empty response".to_string());
+        }
+        Ok(answer)
+    }
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    {
+        let _ = (system_prompt, user_prompt, max_output_tokens);
+        Err("Apple Intelligence requires an Apple Silicon Mac".to_string())
+    }
 }
 
 #[expect(
@@ -192,6 +227,9 @@ pub(crate) struct DictationProcessResult {
     pub dictionary_fixes: usize,
     pub side_effects: DictationSideEffects,
     pub failsoft_error: Option<String>,
+    /// Token usage + USD cost of the cloud LLM pass, when the provider
+    /// reported usage (OpenRouter). `None` for local providers.
+    pub llm_usage: Option<crate::winstt::managers::LlmRunUsage>,
 }
 
 pub(crate) async fn process_dictation_text(
@@ -203,7 +241,12 @@ pub(crate) async fn process_dictation_text(
     let settings = read_settings(app);
     let presets = dictation_presets(&settings);
     let vocab = build_vocab(&settings);
-    let system_prompt = build_dictation_system_prompt(&presets, &context, &vocab);
+    let tier_model = ollama_tier_model(
+        settings.llm.dictation.base.provider,
+        &settings.llm.dictation.base.model,
+    );
+    let system_prompt =
+        llm::build_dictation_system_prompt_for_model(&presets, &context, &vocab, tier_model);
     let user_prompt = llm::dictation_user_prompt_for_presets(&presets, &text);
     let effort = to_llm_effort(settings.llm.dictation.base.thinking_effort);
 
@@ -219,6 +262,7 @@ pub(crate) async fn process_dictation_text(
     // until the native provider is wired into the unified LLM manager.
     let mut side_effects = DictationSideEffects::default();
     let mut failsoft_error: Option<String> = None;
+    let mut llm_usage: Option<crate::winstt::managers::LlmRunUsage> = None;
     let answer = match settings.llm.dictation.base.provider {
         LlmProvider::Openrouter => {
             let api_key = settings.llm.openrouter_api_key.clone();
@@ -247,9 +291,40 @@ pub(crate) async fn process_dictation_text(
             )
             .await;
             failsoft_error = outcome.failsoft_error;
+            // The chat parked its usage/cost on the manager's ledger under this
+            // request id (the fallback attempt reuses the id, so this reads
+            // whichever attempt actually produced the answer).
+            llm_usage = mgr.take_llm_usage(&request_id);
             outcome.text
         }
-        LlmProvider::AppleIntelligence => text.clone(),
+        LlmProvider::AppleIntelligence => match apple_intelligence_chat(
+            &system_prompt,
+            &user_prompt,
+            settings.llm.dictation.base.max_output_tokens,
+        ) {
+            Ok(answer) => answer,
+            Err(err) => {
+                let compact = llm::compact_error_for_log(&err);
+                warn!(
+                    "[llm][{request_id}] dictation Apple Intelligence failed; returning original text: {compact}"
+                );
+                record_llm_issue(
+                    app,
+                    "llm",
+                    "dictation",
+                    "Apple Intelligence dictation post-processing failed; original text was kept",
+                    &compact,
+                    "apple_intelligence",
+                    "",
+                    &request_id,
+                    "dictation",
+                    true,
+                    &[],
+                );
+                failsoft_error = Some(format!("Apple Intelligence failed: {compact}"));
+                text.clone()
+            }
+        },
         LlmProvider::Ollama => match mgr
             .ollama_dictation(
                 &endpoint,
@@ -302,6 +377,7 @@ pub(crate) async fn process_dictation_text(
         dictionary_fixes: 0,
         side_effects,
         failsoft_error,
+        llm_usage,
     })
 }
 
@@ -317,7 +393,14 @@ pub async fn process_transform(
     let settings = read_settings(&app);
     // Resolve the transform's own preset body (no context/vocab folding).
     let presets = transforms_presets(&settings);
-    let system_prompt = build_system_prompt(&presets);
+    let system_prompt = llm::build_system_prompt_tiered(
+        &presets,
+        ollama_tier_model(
+            settings.llm.transforms.base.provider,
+            &settings.llm.transforms.base.model,
+        )
+        .is_some_and(llm::is_lite_ollama_model),
+    );
     let user_prompt = llm::transforms_user_prompt_for_presets(&presets, &text);
     let effort = to_llm_effort(settings.llm.transforms.base.thinking_effort);
 
@@ -356,7 +439,31 @@ pub async fn process_transform(
             .await
             .text
         }
-        LlmProvider::AppleIntelligence => text.clone(),
+        LlmProvider::AppleIntelligence => apple_intelligence_chat(
+            &system_prompt,
+            &user_prompt,
+            settings.llm.transforms.base.max_output_tokens,
+        )
+        .unwrap_or_else(|err| {
+            let compact = llm::compact_error_for_log(&err);
+            warn!(
+                "[llm][{request_id}] transform '{transform_id}' Apple Intelligence failed; returning original text: {compact}"
+            );
+            record_llm_issue(
+                &app,
+                "llm",
+                "transform",
+                "Apple Intelligence transform failed; original text was kept",
+                &compact,
+                "apple_intelligence",
+                "",
+                &request_id,
+                &transform_id,
+                true,
+                &[],
+            );
+            text.clone()
+        }),
         LlmProvider::Ollama => mgr
             .ollama_transform(
                 &endpoint,
@@ -494,7 +601,7 @@ async fn run_openrouter_with_fallback(
         options,
     } = request;
 
-    let timeout = openrouter_attempt_timeout(timeout_ms);
+    let timeout = llm::llm_request_timeout(timeout_ms);
     match run_openrouter_attempt(
         mgr,
         OpenRouterAttempt {
@@ -621,10 +728,6 @@ struct OpenRouterAttempt<'a> {
     timeout: Duration,
 }
 
-fn openrouter_attempt_timeout(timeout_ms: i64) -> Duration {
-    Duration::from_millis(timeout_ms.clamp(1_000, 30_000) as u64)
-}
-
 fn should_try_openrouter_fallback(code: &CloudSttErrorCode) -> bool {
     !matches!(
         code,
@@ -724,11 +827,21 @@ pub async fn ollama_refresh_models(
         });
     }
     match mgr.ollama_list_models_detailed(&endpoint).await {
-        Ok(models) => Ok(OllamaScanResultPayload {
-            models: models.into_iter().map(Into::into).collect(),
-            reachable: true,
-            error: None,
-        }),
+        Ok(models) => {
+            let models: Vec<OllamaModelPayload> = models.into_iter().map(Into::into).collect();
+            // Broadcast the fresh catalog to EVERY window (`llm:catalog`, the
+            // channel each window's llm-catalog store already subscribes to).
+            // Each window otherwise only sees its OWN scans, so a delete/pull
+            // done in the detached picker left the settings window — and its
+            // deleted-model reconcile effect — looking at a stale list: the
+            // removed model stayed "selected" until that window rescanned.
+            let _ = app.emit("llm:catalog", serde_json::json!({ "models": &models }));
+            Ok(OllamaScanResultPayload {
+                models,
+                reachable: true,
+                error: None,
+            })
+        }
         Err(e) => {
             record_llm_issue(
                 &app,
@@ -1005,6 +1118,12 @@ pub async fn ollama_pull(
     let endpoint = settings.llm.endpoint.clone();
     let mgr = llm_manager.inner().clone();
 
+    // A cancel issued after a previous pull loop already ended leaves its flag
+    // set with nothing to consume it — without this reset the NEXT pull of the
+    // model aborts on its first between-chunk poll and instantly reads as
+    // "paused" to the user.
+    clear_pull_cancel(&model);
+
     // Leading "starting" frame (matches the reference broadcast).
     emit_pull_progress(
         &app,
@@ -1148,6 +1267,49 @@ pub async fn verify_credential(
 }
 
 // ── settings → vocab / replacement-pairs ──────────────────────────────────
+
+/// The exact system/user scaffolding a real dictation request sends, built with
+/// an EMPTY transcript and EMPTY context. The warm-up sends this once through
+/// `/api/chat` so llama.cpp caches the static prompt prefix — the transcript is
+/// interpolated at the very END of the user prompt, so a real dictation then
+/// only prefills the spoken words instead of paying the full system-prompt
+/// ingest on the user's first phrase. Lives in the commands layer because the
+/// preset/effort conversions are `pub(super)` here.
+pub(crate) struct DictationPromptPrimeInputs {
+    pub dictionary_auto_add_enabled: bool,
+    pub effort: llm::ThinkingEffort,
+    pub system_prompt: String,
+    pub user_prompt: String,
+}
+
+pub(crate) fn dictation_prompt_prime_inputs(
+    settings: &WinsttSettings,
+) -> DictationPromptPrimeInputs {
+    let presets = dictation_presets(settings);
+    let vocab = build_vocab(settings);
+    DictationPromptPrimeInputs {
+        dictionary_auto_add_enabled: settings.llm.dictation.dictionary_auto_add_enabled,
+        effort: to_llm_effort(settings.llm.dictation.base.thinking_effort),
+        system_prompt: llm::build_dictation_system_prompt_for_model(
+            &presets,
+            "",
+            &vocab,
+            ollama_tier_model(
+                settings.llm.dictation.base.provider,
+                &settings.llm.dictation.base.model,
+            ),
+        ),
+        user_prompt: llm::dictation_user_prompt_for_presets(&presets, ""),
+    }
+}
+
+/// The Ollama model name prompt tiering keys on, or `None` when the feature
+/// runs a cloud provider / has no model configured (cloud models always get
+/// the full-tier prompt and envelope).
+pub(crate) fn ollama_tier_model(provider: LlmProvider, model: &str) -> Option<&str> {
+    let trimmed = model.trim();
+    (matches!(provider, LlmProvider::Ollama) && !trimmed.is_empty()).then_some(trimmed)
+}
 
 pub(crate) fn build_vocab(settings: &WinsttSettings) -> Vocab {
     // Vocabulary words = entries WITHOUT a replacement (canonical spellings). Replacement-pair

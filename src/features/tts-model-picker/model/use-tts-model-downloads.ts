@@ -116,7 +116,7 @@ export function useTtsModelDownloads(): {
 				const previous = prev[key];
 				// No live entry and nothing to seed → don't create a
 				// zero-progress ghost (locked by the resume-without-snapshot test).
-				if (!previous && !seed) {
+				if (!(previous || seed)) {
 					return prev;
 				}
 				return {

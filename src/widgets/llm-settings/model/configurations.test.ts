@@ -4,6 +4,8 @@ import type {
 	CustomModifier,
 } from "@/entities/llm-catalog";
 import {
+	BUILTIN_CONFIGURATIONS,
+	configurationsEqual,
 	type LlmConfiguration,
 	matchConfigurationId,
 	matchFullConfigurationId,
@@ -12,6 +14,8 @@ import {
 	postProcessingPatchFromConfiguration,
 	reorderSavedConfigurations,
 	type SavedConfiguration,
+	seedBuiltinConfigurations,
+	withAvailableLlmProvider,
 } from "./configurations";
 
 // A full configuration body. The matcher only inspects presets + customModifiers,
@@ -331,5 +335,214 @@ describe("postProcessingPatchFromConfiguration", () => {
 		expect(patch.customModifiers).toEqual([mod({ id: "m2" })]);
 		expect(patch.presets).not.toBe(source.presets);
 		expect(patch.customModifiers).not.toBe(source.customModifiers);
+	});
+});
+
+describe("configurationsEqual", () => {
+	test("true for two structurally identical configurations", () => {
+		expect(
+			configurationsEqual(
+				body({ model: "llama3", presets: presets([{ key: "formal" }]) }),
+				body({ model: "llama3", presets: presets([{ key: "formal" }]) }),
+			),
+		).toBe(true);
+	});
+
+	test("ignores enabled — the toggle owns on/off, not profile content", () => {
+		expect(
+			configurationsEqual(body({ enabled: true }), body({ enabled: false })),
+		).toBe(true);
+	});
+
+	test("distinguishes the provider/model half (drives the dirty state)", () => {
+		expect(
+			configurationsEqual(
+				body({ provider: "ollama" }),
+				body({ provider: "openrouter" }),
+			),
+		).toBe(false);
+		expect(
+			configurationsEqual(body({ model: "a" }), body({ model: "b" })),
+		).toBe(false);
+	});
+
+	test("distinguishes tone + modifiers", () => {
+		expect(
+			configurationsEqual(
+				body({ presets: presets([{ key: "formal" }]) }),
+				body({ presets: presets([{ key: "friendly" }]) }),
+			),
+		).toBe(false);
+		expect(
+			configurationsEqual(
+				body({ customModifiers: [mod({ id: "m1", enabled: true })] }),
+				body({ customModifiers: [mod({ id: "m1", enabled: false })] }),
+			),
+		).toBe(false);
+	});
+});
+
+describe("BUILTIN_CONFIGURATIONS", () => {
+	test("ships the AI Prompt preset: Polish tone + concise(high)/reorder/restructure/reword", () => {
+		const aiPrompt = BUILTIN_CONFIGURATIONS.find(
+			(c) => c.id === "builtin:ai-prompt",
+		);
+		expect(aiPrompt).toBeDefined();
+		expect(aiPrompt?.name).toBe("AI Prompt");
+		expect(aiPrompt?.config.presets).toEqual([
+			{ key: "neutral" },
+			{ key: "concise", level: "high" },
+			{ key: "reorder" },
+			{ key: "restructure" },
+			{ key: "rewordForClarity" },
+		]);
+	});
+
+	test("ships the Casual Chat preset: Friendly tone + concise(medium)/reword", () => {
+		const chat = BUILTIN_CONFIGURATIONS.find(
+			(c) => c.id === "builtin:casual-chat",
+		);
+		expect(chat?.name).toBe("Casual Chat");
+		expect(chat?.config.presets).toEqual([
+			{ key: "friendly" },
+			{ key: "concise", level: "medium" },
+			{ key: "rewordForClarity" },
+		]);
+	});
+
+	test("ships the Formal Email preset: Formal tone + concise/reorder/restructure/reword", () => {
+		const email = BUILTIN_CONFIGURATIONS.find(
+			(c) => c.id === "builtin:formal-email",
+		);
+		expect(email?.name).toBe("Formal Email");
+		expect(email?.config.presets).toEqual([
+			{ key: "formal" },
+			{ key: "concise", level: "medium" },
+			{ key: "reorder" },
+			{ key: "restructure" },
+			{ key: "rewordForClarity" },
+		]);
+	});
+
+	test("ships the Note Taking preset: Polish tone + summarize(medium)/reorder/restructure", () => {
+		const notes = BUILTIN_CONFIGURATIONS.find(
+			(c) => c.id === "builtin:note-taking",
+		);
+		expect(notes?.name).toBe("Note Taking");
+		expect(notes?.config.presets).toEqual([
+			{ key: "neutral" },
+			{ key: "summarize", level: "medium" },
+			{ key: "reorder" },
+			{ key: "restructure" },
+		]);
+	});
+
+	test("every built-in has a stable, unique builtin: id and a valid preset stack", () => {
+		const ids = BUILTIN_CONFIGURATIONS.map((c) => c.id);
+		expect(ids.every((id) => id.startsWith("builtin:"))).toBe(true);
+		expect(new Set(ids).size).toBe(ids.length);
+		// Schema invariants every stack must honor: exactly one tone, no dup keys,
+		// levels only on the leveled presets.
+		const TONES = new Set(["neutral", "formal", "friendly", "technical"]);
+		const LEVELED = new Set(["concise", "summarize"]);
+		for (const { config } of BUILTIN_CONFIGURATIONS) {
+			const keys = config.presets.map((p) => p.key);
+			expect(new Set(keys).size).toBe(keys.length);
+			expect(keys.filter((k) => TONES.has(k)).length).toBe(1);
+			for (const p of config.presets) {
+				if (p.level !== undefined) {
+					expect(LEVELED.has(p.key)).toBe(true);
+				}
+			}
+		}
+	});
+});
+
+describe("seedBuiltinConfigurations", () => {
+	const b1 = saved("builtin:one");
+	const b2 = saved("builtin:two");
+
+	test("seeds an unseeded built-in into an empty list and records its id", () => {
+		const result = seedBuiltinConfigurations([], new Set(), [b1]);
+		expect(result.changed).toBe(true);
+		expect(result.configurations.map((c) => c.id)).toEqual(["builtin:one"]);
+		expect(result.seededIds).toEqual(["builtin:one"]);
+		// Deep-cloned so the shipped definition is never aliased into the store.
+		expect(result.configurations[0]?.config).not.toBe(b1.config);
+	});
+
+	test("appends built-ins after the user's own configurations", () => {
+		const result = seedBuiltinConfigurations([saved("mine")], new Set(), [b1]);
+		expect(result.configurations.map((c) => c.id)).toEqual([
+			"mine",
+			"builtin:one",
+		]);
+	});
+
+	test("does not re-seed a built-in the user deleted (id already recorded)", () => {
+		const result = seedBuiltinConfigurations(
+			[saved("mine")],
+			new Set(["builtin:one"]),
+			[b1],
+		);
+		expect(result.changed).toBe(false);
+		expect(result.configurations.map((c) => c.id)).toEqual(["mine"]);
+		expect(result.seededIds).toEqual(["builtin:one"]);
+	});
+
+	test("seeds only the newly-shipped built-in on an app update", () => {
+		const result = seedBuiltinConfigurations(
+			[b1, saved("mine")],
+			new Set(["builtin:one"]),
+			[b1, b2],
+		);
+		expect(result.changed).toBe(true);
+		expect(result.configurations.map((c) => c.id)).toEqual([
+			"builtin:one",
+			"mine",
+			"builtin:two",
+		]);
+		expect(result.seededIds.sort()).toEqual(["builtin:one", "builtin:two"]);
+	});
+
+	test("records the id but adds no duplicate when the built-in is already present", () => {
+		const result = seedBuiltinConfigurations([b1], new Set(), [b1]);
+		// First seeding: the id must be recorded even though it was already in the
+		// list, so it is not re-added on the next load.
+		expect(result.changed).toBe(true);
+		expect(result.configurations.map((c) => c.id)).toEqual(["builtin:one"]);
+		expect(result.seededIds).toEqual(["builtin:one"]);
+	});
+});
+
+describe("withAvailableLlmProvider", () => {
+	test("downshifts a keyless OpenRouter config to local ollama", () => {
+		const gated = withAvailableLlmProvider(
+			body({ provider: "openrouter", openrouterModel: "anthropic/claude" }),
+			"",
+		);
+		expect(gated.provider).toBe("ollama");
+		// Tone/modifiers + stored cloud model fields are preserved so re-adding the
+		// key and re-applying restores the original target.
+		expect(gated.openrouterModel).toBe("anthropic/claude");
+	});
+
+	test("treats a whitespace-only key as absent", () => {
+		expect(
+			withAvailableLlmProvider(body({ provider: "openrouter" }), "   ")
+				.provider,
+		).toBe("ollama");
+	});
+
+	test("leaves OpenRouter intact when a key is present (returns same ref)", () => {
+		const config = body({ provider: "openrouter" });
+		expect(withAvailableLlmProvider(config, "sk-or-123")).toBe(config);
+	});
+
+	test("leaves local providers untouched even without a key", () => {
+		const ollama = body({ provider: "ollama" });
+		expect(withAvailableLlmProvider(ollama, "")).toBe(ollama);
+		const apple = body({ provider: "apple-intelligence" });
+		expect(withAvailableLlmProvider(apple, "")).toBe(apple);
 	});
 });

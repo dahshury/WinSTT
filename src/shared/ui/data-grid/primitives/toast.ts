@@ -25,8 +25,12 @@ const ACCENT: Record<ToastKind, string> = {
 let container: HTMLElement | null = null;
 
 function getContainer(): HTMLElement | null {
-	if (typeof document === "undefined") return null;
-	if (container?.isConnected) return container;
+	if (typeof document === "undefined") {
+		return null;
+	}
+	if (container?.isConnected) {
+		return container;
+	}
 	container = document.createElement("div");
 	container.setAttribute("data-data-grid-toaster", "");
 	container.style.cssText = [
@@ -47,7 +51,9 @@ function getContainer(): HTMLElement | null {
 
 function show(kind: ToastKind, message: string, opts?: ToastOptions): void {
 	const root = getContainer();
-	if (!root) return;
+	if (!root) {
+		return;
+	}
 
 	const el = document.createElement("div");
 	el.setAttribute("role", kind === "error" ? "alert" : "status");

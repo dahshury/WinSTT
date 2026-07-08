@@ -26,9 +26,19 @@ export {
 	TtsModelSelector,
 	type TtsModelSelectorProps,
 } from "./tts/ui/TtsModelSelector";
+export { AuthorBadge } from "./ui/AuthorBadge";
 export { OpenRouterModelSelector } from "./ui/OpenRouterModelSelector";
+export {
+	openrouterSelectedMeta,
+	OpenRouterSelectedSummary,
+} from "./ui/OpenRouterSelectedSummary";
 export {
 	ReasoningEffortDropdown,
 	type ReasoningEffortDropdownProps,
 } from "./ui/ReasoningEffortDropdown";
+export {
+	type SelectedModelMetaItem,
+	type SelectedModelNameParts,
+	SelectedModelSummary,
+} from "./ui/SelectedModelSummary";
 export type { ReasoningEffort } from "./config/model-selector-options";

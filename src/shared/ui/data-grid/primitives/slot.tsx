@@ -22,8 +22,11 @@ type AnyProps = Record<string, unknown>;
 function mergeRefs<T>(...refs: Array<Ref<T> | undefined>) {
 	return (node: T | null) => {
 		for (const ref of refs) {
-			if (typeof ref === "function") ref(node);
-			else if (ref) (ref as { current: T | null }).current = node;
+			if (typeof ref === "function") {
+				ref(node);
+			} else if (ref) {
+				(ref as { current: T | null }).current = node;
+			}
 		}
 	};
 }
@@ -62,7 +65,9 @@ function SlotComponent({
 	ref,
 	...slotProps
 }: HTMLAttributes<HTMLElement> & { ref?: Ref<HTMLElement> | undefined }) {
-	if (!isValidElement(children)) return null;
+	if (!isValidElement(children)) {
+		return null;
+	}
 	const child = children as ReactElement<AnyProps> & {
 		ref?: Ref<HTMLElement>;
 	};

@@ -1,3 +1,7 @@
+import {
+	bareCloudModelId,
+	isCloudModelId,
+} from "@/entities/cloud-stt-provider";
 import { resolveEffectiveQuant } from "@/entities/model-catalog";
 import { estimateForQuant } from "@/entities/system-resources";
 import type { ModelStateEntry, OllamaModel } from "@/shared/api/ipc-client";
@@ -56,6 +60,9 @@ export interface BreakdownRow {
 	logoSrc?: string | null;
 	/** Maker/author label, the logo's hover hint (e.g. "OpenAI"). */
 	maker?: string | null;
+	/** The model runs on a cloud provider — badges the mark with a cloud sign
+	 *  instead of showing a (meaningless) local quantization / device tag. */
+	cloud?: boolean;
 }
 
 export interface BreakdownSection {
@@ -78,6 +85,13 @@ export interface BreakdownInput {
 	sttQuant: string;
 	getSttModel: (id: string) => CatalogSizeInfo | undefined;
 	getSttState: (id: string) => ModelStateEntry | undefined;
+	/** Resolve a cloud model id to its maker logo + label. Cloud models aren't in
+	 *  any local catalog, so the hook layer resolves their brand mark from the
+	 *  id's maker. Optional so pure unit tests can omit it (no mark rendered). */
+	resolveCloud?: (id: string) => {
+		logoSrc: string | null;
+		maker: string | null;
+	};
 	tts: {
 		enabled: boolean;
 		source: "local" | "cloud";
@@ -115,12 +129,50 @@ function pickQuantBytes(
 	return firstPositive ?? null;
 }
 
+/**
+ * A cloud-provider model row (STT / TTS / post-processing). Cloud models have
+ * no local weights, so the row carries no quantization, device, or memory — the
+ * maker logo + cloud sign (badged in the renderer) is the whole story. `rawId`
+ * is the stored id (possibly `openrouter:` / `elevenlabs:`-prefixed); the
+ * displayed name is the bare id, falling back to the raw value.
+ */
+function cloudRow(
+	key: string,
+	rawId: string,
+	live: boolean,
+	input: BreakdownInput,
+): BreakdownRow {
+	const resolved = input.resolveCloud?.(rawId) ?? {
+		logoSrc: null,
+		maker: null,
+	};
+	return {
+		key,
+		name: bareCloudModelId(rawId) || rawId,
+		status: null,
+		detail: null,
+		live,
+		memBytes: null,
+		diskBytes: null,
+		device: null,
+		logoSrc: resolved.logoSrc,
+		maker: resolved.maker,
+		cloud: true,
+	};
+}
+
 function sttRow(
 	key: string,
 	modelId: string,
 	live: boolean,
 	input: BreakdownInput,
 ): BreakdownRow {
+	// Cloud STT (openrouter:/elevenlabs:) isn't in the local catalog — showing
+	// the local quantization + a VRAM/RAM device tag for it is meaningless, so
+	// route it to the cloud row (logo + cloud sign, no local specs).
+	if (isCloudModelId(modelId)) {
+		return cloudRow(key, modelId, live, input);
+	}
 	const catalog = input.getSttModel(modelId);
 	const state = input.getSttState(modelId);
 	const effectiveQuant = resolveEffectiveQuant(state, input.sttQuant);
@@ -179,20 +231,11 @@ function ttsSection(input: BreakdownInput): BreakdownSection {
 		return { key: "tts", rows: [offRow("tts")] };
 	}
 	if (tts.source === "cloud") {
+		// Prefer the specific cloud model id (maker logo); fall back to the bare
+		// provider name when the model id isn't recorded.
 		return {
 			key: "tts",
-			rows: [
-				{
-					key: "tts",
-					name: null,
-					status: "cloud",
-					detail: tts.cloudProvider || null,
-					live: false,
-					memBytes: null,
-					diskBytes: null,
-					device: null,
-				},
-			],
+			rows: [cloudRow("tts", tts.modelId || tts.cloudProvider, false, input)],
 		};
 	}
 	const catalog = input.getTtsModel(tts.modelId);
@@ -245,24 +288,13 @@ function postSection(input: BreakdownInput): BreakdownSection {
 		llmCleanup.provider === "openrouter"
 			? llmCleanup.openrouterModel !== ""
 			: llmCleanup.provider === "apple-intelligence" || llmCleanup.model !== "";
-	if (!llmCleanup.enabled || !hasModel) {
+	if (!(llmCleanup.enabled && hasModel)) {
 		return { key: "post", rows: [offRow("post")] };
 	}
 	if (llmCleanup.provider === "openrouter") {
 		return {
 			key: "post",
-			rows: [
-				{
-					key: "post",
-					name: null,
-					status: "cloud",
-					detail: llmCleanup.openrouterModel || null,
-					live: false,
-					memBytes: null,
-					diskBytes: null,
-					device: null,
-				},
-			],
+			rows: [cloudRow("post", llmCleanup.openrouterModel, false, input)],
 		};
 	}
 	if (llmCleanup.provider === "apple-intelligence") {

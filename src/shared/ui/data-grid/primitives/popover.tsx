@@ -82,7 +82,9 @@ export function PopoverAnchor({
 	children: ReactElement;
 }) {
 	const ctx = use(AnchorContext);
-	if (!isValidElement(children)) return children ?? null;
+	if (!isValidElement(children)) {
+		return children ?? null;
+	}
 	const child = children as ReactElement<{ ref?: Ref<HTMLElement> }>;
 	const original = child.props.ref;
 	return cloneElement(child, {
@@ -91,9 +93,11 @@ export function PopoverAnchor({
 				ctx.anchorRef.current = node;
 				ctx.setHasAnchor(Boolean(node));
 			}
-			if (typeof original === "function") original(node);
-			else if (original)
+			if (typeof original === "function") {
+				original(node);
+			} else if (original) {
 				(original as { current: HTMLElement | null }).current = node;
+			}
 		},
 	});
 }

@@ -129,7 +129,10 @@ struct WakeState {
 
 enum ActiveWakeWordDetector {
     LegacyPorcupine(LegacyPorcupineDetector),
-    Sherpa(WakeWordDetector),
+    // Boxed: `WakeWordDetector` is far larger than `LegacyPorcupineDetector`, so
+    // an unboxed variant makes every `ActiveWakeWordDetector` (and the
+    // `Option<..>` the manager stores) carry the KWS detector's full footprint.
+    Sherpa(Box<WakeWordDetector>),
 }
 
 impl ActiveWakeWordDetector {
@@ -722,7 +725,7 @@ impl WakeWordManager {
         match WakeWordDetector::new(&config) {
             Ok(detector) => {
                 debug!("Built KWS detector for wake word '{phrase}'");
-                self.store_detector(Some(ActiveWakeWordDetector::Sherpa(detector)));
+                self.store_detector(Some(ActiveWakeWordDetector::Sherpa(Box::new(detector))));
                 Ok(())
             }
             Err(e) => {

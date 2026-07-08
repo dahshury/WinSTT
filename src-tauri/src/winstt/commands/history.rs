@@ -46,6 +46,8 @@ use crate::managers::history::{
 
 const EVT_TRANSFORM_HISTORY_ADDED: &str = "transform-history:added";
 const EVT_TRANSFORM_HISTORY_DELETED: &str = "transform-history:deleted";
+const EVT_TTS_HISTORY_ADDED: &str = "tts-history:added";
+const EVT_TTS_HISTORY_DELETED: &str = "tts-history:deleted";
 
 /// Hard cap on the unbounded `history_get_all` read. The legacy settings panel
 /// loads the full set into a renderer store (no pagination) to compute its
@@ -125,6 +127,10 @@ pub struct TranscriptionHistoryEntry {
     /// when an LLM ran.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_processing_ms: Option<i64>,
+    /// STT final decode/finalization wall-time in ms. This is distinct from
+    /// `duration_ms`, which is the user's recorded audio length.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stt_processing_ms: Option<i64>,
     /// LLM generation speed (output tokens / processing second), when the
     /// provider reported token usage and the pass took a measurable duration.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -143,6 +149,18 @@ pub struct TranscriptionHistoryEntry {
     /// Omitted on legacy rows and renderer-driven manual adds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stt_model: Option<String>,
+    /// USD billed for the cloud STT upload. Omitted for local decodes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stt_cost_usd: Option<f64>,
+    /// `true` when `sttCostUsd` is a client-side estimate (the provider
+    /// reports no billed amount). Omitted when there is no STT cost.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stt_cost_is_estimate: Option<bool>,
+    /// USD cost of the cloud LLM post-processing pass, computed from the
+    /// provider's native token accounting × catalog rates. Omitted for local
+    /// LLMs and runs without usage data.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_cost_usd: Option<f64>,
 }
 
 /// Legacy-table compatible transform row for the settings History tab. It uses
@@ -166,7 +184,39 @@ pub struct TransformHistoryEntry {
     pub llm_processing_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_tokens_per_second: Option<f64>,
+    /// USD cost of the cloud LLM transform. Omitted for local LLMs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_cost_usd: Option<f64>,
     pub source: String,
+}
+
+/// One text-to-speech read-aloud run for the settings History tab. Shares the
+/// core fields with the other history shapes so the table renders it with the
+/// same card + footer machinery.
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsHistoryEntry {
+    pub id: String,
+    pub text: String,
+    pub timestamp: i64,
+    pub word_count: i64,
+    /// Engine id: `<provider>:<id>` for cloud synthesis, the local model key
+    /// otherwise.
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice: Option<String>,
+    /// Characters synthesized (the unit most TTS providers bill on).
+    pub characters: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub processing_ms: Option<i64>,
+    /// USD billed for the run. Omitted for local synthesis and cloud runs
+    /// whose cost could not be resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    /// `true` when `costUsd` is a client-side estimate rather than a
+    /// provider-billed figure. Omitted when there is no cost.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_is_estimate: Option<bool>,
 }
 
 /// Entity `HistoryEntry` (entities/transcription-history/model) — the dedicated
@@ -327,12 +377,19 @@ fn to_transcription_entry(
         original_text,
         llm_model: meta.model,
         llm_error: meta.error,
-        llm_processing_ms: if llm_failed { None } else { meta.processing_ms },
+        llm_processing_ms: meta.processing_ms,
+        stt_processing_ms: entry.stt_processing_ms,
         llm_tokens_per_second,
         dictionary_fixes: entry.dictionary_fixes,
         history_tag: entry.history_tag.clone(),
         privacy_markers: optional_privacy_markers(entry.privacy_markers_json.as_deref()),
         stt_model,
+        stt_cost_usd: entry.stt_cost_usd,
+        stt_cost_is_estimate: entry
+            .stt_cost_usd
+            .is_some()
+            .then_some(entry.stt_cost_is_estimate),
+        llm_cost_usd: if llm_failed { None } else { meta.cost_usd },
     }
 }
 
@@ -358,8 +415,39 @@ fn to_transform_entry(entry: &TransformHistoryDbEntry) -> TransformHistoryEntry 
         llm_error: meta.error,
         llm_processing_ms: meta.processing_ms,
         llm_tokens_per_second,
+        llm_cost_usd: meta.cost_usd,
         source: entry.source.clone(),
     }
+}
+
+fn to_tts_entry(entry: &crate::managers::history::TtsHistoryDbEntry) -> TtsHistoryEntry {
+    TtsHistoryEntry {
+        id: entry.id.to_string(),
+        word_count: count_words(&entry.text),
+        text: entry.text.clone(),
+        timestamp: entry.timestamp.saturating_mul(1000),
+        model: entry.model.clone(),
+        voice: entry.voice.clone().filter(|voice| !voice.trim().is_empty()),
+        characters: entry.characters,
+        processing_ms: entry.processing_ms,
+        cost_usd: entry.cost_usd,
+        cost_is_estimate: entry.cost_usd.is_some().then_some(entry.cost_is_estimate),
+    }
+}
+
+pub fn emit_tts_history_added(
+    app: &AppHandle,
+    entry: &crate::managers::history::TtsHistoryDbEntry,
+) {
+    let payload = to_tts_entry(entry);
+    let _ = app.emit(EVT_TTS_HISTORY_ADDED, &payload);
+}
+
+fn emit_tts_history_deleted(app: &AppHandle, id: i64) {
+    let _ = app.emit(
+        EVT_TTS_HISTORY_DELETED,
+        serde_json::json!({ "id": id.to_string() }),
+    );
 }
 
 pub fn emit_transform_history_added(app: &AppHandle, entry: &TransformHistoryDbEntry) {
@@ -382,6 +470,7 @@ struct LlmMeta {
     error: Option<String>,
     processing_ms: Option<i64>,
     tokens: Option<i64>,
+    cost_usd: Option<f64>,
 }
 
 /// LLM generation speed (output tokens / processing second). `None` when the
@@ -412,6 +501,10 @@ fn parse_llm_meta(raw: &str) -> LlmMeta {
             .filter(|s| !s.is_empty()),
         processing_ms: value.get("processingMs").and_then(|m| m.as_i64()),
         tokens: value.get("tokens").and_then(|t| t.as_i64()),
+        cost_usd: value
+            .get("costUsd")
+            .and_then(|c| c.as_f64())
+            .filter(|c| c.is_finite() && *c >= 0.0),
     }
 }
 
@@ -493,6 +586,9 @@ fn map_db_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbHistoryEntry> {
         history_tag: row.get("history_tag")?,
         privacy_markers_json: row.get("privacy_markers_json")?,
         stt_model: row.get("stt_model")?,
+        stt_processing_ms: row.get("stt_processing_ms")?,
+        stt_cost_usd: row.get("stt_cost_usd")?,
+        stt_cost_is_estimate: row.get("stt_cost_is_estimate")?,
     })
 }
 
@@ -518,7 +614,8 @@ pub async fn history_list(
         let mut stmt = conn.prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
              post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
-             dictionary_fixes, history_tag, privacy_markers_json, stt_model \
+             dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, \
+             stt_cost_usd, stt_cost_is_estimate \
              FROM transcription_history ORDER BY id DESC LIMIT ?1 OFFSET ?2",
         )?;
         // Bind before the closure ends so the row-iterator's borrow of `stmt`
@@ -553,7 +650,8 @@ pub async fn history_recent(
         let mut stmt = conn.prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
              post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
-             dictionary_fixes, history_tag, privacy_markers_json, stt_model \
+             dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, \
+             stt_cost_usd, stt_cost_is_estimate \
              FROM transcription_history ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt
@@ -654,6 +752,13 @@ pub async fn history_add(
     post_process_requested: Option<bool>,
 ) -> Result<Option<HistoryRow>, String> {
     authorize_history_operation(&webview, HistoryOperation::Add)?;
+    if !crate::winstt::settings_store::read_settings_raw(webview.app_handle())
+        .general
+        .history_enabled
+    {
+        log::debug!("history_add: history disabled; row not persisted");
+        return Ok(None);
+    }
     let transcription_text = text.unwrap_or_default();
     if transcription_text.trim().is_empty() {
         return Ok(None);
@@ -671,6 +776,9 @@ pub async fn history_add(
             None,
             None,
             None,
+            None,
+            None,
+            false,
         )
         .map_err(|e| e.to_string())?;
     Ok(Some(to_history_row(&entry)))
@@ -700,7 +808,8 @@ pub async fn history_get_all(
         let mut stmt = conn.prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
              post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
-             dictionary_fixes, history_tag, privacy_markers_json, stt_model \
+             dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, \
+             stt_cost_usd, stt_cost_is_estimate \
              FROM transcription_history ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt
@@ -863,6 +972,67 @@ pub async fn transform_history_delete(
         .map_err(|e| e.to_string())?;
     if deleted {
         emit_transform_history_deleted(&app, numeric);
+    }
+    Ok(DeletedResult { deleted })
+}
+
+/// `tts-history:get-all` — every TTS read-aloud row reshaped for the settings
+/// History tab (STRING id, MILLIS timestamp, camelCase).
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_history_get_all(
+    history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
+) -> Result<Vec<TtsHistoryEntry>, String> {
+    authorize_history_operation(&webview, HistoryOperation::Read)?;
+    let rows = history_manager
+        .get_tts_history_entries()
+        .map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(to_tts_entry).collect())
+}
+
+/// `tts-history:clear` — delete all TTS rows. Same `ClearResult` envelope as
+/// the other history clears so the frontend shares the confirm flow.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_history_clear(
+    app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
+) -> Result<ClearResult, String> {
+    authorize_history_operation(&webview, HistoryOperation::Write)?;
+    let rows = history_manager
+        .get_tts_history_entries()
+        .map_err(|e| e.to_string())?;
+    for entry in rows {
+        if history_manager
+            .delete_tts_entry(entry.id)
+            .map_err(|e| e.to_string())?
+        {
+            emit_tts_history_deleted(&app, entry.id);
+        }
+    }
+    Ok(ClearResult { cleared: true })
+}
+
+/// `tts-history:delete` (STRING id) — delete one TTS row.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_history_delete(
+    app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
+    id: String,
+) -> Result<DeletedResult, String> {
+    authorize_history_operation(&webview, HistoryOperation::Write)?;
+    let Ok(numeric) = id.parse::<i64>() else {
+        return Ok(DeletedResult { deleted: false });
+    };
+    let deleted = history_manager
+        .delete_tts_entry(numeric)
+        .map_err(|e| e.to_string())?;
+    if deleted {
+        emit_tts_history_deleted(&app, numeric);
     }
     Ok(DeletedResult { deleted })
 }

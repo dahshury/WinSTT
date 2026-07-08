@@ -20,6 +20,7 @@ import type {
 	OllamaPullProgress,
 	RecommendedOllamaModel,
 } from "@/shared/api/models";
+import { isLiteOllamaModel } from "@/entities/llm-catalog";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { DownloadProgressBar } from "@/shared/ui/download";
@@ -61,6 +62,7 @@ import {
 import { makerGroupCount, type MakerGroup } from "../lib/maker-groups";
 import {
 	InstalledCapabilityBadges,
+	LiteTierChip,
 	OllamaMakerIcon,
 	RecommendedStar,
 	WontFitChip,
@@ -72,6 +74,7 @@ import { defaultTagBodyClick } from "./OllamaQuantShelf.helpers";
 import type {
 	MakerGroupDeps,
 	OllamaFitInfo,
+	OllamaHitState,
 	OllamaTagsState,
 	PausedPullState,
 	QuantShelfDeps,
@@ -205,8 +208,13 @@ function OllamaModelRow({
 		<ModelCard
 			as="combobox-item"
 			badges={
-				model.capabilities?.length ? (
-					<InstalledCapabilityBadges capabilities={model.capabilities} />
+				model.capabilities?.length || isLiteOllamaModel(model.name) ? (
+					<>
+						{model.capabilities?.length ? (
+							<InstalledCapabilityBadges capabilities={model.capabilities} />
+						) : null}
+						<LiteTierChip model={model.name} />
+					</>
 				) : null
 			}
 			className={activePullName ? OLLAMA_DOWNLOADING_CARD_CLASSES : undefined}
@@ -736,6 +744,7 @@ function RecommendedRow({
 			badges={
 				<>
 					<RecommendedStar />
+					<LiteTierChip model={model.name} />
 					<WontFitChip fit={fit} />
 				</>
 			}
@@ -770,6 +779,7 @@ function RecommendedRow({
 }
 
 interface TypedModelRowProps {
+	hitState: OllamaHitState;
 	info: TypedModelQueryInfo;
 	matchingTag: OllamaLibraryTag;
 	shelfDeps: QuantShelfDeps;
@@ -808,6 +818,14 @@ function buildTypedModelMetaEntries(
 			tooltip: "Quantization",
 		});
 	}
+	if (matchingTag.contextWindow) {
+		entries.push({
+			key: "context",
+			icon: Brain01Icon,
+			value: matchingTag.contextWindow,
+			tooltip: "Context window",
+		});
+	}
 	if (matchingTag.sizeBytes) {
 		entries.push({
 			key: "size",
@@ -817,14 +835,24 @@ function buildTypedModelMetaEntries(
 		});
 	}
 	if (entries.length === 0) {
-		return undefined;
+		return;
 	}
 	return entries;
 }
 
-function TypedModelFetchStatus({ tagsState }: { tagsState: OllamaTagsState }) {
+function TypedModelFetchStatus({
+	hitState,
+	tagsState,
+}: {
+	hitState: OllamaHitState;
+	tagsState: OllamaTagsState;
+}) {
 	const t = useTranslations("modelPicker");
-	if (tagsState?.isLoading && tagsState.tags.length === 0) {
+	const loadingTags = Boolean(
+		tagsState?.isLoading && tagsState.tags.length === 0,
+	);
+	const loadingHit = Boolean(hitState?.isLoading && !hitState.hit);
+	if (loadingTags || loadingHit) {
 		return (
 			<div className="flex items-center gap-2 text-foreground-muted text-xs">
 				<PulseDot className="size-2" />
@@ -843,6 +871,7 @@ function TypedModelFetchStatus({ tagsState }: { tagsState: OllamaTagsState }) {
 }
 
 function TypedModelShelf({
+	hitState,
 	info,
 	matchingTag,
 	shelfDeps,
@@ -858,12 +887,31 @@ function TypedModelShelf({
 				forceKeepNames={forceKeepNames}
 				paramSize={info.paramSize}
 			/>
-			<TypedModelFetchStatus tagsState={tagsState} />
+			<TypedModelFetchStatus hitState={hitState} tagsState={tagsState} />
 		</div>
 	);
 }
 
+/** Description for a typed card: the scraped homepage summary once it resolves,
+ *  else the bare tag (monospace) as a placeholder while the hit loads or if the
+ *  homepage can't be reached. */
+function typedModelDescription(
+	info: TypedModelQueryInfo,
+	hitState: OllamaHitState,
+): ReactNode {
+	const description = hitState?.hit?.description;
+	if (description) {
+		return description;
+	}
+	return (
+		<span className="truncate font-mono text-foreground-secondary">
+			{info.modelName}
+		</span>
+	);
+}
+
 function TypedModelRow({
+	hitState,
 	info,
 	matchingTag,
 	shelfDeps,
@@ -875,22 +923,33 @@ function TypedModelRow({
 		info.paramSize,
 	);
 	const publisher = getOllamaPublisher(familySlugFromName(info.baseSlug));
+	// Same fit assessment the recommended/installed rows get, so a typed heavy
+	// tag (e.g. `gpt-oss:20b`) surfaces a "won't fit" heads-up before download.
+	const fit = matchingTag.sizeBytes
+		? shelfDeps.getFit?.(matchingTag.sizeBytes)
+		: undefined;
+	// Capabilities come from the on-demand homepage scrape (`fetchHit`); until it
+	// resolves the badge cluster renders nothing, then fills in place.
+	const capabilities = hitState?.hit?.capabilities ?? undefined;
 	return (
 		<ModelCard
 			as="div"
+			badges={
+				<>
+					<InstalledCapabilityBadges capabilities={capabilities} compact />
+					<WontFitChip fit={fit} />
+				</>
+			}
 			className={activePullName ? OLLAMA_DOWNLOADING_CARD_CLASSES : undefined}
 			data-model-id={activePullName ?? info.modelName}
-			description={
-				<span className="truncate font-mono text-foreground-secondary">
-					{info.modelName}
-				</span>
-			}
+			description={typedModelDescription(info, hitState)}
 			makerIcon={<OllamaMakerIcon slug={publisher.slug} />}
 			meta={buildTypedModelMetaEntries(info, matchingTag)}
 			name={formatOllamaDisplayName(info.modelName)}
 			onBodyClick={defaultTagBodyClick(shelfDeps, info.modelName)}
 			shelf={
 				<TypedModelShelf
+					hitState={hitState}
 					info={info}
 					matchingTag={matchingTag}
 					shelfDeps={shelfDeps}
@@ -926,6 +985,7 @@ interface ListBodyProps {
 	sortedInstalled: readonly OllamaModel[];
 	/** Active global sort key, or ``null`` for the default maker-grouped view. */
 	sortKey: OllamaSortValue;
+	typedModelHitState: OllamaHitState;
 	typedModelInfo: TypedModelQueryInfo | null;
 	typedModelMatch: OllamaLibraryTag | undefined;
 	typedModelTagsState: OllamaTagsState;
@@ -1059,6 +1119,7 @@ export function ListBody(props: ListBodyProps) {
 		showTypedModelCard,
 		sortedInstalled,
 		sortKey,
+		typedModelHitState,
 		typedModelInfo,
 		typedModelMatch,
 		typedModelTagsState,
@@ -1136,6 +1197,7 @@ export function ListBody(props: ListBodyProps) {
 				{showTypedModel && typedModelInfo && typedModelMatch ? (
 					<div className="p-1.5">
 						<TypedModelRow
+							hitState={typedModelHitState}
 							info={typedModelInfo}
 							matchingTag={typedModelMatch}
 							shelfDeps={shelfDeps}

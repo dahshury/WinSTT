@@ -1,5 +1,5 @@
 import type { OpenRouterModel } from "@/shared/api/models";
-import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+import { rankBySearch } from "@/shared/lib/model-search";
 import type { ModelVariant } from "./model-variant-utils";
 import { hasAnyVariant, hasVariant } from "./model-variant-utils";
 import type { FilterableParameter } from "./openrouter-provider-utils";
@@ -12,100 +12,11 @@ export interface FilterModelsOptions {
 	selectedVariant?: ModelVariant | "none" | null;
 }
 
-interface LowerCasedModel {
-	id: string;
-	maker: string;
-	modelName: string;
-	name: string;
-}
-
-const lowerCasedCache = new WeakMap<OpenRouterModel, LowerCasedModel>();
 const searchCorpusCache = new WeakMap<OpenRouterModel, string[]>();
 const supportedParametersCache = new WeakMap<
 	readonly string[],
 	ReadonlySet<string>
 >();
-
-function toLowerOrEmpty(value: string | undefined): string {
-	return value?.toLowerCase() ?? "";
-}
-
-function toLowerCased(model: OpenRouterModel): LowerCasedModel {
-	const cached = lowerCasedCache.get(model);
-	if (cached) {
-		return cached;
-	}
-	const lowerCased = {
-		maker: toLowerOrEmpty(model.maker),
-		name: toLowerOrEmpty(model.name),
-		id: toLowerOrEmpty(model.id),
-		modelName: toLowerOrEmpty(model.model_name),
-	};
-	lowerCasedCache.set(model, lowerCased);
-	return lowerCased;
-}
-
-function anyNameStartsWith(lc: LowerCasedModel, q: string): boolean {
-	return (
-		lc.name.startsWith(q) || lc.id.startsWith(q) || lc.modelName.startsWith(q)
-	);
-}
-
-function anyNameIncludes(lc: LowerCasedModel, q: string): boolean {
-	return lc.name.includes(q) || lc.id.includes(q) || lc.modelName.includes(q);
-}
-
-function scoreMakerMatch(lc: LowerCasedModel, q: string): number {
-	if (lc.maker === q) {
-		return 1;
-	}
-	if (lc.maker.startsWith(q)) {
-		return 2;
-	}
-	return 0;
-}
-
-function scoreIncludesMatch(lc: LowerCasedModel, q: string): number {
-	if (lc.maker.includes(q)) {
-		return 4;
-	}
-	return anyNameIncludes(lc, q) ? 5 : 0;
-}
-
-function scoreNameMatch(lc: LowerCasedModel, q: string): number {
-	if (anyNameStartsWith(lc, q)) {
-		return 3;
-	}
-	return scoreIncludesMatch(lc, q);
-}
-
-function scoreModelMatch(
-	model: OpenRouterModel,
-	normalizedQuery: string,
-): number {
-	const lc = toLowerCased(model);
-	const makerScore = scoreMakerMatch(lc, normalizedQuery);
-	return makerScore || scoreNameMatch(lc, normalizedQuery);
-}
-
-interface MatchWithScore {
-	model: OpenRouterModel;
-	score: number;
-}
-
-function collectExactMatches(
-	models: OpenRouterModel[],
-	normalizedQuery: string,
-): OpenRouterModel[] {
-	const exactMatches: MatchWithScore[] = [];
-	for (const model of models) {
-		const score = scoreModelMatch(model, normalizedQuery);
-		if (score > 0) {
-			exactMatches.push({ model, score });
-		}
-	}
-	return exactMatches.toSorted((a, b) => a.score - b.score).map((m) => m.model);
-}
 
 function modelSearchCorpus(model: OpenRouterModel): string[] {
 	const cached = searchCorpusCache.get(model);
@@ -125,35 +36,17 @@ function modelSearchCorpus(model: OpenRouterModel): string[] {
 	return corpus;
 }
 
-function appendSynchronousFuzzyMatches(
-	models: OpenRouterModel[],
-	prioritized: OpenRouterModel[],
-	query: string,
-): OpenRouterModel[] {
-	const includedIds = new Set(prioritized.map((m) => m.id));
-	const combined = [...prioritized];
-	for (const model of models) {
-		if (includedIds.has(model.id)) {
-			continue;
-		}
-		if (matchesFuzzySearch(modelSearchCorpus(model), query)) {
-			combined.push(model);
-			includedIds.add(model.id);
-		}
-	}
-	return combined;
-}
-
 function searchModels(
 	models: OpenRouterModel[],
 	query: string,
 ): OpenRouterModel[] {
-	if (!query.trim()) {
-		return models;
-	}
-	const normalizedQuery = query.trim().toLowerCase();
-	const prioritized = collectExactMatches(models, normalizedQuery);
-	return appendSynchronousFuzzyMatches(models, prioritized, query);
+	// Exact/prefix/substring matches lead in tier order, then fuzzy-only matches
+	// in model order — the shared ranking pipeline used by every picker.
+	return rankBySearch(models, query, (model) => ({
+		corpus: modelSearchCorpus(model),
+		maker: model.maker ?? "",
+		names: [model.name ?? "", model.id, model.model_name ?? ""],
+	}));
 }
 
 function matchesVariantFilter(

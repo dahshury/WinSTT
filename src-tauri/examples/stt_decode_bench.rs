@@ -92,9 +92,10 @@ fn default_snap() -> String {
         .into_owned()
 }
 
-/// Provider selection for the benchmark, via `STT_BENCH_PROVIDER` (cpu|dml|cuda; default cpu).
-/// DirectML/CUDA fall back to CPU inside `execution_providers()` if the EP isn't present,
-/// so the benchmark still runs; the active-providers print tells you what actually bound.
+/// Provider selection for the benchmark, via `STT_BENCH_PROVIDER` (cpu|dml|cuda|webgpu; default cpu).
+/// DirectML/CUDA/WebGPU fall back to CPU inside `execution_providers()` if the EP isn't present
+/// (webgpu additionally needs `--features webgpu`), so the benchmark still runs; the
+/// active-providers print tells you what actually bound.
 fn providers_from_env() -> Vec<Accelerator> {
     match std::env::var("STT_BENCH_PROVIDER")
         .unwrap_or_default()
@@ -103,6 +104,7 @@ fn providers_from_env() -> Vec<Accelerator> {
     {
         "dml" | "directml" => vec![Accelerator::DirectMl, Accelerator::Cpu],
         "cuda" => vec![Accelerator::Cuda, Accelerator::Cpu],
+        "webgpu" | "wgpu" => vec![Accelerator::WebGpu, Accelerator::Cpu],
         _ => vec![Accelerator::Cpu],
     }
 }

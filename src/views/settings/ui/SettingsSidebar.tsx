@@ -15,13 +15,15 @@ import {
 	useIsPresent,
 	useReducedMotion,
 } from "motion/react";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import {
 	readPersistedSelectorState,
 	writePersistedSelectorState,
 } from "@/shared/lib/persisted-selector-state";
+import { springs } from "@/shared/lib/springs";
+import { SurfaceProvider } from "@/shared/lib/surface";
 import { ClearableTextField } from "@/shared/ui/text-field";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { matchesSearchQuery } from "../lib/settings-search";
@@ -86,15 +88,11 @@ function SearchResultRow({
 							opacity: 0,
 							y: -4,
 							filter: "blur(2px)",
-							transition: { duration: 0.12 },
+							transition: springs.moderate.exit,
 						}
 			}
 			initial={reduceMotion ? false : { opacity: 0, y: 4, filter: "blur(2px)" }}
-			transition={
-				reduceMotion
-					? { duration: 0 }
-					: { duration: 0.18, ease: [0.22, 1, 0.36, 1] }
-			}
+			transition={reduceMotion ? { duration: 0 } : springs.moderate}
 		>
 			{children}
 		</m.div>
@@ -112,10 +110,32 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 	const t = useTranslations("settings");
 	const [query, setQuery] = useState("");
 	const [collapsed, setCollapsed] = useState(readCollapsed);
+	const [searchOpen, setSearchOpen] = useState(false);
 	const reduceMotion = useReducedMotion();
 	const inputRef = useRef<HTMLInputElement>(null);
+	const searchRegionRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!searchOpen) {
+			return;
+		}
+		const onOutsidePress = (event: PointerEvent) => {
+			const target = event.target as Node | null;
+			if (target && searchRegionRef.current?.contains(target)) {
+				return;
+			}
+			window.setTimeout(() => {
+				setSearchOpen(false);
+				setQuery("");
+			}, 120);
+		};
+		document.addEventListener("pointerdown", onOutsidePress, true);
+		return () =>
+			document.removeEventListener("pointerdown", onOutsidePress, true);
+	}, [searchOpen]);
 
 	const closeSearch = () => {
+		setSearchOpen(false);
 		setQuery("");
 		inputRef.current?.blur();
 	};
@@ -123,9 +143,18 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 	const handleSearchBlur = () => {
 		window.setTimeout(() => {
 			if (document.activeElement !== inputRef.current) {
+				setSearchOpen(false);
 				setQuery("");
 			}
 		}, 120);
+	};
+
+	const openSearch = () => {
+		if (collapsed) {
+			setCollapsed(false);
+			writeCollapsed(false);
+		}
+		setSearchOpen(true);
 	};
 
 	const toggleCollapsed = () => {
@@ -148,6 +177,17 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 			)
 		: links;
 
+	const searchButton = (
+		<BaseButton
+			aria-label={t("searchPlaceholder")}
+			className="settings-sidebar-icon-button titlebar-no-drag flex shrink-0 items-center justify-center bg-transparent text-foreground-muted outline-none transition-[background-color,color,transform,box-shadow] duration-200 hover:text-foreground-secondary active:translate-y-px focus-visible:ring-2 focus-visible:ring-accent"
+			onClick={openSearch}
+			type="button"
+		>
+			<HugeiconsIcon icon={Search01Icon} size={17} />
+		</BaseButton>
+	);
+
 	const toggleButton = (
 		<Tooltip
 			content={collapsed ? t("expandSidebar") : t("collapseSidebar")}
@@ -169,7 +209,7 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 
 	return (
 		<aside
-			className="settings-sidebar-shell relative flex h-full shrink-0 flex-col transition-[width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+			className="settings-sidebar-shell relative flex h-full shrink-0 flex-col transition-[width] duration-240 ease-[cubic-bezier(0.16,1,0.3,1)]"
 			data-collapsed={collapsed ? "true" : undefined}
 			style={{ width: collapsed ? COLLAPSED_WIDTH : SIDEBAR_WIDTH }}
 		>
@@ -189,42 +229,57 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 						className="titlebar-drag absolute inset-x-0 top-0 h-4"
 						data-slot="settings-sidebar-top-drag"
 					/>
-					<div className="relative flex h-10 min-w-0 flex-1 items-center">
-						<label
-							aria-label={t("searchPlaceholder")}
-							className="settings-sidebar-search titlebar-no-drag absolute inset-y-0 start-0 z-overlay flex items-center"
-						>
-							<ClearableTextField
-								aria-label={t("searchPlaceholder")}
-								clearLabel={t("searchClear")}
-								className="settings-sidebar-search-input border shadow-none transition-colors focus-visible:ring-0 focus-visible:ring-offset-0"
-								leadingIcon={
-									<HugeiconsIcon
-										aria-hidden="true"
-										icon={Search01Icon}
-										size={17}
-									/>
-								}
-								onBlur={handleSearchBlur}
-								onKeyDown={(e) => {
-									if (e.key === "Escape") {
-										e.stopPropagation();
-										closeSearch();
-									}
-								}}
-								onValueChange={setQuery}
-								placeholder={t("searchPlaceholderShort")}
-								ref={inputRef}
-								type="text"
-								value={query}
-								wrapperClassName="w-full"
-							/>
-						</label>
-						<span className="titlebar-drag flex min-w-0 flex-1 items-center self-stretch ps-16">
-							<span className="settings-sidebar-title min-w-0 flex-1 truncate font-semibold uppercase">
-								{t("title")}
+					<div
+						className="relative flex h-10 min-w-0 flex-1 items-center gap-2"
+						ref={searchRegionRef}
+					>
+						{searchOpen ? null : searchButton}
+						{searchOpen ? null : (
+							<span className="titlebar-drag flex min-w-0 flex-1 items-center self-stretch">
+								<span className="settings-sidebar-title min-w-0 flex-1 truncate font-semibold uppercase">
+									{t("title")}
+								</span>
 							</span>
-						</span>
+						)}
+						<div
+							aria-hidden={searchOpen ? undefined : true}
+							className="settings-sidebar-search titlebar-no-drag absolute inset-y-0 start-0 flex w-full items-center"
+							data-open={searchOpen ? "true" : undefined}
+						>
+							{/* Substrate 4 so the shared TextField lifts to surface-5 —
+							    the same raised plate as the active sidebar tab and the
+							    settings picker triggers. */}
+							<SurfaceProvider value={4}>
+								<ClearableTextField
+									aria-label={t("searchPlaceholder")}
+									autoFocus={searchOpen}
+									clearLabel={t("searchClear")}
+									className="h-full focus-visible:ring-0 focus-visible:ring-offset-0"
+									key={searchOpen ? "search-open" : "search-closed"}
+									leadingIcon={
+										<HugeiconsIcon
+											aria-hidden="true"
+											icon={Search01Icon}
+											size={17}
+										/>
+									}
+									onBlur={handleSearchBlur}
+									onKeyDown={(e) => {
+										if (e.key === "Escape") {
+											e.stopPropagation();
+											closeSearch();
+										}
+									}}
+									onValueChange={setQuery}
+									placeholder={t("searchPlaceholderShort")}
+									ref={inputRef}
+									tabIndex={searchOpen ? 0 : -1}
+									type="text"
+									value={query}
+									wrapperClassName="h-full w-full"
+								/>
+							</SurfaceProvider>
+						</div>
 					</div>
 					{toggleButton}
 				</div>
@@ -249,7 +304,7 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 												opacity: 0,
 												y: -4,
 												filter: "blur(2px)",
-												transition: { duration: 0.12 },
+												transition: springs.moderate.exit,
 											}
 								}
 								initial={
@@ -258,11 +313,7 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 										: { opacity: 0, y: 4, filter: "blur(2px)" }
 								}
 								key="settings-search-empty"
-								transition={
-									reduceMotion
-										? { duration: 0 }
-										: { duration: 0.18, ease: [0.22, 1, 0.36, 1] }
-								}
+								transition={reduceMotion ? { duration: 0 } : springs.moderate}
 							>
 								{t("searchNoResults")}
 							</m.p>
@@ -304,7 +355,7 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 										key={link.key}
 										reduceMotion={reduceMotion ?? false}
 									>
-										{!searching && !collapsed && link.groupLabel ? (
+										{!(searching || collapsed) && link.groupLabel ? (
 											<div className="settings-sidebar-group-label truncate">
 												{link.groupLabel}
 											</div>

@@ -34,7 +34,6 @@ function model(id: string): ModelInfo {
 		sizeLabel: "600M",
 		speedScore: 0.8,
 		supportsLanguageDetection: false,
-		supportsRealtime: true,
 	};
 }
 

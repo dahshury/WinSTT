@@ -66,6 +66,7 @@ const FAMILY_DISPLAY: Record<string, string> = {
 	command: "Command",
 	commandr: "Command R",
 	nemotron: "Nemotron",
+	gpt: "GPT",
 	other: "Other",
 };
 
@@ -434,6 +435,7 @@ const TOKEN_CASING: Record<string, string> = {
 	mini: "Mini",
 	moe: "MoE",
 	tools: "Tools",
+	oss: "OSS",
 };
 
 function formatToken(token: string): string {
@@ -449,6 +451,90 @@ function formatToken(token: string): string {
 
 function splitBaseAlphaNumeric(base: string): string[] {
 	return base.match(/[a-zA-Z]+|[\d.]+/g) ?? [];
+}
+
+export interface OllamaDisplayNameParts {
+	full: string;
+	main: string;
+	parameterSize: string | null;
+	quantization: string | null;
+	variant: string | null;
+}
+
+function parseVariantFacts(variant: string): {
+	parameterSize: string | null;
+	quantization: string | null;
+	variantParts: string[];
+} {
+	let parameterSize: string | null = null;
+	let quantization: string | null = null;
+	const variantWithoutQuant = variant.replace(QUANT_STRIP_RE, (match) => {
+		const cleaned = match.replace(/^[-_]/, "");
+		quantization = cleaned;
+		return "";
+	});
+	const variantParts = variantWithoutQuant
+		.split(VARIANT_SPLIT_RE)
+		.map((t) => t.trim())
+		.filter((token) => {
+			if (token.length === 0) {
+				return false;
+			}
+			if (PARAM_TOKEN_RE.test(token)) {
+				parameterSize = token;
+				return false;
+			}
+			if (QUANT_TOKEN_RE.test(token)) {
+				quantization = token;
+				return false;
+			}
+			return true;
+		})
+		.map(formatToken);
+	return { parameterSize, quantization, variantParts };
+}
+
+/**
+ * Beautify an Ollama tag into separately stylable name parts. The base family
+ * stays prominent (`Gemma 3`), while non-size/quant tag flavor stays secondary
+ * (`IT`, `Instruct`, `Vision`). Parameter and quantization facts are returned
+ * separately so the trigger and rows can show them as metadata without
+ * repeating them in the name.
+ */
+export function formatOllamaDisplayNameParts(
+	name: string,
+): OllamaDisplayNameParts {
+	const trimmed = name.trim();
+	if (!trimmed) {
+		return {
+			full: "",
+			main: "",
+			parameterSize: null,
+			quantization: null,
+			variant: null,
+		};
+	}
+	const colonIdx = trimmed.indexOf(":");
+	const base = colonIdx >= 0 ? trimmed.slice(0, colonIdx) : trimmed;
+	const variant = colonIdx >= 0 ? trimmed.slice(colonIdx + 1) : "";
+
+	const baseTokens = splitBaseAlphaNumeric(base);
+	const firstToken = baseTokens[0]?.toLowerCase() ?? "";
+	const familyLabel = FAMILY_DISPLAY[firstToken] ?? formatToken(firstToken);
+	const main = [familyLabel, ...baseTokens.slice(1).map(formatToken)]
+		.filter(Boolean)
+		.join(" ");
+	const { parameterSize, quantization, variantParts } =
+		parseVariantFacts(variant);
+	const variantLabel = variantParts.join(" ");
+	const full = [main, variantLabel].filter(Boolean).join(" ");
+	return {
+		full,
+		main: main || full || trimmed,
+		parameterSize,
+		quantization,
+		variant: variantLabel || null,
+	};
 }
 
 /**
@@ -468,29 +554,7 @@ function splitBaseAlphaNumeric(base: string): string[] {
  * unknown families fall back to first-letter capitalization.
  */
 export function formatOllamaDisplayName(name: string): string {
-	const trimmed = name.trim();
-	if (!trimmed) {
-		return "";
-	}
-	const colonIdx = trimmed.indexOf(":");
-	const base = colonIdx >= 0 ? trimmed.slice(0, colonIdx) : trimmed;
-	const variant = colonIdx >= 0 ? trimmed.slice(colonIdx + 1) : "";
-
-	const baseTokens = splitBaseAlphaNumeric(base);
-	const firstToken = baseTokens[0]?.toLowerCase() ?? "";
-	const familyLabel = FAMILY_DISPLAY[firstToken] ?? formatToken(firstToken);
-	const baseParts = [familyLabel, ...baseTokens.slice(1).map(formatToken)];
-
-	const variantWithoutQuant = variant.replace(QUANT_STRIP_RE, "");
-	const variantParts = variantWithoutQuant
-		.split(VARIANT_SPLIT_RE)
-		.map((t) => t.trim())
-		.filter(
-			(t) => t.length > 0 && !PARAM_TOKEN_RE.test(t) && !QUANT_TOKEN_RE.test(t),
-		)
-		.map(formatToken);
-
-	return [...baseParts, ...variantParts].filter(Boolean).join(" ");
+	return formatOllamaDisplayNameParts(name).full;
 }
 
 /** Pretty size label — "1.2 GB" / "650 MB" / "—" when unknown. */

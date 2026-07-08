@@ -11,6 +11,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { AnimatePresence, LayoutGroup, m } from "motion/react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
+import { springs } from "@/shared/lib/springs";
 import {
 	type OnboardingTrack,
 	useOnboardingWizardStore,
@@ -98,7 +99,7 @@ function TrackChoiceNote() {
 			animate={{ opacity: 1, y: 0 }}
 			className="mt-3 flex items-start gap-2.5 rounded-md bg-surface-2 px-3 py-2.5 ring-1 ring-divider"
 			initial={{ opacity: 0, y: 4 }}
-			transition={{ duration: 0.22, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
+			transition={{ ...springs.slow, delay: 0.12 }}
 		>
 			<span
 				aria-hidden
@@ -136,7 +137,7 @@ function TrackCard({ option, selected }: TrackCardProps) {
 					: "bg-surface-4 shadow-surface-3 ring-1 ring-divider-strong hover:bg-surface-5 hover:ring-border-hover",
 			)}
 			layout
-			transition={{ type: "spring", stiffness: 420, damping: 32, mass: 0.65 }}
+			transition={springs.slow}
 			whileHover={{ y: -2 }}
 			whileTap={{ scale: 0.985 }}
 			value={option.id}
@@ -146,12 +147,7 @@ function TrackCard({ option, selected }: TrackCardProps) {
 					aria-hidden
 					className="pointer-events-none absolute inset-0 rounded-xl bg-accent/[0.07] ring-1 ring-accent"
 					layoutId="onboarding-track-selected-surface"
-					transition={{
-						type: "spring",
-						stiffness: 520,
-						damping: 38,
-						mass: 0.65,
-					}}
+					transition={springs.moderate}
 				/>
 			) : null}
 			{/* Top hairline — only visible when selected, matches the titlebar's
@@ -162,7 +158,7 @@ function TrackCard({ option, selected }: TrackCardProps) {
 					className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/60 to-transparent"
 					animate={{ opacity: 1, scaleX: 1 }}
 					initial={{ opacity: 0, scaleX: 0.4 }}
-					transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+					transition={springs.moderate}
 				/>
 			) : null}
 
@@ -186,9 +182,14 @@ function TrackCard({ option, selected }: TrackCardProps) {
 						<m.span
 							animate={{ opacity: 1, rotate: 0, scale: 1 }}
 							className="inline-flex text-accent"
-							exit={{ opacity: 0, rotate: -20, scale: 0.4 }}
+							exit={{
+								opacity: 0,
+								rotate: -20,
+								scale: 0.4,
+								transition: springs.moderate.exit,
+							}}
 							initial={{ opacity: 0, rotate: -35, scale: 0.35 }}
-							transition={{ type: "spring", stiffness: 620, damping: 28 }}
+							transition={springs.moderate}
 						>
 							<HugeiconsIcon
 								aria-hidden
@@ -223,7 +224,7 @@ function TrackCard({ option, selected }: TrackCardProps) {
 								opacity: 1,
 								y: 0,
 								filter: "blur(0px)",
-								transition: { duration: 0.2, ease: [0.22, 1, 0.36, 1] },
+								transition: springs.slow,
 							},
 						}}
 					>

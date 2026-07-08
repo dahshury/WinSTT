@@ -7,9 +7,24 @@
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::{HistoryEntry, HistoryManager, PaginatedHistory, TransformHistoryDbEntry};
+use super::{
+    HistoryEntry, HistoryManager, PaginatedHistory, TransformHistoryDbEntry, TtsHistoryDbEntry,
+};
 
 impl HistoryManager {
+    pub fn get_tts_history_entries(&self) -> Result<Vec<TtsHistoryDbEntry>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, title, text, model, voice, characters, processing_ms, cost_usd, cost_is_estimate
+             FROM tts_history
+             ORDER BY id ASC",
+        )?;
+        let rows = stmt
+            .query_map([], Self::map_tts_history_entry)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn get_transform_history_entries(&self) -> Result<Vec<TransformHistoryDbEntry>> {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
@@ -35,7 +50,7 @@ impl HistoryManager {
             (Some(cursor_id), Some(lim)) => {
                 let fetch_count = (lim + 1) as i64;
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate
                      FROM transcription_history
                      WHERE id < ?1
                      ORDER BY id DESC
@@ -48,7 +63,7 @@ impl HistoryManager {
             (None, Some(lim)) => {
                 let fetch_count = (lim + 1) as i64;
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate
                      FROM transcription_history
                      ORDER BY id DESC
                      LIMIT ?1",
@@ -59,7 +74,7 @@ impl HistoryManager {
             }
             (_, None) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate
                      FROM transcription_history
                      ORDER BY id DESC",
                 )?;
@@ -94,7 +109,10 @@ impl HistoryManager {
                 dictionary_fixes,
                 history_tag,
                 privacy_markers_json,
-                stt_model
+                stt_model,
+                stt_processing_ms,
+                stt_cost_usd,
+                stt_cost_is_estimate
              FROM transcription_history
              ORDER BY timestamp DESC
              LIMIT 1",
@@ -128,7 +146,10 @@ impl HistoryManager {
                 dictionary_fixes,
                 history_tag,
                 privacy_markers_json,
-                stt_model
+                stt_model,
+                stt_processing_ms,
+                stt_cost_usd,
+                stt_cost_is_estimate
              FROM transcription_history
              WHERE transcription_text != ''
              ORDER BY timestamp DESC
@@ -156,7 +177,10 @@ impl HistoryManager {
                 dictionary_fixes,
                 history_tag,
                 privacy_markers_json,
-                stt_model
+                stt_model,
+                stt_processing_ms,
+                stt_cost_usd,
+                stt_cost_is_estimate
              FROM transcription_history
              WHERE id = ?1",
         )?;

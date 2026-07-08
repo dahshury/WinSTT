@@ -34,11 +34,11 @@ pub mod download_manager;
 /// preview, driving the RealtimeAccumulator (committed-watermark + RealtimeSTT stabilizer).
 pub mod realtime_manager;
 
-pub use cloud_stt_manager::CloudSttManager;
+pub use cloud_stt_manager::{CloudSttManager, CloudSttRunCost};
 pub use context_manager::ContextManager;
 pub use download_manager::DownloadManager;
 pub use file_transcribe_manager::FileTranscribeManager;
-pub use llm_manager::LlmManager;
+pub use llm_manager::{LlmManager, LlmRunUsage};
 pub use loopback_manager::LoopbackManager;
 pub use ollama_manager::OllamaManager;
 pub use realtime_manager::RealtimeManager;

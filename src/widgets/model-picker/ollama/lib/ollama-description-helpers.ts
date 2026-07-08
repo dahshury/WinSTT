@@ -68,7 +68,7 @@ export function ollamaPullMatchesRow(
 		normalizeOllamaParamSize(rowParamSize) ||
 		normalizeOllamaParamSize(paramSizeFromName(rowName));
 	const pullParam = normalizeOllamaParamSize(paramSizeFromName(pullName));
-	return !rowParam || !pullParam || rowParam === pullParam;
+	return !(rowParam && pullParam) || rowParam === pullParam;
 }
 
 export function activePullNameForRow(
@@ -128,14 +128,14 @@ export function formatOllamaContextWindow(
 	tokens: number | null | undefined,
 ): string | undefined {
 	if (!tokens || tokens <= 0) {
-		return undefined;
+		return;
 	}
 	if (tokens >= 1_000_000) {
 		const millions = tokens / 1_000_000;
 		return `${millions.toFixed(millions >= 10 ? 0 : 1).replace(/\.0$/, "")}M context`;
 	}
-	if (tokens >= 1_000) {
-		return `${Math.round(tokens / 1_000)}K context`;
+	if (tokens >= 1000) {
+		return `${Math.round(tokens / 1000)}K context`;
 	}
 	return `${tokens} context`;
 }

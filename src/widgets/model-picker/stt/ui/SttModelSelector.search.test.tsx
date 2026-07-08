@@ -15,7 +15,6 @@ function model(overrides: Partial<ModelInfo> = {}): ModelInfo {
 		previewCapable: true,
 		nativeStreaming: false,
 		finalReuseSafe: false,
-		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
@@ -170,6 +169,34 @@ describe("SttModelSelector search → clear → search", () => {
 		expect(searchInput().value).toBe("");
 		expect(showsParakeet()).toBe(true);
 		expect(showsWhisper()).toBe(false);
+	});
+
+	test("ranks a name-prefix match above a substring match within a group", () => {
+		// "Distil Whisper" only *contains* the query (tier 5) and is smaller, so
+		// without ranking it would sort first by param size. "Whisper Large" is a
+		// name-prefix (tier 3) and must lead once ranked.
+		renderInline([
+			model({
+				id: "distil",
+				displayName: "Distil Whisper",
+				family: "whisper",
+				sizeLabel: "39M",
+			}),
+			model({
+				id: "wlarge",
+				displayName: "Whisper Large",
+				family: "whisper",
+				sizeLabel: "1.5B",
+			}),
+		]);
+
+		setSearch("whisper");
+		const names = visibleModelNames();
+		const largeIdx = names.findIndex((n) => n.includes("Large"));
+		const distilIdx = names.findIndex((n) => n.includes("Distil"));
+		expect(largeIdx).toBeGreaterThanOrEqual(0);
+		expect(distilIdx).toBeGreaterThanOrEqual(0);
+		expect(largeIdx).toBeLessThan(distilIdx);
 	});
 
 	test("re-searching after a rail change with an active query still works", () => {

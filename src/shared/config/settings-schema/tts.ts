@@ -17,6 +17,19 @@ export const ttsSettingsSchema = z.object({
 	// Default "kokoro-82m" preserves the historical Kokoro-only behaviour.
 	model: z.string().default("kokoro-82m"),
 	voice: z.string().default("af_heart"),
+	// Reference-clip transcript for cloning models that need it (cloning ===
+	// "zero_shot_audio_transcript", e.g. Spark). Auto-filled by transcribing the
+	// uploaded reference with the selected STT model, then user-editable. Mirrors
+	// the Rust `TtsSettings.clone_ref_text` default (empty) for the parity gate.
+	cloneRefText: z.string().default(""),
+	// Selected weight precision for the local TTS model (mirrors the STT
+	// `model.onnxQuantization` field). Empty string = the model's own default
+	// quant, resolved server-side (e.g. Qwen3-TTS-VoiceDesign → "int4"); concrete
+	// tiers ("int4"/"fp16"/"fp32") pass through verbatim. Kept generic so every
+	// engine's precision shelf persists its selection through one field. Default
+	// MUST mirror the canonical Rust default (`TtsSettings.quantization`),
+	// enforced by the Rust↔zod parity gate (`defaults-parity.test.ts`).
+	quantization: z.string().default(""),
 	lang: z.string().default("en-us"),
 	// Floor 0.4 matches Supertonic's widened slider (SUPERTONIC_SPEED_MIN); other
 	// engines' sliders still start at 0.5, but the stored value must accept 0.4 so

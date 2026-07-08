@@ -7,7 +7,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
-import { useCatalogStore } from "@/entities/model-catalog";
+import type { useCatalogStore } from "@/entities/model-catalog";
 import {
 	DEFAULT_SETTINGS,
 	SettingField,

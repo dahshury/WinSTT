@@ -224,7 +224,7 @@ describe("ModelPicker popup animation", () => {
 		const target = container.querySelector<HTMLElement>(
 			'[data-model-id="target"]',
 		);
-		if (!root || !list || !target) {
+		if (!(root && list && target)) {
 			throw new Error("test DOM did not render");
 		}
 		list.getBoundingClientRect = () => domRect(20, 200);

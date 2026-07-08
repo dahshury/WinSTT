@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "../../test/render-with-intl";
 import { type ModelInfo, useModelSwapStore } from "@/entities/model-catalog";
-import { SttModelSelector } from "./SttModelSelector";
+import type { ModelStateEntry } from "@/shared/api/ipc-client";
+import {
+	_resetSelectedModelMetadataCacheForTests,
+	SttModelSelector,
+} from "./SttModelSelector";
 
 function model(): ModelInfo {
 	return {
@@ -15,7 +19,6 @@ function model(): ModelInfo {
 		previewCapable: true,
 		nativeStreaming: false,
 		finalReuseSafe: false,
-		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
@@ -28,8 +31,31 @@ function model(): ModelInfo {
 	} as ModelInfo;
 }
 
+function state(overrides: Partial<ModelStateEntry> = {}): ModelStateEntry {
+	return {
+		id: "tiny",
+		cache: {
+			state: "cached",
+			progress: 1,
+			downloaded_bytes: 123_000_000,
+			total_bytes: 123_000_000,
+		},
+		cache_by_quantization: {},
+		available_quantizations: ["", "int8"],
+		effective_quantization: "int8",
+		estimated_bytes: 0,
+		comfortable_on_gpu: true,
+		comfortable_on_cpu: true,
+		...overrides,
+	} as ModelStateEntry;
+}
+
 describe("SttModelSelector detached-open mode", () => {
 	beforeEach(() => {
+		// The module-level selected-model metadata cache (keyed by `${kind}:${value}`)
+		// bleeds across test files in the single-process suite — a prior file's
+		// `stt:tiny` entry yields stale quant/footprint here. Clear it per case.
+		_resetSelectedModelMetadataCacheForTests();
 		// A leaked, never-unmounted selector fiber from a prior test file can leave
 		// the model-swap store mid-swap, which flips the trigger into its
 		// "switching from → to" view instead of the steady-state chip. Reset it so
@@ -106,5 +132,36 @@ describe("SttModelSelector detached-open mode", () => {
 
 		expect(screen.getByText("OpenAI")).toBeDefined();
 		expect(screen.getByText("Tiny")).toBeDefined();
+	});
+
+	test("renders selected quantization and footprint in the closed trigger", () => {
+		const selected = {
+			...model(),
+			displayName: "NeMo Parakeet TDT 0.6B v3",
+			family: "nemo",
+			sizeLabel: "0.6B",
+			sizeBytesByQuantization: { int8: 123_000_000 },
+		} as ModelInfo;
+
+		render(
+			<SttModelSelector
+				currentQuantization="int8"
+				models={[selected]}
+				onChange={mock(() => undefined)}
+				onOpenDetached={mock(() => undefined)}
+				statesById={{ tiny: state() }}
+				systemInfo={null}
+				value="tiny"
+			/>,
+		);
+
+		const trigger = document.querySelector(
+			'[data-slot="stt-model-selector-trigger"]',
+		);
+		expect(trigger?.textContent).toContain("Parakeet TDT");
+		expect(trigger?.textContent).toContain("v3");
+		expect(trigger?.textContent).toContain("0.6B");
+		expect(trigger?.textContent).toContain("INT8");
+		expect(trigger?.textContent).toContain("117 MB");
 	});
 });

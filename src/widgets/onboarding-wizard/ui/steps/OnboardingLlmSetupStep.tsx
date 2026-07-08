@@ -19,6 +19,7 @@ import {
 import { cn } from "@/shared/lib/cn";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { ollamaLlmSelectorUiStorageKey } from "@/shared/lib/model-picker-ui-storage-keys";
+import { springs } from "@/shared/lib/springs";
 import { FormControl } from "@/shared/ui/form-control";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import { Toggle } from "@/shared/ui/toggle";
@@ -85,15 +86,17 @@ export function OnboardingLlmSetupStep() {
 				<m.div
 					animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
 					className="flex items-center gap-2 px-1 py-1.5 text-body-sm text-foreground-muted"
-					exit={{ opacity: 0, y: -4, filter: "blur(2px)" }}
+					exit={{
+						opacity: 0,
+						y: -4,
+						filter: "blur(2px)",
+						transition: reduceMotion ? { duration: 0 } : springs.moderate.exit,
+					}}
 					initial={
 						reduceMotion ? false : { opacity: 0, y: 4, filter: "blur(2px)" }
 					}
 					key="detecting"
-					transition={{
-						duration: reduceMotion ? 0 : 0.18,
-						ease: [0.22, 1, 0.36, 1],
-					}}
+					transition={reduceMotion ? { duration: 0 } : springs.moderate}
 				>
 					<PulseDot className="size-2" />
 					<span>{t("lookingForOllama")}</span>
@@ -107,15 +110,17 @@ export function OnboardingLlmSetupStep() {
 			<AnimatePresence initial={false} mode="wait">
 				<m.div
 					animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-					exit={{ opacity: 0, y: -5, filter: "blur(2px)" }}
+					exit={{
+						opacity: 0,
+						y: -5,
+						filter: "blur(2px)",
+						transition: reduceMotion ? { duration: 0 } : springs.slow.exit,
+					}}
 					initial={
 						reduceMotion ? false : { opacity: 0, y: 6, filter: "blur(3px)" }
 					}
 					key="not-installed"
-					transition={{
-						duration: reduceMotion ? 0 : 0.2,
-						ease: [0.22, 1, 0.36, 1],
-					}}
+					transition={reduceMotion ? { duration: 0 } : springs.slow}
 				>
 					<NotInstalledPanel
 						error={startError}
@@ -123,12 +128,12 @@ export function OnboardingLlmSetupStep() {
 							setStarting(true);
 							setStartError(null);
 							startOllama()
-								.then((result) => {
+								.then(async (result) => {
 									if (result.started) {
-										return detectOllama().then(setDetect);
+										setDetect(await detectOllama());
+										return;
 									}
 									setStartError(result.error ?? t("couldNotStartOllama"));
-									return;
 								})
 								.finally(() => setStarting(false));
 						}}
@@ -202,27 +207,29 @@ export function OnboardingLlmSetupStep() {
 			<m.div
 				animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
 				className="flex flex-col gap-3"
-				exit={{ opacity: 0, y: -5, filter: "blur(2px)" }}
+				exit={{
+					opacity: 0,
+					y: -5,
+					filter: "blur(2px)",
+					transition: reduceMotion ? { duration: 0 } : springs.slow.exit,
+				}}
 				initial={
 					reduceMotion ? false : { opacity: 0, y: 6, filter: "blur(3px)" }
 				}
 				key="installed"
-				transition={{
-					duration: reduceMotion ? 0 : 0.2,
-					ease: [0.22, 1, 0.36, 1],
-				}}
+				transition={reduceMotion ? { duration: 0 } : springs.slow}
 			>
 				<m.div
 					animate={{ opacity: 1, scale: 1, y: 0 }}
 					className="flex items-center gap-2 rounded-md bg-success/10 px-3 py-2 text-body-sm text-success ring-1 ring-success/25"
 					initial={reduceMotion ? false : { opacity: 0, scale: 0.98, y: 4 }}
-					transition={{ type: "spring", stiffness: 580, damping: 34 }}
+					transition={springs.moderate}
 				>
 					<m.span
 						animate={{ rotate: 0, scale: 1 }}
 						className="inline-flex"
 						initial={reduceMotion ? false : { rotate: -28, scale: 0.55 }}
-						transition={{ type: "spring", stiffness: 700, damping: 26 }}
+						transition={springs.moderate}
 					>
 						<HugeiconsIcon icon={CheckmarkCircle02Icon} size={13} />
 					</m.span>
@@ -308,10 +315,15 @@ function NotInstalledPanel({
 						<AnimatePresence initial={false} mode="wait">
 							<m.span
 								animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-								exit={{ opacity: 0, y: -3, filter: "blur(2px)" }}
+								exit={{
+									opacity: 0,
+									y: -3,
+									filter: "blur(2px)",
+									transition: springs.moderate.exit,
+								}}
 								initial={{ opacity: 0, y: 3, filter: "blur(2px)" }}
 								key={starting ? "starting" : "start"}
-								transition={{ duration: 0.14, ease: "easeInOut" }}
+								transition={springs.moderate}
 							>
 								{starting ? t("startingOllama") : t("tryStartOllama")}
 							</m.span>
@@ -333,9 +345,9 @@ function NotInstalledPanel({
 						<m.p
 							animate={{ opacity: 1, x: 0 }}
 							className="mt-2 text-body-sm text-error"
-							exit={{ opacity: 0, x: -4 }}
+							exit={{ opacity: 0, x: -4, transition: springs.moderate.exit }}
 							initial={{ opacity: 0, x: 4 }}
-							transition={{ duration: 0.16, ease: "easeInOut" }}
+							transition={springs.moderate}
 						>
 							{error}
 						</m.p>

@@ -10,8 +10,8 @@ import {
 } from "@/shared/ui/thinking-indicator";
 import { CancelButton } from "./overlay-shell";
 import {
-	breatheVariants,
 	BUBBLE_SHADOW,
+	breatheVariants,
 	bubbleVariants,
 	CHIP_SHADOW,
 	chipVariants,
@@ -166,7 +166,7 @@ function FloatingMorphSurface({
 						: "pointer-events-none opacity-0"
 				}
 				data-overlay-hit-region="true"
-				style={{ transition: "opacity 180ms ease-out" }}
+				style={{ transition: "opacity 160ms ease-out" }}
 			>
 				<div
 					className={`relative block shrink-0 overflow-hidden ${roundedClass} t-resize ${GLASS_SURFACE} ${surfaceShadow}`}
@@ -363,8 +363,8 @@ function FloatingTransformPill({
 }
 
 export {
-	type FloatingPillProps,
-	type FloatingMorphSurfaceProps,
 	FloatingBottomPill,
+	type FloatingMorphSurfaceProps,
+	type FloatingPillProps,
 	FloatingTransformPill,
 };

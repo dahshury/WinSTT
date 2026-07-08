@@ -121,7 +121,7 @@ export function quantDownloadSeedFromCache(
 	cache: QuantCacheSeedSource | null | undefined,
 ): QuantDownloadSeed | undefined {
 	if (cache?.state !== "partial") {
-		return undefined;
+		return;
 	}
 	const { downloaded, total } = cacheBytes(cache);
 	const progressValue = cache?.progress;

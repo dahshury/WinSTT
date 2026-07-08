@@ -37,14 +37,14 @@ New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 
 $sidecar = Join-Path $repoRoot "src-tauri\binaries\winstt-context.exe"
 $cargoEnv = Join-Path $repoRoot "tools\windows\cargo-env.bat"
-$smokeExe = Join-Path $repoRoot "src-tauri\target\debug\context_prompt_smoke.exe"
+$smokeExe = Join-Path $repoRoot "src-tauri\target\debug\examples\context_prompt_smoke.exe"
 
 if (-not (Test-Path $sidecar)) {
     throw "Native context helper not found: $sidecar"
 }
 
 if (-not $SkipBuild) {
-    & $cargoEnv build --bin context_prompt_smoke | Out-Host
+    & $cargoEnv build --example context_prompt_smoke | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to build context_prompt_smoke"
     }

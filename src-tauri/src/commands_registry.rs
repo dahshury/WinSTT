@@ -51,12 +51,6 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         shortcut::change_binding,
         shortcut::reset_binding,
         shortcut::get_available_typing_tools,
-        shortcut::set_post_process_provider,
-        shortcut::fetch_post_process_models,
-        shortcut::add_post_process_prompt,
-        shortcut::update_post_process_prompt,
-        shortcut::delete_post_process_prompt,
-        shortcut::set_post_process_selected_prompt,
         shortcut::suspend_binding,
         shortcut::resume_binding,
         shortcut::change_whisper_gpu_device,
@@ -100,6 +94,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::settings_transfer::settings_export_full,
         winstt::commands::settings_transfer::settings_import_full,
         winstt::commands::stt::stt_list_models,
+        winstt::commands::stt::tts_transcribe_reference,
         winstt::commands::stt::picker_quantizations_for,
         winstt::commands::stt::get_live_resources,
         winstt::commands::stt::set_custom_model,
@@ -198,6 +193,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::tts::tts_report_playback_ended,
         winstt::commands::ollama_library::ollama_refresh_library,
         winstt::commands::ollama_library::ollama_refresh_tags,
+        winstt::commands::ollama_library::ollama_refresh_model_hit,
         winstt::commands::ollama_library::ollama_search_library,
         winstt::commands::ollama_pull::ollama_cancel_pull,
         winstt::commands::ollama_pull::llm_warmup_status,
@@ -221,6 +217,9 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::history::transform_history_get_all,
         winstt::commands::history::transform_history_clear,
         winstt::commands::history::transform_history_delete,
+        winstt::commands::history::tts_history_get_all,
+        winstt::commands::history::tts_history_clear,
+        winstt::commands::history::tts_history_delete,
         winstt::commands::about::about_get_app_info,
         winstt::commands::about::about_get_license,
         winstt::commands::about::about_get_notices,
@@ -228,6 +227,8 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::diag::diag_save_bundle,
         winstt::commands::diag::diag_observability_timeline,
         winstt::commands::diag::diag_clear_observability_timeline,
+        winstt::commands::diag::diag_cloud_metrics,
+        winstt::commands::diag::diag_clear_cloud_metrics,
         winstt::commands::sound::sound_library_add,
         winstt::commands::sound::sound_library_pick_and_add,
         winstt::commands::sound::sound_library_read_file,
@@ -257,6 +258,8 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::tray_menu::show_tray_menu,
         winstt::commands::tray_menu::reanchor_tray_menu,
         winstt::commands::tray_menu::hide_tray_menu,
+        winstt::commands::tray_indicator_window::tray_indicator_show,
+        winstt::commands::tray_indicator_window::tray_indicator_hide,
         // ── de-brand/completion slice ──
         winstt::commands::sound::sound_get_data,
         winstt::commands::cancel::cancel_current_operation,
@@ -441,9 +444,7 @@ mod command_registry_tests {
                     format!("{source} should be under src/shortcut/ and end with .rs")
                 })?;
                 match module.as_str() {
-                    "accelerator_commands" | "post_process_commands" | "settings_commands" => {
-                        Ok(format!("shortcut::{name}"))
-                    }
+                    "accelerator_commands" | "settings_commands" => Ok(format!("shortcut::{name}")),
                     _ => Ok(format!("shortcut::{module}::{name}")),
                 }
             }

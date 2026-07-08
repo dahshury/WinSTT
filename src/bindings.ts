@@ -24,54 +24,6 @@ async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
 async getAvailableTypingTools() : Promise<string[]> {
     return await TAURI_INVOKE("get_available_typing_tools");
 },
-async setPostProcessProvider(providerId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_post_process_provider", { providerId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return __commandError__(e);
-}
-},
-async fetchPostProcessModels(providerId: string) : Promise<Result<string[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("fetch_post_process_models", { providerId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return __commandError__(e);
-}
-},
-async addPostProcessPrompt(name: string, prompt: string) : Promise<Result<LLMPrompt, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("add_post_process_prompt", { name, prompt }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return __commandError__(e);
-}
-},
-async updatePostProcessPrompt(id: string, name: string, prompt: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_post_process_prompt", { id, name, prompt }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return __commandError__(e);
-}
-},
-async deletePostProcessPrompt(id: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_post_process_prompt", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return __commandError__(e);
-}
-},
-async setPostProcessSelectedPrompt(id: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_post_process_selected_prompt", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return __commandError__(e);
-}
-},
 /**
  * Temporarily unregister a binding while the user is editing it in the UI.
  * This avoids firing the action while keys are being recorded.
@@ -440,6 +392,20 @@ async settingsImportFull() : Promise<Result<SettingsImportResult, string>> {
  */
 async sttListModels() : Promise<CatalogModelInfo[]> {
     return await TAURI_INVOKE("stt_list_models");
+},
+/**
+ * `tts_transcribe_reference` — validate a cloning reference clip's length and transcribe it with
+ * the currently-loaded STT model. Used by the voice-cloning UI to (1) REJECT clips longer than
+ * `max_secs` and (2) auto-fill the reference transcript (editable afterwards) for cloning models
+ * that need it (Spark). Decodes via the shared symphonia path (wav/mp3/flac/… → 16 kHz mono).
+ */
+async ttsTranscribeReference(path: string, maxSecs: number) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_transcribe_reference", { path, maxSecs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
 },
 /**
  * `picker_quantizations_for` — the quant suffixes the picker should offer for a
@@ -1404,6 +1370,19 @@ async ollamaRefreshTags(model: string) : Promise<Result<OllamaLibraryTagsResult,
 }
 },
 /**
+ * `ollama_refresh_model_hit` → `LLM_FETCH_OLLAMA_MODEL_HIT`. Per-slug homepage scrape
+ * (description / capabilities / pulls / updated) so a typed tag that isn't in the
+ * recommended catalog fills the same card fields the catalog cards show.
+ */
+async ollamaRefreshModelHit(model: string) : Promise<Result<OllamaLibraryHit, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ollama_refresh_model_hit", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
  * `ollama_search_library` → `LLM_SEARCH_OLLAMA_LIBRARY`. Paginated search (parity; v1 renderer
  * filters the full catalog client-side instead).
  */
@@ -1655,6 +1634,41 @@ async transformHistoryDelete(id: string) : Promise<Result<DeletedResult, string>
 }
 },
 /**
+ * `tts-history:get-all` — every TTS read-aloud row reshaped for the settings
+ * History tab (STRING id, MILLIS timestamp, camelCase).
+ */
+async ttsHistoryGetAll() : Promise<Result<TtsHistoryEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_history_get_all") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * `tts-history:clear` — delete all TTS rows. Same `ClearResult` envelope as
+ * the other history clears so the frontend shares the confirm flow.
+ */
+async ttsHistoryClear() : Promise<Result<ClearResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_history_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * `tts-history:delete` (STRING id) — delete one TTS row.
+ */
+async ttsHistoryDelete(id: string) : Promise<Result<DeletedResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_history_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
  * `about_get_app_info` — app metadata for About/native surfaces.
  */
 async aboutGetAppInfo() : Promise<AboutAppInfo> {
@@ -1703,6 +1717,21 @@ async diagObservabilityTimeline(limit: number | null) : Promise<ObservabilityIss
  */
 async diagClearObservabilityTimeline() : Promise<number> {
     return await TAURI_INVOKE("diag_clear_observability_timeline");
+},
+/**
+ * `diag_cloud_metrics` - per-(provider, operation) cloud latency/outcome
+ * aggregates (count, avg/min/max ms, error count + last error). Complements
+ * the issue timeline with the latency side of every cloud round-trip.
+ */
+async diagCloudMetrics() : Promise<CloudOpStats[]> {
+    return await TAURI_INVOKE("diag_cloud_metrics");
+},
+/**
+ * `diag_clear_cloud_metrics` - reset the cloud latency aggregates. Returns the
+ * number of (provider, operation) rows removed.
+ */
+async diagClearCloudMetrics() : Promise<number> {
+    return await TAURI_INVOKE("diag_clear_cloud_metrics");
 },
 /**
  * `sound_library_add` is retained for older renderer code but intentionally
@@ -2011,6 +2040,29 @@ async hideTrayMenu() : Promise<Result<null, string>> {
 }
 },
 /**
+ * Show the tray-indicator pill anchored at the notification-area corner. Returns
+ * `true` if it was actually shown, `false` when suppressed (settings focused).
+ */
+async trayIndicatorShow() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tray_indicator_show") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * Hide the pill. The renderer calls this after its exit animation completes.
+ */
+async trayIndicatorHide() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tray_indicator_hide") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
  * `sound_get_data` — serve the ACTIVE recording chime's bytes to the renderer's
  * Web Audio preloader. Returns `None` when the chime is disabled or the file is
  * missing/unreadable (the renderer treats null as "no sound"). Mirrors the
@@ -2111,7 +2163,7 @@ webview2Version: string; copyright: string }
  * its on-disk size in bytes.
  */
 export type AppDataUsageEntry = { key: string; bytes: number }
-export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; update_checks_enabled?: boolean; selected_model?: string; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPositionLegacy; debug_mode?: boolean; log_level?: LogLevel; model_unload_timeout?: ModelUnloadTimeoutLegacy; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKeyLegacy; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number }
+export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; update_checks_enabled?: boolean; selected_model?: string; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPositionLegacy; debug_mode?: boolean; log_level?: LogLevel; model_unload_timeout?: ModelUnloadTimeoutLegacy; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKeyLegacy; mute_while_recording?: boolean; append_trailing_space?: boolean; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 /**
  * One audio input device in the WinSTT spec `AudioDevice` shape (camelCase).
@@ -2148,6 +2200,14 @@ export type AudioSettings = {
  * Mic index; `null` = system default. HOT-SWAP.
  */
 inputDeviceIndex?: number | null;
+/**
+ * Microphone preference order (cpal device NAMES, highest first). When
+ * non-empty, the first CONNECTED entry wins on every stream open,
+ * overriding `input_device_index` (which the renderer keeps re-pointed at
+ * the same effective device). Empty = plain index selection. HOT-SWAP.
+ * Zod `.catch([])`.
+ */
+inputDevicePriority?: string[];
 /**
  * Capture sample rate. STARTUP (CLI).
  */
@@ -2260,6 +2320,18 @@ accuracy_score: number }
 export type ClearResult = { cleared: boolean }
 export type ClearUpdaterHistoryResult = { cleared: boolean }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
+/**
+ * Rolling aggregate for one `(provider, operation)` pair.
+ */
+export type CloudOpStats = { provider: string; operation: string; count: number; errorCount: number; lastMs: number; avgMs: number; minMs: number; maxMs: number;
+/**
+ * Unix ms of the most recent sample.
+ */
+lastAtMs: number;
+/**
+ * Most recent failure message (trimmed), if any sample failed.
+ */
+lastError?: string | null }
 /**
  * Verify-credential outcome surfaced to the renderer.
  */
@@ -2509,6 +2581,15 @@ contextAllowList?: string[];
  */
 contextDenyList?: string[];
 /**
+ * Tier-2 OCR fallback (report R3): when context awareness captured no usable
+ * text (canvas apps, remote desktops, games — surfaces UIA returns nothing
+ * for), screenshot the PINNED window and OCR it ON-DEVICE. DEFAULT FALSE:
+ * screenshot capture is the industry-unanimous opt-in tier. The recognized
+ * text never leaves the machine — it feeds only the local LLM cleanup step,
+ * exactly like the UIA text. HOT-SWAP (read per-capture from settings).
+ */
+contextScreenOcr?: boolean;
+/**
  * Per-utterance speaker diarization (~32 MB models, first-run download).
  * HOT-SWAP (runtime toggle via diarization-toggle method).
  */
@@ -2558,6 +2639,12 @@ previewBeforePasting?: boolean;
  * with preview-before-pasting. Zod `.catch(false)`.
  */
 wordByWordPasting?: boolean;
+/**
+ * Master switch for transcription history. When false, nothing is persisted:
+ * no history rows, no transform rows, no WAV recordings. Existing data stays on
+ * disk until deleted explicitly. HOT-SWAP. Zod `.catch(true)`.
+ */
+historyEnabled?: boolean;
 /**
  * Cap on persisted history entries. Range 10..10000. HOT-SWAP. Zod `.catch(1000)`.
  */
@@ -2616,7 +2703,22 @@ privacy_markers_json: string | null;
  * a catalog key (e.g. `tiny`) or a `provider:model` cloud-STT id. `None`
  * on legacy rows (column added later) and renderer-driven manual adds.
  */
-stt_model: string | null }
+stt_model: string | null;
+/**
+ * Wall-clock time spent by the STT model finalizing this transcription.
+ * `None` for legacy rows and renderer-driven manual adds.
+ */
+stt_processing_ms: number | null;
+/**
+ * USD billed for the cloud STT upload. `None` for local decodes and rows
+ * written before cost tracking shipped.
+ */
+stt_cost_usd: number | null;
+/**
+ * `true` when `stt_cost_usd` is a client-side estimate (providers that
+ * report no billed amount) rather than a provider-billed figure.
+ */
+stt_cost_is_estimate: boolean }
 /**
  * Entity `HistoryEntry` (entities/transcription-history/model) — the dedicated
  * history window + paginated list. NUMBER id, epoch-SECONDS timestamp.
@@ -2631,7 +2733,6 @@ export type HotkeySettings = {
 pushToTalkKey?: string }
 export type IntegrationsSettings = { elevenlabs?: ProviderIntegrationStatus }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
-export type LLMPrompt = { id: string; name: string; prompt: string }
 /**
  * One language `{ code, label }`.
  */
@@ -2698,7 +2799,9 @@ openrouterApiKey?: string;
  */
 profileSwapHotkey?: string; dictation?: LlmDictation; transforms?: LlmTransforms;
 /**
- * Client request timeout (ms). Range 1000..30000. Persisted but NOT applied at network layer.
+ * Client request timeout (ms). Range 1000..30000. Applied (via
+ * `llm::llm_request_timeout`) to every cloud LLM round-trip: the
+ * dictation/transform OpenRouter attempts and the legacy post-process path.
  */
 timeout?: number }
 export type LlmTransforms = ({ provider?: LlmProvider;
@@ -2774,6 +2877,12 @@ model?: string;
  * Realtime/live-preview model (must support realtime). HOT-SWAP.
  */
 realtimeModel?: string;
+/**
+ * Forced language for a multilingual/prompt realtime model (Nemotron-3.5), independent of the
+ * main model's `language`. `""` = whole-utterance auto-detect. HOT-SWAP (reloads the realtime
+ * engine so the encoder `prompt_index` is re-bound).
+ */
+realtimeLanguage?: string;
 /**
  * Forced decode language (`""` = auto-detect). HOT-SWAP.
  */
@@ -2949,7 +3058,6 @@ export type PaginatedHistory = { entries: HistoryRow[]; hasMore: boolean }
 export type PartialWinsttSettings = { global?: GlobalSettings | null; model?: ModelSettings | null; quality?: QualitySettings | null; audio?: AudioSettings | null; general?: GeneralSettings | null; hotkey?: HotkeySettings | null; dictionary?: DictionaryEntry[] | null; snippets?: SnippetEntry[] | null; llm?: LlmSettings | null; tts?: TtsSettings | null; integrations?: IntegrationsSettings | null }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
-export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * `presetEntrySchema`. `level` valid only for summarize/concise; `targetLang`
  * valid only for translate (cross-field constraints enforced at the app layer).
@@ -3083,7 +3191,6 @@ providers: string[];
  * The currently-loaded REALTIME model id (`None` when realtime isn't loaded).
  */
 realtime_model: string | null }
-export type SecretMap = Partial<{ [key in string]: string }>
 /**
  * Result of `winstt_set_settings`: whether the change requires an engine
  * restart, and which dot-paths drove that decision. Kept for renderer wire
@@ -3164,6 +3271,11 @@ llmError?: string | null;
  */
 llmProcessingMs?: number | null;
 /**
+ * STT final decode/finalization wall-time in ms. This is distinct from
+ * `duration_ms`, which is the user's recorded audio length.
+ */
+sttProcessingMs?: number | null;
+/**
  * LLM generation speed (output tokens / processing second), when the
  * provider reported token usage and the pass took a measurable duration.
  */
@@ -3179,7 +3291,22 @@ dictionaryFixes?: number | null; historyTag?: string | null; privacyMarkers?: st
  * transcription (e.g. `Whisper Tiny`), resolved from the stored model id.
  * Omitted on legacy rows and renderer-driven manual adds.
  */
-sttModel?: string | null }
+sttModel?: string | null;
+/**
+ * USD billed for the cloud STT upload. Omitted for local decodes.
+ */
+sttCostUsd?: number | null;
+/**
+ * `true` when `sttCostUsd` is a client-side estimate (the provider
+ * reports no billed amount). Omitted when there is no STT cost.
+ */
+sttCostIsEstimate?: boolean | null;
+/**
+ * USD cost of the cloud LLM post-processing pass, computed from the
+ * provider's native token accounting × catalog rates. Omitted for local
+ * LLMs and runs without usage data.
+ */
+llmCostUsd?: number | null }
 /**
  * `transformSchema` — a single user-configurable text transform.
  * `builtin: true` entries show a Reset action instead of Delete in the UI.
@@ -3197,7 +3324,11 @@ export type TransformApplyResult = { before: string; after: string; source: Tran
  * the same core fields as `TranscriptionHistoryEntry` so the current table,
  * copy controls, and before/after diff view can be shared unchanged.
  */
-export type TransformHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; originalText?: string | null; llmModel?: string | null; llmError?: string | null; llmProcessingMs?: number | null; llmTokensPerSecond?: number | null; source: string }
+export type TransformHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; originalText?: string | null; llmModel?: string | null; llmError?: string | null; llmProcessingMs?: number | null; llmTokensPerSecond?: number | null;
+/**
+ * USD cost of the cloud LLM transform. Omitted for local LLMs.
+ */
+llmCostUsd?: number | null; source: string }
 /**
  * The selection source the capture resolved. Mirrors WinSTT's
  * `ApplyResult.source` ("uia" | "clipboard" | "empty").
@@ -3248,6 +3379,31 @@ speed?: number; speakerBoost?: boolean }
  */
 export type TtsCloudProvider = "elevenlabs" | "openrouter"
 /**
+ * One text-to-speech read-aloud run for the settings History tab. Shares the
+ * core fields with the other history shapes so the table renders it with the
+ * same card + footer machinery.
+ */
+export type TtsHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number;
+/**
+ * Engine id: `<provider>:<id>` for cloud synthesis, the local model key
+ * otherwise.
+ */
+model: string; voice?: string | null;
+/**
+ * Characters synthesized (the unit most TTS providers bill on).
+ */
+characters: number; processingMs?: number | null;
+/**
+ * USD billed for the run. Omitted for local synthesis and cloud runs
+ * whose cost could not be resolved.
+ */
+costUsd?: number | null;
+/**
+ * `true` when `costUsd` is a client-side estimate rather than a
+ * provider-billed figure. Omitted when there is no cost.
+ */
+costIsEstimate?: boolean | null }
+/**
  * `{ ready }` — the `initTts` result shape (`{ ready: boolean }`).
  */
 export type TtsInitResult = { ready: boolean }
@@ -3255,7 +3411,12 @@ export type TtsInitResult = { ready: boolean }
  * One TTS catalog row, snake_case (the renderer's rawTtsModelSchema maps it to
  * the camelCase `TtsModelInfo`).
  */
-export type TtsModelInfoDto = { id: string; engine: string; display_name: string; maker: string; languages: string[]; num_voices: number; cloning: string; sample_rate: number; param_count_m: number; size_label: string; available_quantizations: string[]; size_bytes_by_quantization: Partial<{ [key in string]: number }>; quality_score: number; speed_score: number; description: string; available: boolean }
+export type TtsModelInfoDto = { id: string; engine: string; display_name: string; maker: string; languages: string[]; num_voices: number; cloning: string;
+/**
+ * Voice-design capability: the voice is chosen by a text prompt (→ `voiceDesign`
+ * on the frontend). Drives the picker's VoiceDesign badge + prompt dialog.
+ */
+voice_design: boolean; sample_rate: number; param_count_m: number; size_label: string; available_quantizations: string[]; size_bytes_by_quantization: Partial<{ [key in string]: number }>; quality_score: number; speed_score: number; description: string; available: boolean }
 /**
  * Per-model cache state, camelCase (matches the renderer's `TtsModelStateEntry`).
  */
@@ -3269,9 +3430,24 @@ export type TtsSettings = { enabled?: boolean;
  */
 model?: string;
 /**
+ * ONNX weights quant/precision for the selected local model (mirrors
+ * `model.onnxQuantization` for STT). Free-string gated by the catalog per
+ * model; empty → the model's default quant. Currently only Qwen3-TTS Voice
+ * Design ships a quant ladder (`int4`|`fp16`|`fp32`); other engines ignore it.
+ * HOT-SWAP (the engine is rebuilt when the fingerprint changes).
+ */
+quantization?: string;
+/**
  * Voice catalog id WITHIN the selected model.
  */
-voice?: string; lang?: string;
+voice?: string;
+/**
+ * Reference-clip transcript for cloning models that need it (`cloning ==
+ * zero_shot_audio_transcript`, e.g. Spark). Auto-filled by transcribing the uploaded
+ * reference clip with the selected STT model, then user-editable. Empty otherwise.
+ * HOT-SWAP (the Spark engine is rebuilt when this changes).
+ */
+cloneRefText?: string; lang?: string;
 /**
  * 0.4..2.0 multiplier (Supertonic slider reaches 0.4; other engines 0.5).
  */

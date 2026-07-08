@@ -32,7 +32,7 @@ const asSettings = <T extends object>(s: T): AppSettings =>
 const originalApi = window.nativeBridge;
 const sentChannels: Array<{ channel: string; args: unknown[] }> = [];
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
-const savedPatches: Array<Partial<AppSettings>> = [];
+const savedPatches: Partial<AppSettings>[] = [];
 let initialSettings = appSettingsSchema.parse({});
 
 function recordSave(settings: Partial<AppSettings>): void {
@@ -52,7 +52,7 @@ function makeApi() {
 			if (channel === IPC.SETTINGS_LOAD) {
 				return {};
 			}
-			return;
+			return undefined;
 		},
 		send: (channel: string, ...args: unknown[]) => {
 			sentChannels.push({ channel, args });

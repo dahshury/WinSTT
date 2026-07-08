@@ -94,7 +94,9 @@ export function useBadgeOverflow<T>({
 	const [containerWidth, setContainerWidth] = React.useState(0);
 
 	React.useEffect(() => {
-		if (!containerRef.current) return;
+		if (!containerRef.current) {
+			return;
+		}
 
 		function measureWidth() {
 			if (containerRef.current) {

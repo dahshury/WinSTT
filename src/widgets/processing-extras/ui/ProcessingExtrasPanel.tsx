@@ -227,6 +227,8 @@ export function ContextAwarenessSection({
 	const contextAppMode =
 		general?.contextAppMode ?? DEFAULT_SETTINGS.general.contextAppMode;
 	const hasAllowedApps = (general?.contextAllowList?.length ?? 0) > 0;
+	const screenOcr =
+		general?.contextScreenOcr ?? DEFAULT_SETTINGS.general.contextScreenOcr;
 	// "Allow list" (selected-only) mode captures nothing until the user picks an
 	// app, so in that mode context awareness is genuinely on ONLY when the list
 	// is non-empty. Rather than just faking the toggle's look (which left the
@@ -333,6 +335,31 @@ export function ContextAwarenessSection({
 						value={contextAppMode}
 					/>
 				</SettingField>
+				{/* Tier-2 OCR fallback (report R3). Opt-in, default off: when context
+				    capture finds no text via accessibility (canvas apps, remote
+				    desktops, games), WinSTT screenshots the window and reads it with
+				    on-device OCR. The recognized text never leaves the machine. */}
+				<SettingField
+					caption={tg("contextScreenOcrCaption")}
+					disabled={disabled}
+					disabledTooltip={disabledTooltip}
+					hideReset={disabled}
+					isDefault={screenOcr === DEFAULT_SETTINGS.general.contextScreenOcr}
+					label={tg("contextScreenOcr")}
+					labelAddon={
+						<Toggle
+							checked={screenOcr}
+							disabled={disabled}
+							onCheckedChange={(v) => updateGeneral({ contextScreenOcr: v })}
+						/>
+					}
+					onReset={() =>
+						updateGeneral({
+							contextScreenOcr: DEFAULT_SETTINGS.general.contextScreenOcr,
+						})
+					}
+					tooltip={tg("contextScreenOcrTooltip")}
+				/>
 				{contextAppMode === "selected-only" ? (
 					<ContextAllowedAppsSection
 						initialOpen={appsOpenNonce > 0}

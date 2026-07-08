@@ -17,6 +17,7 @@ function makeModel(overrides: Partial<TtsModelInfo> = {}): TtsModelInfo {
 		languages: ["en-us"],
 		numVoices: 54,
 		cloning: "none",
+		voiceDesign: false,
 		sampleRate: 24_000,
 		paramCountM: 82,
 		availableQuantizations: ["fp16"],

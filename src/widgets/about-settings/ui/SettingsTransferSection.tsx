@@ -43,7 +43,7 @@ async function runSettingsExport(
 ): Promise<ExportOutcome> {
 	try {
 		const result = unwrapCommand(await commands.settingsExportFull());
-		if (!result.cancelled && !result.ok) {
+		if (!(result.cancelled || result.ok)) {
 			return { message: result.error ?? failureMessage, ok: false };
 		}
 		return { ok: true };

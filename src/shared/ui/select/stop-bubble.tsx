@@ -27,7 +27,6 @@ export function StopBubble({
 	className?: string | undefined;
 }) {
 	return (
-		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: role="toolbar" IS interactive per WAI-ARIA, and this shim's only job is to stop pointer/keyboard events from bubbling out to the parent listbox row so an inner control (preview button, etc.) can be activated without selecting the row.
 		<div
 			className={className}
 			onClick={swallowEvent}

@@ -211,11 +211,22 @@ function ramReasonFor(severity: FitSeverity): FitReason {
 	return RAM_REASON_BY_SEVERITY[severity];
 }
 
-function gpuAvailableBytes(total: number, free: number): number {
+interface GpuAvailability {
+	available: number;
+	/** True when `free_vram_bytes` was a real measurement. The DXGI backend
+	 * reports either the live free budget or a `total` fallback, so a genuine
+	 * `0` means the card is FULL — not "unmeasured". */
+	freeKnown: boolean;
+}
+
+function gpuAvailability(total: number, free: number): GpuAvailability {
 	if (free > 0) {
-		return free;
+		return { available: free, freeKnown: true };
 	}
-	return total;
+	// free === 0: the GPU is (reported) full. We still expose `total` so the
+	// dialog can show the capacity, but the caller must not treat this as a
+	// confident fit — see `assessGpuFit`.
+	return { available: total, freeKnown: false };
 }
 
 function pushIfPositive(
@@ -235,9 +246,15 @@ function assessGpuFit(
 	reasons: FitReason[],
 ): FitAssessmentEntry {
 	const { total, free } = largestGpu(live);
-	const available = gpuAvailableBytes(total, free);
+	const { available, freeKnown } = gpuAvailability(total, free);
 	pushIfPositive(reasons, loadedOther, "stt_already_uses_gpu");
-	const severity = severityFor(required, available);
+	let severity = severityFor(required, available);
+	// A full GPU (free === 0) fell back to `total` capacity, which is optimistic
+	// — never report a confident "ok" off a guessed number; downgrade to a soft
+	// "tight" so the user still gets a heads-up before loading onto a busy card.
+	if (!freeKnown && severity === "ok") {
+		severity = "warning";
+	}
 	reasons.push(vramReasonFor(severity));
 	return {
 		severity,

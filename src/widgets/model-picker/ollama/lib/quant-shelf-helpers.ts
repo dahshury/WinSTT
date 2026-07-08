@@ -12,6 +12,15 @@
  */
 
 import type { OllamaLibraryTag } from "@/shared/api/models";
+import {
+	canonicalOllamaTag,
+	isSameOllamaTag,
+	ollamaTagIdentityKey,
+} from "@/shared/lib/ollama-tag";
+
+// Tag identity moved to shared so the llm-catalog store can key its pull
+// lifecycle on it too; re-exported here to keep this lib the picker-facing API.
+export { canonicalOllamaTag, isSameOllamaTag, ollamaTagIdentityKey };
 
 /**
  * Derive the base library slug from any Ollama pull tag or installed model name.
@@ -25,59 +34,6 @@ export function libraryBaseSlug(name: string): string {
 	const colonIdx = trimmed.indexOf(":");
 	const base = colonIdx >= 0 ? trimmed.slice(0, colonIdx) : trimmed;
 	return base.toLowerCase();
-}
-
-/**
- * Ollama's `:latest` is the implicit default tag — `ollama pull tinyllama` lands
- * on disk as `tinyllama:latest`, while the recommended list / library scrape may
- * name the same artifact bare (`tinyllama`). Canonicalize to the explicit
- * `:latest` form so installed/selected comparisons match regardless of which
- * form produced the name.
- */
-export function canonicalOllamaTag(name: string): string {
-	const trimmed = name.trim();
-	return trimmed.includes(":") ? trimmed : `${trimmed}:latest`;
-}
-
-const OLLAMA_TAG_ALIAS_GROUPS: readonly (readonly string[])[] = [
-	// Same Ollama digest aliases only. Do not map to a smaller/better quant here:
-	// those are different downloads and must stay separate choices.
-	["smollm2:135m-instruct-fp16", "smollm2:135m"],
-	["smollm2:360m-instruct-fp16", "smollm2:360m"],
-	["llama3.2:1b-instruct-q8_0", "llama3.2:1b"],
-	["llama3.2:3b-instruct-q4_k_m", "llama3.2:3b"],
-	["ministral-3:3b-instruct-2512-q4_k_m", "ministral-3:3b"],
-	["gemma4:e2b-it-q4_k_m", "gemma4:e2b"],
-	["gemma4:e4b-it-q4_k_m", "gemma4:e4b"],
-	["gemma4:12b-it-q4_k_m", "gemma4:12b"],
-];
-
-function buildAliasLookup(
-	groups: readonly (readonly string[])[],
-): ReadonlyMap<string, string> {
-	const lookup = new Map<string, string>();
-	for (const group of groups) {
-		const identity = group[0];
-		if (!identity) {
-			continue;
-		}
-		for (const alias of group) {
-			lookup.set(canonicalOllamaTag(alias).toLowerCase(), identity);
-		}
-	}
-	return lookup;
-}
-
-const OLLAMA_TAG_ALIAS_LOOKUP = buildAliasLookup(OLLAMA_TAG_ALIAS_GROUPS);
-
-export function ollamaTagIdentityKey(name: string): string {
-	const canonical = canonicalOllamaTag(name).toLowerCase();
-	return OLLAMA_TAG_ALIAS_LOOKUP.get(canonical) ?? canonical;
-}
-
-/** True when `a` and `b` name the same Ollama artifact (treating bare ≡ `:latest`). */
-export function isSameOllamaTag(a: string | undefined, b: string): boolean {
-	return a !== undefined && ollamaTagIdentityKey(a) === ollamaTagIdentityKey(b);
 }
 
 /**
@@ -253,7 +209,9 @@ function sortByCapabilityDesc(
  * Quant pruning — Ollama lists 15–20+ tags per size (legacy linear q4_0/q5_1,
  * Apple-only MLX, niche mxfp8/nvfp4, every K-quant _S/_M/_L, bf16≈fp16). Most are
  * strictly dominated or platform-irrelevant, so the shelf shows ONLY the explicit
- * canonical precision ladder — q4_K_M (sweet spot) · q5_K_M · q8_0 · fp16.
+ * canonical precision ladder — QAT (int4 quantization-aware trained, the lightest
+ * faithful pull where offered, e.g. gemma4's `-it-qat` builds at ~60% of the
+ * q4_K_M size) · q4_K_M (sweet spot) · q5_K_M · q8_0 · fp16.
  *
  * The bare "default" / `:latest` tag (no precision token) is deliberately NOT a
  * shelf badge — it is the model's AUTO/recommended pick, surfaced by clicking the
@@ -263,7 +221,8 @@ function sortByCapabilityDesc(
  * (so an installed odd quant — or the default they already pulled — never vanishes
  * mid-flight; `pruneToShownQuants`'s `forceKeep` keeps it).
  */
-const CANONICAL_QUANT_RE = /(?:^|[-_:])(q4_k_m|q5_k_m|q8_0|fp16)(?=$|[-_:])/i;
+const CANONICAL_QUANT_RE =
+	/(?:^|[-_:])(qat|q4_k_m|q5_k_m|q8_0|fp16)(?=$|[-_:])/i;
 
 function isShownQuantTag(name: string): boolean {
 	// Only the explicit canonical quant ladder gets a badge. A bare default (no

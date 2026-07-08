@@ -1,6 +1,10 @@
 import { useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
-import { useInputDevices, useOutputDevices } from "@/entities/audio-device";
+import {
+	resolveEffectivePriorityDeviceIndex,
+	useInputDevices,
+	useOutputDevices,
+} from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import {
@@ -30,6 +34,9 @@ function shouldResetSavedIndex(
 /** Internal — exported solely for colocated unit tests (not in the slice
  * public API). */
 export const __test_shouldResetSavedIndex = shouldResetSavedIndex;
+
+/** Stable fallback so the zustand selector doesn't fabricate a new `[]` per render. */
+const EMPTY_PRIORITY: readonly string[] = [];
 
 function shouldResetSavedOutputDevice(
 	savedDeviceId: string | null | undefined,
@@ -80,6 +87,9 @@ export function useDeviceSwitchFeedback(): void {
 	const updateAudio = useSettingsStore((s) => s.updateAudioSettings);
 	const savedIndex = useSettingsStore(
 		(s) => s.settings.audio?.inputDeviceIndex,
+	);
+	const savedPriority = useSettingsStore(
+		(s) => s.settings.audio?.inputDevicePriority ?? EMPTY_PRIORITY,
 	);
 	const savedOutputDeviceId = useSettingsStore(
 		(s) => s.settings.general?.outputDeviceId ?? "",
@@ -145,11 +155,42 @@ export function useDeviceSwitchFeedback(): void {
 		if (!shouldResetSavedIndex(savedIndex, devices)) {
 			return;
 		}
+		// When a preference order resolves to a connected device, the
+		// priority-sync effect below owns the re-point — resetting to null here
+		// would only add a redundant save (and a "System default" flicker).
+		if (resolveEffectivePriorityDeviceIndex(devices, savedPriority) != null) {
+			return;
+		}
 		updateAudio({ inputDeviceIndex: null });
 		// Same partial-save rationale as the device-switch-failed handler above —
 		// only the `audio` section is this hook's concern.
 		settingsSave({ audio: useSettingsStore.getState().settings.audio });
-	}, [devices, savedIndex, updateAudio]);
+	}, [devices, savedIndex, savedPriority, updateAudio]);
+
+	// Preference-order enforcement (`audio.inputDevicePriority`, drag-sorted in
+	// the mic pickers): whenever the device list or the order changes, re-point
+	// `inputDeviceIndex` at the highest-priority CONNECTED device. This is what
+	// makes plugging a preferred mic back in switch to it automatically — and it
+	// keeps the pickers' checkmark on the device the recorder will actually
+	// open (the backend applies the same rule at stream-open time). The
+	// `set_selected_microphone` bridge effect above then pushes the switch to
+	// the live stream.
+	useEffect(() => {
+		if (devices.length === 0 || savedPriority.length === 0) {
+			return;
+		}
+		const effective = resolveEffectivePriorityDeviceIndex(
+			devices,
+			savedPriority,
+		);
+		if (effective == null || String(effective) === String(savedIndex)) {
+			return;
+		}
+		updateAudio({ inputDeviceIndex: effective });
+		// Partial save, same rationale as above; immediate (no debounce) so the
+		// backend's live-read sees the new index before the next stream open.
+		settingsSave({ audio: useSettingsStore.getState().settings.audio });
+	}, [devices, savedIndex, savedPriority, updateAudio]);
 
 	useEffect(() => {
 		if (!shouldResetSavedOutputDevice(savedOutputDeviceId, outputSinkIds)) {

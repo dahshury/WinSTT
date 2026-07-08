@@ -292,6 +292,14 @@ fn overlay_hide_grace_ms(mode: OverlayMode, force_renderer_grace: bool) -> u64 {
 
 fn apply_overlay_hide(window: &tauri::WebviewWindow) {
     let _ = set_overlay_window_opacity(window, 0.0);
+    // Restore click-through only now, AFTER the window is fully transparent.
+    // Toggling the flag earlier (while the island's exit animation is still on
+    // screen) makes tao rewrite GWL_EXSTYLE and issue a SWP_FRAMECHANGED
+    // SetWindowPos, which invalidates the whole native frame; WebView2 repaints
+    // the invalidated area with its white clear color before the next composite,
+    // and SetWindowRgn clips that to the pill's hit region — a sharp white
+    // rectangle flashing behind the closing island.
+    let _ = window.set_ignore_cursor_events(true);
     let _ = window.set_position(tauri::LogicalPosition::new(
         OVERLAY_OFFSCREEN_POS,
         OVERLAY_OFFSCREEN_POS,
@@ -419,6 +427,71 @@ fn place_and_show_stacked(app: &AppHandle, reason: &str) {
 /// mouse/touch input for its visible controls.
 fn ignore_cursor_events_for_show_reason(reason: &str) -> bool {
     !matches!(reason, "recording" | "tts" | "preview")
+}
+
+/// Suppress the legacy non-client frame paint on the overlay window.
+///
+/// tao gives every top-level window `WS_CAPTION | WS_SYSMENU` in its real
+/// `GWL_STYLE` (decorations(false) only strips them for `AdjustWindowRectEx`),
+/// and rewrites that style on every window-flag diff — including the
+/// `set_ignore_cursor_events` flips in the overlay show/hide paths — so the
+/// caption style cannot be stripped once and stay gone. Normally the caption
+/// is invisible because tao's `WM_NCCALCSIZE` handling leaves no non-client
+/// area, but `SetWindowRgn` (the hit-region mechanism in
+/// `apply_overlay_hit_regions`) drops the window out of DWM frame rendering
+/// into the legacy frame pipeline. From there, every activation repaints the
+/// classic caption bar into the window's redirection bitmap — and clicking the
+/// island always activates the window, because WebView2 focuses itself on
+/// mouse-down (so even `WS_EX_NOACTIVATE` cannot prevent it; verified live).
+/// Those opaque caption pixels then linger behind the pill as a light "bar"
+/// wherever the hit region extends past the island's painted surface.
+///
+/// Fix: subclass the hwnd and (a) swallow `WM_NCPAINT` and the undocumented
+/// themed-caption repaints, (b) forward `WM_NCACTIVATE` with `lparam = -1`,
+/// which tells `DefWindowProc` to skip the frame repaint. tao's own subclass
+/// still receives `WM_NCACTIVATE` (it only reads `wparam`), so focus events
+/// are unaffected.
+#[cfg(target_os = "windows")]
+pub(crate) fn suppress_overlay_frame_paint(window: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::{WM_NCACTIVATE, WM_NCPAINT};
+
+    // Undocumented "user allowed height" caption/frame repaints sent to themed
+    // windows; classic frameless-window hygiene swallows them alongside NCPAINT.
+    const WM_NCUAHDRAWCAPTION: u32 = 0x00AE;
+    const WM_NCUAHDRAWFRAME: u32 = 0x00AF;
+    const SUBCLASS_ID: usize = 0x574e_4652; // "WNFR" — WinSTT no-frame subclass
+
+    unsafe extern "system" fn no_frame_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _subclass_id: usize,
+        _ref_data: usize,
+    ) -> LRESULT {
+        match msg {
+            WM_NCPAINT | WM_NCUAHDRAWCAPTION | WM_NCUAHDRAWFRAME => LRESULT(0),
+            // SAFETY: forwarding down the subclass chain with the documented
+            // "do not repaint" lparam sentinel.
+            WM_NCACTIVATE => unsafe { DefSubclassProc(hwnd, msg, wparam, LPARAM(-1)) },
+            // SAFETY: default forwarding down the subclass chain.
+            _ => unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) },
+        }
+    }
+
+    let w = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        if let Ok(hwnd) = w.hwnd() {
+            // SAFETY: `hwnd` belongs to this process and we are on its thread
+            // (SetWindowSubclass requires the window's own thread). Installing
+            // the same id twice only updates ref_data, so this is idempotent.
+            unsafe {
+                let _ = SetWindowSubclass(hwnd, Some(no_frame_proc), SUBCLASS_ID, 0);
+            }
+        }
+    });
 }
 
 /// Force the overlay topmost via Win32 (more reliable than always_on_top alone).
@@ -686,9 +759,14 @@ fn hide_overlay_window_with_options(app: &AppHandle, force_renderer_grace: bool)
         return;
     };
     let _ = window.emit(crate::winstt::commands::events::names::OVERLAY_HIDE, ());
-    // Restore click-through while hidden so a stale transparent overlay can never
-    // keep capturing the cursor after the session/read has ended.
-    let _ = window.set_ignore_cursor_events(true);
+    // Click-through is deliberately NOT restored here: flipping the cursor flag
+    // makes tao rewrite the window ex-style + fire a SWP_FRAMECHANGED repaint,
+    // which flashed a white rectangle (the region-clipped WebView2 clear color)
+    // behind the island while its exit animation was still playing. The restore
+    // happens in `apply_overlay_hide` after opacity reaches 0, so a stale
+    // transparent overlay still can never keep capturing the cursor once the
+    // window is actually gone; during the short exit grace the pill is still
+    // on screen, so it owning the cursor over its own rect is correct.
     // Snapshot the current generation; only hide if no newer show lands during the
     // grace window (the press→release→press race guard — the reference's `desired`).
     let generation = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);

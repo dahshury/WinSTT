@@ -1,5 +1,6 @@
+import { AiCloud01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import {
 	SurfaceProvider,
@@ -8,77 +9,178 @@ import {
 	surfaceHoverBg,
 	useSurface,
 } from "@/shared/lib/surface";
+import { Tooltip } from "@/shared/ui/tooltip";
 
 /**
  * One datum chip on a card's recessed footer shelf: an icon (or brand logo) and
- * a value, with an optional hover title. `danger` strikes the value through and
- * tints it red for a failed datum; `truncate` clamps long values (ids) so the
- * strip stays one line.
+ * a value, with an optional hover title or rich tooltip. `danger` strikes the
+ * value through and tints it red for a failed datum; `truncate` clamps long
+ * values (ids) so the strip stays one line.
  */
 export interface EntryCardMetaPart {
+	/** Flags the datum as running on a cloud provider — appends a small cloud
+	 *  sign after the value (`cloudLabel` becomes its accessible name). Mirrors
+	 *  the main window's cloud cue so local/cloud models read apart at a glance. */
+	cloud?: boolean;
+	cloudLabel?: string;
 	danger?: boolean;
 	icon: IconSvgElement;
 	key: string;
 	logo?: string | null;
+	/** Render the brand `logo` uncolored — alpha-masked to the chip's own muted
+	 *  text color instead of a full-color `<img>` — so it sits in the footer's
+	 *  monochrome shelf the way the main-window model chip does. */
+	monoLogo?: boolean;
+	/** Tint class for the icon + value (kind-colored chips); `danger` wins. */
+	tint?: string;
 	title?: string;
 	truncate?: boolean;
+	tooltip?: ReactNode;
 	value: string;
+}
+
+/** The brand logo for a meta chip. `monoLogo` renders it alpha-masked to the
+ *  chip's current text color (matching the main-window footer glyph); otherwise
+ *  it's a full-color image. `danger` desaturates a failed datum's mark. */
+function MetaLogo({ part }: { part: EntryCardMetaPart }): ReactNode {
+	if (!part.logo) {
+		return null;
+	}
+	if (part.monoLogo) {
+		return (
+			<span
+				aria-hidden="true"
+				className={cn(
+					"size-3.5 shrink-0 bg-current [mask-image:var(--meta-logo)] [mask-position:center] [mask-repeat:no-repeat] [mask-size:contain] [-webkit-mask-image:var(--meta-logo)] [-webkit-mask-position:center] [-webkit-mask-repeat:no-repeat] [-webkit-mask-size:contain]",
+					part.danger ? "text-error" : (part.tint ?? "text-foreground-muted"),
+				)}
+				style={{ "--meta-logo": `url("${part.logo}")` } as CSSProperties}
+			/>
+		);
+	}
+	return (
+		<img
+			alt=""
+			aria-hidden="true"
+			className={cn(
+				"size-3.5 shrink-0 rounded-[3px] object-contain",
+				part.danger && "grayscale opacity-70",
+			)}
+			src={part.logo}
+		/>
+	);
+}
+
+/** The chip's leading mark: its brand logo (or icon fallback), badged with a
+ *  small cloud sign notched into the bottom-right corner when the datum ran on
+ *  a cloud provider. The badge is punched out with the shelf's own surface color
+ *  so the cloud reads cleanly over the logo — a compact, wordless cloud/local
+ *  cue that mirrors the main-window model chip. */
+function MetaGlyph({ part }: { part: EntryCardMetaPart }): ReactNode {
+	// The shelf steps one surface below the card; match that so the badge's
+	// punch-out disc blends into the strip rather than the card body.
+	const shelfLevel = Math.max(useSurface() - 1, 1);
+	const inner = part.logo ? (
+		<MetaLogo part={part} />
+	) : (
+		<HugeiconsIcon
+			aria-hidden="true"
+			className={cn(
+				"size-3.5 shrink-0",
+				part.danger ? "text-error" : (part.tint ?? "text-foreground-muted"),
+			)}
+			icon={part.icon}
+			strokeWidth={1.75}
+		/>
+	);
+	if (!part.cloud) {
+		return inner;
+	}
+	return (
+		<span
+			aria-label={part.cloudLabel}
+			className="relative inline-flex shrink-0"
+			role={part.cloudLabel ? "img" : undefined}
+		>
+			{inner}
+			<span
+				aria-hidden="true"
+				className={cn(
+					"-right-1 -bottom-1 absolute inline-flex items-center justify-center rounded-full text-foreground-muted",
+					surfaceBg(shelfLevel),
+				)}
+			>
+				<HugeiconsIcon icon={AiCloud01Icon} size={9} />
+			</span>
+		</span>
+	);
+}
+
+function EntryCardMetaItem({ part }: { part: EntryCardMetaPart }) {
+	// Every hover hint renders through the shared Tooltip — a plain `title`
+	// string becomes its content when no rich tooltip is given. Native `title`
+	// attributes are banned here: mixing OS tooltips with styled ones on the
+	// same shelf reads as a bug.
+	const hint = part.tooltip ?? part.title;
+	const chip = (
+		<span
+			aria-label={hint ? part.title : undefined}
+			className={cn(
+				"inline-flex min-w-0 items-center gap-1 tabular-nums",
+				hint &&
+					"cursor-help rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
+			)}
+			tabIndex={hint ? 0 : undefined}
+		>
+			<MetaGlyph part={part} />
+			<span
+				className={cn(
+					part.truncate ? "max-w-[10rem] truncate" : "whitespace-nowrap",
+					!part.danger && part.tint,
+					part.danger &&
+						"text-error line-through decoration-2 decoration-error/80",
+				)}
+			>
+				{part.value}
+			</span>
+		</span>
+	);
+	if (!hint) {
+		return chip;
+	}
+	return (
+		<Tooltip content={hint} side="top">
+			{chip}
+		</Tooltip>
+	);
 }
 
 function EntryCardMetaShelf({
 	cardLevel,
 	parts,
+	singleLine,
 }: {
 	cardLevel: number;
 	parts: EntryCardMetaPart[];
+	singleLine?: boolean;
 }) {
 	return (
 		// Recessed meta shelf: full-bleed to the card's bottom + side edges (negative
 		// margins MUST match the card's px-3.5/py-3), split off by a hairline, and
 		// stepped DOWN one surface so it reads as a ledge under the card body.
+		// `singleLine` locks the strip to one row — chips that overflow scroll
+		// horizontally (auto-hiding scrollbar) rather than wrapping to a second line.
 		<div
 			className={cn(
-				"-mx-3.5 -mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-divider border-t px-3.5 pt-2.5 pb-3 text-foreground-secondary text-xs-tight",
+				"-mx-3.5 -mb-3 flex items-center border-divider border-t px-3.5 pt-2.5 pb-3 text-foreground-secondary text-xs-tight",
+				singleLine
+					? "gap-x-3 overflow-x-auto whitespace-nowrap"
+					: "flex-wrap gap-x-3 gap-y-1",
 				surfaceBg(Math.max(cardLevel - 1, 1)),
 			)}
 		>
 			{parts.map((part) => (
-				<span
-					className="inline-flex min-w-0 items-center gap-1 tabular-nums"
-					key={part.key}
-					title={part.title}
-				>
-					{part.logo ? (
-						<img
-							alt=""
-							aria-hidden="true"
-							className={cn(
-								"size-3.5 shrink-0 rounded-[3px] object-contain",
-								part.danger && "grayscale opacity-70",
-							)}
-							src={part.logo}
-						/>
-					) : (
-						<HugeiconsIcon
-							aria-hidden="true"
-							className={cn(
-								"size-3.5 shrink-0",
-								part.danger ? "text-error" : "text-foreground-muted",
-							)}
-							icon={part.icon}
-							strokeWidth={1.75}
-						/>
-					)}
-					<span
-						className={cn(
-							part.truncate ? "max-w-[10rem] truncate" : "whitespace-nowrap",
-							part.danger &&
-								"text-error line-through decoration-2 decoration-error/80",
-						)}
-					>
-						{part.value}
-					</span>
-				</span>
+				<EntryCardMetaItem key={part.key} part={part} />
 			))}
 		</div>
 	);
@@ -95,9 +197,13 @@ function EntryCardMetaShelf({
 export function EntryCard({
 	children,
 	footer,
+	singleLine,
 }: {
 	children: ReactNode;
 	footer: EntryCardMetaPart[];
+	/** Keep the footer meta strip on a single line (history rows); overflow
+	 *  scrolls horizontally instead of wrapping. */
+	singleLine?: boolean;
 }) {
 	const cardLevel = Math.min(useSurface() + 1, 8);
 	return (
@@ -117,7 +223,11 @@ export function EntryCard({
 				>
 					{children}
 					{footer.length > 0 ? (
-						<EntryCardMetaShelf cardLevel={cardLevel} parts={footer} />
+						<EntryCardMetaShelf
+							cardLevel={cardLevel}
+							parts={footer}
+							singleLine={singleLine ?? false}
+						/>
 					) : null}
 				</div>
 			</SurfaceProvider>

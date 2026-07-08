@@ -25,6 +25,14 @@ const CHAT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// keep trickling. Dictation cleanup completes in seconds on a healthy GPU; this
 /// only fires on a degenerate stall, where we fail soft to the original text.
 const CHAT_STREAM_TOTAL_TIMEOUT: Duration = Duration::from_secs(90);
+/// Whole-request ceiling on the chat POST, covering the phase the loop timeouts
+/// CANNOT see: everything before the response headers arrive. Ollama does not
+/// send headers until the model is loaded, so this must absorb a cold in-request
+/// load (~20s for a 14 GB model); but a wedged/dying server can otherwise hold
+/// `.send()` open unboundedly (measured: an 84s hang ending in a transport error
+/// while the island counted). Generous vs. the 90s in-stream ceiling — the loop
+/// still cuts healthy-but-slow generations first.
+const CHAT_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Abort the chat stream when it has been silent too long (`idle_for`, no token)
 /// OR has run past the hard ceiling (`running_for`). Pure so the threshold logic
@@ -102,6 +110,37 @@ impl OllamaClient {
 
         let _ = response.bytes().await;
         OllamaLoadResult::Ok
+    }
+
+    /// Send one non-streaming `/api/chat` request and discard the answer — used
+    /// by the warm-up to prime llama.cpp's prompt-prefix (KV) cache with the
+    /// REAL dictation scaffolding. The empty `/api/generate` warm loads the
+    /// weights but caches no prompt tokens, so the FIRST real dictation still
+    /// paid the full system-prompt prefill that later requests skip via the
+    /// prefix cache; sending the same prefix once at warm time moves that cost
+    /// off the user's first dictation.
+    pub async fn prime_chat(
+        &self,
+        endpoint: &str,
+        body: &serde_json::Value,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let url = build_loopback_ollama_api_url(endpoint, "/api/chat")?;
+        let response = self
+            .http
+            .post(url)
+            .json(body)
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|err| err.to_string())?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("HTTP {status}: {body}"));
+        }
+        let _ = response.bytes().await;
+        Ok(())
     }
 
     /// Unload a warmed model through `/api/generate` with `keep_alive: 0`.
@@ -191,9 +230,26 @@ impl OllamaClient {
             .http
             .post(url)
             .json(&body)
+            .timeout(CHAT_REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|e| format!("Ollama POST failed: {e}"))?;
+            .map_err(|e| {
+                if e.is_timeout() {
+                    // Distinct marker: a request-ceiling timeout means the model
+                    // is prefilling too slowly for this hardware (measured: a
+                    // ≥2048-token dictation prompt at ~10-25 tok/s on a
+                    // CPU-offloaded 14 GB model). The caller's load-crash
+                    // classifier matches "timed out" and backs the model off so
+                    // the NEXT dictation fails soft instantly instead of paying
+                    // this ceiling again.
+                    format!(
+                        "Ollama chat request timed out after {}s (model too slow on this hardware)",
+                        CHAT_REQUEST_TIMEOUT.as_secs()
+                    )
+                } else {
+                    format!("Ollama POST failed: {e}")
+                }
+            })?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let t = resp.text().await.unwrap_or_default();
@@ -234,6 +290,17 @@ impl OllamaClient {
                                 on_thinking_delta(&t);
                             }
                         }
+                    }
+                    // Ollama marks completion with a final `{"done":true}` line.
+                    // Break on THAT rather than waiting for the HTTP body to reach
+                    // EOF: a pooled keep-alive connection can hold the stream open
+                    // briefly after the last chunk, which would freeze `last_token`
+                    // and trip the 30s idle "stall" — throwing away a VALID answer.
+                    // Long-reasoning models (gpt-oss streams a big `thinking` phase
+                    // before a short answer) are the most exposed, so they were the
+                    // ones that appeared to hang / never paste.
+                    if state.done {
+                        break;
                     }
                 }
                 Ok(None) => break,

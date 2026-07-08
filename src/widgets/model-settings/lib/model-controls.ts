@@ -65,7 +65,7 @@ export function localModelIdOrNull(
 	modelId: string | undefined,
 	enabled = true,
 ): string | null {
-	if (!enabled || !modelId || providerOf(modelId) !== null) {
+	if (!(enabled && modelId) || providerOf(modelId) !== null) {
 		return null;
 	}
 	return modelId;

@@ -19,7 +19,6 @@ function model(languages: readonly string[]): ModelInfo {
 		previewCapable: true,
 		nativeStreaming: false,
 		finalReuseSafe: true,
-		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [],
