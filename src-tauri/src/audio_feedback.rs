@@ -76,5 +76,17 @@ pub(crate) fn play_audio_file(
     sink.set_volume(volume);
     sink.sleep_until_end();
 
+    // `sleep_until_end` returns once rodio has handed the last samples to the
+    // CPAL/WASAPI output callback — NOT once they have reached the speaker. One
+    // device-buffer worth of audio (~10-30 ms on WASAPI shared mode) is still in
+    // the OS ring buffer at this point. Returning here drops `device_sink`, closes
+    // the stream, and discards that trailing buffer. On a long clip this is
+    // inaudible; on a very short chime (the ~70 ms recording sound) it clips a
+    // large fraction of the tail, which is why the native chime sounded thinner /
+    // "different" than the persistent-AudioContext Web Audio preview. Let the
+    // device buffer drain before tearing the stream down. The margin is silent
+    // (playback already finished) so it adds no perceptible latency.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
     Ok(())
 }

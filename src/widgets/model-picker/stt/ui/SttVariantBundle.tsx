@@ -223,7 +223,9 @@ export function SttVariantBundle({
 		<>
 			<SttModelCard
 				{...sharedCardProps}
-				actions={
+				fitAssessment={getFitAssessment?.(primary.id) ?? null}
+				hasSelectedVariant={hasSelectedVariant}
+				variantExpander={
 					<ExpandTrigger
 						baseId={bundle.baseId}
 						expanded={expanded}
@@ -232,8 +234,6 @@ export function SttVariantBundle({
 						siblingCount={siblings.length}
 					/>
 				}
-				fitAssessment={getFitAssessment?.(primary.id) ?? null}
-				hasSelectedVariant={hasSelectedVariant}
 				model={primary}
 				state={statesById[primary.id]}
 			/>

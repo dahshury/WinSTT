@@ -1,7 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { buildQuantTooltipContent } from "./quant-shelf-state";
+import {
+	buildQuantTooltipContent,
+	resolveQuantDownloadState,
+} from "./quant-shelf-state";
 import { QuantShelf, type QuantShelfEntry } from "./QuantShelf";
 
 function entry(overrides: Partial<QuantShelfEntry> = {}): QuantShelfEntry {
@@ -46,6 +49,50 @@ function renderInClickableCard(quantEntry: QuantShelfEntry) {
 
 	return { onCardClick, onCardPointerDown, onDownloadAction, onSelect };
 }
+
+describe("resolveQuantDownloadState download size", () => {
+	test("a fully-cached quant reports the authoritative catalog size, not a tiny on-disk artifact", () => {
+		// Repro: cohere q4 is cached but its per-quant cache snapshot reports only a
+		// dedup'd/shared 2 MB file. The catalog knows the real ~2 GB size and must win.
+		const resolved = resolveQuantDownloadState({
+			cache: {
+				state: "cached",
+				downloaded_bytes: 2_000_000,
+				total_bytes: 2_000_000,
+			},
+			download: undefined,
+			fallbackSizeBytes: [2_209_640_089],
+			hasDownloadAction: true,
+		});
+		expect(resolved.downloadSizeBytes).toBe(2_209_640_089);
+	});
+
+	test("falls back to the cached on-disk total only when the catalog ships no size", () => {
+		const resolved = resolveQuantDownloadState({
+			cache: {
+				state: "cached",
+				downloaded_bytes: 512_000,
+				total_bytes: 512_000,
+			},
+			download: undefined,
+			fallbackSizeBytes: [undefined],
+			hasDownloadAction: true,
+		});
+		expect(resolved.downloadSizeBytes).toBe(512_000);
+	});
+
+	test("never surfaces a partial download's progress bytes as the size", () => {
+		// No catalog size, no live download, only a partial cache with total==0:
+		// its downloaded bytes are progress, not size, so we report nothing.
+		const resolved = resolveQuantDownloadState({
+			cache: { state: "partial", downloaded_bytes: 1_048_576, total_bytes: 0 },
+			download: undefined,
+			fallbackSizeBytes: [],
+			hasDownloadAction: true,
+		});
+		expect(resolved.downloadSizeBytes).toBeNull();
+	});
+});
 
 describe("QuantShelf badge events", () => {
 	test("tooltip content separates status, download size, and precision detail", () => {

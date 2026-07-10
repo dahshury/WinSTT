@@ -3,13 +3,16 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { ComponentPropsWithoutRef } from "react";
+import { type ComponentPropsWithoutRef, useEffect } from "react";
 import { useTranslations } from "use-intl";
+import { lookupModelsDev, useModelsDevStore } from "@/entities/llm-catalog";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { ModelSpecHoverCard } from "@/shared/ui/model-spec-card";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import { MODEL_TRIGGER_GLASS_CLASSES } from "@/shared/ui/switching-trigger";
+import { buildOpenRouterSpec } from "../lib/build-openrouter-spec";
 import { VariantBadge } from "../lib/model-list-meta-chips";
 import { getVariantClasses } from "../lib/model-selector-display-utils";
 import { formatMaker, formatModelName } from "../lib/model-selector-utils";
@@ -70,18 +73,38 @@ function SelectedModelContent({
 }: {
 	selectedModel: OpenRouterModel;
 }) {
+	// Subscribe to the index so the card re-renders once models.dev loads, and
+	// kick off the (cached, offline-graceful) fetch on mount.
+	const index = useModelsDevStore((s) => s.index);
+	const isLoading = useModelsDevStore((s) => s.isLoading);
+	const ensureLoaded = useModelsDevStore((s) => s.ensureLoaded);
+	useEffect(() => {
+		ensureLoaded();
+	}, [ensureLoaded]);
+	const enrichment = index
+		? lookupModelsDev(
+				index,
+				selectedModel.id,
+				selectedModel.model_name ?? selectedModel.name,
+			)
+		: null;
+	const spec = buildOpenRouterSpec(selectedModel, enrichment, {
+		loading: isLoading,
+	});
 	return (
-		<div className="flex min-w-0 flex-1 items-center gap-2">
-			<MakerBadge maker={selectedModel.maker} />
-			<TruncatedText
-				className="min-w-0 flex-1 font-medium text-body text-foreground leading-tight tracking-tight"
-				text={formatModelName(
-					selectedModel.model_name ?? selectedModel.name,
-					selectedModel.maker,
-				)}
-			/>
-			<SelectedVariantBadge variant={selectedModel.variant} />
-		</div>
+		<ModelSpecHoverCard spec={spec}>
+			<div className="flex min-w-0 flex-1 items-center gap-2">
+				<MakerBadge maker={selectedModel.maker} />
+				<TruncatedText
+					className="min-w-0 flex-1 font-medium text-body text-foreground leading-tight tracking-tight"
+					text={formatModelName(
+						selectedModel.model_name ?? selectedModel.name,
+						selectedModel.maker,
+					)}
+				/>
+				<SelectedVariantBadge variant={selectedModel.variant} />
+			</div>
+		</ModelSpecHoverCard>
 	);
 }
 

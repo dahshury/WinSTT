@@ -520,8 +520,37 @@ function useSettingsWindowMotion(
 	}, [clearRevealFailsafe, contentReady, playOpen]);
 
 	useEffect(() => {
-		requestReveal();
+		// Reveal on mount ONLY if the OS window is already on screen. That is the
+		// cold-open case: Rust show()+emit(SETTINGS_WINDOW_SHOWN) fired before this
+		// renderer had mounted and subscribed, so the event was missed and the
+		// mount-time reveal is the fallback.
+		//
+		// While PREWARMED (window created hidden and never shown), the webview
+		// still reports document.visibilityState="visible" and its rAFs are NOT
+		// frozen — so an unconditional reveal here plays the ENTIRE enter animation
+		// into the void: the shell finishes at opacity 1 while the OS window is
+		// still hidden. The first real show then paints that fully-opaque card,
+		// and the SHOWN handler (seeing a now-stale enter) snaps it back to 0 and
+		// re-animates — the first-open flicker. So while hidden we do nothing and
+		// let SETTINGS_WINDOW_SHOWN (which fires on every real open) drive the
+		// reveal from a clean opacity-0 shell.
+		let cancelled = false;
+		void import("@tauri-apps/api/window")
+			.then(({ getCurrentWindow }) => getCurrentWindow().isVisible())
+			.then((visible) => {
+				if (!cancelled && visible) {
+					requestReveal();
+				}
+			})
+			.catch(() => {
+				// Visibility unknown (non-Tauri/test env) — reveal so the window can
+				// never get stuck invisible.
+				if (!cancelled) {
+					requestReveal();
+				}
+			});
 		return () => {
+			cancelled = true;
 			clearCloseTimer();
 			clearOpenFrame();
 			clearRevealFailsafe();

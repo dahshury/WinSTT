@@ -48,7 +48,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::winstt::catalog;
 use crate::winstt::downloads::{
-    PauseCancelFlags, TransferControl, TransferOutcome, TransferRequest, transfer_url_blocking,
+    PauseCancelFlags, TransferControl, TransferOutcome, TransferRequest, transfer_url,
 };
 use crate::winstt::stt::Quantization;
 use crate::winstt::stt::cache_probe::{self, CacheState, ProbeModel};
@@ -401,7 +401,32 @@ impl DownloadManager {
                                 quantization,
                                 handle,
                             } = job;
-                            me.run_quant_download(model, quantization, handle);
+                            // This is the SINGLE point where the async download job is driven to
+                            // completion — one `block_on` per job, wrapping the ENTIRE async pipeline.
+                            // Because the whole job is one future, every `.await` inside runs in the
+                            // runtime context this `block_on` enters; there is no way to build a
+                            // runtime-touching future (a reqwest `.send()`, a timer) eagerly OUTSIDE
+                            // the context, which was the root cause of the worker panics.
+                            //
+                            // `catch_unwind` isolates any panic so it can't KILL this worker thread:
+                            // an unwinding worker leaves both pool slots dead and every later download
+                            // queued forever (the "infinite loading dot"). On panic we settle the job
+                            // as cancelled (drops the in-flight entry + clears the badge) and keep
+                            // draining. `&me`/`&model`/`&quantization` are borrowed for the settle path
+                            // since the run moves the owned copies.
+                            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                tauri::async_runtime::block_on(me.run_quant_download(
+                                    model.clone(),
+                                    quantization.clone(),
+                                    handle,
+                                ));
+                            }));
+                            if run.is_err() {
+                                log::error!(
+                                    "[stt-download] worker job panicked for {model}@{quantization}; settling cancelled and continuing"
+                                );
+                                me.finish_quant(&model, &quantization, true);
+                            }
                         }
                     });
                 if let Err(e) = spawned {
@@ -668,11 +693,21 @@ impl DownloadManager {
 
     // ── Worker ──
 
-    /// Per-quant download worker. Resolves the model's file plan, then streams each planned file via
-    /// hf-hub's progress-aware fetch INTO the HF cache, emitting `emit_progress` as bytes land and
-    /// honoring `paused`/`cancelled` at file boundaries. On cancel the in-flight `.incomplete`
-    /// markers are left for hf-hub to resume from; on success the badge flips to "Downloaded".
-    fn run_quant_download(&self, model: String, quantization: String, handle: Arc<DownloadHandle>) {
+    /// Per-quant download worker (ASYNC). Resolves the model's file plan, then streams each planned
+    /// file INTO the HF cache, emitting `emit_progress` as bytes land and honoring `paused`/`cancelled`
+    /// at file boundaries. On cancel the in-flight `.incomplete` markers are left to resume from; on
+    /// success the badge flips to "Downloaded".
+    ///
+    /// This is a single `async fn` end-to-end — the worker thread drives it with ONE `block_on` (see
+    /// the pool loop). Every network/cache step is a plain `.await` in that entered runtime context,
+    /// so no future is ever constructed eagerly outside a runtime (the class of bug that panicked the
+    /// worker on reqwest `.send()` / `tokio::time` timers).
+    async fn run_quant_download(
+        &self,
+        model: String,
+        quantization: String,
+        handle: Arc<DownloadHandle>,
+    ) {
         // On dequeue, BEFORE spending any network I/O (plan + stream), re-check the cancel flag.
         // The job may have been cancelled while it waited in the pool's queue for a free worker
         // (cancel-while-queued); this re-check replicates the old post-semaphore-permit re-check so
@@ -694,9 +729,7 @@ impl DownloadManager {
         let quant = Quantization::parse(&quantization).unwrap_or(Quantization::Default);
 
         // Plan: list the repo tree once → required graphs + sidecars + config + vocab/tokenizer.
-        let planned = match tauri::async_runtime::block_on(resolver::plan_quant_download(
-            &model, kind, quant,
-        )) {
+        let planned = match resolver::plan_quant_download(&model, kind, quant).await {
             Ok(p) => p,
             Err(e) => {
                 log::warn!("[stt-download] plan failed for {model}@{quantization}: {e}");
@@ -756,7 +789,7 @@ impl DownloadManager {
         // every subsequent file repeats it. With every planned file's size known here, progress runs
         // a single monotonic 0→100%. Best-effort: an empty/partial map (offline, private/gated repo,
         // off-catalog local model) simply degrades to the old per-file growing total.
-        let plan_sizes = fetch_repo_file_sizes(&http, &model);
+        let plan_sizes = fetch_repo_file_sizes(&http, &model).await;
         if !plan_sizes.is_empty() {
             for p in &planned {
                 if let Some(&sz) = plan_sizes.get(p) {
@@ -781,9 +814,7 @@ impl DownloadManager {
                 // cached file as fully done against its seeded size so a resume/partial download's
                 // bar starts at the correct baseline instead of reading 0/size for already-present
                 // files; an unseeded file (size unknown) is just tracked as before.
-                if tauri::async_runtime::block_on(resolver::is_file_cached(
-                    &model, repo_path, quant,
-                )) {
+                if resolver::is_file_cached(&model, repo_path, quant).await {
                     match plan_sizes.get(repo_path) {
                         Some(&sz) => agg.update_file(repo_path, sz, sz),
                         None => agg.mark_file_cached(repo_path),
@@ -792,16 +823,19 @@ impl DownloadManager {
                     break 'file;
                 }
 
-                match self.stream_file_into_hf_cache(
-                    &http,
-                    &http_head,
-                    &model,
-                    &quantization,
-                    repo_path,
-                    &handle,
-                    &agg,
-                    start,
-                ) {
+                match self
+                    .stream_file_into_hf_cache(
+                        &http,
+                        &http_head,
+                        &model,
+                        &quantization,
+                        repo_path,
+                        &handle,
+                        &agg,
+                        start,
+                    )
+                    .await
+                {
                     StreamOutcome::Completed => break 'file,
                     StreamOutcome::Cancelled => {
                         // Partial `.incomplete` is left on disk (resumable); the badge clears.
@@ -837,9 +871,11 @@ impl DownloadManager {
                                 start,
                             });
                         let handler: hf_hub::progress::Progress = reporter.into();
-                        match tauri::async_runtime::block_on(resolver::download_planned_file(
+                        match resolver::download_planned_file(
                             &model, repo_path, quant, false, handler,
-                        )) {
+                        )
+                        .await
+                        {
                             Ok(_) => {
                                 agg.mark_file_complete(repo_path);
                                 self.emit_agg(&model, &quantization, &agg, start);
@@ -900,7 +936,7 @@ impl DownloadManager {
         clippy::too_many_arguments,
         reason = "HF cache streaming needs both HTTP clients plus model, quantization, and file metadata"
     )]
-    fn stream_file_into_hf_cache(
+    async fn stream_file_into_hf_cache(
         &self,
         http: &reqwest::Client,
         http_head: &reqwest::Client,
@@ -911,8 +947,6 @@ impl DownloadManager {
         agg: &ProgressAgg,
         start: Instant,
     ) -> StreamOutcome {
-        use tauri::async_runtime::block_on;
-
         // The SET's quant drives repo resolution so a per-quant override (int8 → Masterx) routes the
         // whole streaming download — graphs AND shared metadata — to one repo.
         let quant = Quantization::parse(quantization).unwrap_or(Quantization::Default);
@@ -926,8 +960,10 @@ impl DownloadManager {
         let url = format!("https://huggingface.co/{owner}/{name}/resolve/main/{encoded_path}");
 
         // HEAD (no-redirect) for the cache-layout identity: commit + etag + size live on HF's 302,
-        // not on the CDN response. Any status is fine as long as those headers are present.
-        let head = match block_on(http_head.head(&url).send()) {
+        // not on the CDN response. Any status is fine as long as those headers are present. Plain
+        // `.await` — this whole fn is async, driven by the worker's single top-level `block_on`, so
+        // reqwest's total-timeout timer is constructed inside the entered runtime context.
+        let head = match http_head.head(&url).send().await {
             Ok(r) => r,
             Err(e) => {
                 log::warn!("[stt-download] HEAD failed {model}@{quantization} {repo_path}: {e}");
@@ -978,7 +1014,7 @@ impl DownloadManager {
                 log::warn!("[stt-download] ref write failed {model}@{quantization}: {e}");
                 return StreamOutcome::Failed;
             }
-            if !block_on(resolver::is_file_cached(model, repo_path, quant)) {
+            if !resolver::is_file_cached(model, repo_path, quant).await {
                 return StreamOutcome::Failed;
             }
             agg.update_file(repo_path, size, size);
@@ -999,7 +1035,7 @@ impl DownloadManager {
         if let Ok(mut partial_path) = handle.partial_path.lock() {
             *partial_path = Some(staging.clone());
         }
-        let report = match transfer_url_blocking(
+        let report = match transfer_url(
             http,
             TransferRequest {
                 delete_partial_on_cancel: true,
@@ -1018,7 +1054,9 @@ impl DownloadManager {
                 agg.update_file(repo_path, progress.downloaded_bytes, total);
                 self.emit_agg(model, quantization, agg, start);
             },
-        ) {
+        )
+        .await
+        {
             Ok(report) => report,
             Err(e) => {
                 log::warn!("[stt-download] stream failed {model}@{quantization} {repo_path}: {e}");
@@ -1052,7 +1090,7 @@ impl DownloadManager {
         // Self-check: hf-hub's OWN cache-only resolve must now find what we placed (correct commit
         // ref + snapshot file, and — for `.onnx` — complete external-data shards). If not, fall back
         // to a real hf-hub fetch rather than claim a success the model loader can't load.
-        if !block_on(resolver::is_file_cached(model, repo_path, quant)) {
+        if !resolver::is_file_cached(model, repo_path, quant).await {
             log::warn!(
                 "[stt-download] streamed file failed cache self-check {model}@{quantization} {repo_path} — falling back to hf-hub"
             );

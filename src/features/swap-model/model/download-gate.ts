@@ -196,6 +196,9 @@ function clientGateAssessment(
 				args.currentQuantization,
 			),
 		},
+		// The swap unloads the target slot's resident model first, so its memory
+		// is available to the incoming model — measure against post-removal free.
+		replacedId: args.kind === "realtime" ? realtimeId : mainId,
 		requestedDevice: requestedDeviceForFit(args.deviceValue),
 		statesById: args.statesById,
 	});

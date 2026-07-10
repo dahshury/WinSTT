@@ -13,10 +13,16 @@ export {
 	type OllamaThinkingMode,
 	ollamaThinkingMode,
 } from "./lib/ollama-thinking";
+export {
+	lookupModelsDev,
+	type ModelsDevEntry,
+	type ModelsDevIndex,
+} from "./lib/models-dev";
 export { RECOMMENDED_OLLAMA_MODELS } from "./lib/recommended-models";
 export {
 	type PausedPullState,
 	useLlmCatalogStore,
 } from "./model/llm-catalog-store";
 export { useOllamaLibraryStore } from "./model/ollama-library-store";
+export { useModelsDevStore } from "./model/models-dev-store";
 export { useOpenRouterCatalogStore } from "./model/openrouter-catalog-store";

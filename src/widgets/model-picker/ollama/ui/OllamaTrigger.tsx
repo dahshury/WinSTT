@@ -15,6 +15,7 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, MouseEvent, ReactNode } from "react";
 import type { OllamaModel } from "@/shared/api/models";
 import { Button } from "@/shared/ui/button";
+import { ModelSpecHoverCard } from "@/shared/ui/model-spec-card";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import {
 	buildSwitchingClassName,
@@ -38,6 +39,7 @@ import {
 	supportsOllamaToolCalling,
 	visibleCapabilities,
 } from "../lib/ollama-description-helpers";
+import { buildOllamaSpec } from "../lib/build-ollama-spec";
 import { PublisherChip } from "./OllamaModelChips";
 import type {
 	OllamaFitInfo,
@@ -198,12 +200,16 @@ function SelectedTriggerContent({
 	const family = getOllamaFamily(model);
 	const parts = formatOllamaDisplayNameParts(model.name);
 	return (
-		<SelectedModelSummary
-			leading={<PublisherChip family={family} />}
-			meta={selectedOllamaMeta(model, getFit)}
-			metaPlacement="right"
-			name={parts}
-		/>
+		<ModelSpecHoverCard spec={buildOllamaSpec(model)}>
+			<div className="flex min-w-0 flex-1">
+				<SelectedModelSummary
+					leading={<PublisherChip family={family} />}
+					meta={selectedOllamaMeta(model, getFit)}
+					metaPlacement="right"
+					name={parts}
+				/>
+			</div>
+		</ModelSpecHoverCard>
 	);
 }
 
@@ -213,10 +219,54 @@ function SelectedTriggerContent({
 // Processing tab picker from blending into the settings background.
 const OLLAMA_TRIGGER_GLASS_CLASSES = `${MODEL_TRIGGER_GLASS_CLASSES} disabled:opacity-50`;
 
+/** The precision token an Ollama tag carries (e.g. "Q8_0"), preferring the
+ *  structured ``details.quantizationLevel`` and falling back to the tag-parsed
+ *  value. Ollama's display name strips the quant, so two tags of the same base
+ *  render identically — this surfaces the precision in the switching view so a
+ *  pure quant swap (`gemma3:4b-q8_0` → `gemma3:4b-q4_K_M`) reads as an actual
+ *  change instead of "Gemma 3 → Gemma 3". */
+function ollamaQuantToken(model: OllamaModel): string | null {
+	const structured = model.details?.quantizationLevel?.trim();
+	if (structured) {
+		return structured.toUpperCase();
+	}
+	const parsed = formatOllamaDisplayNameParts(model.name).quantization;
+	return parsed ? parsed.toUpperCase() : null;
+}
+
+function ollamaQuantTokenFromName(name: string): string | null {
+	const parsed = formatOllamaDisplayNameParts(name).quantization;
+	return parsed ? parsed.toUpperCase() : null;
+}
+
+/** Small precision chip appended to a switching label. Muted on the "from" leg,
+ *  warning-toned on the "to" leg — matching the selected-model quant meta chip. */
+function OllamaQuantToken({
+	quant,
+	side,
+}: {
+	quant: string;
+	side: "from" | "to";
+}) {
+	const tone =
+		side === "from"
+			? "text-foreground-dim line-through decoration-foreground-dim/40"
+			: "text-warning";
+	return (
+		<span
+			className={`shrink-0 rounded bg-warning/10 px-1 py-0.5 font-mono text-[9px] leading-none ${tone}`}
+			data-slot="ollama-switching-quant"
+		>
+			{quant}
+		</span>
+	);
+}
+
 /** Ollama-flavored chip+name pair used as a slot inside `SwitchingFromToRow`.
  *  Mirrors the STT picker's `SttModelLabel` so both switching views read the
  *  same way: family chip + name, dim/struck-through on the "from" leg and
- *  accent-emphasized on the "to" leg. */
+ *  accent-emphasized on the "to" leg. Appends the precision token so a quant
+ *  swap is legible even when the two tags share a base name. */
 function OllamaModelLabel({
 	model,
 	side,
@@ -226,6 +276,7 @@ function OllamaModelLabel({
 }) {
 	const family = getOllamaFamily(model);
 	const displayName = formatOllamaDisplayName(model.name);
+	const quant = ollamaQuantToken(model);
 	if (side === "from") {
 		return (
 			<>
@@ -233,6 +284,7 @@ function OllamaModelLabel({
 				<span className="min-w-0 max-w-[8rem] truncate font-medium text-body text-foreground-dim leading-tight tracking-tight line-through decoration-foreground-dim/40">
 					{displayName}
 				</span>
+				{quant ? <OllamaQuantToken quant={quant} side="from" /> : null}
 			</>
 		);
 	}
@@ -242,6 +294,7 @@ function OllamaModelLabel({
 			<span className="min-w-0 truncate font-semibold text-accent text-body leading-tight tracking-tight">
 				{displayName}
 			</span>
+			{quant ? <OllamaQuantToken quant={quant} side="to" /> : null}
 		</>
 	);
 }
@@ -258,16 +311,20 @@ function OllamaTextLabel({
 	side: "from" | "to";
 }) {
 	const displayName = formatOllamaDisplayName(name);
+	const quant = ollamaQuantTokenFromName(name);
 	const tone =
 		side === "from"
 			? "text-foreground-dim line-through decoration-foreground-dim/40"
 			: "font-semibold text-accent";
 	return (
-		<span
-			className={`min-w-0 max-w-[8rem] truncate font-medium text-body leading-tight tracking-tight ${tone}`}
-		>
-			{displayName}
-		</span>
+		<>
+			<span
+				className={`min-w-0 max-w-[8rem] truncate font-medium text-body leading-tight tracking-tight ${tone}`}
+			>
+				{displayName}
+			</span>
+			{quant ? <OllamaQuantToken quant={quant} side={side} /> : null}
+		</>
 	);
 }
 

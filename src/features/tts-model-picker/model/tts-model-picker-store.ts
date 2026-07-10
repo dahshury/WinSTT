@@ -13,7 +13,7 @@ interface TtsModelPickerState {
 	 * so a late download-complete event (from the inline section selector, say)
 	 * can't silently flip the toggle on.
 	 */
-	commitInstalled: (modelId: string) => void;
+	commitInstalled: (modelId: string, quantization?: string) => void;
 	/** When true, a model that installs/selects commits `enabled: true` for
 	 *  read-aloud — the toggle-driven "turn this on" path. When false the picker
 	 *  only writes the model (a plain "change my voice model" browse), leaving
@@ -46,15 +46,22 @@ export const useTtsModelPickerStore = create<TtsModelPickerState>(
 			}),
 		close: () =>
 			set({ open: false, enableOnInstall: false, sourceOnInstall: null }),
-		commitInstalled: (modelId) => {
+		commitInstalled: (modelId, quantization) => {
 			if (!get().open) {
 				return;
 			}
 			const settings = useSettingsStore.getState();
 			const sourceOnInstall = get().sourceOnInstall;
 			const sourcePatch = sourceOnInstall ? { source: sourceOnInstall } : {};
+			// Persist an explicit precision pick alongside the model so the backend
+			// loads the chosen quant (parity with the inline section selector).
+			const quantPatch = quantization === undefined ? {} : { quantization };
 			if (!get().enableOnInstall) {
-				settings.updateTtsSettings({ model: modelId, ...sourcePatch });
+				settings.updateTtsSettings({
+					model: modelId,
+					...quantPatch,
+					...sourcePatch,
+				});
 				return;
 			}
 			// Fold the default Speak-selection hotkey in alongside `enabled: true`
@@ -62,11 +69,17 @@ export const useTtsModelPickerStore = create<TtsModelPickerState>(
 			// read-aloud turns on (parity with the old install-gate enable patch).
 			const currentHotkey = settings.settings.tts?.hotkey ?? "";
 			const patch = currentHotkey.trim()
-				? { model: modelId, enabled: true as const, ...sourcePatch }
+				? {
+						model: modelId,
+						enabled: true as const,
+						...quantPatch,
+						...sourcePatch,
+					}
 				: {
 						model: modelId,
 						enabled: true as const,
 						hotkey: DEFAULT_SETTINGS.tts.hotkey,
+						...quantPatch,
 						...sourcePatch,
 					};
 			settings.updateTtsSettings(patch);

@@ -135,18 +135,28 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
 
 /// The graph (`.onnx`) globs a quant requires — i.e. `file_globs` minus the always-present
 /// vocab/tokenizer/config text files (those are shared across quants, so they don't tell us
-/// whether THIS quant's weights are present). A quant is "cached" iff every `.onnx` graph it needs
-/// is present and external-data-complete.
+/// whether THIS quant's weights are present), AND minus OPTIONAL graphs. An optional graph (e.g.
+/// the Cohere `decoder_dyn` CPU-fallback, or the NeMo AED KV fast-path exports) is one the loader
+/// runs fine without, so a repo that doesn't ship it for a given precision — the Cohere Arabic
+/// export has no `decoder_model_merged_int8_dyn` — must still badge that quant "cached" once its
+/// REQUIRED graphs are present. Including the optional here left such a quant stuck at `Partial`
+/// forever (the "1% / can't finish" badge). A quant is "cached" iff every REQUIRED `.onnx` graph it
+/// needs is present and external-data-complete.
 fn required_onnx_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<FileGlob> {
     resolver::file_globs(model_id, kind, quant)
         .into_iter()
-        .filter(|fg| fg.glob.ends_with(".onnx"))
+        .filter(|fg| !fg.optional && fg.glob.ends_with(".onnx"))
         .collect()
 }
 
 /// Given the set of cached `(posix_name, size_bytes, complete)` triples for one repo, decide the
-/// cache state for ONE quantization. `complete` is the per-file external-data completeness flag the
-/// caller computed from the on-disk snapshot.
+/// cache state and DOWNLOADED-BYTES for ONE quantization. `complete` is the per-file external-data
+/// completeness flag the caller computed.
+///
+/// The returned byte count sums each present graph AND its external-data sidecars (`.onnx_data*`).
+/// The `.onnx` graph is only KB-MB while its weights are GB, so counting graphs alone made a
+/// partial (or even fully-cached) download read a nonsense ~1% against the real repo total. (In-flight
+/// `.incomplete` STAGING bytes are folded in by the caller, only for a `Partial` result.)
 fn quant_state(
     model_id: &str,
     kind: EngineKind,
@@ -168,9 +178,18 @@ fn quant_state(
             .iter()
             .filter(|(name, _, _)| matches_quant_glob(&fg.glob, name, quant))
             .max_by_key(|(_, size, _)| *size);
-        if let Some((_, size, complete)) = best {
+        if let Some((name, size, complete)) = best {
             present += 1;
             matched_bytes += *size;
+            // Add every external-data sidecar of this graph (`<stem>.onnx_data*` / `.weights`) — the
+            // real weight bytes. Without this the "downloaded" figure was just the tiny graph.
+            if let Some(stem) = name.strip_suffix(".onnx") {
+                for (sname, ssize, _) in cached {
+                    if resolver::is_sidecar_for(stem, sname) {
+                        matched_bytes += *ssize;
+                    }
+                }
+            }
             if !*complete {
                 all_complete = false;
             }
@@ -243,11 +262,34 @@ pub struct ProbeModel {
 /// drives it on the shared runtime. A scan failure (no cache dir yet, IO error) degrades to an EMPTY
 /// map → every model reads `not_cached`, which is the honest cold-start answer.
 ///
-/// PICKER-OPEN HOT PATH: this is the list path (`stt_list_models_with_state`). It does NOT
-/// run `verify_external_data_complete` — that stat/parses every cached `.onnx` (the Rust analogue of
-/// the documented Python `list_models_onnx_parse_loop_starvation` bug). Every `.onnx` present on
-/// disk is treated as complete here; the LOAD path (`resolver::resolve` → `all_onnx_complete`) does
-/// the authoritative per-shard verify lazily, only for the one quant actually being loaded.
+/// Sum the repo's in-flight STAGING bytes: every `blobs/<etag>.incomplete` file (a transfer paused
+/// or interrupted mid-file — the streamer stages there before renaming into `snapshots/`). These are
+/// real downloaded bytes not yet committed to a snapshot file, so a partial quant counts them toward
+/// its progress. A missing/unreadable `blobs` dir → 0 (the common no-staging case). Cheap: one
+/// `read_dir` + a `stat` per staging file.
+fn staging_bytes_in(repo_path: &std::path::Path) -> u64 {
+    let mut total = 0u64;
+    if let Ok(entries) = std::fs::read_dir(repo_path.join("blobs")) {
+        for entry in entries.flatten() {
+            if entry.path().extension().and_then(|e| e.to_str()) == Some("incomplete")
+                && let Ok(meta) = entry.metadata()
+            {
+                total = total.saturating_add(meta.len());
+            }
+        }
+    }
+    total
+}
+
+/// EXTERNAL-DATA COMPLETENESS: a graph `.onnx` present but its `.onnx_data*` shard MISSING (e.g. an
+/// interrupted multi-GB download) must NOT badge `cached` — otherwise the picker shows green, the
+/// user selects the quant, and the LOAD path (`resolver::resolve`) then SILENTLY refetches gigabytes
+/// with no feedback ("transcription stuck forever"). So we DO verify completeness here, but cheaply:
+/// `verify_external_data_complete` parses ONLY graphs under 64 MB (`EXTERNAL_DATA_PARSE_SIZE_GUARD`)
+/// — big inline-weight graphs are instant-skipped, avoiding the documented Python
+/// `list_models_onnx_parse_loop_starvation` cost — and we scope the verify to the repos actually
+/// being probed (below); most catalog models aren't cached so contribute nothing. The whole probe
+/// result is memoized for 2 s by the caller (`cache_snapshot_async`), so a picker open pays it once.
 pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCache> {
     let mut out: BTreeMap<String, ModelQuantCache> = BTreeMap::new();
 
@@ -260,13 +302,33 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
         Err(_) => return out,
     };
 
-    // Index cached repos by lowercase `owner/name` for a cheap lookup per model.
+    // The repos we actually probe (each model × quant → its resolved repo key). ONLY these get the
+    // bounded external-data verify; every other cached repo's completeness flag is never read, so we
+    // leave it `true` and skip the parse entirely.
+    let mut relevant_repos: BTreeSet<String> = BTreeSet::new();
+    for m in models {
+        for q in &m.quantizations {
+            let quant = Quantization::parse(q).unwrap_or(Quantization::Default);
+            if let Some((o, n)) = resolver::resolve_repo_for_quant(&m.id, quant) {
+                relevant_repos.insert(format!("{o}/{n}").to_ascii_lowercase());
+            }
+        }
+    }
+
+    // Index cached repos by lowercase `owner/name` for a cheap lookup per model, plus each probed
+    // repo's in-flight STAGING total (`blobs/<etag>.incomplete` — bytes of a file mid-transfer that
+    // isn't a committed snapshot file yet). An interrupted multi-GB download leaves these, and they
+    // are real progress, so they count toward the repo's partial quant.
     let mut repo_files: BTreeMap<String, Vec<(String, u64, bool)>> = BTreeMap::new();
+    let mut repo_staging: BTreeMap<String, u64> = BTreeMap::new();
     for repo in &scan.repos {
-        // Collect every file across all cached revisions of this repo. The completeness flag is set
-        // to `true` for every present file: the picker-open list path deliberately skips the
-        // per-`.onnx` external-data verify (see the doc-comment above). Presence is enough to badge
-        // the quant `cached`; the load path catches a truly-partial shard set and refetches.
+        let repo_key = repo.repo_id.to_ascii_lowercase();
+        // Verify external-data completeness only for probed repos (see the doc-comment). Presence
+        // alone is NOT enough — a graph whose shard series is incomplete must read `partial`.
+        let verify = relevant_repos.contains(&repo_key);
+        if verify {
+            repo_staging.insert(repo_key.clone(), staging_bytes_in(&repo.repo_path));
+        }
         let mut files: Vec<(String, u64, bool)> = Vec::new();
         let mut seen: BTreeSet<String> = BTreeSet::new();
         for rev in &repo.revisions {
@@ -275,10 +337,18 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
                 if !seen.insert(posix.clone()) {
                     continue;
                 }
-                files.push((posix, f.size_on_disk, true));
+                // A `.onnx` graph is "complete" iff its referenced external-data sidecars are all on
+                // disk; `verify_external_data_complete` self-limits its protobuf parse to <64 MB
+                // graphs. Non-`.onnx` files (vocab/tokenizer/config/sidecars) are always `true`.
+                let complete = if verify && posix.ends_with(".onnx") {
+                    resolver::verify_external_data_complete(&f.file_path)
+                } else {
+                    true
+                };
+                files.push((posix, f.size_on_disk, complete));
             }
         }
-        repo_files.insert(repo.repo_id.to_ascii_lowercase(), files);
+        repo_files.insert(repo_key, files);
     }
 
     for m in models {
@@ -293,9 +363,22 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
             let repo_key = resolver::resolve_repo_for_quant(&m.id, quant)
                 .map(|(o, n)| format!("{o}/{n}").to_ascii_lowercase());
             let cached = repo_key.as_ref().and_then(|k| repo_files.get(k));
+            let staging = repo_key
+                .as_ref()
+                .and_then(|k| repo_staging.get(k))
+                .copied()
+                .unwrap_or(0);
             let (state, bytes) = match cached {
                 Some(files) => quant_state(&m.id, kind, quant, files),
                 None => (CacheState::NotCached, 0),
+            };
+            // Fold the repo's in-flight `.incomplete` staging bytes into a PARTIAL quant's progress
+            // (an interrupted multi-GB shard is real downloaded bytes). Only `Partial` — a fully
+            // `Cached` quant has no pending transfer, and a `NotCached` quant has nothing started.
+            let bytes = if state == CacheState::Partial {
+                bytes.saturating_add(staging)
+            } else {
+                bytes
             };
             mqc.by_quant.insert(q.clone(), (state, bytes, bytes));
         }
@@ -518,6 +601,84 @@ mod tests {
             &files,
         );
         assert_eq!(fp16_state, CacheState::Cached);
+    }
+
+    #[test]
+    fn cohere_int8_cached_without_optional_dyn_decoder() {
+        // REGRESSION: the Cohere Arabic export ships `encoder_model_int8` + `decoder_model_merged_int8`
+        // but NO `decoder_model_merged_int8_dyn` (the OPTIONAL CPU-fallback graph). The probe must
+        // badge int8 "cached" off the two REQUIRED graphs — including the optional `_dyn` as required
+        // left this quant stuck at `Partial` (the "1% / can't finish" badge the user reported).
+        let files = vec![
+            ("onnx/encoder_model_int8.onnx".to_string(), 1000, true),
+            ("onnx/decoder_model_merged_int8.onnx".to_string(), 500, true),
+            ("tokenizer.json".to_string(), 10, true),
+        ];
+        let (state, bytes) = quant_state(
+            "cohere-transcribe-arabic",
+            EngineKind::CohereAsr,
+            Quantization::Int8,
+            &files,
+        );
+        assert_eq!(state, CacheState::Cached);
+        assert_eq!(bytes, 1500);
+        // The default export (which DOES ship its `_dyn`) still requires only encoder+decoder, and a
+        // present `_dyn` neither breaks nor is needed for the cached verdict.
+        let files_default = vec![
+            ("onnx/encoder_model.onnx".to_string(), 2000, true),
+            ("onnx/decoder_model_merged.onnx".to_string(), 800, true),
+            ("onnx/decoder_model_merged_dyn.onnx".to_string(), 400, true),
+        ];
+        let (dstate, _) = quant_state(
+            "cohere-transcribe-arabic",
+            EngineKind::CohereAsr,
+            Quantization::Default,
+            &files_default,
+        );
+        assert_eq!(dstate, CacheState::Cached);
+    }
+
+    #[test]
+    fn quant_state_downloaded_bytes_include_external_data_sidecars() {
+        // REGRESSION (badge read ~1%): the `.onnx` graph is KB-MB, its `.onnx_data*` weights are GB.
+        // Downloaded-bytes must sum graph + sidecars, else the picker showed ~1% for a model with
+        // gigabytes on disk (multilingual cohere int8). Sharded encoder + single-file decoder here.
+        let files = vec![
+            ("onnx/encoder_model_int8.onnx".to_string(), 20_000_000, true),
+            (
+                "onnx/encoder_model_int8.onnx_data".to_string(),
+                2_000_000_000,
+                true,
+            ),
+            (
+                "onnx/encoder_model_int8.onnx_data_1".to_string(),
+                700_000_000,
+                true,
+            ),
+            (
+                "onnx/decoder_model_merged_int8.onnx".to_string(),
+                120_000,
+                true,
+            ),
+            (
+                "onnx/decoder_model_merged_int8.onnx_data".to_string(),
+                195_000_000,
+                true,
+            ),
+            ("tokenizer.json".to_string(), 1_800_000, true), // shared metadata — NOT counted
+        ];
+        let (state, bytes) = quant_state(
+            "cohere-transcribe",
+            EngineKind::CohereAsr,
+            Quantization::Int8,
+            &files,
+        );
+        assert_eq!(state, CacheState::Cached);
+        assert_eq!(
+            bytes,
+            20_000_000 + 2_000_000_000 + 700_000_000 + 120_000 + 195_000_000,
+            "downloaded bytes must include every graph's external-data sidecars, not just the graph"
+        );
     }
 
     #[test]

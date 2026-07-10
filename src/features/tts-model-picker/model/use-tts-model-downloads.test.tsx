@@ -47,8 +47,25 @@ useTtsModelStateStore.setState = (patch: Partial<MockTtsModelState>): void => {
 	Object.assign(mockTtsModelState, patch, { refresh: refreshSpy });
 };
 
+// `mock.module` is process-global. Within the features layer (how CI runs this
+// file) the barrel is only needed for `useTtsModelStateStore`; expose
+// `useTtsSwapStore` too so a co-running features test that pulls the real barrel
+// (e.g. via a component import) still resolves the binding added for TTS quant
+// switching.
+const ttsSwapState = {
+	active: null,
+	begin: () => undefined,
+	confirm: () => undefined,
+	clear: () => undefined,
+};
+function useTtsSwapStore<T>(selector: (state: typeof ttsSwapState) => T): T {
+	return selector(ttsSwapState);
+}
+useTtsSwapStore.getState = () => ttsSwapState;
+
 mock.module("@/entities/tts-catalog", () => ({
 	useTtsModelStateStore,
+	useTtsSwapStore,
 }));
 
 mock.module("@/shared/api/ipc-client", () => ({

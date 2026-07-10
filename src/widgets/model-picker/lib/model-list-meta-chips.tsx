@@ -555,7 +555,7 @@ export function InlineModelMeta({
 
 	return (
 		<div
-			className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-foreground-muted leading-tight"
+			className="flex min-w-0 flex-nowrap items-center gap-x-1.5 overflow-hidden whitespace-nowrap text-[11px] text-foreground-muted leading-tight"
 			data-slot="inline-model-meta"
 		>
 			{facts}

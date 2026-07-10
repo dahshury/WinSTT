@@ -96,6 +96,8 @@ function resetStore(): void {
 		activeRealtime: null,
 		fromMain: null,
 		fromRealtime: null,
+		quantMain: null,
+		quantRealtime: null,
 	});
 }
 
@@ -179,6 +181,27 @@ describe("useModelSwapStore.setActive / clear", () => {
 		const s = useModelSwapStore.getState();
 		expect(s.activeMain).toBeNull();
 		expect(s.fromMain).toBeNull();
+	});
+
+	test("beginSwap records the precision transition on the matching slot", () => {
+		resetStore();
+		useModelSwapStore
+			.getState()
+			.beginSwap("main", "tiny", "tiny", { from: "", to: "int8" });
+		let s = useModelSwapStore.getState();
+		expect(s.quantMain).toEqual({ from: "", to: "int8" });
+		// Realtime slot untouched.
+		expect(s.quantRealtime).toBeNull();
+		// clear wipes the precision transition too.
+		useModelSwapStore.getState().clear("main");
+		s = useModelSwapStore.getState();
+		expect(s.quantMain).toBeNull();
+	});
+
+	test("beginSwap without a precision arg leaves the quant slot null", () => {
+		resetStore();
+		useModelSwapStore.getState().beginSwap("realtime", "small", "base");
+		expect(useModelSwapStore.getState().quantRealtime).toBeNull();
 	});
 });
 

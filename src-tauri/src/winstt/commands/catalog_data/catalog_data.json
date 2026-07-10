@@ -110,7 +110,7 @@
       "onnx_model_name": "onnx-community/whisper-tiny",
       "description": "Smallest multilingual Whisper; best for quick notes on low-end hardware.",
       "param_count": 37760640,
-      "wer": 24.5,
+      "wer": 67.8,
       "rtfx": 750,
       "available_quantizations": [
         "",
@@ -119,10 +119,10 @@
         "bnb4"
       ],
       "size_bytes_by_quantization": {
-        "": 149273068,
-        "fp16": 59593896,
-        "q4": 86713702,
-        "bnb4": 86124414
+        "": 152532250,
+        "fp16": 77186519,
+        "q4": 96807800,
+        "bnb4": 95776296
       }
     },
     {
@@ -235,7 +235,7 @@
       "onnx_model_name": "onnx-community/whisper-base",
       "description": "Light multilingual Whisper; a small accuracy bump without much extra wait.",
       "param_count": 72593920,
-      "wer": 18.0,
+      "wer": 52.1,
       "rtfx": 510,
       "available_quantizations": [
         "",
@@ -244,10 +244,10 @@
         "bnb4"
       ],
       "size_bytes_by_quantization": {
-        "": 262214843,
-        "fp16": 104727818,
-        "q4": 123602419,
-        "bnb4": 122030467
+        "": 292063037,
+        "fp16": 147133861,
+        "q4": 143448301,
+        "bnb4": 140696989
       }
     },
     {
@@ -360,7 +360,7 @@
       "onnx_model_name": "onnx-community/whisper-small",
       "description": "Practical everyday Whisper; balanced speed and accuracy across many languages.",
       "param_count": 241734912,
-      "wer": 13.0,
+      "wer": 26.4,
       "rtfx": 330,
       "available_quantizations": [
         "",
@@ -369,10 +369,10 @@
         "bnb4"
       ],
       "size_bytes_by_quantization": {
-        "": 772075146,
-        "fp16": 308583076,
-        "q4": 233149327,
-        "bnb4": 226073167
+        "": 969223586,
+        "fp16": 486264247,
+        "q4": 300404846,
+        "bnb4": 288020798
       }
     },
     {
@@ -485,7 +485,7 @@
       "onnx_model_name": "Xenova/whisper-medium",
       "description": "More careful multilingual Whisper for messier audio when you can wait longer.",
       "param_count": 769000000,
-      "wer": 9.5,
+      "wer": 15.8,
       "rtfx": 200,
       "available_quantizations": [
         "",
@@ -494,10 +494,10 @@
         "bnb4"
       ],
       "size_bytes_by_quantization": {
-        "": 2291389871,
-        "fp16": 916186656,
-        "q4": 469835828,
-        "bnb4": 444673676
+        "": 3059081632,
+        "fp16": 1532260929,
+        "q4": 680870113,
+        "bnb4": 636834769
       }
     },
     {
@@ -610,13 +610,13 @@
       "onnx_model_name": "Xenova/whisper-large-v3",
       "description": "Most accurate full Whisper; best for tough multilingual audio.",
       "param_count": 1550000000,
-      "wer": 7.4,
-      "rtfx": 145,
+      "wer": 6.55,
+      "rtfx": 462,
       "available_quantizations": [
         ""
       ],
       "size_bytes_by_quantization": {
-        "": 4544298282
+        "": 6178863604
       }
     },
     {
@@ -729,8 +729,8 @@
       "onnx_model_name": "onnx-community/whisper-large-v3-turbo",
       "description": "Near-large Whisper quality with much faster everyday transcription.",
       "param_count": 795766657,
-      "wer": 7.8,
-      "rtfx": 250,
+      "wer": 7.01,
+      "rtfx": 783,
       "available_quantizations": [
         "",
         "fp16",
@@ -738,10 +738,10 @@
         "bnb4"
       ],
       "size_bytes_by_quantization": {
-        "": 1127967979,
-        "fp16": 344227339,
-        "q4": 334147222,
-        "bnb4": 327594234
+        "": 3237418895,
+        "fp16": 1619642480,
+        "q4": 760162535,
+        "bnb4": 714289515
       }
     },
     {
@@ -756,7 +756,7 @@
       "onnx_model_name": "onnx-community/whisper-tiny.en",
       "description": "Tiny English-only Whisper; fastest option for simple English snippets.",
       "param_count": 37760256,
-      "wer": 22.5,
+      "wer": 14.6,
       "rtfx": 750,
       "available_quantizations": [
         "",
@@ -765,10 +765,10 @@
         "bnb4"
       ],
       "size_bytes_by_quantization": {
-        "": 149271149,
-        "fp16": 59589240,
-        "q4": 86712166,
-        "bnb4": 86122878
+        "": 152493270,
+        "fp16": 77144419,
+        "q4": 96768820,
+        "bnb4": 95737316
       }
     },
     {
@@ -783,7 +783,7 @@
       "onnx_model_name": "onnx-community/whisper-base.en",
       "description": "Light English-only Whisper; clearer than Tiny while staying quick.",
       "param_count": 74000000,
-      "wer": 15.5,
+      "wer": 10.2,
       "rtfx": 510,
       "available_quantizations": [
         "",
@@ -792,10 +792,10 @@
         "bnb4"
       ],
       "size_bytes_by_quantization": {
-        "": 262212283,
-        "fp16": 104721330,
-        "q4": 123600371,
-        "bnb4": 122028419
+        "": 292023545,
+        "fp16": 147089929,
+        "q4": 143408809,
+        "bnb4": 140657497
       }
     },
     {
@@ -810,7 +810,7 @@
       "onnx_model_name": "onnx-community/whisper-small.en",
       "description": "Everyday English Whisper; reliable notes without the weight of larger models.",
       "param_count": 244000000,
-      "wer": 11.5,
+      "wer": 7.4,
       "rtfx": 330,
       "available_quantizations": [
         "",
@@ -819,10 +819,10 @@
         "bnb4"
       ],
       "size_bytes_by_quantization": {
-        "": 772071305,
-        "fp16": 308571252,
-        "q4": 233146255,
-        "bnb4": 226070095
+        "": 969183092,
+        "fp16": 486215001,
+        "q4": 300364352,
+        "bnb4": 287980304
       }
     },
     {
@@ -837,7 +837,7 @@
       "onnx_model_name": "Xenova/whisper-medium.en",
       "description": "High-accuracy English Whisper for longer or noisier dictation.",
       "param_count": 769000000,
-      "wer": 8.8,
+      "wer": 6.3,
       "rtfx": 200,
       "available_quantizations": [
         "",
@@ -846,10 +846,10 @@
         "bnb4"
       ],
       "size_bytes_by_quantization": {
-        "": 4330381743,
-        "fp16": 916184608,
-        "q4": 469831732,
-        "bnb4": 444669580
+        "": 5098037198,
+        "fp16": 1532221551,
+        "q4": 680828687,
+        "bnb4": 636793343
       }
     },
     {
@@ -962,13 +962,13 @@
       "onnx_model_name": "xeonchen/Breeze-ASR-25-ONNX",
       "description": "Best for Taiwanese Mandarin, local terms, and Mandarin-English switching.",
       "param_count": 1545107214,
-      "wer": 8.0,
+      "wer": 7.97,
       "rtfx": 150,
       "available_quantizations": [
         ""
       ],
       "size_bytes_by_quantization": {
-        "": 913815769
+        "": 1561754110
       }
     },
     {
@@ -984,8 +984,8 @@
       "onnx_model_name": "onnx-community/CrisperWhisper-ONNX",
       "description": "Verbatim transcripts; keeps fillers, stutters, and false starts.",
       "param_count": 1543304960,
-      "wer": 6.7,
-      "rtfx": 150,
+      "wer": 5.76,
+      "rtfx": 33,
       "available_quantizations": [
         "",
         "fp16",
@@ -993,10 +993,10 @@
         "bnb4"
       ],
       "size_bytes_by_quantization": {
-        "": 6490000000,
-        "fp16": 1815335624,
-        "q4": 797258751,
-        "bnb4": 744834847
+        "": 6177594687,
+        "fp16": 3090566256,
+        "q4": 1223089067,
+        "bnb4": 1131345131
       }
     },
     {
@@ -1109,15 +1109,15 @@
       "onnx_model_name": "onnx-community/lite-whisper-large-v3-turbo-ONNX",
       "description": "Compressed Turbo for near-large quality with a much smaller footprint.",
       "param_count": 534359083,
-      "wer": 8.5,
+      "wer": 12.6,
       "rtfx": 380,
       "available_quantizations": [
         "",
         "fp16"
       ],
       "size_bytes_by_quantization": {
-        "": 1126112643,
-        "fp16": 344140718
+        "": 2191532655,
+        "fp16": 1096585520
       }
     },
     {
@@ -1230,15 +1230,15 @@
       "onnx_model_name": "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX",
       "description": "Accuracy-focused Lite-Whisper when you want cleaner text in less space.",
       "param_count": 581299243,
-      "wer": 8.0,
-      "rtfx": 320,
+      "wer": 6.53,
+      "rtfx": 327,
       "available_quantizations": [
         "",
         "fp16"
       ],
       "size_bytes_by_quantization": {
-        "": 1126112643,
-        "fp16": 344140718
+        "": 2379284175,
+        "fp16": 1190456676
       }
     },
     {
@@ -1351,15 +1351,15 @@
       "onnx_model_name": "onnx-community/lite-whisper-large-v3-turbo-fast-ONNX",
       "description": "Fastest Lite-Whisper for quick local transcription on modest hardware.",
       "param_count": 473840689,
-      "wer": 9.5,
+      "wer": 20.1,
       "rtfx": 500,
       "available_quantizations": [
         "",
         "fp16"
       ],
       "size_bytes_by_quantization": {
-        "": 1126112643,
-        "fp16": 344140718
+        "": 1949462948,
+        "fp16": 975552597
       }
     },
     {
@@ -1374,8 +1374,8 @@
       "onnx_model_name": "moonshine-tiny",
       "description": "Fastest English Moonshine; best for short commands and quick notes.",
       "param_count": 27092835,
-      "wer": 12.5,
-      "rtfx": 1800,
+      "wer": 11.39,
+      "rtfx": 3733,
       "available_quantizations": [
         "",
         "fp16",
@@ -1386,13 +1386,13 @@
         "q4f16"
       ],
       "size_bytes_by_quantization": {
-        "": 327617721,
-        "fp16": 167896848,
-        "q4": 143348155,
-        "bnb4": 141172921,
-        "int8": 66661585,
-        "uint8": 66661694,
-        "q4f16": 104981560
+        "": 186555396,
+        "fp16": 95544684,
+        "q4": 102595881,
+        "bnb4": 101041821,
+        "int8": 50370483,
+        "uint8": 50370561,
+        "q4f16": 59796393
       }
     },
     {
@@ -1407,8 +1407,8 @@
       "onnx_model_name": "moonshine-base",
       "description": "Low-latency English Moonshine with better accuracy for everyday dictation.",
       "param_count": 61514019,
-      "wer": 8.5,
-      "rtfx": 990,
+      "wer": 8.6,
+      "rtfx": 2767,
       "available_quantizations": [
         "",
         "fp16",
@@ -1419,13 +1419,13 @@
         "q4f16"
       ],
       "size_bytes_by_quantization": {
-        "": 711448374,
-        "fp16": 361729459,
-        "q4": 240425489,
-        "bnb4": 234370823,
-        "int8": 143900514,
-        "uint8": 143900678,
-        "q4f16": 186649023
+        "": 405139055,
+        "fp16": 204936715,
+        "q4": 171542072,
+        "bnb4": 167216888,
+        "int8": 105371664,
+        "uint8": 105371781,
+        "q4f16": 105457908
       }
     },
     {
@@ -1452,13 +1452,13 @@
         "q4f16"
       ],
       "size_bytes_by_quantization": {
-        "": 328254328,
-        "fp16": 131165240,
-        "q4": 143451922,
-        "bnb4": 141276688,
-        "int8": 67266025,
-        "uint8": 67266025,
-        "q4f16": 81124575
+        "": 186618442,
+        "fp16": 95608818,
+        "q4": 102658927,
+        "bnb4": 101104867,
+        "int8": 50787803,
+        "uint8": 50787803,
+        "q4f16": 59860527
       }
     },
     {
@@ -1485,13 +1485,13 @@
         "q4f16"
       ],
       "size_bytes_by_quantization": {
-        "": 328254331,
-        "fp16": 131165240,
-        "q4": 143451922,
-        "bnb4": 141276688,
-        "int8": 67266028,
-        "uint8": 67266028,
-        "q4f16": 81124575
+        "": 186618442,
+        "fp16": 95608818,
+        "q4": 102658927,
+        "bnb4": 101104867,
+        "int8": 50787805,
+        "uint8": 50787805,
+        "q4f16": 59860527
       }
     },
     {
@@ -1518,13 +1518,13 @@
         "q4f16"
       ],
       "size_bytes_by_quantization": {
-        "": 557988941,
-        "fp16": 189315222,
-        "q4": 161910319,
-        "bnb4": 161910319,
-        "int8": 182991743,
-        "uint8": 182991817,
-        "q4f16": 98381948
+        "": 262583214,
+        "fp16": 134264380,
+        "q4": 114923291,
+        "bnb4": 114923291,
+        "int8": 70227860,
+        "uint8": 70227934,
+        "q4f16": 71272603
       }
     },
     {
@@ -1551,13 +1551,13 @@
         "q4f16"
       ],
       "size_bytes_by_quantization": {
-        "": 712558936,
-        "fp16": 284662526,
-        "q4": 240546440,
-        "bnb4": 234491774,
-        "int8": 144985996,
-        "uint8": 144985996,
-        "q4f16": 145401448
+        "": 405216664,
+        "fp16": 205015454,
+        "q4": 171619681,
+        "bnb4": 167294497,
+        "int8": 106131563,
+        "uint8": 106131563,
+        "q4f16": 105536647
       }
     },
     {
@@ -1584,13 +1584,13 @@
         "q4f16"
       ],
       "size_bytes_by_quantization": {
-        "": 712558936,
-        "fp16": 284662526,
-        "q4": 240546440,
-        "bnb4": 234491774,
-        "int8": 144985996,
-        "uint8": 144985996,
-        "q4f16": 145401448
+        "": 405216664,
+        "fp16": 205015454,
+        "q4": 171619681,
+        "bnb4": 167294497,
+        "int8": 106131563,
+        "uint8": 106131563,
+        "q4f16": 105536647
       }
     },
     {
@@ -1617,13 +1617,13 @@
         "q4f16"
       ],
       "size_bytes_by_quantization": {
-        "": 712559424,
-        "fp16": 284662526,
-        "q4": 240810600,
-        "bnb4": 242632184,
-        "int8": 159273161,
-        "uint8": 145477449,
-        "q4f16": 145839310
+        "": 405217156,
+        "fp16": 205015455,
+        "q4": 171883842,
+        "bnb4": 175434908,
+        "int8": 120418730,
+        "uint8": 106623018,
+        "q4f16": 105974510
       }
     },
     {
@@ -1650,13 +1650,13 @@
         "q4f16"
       ],
       "size_bytes_by_quantization": {
-        "": 557988939,
-        "fp16": 189315222,
-        "q4": 161910319,
-        "bnb4": 161910319,
-        "int8": 182991741,
-        "uint8": 182991810,
-        "q4f16": 98381948
+        "": 262583214,
+        "fp16": 134264380,
+        "q4": 114923291,
+        "bnb4": 114923291,
+        "int8": 70227858,
+        "uint8": 70227927,
+        "q4f16": 71272603
       }
     },
     {
@@ -1683,13 +1683,13 @@
         "q4f16"
       ],
       "size_bytes_by_quantization": {
-        "": 328254331,
-        "fp16": 131165240,
-        "q4": 143451922,
-        "bnb4": 141276688,
-        "int8": 67266028,
-        "uint8": 67266028,
-        "q4f16": 81124575
+        "": 186618531,
+        "fp16": 95608907,
+        "q4": 102659016,
+        "bnb4": 101104956,
+        "int8": 50787894,
+        "uint8": 50787894,
+        "q4f16": 59860616
       }
     },
     {
@@ -1714,11 +1714,11 @@
       ],
       "supports_language_detection": true,
       "supports_realtime": true,
-      "onnx_model_name": "cohere-transcribe",
+      "onnx_model_name": "Masterx/cohere-transcribe-03-2026-ONNX",
       "description": "Highest-accuracy open multilingual option; strong across 14 languages.",
       "param_count": 2000000000,
-      "wer": 5.1,
-      "rtfx": 270,
+      "wer": 3.83,
+      "rtfx": 491,
       "available_quantizations": [
         "",
         "fp16",
@@ -1727,11 +1727,11 @@
         "q4f16"
       ],
       "size_bytes_by_quantization": {
-        "": 5066516727,
-        "fp16": 2433508136,
-        "int8": 2124236889,
-        "q4": 2126516259,
-        "q4f16": 1535058724
+        "": 8331478949,
+        "fp16": 4166852686,
+        "int8": 3088880258,
+        "q4": 2138235411,
+        "q4f16": 1545697329
       }
     },
     {
@@ -1747,17 +1747,15 @@
       "onnx_model_name": "Masterx/cohere-transcribe-arabic-07-2026-ONNX",
       "description": "Arabic + English specialised Cohere Transcribe (2B); highest-accuracy open Arabic ASR.",
       "param_count": 2000000000,
-      "wer": 0,
+      "wer": 11.8,
       "rtfx": 270,
       "available_quantizations": [
         "",
-        "int8",
-        "q4"
+        "int8"
       ],
       "size_bytes_by_quantization": {
         "": 8315079574,
-        "int8": 2126020212,
-        "q4": 2209640089
+        "int8": 2126020212
       }
     },
     {
@@ -1776,17 +1774,17 @@
       "onnx_model_name": "smcleod/ibm-granite-speech-4.1-2b-plus-onnx",
       "description": "IBM Granite Speech 4.1 Plus autoregressive multilingual ASR with strong punctuation quality.",
       "param_count": 2000000000,
-      "wer": 0,
-      "rtfx": 0,
+      "wer": 5.33,
+      "rtfx": 231,
       "available_quantizations": [
         "",
         "int8",
         "fp16w"
       ],
       "size_bytes_by_quantization": {
-        "": 16399827308,
-        "int8": 4055596124,
-        "fp16w": 8104489645
+        "": 15807988004,
+        "int8": 4062756826,
+        "fp16w": 7911650341
       }
     },
     {
@@ -1805,8 +1803,8 @@
       "onnx_model_name": "smcleod/ibm-granite-speech-4.1-2b-nar-onnx",
       "description": "IBM Granite Speech 4.1 non-autoregressive multilingual ASR with a single-pass editor.",
       "param_count": 2000000000,
-      "wer": 0,
-      "rtfx": 0,
+      "wer": 5.33,
+      "rtfx": 231,
       "available_quantizations": [
         "",
         "int8",
@@ -1859,8 +1857,8 @@
       "onnx_model_name": "andrewleech/qwen3-asr-0.6b-onnx",
       "description": "Alibaba Qwen3-ASR LLM-based multilingual ASR (30 languages, auto language detection). int4-quantized.",
       "param_count": 600000000,
-      "wer": 0,
-      "rtfx": 0,
+      "wer": 5.61,
+      "rtfx": 439,
       "available_quantizations": [
         "int4"
       ],
@@ -1909,8 +1907,8 @@
       "onnx_model_name": "andrewleech/qwen3-asr-1.7b-onnx",
       "description": "Alibaba Qwen3-ASR LLM-based multilingual ASR (30 languages, auto language detection), larger 1.7B model. int4-quantized.",
       "param_count": 1700000000,
-      "wer": 0,
-      "rtfx": 0,
+      "wer": 5.11,
+      "rtfx": 148,
       "available_quantizations": [
         "int4"
       ],
@@ -1934,15 +1932,15 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
       "description": "Very fast Chinese, Cantonese, English, Japanese, and Korean transcription.",
       "param_count": 234000000,
-      "wer": 7.2,
+      "wer": 10.56,
       "rtfx": 850,
       "available_quantizations": [
         "",
         "int8"
       ],
       "size_bytes_by_quantization": {
-        "": 937617178,
-        "int8": 159383552
+        "": 937933072,
+        "int8": 239549735
       }
     },
     {
@@ -1957,8 +1955,8 @@
       "onnx_model_name": "nemo-parakeet-ctc-0.6b",
       "description": "Very fast English transcription when speed matters most.",
       "param_count": 600000000,
-      "wer": 7.5,
-      "rtfx": 1200,
+      "wer": 6.73,
+      "rtfx": 5884,
       "available_quantizations": [
         "",
         "int8"
@@ -1980,8 +1978,8 @@
       "onnx_model_name": "nemo-parakeet-rnnt-0.6b",
       "description": "High-quality English notes when accuracy matters more than raw speed.",
       "param_count": 600000000,
-      "wer": 6.5,
-      "rtfx": 850,
+      "wer": 6.65,
+      "rtfx": 5407,
       "available_quantizations": [
         "",
         "int8"
@@ -2027,8 +2025,8 @@
       "onnx_model_name": "nemo-parakeet-tdt-0.6b-v3",
       "description": "Fast Parakeet for 25 European languages.",
       "param_count": 626983558,
-      "wer": 5.9,
-      "rtfx": 1100,
+      "wer": 5.66,
+      "rtfx": 6098,
       "available_quantizations": [
         "",
         "int8"
@@ -2071,18 +2069,18 @@
       ],
       "supports_language_detection": false,
       "supports_realtime": true,
-      "onnx_model_name": "nemo-canary-1b-v2",
+      "onnx_model_name": "Masterx/canary-1b-v2-onnx",
       "description": "Best NVIDIA pick for accurate 25-language transcription.",
       "param_count": 978000000,
-      "wer": 5.6,
-      "rtfx": 430,
+      "wer": 6.39,
+      "rtfx": 1821,
       "available_quantizations": [
         "",
         "int8"
       ],
       "size_bytes_by_quantization": {
-        "": 3965706828,
-        "int8": 1029118512
+        "": 4638496265,
+        "int8": 1196968578
       }
     },
     {
@@ -2120,7 +2118,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms",
       "description": "Native streaming English FastConformer CTC 80 ms fp32 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 7.8,
       "rtfx": 0.0,
       "available_quantizations": [
         ""
@@ -2141,7 +2139,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-480ms",
       "description": "Native streaming English FastConformer transducer 480 ms fp32 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 5.7,
       "rtfx": 0.0,
       "available_quantizations": [
         ""
@@ -2162,7 +2160,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-480ms",
       "description": "Native streaming English FastConformer CTC 480 ms fp32 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 6.7,
       "rtfx": 0.0,
       "available_quantizations": [
         ""
@@ -2183,7 +2181,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-1040ms",
       "description": "Native streaming English FastConformer CTC 1040 ms fp32 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 6.2,
       "rtfx": 0.0,
       "available_quantizations": [
         ""
@@ -2204,7 +2202,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8",
       "description": "Native streaming English FastConformer CTC 80 ms int8 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 7.8,
       "rtfx": 0.0,
       "available_quantizations": [
         "int8"
@@ -2225,7 +2223,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-480ms-int8",
       "description": "Native streaming English FastConformer CTC 480 ms int8 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 6.7,
       "rtfx": 0.0,
       "available_quantizations": [
         "int8"
@@ -2246,7 +2244,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-1040ms-int8",
       "description": "Native streaming English FastConformer CTC 1040 ms int8 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 6.2,
       "rtfx": 0.0,
       "available_quantizations": [
         "int8"
@@ -2267,7 +2265,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms",
       "description": "Native streaming English FastConformer transducer 80 ms fp32 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 6.4,
       "rtfx": 0.0,
       "available_quantizations": [
         ""
@@ -2288,7 +2286,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-1040ms",
       "description": "Native streaming English FastConformer transducer 1040 ms fp32 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 5.4,
       "rtfx": 0.0,
       "available_quantizations": [
         ""
@@ -2309,7 +2307,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms-int8",
       "description": "Native streaming English FastConformer transducer 80 ms int8 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 6.4,
       "rtfx": 0.0,
       "available_quantizations": [
         "int8"
@@ -2330,7 +2328,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-480ms-int8",
       "description": "Native streaming English FastConformer transducer 480 ms int8 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 5.7,
       "rtfx": 0.0,
       "available_quantizations": [
         "int8"
@@ -2351,7 +2349,7 @@
       "onnx_model_name": "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-1040ms-int8",
       "description": "Native streaming English FastConformer transducer 1040 ms int8 export with cached online decoding.",
       "param_count": 114000000,
-      "wer": 0.0,
+      "wer": 5.4,
       "rtfx": 0.0,
       "available_quantizations": [
         "int8"
@@ -2372,7 +2370,7 @@
       "onnx_model_name": "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-240ms",
       "description": "Native streaming English Parakeet Unified transducer 240 ms fp32 export with cached online decoding.",
       "param_count": 600000000,
-      "wer": 0.0,
+      "wer": 7.35,
       "rtfx": 0.0,
       "available_quantizations": [
         ""
@@ -2393,7 +2391,7 @@
       "onnx_model_name": "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-560ms",
       "description": "Native streaming English Parakeet Unified transducer 560 ms fp32 export with cached online decoding.",
       "param_count": 600000000,
-      "wer": 0.0,
+      "wer": 6.52,
       "rtfx": 0.0,
       "available_quantizations": [
         ""
@@ -2414,7 +2412,7 @@
       "onnx_model_name": "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-1120ms",
       "description": "Native streaming English Parakeet Unified transducer 1120 ms fp32 export with cached online decoding.",
       "param_count": 600000000,
-      "wer": 0.0,
+      "wer": 6.29,
       "rtfx": 0.0,
       "available_quantizations": [
         ""
@@ -2435,7 +2433,7 @@
       "onnx_model_name": "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-240ms",
       "description": "Native streaming English Parakeet Unified transducer 240 ms int8 export with cached online decoding.",
       "param_count": 600000000,
-      "wer": 0.0,
+      "wer": 7.35,
       "rtfx": 0.0,
       "available_quantizations": [
         "int8"
@@ -2456,7 +2454,7 @@
       "onnx_model_name": "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-560ms",
       "description": "Native streaming English Parakeet Unified transducer 560 ms int8 export with cached online decoding.",
       "param_count": 600000000,
-      "wer": 0.0,
+      "wer": 6.52,
       "rtfx": 0.0,
       "available_quantizations": [
         "int8"
@@ -2477,7 +2475,7 @@
       "onnx_model_name": "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-1120ms",
       "description": "Native streaming English Parakeet Unified transducer 1120 ms int8 export with cached online decoding.",
       "param_count": 600000000,
-      "wer": 0.0,
+      "wer": 6.29,
       "rtfx": 0.0,
       "available_quantizations": [
         "int8"
@@ -2517,15 +2515,15 @@
       "onnx_model_name": "Masterx/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-2026-06-11",
       "description": "Multilingual (100+ languages) cache-aware streaming Nemotron 3.5 transducer, 1120 ms, with whole-utterance language auto-detect. fp32 (best accuracy) + int8. Supersedes the English Nemotron.",
       "param_count": 600000000,
-      "wer": 0.0,
-      "rtfx": 0.0,
+      "wer": 7.91,
+      "rtfx": 1490,
       "available_quantizations": [
         "",
         "int8"
       ],
       "size_bytes_by_quantization": {
-        "": 2594042285,
-        "int8": 681877630
+        "": 139768605,
+        "int8": 682009070
       }
     },
     {
@@ -2540,18 +2538,18 @@
       ],
       "supports_language_detection": false,
       "supports_realtime": true,
-      "onnx_model_name": "istupakov/canary-180m-flash-onnx",
+      "onnx_model_name": "Masterx/canary-180m-flash-onnx",
       "description": "Compact Canary for fast English, German, Spanish, and French notes.",
       "param_count": 194168492,
-      "wer": 7.5,
-      "rtfx": 1300,
+      "wer": 6.29,
+      "rtfx": 2484,
       "available_quantizations": [
         "",
         "int8"
       ],
       "size_bytes_by_quantization": {
-        "": 779453711,
-        "int8": 213231107
+        "": 1093520141,
+        "int8": 291400407
       }
     },
     {
@@ -2566,11 +2564,11 @@
       ],
       "supports_language_detection": false,
       "supports_realtime": true,
-      "onnx_model_name": "istupakov/canary-1b-flash-onnx",
+      "onnx_model_name": "Masterx/canary-1b-flash-onnx",
       "description": "Larger Flash model for cleaner four-language notes at high speed.",
       "param_count": 883000000,
-      "wer": 6.4,
-      "rtfx": 1000,
+      "wer": 5.78,
+      "rtfx": 2126,
       "available_quantizations": [
         "",
         "int8"
@@ -2589,7 +2587,7 @@
       "onnx_model_name": "nemo-fastconformer-ru-ctc",
       "description": "Fast Russian transcription with a lightweight feel.",
       "param_count": 109270705,
-      "wer": 10.0,
+      "wer": 5.3,
       "rtfx": 700,
       "available_quantizations": [
         "",
@@ -2612,7 +2610,7 @@
       "onnx_model_name": "nemo-fastconformer-ru-rnnt",
       "description": "More accurate Russian notes when you can trade a little speed.",
       "param_count": 114078382,
-      "wer": 9.0,
+      "wer": 5.3,
       "rtfx": 550,
       "available_quantizations": [
         "",
@@ -2635,15 +2633,15 @@
       "onnx_model_name": "gigaam-v3-e2e-ctc",
       "description": "Fast Russian GigaAM for broad everyday audio.",
       "param_count": 243000000,
-      "wer": 5.5,
+      "wer": 9.2,
       "rtfx": 600,
       "available_quantizations": [
         "",
         "int8"
       ],
       "size_bytes_by_quantization": {
-        "": 3553467958,
-        "int8": 901811185
+        "": 885952221,
+        "int8": 224895489
       }
     },
     {
@@ -2658,15 +2656,15 @@
       "onnx_model_name": "gigaam-v3-e2e-rnnt",
       "description": "Most accurate GigaAM option for Russian speech and calls.",
       "param_count": 243000000,
-      "wer": 5.0,
+      "wer": 8.4,
       "rtfx": 450,
       "available_quantizations": [
         "",
         "int8"
       ],
       "size_bytes_by_quantization": {
-        "": 3553467958,
-        "int8": 901811185
+        "": 892410829,
+        "int8": 226430927
       }
     },
     {
@@ -2681,7 +2679,7 @@
       "onnx_model_name": "alphacep/vosk-model-ru",
       "description": "Reliable offline Russian model with a compact footprint.",
       "param_count": 65016922,
-      "wer": 13.0,
+      "wer": 6.1,
       "rtfx": 350,
       "available_quantizations": [
         "",
@@ -2704,7 +2702,7 @@
       "onnx_model_name": "alphacep/vosk-model-small-ru",
       "description": "Smallest Russian Vosk option for quick lightweight dictation.",
       "param_count": 22986644,
-      "wer": 18.0,
+      "wer": 9.8,
       "rtfx": 800,
       "available_quantizations": [
         "",
@@ -2727,7 +2725,7 @@
       "onnx_model_name": "t-tech/t-one",
       "description": "Real-time Russian call transcription tuned for telephony.",
       "param_count": 71697827,
-      "wer": 10.0,
+      "wer": 5.32,
       "rtfx": 500,
       "available_quantizations": [
         ""
@@ -2762,7 +2760,7 @@
       "onnx_model_name": "dolphin-base-ctc",
       "description": "Best for Eastern languages and Chinese dialect coverage.",
       "param_count": 140000000,
-      "wer": 0.0,
+      "wer": 33.3,
       "rtfx": 1500,
       "available_quantizations": [
         "int8"

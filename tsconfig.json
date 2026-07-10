@@ -18,7 +18,7 @@
     "forceConsistentCasingInFileNames": true,
 
     /* Path Aliases — renderer (@/*) + Tauri bindings (@/bindings).
-       No `baseUrl` (removed in TS 7 / tsgo): non-relative `paths` mappings
+       No `baseUrl` (removed in TS 7): non-relative `paths` mappings
        resolve relative to this tsconfig's directory, so the explicit `./`
        prefixes below are self-anchored. */
     "paths": {
@@ -28,7 +28,7 @@
     },
 
     /* Strictness — maximum type-soundness gate. Every type-checking
-       strictness lever TypeScript/tsgo exposes is on; the only ones left
+       strictness lever TypeScript exposes is on; the only ones left
        off are emit-shape constraints (isolatedDeclarations) irrelevant to
        this `noEmit` renderer. */
     "strict": true,

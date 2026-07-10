@@ -70,28 +70,35 @@ pub(super) fn header_size(h: &reqwest::header::HeaderMap) -> Option<u64> {
 /// smooth 0→100% instead of resetting as each planned file begins). Best-effort: any error
 /// (offline, private/gated repo, an off-catalog/local model with no `owner/name`) yields an empty
 /// map and the caller falls back to the per-file growing total.
-pub(super) fn fetch_repo_file_sizes(http: &reqwest::Client, model: &str) -> BTreeMap<String, u64> {
+pub(super) async fn fetch_repo_file_sizes(
+    http: &reqwest::Client,
+    model: &str,
+) -> BTreeMap<String, u64> {
     let Some((owner, name)) = resolver::resolve_repo(model) else {
         return BTreeMap::new();
     };
     // The model-info endpoint (`/api/models/…`), NOT the resolve host path the file streamer uses.
     let url = format!("https://huggingface.co/api/models/{owner}/{name}?blobs=true");
-    // Bound the whole probe: this seeds the progress denominator and runs BEFORE any streaming, so a
-    // stalled metadata fetch (the `http` client only sets `connect_timeout`) would hang the download
-    // before the first byte. On timeout/error we degrade to an empty map (per-file growing total).
-    let fetch = async {
-        let resp = http.get(&url).send().await.ok()?;
-        if !resp.status().is_success() {
-            return None;
-        }
-        resp.json::<serde_json::Value>().await.ok()
+    // Bound the whole probe with reqwest's REQUEST-level `.timeout()`: this seeds the progress
+    // denominator and runs BEFORE any streaming, so a stalled metadata fetch (the `http` client only
+    // sets `connect_timeout`) must not hang the download before the first byte. This is an `async fn`
+    // driven by the worker's single top-level `block_on`, so the timeout timer is constructed while
+    // the request drives — inside the runtime context — not eagerly on a bare thread. On any
+    // error/timeout → empty map (the caller falls back to the per-file growing total).
+    let Ok(resp) = http
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+    else {
+        return BTreeMap::new();
     };
-    match tauri::async_runtime::block_on(tokio::time::timeout(
-        std::time::Duration::from_secs(20),
-        fetch,
-    )) {
-        Ok(Some(body)) => parse_sibling_sizes(&body),
-        _ => BTreeMap::new(),
+    if !resp.status().is_success() {
+        return BTreeMap::new();
+    }
+    match resp.json::<serde_json::Value>().await {
+        Ok(body) => parse_sibling_sizes(&body),
+        Err(_) => BTreeMap::new(),
     }
 }
 

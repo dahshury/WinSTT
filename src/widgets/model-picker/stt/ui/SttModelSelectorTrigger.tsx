@@ -15,12 +15,14 @@ import { useTranslations } from "use-intl";
 import {
 	type ModelInfo,
 	resolveEffectiveQuant,
+	type SwapQuant,
 	useModelSwapStore,
 } from "@/entities/model-catalog";
 import { estimateForQuant } from "@/entities/system-resources";
 import type { ModelStateEntry } from "@/shared/api/ipc-client";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { Button } from "@/shared/ui/button";
+import { ModelSpecHoverCard } from "@/shared/ui/model-spec-card";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import {
 	buildSwitchingClassName,
@@ -28,6 +30,7 @@ import {
 	SwapSweepBar,
 	SwitchingFromToRow,
 	SwitchingPill,
+	SwitchingQuantBadge,
 } from "@/shared/ui/switching-trigger";
 import { publicAsset } from "@/shared/lib/public-asset";
 import { AuthorBadge } from "../../ui/AuthorBadge";
@@ -41,6 +44,7 @@ import {
 	getFamilyConfig,
 	variantDisplayName,
 } from "../lib/family-helpers";
+import { buildSttSpec } from "../lib/build-stt-spec";
 import { formatLanguages } from "../lib/language-names";
 import {
 	activeLatencyModel,
@@ -163,20 +167,33 @@ function positiveSize(value: number | null | undefined): number | null {
 	return typeof value === "number" && value > 0 ? value : null;
 }
 
+/** The size shown in the trigger's spec badge, in bytes, plus whether it's the
+ *  AUTHORITATIVE per-quant download size (real on-disk bytes) or the param-count
+ *  runtime estimate. The download size is exact and — for these weight-dominated
+ *  ONNX models — closely tracks the loaded RAM, so it's preferred over the
+ *  estimate (which the old code showed ~2.7× too small before the baseline fix).
+ *  The param estimate is only the fallback for the few catalog rows that ship no
+ *  per-quant size. */
 function selectedSttBytes(
 	model: ModelInfo,
 	state: ModelStateEntry | undefined,
 	effectiveQuantization: string,
 	currentQuantization: string,
-): number | null {
-	if (state && state.estimated_bytes > 0) {
-		return estimateForQuant(state.estimated_bytes, effectiveQuantization);
-	}
-	return (
+): { bytes: number | null; fromCatalogSize: boolean } {
+	const actual =
 		positiveSize(model.sizeBytesByQuantization[effectiveQuantization]) ??
 		positiveSize(model.sizeBytesByQuantization[currentQuantization]) ??
-		positiveSize(model.sizeBytesByQuantization[""])
-	);
+		positiveSize(model.sizeBytesByQuantization[""]);
+	if (actual !== null) {
+		return { bytes: actual, fromCatalogSize: true };
+	}
+	if (state && state.estimated_bytes > 0) {
+		return {
+			bytes: estimateForQuant(state.estimated_bytes, effectiveQuantization),
+			fromCatalogSize: false,
+		};
+	}
+	return { bytes: null, fromCatalogSize: false };
 }
 
 function selectedSttMeta(
@@ -188,7 +205,7 @@ function selectedSttMeta(
 		state,
 		currentQuantization,
 	);
-	const bytes = selectedSttBytes(
+	const { bytes, fromCatalogSize } = selectedSttBytes(
 		model,
 		state,
 		effectiveQuantization,
@@ -249,10 +266,9 @@ function selectedSttMeta(
 			label: sizeLabel,
 			icon: HardDriveDownloadIcon,
 			tone: "success",
-			title:
-				state && state.estimated_bytes > 0
-					? "Estimated runtime memory"
-					: "Model size",
+			title: fromCatalogSize
+				? "Size on device (≈ memory when loaded)"
+				: "Estimated runtime memory",
 		});
 	}
 	return items;
@@ -278,12 +294,16 @@ function SelectedContent({
 	const activeState =
 		statesById[activeModel.id] ?? statesById[selectedModel.id];
 	return (
-		<SelectedModelSummary
-			leading={<AuthorChip family={selectedModel.family} />}
-			meta={selectedSttMeta(activeModel, activeState, currentQuantization)}
-			metaPlacement="right"
-			name={sttNameParts(variantDisplayName(selectedModel, peers))}
-		/>
+		<ModelSpecHoverCard spec={buildSttSpec(activeModel)}>
+			<div className="flex min-w-0 flex-1">
+				<SelectedModelSummary
+					leading={<AuthorChip family={selectedModel.family} />}
+					meta={selectedSttMeta(activeModel, activeState, currentQuantization)}
+					metaPlacement="right"
+					name={sttNameParts(variantDisplayName(selectedModel, peers))}
+				/>
+			</div>
+		</ModelSpecHoverCard>
 	);
 }
 
@@ -314,6 +334,40 @@ function SttModelLabel({
 				{variantDisplayName(model, peers)}
 			</span>
 		</>
+	);
+}
+
+/** Pure same-model quant swap: the `from → to` model legs are identical, so
+ *  the model→model row would be redundant. Show the model once + the precision
+ *  transition ("FP32 → INT8") so the trigger says exactly what is changing. */
+function QuantSwitchRow({
+	ariaLabel,
+	model,
+	quant,
+	peers,
+}: {
+	ariaLabel: string | undefined;
+	model: ModelInfo;
+	peers?: readonly ModelInfo[] | undefined;
+	quant: SwapQuant;
+}) {
+	return (
+		<output
+			aria-label={ariaLabel}
+			aria-live="polite"
+			className="flex min-w-0 flex-1 items-center gap-1.5"
+			data-slot="switching-quant"
+		>
+			<AuthorChip family={model.family} />
+			<span className="min-w-0 truncate font-semibold text-body text-foreground leading-tight tracking-tight">
+				{variantDisplayName(model, peers)}
+			</span>
+			<PulseDot className="size-2.5 shrink-0 text-accent" />
+			<SwitchingQuantBadge
+				from={quantLabel(quant.from)}
+				to={quantLabel(quant.to)}
+			/>
+		</output>
 	);
 }
 
@@ -393,6 +447,55 @@ function DownloadingBody({
 	);
 }
 
+/** The `from → to` (or precision-only) row shown while a swap is in flight.
+ *  Split out of {@link TriggerBody} so its branching (pure quant swap vs
+ *  model→model + target precision) stays under Biome's complexity cap. */
+function SwitchingBody({
+	ariaLabel,
+	fromModel,
+	toModel,
+	swapQuant,
+	peers,
+}: {
+	ariaLabel: string | undefined;
+	fromModel: ModelInfo | undefined;
+	peers?: readonly ModelInfo[] | undefined;
+	swapQuant: SwapQuant | null;
+	toModel: ModelInfo | undefined;
+}) {
+	// Pure quant swap (same model on both legs) → precision-focused row.
+	if (swapQuant && fromModel && toModel && fromModel.id === toModel.id) {
+		return (
+			<QuantSwitchRow
+				ariaLabel={ariaLabel}
+				model={toModel}
+				peers={peers}
+				quant={swapQuant}
+			/>
+		);
+	}
+	return (
+		<SwitchingFromToRow
+			ariaLabel={ariaLabel}
+			from={
+				fromModel ? (
+					<SttModelLabel model={fromModel} peers={peers} side="from" />
+				) : undefined
+			}
+			to={
+				toModel ? (
+					<span className="flex min-w-0 items-center gap-1.5">
+						<SttModelLabel model={toModel} peers={peers} side="to" />
+						{swapQuant ? (
+							<SwitchingQuantBadge to={quantLabel(swapQuant.to)} />
+						) : null}
+					</span>
+				) : undefined
+			}
+		/>
+	);
+}
+
 function TriggerBody({
 	isSwitching,
 	isDownloadingTarget,
@@ -404,6 +507,7 @@ function TriggerBody({
 	downloadingModel,
 	fromModel,
 	toModel,
+	swapQuant,
 	selectedModel,
 	selectedId,
 	placeholder,
@@ -413,6 +517,9 @@ function TriggerBody({
 }: {
 	ariaLabel: string | undefined;
 	currentQuantization: string;
+	/** Precision transition for the in-flight swap, or null when the swap keeps
+	 *  the precision. Drives the "FP32 → INT8" badge in the switching view. */
+	swapQuant: SwapQuant | null;
 	/** Catalog of known models — lets {@link variantDisplayName} keep the size
 	 *  token when two would collide (Canary 180M Flash vs Canary 1B Flash). */
 	peers?: readonly ModelInfo[] | undefined;
@@ -477,18 +584,12 @@ function TriggerBody({
 	}
 	if (isSwitching) {
 		return (
-			<SwitchingFromToRow
+			<SwitchingBody
 				ariaLabel={ariaLabel}
-				from={
-					fromModel ? (
-						<SttModelLabel model={fromModel} peers={peers} side="from" />
-					) : undefined
-				}
-				to={
-					toModel ? (
-						<SttModelLabel model={toModel} peers={peers} side="to" />
-					) : undefined
-				}
+				fromModel={fromModel}
+				peers={peers}
+				swapQuant={swapQuant}
+				toModel={toModel}
 			/>
 		);
 	}
@@ -535,6 +636,7 @@ interface AriaLabelInputs {
 	isMultiDownload: boolean;
 	isSwitching: boolean;
 	selectedModel: ModelInfo | undefined;
+	swapQuant: SwapQuant | null;
 	toModel: ModelInfo | undefined;
 }
 
@@ -571,10 +673,21 @@ function buildAriaLabel(inputs: AriaLabelInputs): string | undefined {
 				: `${inputs.downloadPercent} percent`;
 		return `Downloading ${inputs.toModel.displayName} (${pct}). Currently loaded: ${loadedName}.`;
 	}
+	// Pure quant swap (same model both legs) → announce the precision change.
+	if (
+		inputs.swapQuant &&
+		inputs.fromModel &&
+		inputs.fromModel.id === inputs.toModel.id
+	) {
+		return `Switching ${inputs.toModel.displayName} precision from ${quantLabel(inputs.swapQuant.from)} to ${quantLabel(inputs.swapQuant.to)}`;
+	}
 	const fromClause = inputs.fromModel
 		? ` from ${inputs.fromModel.displayName}`
 		: "";
-	return `Switching${fromClause} to ${inputs.toModel.displayName}`;
+	const quantClause = inputs.swapQuant
+		? ` at ${quantLabel(inputs.swapQuant.to)}`
+		: "";
+	return `Switching${fromClause} to ${inputs.toModel.displayName}${quantClause}`;
 }
 
 interface TriggerButtonProps extends SttModelSelectorTriggerProps {
@@ -599,6 +712,9 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 	);
 	const swapFromName = useModelSwapStore((s) =>
 		kind === "main" ? s.fromMain : s.fromRealtime,
+	);
+	const swapQuant = useModelSwapStore((s) =>
+		kind === "main" ? s.quantMain : s.quantRealtime,
 	);
 	const isSwitching = swapTargetName !== null;
 	const fromModel = swapFromName
@@ -639,6 +755,7 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 		isMultiDownload,
 		isSwitching,
 		selectedModel,
+		swapQuant,
 		toModel,
 	});
 	// Treat a background per-quant download as "trigger-active" for the
@@ -682,6 +799,7 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 				selectedId={rest.selectedId}
 				selectedModel={rest.selectedModel}
 				statesById={rest.statesById}
+				swapQuant={swapQuant}
 				toModel={toModel}
 			/>
 			{isTriggerActive ? (

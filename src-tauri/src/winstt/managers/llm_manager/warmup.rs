@@ -142,7 +142,14 @@ impl LlmManager {
                 // policy (2m/15m/…) counts down from the LAST REAL USE on its
                 // own — a periodic re-warm would reset that countdown forever
                 // and the model would never unload, violating the setting.
-                if !booted || mgr.ollama_keep_alive_refresh_enabled() {
+                //
+                // Skip the keep-alive pass entirely when there are no enabled
+                // models: there is nothing to self-heal, and running it every
+                // tick just spams "no enabled models to warm; evicting stale"
+                // once a minute for the whole idle lifetime of the app.
+                let keep_alive_pass = mgr.ollama_keep_alive_refresh_enabled()
+                    && !enabled_ollama_models(&read_settings_raw(&mgr.app)).is_empty();
+                if !booted || keep_alive_pass {
                     booted = mgr.warm_enabled_models().await || booted;
                 }
             }

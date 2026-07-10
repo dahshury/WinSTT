@@ -98,7 +98,15 @@ impl EngineKind {
     /// NOT inherited from the reference's blanket family list. The reference excluded the whole
     /// `nemo`/`gigaam`/`t-one`/`kaldi`/`sense_voice`/`dolphin` families after testing ONE
     /// AED model, but only these actually fail on DML:
-    ///   * `NemoAed` (Canary): conformer-encoder `Reshape` kernel crash (MLOperatorAuthorImpl).
+    ///   * `NemoAed` (Canary): was pinned here (2026-07-08) — istupakov's torch-DYNAMO-exported
+    ///     conformer encoder trips two unfixed ORT-DML defects (dynamic seq → `887A0020` device
+    ///     removal in the pos-table Slice→MatMul→Reshape region; static seq → `InferAndVerifyOutput`
+    ///     `Sizes` 80070057; upstream #26826/#26944). RESOLVED (2026-07-08) by re-exporting the
+    ///     encoder from the NeMo checkpoint via `torch.onnx.export(dynamo=False)` — parakeet's
+    ///     TorchScript idiom, which runs the SAME conformer fine on DML — hosted on the `Masterx/
+    ///     canary-*-onnx` repos the catalog now points at (encoder CPU-parity ~4e-6; decoder
+    ///     unchanged; DML ~2× faster than CPU on a 66 s clip). So NemoAed is NO LONGER pinned. Tool:
+    ///     `E:/DL/Projects/cohere-arabic-export/canary_encoder_export.py`.
     ///   * `CohereAsr`: the DML `com.microsoft.MultiHeadAttention` kernel faults on the
     ///     cross-attention (`encoder_attn`) node — but ONLY for exports that bake in that fused
     ///     contrib op (onnx-community). This flag is therefore CONSERVATIVE/pre-resolve: it pins
@@ -106,10 +114,14 @@ impl EngineKind {
     ///     MatMul/Softmax, zero `MultiHeadAttention` nodes) run correctly and ~2.7× FASTER than CPU
     ///     on DirectML, so `backend::resolve_catalog` probes the resolved graph
     ///     (`cohere_export_dml_safe`) and RESTORES the GPU EP when it's MHA-free.
-    ///   * `KaldiTransducer` (zipformer/vosk), `SenseVoiceCtc`, `DolphinCtc`: silent hang/crash.
-    ///   * Streaming Zipformer2 remains CPU-pinned like the offline Zipformer graph until DirectML
-    ///     stability is proven for that cache-heavy graph. Streaming NeMo CTC/RNN-T use WinSTT's
-    ///     native `ort` implementation and follow their own per-quant policy.
+    ///   * `KaldiTransducer` (zipformer/vosk), `SenseVoiceCtc`, `DolphinCtc`: the DML session
+    ///     BUILD terminates the whole process silently (exit 0, no panic, no error — reproduced
+    ///     2026-07-08 via `examples/stt_dml_spike.rs`); in-app that would kill WinSTT outright.
+    ///     These graphs are also 20-70× realtime on CPU (39-66 ms per 3 s clip), so the GPU has
+    ///     nothing to win — the pin is final, not conservative.
+    ///   * Streaming Zipformer2 remains CPU-pinned like the offline Zipformer graph (same sherpa
+    ///     export family as the process-killing offline graph). Streaming NeMo CTC/RNN-T use
+    ///     WinSTT's native `ort` implementation and follow their own per-quant policy.
     ///
     /// The NeMo CTC/TDT (parakeet) + GigaAM CTC + T-One CTC graphs RUN CORRECTLY and **2–3×
     /// FASTER on DirectML than CPU** (parakeet-ctc 73 vs 223ms, parakeet-tdt 144 vs 270ms,
@@ -119,18 +131,15 @@ impl EngineKind {
     pub fn is_dml_incompatible(self) -> bool {
         matches!(
             self,
-            EngineKind::NemoAed
-                | EngineKind::CohereAsr
+            EngineKind::CohereAsr
                 | EngineKind::KaldiTransducer
                 | EngineKind::SenseVoiceCtc
                 | EngineKind::DolphinCtc
                 | EngineKind::KaldiTransducerStreaming
-                // Qwen3-ASR: conservatively CPU-pinned on non-CUDA GPU EPs. It's a brand-new large
-                // LLM-decoder graph (int4 MatMulNBits) whose DirectML stability is unverified; the
-                // mRoPE + int4 path is exactly the kind that crashes the DML reshape/MatMulNBits
-                // kernels on the granite/cohere-class graphs. CPU is correctness-safe.
-                | EngineKind::Qwen3Asr
         )
+        // Qwen3-ASR was conservatively pinned here until 2026-07-08, then verified on DirectML with
+        // the real engine (examples/stt_dml_spike.rs, int4): correct transcripts and 1.85× faster
+        // than CPU (66 s clip: 4.5 s DML vs 8.2 s CPU) — so it keeps the GPU EP.
     }
 
     /// Works on DirectML but is FASTER on CPU at THIS quant → routed to CPU as a PERF choice

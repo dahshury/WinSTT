@@ -51,24 +51,27 @@ fn quant_from_env() -> Quantization {
     }
 }
 
-fn audio_path() -> PathBuf {
+// COHERE_AUDIO accepts a comma-separated list; passes cycle through the clips (shape-cache probing:
+// alternating lengths reveals whether the DML EP keeps multiple compiled signatures per session).
+fn audio_paths() -> Vec<PathBuf> {
     if let Ok(p) = std::env::var("COHERE_AUDIO") {
-        return PathBuf::from(p);
+        return p.split(',').map(PathBuf::from).collect();
     }
     let cwd = PathBuf::from("tools/bench/audio/jfk_short_3s.f32");
     if cwd.exists() {
-        return cwd;
+        return vec![cwd];
     }
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir
-        .parent()
-        .map(|repo| repo.join("tools/bench/audio/jfk_short_3s.f32"))
-        .unwrap_or(cwd)
+    vec![
+        manifest_dir
+            .parent()
+            .map(|repo| repo.join("tools/bench/audio/jfk_short_3s.f32"))
+            .unwrap_or(cwd),
+    ]
 }
 
-fn load_audio() -> Vec<f32> {
-    let p = audio_path();
-    let bytes = std::fs::read(&p).unwrap_or_else(|e| panic!("read audio {}: {e}", p.display()));
+fn load_audio(p: &PathBuf) -> Vec<f32> {
+    let bytes = std::fs::read(p).unwrap_or_else(|e| panic!("read audio {}: {e}", p.display()));
     let mut audio: Vec<f32> = bytes
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -93,7 +96,9 @@ fn main() {
     eprintln!("model    = {model_id}");
     eprintln!("quant    = {quant:?} (suffix '{}')", quant.suffix());
     eprintln!("providers= {providers:?}");
-    eprintln!("audio    = {}", audio_path().display());
+    for p in audio_paths() {
+        eprintln!("audio    = {}", p.display());
+    }
 
     // Resolve the model files from the HF cache (offline-first).
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -164,38 +169,55 @@ fn main() {
     eprintln!("active providers = {:?}", engine.active_providers());
 
     // ── TRANSCRIBE (the decode loop drives MultiHeadAttention every token) ──
-    let audio = load_audio();
-    eprintln!(
-        "audio samples = {} ({:.1}s @16k)",
-        audio.len(),
-        audio.len() as f32 / 16000.0
-    );
+    let clips: Vec<Vec<f32>> = audio_paths().iter().map(load_audio).collect();
+    for audio in &clips {
+        eprintln!(
+            "audio samples = {} ({:.1}s @16k)",
+            audio.len(),
+            audio.len() as f32 / 16000.0
+        );
+    }
     let opts = TranscribeOptions {
         language: lang,
         ..Default::default()
     };
 
-    let run_start = Instant::now();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        engine.transcribe(&audio, &opts)
-    }));
-    match result {
-        Ok(Ok(t)) => {
-            let dt = run_start.elapsed();
-            eprintln!("\n✅ SUCCESS in {dt:?}");
-            eprintln!("transcript: {:?}", t.text);
-            if t.text.trim().is_empty() {
-                eprintln!("⚠️  empty transcript — ran without crashing but produced no text");
-                std::process::exit(5);
+    // COHERE_PASSES>1: transcribe N times on the SAME loaded engine → steady-state timing with the
+    // one-time DML graph compile excluded (it happens on pass 1). Per-pass wall time printed; use the
+    // `[cohere-profile] decode ... avg-rest ms/tok` lines (WINSTT_COHERE_PROFILE=1) for the noise-free
+    // per-token metric.
+    let passes: usize = std::env::var("COHERE_PASSES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(1);
+    let mut last_text = String::new();
+    for pass in 0..passes {
+        let audio = &clips[pass % clips.len()];
+        let run_start = Instant::now();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            engine.transcribe(audio, &opts)
+        }));
+        match result {
+            Ok(Ok(t)) => {
+                let dt = run_start.elapsed();
+                eprintln!("[pass {}/{passes}] {dt:?}", pass + 1);
+                last_text = t.text;
+                if last_text.trim().is_empty() {
+                    eprintln!("⚠️  empty transcript — ran without crashing but produced no text");
+                    std::process::exit(5);
+                }
+            }
+            Ok(Err(e)) => {
+                eprintln!("\n❌ TRANSCRIBE ERROR (SttError): {e}");
+                std::process::exit(6);
+            }
+            Err(_) => {
+                eprintln!("\n💥 TRANSCRIBE PANIC (DirectML kernel crash during decode)");
+                std::process::exit(7);
             }
         }
-        Ok(Err(e)) => {
-            eprintln!("\n❌ TRANSCRIBE ERROR (SttError): {e}");
-            std::process::exit(6);
-        }
-        Err(_) => {
-            eprintln!("\n💥 TRANSCRIBE PANIC (DirectML kernel crash during decode)");
-            std::process::exit(7);
-        }
     }
+    eprintln!("\n✅ SUCCESS");
+    eprintln!("transcript: {last_text:?}");
 }

@@ -560,7 +560,24 @@ fn to_model_info(m: &TtsModelEntry) -> TtsModelInfoDto {
     }
 }
 
-fn to_model_state(m: &TtsModelEntry, dl: &TtsDownloadManager) -> TtsModelStateDto {
+/// The precision the engine will actually load for a model: the user's persisted
+/// `tts.quantization` when it's a concrete pick the model publishes, else the
+/// catalog default. Mirrors `build_local_engine_for`'s resolution so the badge
+/// matches what loads (only Qwen3-TTS ships a real ladder today).
+fn resolve_tts_effective_quant(m: &TtsModelEntry, settings_quant: &str) -> String {
+    if !settings_quant.is_empty() && m.quant(settings_quant).is_some() {
+        settings_quant.to_string()
+    } else {
+        m.default_quant().to_string()
+    }
+}
+
+fn to_model_state(
+    m: &TtsModelEntry,
+    dl: &TtsDownloadManager,
+    active_model_id: &str,
+    active_quant: &str,
+) -> TtsModelStateDto {
     let mut by_quant: HashMap<String, TtsCacheInfoDto> = HashMap::new();
     for q in m.quants {
         let info = dl.cache_info(m.id, q.id);
@@ -574,7 +591,14 @@ fn to_model_state(m: &TtsModelEntry, dl: &TtsDownloadManager) -> TtsModelStateDt
             },
         );
     }
-    let eff = m.default_quant().to_string();
+    // Reflect the user's precision pick for the ACTIVE model so `currentTtsQuant`
+    // (and the picker badge) tracks what actually loads; other rows report their
+    // catalog default.
+    let eff = if m.id == active_model_id {
+        resolve_tts_effective_quant(m, active_quant)
+    } else {
+        m.default_quant().to_string()
+    };
     let estimated_bytes = m.quant(&eff).map_or(0, |q| q.size_bytes);
     TtsModelStateDto {
         id: m.id.to_string(),
@@ -594,11 +618,20 @@ pub fn tts_list_models() -> Vec<TtsModelInfoDto> {
 /// `tts_list_models_with_state` — catalog + per-model cache state in one call.
 #[tauri::command]
 #[specta::specta]
-pub fn tts_list_models_with_state(dl: State<'_, Arc<TtsDownloadManager>>) -> TtsModelsWithStateDto {
+pub fn tts_list_models_with_state(
+    app: AppHandle,
+    dl: State<'_, Arc<TtsDownloadManager>>,
+) -> TtsModelsWithStateDto {
+    // Read the active model + its persisted precision so the ACTIVE row's
+    // `effectiveQuantization` reflects the user's pick (drives `currentTtsQuant`
+    // and the picker's quant badge) rather than always the catalog default.
+    let settings = crate::winstt::settings_store::read_settings_raw(&app);
+    let active_model = settings.tts.model.as_str();
+    let active_quant = settings.tts.quantization.as_str();
     let models = catalog::TTS_CATALOG.iter().map(to_model_info).collect();
     let states = catalog::TTS_CATALOG
         .iter()
-        .map(|m| to_model_state(m, dl.inner()))
+        .map(|m| to_model_state(m, dl.inner(), active_model, active_quant))
         .collect();
     TtsModelsWithStateDto { models, states }
 }

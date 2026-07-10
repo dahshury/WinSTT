@@ -7,7 +7,7 @@
 		"studio": "remotion studio src/index.tsx",
 		"render": "remotion render src/index.tsx",
 		"render:all": "node scripts/render-all.mjs",
-		"types:check": "tsgo -p tsconfig.json --noEmit"
+		"types:check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.469",
@@ -20,7 +20,6 @@
     "@types/node": "^24.9.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-		"@typescript/native-preview": "^7.0.0-dev.20260615.1",
-		"typescript": "~5.9.0"
+		"typescript": "^7.0.2"
 	}
 }

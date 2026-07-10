@@ -97,6 +97,21 @@ fn bytes_per_param(q: Quantization) -> f64 {
     }
 }
 
+/// Estimated RUNTIME memory footprint (bytes) of a `param_count`-param model loaded at `quant`:
+/// `param_count × bytes_per_param(quant)`. This is the ONE per-quant runtime model shared by the
+/// RAM/VRAM-aware auto-quant picker (`fit_aware_auto_quant`), the catalog fitness flags
+/// (`is_comfortable_on_*`), the `estimated_bytes` the renderer scales via `estimateForQuant`, and
+/// the tooltip's "runtime memory". `param_count == 0` (unknown params) → 0. Passing
+/// `Quantization::Default` gives the fp32 baseline (`param × 4`), which is exactly what the
+/// renderer's `estimateForQuant` divides back down per-quant — so `estimated_bytes` MUST be the
+/// Default-baseline value, not a pre-scaled one.
+pub fn runtime_footprint_bytes(param_count: u64, quant: Quantization) -> u64 {
+    if param_count == 0 {
+        return 0;
+    }
+    (param_count as f64 * bytes_per_param(quant)) as u64
+}
+
 /// Accuracy/faithfulness weight (higher = more accurate) — mirrors the picker's
 /// `QUANTIZATION_WEIGHT` ("" 32, fp16 16, int8/uint8 8, q4f16 6, int4/bnb4/q4 4).
 fn accuracy_weight(q: Quantization) -> u32 {
@@ -273,27 +288,30 @@ pub fn onnx_graph_contains_op(path: &std::path::Path, op: &str) -> bool {
     false
 }
 
-/// Whether a resolved **Cohere** export is safe to run on DirectML. Cohere's DML crash is confined to
-/// exports that bake in the fused `com.microsoft.MultiHeadAttention` contrib op (e.g. onnx-community):
-/// its DirectML kernel faults on the cross-attention (`encoder_attn`) node. Hand-decomposed exports
-/// (e.g. the Masterx conversions) contain NO `MultiHeadAttention` nodes — plain MatMul/Softmax
-/// attention — and run correctly, and 2–3× faster than CPU, on DirectML.
+/// Whether a resolved **Cohere** export is safe to run on DirectML. Cohere's DirectML faults are
+/// confined to the DECODER's fused attention (empirically isolated with the DML benchmark harness):
+///   * cross-attention `com.microsoft.MultiHeadAttention` — its DML kernel CRASHES (`encoder_attn`,
+///     `E_INVALIDARG`) on the 3-D-query / 4-D-KV form;
+///   * self-attention `com.microsoft.GroupQueryAttention` — DML silently MIS-COMPUTES it (garbled
+///     transcript, no error).
+///
+/// The encoder's self-attention `MultiHeadAttention` was measured DML-SAFE (correct output), so it is
+/// deliberately NOT probed — otherwise a decoder-decomposed / fused-encoder export (onnx-community
+/// decoder rewritten to plain SDPA + primitive GQA) would be needlessly kept on CPU.
+///
+/// So an export is DML-safe iff its DECODER graph contains NEITHER contrib op: true for a hand-
+/// decomposed export (Masterx: plain MatMul/Softmax, ~2.7× faster than CPU on a 2 B model) and for a
+/// decoder rewritten to primitives; false for the stock fused onnx-community decoder (MHA + GQA).
 ///
 /// `EngineKind::is_dml_incompatible` pins ALL Cohere to CPU *before* resolve (no files on disk yet);
-/// this probes the actual encoder+decoder graphs once resolved so the caller can RESTORE the GPU EP
-/// for a decomposed export. Absent files / unreadable graphs → `false` (keep the safe CPU pin).
+/// this probes the resolved decoder graph so the caller can RESTORE the GPU EP for a decomposed
+/// export. Absent / unreadable decoder → `false` (keep the safe CPU pin).
 pub fn cohere_export_dml_safe(resolved: &super::ResolvedModel) -> bool {
-    let mut probed_any = false;
-    for key in ["encoder", "decoder"] {
-        if let Some(path) = resolved.files.get(key) {
-            probed_any = true;
-            if onnx_graph_contains_op(path, "MultiHeadAttention") {
-                return false;
-            }
-        }
-    }
-    // Only vouch for DML if we actually inspected the graph(s); an empty file map stays CPU-pinned.
-    probed_any
+    let Some(decoder) = resolved.files.get("decoder") else {
+        return false;
+    };
+    !onnx_graph_contains_op(decoder, "MultiHeadAttention")
+        && !onnx_graph_contains_op(decoder, "GroupQueryAttention")
 }
 
 /// CTC greedy collapse: argmax already done → ids; drop `blank_id`, collapse
@@ -368,6 +386,113 @@ mod tests {
     fn ctc_collapse_empty() {
         assert!(ctc_greedy_collapse(&[], 0).is_empty());
         assert!(ctc_greedy_collapse(&[0, 0, 0], 0).is_empty());
+    }
+
+    #[test]
+    fn onnx_op_scan_finds_and_misses() {
+        use std::io::Write;
+        let dir = std::env::temp_dir();
+        let hit = dir.join("winstt_optest_hit.onnx");
+        let miss = dir.join("winstt_optest_miss.onnx");
+        // Op strings sit among protobuf noise; the scanner is a byte-substring match.
+        std::fs::File::create(&hit)
+            .unwrap()
+            .write_all(b"\x08\x01graphMatMulSoftmaxMultiHeadAttention\x12Add")
+            .unwrap();
+        std::fs::File::create(&miss)
+            .unwrap()
+            .write_all(b"\x08\x01graphMatMulSoftmaxAddTransposeReshape")
+            .unwrap();
+        assert!(onnx_graph_contains_op(&hit, "MultiHeadAttention"));
+        assert!(!onnx_graph_contains_op(&miss, "MultiHeadAttention"));
+        // Missing file → false (never an unsafe "op absent → GPU-safe" misread; caller keeps CPU pin).
+        assert!(!onnx_graph_contains_op(
+            &dir.join("winstt_optest_absent.onnx"),
+            "MultiHeadAttention"
+        ));
+        let _ = std::fs::remove_file(&hit);
+        let _ = std::fs::remove_file(&miss);
+    }
+
+    #[test]
+    fn onnx_op_scan_spans_chunk_boundary() {
+        use std::io::Write;
+        // Place the needle so it straddles the 1 MiB read boundary: last 4 bytes of chunk 0 +
+        // first bytes of chunk 1. The carried `needle.len()-1` overlap must catch it.
+        let needle = "MultiHeadAttention";
+        let chunk = 1usize << 20;
+        let split_at = chunk - 4; // needle starts 4 bytes before the seam
+        let mut bytes = vec![b'.'; split_at];
+        bytes.extend_from_slice(needle.as_bytes());
+        bytes.extend(std::iter::repeat_n(b'.', 64));
+        let path = std::env::temp_dir().join("winstt_optest_seam.onnx");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(&bytes)
+            .unwrap();
+        assert!(onnx_graph_contains_op(&path, needle));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn cohere_dml_safety_keys_on_decoder_attention_ops() {
+        use std::io::Write;
+        let dir = std::env::temp_dir();
+        let mk = |name: &str, body: &[u8]| {
+            let p = dir.join(name);
+            std::fs::File::create(&p).unwrap().write_all(body).unwrap();
+            p
+        };
+        let build = |files: Vec<(&str, std::path::PathBuf)>| super::super::ResolvedModel {
+            files: files.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            effective_quantization: Quantization::Default,
+        };
+
+        // Fused decoder (MHA + GQA) → unsafe, even with a decomposed (op-free) encoder.
+        let enc_ok = mk(
+            "winstt_cohere_enc_ok.onnx",
+            b"MatMulSoftmaxTransposeReshape",
+        );
+        let fused_dec = mk(
+            "winstt_cohere_dec_fused.onnx",
+            b"...GroupQueryAttention..MultiHeadAttention..",
+        );
+        assert!(!cohere_export_dml_safe(&build(vec![
+            ("encoder", enc_ok.clone()),
+            ("decoder", fused_dec.clone()),
+        ])));
+
+        // GQA-only decoder (MHA decomposed, GQA left) → still unsafe.
+        let gqa_dec = mk(
+            "winstt_cohere_dec_gqa.onnx",
+            b"MatMul..GroupQueryAttention..Softmax",
+        );
+        assert!(!cohere_export_dml_safe(&build(vec![(
+            "decoder",
+            gqa_dec.clone()
+        )])));
+
+        // Fully decomposed decoder (no contrib attention) → safe, regardless of a fused ENCODER
+        // (encoder MHA is DML-safe and deliberately not probed).
+        let enc_fused = mk("winstt_cohere_enc_fused.onnx", b"...MultiHeadAttention...");
+        let plain_dec = mk(
+            "winstt_cohere_dec_plain.onnx",
+            b"MatMulSoftmaxTransposeReshapeConcat",
+        );
+        assert!(cohere_export_dml_safe(&build(vec![
+            ("encoder", enc_fused.clone()),
+            ("decoder", plain_dec.clone()),
+        ])));
+
+        // No decoder resolved → keep the safe CPU pin.
+        assert!(!cohere_export_dml_safe(&build(vec![(
+            "encoder",
+            enc_ok.clone()
+        )])));
+
+        for p in [enc_ok, fused_dec, gqa_dec, enc_fused, plain_dec] {
+            let _ = std::fs::remove_file(p);
+        }
     }
 
     #[test]
@@ -586,10 +711,20 @@ mod tests {
 
     #[test]
     fn dml_incompatible_engine_forced_to_cpu() {
+        // NemoAed (Canary) is NO LONGER pinned — the DirectML-safe re-export (Masterx, encoder via
+        // `dynamo=False`) runs on DML, so it keeps the GPU EP.
         assert_eq!(
             override_dml_to_cpu_for_kind(
                 vec![Accelerator::DirectMl, Accelerator::Cpu],
                 EngineKind::NemoAed,
+                Quantization::Default
+            ),
+            vec![Accelerator::DirectMl, Accelerator::Cpu]
+        );
+        assert_eq!(
+            override_dml_to_cpu_for_kind(
+                vec![Accelerator::DirectMl, Accelerator::Cpu],
+                EngineKind::CohereAsr,
                 Quantization::Default
             ),
             vec![Accelerator::Cpu]

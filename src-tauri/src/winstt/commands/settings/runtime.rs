@@ -315,6 +315,11 @@ fn tts_warm_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> 
     !should_warm_tts(previous)
         || previous.tts.source != next.tts.source
         || previous.tts.model != next.tts.model
+        // A precision change (e.g. Qwen3-TTS int4→fp16) moves the engine
+        // fingerprint, so proactively rebuild+warm the resident voice at the new
+        // quant instead of waiting for the next read-aloud (mirrors STT's
+        // `same_model_load_inputs_changed` observing `onnx_quantization`).
+        || previous.tts.quantization != next.tts.quantization
         || previous.model.device != next.model.device
 }
 

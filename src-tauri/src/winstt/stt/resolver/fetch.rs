@@ -111,9 +111,12 @@ pub async fn resolve(req: &ResolveRequest) -> SttResult<ResolvedModel> {
         {
             return Ok(resolved);
         }
-        // else: cache present but an `.onnx_data_N` shard is missing → fall through to refetch.
-        // Pass 2 — exactly ONE network attempt (cache-only miss OR the partial-shard refetch).
-        let refetched = resolve_remote(req, false).await?;
+        // else: cache present but incomplete → fall through to the load-time heal. Pass 2 —
+        // exactly ONE network attempt, `fail_fast_weights = true`: heal a SMALL metadata gap (a
+        // dropped `config.json`/`tokenizer.json`, a few MB) transparently, but do NOT silently
+        // download a missing multi-GB weight (graph / `.onnx_data*` shard) — that is the "stuck
+        // forever" load hang. A missing weight returns an actionable error the UI surfaces.
+        let refetched = resolve_remote(req, false, true).await?;
         if all_onnx_complete(&refetched) {
             return Ok(refetched);
         }
@@ -124,7 +127,8 @@ pub async fn resolve(req: &ResolveRequest) -> SttResult<ResolvedModel> {
     }
 
     // Caller explicitly asked for a network resolve from the start: one attempt, must be complete.
-    let resolved = resolve_remote(req, false).await?;
+    // (No caller sets `local_files_only=false` today; this stays a full download for correctness.)
+    let resolved = resolve_remote(req, false, false).await?;
     if all_onnx_complete(&resolved) {
         Ok(resolved)
     } else {
@@ -196,6 +200,9 @@ fn resolve_local_dir(
                         continue;
                     }
                 }
+                if fg.optional {
+                    continue;
+                }
                 return Err(SttError::Resolve(format!(
                     "missing {} ({}) in {}",
                     fg.key,
@@ -216,9 +223,34 @@ fn resolve_local_dir(
     })
 }
 
+/// True for the small text/config sidecars a load-time refetch may transparently heal (a few KB–MB
+/// each): `config.*` / `vocab.*` / `tokenizer*.json` / `*.txt` / `*.jinja` / `*.yaml|.yml`. EVERY
+/// other file — `.onnx` graphs, `.onnx_data*` / `.weights` / `.data` external-data shards, `.bin`
+/// tables — is a potentially-MULTI-GB weight blob. A missing weight must NOT be silently downloaded
+/// at model-LOAD time (that blocks the load for minutes/hours with zero feedback — the reported
+/// "transcription stuck forever" after an interrupted download); the loader fails fast on it instead
+/// and the caller routes the user to the progress-visible download flow.
+fn is_small_metadata_path(repo_path: &str) -> bool {
+    let name = repo_path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(repo_path)
+        .to_ascii_lowercase();
+    [".json", ".txt", ".jinja", ".yaml", ".yml"]
+        .iter()
+        .any(|ext| name.ends_with(ext))
+}
+
 /// The remote resolve: list tree → glob → download each file (+ sidecars + config). `cache_only`
 /// chooses `local_files_only` on every download (the first pass) vs a network fetch (the refetch).
-async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<ResolvedModel> {
+/// `fail_fast_weights` (set on the LOAD-time heal pass) additionally refuses to network-download a
+/// missing WEIGHT file: only small metadata (`is_small_metadata_path`) may be healed on load; a
+/// missing graph/shard returns an actionable error instead of a silent multi-GB block.
+async fn resolve_remote(
+    req: &ResolveRequest,
+    cache_only: bool,
+    fail_fast_weights: bool,
+) -> SttResult<ResolvedModel> {
     use hf_hub::HFClient;
 
     let (owner, name) =
@@ -251,6 +283,7 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
         }
         let path = match pick_kaldi_tiebreak(req.kind, &matches) {
             Ok(Some(p)) => p,
+            Ok(None) if fg.optional => continue,
             Ok(None) => {
                 return Err(SttError::Resolve(format!(
                     "missing {} ({}) in {}/{}",
@@ -304,7 +337,24 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
     let mut files: BTreeMap<String, PathBuf> = BTreeMap::new();
     let mut config_local: Option<PathBuf> = None;
     for pf in &planned {
-        let local = download_one(&repo, &pf.repo_path, cache_only).await?;
+        let local = if fail_fast_weights && !is_small_metadata_path(&pf.repo_path) {
+            // LOAD-time heal: a missing weight file (graph / shard) would trigger a silent,
+            // unbounded network download that blocks the model load. Accept it ONLY if already
+            // cached; otherwise fail fast with an actionable message so the UI can route the user
+            // to the download flow (which shows progress + supports pause/cancel).
+            match download_one(&repo, &pf.repo_path, true).await {
+                Ok(p) => p,
+                Err(_) => {
+                    return Err(SttError::Resolve(format!(
+                        "model '{}' is incompletely downloaded (missing weight file '{}') — \
+                         re-download it from the model picker",
+                        req.model_id, pf.repo_path
+                    )));
+                }
+            }
+        } else {
+            download_one(&repo, &pf.repo_path, cache_only).await?
+        };
         if let Some(key) = pf.key {
             files.insert(key.to_string(), local.clone());
         } else if pf.repo_path == "config.json" {
@@ -407,6 +457,7 @@ async fn resolve_cached_offline(req: &ResolveRequest) -> SttResult<ResolvedModel
         }
         let chosen = match pick_kaldi_tiebreak(req.kind, &matches) {
             Ok(Some(p)) => (*p).clone(),
+            Ok(None) if fg.optional => continue,
             Ok(None) => {
                 // Required file not cached → genuine miss; let `resolve()` go to the network.
                 return Err(SttError::Resolve(format!(
@@ -488,6 +539,11 @@ pub async fn plan_quant_download(
         // other kind a unique match is chosen, and >1 falls back to `first()` (pre-existing behaviour).
         let path = match pick_kaldi_tiebreak(kind, &matches) {
             Ok(Some(p)) => p.clone(),
+            // An OPTIONAL file with no match is skipped, not planned (parity with `resolve_remote` /
+            // `resolve_cached_offline`). Without this, a per-quant download whose repo doesn't ship
+            // an optional graph — e.g. the Cohere Arabic export has no `decoder_model_merged_int8_dyn`
+            // — failed to PLAN and settled the download as cancelled ("stuck, can't download").
+            Ok(None) if fg.optional => continue,
             Ok(None) => {
                 return Err(SttError::Resolve(format!(
                     "missing {} ({}) in {owner}/{name}",
@@ -668,6 +724,41 @@ mod tests {
             assert!(
                 validate_repo_path(path).is_err(),
                 "{path} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn small_metadata_healable_but_weights_fail_fast() {
+        // Small text/config sidecars a load-time refetch MAY heal transparently.
+        for p in [
+            "config.json",
+            "generation_config.json",
+            "onnx/tokenizer_config.json",
+            "tokenizer.json",
+            "added_tokens.json",
+            "preprocessor_config.json",
+            "vocab.txt",
+            "tokens.txt",
+            "chat_template.jinja",
+            "config.yaml",
+        ] {
+            assert!(is_small_metadata_path(p), "{p} should be healable metadata");
+        }
+        // Potentially-multi-GB weight blobs a load MUST NOT silently download — the loader fails
+        // fast on these so the model load never blocks for minutes/hours with no feedback.
+        for p in [
+            "onnx/encoder_model_int8.onnx",
+            "onnx/encoder_model_int8.onnx_data",
+            "onnx/encoder_model_int8.onnx_data_1",
+            "onnx/decoder_model_merged.onnx.data",
+            "onnx/encoder.weights",
+            "decoder_weights.int4.data",
+            "embed_tokens.bin",
+        ] {
+            assert!(
+                !is_small_metadata_path(p),
+                "{p} is a weight file and must fail fast, not heal"
             );
         }
     }

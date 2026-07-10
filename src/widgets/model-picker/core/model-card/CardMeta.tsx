@@ -18,9 +18,12 @@ export interface MetaEntry {
 
 /** The metadata-line container classes — shared so a picker composing a
  *  heterogeneous meta row (e.g. OpenRouter's variant badge + chips) matches the
- *  homogeneous {@link CardMetaRow} exactly. */
+ *  homogeneous {@link CardMetaRow} exactly. Kept to a SINGLE line (`flex-nowrap`
+ *  + `overflow-hidden`) so the card's identity block stays a fixed height — the
+ *  facts never wrap into a second row that would make one card taller than its
+ *  neighbours. */
 const META_ROW_CLASSES =
-	"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-foreground-muted leading-tight";
+	"flex min-w-0 flex-nowrap items-center gap-x-1.5 overflow-hidden whitespace-nowrap text-[11px] text-foreground-muted leading-tight";
 
 /** The faint middot that separates facts in a metadata line. */
 function MetaSeparator() {

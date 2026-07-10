@@ -95,25 +95,6 @@ export function ModelPickerWindow() {
 	const currentQuantization = (modelSettings?.onnxQuantization ??
 		"") as OnnxQuantization;
 	const deviceValue = gpuAvailable ? (modelSettings?.device ?? "auto") : "cpu";
-	const getFitAssessment: GetFitAssessment = (modelId) => {
-		if (liveResources === null) {
-			return null;
-		}
-		const mainId = localModelIdOrNull(currentModel);
-		const realtimeId = localModelIdOrNull(modelSettings?.realtimeModel);
-		return assessDictationFitClient(modelId, {
-			candidateQuant: quantForFit(statesById, modelId, currentQuantization),
-			live: liveResources,
-			loaded: {
-				mainId,
-				mainQuant: quantForFit(statesById, mainId, currentQuantization),
-				realtimeId,
-				realtimeQuant: quantForFit(statesById, realtimeId, currentQuantization),
-			},
-			requestedDevice: requestedDeviceForFit(deviceValue),
-			statesById,
-		});
-	};
 	const [fileQueueBusy, setFileQueueBusy] = useState(false);
 	useEffect(
 		() => onFileQueueActive((data) => setFileQueueBusy(data.active)),
@@ -181,6 +162,31 @@ export function ModelPickerWindow() {
 		dropdownStateClass,
 		openGeneration,
 	} = usePanelRect(catalogLoaded);
+
+	const getFitAssessment: GetFitAssessment = (modelId) => {
+		if (liveResources === null) {
+			return null;
+		}
+		const mainId = localModelIdOrNull(currentModel);
+		const realtimeId = localModelIdOrNull(modelSettings?.realtimeModel);
+		// The slot this picker edits is unloaded first on swap, so treat its
+		// resident model as freed: the realtime picker frees the realtime slot,
+		// every other STT picker frees the main dictation slot.
+		const replacedId = mode.kind === "stt-realtime" ? realtimeId : mainId;
+		return assessDictationFitClient(modelId, {
+			candidateQuant: quantForFit(statesById, modelId, currentQuantization),
+			live: liveResources,
+			loaded: {
+				mainId,
+				mainQuant: quantForFit(statesById, mainId, currentQuantization),
+				realtimeId,
+				realtimeQuant: quantForFit(statesById, realtimeId, currentQuantization),
+			},
+			replacedId,
+			requestedDevice: requestedDeviceForFit(deviceValue),
+			statesById,
+		});
+	};
 
 	return (
 		<div

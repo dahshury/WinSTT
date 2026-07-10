@@ -110,7 +110,7 @@ pub use engine_kind::EngineKind;
 pub use quant_resolve::{
     cohere_export_dml_safe, ctc_greedy_collapse, fit_aware_auto_quant, onnx_graph_contains_op,
     override_dml_to_cpu_for_kind, pick_intra_op_threads, resolve_quantization_auto,
-    vocab_is_uppercase,
+    runtime_footprint_bytes, vocab_is_uppercase,
 };
 // Crate-internal session/provider helpers — keep `pub(crate)` (NOT `pub`) to avoid widening the
 // public API surface (used by whisper.rs / moonshine.rs / families.rs via `super::`).

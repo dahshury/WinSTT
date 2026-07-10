@@ -150,7 +150,9 @@ export function TtsModelSection() {
 								<TtsModelSelector
 									currentQuantization={currentTtsQuant}
 									models={ttsModels}
-									onChange={(modelId) => handleModelChange(modelId)}
+									onChange={(modelId, quant) =>
+										handleModelChange(modelId, quant)
+									}
 									onDeleteQuant={(modelId, quant) =>
 										ttsDeleteModel(modelId, quant)
 									}

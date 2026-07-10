@@ -110,8 +110,19 @@ interface IdentityColumnProps {
 	unavailableLabel: string;
 }
 
-/** The left identity column: name-dominant top line + the subordinate
- *  meta-line / badges / description (or an error line when unavailable). */
+/**
+ * The left identity column — deliberately a FIXED-height stack so every card in
+ * every picker reads as the same "medium" specimen regardless of how much
+ * content it carries. Three zones, each with reserved height:
+ *   1. name row (one line, truncated)
+ *   2. a single detail line: the middot meta strip + any capability/status
+ *      badges inlined at its end (never a second wrapping row that would grow
+ *      the card)
+ *   3. the description, clamped to two lines and reserving that height even
+ *      when the text is shorter or absent — so a rich card and a sparse card
+ *      occupy the identical footprint.
+ * (An unavailable card swaps zones 2–3 for a single error line.)
+ */
 function IdentityColumn({
 	badges,
 	description,
@@ -138,22 +149,33 @@ function IdentityColumn({
 					/>
 				) : null}
 			</div>
-			{unavailable ? null : metaRow}
-			{!unavailable && badges ? (
-				<div className="flex w-fit max-w-full min-w-0 flex-wrap items-center gap-1 rounded-md bg-foreground/[0.025] px-1.5 py-1 ring-1 ring-overlay-foreground/[0.035]">
-					{badges}
-				</div>
-			) : null}
-			{!unavailable && description ? (
-				<p className="line-clamp-2 text-[11px] text-foreground-muted leading-snug">
-					{description}
-				</p>
-			) : null}
-			{unavailable && errorMessage ? (
-				<span className="truncate text-[11px] text-foreground-dim leading-tight">
-					{errorMessage}
-				</span>
-			) : null}
+			{unavailable ? (
+				errorMessage ? (
+					<span className="truncate text-[11px] text-foreground-dim leading-tight">
+						{errorMessage}
+					</span>
+				) : null
+			) : (
+				<>
+					{/* Detail line: the meta strip (allowed to shrink/clip) plus any
+					    capability/status badges pinned to its end. Kept to ONE line
+					    (`overflow-hidden`) so a busy card never sprouts an extra row,
+					    and to a fixed height (`min-h-[20px]`, tall enough for a badge
+					    pill) so a card WITH badges is the exact same height as one with
+					    only the plain meta text. */}
+					<div className="flex min-h-[20px] min-w-0 items-center gap-x-2 overflow-hidden">
+						<div className="min-w-0 flex-1 overflow-hidden">{metaRow}</div>
+						{badges ? (
+							<div className="flex shrink-0 items-center gap-1">{badges}</div>
+						) : null}
+					</div>
+					{/* Description reserves two lines of height unconditionally, so the
+					    card's footprint doesn't change with the length of the copy. */}
+					<p className="line-clamp-2 min-h-[30px] text-[11px] text-foreground-muted leading-snug">
+						{description}
+					</p>
+				</>
+			)}
 		</div>
 	);
 }

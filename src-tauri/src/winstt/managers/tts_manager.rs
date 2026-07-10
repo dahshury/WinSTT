@@ -119,6 +119,20 @@ fn tts_engine_key(source: TtsSource, fingerprint: &str) -> String {
     format!("tts:{source:?}:{fingerprint}")
 }
 
+/// Precision the engine loads for `model_id`: the persisted `tts.quantization`
+/// when it's a concrete pick the model actually publishes, else the catalog
+/// default. Shared by the engine build and the asset-ensure so the files that
+/// get downloaded are the files that get loaded (only Qwen3-TTS ships a ladder).
+fn resolve_selected_quant(model_id: &str, settings_quant: &str) -> String {
+    match catalog::find(model_id) {
+        Some(entry) if !settings_quant.is_empty() && entry.quant(settings_quant).is_some() => {
+            settings_quant.to_string()
+        }
+        Some(entry) => entry.default_quant().to_string(),
+        None => settings_quant.to_string(),
+    }
+}
+
 /// Resolve which cloud-TTS provider to ACTUALLY use. The persisted
 /// `tts.cloud.provider` can outlive its key — the renderer defaults the field to
 /// `elevenlabs` before any key exists, and a key can later be removed — so
@@ -450,19 +464,10 @@ impl TtsManager {
             // Qwen3-TTS Voice Design: the persisted `tts.quantization` selects the
             // weights precision (int4|fp16|fp32); empty falls back to the catalog's
             // default quant (int4). The engine treats `tts.voice` as the design prompt.
-            Some(TtsEngineId::Qwen3Tts) => {
-                let quant = if settings.tts.quantization.is_empty() {
-                    catalog::find(&model_id)
-                        .map_or("int4", catalog::TtsModelEntry::default_quant)
-                        .to_string()
-                } else {
-                    settings.tts.quantization.clone()
-                };
-                Arc::new(Qwen3TtsLocalEngine::new(
-                    self.model_cache_dir(&model_id),
-                    quant,
-                ))
-            }
+            Some(TtsEngineId::Qwen3Tts) => Arc::new(Qwen3TtsLocalEngine::new(
+                self.model_cache_dir(&model_id),
+                resolve_selected_quant(&model_id, &settings.tts.quantization),
+            )),
             // Orpheus (3B Llama → SNAC) + Spark (Qwen0.5B → BiCodec): CPU-pinned LLM-codec
             // engines that load their ONNX from the per-model cache dir populated by the
             // download manager. `tts.voice` = preset voice id (Orpheus) / gender (Spark).
@@ -550,10 +555,14 @@ impl TtsManager {
     /// inside its own engine, so it is skipped here.
     fn ensure_local_model_assets_for(&self, settings: &WinsttSettings) -> TtsResult<()> {
         let model_id = settings.tts.model.clone();
-        let Some(entry) = catalog::find(&model_id) else {
+        if catalog::find(&model_id).is_none() {
             return Ok(());
-        };
-        let quant = entry.default_quant();
+        }
+        // Fetch the SELECTED precision's files, not the catalog default — a quant
+        // swap (Qwen3-TTS int4→fp16) must download the picked variant, otherwise
+        // the engine loads a file set the ensure step never fetched.
+        let quant_owned = resolve_selected_quant(&model_id, &settings.tts.quantization);
+        let quant = quant_owned.as_str();
         let dl = self.app.state::<Arc<TtsDownloadManager>>();
         if dl.is_present(&model_id, quant) {
             return Ok(());
@@ -852,7 +861,10 @@ impl TtsManager {
                 unavailable: true,
             };
         };
-        let quant = entry.default_quant();
+        // Gate on the SELECTED precision so an fp16 pick isn't reported as
+        // "installed" just because the default int4 files happen to be on disk.
+        let quant_owned = resolve_selected_quant(&model_id, &settings.tts.quantization);
+        let quant = quant_owned.as_str();
         let dl = self.app.state::<Arc<TtsDownloadManager>>();
         let installed = dl.is_present(&model_id, quant);
         let total = entry.quant(quant).map_or(0, |q| q.size_bytes);

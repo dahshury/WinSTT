@@ -35,7 +35,7 @@
 // real Windows impl modeled on the existing session-volume path; the only
 // unverifiable bit is runtime COM behavior.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, mpsc};
 
 // ───────────────────────── pure reduction math ────────────────────────
 
@@ -238,10 +238,73 @@ pub fn request_read_aloud_restore() {
     request_session_restore(DuckReason::ReadAloud);
 }
 
-fn duck_sessions_blocking(reason: DuckReason, reduction_pct: u8) {
-    if lock_session_state().request_duck(reason) != SessionDuckAction::Duck {
-        return;
+// ─────────────────────── serialized COM executor ───────────────────────────
+//
+// Every COM duck/restore runs on ONE worker thread, in enqueue order. This is
+// the invariant that keeps the two-layer latch honest against the real world:
+// `perform_session_duck` SNAPSHOTS each session's live volume before lowering
+// it, so it must never observe a session that a previous cycle's restore has not
+// finished putting back. If duck and restore ran on independent spawned threads
+// (as they used to), a fast recording cycle could snapshot the ALREADY-DUCKED
+// volume of the prior cycle — and every later restore would then write that
+// ducked value back as if it were the user's setting. Repeated races ratcheted
+// background apps toward silence, leaving mixer sliders stuck muted.
+//
+// Serializing through a FIFO queue guarantees restore N fully applies before
+// duck N+1 reads, and that two `SetMasterVolume` batches never overlap. The
+// recording-chime path still blocks (duck-before-chime) by waiting on an ack.
+
+enum ComJob {
+    /// Capture + lower background sessions, then feed the snapshots back into the
+    /// state machine (which may ask for an immediate restore on a raced release).
+    Duck {
+        reduction_pct: u8,
+        ack: Option<mpsc::SyncSender<()>>,
+    },
+    /// Put previously-captured sessions back to their pre-duck volumes.
+    Restore {
+        snapshots: Vec<SessionVolumeSnapshot>,
+    },
+}
+
+static COM_JOBS: OnceLock<Mutex<mpsc::Sender<ComJob>>> = OnceLock::new();
+
+/// Lazily start the single COM worker thread and hand back its job sender.
+fn com_jobs() -> mpsc::Sender<ComJob> {
+    let sender = COM_JOBS.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<ComJob>();
+        std::thread::Builder::new()
+            .name("winstt-ducking".into())
+            .spawn(move || {
+                for job in rx {
+                    match job {
+                        ComJob::Duck { reduction_pct, ack } => {
+                            run_duck_job(reduction_pct);
+                            if let Some(ack) = ack {
+                                let _ = ack.send(());
+                            }
+                        }
+                        ComJob::Restore { snapshots } => perform_session_restore(snapshots),
+                    }
+                }
+            })
+            .expect("spawn winstt-ducking worker");
+        Mutex::new(tx)
+    });
+    match sender.lock() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
     }
+}
+
+fn enqueue_com_job(job: ComJob) {
+    let _ = com_jobs().send(job);
+}
+
+/// Perform the COM duck and reconcile with the state machine. Runs on the worker
+/// thread. If every reason was released while the duck was in flight, the latch
+/// hands the just-captured snapshots straight back for an inline restore.
+fn run_duck_job(reduction_pct: u8) {
     let snapshots = perform_session_duck(reduction_pct).unwrap_or_default();
     let restore_now = lock_session_state().on_duck_complete(snapshots);
     if !restore_now.is_empty() {
@@ -249,23 +312,34 @@ fn duck_sessions_blocking(reason: DuckReason, reduction_pct: u8) {
     }
 }
 
+fn duck_sessions_blocking(reason: DuckReason, reduction_pct: u8) {
+    if lock_session_state().request_duck(reason) != SessionDuckAction::Duck {
+        return;
+    }
+    // Rendezvous channel: block the caller until the worker has actually lowered
+    // the background sessions, so the recording chime plays into quieted audio.
+    let (ack_tx, ack_rx) = mpsc::sync_channel::<()>(0);
+    enqueue_com_job(ComJob::Duck {
+        reduction_pct,
+        ack: Some(ack_tx),
+    });
+    let _ = ack_rx.recv();
+}
+
 fn request_session_duck_async(reason: DuckReason, reduction_pct: u8) {
     if lock_session_state().request_duck(reason) != SessionDuckAction::Duck {
         return;
     }
-    std::thread::spawn(move || {
-        let snapshots = perform_session_duck(reduction_pct).unwrap_or_default();
-        let restore_now = lock_session_state().on_duck_complete(snapshots);
-        if !restore_now.is_empty() {
-            perform_session_restore(restore_now);
-        }
+    enqueue_com_job(ComJob::Duck {
+        reduction_pct,
+        ack: None,
     });
 }
 
 fn request_session_restore(reason: DuckReason) {
     let snapshots = lock_session_state().request_restore(reason);
     if !snapshots.is_empty() {
-        std::thread::spawn(move || perform_session_restore(snapshots));
+        enqueue_com_job(ComJob::Restore { snapshots });
     }
 }
 

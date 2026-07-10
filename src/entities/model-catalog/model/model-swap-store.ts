@@ -23,10 +23,24 @@ import { markSwapFailed } from "@/shared/lib/swap-failure-timing";
  *     `SttModelSelector` so the picker is disabled until the swap
  *     resolves.
  */
+/** The precision leg of a swap. Both are raw ``onnxQuantization`` strings
+ *  (``""`` = default/fp32, ``"int8"``, ``"q4"``, …) — the trigger formats them
+ *  for display. Present only for a swap that actually changes the precision;
+ *  ``null`` on a pure model switch that carries the precision unchanged. */
+export interface SwapQuant {
+	from: string;
+	to: string;
+}
+
 interface ModelSwapStore {
 	activeMain: string | null;
 	activeRealtime: string | null;
-	beginSwap: (kind: ModelSwapKind, from: string, to: string) => void;
+	beginSwap: (
+		kind: ModelSwapKind,
+		from: string,
+		to: string,
+		quant?: SwapQuant | null,
+	) => void;
 	clear: (kind: ModelSwapKind) => void;
 	// Previous model id captured at the moment the swap is initiated. Surfaces
 	// the "from" leg of the transition in the picker trigger (and anywhere
@@ -35,6 +49,12 @@ interface ModelSwapStore {
 	// indicator in that case.
 	fromMain: string | null;
 	fromRealtime: string | null;
+	// Precision transition for the in-flight swap, captured at `beginSwap`.
+	// Lets the trigger render "FP32 → INT8" for a quant change — including a
+	// PURE quant swap (same model, from === to) where the model→model row is
+	// otherwise redundant. Null when the swap doesn't change precision.
+	quantMain: SwapQuant | null;
+	quantRealtime: SwapQuant | null;
 	isSwapping: (kind: ModelSwapKind) => boolean;
 	setActive: (kind: ModelSwapKind, name: string) => void;
 }
@@ -96,7 +116,9 @@ export const useModelSwapStore = create<ModelSwapStore>()((set, get) => ({
 	activeRealtime: null,
 	fromMain: null,
 	fromRealtime: null,
-	beginSwap: (kind, from, to) => {
+	quantMain: null,
+	quantRealtime: null,
+	beginSwap: (kind, from, to, quant = null) => {
 		// Race guard: if a REAL swap to this exact target is already confirmed
 		// (server's `model_swap_started` landed before this settings-driven
 		// optimistic open — the cross-window ordering), update the `from` leg
@@ -106,8 +128,8 @@ export const useModelSwapStore = create<ModelSwapStore>()((set, get) => ({
 			swapConfirmed[kind] && activeFor(kind) === to;
 		set(
 			kind === "main"
-				? { activeMain: to, fromMain: from }
-				: { activeRealtime: to, fromRealtime: from },
+				? { activeMain: to, fromMain: from, quantMain: quant }
+				: { activeRealtime: to, fromRealtime: from, quantRealtime: quant },
 		);
 		if (!alreadyConfirmedSameTarget) {
 			swapConfirmed[kind] = false;
@@ -126,8 +148,8 @@ export const useModelSwapStore = create<ModelSwapStore>()((set, get) => ({
 		cancelSelfHeal(kind);
 		set(
 			kind === "main"
-				? { activeMain: null, fromMain: null }
-				: { activeRealtime: null, fromRealtime: null },
+				? { activeMain: null, fromMain: null, quantMain: null }
+				: { activeRealtime: null, fromRealtime: null, quantRealtime: null },
 		);
 	},
 	isSwapping: (kind) =>

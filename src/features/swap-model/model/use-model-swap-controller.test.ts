@@ -37,6 +37,24 @@ describe("isQuantizationChanging", () => {
 	});
 });
 
+describe("swapQuantTransition", () => {
+	test("null when the precision is not changing", () => {
+		expect(t.swapQuantTransition(undefined, false, "int8")).toBeNull();
+		expect(t.swapQuantTransition("int8", false, "int8")).toBeNull();
+	});
+
+	test("from → to when the precision is changing", () => {
+		expect(t.swapQuantTransition("int8", true, "")).toEqual({
+			from: "",
+			to: "int8",
+		});
+		expect(t.swapQuantTransition("q4", true, "fp16")).toEqual({
+			from: "fp16",
+			to: "q4",
+		});
+	});
+});
+
 // ``baseMainPatch`` was removed alongside the typed ``ModelPatch`` change —
 // a bare ``{ model }`` patch is no longer representable, and the catalog-
 // miss path is now handled by an early return in ``applyMainSwap``. See

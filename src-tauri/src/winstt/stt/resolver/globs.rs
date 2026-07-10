@@ -41,7 +41,8 @@ pub const MODEL_REPOS: &[(&str, &str)] = &[
         "nemo-parakeet-tdt-0.6b-v3",
         "istupakov/parakeet-tdt-0.6b-v3-onnx",
     ),
-    ("nemo-canary-1b-v2", "istupakov/canary-1b-v2-onnx"),
+    // DirectML-safe re-export (encoder via dynamo=False); see the nemo-canary-1b-v2 catalog entry.
+    ("nemo-canary-1b-v2", "Masterx/canary-1b-v2-onnx"),
     ("whisper-base", "istupakov/whisper-base-onnx"),
     ("moonshine-tiny", "onnx-community/moonshine-tiny-ONNX"),
     ("moonshine-base", "onnx-community/moonshine-base-ONNX"),
@@ -55,9 +56,11 @@ pub const MODEL_REPOS: &[(&str, &str)] = &[
     ("moonshine-base-ko", "onnx-community/moonshine-base-ko-ONNX"),
     ("moonshine-tiny-uk", "onnx-community/moonshine-tiny-uk-ONNX"),
     ("moonshine-tiny-fr", "onnx-community/moonshine-tiny-fr-ONNX"),
+    // DML-safe re-export (decoder attention decomposed + `If`s flattened); byte-identical weights
+    // to onnx-community. See the `cohere-transcribe` catalog entry.
     (
         "cohere-transcribe",
-        "onnx-community/cohere-transcribe-03-2026-ONNX",
+        "Masterx/cohere-transcribe-03-2026-ONNX",
     ),
     (
         "dolphin-base-ctc",
@@ -115,11 +118,14 @@ fn is_valid_hf_repo_component(s: &str) -> bool {
 /// `MODEL_REPOS` alias (Moonshine/NeMo/GigaAM), so we recurse through it once: a slash splits
 /// directly, an alias falls to step 2. The single-level guard (`!= model`) prevents any self-loop.
 /// Per-(model, quant) repo override: a specific precision that lives in a DIFFERENT repo than the
-/// model's default `onnx_model_name`. Used for the multilingual `cohere-transcribe` int8, which we
-/// host on `Masterx/...` because onnx-community hasn't merged the int8 PR — so int8 resolves (download
-/// AND cache) from Masterx while fp32/fp16/q4/q4f16 stay on onnx-community. Keyed by BOTH the catalog
-/// id (cache-probe path) and the `onnx_model_name` (engine-load path). A model/quant not listed here
-/// is unaffected — `resolve_repo_for_quant` == `resolve_repo` for everything else.
+/// model's default `onnx_model_name`. Keyed by BOTH the catalog id (cache-probe path) and the
+/// `onnx_model_name` (engine-load path). A model/quant not listed here is unaffected —
+/// `resolve_repo_for_quant` == `resolve_repo` for everything else.
+///
+/// The `cohere-transcribe` int8 entries predate the full repoint of that model to Masterx (the
+/// DML-safe re-export) and now resolve to the same repo as the default — kept because the
+/// onnx-community id → Masterx mapping still redirects anyone loading the fused repo by name to the
+/// DML-safe copy, and they keep the override machinery exercised.
 const QUANT_REPO_OVERRIDES: &[(&str, Quantization, &str)] = &[
     (
         "cohere-transcribe",
@@ -197,6 +203,10 @@ pub struct FileGlob {
     /// with `**/` (recurse any depth) or `*/` (one dir level), and uses `?` (single char) as the
     /// quant-separator wildcard so `?int8` matches BOTH `_int8` and `.int8`.
     pub glob: String,
+    /// When `true`, a zero-match for this glob is NOT an error — the file is skipped (used for the
+    /// Cohere `decoder_dyn` CPU-fallback graph, which older exports don't ship). A required glob
+    /// (the default) that matches nothing is a hard resolve error.
+    pub optional: bool,
 }
 
 /// Build the quant suffix the way every `_get_model_files` does: `"?" + quant` when a quant is set,
@@ -229,7 +239,16 @@ fn granite_quant_dir(quant: Quantization) -> &'static str {
 /// override of `KaldiTransducer._get_model_files` (models/kaldi.py L110-118 vs L39-47).
 pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<FileGlob> {
     let s = quant_suffix(quant);
-    let g = |key: &'static str, glob: String| FileGlob { key, glob };
+    let g = |key: &'static str, glob: String| FileGlob {
+        key,
+        glob,
+        optional: false,
+    };
+    let go = |key: &'static str, glob: String| FileGlob {
+        key,
+        glob,
+        optional: true,
+    };
     match kind {
         EngineKind::WhisperHf => vec![
             g("encoder", format!("**/encoder_model{s}.onnx")),
@@ -257,6 +276,12 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
         EngineKind::CohereAsr => vec![
             g("encoder", format!("**/encoder_model{s}.onnx")),
             g("decoder", format!("**/decoder_model_merged{s}.onnx")),
+            // CPU-fallback decoder (growing-self KV — faster than the DML-static graph on the CPU EP).
+            // Optional: legacy Cohere exports ship only the single decoder.
+            go(
+                "decoder_dyn",
+                format!("**/decoder_model_merged{s}_dyn.onnx"),
+            ),
             g("tokenizer", "tokenizer.json".into()),
             g("tokenizer_config", "tokenizer_config.json".into()),
         ],
@@ -310,6 +335,11 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
         EngineKind::NemoAed => vec![
             g("encoder", format!("encoder-model{s}.onnx")),
             g("decoder", format!("decoder-model{s}.onnx")),
+            // KV fast-path artifacts (Masterx re-exports): cross-attn K/V hoist + true-KV-cache
+            // step decoder. Optional — istupakov-era caches don't ship them; the engine falls
+            // back to the legacy decoder_mems loop.
+            go("cross_kv", format!("cross-kv-model{s}.onnx")),
+            go("decoder_kv", format!("decoder-kv-model{s}.onnx")),
             g("vocab", "vocab.txt".into()),
         ],
         EngineKind::KaldiTransducer => {

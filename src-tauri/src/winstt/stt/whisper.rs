@@ -46,6 +46,7 @@ mod ort_shapes;
 mod token_select;
 
 use std::path::Path;
+use std::time::Instant;
 
 use ort::memory::{AllocationDevice, Allocator, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::Session;
@@ -74,6 +75,15 @@ use crate::winstt::word_timestamps::{self, AlignArgs, CrossAttentions, lookup_al
 
 /// Re-export so `stt::whisper::directml_degenerate_model_blocked` (backend.rs) keeps resolving.
 pub(crate) use degenerate::directml_degenerate_model_blocked;
+
+/// Stage-timing diagnostics, printed to stderr when `WINSTT_WHISPER_PROFILE` is set (spike/bench runs
+/// only — never in the shipped hot path unless the user opts in). Mirrors `WINSTT_COHERE_PROFILE`.
+/// Reports mel+encode ms, decode ms, decoded token count, and per-token decode cost — the numbers that
+/// decide whether the encoder-DML/decoder-CPU hybrid is worth it for a given model.
+fn profile_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("WINSTT_WHISPER_PROFILE").is_ok())
+}
 
 /// Maximum decoder length (Whisper's hard cap). The loop also stops on all-EOS.
 const MAX_LENGTH: usize = 448;
@@ -968,7 +978,9 @@ impl Transcriber for WhisperEngine {
         if audio.is_empty() {
             return Ok(Transcription::default());
         }
+        let enc_started = Instant::now();
         let encoder_out = self.encode(audio)?;
+        let encode_ms = enc_started.elapsed().as_secs_f64() * 1000.0;
 
         // Resolve the language slot for multilingual + no-language via the 3-token detect.
         let mut prompt = self.build_prompt(opts);
@@ -1042,7 +1054,22 @@ impl Transcriber for WhisperEngine {
             }
         }
 
+        let prompt_len = prompt.len();
+        let dec_started = Instant::now();
         let tokens = self.decode_greedy(&encoder_out, prompt, max_length)?;
+        if profile_enabled() {
+            let decode_ms = dec_started.elapsed().as_secs_f64() * 1000.0;
+            let n_tok = tokens.len().saturating_sub(prompt_len).max(1);
+            eprintln!(
+                "[whisper-profile] model='{}' ep={:?} | encode {:.1}ms | decode {:.1}ms | {} tok | {:.2} ms/tok",
+                self.model_name,
+                self.providers,
+                encode_ms,
+                decode_ms,
+                n_tok,
+                decode_ms / n_tok as f64,
+            );
+        }
         // Strip the injected initial-prompt prefix before decode.
         let tokens: &[i64] = if prefix_len > 0 && prefix_len <= tokens.len() {
             &tokens[prefix_len..]

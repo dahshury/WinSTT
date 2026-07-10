@@ -2,6 +2,7 @@ import {
 	isSelectableRealtimeModel,
 	isVisibleSttModel,
 	modelsHaveLanguageOverlap,
+	type SwapQuant,
 	useModelSwapStore,
 } from "@/entities/model-catalog";
 import { providerOf } from "@/entities/cloud-stt-provider";
@@ -19,6 +20,22 @@ export function isQuantizationChanging(
 	currentQuantization: OnnxQuantization,
 ): boolean {
 	return quantization !== undefined && quantization !== currentQuantization;
+}
+
+/** The precision transition to surface in the swap-in-flight trigger. Only a
+ *  genuine precision change carries one — a plain model switch that keeps the
+ *  precision returns null so the trigger shows the model→model row alone. The
+ *  swap store holds this so the picker can render "FP32 → INT8" even for a pure
+ *  same-model quant swap (where the model legs are identical). */
+export function swapQuantTransition(
+	quantization: OnnxQuantization | undefined,
+	quantizationChanging: boolean,
+	currentQuantization: OnnxQuantization,
+): SwapQuant | null {
+	if (!(quantizationChanging && quantization !== undefined)) {
+		return null;
+	}
+	return { from: currentQuantization, to: quantization };
 }
 
 /** The default/auto precision sentinel. Always a valid selection for any model —
@@ -187,7 +204,18 @@ function applyMainSwap(
 	// the runtime back into settings — reverting the user's pick. The
 	// regression-guard comment in use-sync-active-model.ts assumed this
 	// already happened.
-	useModelSwapStore.getState().beginSwap("main", args.previous, args.value);
+	useModelSwapStore
+		.getState()
+		.beginSwap(
+			"main",
+			args.previous,
+			args.value,
+			swapQuantTransition(
+				args.quantization,
+				quantizationChanging,
+				args.currentQuantization,
+			),
+		);
 	const patch = buildMainSwapPatch(
 		args.value,
 		info,
@@ -240,7 +268,18 @@ function applyRealtimeSwap(
 	args.prevRealtimeModelRef.current = args.previous;
 	// See applyMainSwap — same race; the realtime slot has the same
 	// reconciler guard via ``activeRealtime``.
-	useModelSwapStore.getState().beginSwap("realtime", args.previous, args.value);
+	useModelSwapStore
+		.getState()
+		.beginSwap(
+			"realtime",
+			args.previous,
+			args.value,
+			swapQuantTransition(
+				args.quantization,
+				quantizationChanging,
+				args.currentQuantization,
+			),
+		);
 	args.update(
 		buildRealtimeSwapPatch(args.value, args.quantization, quantizationChanging),
 	);

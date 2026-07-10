@@ -9,7 +9,7 @@ import type {
 // These tests lock the *structural contract* the call sites depend on: a drift
 // in field names or nullability here would silently desync the renderer cache
 // from the main-process `HistoryEntryRow` / OpenAPI `HistoryEntry` shape. The
-// assertions are about the SHAPE; the type-checker (tsgo) catches the rest at
+// assertions are about the SHAPE; the type-checker (tsc) catches the rest at
 // import/compile time. We build literal values typed as the interfaces so a
 // renamed/removed field fails to compile and breaks this test file.
 

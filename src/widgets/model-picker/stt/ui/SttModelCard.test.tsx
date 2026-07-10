@@ -143,7 +143,9 @@ describe("SttModelCard custom-model handling", () => {
 				finalReuseSafe: true,
 			}),
 		);
-		expect(screen.getByText("Native stream · 1.12 s")).toBeDefined();
+		// The meta line now carries just the word — the per-chunk latency lives on
+		// the latency shelf (and the tooltip) so the meta strip stays one line.
+		expect(screen.getByText("Streaming")).toBeDefined();
 
 		renderCard(
 			makeModel({

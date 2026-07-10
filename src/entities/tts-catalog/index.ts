@@ -4,3 +4,9 @@ export {
 	useTtsCatalogStore,
 	useTtsModelStateStore,
 } from "./model/tts-catalog-store";
+export {
+	_resetTtsSwapForTests,
+	_setTtsSwapStaleMsForTests,
+	type TtsSwapTransition,
+	useTtsSwapStore,
+} from "./model/tts-swap-store";

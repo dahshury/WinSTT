@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useConnectionStore } from "@/entities/connection";
-import { useCatalogStore } from "@/entities/model-catalog";
+import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 
@@ -78,6 +78,58 @@ describe("ModelSettingsPanel", () => {
 			</IntlProvider>,
 		);
 		expect(rendered.container.firstElementChild).not.toBeNull();
+	});
+
+	test("does NOT switch the selected model on a warm mount before the fresh state refresh resolves", () => {
+		// Regression: `useModelStateStore.isLoaded` latches globally, so a warm mount can hand the
+		// stale-model fallback a snapshot that momentarily reports the (actually-fine) selected model
+		// as not-cached. Before the fix that stale read silently switched the persisted selection to
+		// the smallest cached model (the first list item, vosk russian). The panel now gates the
+		// fallback on THIS mount's refresh resolving; here that refresh never resolves, so the
+		// selection must stay put.
+		const state = () => useModelStateStore.getState();
+		const originalRefresh = state().refresh;
+		const entry = (cached: boolean, bytes: number) =>
+			({
+				cache: {
+					state: cached ? "cached" : "not_cached",
+					progress: cached ? 1 : 0,
+				},
+				estimated_bytes: bytes,
+				comfortable_on_cpu: true,
+				comfortable_on_gpu: true,
+			}) as never;
+		try {
+			useCatalogStore
+				.getState()
+				.setModels([rawModel("tiny", false), rawModel("base", false)]);
+			useModelStateStore.setState({
+				isLoaded: true, // warm: a prior surface already latched loaded
+				statesById: { tiny: entry(false, 100), base: entry(true, 50) },
+				// Never resolves → `statesFreshSinceMount` stays false → fallback stays gated.
+				refresh: () => new Promise<void>(() => undefined),
+			});
+			useSettingsStore.setState({
+				settings: {
+					...DEFAULT_SETTINGS,
+					model: { ...DEFAULT_SETTINGS.model, model: "tiny" },
+				} as typeof DEFAULT_SETTINGS,
+			});
+			rendered = render(
+				<IntlProvider>
+					<ModelSettingsPanel />
+				</IntlProvider>,
+			);
+			// Selection unchanged — the fallback did NOT fire on the stale snapshot (without the gate
+			// it would have switched "tiny" → the cached "base").
+			expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
+		} finally {
+			useModelStateStore.setState({
+				isLoaded: false,
+				statesById: {},
+				refresh: originalRefresh,
+			});
+		}
 	});
 
 	test("hides the initial prompt setting", () => {

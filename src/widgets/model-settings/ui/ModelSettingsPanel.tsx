@@ -135,9 +135,29 @@ function useModelSettingsPanelRender() {
 
 	const refreshLive = useSystemResourcesStore((s) => s.refresh);
 
+	// Gate the stale-model fallback on THIS mount's fresh model-state refresh. The global
+	// `useModelStateStore.isLoaded` latches to `true` on the first success anywhere (footer chip,
+	// detached picker, an earlier probe) and never resets, so a warm mount can hand the fallback a
+	// STALE `statesById` snapshot — one taken before the selected model finished downloading, or a
+	// transient HF-cache-probe miss — that momentarily reports the (actually-cached) selection as
+	// not-cached. On that stale read the fallback silently switched the persisted selection to the
+	// smallest cached model (= the first list item, vosk russian). Waiting for the mount refresh to
+	// resolve means the fallback only ever decides on freshly-read cache state, closing the race
+	// WITHOUT changing its deliberate behavior (empty/removed-id repair, deprecated-variant
+	// migration, cloud fallback). Display still shows a model immediately — this only gates the
+	// selection-mutating effect, not the rendered value.
+	const [statesFreshSinceMount, setStatesFreshSinceMount] = useState(false);
 	useEffect(() => {
-		refreshModelState();
+		let cancelled = false;
+		void refreshModelState().then(() => {
+			if (!cancelled) {
+				setStatesFreshSinceMount(true);
+			}
+		});
 		refreshLive();
+		return () => {
+			cancelled = true;
+		};
 	}, [refreshModelState, refreshLive]);
 
 	// Mirrors AppearanceSettingsPanel: when no cached realtime path can serve
@@ -200,7 +220,7 @@ function useModelSettingsPanelRender() {
 		catalogLoaded,
 		catalogModels,
 		statesById,
-		modelStatesLoaded,
+		modelStatesLoaded && statesFreshSinceMount,
 		settings?.model,
 		settings?.realtimeModel,
 		settings,

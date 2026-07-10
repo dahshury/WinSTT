@@ -267,9 +267,15 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "cohere-transcribe",
         display_name: "Cohere Transcribe",
         family: Family::Cohere,
-        onnx_model_name: "cohere-transcribe",
-        // int8 lives on Masterx (resolver QUANT_REPO_OVERRIDES) — onnx-community hasn't merged the int8
-        // PR yet; the other precisions resolve from onnx-community/cohere-transcribe-03-2026-ONNX.
+        // Masterx hosts the DirectML-safe re-export of the onnx-community weights: the stock decoders
+        // fuse attention into `MultiHeadAttention` (cross-attn form CRASHES the DML kernel) +
+        // `GroupQueryAttention` (DML silently drops its attention_bias input → garbled decode), gated
+        // by two `If` nodes (a CPU-only op → per-token GPU↔CPU sync). The Masterx decoders are the
+        // SAME weights with the attention decomposed to plain ops and the `If`s flattened (branchless
+        // cross-KV recompute, same layout as the Arabic export): CPU bit-parity, and
+        // `cohere_export_dml_safe` restores the DirectML EP (66 s clip: 14 s DML vs 21-29 s CPU).
+        // Encoders + all weight sidecars are byte-identical to onnx-community's.
+        onnx_model_name: "Masterx/cohere-transcribe-03-2026-ONNX",
         available_quantizations: &["", "fp16", "int8", "q4", "q4f16"],
         param_count: 2_000_000_000,
         supports_realtime: true,
@@ -282,11 +288,15 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         // merged-KV decoder), Arabic + English specialised weights. ONNX export in the onnx-community
         // merged layout; runs through the existing CohereEngine unchanged.
         onnx_model_name: "Masterx/cohere-transcribe-arabic-07-2026-ONNX",
-        // fp32 (best accuracy, and fastest on the CPU EP cohere is pinned to) + int8 (8-bit, ~2.1 GB,
-        // accuracy between fp32 and q4) + q4 (smallest ~2.2 GB). fp16/q4f16 are omitted — the CPU EP
-        // up-casts fp16→fp32 (slower + larger), so auto-quant never picks them for cohere
-        // (quant_resolve.rs). The 7.6 GB fp32 encoder needed HF `lfs-enable-largefiles` (>5 GB).
-        available_quantizations: &["", "int8", "q4"],
+        // fp32 (best accuracy, and fastest on the CPU EP cohere is pinned to) + int8 (8-bit, ~2.1 GB).
+        // q4 is DROPPED for this checkpoint: its export is actually LARGER than int8 (2.22 GB vs
+        // 2.14 GB, the Conformer encoder barely shrinks under 4-bit) AND less accurate, so int8
+        // strictly dominates it — there is no configuration where q4 wins. (The multilingual
+        // `cohere-transcribe` KEEPS q4: there its export IS ~1 GB smaller than int8, a real tradeoff.)
+        // fp16/q4f16 are omitted — the CPU EP up-casts fp16→fp32 (slower + larger), so auto-quant
+        // never picks them for cohere (quant_resolve.rs). The 7.6 GB fp32 encoder needed HF
+        // `lfs-enable-largefiles` (>5 GB).
+        available_quantizations: &["", "int8"],
         param_count: 2_000_000_000,
         supports_realtime: true,
     },
@@ -372,7 +382,8 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "nemo-canary-1b-v2",
         display_name: "NeMo Canary 1B v2",
         family: Family::Nemo,
-        onnx_model_name: "nemo-canary-1b-v2",
+        // DirectML-safe re-export (encoder via `dynamo=False`); see nemo-canary-180m-flash.
+        onnx_model_name: "Masterx/canary-1b-v2-onnx",
         available_quantizations: &["", "int8"],
         param_count: 978_000_000,
         supports_realtime: true,
@@ -572,7 +583,12 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "nemo-canary-180m-flash",
         display_name: "NeMo Canary 180M Flash",
         family: Family::Nemo,
-        onnx_model_name: "istupakov/canary-180m-flash-onnx",
+        // Masterx hosts a DirectML-safe re-export: istupakov's encoder is a torch-DYNAMO export that
+        // traps the DML EP (dynamic shapes crash the Reshape/attention kernels; static shapes fail
+        // `InferAndVerifyOutputSizes` — unfixed upstream #26826/#26944). The Masterx encoder is the
+        // SAME weights re-exported via `torch.onnx.export(dynamo=False)` (parakeet's DML-safe idiom;
+        // CPU-parity ~4e-6); the decoder is byte-for-byte istupakov's. Runs on DML ~2× faster than CPU.
+        onnx_model_name: "Masterx/canary-180m-flash-onnx",
         available_quantizations: &["", "int8"],
         param_count: 194_168_492,
         supports_realtime: true,
@@ -581,7 +597,8 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "nemo-canary-1b-flash",
         display_name: "NeMo Canary 1B Flash",
         family: Family::Nemo,
-        onnx_model_name: "istupakov/canary-1b-flash-onnx",
+        // DirectML-safe re-export (encoder via `dynamo=False`); see nemo-canary-180m-flash.
+        onnx_model_name: "Masterx/canary-1b-flash-onnx",
         available_quantizations: &["", "int8"],
         param_count: 883_000_000,
         supports_realtime: true,

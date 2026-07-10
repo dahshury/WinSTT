@@ -667,4 +667,54 @@ mod tests {
         let locs = external_data_locations(&path).unwrap();
         assert_eq!(locs, vec!["encoder_model_fp16.onnx_data".to_string()]);
     }
+
+    #[test]
+    fn verify_external_data_complete_flags_graph_with_missing_sidecar() {
+        // REGRESSION: a small graph `.onnx` that references an external-data sidecar which is NOT on
+        // disk (an interrupted multi-GB download — exactly what left multilingual cohere int8 with a
+        // 20 MB `encoder_model_int8.onnx` but no `.onnx_data` shards) must read INCOMPLETE. The cache
+        // probe now consults this, so such a quant badges `partial`, not `cached` — without it the
+        // picker showed green, the user selected int8, and the loader silently refetched ~2.8 GB
+        // ("transcription stuck forever").
+        use crate::winstt::stt::resolver::verify_external_data_complete;
+        let init = TensorProto {
+            name: "encoder.weight".into(),
+            data_type: ELEM_TYPE_FLOAT16,
+            data_location: DATA_LOCATION_EXTERNAL,
+            external_data: vec![StringStringEntryProto {
+                key: "location".into(),
+                value: "encoder_model_int8.onnx_data".into(),
+            }],
+            ..Default::default()
+        };
+        let model = ModelProtoReal {
+            ir_version: 9,
+            graph: Some(GraphProto {
+                initializer: vec![init],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("encoder_model_int8.onnx");
+        let mut bytes = Vec::new();
+        model.encode(&mut bytes).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+
+        // Sidecar absent → incomplete.
+        assert!(
+            !verify_external_data_complete(&path),
+            "graph referencing a missing sidecar must be INCOMPLETE"
+        );
+        // Materialize the referenced sidecar → complete.
+        std::fs::write(
+            dir.path().join("encoder_model_int8.onnx_data"),
+            b"\x00\x01\x02",
+        )
+        .unwrap();
+        assert!(
+            verify_external_data_complete(&path),
+            "graph is COMPLETE once its referenced sidecar exists"
+        );
+    }
 }

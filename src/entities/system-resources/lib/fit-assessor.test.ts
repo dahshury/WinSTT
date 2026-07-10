@@ -184,6 +184,58 @@ describe("assessDictationFitClient", () => {
 		expect(result.reasons).not.toContain("stt_already_uses_ram");
 	});
 
+	test("already-loaded model fits — its own footprint is freed by the swap", () => {
+		// `big` is resident (so ram_available is depressed to 2 GB); re-selecting it
+		// must not read as "Won't fit" because a swap-to-self keeps its memory.
+		const result = assessDictationFitClient("big", {
+			statesById: {
+				big: entryOf({ id: "big", estimated_bytes: 3 * GB }),
+			},
+			candidateQuant: "",
+			requestedDevice: "cpu",
+			loaded: {
+				mainId: "big",
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
+			live: liveOf({ ram_total_bytes: 8 * GB, ram_available_bytes: 2 * GB }),
+		});
+		expect(result.severity).not.toBe("critical");
+	});
+
+	test("swap to a different model is measured against post-removal memory", () => {
+		const statesById = {
+			incoming: entryOf({ id: "incoming", estimated_bytes: 3 * GB }),
+			outgoing: entryOf({ id: "outgoing", estimated_bytes: 3 * GB }),
+		};
+		const base = {
+			statesById,
+			candidateQuant: "" as const,
+			requestedDevice: "cpu" as const,
+			// `outgoing` resident → only 2 GB free; `incoming` (3 GB) won't fit unless
+			// the outgoing model's 3 GB is credited back.
+			live: liveOf({ ram_total_bytes: 8 * GB, ram_available_bytes: 2 * GB }),
+		};
+		const loaded = {
+			mainId: "outgoing",
+			mainQuant: "",
+			realtimeId: null,
+			realtimeQuant: "",
+		};
+		const withoutRemoval = assessDictationFitClient("incoming", {
+			...base,
+			loaded,
+		});
+		expect(withoutRemoval.severity).toBe("critical");
+		const withRemoval = assessDictationFitClient("incoming", {
+			...base,
+			loaded,
+			replacedId: "outgoing",
+		});
+		expect(withRemoval.severity).not.toBe("critical");
+	});
+
 	test("no GPU + non-CPU device adds no_gpu_available reason", () => {
 		const result = assessDictationFitClient("tiny", {
 			statesById: {

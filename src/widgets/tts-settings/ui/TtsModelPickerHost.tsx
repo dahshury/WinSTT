@@ -69,9 +69,9 @@ export function TtsModelPickerHost() {
 	// Picking an already-cached model commits + closes (the user chose it). An
 	// uncached pick is ignored — the user must download it first; the on-complete
 	// listener above then commits the freshly downloaded model.
-	const handleChange = (modelId: string): void => {
+	const handleChange = (modelId: string, quant?: string): void => {
 		if (isTtsModelCached(statesById[modelId])) {
-			commitInstalled(modelId);
+			commitInstalled(modelId, quant);
 			close();
 		}
 	};

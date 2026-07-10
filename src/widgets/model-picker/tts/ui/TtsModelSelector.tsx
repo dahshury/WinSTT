@@ -18,7 +18,12 @@ import {
 	useReducer,
 	useState,
 } from "react";
-import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
+import {
+	type TtsModelInfo,
+	type TtsModelState,
+	type TtsSwapTransition,
+	useTtsSwapStore,
+} from "@/entities/tts-catalog";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import {
@@ -26,7 +31,16 @@ import {
 	type SearchRankable,
 } from "@/shared/lib/model-search";
 import { Button } from "@/shared/ui/button";
-import { MODEL_TRIGGER_GLASS_CLASSES } from "@/shared/ui/switching-trigger";
+import { ModelSpecHoverCard } from "@/shared/ui/model-spec-card";
+import { PulseDot } from "@/shared/ui/pulse-dot";
+import {
+	buildSwitchingClassName,
+	MODEL_TRIGGER_GLASS_CLASSES,
+	SwapSweepBar,
+	SwitchingFromToRow,
+	SwitchingPill,
+	SwitchingQuantBadge,
+} from "@/shared/ui/switching-trigger";
 import {
 	GroupRail,
 	type GroupRailItem,
@@ -57,6 +71,7 @@ import {
 	type TtsListGroup,
 	withTtsFavoritesGroup,
 } from "../lib/tts-helpers";
+import { buildTtsSpec } from "../lib/build-tts-spec";
 import {
 	type TtsPendingDelete,
 	TtsDeleteQuantConfirmDialog,
@@ -281,10 +296,156 @@ function selectedTtsMeta(
 	return items;
 }
 
+/** TTS quant label for the switching badge — mirrors the selected-model meta
+ *  chip (`"" → Auto`, else upper-cased). */
+function ttsQuantLabel(quant: string): string {
+	return quant === "" ? "Auto" : quant.toUpperCase();
+}
+
+/** Engine/maker chip — the same {@link AuthorBadge} the selected summary uses. */
+function TtsEngineChip({
+	engine,
+	muted = false,
+}: {
+	engine: TtsModelInfo["engine"];
+	muted?: boolean;
+}) {
+	const logo = getEngineLogoSrc(engine);
+	return (
+		<AuthorBadge
+			icon={getEngineConfig(engine).icon}
+			label={getEngineLabel(engine)}
+			logoSrc={logo ? publicAsset(logo) : null}
+			muted={muted}
+		/>
+	);
+}
+
+/** Engine chip + name slot used inside `SwitchingFromToRow`. Dim + struck on the
+ *  `from` leg, accent-emphasized on the `to` leg — mirrors the STT trigger. */
+function TtsSwitchingLabel({
+	displayName,
+	engine,
+	side,
+}: {
+	displayName: string;
+	engine: TtsModelInfo["engine"] | undefined;
+	side: "from" | "to";
+}) {
+	const nameClass =
+		side === "from"
+			? "min-w-0 max-w-[8rem] truncate font-medium text-body text-foreground-dim leading-tight tracking-tight line-through decoration-foreground-dim/40"
+			: "min-w-0 truncate font-semibold text-accent text-body leading-tight tracking-tight";
+	return (
+		<>
+			{engine ? (
+				<TtsEngineChip engine={engine} muted={side === "from"} />
+			) : null}
+			<span className={nameClass}>{displayName}</span>
+		</>
+	);
+}
+
+/** The in-flight swap row for the TTS trigger. A pure precision swap (same model
+ *  on both legs) collapses to `model · FP16 → INT4`; a model change shows the
+ *  `from → to` model row with the target precision appended. */
+function TtsSwitchingBody({
+	active,
+	ariaLabel,
+	models,
+	selectedModel,
+}: {
+	active: TtsSwapTransition;
+	ariaLabel: string | undefined;
+	models: readonly TtsModelInfo[];
+	selectedModel: TtsModelInfo | undefined;
+}) {
+	const toModel =
+		models.find((m) => m.id === active.toModelId) ?? selectedModel;
+	const fromModel = active.fromModelId
+		? models.find((m) => m.id === active.fromModelId)
+		: undefined;
+	const sameModel = active.fromModelId === active.toModelId;
+	const quantBadge =
+		active.toQuant === null ? null : (
+			<SwitchingQuantBadge
+				from={
+					active.fromQuant === null
+						? undefined
+						: ttsQuantLabel(active.fromQuant)
+				}
+				to={ttsQuantLabel(active.toQuant)}
+			/>
+		);
+	// Pure precision swap → model once + the precision transition.
+	if (sameModel && quantBadge && toModel) {
+		return (
+			<output
+				aria-label={ariaLabel}
+				aria-live="polite"
+				className="flex min-w-0 flex-1 items-center gap-1.5"
+				data-slot="tts-switching-quant"
+			>
+				<TtsEngineChip engine={toModel.engine} />
+				<span className="min-w-0 truncate font-semibold text-body text-foreground leading-tight tracking-tight">
+					{toModel.displayName}
+				</span>
+				<PulseDot className="size-2.5 shrink-0 text-accent" />
+				{quantBadge}
+			</output>
+		);
+	}
+	return (
+		<SwitchingFromToRow
+			ariaLabel={ariaLabel}
+			from={
+				fromModel ? (
+					<TtsSwitchingLabel
+						displayName={fromModel.displayName}
+						engine={fromModel.engine}
+						side="from"
+					/>
+				) : undefined
+			}
+			to={
+				<span className="flex min-w-0 items-center gap-1.5">
+					<TtsSwitchingLabel
+						displayName={toModel?.displayName ?? active.toModelId}
+						engine={toModel?.engine}
+						side="to"
+					/>
+					{active.toQuant === null ? null : (
+						<SwitchingQuantBadge to={ttsQuantLabel(active.toQuant)} />
+					)}
+				</span>
+			}
+		/>
+	);
+}
+
+function ttsSwitchingAriaLabel(
+	active: TtsSwapTransition,
+	models: readonly TtsModelInfo[],
+): string {
+	const toName =
+		models.find((m) => m.id === active.toModelId)?.displayName ??
+		active.toModelId;
+	if (active.fromModelId === active.toModelId && active.toQuant !== null) {
+		const from =
+			active.fromQuant === null
+				? ""
+				: ` from ${ttsQuantLabel(active.fromQuant)}`;
+		return `Switching ${toName} precision${from} to ${ttsQuantLabel(active.toQuant)}`;
+	}
+	const quant =
+		active.toQuant === null ? "" : ` at ${ttsQuantLabel(active.toQuant)}`;
+	return `Switching to ${toName}${quant}`;
+}
+
 /** Default glass-card-ish trigger — engine chip + display name + the connected
- *  spec badge (right-aligned), sharing the STT / Ollama badge strategy. Still
- *  lighter than the STT trigger (no swap/download in-flight states) since TTS
- *  model swaps are instantaneous. */
+ *  spec badge (right-aligned), sharing the STT / Ollama badge strategy. During a
+ *  model / precision swap it flips to the shared switching view (from → to +
+ *  `FP16 → INT4` badge), matching the STT and Ollama triggers. */
 function TtsTriggerBody({
 	selectedModel,
 	placeholder,
@@ -305,21 +466,25 @@ function TtsTriggerBody({
 	}
 	const engineLogo = getEngineLogoSrc(selectedModel.engine);
 	return (
-		<SelectedModelSummary
-			leading={
-				<AuthorBadge
-					icon={getEngineConfig(selectedModel.engine).icon}
-					label={getEngineLabel(selectedModel.engine)}
-					logoSrc={engineLogo ? publicAsset(engineLogo) : null}
+		<ModelSpecHoverCard spec={buildTtsSpec(selectedModel)}>
+			<div className="flex min-w-0 flex-1">
+				<SelectedModelSummary
+					leading={
+						<AuthorBadge
+							icon={getEngineConfig(selectedModel.engine).icon}
+							label={getEngineLabel(selectedModel.engine)}
+							logoSrc={engineLogo ? publicAsset(engineLogo) : null}
+						/>
+					}
+					meta={selectedTtsMeta(selectedModel, currentQuantization, state)}
+					metaPlacement="right"
+					name={{
+						full: selectedModel.displayName,
+						main: selectedModel.displayName,
+					}}
 				/>
-			}
-			meta={selectedTtsMeta(selectedModel, currentQuantization, state)}
-			metaPlacement="right"
-			name={{
-				full: selectedModel.displayName,
-				main: selectedModel.displayName,
-			}}
-		/>
+			</div>
+		</ModelSpecHoverCard>
 	);
 }
 
@@ -329,6 +494,7 @@ function TtsTriggerButton({
 	disabled,
 	open,
 	placeholder,
+	models = [],
 	selectedModel,
 	state,
 }: {
@@ -337,29 +503,54 @@ function TtsTriggerButton({
 	disabled: boolean;
 	open: boolean;
 	placeholder: string;
+	/** Catalog used to resolve the swap's from/to ids → display names. */
+	models?: readonly TtsModelInfo[];
 	selectedModel: TtsModelInfo | undefined;
 	state: TtsModelState | undefined;
 }) {
+	const swap = useTtsSwapStore((s) => s.active);
+	const isSwitching = swap !== null;
+	const ariaLabel = swap ? ttsSwitchingAriaLabel(swap, models) : undefined;
 	return (
 		<Button
 			{...buttonProps}
 			aria-expanded={open}
-			className={MODEL_TRIGGER_GLASS_CLASSES}
+			aria-label={ariaLabel}
+			className={`${MODEL_TRIGGER_GLASS_CLASSES} ${buildSwitchingClassName(isSwitching)}`}
 			data-slot="tts-model-selector-trigger"
 			data-state={open ? "open" : "closed"}
+			data-switching={isSwitching}
 			disabled={disabled}
 			type="button"
 		>
-			<TtsTriggerBody
-				currentQuantization={currentQuantization}
-				placeholder={placeholder}
-				selectedModel={selectedModel}
-				state={state}
+			<span
+				aria-hidden="true"
+				className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-accent/55 to-transparent opacity-0 transition-opacity duration-200 group-data-[state=open]:opacity-100 group-data-[switching=true]:opacity-100"
 			/>
-			<HugeiconsIcon
-				className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"
-				icon={ArrowDown01Icon}
-			/>
+			{swap ? (
+				<TtsSwitchingBody
+					active={swap}
+					ariaLabel={ariaLabel}
+					models={models}
+					selectedModel={selectedModel}
+				/>
+			) : (
+				<TtsTriggerBody
+					currentQuantization={currentQuantization}
+					placeholder={placeholder}
+					selectedModel={selectedModel}
+					state={state}
+				/>
+			)}
+			{isSwitching ? (
+				<SwitchingPill />
+			) : (
+				<HugeiconsIcon
+					className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"
+					icon={ArrowDown01Icon}
+				/>
+			)}
+			{isSwitching ? <SwapSweepBar /> : null}
 		</Button>
 	);
 }
@@ -369,6 +560,7 @@ function DefaultTrigger({
 	disabled,
 	open,
 	placeholder,
+	models,
 	selectedModel,
 	state,
 }: {
@@ -376,6 +568,7 @@ function DefaultTrigger({
 	disabled: boolean;
 	open: boolean;
 	placeholder: string;
+	models: readonly TtsModelInfo[];
 	selectedModel: TtsModelInfo | undefined;
 	state: TtsModelState | undefined;
 }) {
@@ -387,6 +580,7 @@ function DefaultTrigger({
 					buttonProps={p as ComponentPropsWithoutRef<"button">}
 					currentQuantization={currentQuantization}
 					disabled={disabled}
+					models={models}
 					open={open}
 					placeholder={placeholder}
 					selectedModel={selectedModel}
@@ -406,6 +600,7 @@ function TtsModelSelectorTriggerButton({
 	onActivate,
 	disabled,
 	placeholder,
+	models,
 	selectedModel,
 	state,
 }: {
@@ -413,6 +608,7 @@ function TtsModelSelectorTriggerButton({
 	onActivate: (event: MouseEvent<HTMLButtonElement>) => void;
 	disabled: boolean;
 	placeholder: string;
+	models: readonly TtsModelInfo[];
 	selectedModel: TtsModelInfo | undefined;
 	state: TtsModelState | undefined;
 }) {
@@ -421,6 +617,7 @@ function TtsModelSelectorTriggerButton({
 			buttonProps={{ type: "button", onClick: onActivate }}
 			currentQuantization={currentQuantization}
 			disabled={disabled}
+			models={models}
 			open={false}
 			placeholder={placeholder}
 			selectedModel={selectedModel}
@@ -639,6 +836,7 @@ function TtsModelSelectorPanel({
 								<DefaultTrigger
 									currentQuantization={currentQuantization}
 									disabled={disabled || isLoading}
+									models={models}
 									open={open}
 									placeholder={placeholder}
 									selectedModel={selectedModel ?? undefined}
@@ -677,6 +875,7 @@ function TtsModelSelectorDetachedTrigger({
 		<TtsModelSelectorTriggerButton
 			currentQuantization={currentQuantization}
 			disabled={disabled || isLoading}
+			models={models}
 			onActivate={(event) =>
 				onOpenDetached?.(event.currentTarget.getBoundingClientRect())
 			}

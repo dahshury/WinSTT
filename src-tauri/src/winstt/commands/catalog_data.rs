@@ -111,12 +111,16 @@ pub fn accuracy_score(wer: f64) -> f64 {
     round3(clamp(1.0 - wer / 30.0, 0.05, 0.99))
 }
 
-/// `_speed_score`: 0.5 sentinel for unknown (`rtfx<=0`); else log10-scaled over the 1x..2000x span.
+/// `_speed_score`: 0.5 sentinel for unknown (`rtfx<=0`); else log10-scaled over
+/// the 1x..6400x span. Ceiling re-anchored from 2000 to 6400 to match the
+/// current Open ASR Leaderboard RTFx range (fast CTC/Parakeet models now report
+/// ~6100 RTFx on the leaderboard hardware), so the fastest models don't all
+/// clamp to the same bar.
 pub fn speed_score(rtfx: f64) -> f64 {
     if rtfx <= 0.0 {
         return 0.5;
     }
-    round3(clamp((rtfx + 1.0).log10() / 2001.0_f64.log10(), 0.05, 0.99))
+    round3(clamp((rtfx + 1.0).log10() / 6400.0_f64.log10(), 0.05, 0.99))
 }
 
 fn streaming_wer_estimate(id: &str) -> Option<f64> {
@@ -296,22 +300,36 @@ fn catalog_description(entry: &RawCatalogEntry) -> String {
 
 // ── Fitness heuristics (port of model_state.py) ────────────────────────────────────────────────
 
-const BYTES_PER_PARAM_INT8: f64 = 1.5;
 const GPU_HEADROOM: f64 = 1.5;
 const CPU_HEADROOM: f64 = 2.0;
 
+/// The model's fp32-BASELINE runtime footprint (`param × 4`), reported to the renderer as
+/// `estimated_bytes`. The renderer's `estimateForQuant` divides this back down by the same fp32
+/// baseline to get the per-quant footprint (`param × bytes_per_param(quant)`), so this MUST be the
+/// Default-baseline value — the old `param × 1.5` under-reported memory ~2.7× once the renderer
+/// re-scaled it. Single source of truth for the per-quant model: `stt::runtime_footprint_bytes`.
 fn estimate_runtime_bytes(param_count: u64) -> u64 {
-    if param_count == 0 {
-        return 0;
-    }
-    (param_count as f64 * BYTES_PER_PARAM_INT8) as u64
+    crate::winstt::stt::runtime_footprint_bytes(
+        param_count,
+        crate::winstt::stt::Quantization::Default,
+    )
 }
 
-fn is_comfortable_on_gpu(param_count: u64, sys: &SystemInfoEntry) -> bool {
+/// Runtime footprint at the precision the model will ACTUALLY load at (the effective quant), used
+/// for the fit flags — a model that loads at int8 must be measured at its int8 footprint, not fp32.
+fn runtime_bytes_at(param_count: u64, quant: crate::winstt::stt::Quantization) -> u64 {
+    crate::winstt::stt::runtime_footprint_bytes(param_count, quant)
+}
+
+fn is_comfortable_on_gpu(
+    param_count: u64,
+    quant: crate::winstt::stt::Quantization,
+    sys: &SystemInfoEntry,
+) -> bool {
     if sys.gpus.is_empty() {
         return false;
     }
-    let needed = estimate_runtime_bytes(param_count);
+    let needed = runtime_bytes_at(param_count, quant);
     if needed == 0 {
         return true;
     }
@@ -320,8 +338,12 @@ fn is_comfortable_on_gpu(param_count: u64, sys: &SystemInfoEntry) -> bool {
         .all(|g| g.total_vram_bytes as f64 >= needed as f64 * GPU_HEADROOM)
 }
 
-fn is_comfortable_on_cpu(param_count: u64, sys: &SystemInfoEntry) -> bool {
-    let needed = estimate_runtime_bytes(param_count);
+fn is_comfortable_on_cpu(
+    param_count: u64,
+    quant: crate::winstt::stt::Quantization,
+    sys: &SystemInfoEntry,
+) -> bool {
+    let needed = runtime_bytes_at(param_count, quant);
     if needed == 0 || sys.total_ram_bytes == 0 {
         return true;
     }
@@ -583,6 +605,10 @@ pub(crate) fn to_state_entry(
         .cloned()
         .unwrap_or_else(ModelCacheInfo::not_cached);
 
+    // The fit flags measure the model at the precision it will ACTUALLY load at (the effective
+    // quant), not fp32 — a 2 B model that loads at int8 needs ~2.4 GB, not ~8 GB.
+    let eff_quant = crate::winstt::stt::Quantization::parse(&eff)
+        .unwrap_or(crate::winstt::stt::Quantization::Default);
     ModelStateEntry {
         id: entry.id.clone(),
         cache: overall,
@@ -590,8 +616,8 @@ pub(crate) fn to_state_entry(
         available_quantizations: entry.available_quantizations.clone(),
         effective_quantization: eff,
         estimated_bytes: estimate_runtime_bytes(entry.param_count),
-        comfortable_on_gpu: is_comfortable_on_gpu(entry.param_count, sys),
-        comfortable_on_cpu: is_comfortable_on_cpu(entry.param_count, sys),
+        comfortable_on_gpu: is_comfortable_on_gpu(entry.param_count, eff_quant, sys),
+        comfortable_on_cpu: is_comfortable_on_cpu(entry.param_count, eff_quant, sys),
     }
 }
 

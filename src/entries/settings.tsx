@@ -21,6 +21,18 @@ import { useTranscriptionHistorySync } from "@/widgets/transcription-history-set
 
 installWebviewDiag("settings");
 
+// Warm the DEFAULT settings tab's panel chunk at window boot — before React even
+// renders — so its fetch/parse overlaps the entry boot + `settingsLoad()`
+// hydration instead of only starting once `canRenderSettings` flips and the
+// lazy panel is first rendered. That deferred start previously added ~700ms to
+// first-open content-ready (the mounted panel IS the window's reveal gate), so a
+// cold open sat invisible until the chunk landed. The dynamic import is memoized
+// by specifier: this primes the exact chunk the `lazy()` factory in SettingsPage
+// awaits, and stays code-split (never pulled into the entry's static graph).
+// Keep the specifier in sync with the default `activeTab` ("recording") in
+// settings-tab-store.
+void import("@/widgets/recording-settings");
+
 const container = document.getElementById("root");
 if (!container) {
 	throw new Error("[settings] #root element missing");

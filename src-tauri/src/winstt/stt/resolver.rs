@@ -152,9 +152,10 @@ mod tests {
             resolve_repo("crisper-whisper"),
             Some(("onnx-community".into(), "CrisperWhisper-ONNX".into()))
         );
+        // Canary now points at the DirectML-safe Masterx re-export (encoder via dynamo=False).
         assert_eq!(
             resolve_repo("nemo-canary-1b-flash"),
-            Some(("istupakov".into(), "canary-1b-flash-onnx".into()))
+            Some(("Masterx".into(), "canary-1b-flash-onnx".into()))
         );
         // A catalog id whose onnx_model_name is itself a MODEL_REPOS alias (Moonshine) still
         // resolves through the alias recursion.
@@ -177,6 +178,26 @@ mod tests {
             ))
         );
         assert_eq!(resolve_repo("granite-4.0-1b-speech"), None);
+    }
+
+    #[test]
+    fn cohere_dyn_decoder_is_optional_encoder_decoder_required() {
+        // The invariant the plan/probe optional-skip fixes rely on: the Cohere `decoder_dyn`
+        // CPU-fallback graph is OPTIONAL (a repo like the Arabic export need not ship it per quant),
+        // while encoder + decoder are required. If this ever flips, a per-quant download would fail
+        // to plan and the cache badge would stick at Partial again.
+        let g = file_globs(
+            "cohere-transcribe-arabic",
+            EngineKind::CohereAsr,
+            Quantization::Int8,
+        );
+        let dyn_fg = g
+            .iter()
+            .find(|f| f.key == "decoder_dyn")
+            .expect("decoder_dyn glob present");
+        assert!(dyn_fg.optional, "decoder_dyn must be optional");
+        assert!(g.iter().any(|f| f.key == "encoder" && !f.optional));
+        assert!(g.iter().any(|f| f.key == "decoder" && !f.optional));
     }
 
     #[test]

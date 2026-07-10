@@ -36,6 +36,7 @@ export { useCatalogStore } from "./model/catalog-store";
 export { useModelStateStore } from "./model/model-state-store";
 export {
 	_resetOptimisticSwapForTests,
+	type SwapQuant,
 	useModelSwapStore,
 } from "./model/model-swap-store";
 

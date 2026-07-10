@@ -17,6 +17,7 @@ import {
 	realtimePatchForMainSwap,
 	runIssueSwap,
 	shouldReloadForHotSwap,
+	swapQuantTransition,
 	toQuantPatch,
 } from "./apply-swap";
 import {
@@ -359,6 +360,7 @@ export const __testables = {
 	runProceedWithSelection,
 	shouldReloadForHotSwap,
 	surfaceFitWarning,
+	swapQuantTransition,
 	toIssueSwapInvoker,
 	toPresentList,
 	toQuantPatch,

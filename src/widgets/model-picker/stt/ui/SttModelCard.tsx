@@ -165,8 +165,10 @@ function buildMetaEntries(
 			latencyMs === null ? null : formatNativeStreamingLatency(latencyMs);
 		entries.push({
 			key: "streaming",
+			// Just the word here — the per-chunk latency lives on the latency shelf
+			// below (and in this tooltip), so the meta line stays short and one-line.
 			icon: LiveStreaming02Icon,
-			value: latency === null ? "Native stream" : `Native stream · ${latency}`,
+			value: "Streaming",
 			tooltip:
 				latency === null
 					? "Feeds new audio into a stateful streaming decoder"
@@ -576,13 +578,12 @@ function LatencyShelf({
 
 export interface SttModelCardProps {
 	/**
-	 * Optional content rendered in the card's header right column, after
-	 * the read-only attribute group. Used by ``SttVariantBundle`` to slot
-	 * in the expand/collapse chevron without overlapping the "Multilingual"
-	 * badge (the chevron used to be absolutely positioned and would collide
-	 * with the right-edge AttributeGroup when present).
+	 * Optional content rendered in the card's BOTTOM-right footer (above the
+	 * precision shelf). Used by ``SttVariantBundle`` to slot in the
+	 * "+N variants" expander. Kept out of the top-right cluster so the perf
+	 * bars keep a stable x-position whether or not a card has variants.
 	 */
-	actions?: import("react").ReactNode;
+	variantExpander?: import("react").ReactNode;
 	currentQuantization: OnnxQuantization;
 	/** Lookup for the active download snapshot per (modelId, quant). The
 	 *  picker is self-contained so the consumer wires it; ``undefined``
@@ -671,7 +672,7 @@ export function SttModelCard({
 	canDeleteQuant,
 	getDownloadSnapshot,
 	onDownloadAction,
-	actions,
+	variantExpander,
 	hasSelectedVariant = false,
 	isFavorite,
 	nested = false,
@@ -704,12 +705,12 @@ export function SttModelCard({
 	// title attribute (tooltips are unified on the shared styled Tooltip).
 	// STT is the canonical adapter over the shared universal `ModelCard`: the
 	// quant precision controls drop into the recessed `shelf`, the bundle
-	// expand chevron into `actions`, and the rest maps 1:1. All STT-specific
-	// logic (PrecisionGroup, language meta, variant naming) stays here.
+	// expand chevron into the bottom-right `footer`, and the rest maps 1:1. All
+	// STT-specific logic (PrecisionGroup, language meta, variant naming) stays here.
 	return (
 		<ModelCard
-			actions={actions}
 			data-model-id={model.id}
+			footer={variantExpander}
 			description={model.description || undefined}
 			errorMessage={model.errorMessage}
 			favorite={

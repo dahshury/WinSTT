@@ -12,6 +12,7 @@ import {
 import {
 	useTtsCatalogStore,
 	useTtsModelStateStore,
+	useTtsSwapStore,
 } from "@/entities/tts-catalog";
 import {
 	resolveTtsModelSelectionPatch,
@@ -179,8 +180,29 @@ export function useTtsModelSection() {
 		return () => window.clearTimeout(id);
 	}, [unloadingLocalModel]);
 
-	const handleModelChange = (nextModel: string): void => {
-		update(resolveTtsModelSelectionPatch(nextModel, ttsModels, speed));
+	const handleModelChange = (nextModel: string, quant?: string): void => {
+		const modelChanged = nextModel !== model;
+		const quantChanged = quant !== undefined && quant !== currentTtsQuant;
+		if (!(modelChanged || quantChanged)) {
+			return;
+		}
+		// Optimistically open the swap indicator on the trigger BEFORE persisting so
+		// the transition shows immediately; the backend confirms/clears it via
+		// `tts:install-status`. Only while a LOCAL engine is actually wanted — a
+		// cloud voice or a disabled feature triggers no engine rebuild.
+		if (enabled && !isCloud) {
+			useTtsSwapStore.getState().begin({
+				fromModelId: model,
+				toModelId: nextModel,
+				fromQuant: quantChanged ? currentTtsQuant : null,
+				toQuant: quantChanged ? (quant ?? null) : null,
+			});
+		}
+		if (modelChanged) {
+			update(resolveTtsModelSelectionPatch(nextModel, ttsModels, speed, quant));
+		} else if (quant !== undefined) {
+			update({ quantization: quant });
+		}
 	};
 
 	const {

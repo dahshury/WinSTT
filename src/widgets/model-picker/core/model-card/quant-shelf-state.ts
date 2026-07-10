@@ -89,19 +89,28 @@ export function resolveQuantDownloadState({
 	const isCached = state === "cached";
 	const isPartial = state === "partial";
 	const cacheProgressValue = cache?.progress;
+	// A model's download size is a static, known fact: the catalog ships it per
+	// quant, so it's authoritative whenever present — full stop. Trusting a
+	// runtime number over it is exactly what let a small on-disk artifact (a
+	// dedup'd/shared file, or a partial download's progress bytes) masquerade as
+	// the real multi-GB size — e.g. a fully-cached cohere q4 showing "2 MB". This
+	// mirrors the card-meta resolver (`resolveSttDownloadSizeBytes`).
 	const fallbackSize = firstPositive(fallbackSizeBytes);
 	const liveSize =
 		download && download.totalBytes > 0
 			? Math.max(download.totalBytes, download.downloadedBytes)
 			: null;
+	// On-disk size: trust the cache's real *total* (valid for cached and partial),
+	// and its downloaded bytes ONLY when fully cached (then downloaded == size).
+	// A partial's downloaded bytes are progress, not size — never surface them.
+	const cacheTotal = cacheTotalBytes(cache);
+	const cacheDownloaded = cacheDownloadedBytes(cache);
 	const cacheSize =
-		cache && (cacheTotalBytes(cache) > 0 || cacheDownloadedBytes(cache) > 0)
-			? Math.max(cacheTotalBytes(cache), cacheDownloadedBytes(cache))
-			: null;
-	const cacheOrCatalogSize =
-		isPartial && fallbackSize !== null
-			? Math.max(fallbackSize, cacheSize ?? 0)
-			: cacheSize;
+		cacheTotal > 0
+			? cacheTotal
+			: isCached && cacheDownloaded > 0
+				? cacheDownloaded
+				: null;
 	return {
 		cacheState: state,
 		cacheProgress:
@@ -109,7 +118,7 @@ export function resolveQuantDownloadState({
 				? Math.min(0.99, Math.max(0, cacheProgressValue))
 				: null,
 		cacheStatusLabel: quantCacheStatusLabel(cache),
-		downloadSizeBytes: liveSize ?? cacheOrCatalogSize ?? fallbackSize,
+		downloadSizeBytes: fallbackSize ?? liveSize ?? cacheSize,
 		isCached,
 		isPartial,
 		canResumeDownload: isPartial && hasDownloadAction,
