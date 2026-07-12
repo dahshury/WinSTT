@@ -7,7 +7,6 @@ import {
 } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS } from "@/entities/setting";
 import type { CloudSttProvider } from "@/shared/api/models";
-import type { TranscriberBackend } from "@/shared/api/schema.zod";
 
 /**
  * Every cloud integration whose API key, once removed, must revert the
@@ -41,9 +40,8 @@ export interface RevertPlan {
 	ttsCloud: boolean;
 }
 
-/** Local STT target (`{ model, backend }`) the main slot reverts to. */
+/** Local STT target (`{ model }`) the main slot reverts to. */
 export interface SttTarget {
-	backend: TranscriberBackend;
 	model: string;
 }
 
@@ -122,28 +120,25 @@ export function affectedProviders(
 }
 
 /**
- * Resolve the `{ model, backend }` to swap the main STT slot to. Prefers the
- * smallest *cached* local model (so the revert never triggers a download),
- * falling back to the schema default (`tiny` / `faster_whisper`, the vendored
- * offline base) when the catalog is empty or lacks a backend.
+ * Resolve the `{ model }` to swap the main STT slot to. Prefers the smallest
+ * cached local model (so the revert never triggers a download), falling back
+ * to the schema default (`tiny`, the vendored offline base) when the catalog is
+ * empty or has no usable pick.
  */
 export function resolveLocalSttTarget(
 	models: CatalogModels,
 	statesById: StatesById,
 ): SttTarget {
-	const fallback: SttTarget = {
-		model: DEFAULT_SETTINGS.model.model,
-		backend: DEFAULT_SETTINGS.model.backend,
-	};
+	const fallback: SttTarget = { model: DEFAULT_SETTINGS.model.model };
 	const pick = pickDefaultSttModel(models, statesById);
 	if (!pick) {
 		return fallback;
 	}
 	const entry = models.find((m: ModelInfo) => m.id === pick);
-	if (!entry?.backend) {
+	if (!entry) {
 		return fallback;
 	}
-	return { model: pick, backend: entry.backend };
+	return { model: pick };
 }
 
 /** Human-readable label for a cleared provider (used in the revert toast). */

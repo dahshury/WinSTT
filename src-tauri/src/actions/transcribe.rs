@@ -1,7 +1,7 @@
-use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error};
+use crate::audio_toolkit::{CapturedAudio, is_microphone_access_denied, is_no_input_device_error};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
-use crate::managers::transcription::{TranscriptionManager, is_silent_recording};
+use crate::managers::transcription::{TranscriptionManager, is_silent_recording_with_mask};
 use crate::shortcut;
 use crate::tray::{TrayIconState, change_tray_icon};
 use crate::utils::{self, show_recording_overlay};
@@ -299,24 +299,13 @@ impl ShortcutAction for TranscribeAction {
             // whole recording window — the overlay pill reveals on the first words, not
             // on the silent lead-in. See winstt/commands/dictation.rs::SttEvents.
             crate::winstt::commands::dictation::SttEvents::recording_start(app);
-            // Play the recording chime (the reference `playRecordingSound()` on hotkey-start).
-            // Native rodio instead of the old `app.emit("sound:play")` ->
-            // renderer Web Audio path: the webview chime hung off the main window's
-            // AudioContext, which starts suspended (a global hotkey gives the page no
-            // user gesture) and is throttled by WebView2 while the window sits hidden in
-            // the tray — so the first chime after idle could lag/drop. Playing from Rust
-            // removes the IPC→webview hop and both hazards. Self-gates on
-            // `general.recording_sound` and fires on a worker thread (non-blocking).
-            // Listen mode goes through loopback_manager (not this path), matching the
-            // reference's "suppressed in listen mode".
-            //
-            // System-audio ducking is sequenced INSIDE this call: background audio
-            // is ducked first (per-session, protecting WinSTT's process tree), then
-            // the chime plays at full volume — so the chime is never attenuated.
-            crate::winstt::commands::sound::duck_then_play_recording_chime(
-                app,
-                rm.recording_generation(),
-            );
+            // The start chime is NOT played here. It fires from the recorder's
+            // capture-live callback (managers::audio::create_audio_recorder) on the FIRST
+            // captured frame: a cold on-demand stream delivers nothing for up to ~1 s
+            // after the press, and a chime at press invites speech into a mic that is not
+            // capturing yet — those words are physically unrecoverable. The callback is
+            // the mic-is-live ground truth, so the chime doubles as the honest "speak
+            // now" signal in every mode (warm streams reach it within one device period).
         } else {
             crate::transcription_coordinator::finish_dictation_session(session_id);
             // The recorder never opened, so no context will be captured for this
@@ -372,13 +361,13 @@ impl ShortcutAction for TranscribeAction {
 
         let stop_recording_time = Instant::now();
         info!("[stt-ui] recorder_stop_start binding_id='{binding_id}' generation={generation}");
-        let stopped_samples = rm.stop_recording(&binding_id);
+        let stopped_capture = rm.stop_recording(&binding_id);
         let stop_recording_elapsed = stop_recording_time.elapsed();
-        let stopped_sample_count = stopped_samples.as_ref().map_or(0, Vec::len);
+        let stopped_sample_count = stopped_capture.as_ref().map_or(0, |c| c.samples.len());
         info!(
             "[stt-ui] recorder_stop_complete binding_id='{binding_id}' duration_ms={} result={} samples={} audio_ms={}",
             stop_recording_elapsed.as_millis(),
-            if stopped_samples.is_some() {
+            if stopped_capture.is_some() {
                 "samples"
             } else {
                 "none"
@@ -424,17 +413,22 @@ impl ShortcutAction for TranscribeAction {
                 binding_id
             );
 
-            if let Some(samples) = stopped_samples {
+            if let Some(CapturedAudio {
+                samples,
+                speech_mask,
+            }) = stopped_capture
+            {
                 debug!(
-                    "Recording samples handed to async transcription task, sample count: {}",
-                    samples.len()
+                    "Recording samples handed to async transcription task, sample count: {} mask_frames: {}",
+                    samples.len(),
+                    speech_mask.len()
                 );
 
                 if cancelled_session_cleanup(&ah, session_id, "recording stop") {
                     return;
                 }
 
-                if is_silent_recording(&samples) {
+                if is_silent_recording_with_mask(&samples, Some(&speech_mask)) {
                     debug!(
                         "Recording produced no decodable audio ({} samples); skipping persistence",
                         samples.len()
@@ -452,6 +446,7 @@ impl ShortcutAction for TranscribeAction {
                     // pure memcpy on the hot path for zero benefit (both consumers only
                     // read).
                     let samples = Arc::new(samples);
+                    let speech_mask = Arc::new(speech_mask);
                     let sample_count = samples.len();
                     // History master switch, read ONCE per dictation so the WAV
                     // write and the DB row always agree (no orphan recordings if
@@ -499,22 +494,32 @@ impl ShortcutAction for TranscribeAction {
                     // post-key-up delay. Falls back to a fresh decode when reuse is not safe.
                     let tm_for_decode = Arc::clone(&tm);
                     let samples_for_decode = Arc::clone(&samples);
+                    let mask_for_decode = Arc::clone(&speech_mask);
                     let transcription_result =
                         match tauri::async_runtime::spawn_blocking(move || {
+                            let mask = Some(mask_for_decode.as_slice());
                             if preview_requested {
                                 debug!(
                                     "Preview-before-pasting active; skipping realtime reuse for batch final transcript"
                                 );
                                 tm_for_decode.clear_realtime_reuse();
-                                return (false, tm_for_decode.transcribe(&samples_for_decode));
+                                return (
+                                    false,
+                                    tm_for_decode.transcribe_with_mask(&samples_for_decode, mask),
+                                );
                             }
 
-                            if let Some(reused) =
-                                tm_for_decode.try_reuse_realtime(generation, &samples_for_decode)
-                            {
+                            if let Some(reused) = tm_for_decode.try_reuse_realtime(
+                                generation,
+                                &samples_for_decode,
+                                mask,
+                            ) {
                                 (true, Ok(reused))
                             } else {
-                                (false, tm_for_decode.transcribe(&samples_for_decode))
+                                (
+                                    false,
+                                    tm_for_decode.transcribe_with_mask(&samples_for_decode, mask),
+                                )
                             }
                         })
                         .await

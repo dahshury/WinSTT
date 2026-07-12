@@ -597,6 +597,51 @@ pub(super) fn is_special_token(token: &str) -> bool {
     (token.starts_with("<|") && token.ends_with("|>")) || token == "<unk>" || token == "<pad>"
 }
 
+/// Strip the Cohere/AED decoder's inline NON-SPEECH EVENT annotations from finished text
+/// (`<hesitation>`, `<laugh>`, `<cough>`, …). The model emits these as ordinary sub-word text —
+/// NOT as `<|…|>` control tokens — so `is_special_token` never sees them; they must be removed
+/// from the decoded string. A `<…>` span is removed only when its interior is a non-speech marker:
+/// either `<lowercase_ascii/underscore>` (the event tags, e.g. `<hesitation>`) or a `<|…|>` control
+/// token in text form (defensive — usually already token-stripped, but a sub-word-assembled one
+/// would slip through). Any other angle-bracket content (`5 < 10 > 3`, `<Foo>`, `<3`) is left
+/// untouched. The single space a mid-sentence removal would double up is collapsed, then trimmed.
+pub(super) fn strip_inline_event_tags(s: &str) -> String {
+    fn strippable(inner: &str) -> bool {
+        (inner.starts_with('|') && inner.ends_with('|') && inner.len() >= 2)
+            || (!inner.is_empty() && inner.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'))
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(lt) = rest.find('<') {
+        out.push_str(&rest[..lt]);
+        let after = &rest[lt + 1..];
+        if let Some(gt) = after.find('>')
+            && strippable(&after[..gt])
+        {
+            rest = &after[gt + 1..]; // drop the whole `<tag>`
+            continue;
+        }
+        out.push('<');
+        rest = after;
+    }
+    out.push_str(rest);
+    // collapse the doubled ASCII space a removed tag leaves ("a  b" -> "a b"); trim.
+    let mut collapsed = String::with_capacity(out.len());
+    let mut prev_space = false;
+    for ch in out.chars() {
+        if ch == ' ' {
+            if !prev_space {
+                collapsed.push(' ');
+            }
+            prev_space = true;
+        } else {
+            collapsed.push(ch);
+            prev_space = false;
+        }
+    }
+    collapsed.trim().to_string()
+}
+
 /// Extract the final decode-step logit row from a `(1, S, vocab)` or `(1, vocab)` logits array.
 pub(super) fn last_step_row(logits: &ArrayD<f32>) -> SttResult<Vec<f32>> {
     match logits.ndim() {

@@ -1,5 +1,6 @@
 "use client";
 
+import { HardDriveDownloadIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
@@ -14,6 +15,18 @@ export interface MetaEntry {
 	key: string;
 	tooltip: string;
 	value: string;
+}
+
+/** The download-size fact under a model name. The STT and TTS cards build the
+ *  identical entry (hard-drive glyph + `Download size:` tooltip), so it lives
+ *  here as one factory the adapters share. */
+export function downloadSizeMetaEntry(bytes: string): MetaEntry {
+	return {
+		key: "size",
+		icon: HardDriveDownloadIcon,
+		value: bytes,
+		tooltip: `Download size: ${bytes}`,
+	};
 }
 
 /** The metadata-line container classes — shared so a picker composing a

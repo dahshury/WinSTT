@@ -247,6 +247,19 @@ export function ipcClientMock(): Record<string, unknown> {
 
 		// Settings
 		settingsSave: (settings: unknown) => send(IPC.SETTINGS_SAVE, { settings }),
+		// Acknowledged settings save (audit #46). The real export routes through the
+		// typed `invoke(SETTINGS_SAVE)`, which ipc-transport maps to
+		// `commands.winsttSetSettings` and REJECTS on a backend `Result::Err`. Mirror
+		// that here (through the same command binding) so a suite that leaks this mock
+		// in via `mock.module` still exercises the confirmed-ack path — and so tests
+		// stubbing `commands.winsttSetSettings` capture the write. Omitting this left
+		// `settingsSaveAck` undefined, throwing inside `performScheduledSave` and
+		// silently dropping the save whenever this mock won the global slot.
+		settingsSaveAck: async (settings: unknown): Promise<void> => {
+			unwrapCommandResult(
+				(await commands.winsttSetSettings(settings as never)) as never,
+			);
+		},
 		// Faithful to the real module: it decodes the raw payload through
 		// `decodeSettingsPayload`, which fills every section with schema
 		// defaults. Returning the raw `{}` here (the old behaviour) left
@@ -946,15 +959,31 @@ export function ipcClientMock(): Record<string, unknown> {
 		onHistoryRowToggled: (cb: (payload: unknown) => void) =>
 			onCast(IPC.HISTORY_ROW_TOGGLED, cb),
 		alignTranscriptionHistoryAudio: (id: string) =>
-			invokeOrDefault<unknown[]>(IPC.HISTORY_ALIGN_AUDIO, [], id),
+			commandOrDefault<unknown[]>(
+				async () => unwrapCommandResult(await commands.alignWords(id)),
+				[],
+			),
 		deleteTranscriptionHistoryEntry: (id: string) =>
 			invokeOrDefault<{ deleted: boolean }>(
 				IPC.HISTORY_DELETE,
 				{ deleted: false },
 				id,
 			),
+		// Faithful to the real module: these route through the typed `commands.*`
+		// bindings (→ `__TAURI_INTERNALS__.invoke` with the snake_case command name),
+		// NOT `window.nativeBridge`. Routing them through nativeBridge left suites
+		// that instrument `__TAURI_INTERNALS__.invoke` (e.g. HistoryTable playback)
+		// blind to the load whenever this mock won the global slot.
 		loadTranscriptionHistoryAudio: (id: string) =>
-			invokeOrDefault<string | null>(IPC.HISTORY_LOAD_AUDIO, null, id),
+			commandOrDefault<string | null>(
+				async () => unwrapCommandResult(await commands.historyLoadAudio(id)),
+				null,
+			),
+		loadTtsHistoryAudio: (id: string) =>
+			commandOrDefault<string | null>(
+				async () => unwrapCommandResult(await commands.ttsHistoryLoadAudio(id)),
+				null,
+			),
 		onTranscriptionHistoryDeleted: (cb: (payload: { id: string }) => void) =>
 			onCast<{ id: string }>(IPC.HISTORY_DELETED, cb),
 		onTranscriptionFailed: (

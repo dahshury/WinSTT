@@ -60,4 +60,19 @@ describe("persisted selector state", () => {
 		expect(isStringArray(["en", 42])).toBe(false);
 		expect(isStringArray("en")).toBe(false);
 	});
+
+	// The write must report whether it actually landed so callers (e.g. saved LLM
+	// configurations) can surface a failure instead of silently claiming success.
+	test("reports true when the write lands", () => {
+		expect(writePersistedSelectorState(KEY, { filter: "x", sort: null })).toBe(
+			true,
+		);
+	});
+
+	test("reports false when the write throws (serialization / quota)", () => {
+		// A BigInt can't be JSON-serialized, so the write throws inside the same
+		// try/catch a quota/disabled-storage failure would — the caller is told the
+		// value did not persist rather than being left to assume success.
+		expect(writePersistedSelectorState(KEY, { bad: 1n })).toBe(false);
+	});
 });

@@ -55,11 +55,10 @@ function seed(over: Overrides): void {
 	useSettingsStore.setState({ settings: buildSettings(over), isLoaded: true });
 }
 
-function model(id: string, backend = "onnx_asr"): ModelInfo {
+function model(id: string): ModelInfo {
 	return {
 		id,
 		displayName: id,
-		backend,
 		family: "whisper",
 		languages: [],
 		supportsLanguageDetection: false,

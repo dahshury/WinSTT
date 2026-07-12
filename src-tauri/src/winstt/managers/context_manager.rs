@@ -17,16 +17,15 @@ use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager};
 
-#[cfg(windows)]
 use crate::winstt::context::MAX_BUFFER_BYTES;
+// Outer timeout for the one-shot non-Windows capture (macOS AX / Linux AT-SPI).
+#[cfg(not(windows))]
+use crate::winstt::context::READ_TIMEOUT_MS;
+use crate::winstt::context::parse_snapshot;
 use crate::winstt::context::{
     ContextMode, ContextReader, WindowContextSnapshot, apply_context_app_policy,
     capture_prompt_fragment, empty_context, format_context_for_prompt,
 };
-// `parse_snapshot` is only consumed by the Windows-gated snapshot branch below;
-// on Linux the import is unused, so allow it rather than fail `-D warnings`.
-#[cfg_attr(not(windows), allow(unused_imports))]
-use crate::winstt::context::parse_snapshot;
 use crate::winstt::settings_schema::ContextAppMode;
 
 /// Outer timeout for one persistent-sidecar request. With no cold spawn on the
@@ -141,9 +140,15 @@ impl ContextManager {
         }
         #[cfg(not(windows))]
         {
-            // No UIA off Windows.
-            let _ = (bin, mode, hwnd, ocr);
-            empty_context()
+            // AX-API (macOS) / AT-SPI (Linux) capture. The sidecar is invoked
+            // one-shot per request (no warm serve loop off Windows); the reader
+            // emits the SAME JSON snapshot shape the parser consumes. `hwnd` has no
+            // cross-platform analog and `ocr` (Windows.Media.Ocr) is Windows-only.
+            let _ = (hwnd, ocr);
+            match oneshot::request(bin, mode, READ_TIMEOUT_MS, MAX_BUFFER_BYTES) {
+                Some(raw) => parse_snapshot(&raw),
+                None => empty_context(),
+            }
         }
     }
 
@@ -215,8 +220,9 @@ fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    // 3. Dev fallback: prefer `src-tauri/binaries/` when present.
-    #[cfg(windows)]
+    // 3. Dev fallback: prefer `src-tauri/binaries/` when present (all platforms —
+    //    the non-`.exe` binary name is already resolved above, so `cargo run` dev
+    //    builds locate the staged sidecar on macOS/Linux too).
     {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let candidates = [
@@ -415,6 +421,71 @@ mod serve {
         let mut map = obj.clone();
         map.remove("id");
         Some(serde_json::Value::Object(map).to_string())
+    }
+}
+
+/// One-shot sidecar transport for the non-Windows readers (macOS AX / Linux
+/// AT-SPI). Unlike the Windows warm `--serve` child, each capture spawns the
+/// sidecar with the mode flag, reads its single-line JSON stdout under a hard
+/// timeout, and lets the child exit. The mac/linux readers are process-cheap and
+/// dictation off Windows isn't the latency-critical hot path, so the simpler
+/// spawn-per-capture avoids the Windows-specific `--serve` pipe plumbing.
+#[cfg(not(windows))]
+mod oneshot {
+    use std::io::Read;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use crate::winstt::context::ContextMode;
+
+    /// Run the sidecar once in `mode` and return its raw single-line JSON stdout,
+    /// bounded by `timeout_ms` (the child is killed on timeout) and `max_bytes`.
+    /// Returns `None` on spawn failure, timeout, disconnect, or an empty/oversize
+    /// response — the caller then yields `empty_context`.
+    pub fn request(
+        bin: &Path,
+        mode: ContextMode,
+        timeout_ms: u64,
+        max_bytes: usize,
+    ) -> Option<String> {
+        let mut cmd = Command::new(bin);
+        if let Some(flag) = mode.flag() {
+            cmd.arg(flag);
+        }
+        let mut child = cmd
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+
+        // Read stdout on a helper thread so the timeout can fire even if the child
+        // (a wedged AX / AT-SPI call) never closes the pipe.
+        let mut stdout = child.stdout.take()?;
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stdout.read_to_end(&mut buf);
+            let _ = tx.send(buf);
+        });
+
+        let out = match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
+            Ok(buf) => buf,
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        };
+        let _ = child.wait();
+
+        if out.is_empty() || out.len() > max_bytes {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&out).trim().to_string();
+        if text.is_empty() { None } else { Some(text) }
     }
 }
 

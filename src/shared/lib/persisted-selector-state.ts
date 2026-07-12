@@ -18,17 +18,25 @@ export function readPersistedSelectorState<T>(
 	}
 }
 
+/** Persist `value` under `storageKey`. Returns `true` when the write actually
+ *  reached localStorage, `false` when it was skipped (no `window`) or threw
+ *  (quota exceeded, serialization error, storage disabled). Callers that must
+ *  not falsely claim success — e.g. "saved" UI — inspect the result instead of
+ *  assuming the write landed. Loose selector state can still ignore it. */
 export function writePersistedSelectorState(
 	storageKey: string,
 	value: unknown,
-): void {
+): boolean {
 	if (typeof window === "undefined") {
-		return;
+		return false;
 	}
 	try {
 		window.localStorage.setItem(storageKey, JSON.stringify(value));
+		return true;
 	} catch {
-		// Ignore storage failures; selector state should remain usable in-memory.
+		// Storage failure — the in-memory value is still usable this session, but
+		// the caller is told the write did not persist so it can surface it.
+		return false;
 	}
 }
 

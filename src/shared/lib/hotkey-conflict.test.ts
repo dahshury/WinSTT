@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
 	compareHotkeys,
 	type HotkeyRelation,
+	type HotkeySet,
 	type HotkeyTriple,
 	isHotkeyConflict,
+	resolveHotkeySet,
 	resolveHotkeyTriple,
 } from "./hotkey-conflict";
 
@@ -11,6 +13,12 @@ const DEFAULTS: HotkeyTriple = {
 	pushToTalkKey: "LCtrl+LMeta",
 	repasteHotkey: "LCtrl+LShift+V",
 	ttsHotkey: "LCtrl+Space",
+};
+
+const SET_DEFAULTS: HotkeySet = {
+	...DEFAULTS,
+	transformHotkey: "LCtrl+LShift+T",
+	profileSwapHotkey: "LCtrl+LShift+P",
 };
 
 describe("compareHotkeys", () => {
@@ -159,6 +167,48 @@ describe("resolveHotkeyTriple", () => {
 			ttsHotkey: "LCtrl+LShift+V",
 		};
 		const r = resolveHotkeyTriple(candidate, DEFAULTS);
+		expect(r.values.pushToTalkKey).toBe(candidate.pushToTalkKey);
+		expect(r.rewrites).not.toContain("pushToTalkKey");
+	});
+});
+
+describe("resolveHotkeySet (audit #25 — all five hotkeys)", () => {
+	test("disjoint defaults pass through unchanged with no rewrites", () => {
+		const r = resolveHotkeySet({ ...SET_DEFAULTS }, SET_DEFAULTS);
+		expect(r.values).toEqual(SET_DEFAULTS);
+		expect(r.rewrites).toEqual([]);
+	});
+
+	test("resets the transform hotkey when it collides with PTT", () => {
+		const r = resolveHotkeySet(
+			{ ...SET_DEFAULTS, pushToTalkKey: "LCtrl+A", transformHotkey: "LCtrl+A" },
+			SET_DEFAULTS,
+		);
+		expect(r.values.transformHotkey).toBe(SET_DEFAULTS.transformHotkey);
+		expect(r.rewrites).toContain("transformHotkey");
+	});
+
+	test("resets the profile-swap hotkey when it collides with an earlier-settled binding", () => {
+		// profileSwap is a subset of the repaste combo → pressing repaste would
+		// also fire profile-swap. Previously unguarded (resolveHotkeyTriple only
+		// handled the first three); now it is reset.
+		const r = resolveHotkeySet(
+			{ ...SET_DEFAULTS, profileSwapHotkey: "LCtrl+LShift" },
+			SET_DEFAULTS,
+		);
+		expect(r.values.profileSwapHotkey).toBe(SET_DEFAULTS.profileSwapHotkey);
+		expect(r.rewrites).toContain("profileSwapHotkey");
+	});
+
+	test("PTT anchors and is never rewritten", () => {
+		const candidate: HotkeySet = {
+			pushToTalkKey: "LCtrl+LShift+V",
+			repasteHotkey: "LCtrl+LShift+V",
+			ttsHotkey: "LCtrl+LShift+V",
+			transformHotkey: "LCtrl+LShift+V",
+			profileSwapHotkey: "LCtrl+LShift+V",
+		};
+		const r = resolveHotkeySet(candidate, SET_DEFAULTS);
 		expect(r.values.pushToTalkKey).toBe(candidate.pushToTalkKey);
 		expect(r.rewrites).not.toContain("pushToTalkKey");
 	});

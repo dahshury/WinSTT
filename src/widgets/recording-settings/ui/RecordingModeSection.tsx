@@ -1,4 +1,4 @@
-import { RecordIcon } from "@hugeicons/core-free-icons";
+import { LockIcon, RecordIcon } from "@hugeicons/core-free-icons";
 import type { ReactNode } from "react";
 import {
 	DEFAULT_SETTINGS,
@@ -10,9 +10,10 @@ import {
 	settingsSave,
 	type WakewordModelStatusPayload,
 } from "@/shared/api/ipc-client";
+import { listenModeSupport } from "@/shared/lib/host-platform";
 import { CreatableCombobox } from "@/shared/ui/creatable-combobox";
 import { Slider } from "@/shared/ui/slider";
-import { Switcher } from "@/shared/ui/switcher";
+import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
 import {
 	buildWakeWordItems,
@@ -337,7 +338,25 @@ export function RecordingModeSection({
 	wakewordEnablePending,
 	wakewordStatus,
 }: RecordingModeSectionProps): ReactNode {
-	const recordingModeOptions = buildRecordingModeOptions(t);
+	// Listen mode captures speaker/system audio (WASAPI loopback / ScreenCaptureKit
+	// / PipeWire monitors). Older macOS lacks the ScreenCaptureKit audio path, so
+	// the backend can't feed it — reflect that as a locked, unselectable option
+	// with an explanatory badge rather than a mode that silently never records.
+	const listenSupport = listenModeSupport();
+	const recordingModeOptions: readonly SwitcherOption<
+		"ptt" | "toggle" | "listen" | "wakeword"
+	>[] = buildRecordingModeOptions(t).map((opt) =>
+		opt.value === "listen" && !listenSupport.supported
+			? {
+					...opt,
+					disabled: true,
+					badgeIcon: LockIcon,
+					...(listenSupport.reason
+						? { badgeTooltip: listenSupport.reason }
+						: {}),
+				}
+			: opt,
+	);
 	const manualToggleStop = general?.manualToggleStop ?? false;
 	const wakewordControlsLocked =
 		!wakewordStatus.available &&
@@ -357,6 +376,11 @@ export function RecordingModeSection({
 			!wakewordStatus.downloading
 		) {
 			requestWakewordDownload();
+			return;
+		}
+		if (value === "listen" && !listenSupport.supported) {
+			// The option is already rendered disabled; guard the value path too so
+			// a keyboard/programmatic select can't slip an unsupported mode through.
 			return;
 		}
 		if (value === "listen" && !prepareListenMode()) {

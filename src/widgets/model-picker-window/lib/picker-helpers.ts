@@ -29,6 +29,11 @@ export const DESIRED_WIDTH = STT_PICKER_WIDTH_PX;
 export const DESIRED_HEIGHT = 560;
 const OPENROUTER_PICKER_WIDTH = 580;
 const OLLAMA_PICKER_WIDTH = 620;
+// The output-device picker is a compact device list (like the mic fly-out), so
+// it needs neither the STT grid's width nor its tall height. Rust widens the
+// panel to the trigger's measured width when the footer chip is wider than this.
+const OUTPUT_DEVICE_PICKER_WIDTH = 320;
+const OUTPUT_DEVICE_PICKER_HEIGHT = 320;
 // Sized to show exactly three model cards (Ollama/OpenRouter) — a hair shorter
 // than the previous 620 so the fourth maker group's header no longer peeks in
 // under the third card.
@@ -90,6 +95,10 @@ export type DetachedModelPickerMode =
 	| { kind: "stt-cloud" }
 	/** Read-aloud (TTS) voice-model picker. */
 	| { kind: "tts" }
+	/** Listen-mode output (loopback) device picker, opened from the footer pill.
+	 *  Not a model at all — reuses this detached backdrop window purely so the
+	 *  device list can escape the 420×150 main window. */
+	| { kind: "output-device" }
 	| { feature: DetachedLlmFeature; kind: "llm-ollama" }
 	| {
 			feature: DetachedLlmFeature;
@@ -133,6 +142,9 @@ export function normalizeDetachedModelPickerMode(
 	if (value["kind"] === "tts") {
 		return { kind: "tts" };
 	}
+	if (value["kind"] === "output-device") {
+		return { kind: "output-device" };
+	}
 	return DEFAULT_MODEL_PICKER_MODE;
 }
 
@@ -145,6 +157,11 @@ export function desiredSizeForMode(mode: DetachedModelPickerMode): {
 			return { width: OLLAMA_PICKER_WIDTH, height: LLM_PICKER_HEIGHT };
 		case "llm-openrouter":
 			return { width: OPENROUTER_PICKER_WIDTH, height: LLM_PICKER_HEIGHT };
+		case "output-device":
+			return {
+				width: OUTPUT_DEVICE_PICKER_WIDTH,
+				height: OUTPUT_DEVICE_PICKER_HEIGHT,
+			};
 		// STT main / realtime / cloud and TTS all share the STT picker footprint —
 		// the renderer-reported width is the FLOOR; Rust widens the panel to the
 		// trigger combobox's measured width when it is wider (see place_model_picker).

@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.1.3-alpha.6] - 2026-07-12
+
+Changes since `v0.1.3-alpha.5`.
+
+### Added
+
+- Added hover model-spec cards across the STT, TTS, LLM, and Ollama pickers, backed by a shared `ModelSpecCard`/`ModelSpecHoverCard`, per-source spec builders, and a models.dev catalog integration for cloud/LLM metadata.
+- Added a Listen-mode output-device picker surfaced as a footer chip, a detached picker window, and a recording-sound preview button, with device enumeration and hooks under `features/listen-mode`.
+- Added dedicated settings-warning and LLM-settings-notice surfaces so hydration, capability, and provider issues are shown inline instead of failing silently.
+- Added a dictionary context control and an encoder-dictionary workspace index, replacing the previous phonetics path.
+- Added a modifier-only push-to-talk hotkey toast and a recording-mode settings command for clearer mode configuration.
+- Added catalog/model-info and cloud-STT parity fixtures with matching frontend parity tests to keep the Rust catalog and the renderer in lockstep.
+
+### Changed
+
+- Completed the ESLint-to-Biome migration: removed `eslint.config.js` and the remaining ESLint dependencies, replacing the i18n JSX guard with a standalone `tools/i18n/check-no-literal-string.ts` scanner wired into `bun run lint`.
+- Enriched the model pickers and switching UI with a switching quant badge, shared combobox-base primitives, a host-platform helper, and a performance-color utility.
+- Refreshed backend catalog data, cloud STT, loopback capture, TTS, download, and command plumbing while keeping generated Tauri bindings in sync.
+
+### Fixed
+
+- Fixed model-picker, listen-mode device, settings-hydration, and cloud key-removal-revert edge cases covered by the expanded frontend and Rust test suites.
+
+### Maintenance
+
+- Bumped the application version from `0.1.3-alpha.5` to `0.1.3-alpha.6` while keeping the alpha release policy.
+
 ## [0.1.3-alpha.5] - 2026-07-08
 
 Changes since `v0.1.3-alpha.4`.

@@ -94,7 +94,6 @@ fn configure_windows_test_delay_load() {
         "dbghelp.dll",
         "api-ms-win-core-path-l1-1-0.dll",
         "setupapi.dll",
-        "sherpa-onnx-c-api.dll",
         "directml.dll",
         "d3d12.dll",
         "dxgi.dll",

@@ -99,16 +99,28 @@ impl MelExtractor {
         }
     }
 
-    /// Compute log-mel features for one mono 16 kHz utterance.
-    ///
-    /// Returns `(features, n_mels, n_frames)` where `features` is row-major
-    /// `[mel * n_frames + frame]` — i.e. shape `(n_mels, N_FRAMES)`, ready to feed the
-    /// encoder as `input_features (1, n_mels, T)`. T is always `N_FRAMES` (3000) because
-    /// Whisper pads/truncates to a fixed 30 s window.
+    /// Compute log-mel features for one mono 16 kHz utterance over the full fixed 30 s
+    /// window (3000 frames) — the classic Whisper front-end contract.
     pub fn extract(&self, audio: &[f32]) -> (Vec<f32>, usize, usize) {
-        // 1. Truncate then zero-pad to exactly N_SAMPLES (30 s).
-        let mut padded = vec![0.0f32; N_SAMPLES + N_FFT];
-        let take = audio.len().min(N_SAMPLES);
+        self.extract_frames(audio, N_FRAMES)
+    }
+
+    /// Compute log-mel features over a SHORTENED window of `n_frames` (≤ 3000) frames —
+    /// the dynamic-length encoder path (whisper.cpp `audio_ctx` / sherpa-onnx tail-padding
+    /// trick): a short dictation utterance encodes `n_frames` mel frames instead of always
+    /// paying the full 30 s. The first `ceil(len/HOP)` frames carry signal, the rest is the
+    /// zero-pad "silence" region the decoder needs to emit EOT into. Numerically identical
+    /// to the first `n_frames` columns of the full-window `extract` for any audio that fits
+    /// (same STFT, same filterbank; the dynamic-range clamp maxes over speech frames either
+    /// way — the zero-pad region never wins the max).
+    ///
+    /// Returns `(features, n_mels, n_frames)`, row-major `(n_mels, n_frames)`.
+    pub fn extract_frames(&self, audio: &[f32], n_frames: usize) -> (Vec<f32>, usize, usize) {
+        let n_frames = n_frames.clamp(1, N_FRAMES);
+        let n_samples = n_frames * HOP_LENGTH;
+        // 1. Truncate then zero-pad to exactly n_samples.
+        let mut padded = vec![0.0f32; n_samples + N_FFT];
+        let take = audio.len().min(n_samples);
         // 2. reflect-pad n_fft/2 on each side. We place the signal at offset n_fft/2
         //    and fill the left/right reflect borders. The right border lives in the
         //    zero-padded silence region, so reflection there is over zeros (no-op).
@@ -123,9 +135,9 @@ impl MelExtractor {
         // tail is silence (zero-padded), the reflection is zeros — already initialized.
 
         let n_mels = self.n_mels;
-        let mut features = vec![0.0f32; n_mels * N_FRAMES];
+        let mut features = vec![0.0f32; n_mels * n_frames];
         // log10 mel, time-major (t, mel); transposed to (mel, t) at the end.
-        let mut log_mel = vec![0.0f32; n_mels * N_FRAMES];
+        let mut log_mel = vec![0.0f32; n_mels * n_frames];
 
         // The 3000 frames are independent → compute the per-frame FFT + mel projection in parallel
         // (Whisper ALWAYS processes the full 30 s window = 3000 frames regardless of clip length, so
@@ -177,13 +189,13 @@ impl MelExtractor {
 
         // 6. Dynamic-range clamp to (max - 8), affine (+4)/4. 7. transpose to (n_mels, T).
         let floor = global_max - 8.0;
-        for t in 0..N_FRAMES {
+        for t in 0..n_frames {
             for m in 0..n_mels {
                 let v = log_mel[t * n_mels + m].max(floor);
-                features[m * N_FRAMES + t] = (v + 4.0) / 4.0;
+                features[m * n_frames + t] = (v + 4.0) / 4.0;
             }
         }
-        (features, n_mels, N_FRAMES)
+        (features, n_mels, n_frames)
     }
 }
 

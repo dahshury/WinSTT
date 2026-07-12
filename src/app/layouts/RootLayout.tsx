@@ -10,6 +10,10 @@ import {
 	useCloudOfflineAutoRevert,
 } from "@/features/revert-cloud-on-key-removal";
 import { CloudSttErrorToasts } from "@/features/show-cloud-stt-errors";
+import {
+	SettingsHydrationErrorNotice,
+	SettingsWarningToasts,
+} from "@/features/surface-settings-warnings";
 import { SwapFailureToast } from "@/features/swap-notifications";
 import { TransformToast } from "@/features/transform-notifications";
 import { springs } from "@/shared/lib/springs";
@@ -62,6 +66,8 @@ export function RootLayout({ children }: { children: ReactNode }) {
 									<SwapFailureToast />
 									<CloudSttErrorToasts />
 									<CloudKeyRevertNotice />
+									<SettingsWarningToasts />
+									<SettingsHydrationErrorNotice />
 								</m.div>
 							</LazyMotion>
 						</SurfaceProvider>

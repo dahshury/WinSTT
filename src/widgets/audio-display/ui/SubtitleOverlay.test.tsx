@@ -43,6 +43,23 @@ describe("SubtitleOverlay", () => {
 		expect(line?.style.transition).toBe("opacity 140ms ease-out");
 	});
 
+	test("renders a feathered scrim layer whose opacity tracks the strongest line", () => {
+		useTranscriptionStore.setState({
+			items: [
+				{ id: "1", type: "final", text: "Hello world.", timestamp: Date.now() },
+			],
+			currentRealtime: "",
+			ephemeral: null,
+		});
+		const { container } = render(<SubtitleOverlay />);
+		const scrim = container.querySelector<HTMLElement>("[data-subtitle-scrim]");
+		expect(scrim).not.toBeNull();
+		expect(scrim?.classList.contains("subtitle-scrim-bloom")).toBe(true);
+		// Fresh line → fully visible scrim that will fade with the caption.
+		expect(scrim?.style.opacity).toBe("1");
+		expect(scrim?.style.transition).toBe("opacity 140ms ease-out");
+	});
+
 	test("removes the normal subtitle layer after the final line exits", () => {
 		useTranscriptionStore.setState({
 			items: [

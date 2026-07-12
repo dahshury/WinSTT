@@ -116,6 +116,34 @@ pub use quant_resolve::{
 // public API surface (used by whisper.rs / moonshine.rs / families.rs via `super::`).
 pub(crate) use device::{configure_session, kv_sort_key, num_cpus_best_effort, provider_label};
 
+// Additional `EngineKind` capability methods live here (rather than in `engine_kind.rs`) so the
+// long-form segmentation cap stays with the code that consumes it; `EngineKind` is re-exported
+// above, so `kind.max_chunk_seconds()` resolves identically to the sibling capability methods.
+impl EngineKind {
+    /// Longest audio (seconds) this engine may decode in ONE `transcribe` call before the
+    /// VAD-segmenter must hard-split it. The segmenter caps every chunk at this value so no chunk
+    /// hits the engine's decode wall (where text past the wall is silently dropped — the exact
+    /// failure the segmenter exists to prevent).
+    ///
+    /// Default 28.0 s: headroom under Whisper's 30 s mel window (`mel.rs`
+    /// `audio.len().min(N_SAMPLES)`) and comfortably inside the AED decoders' ~1024-token budgets.
+    ///
+    /// Moonshine overrides to 14.0 s. Its greedy decode is capped at `MAX_LENGTH = 448` tokens
+    /// (`moonshine.rs`) — a HARD runaway guard: once the running sequence reaches 448 the loop
+    /// stops and any remaining speech is dropped. Budget = 448 − 1 bos − 1 eos = 446 content
+    /// tokens. To keep a decode well clear of that ceiling (never approaching it mid-chunk), plan
+    /// against a conservative ~30 tokens/s — fast dictation (~3.5 words/s) with the SentencePiece
+    /// byte-fallback tokenizer fragmenting numerals, proper nouns, and any out-of-vocab/non-English
+    /// runs into many single-byte pieces. 446 / 30 ≈ 14.9 s → cap at 14.0 s. The decoder position
+    /// window (`max_position_embeddings = 512`) is never the binding limit here since 448 < 512.
+    pub fn max_chunk_seconds(&self) -> f32 {
+        match self {
+            EngineKind::Moonshine => 14.0,
+            _ => 28.0,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Inputs / outputs
 // ---------------------------------------------------------------------------
@@ -322,5 +350,29 @@ pub fn build_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>> {
         // (see `engine_kind_for` whitelist in managers/transcription.rs); the benchmark harness
         // (`stt_decode_bench --catalog`) reaches them directly to drive that validation.
         _ => families::build_family_engine(cfg),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_chunk_seconds_default_is_28() {
+        // Whisper (30 s mel wall) and the AED decoders take the 28 s default.
+        assert_eq!(EngineKind::WhisperHf.max_chunk_seconds(), 28.0);
+        assert_eq!(EngineKind::CohereAsr.max_chunk_seconds(), 28.0);
+        assert_eq!(EngineKind::NemoAed.max_chunk_seconds(), 28.0);
+    }
+
+    #[test]
+    fn max_chunk_seconds_moonshine_override_under_token_budget() {
+        // Moonshine's 448-token greedy cap → conservative 14 s; strictly below the default.
+        let cap = EngineKind::Moonshine.max_chunk_seconds();
+        assert_eq!(cap, 14.0);
+        assert!(cap < EngineKind::WhisperHf.max_chunk_seconds());
+        // Sanity on the budget arithmetic: 14 s at ~30 tok/s stays under the 446 content-token
+        // budget (448 − bos − eos).
+        assert!((cap * 30.0) < 446.0);
     }
 }

@@ -1,4 +1,5 @@
 export { useListenMode } from "./api/use-listen-mode";
+export { useOutputDevicePicker } from "./api/use-output-device-picker";
 export {
 	hasCachedNativeStreamingModel,
 	resolveListenStreamingModelId,

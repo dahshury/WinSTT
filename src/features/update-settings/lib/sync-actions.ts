@@ -272,14 +272,12 @@ export function syncDiarizationParams(
 	}
 }
 
-// NOTE: the Dictionary (custom words) and `general.wordCorrectionThreshold` are NOT
-// synced here. They are persisted canonically via `winstt_set_settings` (the
-// `settingsSave` debounced write), and the STT pipeline reads them straight from
-// `WinsttSettings` at transcription time (`ws.dictionary` /
-// `ws.general.word_correction_threshold` in `winstt/stt/backend.rs`). The former
-// `update_custom_words` / `change_word_correction_threshold_setting` push was a second
-// write path into the AppSettings shadow that nothing read — removed so each setting
-// has exactly one writer.
+// NOTE: the Dictionary (custom words) is NOT synced here. It is persisted canonically
+// via `winstt_set_settings` (the `settingsSave` debounced write), and the dictation
+// post-processor reads it straight from `WinsttSettings` at transcription time
+// (`ws.dictionary` in `actions/post_process.rs`). The former `update_custom_words` push
+// was a second write path into the AppSettings shadow that nothing read — removed so
+// each setting has exactly one writer.
 
 export function syncToServer(
 	deps: SyncDeps,

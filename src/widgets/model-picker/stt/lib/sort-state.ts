@@ -1,4 +1,10 @@
 import type { ModelInfo } from "@/entities/model-catalog";
+import {
+	ascendingOrName,
+	makeNameComparator,
+	makeSortState,
+	type SortValue,
+} from "../../core/lib/sort-state";
 
 /**
  * Sort dimensions exposed in the picker's "Sort by" section. ``null`` means no
@@ -13,7 +19,7 @@ import type { ModelInfo } from "@/entities/model-catalog";
 export type SttSortKey = "speed" | "accuracy" | "size" | "name";
 
 /** ``null`` = no sort active (the default grouped view). */
-export type SttSortValue = SttSortKey | null;
+export type SttSortValue = SortValue<SttSortKey>;
 
 /** Sort keys in display order — drives the menu chips + keeps logic table-driven. */
 export const STT_SORT_KEYS = ["speed", "accuracy", "size", "name"] as const;
@@ -51,11 +57,7 @@ function smallestDownloadBytes(m: ModelInfo): number {
 }
 
 /** Stable A→Z name compare — also the universal tie-breaker for every key. */
-function byName(a: ModelInfo, b: ModelInfo): number {
-	return a.displayName.localeCompare(b.displayName, undefined, {
-		sensitivity: "base",
-	});
-}
+const byName = makeNameComparator((m: ModelInfo) => m.displayName);
 
 const COMPARATORS: Record<SttSortKey, (a: ModelInfo, b: ModelInfo) => number> =
 	{
@@ -63,16 +65,16 @@ const COMPARATORS: Record<SttSortKey, (a: ModelInfo, b: ModelInfo) => number> =
 		// best first. The 0.5 "unknown" sentinel naturally lands mid-pack.
 		speed: (a, b) => b.speedScore - a.speedScore || byName(a, b),
 		accuracy: (a, b) => b.accuracyScore - a.accuracyScore || byName(a, b),
-		size: (a, b) => {
-			const av = smallestDownloadBytes(a);
-			const bv = smallestDownloadBytes(b);
-			const aUnknown = !Number.isFinite(av);
-			const bUnknown = !Number.isFinite(bv);
-			if (aUnknown !== bUnknown) {
-				return aUnknown ? 1 : -1; // unknown sizes always sort last
-			}
-			return av - bv || byName(a, b);
-		},
+		// `smallestDownloadBytes` returns ``+Infinity`` for an unsized model, so the
+		// shared unknown-last compare drops it to the END of the smallest-first list.
+		size: (a, b) =>
+			ascendingOrName(
+				smallestDownloadBytes(a),
+				smallestDownloadBytes(b),
+				a,
+				b,
+				byName,
+			),
 		name: byName,
 	};
 
@@ -81,9 +83,4 @@ const COMPARATORS: Record<SttSortKey, (a: ModelInfo, b: ModelInfo) => number> =
  * direction. Pure — never mutates the input. The selector uses this to flatten
  * the maker groups into a single globally-sorted column while a sort is active.
  */
-export function sortSttModels(
-	models: readonly ModelInfo[],
-	key: SttSortKey,
-): ModelInfo[] {
-	return models.toSorted(COMPARATORS[key]);
-}
+export const { sortModels: sortSttModels } = makeSortState(COMPARATORS);

@@ -382,6 +382,48 @@ describe("configurationsEqual", () => {
 	});
 });
 
+describe("order-insensitive matching (#27)", () => {
+	// Toggling a modifier off then on reorders the stored presets/customModifiers
+	// arrays but is a no-net-change, so equality/matching must compare them as
+	// sets — otherwise the reorder would falsely read as "modified".
+	test("configurationsEqual ignores preset + modifier array order", () => {
+		const a = body({
+			presets: presets([
+				{ key: "formal" },
+				{ key: "summarize", level: "high" },
+				{ key: "reorder" },
+			]),
+			customModifiers: [mod({ id: "m1" }), mod({ id: "m2" })],
+		});
+		const b = body({
+			presets: presets([
+				{ key: "reorder" },
+				{ key: "summarize", level: "high" },
+				{ key: "formal" },
+			]),
+			customModifiers: [mod({ id: "m2" }), mod({ id: "m1" })],
+		});
+		expect(configurationsEqual(a, b)).toBe(true);
+	});
+
+	test("matchConfigurationId matches a reordered but equivalent carrier", () => {
+		const configs = [
+			saved("a", {
+				presets: presets([{ key: "formal" }, { key: "reorder" }]),
+			}),
+		];
+		expect(
+			matchConfigurationId(
+				{
+					presets: [{ key: "reorder" }, { key: "formal" }],
+					customModifiers: [],
+				},
+				configs,
+			),
+		).toBe("a");
+	});
+});
+
 describe("BUILTIN_CONFIGURATIONS", () => {
 	test("ships the AI Prompt preset: Polish tone + concise(high)/reorder/restructure/reword", () => {
 		const aiPrompt = BUILTIN_CONFIGURATIONS.find(

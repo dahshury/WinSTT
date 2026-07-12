@@ -11,7 +11,6 @@ function model(
 		id,
 		displayName: modelOverrides.displayName ?? id,
 		family: "custom",
-		backend: "onnx_asr",
 		languages: ["en"],
 		supportsLanguageDetection: false,
 		sizeLabel: "100M",

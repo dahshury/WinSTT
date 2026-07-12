@@ -275,6 +275,12 @@ export const deleteTransformHistoryEntry = (id: string) =>
 
 /** One text-to-speech read-aloud run, listed in the History tab beside STT. */
 export interface TtsHistoryEntry {
+	/**
+	 * Absolute path on disk to the saved synthesis audio (WAV/MP3 under
+	 * userData/recordings/). Omitted on entries created before TTS audio
+	 * persistence shipped and on runs whose capture failed.
+	 */
+	audioFilePath?: string;
 	/** Characters synthesized (the unit most TTS providers bill on). */
 	characters: number;
 	/**
@@ -320,6 +326,10 @@ export const onTtsHistoryDeleted = (cb: (payload: { id: string }) => void) =>
 /** Load the WAV for an entry as a data URI ready for an `<audio src>`. */
 export const loadTranscriptionHistoryAudio = (id: string) =>
 	invokeOrDefault<string | null>(IPC.HISTORY_LOAD_AUDIO, null, id);
+
+/** Load a TTS run's saved synthesis audio as a data URI (WAV or MP3), or null. */
+export const loadTtsHistoryAudio = (id: string) =>
+	invokeOrDefault<string | null>(IPC.TTS_HISTORY_LOAD_AUDIO, null, id);
 
 /** Per-word playback timing (seconds) for highlight-while-playing. */
 export interface WordTiming {

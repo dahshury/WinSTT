@@ -12,6 +12,10 @@ import { useSettingsStore } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import { fetchOllamaModels, retryLlmWarmup } from "@/shared/api/ipc-client";
 import { detectAppleIntelligencePlatform } from "@/shared/lib/apple-intelligence-platform";
+import {
+	createTransientNotificationStore,
+	type TransientNotificationMeta,
+} from "@/shared/lib/create-transient-notification-store";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { isSameOllamaTag } from "@/shared/lib/ollama-tag";
 import { useWarmupStatusFeed } from "../api/use-warmup-status-feed";
@@ -33,6 +37,14 @@ import type {
 	OllamaPullBundle,
 	OpenRouterCatalogState,
 } from "../ui/types";
+
+/** Single-slot notice raised when enabling LLM dictation post-processing
+ *  silently switches OFF Smart Endpoint (they run competing finalization
+ *  heuristics, so only one may be active). Surfaced as a toast so this cross-tab
+ *  change is visible instead of a hidden setting flip on another panel. */
+export type SmartEndpointDisabledNotice = TransientNotificationMeta;
+export const useSmartEndpointDisabledNoticeStore =
+	createTransientNotificationStore<SmartEndpointDisabledNotice>();
 
 const resolveOpenRouterEnablePatch = (
 	currentOpenRouterModel: string,
@@ -69,10 +81,18 @@ export function useLlmSettingsPanel() {
 	);
 	const updateTransforms = useSettingsStore((s) => s.updateLlmTransforms);
 	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
+	const smartEndpoint = useSettingsStore(
+		(s) => s.settings.quality.smartEndpoint,
+	);
 
 	// Mutual-exclusion with Smart Endpoint's competing finalization heuristic.
-	// Defined once so every dictation-enable path goes through it.
+	// Defined once so every dictation-enable path goes through it. When this
+	// actually turns Smart Endpoint off (it was on, and lives on a DIFFERENT
+	// settings tab), raise a toast so the cross-tab change isn't silent.
 	const disableDictationConflicts = () => {
+		if (smartEndpoint) {
+			useSmartEndpointDisabledNoticeStore.getState().show({});
+		}
 		updateQuality({ smartEndpoint: false });
 	};
 	const t = useTranslations("llm");

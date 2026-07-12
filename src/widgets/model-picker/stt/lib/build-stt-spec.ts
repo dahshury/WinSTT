@@ -1,7 +1,9 @@
 import {
+	DashboardSpeed02Icon,
 	GlobeIcon,
 	LiveStreaming02Icon,
 	NeuralNetworkIcon,
+	Target02Icon,
 } from "@hugeicons/core-free-icons";
 import type { ModelInfo } from "@/entities/model-catalog";
 import { publicAsset } from "@/shared/lib/public-asset";
@@ -66,11 +68,21 @@ export function buildSttSpec(model: ModelInfo): ModelSpec {
 	}
 
 	const stats: ModelSpecStat[] = [];
-	const accuracy = specStat("accuracy", "Accuracy", model.accuracyScore);
+	const accuracy = specStat(
+		"accuracy",
+		"Accuracy",
+		model.accuracyScore,
+		Target02Icon,
+	);
 	if (accuracy) {
 		stats.push(accuracy);
 	}
-	const speed = specStat("speed", "Speed", model.speedScore);
+	const speed = specStat(
+		"speed",
+		"Speed",
+		model.speedScore,
+		DashboardSpeed02Icon,
+	);
 	if (speed) {
 		stats.push(speed);
 	}

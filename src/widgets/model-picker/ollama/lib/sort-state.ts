@@ -1,4 +1,10 @@
 import type { OllamaModel } from "@/shared/api/models";
+import {
+	ascendingOrName,
+	makeNameComparator,
+	makeSortState,
+	type SortValue,
+} from "../../core/lib/sort-state";
 
 /**
  * Sort dimensions exposed in the Ollama picker's "Sort" section. ``null`` means
@@ -13,7 +19,7 @@ import type { OllamaModel } from "@/shared/api/models";
 export type OllamaSortKey = "name" | "size" | "params";
 
 /** ``null`` = no sort active (the default grouped view). */
-export type OllamaSortValue = OllamaSortKey | null;
+export type OllamaSortValue = SortValue<OllamaSortKey>;
 
 /** Sort keys in display order — drives the menu chips + keeps logic table-driven. */
 export const OLLAMA_SORT_KEYS = ["name", "size", "params"] as const;
@@ -73,39 +79,21 @@ function onDiskBytes(m: OllamaModel): number {
 }
 
 /** Stable A→Z name compare — also the universal tie-breaker for every key. */
-function byName(a: OllamaModel, b: OllamaModel): number {
-	return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-}
-
-/**
- * Ascending compare on two metrics where ``+Infinity`` means "unknown". Guards
- * the ``Infinity - Infinity = NaN`` trap (two unknowns) by treating equal values
- * — including two unknowns — as a name tie-break rather than subtracting.
- */
-function ascendingOrName(
-	av: number,
-	bv: number,
-	a: OllamaModel,
-	b: OllamaModel,
-): number {
-	if (av === bv) {
-		return byName(a, b);
-	}
-	return av - bv;
-}
+const byName = makeNameComparator((m: OllamaModel) => m.name);
 
 const COMPARATORS: Record<
 	OllamaSortKey,
 	(a: OllamaModel, b: OllamaModel) => number
 > = {
 	name: byName,
-	size: (a, b) => ascendingOrName(onDiskBytes(a), onDiskBytes(b), a, b),
+	size: (a, b) => ascendingOrName(onDiskBytes(a), onDiskBytes(b), a, b, byName),
 	params: (a, b) =>
 		ascendingOrName(
 			parseOllamaParamCount(a.details?.parameterSize),
 			parseOllamaParamCount(b.details?.parameterSize),
 			a,
 			b,
+			byName,
 		),
 };
 
@@ -115,9 +103,4 @@ const COMPARATORS: Record<
  * the publisher groups into a single globally-sorted column while a sort is
  * active.
  */
-export function sortOllamaModels(
-	models: readonly OllamaModel[],
-	key: OllamaSortKey,
-): OllamaModel[] {
-	return models.toSorted(COMPARATORS[key]);
-}
+export const { sortModels: sortOllamaModels } = makeSortState(COMPARATORS);

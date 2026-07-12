@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { decodeSettingsPayload } from "./settings-codec";
+import {
+	decodeSettingsPayload,
+	decodeSettingsWithDiagnostics,
+} from "./settings-codec";
 
 describe("decodeSettingsPayload", () => {
 	test("returns schema defaults for undefined payload", () => {
@@ -33,7 +36,6 @@ describe("decodeSettingsPayload", () => {
 		const settings = decodeSettingsPayload({
 			model: {
 				model: "nemo-canary-180m-flash",
-				backend: "onnx_asr",
 			},
 			integrations: {
 				// The exact shape the secrets-walker bug produced — string
@@ -43,7 +45,6 @@ describe("decodeSettingsPayload", () => {
 		});
 		// Surviving section preserves the user's pick:
 		expect(settings.model.model).toBe("nemo-canary-180m-flash");
-		expect(settings.model.backend).toBe("onnx_asr");
 		// Corrupted section falls back to its OWN defaults, not the global:
 		expect(typeof settings.integrations.elevenlabs).toBe("object");
 		expect(settings.integrations.elevenlabs.apiKey).toBe("");
@@ -60,5 +61,48 @@ describe("decodeSettingsPayload", () => {
 		});
 		expect(settings.global.modelUnloadTimeout).toBe("hour1");
 		expect("modelUnloadTimeout" in settings.model).toBe(false);
+	});
+
+	// Audit #19/#20: the OpenAI→OpenRouter STT rewrite must run on the
+	// per-section recovery path too. A corrupt unrelated section forces
+	// partialDecodeBySections, which previously bypassed this migration.
+	test("section fallback still migrates a legacy openai STT model selection", () => {
+		const settings = decodeSettingsPayload({
+			model: { model: "openai:whisper-1" },
+			integrations: { elevenlabs: "" },
+		});
+		expect(settings.model.model).toBe("openrouter:openai/whisper-1");
+	});
+});
+
+describe("decodeSettingsWithDiagnostics", () => {
+	test("reports no recovery for a clean payload", () => {
+		const { diagnostics } = decodeSettingsWithDiagnostics({
+			general: { recordingMode: "toggle" },
+		});
+		expect(diagnostics.defaultedSections).toEqual([]);
+		expect(diagnostics.hotkeyRewrites).toEqual([]);
+	});
+
+	// Audit #45: a section that fails to parse and falls back to defaults must be
+	// REPORTED so the app can warn instead of silently healing corruption into
+	// permanent loss on the next save.
+	test("reports the section it had to default when one is corrupt", () => {
+		const { settings, diagnostics } = decodeSettingsWithDiagnostics({
+			model: { model: "nemo-canary-180m-flash" },
+			integrations: { elevenlabs: "" },
+		});
+		expect(diagnostics.defaultedSections).toContain("integrations");
+		// The surviving section is untouched.
+		expect(settings.model.model).toBe("nemo-canary-180m-flash");
+	});
+
+	// Audit #26: colliding hotkeys that the resolver reset must be reported.
+	test("reports hotkey rewrites when a colliding hotkey is reset", () => {
+		const { diagnostics } = decodeSettingsWithDiagnostics({
+			hotkey: { pushToTalkKey: "LCtrl+LShift+V" },
+			general: { repasteHotkey: "LCtrl+LShift+V" },
+		});
+		expect(diagnostics.hotkeyRewrites).toContain("repasteHotkey");
 	});
 });

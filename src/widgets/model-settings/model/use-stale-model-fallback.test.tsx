@@ -22,7 +22,6 @@ function model(
 	const previewCapable = overrides.previewCapable ?? false;
 	return {
 		displayName: overrides.displayName ?? overrides.id,
-		backend: overrides.backend ?? "onnx_asr",
 		family: overrides.family ?? "whisper",
 		languages: [],
 		supportsLanguageDetection: false,
@@ -88,17 +87,15 @@ function renderFallback(args: HookArgs) {
 const CATALOG: ModelInfo[] = [
 	model({
 		id: "tiny",
-		backend: "onnx_asr",
 		previewCapable: true,
 		nativeStreaming: true,
 	}),
 	model({
 		id: "base",
-		backend: "faster_whisper",
 		previewCapable: true,
 		nativeStreaming: true,
 	}),
-	model({ id: "large", backend: "onnx_asr", previewCapable: false }),
+	model({ id: "large", previewCapable: false }),
 ];
 
 const STATES: StatesById = {
@@ -186,7 +183,6 @@ describe("useStaleModelFallback", () => {
 		});
 		expect(update).toHaveBeenCalledWith({
 			model: "streaming-nemo-rnnt-en-1040ms-int8",
-			backend: "onnx_asr",
 		});
 	});
 
@@ -237,7 +233,7 @@ describe("useStaleModelFallback", () => {
 			update,
 		});
 		expect(update).toHaveBeenCalledTimes(1);
-		expect(update).toHaveBeenCalledWith({ model: "tiny", backend: "onnx_asr" });
+		expect(update).toHaveBeenCalledWith({ model: "tiny" });
 	});
 
 	test("does NOT patch the main model when no cached local model remains", () => {
@@ -274,7 +270,6 @@ describe("useStaleModelFallback", () => {
 		});
 		expect(update).toHaveBeenCalledWith({
 			model: "elevenlabs:scribe_v1",
-			backend: "onnx_asr",
 		});
 	});
 
@@ -292,7 +287,7 @@ describe("useStaleModelFallback", () => {
 		// Smallest cached = tiny; backend MUST travel with the model patch
 		// (the original drift bug wrote model-only and left backend stale).
 		expect(update).toHaveBeenCalledTimes(1);
-		expect(update).toHaveBeenCalledWith({ model: "tiny", backend: "onnx_asr" });
+		expect(update).toHaveBeenCalledWith({ model: "tiny" });
 	});
 
 	test("falls back the main model when the saved id is empty (corrupted settings)", () => {
@@ -305,7 +300,7 @@ describe("useStaleModelFallback", () => {
 			currentRealtimeModel: "tiny",
 			update,
 		});
-		expect(update).toHaveBeenCalledWith({ model: "tiny", backend: "onnx_asr" });
+		expect(update).toHaveBeenCalledWith({ model: "tiny" });
 	});
 
 	test("falls back the main model when the saved id is undefined", () => {
@@ -318,7 +313,7 @@ describe("useStaleModelFallback", () => {
 			currentRealtimeModel: "tiny",
 			update,
 		});
-		expect(update).toHaveBeenCalledWith({ model: "tiny", backend: "onnx_asr" });
+		expect(update).toHaveBeenCalledWith({ model: "tiny" });
 	});
 
 	test("does NOT patch when the resolved fallback equals the (stale-by-empty) current model", () => {
@@ -326,7 +321,7 @@ describe("useStaleModelFallback", () => {
 		// catalog. currentMainModel="" needsFallback (empty) but pickDefault
 		// returns "" too, so next === currentMainModel → no patch.
 		const update = mock<Update>(() => undefined);
-		const weirdCatalog: ModelInfo[] = [model({ id: "", backend: "onnx_asr" })];
+		const weirdCatalog: ModelInfo[] = [model({ id: "" })];
 		renderFallback({
 			catalogLoaded: true,
 			catalogModels: weirdCatalog,
@@ -336,28 +331,6 @@ describe("useStaleModelFallback", () => {
 			update,
 		});
 		// next ("") === currentMainModel ("") → main effect must not patch.
-		expect(update).not.toHaveBeenCalled();
-	});
-
-	test("does NOT patch the main model when no fallback entry has a backend", () => {
-		// pickDefaultSttModel returns an id, but the matching catalog entry has
-		// no backend → the `fallbackEntry?.backend` guard rejects the patch.
-		const update = mock<Update>(() => undefined);
-		const noBackend: ModelInfo[] = [
-			{
-				...model({ id: "tiny" }),
-				backend: "" as unknown as ModelInfo["backend"],
-			},
-		];
-		renderFallback({
-			catalogLoaded: true,
-			catalogModels: noBackend,
-			statesById: { tiny: stateEntry(1, true) },
-			currentMainModel: "stale",
-			currentRealtimeModel: "",
-			update,
-		});
-		// Main: next="tiny" !== "stale", but backend is falsy → no main patch.
 		expect(update).not.toHaveBeenCalled();
 	});
 
@@ -586,7 +559,7 @@ describe("useStaleModelFallback", () => {
 			update,
 		});
 		expect(update).toHaveBeenCalledTimes(2);
-		expect(update).toHaveBeenCalledWith({ model: "tiny", backend: "onnx_asr" });
+		expect(update).toHaveBeenCalledWith({ model: "tiny" });
 		expect(update).toHaveBeenCalledWith({ realtimeModel: "tiny" });
 	});
 });

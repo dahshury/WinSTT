@@ -7,12 +7,19 @@
 //! skipped. The ~310 MB model is downloaded via the managed [`download`] flow (start/pause/resume),
 //! NOT silently — until it's present, this path is a no-op.
 //!
-//! Validated (see `tools/bench/eval_*`): mmBERT-base int8, rank rule K≈600 — 85% recall, 0 false
-//! positives on the held-out adversarial set, ~24 ms/utterance CPU.
+//! Architecture (retrieve-then-verify, à la NVIDIA SpellMapper / Microsoft CSC): [`index`] builds a
+//! phonetic index over the dictionary and returns a BOUNDED top-K of `(span → term)` proposals per
+//! utterance regardless of dictionary size; [`engine`] then judges each with the masked-LM (one-sided
+//! `rank(original) > K` rule) and resolves overlapping spans to a single best edit. The old design
+//! scored every phonetic collision INDEPENDENTLY, so its false-positive rate compounded with
+//! dictionary size and its English-Soundex prefilter missed homophones + all non-Latin scripts. The
+//! bounded top-K retrieval fixes the former; metaphone + character-n-gram retrieval fixes the latter.
+//! Validated on the real int8 model (`examples/dict_eval`): 100% recall / 0 false positives on the
+//! adversarial set at 50 terms, ~42 ms/utterance.
 
 pub mod download;
 pub mod engine;
-pub mod phonetics;
+pub mod index;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -22,12 +29,20 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 
 pub use engine::DEFAULT_RANK_K;
-use engine::EncoderDict;
+use engine::{DEFAULT_CONTEXT_BYTES, EncoderDict};
+use index::DictIndex;
+
+/// Widest the user may set the context window (bytes each side); mirrors the zod/Rust validation.
+const MAX_CONTEXT_BYTES: i64 = 1000;
 
 /// Local filenames the model is stored under (in the app-data `encoder-dict` dir).
 pub(crate) const MODEL_FILENAME: &str = "model_int8.onnx";
 pub(crate) const TOKENIZER_FILENAME: &str = "tokenizer.json";
-const CORRECTION_TIMEOUT_MS: u64 = 2_000;
+// Per-utterance fail-soft budget. Local-window scoring ([`engine`]) keeps a full paragraph's
+// correction to a few hundred ms even at the top-K candidate cap, but real dictation runs it while
+// the STT model / Ollama contend for CPU, so this leaves comfortable headroom before giving up and
+// returning the text uncorrected.
+const CORRECTION_TIMEOUT_MS: u64 = 3_000;
 const ENGINE_LOCK_TIMEOUT_MS: u64 = 500;
 
 /// Loaded engine, created once after the model is present. `None` until then.
@@ -212,18 +227,25 @@ pub fn preload_async(app: &AppHandle) {
 
 /// Correct vocabulary `terms` in `text` using the masked-LM fallback. No-op (returns `text`) when
 /// the model isn't downloaded yet, or on any load/inference error (fail-soft).
-pub async fn correct_vocabulary(
-    app: &AppHandle,
-    text: &str,
-    terms: &[String],
-    rank_k: usize,
-) -> String {
+pub async fn correct_vocabulary(app: &AppHandle, text: &str, terms: &[String]) -> String {
     if terms.is_empty() || text.trim().is_empty() || !is_model_present(app) {
         return text.to_string();
     }
+    // Build the phonetic index off the model thread (pure, cheap); a term set that indexes to nothing
+    // (all empty/whitespace) short-circuits before any inference.
+    let index = DictIndex::build(terms);
+    if index.is_empty() {
+        return text.to_string();
+    }
+    // How much surrounding text the model reads per word (Vocabulary tab slider). Clamped to the
+    // validated range so a hand-edited settings file can't feed a runaway sequence length.
+    let context_bytes = crate::winstt::commands::settings::read_settings(app)
+        .general
+        .dictionary_context_chars
+        .clamp(DEFAULT_CONTEXT_BYTES as i64, MAX_CONTEXT_BYTES) as usize;
     touch_encoder_used();
     log::info!(
-        "[encoder-dict] correction_start chars={} terms={} rank_k={rank_k}",
+        "[encoder-dict] correction_start chars={} terms={}",
         text.chars().count(),
         terms.len()
     );
@@ -234,7 +256,6 @@ pub async fn correct_vocabulary(
     let tok_path = dir.join(TOKENIZER_FILENAME);
 
     let text_owned = text.to_string();
-    let terms_owned = terms.to_vec();
     let fallback = text.to_string();
     let correction_started = Instant::now();
     let task = tokio::task::spawn_blocking(move || {
@@ -264,7 +285,7 @@ pub async fn correct_vocabulary(
             Some(e) => {
                 let infer_started = Instant::now();
                 log::info!("[encoder-dict] infer_start");
-                let corrected = e.correct(&text_owned, &terms_owned, rank_k);
+                let corrected = e.correct(&text_owned, &index, context_bytes);
                 log::info!(
                     "[encoder-dict] infer_complete duration_ms={} changed={} total_blocking_ms={}",
                     infer_started.elapsed().as_millis(),

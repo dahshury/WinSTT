@@ -31,7 +31,6 @@ function sttModel(overrides: Partial<ModelInfo>): ModelInfo {
 	return {
 		id: "tiny",
 		displayName: "Whisper Tiny",
-		backend: "onnx_asr",
 		family: "whisper",
 		languages: ["en"],
 		supportsLanguageDetection: true,

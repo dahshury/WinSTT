@@ -20,7 +20,7 @@ describe("buildOllamaSpec", () => {
 	test("maps identity and publisher", () => {
 		const spec = buildOllamaSpec(makeModel());
 		expect(spec.name.toLowerCase()).toContain("llama");
-		expect(spec.makerLabel.length).toBeGreaterThan(0);
+		expect(spec.makerLabel?.length ?? 0).toBeGreaterThan(0);
 	});
 
 	test("passes through an optional description", () => {

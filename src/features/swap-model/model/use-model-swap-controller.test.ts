@@ -78,48 +78,29 @@ describe("toQuantPatch / definedQuantPatches", () => {
 
 describe("applyQuantOverride", () => {
 	test("merges the quant override when changing", () => {
-		const out = t.applyQuantOverride(
-			{ model: "m", backend: "onnx_asr" },
-			"fp16",
-			true,
-		);
+		const out = t.applyQuantOverride({ model: "m" }, "fp16", true);
 		expect(out).toEqual({
 			model: "m",
-			backend: "onnx_asr",
 			onnxQuantization: "fp16",
 		});
 	});
 
 	test("leaves patch untouched when not changing", () => {
-		const out = t.applyQuantOverride(
-			{ model: "m", backend: "onnx_asr" },
-			undefined,
-			false,
-		);
-		expect(out).toEqual({ model: "m", backend: "onnx_asr" });
+		const out = t.applyQuantOverride({ model: "m" }, undefined, false);
+		expect(out).toEqual({ model: "m" });
 	});
 
 	test("leaves patch untouched when changing flag set but value undefined", () => {
-		const out = t.applyQuantOverride(
-			{ model: "m", backend: "onnx_asr" },
-			undefined,
-			true,
-		);
-		expect(out).toEqual({ model: "m", backend: "onnx_asr" });
+		const out = t.applyQuantOverride({ model: "m" }, undefined, true);
+		expect(out).toEqual({ model: "m" });
 	});
 });
 
 describe("buildMainSwapPatch / buildRealtimeSwapPatch", () => {
 	test("main patch composes base info and quant override", () => {
-		const out = t.buildMainSwapPatch(
-			"m",
-			{ backend: "onnx_asr" } as never,
-			"fp16",
-			true,
-		);
+		const out = t.buildMainSwapPatch("m", {} as never, "fp16", true);
 		expect(out).toEqual({
 			model: "m",
-			backend: "onnx_asr",
 			onnxQuantization: "fp16",
 		});
 	});
@@ -130,14 +111,13 @@ describe("buildMainSwapPatch / buildRealtimeSwapPatch", () => {
 		// to the new model's default precision.
 		const out = t.buildMainSwapPatch(
 			"parakeet",
-			{ backend: "onnx_asr", availableQuantizations: ["", "int8"] } as never,
+			{ availableQuantizations: ["", "int8"] } as never,
 			undefined, // no explicit precision pick
 			false, // precision not changing on its own
 			"q4", // carried over from the previous model
 		);
 		expect(out).toEqual({
 			model: "parakeet",
-			backend: "onnx_asr",
 			onnxQuantization: "",
 		});
 	});
@@ -145,12 +125,12 @@ describe("buildMainSwapPatch / buildRealtimeSwapPatch", () => {
 	test("model switch keeps a precision the new model offers", () => {
 		const out = t.buildMainSwapPatch(
 			"tiny",
-			{ backend: "onnx_asr", availableQuantizations: ["", "q4"] } as never,
+			{ availableQuantizations: ["", "q4"] } as never,
 			undefined,
 			false,
 			"q4", // offered by the new model → left as-is, no override
 		);
-		expect(out).toEqual({ model: "tiny", backend: "onnx_asr" });
+		expect(out).toEqual({ model: "tiny" });
 	});
 
 	test("realtime patch swaps just the realtime model", () => {
@@ -470,7 +450,6 @@ describe("runIssueSwap — cloud persistence (regression: cloud combo showed no 
 		// update, leaving model.model unchanged → the cloud combo stayed empty.
 		expect(update).toHaveBeenCalledWith({
 			model: "openrouter:openai/gpt-4o-mini-transcribe",
-			backend: "onnx_asr",
 		});
 	});
 
@@ -572,9 +551,7 @@ describe("runIssueSwap", () => {
 		t.runIssueSwap({
 			currentQuantization: "int8",
 			getModel: ((id: string) =>
-				id === "next"
-					? ({ backend: "onnx_asr" } as never)
-					: undefined) as never,
+				id === "next" ? ({} as never) : undefined) as never,
 			kind: "main",
 			previous: "prev",
 			prevMainModelRef: refMain as never,
@@ -583,7 +560,7 @@ describe("runIssueSwap", () => {
 			update: update as never,
 			value: "next",
 		});
-		expect(update).toHaveBeenCalledWith({ model: "next", backend: "onnx_asr" });
+		expect(update).toHaveBeenCalledWith({ model: "next" });
 		expect(refMain.current).toBe("prev");
 	});
 
@@ -596,15 +573,10 @@ describe("runIssueSwap", () => {
 			currentRealtimeModel: "rt-ru",
 			getModel: ((id: string) => {
 				if (id === "next-en") {
-					return { backend: "onnx_asr", languages: ["en"] } as never;
+					return { languages: ["en"] } as never;
 				}
 				if (id === "rt-ru") {
-					return {
-						backend: "onnx_asr",
-						id,
-						languages: ["ru"],
-						nativeStreaming: true,
-					} as never;
+					return { id, languages: ["ru"], nativeStreaming: true } as never;
 				}
 			}) as never,
 			kind: "main",
@@ -617,7 +589,6 @@ describe("runIssueSwap", () => {
 		});
 		expect(update).toHaveBeenCalledWith({
 			model: "next-en",
-			backend: "onnx_asr",
 			realtimeModel: "",
 		});
 		expect(refMain.current).toBe("prev");
@@ -632,11 +603,10 @@ describe("runIssueSwap", () => {
 			currentRealtimeModel: "rt-en",
 			getModel: ((id: string) => {
 				if (id === "next-en") {
-					return { backend: "onnx_asr", languages: ["en"] } as never;
+					return { languages: ["en"] } as never;
 				}
 				if (id === "rt-en") {
 					return {
-						backend: "onnx_asr",
 						id,
 						languages: ["en", "de"],
 						nativeStreaming: true,
@@ -653,7 +623,6 @@ describe("runIssueSwap", () => {
 		});
 		expect(update).toHaveBeenCalledWith({
 			model: "next-en",
-			backend: "onnx_asr",
 		});
 		expect(refMain.current).toBe("prev");
 	});
@@ -667,20 +636,10 @@ describe("runIssueSwap", () => {
 			currentRealtimeModel: "rt-en",
 			getModel: ((id: string) => {
 				if (id === "streaming-zipformer-en") {
-					return {
-						backend: "onnx_asr",
-						id,
-						languages: ["en"],
-						nativeStreaming: true,
-					} as never;
+					return { id, languages: ["en"], nativeStreaming: true } as never;
 				}
 				if (id === "rt-en") {
-					return {
-						backend: "onnx_asr",
-						id,
-						languages: ["en"],
-						nativeStreaming: true,
-					} as never;
+					return { id, languages: ["en"], nativeStreaming: true } as never;
 				}
 			}) as never,
 			kind: "main",
@@ -693,17 +652,15 @@ describe("runIssueSwap", () => {
 		});
 		expect(update).toHaveBeenCalledWith({
 			model: "streaming-zipformer-en",
-			backend: "onnx_asr",
 			realtimeModel: "streaming-zipformer-en",
 		});
 		expect(refMain.current).toBe("prev");
 	});
 
 	test("main: short-circuits when catalog does not know the target model", () => {
-		// Regression guard: writing { model: x } without a paired backend was the
-		// drift that produced model=canary, backend=faster_whisper on disk. The
-		// typed ModelPatch now forbids it; applyMainSwap must early-return so we
-		// never write an inconsistent pair.
+		// A genuinely-missing LOCAL id isn't a real catalog selection, so
+		// applyMainSwap must early-return rather than persist an id the picker
+		// can't resolve.
 		const update = mock(() => undefined);
 		const refMain = { current: null as string | null };
 		const refRt = { current: null as string | null };
@@ -730,12 +687,7 @@ describe("runIssueSwap", () => {
 			currentQuantization: "int8",
 			getModel: ((id: string) =>
 				id === "rt-next"
-					? ({
-							backend: "onnx_asr",
-							id,
-							languages: ["en"],
-							nativeStreaming: true,
-						} as never)
+					? ({ id, languages: ["en"], nativeStreaming: true } as never)
 					: undefined) as never,
 			kind: "realtime",
 			previous: "prev-rt",
@@ -758,15 +710,10 @@ describe("runIssueSwap", () => {
 			currentQuantization: "int8",
 			getModel: ((id: string) => {
 				if (id === "main-en") {
-					return { backend: "onnx_asr", languages: ["en"] } as never;
+					return { languages: ["en"] } as never;
 				}
 				if (id === "rt-ru") {
-					return {
-						backend: "onnx_asr",
-						id,
-						languages: ["ru"],
-						nativeStreaming: true,
-					} as never;
+					return { id, languages: ["ru"], nativeStreaming: true } as never;
 				}
 			}) as never,
 			kind: "realtime",
@@ -790,20 +737,10 @@ describe("runIssueSwap", () => {
 			currentQuantization: "int8",
 			getModel: ((id: string) => {
 				if (id === "streaming-zipformer-en") {
-					return {
-						backend: "onnx_asr",
-						id,
-						languages: ["en"],
-						nativeStreaming: true,
-					} as never;
+					return { id, languages: ["en"], nativeStreaming: true } as never;
 				}
 				if (id === "streaming-nemo-rnnt-en-1040ms-int8") {
-					return {
-						backend: "onnx_asr",
-						id,
-						languages: ["en"],
-						nativeStreaming: true,
-					} as never;
+					return { id, languages: ["en"], nativeStreaming: true } as never;
 				}
 			}) as never,
 			kind: "realtime",
@@ -826,12 +763,7 @@ describe("runIssueSwap", () => {
 			currentQuantization: "int8",
 			getModel: ((id: string) =>
 				id === "streaming-parakeet-unified-en-240ms-int8"
-					? ({
-							backend: "onnx_asr",
-							id,
-							languages: ["en"],
-							nativeStreaming: true,
-						} as never)
+					? ({ id, languages: ["en"], nativeStreaming: true } as never)
 					: undefined) as never,
 			kind: "realtime",
 			previous: "prev-rt",
@@ -1049,7 +981,7 @@ describe("handleDownloadCompleteEvent / closePendingDownloadFor / clearIfMatches
 
 describe("handleSwapFailedEvent / rollbackMain / rollbackRealtime", () => {
 	const fakeGetModel = (id: string) =>
-		id === "prev-main" ? ({ backend: "onnx_asr" } as never) : undefined;
+		id === "prev-main" ? ({} as never) : undefined;
 
 	test("main rollback uses the captured main ref and resolves backend from the catalog", () => {
 		const update = mock(() => undefined);
@@ -1065,7 +997,6 @@ describe("handleSwapFailedEvent / rollbackMain / rollbackRealtime", () => {
 		);
 		expect((update.mock.calls as unknown[][])[0]?.[0]).toEqual({
 			model: "prev-main",
-			backend: "onnx_asr",
 		});
 	});
 

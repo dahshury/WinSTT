@@ -10,8 +10,13 @@ import {
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { type DragEvent, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
-import { SurfaceProvider, surfaceClasses } from "@/shared/lib/surface";
+import { surfaceClasses } from "@/shared/lib/surface";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+import {
+	COMBOBOX_EMPTY_CLASS,
+	ComboboxPopupShell,
+	comboboxPopupClassName,
+} from "@/shared/ui/combobox-base";
 import { IconButton } from "@/shared/ui/icon-button";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 import {
@@ -270,72 +275,68 @@ export function CreatableCombobox({
 					</Combobox.Trigger>
 				</div>
 
-				<Combobox.Portal>
-					<SurfaceProvider value={popupLevel}>
-						<Combobox.Positioner
-							className="z-popover outline-none"
-							collisionPadding={8}
-							sideOffset={4}
-						>
-							<Combobox.Popup
-								className={`searchable-select-popup relative w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-lg ${surfaceClasses(popupLevel, popupShadow)} py-1 [max-height:min(14rem,var(--available-height))]`}
-								ref={popupRef}
-							>
-								<MenuHighlightLayer
-									containerRef={popupRef}
-									value={selectedRow?.id ?? ""}
-								/>
-								<Combobox.Empty className="px-2.5 py-2 text-body-sm text-foreground-muted">
-									{emptyLabel}
-								</Combobox.Empty>
-								<Combobox.List className="outline-none">
-									{(row: Row) => (
-										<Combobox.Item
-											className={`relative z-raised mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs border-y py-[6px] ps-2.5 pe-1.5 text-body text-foreground leading-normal outline-none ${
-												dropTarget?.id === row.id
-													? dropTarget.placement === "before"
-														? "border-t-accent border-b-transparent"
-														: "border-t-transparent border-b-accent"
-													: "border-transparent"
-											} ${draggedId === row.id ? "opacity-50" : ""}`}
-											data-menu-option={row.id}
-											key={row.id}
-											onDragLeave={(event) => {
-												const nextTarget = event.relatedTarget as Node | null;
-												if (event.currentTarget.contains(nextTarget)) {
-													return;
-												}
-												if (dropTarget?.id === row.id) {
-													setDropTarget(null);
-												}
-											}}
-											onDragOver={(event) => handleDragOver(event, row)}
-											onDrop={(event) => handleDrop(event, row)}
-											value={row}
-										>
-											<RowContent
-												createLabel={createLabel}
-												deleteAriaLabel={deleteAriaLabel}
-												hideSelectedCheck={hideSelectedCheck}
-												leadingReorderHandle={leadingReorderHandle}
-												onDelete={onDelete}
-												onDragEnd={clearDragState}
-												onDragStart={(event) => handleDragStart(event, row)}
-												onReset={onReset}
-												onSave={onSave}
-												reorderAriaLabel={reorderAriaLabel}
-												reorderable={Boolean(onReorder)}
-												resetAriaLabel={resetAriaLabel}
-												row={row}
-												saveAriaLabel={saveAriaLabel}
-											/>
-										</Combobox.Item>
-									)}
-								</Combobox.List>
-							</Combobox.Popup>
-						</Combobox.Positioner>
-					</SurfaceProvider>
-				</Combobox.Portal>
+				<ComboboxPopupShell popupLevel={popupLevel}>
+					<Combobox.Popup
+						className={comboboxPopupClassName(
+							popupLevel,
+							popupShadow,
+							"searchable-select-popup relative overflow-y-auto py-1 [max-height:min(14rem,var(--available-height))]",
+						)}
+						ref={popupRef}
+					>
+						<MenuHighlightLayer
+							containerRef={popupRef}
+							value={selectedRow?.id ?? ""}
+						/>
+						<Combobox.Empty className={COMBOBOX_EMPTY_CLASS}>
+							{emptyLabel}
+						</Combobox.Empty>
+						<Combobox.List className="outline-none">
+							{(row: Row) => (
+								<Combobox.Item
+									className={`relative z-raised mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs border-y py-[6px] ps-2.5 pe-1.5 text-body text-foreground leading-normal outline-none ${
+										dropTarget?.id === row.id
+											? dropTarget.placement === "before"
+												? "border-t-accent border-b-transparent"
+												: "border-t-transparent border-b-accent"
+											: "border-transparent"
+									} ${draggedId === row.id ? "opacity-50" : ""}`}
+									data-menu-option={row.id}
+									key={row.id}
+									onDragLeave={(event) => {
+										const nextTarget = event.relatedTarget as Node | null;
+										if (event.currentTarget.contains(nextTarget)) {
+											return;
+										}
+										if (dropTarget?.id === row.id) {
+											setDropTarget(null);
+										}
+									}}
+									onDragOver={(event) => handleDragOver(event, row)}
+									onDrop={(event) => handleDrop(event, row)}
+									value={row}
+								>
+									<RowContent
+										createLabel={createLabel}
+										deleteAriaLabel={deleteAriaLabel}
+										hideSelectedCheck={hideSelectedCheck}
+										leadingReorderHandle={leadingReorderHandle}
+										onDelete={onDelete}
+										onDragEnd={clearDragState}
+										onDragStart={(event) => handleDragStart(event, row)}
+										onReset={onReset}
+										onSave={onSave}
+										reorderAriaLabel={reorderAriaLabel}
+										reorderable={Boolean(onReorder)}
+										resetAriaLabel={resetAriaLabel}
+										row={row}
+										saveAriaLabel={saveAriaLabel}
+									/>
+								</Combobox.Item>
+							)}
+						</Combobox.List>
+					</Combobox.Popup>
+				</ComboboxPopupShell>
 			</Combobox.Root>
 		</div>
 	);

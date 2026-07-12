@@ -835,6 +835,10 @@ pub fn run(cli_args: CliArgs) {
             std::thread::spawn(move || {
                 let mut startup = StartupProfiler::new();
                 startup::log_since_launch("deferred startup thread running");
+                // Wire the ducking crash journal and restore any session
+                // volumes a previous run left ducked (crash / kill while
+                // dictating). Must precede the first dictation.
+                winstt::ducking::init(&app_handle_for_startup);
                 // Headless model-runtime boot FIRST, while the splash webview is
                 // still painting: the reveal gate's long pole is the STT
                 // load+warmup, and none of this touches a window — the two now
@@ -1009,6 +1013,11 @@ fn cleanup_runtime_models_on_exit(app: &AppHandle) {
 
     let started = Instant::now();
     log::info!("[shutdown] unloading model runtimes");
+
+    // Put every mixer session we ducked back FIRST (bounded wait). Windows
+    // persists per-app session volumes, so quitting while ducked would leave
+    // the user's apps quiet across reboots.
+    winstt::ducking::restore_all_blocking_on_exit();
 
     if let Some(llm) = app.try_state::<Arc<winstt::managers::LlmManager>>() {
         llm.inner().begin_shutdown();

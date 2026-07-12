@@ -126,11 +126,7 @@ impl TtsDownloadManager {
     }
 
     fn emit_catalog_progress(&self, model_id: &str, quant: &str, downloaded: u64, total: u64) {
-        let progress = if total > 0 {
-            (downloaded as f64 / total as f64).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+        let progress = crate::winstt::downloads::progress_fraction_of(downloaded, total);
         let _ = self.app.emit(
             "tts:catalog-model-download-progress",
             json!({

@@ -17,7 +17,6 @@ import {
 	useState,
 } from "react";
 import {
-	SurfaceProvider,
 	surfaceBg,
 	surfaceClasses,
 	surfaceHighlightedBg,
@@ -25,6 +24,11 @@ import {
 	useSurface,
 } from "@/shared/lib/surface";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+import {
+	COMBOBOX_EMPTY_CLASS,
+	ComboboxPopupShell,
+	comboboxPopupClassName,
+} from "@/shared/ui/combobox-base";
 import { IconButton } from "@/shared/ui/icon-button";
 import {
 	StopBubble,
@@ -210,68 +214,62 @@ export function EditableListCombobox({
 					</Combobox.Trigger>
 				</div>
 
-				<Combobox.Portal>
-					<SurfaceProvider value={popupLevel}>
-						<Combobox.Positioner
-							className="z-popover outline-none"
-							collisionPadding={8}
-							sideOffset={4}
-						>
-							<Combobox.Popup
-								className={`editable-list-combobox-popup w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-lg ${surfaceClasses(popupLevel, popupShadow)} py-1 [max-height:min(16rem,var(--available-height))]`}
-							>
-								{visibleEntries.length === 0 && !canCreate ? (
-									<div className="px-2.5 py-2 text-body-sm text-foreground-muted">
-										{emptyLabel}
-									</div>
-								) : null}
+				<ComboboxPopupShell popupLevel={popupLevel}>
+					<Combobox.Popup
+						className={comboboxPopupClassName(
+							popupLevel,
+							popupShadow,
+							"editable-list-combobox-popup overflow-y-auto py-1 [max-height:min(16rem,var(--available-height))]",
+						)}
+					>
+						{visibleEntries.length === 0 && !canCreate ? (
+							<div className={COMBOBOX_EMPTY_CLASS}>{emptyLabel}</div>
+						) : null}
 
-								{visibleEntries.map((entry) =>
-									editing === entry ? (
-										<EntryEditor
-											cancelAriaLabel={cancelAriaLabel}
-											initial={entry}
-											inputAriaLabel={inputAriaLabel}
-											key={entry}
-											onCancel={() => setEditing(null)}
-											onCommit={(raw) => replaceEntry(entry, raw)}
-											saveAriaLabel={saveAriaLabel}
-										/>
-									) : (
-										<EntryRow
-											editAriaLabel={editAriaLabel(entry)}
-											entry={entry}
-											key={entry}
-											onEdit={() => setEditing(entry)}
-											onRemove={() => removeEntry(entry)}
-											removeAriaLabel={removeAriaLabel(entry)}
-										/>
-									),
-								)}
+						{visibleEntries.map((entry) =>
+							editing === entry ? (
+								<EntryEditor
+									cancelAriaLabel={cancelAriaLabel}
+									initial={entry}
+									inputAriaLabel={inputAriaLabel}
+									key={entry}
+									onCancel={() => setEditing(null)}
+									onCommit={(raw) => replaceEntry(entry, raw)}
+									saveAriaLabel={saveAriaLabel}
+								/>
+							) : (
+								<EntryRow
+									editAriaLabel={editAriaLabel(entry)}
+									entry={entry}
+									key={entry}
+									onEdit={() => setEditing(entry)}
+									onRemove={() => removeEntry(entry)}
+									removeAriaLabel={removeAriaLabel(entry)}
+								/>
+							),
+						)}
 
-								<Combobox.List className="outline-none">
-									{(item: string) => (
-										<Combobox.Item
-											className={`mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none ${surfaceHighlightedBg(highlightLevel)}`}
-											key={item}
-											value={item}
-										>
-											<HugeiconsIcon
-												aria-hidden="true"
-												className="shrink-0 text-accent"
-												icon={PlusSignIcon}
-												size={14}
-											/>
-											<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-												{createLabel(item)}
-											</span>
-										</Combobox.Item>
-									)}
-								</Combobox.List>
-							</Combobox.Popup>
-						</Combobox.Positioner>
-					</SurfaceProvider>
-				</Combobox.Portal>
+						<Combobox.List className="outline-none">
+							{(item: string) => (
+								<Combobox.Item
+									className={`mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none ${surfaceHighlightedBg(highlightLevel)}`}
+									key={item}
+									value={item}
+								>
+									<HugeiconsIcon
+										aria-hidden="true"
+										className="shrink-0 text-accent"
+										icon={PlusSignIcon}
+										size={14}
+									/>
+									<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+										{createLabel(item)}
+									</span>
+								</Combobox.Item>
+							)}
+						</Combobox.List>
+					</Combobox.Popup>
+				</ComboboxPopupShell>
 			</Combobox.Root>
 		</div>
 	);

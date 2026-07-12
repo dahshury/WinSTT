@@ -5,8 +5,8 @@ import {
 	AlertCircleIcon,
 	Clock01Icon,
 	CloudDownloadIcon,
+	CpuIcon,
 	GlobeIcon,
-	HardDriveDownloadIcon,
 	LiveStreaming02Icon,
 	NeuralNetworkIcon,
 	SparklesIcon,
@@ -25,7 +25,10 @@ import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { Tooltip } from "@/shared/ui/tooltip";
-import type { MetaEntry } from "../../core/model-card/CardMeta";
+import {
+	downloadSizeMetaEntry,
+	type MetaEntry,
+} from "../../core/model-card/CardMeta";
 import { ModelCard } from "../../core/model-card/ModelCard";
 import {
 	type QuantDownloadAction,
@@ -118,6 +121,54 @@ function fitTooltip(
 		: `May exceed available ${target}`;
 }
 
+/** Precisions that lean on a GPU: fp16-family and 4-bit integer weights. On a
+ *  CPU-only host these decode noticeably slower than an int8/fp32 path, and the
+ *  int4-only models (Cohere / Canary) have no lighter fallback — so a card whose
+ *  effective precision is one of these earns a subtle CPU hint. */
+const GPU_ORIENTED_QUANTS: ReadonlySet<OnnxQuantization> = new Set([
+	"fp16",
+	"fp16w",
+	"int4",
+	"q4f16",
+]);
+
+function systemHasGpu(sys: SystemInfoEntry | null): boolean {
+	return sys !== null && sys.gpus.length > 0;
+}
+
+/** The subtle "CPU — expect slower decode" meta entry, shown only when the host
+ *  has no detected GPU AND this card's effective precision is GPU-oriented.
+ *  Reuses the same `systemInfo.gpus` signal the hardware-fit warning reads, so
+ *  no new device probe is introduced. */
+function cpuSlowdownEntry(
+	model: ModelInfo,
+	state: ModelStateEntry | undefined,
+	systemInfo: SystemInfoEntry | null,
+): MetaEntry | null {
+	if (systemHasGpu(systemInfo)) {
+		return null;
+	}
+	const effective = (state?.effective_quantization ??
+		null) as OnnxQuantization | null;
+	const gpuOriented =
+		effective === null
+			? model.availableQuantizations.some((q) =>
+					GPU_ORIENTED_QUANTS.has(q as OnnxQuantization),
+				)
+			: GPU_ORIENTED_QUANTS.has(effective);
+	if (!gpuOriented) {
+		return null;
+	}
+	return {
+		key: "cpu-hint",
+		icon: CpuIcon,
+		value: "CPU",
+		tooltip:
+			"No GPU detected — this precision runs on CPU, so expect slower decode.",
+		className: "text-foreground-muted",
+	};
+}
+
 function formatNativeStreamingLatency(ms: number): string {
 	if (ms >= 1000) {
 		const seconds = (ms / 1000).toFixed(ms % 1000 === 0 ? 0 : 2);
@@ -145,12 +196,7 @@ function buildMetaEntries(
 		});
 	}
 	if (bytes) {
-		entries.push({
-			key: "size",
-			icon: HardDriveDownloadIcon,
-			value: bytes,
-			tooltip: `Download size: ${bytes}`,
-		});
+		entries.push(downloadSizeMetaEntry(bytes));
 	}
 	const lang = languageMeta(model);
 	entries.push({
@@ -184,6 +230,10 @@ function buildMetaEntries(
 			tooltip: fitTooltip(fitSeverity, fitAssessment),
 			className: FIT_CLASS_BY_SEVERITY[fitSeverity],
 		});
+	}
+	const cpuHint = cpuSlowdownEntry(model, state, systemInfo);
+	if (cpuHint) {
+		entries.push(cpuHint);
 	}
 	return entries;
 }

@@ -6,8 +6,9 @@
 use super::{
     LoadedEngine, LoadedTranscriptionCapabilities, NATIVE_STREAM_FINAL_SILENCE_PAD_MS,
     NATIVE_STREAM_SAMPLE_RATE, RealtimeReuse, RealtimeStreamOutcome, RealtimeStreamText,
-    SILENCE_AC_FLOOR, TranscriptionManager, dc_immune_rms, is_silent_recording,
-    native_stream_final_tail_with_silence,
+    SILENCE_AC_FLOOR, TranscriptionManager, dc_immune_rms, is_silent_recording_with_mask,
+    native_stream_final_tail_capped, native_stream_final_tail_with_silence,
+    trailing_silence_samples_from_mask,
 };
 use crate::winstt::stt::{NativeStreamUpdate, SttResult};
 use crate::winstt::sync_ext::MutexExt;
@@ -219,9 +220,20 @@ impl TranscriptionManager {
     /// This is deliberately blocking and is called from the transcription blocking pool: after
     /// release, final paste should wait for the engine's own end-of-stream callback instead of
     /// guessing a fixed microphone hold-open duration.
-    fn finalize_native_stream_text(&self, tail: &[f32]) -> Option<String> {
+    ///
+    /// `already_silent_samples` is the trailing real silence the capture already carries (from the
+    /// mic mask); the finalize pad is shortened by it. `None` (listen mode, no mask) keeps the full
+    /// fixed pad.
+    fn finalize_native_stream_text(
+        &self,
+        tail: &[f32],
+        already_silent_samples: Option<usize>,
+    ) -> Option<String> {
         let started = Instant::now();
-        let final_tail = native_stream_final_tail_with_silence(tail);
+        let final_tail = match already_silent_samples {
+            Some(sil) => native_stream_final_tail_capped(tail, sil),
+            None => native_stream_final_tail_with_silence(tail),
+        };
         let _watchdog = NativeStreamFinalizeWatchdog::start(
             self.app_handle.clone(),
             self.get_current_model(),
@@ -273,7 +285,8 @@ impl TranscriptionManager {
     /// paste/post-processing; it only drains the native stream tail so loopback captions do not
     /// lose the last sub-chunk before VAD closes the utterance.
     pub fn stream_finalize_realtime_blocking(&self, tail: &[f32]) -> Option<String> {
-        self.finalize_native_stream_text(tail)
+        // Listen mode has no capture mask → keep the full fixed finalize pad.
+        self.finalize_native_stream_text(tail, None)
     }
 
     /// Peek whether the loaded engine does NATIVE streaming (carries cross-chunk cache state so the
@@ -469,7 +482,16 @@ impl TranscriptionManager {
     ///
     /// Returns `None` (→ caller does a fresh `transcribe`) otherwise. The cache is consumed either
     /// way so a stale decode can't leak into the next recording.
-    pub fn try_reuse_realtime(&self, generation: u64, samples: &[f32]) -> Option<String> {
+    ///
+    /// `speech_mask` is the mic capture's per-frame speech mask: it drives the mask-aware whole-clip
+    /// silence gate and shortens the native-stream finalize pad by the trailing silence the capture
+    /// already carries. `None` = no capture mask.
+    pub fn try_reuse_realtime(
+        &self,
+        generation: u64,
+        samples: &[f32],
+        speech_mask: Option<&[bool]>,
+    ) -> Option<String> {
         // Context-dependent engines (attention enc-dec: Whisper/Canary/Cohere) must re-decode with
         // proper VAD-segmentation — the chunked realtime watermark text has arbitrary cut points and
         // is lower quality than a clean-boundary final. Only the frame-synchronous (CTC / transducer
@@ -486,10 +508,14 @@ impl TranscriptionManager {
         if entry.generation != generation {
             return None;
         }
-        // Whole-recording silence → let the batch path's gate emit the honest "no audio".
-        if is_silent_recording(samples) {
+        // Whole-recording silence → let the batch path's gate emit the honest "no audio". Mask-aware
+        // (capture is ungated) so a quiet-but-real speaker isn't rejected here.
+        if is_silent_recording_with_mask(samples, speech_mask) {
             return None;
         }
+        // Trailing real silence the capture already carries (from the mask) shortens the native
+        // finalize pad — the encoder already has that right context.
+        let already_silent = speech_mask.map(trailing_silence_samples_from_mask);
         // Trailing audio the realtime decode never saw (last partial chunk + extra-buffer tail).
         // Native-streaming engines can accept that tail before finalizing. Window-redecode engines
         // cannot, so speech-bearing tail must fall back to a fresh final decode.
@@ -506,10 +532,10 @@ impl TranscriptionManager {
         );
         let raw_text = if capabilities.native_streaming {
             let finalized = if tail.is_empty() {
-                self.finalize_native_stream_text(tail)
+                self.finalize_native_stream_text(tail, already_silent)
                     .unwrap_or_else(|| entry.raw_text.clone())
             } else {
-                self.finalize_native_stream_text(tail)?
+                self.finalize_native_stream_text(tail, already_silent)?
             };
             if !tail.is_empty()
                 && finalized.chars().count() <= entry.raw_text.chars().count()

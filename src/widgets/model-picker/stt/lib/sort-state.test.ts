@@ -5,7 +5,6 @@ import { sortSttModels } from "./sort-state";
 const BASE: ModelInfo = {
 	id: "base",
 	displayName: "Base",
-	backend: "onnx_asr",
 	family: "whisper",
 	languages: [],
 	supportsLanguageDetection: true,

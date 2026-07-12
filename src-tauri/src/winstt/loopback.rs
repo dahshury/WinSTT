@@ -192,6 +192,12 @@ pub struct LoopbackCapture {
     stop: Arc<AtomicBool>,
     #[cfg(windows)]
     worker: Option<JoinHandle<()>>,
+    /// Linux PipeWire/PulseAudio capture session (child process + reader thread).
+    #[cfg(target_os = "linux")]
+    linux: Option<linux_impl::LinuxSession>,
+    /// macOS ScreenCaptureKit capture session (SCStream + audio delegate).
+    #[cfg(target_os = "macos")]
+    macos: Option<macos_impl::MacosSession>,
 }
 
 impl LoopbackCapture {
@@ -204,7 +210,15 @@ impl LoopbackCapture {
         {
             self.worker.is_some()
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        {
+            self.linux.is_some()
+        }
+        #[cfg(target_os = "macos")]
+        {
+            self.macos.is_some()
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             false
         }
@@ -258,7 +272,59 @@ impl LoopbackCapture {
         Ok(info)
     }
 
-    #[cfg(not(windows))]
+    /// Linux system-audio loopback via the default sink monitor. Spawns
+    /// `pw-record` (PipeWire) — or `parec` (PulseAudio) as a fallback — as a child
+    /// process producing raw PCM, then streams AGC'd, 16 kHz mono f32 frames onto
+    /// `sink`, honouring the exact contract of the Windows WASAPI path. Returns the
+    /// resolved [`DeviceInfo`] synchronously so device-open errors surface before
+    /// capture is marked active. Non-blocking (child + reader thread are spawned).
+    #[cfg(target_os = "linux")]
+    pub fn start(
+        &mut self,
+        device_id: Option<String>,
+        sink: Sender<Vec<f32>>,
+    ) -> Result<DeviceInfo, LoopbackError> {
+        if self.is_active() {
+            return Err(LoopbackError::AlreadyActive);
+        }
+        let (info, session) = linux_impl::start(device_id, sink)?;
+        log::info!(
+            "[loopback] PipeWire loopback stream started device='{}' rate={} channels={}",
+            info.name,
+            info.sample_rate,
+            info.channels,
+        );
+        self.linux = Some(session);
+        Ok(info)
+    }
+
+    /// macOS system-audio loopback via ScreenCaptureKit (macOS 13+). Builds an
+    /// audio-only `SCStream`, pulls `CMSampleBuffer` audio in the stream-output
+    /// delegate, AGCs (int16 domain — Python parity) and resamples to 16 kHz mono,
+    /// then streams f32 frames onto `sink`. Returns [`DeviceInfo`] synchronously so
+    /// permission/availability errors surface before capture is marked active.
+    /// Older macOS (or SCK unavailable) yields [`LoopbackError::Unsupported`].
+    #[cfg(target_os = "macos")]
+    pub fn start(
+        &mut self,
+        device_id: Option<String>,
+        sink: Sender<Vec<f32>>,
+    ) -> Result<DeviceInfo, LoopbackError> {
+        if self.is_active() {
+            return Err(LoopbackError::AlreadyActive);
+        }
+        let (info, session) = macos_impl::start(device_id, sink)?;
+        log::info!(
+            "[loopback] ScreenCaptureKit loopback stream started device='{}' rate={} channels={}",
+            info.name,
+            info.sample_rate,
+            info.channels,
+        );
+        self.macos = Some(session);
+        Ok(info)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     pub fn start(
         &mut self,
         _device_id: Option<String>,
@@ -267,13 +333,25 @@ impl LoopbackCapture {
         Err(LoopbackError::Unsupported)
     }
 
-    /// Stop capture by signaling the WASAPI thread and joining it.
+    /// Stop capture by signaling the platform backend and joining/tearing it down.
     pub fn stop(&mut self) {
         #[cfg(windows)]
         {
             self.stop.store(true, Ordering::SeqCst);
             if let Some(worker) = self.worker.take() {
                 let _ = worker.join();
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(session) = self.linux.take() {
+                session.stop();
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(session) = self.macos.take() {
+                session.stop();
             }
         }
     }
@@ -285,11 +363,34 @@ impl LoopbackCapture {
             .map_err(|e| LoopbackError::Backend(format!("list render devices: {e}")))
     }
 
-    #[cfg(not(windows))]
+    /// Enumerate loopback-capable monitor sources (PipeWire/PulseAudio).
+    #[cfg(target_os = "linux")]
+    pub fn list_devices() -> Result<Vec<LoopbackDeviceInfo>, LoopbackError> {
+        linux_impl::list_devices()
+    }
+
+    /// Enumerate loopback-capable outputs (ScreenCaptureKit displays / system audio).
+    #[cfg(target_os = "macos")]
+    pub fn list_devices() -> Result<Vec<LoopbackDeviceInfo>, LoopbackError> {
+        macos_impl::list_devices()
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     pub fn list_devices() -> Result<Vec<LoopbackDeviceInfo>, LoopbackError> {
         Ok(Vec::new())
     }
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Non-Windows backends (strictly cfg-gated; the Windows WASAPI path above is
+// untouched). Each lives in its own file under `loopback/`.
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[cfg(target_os = "linux")]
+mod linux_impl;
+
+#[cfg(target_os = "macos")]
+mod macos_impl;
 
 impl Drop for LoopbackCapture {
     fn drop(&mut self) {

@@ -46,8 +46,8 @@ use crate::winstt::tts::local_engines::{
     SupertonicLocalEngine, piper_voice_infos,
 };
 use crate::winstt::tts::phonemize::{
-    ESPEAK_RUNTIME_COMPONENT_ID, ESPEAK_RUNTIME_COMPONENT_LABEL, ensure_espeak_runtime,
-    espeak_runtime_available, espeak_runtime_pack,
+    ESPEAK_RUNTIME_COMPONENT_ID, ESPEAK_RUNTIME_COMPONENT_LABEL, EspeakCliPhonemizer, Phonemizer,
+    ensure_espeak_runtime, espeak_runtime_available, espeak_runtime_pack,
 };
 use crate::winstt::tts::supertonic::SUPERTONIC_LANGUAGES;
 use crate::winstt::tts::{
@@ -62,7 +62,7 @@ use crate::winstt::tts::{
 mod chunk_sink;
 mod payloads;
 
-use chunk_sink::{EmitChunkSink, chunk_payload};
+use chunk_sink::{CapturedTtsAudio, EmitChunkSink, TtsAudioCapture, chunk_payload};
 pub use payloads::*;
 
 /// Live engine + the source it was built for + the settings it was built from.
@@ -156,6 +156,15 @@ fn effective_cloud_provider(s: &WinsttSettings) -> TtsCloudProvider {
     }
 }
 
+/// Whether a system `espeak-ng` CLI is on PATH (cross-platform). Probes the same
+/// binary the CLI phonemizer would shell out to (honoring `ESPEAK_NG_BIN` /
+/// `WINSTT_ESPEAK_NG`) via a cheap `--version` call. Used to relax the espeak
+/// gate for CLI-capable engines (Kokoro/Kitten) when the in-process shared lib is
+/// absent, so the engine's CLI fallback can run instead of dropping the request.
+fn espeak_cli_available() -> bool {
+    EspeakCliPhonemizer::default().is_available()
+}
+
 /// Plain-string event (mirrors `tts:failed`): cloud TTS is unreachable AND no local voice pack is
 /// installed to fall back to. The renderer localizes `reason` and surfaces an offline notice.
 pub const TTS_UNAVAILABLE: &str = "tts:unavailable";
@@ -163,6 +172,44 @@ pub const TTS_UNAVAILABLE: &str = "tts:unavailable";
 /// The smallest fully-cached local TTS model to fall back to when cloud is offline, or `None` when
 /// no local voice pack is installed. Synchronous — TTS cache state is a plain on-disk file check
 /// (`TtsDownloadManager::is_present`), no HF scan needed.
+/// Write a captured read-aloud session into the recordings dir and return the
+/// basename to store on the history row. Local f32 streams become an i16 WAV at
+/// the engine's own rate; cloud mp3 streams are written verbatim. Returns
+/// `None` (row saved without audio) when the write fails.
+fn write_tts_capture(
+    recordings_dir: &std::path::Path,
+    captured: CapturedTtsAudio,
+) -> Option<String> {
+    // Millis + payload size disambiguates back-to-back runs without a counter.
+    let stamp = now_ms();
+    let (file_name, write_result) = match captured.format {
+        crate::winstt::tts::Format::F32le => {
+            let name = format!("tts-{stamp}-{}.wav", captured.pcm.len());
+            let result = crate::audio_toolkit::save_wav_file_with_spec(
+                recordings_dir.join(&name),
+                &captured.pcm,
+                captured.sample_rate,
+                captured.channels,
+            )
+            .map_err(|e| e.to_string());
+            (name, result)
+        }
+        crate::winstt::tts::Format::Mp3 => {
+            let name = format!("tts-{stamp}-{}.mp3", captured.mp3.len());
+            let result = std::fs::write(recordings_dir.join(&name), &captured.mp3)
+                .map_err(|e| e.to_string());
+            (name, result)
+        }
+    };
+    match write_result {
+        Ok(()) => Some(file_name),
+        Err(err) => {
+            log::warn!("[tts] failed to save session audio {file_name}: {err}");
+            None
+        }
+    }
+}
+
 fn resolve_local_tts_fallback(app: &AppHandle) -> Option<String> {
     let dl = app.state::<Arc<TtsDownloadManager>>();
     let mut best: Option<(u64, &'static str)> = None;
@@ -492,12 +539,37 @@ impl TtsManager {
         )
     }
 
+    /// Whether the selected engine can fall back to a system `espeak-ng` CLI (or
+    /// the Null phonemizer) when the in-process shared lib is absent. Kokoro and
+    /// Kitten build their G2P via `default_phonemizer()` (lib → CLI → null), so a
+    /// CLI on PATH is enough. Piper phonemizes exclusively through the shared lib
+    /// (`EspeakLibPhonemizer`), so it always needs the lib.
+    fn selected_engine_accepts_cli_for(settings: &WinsttSettings) -> bool {
+        let model_id = &settings.tts.model;
+        let engine = catalog::find(model_id).map_or(TtsEngineId::Kokoro, |e| e.engine);
+        matches!(engine, TtsEngineId::Kokoro | TtsEngineId::Kitten)
+    }
+
     fn ensure_espeak_runtime_for_settings(
         &self,
         settings: &WinsttSettings,
         emit_install_events: bool,
     ) -> TtsResult<()> {
         if !Self::selected_local_engine_needs_espeak_for(settings) || espeak_runtime_available() {
+            return Ok(());
+        }
+        // No in-process shared lib. Where there's a pinned runtime pack (Windows)
+        // we keep downloading it — the in-process lib is faster than a per-sentence
+        // subprocess. Only where there's no downloadable pack (Unix) do Kokoro/Kitten
+        // degrade to a system `espeak-ng` CLI (their phonemizer's built-in fallback),
+        // which satisfies the runtime with no download — the common case where
+        // `apt install espeak-ng` ships the CLI even when the -dev .so is absent.
+        // Piper has no CLI fallback and always needs the lib, so it skips this and
+        // falls through to the install-required signal.
+        if espeak_runtime_pack().is_none()
+            && Self::selected_engine_accepts_cli_for(settings)
+            && espeak_cli_available()
+        {
             return Ok(());
         }
         if emit_install_events {
@@ -874,8 +946,16 @@ impl TtsManager {
             entry.engine,
             TtsEngineId::Kokoro | TtsEngineId::Kitten | TtsEngineId::Piper
         ) {
-            let runtime_installed = espeak_runtime_available();
+            // Kokoro/Kitten can run off a system espeak-ng CLI when no shared lib
+            // AND no downloadable pack is present; Piper needs the lib. Count the
+            // CLI as "installed" for the CLI-capable engines so the estimate
+            // doesn't demand a nonexistent runtime pack on Unix. Where a pack
+            // exists (Windows) the CLI never masks the download.
             let runtime_bytes = espeak_runtime_pack().map_or(0, |p| p.size_bytes);
+            let cli_fallback = espeak_runtime_pack().is_none()
+                && matches!(entry.engine, TtsEngineId::Kokoro | TtsEngineId::Kitten)
+                && espeak_cli_available();
+            let runtime_installed = espeak_runtime_available() || cli_fallback;
             unavailable = !runtime_installed && espeak_runtime_pack().is_none();
             components.push(DownloadComponent {
                 id: ESPEAK_RUNTIME_COMPONENT_ID.to_string(),
@@ -1368,6 +1448,12 @@ impl TtsManager {
             request_id: request_id.to_string(),
             cancelled: cancel.clone(),
             seq: AtomicU64::new(0),
+            // Capture the session's audio for history playback only when history
+            // is on — otherwise the accumulator never allocates.
+            capture: read_settings_raw(&self.app)
+                .general
+                .history_enabled
+                .then(TtsAudioCapture::new),
         };
         let sentences = split_sentences(text, DEFAULT_MAX_SENTENCE_LEN);
         let mut result: TtsResult<()> = Ok(());
@@ -1395,7 +1481,11 @@ impl TtsManager {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         // Persist the run to TTS history (with cloud cost when available) —
         // drains the engine's per-session usage even when history is off so a
-        // later run can't inherit this one's billing telemetry.
+        // later run can't inherit this one's billing telemetry. The captured
+        // session audio rides along so the row is replayable from the History
+        // tab (partial audio from a cancelled run is still saved — that's what
+        // actually played).
+        let captured_audio = sink.capture.as_ref().and_then(TtsAudioCapture::take);
         self.persist_tts_history_run(
             &settings,
             source,
@@ -1404,6 +1494,7 @@ impl TtsManager {
             elapsed_ms,
             engine.as_ref(),
             result.is_ok(),
+            captured_audio,
         );
         match &result {
             Ok(()) => {
@@ -1459,6 +1550,7 @@ impl TtsManager {
         elapsed_ms: u64,
         engine: &dyn TtsEngine,
         completed: bool,
+        captured_audio: Option<CapturedTtsAudio>,
     ) {
         // Drain FIRST (even when history is off) so the engine's session
         // accumulator never leaks into the next run.
@@ -1511,6 +1603,10 @@ impl TtsManager {
                 log::warn!("[tts] history manager unavailable; TTS run not persisted");
                 return;
             };
+            // Write the session audio into the recordings dir first so the row
+            // is born replayable. A failed write degrades to a row without audio.
+            let audio_file_name = captured_audio
+                .and_then(|captured| write_tts_capture(hm.recordings_dir(), captured));
             let entry = match hm.save_tts_entry(
                 text,
                 model,
@@ -1519,6 +1615,7 @@ impl TtsManager {
                 Some(elapsed_ms.min(i64::MAX as u64) as i64),
                 cost_usd,
                 cost_is_estimate,
+                audio_file_name,
             ) {
                 Ok(entry) => {
                     crate::winstt::commands::history::emit_tts_history_added(&app, &entry);

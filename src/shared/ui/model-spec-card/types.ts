@@ -46,6 +46,9 @@ export interface ModelSpecStat {
 	label: string;
 	/** Normalized 0..1 score. */
 	score: number;
+	/** Optional metaphor glyph shown before the label, matching the model-picker
+	 *  card's perf bars (target = accuracy, speedometer = speed). */
+	icon?: IconSvgElement | undefined;
 }
 
 /** A price tier derived from cloud pricing — rendered as `$` / `$$` / `$$$`. */

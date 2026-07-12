@@ -33,7 +33,7 @@
 // the Jaro-Winkler wrapper) live in the sibling `phonetic` submodule; this file
 // is the snippet engine proper plus the `SnippetStore` cache and public seams.
 
-mod phonetic;
+pub(crate) mod phonetic;
 
 use std::sync::RwLock;
 

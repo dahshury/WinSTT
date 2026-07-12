@@ -28,6 +28,15 @@ const MAX_RETAINED_SILENCE: usize = SR * 200 / 1000;
 const MIN_DECODE_CHUNK: usize = SR * 750 / 1000;
 pub const VAD_COMPACT_MIN_S: f32 = 5.0;
 
+/// Audio overlap given to each cap-forced (continuous-speech) hard split so the decoder re-hears the
+/// words straddling the cut on BOTH sides; `merge_word_overlap` then strips the duplicate. 0.5 s is
+/// long enough to cover a word or two at normal speech rate without materially inflating decode cost.
+const HARD_SPLIT_OVERLAP: usize = SR / 2;
+/// Window before a cap-forced cut position searched for the quietest 30 ms frame to split on, so the
+/// seam lands in a natural pause instead of mid-word. ~2 s — long enough to contain a between-word
+/// gap in fast continuous speech without letting the seam drift far from the cap.
+const HARD_SPLIT_SEARCH_BACK: usize = SR * 2;
+
 fn speech_mask(vad: &mut SileroVad, audio: &[f32]) -> Vec<bool> {
     vad.reset();
     let mut mask = Vec::with_capacity(audio.len() / VAD_FRAME_SAMPLES + 1);
@@ -245,16 +254,207 @@ fn compact_silences_for_segments<'a>(audio: &'a [f32], segs: &[(usize, usize)]) 
     }
 }
 
-/// Remove long non-speech gaps before transcription.
+/// Map a capture-layer per-480-sample-frame speech mask onto the frame grid `find_segments` walks.
+///
+/// The capture mask (`CapturedAudio`, built in the audio pipeline) uses the SAME 480-sample frame
+/// as [`speech_mask`], so it aligns 1:1 with the full-frame grid this module scans. It may be a few
+/// frames SHORT — a trailing partial capture frame (< 480 samples) produces no mask bit — so any
+/// full frame past the mask's end inherits the LAST known mask value (`false` if the mask is empty).
+/// Frames beyond the mask on the audio side are otherwise indistinguishable from held speech/silence,
+/// and inheriting the tail value keeps a word that runs into the final partial frame from being cut.
+fn capture_mask_frames(audio_len: usize, capture_mask: &[bool]) -> Vec<bool> {
+    let frames = audio_len / VAD_FRAME_SAMPLES;
+    let last = capture_mask.last().copied().unwrap_or(false);
+    (0..frames)
+        .map(|fi| capture_mask.get(fi).copied().unwrap_or(last))
+        .collect()
+}
+
+/// Per-frame speech mask for `audio`: use the supplied capture mask (skipping the Silero sweep
+/// entirely) when present, else run Silero. Both produce a `bool` per full 480-sample frame, so the
+/// downstream [`find_segments`] / [`compact_silences`] machinery is identical either way.
+fn frame_mask(audio: &[f32], capture_mask: Option<&[bool]>, vad: &mut SileroVad) -> Vec<bool> {
+    match capture_mask {
+        Some(m) => capture_mask_frames(audio.len(), m),
+        None => speech_mask(vad, audio),
+    }
+}
+
+/// Remove long non-speech gaps before transcription, using a supplied capture mask when available.
+///
+/// When `capture_mask` is `Some`, the capture layer's per-frame speech mask drives compaction and
+/// the Silero sweep is SKIPPED (`vad` is then unused). When `None`, this falls back to Silero — so
+/// `compact_for_transcription` (below) is a thin wrapper. Keeps up to 200 ms of natural silence
+/// around speech runs. Used by the single-pass path for short mic clips too (every mic clip carrying
+/// a mask is compacted before decode), and by cloud STT before upload.
+pub fn compact_for_transcription_with_mask<'a>(
+    audio: &'a [f32],
+    capture_mask: Option<&[bool]>,
+    vad: &mut SileroVad,
+) -> Cow<'a, [f32]> {
+    let mask = frame_mask(audio, capture_mask, vad);
+    let raw = find_segments(&mask, VAD_FRAME_SAMPLES, audio.len());
+    compact_silences_for_segments(audio, &raw)
+}
+
+/// Remove long non-speech gaps before transcription (Silero-driven).
 ///
 /// This keeps up to 200 ms of natural silence around speech runs. Local final
 /// decode uses the same primitive before chunking; cloud STT uses it before
 /// upload so pause-heavy recordings send less audio and ask the provider to
-/// process less duration.
+/// process less duration. Thin wrapper over [`compact_for_transcription_with_mask`] with no capture
+/// mask (kept so existing call sites compile while the integration agent threads the mask through).
 pub fn compact_for_transcription<'a>(audio: &'a [f32], vad: &mut SileroVad) -> Cow<'a, [f32]> {
-    let mask = speech_mask(vad, audio);
+    compact_for_transcription_with_mask(audio, None, vad)
+}
+
+/// Mask-only silence compaction — no Silero VAD needed (the capture mask fully determines the frame
+/// grid). Used by the single-pass mic path and cloud upload, where a capture mask is always present,
+/// so a short mic clip's (now ungated) captured silence is cut without paying a Silero session build.
+/// Keeps up to 200 ms of natural silence around speech runs, identical to the Silero-driven path.
+pub fn compact_for_transcription_mask<'a>(
+    audio: &'a [f32],
+    capture_mask: &[bool],
+) -> Cow<'a, [f32]> {
+    let mask = capture_mask_frames(audio.len(), capture_mask);
     let raw = find_segments(&mask, VAD_FRAME_SAMPLES, audio.len());
     compact_silences_for_segments(audio, &raw)
+}
+
+/// DC-immune RMS energy of one frame: subtract the frame mean (kills any constant offset a
+/// resampler / codec can leave) before squaring, so a quiet-but-DC-biased frame still reads as low
+/// energy. Empty → 0.
+fn frame_rms_dc_immune(frame: &[f32]) -> f32 {
+    if frame.is_empty() {
+        return 0.0;
+    }
+    let n = frame.len() as f32;
+    let mean = frame.iter().sum::<f32>() / n;
+    let ss: f32 = frame
+        .iter()
+        .map(|&x| {
+            let d = x - mean;
+            d * d
+        })
+        .sum();
+    (ss / n).sqrt()
+}
+
+/// START sample of the minimum-DC-immune-RMS `frame`-aligned window within `[lo, hi)`. Used to move a
+/// cap-forced cut off a word onto the quietest nearby frame. Frames are stepped from `lo`; if no full
+/// frame fits (`hi - lo < frame`), returns `lo`. On an energy tie the EARLIEST frame wins (keeps the
+/// left chunk shorter, never over cap).
+fn best_split_point(audio: &[f32], lo: usize, hi: usize, frame: usize) -> usize {
+    let hi = hi.min(audio.len());
+    let mut best = lo;
+    let mut best_energy = f32::INFINITY;
+    let mut s = lo;
+    while s + frame <= hi {
+        let energy = frame_rms_dc_immune(&audio[s..s + frame]);
+        if energy < best_energy {
+            best_energy = energy;
+            best = s;
+        }
+        s += frame;
+    }
+    best
+}
+
+/// Post-pass over merged chunk boundaries that refines each cap-FORCED split and gives it an audio
+/// overlap. A forced split is detected purely by geometry: only a hard split leaves neighbors that
+/// OVERLAP (`next.start < cur.end`); a real silence boundary always leaves a gap. For each such pair
+/// the shared boundary is moved to the quietest 30 ms frame in the ~`search_back` before the cut,
+/// the left chunk is extended `overlap` past it, and the right chunk starts AT it — so the seam is
+/// re-heard on both sides (deduped later) with no audio lost. Both refined chunks stay ≤ `max_chunk`
+/// by construction (search upper bound is clamped to keep the left ≤ cap; the right can only shrink).
+///
+/// Returns `(refined_chunks, hard_before)` where `hard_before[i]` marks that the join ENTERING chunk
+/// `i` is a hard split (its text join must dedupe) rather than a silence boundary (plain space join).
+fn refine_hard_splits(
+    mut chunks: Vec<(usize, usize)>,
+    audio: &[f32],
+    max_chunk: usize,
+    overlap: usize,
+    search_back: usize,
+) -> (Vec<(usize, usize)>, Vec<bool>) {
+    let n = chunks.len();
+    let mut hard_before = vec![false; n];
+    for i in 0..n.saturating_sub(1) {
+        let (ls, le) = chunks[i];
+        let (_rs, re) = chunks[i + 1];
+        // Silence boundary (gap) → leave the plain join untouched.
+        if chunks[i + 1].0 >= le {
+            continue;
+        }
+        // Keep `b + overlap` within the cap: cap the search at `ls + max_chunk - overlap` (upper) and
+        // no earlier than `re - max_chunk` (lower) so the right chunk, which starts at `b`, also stays
+        // ≤ cap even when `b` moves before the original overlap region.
+        let hi = le
+            .min(ls + max_chunk.saturating_sub(overlap))
+            .min(audio.len());
+        let lo = le
+            .saturating_sub(search_back)
+            .max(re.saturating_sub(max_chunk))
+            .min(hi);
+        let b = if hi > lo {
+            best_split_point(audio, lo, hi, VAD_FRAME_SAMPLES)
+        } else {
+            lo
+        };
+        let new_le = (b + overlap).min(ls + max_chunk).min(audio.len());
+        // Guarantee a non-empty, ordered left chunk even in degenerate tiny-region cases.
+        chunks[i].1 = new_le.max(ls + 1).min(re);
+        chunks[i + 1].0 = b.min(re.saturating_sub(1)).max(ls);
+        hard_before[i + 1] = true;
+    }
+    (chunks, hard_before)
+}
+
+/// ASCII-punctuation-and-case-insensitive comparison key for one word (drops leading/trailing ASCII
+/// punctuation, lowercases). `"World,"` and `"world"` compare equal; interior punctuation is kept.
+fn word_key(w: &str) -> String {
+    w.trim_matches(|c: char| c.is_ascii_punctuation())
+        .to_lowercase()
+}
+
+/// Merge two decoded texts from an OVERLAPPING hard-split pair by dropping the duplicated words.
+///
+/// Finds the LONGEST word-level overlap where a suffix of `left` equals a prefix of `right` under
+/// [`word_key`] (case/punctuation-insensitive), emits `left`'s rendering of the shared words, and
+/// drops that many words from the front of `right`. No overlap → a plain space join (also the safe
+/// result when a chunk decoded empty and the pair is no longer truly adjacent). Full containment (all
+/// of `right` is a suffix of `left`) collapses to just `left`. Either side empty → the other side.
+fn merge_word_overlap(left: &str, right: &str) -> String {
+    let lw: Vec<&str> = left.split_whitespace().collect();
+    let rw: Vec<&str> = right.split_whitespace().collect();
+    if lw.is_empty() {
+        return right.trim().to_string();
+    }
+    if rw.is_empty() {
+        return left.trim().to_string();
+    }
+
+    let lk: Vec<String> = lw.iter().map(|w| word_key(w)).collect();
+    let rk: Vec<String> = rw.iter().map(|w| word_key(w)).collect();
+
+    let max_k = lw.len().min(rw.len());
+    let mut overlap = 0usize;
+    for k in (1..=max_k).rev() {
+        // Compare the last `k` keys of left against the first `k` keys of right, skipping any that
+        // key to empty (pure-punctuation tokens) so they can't spuriously match.
+        if lk[lw.len() - k..]
+            .iter()
+            .zip(&rk[..k])
+            .all(|(a, b)| a == b && !a.is_empty())
+        {
+            overlap = k;
+            break;
+        }
+    }
+
+    let mut out: Vec<&str> = lw;
+    out.extend_from_slice(&rw[overlap..]);
+    out.join(" ")
 }
 
 /// Last `n` chars of `s` (char-safe), for the optional Whisper prior-chunk continuation prompt.
@@ -274,14 +474,9 @@ fn tail_chars(s: &str, n: usize) -> String {
 }
 
 /// Decode an arbitrarily long recording by VAD-segmenting it into ≤ `max_chunk_s` chunks and
-/// decoding each independently through `engine`, then joining. For audio already short enough
-/// (`<= max_chunk_s`), this is a single `engine.transcribe` — i.e. ZERO behavior change for normal
-/// PTT dictation; it only engages on long recordings.
-///
-/// `prior_prompt` (Whisper-only — gated on `supports_initial_prompt`) seeds each chunk after the
-/// first with the tail of the previous chunk's text via the `<|startofprev|>` slot for continuity.
-/// Pass `false` to decode every chunk independently (whisperX/onnx-asr default; preserves the
-/// user's configured initial-prompt and avoids prior-text hallucination on near-silent chunks).
+/// decoding each independently through `engine`, then joining. Thin wrapper over
+/// [`vad_segment_decode_with_mask`] with no capture mask (kept so existing call sites compile while
+/// the integration agent threads the capture mask through).
 pub fn vad_segment_decode(
     engine: &mut dyn Transcriber,
     audio: &[f32],
@@ -291,17 +486,64 @@ pub fn vad_segment_decode(
     opts: &TranscribeOptions,
     request_id: &str,
 ) -> super::SttResult<String> {
+    vad_segment_decode_with_mask(
+        engine,
+        audio,
+        None,
+        max_chunk_s,
+        prior_prompt,
+        vad,
+        opts,
+        request_id,
+    )
+}
+
+/// Decode an arbitrarily long recording by VAD-segmenting it into ≤ `max_chunk_s` chunks and
+/// decoding each independently through `engine`, then joining. For audio already short enough
+/// (`<= max_chunk_s`), this is a single `engine.transcribe` — i.e. ZERO behavior change for normal
+/// PTT dictation; it only engages on long recordings.
+///
+/// `capture_mask`, when `Some`, is the capture layer's per-480-sample-frame speech mask; it drives
+/// the FIRST silence-compaction sweep instead of a Silero pass (identical framing, mapped 1:1). The
+/// second sweep, on the already-compacted audio, is always Silero (the capture mask doesn't align to
+/// compacted samples).
+///
+/// A continuous-speech region longer than the cap is hard-split on the quietest nearby frame (not
+/// mid-word) with a small audio overlap; the two chunks' texts are then merged by dropping the
+/// duplicated words at the seam (`merge_word_overlap`). Silence-boundary joins keep the plain space
+/// join.
+///
+/// `prior_prompt` (Whisper-only — gated on `supports_initial_prompt`) seeds each chunk after the
+/// first with the tail of the previous chunk's text via the `<|startofprev|>` slot for continuity.
+/// Pass `false` to decode every chunk independently (whisperX/onnx-asr default; preserves the
+/// user's configured initial-prompt and avoids prior-text hallucination on near-silent chunks).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one-shot long-form decode entry; the capture mask is an added parameter alongside the \
+              existing engine/audio/cap/prompt/vad/opts/request-id set, all load-bearing"
+)]
+pub fn vad_segment_decode_with_mask(
+    engine: &mut dyn Transcriber,
+    audio: &[f32],
+    capture_mask: Option<&[bool]>,
+    max_chunk_s: f32,
+    prior_prompt: bool,
+    vad: &mut SileroVad,
+    opts: &TranscribeOptions,
+    request_id: &str,
+) -> super::SttResult<String> {
     let max_chunk = (max_chunk_s * SR as f32) as usize;
 
-    // 1. Per-frame speech mask (30 ms / 480-sample Silero frames). Per-chunk
-    // tracing goes to `log::debug!` (`[vad-segment] …`) — gate it via the log level.
+    // 1. Per-frame speech mask (30 ms / 480-sample frames). The capture mask, when supplied, skips
+    // this Silero sweep. Per-chunk tracing goes to `log::debug!` (`[vad-segment] …`).
     log::debug!(
-        "[stt][{request_id}][vad-segment] speech_mask_start audio_ms={} max_chunk_ms={}",
+        "[stt][{request_id}][vad-segment] speech_mask_start audio_ms={} max_chunk_ms={} capture_mask={}",
         audio.len() * 1000 / SR,
-        max_chunk * 1000 / SR
+        max_chunk * 1000 / SR,
+        capture_mask.is_some()
     );
     let mask_started = Instant::now();
-    let mask = speech_mask(vad, audio);
+    let mask = frame_mask(audio, capture_mask, vad);
     log::debug!(
         "[stt][{request_id}][vad-segment] speech_mask_complete duration_ms={} frames={}",
         mask_started.elapsed().as_millis(),
@@ -386,11 +628,22 @@ pub fn vad_segment_decode(
     );
     let merged_len = merged.len();
     let merged = coalesce_short_chunks(merged, max_chunk, MIN_DECODE_CHUNK);
+    // Refine each cap-forced split onto the quietest nearby frame and give it an audio overlap; the
+    // returned `hard_before` flags which joins must dedupe (vs silence joins that stay plain).
+    let (merged, hard_before) = refine_hard_splits(
+        merged,
+        &compacted,
+        max_chunk,
+        HARD_SPLIT_OVERLAP,
+        HARD_SPLIT_SEARCH_BACK,
+    );
+    let hard_splits = hard_before.iter().filter(|h| **h).count();
     log::debug!(
-        "[stt][{request_id}][vad-segment] chunks_prepared raw={} merged={} coalesced={}",
+        "[stt][{request_id}][vad-segment] chunks_prepared raw={} merged={} coalesced={} hard_splits={}",
         raw.len(),
         merged_len,
-        merged.len()
+        merged.len(),
+        hard_splits
     );
 
     if merged.is_empty() {
@@ -413,7 +666,10 @@ pub fn vad_segment_decode(
     // 3. Decode each chunk independently; optional Whisper prior-chunk prompt.
     let track_prev = prior_prompt && engine.kind().supports_initial_prompt();
     let mut prev = String::new();
-    let mut parts: Vec<String> = Vec::with_capacity(merged.len());
+    // Assembled output. Hard-split (overlapping) joins dedupe the seam words; silence joins keep the
+    // plain space join. Built incrementally so an empty middle chunk can't desync the join flags.
+    let mut acc = String::new();
+    let mut emitted = false;
     let total_chunks = merged.len();
     for (idx, (s, e)) in merged.into_iter().enumerate() {
         let (s, e) = if e.saturating_sub(s) < MIN_DECODE_CHUNK {
@@ -476,10 +732,19 @@ pub fn vad_segment_decode(
             if track_prev {
                 prev = txt.clone();
             }
-            parts.push(txt);
+            if !emitted {
+                acc = txt;
+                emitted = true;
+            } else if hard_before.get(idx).copied().unwrap_or(false) {
+                // Overlapping hard-split seam: drop the words re-heard on both sides.
+                acc = merge_word_overlap(&acc, &txt);
+            } else {
+                acc.push(' ');
+                acc.push_str(&txt);
+            }
         }
     }
-    Ok(parts.join(" "))
+    Ok(acc)
 }
 
 /// Per-word timings for an arbitrarily long recording, in the ORIGINAL audio timeline.
@@ -712,5 +977,212 @@ mod tests {
         assert_eq!(tail_chars("hello world", 5), "world");
         assert_eq!(tail_chars("hi", 5), "hi");
         assert_eq!(tail_chars("héllo wörld", 5).chars().count(), 5);
+    }
+
+    // ---- capture-mask mapping ----
+    #[test]
+    fn capture_mask_maps_one_to_one_to_frame_grid() {
+        // A hand mask with exactly `audio_len / frame` entries maps back to itself → the capture
+        // path feeds `find_segments` the identical mask a Silero sweep would.
+        let audio_len = 10 * VAD_FRAME_SAMPLES;
+        let mask = vec![
+            false, true, true, false, false, true, true, true, false, true,
+        ];
+        assert_eq!(capture_mask_frames(audio_len, &mask), mask);
+    }
+
+    #[test]
+    fn capture_mask_inherits_last_value_for_missing_tail_frames() {
+        // Audio has 6 full frames but the capture mask is 2 frames short (a trailing partial
+        // capture frame produced no bit) → the missing tail frames inherit the last value.
+        let audio_len = 6 * VAD_FRAME_SAMPLES;
+        assert_eq!(
+            capture_mask_frames(audio_len, &[false, true, true, true]),
+            vec![false, true, true, true, true, true]
+        );
+        // Empty mask → all frames default to `false`.
+        assert_eq!(capture_mask_frames(audio_len, &[]), vec![false; 6]);
+    }
+
+    #[test]
+    fn capture_mask_compaction_matches_mask_compaction() {
+        // Both the mask path (find_segments on a hand mask standing in for a Silero sweep) and the
+        // capture path (map the same mask, then find_segments) must produce identical compacted
+        // audio for the same synthetic waveform.
+        let audio: Vec<f32> = (0..40 * VAD_FRAME_SAMPLES)
+            .map(|n| (n % 7) as f32)
+            .collect();
+        let mut mask = vec![false; 40];
+        mask[2..6].fill(true);
+        mask[30..34].fill(true);
+
+        let via_mask = {
+            let raw = find_segments(&mask, VAD_FRAME_SAMPLES, audio.len());
+            compact_silences_for_segments(&audio, &raw).into_owned()
+        };
+        let via_capture = {
+            let frames = capture_mask_frames(audio.len(), &mask);
+            let raw = find_segments(&frames, VAD_FRAME_SAMPLES, audio.len());
+            compact_silences_for_segments(&audio, &raw).into_owned()
+        };
+        assert_eq!(via_mask, via_capture);
+        assert!(
+            via_capture.len() < audio.len(),
+            "the long silence gap must compact"
+        );
+    }
+
+    #[test]
+    fn compact_for_transcription_mask_matches_the_vad_variant_with_a_mask() {
+        // The no-VAD mask-only entry point must produce the same compaction as the with-mask path
+        // (which ignores the VAD when a mask is present) for the same waveform + mask.
+        let audio: Vec<f32> = (0..40 * VAD_FRAME_SAMPLES)
+            .map(|n| (n % 5) as f32)
+            .collect();
+        let mut mask = vec![false; 40];
+        mask[3..7].fill(true);
+        mask[30..35].fill(true);
+        let mask_only = compact_for_transcription_mask(&audio, &mask).into_owned();
+        // Equivalent to the manual mask path (no Silero involved).
+        let frames = capture_mask_frames(audio.len(), &mask);
+        let raw = find_segments(&frames, VAD_FRAME_SAMPLES, audio.len());
+        let expected = compact_silences_for_segments(&audio, &raw).into_owned();
+        assert_eq!(mask_only, expected);
+        assert!(
+            mask_only.len() < audio.len(),
+            "the silence gap must compact"
+        );
+    }
+
+    // ---- boundary refinement ----
+    #[test]
+    fn frame_rms_ignores_dc_offset() {
+        // Pure DC → ~0 after mean subtraction; an oscillating frame with the same offset is clearly
+        // non-zero. Empty → 0.
+        let dc = vec![0.5f32; VAD_FRAME_SAMPLES];
+        assert!(frame_rms_dc_immune(&dc) < 1e-6);
+        let osc: Vec<f32> = (0..VAD_FRAME_SAMPLES)
+            .map(|n| 0.5 + if n % 2 == 0 { 0.1 } else { -0.1 })
+            .collect();
+        assert!(frame_rms_dc_immune(&osc) > frame_rms_dc_immune(&dc));
+        assert_eq!(frame_rms_dc_immune(&[]), 0.0);
+    }
+
+    #[test]
+    fn best_split_point_picks_low_energy_frame() {
+        // Loud oscillating audio (constant frames would read as 0 energy under DC removal) with one
+        // silent frame at index 6 → chosen as the split.
+        let mut audio: Vec<f32> = (0..10 * VAD_FRAME_SAMPLES)
+            .map(|n| if n % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+        let quiet = 6 * VAD_FRAME_SAMPLES;
+        for s in &mut audio[quiet..quiet + VAD_FRAME_SAMPLES] {
+            *s = 0.0;
+        }
+        assert_eq!(
+            best_split_point(&audio, 0, audio.len(), VAD_FRAME_SAMPLES),
+            quiet
+        );
+        // Window excluding the quiet frame → earliest in-window frame wins the loud tie.
+        assert_eq!(best_split_point(&audio, 0, quiet, VAD_FRAME_SAMPLES), 0);
+        // No full frame fits → returns lo.
+        assert_eq!(best_split_point(&audio, 100, 200, VAD_FRAME_SAMPLES), 100);
+    }
+
+    #[test]
+    fn refine_hard_splits_moves_seam_to_quiet_frame_with_overlap() {
+        let max_chunk = 30 * VAD_FRAME_SAMPLES;
+        let overlap = 2 * VAD_FRAME_SAMPLES;
+        let search_back = 8 * VAD_FRAME_SAMPLES;
+        let mut audio: Vec<f32> = (0..40 * VAD_FRAME_SAMPLES)
+            .map(|n| if n % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+        let quiet = 16 * VAD_FRAME_SAMPLES;
+        for s in &mut audio[quiet..quiet + VAD_FRAME_SAMPLES] {
+            *s = 0.0;
+        }
+        // Two OVERLAPPING chunks (a cap-forced split): left [0, 20F], right [19F, 39F].
+        let le = 20 * VAD_FRAME_SAMPLES;
+        let rs = 19 * VAD_FRAME_SAMPLES;
+        let re = 39 * VAD_FRAME_SAMPLES;
+        let (out, hard) = refine_hard_splits(
+            vec![(0, le), (rs, re)],
+            &audio,
+            max_chunk,
+            overlap,
+            search_back,
+        );
+
+        assert_eq!(
+            hard,
+            vec![false, true],
+            "join entering chunk 1 is a hard split"
+        );
+        assert_eq!(
+            out[1].0, quiet,
+            "right chunk starts at the quiet split frame"
+        );
+        assert_eq!(
+            out[0].1,
+            quiet + overlap,
+            "left chunk overlaps past the split"
+        );
+        assert!(out[0].1 - out[0].0 <= max_chunk, "left within cap");
+        assert!(out[1].1 - out[1].0 <= max_chunk, "right within cap");
+        assert!(out[0].1 > out[1].0, "seam is re-heard on both sides");
+    }
+
+    #[test]
+    fn refine_hard_splits_leaves_silence_joins_plain() {
+        // Neighbors with a gap (silence boundary) → untouched, no hard-split flag.
+        let audio = vec![0.0f32; 40 * VAD_FRAME_SAMPLES];
+        let chunks = vec![(0usize, 5_000usize), (12_000, 18_000)];
+        let (out, hard) = refine_hard_splits(
+            chunks.clone(),
+            &audio,
+            20 * VAD_FRAME_SAMPLES,
+            VAD_FRAME_SAMPLES / 2,
+            VAD_FRAME_SAMPLES * 2,
+        );
+        assert_eq!(out, chunks);
+        assert_eq!(hard, vec![false, false]);
+    }
+
+    // ---- word-overlap dedupe ----
+    #[test]
+    fn merge_word_overlap_drops_duplicated_seam() {
+        assert_eq!(
+            merge_word_overlap(
+                "the quick brown fox jumps",
+                "brown fox jumps over the lazy dog"
+            ),
+            "the quick brown fox jumps over the lazy dog"
+        );
+    }
+
+    #[test]
+    fn merge_word_overlap_case_and_punctuation_insensitive() {
+        // Seam differs only in case/punctuation; the LEFT rendering is emitted.
+        assert_eq!(
+            merge_word_overlap("we go to the Store,", "store the shelves"),
+            "we go to the Store, the shelves"
+        );
+    }
+
+    #[test]
+    fn merge_word_overlap_full_containment_and_no_overlap() {
+        // Right fully contained in left's suffix → collapses to left.
+        assert_eq!(
+            merge_word_overlap("alpha beta gamma", "beta gamma"),
+            "alpha beta gamma"
+        );
+        // No overlap → plain space join.
+        assert_eq!(
+            merge_word_overlap("alpha beta", "gamma delta"),
+            "alpha beta gamma delta"
+        );
+        // Empty sides → the other side.
+        assert_eq!(merge_word_overlap("", "gamma"), "gamma");
+        assert_eq!(merge_word_overlap("alpha", ""), "alpha");
     }
 }

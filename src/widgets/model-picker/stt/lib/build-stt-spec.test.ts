@@ -7,7 +7,6 @@ function makeModel(overrides: Partial<ModelInfo> = {}): ModelInfo {
 		accuracyScore: 0.8,
 		available: true,
 		availableQuantizations: ["", "int8"],
-		backend: "onnx",
 		description: "A multilingual speech model.",
 		displayName: "Whisper Large v3",
 		errorMessage: "",

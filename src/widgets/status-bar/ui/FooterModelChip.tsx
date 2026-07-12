@@ -22,6 +22,7 @@ import {
 	providerOf,
 	useOpenRouterSttCatalogStore,
 } from "@/entities/cloud-stt-provider";
+import type { ModelPickerKind } from "@/shared/api/model-picker-window";
 import { useCatalogStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import type { OpenRouterSttModel } from "@/shared/api/models";
@@ -46,6 +47,9 @@ interface FooterModelChipProps {
 	 *  the HugeIcon, so the chip shows the model's own mark while staying
 	 *  monochrome with the rest of the footer. */
 	logoSrc?: string | undefined;
+	/** Which detached picker the chip opens. Omitted → the main STT picker (`stt`);
+	 *  `"stt-realtime"` in listen mode so the chip edits the realtime slot. */
+	pickerKind?: ModelPickerKind | undefined;
 	tooltip: string;
 }
 
@@ -160,10 +164,11 @@ function FooterModelChip({
 	tooltip,
 	icon = AiAudioIcon,
 	logoSrc,
+	pickerKind,
 }: FooterModelChipProps): ReactNode {
 	const substrate = useSurface();
 	const hoverLevel = Math.min(substrate + 2, 8);
-	const openModelPicker = useModelPickerTrigger();
+	const openModelPicker = useModelPickerTrigger(pickerKind);
 	return (
 		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
 			<BaseButton
@@ -192,6 +197,9 @@ function FooterModelChip({
 
 interface ActiveModelChipProps {
 	currentModel: string;
+	/** Detached picker the chip opens — `"stt-realtime"` in listen mode so the
+	 *  chip edits the realtime slot; omitted → the main STT picker. */
+	pickerKind?: ModelPickerKind | undefined;
 	tIntegrations: TranslateFn;
 	tModel: TranslateFn;
 	tStatus: TranslateFn;
@@ -205,6 +213,7 @@ interface ActiveModelChipProps {
  */
 export function ActiveModelChip({
 	currentModel,
+	pickerKind,
 	tModel,
 	tStatus,
 	tIntegrations,
@@ -255,6 +264,7 @@ export function ActiveModelChip({
 				icon={AiCloud01Icon}
 				label={cloudDisplay?.label ?? label}
 				logoSrc={cloudDisplay?.logoSrc}
+				pickerKind={pickerKind}
 				tooltip={tIntegrations("providerStatus", {
 					provider: providerDisplayName(cloudProvider),
 					status,
@@ -268,6 +278,7 @@ export function ActiveModelChip({
 			icon={familyConfig?.icon ?? AiAudioIcon}
 			label={label}
 			logoSrc={familyConfig?.logoSrc}
+			pickerKind={pickerKind}
 			tooltip={tStatus("modelTooltip", {
 				model: modelInfo?.displayName ?? currentModel,
 			})}

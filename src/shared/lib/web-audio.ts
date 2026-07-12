@@ -73,6 +73,26 @@ export function playBuffer(ctx: AudioContext, buf: AudioBuffer): void {
 }
 
 /**
+ * Feature-test for per-context output-device routing (`AudioContext.setSinkId`,
+ * Chromium M114+). Returns false on engines that ship an `AudioContext` without
+ * the method — notably WKWebView (macOS) and WebKitGTK (Linux), where selecting
+ * a non-default output device is a silent no-op. Call sites use this to disable
+ * / hide the output-device picker instead of offering a dead control.
+ *
+ * `setSinkId` is declared as optional on `AudioContext` via
+ * `src/dom-augment.d.ts`, so the presence check stays type-safe. Guarded for
+ * SSR / test contexts where `AudioContext` is undefined.
+ */
+export function outputDeviceRoutingSupported(): boolean {
+	const Ctx =
+		typeof AudioContext === "undefined"
+			? (globalThis as { webkitAudioContext?: typeof AudioContext })
+					.webkitAudioContext
+			: AudioContext;
+	return typeof Ctx?.prototype?.setSinkId === "function";
+}
+
+/**
  * Construct an AudioContext routed to a specific output device, falling
  * back to the system default when `deviceId` is empty / the browser is
  * older than M114 (no `sinkId` constructor option). Pairs with

@@ -172,7 +172,6 @@ pub async fn remove_app_data_category(
             ) {
                 errors.push(err);
             }
-            cleanup::clear_legacy_selected_model(&app);
         }
         "tts" => {
             tts_manager.unload_active_local_model_for_cleanup("category cleanup");
@@ -403,7 +402,6 @@ pub async fn remove_downloaded_models(
         );
         return Err(err);
     }
-    cleanup::clear_legacy_selected_model(&app);
 
     let mut deleted_model_caches = 0;
     deleted_model_caches += cleanup::delete_stt_model_caches(downloads.inner(), &mut errors).await;

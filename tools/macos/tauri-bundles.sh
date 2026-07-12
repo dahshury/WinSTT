@@ -33,7 +33,9 @@ native_cache_patterns=(
 )
 rm -rf "${native_cache_patterns[@]}"
 
-build_args=(--target "$target" --bundles app,dmg)
+# Enable the CoreML ONNX execution provider for the macOS GPU/ANE path (mirrors the
+# Windows DirectML feature). Forwarded straight through to `cargo build`.
+build_args=(--target "$target" --bundles app,dmg --features coreml)
 if [ "$config" != "none" ]; then
   build_args+=(--config "$config")
 fi

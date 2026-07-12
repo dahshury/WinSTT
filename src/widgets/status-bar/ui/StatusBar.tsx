@@ -16,16 +16,15 @@ import {
 import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { ConnectionIndicator } from "@/features/connect-server";
-import { useListenStore } from "@/features/listen-mode";
 import {
 	useDownloadAggregate,
 	useDownloadStore,
 } from "@/features/model-download";
 import { surfaceClasses, useSurface } from "@/shared/lib/surface";
-import { Tooltip } from "@/shared/ui/tooltip";
-import { abbreviateDevice, shortDeviceName } from "../lib/device-name";
-import { FOOTER_TOOLTIP_DELAY, FooterMenuChip } from "./FooterMenuChip";
+import { abbreviateDevice } from "../lib/device-name";
+import { FooterMenuChip } from "./FooterMenuChip";
 import { ActiveModelChip } from "./FooterModelChip";
+import { FooterOutputDeviceChip } from "./FooterOutputDeviceChip";
 import { FooterDownloadChip, ModelSwapChip } from "./FooterStatusChips";
 
 /** Stable fallback so the zustand selector doesn't fabricate a new `[]` per render. */
@@ -36,6 +35,12 @@ export function StatusBar() {
 	const recordingMode = useSettingsStore(
 		(s) => s.settings.general?.recordingMode ?? "ptt",
 	);
+	const realtimeModel = useSettingsStore(
+		(s) => s.settings.model?.realtimeModel,
+	);
+	const useMainModelForRealtime = useSettingsStore(
+		(s) => s.settings.quality?.useMainModelForRealtime ?? false,
+	);
 	const inputDeviceIndex = useSettingsStore(
 		(s) => s.settings.audio?.inputDeviceIndex,
 	);
@@ -43,8 +48,6 @@ export function StatusBar() {
 		(s) => s.settings.audio?.inputDevicePriority ?? EMPTY_PRIORITY,
 	);
 	const updateAudio = useSettingsStore((s) => s.updateAudioSettings);
-	const isListening = useListenStore((s) => s.isListening);
-	const listenDeviceName = useListenStore((s) => s.deviceName);
 	const isDownloading = useDownloadStore((s) => s.isDownloading);
 	// Per-quant + whole-model aggregate so the footer chip can preempt the
 	// idle model chip with a "↓ Model X%" / "↓ N downloads · X%" view
@@ -54,10 +57,26 @@ export function StatusBar() {
 	const getCatalogModel = useCatalogStore((s) => s.getModel);
 	const allCatalogModels = useCatalogStore((s) => s.models);
 	const swappingMain = useModelSwapStore((s) => s.activeMain);
-	const mainSwapping = swappingMain !== null;
+	const swappingRealtime = useModelSwapStore((s) => s.activeRealtime);
 	const t = useTranslations("statusBar");
 	const tAudio = useTranslations("audio");
 	const tModel = useTranslations("model");
+
+	// In listen mode the realtime model is the active transcriber — the main
+	// model is unloaded — so the footer model chip reflects and edits the
+	// realtime slot (clicking opens the realtime picker), mirroring the input/
+	// output device chip which also swaps to its listen-mode variant. In
+	// PTT/toggle the main model is active, so the chip stays the main-model
+	// selector. `useMainModelForRealtime` (or no separate realtime model) means
+	// listen reuses the main model, so the chip keeps showing the main model.
+	const listenUsesRealtimeModel =
+		recordingMode === "listen" && !useMainModelForRealtime && !!realtimeModel;
+	const activeModel = listenUsesRealtimeModel ? realtimeModel : currentModel;
+	const activePickerKind = listenUsesRealtimeModel ? "stt-realtime" : undefined;
+	// The realtime swap lives in `activeRealtime`; only that slot is in flight
+	// when the footer edits the realtime model, so the swap chip watches it.
+	const swapTarget = listenUsesRealtimeModel ? swappingRealtime : swappingMain;
+	const isSwapping = swapTarget !== null;
 
 	const { devices, defaultDevice } = useInputDevices();
 	const defaultLabel = defaultDevice
@@ -116,28 +135,7 @@ export function StatusBar() {
 					orientation="vertical"
 				/>
 				{recordingMode === "listen" ? (
-					<Tooltip
-						content={
-							isListening
-								? t("loopbackActiveTooltip")
-								: t("loopbackIdleTooltip")
-						}
-						delay={FOOTER_TOOLTIP_DELAY}
-						side="top"
-					>
-						<span className="inline-flex max-w-[120px] cursor-help items-center gap-1.5 text-2xs">
-							{isListening && (
-								<span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-success" />
-							)}
-							<span
-								className={`truncate ${isListening ? "text-success" : "text-foreground-secondary"}`}
-							>
-								{listenDeviceName
-									? shortDeviceName(listenDeviceName)
-									: t("loopbackIdle")}
-							</span>
-						</span>
-					</Tooltip>
+					<FooterOutputDeviceChip />
 				) : (
 					<FooterMenuChip
 						ariaLabel={tAudio("inputDevice")}
@@ -151,7 +149,7 @@ export function StatusBar() {
 						value={currentDeviceId}
 					/>
 				)}
-				{currentModel && (
+				{activeModel && (
 					<>
 						<Separator
 							className="h-3 w-px shrink-0 bg-border"
@@ -159,13 +157,13 @@ export function StatusBar() {
 						/>
 						<div className="flex min-w-0 flex-1 items-center">
 							{(() => {
-								if (mainSwapping) {
-									const swapModel = swappingMain
-										? getCatalogModel(swappingMain)
+								if (isSwapping) {
+									const swapModel = swapTarget
+										? getCatalogModel(swapTarget)
 										: undefined;
 									const swapName = swapModel
 										? variantDisplayName(swapModel, allCatalogModels)
-										: (swappingMain ?? "");
+										: (swapTarget ?? "");
 									return (
 										<ModelSwapChip
 											label={t("switchingModel", { model: swapName })}
@@ -199,7 +197,8 @@ export function StatusBar() {
 								}
 								return (
 									<ActiveModelChip
-										currentModel={currentModel}
+										currentModel={activeModel}
+										pickerKind={activePickerKind}
 										tIntegrations={tIntegrations}
 										tModel={tModel}
 										tStatus={t}

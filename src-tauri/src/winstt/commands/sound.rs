@@ -63,7 +63,12 @@ impl SoundLibraryOperation {
     }
 }
 
-const SOUND_LIBRARY_ALLOWED_WINDOWS: &[&str] = &["settings"];
+// The sound-library UI lives in Settings, but the detached model-picker window
+// also hosts the listen-mode output-device picker, whose per-device play/preview
+// buttons read the recording chime (`sound:library-read-file`) to audition each
+// speaker — so it needs read access too. Read-only preview; the add/remove/pick
+// mutations are still exercised only from Settings in practice.
+const SOUND_LIBRARY_ALLOWED_WINDOWS: &[&str] = &["settings", "model-picker"];
 
 fn authorize_sound_library_operation(
     caller: &tauri::WebviewWindow,
@@ -574,8 +579,15 @@ pub fn duck_then_play_recording_chime(app: &AppHandle, recording_generation: u64
     let app_handle = app.clone();
     std::thread::spawn(move || {
         // 1. Duck background audio first (only while this recording is live).
+        //    The closure re-checks liveness ON the ducking worker right before
+        //    the COM duck (a stop that lands while this request is in flight
+        //    skips the duck instead of stranding it) and again from the
+        //    watchdog while the duck is held.
         if recording_generation_is_active(&app_handle, recording_generation) {
-            crate::winstt::ducking::duck_from_settings_blocking(&app_handle);
+            let gate_app = app_handle.clone();
+            crate::winstt::ducking::duck_from_settings_blocking(&app_handle, move || {
+                recording_generation_is_active(&gate_app, recording_generation)
+            });
         }
         // 2. Then play the chime at full volume (protected from the duck above).
         let Some(path) = path else {
@@ -645,14 +657,14 @@ mod tests {
     }
 
     #[test]
-    fn sound_library_authorization_matches_settings_only_policy() {
+    fn sound_library_authorization_allows_settings_and_model_picker() {
         command_auth::assert_label_rules(
-            &["settings"],
+            // model-picker hosts the listen-mode output-device preview buttons.
+            &["settings", "model-picker"],
             &[
                 "main",
                 "overlay",
                 "tray-menu",
-                "model-picker",
                 "device-picker",
                 "history",
                 "onboarding",

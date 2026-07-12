@@ -49,7 +49,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use ort::memory::{AllocationDevice, Allocator, AllocatorType, MemoryInfo, MemoryType};
-use ort::session::Session;
+use ort::session::{IoBinding, Session};
 use ort::value::{DynValue, Tensor};
 
 use degenerate::{
@@ -89,6 +89,33 @@ fn profile_enabled() -> bool {
 const MAX_LENGTH: usize = 448;
 const WARMUP_DECODE_STEPS: usize = 8;
 
+/// Dynamic-length encoder buckets (mel frames; 100 frames = 1 s). A dynlen-capable encoder
+/// (dynamic `input_features` T — the `posfix` sliced positional embedding) encodes only the
+/// smallest bucket that holds the utterance + tail pad instead of always paying the 30 s
+/// window (whisper.cpp `audio_ctx` / sherpa-onnx tail-padding; ~3× encoder cut on short
+/// dictation, WER-neutral per whisper.cpp #1855 and our fixture sweep). Floor is 1000 (10 s):
+/// a 5 s window measurably degenerates (repetition loops — the decoder was trained against a
+/// 30 s cross-attention memory and needs slack). Few, coarse buckets on purpose: the DirectML
+/// EP re-fuses per input shape and caches ONE compiled shape, so every distinct bucket that
+/// appears costs one re-fusion when it displaces another.
+const ENC_BUCKETS: &[usize] = &[1000, 2000, 3000];
+/// Tail padding (mel frames) appended past the audio before bucket rounding — the "silence"
+/// region the decoder emits EOT into (whisper.cpp uses +128 post-conv ≈ 256 mel; sherpa-onnx
+/// defaults to a generous 1000). 250 (2.5 s) sits between them and validated clean.
+const ENC_TAIL_PAD_FRAMES: usize = 250;
+
+/// Pick the mel-frame count to encode for `n_audio_frames` of real signal: the smallest
+/// bucket that fits audio + tail pad, else the full 30 s window.
+fn enc_bucket_frames(n_audio_frames: usize) -> usize {
+    let want = n_audio_frames.saturating_add(ENC_TAIL_PAD_FRAMES);
+    for &b in ENC_BUCKETS {
+        if want <= b {
+            return b;
+        }
+    }
+    *ENC_BUCKETS.last().unwrap_or(&3000)
+}
+
 /// A loaded Whisper-family engine (covers `EngineKind::WhisperHf`). Holds the two ORT
 /// sessions, the parsed tokenizer, the mel front-end, and the per-load capability flags.
 pub struct WhisperEngine {
@@ -114,6 +141,10 @@ pub struct WhisperEngine {
     device: AllocationDevice,
     device_id: i32,
     suppress_token_mask: Vec<bool>,
+    /// True when the encoder graph accepts a variable mel-frame count (dim 2 of
+    /// `input_features` is symbolic — the dynlen-patched export). Enables the short-window
+    /// bucket path in `encode`; the stock static-3000 export always gets the full window.
+    enc_dynlen: bool,
     ready: bool,
 }
 
@@ -125,14 +156,25 @@ struct DecodeState {
     tokens: Vec<i64>,
     /// Number of decoder-prompt tokens at the head of `tokens` (the generated region starts here).
     prompt_len: usize,
-    /// Device `MemoryInfo` for the resident encoder output + carried KV (CPU when no GPU EP).
+    /// Device `MemoryInfo` for re-binding the `present.*` outputs each step (CPU when no GPU EP).
     dev_mem: MemoryInfo,
     /// Host `MemoryInfo` for the logits (argmax) and, when collecting, the cross-attention.
     cpu_mem: MemoryInfo,
+    /// ONE IoBinding reused for every step of this decode (optimum keeps one per session;
+    /// the old fresh-binding-per-step pattern re-bound all ~20 inputs + ~17 outputs each token).
+    /// Rebinding by name REPLACES the prior entry, so each step rebinds only what changed:
+    /// `input_ids`, the flipped `use_cache_branch`, and the carried self-attn KV entries.
+    binding: IoBinding,
+    /// Pre-created `use_cache_branch=true` flag tensor, bound once at step 1 (the step-0 `false`
+    /// tensor is bound in `prepare_decode_state`; the binding keeps bound values alive).
+    flag_true: Tensor<bool>,
     /// `present.*` output names, parallel to `past_kv_names` (canonical layer order).
     present_names: Vec<String>,
     /// Carried KV cache as DEVICE-resident OrtValues; `None` = the (0,H,0,D) empty step-0 cache.
     past: Vec<Option<DynValue>>,
+    /// Which `past` entries were replaced since their last bind (must be rebound this step).
+    /// Encoder (cross-attn) KV settles after step 0 and is never rebound again.
+    past_dirty: Vec<bool>,
     /// Whether to collect cross-attention this run (`*_timestamped` export + caller requested).
     want_attn: bool,
     /// Per-layer running cross-attention buffers: each entry is (heads, dec_step_len, frames) FLAT
@@ -233,6 +275,21 @@ impl WhisperEngine {
         let encoder = build_session(encoder_path, cfg, intra, cfg.whisper_fp16_workaround)?;
         let decoder = load_decoder_with_fp16_repair(decoder_path, cfg, intra)?;
 
+        // Dynamic-length capability probe: a dynlen-patched encoder declares `input_features`
+        // dim 2 (mel frames) symbolically; the stock Optimum export pins it at 3000. Opt-out via
+        // WINSTT_WHISPER_NO_DYNLEN (mirrors WINSTT_COHERE_NO_ENC_PAD).
+        let enc_dynlen = std::env::var("WINSTT_WHISPER_NO_DYNLEN").is_err()
+            && encoder
+                .inputs()
+                .iter()
+                .find(|o| o.name() == "input_features")
+                .is_some_and(|o| match o.dtype() {
+                    ort::value::ValueType::Tensor { shape, .. } => {
+                        shape.get(2).copied().unwrap_or(0) <= 0
+                    }
+                    _ => false,
+                });
+
         // Introspect the decoder graph (inputs()/outputs() return &[Outlet]).
         let mut past_kv_names: Vec<String> = decoder
             .inputs()
@@ -312,6 +369,7 @@ impl WhisperEngine {
             device,
             device_id,
             suppress_token_mask,
+            enc_dynlen,
             ready: true,
         })
     }
@@ -320,7 +378,15 @@ impl WhisperEngine {
     /// never copied to host). Mirrors onnx-asr `_hf.py::_encode`. The returned `DynValue` is rebound
     /// as the decoder's `encoder_hidden_states` every step with no host round-trip.
     fn encode(&mut self, audio: &[f32]) -> SttResult<DynValue> {
-        let (feats, n_mels, n_frames) = self.mel.extract(audio);
+        // Dynlen-capable encoder → smallest bucket that holds the audio + tail pad; stock
+        // static export → the classic full 30 s window.
+        let (feats, n_mels, n_frames) = if self.enc_dynlen {
+            let n_audio_frames = audio.len().div_ceil(HOP_LENGTH);
+            self.mel
+                .extract_frames(audio, enc_bucket_frames(n_audio_frames))
+        } else {
+            self.mel.extract(audio)
+        };
         // input_features: (1, n_mels, T).
         let input = Tensor::from_array(([1usize, n_mels, n_frames], feats.into_boxed_slice()))
             .map_err(|e| SttError::Inference(format!("encoder input tensor: {e}")))?;
@@ -482,11 +548,11 @@ impl WhisperEngine {
         first_step_allowed: Option<&[i64]>,
     ) -> SttResult<(Vec<i64>, Option<CrossAttentions>)> {
         let eos = self.tokenizer.eos_token_id;
-        let mut state = self.prepare_decode_state(prompt, collect_cross_attn)?;
+        let mut state = self.prepare_decode_state(encoder_out, prompt, collect_cross_attn)?;
         let total_steps = max_length.saturating_sub(state.tokens.len());
 
         for step_index in 0..total_steps {
-            let next = self.decode_step(encoder_out, &mut state, step_index, first_step_allowed)?;
+            let next = self.decode_step(&mut state, step_index, first_step_allowed)?;
             state.tokens.push(next);
             if next == eos {
                 break;
@@ -498,12 +564,15 @@ impl WhisperEngine {
         Ok((state.tokens, attn))
     }
 
-    /// One-time decode setup (mirrors onnx-asr `_create_state`): allocate the device/host
-    /// `MemoryInfo`, derive the `present.*` output names, the empty KV cache, and the cross-
-    /// attention collection buffers. Returns the loop-carried `DecodeState`; nothing here is
-    /// per-step (no allocations on the hot path).
+    /// One-time decode setup (mirrors onnx-asr `_create_state` + optimum's one-binding-per-
+    /// session): allocate the device/host `MemoryInfo`, derive the `present.*` output names,
+    /// create THE IoBinding for this decode and bind everything that never changes across steps —
+    /// the encoder output, the step-0 empty KV cache, the step-0 `use_cache_branch=false` flag,
+    /// and every output. Returns the loop-carried `DecodeState`; per-step work is only the
+    /// handful of rebinds that actually changed (input_ids, flipped flag, replaced self-KV).
     fn prepare_decode_state(
         &self,
+        encoder_out: &DynValue,
         prompt: Vec<i64>,
         collect_cross_attn: bool,
     ) -> SttResult<DecodeState> {
@@ -534,6 +603,56 @@ impl WhisperEngine {
 
         let want_attn =
             collect_cross_attn && self.has_cross_attention && !self.cross_attn_names.is_empty();
+
+        // THE binding for this decode. Bind the step-invariants now:
+        //   * encoder_hidden_states — device-resident, identical every step;
+        //   * the (0,H,0,D) empty past.* tensors — replaced from step 1 by carried device KV
+        //     (`bind_input` holds an Arc on the bound value, so the temporaries can drop here);
+        //   * use_cache_branch=false — flipped to the pre-created `true` tensor at step 1;
+        //   * every output: logits → host, present.* → device, cross_attentions.* → host when
+        //     collecting else device (ORT requires all outputs bound when any is).
+        let decoder = self
+            .decoder
+            .as_ref()
+            .ok_or_else(|| SttError::Inference("whisper decoder session is shut down".into()))?;
+        let mut binding = decoder
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("decoder binding: {e}")))?;
+        binding
+            .bind_input("encoder_hidden_states", encoder_out)
+            .map_err(|e| SttError::Inference(format!("bind encoder_hidden_states: {e}")))?;
+        for (i, name) in self.past_kv_names.iter().enumerate() {
+            let (h, d) = self.kv_dims[i];
+            let shape = [0usize, h.max(0) as usize, 0usize, d.max(0) as usize];
+            let t = Tensor::<f32>::new(&Allocator::default(), shape)
+                .map_err(|e| SttError::Inference(format!("empty past kv: {e}")))?;
+            binding
+                .bind_input(name.as_str(), &t)
+                .map_err(|e| SttError::Inference(format!("bind empty {name}: {e}")))?;
+        }
+        let flag_false = Tensor::from_array(([1usize], vec![false].into_boxed_slice()))
+            .map_err(|e| SttError::Inference(format!("use_cache_branch=false: {e}")))?;
+        let flag_true = Tensor::from_array(([1usize], vec![true].into_boxed_slice()))
+            .map_err(|e| SttError::Inference(format!("use_cache_branch=true: {e}")))?;
+        if self.has_use_cache_branch {
+            binding
+                .bind_input("use_cache_branch", &flag_false)
+                .map_err(|e| SttError::Inference(format!("bind use_cache_branch: {e}")))?;
+        }
+        binding
+            .bind_output_to_device("logits", &cpu_mem)
+            .map_err(|e| SttError::Inference(format!("bind logits: {e}")))?;
+        for pname in &present_names {
+            binding
+                .bind_output_to_device(pname.as_str(), &dev_mem)
+                .map_err(|e| SttError::Inference(format!("bind {pname}: {e}")))?;
+        }
+        let ca_mem = if want_attn { &cpu_mem } else { &dev_mem };
+        for name in &self.cross_attn_names {
+            binding
+                .bind_output_to_device(name.as_str(), ca_mem)
+                .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+        }
         // Per-layer running buffers: each entry is (heads, dec_step_len, enc_frames) FLAT data, one
         // per decode step. Concatenated along the decoder-token (step) axis at the end, exactly like
         // `_hf.py` `np.concatenate(layer_steps, axis=2)` then `np.stack(..., axis=1)`.
@@ -541,13 +660,17 @@ impl WhisperEngine {
         let per_layer_steps: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_layers];
 
         let prompt_len = prompt.len();
+        let past_dirty = vec![false; self.past_kv_names.len()];
         Ok(DecodeState {
             tokens: prompt,
             prompt_len,
             dev_mem,
             cpu_mem,
+            binding,
+            flag_true,
             present_names,
             past,
+            past_dirty,
             want_attn,
             per_layer_steps,
             // Resolved at the FIRST step from the actual output shapes (steps are uniform per layer).
@@ -564,20 +687,27 @@ impl WhisperEngine {
         })
     }
 
-    /// One greedy KV-cache step (mirrors onnx-asr `_decode`): build `input_ids` + empty-KV host
-    /// tensors, bind the device-resident encoder output / carried KV in a fresh binding, run +
-    /// sync, argmax the last-position logits (with first-step allow-list / no_repeat_ngram), carry
-    /// `present.*` → `past.*`, and collect this step's cross-attention. Returns the next token.
-    /// Hot path: `state` is borrowed mutably so nothing is cloned across the step boundary.
+    /// One greedy KV-cache step (mirrors onnx-asr `_decode` semantics, optimum's binding reuse):
+    /// rebind ONLY what changed since the previous step — `input_ids`, the `use_cache_branch`
+    /// flip at step 1, and the carried self-KV entries replaced last step — then run, argmax the
+    /// last-position logits (with first-step allow-list / no_repeat_ngram), carry `present.*` →
+    /// `past.*`, and collect this step's cross-attention. Returns the next token.
+    ///
+    /// No per-step `synchronize_outputs()`: on DirectML that call is a FULL device-queue drain
+    /// (`ExecutionProvider::Sync` → `WaitForOutstandingWork`), while the host `logits` readback
+    /// ORT performs during `run_binding` already fence-waits on the producing kernels, and the
+    /// device-resident `present.*` → next-step reads are ordered by the command queue itself.
+    /// (onnx-asr never syncs; optimum's per-step syncs are CUDA-stream semantics.) Verified on
+    /// DML by transcript-identical repeated bench passes; the always-on garbage detector below
+    /// self-reports if a platform ever violates this ordering.
     fn decode_step(
         &mut self,
-        encoder_out: &DynValue,
         state: &mut DecodeState,
         step_index: usize,
         first_step_allowed: Option<&[i64]>,
     ) -> SttResult<i64> {
         let eos = self.tokenizer.eos_token_id;
-        let use_cache = state.past.iter().any(|p| p.is_some());
+        let use_cache = step_index > 0;
 
         // input_ids: full prompt on step 0, else only the last token.
         let (id_data, id_len): (Vec<i64>, usize) = if use_cache {
@@ -590,105 +720,68 @@ impl WhisperEngine {
         };
         let input_ids = Tensor::from_array(([1usize, id_len], id_data.into_boxed_slice()))
             .map_err(|e| SttError::Inference(format!("decoder input_ids: {e}")))?;
-        // Whisper merged decoders declare use_cache_branch as a bool tensor.
-        let cache_flag = if self.has_use_cache_branch {
-            Some(
-                Tensor::from_array(([1usize], vec![use_cache].into_boxed_slice()))
-                    .map_err(|e| SttError::Inference(format!("use_cache_branch: {e}")))?,
-            )
-        } else {
-            None
-        };
-        // Empty (0,H,0,D) host tensors for any `None` past entry (step 0). The allocator-backed
-        // ctor accepts 0-element tensors (`from_array`'s raw-data path rejects 0-sized dims).
-        // Held in this Vec so they outlive the binding through `run_binding`.
-        let mut empties: Vec<Tensor<f32>> = Vec::new();
-        for (i, p) in state.past.iter().enumerate() {
-            if p.is_none() {
-                let (h, d) = self.kv_dims[i];
-                let shape = [0usize, h.max(0) as usize, 0usize, d.max(0) as usize];
-                let t = Tensor::<f32>::new(&Allocator::default(), shape)
-                    .map_err(|e| SttError::Inference(format!("empty past kv: {e}")))?;
-                empties.push(t);
-            }
-        }
-
-        // Fresh binding per step (mirrors onnx-asr's per-`_decode` `io_binding()`): bind the
-        // changing inputs + the device-resident encoder output / KV; bind logits to host and
-        // present.* to the device so the cache never round-trips through the CPU.
-        let mut binding = self
-            .decoder
-            .as_mut()
-            .ok_or_else(|| SttError::Inference("whisper decoder session is shut down".into()))?
-            .create_binding()
-            .map_err(|e| SttError::Inference(format!("decoder binding: {e}")))?;
-        binding
+        state
+            .binding
             .bind_input("input_ids", &input_ids)
             .map_err(|e| SttError::Inference(format!("bind input_ids: {e}")))?;
-        binding
-            .bind_input("encoder_hidden_states", encoder_out)
-            .map_err(|e| SttError::Inference(format!("bind encoder_hidden_states: {e}")))?;
-        if let Some(flag) = &cache_flag {
-            binding
-                .bind_input("use_cache_branch", flag)
+        // The merged decoder's bool `use_cache_branch` flips exactly once, at step 1.
+        if self.has_use_cache_branch && step_index == 1 {
+            state
+                .binding
+                .bind_input("use_cache_branch", &state.flag_true)
                 .map_err(|e| SttError::Inference(format!("bind use_cache_branch: {e}")))?;
         }
-        // past_key_values.* : device value carried from prev step, else the empty host tensor.
-        let mut empty_iter = empties.iter();
+        // past_key_values.*: rebind only the entries replaced since their last bind (all 2·L
+        // decoder+encoder entries at step 1; just the 2·L_dec self-attn entries afterwards —
+        // the cross-attn KV settles at step 0 and its binding stays valid for the whole decode).
         for (i, name) in self.past_kv_names.iter().enumerate() {
-            match &state.past[i] {
-                Some(v) => binding
+            if state.past_dirty[i]
+                && let Some(v) = &state.past[i]
+            {
+                state
+                    .binding
                     .bind_input(name.as_str(), v)
-                    .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?,
-                None => {
-                    let Some(t) = empty_iter.next() else {
-                        return Err(SttError::Inference(
-                            "missing empty tensor for whisper past key/value input".into(),
-                        ));
-                    };
-                    binding
-                        .bind_input(name.as_str(), t)
-                        .map_err(|e| SttError::Inference(format!("bind empty {name}: {e}")))?;
-                }
+                    .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+                state.past_dirty[i] = false;
             }
         }
-        // outputs: logits → host (argmax); present.* → device (carried); cross_attn → host.
-        binding
-            .bind_output_to_device("logits", &state.cpu_mem)
-            .map_err(|e| SttError::Inference(format!("bind logits: {e}")))?;
-        for pname in &state.present_names {
-            binding
-                .bind_output_to_device(pname.as_str(), &state.dev_mem)
-                .map_err(|e| SttError::Inference(format!("bind {pname}: {e}")))?;
-        }
-        // cross_attentions.* exist only on `*_timestamped` exports. ORT's RunWithBinding requires
-        // EVERY graph output bound, so bind them whenever the export declares them — to host
-        // (cpu_mem) when we'll collect them for word timestamps, else to device (computed by the
-        // graph anyway, never copied back) just to satisfy the all-outputs-bound contract.
-        let ca_mem = if state.want_attn {
-            &state.cpu_mem
-        } else {
-            &state.dev_mem
-        };
-        for name in &self.cross_attn_names {
-            binding
-                .bind_output_to_device(name.as_str(), ca_mem)
-                .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+        // OUTPUTS must be re-bound every step: a `bind_output_to_device` binding caches the
+        // run's allocated OrtValue, and the next run shape-verifies against it — the growing
+        // present.*.decoder (p+1) and the (0,H,1,D)↔(1,H,T,D) encoder sentinel flip both fail
+        // that check ("OrtValue shape verification failed"). Re-binding resets the slot to
+        // "allocate on device this run" — pure FFI, no tensor copies.
+        if step_index > 0 {
+            state
+                .binding
+                .bind_output_to_device("logits", &state.cpu_mem)
+                .map_err(|e| SttError::Inference(format!("bind logits: {e}")))?;
+            for pname in &state.present_names {
+                state
+                    .binding
+                    .bind_output_to_device(pname.as_str(), &state.dev_mem)
+                    .map_err(|e| SttError::Inference(format!("bind {pname}: {e}")))?;
+            }
+            if !self.cross_attn_names.is_empty() {
+                let ca_mem = if state.want_attn {
+                    &state.cpu_mem
+                } else {
+                    &state.dev_mem
+                };
+                for name in &self.cross_attn_names {
+                    state
+                        .binding
+                        .bind_output_to_device(name.as_str(), ca_mem)
+                        .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+                }
+            }
         }
 
         let mut outputs = self
             .decoder
             .as_mut()
             .ok_or_else(|| SttError::Inference("whisper decoder session is shut down".into()))?
-            .run_binding(&binding)
+            .run_binding(&state.binding)
             .map_err(|e| SttError::Inference(format!("decoder run_binding: {e}")))?;
-        // DML/CUDA run_binding is async w.r.t. the device stream. The Python reference implicitly
-        // syncs every step (`.numpy()` on logits); we must too, or the host logits read + the
-        // carried device `present.*` race the still-running kernels → stale data (first call slow
-        // enough to mask it, warm calls corrupt). One sync per step matches onnx-asr.
-        binding
-            .synchronize_outputs()
-            .map_err(|e| SttError::Inference(format!("decoder synchronize: {e}")))?;
 
         // logits: (1, seq, vocab) → argmax of the LAST position (host). Scoped so the borrow of
         // `outputs` ends before the present→past `remove`s take it mutably.
@@ -799,17 +892,18 @@ impl WhisperEngine {
 
         // Carry present.* → past.* as DEVICE values (keep prev when present is 0-length, i.e.
         // the reused cross-attn/encoder KV). Extracted values are session-owned and survive the
-        // binding drop, so they rebind next step with no host round-trip.
+        // step, so they rebind next step with no host round-trip. Mark replaced entries dirty so
+        // the next step rebinds exactly those.
         for (i, pname) in state.present_names.iter().enumerate() {
             if let Some(v) = outputs.remove(pname.as_str())
                 && first_dim(&v) != 0
             {
                 state.past[i] = Some(v);
+                state.past_dirty[i] = true;
             }
-            // else: present empty → keep the existing past[i] (reused encoder KV).
+            // else: present empty → keep the existing past[i] (reused encoder KV, still bound).
         }
         drop(outputs);
-        drop(binding);
 
         Ok(next)
     }

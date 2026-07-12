@@ -11,7 +11,6 @@ function model(languages: readonly string[]): ModelInfo {
 	return {
 		id: "model",
 		displayName: "Model",
-		backend: "onnx_asr",
 		family: "whisper",
 		languages: [...languages],
 		supportsLanguageDetection: true,

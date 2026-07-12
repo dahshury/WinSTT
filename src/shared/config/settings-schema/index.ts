@@ -24,7 +24,7 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
 	return isPlainRecord(value) ? value : null;
 }
 
-export function migrateLegacyGlobalSettings(payload: unknown): unknown {
+function migrateLegacyGlobalSettings(payload: unknown): unknown {
 	const root = objectRecord(payload);
 	if (!root) {
 		return payload;
@@ -69,7 +69,37 @@ function migrateOpenaiSttModel(payload: unknown): unknown {
 	};
 }
 
+/**
+ * Apply every pre-parse legacy migration in one pass. Single-sourced so the
+ * whole-tree `appSettingsSchema` preprocess AND the per-section recovery path
+ * in `settings-codec.partialDecodeBySections` run the SAME migrations — the
+ * per-section path previously bypassed `migrateOpenaiSttModel`, so a corrupt
+ * unrelated section could drop the OpenAI→OpenRouter STT rewrite and silently
+ * revert a cloud transcription selection to a local model.
+ */
+export function migrateLegacySettings(payload: unknown): unknown {
+	return migrateOpenaiSttModel(migrateLegacyGlobalSettings(payload));
+}
+
+/**
+ * Settings schema version (finding #20). Bumped when a breaking shape change
+ * needs a migration step. The Rust backend persists it as the `schemaVersion`
+ * field of `WinsttSettings` (so a downgrade/upgrade is detectable) and the zod
+ * schema parses the same field below, so both sides carry one shared anchor for
+ * future migrations. Must equal the Rust `SCHEMA_VERSION` — the defaults-parity
+ * fixture (which includes `schemaVersion`) fails CI when they drift.
+ */
+const SETTINGS_SCHEMA_VERSION = 1;
+
 const appSettingsBaseSchema = z.object({
+	// The one top-level SCALAR in an otherwise all-object tree. Section-generic
+	// helpers (`patchSection`, per-section merges) must not treat it as a
+	// patchable section — see `ObjectSectionKey` in entities/setting.
+	schemaVersion: z
+		.number()
+		.int()
+		.default(SETTINGS_SCHEMA_VERSION)
+		.catch(SETTINGS_SCHEMA_VERSION),
 	global: globalSettingsSchema.prefault({}),
 	model: modelSettingsSchema.prefault({}),
 	quality: qualitySettingsSchema.prefault({}),
@@ -90,7 +120,7 @@ const appSettingsBaseSchema = z.object({
 export const appSettingsSectionSchemas = appSettingsBaseSchema.shape;
 
 export const appSettingsSchema = z.preprocess(
-	(payload) => migrateOpenaiSttModel(migrateLegacyGlobalSettings(payload)),
+	(payload) => migrateLegacySettings(payload),
 	appSettingsBaseSchema,
 );
 

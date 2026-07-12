@@ -1,4 +1,5 @@
 import type { OllamaModel, RecommendedOllamaModel } from "@/shared/api/models";
+import { countActiveFlags } from "../../core/lib/filter-state";
 
 /**
  * The two boolean catalog filters the Ollama picker exposes, ported from the
@@ -33,7 +34,7 @@ export function ollamaActiveFilterCount(
 	filters: OllamaFilterState,
 	flags: readonly OllamaFilterFlag[] = OLLAMA_FILTER_FLAGS,
 ): number {
-	return flags.filter((key) => filters[key]).length;
+	return countActiveFlags(filters, flags);
 }
 
 export function isOllamaFilterState(

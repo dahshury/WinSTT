@@ -288,15 +288,16 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         // merged-KV decoder), Arabic + English specialised weights. ONNX export in the onnx-community
         // merged layout; runs through the existing CohereEngine unchanged.
         onnx_model_name: "Masterx/cohere-transcribe-arabic-07-2026-ONNX",
-        // fp32 (best accuracy, and fastest on the CPU EP cohere is pinned to) + int8 (8-bit, ~2.1 GB).
+        // fp32 (best accuracy) + fp16 (fp32-parity transcripts, ~3.5× faster wall than fp32 on
+        // DirectML — encoder halves; ~4.6 GB vs 8.3 GB; added 2026-07-11) + int8 (8-bit, ~2.1 GB).
         // q4 is DROPPED for this checkpoint: its export is actually LARGER than int8 (2.22 GB vs
         // 2.14 GB, the Conformer encoder barely shrinks under 4-bit) AND less accurate, so int8
         // strictly dominates it — there is no configuration where q4 wins. (The multilingual
         // `cohere-transcribe` KEEPS q4: there its export IS ~1 GB smaller than int8, a real tradeoff.)
-        // fp16/q4f16 are omitted — the CPU EP up-casts fp16→fp32 (slower + larger), so auto-quant
-        // never picks them for cohere (quant_resolve.rs). The 7.6 GB fp32 encoder needed HF
-        // `lfs-enable-largefiles` (>5 GB).
-        available_quantizations: &["", "int8"],
+        // q4f16 is omitted (MatMulNBits dequant overhead loses on DML; CPU up-casts fp16-compute).
+        // Auto stays accuracy-first fp32; fp16 auto-promotes on CUDA only (policy.rs) — the picker
+        // exposes it everywhere. The 7.6 GB fp32 encoder needed HF `lfs-enable-largefiles` (>5 GB).
+        available_quantizations: &["", "fp16", "int8"],
         param_count: 2_000_000_000,
         supports_realtime: true,
     },
@@ -356,6 +357,8 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         display_name: "NeMo Parakeet CTC 0.6B",
         family: Family::Nemo,
         onnx_model_name: "nemo-parakeet-ctc-0.6b",
+        // NO fp16: the v1-era export converts (CPU-correct) but produces garbage on the DML EP
+        // at fp16 (the lite-whisper disease); fp16-on-CPU is pointless. tdt-v3 carries fp16.
         available_quantizations: &["", "int8"],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -365,6 +368,8 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         display_name: "NeMo Parakeet RNNT 0.6B",
         family: Family::Nemo,
         onnx_model_name: "nemo-parakeet-rnnt-0.6b",
+        // NO fp16: the v1-era export converts (CPU-correct) but produces garbage on the DML EP
+        // at fp16 (the lite-whisper disease); fp16-on-CPU is pointless. tdt-v3 carries fp16.
         available_quantizations: &["", "int8"],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -374,7 +379,9 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         display_name: "NeMo Parakeet TDT 0.6B v3",
         family: Family::Nemo,
         onnx_model_name: "nemo-parakeet-tdt-0.6b-v3",
-        available_quantizations: &["", "int8"],
+        // fp16 = Masterx/parakeet-tdt-0.6b-v3-fp16-onnx (QUANT_REPO_OVERRIDES). Measured
+        // 2026-07-11: 231 ms vs fp32 459 ms on DirectML (66 s clip), transcripts byte-identical.
+        available_quantizations: &["", "fp16", "int8"],
         param_count: 626_983_558,
         supports_realtime: true,
     },
@@ -383,8 +390,9 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         display_name: "NeMo Canary 1B v2",
         family: Family::Nemo,
         // DirectML-safe re-export (encoder via `dynamo=False`); see nemo-canary-180m-flash.
+        // fp16 = fp16 ENCODER only (same repo); the CPU-pinned KV decoders stay fp32 (globs).
         onnx_model_name: "Masterx/canary-1b-v2-onnx",
-        available_quantizations: &["", "int8"],
+        available_quantizations: &["", "fp16", "int8"],
         param_count: 978_000_000,
         supports_realtime: true,
     },
@@ -511,8 +519,11 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-parakeet-unified-en-240ms",
         display_name: "Streaming Parakeet Unified 240ms (English)",
         family: Family::Nemo,
+        // fp16 = Masterx conversion of this repo's graphs (QUANT_REPO_OVERRIDES) — the sherpa
+        // maintainer publishes fp32 and int8 as separate repos, no fp16. Same NemoRnntStreaming
+        // engine + all-DML float policy as nemotron (whose fp16 measured 2.14× fp32 on DirectML).
         onnx_model_name: "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-240ms",
-        available_quantizations: &[""],
+        available_quantizations: &["", "fp16"],
         param_count: 600_000_000,
         supports_realtime: true,
     },
@@ -520,8 +531,9 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-parakeet-unified-en-560ms",
         display_name: "Streaming Parakeet Unified 560ms (English)",
         family: Family::Nemo,
+        // fp16 via QUANT_REPO_OVERRIDES (see the 240ms row).
         onnx_model_name: "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-560ms",
-        available_quantizations: &[""],
+        available_quantizations: &["", "fp16"],
         param_count: 600_000_000,
         supports_realtime: true,
     },
@@ -529,8 +541,9 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-parakeet-unified-en-1120ms",
         display_name: "Streaming Parakeet Unified 1120ms (English)",
         family: Family::Nemo,
+        // fp16 via QUANT_REPO_OVERRIDES (see the 240ms row).
         onnx_model_name: "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-1120ms",
-        available_quantizations: &[""],
+        available_quantizations: &["", "fp16"],
         param_count: 600_000_000,
         supports_realtime: true,
     },
@@ -571,11 +584,13 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         id: "streaming-nemotron-3.5-multi-1120ms-int8",
         display_name: "Streaming Nemotron 3.5 1120ms (Multilingual)",
         family: Family::Nemo,
-        // Masterx repo ships BOTH fp32 (encoder.onnx + encoder.data) and int8, self-exported from
-        // nvidia/nemotron-3.5-asr-streaming-0.6b via sherpa-onnx's export_onnx.py (the upstream
-        // csukuangfj2 package is int8-only). fp32 is the higher-accuracy default.
+        // Masterx repo ships fp32 (encoder.onnx + encoder.data), fp16, and int8, self-exported
+        // from nvidia/nemotron-3.5-asr-streaming-0.6b via sherpa-onnx's export_onnx.py (the
+        // upstream csukuangfj2 package is int8-only). fp32 is the higher-accuracy default; fp16
+        // measured 2026-07-11 at 2.14× fp32 on DirectML (66 s clip 1.90 s vs 4.07 s, encoder
+        // 22 vs 51 ms/chunk) with an IDENTICAL transcript, at half the download.
         onnx_model_name: "Masterx/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-2026-06-11",
-        available_quantizations: &["", "int8"],
+        available_quantizations: &["", "fp16", "int8"],
         param_count: 600_000_000,
         supports_realtime: true,
     },
@@ -588,8 +603,9 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         // `InferAndVerifyOutputSizes` — unfixed upstream #26826/#26944). The Masterx encoder is the
         // SAME weights re-exported via `torch.onnx.export(dynamo=False)` (parakeet's DML-safe idiom;
         // CPU-parity ~4e-6); the decoder is byte-for-byte istupakov's. Runs on DML ~2× faster than CPU.
+        // fp16 = fp16 ENCODER only (same repo); the CPU-pinned KV decoders stay fp32 (globs).
         onnx_model_name: "Masterx/canary-180m-flash-onnx",
-        available_quantizations: &["", "int8"],
+        available_quantizations: &["", "fp16", "int8"],
         param_count: 194_168_492,
         supports_realtime: true,
     },
@@ -598,8 +614,9 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         display_name: "NeMo Canary 1B Flash",
         family: Family::Nemo,
         // DirectML-safe re-export (encoder via `dynamo=False`); see nemo-canary-180m-flash.
+        // fp16 = fp16 ENCODER only (same repo); the CPU-pinned KV decoders stay fp32 (globs).
         onnx_model_name: "Masterx/canary-1b-flash-onnx",
-        available_quantizations: &["", "int8"],
+        available_quantizations: &["", "fp16", "int8"],
         param_count: 883_000_000,
         supports_realtime: true,
     },

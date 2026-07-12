@@ -367,10 +367,11 @@ pub(crate) async fn process_dictation_text(
         },
     };
 
-    // The LLM is the SOLE authority for dictionary corrections — both vocabulary words and
-    // replacement pairs are fed to it as structured prompt blocks (`build_dictation_system_prompt`).
-    // There is no deterministic post-pass, so `dictionary_fixes` is not counted here (the History
-    // "AI Impact" diff still reflects what the model changed).
+    // Vocabulary words + replacement pairs are fed to the model as structured prompt blocks
+    // (`build_dictation_system_prompt`) so it corrects them WITH context. Replacement pairs are ALSO
+    // enforced by a deterministic post-pass on the model's output in `actions::post_process` (the
+    // schema's documented safety net), which is where their count is folded into `dictionary_fixes` —
+    // so this stage reports 0 and never double-counts.
     let text = normalize_llm_text_output(&answer);
     Ok(DictationProcessResult {
         text,
@@ -1333,7 +1334,10 @@ pub(crate) fn build_vocab(settings: &WinsttSettings) -> Vocab {
     }
 }
 
-/// Replacement pairs are the dictionary entries that carry a replacement value.
+/// Replacement pairs are the dictionary entries that carry a replacement value. A whitespace-only
+/// replacement counts as ABSENT (trimmed), matching how `build_vocab` and `actions::post_process`
+/// classify vocab-vs-pair — otherwise the same entry would be both a vocab word (trimmed → empty)
+/// and a pair that rewrites the term to blanks.
 pub(crate) fn replacement_pairs(settings: &WinsttSettings) -> Vec<(String, String)> {
     settings
         .dictionary
@@ -1341,7 +1345,7 @@ pub(crate) fn replacement_pairs(settings: &WinsttSettings) -> Vec<(String, Strin
         .filter_map(|d| {
             d.replacement
                 .as_ref()
-                .filter(|r| !r.is_empty())
+                .filter(|r| !r.trim().is_empty())
                 .map(|r| (d.term.clone(), r.clone()))
         })
         .collect()

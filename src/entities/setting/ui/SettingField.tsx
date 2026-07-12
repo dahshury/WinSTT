@@ -19,6 +19,13 @@ export interface SettingFieldProps {
 	/** Dim + make the control non-interactive (e.g. gated by a parent toggle). */
 	disabled?: boolean;
 	/**
+	 * Inline validation message rendered beneath the control using the error
+	 * token (grayscale-status project uses the error token for failures only).
+	 * Optional and off by default, so existing scalar rows are unaffected —
+	 * pass a non-empty string to surface a per-field error affordance.
+	 */
+	error?: string | undefined;
+	/**
 	 * Name of the setting this one depends on. When `disabled`, the localized
 	 * `settings.disabledReason` message is shown on the setting control itself.
 	 */
@@ -70,6 +77,7 @@ export function SettingField({
 	className,
 	defaultValue,
 	disabled,
+	error,
 	disabledReason,
 	disabledTooltip,
 	isDefault,
@@ -101,6 +109,7 @@ export function SettingField({
 			className={className}
 			controlTooltip={controlTooltip}
 			disabled={disabled}
+			error={error}
 			label={label}
 			labelIcon={labelIcon}
 			labelAddon={labelAddon}

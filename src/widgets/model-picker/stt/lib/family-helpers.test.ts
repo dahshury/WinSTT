@@ -21,7 +21,6 @@ function model(id: string, family: FamilyKey, sizeLabel = "39M"): ModelInfo {
 		id,
 		displayName: id,
 		family,
-		backend: "faster_whisper",
 		languages: ["en"],
 		supportsLanguageDetection: true,
 		sizeLabel,

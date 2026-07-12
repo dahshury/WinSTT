@@ -18,7 +18,6 @@ function model(id: string): ModelInfo {
 		accuracyScore: 0.8,
 		available: true,
 		availableQuantizations: ["int8"],
-		backend: "onnx_asr",
 		description: "Native streaming test model",
 		displayName: "Streaming Nemotron",
 		errorMessage: "",

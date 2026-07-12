@@ -146,25 +146,31 @@ impl EngineKind {
     /// (distinct from `is_dml_incompatible`, which is a crash). EMPIRICALLY per-(engine, quant):
     /// the RNN-T transducers run a per-ENCODER-FRAME predictor/joint loop (hundreds of tiny ops).
     /// On DirectML each is a kernel launch, AND a QUANTIZED (int8/QDQ) graph additionally demotes
-    /// its QuantizeLinear/DequantizeLinear nodes to CPU per-op — so QUANTIZED RNN-T loses to CPU
-    /// (parakeet-rnnt int8: CPU 252 vs DML 361ms; gigaam-rnnt int8 ≈ tie). But FLOAT RNN-T (fp32/
-    /// fp16, no QDQ demotion) WINS on DML (parakeet-rnnt fp32: DML 120 vs CPU 322; gigaam-rnnt fp32:
-    /// DML 126 vs CPU 211). So: quantized RNN-T → CPU, float RNN-T → DML. The CTC/TDT single-pass
-    /// engines win on DML at EVERY quant (gigaam-ctc fp32 32ms / int8 51ms both « CPU), so excluded.
-    /// Streaming NeMo RNN-T int8 follows the same policy (Nemotron 1120ms int8 release harness:
-    /// CPU 3.7s vs DML 4.0s for 30s audio).
+    /// its QuantizeLinear/DequantizeLinear nodes to CPU per-op.
+    ///
+    /// `NemoRnnt` (parakeet-rnnt) was here for int8 until 2026-07-11 (all-CPU 252 ms beat
+    /// all-DML 361 ms on an 11 s clip) — but `transducer.rs::load` now splits the sessions
+    /// (encoder → GPU EP, decoder_joint → CPU), and hybrid int8 measures 645 ms vs 2.38 s
+    /// all-CPU on a 66 s clip (the int8 ENCODER still wins on DML; only the per-frame loop
+    /// demotes) — so parakeet RNN-T keeps the GPU EP at every quant now.
+    ///
+    /// `GigaamRnnt` int8 stays (measured ≈ tie, engine has no hybrid split — untested).
+    /// Streaming NeMo RNN-T int8 stays — RE-VERIFIED 2026-07-11 on a clean machine
+    /// (Nemotron-3.5 1120ms, 66 s clip, warm min-of-3): int8 all-CPU 4.94 s vs the
+    /// enc-DML/dec-CPU hybrid 5.50 s — the streaming int8 ENCODER's QDQ nodes demote on DML too
+    /// (unlike parakeet's offline export), so there is no hybrid win to unlock there; the
+    /// engine's quantized hybrid split in `nemo_streaming.rs::load` stays as a spike/env-escape
+    /// path only. (fp32 keeps all-DML: 4.07 s vs 4.94 s int8-CPU — fastest AND most accurate.)
     pub fn dml_slower_than_cpu(self, quant: Quantization) -> bool {
-        matches!(
-            self,
-            EngineKind::NemoRnnt | EngineKind::GigaamRnnt | EngineKind::NemoRnntStreaming
-        ) && matches!(
-            quant,
-            Quantization::Int8
-                | Quantization::Q4
-                | Quantization::Q4f16
-                | Quantization::Bnb4
-                | Quantization::Uint8
-        )
+        matches!(self, EngineKind::GigaamRnnt | EngineKind::NemoRnntStreaming)
+            && matches!(
+                quant,
+                Quantization::Int8
+                    | Quantization::Q4
+                    | Quantization::Q4f16
+                    | Quantization::Bnb4
+                    | Quantization::Uint8
+            )
     }
 
     /// True iff this kind has a cache-aware/stateful streaming ONNX graph we drive chunk-by-chunk

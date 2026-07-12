@@ -31,7 +31,6 @@ function model(over: Partial<ModelInfo> & Pick<ModelInfo, "id">): ModelInfo {
 	const previewCapable = over.previewCapable ?? false;
 	return {
 		displayName: over.displayName ?? over.id,
-		backend: over.backend ?? "onnx_asr",
 		family: over.family ?? "whisper",
 		languages: [],
 		supportsLanguageDetection: false,
@@ -178,16 +177,12 @@ describe("resolveLocalSttTarget", () => {
 	test("falls back to the schema default when the catalog is empty", () => {
 		expect(resolveLocalSttTarget([], {})).toEqual({
 			model: DEFAULT_SETTINGS.model.model,
-			backend: DEFAULT_SETTINGS.model.backend,
 		});
 	});
 
-	test("picks a catalog model and pairs its backend", () => {
-		const target = resolveLocalSttTarget(
-			[model({ id: "tiny", backend: "onnx_asr" })],
-			{},
-		);
-		expect(target).toEqual({ model: "tiny", backend: "onnx_asr" });
+	test("picks a catalog model", () => {
+		const target = resolveLocalSttTarget([model({ id: "tiny" })], {});
+		expect(target).toEqual({ model: "tiny" });
 	});
 });
 

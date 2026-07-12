@@ -3,7 +3,6 @@
 import {
 	Copy01Icon,
 	GlobeIcon,
-	HardDriveDownloadIcon,
 	MagicWand01Icon,
 	UserMultiple02Icon,
 } from "@hugeicons/core-free-icons";
@@ -12,7 +11,10 @@ import type { ReactNode } from "react";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { Tooltip } from "@/shared/ui/tooltip";
-import type { MetaEntry } from "../../core/model-card/CardMeta";
+import {
+	downloadSizeMetaEntry,
+	type MetaEntry,
+} from "../../core/model-card/CardMeta";
 import { ModelCard } from "../../core/model-card/ModelCard";
 import {
 	type QuantDownloadAction,
@@ -272,12 +274,7 @@ function buildMetaEntries(
 		tooltip: lang.tooltip,
 	});
 	if (bytes) {
-		entries.push({
-			key: "size",
-			icon: HardDriveDownloadIcon,
-			value: bytes,
-			tooltip: `Download size: ${bytes}`,
-		});
+		entries.push(downloadSizeMetaEntry(bytes));
 	}
 	return entries;
 }

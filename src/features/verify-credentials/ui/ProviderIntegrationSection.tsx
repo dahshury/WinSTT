@@ -18,7 +18,11 @@ import type {
 	IntegrationCloudProvider,
 } from "@/shared/api/models";
 import { verifyCredentialCommand } from "../api/verify-credential";
-import { isProbedSecretCurrent } from "@/shared/config/settings-schema";
+import {
+	displaySecretValue,
+	isProbedSecretCurrent,
+	SECRET_CLEAR_SENTINEL,
+} from "@/shared/config/settings-schema";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { useSurface } from "@/shared/lib/surface";
 import { brandLogoFor } from "@/shared/ui/brand-logo";
@@ -72,6 +76,12 @@ export function ProviderIntegrationSection({
 }: ProviderIntegrationSectionProps) {
 	const persistedApiKey = useSettingsStore(
 		(s) => s.settings.integrations[provider].apiKey,
+	);
+	// Persisted verdict of the last probe — survives remounts (the in-memory
+	// status store resets to idle), so a rejected key stays flagged as invalid
+	// on the sealed field instead of quietly reading as good.
+	const persistedVerified = useSettingsStore(
+		(s) => s.settings.integrations[provider].verified,
 	);
 	const updateIntegrations = useSettingsStore((s) => s.updateIntegrations);
 	const activeModel = useSettingsStore((s) => s.settings.model?.model ?? "");
@@ -227,8 +237,15 @@ export function ProviderIntegrationSection({
 		reqIdRef.current++;
 		setDraftApiKey("");
 		setEditingApiKey(false);
+		// Explicit removal: post the CLEAR sentinel (not "") so the backend performs
+		// a real wipe — an empty incoming secret is now treated as "keep the stored
+		// key" and would silently no-op the removal.
 		updateIntegrations({
-			[provider]: { apiKey: "", verified: null, lastVerifiedAt: null },
+			[provider]: {
+				apiKey: SECRET_CLEAR_SENTINEL,
+				verified: null,
+				lastVerifiedAt: null,
+			},
 		});
 		useCredentialStatusStore.getState().setStatus(provider, { status: "idle" });
 	};
@@ -241,18 +258,26 @@ export function ProviderIntegrationSection({
 		reqIdRef.current++;
 		setDraftApiKey("");
 		setEditingApiKey(false);
+		// See requestRemoveApiKey: the CLEAR sentinel is what actually wipes the key.
 		updateIntegrations({
-			[provider]: { apiKey: "", verified: null, lastVerifiedAt: null },
+			[provider]: {
+				apiKey: SECRET_CLEAR_SENTINEL,
+				verified: null,
+				lastVerifiedAt: null,
+			},
 		});
 		useCredentialStatusStore.getState().setStatus(provider, { status: "idle" });
 	};
 
-	const hasLocalKey = persistedApiKey.trim().length > 0;
+	// The CLEAR sentinel is parked in the store until the backend broadcasts the
+	// cleared value back — treat it as "no key" for every display-derived value.
+	const displayApiKey = displaySecretValue(persistedApiKey);
+	const hasLocalKey = displayApiKey.trim().length > 0;
 	const keyLocked = hasLocalKey && !editingApiKey;
-	const editableApiKey = editingApiKey ? draftApiKey : persistedApiKey;
+	const editableApiKey = editingApiKey ? draftApiKey : displayApiKey;
 	const pill = (
 		<CredentialStatusPill
-			apiKey={persistedApiKey}
+			apiKey={displayApiKey}
 			chipLevel={chipLevel}
 			status={status}
 			t={t}
@@ -289,6 +314,9 @@ export function ProviderIntegrationSection({
 						{keyLocked ? (
 							<StoredSecretField
 								aria-label={keyLabel}
+								invalid={
+									persistedVerified === false || status.status === "invalid"
+								}
 								placeholder={placeholder}
 							/>
 						) : (

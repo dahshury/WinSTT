@@ -24,6 +24,7 @@ import {
 	useSettingsStore,
 } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
+import { contextAwarenessSupport } from "@/shared/lib/host-platform";
 import { Badge } from "@/shared/ui/badge";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { OptInDialog } from "@/shared/ui/opt-in-dialog";
@@ -620,6 +621,16 @@ export function ProcessingExtrasPanel() {
 		? LISTEN_MODE_PROCESSING_DISABLED_TOOLTIP
 		: undefined;
 	const contextAwarenessEnabled = general?.contextAwareness ?? false;
+	// Context capture reads other apps' UI text via the OS accessibility layer
+	// (UIA / AX / AT-SPI). On a host without that layer (non-desktop / non-Tauri)
+	// the toggle would drive an always-empty feature — disable it with a reason
+	// instead. Desktop OSes all report supported, so mac/linux stay interactive.
+	const contextSupport = contextAwarenessSupport();
+	const contextUnavailable = !contextSupport.supported;
+	const contextDisabled = isListenMode || contextUnavailable;
+	const contextDisabledTooltip = contextUnavailable
+		? contextSupport.reason
+		: listenModeDisabledTooltip;
 
 	return (
 		<div className="flex flex-col">
@@ -655,8 +666,8 @@ export function ProcessingExtrasPanel() {
 				 hide it instead of advertising a dead setting. */}
 			{contextAwarenessUseful ? (
 				<ContextAwarenessSection
-					disabled={isListenMode}
-					disabledTooltip={listenModeDisabledTooltip}
+					disabled={contextDisabled}
+					disabledTooltip={contextDisabledTooltip}
 					enabled={contextAwarenessEnabled}
 					onCancel={() => updateGeneral({ contextAwareness: false })}
 					onConfirm={() => updateGeneral({ contextAwareness: true })}

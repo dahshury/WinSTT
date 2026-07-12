@@ -1,26 +1,7 @@
-use super::types::{LogLevel, OverlayPosition, TypingTool};
-
-pub(super) fn default_model() -> String {
-    "".to_string()
-}
-
-pub(super) fn default_translate_to_english() -> bool {
-    false
-}
+use super::types::{LogLevel, TypingTool};
 
 pub(super) fn default_update_checks_enabled() -> bool {
     true
-}
-
-pub(super) fn default_selected_language() -> String {
-    "auto".to_string()
-}
-
-pub(super) fn default_overlay_position() -> OverlayPosition {
-    #[cfg(target_os = "linux")]
-    return OverlayPosition::None;
-    #[cfg(not(target_os = "linux"))]
-    return OverlayPosition::Bottom;
 }
 
 pub(super) fn default_debug_mode() -> bool {

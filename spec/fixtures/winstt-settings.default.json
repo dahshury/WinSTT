@@ -34,6 +34,7 @@
     ],
     "contextScreenOcr": false,
     "customWakeWords": [],
+    "dictionaryContextChars": 220,
     "encoderDictionaryEnabled": true,
     "fileTranscriptionFormat": "txt",
     "fileTranscriptionSaveLocation": "auto",
@@ -80,8 +81,7 @@
     "wakeWord": "alexa",
     "wakeWordSensitivity": 0.6,
     "wakeWordTimeout": 5.0,
-    "wordByWordPasting": false,
-    "wordCorrectionThreshold": 0.18
+    "wordByWordPasting": false
   },
   "global": {
     "modelUnloadTimeout": "min15"
@@ -150,7 +150,6 @@
   },
   "model": {
     "autoDetectLanguage": false,
-    "backend": "faster_whisper",
     "device": "auto",
     "initialPrompt": "",
     "initialPromptRealtime": "",
@@ -178,6 +177,7 @@
     "unknownSentenceDetectionPause": 1.3,
     "useMainModelForRealtime": false
   },
+  "schemaVersion": 1,
   "snippets": [],
   "tts": {
     "cloneRefText": "",

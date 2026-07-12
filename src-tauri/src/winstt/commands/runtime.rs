@@ -131,19 +131,39 @@ pub fn runtime_info_snapshot(
     let (device, is_gpu, providers) = accel_runtime(accel);
     let settings = read_settings_raw(app);
     let loaded = transcription.get_current_model();
-    let model = loaded.or_else(|| {
+
+    // Is the RESIDENT engine the SEPARATE realtime model? In listen mode (and any
+    // time realtime runs as its own engine) `get_current_model()` returns the
+    // realtime id, NOT the main model. Reporting that in the MAIN-slot `model`
+    // field made `useSyncActiveModel` adopt the realtime model into the main
+    // settings slot, pairing it with the main model's `onnxQuantization` (e.g.
+    // main=fp16 vs a realtime model that only offers int8) → the rejected
+    // `settings:save`. The `model` field must always describe the MAIN model, so
+    // fall back to the persisted main model whenever the realtime engine is what's
+    // loaded.
+    let realtime_id = settings.model.realtime_model.clone();
+    let loaded_is_separate_realtime = !settings.quality.use_main_model_for_realtime
+        && !realtime_id.is_empty()
+        && loaded.as_deref() == Some(realtime_id.as_str());
+    let persisted_main = {
         let m = settings.model.model.clone();
         if m.is_empty() { None } else { Some(m) }
-    });
+    };
+    let model = if loaded_is_separate_realtime {
+        persisted_main
+    } else {
+        loaded.or(persisted_main)
+    };
+
     // The selected realtime model is only actually loaded when realtime is
     // enabled for the current settings AND a SEPARATE model is used (not the main
     // model). Reporting it whenever the setting is non-empty made the footer chip
     // / model-footprint show a "LIVE" realtime model the user had disabled.
     let realtime_model = if effective_realtime(&settings)
         && !settings.quality.use_main_model_for_realtime
-        && !settings.model.realtime_model.is_empty()
+        && !realtime_id.is_empty()
     {
-        Some(settings.model.realtime_model)
+        Some(realtime_id)
     } else {
         None
     };

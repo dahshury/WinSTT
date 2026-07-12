@@ -23,11 +23,6 @@ describe("modelSettingsSchema defaults", () => {
 		expect(out.autoDetectLanguage).toBe(false);
 		expect(out.languageCandidates).toEqual([]);
 		expect(out.device).toBe("auto");
-		expect(out.backend).toBe("faster_whisper");
-	});
-
-	test("rejects unknown backend", () => {
-		expect(() => modelSettingsSchema.parse({ backend: "made-up" })).toThrow();
 	});
 
 	test("device enum accepts both 'auto' and 'cpu'", () => {
@@ -43,19 +38,6 @@ describe("modelSettingsSchema defaults", () => {
 		// option with "". Passing "" should still fail validation because
 		// neither real option is "".
 		expect(() => modelSettingsSchema.parse({ device: "" })).toThrow();
-	});
-
-	test("backend enum accepts both 'faster_whisper' and 'onnx_asr'", () => {
-		expect(
-			modelSettingsSchema.parse({ backend: "faster_whisper" }).backend,
-		).toBe("faster_whisper");
-		expect(modelSettingsSchema.parse({ backend: "onnx_asr" }).backend).toBe(
-			"onnx_asr",
-		);
-	});
-
-	test("backend enum rejects empty string", () => {
-		expect(() => modelSettingsSchema.parse({ backend: "" })).toThrow();
 	});
 
 	test("onnxQuantization defaults to 'auto' (RAM-aware pick, mirrors the canonical Rust default)", () => {
@@ -131,16 +113,20 @@ describe("audioSettingsSchema bounds", () => {
 });
 
 describe("qualitySettingsSchema", () => {
-	test("smartEndpointSpeed bounded [0.5, 3.0]", () => {
+	test("smartEndpointSpeed bounded [0.5, 3.0], out-of-range catches to default", () => {
 		expect(
 			qualitySettingsSchema.parse({ smartEndpointSpeed: 1 }).smartEndpointSpeed,
 		).toBe(1);
-		expect(() =>
-			qualitySettingsSchema.parse({ smartEndpointSpeed: 0.4 }),
-		).toThrow();
-		expect(() =>
-			qualitySettingsSchema.parse({ smartEndpointSpeed: 3.5 }),
-		).toThrow();
+		// Audit #43: an out-of-range persisted value must reset only this field
+		// (via `.catch(2.0)`), NOT reject and nuke the whole `quality` section.
+		expect(
+			qualitySettingsSchema.parse({ smartEndpointSpeed: 0.4 })
+				.smartEndpointSpeed,
+		).toBe(2.0);
+		expect(
+			qualitySettingsSchema.parse({ smartEndpointSpeed: 3.5 })
+				.smartEndpointSpeed,
+		).toBe(2.0);
 	});
 
 	test("realtime defaults align with PTT mode", () => {
@@ -306,8 +292,15 @@ describe("dictionary & snippet schemas", () => {
 });
 
 describe("llmSettingsSchema", () => {
-	test("endpoint must be a URL", () => {
-		expect(() => llmSettingsSchema.parse({ endpoint: "not a url" })).toThrow();
+	test("endpoint validates as a URL but catches a bad value to the default", () => {
+		expect(
+			llmSettingsSchema.parse({ endpoint: "http://host:1234" }).endpoint,
+		).toBe("http://host:1234");
+		// Audit #43: a malformed endpoint must reset only itself (via `.catch`),
+		// NOT reject and drag the whole `llm` section back to defaults on decode.
+		expect(llmSettingsSchema.parse({ endpoint: "not a url" }).endpoint).toBe(
+			"http://localhost:11434",
+		);
 	});
 
 	test("dictation.presets must contain known preset keys", () => {

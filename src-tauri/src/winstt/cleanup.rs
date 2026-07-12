@@ -93,17 +93,6 @@ pub fn model_uninstall_settings_patch(
     )
 }
 
-/// Clear the legacy top-level `selected_model` field that predates the nested
-/// settings tree. No-op when already empty.
-pub fn clear_legacy_selected_model(app: &AppHandle) {
-    let mut settings = crate::settings::get_settings(app);
-    if settings.selected_model.is_empty() {
-        return;
-    }
-    settings.selected_model.clear();
-    crate::settings::write_settings(app, settings);
-}
-
 // ───────────────────────── model-cache deletion ─────────────────────────
 
 /// Delete every cached STT model (catalog entries + the WinSTT-owned Hugging

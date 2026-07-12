@@ -57,20 +57,58 @@ pub fn espeak_runtime_loader_dir() -> Option<PathBuf> {
 
 pub fn espeak_runtime_available() -> bool {
     resolve_espeak_lib().is_some_and(|(lib, data)| {
-        lib.is_file() && data.as_deref().and_then(resolve_espeak_data_home).is_some()
+        espeak_lib_path_usable(&lib) && data.as_deref().and_then(resolve_espeak_data_home).is_some()
     })
 }
 
+/// A resolved shared-lib path is usable when it points at a real file, or — on
+/// Unix — when it is a bare soname the dynamic loader resolves. `resolve_espeak_lib`
+/// only ever returns a bare soname after verifying it dlopens (see its loader
+/// fallback), so we trust that here without re-probing.
+fn espeak_lib_path_usable(lib: &Path) -> bool {
+    if lib.is_file() {
+        return true;
+    }
+    #[cfg(not(windows))]
+    {
+        // A bare soname (e.g. `libespeak-ng.so.1`) has no directory component;
+        // the loader — not the filesystem — resolves it.
+        lib.parent().is_none_or(|p| p.as_os_str().is_empty())
+    }
+    #[cfg(windows)]
+    {
+        false
+    }
+}
+
 pub fn espeak_runtime_install_required_message() -> String {
-    let path = espeak_runtime_loader_dir().map_or_else(
-        || "%LOCALAPPDATA%\\winstt\\tts\\runtime\\espeakng_loader".to_string(),
-        |p| p.display().to_string(),
-    );
-    format!(
-        "eSpeak NG runtime is required for this TTS model. Expected espeak-ng.dll \
-         and espeak-ng-data under {path}. Install eSpeak NG and set ESPEAK_NG_LIBRARY, \
-         or retry on a platform with a pinned espeakng_loader runtime pack."
-    )
+    #[cfg(windows)]
+    {
+        let path = espeak_runtime_loader_dir().map_or_else(
+            || "%LOCALAPPDATA%\\winstt\\tts\\runtime\\espeakng_loader".to_string(),
+            |p| p.display().to_string(),
+        );
+        format!(
+            "eSpeak NG runtime is required for this TTS model. Expected espeak-ng.dll \
+             and espeak-ng-data under {path}. Install eSpeak NG and set ESPEAK_NG_LIBRARY, \
+             or retry on a platform with a pinned espeakng_loader runtime pack."
+        )
+    }
+    #[cfg(all(not(windows), target_os = "macos"))]
+    {
+        "eSpeak NG is required for this TTS model. Install it with \
+         `brew install espeak-ng` (or set ESPEAK_NG_LIBRARY to a libespeak-ng.dylib \
+         and ESPEAK_DATA_PATH to its espeak-ng-data)."
+            .to_string()
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        "eSpeak NG is required for this TTS model. Install it with your package \
+         manager (e.g. `apt install espeak-ng` / `dnf install espeak-ng`), or set \
+         ESPEAK_NG_LIBRARY to a libespeak-ng.so and ESPEAK_DATA_PATH to its \
+         espeak-ng-data."
+            .to_string()
+    }
 }
 
 /// Ensure the pinned espeakng_loader runtime is installed under LOCALAPPDATA.

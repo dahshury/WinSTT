@@ -305,6 +305,12 @@ fn consumer_loop(
     let mut in_speech = false;
     let mut silence_frames = 0usize;
     let mut realtime = LoopbackRealtimeState::new();
+    // Tracks whether the last `audio_level` emission (real chunk or idle tick) was
+    // already the 0.0 floor, so a silent stretch emits the zero ONCE on the
+    // non-zero → zero transition instead of every 200 ms recv timeout for as long as
+    // the silence lasts (each emit also drives `on_tray_audio_level`). Starts `true`
+    // — no level has been emitted yet, so there is nothing to re-announce as zero.
+    let mut audio_level_is_zero = true;
     transcription.stream_reset_realtime();
 
     loop {
@@ -317,7 +323,10 @@ fn consumer_loop(
         let chunk = match rx.recv_timeout(LOOPBACK_RECV_TIMEOUT) {
             Ok(c) => c,
             Err(RecvTimeoutError::Timeout) => {
-                SttEvents::audio_level(&app, 0.0);
+                if !audio_level_is_zero {
+                    SttEvents::audio_level(&app, 0.0);
+                    audio_level_is_zero = true;
+                }
                 if in_speech {
                     silence_frames = silence_frames
                         .saturating_add(silence_frames_for_duration(LOOPBACK_RECV_TIMEOUT));
@@ -357,6 +366,7 @@ fn consumer_loop(
             .fold(0.0f32, |m, s| m.max(s.abs()))
             .clamp(0.0, 1.0);
         SttEvents::audio_level(&app, level);
+        audio_level_is_zero = level <= 0.0;
 
         frame_acc.extend_from_slice(&chunk);
 

@@ -5,7 +5,11 @@
  * trivially unit-testable.
  */
 
-import { decodeSettingsPayload } from "@/shared/config/settings-codec";
+import { DEFAULT_SETTINGS } from "@/entities/setting";
+import {
+	decodeSettingsWithDiagnostics,
+	type SettingsDecodeDiagnostics,
+} from "@/shared/config/settings-codec";
 import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
 import { isPlainRecord } from "@/shared/lib/is-record";
 
@@ -258,13 +262,37 @@ function isLiveServerReady(serverStatus: string, isLoaded: boolean): boolean {
 	return serverStatus === "running" && isLoaded;
 }
 
+/**
+ * Whether THIS window should perform the connect-time full sync.
+ *
+ * `useSyncSettings` mounts in every window (main, settings, model-picker,
+ * footprint, …). Each one runs `syncToServer` when `serverStatus` flips to
+ * "running", so with several windows open the server received the same
+ * `sttSetParameter`/`silence_timing`/diarization burst N times on connect
+ * (audit #1). Only the always-present main window drives the connect-time
+ * push; the other windows skip it. Their per-window LIVE change syncing (the
+ * settings-change effect) is unaffected — only the redundant connect fan-out
+ * is suppressed.
+ *
+ * When the window label is unknown (plain Vite / happy-dom tests / any
+ * non-Tauri host where there's a single renderer), treat this as primary so
+ * the connect sync still happens exactly once.
+ */
+export function isPrimarySyncWindow(
+	currentWindowLabel: string | null,
+): boolean {
+	return currentWindowLabel == null || currentWindowLabel === "main";
+}
+
 export function shouldSyncOnConnect(
 	serverStatus: string,
 	isLoaded: boolean,
 	alreadySynced: boolean,
 	hasIpcLoadResolved: boolean,
+	isPrimaryWindow = true,
 ): boolean {
 	return (
+		isPrimaryWindow &&
 		isLiveServerReady(serverStatus, isLoaded) &&
 		hasIpcLoadResolved &&
 		!alreadySynced
@@ -384,12 +412,41 @@ function mergeChangedValue(
 	return { value: result, preserved };
 }
 
+/**
+ * True when the ENTIRE settings tree carries no user information: every
+ * section equals the schema defaults exactly. That is the signature of an
+ * unhydrated / empty-cache window store (`DEFAULT_SETTINGS`), NOT of user
+ * intent — and such a store must never win a merge against disk/broadcast
+ * state nor be posted as a save. Preserving those defaults as "user-dirty" is
+ * how a boot-time window posted a FULL all-defaults tree (wakeWord back to
+ * "alexa", model back to "tiny"), wiping real settings and then re-posting
+ * forever (each broadcast "preserved" its defaults again).
+ *
+ * Deliberately WHOLE-TREE, not per-section: a single section equal to its
+ * defaults is a legitimate user state (e.g. toggling the one customized field
+ * of `llm` back off makes the section defaults-equal again) and must keep
+ * normal dirty-merge/save semantics.
+ */
+export function treeCarriesNoUserInfo(settings: AppSettings): boolean {
+	return settingsSectionsEqual(settings, DEFAULT_SETTINGS);
+}
+
 function mergeSections(
 	decoded: AppSettings,
 	current: AppSettings,
 	lastSaved: AppSettings,
 ): { merged: AppSettings; preserved: boolean } {
+	// Unhydrated store (pure defaults) → the incoming snapshot wins outright;
+	// there is nothing user-dirty to preserve. See `treeCarriesNoUserInfo`.
+	if (treeCarriesNoUserInfo(current)) {
+		return { merged: decoded, preserved: false };
+	}
 	let preserved = false;
+	// Track whether any top-level section actually changed identity vs `current`.
+	// When nothing did, we hand back `current` itself (below) so a no-op broadcast
+	// produces zero re-renders — the whole-object selector `(s) => s.settings`
+	// sees the same reference and every object-slice subscriber is skipped.
+	let changedAny = false;
 	const result: Record<string, unknown> = {};
 	for (const [key, decodedValue] of Object.entries(decoded)) {
 		const typedKey = key as keyof AppSettings;
@@ -398,8 +455,21 @@ function mergeSections(
 			current[typedKey],
 			lastSaved[typedKey],
 		);
-		result[key] = picked.value;
+		// Audit #34: preserve referential identity when the merged section is
+		// structurally identical to the current one, so a section that merely
+		// round-tripped through decode (new object, same data) doesn't re-render
+		// its selectors. `mergeDirtyValue` already returns the `current` reference
+		// for user-dirty sections; this covers the clean-but-equal case.
+		if (settingsSectionsEqual(picked.value, current[typedKey])) {
+			result[key] = current[typedKey];
+		} else {
+			result[key] = picked.value;
+			changedAny = true;
+		}
 		preserved = preserved || picked.preserved;
+	}
+	if (!changedAny) {
+		return { merged: current, preserved };
 	}
 	return { merged: result as AppSettings, preserved };
 }
@@ -489,14 +559,28 @@ export function deriveBroadcastUpdate(
 	current: AppSettings,
 	lastSaved: AppSettings | undefined,
 	fromBroadcastNow: boolean,
-): { merged: AppSettings; nextFromBroadcast: boolean } {
-	const decoded = decodeSettingsPayload(incoming);
+): {
+	decoded: AppSettings;
+	diagnostics: SettingsDecodeDiagnostics;
+	merged: AppSettings;
+	nextFromBroadcast: boolean;
+} {
+	const { settings: decoded, diagnostics } =
+		decodeSettingsWithDiagnostics(incoming);
 	const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 		decoded,
 		current,
 		lastSaved,
 	);
-	return { merged, nextFromBroadcast: !preserved || fromBroadcastNow };
+	// `decoded` is the SAME normalized value the store will hold for clean
+	// sections; the caller stamps `lastSavedRef` with it (audit #33) so those
+	// sections don't read perpetually dirty against the RAW broadcast payload.
+	return {
+		decoded,
+		diagnostics,
+		merged,
+		nextFromBroadcast: !preserved || fromBroadcastNow,
+	};
 }
 
 /**

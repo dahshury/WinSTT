@@ -35,13 +35,17 @@
 // MAX_AXHTML_CHARS = 150000; TREE_WALK_BUDGET_MS = 600; WATCHDOG_TIMEOUT_MS = 750).
 // In --serve the watchdog is armed PER REQUEST (a wedged UIA call exits the
 // process so the manager respawns; one bad request can't hang the warm server).
-// On non-Windows this is a stub that prints an empty snapshot.
+//
+// On macOS the reader uses the Accessibility API (AXUIElement); on Linux it uses
+// AT-SPI (atspi + zbus). Both emit the SAME single-line JSON snapshot shape so the
+// manager + parser are platform-agnostic. Other platforms print an empty snapshot.
 
 #![cfg_attr(
     not(windows),
     expect(
         unused,
-        reason = "non-Windows sidecar build is a stub that leaves Windows UIA code unused"
+        reason = "the shared Windows UIA caps/consts are unused on the macOS/Linux \
+                  sidecar builds, which use the AX-API / AT-SPI readers below"
     )
 )]
 
@@ -83,15 +87,135 @@ const MAX_OCR_CHARS: usize = 8_000;
 fn main() {
     #[cfg(windows)]
     windows_impl::run();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    macos_impl::run();
+    #[cfg(target_os = "linux")]
+    linux_impl::run();
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
-        // No UIA off Windows — emit the cheap empty 3-field shape.
+        // No accessibility backend on this platform — emit the cheap empty shape.
         print!(
             "{{\"windowTitle\":\"\",\"elementName\":\"\",\"focusedText\":\"\",\
              \"textBefore\":\"\",\"textAfter\":\"\",\"appExe\":\"\",\
              \"url\":\"\",\"axHtml\":\"\"}}"
         );
     }
+}
+
+// ─────────────── shared non-Windows snapshot plumbing ───────────────
+//
+// The macOS (AX-API) and Linux (AT-SPI) readers emit the SAME single-line JSON
+// snapshot shape as the Windows UIA one-shot path, so `parse_snapshot` and every
+// downstream context consumer stay platform-agnostic. These helpers hold the
+// shared mode parse + escape + emit logic both readers reuse.
+
+/// The capture mode for the non-Windows readers (mirrors the Windows `Mode`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NwMode {
+    Focused,
+    Selection,
+    Split,
+    Tree,
+}
+
+/// Parse the mode from the process args — the same `--selection` / `--split` /
+/// `--tree` flags the manager passes (default = focused). `--hwnd` / `--ocr` /
+/// `--serve` are Windows-only concepts and ignored here.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn nw_parse_mode() -> NwMode {
+    let mut mode = NwMode::Focused;
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--selection" => mode = NwMode::Selection,
+            "--split" => mode = NwMode::Split,
+            "--tree" => mode = NwMode::Tree,
+            _ => {}
+        }
+    }
+    mode
+}
+
+/// The snapshot fields the non-Windows readers populate. `is_password` withholds
+/// all text end-to-end (mirrors the Windows password guard); `url` / `ax_html`
+/// stay empty (no portable omnibox / tree walk off Windows).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Default)]
+struct NwSnapshot {
+    window_title: String,
+    element_name: String,
+    focused_text: String,
+    text_before: String,
+    text_after: String,
+    app_exe: String,
+    url: String,
+    ax_html: String,
+    is_password: bool,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl NwSnapshot {
+    fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Emit the single-line JSON snapshot to stdout, byte-shape-identical to the
+    /// Windows one-shot output (plus the optional trailing `"isPassword":true`).
+    fn print(mut self) {
+        use std::io::Write;
+
+        nw_truncate_chars(&mut self.focused_text, MAX_CONTEXT_CHARS);
+        nw_truncate_chars(&mut self.text_before, MAX_CONTEXT_CHARS);
+        nw_truncate_chars(&mut self.text_after, MAX_CONTEXT_CHARS);
+
+        let pw_suffix = if self.is_password {
+            ",\"isPassword\":true"
+        } else {
+            ""
+        };
+        print!(
+            "{{\"windowTitle\":\"{}\",\"elementName\":\"{}\",\"focusedText\":\"{}\",\
+             \"textBefore\":\"{}\",\"textAfter\":\"{}\",\"appExe\":\"{}\",\
+             \"url\":\"{}\",\"axHtml\":\"{}\"{pw_suffix}}}",
+            nw_json_escape(&self.window_title),
+            nw_json_escape(&self.element_name),
+            nw_json_escape(&self.focused_text),
+            nw_json_escape(&self.text_before),
+            nw_json_escape(&self.text_after),
+            nw_json_escape(&self.app_exe),
+            nw_json_escape(&self.url),
+            nw_json_escape(&self.ax_html),
+        );
+        let _ = std::io::stdout().flush();
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn nw_truncate_chars(s: &mut String, max: usize) {
+    if s.chars().count() > max {
+        *s = s.chars().take(max).collect();
+    }
+}
+
+/// JSON-escape a UTF-8 string body (structural + sub-0x20 control chars), matching
+/// the Windows `json_escape` so both platforms produce identical snapshot bytes.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn nw_json_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 8);
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\u{000C}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(windows)]
@@ -1955,5 +2079,570 @@ mod windows_impl {
             drop(stdin);
             let _ = child.wait();
         }
+    }
+}
+
+// ─────────────────────────── macOS (AX-API) ───────────────────────────
+//
+// Focused-field reader via the Accessibility API (HIServices / AXUIElement). We
+// bind the minimal CoreFoundation + ApplicationServices C ABI directly rather than
+// the typed `objc2-application-services` wrappers: those methods take `&CFString` /
+// `NonNull<*const CFType>` from `objc2-core-foundation`, which is only a transitive
+// dependency here (not directly nameable), and the free-function forms are
+// `#[deprecated]` (they would trip `warnings = "deny"`). The direct FFI is
+// feature-flag-independent and self-contained; the framework linkage is guaranteed
+// by the `#[link]` attributes below. Reading needs the Accessibility permission
+// (granted out-of-band via `tauri_plugin_macos_permissions`); when it is absent —
+// or any AX call fails — an empty, well-formed snapshot is printed.
+#[cfg(target_os = "macos")]
+mod macos_impl {
+    use std::ffi::c_void;
+    use std::ptr;
+    use std::time::Duration;
+
+    use super::{CARET_AFTER_CHARS, CARET_BEFORE_CHARS, NwMode, NwSnapshot, nw_parse_mode};
+
+    // ── Minimal CoreFoundation / ApplicationServices C ABI ──
+    type CFTypeRef = *const c_void;
+    type CFStringRef = *const c_void;
+    type CFAllocatorRef = *const c_void;
+    type CFIndex = isize;
+    type CFTypeID = usize;
+    type Boolean = u8;
+    type AXError = i32;
+    type CFStringEncoding = u32;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CFRange {
+        location: CFIndex,
+        length: CFIndex,
+    }
+
+    // kCFStringEncodingUTF8.
+    const CF_STRING_ENCODING_UTF8: CFStringEncoding = 0x0800_0100;
+    // kAXValueTypeCFRange (AXValue.rs: `pub const CFRange: Self = Self(4)`).
+    const AX_VALUE_TYPE_CFRANGE: u32 = 4;
+    // kAXErrorSuccess (AXError.rs: `pub const Success: Self = Self(0)`).
+    const AX_ERROR_SUCCESS: AXError = 0;
+    const CF_ALLOCATOR_DEFAULT: CFAllocatorRef = ptr::null();
+
+    // PROC_PIDPATHINFO_MAXSIZE (4 * MAXPATHLEN).
+    const PROC_PIDPATH_MAX: usize = 4096;
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFRelease(cf: CFTypeRef);
+        fn CFGetTypeID(cf: CFTypeRef) -> CFTypeID;
+        fn CFStringGetTypeID() -> CFTypeID;
+        fn CFStringCreateWithBytes(
+            alloc: CFAllocatorRef,
+            bytes: *const u8,
+            num_bytes: CFIndex,
+            encoding: CFStringEncoding,
+            is_external_representation: Boolean,
+        ) -> CFStringRef;
+        fn CFStringGetLength(the_string: CFStringRef) -> CFIndex;
+        fn CFStringGetBytes(
+            the_string: CFStringRef,
+            range: CFRange,
+            encoding: CFStringEncoding,
+            loss_byte: u8,
+            is_external_representation: Boolean,
+            buffer: *mut u8,
+            max_buf_len: CFIndex,
+            used_buf_len: *mut CFIndex,
+        ) -> CFIndex;
+    }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn AXIsProcessTrusted() -> Boolean;
+        fn AXUIElementCreateSystemWide() -> CFTypeRef;
+        fn AXUIElementCopyAttributeValue(
+            element: CFTypeRef,
+            attribute: CFStringRef,
+            value: *mut CFTypeRef,
+        ) -> AXError;
+        fn AXUIElementGetPid(element: CFTypeRef, pid: *mut i32) -> AXError;
+        fn AXValueGetValue(value: CFTypeRef, the_type: u32, value_ptr: *mut c_void) -> Boolean;
+    }
+
+    // libproc lives in libSystem (always linked); maps the focused app's pid to
+    // its executable path, whose basename is the closest analog to the Windows
+    // `appExe` the deny-list matches on.
+    unsafe extern "C" {
+        fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
+    }
+
+    /// RAII wrapper that `CFRelease`s an owned (+1) CoreFoundation object on drop,
+    /// so every `Copy`/`Create` result is balanced on all paths.
+    struct CfOwned(CFTypeRef);
+
+    impl Drop for CfOwned {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: `self.0` is a non-null CF object this owns a +1 ref to.
+                unsafe { CFRelease(self.0) };
+            }
+        }
+    }
+
+    impl CfOwned {
+        fn get(&self) -> CFTypeRef {
+            self.0
+        }
+    }
+
+    pub fn run() {
+        // Hard watchdog: a wedged AX call can hang the process; exit so the manager
+        // sees a dead child and falls back (mirrors the Windows one-shot watchdog).
+        std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(2_000));
+            std::process::exit(3);
+        });
+
+        let mode = nw_parse_mode();
+        let snapshot = read(mode).unwrap_or_else(NwSnapshot::empty);
+        snapshot.print();
+    }
+
+    /// Read the focused-field context. Returns `None` (→ empty snapshot) when the
+    /// Accessibility permission is missing or no focused element is reachable.
+    fn read(mode: NwMode) -> Option<NwSnapshot> {
+        // SAFETY: plain C predicate, no arguments.
+        if unsafe { AXIsProcessTrusted() } == 0 {
+            return None;
+        }
+        // SAFETY: constructs the system-wide AX element; may return null.
+        let system = unsafe { AXUIElementCreateSystemWide() };
+        if system.is_null() {
+            return None;
+        }
+        let system = CfOwned(system);
+
+        let focused = copy_attr(system.get(), "AXFocusedUIElement")?;
+        let felem = focused.get();
+
+        let mut snap = NwSnapshot::empty();
+
+        // App identity: the focused element's owning pid → executable basename.
+        let mut pid: i32 = 0;
+        // SAFETY: `felem` is a live AX element and `pid` is valid writable storage.
+        if unsafe { AXUIElementGetPid(felem, &mut pid) } == AX_ERROR_SUCCESS {
+            snap.app_exe = app_exe_for_pid(pid);
+        }
+
+        // Element name: prefer the title, fall back to the description.
+        snap.element_name = copy_attr_string(felem, "AXTitle")
+            .filter(|s| !s.is_empty())
+            .or_else(|| copy_attr_string(felem, "AXDescription"))
+            .unwrap_or_default();
+
+        // Window title: the focused element's window, else the focused app's title.
+        if let Some(window) = copy_attr(felem, "AXWindow") {
+            snap.window_title = copy_attr_string(window.get(), "AXTitle").unwrap_or_default();
+        }
+        if snap.window_title.is_empty()
+            && let Some(app) = copy_attr(system.get(), "AXFocusedApplication")
+        {
+            snap.window_title = copy_attr_string(app.get(), "AXTitle").unwrap_or_default();
+        }
+
+        // Password guard: secure text fields carry the AXSecureTextField subrole.
+        // Their (masked) contents are never read — mirror the Windows guard.
+        if copy_attr_string(felem, "AXSubrole").as_deref() == Some("AXSecureTextField") {
+            snap.is_password = true;
+            return Some(snap);
+        }
+
+        match mode {
+            NwMode::Selection => {
+                snap.focused_text = copy_attr_string(felem, "AXSelectedText").unwrap_or_default();
+            }
+            NwMode::Split | NwMode::Tree => {
+                let value = copy_attr_string(felem, "AXValue").unwrap_or_default();
+                if let Some(range) = copy_selected_range(felem) {
+                    // AX text ranges index the UTF-16 representation; split there.
+                    let units: Vec<u16> = value.encode_utf16().collect();
+                    let total = units.len();
+                    let caret = clamp_usize(range.location, total);
+                    let sel_end =
+                        clamp_usize(range.location.saturating_add(range.length.max(0)), total);
+                    let before_start = caret.saturating_sub(CARET_BEFORE_CHARS as usize);
+                    let after_end = sel_end
+                        .saturating_add(CARET_AFTER_CHARS as usize)
+                        .min(total);
+                    snap.text_before = String::from_utf16_lossy(&units[before_start..caret]);
+                    snap.text_after = String::from_utf16_lossy(&units[sel_end..after_end]);
+                } else {
+                    // No caret/selection — degrade to the whole-field value.
+                    snap.focused_text = value;
+                }
+            }
+            NwMode::Focused => {
+                snap.focused_text = copy_attr_string(felem, "AXValue").unwrap_or_default();
+            }
+        }
+
+        Some(snap)
+    }
+
+    /// Clamp a CFIndex (may be negative on a stale range) into `0..=max` as usize.
+    fn clamp_usize(value: CFIndex, max: usize) -> usize {
+        if value <= 0 {
+            0
+        } else {
+            (value as usize).min(max)
+        }
+    }
+
+    /// Create a CoreFoundation string from a UTF-8 `&str` (owned; `CFRelease`d on
+    /// drop). `None` if allocation fails.
+    fn cfstr(s: &str) -> Option<CfOwned> {
+        let bytes = s.as_bytes();
+        // SAFETY: `bytes`/`len` describe a valid UTF-8 buffer; the default allocator
+        // is null and the result is an owned (+1) CFString or null.
+        let cf = unsafe {
+            CFStringCreateWithBytes(
+                CF_ALLOCATOR_DEFAULT,
+                bytes.as_ptr(),
+                bytes.len() as CFIndex,
+                CF_STRING_ENCODING_UTF8,
+                0,
+            )
+        };
+        if cf.is_null() {
+            None
+        } else {
+            Some(CfOwned(cf))
+        }
+    }
+
+    /// Copy a UI element's attribute value as an owned CF object, or `None` when
+    /// the attribute is unsupported / has no value.
+    fn copy_attr(element: CFTypeRef, name: &str) -> Option<CfOwned> {
+        let attr = cfstr(name)?;
+        let mut value: CFTypeRef = ptr::null();
+        // SAFETY: `element` is a live AX element, `attr` a live CFString, and
+        // `value` valid writable storage; success yields an owned (+1) object.
+        let err = unsafe { AXUIElementCopyAttributeValue(element, attr.get(), &mut value) };
+        if err != AX_ERROR_SUCCESS || value.is_null() {
+            return None;
+        }
+        Some(CfOwned(value))
+    }
+
+    /// Copy an attribute value and decode it as a UTF-8 string (when it is a
+    /// CFString).
+    fn copy_attr_string(element: CFTypeRef, name: &str) -> Option<String> {
+        let value = copy_attr(element, name)?;
+        cfstring_to_string(value.get())
+    }
+
+    /// Copy the AXSelectedTextRange (an AXValue wrapping a CFRange) and unwrap it.
+    fn copy_selected_range(element: CFTypeRef) -> Option<CFRange> {
+        let value = copy_attr(element, "AXSelectedTextRange")?;
+        let mut range = CFRange {
+            location: 0,
+            length: 0,
+        };
+        // SAFETY: `value` is an AXValue; requesting the CFRange type writes into the
+        // provided `CFRange` slot and returns non-zero on success.
+        let ok = unsafe {
+            AXValueGetValue(
+                value.get(),
+                AX_VALUE_TYPE_CFRANGE,
+                (&mut range as *mut CFRange).cast(),
+            )
+        };
+        if ok == 0 { None } else { Some(range) }
+    }
+
+    /// Decode a `CFStringRef` into an owned `String` (UTF-8). Returns `None` when
+    /// the object is null or not a CFString; an empty string decodes to `Some("")`.
+    fn cfstring_to_string(cf: CFStringRef) -> Option<String> {
+        if cf.is_null() {
+            return None;
+        }
+        // SAFETY: `cf` is a live CF object; the type-id gate ensures it is a
+        // CFString before any CFString-specific call below.
+        unsafe {
+            if CFGetTypeID(cf) != CFStringGetTypeID() {
+                return None;
+            }
+            let len_utf16 = CFStringGetLength(cf);
+            if len_utf16 <= 0 {
+                return Some(String::new());
+            }
+            let range = CFRange {
+                location: 0,
+                length: len_utf16,
+            };
+            // First pass: measure the UTF-8 byte length.
+            let mut used: CFIndex = 0;
+            CFStringGetBytes(
+                cf,
+                range,
+                CF_STRING_ENCODING_UTF8,
+                0,
+                0,
+                ptr::null_mut(),
+                0,
+                &mut used,
+            );
+            if used <= 0 {
+                return Some(String::new());
+            }
+            // Second pass: fill the buffer.
+            let mut buf = vec![0u8; used as usize];
+            let mut written: CFIndex = 0;
+            let converted = CFStringGetBytes(
+                cf,
+                range,
+                CF_STRING_ENCODING_UTF8,
+                0,
+                0,
+                buf.as_mut_ptr(),
+                used,
+                &mut written,
+            );
+            if converted <= 0 {
+                return None;
+            }
+            buf.truncate(written.max(0) as usize);
+            Some(String::from_utf8_lossy(&buf).into_owned())
+        }
+    }
+
+    /// The process executable basename (lowercased) for `pid`, matching the
+    /// Windows `appExe` convention. Empty on failure.
+    fn app_exe_for_pid(pid: i32) -> String {
+        if pid <= 0 {
+            return String::new();
+        }
+        let mut buf = vec![0u8; PROC_PIDPATH_MAX];
+        // SAFETY: `buf` is valid writable storage of the declared size.
+        let n = unsafe { proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+        if n <= 0 {
+            return String::new();
+        }
+        buf.truncate(n as usize);
+        let path = String::from_utf8_lossy(&buf).into_owned();
+        let base = path.rsplit(['/', '\\']).next().unwrap_or(&path);
+        base.to_lowercase()
+    }
+}
+
+// ─────────────────────────── Linux (AT-SPI) ───────────────────────────
+//
+// Focused-field reader over AT-SPI (atspi + zbus). AT-SPI has no direct "focused
+// element" query, so we walk the registry desktop tree (bounded by node + depth
+// caps) for the accessible carrying `State::Focused` that also implements the
+// `Text` interface, then read its caret offset / character count / selection /
+// surrounding text. atspi is async; the sidecar is a short-lived process, so we
+// drive the futures to completion on a local Tokio current-thread runtime (zbus
+// is built on its async-io backend here and self-drives its D-Bus I/O on an
+// internal thread, so any runtime can poll the top-level future). When the
+// accessibility bus isn't running, or no focused text element exists, an empty
+// snapshot is printed.
+#[cfg(target_os = "linux")]
+mod linux_impl {
+    use std::time::Duration;
+
+    use atspi::connection::AccessibilityConnection;
+    use atspi::proxy::accessible::{AccessibleProxy, ObjectRefExt};
+    use atspi::proxy::text::TextProxy;
+    use atspi::{Interface, InterfaceSet, ObjectRef, Role, State};
+    use zbus::proxy::CacheProperties;
+
+    use super::{
+        CARET_AFTER_CHARS, CARET_BEFORE_CHARS, MAX_CONTEXT_CHARS, NwMode, NwSnapshot, nw_parse_mode,
+    };
+
+    /// Cap on accessibles visited while searching for the focused element (a live
+    /// desktop tree can be large; the search is best-effort and bounded).
+    const MAX_NODES: usize = 2_500;
+    /// Cap on descent depth from each application root.
+    const MAX_DEPTH: usize = 30;
+
+    pub fn run() {
+        // Hard watchdog: a wedged D-Bus round-trip can hang; exit so the manager
+        // sees a dead child and falls back (mirrors the Windows one-shot watchdog).
+        std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(2_500));
+            std::process::exit(3);
+        });
+
+        let mode = nw_parse_mode();
+        // atspi is async; drive it to completion on a local Tokio runtime. This is
+        // the sidecar's main thread with no ambient runtime, so building one here is
+        // safe. zbus's connection self-drives its I/O regardless of this runtime.
+        let snapshot = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime
+                .block_on(read(mode))
+                .unwrap_or_else(NwSnapshot::empty),
+            Err(_) => NwSnapshot::empty(),
+        };
+        snapshot.print();
+    }
+
+    async fn read(mode: NwMode) -> Option<NwSnapshot> {
+        let connection = AccessibilityConnection::new().await.ok()?;
+        let bus = connection.connection();
+
+        // The AT-SPI registry's accessible desktop root; its children are the apps.
+        let root = AccessibleProxy::builder(bus)
+            .destination("org.a11y.atspi.Registry")
+            .ok()?
+            .path("/org/a11y/atspi/accessible/root")
+            .ok()?
+            .cache_properties(CacheProperties::No)
+            .build()
+            .await
+            .ok()?;
+
+        let focused_ref = find_focused_text(bus, &root).await?;
+        let focused = focused_ref.as_accessible_proxy(bus).await.ok()?;
+
+        let mut snap = NwSnapshot::empty();
+
+        // App identity: the application ancestor's name, lowercased to mirror the
+        // Windows `appExe` basename convention used by the deny-list matcher.
+        if let Ok(app_ref) = focused.get_application().await
+            && let Ok(app) = app_ref.as_accessible_proxy(bus).await
+            && let Ok(name) = app.name().await
+        {
+            snap.app_exe = name.trim().to_lowercase();
+        }
+
+        snap.element_name = focused.name().await.unwrap_or_default();
+        snap.window_title = window_title(bus, &focused).await;
+
+        // Password guard: AT-SPI exposes secure entries as Role::PasswordText.
+        if focused.get_role().await.unwrap_or(Role::Invalid) == Role::PasswordText {
+            snap.is_password = true;
+            return Some(snap);
+        }
+
+        // Text interface on the focused object (offsets are in characters).
+        let text = TextProxy::builder(bus)
+            .destination(focused_ref.name.clone())
+            .ok()?
+            .path(focused_ref.path.clone())
+            .ok()?
+            .cache_properties(CacheProperties::No)
+            .build()
+            .await
+            .ok()?;
+
+        let count = text.character_count().await.unwrap_or(0).max(0);
+
+        match mode {
+            NwMode::Selection => {
+                if text.get_nselections().await.unwrap_or(0) > 0
+                    && let Ok((start, end)) = text.get_selection(0).await
+                    && end > start
+                {
+                    snap.focused_text = text.get_text(start, end).await.unwrap_or_default();
+                }
+            }
+            NwMode::Split | NwMode::Tree => {
+                let caret = text.caret_offset().await.unwrap_or(0).clamp(0, count);
+                let before_start = (caret - CARET_BEFORE_CHARS).max(0);
+                let after_end = (caret + CARET_AFTER_CHARS).min(count);
+                if caret > before_start {
+                    snap.text_before = text.get_text(before_start, caret).await.unwrap_or_default();
+                }
+                if after_end > caret {
+                    snap.text_after = text.get_text(caret, after_end).await.unwrap_or_default();
+                }
+            }
+            NwMode::Focused => {
+                let end = count.min(MAX_CONTEXT_CHARS as i32);
+                if end > 0 {
+                    snap.focused_text = text.get_text(0, end).await.unwrap_or_default();
+                }
+            }
+        }
+
+        Some(snap)
+    }
+
+    /// Bounded depth-first search from the desktop root for the first accessible
+    /// that is `State::Focused` and implements the `Text` interface.
+    async fn find_focused_text(
+        bus: &zbus::Connection,
+        root: &AccessibleProxy<'_>,
+    ) -> Option<ObjectRef> {
+        let mut stack: Vec<(ObjectRef, usize)> = root
+            .get_children()
+            .await
+            .ok()?
+            .into_iter()
+            .map(|child| (child, 0usize))
+            .collect();
+
+        let mut visited = 0usize;
+        while let Some((obj, depth)) = stack.pop() {
+            if visited >= MAX_NODES {
+                break;
+            }
+            visited += 1;
+
+            let Ok(proxy) = obj.as_accessible_proxy(bus).await else {
+                continue;
+            };
+            if proxy
+                .get_state()
+                .await
+                .unwrap_or_default()
+                .contains(State::Focused)
+            {
+                let interfaces = proxy
+                    .get_interfaces()
+                    .await
+                    .unwrap_or_else(|_| InterfaceSet::empty());
+                if interfaces.contains(Interface::Text) {
+                    return Some(obj);
+                }
+            }
+            if depth < MAX_DEPTH
+                && let Ok(children) = proxy.get_children().await
+            {
+                for child in children {
+                    stack.push((child, depth + 1));
+                }
+            }
+        }
+        None
+    }
+
+    /// Walk ancestors from the focused element to the enclosing frame / window /
+    /// dialog and return its name as the window title. Empty when none is found.
+    async fn window_title(bus: &zbus::Connection, focused: &AccessibleProxy<'_>) -> String {
+        let mut current = match focused.parent().await {
+            Ok(parent) => parent,
+            Err(_) => return String::new(),
+        };
+        for _ in 0..MAX_DEPTH {
+            let Ok(proxy) = current.as_accessible_proxy(bus).await else {
+                break;
+            };
+            let role = proxy.get_role().await.unwrap_or(Role::Invalid);
+            if matches!(role, Role::Frame | Role::Window | Role::Dialog) {
+                return proxy.name().await.unwrap_or_default().trim().to_string();
+            }
+            match proxy.parent().await {
+                // A root/self-parent terminates the walk (avoids a cycle).
+                Ok(parent) if parent == current => break,
+                Ok(parent) => current = parent,
+                Err(_) => break,
+            }
+        }
+        String::new()
     }
 }

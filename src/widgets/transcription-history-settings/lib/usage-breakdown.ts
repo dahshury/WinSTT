@@ -50,9 +50,11 @@ function pct(count: number, total: number): number {
 }
 
 /**
- * Sort tallies by count descending and, when there are more than `MAX_VISIBLE`,
- * collapse everything past the top `MAX_VISIBLE - 1` into one `otherLabel` row
- * so the bar list stays readable. Returns percentages against `total`.
+ * Sort tallies by count descending and roll the long tail — plus any explicit
+ * `OTHER_KEY` tally (e.g. the "other" content category) — into one shared
+ * `otherLabel` row at the bottom. Folding the explicit "other" into the same
+ * roll-up is what stops the list from showing two competing "Other" bars.
+ * Returns percentages against `total`.
  */
 function toBuckets(
 	tallies: Tally[],
@@ -67,22 +69,34 @@ function toBuckets(
 		logo: t.logo ?? null,
 		cloud: t.cloud ?? false,
 	});
-	const sorted = tallies.toSorted((a, b) => b.count - a.count);
-	if (sorted.length <= MAX_VISIBLE) {
-		return sorted.map(toBucket);
+	// Any pre-existing "other" tally is set aside and always merges into the
+	// roll-up row, never competing with it as a separate bar.
+	let otherCount = 0;
+	const named: Tally[] = [];
+	for (const t of tallies) {
+		if (t.key === OTHER_KEY) {
+			otherCount += t.count;
+		} else {
+			named.push(t);
+		}
 	}
-	const head = sorted.slice(0, MAX_VISIBLE - 1);
-	const tail = sorted.slice(MAX_VISIBLE - 1);
-	const tailCount = tail.reduce((sum, t) => sum + t.count, 0);
-	return [
-		...head.map(toBucket),
-		{
+	const sorted = named.toSorted((a, b) => b.count - a.count);
+	// Reserve a slot for the roll-up whenever one will exist, so the total row
+	// count still tops out at `MAX_VISIBLE`.
+	const willRollUp = otherCount > 0 || sorted.length > MAX_VISIBLE;
+	const headMax = willRollUp ? MAX_VISIBLE - 1 : MAX_VISIBLE;
+	const head = sorted.slice(0, headMax);
+	otherCount += sorted.slice(headMax).reduce((sum, t) => sum + t.count, 0);
+	const buckets = head.map(toBucket);
+	if (otherCount > 0) {
+		buckets.push({
 			key: OTHER_KEY,
 			label: otherLabel,
-			count: tailCount,
-			pct: pct(tailCount, total),
-		},
-	];
+			count: otherCount,
+			pct: pct(otherCount, total),
+		});
+	}
+	return buckets;
 }
 
 function modelUsage(
@@ -126,7 +140,9 @@ function categoryUsage(
 		total += 1;
 	}
 	const tallies: Tally[] = [...counts].map(([tag, count]) => ({
-		key: tag,
+		// Fold the LLM's literal "other" classification into the shared roll-up
+		// row so it never shows as a second "Other" bar beside the long tail.
+		key: tag === "other" ? OTHER_KEY : tag,
 		// Non-null: tags with no label were skipped above.
 		label: historyTagLabel(tag) ?? tag,
 		count,

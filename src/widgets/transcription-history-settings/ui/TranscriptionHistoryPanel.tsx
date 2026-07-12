@@ -60,7 +60,7 @@ import { HistoryTable } from "./HistoryTable";
 import { ModelAuthorRadar } from "./ModelAuthorRadar";
 import { SpendingSection } from "./SpendingSection";
 import { StreakBanner } from "./StreakBanner";
-import { CATEGORY_ICONS, UsageBars } from "./UsageBreakdown";
+import { CATEGORY_ICONS, MODEL_ICONS, UsageBars } from "./UsageBreakdown";
 import { VoiceProfile } from "./VoiceProfile";
 
 type RetentionValue = "never" | "cap" | "days3" | "weeks2" | "months3";
@@ -212,6 +212,13 @@ export function TranscriptionHistoryPanel() {
 	const [confirmTransformsOpen, setConfirmTransformsOpen] = useState(false);
 	const [confirmTtsOpen, setConfirmTtsOpen] = useState(false);
 	const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
+	// The combined history table's kind filter, doubling as the target of the
+	// single "Clear" action: the shared Select picks which history to show (and
+	// clear), with "All" as the default that shows everything and clears all
+	// three kinds at once.
+	const [historyKind, setHistoryKind] = useState<
+		"all" | "history" | "transforms" | "tts"
+	>("all");
 	const [selectedRange, setSelectedRange] = useState<DateRange | null>(null);
 	const historyEnabled = useSettingsStore(
 		(s) => s.settings.general?.historyEnabled ?? true,
@@ -286,11 +293,21 @@ export function TranscriptionHistoryPanel() {
 	// Group the same filtered history by model maker for the pie beside the
 	// model bars. The catalog self-hydrates on import, so it's populated here.
 	const catalogModels = useCatalogStore((s) => s.models);
+	const authorResolver = buildAuthorResolver(catalogModels);
 	const authorSlices = computeAuthorUsage(
 		filteredEntries,
-		buildAuthorResolver(catalogModels),
+		authorResolver,
 		usageOtherLabel,
 	);
+	// Give the model bars the SAME catalog-family logo the radar uses, so local
+	// makers (NeMo → NVIDIA, GigaAM → Sber, Whisper → OpenAI, …) show their brand
+	// mark. The `modelChipLogo` baked into each bucket only resolves ids that
+	// carry a vendor token (cloud `openrouter:cohere/…` etc.), so it stays as the
+	// fallback for runtime-scanned OpenRouter models the catalog doesn't list.
+	const modelBuckets = usage.models.map((bucket) => ({
+		...bucket,
+		logo: authorResolver(bucket.key)?.logoSrc ?? bucket.logo ?? null,
+	}));
 	// Cloud-spend analytics over the SAME date-filtered window (STT + TTS runs).
 	// `total === 0` for local-only histories, which hides the whole section.
 	const costAnalytics = computeCostAnalytics(
@@ -323,6 +340,58 @@ export function TranscriptionHistoryPanel() {
 	const handleClearTts = () => {
 		clearTtsHistory().then(() => clearTtsLocal());
 	};
+
+	// The history kinds the Select filters/clears by. `count` drives the Clear
+	// button's disabled state (nothing to clear) and `open` arms the matching
+	// confirm dialog — "All" clears everything via the delete-all dialog. Labels
+	// reuse the section nouns already localized in this namespace.
+	const allHistoryKind = {
+		count: entries.length + transformEntries.length + ttsEntries.length,
+		id: "all" as const,
+		label: t("filterAll"),
+		open: () => setConfirmDeleteAllOpen(true),
+	};
+	const historyKinds = [
+		allHistoryKind,
+		{
+			count: entries.length,
+			id: "history" as const,
+			label: t("tableTitle"),
+			open: () => setConfirmOpen(true),
+		},
+		{
+			count: transformEntries.length,
+			id: "transforms" as const,
+			label: t("transformTableTitle"),
+			open: () => setConfirmTransformsOpen(true),
+		},
+		{
+			count: ttsEntries.length,
+			id: "tts" as const,
+			label: t("kindTextToSpeech"),
+			open: () => setConfirmTtsOpen(true),
+		},
+	];
+	const historyKindOptions: SelectOption[] = historyKinds.map((kind) => ({
+		id: kind.id,
+		label: kind.label,
+	}));
+	const activeHistoryKind =
+		historyKinds.find((kind) => kind.id === historyKind) ?? allHistoryKind;
+	// Kind filter applied to the (already date-filtered) combined rows. "All"
+	// passes everything through; the specific kinds map onto the row's `kind` tag.
+	const visibleHistoryEntries =
+		historyKind === "all"
+			? combinedHistoryEntries
+			: combinedHistoryEntries.filter((row) => {
+					if (historyKind === "history") {
+						return row.kind === "transcription";
+					}
+					if (historyKind === "transforms") {
+						return row.kind === "transform";
+					}
+					return row.kind === "tts";
+				});
 
 	// Off-state purge: opting out stops collection but never destroys data
 	// silently — this explicit, confirmed action is the only way old rows,
@@ -439,7 +508,7 @@ export function TranscriptionHistoryPanel() {
 				<SettingSection icon={AiMicIcon} title={t("usageModelsTitle")}>
 					<div className="flex flex-col gap-5 py-2 sm:flex-row sm:items-center sm:gap-6">
 						<div className="min-w-0 flex-1">
-							<UsageBars buckets={usage.models} />
+							<UsageBars buckets={modelBuckets} icons={MODEL_ICONS} />
 						</div>
 						<ModelAuthorRadar slices={authorSlices} />
 					</div>
@@ -492,32 +561,34 @@ export function TranscriptionHistoryPanel() {
 							open={confirmTtsOpen}
 							title={t("clearTtsTitle")}
 						/>
-						{/* The three clear actions read as ONE segmented control (the app's
-						    standard connected button group), not three loose boxes. */}
+						<ConfirmDialog
+							confirmLabel={t("clearConfirm")}
+							description={t("deleteAllDescription")}
+							onConfirm={handleDeleteAll}
+							onOpenChange={setConfirmDeleteAllOpen}
+							open={confirmDeleteAllOpen}
+							title={t("deleteAllTitle")}
+						/>
+						{/* One control: the shared Select filters the table by kind
+						    (default "All") and names the target of the single Clear
+						    button, which (wrapped in the app's connected group so it
+						    reads as the standard segmented chip) acts on the selection. */}
+						<Select
+							className="h-7 w-44"
+							onChange={(v) =>
+								setHistoryKind(v as "all" | "history" | "transforms" | "tts")
+							}
+							options={historyKindOptions}
+							value={historyKind}
+						/>
 						<ButtonGroup connected>
 							<Button
 								className={CLEAR_ACTION_SEGMENT_CLASS}
-								disabled={entries.length === 0}
-								onClick={() => setConfirmOpen(true)}
+								disabled={activeHistoryKind.count === 0}
+								onClick={activeHistoryKind.open}
 							>
 								<HugeiconsIcon icon={Delete02Icon} size={14} />
-								{t("clearButton")}
-							</Button>
-							<Button
-								className={CLEAR_ACTION_SEGMENT_CLASS}
-								disabled={transformEntries.length === 0}
-								onClick={() => setConfirmTransformsOpen(true)}
-							>
-								<HugeiconsIcon icon={Delete02Icon} size={14} />
-								{t("clearTransformsButton")}
-							</Button>
-							<Button
-								className={CLEAR_ACTION_SEGMENT_CLASS}
-								disabled={ttsEntries.length === 0}
-								onClick={() => setConfirmTtsOpen(true)}
-							>
-								<HugeiconsIcon icon={Delete02Icon} size={14} />
-								{t("clearTtsButton")}
+								{t("clearConfirm")}
 							</Button>
 						</ButtonGroup>
 					</div>
@@ -527,7 +598,7 @@ export function TranscriptionHistoryPanel() {
 				title={t("combinedTableTitle")}
 			>
 				<div className="py-2">
-					<HistoryTable entries={combinedHistoryEntries} />
+					<HistoryTable entries={visibleHistoryEntries} />
 				</div>
 			</SettingSection>
 

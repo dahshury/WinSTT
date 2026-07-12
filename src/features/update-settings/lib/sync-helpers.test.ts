@@ -13,6 +13,7 @@ import {
 	getRecordingMode,
 	getSmartEndpoint,
 	isModeChanged,
+	isPrimarySyncWindow,
 	mergeBroadcastPreservingUserDirty,
 	scheduleSave,
 	shouldSendInitial,
@@ -359,6 +360,38 @@ describe("shouldSyncOnConnect", () => {
 		// gate, the first syncToServer re-asserts the stale cache and
 		// triggers a spurious model swap on the server.
 		expect(shouldSyncOnConnect("running", true, false, false)).toBe(false);
+	});
+
+	test("defaults to primary when isPrimaryWindow omitted (single-window/test host)", () => {
+		expect(shouldSyncOnConnect("running", true, false, true)).toBe(true);
+	});
+
+	test("returns false in a non-primary window even when otherwise ready (audit #1)", () => {
+		// A settings / model-picker window must NOT redundantly fan the
+		// connect-time full sync out to the server.
+		expect(shouldSyncOnConnect("running", true, false, true, false)).toBe(
+			false,
+		);
+	});
+
+	test("returns true in the primary window when otherwise ready", () => {
+		expect(shouldSyncOnConnect("running", true, false, true, true)).toBe(true);
+	});
+});
+
+describe("isPrimarySyncWindow", () => {
+	test("main window is primary", () => {
+		expect(isPrimarySyncWindow("main")).toBe(true);
+	});
+
+	test("unknown label (non-Tauri / single renderer) is treated as primary", () => {
+		expect(isPrimarySyncWindow(null)).toBe(true);
+	});
+
+	test("secondary windows are not primary", () => {
+		expect(isPrimarySyncWindow("settings")).toBe(false);
+		expect(isPrimarySyncWindow("model-picker")).toBe(false);
+		expect(isPrimarySyncWindow("model-footprint")).toBe(false);
 	});
 });
 

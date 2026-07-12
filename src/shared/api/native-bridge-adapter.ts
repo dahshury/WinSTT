@@ -188,6 +188,10 @@ const ROUTE: Partial<Record<string, Route>> = {
 		kind: "event",
 		event: "hotkey:recording-done",
 	},
+	[IPC.PTT_MODIFIER_ONLY_UNSUPPORTED]: {
+		kind: "event",
+		event: "ptt:modifier-only-unsupported",
+	},
 
 	// ── System ──
 	[IPC.AUTOSTART_SET]: { kind: "plugin", plugin: "autostart:set" },

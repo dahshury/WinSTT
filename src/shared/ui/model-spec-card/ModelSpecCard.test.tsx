@@ -1,9 +1,18 @@
 import { GlobeIcon, Wrench01Icon } from "@hugeicons/core-free-icons";
 import { render } from "@testing-library/react";
 import { describe, expect, test } from "bun:test";
+import type { ReactNode } from "react";
+import { IntlProvider } from "@/app/providers/IntlProvider";
 import { ModelSpecCard } from "./ModelSpecCard";
 import { ModelSpecHoverCard } from "./ModelSpecHoverCard";
 import type { ModelSpec } from "./types";
+
+// The card's section eyebrows resolve through `useTranslations`, so every render
+// needs an intl context. The test preload swaps in a synchronous English
+// provider (see `test/mocks/intl-provider.tsx`).
+function renderCard(ui: ReactNode) {
+	return render(<IntlProvider>{ui}</IntlProvider>);
+}
 
 const FULL: ModelSpec = {
 	name: "Kimi K2",
@@ -26,7 +35,7 @@ const FULL: ModelSpec = {
 
 describe("ModelSpecCard", () => {
 	test("renders identity, sections, facts, stats and source", () => {
-		const { container } = render(<ModelSpecCard spec={FULL} />);
+		const { container } = renderCard(<ModelSpecCard spec={FULL} />);
 		const text = container.textContent ?? "";
 		expect(text).toContain("Kimi K2");
 		expect(text).toContain("Moonshot AI");
@@ -42,7 +51,7 @@ describe("ModelSpecCard", () => {
 	});
 
 	test("omits empty sections", () => {
-		const { container } = render(
+		const { container } = renderCard(
 			<ModelSpecCard spec={{ name: "Bare Model", features: [], facts: [] }} />,
 		);
 		const text = container.textContent ?? "";
@@ -54,7 +63,7 @@ describe("ModelSpecCard", () => {
 	});
 
 	test("shows a loading hint instead of a source label while enriching", () => {
-		const { container } = render(
+		const { container } = renderCard(
 			<ModelSpecCard
 				spec={{ name: "M", features: [], facts: [], loading: true }}
 			/>,

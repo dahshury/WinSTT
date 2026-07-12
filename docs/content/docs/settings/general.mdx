@@ -215,7 +215,6 @@ that fits them best:
     ["Context deny-list", <code>general.contextDenyList</code>, "6 password managers", <a href="/docs/settings/quality#llm-cleanup">LLM cleanup</a>],
     ["History max entries", <code>general.historyMaxEntries</code>, <code>1000</code>, <a href="/docs/transcription-history">History</a>],
     ["Recording retention", <code>general.recordingRetention</code>, <code>cap</code>, <a href="/docs/transcription-history">History</a>],
-    ["Word-correction threshold", <code>general.wordCorrectionThreshold</code>, <code>0.18</code>, <a href="/docs/dictionary">Dictionary</a>],
     ["Pre-release updates", <code>general.receivePrereleaseUpdates</code>, <code>false</code>, "About tab"],
     ["Output device", <code>general.outputDeviceId</code>, "system default", <a href="/docs/settings/audio">Audio</a>],
   ]}
@@ -253,12 +252,6 @@ A few highlights, with their gotchas:
   Auto-deletes saved recordings: **Never** keeps everything; **Cap** prunes recordings beyond
   History Max Entries; **3 days / 2 weeks / 3 months** are absolute age cutoffs. Cleanup runs
   at startup and whenever the policy changes — "Never" still saves, it just never prunes.
-</SettingRow>
-
-<SettingRow label="Word-Correction Threshold" settingKey="general.wordCorrectionThreshold" default="0.18">
-  The fuzzy-match threshold (0–1) for the deterministic corrector that runs before LLM cleanup.
-  **Lower** is stricter — fewer false positives, more near-misses left for the LLM. 0.18 is the
-  reference default.
 </SettingRow>
 
 <SettingRow label="Pre-Release Updates" settingKey="general.receivePrereleaseUpdates" default="false">

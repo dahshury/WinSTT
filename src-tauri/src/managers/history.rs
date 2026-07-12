@@ -103,6 +103,11 @@ static MIGRATIONS: &[M<'_>] = &[
             cost_is_estimate BOOLEAN NOT NULL DEFAULT 0
         );",
     ),
+    // Basename of the synthesized audio saved under userData/recordings/ (WAV
+    // for local f32 streams, MP3 for cloud mp3 streams), so read-aloud runs are
+    // replayable from the History tab like STT recordings. NULL on rows written
+    // before audio persistence shipped and on runs where capture failed.
+    M::up("ALTER TABLE tts_history ADD COLUMN audio_file_name TEXT;"),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -186,6 +191,9 @@ pub struct TtsHistoryDbEntry {
     /// cost could not be resolved.
     pub cost_usd: Option<f64>,
     pub cost_is_estimate: bool,
+    /// Basename of the synthesized audio under the recordings dir (`.wav` or
+    /// `.mp3`). `None` for legacy rows and runs whose audio wasn't captured.
+    pub audio_file_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -366,6 +374,7 @@ impl HistoryManager {
             processing_ms: row.get("processing_ms")?,
             cost_usd: row.get("cost_usd")?,
             cost_is_estimate: row.get("cost_is_estimate")?,
+            audio_file_name: row.get("audio_file_name")?,
         })
     }
 
@@ -470,5 +479,7 @@ mod tests {
         assert_eq!(entry.processing_ms, Some(1800));
         assert_eq!(entry.cost_usd, Some(0.0000341));
         assert!(!entry.cost_is_estimate);
+        // Legacy-shaped insert (no audio column value) maps to no audio.
+        assert_eq!(entry.audio_file_name, None);
     }
 }

@@ -332,12 +332,28 @@ fn parse_content_range_total(value: &str) -> Option<u64> {
     value.rsplit_once('/')?.1.parse::<u64>().ok()
 }
 
+/// The canonical download progress ratio in `[0, 1]`, 0.0 when the total is unknown/zero.
+///
+/// SINGLE SOURCE OF TRUTH for the fraction every downloader reports. The per-catalog download
+/// managers (STT `download_manager`, TTS `tts_download_manager`, wakeword `wakeword_manager`) keep
+/// their own ORCHESTRATION — different transfer mechanisms (hf-hub `ProgressHandler` vs `transfer_url`),
+/// different per-file accumulators (name-keyed map vs index-keyed vec vs single-archive snapshot), and
+/// different event payload shapes — because those genuinely differ per catalog. What must NOT diverge
+/// is this ratio arithmetic, so it lives here and every emit path calls it.
+pub fn progress_fraction_of(downloaded: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (downloaded as f64 / total as f64).clamp(0.0, 1.0)
+    }
+}
+
 fn progress_fraction(downloaded: u64, total_bytes: Option<u64>) -> Option<f64> {
     let total = total_bytes?;
     if total == 0 {
         return None;
     }
-    Some((downloaded as f64 / total as f64).clamp(0.0, 1.0))
+    Some(progress_fraction_of(downloaded, total))
 }
 
 fn download_rate_estimate(

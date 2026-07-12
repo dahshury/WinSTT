@@ -1,6 +1,7 @@
 use crate::audio_toolkit::{
-    AudioRecorder, CpalDeviceInfo, RealtimeAudioProgress, SileroVad, list_input_devices,
-    vad::SmoothedVad,
+    AudioRecorder, CapturedAudio, CpalDeviceInfo, RealtimeAudioProgress, SileroVad,
+    list_input_devices,
+    vad::{SmoothedVad, VAD_SPEECH_THRESHOLD},
 };
 use crate::helpers::clamshell;
 use crate::winstt::settings_schema::{MicrophoneRelease, RecordingMode, WinsttSettings};
@@ -17,6 +18,13 @@ const TOGGLE_SILENCE_STOP_MIN_SECONDS: f64 = 0.1;
 const TOGGLE_SILENCE_STOP_MAX_SECONDS: f64 = 10.0;
 const TOGGLE_SILENCE_STOP_DEFAULT_SECONDS: f64 = 0.7;
 const TOGGLE_SILENCE_STOP_BINDING: &str = "transcribe";
+
+/// A Toggle/Wakeword recording that never sees a smoothed-VAD speech ONSET is aborted after this
+/// long and DISCARDED (no decode, no paste). Without an onset the offset-armed silence auto-stop
+/// (`schedule_toggle_silence_stop`, which only arms on a speech-OFF transition) never arms, so an
+/// untouched toggle session would otherwise record forever. PTT is exempt (its stop is the key
+/// release). The first onset cancels this watchdog for the whole session.
+const TOGGLE_NO_SPEECH_WATCHDOG: Duration = Duration::from_secs(15);
 
 pub(crate) fn silence_auto_stop_delay(settings: &WinsttSettings) -> Option<Duration> {
     match settings.general.recording_mode {
@@ -94,6 +102,60 @@ fn schedule_toggle_silence_stop(
         if let Some(coordinator) = app.try_state::<crate::TranscriptionCoordinator>() {
             coordinator.request_silence_stop(TOGGLE_SILENCE_STOP_BINDING, recording_generation);
         }
+    });
+}
+
+/// Whether the no-speech watchdog applies to a session under these settings: auto-stop Toggle and
+/// Wakeword only (never PTT — its stop is the key release, and never Listen — loopback owns its own
+/// lifecycle). `manual_toggle_stop` IS exempt: that mode has no silence auto-stop
+/// ([`silence_auto_stop_delay`] returns `None`), so by design the user controls stop timing and may
+/// deliberately pause well past the 15 s window before speaking; the watchdog's "no onset means it
+/// records forever" rationale does not apply because the user must stop it explicitly anyway.
+/// Pure so the gate is unit-testable.
+pub(crate) fn toggle_no_speech_watchdog_enabled(settings: &WinsttSettings) -> bool {
+    match settings.general.recording_mode {
+        RecordingMode::Toggle if settings.general.manual_toggle_stop => false,
+        RecordingMode::Toggle | RecordingMode::Wakeword => true,
+        _ => false,
+    }
+}
+
+/// Arm the no-speech watchdog for a freshly-started Toggle/Wakeword recording. After
+/// [`TOGGLE_NO_SPEECH_WATCHDOG`], if THIS recording (`recording_generation`) is still active and
+/// has seen NO smoothed-VAD speech onset, the whole dictation operation is cancelled and the audio
+/// discarded (no decode/paste) via the shared cancel path — resetting the pill/tray exactly like
+/// Escape. Reuses the recording-generation token so a stale watchdog can never kill a newer
+/// recording. A no-op for PTT/Listen, or if the settings say the watchdog does not apply.
+fn schedule_toggle_no_speech_watchdog(app_handle: &tauri::AppHandle, recording_generation: u64) {
+    if !toggle_no_speech_watchdog_enabled(&read_settings_raw(app_handle)) {
+        return;
+    }
+    let app = app_handle.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(TOGGLE_NO_SPEECH_WATCHDOG);
+
+        let Some(audio) = app.try_state::<Arc<AudioRecordingManager>>() else {
+            return;
+        };
+        // Stale guard: a newer recording (or none) already superseded this token.
+        if audio.recording_generation() != recording_generation || !audio.is_recording() {
+            return;
+        }
+        // First onset cancels the watchdog for the whole session.
+        if audio.speech_seen_since_recording_start() {
+            return;
+        }
+        // The user may have switched to PTT/Listen after starting; re-check.
+        if !toggle_no_speech_watchdog_enabled(&read_settings_raw(&app)) {
+            return;
+        }
+        warn!(
+            "[audio] toggle/wakeword recording (generation {recording_generation}) saw no speech within {}s; discarding",
+            TOGGLE_NO_SPEECH_WATCHDOG.as_secs()
+        );
+        // Mirror Escape: stops the recorder, resets tray/overlay, and notifies the coordinator so
+        // its stage returns to Idle — the audio is dropped without a decode or paste.
+        crate::utils::cancel_current_operation(&app);
     });
 }
 
@@ -210,8 +272,6 @@ fn set_mute(mute: bool) {
     }
 }
 
-const WHISPER_SAMPLE_RATE: usize = 16000;
-
 /* ──────────────────────────────────────────────────────────────── */
 
 #[derive(Clone, Debug)]
@@ -235,7 +295,7 @@ fn create_audio_recorder(
     speech_seen: Arc<AtomicBool>,
     realtime_audio_signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
 ) -> Result<AudioRecorder, anyhow::Error> {
-    let silero = SileroVad::new(vad_path, 0.3)
+    let silero = SileroVad::new(vad_path, VAD_SPEECH_THRESHOLD)
         .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
     let smoothed_vad = SmoothedVad::new(Box::new(silero), 15, 15, 2);
 
@@ -270,9 +330,25 @@ fn create_audio_recorder(
             // open and delivering audio. Surfaced as `stt:capture-active` so the renderer's
             // hotkey badge flips from "opening mic…" to a real recording state instead of
             // lighting up on the keypress (before WASAPI has opened an asleep device).
+            //
+            // The start chime ALSO fires here, not at hotkey press: a cold on-demand open
+            // (`microphone_release = Immediate`, Bluetooth/USB headsets especially) delivers
+            // its first frame up to ~1 s after the press — a chime at press invites the user
+            // to speak into a mic that is not capturing yet, and everything said before this
+            // callback is physically unrecoverable. Chiming on the first real frame makes the
+            // chime the honest "speak now" signal; on a warm stream the first frame arrives
+            // within one device period, so the timing is indistinguishable from chiming at
+            // press. `duck_then_play_recording_chime` self-gates on settings and its
+            // generation check, and does its work on a worker thread (non-blocking here).
             let app_handle = app_handle.clone();
             move || {
                 crate::winstt::commands::dictation::SttEvents::capture_active(&app_handle);
+                if let Some(rm) = app_handle.try_state::<std::sync::Arc<AudioRecordingManager>>() {
+                    crate::winstt::commands::sound::duck_then_play_recording_chime(
+                        &app_handle,
+                        rm.recording_generation(),
+                    );
+                }
             }
         })
         .with_chunk_callback({
@@ -336,7 +412,7 @@ pub struct AudioRecordingManager {
     /// and never emits the previous one's in-flight realtime text.
     recording_generation: Arc<AtomicU64>,
     /// Recorder progress signal for native realtime streaming. The recorder updates this whenever
-    /// the VAD-filtered live mirror grows or resets, so native streaming can sleep on audio events
+    /// the (ungated) live mirror grows or resets, so native streaming can sleep on audio events
     /// instead of polling the mirror.
     realtime_audio_signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
 }
@@ -783,10 +859,14 @@ impl AudioRecordingManager {
                     // Bump the recording generation so the realtime worker treats
                     // this as a fresh utterance even when the previous one ended
                     // moments ago (press→release→press) and it never saw the gap.
-                    self.recording_generation.fetch_add(1, Ordering::SeqCst);
+                    let generation = self.recording_generation.fetch_add(1, Ordering::SeqCst) + 1;
                     *state = RecordingState::Recording {
                         binding_id: binding_id.to_string(),
                     };
+                    // Arm the no-speech watchdog for Toggle/Wakeword: with no onset ever, the
+                    // offset-armed silence auto-stop never arms, so an untouched session would
+                    // record forever. Keyed on this generation so it can't kill a newer take.
+                    schedule_toggle_no_speech_watchdog(&self.app_handle, generation);
                     debug!("Recording started for binding {binding_id}");
                     return Ok(());
                 }
@@ -807,7 +887,7 @@ impl AudioRecordingManager {
         Ok(())
     }
 
-    pub fn stop_recording(&self, binding_id: &str) -> Option<Vec<f32>> {
+    pub fn stop_recording(&self, binding_id: &str) -> Option<CapturedAudio> {
         let mut state = self.state.lock_recover();
 
         match *state {
@@ -821,17 +901,19 @@ impl AudioRecordingManager {
                 self.set_realtime_enabled(false);
                 drop(state);
 
-                let samples = if let Some(rec) = self.recorder.lock_recover().as_ref() {
-                    match rec.stop() {
-                        Ok(buf) => buf,
+                // The FULL capture — every sample plus the per-frame speech mask. Capture is
+                // ungated (no VAD cropping); silence is cut downstream via the mask.
+                let captured = if let Some(rec) = self.recorder.lock_recover().as_ref() {
+                    match rec.stop_captured() {
+                        Ok(cap) => cap,
                         Err(e) => {
-                            error!("stop() failed: {e}");
-                            Vec::new()
+                            error!("stop_captured() failed: {e}");
+                            CapturedAudio::default()
                         }
                     }
                 } else {
                     error!("Recorder not available");
-                    Vec::new()
+                    CapturedAudio::default()
                 };
 
                 *self.is_recording.lock_recover() = false;
@@ -849,16 +931,11 @@ impl AudioRecordingManager {
                     self.schedule_release_after_stop();
                 }
 
-                // Pad if very short
-                let s_len = samples.len();
-                // debug!("Got {} samples", s_len);
-                if s_len < WHISPER_SAMPLE_RATE && s_len > 0 {
-                    let mut padded = samples;
-                    padded.resize(WHISPER_SAMPLE_RATE * 5 / 4, 0.0);
-                    Some(padded)
-                } else {
-                    Some(samples)
-                }
+                // NO short-clip pad here: the capture layer must never lengthen audio. A
+                // degenerately short clip is rejected by the mask-aware silence gate when it
+                // carries no speech, and padded to a family minimum at the decode layer only
+                // where a front-end demonstrably needs it (see backend.rs).
+                Some(captured)
             }
             _ => None,
         }
@@ -1067,5 +1144,38 @@ mod tests {
             silence_auto_stop_delay(&too_high),
             Some(Duration::from_secs(10))
         );
+    }
+
+    #[test]
+    fn no_speech_watchdog_applies_to_toggle_and_wakeword_only() {
+        // Toggle and Wakeword arm the watchdog…
+        assert!(toggle_no_speech_watchdog_enabled(&settings_with(
+            RecordingMode::Toggle,
+            false,
+            0.7
+        )));
+        assert!(toggle_no_speech_watchdog_enabled(&settings_with(
+            RecordingMode::Wakeword,
+            false,
+            0.7
+        )));
+        // …but a MANUAL-stop toggle is EXEMPT: that mode has no silence auto-stop, so the user may
+        // pause past the window before speaking and must stop it explicitly anyway.
+        assert!(!toggle_no_speech_watchdog_enabled(&settings_with(
+            RecordingMode::Toggle,
+            true,
+            0.7
+        )));
+        // PTT and Listen never arm it (PTT stops on release; Listen owns its own lifecycle).
+        assert!(!toggle_no_speech_watchdog_enabled(&settings_with(
+            RecordingMode::Ptt,
+            false,
+            0.7
+        )));
+        assert!(!toggle_no_speech_watchdog_enabled(&settings_with(
+            RecordingMode::Listen,
+            false,
+            0.7
+        )));
     }
 }

@@ -118,6 +118,18 @@ fn is_force_overlay_env_flag_set() -> bool {
     }
 }
 
+/// Linux escape hatch for the now-default-on overlay (item 10): true only when
+/// `WINSTT_FORCE_OVERLAY` is PRESENT and set to a falsey value (0/false/no/off).
+/// An unset or truthy value keeps the default-on floating pill; a falsey value
+/// opts the resolved `auto` position back out to `none`.
+#[cfg(target_os = "linux")]
+fn overlay_force_flag_is_falsey() -> bool {
+    match std::env::var("WINSTT_FORCE_OVERLAY") {
+        Ok(v) => !is_force_overlay_env_value_set(&v),
+        Err(_) => false,
+    }
+}
+
 /// Resolve `general.overlayPosition` to a concrete edge. Ports `resolveOverlayPosition`.
 fn resolve_overlay_position(position: OverlayPosition) -> ResolvedPosition {
     match position {
@@ -125,12 +137,18 @@ fn resolve_overlay_position(position: OverlayPosition) -> ResolvedPosition {
         OverlayPosition::Top => ResolvedPosition::Top,
         OverlayPosition::Bottom => ResolvedPosition::Bottom,
         OverlayPosition::Auto => {
+            // item 10: the floating pill is enabled by DEFAULT on every platform
+            // now — including Linux, where `auto` previously degraded to `none`
+            // (invisible OOB) unless a force-env flag was set. Linux keeps the env
+            // var as an escape hatch, but its meaning is now "opt OUT": a falsey
+            // `WINSTT_FORCE_OVERLAY` resolves back to `none`.
             #[cfg(target_os = "linux")]
             {
-                if is_force_overlay_env_flag_set() {
-                    ResolvedPosition::Bottom
-                } else {
+                let _ = is_force_overlay_env_flag_set;
+                if overlay_force_flag_is_falsey() {
                     ResolvedPosition::None
+                } else {
+                    ResolvedPosition::Bottom
                 }
             }
             #[cfg(not(target_os = "linux"))]
@@ -221,6 +239,83 @@ fn ensure_overlay_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     }
 }
 
+/// Guards the one-time NSPanel conversion of the overlay window (macOS). The pill
+/// is shown many times per session; converting more than once would re-swizzle the
+/// live NSWindow class, so `ensure_overlay_is_panel` is made idempotent by this flag.
+#[cfg(target_os = "macos")]
+static OVERLAY_PANEL_CONVERTED: AtomicBool = AtomicBool::new(false);
+
+/// macOS: a non-activating, floating NSPanel subclass for the overlay window.
+///
+/// `tauri-nspanel` swizzles the tao NSWindow into this class (`to_panel`), giving
+/// us the AppKit affordances a plain Tauri window lacks: the pill can float over
+/// full-screen apps and every Space, and — crucially — never becomes the key
+/// window, so revealing it mid-dictation cannot steal keyboard focus from the app
+/// the user is typing into. This is the macOS analogue of the Windows
+/// `focused(false)` + `HWND_TOPMOST` (`force_overlay_topmost`) treatment.
+#[cfg(target_os = "macos")]
+mod macos_panel {
+    // The `tauri_panel!` expansion calls `WebviewWindow::app_handle()`, which is a
+    // `tauri::Manager` method — the trait must be in scope in THIS module (the
+    // file-level import does not reach into a child `mod`).
+    use tauri::Manager;
+
+    tauri_nspanel::tauri_panel!(WinsttOverlayPanel {
+        config: {
+            // Override `-[NSWindow canBecomeKeyWindow]` → the panel can never take
+            // key status, so show/click never activates WinSTT or pulls focus.
+            can_become_key_window: false,
+            is_floating_panel: true,
+            // Stay on screen when WinSTT is not the active app (the whole point:
+            // the pill floats over whatever the user is actually working in).
+            hides_on_deactivate: false,
+        }
+    });
+}
+
+/// Convert the overlay window into a non-activating floating NSPanel (idempotent).
+/// On any failure this logs and leaves the normal always-on-top window in place —
+/// the pill still works, it just lacks the panel-only floating/non-key niceties.
+#[cfg(target_os = "macos")]
+fn ensure_overlay_is_panel(window: &tauri::WebviewWindow) {
+    if OVERLAY_PANEL_CONVERTED.load(Ordering::SeqCst) {
+        return;
+    }
+    let win = window.clone();
+    // NSWindow class swizzling + AppKit configuration must run on the main thread.
+    let _ = window.run_on_main_thread(move || {
+        // Re-check under the main thread so two racing shows convert exactly once.
+        if OVERLAY_PANEL_CONVERTED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        use tauri_nspanel::{CollectionBehavior, PanelLevel, StyleMask, WebviewWindowExt};
+        match win.to_panel::<macos_panel::WinsttOverlayPanel>() {
+            Ok(panel) => {
+                // Non-activating, borderless style mask → the panel never activates
+                // the app on interaction and carries no title bar / frame.
+                panel.set_style_mask(StyleMask::new().borderless().nonactivating_panel().value());
+                // Float above normal windows; mirrors the Windows topmost band.
+                panel.set_level(PanelLevel::Floating.into());
+                panel.set_floating_panel(true);
+                // Visible on every Space, over full-screen apps, and unmoved by
+                // Mission Control — the pill must track the user everywhere.
+                panel.set_collection_behavior(
+                    CollectionBehavior::new()
+                        .can_join_all_spaces()
+                        .full_screen_auxiliary()
+                        .stationary()
+                        .value(),
+                );
+            }
+            Err(error) => {
+                // Fall back to the normal window; allow a later show to retry.
+                OVERLAY_PANEL_CONVERTED.store(false, Ordering::SeqCst);
+                log::warn!("[overlay] NSPanel conversion failed; keeping normal window: {error}");
+            }
+        }
+    });
+}
+
 pub(crate) fn mark_overlay_page_loaded() {
     OVERLAY_PAGE_LOADED.store(true, Ordering::SeqCst);
 }
@@ -274,8 +369,21 @@ fn set_overlay_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Re
 }
 
 #[cfg(not(target_os = "windows"))]
-fn set_overlay_window_opacity(_window: &tauri::WebviewWindow, _opacity: f64) -> Result<(), String> {
-    Ok(())
+fn set_overlay_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Result<(), String> {
+    // There is no `SetLayeredWindowAttributes` off Windows, and Tauri v2 exposes no
+    // cross-platform per-window opacity API. Instead of a silent no-op, drive the
+    // same fade envelope the Windows layered-window path gives us straight in the
+    // webview: set the document root's CSS opacity. The OverlayPage paints the pill
+    // from its Zustand stores, so fading the whole document (a) hides the very first
+    // pre-paint frame on show — matching the Windows "start at 0, ramp to 1" ramp
+    // (`place_and_show_at`) — and (b) composes cleanly over the renderer's own
+    // enter/exit animation. eval failures (e.g. the webview not yet loaded on a
+    // race-ahead first show) are surfaced to the caller, which already ignores them.
+    let clamped = opacity.clamp(0.0, 1.0);
+    let script = format!(
+        "(function(){{var r=document.documentElement;if(r){{r.style.transition='opacity {OVERLAY_SHOW_OPACITY_RAMP_DELAY_MS}ms linear';r.style.opacity='{clamped}';}}}})();"
+    );
+    window.eval(&script).map_err(|e| e.to_string())
 }
 
 fn overlay_hide_should_wait_for_renderer(mode: OverlayMode) -> bool {
@@ -336,6 +444,12 @@ fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>,
     let Some(window) = ensure_overlay_window(app) else {
         return;
     };
+    // macOS: make the overlay a non-activating floating NSPanel the first time it
+    // is shown (idempotent; no-op on other platforms). Done here rather than at
+    // window creation (windows.rs) so the conversion hooks the exact surface the
+    // pipeline reveals without touching the shared window-spec module.
+    #[cfg(target_os = "macos")]
+    ensure_overlay_is_panel(&window);
     // Mark a fresh show so any in-flight deferred-hide thread cancels itself.
     let generation = OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     OVERLAY_DESIRED_VISIBLE.store(true, Ordering::SeqCst);
@@ -867,9 +981,12 @@ mod tests {
         let resolved = resolve_overlay_position(OverlayPosition::Auto);
         #[cfg(target_os = "linux")]
         {
-            // Without the env flag, Linux auto → none (paste-pipeline safety).
-            if !is_force_overlay_env_flag_set() {
+            // Linux now defaults to the visible bottom pill (item 10 OOB
+            // visibility); only a FALSEY WINSTT_FORCE_OVERLAY opts back out to none.
+            if overlay_force_flag_is_falsey() {
                 assert!(matches!(resolved, ResolvedPosition::None));
+            } else {
+                assert!(matches!(resolved, ResolvedPosition::Bottom));
             }
         }
         #[cfg(not(target_os = "linux"))]

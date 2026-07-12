@@ -49,17 +49,6 @@ pub enum DeviceType {
     Cpu,
 }
 
-/// `model.backend` — `TranscriberBackendSchema`.
-/// NOTE(port): the Rust engine (slice 03) is a single unified `ort` runtime, so
-/// `faster_whisper` is effectively a legacy default that the load path maps to
-/// the ONNX engine. Kept for settings round-trip parity with persisted JSON.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum TranscriberBackend {
-    FasterWhisper,
-    OnnxAsr,
-}
-
 /// `global.modelUnloadTimeout`. IPC normalizes `never` → negative seconds
 /// sentinel ("keep loaded forever"), `immediately` → 0 (tear down after each
 /// transcription). HOT-SWAP (retunes the idle-unload daemon in place).
@@ -405,9 +394,6 @@ pub struct ModelSettings {
     /// CPU vs auto-GPU. HOT-SWAP through targeted model reload.
     #[serde(default)]
     pub device: DeviceType,
-    /// Transcriber engine (auto-derived from model id on load). HOT-SWAP.
-    #[serde(default)]
-    pub backend: TranscriberBackend,
     /// ONNX file quant suffix (`""`, `int8`, `fp16`, `uint8`, `int4`, `q4`,
     /// `q4f16`, `bnb4`). Free-string (not an enum) — the catalog gates valid values per
     /// model and the server resolves `""`/`auto`. HOT-SWAP.
@@ -442,11 +428,6 @@ impl Default for DeviceType {
         DeviceType::Auto
     }
 }
-impl Default for TranscriberBackend {
-    fn default() -> Self {
-        TranscriberBackend::FasterWhisper
-    }
-}
 impl Default for ModelUnloadTimeout {
     fn default() -> Self {
         ModelUnloadTimeout::Min15
@@ -463,7 +444,6 @@ impl Default for ModelSettings {
             auto_detect_language: false,
             language_candidates: Vec::new(),
             device: DeviceType::default(),
-            backend: TranscriberBackend::default(),
             // "auto" = RAM/VRAM-aware recommended pick; "" would mean EXPLICIT fp32 (see backend.rs).
             onnx_quantization: "auto".into(),
             initial_prompt: String::new(),
@@ -894,14 +874,18 @@ pub struct GeneralSettings {
     /// Auto-delete saved WAV recordings policy. HOT-SWAP. Zod `.catch("cap")`.
     #[serde(default)]
     pub recording_retention: RecordingRetention,
-    /// Server fuzzy-corrector max score (lower=stricter). Range 0..1. HOT-SWAP. Zod `.catch(0.18)`.
-    #[serde(default = "GeneralSettings::default_word_correction_threshold")]
-    pub word_correction_threshold: f64,
     /// Master switch for the on-device (encoder) dictionary fallback + its model. When false, the
     /// non-LLM vocabulary path is off entirely: the model is never downloaded/run and the
     /// Vocabulary tab's dictionary is inert unless LLM cleanup is on. HOT-SWAP. Zod `.catch(true)`.
     #[serde(default = "GeneralSettings::default_encoder_dictionary_enabled")]
     pub encoder_dictionary_enabled: bool,
+    /// How much surrounding text (bytes each side of a word) the on-device dictionary reads when
+    /// judging whether a word is a mis-hearing. Lower = faster (masked-LM cost grows with the square
+    /// of the text length); higher reads more context, which can catch borderline corrections in long
+    /// dictation but is slower. Default 220 is the fastest step and works for most speech. HOT-SWAP.
+    /// Zod `.catch(220)`.
+    #[serde(default = "GeneralSettings::default_dictionary_context_chars")]
+    pub dictionary_context_chars: i64,
 }
 
 impl GeneralSettings {
@@ -956,8 +940,8 @@ impl GeneralSettings {
     fn default_history_max_entries() -> i64 {
         1000
     }
-    fn default_word_correction_threshold() -> f64 {
-        0.18
+    fn default_dictionary_context_chars() -> i64 {
+        220
     }
     fn default_encoder_dictionary_enabled() -> bool {
         true
@@ -1099,8 +1083,8 @@ impl Default for GeneralSettings {
             history_enabled: Self::default_history_enabled(),
             history_max_entries: Self::default_history_max_entries(),
             recording_retention: RecordingRetention::default(),
-            word_correction_threshold: Self::default_word_correction_threshold(),
             encoder_dictionary_enabled: Self::default_encoder_dictionary_enabled(),
+            dictionary_context_chars: Self::default_dictionary_context_chars(),
         }
     }
 }
@@ -1109,7 +1093,33 @@ impl Default for GeneralSettings {
 // SECTION: hotkey  (hotkeySettingsSchema)
 // ===========================================================================
 
+// The push-to-talk default is platform-specific. A modifier-only combo
+// (`LCtrl+LMeta`) can only be armed on Windows, where the low-level keyboard hook
+// observes and swallows the held modifiers system-wide. Tauri's global-shortcut
+// backend (used on macOS/Linux) requires a non-modifier key, so a modifier-only
+// default would register NOTHING there and leave a fresh install with no dictation
+// hotkey. Every non-Windows default is therefore a FULL accelerator, chosen to
+// avoid colliding with the other shipped defaults (`read_aloud` = `LCtrl+Space`,
+// `transforms` = `LCtrl+LShift+T`).
+#[cfg(target_os = "windows")]
 pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "LCtrl+LMeta";
+// macOS Option is represented as `Alt` in the app's hotkey vocabulary (the token
+// `validate_hotkey`/`is_supported_hotkey_token` recognizes and the low-level hook
+// emits) — `Option` is not a valid token, so the default must spell it `Alt`.
+#[cfg(target_os = "macos")]
+pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "Alt+Space";
+#[cfg(target_os = "linux")]
+pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "Ctrl+Alt+Space";
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "Alt+Space";
+
+/// zod-canonical push-to-talk key for the Rust↔zod parity fixture. The runtime
+/// default above is platform-specific, but the parity fixture mirrors what the
+/// single JS bundle's `appSettingsSchema.parse({})` produces — identical on every
+/// OS — so the committed fixture must NOT depend on the builder's platform. See
+/// `default_fixture_json`.
+const FIXTURE_PUSH_TO_TALK_KEY: &str = "LCtrl+LMeta";
+
 const TEMPORARY_TAURI_PUSH_TO_TALK_KEY: &str = "LCtrl+LAlt+D";
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
@@ -1548,6 +1558,17 @@ impl Default for IntegrationsSettings {
 // TOP-LEVEL: WinsttSettings  (appSettingsSchema)
 // ===========================================================================
 
+/// Persisted settings schema version (finding #20). Bumped when a breaking shape
+/// change needs a migration step; persisting it makes a downgrade/upgrade
+/// detectable and gives future migrations an anchor. Kept in lockstep with the
+/// zod `SETTINGS_SCHEMA_VERSION` constant (and the import/export envelope) so the
+/// Rust↔zod defaults-parity fixture agrees.
+pub const SCHEMA_VERSION: u32 = 1;
+
+fn default_schema_version() -> u32 {
+    SCHEMA_VERSION
+}
+
 /// The complete WinSTT settings tree, nested by the settings sections, ported
 /// 1:1 from `appSettingsSchema` (Zod). Serializes to the exact camelCase JSON
 /// the reused React renderer expects.
@@ -1557,6 +1578,12 @@ impl Default for IntegrationsSettings {
 #[derive(Serialize, Debug, Clone, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WinsttSettings {
+    /// Persisted schema version (finding #20). Anchors future migrations and lets
+    /// a downgrade/upgrade be detected. An older/newer persisted value survives a
+    /// read (serde `default` only fills an ABSENT key), so a downgrade can never
+    /// silently reset it.
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     #[serde(default)]
     pub global: GlobalSettings,
     #[serde(default)]
@@ -1598,6 +1625,7 @@ pub struct WinsttSettings {
 impl Default for WinsttSettings {
     fn default() -> Self {
         Self {
+            schema_version: SCHEMA_VERSION,
             global: GlobalSettings::default(),
             model: ModelSettings::default(),
             quality: QualitySettings::default(),
@@ -1622,13 +1650,25 @@ impl Default for WinsttSettings {
 /// embedded `AppSettings` view, which the renderer never sees (zod strips it),
 /// and which also carries machine-dependent (`core.appLanguage` reads the host
 /// locale) and `HashMap`-ordered fields that cannot live in a byte-stable
-/// committed fixture. Both the `cargo run --example export_settings_fixture`
-/// regenerator and the Rust parity test go through this one function so they
-/// never drift.
+/// committed fixture. `schemaVersion` (finding #20) is part of the SHARED
+/// surface: both this struct and the zod `appSettingsSchema` model it, so it
+/// stays in the fixture and parity fails CI if either side's version constant
+/// drifts. Both the `cargo run --example export_settings_fixture` regenerator
+/// and the Rust parity test go through this one function so they never drift.
 pub fn default_fixture_json() -> Result<String, serde_json::Error> {
     let mut value = serde_json::to_value(WinsttSettings::default())?;
     if let Some(map) = value.as_object_mut() {
         map.remove("core");
+    }
+    // Pin the push-to-talk key to the zod-canonical value: the runtime default is
+    // platform-specific (see `DEFAULT_PUSH_TO_TALK_KEY`), but the parity fixture must
+    // be identical on every OS so it can be compared against the platform-independent
+    // zod default AND stay byte-stable regardless of which OS regenerated it.
+    if let Some(push_to_talk_key) = value
+        .get_mut("hotkey")
+        .and_then(|hotkey| hotkey.get_mut("pushToTalkKey"))
+    {
+        *push_to_talk_key = serde_json::json!(FIXTURE_PUSH_TO_TALK_KEY);
     }
     let mut json = serde_json::to_string_pretty(&value)?;
     json.push('\n');
@@ -1638,6 +1678,8 @@ pub fn default_fixture_json() -> Result<String, serde_json::Error> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WinsttSettingsWire {
+    #[serde(default = "default_schema_version")]
+    schema_version: u32,
     #[serde(default)]
     global: GlobalSettings,
     #[serde(default)]
@@ -1670,6 +1712,7 @@ struct WinsttSettingsWire {
 impl From<WinsttSettingsWire> for WinsttSettings {
     fn from(w: WinsttSettingsWire) -> Self {
         Self {
+            schema_version: w.schema_version,
             global: w.global,
             model: w.model,
             quality: w.quality,
@@ -1910,6 +1953,10 @@ mod tests {
     fn defaults_match_zod_schema() {
         let s = WinsttSettings::default();
 
+        // schema version (finding #20)
+        assert_eq!(s.schema_version, SCHEMA_VERSION);
+        assert_eq!(s.schema_version, 1);
+
         // model
         assert_eq!(s.model.model, "tiny");
         assert_eq!(s.model.realtime_model, "tiny");
@@ -1917,7 +1964,6 @@ mod tests {
         assert!(!s.model.auto_detect_language);
         assert!(s.model.language_candidates.is_empty());
         assert_eq!(s.model.device, DeviceType::Auto);
-        assert_eq!(s.model.backend, TranscriberBackend::FasterWhisper);
         assert_eq!(s.model.onnx_quantization, "auto");
         assert!(!s.model.translate_to_english);
         assert_eq!(s.global.model_unload_timeout, ModelUnloadTimeout::Min15);
@@ -1980,7 +2026,7 @@ mod tests {
         assert!(s.general.history_enabled);
         assert_eq!(s.general.history_max_entries, 1000);
         assert_eq!(s.general.recording_retention, RecordingRetention::Cap);
-        assert_eq!(s.general.word_correction_threshold, 0.18);
+        assert_eq!(s.general.dictionary_context_chars, 220);
         assert_eq!(s.general.auto_submit_key, AutoSubmitKey::Enter);
         assert!(!s.general.word_by_word_pasting);
         assert_eq!(s.general.onboarded_track, OnboardedTrack::Unset);
@@ -2091,11 +2137,30 @@ mod tests {
 
     #[test]
     fn modifier_only_push_to_talk_survives_deserialize() {
+        // A user who explicitly saved a modifier-only combo keeps it verbatim — the
+        // migration only rewrites empty / temporary values. Assert against the literal
+        // input rather than `DEFAULT_PUSH_TO_TALK_KEY`, which is a full accelerator on
+        // non-Windows and would no longer match the persisted modifier-only combo.
         let s: WinsttSettings = serde_json::from_value(serde_json::json!({
             "hotkey": { "pushToTalkKey": "LCtrl+LMeta" }
         }))
         .unwrap();
-        assert_eq!(s.hotkey.push_to_talk_key, DEFAULT_PUSH_TO_TALK_KEY);
+        assert_eq!(s.hotkey.push_to_talk_key, "LCtrl+LMeta");
+    }
+
+    #[test]
+    fn persisted_schema_version_is_preserved_on_read() {
+        // finding #20: a persisted schemaVersion (older OR newer than the current
+        // binary's) must survive a read — serde `default` only fills an ABSENT key,
+        // so a downgrade/upgrade stays detectable and is never silently reset.
+        let s: WinsttSettings = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 7
+        }))
+        .unwrap();
+        assert_eq!(s.schema_version, 7);
+        // Absent → defaults to the current version.
+        let d: WinsttSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(d.schema_version, SCHEMA_VERSION);
     }
 
     #[test]

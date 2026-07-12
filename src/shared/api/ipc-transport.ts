@@ -426,6 +426,8 @@ const COMMAND_INVOKERS: Partial<
 	[IPC.TTS_HISTORY_GET_ALL]: () => commands.ttsHistoryGetAll(),
 	[IPC.TTS_HISTORY_CLEAR]: () => commands.ttsHistoryClear(),
 	[IPC.TTS_HISTORY_DELETE]: (a) => commands.ttsHistoryDelete(a["id"] as string),
+	[IPC.TTS_HISTORY_LOAD_AUDIO]: (a, args) =>
+		commands.ttsHistoryLoadAudio(stringCommandArg(a, args, "id")),
 
 	// ── Preview-before-pasting ──
 
@@ -551,6 +553,12 @@ export function send(channel: string, ...args: unknown[]) {
 export function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 	if (channel === IPC.SETTINGS_LOAD && canUseDevSettingsBridge()) {
 		return devSettingsLoad() as Promise<T>;
+	}
+	// Acknowledged settings-save over the dev bridge: `devSettingsSave` rejects
+	// on a non-OK HTTP response, so an `invoke`-based save gets a real
+	// success/failure signal (audit #46) instead of the fire-and-forget `send`.
+	if (channel === IPC.SETTINGS_SAVE && canUseDevSettingsBridge()) {
+		return devSettingsSave(args) as Promise<T>;
 	}
 	if (hasNativeBridge()) {
 		const invoker = COMMAND_INVOKERS[channel];

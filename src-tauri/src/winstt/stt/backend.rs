@@ -35,13 +35,14 @@
 //! 5/6. The `warming` flag / `try_lock` preemption and realtime poison recovery stay in core;
 //!    only the decode/warmup bodies move here. `peak_normalize` is applied in this backend.
 
-use crate::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
+use crate::audio_toolkit::vad::{SileroVad, VAD_FRAME_SAMPLES, VAD_SPEECH_THRESHOLD};
 use crate::winstt::audio_conditioning::peak_normalize;
 use crate::winstt::stt::formatting::apply_deterministic_formatting;
 use crate::winstt::stt::vad_segment::{
-    VAD_COMPACT_MIN_S, compact_for_transcription, vad_segment_decode,
+    VAD_COMPACT_MIN_S, compact_for_transcription, compact_for_transcription_mask,
+    vad_segment_decode_with_mask,
 };
-use crate::winstt::stt::{EngineConfig, TranscribeOptions, Transcriber};
+use crate::winstt::stt::{EngineConfig, EngineKind, TranscribeOptions, Transcriber};
 use anyhow::Result;
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
@@ -60,6 +61,53 @@ const SLOW_BACKEND_ENGINE_PHASE_MS: u128 = 10_000;
 /// pad straight back out.
 const FINAL_DECODE_SILENCE_PAD_MS: usize = 700;
 
+/// Which compaction/segmentation path a local decode takes, factored out so the routing is
+/// unit-testable. See [`decode_routing`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DecodeRouting {
+    /// Cut captured silence before decoding (mask compaction and/or Silero segmentation).
+    should_vad_compact: bool,
+    /// The (compacted) buffer exceeds the engine's window and must chunk on speech boundaries.
+    /// Only offline engines segment; native-streaming engines handle length in their own stream.
+    needs_long_form_segmenting: bool,
+    /// Mask-driven compaction + a single decode, WITHOUT building a Silero session.
+    mask_short_path: bool,
+}
+
+/// Decide the local decode routing. Capture is ungated, so a mask-carrying buffer holds its OWN
+/// silence for every engine:
+/// - Offline engines compact via the mask at any length, and additionally run the Silero long-form
+///   segmenter past `VAD_COMPACT_MIN_S` even without a mask (file/cloud). Past the engine's
+///   per-family cap they segment on speech boundaries.
+/// - Native-streaming engines have no offline segmenter, but their BATCH decode (reached when
+///   realtime reuse is unavailable — preview-before-pasting, or the live preview toggled off) must
+///   still cut captured silence, so they compact via the mask whenever one is present. Without a
+///   mask they decode single-pass (nothing to compact), and they never long-form segment.
+///
+/// The mask short path applies whenever compaction runs WITH a mask and no long-form chunking is
+/// needed — the common ungated short mic-dictation case, for offline and streaming engines alike.
+fn decode_routing(
+    supports_native_streaming: bool,
+    has_mask: bool,
+    audio_len: usize,
+    max_chunk_s: f32,
+) -> DecodeRouting {
+    let non_native_offline = !supports_native_streaming;
+    let needs_long_form_segmenting =
+        audio_len > (max_chunk_s * 16_000.0) as usize && non_native_offline;
+    let should_vad_compact = if non_native_offline {
+        has_mask || audio_len > (VAD_COMPACT_MIN_S * 16_000.0) as usize
+    } else {
+        has_mask
+    };
+    let mask_short_path = should_vad_compact && has_mask && !needs_long_form_segmenting;
+    DecodeRouting {
+        should_vad_compact,
+        needs_long_form_segmenting,
+        mask_short_path,
+    }
+}
+
 /// Peak-normalized `audio` followed by [`FINAL_DECODE_SILENCE_PAD_MS`] of zeros.
 fn peak_normalize_with_final_silence_pad(audio: &[f32]) -> Vec<f32> {
     let pad_samples = STT_SAMPLE_RATE * FINAL_DECODE_SILENCE_PAD_MS / 1000;
@@ -73,6 +121,61 @@ fn peak_normalize_with_final_silence_pad(audio: &[f32]) -> Vec<f32> {
     }
     padded.resize(padded.len() + pad_samples, 0.0);
     padded
+}
+
+/// Append [`FINAL_DECODE_SILENCE_PAD_MS`] of zeros to ALREADY-normalized audio (no re-scale). Used
+/// by the mask-driven single-pass path, which peak-normalizes before compaction.
+fn append_final_silence_pad(audio: &[f32]) -> Vec<f32> {
+    let pad_samples = STT_SAMPLE_RATE * FINAL_DECODE_SILENCE_PAD_MS / 1000;
+    let mut out = Vec::with_capacity(audio.len() + pad_samples);
+    out.extend_from_slice(audio);
+    out.resize(out.len() + pad_samples, 0.0);
+    out
+}
+
+/// How much of the mask tail is inspected to decide whether the recording ENDS in speech (and so
+/// wants the trailing pad). ~300 ms = 10 × 30 ms frames.
+const FINAL_PAD_TAIL_FRAMES: usize = 10;
+
+/// Whether the final trailing-silence pad should be applied.
+///
+/// The pad exists ONLY to protect the last word from end-of-audio clipping. With no capture mask
+/// (file / cloud) we cannot tell where speech ends, so we keep the legacy always-pad behavior. With
+/// a mask we pad only when the recording ENDS in speech — any speech frame within the last
+/// [`FINAL_PAD_TAIL_FRAMES`] (~300 ms), i.e. the user was cut off mid/at-word. When the tail already
+/// carries real trailing silence (no speech in that window) the buffer already gives the decoder its
+/// closing context, so the pad is skipped — audio is never lengthened without cause.
+fn should_apply_final_pad(speech_mask: Option<&[bool]>) -> bool {
+    match speech_mask {
+        None => true,
+        Some(mask) => {
+            let start = mask.len().saturating_sub(FINAL_PAD_TAIL_FRAMES);
+            mask[start..].iter().any(|&speech| speech)
+        }
+    }
+}
+
+/// Minimum decode-input length (samples @ 16 kHz) a family's front-end needs before it emits usable
+/// frames. Below this the decode input is zero-padded up to the floor (the capture layer no longer
+/// pads short clips). Only SenseVoice's fbank front-end is known to return 0 frames under ~400
+/// samples (25 ms) and then error / emit nothing, so it gets a one-frame (480-sample) floor;
+/// Whisper's fixed 30 s mel window makes any extra pad a no-op, and the other engines handle tiny
+/// inputs gracefully, so their floor is 0. In practice a clip this short is already rejected by the
+/// mask-aware silence gate when it carries no speech — this is a decode-layer safety net.
+fn min_decode_samples(kind: EngineKind) -> usize {
+    match kind {
+        EngineKind::SenseVoiceCtc => VAD_FRAME_SAMPLES,
+        _ => 0,
+    }
+}
+
+/// Zero-pad `audio` up to [`min_decode_samples`] for `kind` when it is shorter. No-op otherwise.
+fn ensure_min_decode_len(mut audio: Vec<f32>, kind: EngineKind) -> Vec<f32> {
+    let floor = min_decode_samples(kind);
+    if audio.len() < floor {
+        audio.resize(floor, 0.0);
+    }
+    audio
 }
 
 /// Which load/decode path a model id routes to. Decided by id namespace (cloud prefix → catalog
@@ -144,11 +247,17 @@ pub trait SttBackend: Send + Sync {
     /// the FINAL text — the core must not run a second generic post-processing pass on this
     /// output. `engine` is borrowed `&mut` from inside the core's
     /// `catch_unwind`; this method must NOT lock the engine mutex.
+    ///
+    /// `speech_mask` is the mic capture's per-frame speech mask (`CapturedAudio`, `None` for
+    /// file/cloud). When present it drives silence compaction directly (skipping a Silero sweep)
+    /// so EVERY mic clip — short single-pass ones included — has its (now ungated) captured silence
+    /// cut before the model, and it gates the trailing-silence pad.
     fn decode(
         &self,
         app: &AppHandle,
         engine: &mut dyn Transcriber,
         audio: &[f32],
+        speech_mask: Option<&[bool]>,
         request_id: &str,
     ) -> Result<String>;
 
@@ -170,8 +279,16 @@ pub trait SttBackend: Send + Sync {
     /// The full cloud-STT round-trip for a `<provider>:<id>` model: ship the captured audio to
     /// the provider via `CloudSttManager`, then apply the WinSTT dictionary + filler
     /// post-processing (cloud is never Whisper). Owns the nested-runtime `block_in_place` /
-    /// `block_on` branch.
-    fn cloud_transcribe(&self, app: &AppHandle, model_id: &str, audio: &[f32]) -> Result<String>;
+    /// `block_on` branch. `speech_mask` (the mic capture mask, `None` for file/cloud-from-file)
+    /// drives upload compaction — the same silence cut the local path uses — so pause-heavy
+    /// recordings send less audio.
+    fn cloud_transcribe(
+        &self,
+        app: &AppHandle,
+        model_id: &str,
+        audio: &[f32],
+        speech_mask: Option<&[bool]>,
+    ) -> Result<String>;
 }
 
 /// Zero-sized impl of [`SttBackend`]. Reaches all WinSTT state via the `&AppHandle` params
@@ -439,6 +556,7 @@ impl SttBackend for WinsttSttBackend {
         app: &AppHandle,
         engine: &mut dyn Transcriber,
         audio: &[f32],
+        speech_mask: Option<&[bool]>,
         request_id: &str,
     ) -> Result<String> {
         let decode_started = Instant::now();
@@ -514,16 +632,29 @@ impl SttBackend for WinsttSttBackend {
             ..Default::default()
         };
 
-        // Pause-heavy recordings waste decoder time on thinking silence. For local offline engines,
-        // run a VAD compaction pass that keeps at most a short natural pause between speech runs.
-        // If the compacted result still exceeds an engine window (Whisper's 30 s mel wall, AED
-        // token caps), the same path chunks it on speech boundaries.
-        const MAX_CHUNK_S: f32 = 28.0; // headroom under Whisper's 30 s mel wall
-        let transcribe_once = |engine: &mut dyn Transcriber, phase: &str| -> Result<String> {
-            // Single-pass decodes get the trailing-silence pad (the VAD-segment path
-            // compacts silences anyway, so it never wants the pad).
+        // Pause-heavy recordings waste decoder time on thinking silence — and capture is now
+        // UNGATED, so even a short mic clip carries its own silence. For local offline engines we
+        // compact silences via the capture mask (skipping a Silero sweep) at EVERY length when a
+        // mask is present; without a mask (file/cloud) we keep the legacy >VAD_COMPACT_MIN_S Silero
+        // threshold. If the compacted result still exceeds an engine window (Whisper's 30 s mel
+        // wall, AED token caps), the same path chunks it on speech boundaries. The per-family cap is
+        // the engine's own `max_chunk_seconds()` (Cohere stays 28 s — its DirectML encoder pad
+        // bucket is sized to that; Moonshine drops to 14 s under its greedy token budget).
+        let max_chunk_s = kind.max_chunk_seconds();
+        // apply_final_pad: the trailing-silence pad only protects the last word from end-of-audio
+        // clipping. No mask → legacy always-pad; mask present → pad only when the recording ENDS in
+        // speech (cut mid/at-word). See `should_apply_final_pad`.
+        let apply_final_pad = should_apply_final_pad(speech_mask);
+        let transcribe_once = |engine: &mut dyn Transcriber,
+                               phase: &str,
+                               pad: bool|
+         -> Result<String> {
             let normalize_started = Instant::now();
-            let padded = peak_normalize_with_final_silence_pad(audio);
+            let decode_input: Cow<'_, [f32]> = if pad {
+                Cow::Owned(peak_normalize_with_final_silence_pad(audio))
+            } else {
+                Cow::Owned(ensure_min_decode_len(peak_normalize(audio), kind))
+            };
             record_slow_backend_phase(
                 app,
                 &meta,
@@ -532,13 +663,14 @@ impl SttBackend for WinsttSttBackend {
                 SLOW_BACKEND_SETUP_PHASE_MS,
             );
             log::info!(
-                "[stt][{request_id}] {phase}_start model='{model_id}' kind={kind_label} samples={} audio_ms={} final_silence_pad_ms={FINAL_DECODE_SILENCE_PAD_MS}",
-                padded.len(),
-                samples_to_ms(padded.len())
+                "[stt][{request_id}] {phase}_start model='{model_id}' kind={kind_label} samples={} audio_ms={} final_silence_pad_ms={}",
+                decode_input.len(),
+                samples_to_ms(decode_input.len()),
+                if pad { FINAL_DECODE_SILENCE_PAD_MS } else { 0 }
             );
             let phase_started = Instant::now();
             let result = engine
-                .transcribe(&padded, &opts)
+                .transcribe(&decode_input, &opts)
                 .map(|t| t.text)
                 .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e));
             let elapsed = phase_started.elapsed();
@@ -556,15 +688,23 @@ impl SttBackend for WinsttSttBackend {
             record_slow_backend_phase(app, &meta, phase, elapsed, SLOW_BACKEND_ENGINE_PHASE_MS);
             result
         };
-        let non_native_offline = !kind.supports_native_streaming();
+        let has_mask = speech_mask.is_some();
         let audio_len = audio.len();
-        let needs_long_form_segmenting =
-            audio_len > (MAX_CHUNK_S * 16_000.0) as usize && non_native_offline;
-        let should_vad_compact =
-            audio_len > (VAD_COMPACT_MIN_S * 16_000.0) as usize && non_native_offline;
+        let DecodeRouting {
+            should_vad_compact,
+            needs_long_form_segmenting,
+            mask_short_path,
+        } = decode_routing(
+            kind.supports_native_streaming(),
+            has_mask,
+            audio_len,
+            max_chunk_s,
+        );
         log::info!(
-            "[stt][{request_id}] local_decode_route model='{model_id}' kind={kind_label} path={} input_samples={} input_audio_ms={} vad_compact_min_s={VAD_COMPACT_MIN_S}",
-            if should_vad_compact {
+            "[stt][{request_id}] local_decode_route model='{model_id}' kind={kind_label} path={} input_samples={} input_audio_ms={} vad_compact_min_s={VAD_COMPACT_MIN_S} max_chunk_s={max_chunk_s:.1} has_mask={has_mask}",
+            if mask_short_path {
+                "mask_compact"
+            } else if should_vad_compact {
                 "vad_segment"
             } else {
                 "single_pass"
@@ -572,10 +712,66 @@ impl SttBackend for WinsttSttBackend {
             audio_len,
             samples_to_ms(audio_len)
         );
-        let text = if should_vad_compact {
+        let text = if mask_short_path {
+            // Mask-driven silence compaction (no Silero) + one decode, with the conditional
+            // trailing pad — the common ungated short mic-dictation case.
+            let mask = speech_mask.expect("mask_short_path implies has_mask");
+            let normalize_started = Instant::now();
+            let conditioned = peak_normalize(audio);
+            record_slow_backend_phase(
+                app,
+                &meta,
+                "peak_normalize",
+                normalize_started.elapsed(),
+                SLOW_BACKEND_SETUP_PHASE_MS,
+            );
+            let compacted = compact_for_transcription_mask(&conditioned, mask);
+            let compacted_len = compacted.len();
+            let decode_input: Cow<'_, [f32]> = if apply_final_pad {
+                Cow::Owned(append_final_silence_pad(&compacted))
+            } else {
+                Cow::Owned(ensure_min_decode_len(compacted.into_owned(), kind))
+            };
+            log::info!(
+                "[stt][{request_id}] mask_compact_start model='{model_id}' kind={kind_label} input_audio_ms={} compacted_audio_ms={} decode_audio_ms={} final_silence_pad_ms={}",
+                samples_to_ms(conditioned.len()),
+                samples_to_ms(compacted_len),
+                samples_to_ms(decode_input.len()),
+                if apply_final_pad {
+                    FINAL_DECODE_SILENCE_PAD_MS
+                } else {
+                    0
+                }
+            );
+            let phase_started = Instant::now();
+            let result = engine
+                .transcribe(&decode_input, &opts)
+                .map(|t| t.text)
+                .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e));
+            let elapsed = phase_started.elapsed();
+            match &result {
+                Ok(text) => log::info!(
+                    "[stt][{request_id}] mask_compact_complete duration_ms={} output_chars={}",
+                    elapsed.as_millis(),
+                    text.chars().count()
+                ),
+                Err(err) => log::warn!(
+                    "[stt][{request_id}] mask_compact_failed duration_ms={} error={err}",
+                    elapsed.as_millis()
+                ),
+            }
+            record_slow_backend_phase(
+                app,
+                &meta,
+                "mask_compact",
+                elapsed,
+                SLOW_BACKEND_ENGINE_PHASE_MS,
+            );
+            result?
+        } else if should_vad_compact {
             let vad_build_started = Instant::now();
             // Reuses the process-wide cached Silero session (reset per use); only the
-            // very first long-form decode pays the ONNX session build.
+            // very first long-form / no-mask compaction pays the ONNX session build.
             let segment_outcome = with_segmentation_vad(app, |vad| {
                 let vad_build_elapsed = vad_build_started.elapsed();
                 log::info!(
@@ -600,15 +796,17 @@ impl SttBackend for WinsttSttBackend {
                 );
                 let vad_segment_started = Instant::now();
                 log::info!(
-                    "[stt][{request_id}] vad_segment_start model='{model_id}' kind={kind_label} max_chunk_s={MAX_CHUNK_S:.1} audio_ms={}",
+                    "[stt][{request_id}] vad_segment_start model='{model_id}' kind={kind_label} max_chunk_s={max_chunk_s:.1} audio_ms={} has_mask={has_mask}",
                     samples_to_ms(conditioned.len())
                 );
                 // Explicit reborrow: the closure must not consume the `&mut` engine —
-                // the VAD-unavailable fallback below still decodes with it.
-                let result = vad_segment_decode(
+                // the VAD-unavailable fallback below still decodes with it. The capture mask
+                // (when present) drives the FIRST compaction sweep; the second sweep stays Silero.
+                let result = vad_segment_decode_with_mask(
                     &mut *engine,
                     &conditioned,
-                    MAX_CHUNK_S,
+                    speech_mask,
+                    max_chunk_s,
                     kind.needs_past_context(),
                     vad,
                     &opts,
@@ -646,11 +844,11 @@ impl SttBackend for WinsttSttBackend {
                     } else {
                         log::warn!("VAD silence compaction unavailable ({e}); single-pass decode");
                     }
-                    transcribe_once(engine, "single_pass_vad_unavailable")?
+                    transcribe_once(engine, "single_pass_vad_unavailable", apply_final_pad)?
                 }
             }
         } else {
-            transcribe_once(engine, "single_pass")?
+            transcribe_once(engine, "single_pass", apply_final_pad)?
         };
 
         // WinSTT-arm post-processing: custom-words correction, sourced from the SAME `ws`
@@ -706,7 +904,13 @@ impl SttBackend for WinsttSttBackend {
             .map_err(|e| anyhow::anyhow!("WinSTT warmup failed: {}", e))
     }
 
-    fn cloud_transcribe(&self, app: &AppHandle, model_id: &str, audio: &[f32]) -> Result<String> {
+    fn cloud_transcribe(
+        &self,
+        app: &AppHandle,
+        model_id: &str,
+        audio: &[f32],
+        speech_mask: Option<&[bool]>,
+    ) -> Result<String> {
         // When the selected model carries a cloud prefix (openai:/elevenlabs:), there is NO local
         // engine — ship the captured audio to the provider via CloudSttManager.
         let ws = crate::winstt::settings_store::read_settings(app);
@@ -730,7 +934,20 @@ impl SttBackend for WinsttSttBackend {
             (None, [language]) => Some(language.clone()),
             _ => None,
         };
-        let upload_audio = if audio.len() > (VAD_COMPACT_MIN_S * 16_000.0) as usize {
+        // Prefer the mic capture mask (compact at ANY length, no Silero build) — the same silence
+        // cut the local path uses — so pause-heavy dictation uploads less audio. Without a mask
+        // (cloud-from-file), keep the legacy Silero pass gated at >VAD_COMPACT_MIN_S.
+        let upload_audio: Cow<'_, [f32]> = if let Some(mask) = speech_mask {
+            let compacted = compact_for_transcription_mask(audio, mask);
+            if compacted.len() < audio.len() {
+                log::debug!(
+                    "[cloud-stt] mask-compacted upload audio {:.2}s -> {:.2}s",
+                    audio.len() as f32 / 16_000.0,
+                    compacted.len() as f32 / 16_000.0
+                );
+            }
+            compacted
+        } else if audio.len() > (VAD_COMPACT_MIN_S * 16_000.0) as usize {
             match build_segmentation_vad(app) {
                 Ok(mut vad) => {
                     let compacted = compact_for_transcription(audio, &mut vad);
@@ -1069,6 +1286,138 @@ mod tests {
         assert_eq!(
             winstt_postprocess("hello comma world", &ws),
             "hello comma world"
+        );
+    }
+
+    #[test]
+    fn final_pad_always_on_without_mask_conditional_with_mask() {
+        // No mask (file/cloud) → legacy always-pad.
+        assert!(should_apply_final_pad(None));
+        // Mask whose tail (last ~300 ms) ends in speech → pad (cut mid/at-word).
+        let mut ends_in_speech = vec![false; 40];
+        ends_in_speech[39] = true;
+        assert!(should_apply_final_pad(Some(&ends_in_speech)));
+        // Mask ending in trailing silence beyond the tail window → skip the pad.
+        let ends_in_silence = {
+            let mut m = vec![true; 40];
+            for frame in m.iter_mut().skip(40 - FINAL_PAD_TAIL_FRAMES) {
+                *frame = false;
+            }
+            m
+        };
+        assert!(!should_apply_final_pad(Some(&ends_in_silence)));
+        // Empty mask → no speech in the tail → no pad.
+        assert!(!should_apply_final_pad(Some(&[])));
+    }
+
+    #[test]
+    fn append_final_silence_pad_adds_exactly_the_pad() {
+        let audio = vec![0.1f32, -0.2, 0.3];
+        let padded = append_final_silence_pad(&audio);
+        let pad = STT_SAMPLE_RATE * FINAL_DECODE_SILENCE_PAD_MS / 1000;
+        assert_eq!(padded.len(), audio.len() + pad);
+        assert_eq!(&padded[..audio.len()], audio.as_slice());
+        assert!(padded[audio.len()..].iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn decode_routing_compacts_streaming_batch_via_mask() {
+        // Native-streaming engine, short buffer WITH a capture mask: the batch decode (realtime
+        // reuse unavailable) must compact the captured silence via the mask — NOT fall through to
+        // an ungated single pass. This is the regression finding.
+        let streaming_masked = decode_routing(true, true, 16_000, 28.0);
+        assert_eq!(
+            streaming_masked,
+            DecodeRouting {
+                should_vad_compact: true,
+                needs_long_form_segmenting: false,
+                mask_short_path: true,
+            }
+        );
+        // Streaming engine WITHOUT a mask (file/cloud): nothing to compact → single pass, and a
+        // streaming engine never long-form segments even past the cap.
+        assert_eq!(
+            decode_routing(true, false, 16_000, 28.0),
+            DecodeRouting {
+                should_vad_compact: false,
+                needs_long_form_segmenting: false,
+                mask_short_path: false,
+            }
+        );
+        assert_eq!(
+            decode_routing(true, false, 60 * 16_000, 28.0),
+            DecodeRouting {
+                should_vad_compact: false,
+                needs_long_form_segmenting: false,
+                mask_short_path: false,
+            }
+        );
+    }
+
+    #[test]
+    fn decode_routing_offline_paths_unchanged() {
+        // Offline engine, short mic clip with a mask → mask short path.
+        assert_eq!(
+            decode_routing(false, true, 16_000, 28.0),
+            DecodeRouting {
+                should_vad_compact: true,
+                needs_long_form_segmenting: false,
+                mask_short_path: true,
+            }
+        );
+        // Offline engine, long buffer past the cap WITH a mask → still compacts, but long-form
+        // segments (so not the mask short path).
+        assert_eq!(
+            decode_routing(false, true, 60 * 16_000, 28.0),
+            DecodeRouting {
+                should_vad_compact: true,
+                needs_long_form_segmenting: true,
+                mask_short_path: false,
+            }
+        );
+        // Offline engine, no mask, long enough to cross VAD_COMPACT_MIN_S → Silero segmenter.
+        let long = (VAD_COMPACT_MIN_S as usize + 2) * 16_000;
+        assert_eq!(
+            decode_routing(false, false, long, 28.0),
+            DecodeRouting {
+                should_vad_compact: true,
+                needs_long_form_segmenting: false,
+                mask_short_path: false,
+            }
+        );
+        // Offline engine, no mask, short → single pass.
+        assert_eq!(
+            decode_routing(false, false, 16_000, 28.0),
+            DecodeRouting {
+                should_vad_compact: false,
+                needs_long_form_segmenting: false,
+                mask_short_path: false,
+            }
+        );
+    }
+
+    #[test]
+    fn min_decode_len_floor_only_for_sensevoice() {
+        // SenseVoice's fbank front-end needs one full frame; a shorter input is padded up.
+        assert_eq!(
+            min_decode_samples(EngineKind::SenseVoiceCtc),
+            VAD_FRAME_SAMPLES
+        );
+        let short = vec![0.5f32; 100];
+        let floored = ensure_min_decode_len(short, EngineKind::SenseVoiceCtc);
+        assert_eq!(floored.len(), VAD_FRAME_SAMPLES);
+        // Whisper (and others) have no floor — any tiny input is passed through untouched.
+        assert_eq!(min_decode_samples(EngineKind::WhisperHf), 0);
+        let tiny = vec![0.5f32; 3];
+        assert_eq!(
+            ensure_min_decode_len(tiny.clone(), EngineKind::WhisperHf),
+            tiny
+        );
+        // Already-long input is never shortened.
+        let long = vec![0.1f32; VAD_FRAME_SAMPLES * 4];
+        assert_eq!(
+            ensure_min_decode_len(long.clone(), EngineKind::SenseVoiceCtc).len(),
+            long.len()
         );
     }
 }

@@ -1,3 +1,4 @@
+import type { IconSvgElement } from "@hugeicons/react";
 import type {
 	ModelSpecPriceTier,
 	ModelSpecStat,
@@ -78,11 +79,12 @@ export function specStat(
 	key: string,
 	label: string,
 	score: number,
+	icon?: IconSvgElement,
 ): ModelSpecStat | null {
 	if (!Number.isFinite(score) || score === 0.5 || score <= 0) {
 		return null;
 	}
-	return { key, label, score };
+	return { key, label, score, icon };
 }
 
 /** Per-million-token USD figure parsed from an OpenRouter price string. */

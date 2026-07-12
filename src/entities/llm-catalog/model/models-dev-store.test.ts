@@ -38,7 +38,7 @@ describe("useModelsDevStore", () => {
 		globalThis.fetch = (async () => {
 			fetches += 1;
 			return Response.json(SAMPLE);
-		}) as typeof fetch;
+		}) as unknown as typeof fetch;
 
 		// Import AFTER stubbing fetch — the store fetches lazily via ensureLoaded,
 		// so the module-load cache read (empty) is harmless.

@@ -2,7 +2,7 @@ const MAX_DEVICE_CHARS = 16;
 
 /** Strip driver/loopback suffixes: "LG TV (NVIDIA …) [Loopback]" → "LG TV" */
 const DEVICE_SUFFIX_RE = /\s*[([].*/;
-export function shortDeviceName(name: string): string {
+function shortDeviceName(name: string): string {
 	return name.replace(DEVICE_SUFFIX_RE, "").trim() || name;
 }
 

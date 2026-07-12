@@ -19,11 +19,6 @@ type UpdateModelFn = ReturnType<
 >["updateModelSettings"];
 type ModelPatch = Parameters<UpdateModelFn>[0];
 
-// Cloud STT ids route by provider prefix; the backend field is still required
-// by the settings patch type, so persist the same benign backend the swap path
-// uses for cloud selections.
-const CLOUD_MODEL_BACKEND = "onnx_asr" as const;
-
 function applyModelPatch(patch: ModelPatch): void {
 	getSettingsStoreState().updateModelSettings(patch);
 }
@@ -47,21 +42,15 @@ function cloudFallbackPatch(
 	if (!cloudFallbackModel || cloudFallbackModel === currentMainModel) {
 		return null;
 	}
-	return { model: cloudFallbackModel, backend: CLOUD_MODEL_BACKEND };
+	return { model: cloudFallbackModel };
 }
 
 /**
- * Pure decision for the main slot: returns the ``{ model, backend }`` patch
- * to apply, or ``null`` when no fallback is warranted. Extracted from the
- * effect so the reactive body is a flat "compute patch → maybe apply" and
- * the guard chain (cloud id / not-stale / no pick / same pick / no backend)
- * is testable without a render.
- *
- * The backend MUST travel with the model — ``updateModelSettings`` rejects a
- * model-only patch (see the typed ``ModelPatch``). This was the original
- * drift site: the fallback used to write ``{ model: "tiny" }`` while leaving
- * ``backend`` at whatever the previous model used. Disk saved a mismatched
- * pair, every subsequent boot loaded the wrong engine for the right model.
+ * Pure decision for the main slot: returns the ``{ model }`` patch to apply,
+ * or ``null`` when no fallback is warranted. Extracted from the effect so the
+ * reactive body is a flat "compute patch → maybe apply" and the guard chain
+ * (cloud id / not-stale / no pick / same pick / unknown entry) is testable
+ * without a render.
  */
 function resolveMainPatch(
 	currentMainModel: string | undefined,
@@ -105,10 +94,10 @@ function resolveMainPatch(
 		const replacementEntry = catalogModels.find(
 			(m) => m.id === cachedReplacement,
 		);
-		if (!replacementEntry?.backend) {
+		if (!replacementEntry) {
 			return null;
 		}
-		return { model: cachedReplacement, backend: replacementEntry.backend };
+		return { model: cachedReplacement };
 	}
 	const next = pickCachedSttModel(catalogModels, statesById, isVisibleSttModel);
 	if (!next) {
@@ -118,10 +107,10 @@ function resolveMainPatch(
 		return null;
 	}
 	const fallbackEntry = catalogModels.find((m) => m.id === next);
-	if (!fallbackEntry?.backend) {
+	if (!fallbackEntry) {
 		return null;
 	}
-	return { model: next, backend: fallbackEntry.backend };
+	return { model: next };
 }
 
 /**

@@ -217,6 +217,11 @@ pub struct TtsHistoryEntry {
     /// provider-billed figure. Omitted when there is no cost.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_is_estimate: Option<bool>,
+    /// Absolute path to the saved synthesis audio (WAV/MP3 under
+    /// userData/recordings/). Set only when the file is on disk so the
+    /// renderer shows the play button exactly when playback can succeed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_file_path: Option<String>,
 }
 
 /// Entity `HistoryEntry` (entities/transcription-history/model) — the dedicated
@@ -420,7 +425,19 @@ fn to_transform_entry(entry: &TransformHistoryDbEntry) -> TransformHistoryEntry 
     }
 }
 
-fn to_tts_entry(entry: &crate::managers::history::TtsHistoryDbEntry) -> TtsHistoryEntry {
+fn to_tts_entry(
+    mgr: &HistoryManager,
+    entry: &crate::managers::history::TtsHistoryDbEntry,
+) -> TtsHistoryEntry {
+    // Resolve the saved synthesis audio like STT rows: the path is surfaced
+    // only when the file actually exists, so the play button never renders
+    // for a clip that retention already removed.
+    let audio_file_path = entry
+        .audio_file_name
+        .as_deref()
+        .and_then(|name| mgr.try_get_audio_file_path(name).ok())
+        .filter(|path| path.exists())
+        .and_then(|path| path.to_str().map(str::to_string));
     TtsHistoryEntry {
         id: entry.id.to_string(),
         word_count: count_words(&entry.text),
@@ -432,6 +449,7 @@ fn to_tts_entry(entry: &crate::managers::history::TtsHistoryDbEntry) -> TtsHisto
         processing_ms: entry.processing_ms,
         cost_usd: entry.cost_usd,
         cost_is_estimate: entry.cost_usd.is_some().then_some(entry.cost_is_estimate),
+        audio_file_path,
     }
 }
 
@@ -439,7 +457,10 @@ pub fn emit_tts_history_added(
     app: &AppHandle,
     entry: &crate::managers::history::TtsHistoryDbEntry,
 ) {
-    let payload = to_tts_entry(entry);
+    let Some(mgr) = app.try_state::<Arc<HistoryManager>>() else {
+        return;
+    };
+    let payload = to_tts_entry(mgr.inner().as_ref(), entry);
     let _ = app.emit(EVT_TTS_HISTORY_ADDED, &payload);
 }
 
@@ -534,6 +555,25 @@ fn wav_to_data_uri(path: &PathBuf) -> Option<String> {
         Ok(bytes) => {
             let b64 = super::base64_encode(&bytes);
             Some(format!("data:audio/wav;base64,{b64}"))
+        }
+        Err(_) => None,
+    }
+}
+
+/// Data URI for a saved history clip with the mime picked by extension —
+/// TTS sessions persist as WAV (local f32 streams) or MP3 (cloud streams).
+fn audio_to_data_uri(path: &std::path::Path) -> Option<String> {
+    if !path.exists() {
+        return None;
+    }
+    let mime = match path.extension().and_then(|ext| ext.to_str()) {
+        Some("mp3") => "audio/mpeg",
+        _ => "audio/wav",
+    };
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let b64 = super::base64_encode(&bytes);
+            Some(format!("data:{mime};base64,{b64}"))
         }
         Err(_) => None,
     }
@@ -988,7 +1028,37 @@ pub async fn tts_history_get_all(
     let rows = history_manager
         .get_tts_history_entries()
         .map_err(|e| e.to_string())?;
-    Ok(rows.iter().map(to_tts_entry).collect())
+    let mgr = history_manager.inner().as_ref();
+    Ok(rows.iter().map(|row| to_tts_entry(mgr, row)).collect())
+}
+
+/// `tts-history:load-audio` (STRING id) — saved synthesis audio for a TTS row
+/// as a data URI (`audio/wav` or `audio/mpeg` by extension), or null.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_history_load_audio(
+    history_manager: State<'_, Arc<HistoryManager>>,
+    webview: WebviewWindow,
+    id: String,
+) -> Result<Option<String>, String> {
+    authorize_history_operation(&webview, HistoryOperation::Read)?;
+    let Ok(numeric) = id.parse::<i64>() else {
+        return Ok(None);
+    };
+    let rows = history_manager
+        .get_tts_history_entries()
+        .map_err(|e| e.to_string())?;
+    let Some(file_name) = rows
+        .iter()
+        .find(|row| row.id == numeric)
+        .and_then(|row| row.audio_file_name.clone())
+    else {
+        return Ok(None);
+    };
+    let Ok(path) = history_manager.try_get_audio_file_path(&file_name) else {
+        return Ok(None);
+    };
+    Ok(audio_to_data_uri(&path))
 }
 
 /// `tts-history:clear` — delete all TTS rows. Same `ClearResult` envelope as

@@ -15,7 +15,7 @@ impl HistoryManager {
     pub fn get_tts_history_entries(&self) -> Result<Vec<TtsHistoryDbEntry>> {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, title, text, model, voice, characters, processing_ms, cost_usd, cost_is_estimate
+            "SELECT id, timestamp, title, text, model, voice, characters, processing_ms, cost_usd, cost_is_estimate, audio_file_name
              FROM tts_history
              ORDER BY id ASC",
         )?;

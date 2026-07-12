@@ -54,9 +54,8 @@ fn audio_path() -> PathBuf {
         .unwrap_or(cwd)
 }
 
-fn load_audio() -> Vec<f32> {
-    let p = audio_path();
-    let bytes = std::fs::read(&p).unwrap_or_else(|e| panic!("read audio {}: {e}", p.display()));
+fn load_audio_file(p: &std::path::Path) -> Vec<f32> {
+    let bytes = std::fs::read(p).unwrap_or_else(|e| panic!("read audio {}: {e}", p.display()));
     let mut audio: Vec<f32> = bytes
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -69,6 +68,10 @@ fn load_audio() -> Vec<f32> {
         }
     }
     audio
+}
+
+fn load_audio() -> Vec<f32> {
+    load_audio_file(&audio_path())
 }
 
 fn main() {
@@ -171,20 +174,41 @@ fn main() {
 
     // SPIKE_PASSES>1 → warm multi-pass; reports min-of-N (the cohere lesson: a single cold pass
     // includes EP fusion/allocation and mis-ranks providers).
+    // SPIKE_AUDIO_ALT=<clip> → odd passes decode THAT clip instead, so alternating input lengths
+    // expose any per-shape DML graph re-fusion tax (min-of-N still reports the primary clip only).
     let passes: usize = env_or("SPIKE_PASSES", "1").parse().unwrap_or(1);
+    let audio_alt: Option<Vec<f32>> = std::env::var("SPIKE_AUDIO_ALT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|p| load_audio_file(std::path::Path::new(&p)));
     let mut best = std::time::Duration::MAX;
     let mut result = None;
     for i in 0..passes {
+        let clip: &[f32] = match (&audio_alt, i % 2) {
+            (Some(alt), 1) => alt.as_slice(),
+            _ => &audio,
+        };
         let run_start = Instant::now();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            engine.transcribe(&audio, &opts)
+            engine.transcribe(clip, &opts)
         }));
         let dt = run_start.elapsed();
-        eprintln!("pass {}/{passes}: {dt:?}", i + 1);
-        if dt < best {
+        eprintln!(
+            "pass {}/{passes}{}: {dt:?}",
+            i + 1,
+            if audio_alt.is_some() && i % 2 == 1 {
+                " (alt clip)"
+            } else {
+                ""
+            }
+        );
+        let is_alt_pass = audio_alt.is_some() && i % 2 == 1;
+        if dt < best && !is_alt_pass {
             best = dt;
         }
-        result = Some(r);
+        if !is_alt_pass || result.is_none() {
+            result = Some(r);
+        }
     }
     let result = result.expect("at least one pass");
     match result {

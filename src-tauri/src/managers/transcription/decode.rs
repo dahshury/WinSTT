@@ -6,7 +6,7 @@
 
 use super::{
     LoadedEngine, ModelStateEvent, SILENCE_AC_FLOOR, TranscriptionManager, dc_immune_rms,
-    is_degenerate_decode_error, is_device_lost_error, is_silent_recording,
+    is_degenerate_decode_error, is_device_lost_error, is_silent_recording_with_mask,
     next_transcription_request_id,
 };
 use crate::winstt::stt::BackendRoute;
@@ -130,16 +130,32 @@ impl TranscriptionManager {
     /// Borrows the audio (never mutates or keeps it) so callers can share one buffer
     /// with the concurrent WAV-persist task instead of cloning multi-MB sample vectors.
     pub fn transcribe(&self, audio: &[f32]) -> Result<String> {
+        self.transcribe_with_mask(audio, None)
+    }
+
+    /// Batch transcribe carrying the mic capture's per-frame speech mask (`CapturedAudio`). The mask
+    /// drives the mask-aware silence gate and the mask-driven silence compaction in the backend. Pass
+    /// `None` for paths with no capture mask (file transcription, cloud, tests).
+    pub fn transcribe_with_mask(
+        &self,
+        audio: &[f32],
+        speech_mask: Option<&[bool]>,
+    ) -> Result<String> {
         let desired = self.desired_model_id();
-        self.transcribe_with_selected_model(&desired, audio)
+        self.transcribe_with_selected_model(&desired, audio, speech_mask)
     }
 
     pub fn transcribe_with_model(&self, model_id: &str, audio: &[f32]) -> Result<String> {
         let desired = crate::winstt::catalog::canonical_model_id(model_id).to_string();
-        self.transcribe_with_selected_model(&desired, audio)
+        self.transcribe_with_selected_model(&desired, audio, None)
     }
 
-    fn transcribe_with_selected_model(&self, desired: &str, audio: &[f32]) -> Result<String> {
+    fn transcribe_with_selected_model(
+        &self,
+        desired: &str,
+        audio: &[f32],
+        speech_mask: Option<&[bool]>,
+    ) -> Result<String> {
         let request_id = next_transcription_request_id();
 
         #[cfg(debug_assertions)]
@@ -177,10 +193,11 @@ impl TranscriptionManager {
         // earlier gate required `rms < 0.0008 AND dc_dominated`, which let GENUINE digital
         // silence through (rms≈0, mean≈0 → not DC-dominated) — the "Thank you." bug. Audio
         // here is RAW (pre-`peak_normalize`).
-        if is_silent_recording(audio) {
+        if is_silent_recording_with_mask(audio, speech_mask) {
             let rms = dc_immune_rms(audio);
             debug!(
-                "[stt][{request_id}] silent recording skipped; rms={rms:.6}; ac_floor={SILENCE_AC_FLOOR}"
+                "[stt][{request_id}] silent recording skipped; rms={rms:.6}; ac_floor={SILENCE_AC_FLOOR}; has_mask={}",
+                speech_mask.is_some()
             );
             debug!(
                 "Recording RMS {rms:.6} below speech floor (ac_floor {SILENCE_AC_FLOOR}) — \
@@ -198,10 +215,12 @@ impl TranscriptionManager {
         // decides to take the cloud path here — BEFORE the engine lock, since cloud ids have no
         // LoadedEngine — and unloads any resident local engine after.
         if self.backend.route_of(desired) == BackendRoute::Cloud {
-            let filtered = match self
-                .backend
-                .cloud_transcribe(&self.app_handle, desired, audio)
-            {
+            let filtered = match self.backend.cloud_transcribe(
+                &self.app_handle,
+                desired,
+                audio,
+                speech_mask,
+            ) {
                 Ok(text) => text,
                 Err(e) => {
                     // Offline graceful degradation: a network/timeout cloud failure registers a
@@ -223,7 +242,11 @@ impl TranscriptionManager {
                                 "[stt][{request_id}] cloud provider offline for '{desired}'; \
                                  salvaging this utterance on local model '{local_id}'"
                             );
-                            return self.transcribe_with_selected_model(&local_id, audio);
+                            return self.transcribe_with_selected_model(
+                                &local_id,
+                                audio,
+                                speech_mask,
+                            );
                         }
                         // No local model to fall back to — tell the overlay so it can show an
                         // "offline, no local model" pill instead of only a background toast.
@@ -355,9 +378,13 @@ impl TranscriptionManager {
             );
             let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
                 match &mut engine {
-                    LoadedEngine::Winstt(winstt_engine) => {
-                        backend.decode(&app_handle, winstt_engine.as_mut(), audio, &request_id)
-                    }
+                    LoadedEngine::Winstt(winstt_engine) => backend.decode(
+                        &app_handle,
+                        winstt_engine.as_mut(),
+                        audio,
+                        speech_mask,
+                        &request_id,
+                    ),
                 }
             }));
             match transcribe_result {

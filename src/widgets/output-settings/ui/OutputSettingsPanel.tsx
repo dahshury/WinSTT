@@ -1,21 +1,15 @@
 import {
 	ArrowTurnDownIcon,
 	ClipboardPasteIcon,
-	ComputerIcon,
 	FileScriptIcon,
 	HeadphonesIcon,
 	KeyboardIcon,
-	PauseIcon,
-	PlayIcon,
-	Speaker01Icon,
 	SubtitleIcon,
 	Txt01Icon,
 	VolumeMinusIcon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { type ReactNode, useState } from "react";
 import { useTranslations } from "use-intl";
-import { useOutputDevices } from "@/entities/audio-device";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import {
 	isSelectableRealtimeModel,
@@ -31,17 +25,25 @@ import {
 	type UpdateGeneralFn,
 	useSettingsStore,
 } from "@/entities/setting";
-import { useSoundPreview } from "@/features/recording-sound";
-import { cn } from "@/shared/lib/cn";
-import { Button } from "@/shared/ui/button";
+import { useOutputDevicePicker } from "@/features/listen-mode";
+import {
+	buildOutputDeviceOptions,
+	useSoundPreview,
+} from "@/features/recording-sound";
+import { outputDeviceRoutingSupported } from "@/shared/lib/web-audio";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
-import { Tooltip } from "@/shared/ui/tooltip";
 import { Toggle } from "@/shared/ui/toggle";
 
 const REDUCTION_STEPS = [0, 20, 40, 60, 80, 100] as const;
+// Selecting a non-default playback device happens in the renderer via
+// `AudioContext.setSinkId`, which only Chromium (WebView2) ships. On WKWebView
+// (macOS) / WebKitGTK (Linux) the method is absent, so routing silently stays
+// on the system default — surface that instead of offering a dead picker.
+const OUTPUT_ROUTING_UNSUPPORTED_TOOLTIP =
+	"This platform's web engine can't route audio to a specific device; playback uses the system default output.";
 const LISTEN_MODE_OUTPUT_DISABLED_TOOLTIP =
 	"Listen mode only transcribes speaker audio inside the main app window; it never pastes, submits, previews, or mutes app audio.";
 
@@ -282,47 +284,6 @@ function MuteSystemAudioControl({
 	);
 }
 
-interface OutputDevicePreviewButtonProps {
-	active: boolean;
-	deviceLabel: string;
-	isPlaying: boolean;
-	onToggle: () => void;
-	playLabel: string;
-	stopLabel: string;
-}
-
-function OutputDevicePreviewButton({
-	active,
-	deviceLabel,
-	isPlaying,
-	onToggle,
-	playLabel,
-	stopLabel,
-}: OutputDevicePreviewButtonProps): ReactNode {
-	const label = `${isPlaying ? stopLabel : playLabel}: ${deviceLabel}`;
-	return (
-		<Tooltip content={isPlaying ? stopLabel : playLabel}>
-			<Button
-				aria-label={label}
-				className={cn(
-					"flex size-6 shrink-0 items-center justify-center rounded-full transition-colors duration-150 active:scale-95",
-					isPlaying
-						? "bg-foreground/15 text-foreground hover:bg-foreground/25"
-						: "bg-transparent text-foreground-muted hover:bg-foreground/10 hover:text-foreground",
-					active && !isPlaying && "text-foreground-secondary",
-				)}
-				onClick={() => onToggle()}
-			>
-				<HugeiconsIcon icon={isPlaying ? PauseIcon : PlayIcon} size={13} />
-			</Button>
-		</Tooltip>
-	);
-}
-
-function outputPreviewId(deviceId: string): string {
-	return `output:${deviceId || "default"}`;
-}
-
 export function OutputSettingsPanel(): ReactNode {
 	const general = useSettingsStore((s) => s.settings.general);
 	const model = useSettingsStore((s) => s.settings.model);
@@ -496,9 +457,6 @@ export function PlaybackSettingsPanel(): ReactNode {
 
 	const recordingMode = general?.recordingMode ?? "ptt";
 	const isListenMode = recordingMode === "listen";
-	const outputDeviceId = useSettingsStore(
-		(s) => s.settings.general?.outputDeviceId ?? "",
-	);
 	const recordingSoundPath = useSettingsStore(
 		(s) => s.settings.general?.recordingSoundPath ?? "",
 	);
@@ -506,67 +464,28 @@ export function PlaybackSettingsPanel(): ReactNode {
 		(s) => s.settings.general?.recordingSound ?? true,
 	);
 	const ttsEnabled = useSettingsStore((s) => s.settings.tts?.enabled ?? false);
-	const { devices: outputDevices, defaultDevice: defaultOutputDevice } =
-		useOutputDevices();
+	// Selecting a device writes BOTH the browser sink id (playback routing) and
+	// the resolved loopback index (the listen-mode capture device), so an Output
+	// tab change also re-targets listen mode + updates the footer pill.
+	const { entries, currentId, select } = useOutputDevicePicker({
+		systemDefaultLabel: ta("systemDefault"),
+	});
 	const soundPreview = useSoundPreview();
+	// Web engines without `AudioContext.setSinkId` (WKWebView / WebKitGTK) can't
+	// honour a device pick — disable the selector with an explanatory tooltip
+	// rather than letting the user pick a device that never takes effect.
+	const routingSupported = outputDeviceRoutingSupported();
 	const showOutputDevice = isListenMode || recordingSoundEnabled || ttsEnabled;
-	const outputPreviewPlayLabel = tg("soundLibraryPlay");
-	const outputPreviewStopLabel = tg("soundLibraryStop");
-	const outputDeviceOptions: SelectOption[] = (() => {
-		const defaultLabel = defaultOutputDevice
-			? `${ta("systemDefault")} (${defaultOutputDevice.label})`
-			: ta("systemDefault");
-		const opts: SelectOption[] = [
-			{
-				id: "",
-				label: defaultLabel,
-				icon: ComputerIcon,
-				trailing: (
-					<OutputDevicePreviewButton
-						active={outputDeviceId === ""}
-						deviceLabel={defaultLabel}
-						isPlaying={soundPreview.playingId === outputPreviewId("")}
-						onToggle={() =>
-							void soundPreview.toggle(
-								outputPreviewId(""),
-								recordingSoundPath,
-								"",
-							)
-						}
-						playLabel={outputPreviewPlayLabel}
-						stopLabel={outputPreviewStopLabel}
-					/>
-				),
-			},
-		];
-		for (const d of outputDevices) {
-			if (d.deviceId === "default" || d.deviceId === "") {
-				continue;
-			}
-			opts.push({
-				id: d.deviceId,
-				label: d.label,
-				icon: Speaker01Icon,
-				trailing: (
-					<OutputDevicePreviewButton
-						active={outputDeviceId === d.deviceId}
-						deviceLabel={d.label}
-						isPlaying={soundPreview.playingId === outputPreviewId(d.deviceId)}
-						onToggle={() =>
-							void soundPreview.toggle(
-								outputPreviewId(d.deviceId),
-								recordingSoundPath,
-								d.deviceId,
-							)
-						}
-						playLabel={outputPreviewPlayLabel}
-						stopLabel={outputPreviewStopLabel}
-					/>
-				),
-			});
-		}
-		return opts;
-	})();
+	const outputDeviceDisabled = !(showOutputDevice && routingSupported);
+	const outputDeviceOptions: SelectOption[] = buildOutputDeviceOptions({
+		entries,
+		currentId,
+		playingId: soundPreview.playingId,
+		soundPath: recordingSoundPath,
+		toggle: soundPreview.toggle,
+		playLabel: tg("soundLibraryPlay"),
+		stopLabel: tg("soundLibraryStop"),
+	});
 
 	return (
 		<div className="flex flex-col">
@@ -578,23 +497,22 @@ export function PlaybackSettingsPanel(): ReactNode {
 			>
 				<SettingField
 					defaultValue={DEFAULT_SETTINGS.general.outputDeviceId}
-					disabled={!showOutputDevice}
+					disabled={outputDeviceDisabled}
 					disabledReason={`${tg("recordingSound")} / ${tt("title")}`}
+					disabledTooltip={
+						routingSupported ? undefined : OUTPUT_ROUTING_UNSUPPORTED_TOOLTIP
+					}
 					label={ta("outputDevice")}
 					layout="row"
-					onReset={() =>
-						updateGeneral({
-							outputDeviceId: DEFAULT_SETTINGS.general.outputDeviceId,
-						})
-					}
+					onReset={() => select(DEFAULT_SETTINGS.general.outputDeviceId)}
 					tooltip={ta("outputDeviceTooltip")}
-					value={outputDeviceId}
+					value={currentId}
 				>
 					<Select
 						className="w-52"
-						onChange={(v) => updateGeneral({ outputDeviceId: v })}
+						onChange={select}
 						options={outputDeviceOptions}
-						value={outputDeviceId}
+						value={currentId}
 					/>
 				</SettingField>
 			</SettingSection>

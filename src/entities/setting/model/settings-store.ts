@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { TranscriberBackend } from "@/shared/api/schema.zod";
 import {
 	type AppSettingsOutput,
 	appSettingsSchema,
@@ -35,30 +34,17 @@ interface IntegrationPatch {
 }
 
 type ModelSection = AppSettingsOutput["model"];
-type ModelPatchSansCouple = Partial<Omit<ModelSection, "model" | "backend">>;
 
 /**
  * Patch shape for ``updateModelSettings``.
  *
- * Encodes the runtime invariant that the main ``model`` and its
- * ``backend`` must always be written together. Every catalog entry pins
- * exactly one backend per model id, so writing ``model`` alone leaves
- * ``backend`` pointing at the previous model's engine — the exact drift
- * that produced ``model = nemo-canary-180m-flash, backend = faster_whisper``
- * on disk and forced the in-flight ``adoptRuntime`` workaround.
- *
- * The discriminated union below makes that invariant a compile error:
- *
- *   - Patches without ``model`` may freely set every other field.
- *   - Patches with ``model``: ``backend`` is required.
- *
- * Authoring tip: when changing the main model, look up the catalog entry
- * (``useCatalogStore.getState().models.find(...)``) and patch both fields
- * together. ``setMainModelById`` below does this in one step.
+ * A plain partial of the model section: any subset of fields may be written,
+ * including ``model`` on its own. The engine is routed from the model id at
+ * load time (Rust ``SttBackend::route_of``), so there is no paired label that
+ * must travel with the model — the old ``{ model, backend }`` couple invariant
+ * (and its discriminated union) is gone with the ``backend`` field.
  */
-export type ModelPatch =
-	| (ModelPatchSansCouple & { backend?: TranscriberBackend; model?: undefined })
-	| (ModelPatchSansCouple & { backend: TranscriberBackend; model: string });
+export type ModelPatch = Partial<ModelSection>;
 
 /**
  * Shallow-merge each provider patch into the current integrations record.
@@ -142,6 +128,18 @@ function stripSecrets(settings: AppSettingsOutput): AppSettingsOutput {
 }
 
 /**
+ * Top-level settings keys whose value is an OBJECT section (spreadable). The
+ * tree also carries one scalar — `schemaVersion` (finding #20) — which is not a
+ * patchable section; constraining `patchSection` to object-valued keys makes
+ * passing it a compile error instead of a TS2698 spread failure.
+ */
+type ObjectSectionKey = {
+	[K in keyof AppSettingsOutput]: AppSettingsOutput[K] extends object
+		? K
+		: never;
+}[keyof AppSettingsOutput];
+
+/**
  * Shallow-merge `patch` into a single top-level section of the settings tree,
  * returning the next `settings` slice. Collapses the otherwise-identical
  * `update<Section>Settings` callbacks (quality/audio/global/hotkey/llm/tts) to
@@ -149,7 +147,7 @@ function stripSecrets(settings: AppSettingsOutput): AppSettingsOutput {
  * (normalize), `model` (union-erase), `dictionary`/`snippets` (wholesale
  * replace) — keep their bespoke callbacks.
  */
-function patchSection<K extends keyof AppSettingsOutput>(
+function patchSection<K extends ObjectSectionKey>(
 	settings: AppSettingsOutput,
 	key: K,
 	patch: Partial<AppSettingsOutput[K]>,
@@ -208,22 +206,23 @@ export const useSettingsStore = create<SettingsState>()(
 			// (or the synchronous hasHydrated branch) overwrites isLoaded to true
 			// at module init, so the initial value is never observable in tests.
 			isLoaded: false,
-			setSettings: (settings) =>
-				set({ settings: normalizeSettings(settings), isLoaded: true }),
-			updateModelSettings: (patch) => {
-				// Discriminated-union narrowing breaks Zustand's set() inference
-				// (the spread of a union-typed object produces an unsatisfiable
-				// shape). Erase to a plain partial here — the type guard at the
-				// public ``updateModelSettings`` signature is what enforces the
-				// model/backend coupling.
-				const patchAsPartial = patch as Partial<ModelSection>;
+			// Audit #23: `setSettings` is the HYDRATION / cross-window BROADCAST
+			// path, not a user edit. It must NOT re-run the wordByWordPasting
+			// coupling — doing so silently cleared the user's `llm.*.enabled` flags
+			// whenever an unrelated broadcast (e.g. a VAD calibration save from
+			// another window) landed while wordByWordPasting happened to be on, and
+			// the next save then persisted the cleared flags (permanent loss). The
+			// coupling is enforced only on the RELEVANT transition — the user turning
+			// wordByWordPasting on via `updateGeneralSettings`. The writer normalises
+			// before persisting, so the value handed here is already consistent.
+			setSettings: (settings) => set({ settings, isLoaded: true }),
+			updateModelSettings: (patch) =>
 				set((state) => ({
 					settings: {
 						...state.settings,
-						model: { ...state.settings.model, ...patchAsPartial },
+						model: { ...state.settings.model, ...patch },
 					},
-				}));
-			},
+				})),
 			updateQualitySettings: (patch) =>
 				set((state) => ({
 					settings: patchSection(state.settings, "quality", patch),

@@ -8,7 +8,6 @@ function model(overrides: Partial<ModelInfo> = {}): ModelInfo {
 		id: "tiny",
 		displayName: "Whisper Tiny",
 		family: "whisper",
-		backend: "onnx_asr",
 		languages: ["en"],
 		supportsLanguageDetection: true,
 		sizeLabel: "39M",

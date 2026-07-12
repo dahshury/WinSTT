@@ -3,6 +3,7 @@
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
+import { useInsideModelSpecHoverCard } from "@/shared/ui/model-spec-card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./Tooltip";
 
 export interface SelectedModelNameParts {
@@ -49,45 +50,66 @@ interface SelectedModelSummaryProps {
 	trailing?: ReactNode;
 }
 
-function SelectedModelName({
+function SelectedModelNameContent({
 	className,
 	mainClassName,
 	parts,
 	variantClassName,
-}: SelectedModelNameProps) {
+	spanProps,
+}: SelectedModelNameProps & {
+	spanProps?: ComponentPropsWithoutRef<"span">;
+}) {
+	return (
+		<span
+			{...spanProps}
+			className={cn(
+				"flex min-w-0 max-w-full items-baseline gap-1.5 leading-tight",
+				className,
+			)}
+		>
+			<span
+				className={cn(
+					"min-w-0 truncate font-medium text-body text-foreground tracking-tight",
+					mainClassName,
+				)}
+			>
+				{parts.main}
+			</span>
+			{parts.variant ? (
+				<span
+					className={cn(
+						"max-w-[45%] shrink-0 truncate font-medium text-body-sm text-foreground-muted tracking-tight",
+						variantClassName,
+					)}
+				>
+					{parts.variant}
+				</span>
+			) : null}
+		</span>
+	);
+}
+
+function SelectedModelName(props: SelectedModelNameProps) {
+	// Inside a model spec hover card the rich card already leads with the full
+	// name, so this little name-truncation tooltip would be a redundant SECOND
+	// popup on the same hover. Suppress it there; keep it as a standalone
+	// fallback everywhere else (e.g. when the spec is unavailable and the wrapper
+	// is inert).
+	const insideSpecCard = useInsideModelSpecHoverCard();
+	if (insideSpecCard) {
+		return <SelectedModelNameContent {...props} />;
+	}
 	return (
 		<Tooltip>
 			<TooltipTrigger
-				render={(props) => (
-					<span
-						{...(props as ComponentPropsWithoutRef<"span">)}
-						className={cn(
-							"flex min-w-0 max-w-full items-baseline gap-1.5 leading-tight",
-							className,
-						)}
-					>
-						<span
-							className={cn(
-								"min-w-0 truncate font-medium text-body text-foreground tracking-tight",
-								mainClassName,
-							)}
-						>
-							{parts.main}
-						</span>
-						{parts.variant ? (
-							<span
-								className={cn(
-									"max-w-[45%] shrink-0 truncate font-medium text-body-sm text-foreground-muted tracking-tight",
-									variantClassName,
-								)}
-							>
-								{parts.variant}
-							</span>
-						) : null}
-					</span>
+				render={(triggerProps) => (
+					<SelectedModelNameContent
+						{...props}
+						spanProps={triggerProps as ComponentPropsWithoutRef<"span">}
+					/>
 				)}
 			/>
-			<TooltipContent side="top">{parts.full}</TooltipContent>
+			<TooltipContent side="top">{props.parts.full}</TooltipContent>
 		</Tooltip>
 	);
 }

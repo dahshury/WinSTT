@@ -129,7 +129,7 @@ mod tests {
     use super::frontend;
     use super::support::{
         argmax_1d, argmax_last_axis_2d, b64_to_utf8, is_special_token, join_and_normalize,
-        pick_feat_len_inputs,
+        pick_feat_len_inputs, strip_inline_event_tags,
     };
 
     #[test]
@@ -183,6 +183,34 @@ mod tests {
         assert!(is_special_token("<pad>"));
         assert!(!is_special_token("hello"));
         assert!(!is_special_token("\u{2581}the"));
+    }
+
+    #[test]
+    fn strip_inline_event_tags_removes_nonspeech_markers() {
+        // the reported case: Arabic sentence with a mid-stream <hesitation>
+        assert_eq!(
+            strip_inline_event_tags(
+                "\u{645}\u{648}\u{62f}\u{644} \u{62f}\u{647} \u{628}\u{633} <hesitation> \u{643}\u{644}"
+            ),
+            "\u{645}\u{648}\u{62f}\u{644} \u{62f}\u{647} \u{628}\u{633} \u{643}\u{644}"
+        );
+        // English, multiple + underscore tag; collapses the doubled space, trims edges
+        assert_eq!(
+            strip_inline_event_tags("hello <laugh> there <background_noise> world"),
+            "hello there world"
+        );
+        assert_eq!(strip_inline_event_tags("<hesitation> leading"), "leading");
+        assert_eq!(strip_inline_event_tags("trailing <cough>"), "trailing");
+        // control-token text form is also stripped (defensive)
+        assert_eq!(strip_inline_event_tags("x <|ar|> y"), "x y");
+        // NON-tags are preserved: math comparison, capitalised/`<3`/digits stay intact
+        assert_eq!(
+            strip_inline_event_tags("if 5 < 10 > 3 then"),
+            "if 5 < 10 > 3 then"
+        );
+        assert_eq!(strip_inline_event_tags("send <3 now"), "send <3 now");
+        assert_eq!(strip_inline_event_tags("a <Foo> b"), "a <Foo> b");
+        assert_eq!(strip_inline_event_tags("plain text"), "plain text");
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { type RenderHookResult, renderHook } from "@testing-library/react";
+import { act, type RenderHookResult, renderHook } from "@testing-library/react";
+import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import { useVisualizerStore } from "../model/visualizer-store";
 import { useVisualizerSync } from "./use-visualizer-sync";
@@ -26,6 +27,7 @@ beforeEach(() => {
 		audioLevel: 0,
 		sentencePulse: 0,
 	});
+	useSettingsStore.getState().resetSettings();
 	window.nativeBridge = {
 		...originalApi,
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
@@ -48,6 +50,7 @@ afterEach(() => {
 	}
 	mountedHooks = [];
 	window.nativeBridge = originalApi;
+	useSettingsStore.getState().resetSettings();
 });
 
 function fire(channel: string, ...args: unknown[]) {
@@ -57,7 +60,7 @@ function fire(channel: string, ...args: unknown[]) {
 }
 
 describe("useVisualizerSync", () => {
-	test("subscribes to all six visualizer-sync channels", () => {
+	test("subscribes to all visualizer-sync channels", () => {
 		renderHookTracked(() => useVisualizerSync());
 		for (const ch of [
 			IPC.STT_RECORDING_START,
@@ -66,6 +69,7 @@ describe("useVisualizerSync", () => {
 			IPC.STT_VAD_STOP,
 			IPC.STT_AUDIO_LEVEL,
 			IPC.STT_FULL_SENTENCE,
+			IPC.STT_LOOPBACK_STOPPED,
 		]) {
 			expect(listeners.has(ch)).toBe(true);
 		}
@@ -94,6 +98,65 @@ describe("useVisualizerSync", () => {
 		expect(useVisualizerStore.getState().isSpeaking).toBe(false);
 	});
 
+	test("recordingMode change resets stale isRecording (mode-switch bug fix)", () => {
+		renderHookTracked(() => useVisualizerSync());
+		fire(IPC.STT_RECORDING_START);
+		expect(useVisualizerStore.getState().isRecording).toBe(true);
+
+		// Switching mode (e.g. listen -> ptt) never emits a recording-lifecycle
+		// event on its own — this is the bug: without the mode-change reset,
+		// isRecording stays stuck true and the stale rAF loop keeps ticking.
+		act(() => {
+			useSettingsStore
+				.getState()
+				.updateGeneralSettings({ recordingMode: "listen" });
+		});
+
+		expect(useVisualizerStore.getState().isRecording).toBe(false);
+		expect(useVisualizerStore.getState().isSpeaking).toBe(false);
+		expect(useVisualizerStore.getState().audioLevel).toBe(0);
+		expect(useVisualizerStore.getState().sentencePulse).toBe(0);
+	});
+
+	test("recordingMode change to the same value is a no-op (no redundant reset)", () => {
+		renderHookTracked(() => useVisualizerSync());
+		fire(IPC.STT_RECORDING_START);
+		useVisualizerStore.setState({ audioLevel: 0.4 });
+
+		// Re-applying the same mode (default "ptt") must not reset an
+		// in-progress recording.
+		act(() => {
+			useSettingsStore
+				.getState()
+				.updateGeneralSettings({ recordingMode: "ptt" });
+		});
+
+		expect(useVisualizerStore.getState().isRecording).toBe(true);
+		expect(useVisualizerStore.getState().audioLevel).toBe(0.4);
+	});
+
+	test("mounting the hook does not reset an idle store just from reading recordingMode", () => {
+		useSettingsStore
+			.getState()
+			.updateGeneralSettings({ recordingMode: "listen" });
+		renderHookTracked(() => useVisualizerSync());
+		// isRecording was already false; mounting must not itself flip anything.
+		expect(useVisualizerStore.getState().isRecording).toBe(false);
+	});
+
+	test("loopback-stopped event resets stale isRecording", () => {
+		renderHookTracked(() => useVisualizerSync());
+		fire(IPC.STT_RECORDING_START);
+		expect(useVisualizerStore.getState().isRecording).toBe(true);
+
+		fire(IPC.STT_LOOPBACK_STOPPED);
+
+		expect(useVisualizerStore.getState().isRecording).toBe(false);
+		expect(useVisualizerStore.getState().isSpeaking).toBe(false);
+		expect(useVisualizerStore.getState().audioLevel).toBe(0);
+		expect(useVisualizerStore.getState().sentencePulse).toBe(0);
+	});
+
 	test("unmount unsubscribes all listeners", () => {
 		const { unmount } = renderHook(() => useVisualizerSync());
 		unmount();
@@ -104,6 +167,7 @@ describe("useVisualizerSync", () => {
 			IPC.STT_VAD_STOP,
 			IPC.STT_AUDIO_LEVEL,
 			IPC.STT_FULL_SENTENCE,
+			IPC.STT_LOOPBACK_STOPPED,
 		]) {
 			expect(listeners.get(ch)?.length ?? 0).toBe(0);
 		}

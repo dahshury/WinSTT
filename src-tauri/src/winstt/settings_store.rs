@@ -10,13 +10,20 @@
 // (`settings_schema`, `secret_storage`, `sync_ext`) and the legacy `crate::settings`
 // core; it never reaches back up into commands/managers.
 
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use serde::de::DeserializeOwned;
 use tauri::AppHandle;
 use tauri_plugin_store::{Store, StoreExt};
 
 use crate::winstt::commands::secret_storage::{try_decrypt_secret, try_encrypt_secret};
-use crate::winstt::settings_schema::{RecordingMode, WinsttSettings};
+use crate::winstt::settings_schema::{
+    AudioSettings, DictionaryEntry, GeneralSettings, GlobalSettings, HotkeySettings,
+    IntegrationsSettings, LlmSettings, ModelSettings, QualitySettings, RecordingMode, SnippetEntry,
+    TtsSettings, WinsttSettings,
+};
 use crate::winstt::sync_ext::MutexExt;
 
 /// Persisted store key for the full WinSTT settings tree. `pub` because the
@@ -27,9 +34,60 @@ pub(crate) const WINSTT_SETTINGS_FILE: &str = "winstt-settings.json";
 /// Renderer-facing sentinel substituted for any non-empty secret so the renderer
 /// can know a secret exists without receiving its plaintext.
 pub(crate) const SECRET_PRESENT_SENTINEL: &str = "__WINSTT_SECRET_PRESENT__";
+/// Renderer→backend sentinel that signals an EXPLICIT user clear of a stored
+/// secret. Distinct from an incidental empty string (which a pre-hydration or
+/// programmatic save can post before the renderer has loaded the masked
+/// `SECRET_PRESENT_SENTINEL`): an empty incoming secret is treated as "keep the
+/// stored key" so it can't silently wipe a real DPAPI-sealed key (finding #41).
+/// A deliberate clear must post THIS value. Keep in sync with the renderer's
+/// `SECRET_CLEAR_SENTINEL` in `shared/config/settings-schema/secrets.ts`.
+pub(crate) const SECRET_CLEAR_SENTINEL: &str = "__WINSTT_SECRET_CLEAR__";
 
-fn store_path() -> std::path::PathBuf {
-    crate::portable::store_path(WINSTT_SETTINGS_FILE)
+/// The RESOLVED absolute directory holding `winstt-settings.json`, captured once
+/// from an `AppHandle` (portable `Data/` dir, else the OS app-data dir).
+///
+/// LOAD-BEARING (the "settings never persist across dev restarts" bug):
+/// `portable::store_path` returns a BARE RELATIVE path (`"winstt-settings.json"`)
+/// in non-portable mode. The tauri-plugin-store builder resolves that relative
+/// path against the APP-DATA dir — but `durable_save_store`'s `atomic_write_json`
+/// used it directly against the process CWD. Reads (plugin load at boot) and
+/// writes (every save) therefore hit DIFFERENT FILES: boot read
+/// `%APPDATA%\com.winstt.winstt\winstt-settings.json` while saves landed in
+/// `<cwd>\winstt-settings.json` (`src-tauri\` or `target\debug\` under
+/// `tauri dev`). Every setting change was silently lost on restart unless the
+/// plugin's graceful-exit flush ran — which dev kills/hot-reloads never do.
+/// Resolving ONCE against the app handle makes read, write, `.bak`, and
+/// `.corrupt` all point at the SAME absolute file in every launch mode.
+static RESOLVED_STORE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Capture the absolute store dir from `app`. Idempotent; called by
+/// `init_settings_store` (main thread, setup hook) and the `settings_store`
+/// lazy fallback, both of which run before any read/write path needs it.
+fn resolve_store_dir(app: &AppHandle) {
+    let _ = RESOLVED_STORE_DIR.get_or_init(|| {
+        crate::portable::app_data_dir(app).unwrap_or_else(|err| {
+            log::error!("[settings] app-data dir unresolved ({err}); falling back to CWD");
+            PathBuf::from(".")
+        })
+    });
+}
+
+fn store_path() -> PathBuf {
+    match RESOLVED_STORE_DIR.get() {
+        Some(dir) => dir.join(WINSTT_SETTINGS_FILE),
+        // Pre-resolution fallback (should not happen in practice — both store
+        // constructors resolve first): the legacy portable-aware relative path.
+        None => crate::portable::store_path(WINSTT_SETTINGS_FILE),
+    }
+}
+
+/// Sibling `.bak` path holding a copy of the last known-good settings file, used
+/// to recover when the primary file is torn/truncated by a crash mid-write
+/// (finding #47a). `winstt-settings.json` → `winstt-settings.json.bak`.
+fn backup_store_path() -> PathBuf {
+    let mut name = store_path().into_os_string();
+    name.push(".bak");
+    PathBuf::from(name)
 }
 
 /// Process-wide cached handle to the `winstt-settings.json` store.
@@ -57,17 +115,42 @@ static SETTINGS_RAW_CACHE: OnceLock<Mutex<Option<WinsttSettings>>> = OnceLock::n
 /// realtime worker, the PTT watchdog) reads settings, so every off-thread caller stays
 /// on the cached (clone-free) path. Idempotent.
 pub fn init_settings_store(app: &AppHandle) {
+    resolve_store_dir(app);
     if SETTINGS_STORE.get().is_some() {
         return;
     }
-    match app.store(store_path()) {
+    match build_settings_store(app) {
         Ok(store) => {
+            repair_wedged_store_on_boot(&store);
             let _ = SETTINGS_STORE.set(store);
         }
         Err(err) => {
             log::error!("[settings] failed to initialize settings store handle: {err}");
         }
     }
+}
+
+/// Build the store handle with the plugin's debounced auto-save DISABLED.
+///
+/// Every mutation of this store funnels through `write_settings_value` /
+/// `seed_defaults` (there are no external `store.set` writers — verified), which
+/// persist through [`durable_save_store`]'s temp+fsync+rename. The plugin's
+/// default auto-save is a plain, non-atomic `fs::write` fired 100 ms after every
+/// `set`; leaving it on would let a crash tear the file AFTER our durable write
+/// already committed it (finding #47a). Disabling it makes the atomic path the
+/// only writer.
+///
+/// KNOWN QUIRK (finding #2): every `store.set` still emits the plugin's own
+/// `store://change` event synchronously — BEFORE our durable write and the
+/// `settings:changed` broadcast — and the plugin exposes no opt-out. No renderer
+/// subscribes to it (verified); keep it that way. `settings:changed` is the only
+/// settings event a renderer may consume: it is emitted after the durable write,
+/// with the full masked snapshot.
+fn build_settings_store(app: &AppHandle) -> Result<Arc<Store<tauri::Wry>>, String> {
+    app.store_builder(store_path())
+        .disable_auto_save()
+        .build()
+        .map_err(|err| format!("winstt settings store: {err}"))
 }
 
 /// Resolve the cached settings store, falling back to building it on first use. The
@@ -77,9 +160,8 @@ fn settings_store(app: &AppHandle) -> Result<Arc<Store<tauri::Wry>>, String> {
     if let Some(store) = SETTINGS_STORE.get() {
         return Ok(Arc::clone(store));
     }
-    let store = app
-        .store(store_path())
-        .map_err(|err| format!("winstt settings store: {err}"))?;
+    resolve_store_dir(app);
+    let store = build_settings_store(app)?;
     let _ = SETTINGS_STORE.set(Arc::clone(&store));
     Ok(store)
 }
@@ -117,6 +199,16 @@ fn update_raw_settings_cache(settings: &WinsttSettings) {
 ///   * `settings::store::get_settings` computes its backfill lock-free, then persists
 ///     it through `write_core_settings` (a single lock acquisition), so the reader's
 ///     backfill write can't lose a concurrently-written section and never re-enters.
+///
+/// CROSS-PROCESS (finding #3, deliberately not locked): this mutex only covers ONE
+/// process. Two WinSTT processes (debug-only — single-instance is release-gated) do
+/// last-writer-wins at whole-file granularity. An OS advisory lock here (std
+/// `File::lock`, available since Rust 1.89 — no extra dependency) would NOT fix
+/// that: torn bytes are already impossible (temp+fsync+rename), and the actual
+/// hazard — lost updates — comes from each process's `SETTINGS_RAW_CACHE` + plugin
+/// cache serving stale reads for the RMW. Correctness would need a disk re-read +
+/// cache invalidation under the lock, a redesign disproportionate to a
+/// debug-only scenario. Revisit only if multi-process becomes a supported mode.
 static SETTINGS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 /// Run `f` with the process-wide settings write lock held. `MutexExt::lock_recover`
@@ -220,10 +312,70 @@ fn try_read_settings_raw(app: &AppHandle) -> Result<WinsttSettings, String> {
 }
 
 fn parse_settings_value(value: serde_json::Value) -> Result<WinsttSettings, String> {
-    let mut settings: WinsttSettings = serde_json::from_value(value)
-        .map_err(|err| format!("invalid persisted WinSTT settings: {err}"))?;
+    // Every field is `#[serde(default)]`, so a MISSING key already falls back to
+    // its default. A key that is PRESENT but wrong-typed (e.g. `recordingMode: 42`
+    // from a hand-edited or downgrade-mangled file) still fails the whole-tree
+    // parse, though — serde's `default` only covers absence, not a decode error.
+    // The strict path is the fast common case; on failure we recover per-section so
+    // one bad value can no longer wipe the WHOLE tree back to defaults (nor wedge
+    // every later save by making `try_read_settings` error forever) — this mirrors
+    // Zod's `.catch` "never let one bad field nuke the rest" guarantee (finding #47b).
+    let mut settings = match serde_json::from_value::<WinsttSettings>(value.clone()) {
+        Ok(settings) => settings,
+        Err(err) => {
+            log::warn!(
+                "[settings] persisted WinSTT settings failed strict parse ({err}); \
+                 recovering per section"
+            );
+            recover_settings_value(value)
+        }
+    };
     normalize_cross_field_settings(&mut settings);
     Ok(settings)
+}
+
+/// Per-section fallback for a settings blob that failed the strict parse. Each
+/// top-level section is decoded in isolation; any section that fails to decode is
+/// dropped from the value so serde's per-field defaults re-materialize just THAT
+/// section (its siblings, and every good field, are preserved). If the whole tree
+/// still can't decode after that, fall back to full defaults as a last resort.
+fn recover_settings_value(mut value: serde_json::Value) -> WinsttSettings {
+    if let Some(obj) = value.as_object_mut() {
+        drop_unparseable_section::<GlobalSettings>(obj, "global");
+        drop_unparseable_section::<ModelSettings>(obj, "model");
+        drop_unparseable_section::<QualitySettings>(obj, "quality");
+        drop_unparseable_section::<AudioSettings>(obj, "audio");
+        drop_unparseable_section::<GeneralSettings>(obj, "general");
+        drop_unparseable_section::<HotkeySettings>(obj, "hotkey");
+        drop_unparseable_section::<Vec<DictionaryEntry>>(obj, "dictionary");
+        drop_unparseable_section::<Vec<SnippetEntry>>(obj, "snippets");
+        drop_unparseable_section::<LlmSettings>(obj, "llm");
+        drop_unparseable_section::<TtsSettings>(obj, "tts");
+        drop_unparseable_section::<IntegrationsSettings>(obj, "integrations");
+        drop_unparseable_section::<crate::settings::AppSettings>(obj, "core");
+    }
+    serde_json::from_value::<WinsttSettings>(value).unwrap_or_else(|err| {
+        log::error!(
+            "[settings] per-section recovery still failed ({err}); falling back to full defaults"
+        );
+        WinsttSettings::default()
+    })
+}
+
+/// If `obj[key]` is present but doesn't decode into `T`, remove it so the caller's
+/// re-parse falls back to that section's serde default. A no-op for absent or
+/// well-formed sections.
+fn drop_unparseable_section<T: DeserializeOwned>(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    let unparseable = obj
+        .get(key)
+        .is_some_and(|section| serde_json::from_value::<T>(section.clone()).is_err());
+    if unparseable {
+        log::warn!("[settings] dropping unparseable `{key}` section; restoring its defaults");
+        obj.remove(key);
+    }
 }
 
 pub(crate) fn word_by_word_pasting_effective(settings: &WinsttSettings) -> bool {
@@ -291,8 +443,21 @@ pub(crate) fn sanitize_settings_for_renderer(settings: &mut WinsttSettings) {
     mask_secret_for_renderer(&mut settings.integrations.elevenlabs.api_key);
 }
 
+/// Reconcile one incoming secret field against the stored one before sealing:
+///   * `SECRET_PRESENT_SENTINEL` (renderer echoing "a key exists") → keep stored.
+///   * `SECRET_CLEAR_SENTINEL` (explicit user clear) → clear to empty.
+///   * empty incoming with a stored key present → KEEP stored. An empty string is
+///     ambiguous — a genuine clear looks identical to a pre-hydration / programmatic
+///     save that posts the section before the masked sentinel was ever loaded — so
+///     treating it as "keep" stops an incidental empty from silently wiping a real
+///     DPAPI-sealed key (finding #41). A deliberate clear must post the sentinel.
+///   * anything else (a freshly typed/pasted key) → use incoming.
 fn preserve_masked_secret(previous: &str, next: &mut String) {
     if next == SECRET_PRESENT_SENTINEL {
+        *next = previous.to_string();
+    } else if next == SECRET_CLEAR_SENTINEL {
+        next.clear();
+    } else if next.is_empty() && !previous.is_empty() {
         *next = previous.to_string();
     }
 }
@@ -339,11 +504,150 @@ pub(crate) fn write_settings_value(
     settings: &WinsttSettings,
 ) -> Result<(), String> {
     let store = settings_store(app)?;
-    let value = serde_json::to_value(settings).map_err(|e| e.to_string())?;
+    let mut value = serde_json::to_value(settings).map_err(|e| e.to_string())?;
+    // FORWARD-COMPAT (finding #20): carry over any unknown top-level keys the
+    // current binary doesn't model (a NEWER build may have written extra sections).
+    // Without this, an older build's read→write cycle would permanently delete them.
+    preserve_unknown_top_level_keys(&store, &mut value);
     store.set(WINSTT_SETTINGS_KEY, value);
-    store.save().map_err(|e| e.to_string())?;
+    durable_save_store(&store)?;
     update_raw_settings_cache(settings);
     Ok(())
+}
+
+/// Merge any top-level keys present on disk but absent from `value` (the freshly
+/// serialized known tree) INTO `value`, so a downgrade→save round-trip preserves
+/// sections a newer schema added rather than dropping them (finding #20). Known
+/// sections are always present in `value`, so `or_insert` never overwrites them.
+fn preserve_unknown_top_level_keys(store: &Store<tauri::Wry>, value: &mut serde_json::Value) {
+    let (Some(new_obj), Some(existing)) = (value.as_object_mut(), store.get(WINSTT_SETTINGS_KEY))
+    else {
+        return;
+    };
+    let Some(existing_obj) = existing.as_object() else {
+        return;
+    };
+    for (key, stored) in existing_obj {
+        if !new_obj.contains_key(key) {
+            log::debug!("[settings] preserving unknown top-level key `{key}` across write");
+            new_obj.insert(key.clone(), stored.clone());
+        }
+    }
+}
+
+/// Atomically + durably persist the ENTIRE store cache to disk, replacing the
+/// plugin's plain (non-atomic, backup-less) `store.save()` (finding #47a):
+///   1. serialize every key to pretty JSON,
+///   2. write it to a sibling temp file and `fsync` it,
+///   3. `rename` the temp over the target (atomic on Windows + POSIX),
+///   4. refresh a `.bak` copy of the now-good file for crash recovery.
+///
+/// A mid-write crash can therefore leave only the temp file behind (ignored on
+/// next boot); the primary file is never observed torn.
+fn durable_save_store(store: &Store<tauri::Wry>) -> Result<(), String> {
+    let mut map = serde_json::Map::new();
+    for (key, value) in store.entries() {
+        map.insert(key, value);
+    }
+    atomic_write_json(&store_path(), &serde_json::Value::Object(map))
+}
+
+fn atomic_write_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("settings store path has no parent dir: {}", path.display()))?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
+
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    {
+        let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        file.write_all(&bytes).map_err(|e| e.to_string())?;
+        // fsync the bytes to stable storage BEFORE the rename so the swap can't
+        // publish an empty/partial inode after a power loss.
+        file.sync_all().map_err(|e| e.to_string())?;
+    }
+    if let Err(err) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err.to_string());
+    }
+    // Best-effort: keep a copy of the last known-good file for boot recovery.
+    let mut bak = path.as_os_str().to_owned();
+    bak.push(".bak");
+    if let Err(err) = std::fs::copy(path, PathBuf::from(bak)) {
+        log::debug!("[settings] failed to refresh settings .bak (non-fatal): {err}");
+    }
+    Ok(())
+}
+
+/// Sidecar holding the raw bytes of a settings file that failed to parse, kept for
+/// forensics when the store is repaired on boot. `winstt-settings.json.corrupt`.
+fn corrupt_store_path() -> PathBuf {
+    let mut name = store_path().into_os_string();
+    name.push(".corrupt");
+    PathBuf::from(name)
+}
+
+/// Boot-time self-heal so a corrupt store can never wedge the app (finding
+/// #47b/#47c). Runs once, on the MAIN thread, right after the store is built:
+///   * If `winstt_settings` is present but fails the strict parse, rewrite the
+///     per-section-recovered tree to disk (preserving good sections) after copying
+///     the corrupt file aside — so the file is clean and later saves start good.
+///   * If `winstt_settings` is absent (the plugin couldn't load a torn file),
+///     restore from the last-good `.bak` before the fresh-default seed runs.
+fn repair_wedged_store_on_boot(store: &Store<tauri::Wry>) {
+    if let Some(value) = store.get(WINSTT_SETTINGS_KEY) {
+        if serde_json::from_value::<WinsttSettings>(value.clone()).is_ok() {
+            return;
+        }
+        log::error!(
+            "[settings] persisted settings are corrupt; backing up and rewriting a recovered tree"
+        );
+        if let Err(err) = std::fs::copy(store_path(), corrupt_store_path()) {
+            log::debug!("[settings] failed to snapshot corrupt settings (non-fatal): {err}");
+        }
+        let mut recovered = recover_settings_value(value);
+        normalize_cross_field_settings(&mut recovered);
+        persist_recovered_settings(store, &recovered);
+        return;
+    }
+    restore_settings_from_backup(store);
+}
+
+fn persist_recovered_settings(store: &Store<tauri::Wry>, recovered: &WinsttSettings) {
+    match serde_json::to_value(recovered) {
+        Ok(value) => {
+            store.set(WINSTT_SETTINGS_KEY, value);
+            if let Err(err) = durable_save_store(store) {
+                log::error!("[settings] failed to persist recovered settings: {err}");
+            } else {
+                log::info!("[settings] rewrote per-section-recovered settings to disk");
+            }
+        }
+        Err(err) => log::error!("[settings] failed to serialize recovered settings: {err}"),
+    }
+}
+
+fn restore_settings_from_backup(store: &Store<tauri::Wry>) {
+    let Ok(bytes) = std::fs::read(backup_store_path()) else {
+        return;
+    };
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_slice::<serde_json::Value>(&bytes)
+    else {
+        return;
+    };
+    if !map.contains_key(WINSTT_SETTINGS_KEY) {
+        return;
+    }
+    log::warn!("[settings] primary settings file unreadable; restoring from last-good .bak");
+    for (key, value) in map {
+        store.set(key, value);
+    }
+    if let Err(err) = durable_save_store(store) {
+        log::error!("[settings] failed to persist settings restored from .bak: {err}");
+    }
 }
 
 /// One-time-migration marker stored alongside `winstt_settings`. Once the embedded
@@ -383,7 +687,7 @@ pub fn seed_defaults(app: &AppHandle) {
             if let Ok(value) = serde_json::to_value(&defaults) {
                 store.set(WINSTT_SETTINGS_KEY, value);
                 store.set(CORE_MIGRATED_KEY, serde_json::json!(true));
-                if let Err(err) = store.save() {
+                if let Err(err) = durable_save_store(&store) {
                     log::error!(
                         "[settings] core-migration: failed to persist fresh defaults: {err}"
                     );
@@ -447,7 +751,7 @@ pub fn seed_defaults(app: &AppHandle) {
             return;
         }
         store.set(CORE_MIGRATED_KEY, serde_json::json!(true));
-        if let Err(err) = store.save() {
+        if let Err(err) = durable_save_store(&store) {
             // LOUD (M6): a swallowed failure here means the next boot re-runs this
             // migration. The non-destructive guard above keeps that re-run from
             // clobbering user edits, but the operator still needs to see it.
@@ -494,12 +798,23 @@ mod tests {
     }
 
     #[test]
-    fn parse_settings_value_rejects_malformed_field_type() {
+    fn parse_settings_value_recovers_section_with_malformed_field() {
+        // A present-but-wrong-typed field (here `general.recordingMode: 42`) must NOT
+        // fail the whole-tree parse (finding #47b). The offending SECTION recovers to
+        // its defaults; every OTHER section — including good custom values — survives.
         let mut value = serde_json::to_value(WinsttSettings::default()).unwrap();
+        value["model"]["model"] = serde_json::json!("nemo-canary-180m-flash");
         value["general"]["recordingMode"] = serde_json::json!(42);
 
-        let err = parse_settings_value(value).unwrap_err();
-        assert!(err.contains("invalid persisted WinSTT settings"));
+        let settings = parse_settings_value(value).expect("must recover, not error");
+
+        // The corrupt `general` section fell back to defaults …
+        assert_eq!(
+            settings.general.recording_mode,
+            WinsttSettings::default().general.recording_mode
+        );
+        // … while an unrelated good section kept its customized value.
+        assert_eq!(settings.model.model, "nemo-canary-180m-flash");
     }
 
     // ── secret sealing on the persisted form ───────────────────────────────────
@@ -614,7 +929,10 @@ mod tests {
     }
 
     #[test]
-    fn empty_secret_patch_still_clears_previous_secret() {
+    fn incidental_empty_secret_patch_keeps_previous_secret() {
+        // SAFER contract (finding #41): an EMPTY incoming secret is ambiguous — a
+        // pre-hydration / programmatic save posts the section before the masked
+        // sentinel was ever loaded, and that empty must NOT wipe a real stored key.
         let mut previous = WinsttSettings::default();
         previous.llm.openrouter_api_key = "sk-or-v1-secret".into();
         previous.integrations.elevenlabs.api_key = "xi-el-secret".into();
@@ -625,8 +943,41 @@ mod tests {
 
         preserve_masked_secrets(&previous, &mut next);
 
+        assert_eq!(next.llm.openrouter_api_key, "sk-or-v1-secret");
+        assert_eq!(next.integrations.elevenlabs.api_key, "xi-el-secret");
+    }
+
+    #[test]
+    fn explicit_clear_sentinel_clears_previous_secret() {
+        // A DELIBERATE user clear posts `SECRET_CLEAR_SENTINEL`, which still wipes the
+        // stored key — the escape hatch that keeps clearing possible under the
+        // empty-keeps-previous contract above.
+        let mut previous = WinsttSettings::default();
+        previous.llm.openrouter_api_key = "sk-or-v1-secret".into();
+        previous.integrations.elevenlabs.api_key = "xi-el-secret".into();
+
+        let mut next = previous.clone();
+        next.llm.openrouter_api_key = SECRET_CLEAR_SENTINEL.into();
+        next.integrations.elevenlabs.api_key = SECRET_CLEAR_SENTINEL.into();
+
+        preserve_masked_secrets(&previous, &mut next);
+
         assert_eq!(next.llm.openrouter_api_key, "");
         assert_eq!(next.integrations.elevenlabs.api_key, "");
+    }
+
+    #[test]
+    fn newly_typed_secret_patch_replaces_previous_secret() {
+        // A fresh non-empty, non-sentinel value is a real new key — it replaces.
+        let mut previous = WinsttSettings::default();
+        previous.llm.openrouter_api_key = "sk-or-v1-old".into();
+
+        let mut next = previous.clone();
+        next.llm.openrouter_api_key = "sk-or-v1-new".into();
+
+        preserve_masked_secrets(&previous, &mut next);
+
+        assert_eq!(next.llm.openrouter_api_key, "sk-or-v1-new");
     }
 
     // ── H2 concurrency regression: serialized section RMW never loses a section ──
@@ -709,5 +1060,57 @@ mod tests {
             final_tree.tts.cloud.speed, TTS_MARKER,
             "the tts section was lost (overwritten by a stale-read audio write)"
         );
+    }
+
+    // ── #47b per-section recovery ────────────────────────────────────────────────
+
+    #[test]
+    fn recover_settings_value_drops_only_the_corrupt_section() {
+        let mut value = serde_json::to_value(WinsttSettings::default()).unwrap();
+        value["model"]["language"] = serde_json::json!("fr"); // good custom value
+        value["audio"]["microphoneRelease"] = serde_json::json!(12345); // corrupt enum
+
+        let recovered = recover_settings_value(value);
+
+        // Corrupt `audio` section → defaults; good `model` value preserved.
+        assert_eq!(
+            recovered.audio.microphone_release,
+            WinsttSettings::default().audio.microphone_release
+        );
+        assert_eq!(recovered.model.language, "fr");
+    }
+
+    #[test]
+    fn recover_settings_value_falls_back_to_defaults_when_root_is_not_an_object() {
+        // A non-object root can't be section-recovered → full defaults, never a panic.
+        let recovered = recover_settings_value(serde_json::json!("not an object"));
+        assert_eq!(recovered, WinsttSettings::default());
+    }
+
+    // ── #47a atomic + durable write ──────────────────────────────────────────────
+
+    #[test]
+    fn atomic_write_json_persists_and_refreshes_backup() {
+        let dir = std::env::temp_dir().join(format!("winstt_atomic_write_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let value = serde_json::json!({ "winstt_settings": { "model": { "model": "tiny" } } });
+
+        atomic_write_json(&path, &value).expect("atomic write succeeds");
+
+        // Primary file holds valid JSON …
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(on_disk, value);
+        // … and a `.bak` copy of the last-good file exists for recovery.
+        let mut bak = path.as_os_str().to_owned();
+        bak.push(".bak");
+        let bak: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(PathBuf::from(bak)).unwrap()).unwrap();
+        assert_eq!(bak, value);
+        // No temp file left behind.
+        assert!(!dir.join("settings.json.tmp").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

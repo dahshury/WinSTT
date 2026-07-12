@@ -70,6 +70,9 @@ const IDENTICAL_BY_DESIGN = new Set<string>([
 	"llm.pullProgress", // "{percent}% — {status}"
 	"llm.modelSizeLabel", // "{size} GB"
 	"model.resourceWarning.rowHintOk", // "~{req} · {target}"
+	// Model-spec section headings that are the same word in some languages.
+	"modelPicker.specDetails", // "Details" — identical in German
+	"modelPicker.specDescription", // "Description" — identical in French
 ]);
 
 type Json = Record<string, unknown>;

@@ -86,7 +86,7 @@ export function buildMainSwapPatch(
 	quantizationChanging: boolean,
 	currentQuantization: OnnxQuantization = DEFAULT_QUANTIZATION,
 ): UpdatePatch {
-	const patch: UpdatePatch = { model: value, backend: info.backend };
+	const patch: UpdatePatch = { model: value };
 	const resolved = resolveSwapQuantization(
 		info,
 		quantization,
@@ -165,12 +165,6 @@ export function applyQuantOverride(
 	return Object.assign(patch, ...overrides);
 }
 
-// Cloud transcribers carry no local weights and aren't catalog entries, so
-// the server's ``build_transcriber`` routes them purely by the ``provider:``
-// prefix and never reads ``backend``. The renderer's ``ModelPatch`` still
-// requires a backend when ``model`` is set, so persist a benign valid value.
-const CLOUD_MODEL_BACKEND = "onnx_asr" as const;
-
 function applyMainSwap(
 	args: IssueSwapArgs,
 	quantizationChanging: boolean,
@@ -185,11 +179,11 @@ function applyMainSwap(
 		if (isCloudModel(args.value)) {
 			args.prevMainModelRef.current = args.previous;
 			useModelSwapStore.getState().beginSwap("main", args.previous, args.value);
-			args.update({ model: args.value, backend: CLOUD_MODEL_BACKEND });
+			args.update({ model: args.value });
 			return true;
 		}
-		// A genuinely-missing LOCAL id can't form a valid ``{ model, backend }``
-		// pair, so bail rather than write an inconsistent couple.
+		// A genuinely-missing LOCAL id isn't a real catalog selection, so bail
+		// rather than persist an id the picker can't resolve.
 		return false;
 	}
 	if (!isVisibleSttModel(info)) {

@@ -97,4 +97,32 @@ describe("computeUsage", () => {
 			},
 		]);
 	});
+
+	test("the explicit 'other' category folds into the roll-up, not a second bar", () => {
+		// Seven named categories force a tail roll-up, and an explicit "other"
+		// tag would previously have produced a *second* "Other" bar.
+		const named = ["ai_prompt", "document", "task", "personal_message"];
+		const entries = [
+			...named.flatMap((tag, i) =>
+				Array.from({ length: 10 - i }, () => makeEntry({ historyTag: tag })),
+			),
+			// Long-tail named categories that must collapse.
+			makeEntry({ historyTag: "code" }),
+			makeEntry({ historyTag: "email" }),
+			makeEntry({ historyTag: "meeting" }),
+			// The literal "other" classification.
+			makeEntry({ historyTag: "other" }),
+			makeEntry({ historyTag: "other" }),
+		];
+		const { categories } = computeUsage(entries, "Other");
+		// Exactly one "Other" row, and it sits last.
+		const others = categories.filter((c) => c.label === "Other");
+		expect(others).toHaveLength(1);
+		expect(categories.at(-1)?.key).toBe("__other__");
+		// Five named bars fill the head (the four big ones + one of the three
+		// count-1 singles), so two singles collapse (2) alongside the two
+		// explicit "other" entries (2) → 4.
+		expect(categories.at(-1)?.count).toBe(4);
+		expect(categories).toHaveLength(6);
+	});
 });

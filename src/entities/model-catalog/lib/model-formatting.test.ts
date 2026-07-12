@@ -9,7 +9,6 @@ const baseModel: ModelInfo = {
 	id: "large-v3",
 	displayName: "Whisper Large v3",
 	family: "whisper",
-	backend: "onnx_asr",
 	languages: ["en"],
 	supportsLanguageDetection: true,
 	sizeLabel: "1.5B",

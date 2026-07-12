@@ -74,13 +74,13 @@ export const generalSettingsSchema = z.object({
 	// Detection sensitivity passed to the sherpa KWS detector. Lower = stricter
 	// (fewer false positives, may miss soft pronunciations); higher = more
 	// permissive. 0.6 is a sensible compromise for most voices.
-	wakeWordSensitivity: z.number().min(0).max(1).default(0.6),
+	wakeWordSensitivity: z.number().min(0).max(1).default(0.6).catch(0.6),
 	// Seconds the wake-word gate stays armed after a detection before
 	// auto-clearing. If the user says the wake word but doesn't follow up
 	// within this window, the engine returns to listening for the trigger
 	// again — protects against accidental long-tail recordings triggered by
 	// stray noise minutes after the user actually said the wake word.
-	wakeWordTimeout: z.number().min(1).max(30).default(5),
+	wakeWordTimeout: z.number().min(1).max(30).default(5).catch(5),
 	showRecordingOverlay: z.boolean().default(true),
 	// Layout of the recording overlay.
 	// `floating-bottom` keeps the historical two-piece pill near the bottom
@@ -338,17 +338,21 @@ export const generalSettingsSchema = z.object({
 		.enum(["never", "cap", "days3", "weeks2", "months3"])
 		.default("cap")
 		.catch("cap"),
-	// Threshold for the server-side deterministic fuzzy corrector that
-	// runs BEFORE the LLM modifier pipeline. Lower = stricter (fewer
-	// false positives, more genuine near-misses left for the LLM to fix).
-	// 0.18 is the default. `.catch(0.18)`
-	// keeps an older persisted value (or a corrupt entry) from wiping the
-	// whole `general` section on upgrade.
-	wordCorrectionThreshold: z.number().min(0).max(1).default(0.18).catch(0.18),
 	// Master switch for the on-device (non-LLM) encoder dictionary fallback.
 	// When off, the Vocabulary tab's masked-LM corrector never runs even if the
 	// model is downloaded — but the download is left on disk so re-enabling is
 	// instant (deleting it is a separate, explicit action). The dictionary still
 	// works through the LLM cleanup path when that's enabled, independent of this flag.
 	encoderDictionaryEnabled: z.boolean().default(true).catch(true),
+	// How much surrounding text (bytes each side of a word) the on-device dictionary
+	// reads when judging a possible mis-hearing. 220 = the fastest/least step (default);
+	// higher reads more context (slower, can catch borderline corrections in long
+	// dictation). Range mirrors the Rust validator; `.catch(220)` rescues a bad value.
+	dictionaryContextChars: z
+		.number()
+		.int()
+		.min(220)
+		.max(1000)
+		.default(220)
+		.catch(220),
 });

@@ -31,12 +31,16 @@
 // This module root holds the public wire surface (commands + types + constants),
 // the `apply_settings_patch` orchestrator, and the merge/validate/effective-realtime
 // helpers. The cohesive concern clusters live in sibling submodules:
-//   * `persistence` — store I/O + secret seal/open/mask + cross-field normalization.
-//   * `learning`    — auto-apply dictation learning appenders.
-//   * `runtime`     — on-save runtime side-effects (model/tts/llm/history/audio/autostart).
-//   * `wakeword`    — wakeword runtime state machine.
+//   * `persistence`    — store I/O + secret seal/open/mask + cross-field normalization.
+//   * `learning`       — auto-apply dictation learning appenders.
+//   * `runtime`        — on-save runtime side-effects (model/tts/llm/history/audio/autostart).
+//   * `wakeword`       — wakeword runtime state machine.
+//   * `recording_mode` — recording-mode LEAVE transitions (stop loopback / cancel an
+//     in-flight dictation session) when `general.recordingMode` hot-swaps away from
+//     whichever mode owned that runtime state.
 
 mod learning;
+mod recording_mode;
 mod runtime;
 mod wakeword;
 
@@ -51,6 +55,7 @@ use crate::winstt::settings_schema::{
     SoundLibraryEntry, Transform, TtsCloud, TtsSettings, WinsttSettings, is_secret,
 };
 
+use self::recording_mode::apply_recording_mode_runtime_settings;
 use self::runtime::{
     apply_audio_runtime_settings, apply_autostart_setting, apply_encoder_dict_runtime_settings,
     apply_history_retention_settings, apply_llm_runtime_settings, apply_model_runtime_settings,
@@ -174,11 +179,25 @@ pub fn winstt_get_settings(app: AppHandle) -> WinsttSettings {
 #[specta::specta]
 pub fn winstt_set_settings(
     app: AppHandle,
+    window: tauri::Window,
     settings: PartialWinsttSettings,
 ) -> Result<SetSettingsResult, String> {
+    // Save-origin trace: which window posted which sections. This is the
+    // instrumentation that catches cross-window save fights (e.g. a stale
+    // window posting an all-defaults tree at boot) — correlate with the
+    // wholesale-reset warnings `merge_patch_over` logs right after.
+    log::info!(
+        "[settings] save from window '{}' sections=[{}]",
+        window.label(),
+        patch_section_names(&settings).join(",")
+    );
     match apply_settings_patch(&app, settings) {
         Ok(result) => Ok(result),
         Err(error) => {
+            log::warn!(
+                "[settings] save from window '{}' REJECTED: {error}",
+                window.label()
+            );
             // Mirror the reference's `event.sender.send("settings:save-error", { error })`.
             let _ = app.emit(
                 SETTINGS_SAVE_ERROR_EVENT,
@@ -187,6 +206,27 @@ pub fn winstt_set_settings(
             Err(error)
         }
     }
+}
+
+/// The top-level section names present in a partial save, for the save-origin
+/// trace log above.
+fn patch_section_names(patch: &PartialWinsttSettings) -> Vec<&'static str> {
+    [
+        ("global", patch.global.is_some()),
+        ("model", patch.model.is_some()),
+        ("quality", patch.quality.is_some()),
+        ("audio", patch.audio.is_some()),
+        ("general", patch.general.is_some()),
+        ("hotkey", patch.hotkey.is_some()),
+        ("dictionary", patch.dictionary.is_some()),
+        ("snippets", patch.snippets.is_some()),
+        ("llm", patch.llm.is_some()),
+        ("tts", patch.tts.is_some()),
+        ("integrations", patch.integrations.is_some()),
+    ]
+    .into_iter()
+    .filter_map(|(name, present)| present.then_some(name))
+    .collect()
 }
 
 /// The set-settings body, factored out so the error branch in `winstt_set_settings`
@@ -271,6 +311,7 @@ pub fn apply_settings_patch(
     apply_encoder_dict_runtime_settings(app, &previous, &next);
     apply_llm_runtime_settings(app, &previous, &next);
     apply_wakeword_runtime_settings(app, &previous, &next);
+    apply_recording_mode_runtime_settings(app, &previous, &next);
     apply_history_retention_settings(app, &previous, &next);
     apply_audio_runtime_settings(app, &previous, &next);
     apply_autostart_setting(app, &previous, &next);
@@ -373,23 +414,30 @@ pub fn effective_realtime_with_focus(settings: &WinsttSettings, app_focused: boo
 /// the main-owned `onboarded*` fields are restored from the persisted copy so a
 /// renderer round-trip can't revert them. Mirrors the reference's `applySettings`.
 fn merge_patch_over(current: &WinsttSettings, patch: PartialWinsttSettings) -> WinsttSettings {
+    // The wholesale-reset guard (`accept_section`) only arms for FULL-TREE
+    // patches: a diff-based renderer save posts a SUBSET of sections, and a
+    // single section landing on exact defaults there is a legitimate edit
+    // (e.g. toggling the one customized `llm` field back off). A patch posting
+    // EVERY section is the "whole store dumped" shape — the only producer of
+    // that with defaulted sections is an unhydrated/empty-cache window.
+    let full_tree = patch_is_full_tree(&patch);
     let mut next = current.clone();
-    if let Some(global) = patch.global {
+    if let Some(global) = accept_section("global", &current.global, patch.global, full_tree) {
         next.global = global;
     }
-    if let Some(model) = patch.model {
+    if let Some(model) = accept_section("model", &current.model, patch.model, full_tree) {
         next.model = model;
     }
-    if let Some(quality) = patch.quality {
+    if let Some(quality) = accept_section("quality", &current.quality, patch.quality, full_tree) {
         next.quality = quality;
     }
-    if let Some(audio) = patch.audio {
+    if let Some(audio) = accept_section("audio", &current.audio, patch.audio, full_tree) {
         next.audio = audio;
     }
-    if let Some(general) = patch.general {
+    if let Some(general) = accept_section("general", &current.general, patch.general, full_tree) {
         next.general = preserve_main_owned_general(&current.general, general);
     }
-    if let Some(hotkey) = patch.hotkey {
+    if let Some(hotkey) = accept_section("hotkey", &current.hotkey, patch.hotkey, full_tree) {
         next.hotkey = hotkey;
     }
     if let Some(dictionary) = patch.dictionary {
@@ -398,10 +446,10 @@ fn merge_patch_over(current: &WinsttSettings, patch: PartialWinsttSettings) -> W
     if let Some(snippets) = patch.snippets {
         next.snippets = snippets;
     }
-    if let Some(llm) = patch.llm {
+    if let Some(llm) = accept_section("llm", &current.llm, patch.llm, full_tree) {
         next.llm = llm;
     }
-    if let Some(tts) = patch.tts {
+    if let Some(tts) = accept_section("tts", &current.tts, patch.tts, full_tree) {
         next.tts = tts;
     }
     if let Some(integrations) = patch.integrations {
@@ -409,6 +457,66 @@ fn merge_patch_over(current: &WinsttSettings, patch: PartialWinsttSettings) -> W
     }
     normalize_cross_field_settings(&mut next);
     next
+}
+
+/// True when the patch posts EVERY top-level section — the "whole store dumped"
+/// shape that arms the wholesale-reset guard in [`accept_section`].
+fn patch_is_full_tree(patch: &PartialWinsttSettings) -> bool {
+    patch.global.is_some()
+        && patch.model.is_some()
+        && patch.quality.is_some()
+        && patch.audio.is_some()
+        && patch.general.is_some()
+        && patch.hotkey.is_some()
+        && patch.dictionary.is_some()
+        && patch.snippets.is_some()
+        && patch.llm.is_some()
+        && patch.tts.is_some()
+        && patch.integrations.is_some()
+}
+
+/// A section is posted WHOLE (`collectChangedSections` copies the entire section
+/// value), so `merge_patch_over` replaces it wholesale. Within a FULL-TREE patch
+/// (`in_full_tree_patch`), an incoming section that is ALL-DEFAULTS while the
+/// persisted one is customized is REJECTED (kept at the current value), not
+/// merged (finding #21, hardened 2026-07-12).
+///
+/// Rationale: that exact shape is what a renderer window with an unhydrated /
+/// empty-cache store posts at boot (observed live via the save-origin trace: the
+/// main window posted a full defaults tree ~60s after boot — wakeWord back to
+/// "alexa", model back to "tiny" — wiping the user's real settings the moment the
+/// disk write path was fixed). A whole-store dump where sections land on EXACTLY
+/// every schema default is "no information", not user intent. Diff-based partial
+/// saves are exempt: there a defaults-equal section is a legitimate edit (the
+/// user toggled the section's one customized field back off).
+fn accept_section<T: PartialEq + Default>(
+    section: &str,
+    current: &T,
+    incoming: Option<T>,
+    in_full_tree_patch: bool,
+) -> Option<T> {
+    let incoming = incoming?;
+    if in_full_tree_patch && reject_wholesale_reset(section, current, &incoming) {
+        return None;
+    }
+    Some(incoming)
+}
+
+/// True (and logs) when `incoming` is the all-defaults section over a customized
+/// `current` — the corrupt/unhydrated-renderer shape `accept_section` drops.
+fn reject_wholesale_reset<T: PartialEq + Default>(
+    section: &str,
+    current: &T,
+    incoming: &T,
+) -> bool {
+    if *incoming == T::default() && *current != T::default() {
+        log::warn!(
+            "[settings] `{section}` patch resets the whole section to defaults; \
+             REJECTED — kept the persisted section (finding #21)"
+        );
+        return true;
+    }
+    false
 }
 
 /// Re-merge the main-owned `onboarded*` fields from the on-disk `general` section
@@ -744,6 +852,12 @@ fn validate_general_settings(general: &GeneralSettings) -> Result<(), String> {
             10,
             10_000,
         ),
+        (
+            "general.dictionaryContextChars",
+            general.dictionary_context_chars,
+            220,
+            1000,
+        ),
     ] {
         validate_i64_range(path, value, min, max)?;
     }
@@ -756,12 +870,6 @@ fn validate_general_settings(general: &GeneralSettings) -> Result<(), String> {
         "general.outputDeviceId",
         &general.output_device_id,
         MAX_DEVICE_ID_LEN,
-    )?;
-    validate_finite_range(
-        "general.wordCorrectionThreshold",
-        general.word_correction_threshold,
-        0.0,
-        1.0,
     )?;
     Ok(())
 }
@@ -1756,6 +1864,65 @@ mod tests {
         let current = WinsttSettings::default();
         let next = merge_patch_over(&current, PartialWinsttSettings::default());
         assert_eq!(next, current);
+    }
+
+    /// A full-tree PartialWinsttSettings built from `tree` (all 11 sections posted).
+    fn full_tree_patch(tree: &WinsttSettings) -> PartialWinsttSettings {
+        patch_from_json(serde_json::to_value(tree).unwrap())
+    }
+
+    #[test]
+    fn full_tree_defaults_dump_is_rejected_per_section() {
+        // The unhydrated-window boot shape (finding #21, observed live via the
+        // save-origin trace): a renderer with an empty settings cache dumps a
+        // FULL all-defaults tree, silently reverting the user's model/wake word.
+        // Its defaulted sections must be dropped, keeping the persisted values.
+        let mut current = WinsttSettings::default();
+        let mut cv = serde_json::to_value(&current).unwrap();
+        cv["model"]["model"] = serde_json::json!("nemo-canary-180m-flash");
+        cv["general"]["wakeWord"] = serde_json::json!("terminator");
+        current = serde_json::from_value(cv).unwrap();
+
+        let patch = full_tree_patch(&WinsttSettings::default());
+        let next = merge_patch_over(&current, patch);
+
+        assert_eq!(next.model.model, "nemo-canary-180m-flash");
+        assert_eq!(next.general.wake_word, "terminator");
+    }
+
+    #[test]
+    fn partial_defaults_section_is_a_legit_edit_and_accepted() {
+        // A DIFF-based save posting one defaults-equal section is the user
+        // toggling that section's only customized field back off — it must
+        // apply (this was the "second toggle never persists" regression risk).
+        let mut current = WinsttSettings::default();
+        current.llm.dictation.enabled = true;
+
+        let patch = patch_from_json(serde_json::json!({
+            "llm": serde_json::to_value(&WinsttSettings::default().llm).unwrap(),
+        }));
+        let next = merge_patch_over(&current, patch);
+
+        assert!(!next.llm.dictation.enabled);
+    }
+
+    #[test]
+    fn full_tree_with_customized_sections_still_applies() {
+        // The guard must ONLY reject defaults-over-customized inside a full
+        // dump — customized incoming sections in the same dump replace normally.
+        let mut current = WinsttSettings::default();
+        let mut cv = serde_json::to_value(&current).unwrap();
+        cv["general"]["wakeWord"] = serde_json::json!("terminator");
+        current = serde_json::from_value(cv).unwrap();
+
+        let mut tree = current.clone();
+        let mut tv = serde_json::to_value(&tree).unwrap();
+        tv["general"]["wakeWord"] = serde_json::json!("jarvis");
+        tree = serde_json::from_value(tv).unwrap();
+        let patch = full_tree_patch(&tree);
+        let next = merge_patch_over(&current, patch);
+
+        assert_eq!(next.general.wake_word, "jarvis");
     }
 
     #[test]

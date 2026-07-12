@@ -10,7 +10,10 @@ import { useListenMode } from "@/features/listen-mode";
 import { useTranscriptionFeed } from "@/features/live-transcription";
 import { useLlmProcessingFeed } from "@/features/llm-processing";
 import { useDownloadListener } from "@/features/model-download";
-import { usePushToTalk } from "@/features/push-to-talk";
+import {
+	useModifierOnlyHotkeyToast,
+	usePushToTalk,
+} from "@/features/push-to-talk";
 import { useRealtimePreviewFallback } from "@/features/realtime-preview-fallback";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
@@ -91,6 +94,7 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 	useLlmProcessingFeed();
 	useVisualizerSync();
 	usePushToTalk();
+	useModifierOnlyHotkeyToast();
 	useSyncSettings();
 	useSyncActiveModel();
 	useRealtimePreviewFallback();

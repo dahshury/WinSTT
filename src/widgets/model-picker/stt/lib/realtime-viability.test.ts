@@ -7,7 +7,6 @@ function model(overrides: Partial<ModelInfo> = {}): ModelInfo {
 		id: "m",
 		displayName: "M",
 		family: "whisper",
-		backend: "faster_whisper",
 		languages: ["en"],
 		supportsLanguageDetection: true,
 		sizeLabel: "39M",

@@ -176,7 +176,7 @@ fn quant_state(
         // graph, not a stray `.ort` of zero size).
         let best = cached
             .iter()
-            .filter(|(name, _, _)| matches_quant_glob(&fg.glob, name, quant))
+            .filter(|(name, _, _)| matches_quant_glob(&fg.glob, name))
             .max_by_key(|(_, size, _)| *size);
         if let Some((name, size, complete)) = best {
             present += 1;
@@ -210,15 +210,29 @@ fn quant_state(
 /// quant-suffixed forms rely on the `?`-separator glob which already encodes the tag; we add the
 /// `file_quantization` cross-check so a partial onnx name collision can't mis-attribute a file to
 /// the wrong precision (e.g. `..._fp16.onnx` accidentally counting toward int8).
-fn matches_quant_glob(glob: &str, name: &str, quant: Quantization) -> bool {
+fn matches_quant_glob(glob: &str, name: &str) -> bool {
     if !resolver::glob_match(glob, name) {
         return false;
     }
-    // Confirm the file's own quant tag matches what we're attributing it to. The glob already
-    // enforces the suffix for non-default quants; for the default export we require NO recognised
-    // quant tag on the stem (so a stray `encoder_model_int8.onnx` doesn't satisfy the default
-    // `**/encoder_model.onnx` — which it can't anyway, but this makes the intent explicit).
-    path_quantization(name) == quant
+    // Confirm the file's own quant tag matches the quant THIS GLOB targets — which is the tag the
+    // glob itself encodes (via the `?`-separator suffix), NOT the tier's overall quant. The two
+    // diverge for a MIXED-PRECISION tier: the NeMo canary fp16 tier resolves a `?fp16` encoder glob
+    // alongside an UNSUFFIXED (fp32) `decoder-model.onnx` glob, so its decoder file legitimately
+    // carries the Default tag while the tier is Fp16. Comparing against the tier quant rejected that
+    // decoder as "wrong precision", leaving only the fp16 encoder counted → the tier stuck at
+    // ~27% `Partial` forever even with every file on disk (and "resume" then found nothing to fetch
+    // and stopped instantly). Deriving the expected tag from the glob fixes that while preserving the
+    // guard the check exists for: the Kaldi loose `encoder-*.onnx` glob whose `*` spans a `.int8`
+    // separator still gets rejected, because the glob's own expected tag is Default ≠ the file's int8.
+    path_quantization(name) == glob_expected_quant(glob)
+}
+
+/// The quantization a required `.onnx` glob targets, parsed from the suffix the glob itself encodes.
+/// The glob uses `?` as the single-char wildcard standing in for the real `.`/`_` quant separator
+/// (`encoder-model?fp16.onnx`), so canonicalise `?`→`.` before reading the tag the same way a real
+/// filename is read. An unsuffixed glob (`decoder-model.onnx`) → `Default`.
+fn glob_expected_quant(glob: &str) -> Quantization {
+    path_quantization(&glob.replace('?', "."))
 }
 
 fn path_quantization(name: &str) -> Quantization {
@@ -601,6 +615,49 @@ mod tests {
             &files,
         );
         assert_eq!(fp16_state, CacheState::Cached);
+    }
+
+    #[test]
+    fn nemo_canary_fp16_mixed_tier_cached_with_unsuffixed_decoder() {
+        // REGRESSION (badge stuck ~27%, "resume" did nothing): the NeMo canary fp16 tier is
+        // MIXED-PRECISION — a `?fp16` encoder plus an UNSUFFIXED (fp32) `decoder-model.onnx` that it
+        // shares with the default tier. The per-glob quant cross-check used to compare the file's tag
+        // against the TIER quant (Fp16), so the Default-tagged decoder was rejected and only the fp16
+        // encoder counted → Partial with every required file present. It must read Cached.
+        let files = vec![
+            ("encoder-model.fp16.onnx".to_string(), 231, true),
+            ("decoder-model.onnx".to_string(), 316, true), // shared fp32 decoder
+            ("cross-kv-model.onnx".to_string(), 33, true), // optional (not required)
+            ("decoder-kv-model.onnx".to_string(), 282, true), // optional (not required)
+        ];
+        let (state, bytes) = quant_state(
+            "Masterx/canary-180m-flash-onnx",
+            EngineKind::NemoAed,
+            Quantization::Fp16,
+            &files,
+        );
+        assert_eq!(
+            state,
+            CacheState::Cached,
+            "mixed fp16 tier must read cached"
+        );
+        assert_eq!(
+            bytes,
+            231 + 316,
+            "counts fp16 encoder + shared fp32 decoder"
+        );
+        // And the fp16 encoder must NOT satisfy the DEFAULT tier (whose encoder glob is unsuffixed).
+        let (default_state, _) = quant_state(
+            "Masterx/canary-180m-flash-onnx",
+            EngineKind::NemoAed,
+            Quantization::Default,
+            &files,
+        );
+        assert_eq!(
+            default_state,
+            CacheState::Partial,
+            "default tier needs the unsuffixed encoder, which isn't present here"
+        );
     }
 
     #[test]

@@ -181,6 +181,7 @@ impl HistoryManager {
         processing_ms: Option<i64>,
         cost_usd: Option<f64>,
         cost_is_estimate: bool,
+        audio_file_name: Option<String>,
     ) -> Result<TtsHistoryDbEntry> {
         let timestamp = Utc::now().timestamp();
         let title = self.format_timestamp_title(timestamp);
@@ -196,8 +197,9 @@ impl HistoryManager {
                 characters,
                 processing_ms,
                 cost_usd,
-                cost_is_estimate
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                cost_is_estimate,
+                audio_file_name
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 timestamp,
                 &title,
@@ -208,6 +210,7 @@ impl HistoryManager {
                 processing_ms,
                 cost_usd,
                 cost_is_estimate,
+                &audio_file_name,
             ],
         )?;
 
@@ -222,6 +225,7 @@ impl HistoryManager {
             processing_ms,
             cost_usd,
             cost_is_estimate,
+            audio_file_name,
         };
 
         debug!("Saved TTS history entry with id {}", entry.id);
@@ -249,7 +253,7 @@ impl HistoryManager {
             return Err(anyhow!("TTS history entry {} not found", id));
         }
         let entry = conn.query_row(
-            "SELECT id, timestamp, title, text, model, voice, characters, processing_ms, cost_usd, cost_is_estimate
+            "SELECT id, timestamp, title, text, model, voice, characters, processing_ms, cost_usd, cost_is_estimate, audio_file_name
              FROM tts_history WHERE id = ?1",
             params![id],
             Self::map_tts_history_entry,
@@ -260,11 +264,43 @@ impl HistoryManager {
 
     pub fn delete_tts_entry(&self, id: i64) -> Result<bool> {
         let conn = self.get_connection()?;
+        // Remove the saved synthesis audio alongside the row (same policy as
+        // transcription entries: a failed file delete never blocks the row delete).
+        let audio_file_name: Option<String> = conn
+            .query_row(
+                "SELECT audio_file_name FROM tts_history WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap_or(None);
+        if let Some(file_name) = audio_file_name.as_deref() {
+            self.remove_recording_file(file_name);
+        }
         let deleted = conn.execute("DELETE FROM tts_history WHERE id = ?1", params![id])?;
         if deleted > 0 {
             debug!("Deleted TTS history entry with id: {}", id);
         }
         Ok(deleted > 0)
+    }
+
+    /// Best-effort delete of a recordings-dir file by validated basename.
+    /// Invalid names and IO failures are logged and swallowed — audio cleanup
+    /// must never block a history row mutation.
+    pub(super) fn remove_recording_file(&self, file_name: &str) {
+        match self.try_get_audio_file_path(file_name) {
+            Ok(path) if path.exists() => {
+                if let Err(e) = fs::remove_file(&path) {
+                    error!("Failed to delete audio file {}: {}", file_name, e);
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                error!(
+                    "Skipping audio file deletion for invalid history file name {}: {}",
+                    file_name, e
+                );
+            }
+        }
     }
 
     /// Update an existing history entry with new transcription results (used by retry).

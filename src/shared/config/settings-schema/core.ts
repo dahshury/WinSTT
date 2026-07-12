@@ -1,8 +1,5 @@
 import { z } from "zod";
-import {
-	DeviceTypeSchema,
-	TranscriberBackendSchema,
-} from "@/shared/api/schema.zod";
+import { DeviceTypeSchema } from "@/shared/api/schema.zod";
 
 const modelUnloadTimeoutSchema = z
 	.enum(["immediately", "never", "min2", "min5", "min10", "min15", "hour1"])
@@ -28,7 +25,6 @@ export const modelSettingsSchema = z.object({
 	autoDetectLanguage: z.boolean().default(false).catch(false),
 	languageCandidates: z.array(z.string()).default([]).catch([]),
 	device: DeviceTypeSchema.default("auto"),
-	backend: TranscriberBackendSchema.default("faster_whisper"),
 	// "auto" = the RAM/VRAM-aware recommended precision (re-resolved by the
 	// backend's ``fit_aware_auto_quant`` for the user's live hardware). ""
 	// is no longer "auto" — it now means EXPLICIT fp32 (the full-precision
@@ -77,15 +73,33 @@ export const qualitySettingsSchema = z.object({
 	// RealtimeSTT reference (its binary-classified smart-endpoint example
 	// ships 2.0); the old 1.5 committed ~25% sooner everywhere and read
 	// as "pastes too eagerly" in toggle dictation.
-	smartEndpointSpeed: z.number().min(0.5).max(3.0).default(2.0),
+	smartEndpointSpeed: z.number().min(0.5).max(3.0).default(2.0).catch(2.0),
 	// Sentence-pause durations driving the toggle-mode silence-timing heuristic
 	// (the fallback when Smart Endpoint is off). Defaults match the server's
 	// CLI argument defaults. unknownSentenceDetectionPause governs normal
 	// mid-sentence speech; 0.7s cut off natural breath/think pauses, so the
 	// default is 1.3s.
-	endOfSentenceDetectionPause: z.number().min(0.1).max(5.0).default(0.45),
-	midSentenceDetectionPause: z.number().min(0.1).max(10.0).default(2.0),
-	unknownSentenceDetectionPause: z.number().min(0.1).max(5.0).default(1.3),
+	// `.catch(...)` on each constrained slider: a stale out-of-range persisted
+	// value (or hand-edit) must reset only the offending field, never nuke the
+	// whole `quality` section to defaults on decode.
+	endOfSentenceDetectionPause: z
+		.number()
+		.min(0.1)
+		.max(5.0)
+		.default(0.45)
+		.catch(0.45),
+	midSentenceDetectionPause: z
+		.number()
+		.min(0.1)
+		.max(10.0)
+		.default(2.0)
+		.catch(2.0),
+	unknownSentenceDetectionPause: z
+		.number()
+		.min(0.1)
+		.max(5.0)
+		.default(1.3)
+		.catch(1.3),
 });
 
 export const hotkeySettingsSchema = z.object({

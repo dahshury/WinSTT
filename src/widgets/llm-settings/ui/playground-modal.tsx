@@ -94,7 +94,11 @@ function initialPlaygroundDraft(
 	presets: readonly SavedConfiguration[],
 ): LlmConfiguration {
 	const session = loadPlaygroundSession();
-	if (session) {
+	// Only restore the remembered draft when its label still resolves. If the
+	// remembered preset was deleted, `initialPlaygroundSelection` falls back to the
+	// live entry — so seed the draft from that same live selection instead of
+	// restoring the deleted preset's tweaks under a "live post-processing" label.
+	if (session && isResolvableSelection(session.selection, presets)) {
 		return cloneLlmConfiguration(session.config);
 	}
 	return seedForSelection(initialPlaygroundSelection(presets), model, presets);

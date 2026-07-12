@@ -50,6 +50,70 @@ fn ensure_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     }
 }
 
+/// Guards the one-time NSPanel conversion of the tray-indicator window (macOS).
+#[cfg(target_os = "macos")]
+static PANEL_CONVERTED: AtomicBool = AtomicBool::new(false);
+
+/// macOS: a non-activating, floating NSPanel subclass for the tray-indicator pill.
+///
+/// Like the recording overlay, this corner pill is an always-on-top floating
+/// surface that must appear over the user's active app WITHOUT stealing focus.
+/// `tauri-nspanel` swizzles the tao NSWindow into this class so it can float over
+/// every Space / full-screen app and never becomes the key window — the macOS
+/// analogue of the Windows `force_topmost` + `SWP_NOACTIVATE` treatment below.
+#[cfg(target_os = "macos")]
+mod macos_panel {
+    // The `tauri_panel!` expansion calls `WebviewWindow::app_handle()`, which is a
+    // `tauri::Manager` method — the trait must be in scope in THIS module (the
+    // file-level import does not reach into a child `mod`).
+    use tauri::Manager;
+
+    tauri_nspanel::tauri_panel!(WinsttTrayIndicatorPanel {
+        config: {
+            can_become_key_window: false,
+            is_floating_panel: true,
+            hides_on_deactivate: false,
+        }
+    });
+}
+
+/// Convert the tray-indicator window into a non-activating floating NSPanel
+/// (idempotent). On failure, log and keep the normal always-on-top window.
+#[cfg(target_os = "macos")]
+fn ensure_tray_indicator_is_panel(window: &tauri::WebviewWindow) {
+    if PANEL_CONVERTED.load(Ordering::SeqCst) {
+        return;
+    }
+    let win = window.clone();
+    // NSWindow class swizzling + AppKit configuration must run on the main thread.
+    let _ = window.run_on_main_thread(move || {
+        if PANEL_CONVERTED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        use tauri_nspanel::{CollectionBehavior, PanelLevel, StyleMask, WebviewWindowExt};
+        match win.to_panel::<macos_panel::WinsttTrayIndicatorPanel>() {
+            Ok(panel) => {
+                panel.set_style_mask(StyleMask::new().borderless().nonactivating_panel().value());
+                panel.set_level(PanelLevel::Floating.into());
+                panel.set_floating_panel(true);
+                panel.set_collection_behavior(
+                    CollectionBehavior::new()
+                        .can_join_all_spaces()
+                        .full_screen_auxiliary()
+                        .stationary()
+                        .value(),
+                );
+            }
+            Err(error) => {
+                PANEL_CONVERTED.store(false, Ordering::SeqCst);
+                log::warn!(
+                    "[tray-indicator] NSPanel conversion failed; keeping normal window: {error}"
+                );
+            }
+        }
+    });
+}
+
 /// The pill is suppressed only while the settings window is FOCUSED — the user is
 /// already looking at the recording controls there. Settings open-but-in-the-
 /// background (or closed) still shows the pill.
@@ -69,6 +133,11 @@ pub fn tray_indicator_show(app: AppHandle) -> Result<bool, String> {
     let Some(window) = ensure_window(&app) else {
         return Ok(false);
     };
+    // macOS: convert to a non-activating floating NSPanel on first show (idempotent;
+    // no-op elsewhere) so the corner pill floats over the active app without stealing
+    // focus, matching the recording overlay's panel treatment.
+    #[cfg(target_os = "macos")]
+    ensure_tray_indicator_is_panel(&window);
 
     let (mut x, mut y) = corner_anchor(&app);
     if let Some((lx, ly)) = lift_above_overlay(&app, x, y) {

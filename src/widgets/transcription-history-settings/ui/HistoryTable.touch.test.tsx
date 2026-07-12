@@ -296,8 +296,9 @@ describe("HistoryTable cloud costs", () => {
 		// the exact per-stage figures live in its hover tooltip.
 		expect(screen.getByText("<$0.001")).not.toBeNull();
 		expect(screen.getByLabelText("Cloud cost")).not.toBeNull();
-		// STT rows carry the tinted kind marker.
-		expect(screen.getByText("STT")).not.toBeNull();
+		// STT rows are typed by the card-level kind rail (sr-only label), not a
+		// footer chip.
+		expect(screen.getByText("Speech-to-text")).not.toBeNull();
 		// The OpenRouter LLM model is flagged as a cloud model.
 		expect(screen.getByRole("img", { name: "Cloud" })).not.toBeNull();
 	});
@@ -343,7 +344,10 @@ describe("HistoryTable cloud costs", () => {
 		);
 
 		await screen.findByText("read this aloud");
-		expect(screen.getByText("TTS")).not.toBeNull();
+		expect(screen.getByText("Text-to-speech")).not.toBeNull();
+		// No saved synthesis audio → the transport slot keeps an inert play
+		// button (nothing replaces the play icon).
+		expect(screen.getByRole("button", { name: "Not recorded" })).not.toBeNull();
 		// The `openrouter:` prefix is stripped from the displayed model id — the
 		// cloud sign, not the prefix, marks it as a cloud model.
 		expect(screen.getByText("hexgrad/kokoro-82m")).not.toBeNull();
@@ -351,6 +355,68 @@ describe("HistoryTable cloud costs", () => {
 		expect(screen.getByRole("img", { name: "Cloud" })).not.toBeNull();
 		expect(screen.getByText("af_alloy")).not.toBeNull();
 		expect(screen.getByText("<$0.001")).not.toBeNull();
+	});
+
+	test("TTS rows with saved audio play through tts-history:load-audio", async () => {
+		class MockAudio {
+			currentTime = 0;
+			onended: (() => void) | null = null;
+			pause = mock(() => undefined);
+			play = mock<() => Promise<void>>(() => Promise.resolve());
+
+			constructor(readonly src: string) {}
+		}
+		Object.defineProperty(globalThis, "Audio", {
+			configurable: true,
+			value: MockAudio,
+		});
+		// The playback loaders route through the typed `commands.*` bindings →
+		// `__TAURI_INTERNALS__.invoke` (not nativeBridge), so instrument that.
+		const invoke = mock<(cmd: string, args?: unknown) => Promise<unknown>>(
+			(cmd) => {
+				if (cmd === "tts_history_load_audio") {
+					return Promise.resolve("data:audio/wav;base64,AAAA");
+				}
+				return Promise.resolve(undefined);
+			},
+		);
+		(
+			window as unknown as {
+				__TAURI_INTERNALS__: { invoke: typeof invoke };
+			}
+		).__TAURI_INTERNALS__.invoke = invoke;
+		const tts: TtsHistoryEntry = {
+			audioFilePath: "C:\\recordings\\tts-1.wav",
+			characters: 24,
+			id: "tts-audio",
+			model: "kokoro",
+			text: "played back aloud",
+			timestamp: Date.UTC(2026, 0, 3),
+			voice: "af_alloy",
+			wordCount: 3,
+		};
+
+		render(
+			<IntlProvider>
+				<HistoryTable entries={[ttsItem(tts)]} />
+			</IntlProvider>,
+		);
+
+		await screen.findByText("played back aloud");
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: "Play recording" }));
+			await sleep(0);
+		});
+
+		// The clip loads through the TTS loader — never the STT one, and no
+		// word-alignment call is made for synthesis audio.
+		const cmds = invoke.mock.calls.map((call) => call[0]);
+		expect(cmds).toContain("tts_history_load_audio");
+		expect(cmds).not.toContain("history_load_audio");
+		expect(cmds).not.toContain("align_words");
+		expect(
+			screen.getByRole("button", { name: "Pause recording" }),
+		).not.toBeNull();
 	});
 
 	test("local runs (no cost data) render no cost chip", async () => {

@@ -68,7 +68,8 @@ pub mod cloud_stt;
 pub mod context;
 /// Shared HTTP asset transfers (Range resume, pause/cancel, progress, speed, ETA).
 pub mod downloads;
-/// System-audio ducking via IAudioEndpointVolume::SetMasterVolumeLevelScalar (graduated 0-100%).
+/// System-audio ducking via per-session ISimpleAudioVolume (graduated 0-100%),
+/// with crash-safe restore (worker-serialized COM, watchdog, on-disk journal).
 pub mod ducking;
 /// Masked-LM (mmBERT) dictionary corrector — the NON-LLM dictation fallback (context-aware vocab
 /// snapping when LLM cleanup is off). Model downloads on demand.

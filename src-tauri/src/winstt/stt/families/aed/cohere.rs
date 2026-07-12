@@ -57,8 +57,13 @@ pub struct CohereEngine {
     /// its fused graph once instead of re-fusing per token (~34 ms/token measured). `None` = legacy
     /// growing-KV layout.
     static_kv_max: Option<usize>,
-    /// `Some(bucket_samples)` when the ENCODER runs on DirectML: input audio is zero-padded up to
-    /// this fixed length so every utterance shares ONE encoder input shape. The DML EP caches the
+    /// `Some(bucket_samples)` when the ENCODER runs on DirectML AND the STATIC decoder is active
+    /// (`static_kv_max.is_some()` — the fully-optimized, DML-safe export pair): input audio is
+    /// zero-padded up to this fixed length so every utterance shares ONE encoder input shape. A
+    /// legacy / dynamic-only decoder that still resolves (the resolver's `decoder` glob accepts any
+    /// merged decoder and `decoder_dyn` is optional) runs the encoder at its natural length — the pad
+    /// is only known-benign for the shipped static exports (transcripts verified unchanged there), so
+    /// it is not force-fed to an export whose provenance we cannot vouch for. The DML EP caches the
     /// fused graph for exactly one shape signature per session (first-compiled wins — measured:
     /// alternating two lengths keeps only the FIRST warm at ~0.1s; the other re-fuses EVERY run at
     /// ~0.7s). Real dictation has a new length every utterance, so without padding every decode pays
@@ -111,12 +116,22 @@ const MAX_DETECT_LANGS: usize = 6;
 /// model's `max_position_embeddings`; also the engine's `max_decode_length`).
 const STATIC_MAX_KV: usize = 1024;
 
-/// Encoder pad-bucket length in samples (see `encoder_pad_bucket`). 28 s matches the backend's
-/// `MAX_CHUNK_S` VAD-segment cap, so EVERY segment the app can produce lands in the one cached
-/// encoder shape. Cost of the pad itself is small and flat — warm encoder ≈ 0.18 s at 28 s vs
+/// Encoder pad-bucket length in samples (see `encoder_pad_bucket`). 28 s matches Cohere's own
+/// `EngineKind::max_chunk_seconds()` VAD-segment cap (the backend routes with the per-family cap),
+/// so EVERY segment the app can produce lands in the one cached encoder shape. Cost of the pad
+/// itself is small and flat — warm encoder ≈ 0.18 s at 28 s vs
 /// ≈ 0.09 s at 6 s natural (memory-bound conformer) — versus the ~0.7 s per-utterance re-fuse it
 /// removes. Audio longer than the bucket runs at natural length (re-fuse, same as before).
 const ENC_PAD_BUCKET_SAMPLES: usize = 28 * 16_000;
+
+/// Whether the DirectML encoder pad-bucket applies (see `encoder_pad_bucket`). Gated on THREE facts:
+/// the encoder session is on DirectML (only there does the per-shape re-fuse tax exist), the STATIC
+/// decoder is the one loaded (`static_decoder` — the pad is only proven benign for the shipped static
+/// export pair; a legacy/dynamic decoder that still resolves runs at natural length), and the
+/// `WINSTT_COHERE_NO_ENC_PAD` escape hatch is unset. Pure so the gate is unit-testable without a session.
+fn encoder_pad_bucket(enc_on_dml: bool, static_decoder: bool, no_pad_env: bool) -> Option<usize> {
+    (enc_on_dml && static_decoder && !no_pad_env).then_some(ENC_PAD_BUCKET_SAMPLES)
+}
 
 impl CohereEngine {
     pub fn load(cfg: &EngineConfig) -> SttResult<CohereEngine> {
@@ -171,11 +186,16 @@ impl CohereEngine {
         };
         let encoder = build_session(file(&cfg.resolved, "encoder")?, enc_providers)?;
         let decoder = build_session(decoder_path, dec_providers)?;
-        // One fixed encoder input shape on DirectML (see `encoder_pad_bucket` field docs).
+        // One fixed encoder input shape on DirectML, but ONLY under the static decoder — a legacy /
+        // dynamic-only decoder that still resolves runs the encoder at natural length (see
+        // `encoder_pad_bucket` field docs). `static_export` here already reflects the dyn-decoder
+        // override above (reset to false when `decoder_dyn` was picked for the CPU EP).
         // WINSTT_COHERE_NO_ENC_PAD disables it (diagnostics / A-B benchmarking).
-        let encoder_pad_bucket = (enc_providers.first() == Some(&Accelerator::DirectMl)
-            && std::env::var("WINSTT_COHERE_NO_ENC_PAD").is_err())
-        .then_some(ENC_PAD_BUCKET_SAMPLES);
+        let encoder_pad_bucket = encoder_pad_bucket(
+            enc_providers.first() == Some(&Accelerator::DirectMl),
+            static_export,
+            std::env::var("WINSTT_COHERE_NO_ENC_PAD").is_ok(),
+        );
 
         let tok_json: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(file(&cfg.resolved, "tokenizer")?)
@@ -357,7 +377,9 @@ impl CohereEngine {
             out.push_str(&token.replace('\u{2581}', " "));
         }
         flush(&mut byte_buf, &mut out);
-        out.strip_prefix(' ').unwrap_or(&out).to_string()
+        // Remove the model's inline non-speech event tags (`<hesitation>`, …) — emitted as ordinary
+        // text, so not caught by the per-token `is_special_token` skip above. Also trims.
+        strip_inline_event_tags(&out)
     }
 
     /// Greedy autoregressive decode (beam=1, matches Cohere generation_config) with a DEVICE-RESIDENT
@@ -868,5 +890,57 @@ impl Transcriber for CohereEngine {
             text,
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pad_bucket_requires_dml_static_and_no_escape_hatch() {
+        // Canonical shipped case: encoder on DirectML, static decoder loaded, escape hatch unset.
+        assert_eq!(
+            encoder_pad_bucket(true, true, false),
+            Some(ENC_PAD_BUCKET_SAMPLES)
+        );
+    }
+
+    #[test]
+    fn pad_bucket_off_for_legacy_or_dynamic_decoder() {
+        // A legacy / dynamic-only decoder still resolves (optional `decoder_dyn`, permissive `decoder`
+        // glob) — even with the encoder on DirectML the pad is withheld: only the static export pair
+        // is a verified-benign target for trailing zero-pad.
+        assert_eq!(encoder_pad_bucket(true, false, false), None);
+    }
+
+    #[test]
+    fn pad_bucket_off_when_encoder_not_on_dml() {
+        // CPU / CUDA encoders have no per-shape re-fuse tax, so padding would only add compute.
+        assert_eq!(encoder_pad_bucket(false, true, false), None);
+    }
+
+    #[test]
+    fn pad_bucket_escape_hatch_disables_it() {
+        // WINSTT_COHERE_NO_ENC_PAD forces natural length even on the static DirectML path.
+        assert_eq!(encoder_pad_bucket(true, true, true), None);
+    }
+
+    #[test]
+    fn cohere_device_follows_primary_provider() {
+        assert_eq!(
+            cohere_device(&[Accelerator::Cuda]),
+            (AllocationDevice::CUDA, 0)
+        );
+        assert_eq!(
+            cohere_device(&[Accelerator::DirectMl]),
+            (AllocationDevice::DIRECTML, 0)
+        );
+        assert_eq!(
+            cohere_device(&[Accelerator::Cpu]),
+            (AllocationDevice::CPU, 0)
+        );
+        // No providers → CPU (the safe default for the KV-cache binding device).
+        assert_eq!(cohere_device(&[]), (AllocationDevice::CPU, 0));
     }
 }

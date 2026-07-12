@@ -1,9 +1,11 @@
 import {
 	AudioWave02Icon,
 	Copy01Icon,
+	DashboardSpeed02Icon,
 	GlobeIcon,
 	NeuralNetworkIcon,
 	SparklesIcon,
+	StarIcon,
 	UserMultiple02Icon,
 } from "@hugeicons/core-free-icons";
 import type { TtsModelInfo } from "@/entities/tts-catalog";
@@ -89,11 +91,16 @@ export function buildTtsSpec(model: TtsModelInfo): ModelSpec {
 	}
 
 	const stats: ModelSpecStat[] = [];
-	const quality = specStat("quality", "Quality", model.qualityScore);
+	const quality = specStat("quality", "Quality", model.qualityScore, StarIcon);
 	if (quality) {
 		stats.push(quality);
 	}
-	const speed = specStat("speed", "Speed", model.speedScore);
+	const speed = specStat(
+		"speed",
+		"Speed",
+		model.speedScore,
+		DashboardSpeed02Icon,
+	);
 	if (speed) {
 		stats.push(speed);
 	}

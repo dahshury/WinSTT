@@ -499,16 +499,24 @@ fn real_main() {
         }
     }
 
+    // STT_BENCH_FP16_WORKAROUND=1: the staged snapshot holds fp16 exports (under the plain
+    // file names) — apply the same ORT_ENABLE_EXTENDED downgrade + decoder repair the catalog
+    // path applies for Quantization::Fp16, or the sessions fail to commit.
+    let fp16_workaround = std::env::var("STT_BENCH_FP16_WORKAROUND").is_ok();
     let cfg = EngineConfig {
         model_name: snap,
         family: "whisper".into(),
         kind: EngineKind::WhisperHf,
         resolved: ResolvedModel {
             files,
-            effective_quantization: Quantization::Default,
+            effective_quantization: if fp16_workaround {
+                Quantization::Fp16
+            } else {
+                Quantization::Default
+            },
         },
         providers: providers_from_env(),
-        whisper_fp16_workaround: false,
+        whisper_fp16_workaround: fp16_workaround,
         language: None,
     };
 

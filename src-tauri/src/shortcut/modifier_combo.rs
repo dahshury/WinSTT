@@ -837,7 +837,8 @@ mod platform {
 
 #[cfg(not(target_os = "windows"))]
 mod platform {
-    use tauri::AppHandle;
+    use log::warn;
+    use tauri::{AppHandle, Emitter};
 
     use crate::settings::ShortcutBinding;
 
@@ -878,13 +879,25 @@ mod platform {
     }
 
     pub fn register_if_modifier_only(
-        _app: &AppHandle,
+        app: &AppHandle,
         binding: &ShortcutBinding,
     ) -> Result<bool, String> {
         if binding.id == "transcribe" && is_modifier_only_accelerator(&binding.current_binding) {
-            return Err(
-                "modifier-only PTT shortcuts are unavailable on this platform; choose a full hotkey with a non-modifier key".into(),
+            let message = "modifier-only PTT shortcuts are unavailable on this platform; choose a full hotkey with a non-modifier key";
+            warn!(
+                "rejecting modifier-only PTT shortcut '{}': {}",
+                binding.current_binding, message
             );
+            // Surface the rejection to the UI (the frontend listens for this exact
+            // event name) so it can prompt the user to pick a full accelerator instead
+            // of silently arming no dictation hotkey. The payload names the attempted
+            // key. Emitting here — where the modifier-only Err originates and the
+            // AppHandle is in scope — covers both startup registration and live rebinds.
+            let _ = app.emit(
+                "ptt:modifier-only-unsupported",
+                binding.current_binding.clone(),
+            );
+            return Err(message.into());
         }
         Ok(false)
     }

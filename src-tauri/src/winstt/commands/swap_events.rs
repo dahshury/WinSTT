@@ -195,6 +195,19 @@ fn perform_model_swap_inner(
                     tm.inner()
                         .wait_until_warm(&name, std::time::Duration::from_secs(120));
                 }
+                // AUTHORITATIVELY persist the just-loaded model to disk. The renderer's
+                // own debounced/cross-window `settings:save` of `model.model` is
+                // unreliable for a main swap: the detached picker window closes before
+                // (or inside the IPC-load guard window of) its flush, and the other
+                // windows adopt the pick from this very completion event — so the disk
+                // write races/drops and `winstt-settings.json` keeps the OLD model even
+                // though localStorage + the live engine moved on. On the next
+                // hydration/boot, disk (the source of truth) then REVERTS the picker
+                // and the server reloads the stale model (the "reverts to cohere on
+                // every restart/hot-reload" bug). The swap path KNOWS exactly which
+                // model it loaded, so it writes it — making disk always match the
+                // resident engine, independent of any renderer race.
+                persist_swapped_main_model(&app, &name, quantization_override.as_deref());
                 // Push the reconciled runtime snapshot BEFORE completed (the renderer reads the new
                 // active model off runtime-info, then clears the chip on completed).
                 if let Some(tm) =
@@ -217,6 +230,53 @@ fn perform_model_swap_inner(
             }
         }
     });
+}
+
+/// Resolve the precision to persist for `model_id`, given the currently-persisted
+/// `current_quant`. The `""`/`auto` sentinels are universally valid (the loader
+/// re-resolves them per model); a concrete precision the target model doesn't ship
+/// (e.g. an `fp16` carried onto a model whose catalog list omits it) is reset to
+/// `""` so the persisted `{model, onnxQuantization}` couple can never be rejected
+/// by `validate_quantization`. Mirrors the renderer's `resolveSwapQuantization` /
+/// `reconcileAdoptedQuant` so both persistence paths agree.
+fn reconcile_persisted_quant(model_id: &str, current_quant: &str) -> String {
+    if current_quant.is_empty() || current_quant == "auto" {
+        return current_quant.to_string();
+    }
+    match crate::winstt::catalog::find(model_id) {
+        Some(entry) if !entry.available_quantizations.contains(&current_quant) => String::new(),
+        _ => current_quant.to_string(),
+    }
+}
+
+/// Write the just-loaded MAIN model id to disk (`winstt-settings.json`) so it
+/// survives restarts/hot-reloads regardless of the renderer's save reliability.
+/// Goes through `apply_settings_patch` (validate → seal → write → broadcast) with
+/// only the `model` section set, so disk becomes the authoritative match for the
+/// resident engine, `settings:changed` fans the new model to every window (stamping
+/// their last-saved baseline so they don't re-diff/clobber it), and NO engine reload
+/// is triggered (a main model-ID change is a no-op in `apply_model_runtime_settings`
+/// — the swap already loaded it here). A no-op when disk already matches (idempotent;
+/// avoids a redundant broadcast).
+fn persist_swapped_main_model(app: &AppHandle, name: &str, quant_override: Option<&str>) {
+    let current = crate::winstt::settings_store::read_settings_raw(app);
+    let quant = match quant_override {
+        Some(q) => q.to_string(),
+        None => reconcile_persisted_quant(name, &current.model.onnx_quantization),
+    };
+    if current.model.model == name && current.model.onnx_quantization == quant {
+        return;
+    }
+    let mut model_section = current.model;
+    model_section.model = name.to_string();
+    model_section.onnx_quantization = quant;
+    let patch = super::settings::PartialWinsttSettings {
+        model: Some(model_section),
+        ..Default::default()
+    };
+    if let Err(e) = super::settings::apply_settings_patch(app, patch) {
+        log::warn!("[swap] failed to persist swapped main model '{name}' to disk: {e}");
+    }
 }
 
 /// Map a raw load-error string to the renderer's `ModelSwapFailedCategory`. Mirrors the server's

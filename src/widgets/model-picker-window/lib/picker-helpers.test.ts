@@ -34,6 +34,9 @@ describe("normalizeDetachedModelPickerMode", () => {
 		expect(normalizeDetachedModelPickerMode({ kind: "tts" })).toEqual({
 			kind: "tts",
 		});
+		expect(normalizeDetachedModelPickerMode({ kind: "output-device" })).toEqual(
+			{ kind: "output-device" },
+		);
 	});
 
 	test("falls back to the default STT mode for unknown / missing kinds", () => {
@@ -76,6 +79,13 @@ describe("desiredSizeForMode", () => {
 		expect(desiredSizeForMode({ kind: "stt-realtime" })).toEqual(footprint);
 		expect(desiredSizeForMode({ kind: "stt-cloud" })).toEqual(footprint);
 		expect(desiredSizeForMode({ kind: "tts" })).toEqual(footprint);
+	});
+
+	test("output-device is a compact list, narrower than the STT grid", () => {
+		const size = desiredSizeForMode({ kind: "output-device" });
+		expect(size.width).toBe(320);
+		expect(size.height).toBe(320);
+		expect(size.width).toBeLessThan(DESIRED_WIDTH);
 	});
 
 	test("LLM modes keep their own widths", () => {

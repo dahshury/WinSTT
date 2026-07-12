@@ -529,15 +529,12 @@ pub(crate) async fn process_transcription_output(
         .ok();
     }
 
-    // Non-LLM dictionary fallback: when the LLM is NOT doing dictionary correction (cleanup off or
-    // no model), the dictionary still works — deterministic replacement pairs + the masked-LM
-    // encoder for vocabulary words (context-aware: "veet"->"Vite", "video" stays "video"). The
-    // encoder model downloads on demand and this whole block is fail-soft (returns text unchanged
-    // until ready). Listen mode stays raw. When the LLM path ran, it owns the dictionary instead.
-    if !winstt_dictation_llm
-        && winstt_settings.general.encoder_dictionary_enabled
-        && winstt_settings.general.recording_mode != RecordingMode::Listen
-    {
+    // Post-LLM deterministic replacement-pair safety net. Replacement pairs are fed to the model in
+    // its prompt, but a small local model may ignore one — so re-apply them (case-insensitive
+    // whole-word) to the model's OUTPUT, exactly as the dictionary schema documents. Folds the count
+    // into `dictionary_fixes` so the History "AI Impact" stat reflects the deterministic guarantee,
+    // not just what the model happened to change (the LLM path itself reports 0 fixes).
+    if winstt_dictation_llm {
         let pairs = crate::winstt::commands::llm::replacement_pairs(&winstt_settings);
         if !pairs.is_empty() {
             let (replaced, n) =
@@ -548,6 +545,32 @@ pub(crate) async fn process_transcription_output(
                 dictionary_fixes = Some(dictionary_fixes.unwrap_or(0) + n as i64);
             }
         }
+    }
+
+    // Deterministic replacement pairs (find→replace) need NO model, so they run whenever the LLM is
+    // not the dictionary authority — INDEPENDENT of the encoder toggle. (Previously they were gated
+    // behind `encoder_dictionary_enabled`, so disabling the on-device model silently killed plain
+    // string replacements too.) Listen mode stays raw; when the LLM path ran, it owns the dictionary.
+    if !winstt_dictation_llm && winstt_settings.general.recording_mode != RecordingMode::Listen {
+        let pairs = crate::winstt::commands::llm::replacement_pairs(&winstt_settings);
+        if !pairs.is_empty() {
+            let (replaced, n) =
+                crate::winstt::llm::apply_replacement_pairs_counted(&final_text, &pairs);
+            if n > 0 {
+                final_text = replaced;
+                post_processed_text = Some(final_text.clone());
+                dictionary_fixes = Some(dictionary_fixes.unwrap_or(0) + n as i64);
+            }
+        }
+    }
+
+    // Context-aware encoder correction for VOCABULARY words ("veet"->"Vite", "video" stays "video").
+    // This needs the ~310 MB masked-LM, so it stays gated on `encoder_dictionary_enabled`; the model
+    // downloads on demand and the whole block is fail-soft (returns text unchanged until ready).
+    if !winstt_dictation_llm
+        && winstt_settings.general.encoder_dictionary_enabled
+        && winstt_settings.general.recording_mode != RecordingMode::Listen
+    {
         let mut terms: Vec<String> = winstt_settings
             .dictionary
             .iter()
@@ -587,13 +610,8 @@ pub(crate) async fn process_transcription_output(
                 user_term_count,
                 terms.len().saturating_sub(user_term_count)
             );
-            let corrected = crate::winstt::encoder_dict::correct_vocabulary(
-                app,
-                &final_text,
-                &terms,
-                crate::winstt::encoder_dict::DEFAULT_RANK_K,
-            )
-            .await;
+            let corrected =
+                crate::winstt::encoder_dict::correct_vocabulary(app, &final_text, &terms).await;
             info!(
                 "[stt-ui] encoder_dict_complete duration_ms={} changed={}",
                 encoder_started.elapsed().as_millis(),

@@ -19,13 +19,19 @@ export function PlayButton({
 	loading,
 	onToggle,
 	playing,
+	unavailable,
 }: {
 	loading: boolean;
 	onToggle: () => void;
 	playing: boolean;
+	/** Tooltip for rows with no saved audio — the play icon stays (the leading
+	 *  slot is ALWAYS the transport control) but renders inert and dimmed. */
+	unavailable?: string | undefined;
 }) {
 	let label = "Play recording";
-	if (loading) {
+	if (unavailable) {
+		label = unavailable;
+	} else if (loading) {
 		label = "Loading recording";
 	} else if (playing) {
 		label = "Pause recording";
@@ -37,15 +43,22 @@ export function PlayButton({
 	return (
 		<Tooltip content={label}>
 			<BaseButton
+				// `unavailable` stays aria-disabled (not `disabled`) so the tooltip
+				// explaining WHY it's inert still opens on hover/focus.
+				aria-disabled={unavailable ? true : undefined}
 				aria-label={label}
 				className={cn(
-					"inline-flex size-7 shrink-0 items-center justify-center rounded-full transition-colors duration-150 active:scale-95",
-					playing
-						? "bg-foreground/15 text-foreground hover:bg-foreground/25"
-						: "bg-transparent text-foreground-muted hover:bg-foreground/10 hover:text-foreground",
+					"inline-flex size-7 shrink-0 items-center justify-center rounded-full transition-colors duration-150",
+					unavailable
+						? "cursor-default bg-transparent text-foreground-muted/40"
+						: "active:scale-95",
+					!unavailable &&
+						(playing
+							? "bg-foreground/15 text-foreground hover:bg-foreground/25"
+							: "bg-transparent text-foreground-muted hover:bg-foreground/10 hover:text-foreground"),
 				)}
 				disabled={loading}
-				onClick={onToggle}
+				onClick={unavailable ? undefined : onToggle}
 				type="button"
 			>
 				{loading ? (

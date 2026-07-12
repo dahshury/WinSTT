@@ -163,6 +163,22 @@ export const listContextApps = () =>
 // the settings panel but hasn't debounce-saved yet.
 export const settingsSave = (settings: Partial<AppSettings>) =>
 	send(IPC.SETTINGS_SAVE, { settings: settings as AppSettingsSaveInput });
+
+/**
+ * Acknowledged settings save (audit #46). Resolves once the backend confirms
+ * the write and REJECTS when it fails, so the caller can advance its
+ * "last saved" baseline ONLY on confirmed success and keep the section dirty
+ * (retry) on failure — the fire-and-forget `settingsSave` above swallowed
+ * rejections, letting a section read "clean" after a rejected write and never
+ * be re-sent. The backend's fallible `winstt_set_settings` command surfaces a
+ * `Result::Err` on failure, which `invoke` unwraps into a rejected promise.
+ */
+export const settingsSaveAck = (
+	settings: Partial<AppSettings>,
+): Promise<void> =>
+	invoke<unknown>(IPC.SETTINGS_SAVE, {
+		settings: settings as AppSettingsSaveInput,
+	}).then(() => undefined);
 export const settingsLoad = async (): Promise<AppSettings> => {
 	const payload = await invokeOrDefault<unknown>(IPC.SETTINGS_LOAD, {});
 	return decodeSettingsPayload(payload);
@@ -449,6 +465,11 @@ export const onServerStatus = (cb: (status: ServerStatus) => void) =>
 
 export const onHotkeyPressed = (cb: () => void) => on(IPC.HOTKEY_PRESSED, cb);
 export const onHotkeyReleased = (cb: () => void) => on(IPC.HOTKEY_RELEASED, cb);
+
+/** The backend rejected a modifier-only push-to-talk binding (unsupported on
+ *  this OS). Payload is the attempted accelerator string (e.g. "Ctrl+Alt"). */
+export const onPttModifierOnlyUnsupported = (cb: (combo: string) => void) =>
+	onCast<string>(IPC.PTT_MODIFIER_ONLY_UNSUPPORTED, cb);
 
 export const onPostProcessingProfileSwap = (cb: () => void) =>
 	on(IPC.LLM_PROFILE_SWAP, () => cb());

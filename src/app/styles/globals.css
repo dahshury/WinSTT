@@ -124,7 +124,8 @@
 	--color-subtitle-scrim-strong: oklch(0% 0 0 / 0.62);
 	--color-subtitle-scrim-medium: oklch(0% 0 0 / 0.34);
 	--color-subtitle-scrim-soft: oklch(0% 0 0 / 0.08);
-	--color-subtitle-scrim-bottom: oklch(0% 0 0 / 0.55);
+	--color-subtitle-scrim-bloom-core: oklch(0% 0 0 / 0.52);
+	--color-subtitle-scrim-bloom-mid: oklch(0% 0 0 / 0.24);
 
 	/* Settings shell material: window substrate, rail chrome, and active tabs. */
 	--color-settings-window-bloom: oklch(15% 0.014 265 / 0.38);
@@ -913,6 +914,43 @@
 
 	.tray-menu-open-enter {
 		animation: none !important;
+	}
+}
+
+/* Main-window subtitle scrim: a bottom-anchored elliptical bloom so the
+   legibility shadow feathers out on every side (no hard left/right edges)
+   and reads as light falling away beneath the words, not a painted band.
+   Entrance rises softly from below; the missing `to` keyframe lets the
+   animation settle into the inline opacity driven by caption fade state. */
+.subtitle-scrim-bloom {
+	background: radial-gradient(
+		115% 150% at 50% 112%,
+		var(--color-subtitle-scrim-bloom-core) 0%,
+		var(--color-subtitle-scrim-bloom-mid) 48%,
+		transparent 74%
+	);
+	/* Horizontal feather: the bloom must reach zero alpha before the container
+	   clips it, or the rounded edge reintroduces the hard vertical seam. */
+	mask-image: linear-gradient(
+		to right,
+		transparent 0%,
+		var(--color-overlay-surface) 14%,
+		var(--color-overlay-surface) 86%,
+		transparent 100%
+	);
+	animation: subtitle-scrim-in 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes subtitle-scrim-in {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.subtitle-scrim-bloom {
+		animation: none;
 	}
 }
 

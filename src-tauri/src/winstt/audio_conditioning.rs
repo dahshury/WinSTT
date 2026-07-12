@@ -42,13 +42,22 @@ impl AudioFrameStats {
 
 /// Peak-normalize to 0.95. This mirrors the original WinSTT batch STT
 /// `_peak_normalize` chokepoint and is intentionally one-shot.
+///
+/// DC removal (subtract the buffer mean) precedes the peak scan so a mic with a constant bias does
+/// not spend normalization headroom on the offset: the peak is measured on the AC component, and the
+/// same DC-shifted buffer normalizes bit-identically to its offset-free twin. Clean (zero-mean) mics
+/// are near-neutral — `mean ≈ 0` collapses back to the plain peak scale (modulo one float subtract).
 pub(crate) fn peak_normalize(audio: &[f32]) -> Vec<f32> {
-    let peak = audio.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+    if audio.is_empty() {
+        return audio.to_vec();
+    }
+    let mean = audio.iter().copied().sum::<f32>() / audio.len() as f32;
+    let peak = audio.iter().fold(0.0f32, |m, &x| m.max((x - mean).abs()));
     if peak <= 0.0 {
         return audio.to_vec();
     }
     let gain = 0.95 / peak;
-    audio.iter().map(|&x| x * gain).collect()
+    audio.iter().map(|&x| (x - mean) * gain).collect()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -182,10 +191,38 @@ mod tests {
     #[test]
     fn peak_normalize_scales_to_095() {
         assert_eq!(peak_normalize(&[0.0, 0.0]), vec![0.0, 0.0]);
+        assert!(peak_normalize(&[]).is_empty());
 
-        let out = peak_normalize(&[0.5, -0.25]);
+        // Zero-mean input is byte-identical to the pre-DC-removal behaviour (modulo float ops):
+        // mean of [0.5, -0.5] is 0, so centering is a no-op and the peak scale is unchanged.
+        let out = peak_normalize(&[0.5, -0.5]);
         assert!(approx(out[0], 0.95));
-        assert!(approx(out[1], -0.475));
+        assert!(approx(out[1], -0.95));
+    }
+
+    #[test]
+    fn peak_normalize_removes_dc_offset() {
+        // A DC-offset buffer must normalize to the SAME output as its offset-free twin: DC removal
+        // measures the peak on the AC component and scales the centered samples identically.
+        let clean = [0.5, -0.25, 0.1, -0.4];
+        let offset = 0.3f32;
+        let biased: Vec<f32> = clean.iter().map(|&x| x + offset).collect();
+
+        let out_clean = peak_normalize(&clean);
+        let out_biased = peak_normalize(&biased);
+        for (a, b) in out_clean.iter().zip(out_biased.iter()) {
+            assert!(approx(*a, *b), "{a} != {b}");
+        }
+        // AC content still normalizes to a 0.95 peak (offset no longer eats headroom).
+        let peak = out_biased.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        assert!(approx(peak, 0.95));
+    }
+
+    #[test]
+    fn peak_normalize_pure_dc_stays_finite() {
+        // No AC content → centered peak is 0 → return the buffer untouched (no divide-by-zero,
+        // no boosting a constant offset into a full-scale rail).
+        assert_eq!(peak_normalize(&[0.5, 0.5, 0.5]), vec![0.5, 0.5, 0.5]);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 import { Input } from "@base-ui/react/input";
 import { BrainIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useState } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import { InfoTooltip } from "@/shared/ui/info-tooltip";
@@ -71,6 +72,10 @@ export function ReasoningControls({
 	supportsVerbosity,
 }: ReasoningControlsProps) {
 	const t = useTranslations("modelPicker");
+	// Non-empty input that doesn't parse to a positive integer is silently
+	// dropped below; surface a brief hint instead so the user isn't left
+	// wondering why "0" or a stray letter had no effect.
+	const [maxTokensInvalid, setMaxTokensInvalid] = useState(false);
 	const showReasoning = isReasoningSelected && !!onReasoningEffortChange;
 	const showVerbosity = supportsVerbosity && !!onVerbosityChange;
 	const showMaxTokens = supportsMaxTokens && !!onMaxOutputTokensChange;
@@ -84,13 +89,18 @@ export function ReasoningControls({
 			return;
 		}
 		if (raw === "") {
+			setMaxTokensInvalid(false);
 			onMaxOutputTokensChange(null);
 			return;
 		}
 		const parsed = Number.parseInt(raw, 10);
 		if (Number.isFinite(parsed) && parsed > 0) {
+			setMaxTokensInvalid(false);
 			onMaxOutputTokensChange(parsed);
+			return;
 		}
+		// Keep the previously committed value, but flag the rejected input.
+		setMaxTokensInvalid(true);
 	};
 
 	return (
@@ -133,6 +143,7 @@ export function ReasoningControls({
 							icon={BrainIcon}
 						/>
 						<Input
+							aria-invalid={maxTokensInvalid || undefined}
 							aria-label="Max output tokens"
 							className="h-full w-full bg-transparent text-body text-foreground tabular-nums outline-none placeholder:text-foreground-muted"
 							inputMode="numeric"
@@ -143,6 +154,15 @@ export function ReasoningControls({
 							value={maxOutputTokens ?? ""}
 						/>
 					</div>
+					{maxTokensInvalid ? (
+						<p
+							aria-live="polite"
+							className="text-error text-xs-tight leading-[14px]"
+							role="alert"
+						>
+							{t("maxOutputTokensInvalid")}
+						</p>
+					) : null}
 				</div>
 			) : null}
 		</div>

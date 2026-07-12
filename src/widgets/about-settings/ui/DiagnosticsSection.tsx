@@ -5,6 +5,7 @@ import {
 	Clock01Icon,
 	CloudIcon,
 	Copy01Icon,
+	CopyCheckIcon,
 	CpuIcon,
 	Delete02Icon,
 	FileZipIcon,
@@ -13,7 +14,6 @@ import {
 	RefreshIcon,
 	StopWatchIcon,
 	Tag01Icon,
-	Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -33,6 +33,7 @@ import {
 } from "@/shared/lib/provider-icons";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { ButtonGroup } from "@/shared/ui/button-group";
 import {
 	EntryCard,
 	type EntryCardMetaPart,
@@ -191,6 +192,16 @@ function buildIssueClipboardText(issue: ObservabilityIssue): string {
 	if (issue.detail) {
 		lines.push(`Detail: ${issue.detail}`);
 	}
+	// The extra typed fields the backend attaches (device, provider status codes,
+	// etc.) — copied verbatim so the bug report carries the WHOLE issue, not just
+	// the visible summary/detail.
+	if (issue.context) {
+		for (const [key, value] of Object.entries(issue.context)) {
+			if (value) {
+				lines.push(`${key}: ${value}`);
+			}
+		}
+	}
 	if (issue.remediation) {
 		lines.push(`${OBSERVABILITY_COPY.remediationLabel}${issue.remediation}`);
 	}
@@ -224,17 +235,33 @@ function IssueCopyButton({ issue }: { issue: ObservabilityIssue }): ReactNode {
 
 	const label = copied ? OBSERVABILITY_COPY.copied : OBSERVABILITY_COPY.copy;
 
+	// Icon-swap copy control matched to the history row's CopyButton: a contained
+	// size-7 glyph that cross-fades copy → check. Sitting inside the ButtonGroup
+	// shell (below) it reads as its own contained control instead of a bare icon
+	// floating over the badges above it.
 	return (
 		<Tooltip content={label}>
 			<Button
 				aria-label={label}
-				className={cn(
-					"flex items-center gap-1 px-2 py-1 text-xs transition-colors",
-					copied ? "text-accent" : "hover:text-accent",
-				)}
+				className="relative inline-flex size-7 items-center justify-center text-foreground-muted transition-[color,background-color,transform] hover:bg-surface-hover hover:text-foreground active:scale-95"
 				onClick={handleCopy}
 			>
-				<HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} size={14} />
+				<HugeiconsIcon
+					aria-hidden="true"
+					className={cn(
+						"absolute size-3.5 transition-[opacity,transform] duration-200 ease-out",
+						copied ? "scale-50 opacity-0" : "scale-100 opacity-100",
+					)}
+					icon={Copy01Icon}
+				/>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className={cn(
+						"absolute size-3.5 text-success transition-[opacity,transform] duration-200 ease-out",
+						copied ? "scale-100 opacity-100" : "scale-50 opacity-0",
+					)}
+					icon={CopyCheckIcon}
+				/>
 			</Button>
 		</Tooltip>
 	);
@@ -419,7 +446,15 @@ function IssueCard({ issue }: { issue: ObservabilityIssue }): ReactNode {
 								: OBSERVABILITY_COPY.backgroundOnly}
 						</Badge>
 					</div>
-					<IssueCopyButton issue={issue} />
+					<ButtonGroup
+						aria-label={OBSERVABILITY_COPY.copy}
+						className="shrink-0"
+						connected
+						orientation="vertical"
+						separator="inset-strong"
+					>
+						<IssueCopyButton issue={issue} />
+					</ButtonGroup>
 				</div>
 			</div>
 		</EntryCard>

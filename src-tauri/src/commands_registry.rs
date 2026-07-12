@@ -220,6 +220,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::history::tts_history_get_all,
         winstt::commands::history::tts_history_clear,
         winstt::commands::history::tts_history_delete,
+        winstt::commands::history::tts_history_load_audio,
         winstt::commands::about::about_get_app_info,
         winstt::commands::about::about_get_license,
         winstt::commands::about::about_get_notices,

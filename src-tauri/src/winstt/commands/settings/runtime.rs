@@ -46,7 +46,6 @@ pub(super) fn apply_model_runtime_settings(
     if stt_switched_to_cloud(previous, next) {
         unload_loaded_stt_model_async(app);
     }
-    sync_core_model_unload_timeout(app, next.global.model_unload_timeout);
     sync_stt_runtime_policy(app, next);
     let keep_stt_warm = should_keep_stt_model_warm_for_settings(next);
 
@@ -101,16 +100,6 @@ fn sync_stt_runtime_policy(app: &AppHandle, settings: &WinsttSettings) {
     );
 }
 
-fn sync_core_model_unload_timeout(app: &AppHandle, timeout: WinsttModelUnloadTimeout) {
-    let mapped = core_timeout_from_winstt(timeout);
-    let mut settings = crate::settings::get_settings(app);
-    if settings.model_unload_timeout == mapped {
-        return;
-    }
-    settings.model_unload_timeout = mapped;
-    crate::settings::write_settings(app, settings);
-}
-
 fn model_warm_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
     previous.global.model_unload_timeout != next.global.model_unload_timeout
         || should_keep_stt_model_warm_for_settings(previous)
@@ -121,8 +110,7 @@ fn same_model_load_inputs_changed(previous: &WinsttSettings, next: &WinsttSettin
     let model = next.model.model.trim();
     !model.is_empty()
         && previous.model.model == next.model.model
-        && (previous.model.backend != next.model.backend
-            || previous.model.device != next.model.device
+        && (previous.model.device != next.model.device
             || previous.model.onnx_quantization != next.model.onnx_quantization)
 }
 
@@ -882,6 +870,113 @@ mod tests {
 
         settings.global.model_unload_timeout = ModelUnloadTimeout::Immediately;
         assert!(enabled_ollama_models(&settings).is_empty());
+    }
+
+    /// Aggregate of the change-detectors each `apply_*_runtime_settings` handler
+    /// keys off. Mirrors the inline diffs inside those handlers so the coverage test
+    /// below can assert every runtime-relevant field is actually observed by SOME
+    /// handler. When you add a runtime-affecting field you must: (1) diff it inside
+    /// its `apply_*_runtime_settings` handler, (2) OR it in here, and (3) add a case
+    /// to `every_runtime_relevant_field_has_a_diff_handler` (finding #18).
+    fn any_runtime_handler_reacts(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
+        // model — apply_model_runtime_settings
+        same_model_load_inputs_changed(previous, next)
+            || model_warm_inputs_changed(previous, next)
+            || stt_switched_to_cloud(previous, next)
+            || realtime_language_changed(previous, next)
+            // tts — apply_tts_runtime_settings
+            || tts_warm_inputs_changed(previous, next)
+            || local_tts_engine_wanted(previous) != local_tts_engine_wanted(next)
+            || previous.global.model_unload_timeout != next.global.model_unload_timeout
+            // encoder dictionary — apply_encoder_dict_runtime_settings
+            || previous.general.encoder_dictionary_enabled != next.general.encoder_dictionary_enabled
+            // llm — apply_llm_runtime_settings
+            || llm_warm_inputs_changed(previous, next)
+            || ollama_models_for_enabled_features(previous)
+                != ollama_models_for_enabled_features(next)
+            // history retention — apply_history_retention_settings
+            || previous.general.history_max_entries != next.general.history_max_entries
+            || previous.general.recording_retention != next.general.recording_retention
+            // audio — apply_audio_runtime_settings
+            || previous.audio.microphone_release != next.audio.microphone_release
+            || previous.audio.input_device_index != next.audio.input_device_index
+            || previous.audio.clamshell_microphone != next.audio.clamshell_microphone
+            // autostart — apply_autostart_setting
+            || previous.general.auto_start != next.general.auto_start
+            // wakeword — apply_wakeword_runtime_settings
+            || previous.general.recording_mode != next.general.recording_mode
+            || previous.general.wake_word != next.general.wake_word
+            || previous.general.wake_word_sensitivity != next.general.wake_word_sensitivity
+            || previous.general.wake_word_timeout != next.general.wake_word_timeout
+    }
+
+    #[test]
+    fn every_runtime_relevant_field_has_a_diff_handler() {
+        use crate::winstt::settings_schema::{
+            DeviceType, ModelUnloadTimeout, RecordingMode, RecordingRetention,
+        };
+
+        // Each entry mutates one runtime-relevant field away from its default. If a
+        // future field lands without a handler, adding it here fails until a handler
+        // (and `any_runtime_handler_reacts`) observes it — the coverage safeguard.
+        type Mutation = (&'static str, fn(&mut WinsttSettings));
+        let mutations: &[Mutation] = &[
+            ("model.onnxQuantization", |s| {
+                s.model.onnx_quantization = "int8".into()
+            }),
+            ("model.device", |s| s.model.device = DeviceType::Cpu),
+            ("model.realtimeLanguage", |s| {
+                s.model.realtime_model = "tiny".into();
+                s.model.realtime_language = "de".into();
+            }),
+            ("global.modelUnloadTimeout", |s| {
+                s.global.model_unload_timeout = ModelUnloadTimeout::Immediately
+            }),
+            ("tts.enabled", |s| s.tts.enabled = true),
+            ("general.encoderDictionaryEnabled", |s| {
+                s.general.encoder_dictionary_enabled = false
+            }),
+            ("general.historyMaxEntries", |s| {
+                s.general.history_max_entries = 42
+            }),
+            ("general.recordingRetention", |s| {
+                s.general.recording_retention = RecordingRetention::Never
+            }),
+            ("audio.microphoneRelease", |s| {
+                s.audio.microphone_release =
+                    crate::winstt::settings_schema::MicrophoneRelease::Always
+            }),
+            ("audio.inputDeviceIndex", |s| {
+                s.audio.input_device_index = Some(3)
+            }),
+            ("audio.clamshellMicrophone", |s| {
+                s.audio.clamshell_microphone = Some(1)
+            }),
+            ("general.autoStart", |s| s.general.auto_start = true),
+            ("general.recordingMode", |s| {
+                s.general.recording_mode = RecordingMode::Wakeword
+            }),
+            ("general.wakeWord", |s| {
+                s.general.wake_word = "computer".into()
+            }),
+            ("general.wakeWordSensitivity", |s| {
+                s.general.wake_word_sensitivity = 0.9
+            }),
+            ("general.wakeWordTimeout", |s| {
+                s.general.wake_word_timeout = 12.0
+            }),
+        ];
+
+        let base = WinsttSettings::default();
+        for (field, mutate) in mutations {
+            let mut next = base.clone();
+            mutate(&mut next);
+            assert!(
+                any_runtime_handler_reacts(&base, &next),
+                "runtime field `{field}` changed but NO apply_*_runtime_settings handler observes \
+                 it — it would be saved-but-not-applied (finding #18)"
+            );
+        }
     }
 
     #[test]

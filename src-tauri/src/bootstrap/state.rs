@@ -136,6 +136,13 @@ pub(crate) fn activate_runtime_after_onboarding(app_handle: &AppHandle) {
         if let Err(err) = audio.inner().sync_microphone_mode_from_settings() {
             log::warn!("[onboarding] failed to sync microphone policy after finish: {err}");
         }
+        // A device selection saved WHILE onboarding was active was persisted but not
+        // applied (apply_audio_runtime_settings early-returns during onboarding), so
+        // re-apply it here against the now-reopening stream — otherwise the wizard's
+        // mic choice silently doesn't take effect until the next device change.
+        if let Err(err) = audio.inner().update_selected_device() {
+            log::warn!("[onboarding] failed to apply selected input device after finish: {err}");
+        }
         schedule_vad_preload(app_handle, audio.inner().clone());
     }
 

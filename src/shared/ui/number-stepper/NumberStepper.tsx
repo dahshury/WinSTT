@@ -1,4 +1,5 @@
 import { NumberField } from "@base-ui/react/number-field";
+import { useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import {
 	surfaceBg,
@@ -8,9 +9,21 @@ import {
 } from "@/shared/lib/surface";
 
 export interface NumberStepperProps {
+	/**
+	 * Opt into an accessible announcement when a value change lands on the
+	 * `min`/`max` bound (base-ui clamps step interactions and blurred text
+	 * silently). Off by default so the many existing consumers are unaffected;
+	 * enable it where the clamp would otherwise be invisible. Announcement text
+	 * comes from `minClampLabel`/`maxClampLabel` (caller-localized).
+	 */
+	announceClamp?: boolean;
 	disabled?: boolean;
 	max?: number;
+	/** Localized announcement when the value is pinned to `max`. */
+	maxClampLabel?: string;
 	min?: number;
+	/** Localized announcement when the value is pinned to `min`. */
+	minClampLabel?: string;
 	onChange: (value: number) => void;
 	scrubbable?: boolean;
 	smallStep?: number;
@@ -27,7 +40,14 @@ export function NumberStepper({
 	smallStep,
 	disabled,
 	scrubbable = false,
+	announceClamp = false,
+	minClampLabel = "Minimum value reached",
+	maxClampLabel = "Maximum value reached",
 }: NumberStepperProps) {
+	// Announcement text for the last boundary the value landed on. Only tracked
+	// (and only re-rendered as an sr-only aria-live region) when `announceClamp`
+	// is opted into, so default consumers pay nothing.
+	const [clampMessage, setClampMessage] = useState("");
 	// Self-elevates +1 above the host panel; callers render a bare <NumberStepper/>.
 	// The group paints the surface (shown through the transparent center input) and
 	// the +/- buttons sit one step above.
@@ -48,6 +68,17 @@ export function NumberStepper({
 			onValueChange={(v) => {
 				if (v !== null) {
 					onChange(v);
+				}
+				if (announceClamp && v !== null) {
+					// base-ui has already clamped `v` into [min, max]; announce when it
+					// sits exactly on a defined bound so a trimmed overshoot isn't silent.
+					if (max !== undefined && v >= max) {
+						setClampMessage(maxClampLabel);
+					} else if (min !== undefined && v <= min) {
+						setClampMessage(minClampLabel);
+					} else {
+						setClampMessage("");
+					}
 				}
 			}}
 			smallStep={smallStep}
@@ -78,6 +109,11 @@ export function NumberStepper({
 					<PlusIcon />
 				</NumberField.Increment>
 			</NumberField.Group>
+			{announceClamp ? (
+				<span aria-live="polite" className="sr-only" role="status">
+					{clampMessage}
+				</span>
+			) : null}
 		</NumberField.Root>
 	);
 }

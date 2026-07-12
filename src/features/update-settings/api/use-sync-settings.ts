@@ -4,11 +4,14 @@ import { getSettingsStoreState, useSettingsStore } from "@/entities/setting";
 import {
 	hasSettingsBackend,
 	onSettingsChanged,
+	onSettingsSaveError,
 	settingsLoadStrict,
 	settingsSave,
+	settingsSaveAck,
 	sttRequestDiarizationToggle,
 	sttSetParameter,
 } from "@/shared/api/ipc-client";
+import type { SettingsDecodeDiagnostics } from "@/shared/config/settings-codec";
 import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
 import {
 	markIpcLoadResolved,
@@ -25,16 +28,21 @@ import {
 // Matches the guard in `useSyncActiveModel`.
 const SAVE_IPC_LOAD_GUARD_MS = 500;
 
+// Backoff before auto-retrying a failed backend settings hydration (audit #39).
+const HYDRATION_RETRY_MS = 2000;
+
 import { type SyncDeps, syncToServer } from "../lib/sync-actions";
 import {
 	advanceSkipRefs,
 	deriveBroadcastUpdate,
 	deriveIpcLoadUpdate,
 	isModeChanged,
+	isPrimarySyncWindow,
 	LOCAL_CACHE_COLLECTION_KEYS,
 	scheduleSave,
 	settingsSectionsEqual,
 	shouldSyncOnConnect,
+	treeCarriesNoUserInfo,
 } from "../lib/sync-helpers";
 import { useSettingsHydrationStore } from "../model/settings-hydration-store";
 
@@ -49,10 +57,22 @@ export function useSyncSettings(): void {
 	const setSettings = useSettingsStore((s) => s.setSettings);
 	const hydrationStatus = useSettingsHydrationStore((s) => s.status);
 	const setHydrationStatus = useSettingsHydrationStore((s) => s.setStatus);
+	const retryToken = useSettingsHydrationStore((s) => s.retryToken);
 	const serverStatus = useConnectionStore((s) => s.serverStatus);
 	const prevRef = useRef(settings);
 	const loadedOnceRef = useRef(false);
 	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Absolute-time deadline of the current debounced user save. Unlike
+	// `debounceRef` (which the effect cleanup clears on every settings change),
+	// this survives across broadcast-driven re-renders so a burst of unrelated
+	// broadcasts can't keep pushing the save out indefinitely (audit #32).
+	const saveDeadlineRef = useRef<number | null>(null);
+	// Set whenever the latest settings change originated from an incoming
+	// broadcast (imported or another window's save). The save effect reads it to
+	// avoid RESTARTING the user's debounce window on broadcast-origin churn.
+	const broadcastOriginRef = useRef(false);
+	// Auto-retry backoff timer for a transient hydration failure (audit #39).
+	const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	// Initialised from the store's current snapshot (a non-reactive getState
 	// read, equal to `settings` on first render) rather than the reactive
 	// `settings` binding, so the sync effect below doesn't touch the ref with
@@ -113,11 +133,23 @@ export function useSyncSettings(): void {
 				const message = error instanceof Error ? error.message : String(error);
 				console.error("[settings] failed to hydrate backend settings:", error);
 				setHydrationStatus("error", message);
+				// Audit #39: a hydration error used to permanently disable persistence
+				// + server sync for the window session. Schedule a bounded auto-retry
+				// (bumping `retryToken` re-runs this effect); once a retry resolves,
+				// status flips back to "ready" and the save/connect effects resume.
+				if (retryTimerRef.current) {
+					clearTimeout(retryTimerRef.current);
+				}
+				retryTimerRef.current = setTimeout(() => {
+					retryTimerRef.current = null;
+					useSettingsHydrationStore.getState().requestRetry();
+				}, HYDRATION_RETRY_MS);
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [setHydrationStatus, setSettings]);
+		// `retryToken` in the deps re-runs hydration after `requestRetry()`.
+	}, [setHydrationStatus, setSettings, retryToken]);
 
 	// Listen for settings changed from other windows (e.g. settings window → main window).
 	// Validate through Zod schema to ensure defaults are filled for any missing fields.
@@ -132,12 +164,13 @@ export function useSyncSettings(): void {
 	useEffect(() => {
 		const applyBroadcast = (incoming: AppSettings): void => {
 			const current = getSettingsStoreState().settings;
-			const { merged, nextFromBroadcast } = deriveBroadcastUpdate(
-				incoming,
-				current,
-				lastSavedRef.current,
-				fromBroadcastRef.current,
-			);
+			const { decoded, diagnostics, merged, nextFromBroadcast } =
+				deriveBroadcastUpdate(
+					incoming,
+					current,
+					lastSavedRef.current,
+					fromBroadcastRef.current,
+				);
 			// The broadcast IS the persisted disk state (the sender just wrote it).
 			// Advance our baseline so a subsequent legitimate broadcast against an
 			// already-cleanly-applied state isn't misclassified as "user-dirty".
@@ -148,12 +181,38 @@ export function useSyncSettings(): void {
 			// `keep local`, and B silently drops. This was the second-order cause
 			// of the "switching never reaches the main window" symptom after the
 			// secrets-walker fix.
-			lastSavedRef.current = incoming;
+			//
+			// Audit #33: stamp the DECODED/normalized value the store actually
+			// holds — not the RAW `incoming` payload. Stamping raw made every
+			// section read perpetually dirty (raw JSON ≠ decoded JSON) and re-send
+			// forever.
+			lastSavedRef.current = decoded;
 			fromBroadcastRef.current = nextFromBroadcast;
+			// Audit #32: mark broadcast origin so the save effect doesn't restart
+			// the user's debounce window on unrelated broadcast churn.
+			broadcastOriginRef.current = true;
+			surfaceDecodeDiagnostics(diagnostics);
 			setSettings(merged);
 		};
 		return onSettingsChanged(applyBroadcast);
 	}, [setSettings]);
+
+	// Audit #46: surface backend-emitted settings save errors. `onSettingsSaveError`
+	// previously had no production subscriber, so a rejected async write was
+	// silent. Warn the user; the change is kept dirty by the ack path
+	// (`performScheduledSave` never advances `lastSavedRef` on a rejected save),
+	// so it is re-diffed and re-sent on the next edit/flush. Deliberately do NOT
+	// reset `lastSavedRef` to undefined here — that would re-send the ENTIRE tree
+	// including any parse-defaulted section, healing recoverable corruption into
+	// permanent data loss (audit #45).
+	useEffect(
+		() =>
+			onSettingsSaveError((error) => {
+				console.error("[settings] backend rejected settings save:", error);
+				useSettingsHydrationStore.getState().pushWarning("save-failed", error);
+			}),
+		[],
+	);
 
 	// When server signals ready (recorder fully initialized), push all saved settings.
 	// Gated on `hasIpcLoadResolvedRef.current` so we don't sync the stale Zustand-persist
@@ -169,6 +228,10 @@ export function useSyncSettings(): void {
 				isLoaded,
 				hasSyncedOnConnect.current,
 				hasIpcLoadResolvedRef.current && hydrationStatus === "ready",
+				// Audit #1: only the main window drives the connect-time full sync so
+				// the burst isn't fanned out from every open window. Per-window LIVE
+				// change syncing (the settings-change effect below) is untouched.
+				isPrimarySyncWindow(currentWindowLabel()),
 			)
 		) {
 			hasSyncedOnConnect.current = true;
@@ -187,6 +250,10 @@ export function useSyncSettings(): void {
 		window.addEventListener("beforeunload", flush);
 		return () => {
 			window.removeEventListener("beforeunload", flush);
+			if (retryTimerRef.current) {
+				clearTimeout(retryTimerRef.current);
+				retryTimerRef.current = null;
+			}
 			flush();
 		};
 	}, []);
@@ -199,6 +266,10 @@ export function useSyncSettings(): void {
 
 		const prev = prevRef.current;
 		prevRef.current = settings;
+		// Read+clear the broadcast-origin flag up front so it is consumed even on
+		// the early-return (pure-broadcast) path and can't leak onto the user's
+		// NEXT change (which would wrongly preserve the debounce deadline).
+		const isBroadcastOrigin = clearIfSetBool(broadcastOriginRef);
 
 		if (
 			advanceSkipRefs({
@@ -217,9 +288,11 @@ export function useSyncSettings(): void {
 		// so the broadcast reaches other windows without delay.
 		// Debounce everything else to avoid rapid writes from sliders.
 		//
-		// Wrap `settingsSave` so `lastSavedRef` keeps tracking the canonical
-		// post-save baseline. The merge in `onSettingsChanged` uses this to
-		// decide which sections the user has unsaved changes in.
+		// `runScheduledSave` advances `lastSavedRef` only on a CONFIRMED backend
+		// ack (audit #46), reschedules a save the IPC-load guard suppressed
+		// (audit #40), and warns + keeps the section dirty on failure. The merge
+		// in `onSettingsChanged` uses `lastSavedRef` to decide which sections the
+		// user has unsaved changes in.
 		//
 		// IPC-load guard: when the debounce fires, re-check whether we're
 		// still inside the boot reconciliation window. If yes, the latest
@@ -230,16 +303,133 @@ export function useSyncSettings(): void {
 		// runtime value after the window closes; a later settings change
 		// will schedule a fresh save with the corrected value. The guard
 		// uses the shared module-level timestamp set in settingsLoad.then.
+		const immediate = isModeChanged(settings, prev);
+		// Audit #37: capture the import generation at schedule time. If an import
+		// (or any full-tree broadcast that trips `bumpImportGeneration`) lands
+		// before this debounced save fires, abort — the import's own broadcast has
+		// already reconciled the store + `lastSavedRef` and scheduled its own save,
+		// so firing this pre-import snapshot could revert the freshly-imported
+		// section.
+		const importGenAtSchedule =
+			useSettingsHydrationStore.getState().importGeneration;
+		const runScheduledSave = () => {
+			// Window consumed — the next user edit starts a fresh debounce window.
+			saveDeadlineRef.current = null;
+			if (
+				useSettingsHydrationStore.getState().importGeneration !==
+				importGenAtSchedule
+			) {
+				return;
+			}
+			void performScheduledSave(
+				latestSettingsRef,
+				lastSavedRef,
+				settingsSaveAck,
+				{
+					// Audit #40: re-arm a save for after the guard window instead of
+					// dropping a save that fired inside the IPC-load reconciliation.
+					onGuardSuppressed: () => {
+						const remaining =
+							SAVE_IPC_LOAD_GUARD_MS - (Date.now() - recentIpcLoadAt());
+						scheduleSave(
+							settings,
+							false,
+							debounceRef,
+							runScheduledSave,
+							Math.max(remaining + 50, 50),
+						);
+					},
+					onSaveError: () =>
+						useSettingsHydrationStore.getState().pushWarning("save-failed"),
+				},
+			);
+		};
 		scheduleSave(
 			settings,
-			isModeChanged(settings, prev),
+			immediate,
 			debounceRef,
-			() => performScheduledSave(latestSettingsRef, lastSavedRef),
-			300,
+			runScheduledSave,
+			computeSaveDelay(isBroadcastOrigin, immediate, saveDeadlineRef),
 		);
 
 		return () => cancelPendingSave(debounceRef);
 	}, [settings, isLoaded, hydrationStatus]);
+}
+
+/**
+ * The current Tauri webview's label (e.g. "main", "settings", "model-picker"),
+ * read straight from the runtime-injected internals — the same source
+ * `getCurrentWindow().label` uses, but synchronous and dependency-free. Returns
+ * null under plain Vite / happy-dom (no `__TAURI_INTERNALS__`), where a single
+ * renderer means there's no fan-out to de-dupe.
+ */
+function currentWindowLabel(): string | null {
+	if (typeof window === "undefined") {
+		return null;
+	}
+	const internals = (
+		window as Window & {
+			__TAURI_INTERNALS__?: {
+				metadata?: { currentWindow?: { label?: string } };
+			};
+		}
+	).__TAURI_INTERNALS__;
+	return internals?.metadata?.currentWindow?.label ?? null;
+}
+
+/** Local boolean read+clear (avoids importing `clearIfSet` semantics change). */
+function clearIfSetBool(ref: { current: boolean }): boolean {
+	if (!ref.current) {
+		return false;
+	}
+	ref.current = false;
+	return true;
+}
+
+/**
+ * Debounce delay for a user save, preserving the ORIGINAL deadline across
+ * broadcast-origin churn (audit #32). A user edit (re)starts the 300ms window;
+ * a broadcast-origin re-render keeps the existing deadline (starting one if
+ * none) so a burst of unrelated broadcasts can't defer the save indefinitely.
+ */
+function computeSaveDelay(
+	isBroadcastOrigin: boolean,
+	immediate: boolean,
+	saveDeadlineRef: { current: number | null },
+): number {
+	const now = Date.now();
+	if (immediate) {
+		saveDeadlineRef.current = null;
+		return 300;
+	}
+	if (isBroadcastOrigin) {
+		if (saveDeadlineRef.current == null) {
+			saveDeadlineRef.current = now + 300;
+		}
+	} else {
+		saveDeadlineRef.current = now + 300;
+	}
+	return Math.max(0, saveDeadlineRef.current - now);
+}
+
+/**
+ * Push user-visible warnings for any recovery the decoder had to perform
+ * (audit #45 defaulted sections, audit #26 hotkey rewrites). A toast renderer
+ * consuming `useSettingsHydrationStore.warnings` surfaces these.
+ */
+function surfaceDecodeDiagnostics(
+	diagnostics: SettingsDecodeDiagnostics,
+): void {
+	const store = useSettingsHydrationStore.getState();
+	if (diagnostics.defaultedSections.length > 0) {
+		store.pushWarning(
+			"defaulted-sections",
+			diagnostics.defaultedSections.join(", "),
+		);
+	}
+	if (diagnostics.hotkeyRewrites.length > 0) {
+		store.pushWarning("hotkey-rewrite", diagnostics.hotkeyRewrites.join(", "));
+	}
 }
 
 /** Cancel any pending debounced save (called from effect-cleanup). */
@@ -278,7 +468,22 @@ function diffAgainstLastSaved(
 	current: AppSettings,
 	lastSaved: AppSettings | undefined,
 ): Partial<AppSettings> {
-	return lastSaved ? collectChangedSections(current, lastSaved) : current;
+	if (lastSaved) {
+		// With a baseline the diff is trustworthy: it posts only the sections the
+		// user actually changed (including a section legitimately back at its
+		// defaults — e.g. toggling the one customized llm field off).
+		return collectChangedSections(current, lastSaved);
+	}
+	// No baseline → this would dump the WHOLE tree. A pure-defaults tree here is
+	// an unhydrated/empty-cache store, not user intent — posting it is how a
+	// boot-time window reverted wakeWord to "alexa" / model to "tiny" (and then
+	// re-posted forever). Send nothing; hydration will establish the baseline.
+	// The backend enforces the same rule for full-tree dumps (`accept_section`,
+	// finding #21).
+	if (treeCarriesNoUserInfo(current)) {
+		return {};
+	}
+	return current;
 }
 
 function hasAnyKey(obj: Partial<AppSettings>): boolean {
@@ -320,25 +525,56 @@ function patchIncludesLocalCollectionMigration(
  * - Only sends sections that differ from the last-saved baseline, so a
  *   stale-snapshot window can't clobber values another window just persisted.
  */
-export function performScheduledSave(
+export interface ScheduledSaveHooks {
+	onGuardSuppressed?: () => void;
+	onSaveError?: (patch: Partial<AppSettings>, err: unknown) => void;
+}
+
+/**
+ * True while the IPC-load reconciliation guard should suppress a disk save (a
+ * transient revert from `setSettings(loaded)` would otherwise be persisted).
+ * Recording-mode changes and local-collection migrations bypass the guard —
+ * they are real user intent that must reach disk immediately.
+ */
+function isIpcLoadGuardActive(
+	patch: Partial<AppSettings>,
+	lastSaved: AppSettings | undefined,
+): boolean {
+	return (
+		Date.now() - recentIpcLoadAt() < SAVE_IPC_LOAD_GUARD_MS &&
+		!patchIncludesRecordingModeChange(patch, lastSaved) &&
+		!patchIncludesLocalCollectionMigration(patch, lastSaved)
+	);
+}
+
+export async function performScheduledSave(
 	latestSettingsRef: { current: AppSettings },
 	lastSavedRef: { current: AppSettings | undefined },
-	saveSettings: (settings: Partial<AppSettings>) => void = settingsSave,
-): void {
+	saveSettings: (
+		settings: Partial<AppSettings>,
+	) => void | Promise<void> = settingsSaveAck,
+	hooks?: ScheduledSaveHooks,
+): Promise<void> {
 	const s = latestSettingsRef.current;
 	const patch = diffAgainstLastSaved(s, lastSavedRef.current);
 	if (!hasAnyKey(patch)) {
 		return;
 	}
-	if (
-		Date.now() - recentIpcLoadAt() < SAVE_IPC_LOAD_GUARD_MS &&
-		!patchIncludesRecordingModeChange(patch, lastSavedRef.current) &&
-		!patchIncludesLocalCollectionMigration(patch, lastSavedRef.current)
-	) {
+	if (isIpcLoadGuardActive(patch, lastSavedRef.current)) {
+		// Audit #40: don't silently drop the save — let the caller re-arm it for
+		// after the guard window so the edit isn't lost.
+		hooks?.onGuardSuppressed?.();
 		return;
 	}
-	saveSettings(patch);
-	lastSavedRef.current = s;
+	try {
+		await saveSettings(patch);
+		// Audit #46: advance the baseline ONLY on a confirmed successful write.
+		// A rejected save leaves `lastSavedRef` untouched, so the section stays
+		// dirty and is re-diffed (re-sent) on the next change/flush.
+		lastSavedRef.current = s;
+	} catch (err) {
+		hooks?.onSaveError?.(patch, err);
+	}
 }
 
 /**
@@ -347,6 +583,13 @@ export function performScheduledSave(
  * lose changes that hadn't been written yet. Also advances
  * `lastSavedRef` so a later broadcast merge still sees the flushed state as
  * the saved baseline.
+ *
+ * Audit #35: flush the latest diff REGARDLESS of whether a debounce timer is
+ * live — a save the IPC-load guard suppressed (or one re-armed but not yet
+ * fired) leaves no timer, yet still holds an unpersisted edit. Still RESPECT
+ * the IPC-load guard so a transient boot-time revert isn't persisted on close.
+ * Uses the fire-and-forget `settingsSave` (not the ack variant): during
+ * `beforeunload`/unmount there's no opportunity to await a backend response.
  */
 function flushPendingSave(
 	debounceRef: { current: ReturnType<typeof setTimeout> | null },
@@ -356,12 +599,15 @@ function flushPendingSave(
 	if (debounceRef.current) {
 		clearTimeout(debounceRef.current);
 		debounceRef.current = null;
-		const latest = latestSettingsRef.current;
-		const patch = diffAgainstLastSaved(latest, lastSavedRef.current);
-		if (!hasAnyKey(patch)) {
-			return;
-		}
-		settingsSave(patch);
-		lastSavedRef.current = latest;
 	}
+	const latest = latestSettingsRef.current;
+	const patch = diffAgainstLastSaved(latest, lastSavedRef.current);
+	if (!hasAnyKey(patch)) {
+		return;
+	}
+	if (isIpcLoadGuardActive(patch, lastSavedRef.current)) {
+		return;
+	}
+	settingsSave(patch);
+	lastSavedRef.current = latest;
 }

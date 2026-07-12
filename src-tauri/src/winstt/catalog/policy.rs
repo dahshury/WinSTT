@@ -1,9 +1,11 @@
-// Family / Accelerator types and the deterministic precision + execution-provider resolution
-// policy: id canonicalization, display-name helpers, the per-family int8/fp16-auto policy, and
-// the DML force-CPU decision. Consumes the static `ModelEntry` rows + `STT_CATALOG` table from the
+// Family / Accelerator types and the catalog helpers the picker relies on: id canonicalization,
+// display-name helpers, the per-family DML-incompatible/int8-preferred classification, and the
+// CUDA sub-fp16 picker filter. Consumes the static `ModelEntry` rows + `STT_CATALOG` table from the
 // sibling `data` module via `super::`. There is no ML here — only string-state arithmetic.
-
-use std::collections::BTreeSet;
+//
+// NOTE: the deterministic requested->effective precision resolver lives in `stt::quant_resolve`
+// (the RAM/VRAM fit-aware, kind-based resolver the load path and picker badge actually use). The
+// old family-based accuracy-first port that used to live here was fully superseded and removed.
 
 use super::data::{ModelEntry, STT_CATALOG};
 
@@ -98,12 +100,6 @@ impl Family {
         self.is_dml_incompatible_and_int8_preferred()
     }
 
-    /// Alias for readability at call sites that mean "auto-prefer int8 off-CUDA".
-    #[inline]
-    pub const fn prefers_int8_off_cuda(self) -> bool {
-        self.is_dml_incompatible_and_int8_preferred()
-    }
-
     /// Whether decoder-bias prompting (`<|startofprev|>` / initial-prompt) is meaningful.
     ///
     /// Only Whisper benefits. Moonshine has no prompt slot (no-op). Canary/Cohere have the
@@ -115,12 +111,6 @@ impl Family {
         matches!(self, Family::Whisper)
     }
 }
-
-/// fp16 auto-promotion floor: on CUDA, `"auto"`/`""` resolves to fp16 only at or above this
-/// param count (and only if the model publishes fp16). Below it, fp16's I/O cast overhead
-/// dominates compute and fp32 wins. Source: `bootstrap._FP16_AUTO_PARAM_THRESHOLD` (500M),
-/// benchmarked on an RTX 3080 Ti.
-pub const FP16_AUTO_PARAM_THRESHOLD: u64 = 500_000_000;
 
 /// Quantizations ORT's CUDAExecutionProvider can actually accelerate. Everything else
 /// (`int8`/`uint8`/`q4`/`q4f16`/`bnb4`) falls back to fp32 compute via QDQ scatter-gather
@@ -272,21 +262,6 @@ impl Accelerator {
     pub const fn is_cuda(self) -> bool {
         matches!(self, Accelerator::Cuda)
     }
-
-    /// DML / ROCm / CoreML: the GPU EPs that crash DML-incompatible families. (OpenVINO is left
-    /// out — WinSTT's override set is `not in {cuda, cpu}`; OpenVINO behaves like a GPU EP here
-    /// and is treated the same way for the force-CPU decision.)
-    #[inline]
-    pub const fn is_non_cuda_gpu(self) -> bool {
-        matches!(
-            self,
-            Accelerator::DirectMl
-                | Accelerator::Rocm
-                | Accelerator::CoreMl
-                | Accelerator::OpenVino
-                | Accelerator::WebGpu
-        )
-    }
 }
 
 /// Drop sub-fp16 quants from a published `'static` list when running on CUDA (preserves order;
@@ -311,128 +286,4 @@ pub fn picker_quantizations_for(entry: &ModelEntry, accel: Accelerator) -> Vec<&
     } else {
         published.to_vec()
     }
-}
-
-/// Result of resolving a requested quantization to what the loader should actually fetch.
-/// `None` == fp32/default export (the un-suffixed `.onnx`). The string `""` from WinSTT's
-/// `_effective_quant_for` maps to `None` here.
-pub type ResolvedQuant = Option<&'static str>;
-
-/// Port of `bootstrap._resolve_quantization`. Deterministic precision policy.
-///
-/// `requested`: the user setting (`"auto"` / `""` / a concrete quant like `"int8"` / `"fp16"`).
-/// `available`: the model's published quant set (`None` == off-catalog; permissive).
-/// Returns the quant the onnx loader should request, or `None` for fp32-default.
-///
-/// Branches (verbatim from the Python):
-///   1. `"auto"`/`""`:
-///        - CUDA + param >= 500M + publishes fp16/fp16w -> `Some("fp16"/"fp16w")`
-///        - non-CUDA + int8-preferred family + publishes int8 -> `Some("int8")`
-///        - else -> `None` (fp32 default)
-///   2. concrete quant the model does NOT publish -> `None` (warn + fp32; never ask for a
-///      missing file, which would cascade to a `tiny` fallback).
-///   3. concrete sub-fp16 on CUDA -> `None` (fp32; QDQ fallback + int8 hallucination).
-///   4. otherwise -> `Some(requested)` (pass-through; fp16 hits the in-load decoder repair path).
-pub fn resolve_quantization(
-    requested: &str,
-    accel: Accelerator,
-    param_count: u64,
-    available: Option<&[&str]>,
-    family: Family,
-) -> ResolvedQuant {
-    let quant = requested.trim();
-    let publishes = |q: &str| -> bool { available.is_none_or(|set| set.contains(&q)) };
-
-    // Branch 1: auto / empty.
-    if quant.is_empty() || quant == "auto" {
-        if accel.is_cuda() && param_count >= FP16_AUTO_PARAM_THRESHOLD && publishes("fp16") {
-            return Some("fp16");
-        }
-        if accel.is_cuda() && param_count >= FP16_AUTO_PARAM_THRESHOLD && publishes("fp16w") {
-            return Some("fp16w");
-        }
-        // ACCURACY-FIRST: the natural fp32 export (None) when published — do NOT silently
-        // downgrade to int8 (that trades accuracy for speed/size, the USER's call; the picker
-        // exposes every published quant off-CUDA). int8-only models fall back to int8.
-        let _ = family;
-        if publishes("") {
-            return None;
-        }
-        if publishes("int8") {
-            return Some("int8");
-        }
-        // int4-only models (Qwen3-ASR): no fp/int8 export exists, so auto must request int4 rather
-        // than falling through to `None` (which would ask for a non-existent unsuffixed graph).
-        if publishes("int4") {
-            return Some("int4");
-        }
-        return None;
-    }
-
-    // Branch 2: concrete quant the model doesn't publish -> fp32 fallback.
-    if !publishes(quant) {
-        return None;
-    }
-
-    // Branch 3: concrete sub-fp16 on CUDA -> fp32 fallback.
-    if accel.is_cuda() && !GPU_COMPATIBLE_QUANTIZATIONS.contains(&quant) {
-        return None;
-    }
-
-    // Branch 4: pass-through. Return the 'static slice that matches (catalog-backed) so the
-    // caller gets a 'static str; fall back to leaking-free static lookup over the union of all
-    // known quant strings.
-    static_quant(quant)
-}
-
-/// The precision the picker BADGE should show for a model under the current settings — i.e. the
-/// string form of `resolve_quantization` where `None` collapses to `""`. Mirror of
-/// `control_handler._effective_quant_for`. This is the bridge that keeps "badge says cached" and
-/// "swap actually downloads" in agreement.
-pub fn effective_quantization(
-    requested: &str,
-    accel: Accelerator,
-    param_count: u64,
-    available: Option<&[&str]>,
-    family: Family,
-) -> &'static str {
-    resolve_quantization(requested, accel, param_count, available, family).unwrap_or("")
-}
-
-/// Whether the DML-to-CPU override fires for `family` under `accel`: DML-incompatible families on
-/// a non-CUDA GPU EP must be forced to the CPU execution provider (their ONNX encoder crashes the
-/// MLOperatorAuthorImpl reshape kernel). CUDA and CPU pass through unchanged. Mirror of
-/// `bootstrap._override_dml_to_cpu_for_incompatible_family` (the decision half — the provider-list
-/// rewrite belongs to the engine slice).
-pub fn must_force_cpu(family: Family, accel: Accelerator) -> bool {
-    if !family.is_dml_incompatible() {
-        return false;
-    }
-    accel.is_non_cuda_gpu()
-}
-
-/// Map a known quant string to its `'static` form, so resolution can return `&'static str`
-/// without leaking. The universe of quant suffixes is small and closed.
-fn static_quant(q: &str) -> Option<&'static str> {
-    const ALL: &[&str] = &[
-        "", "fp16", "fp16w", "q4", "q4f16", "bnb4", "int8", "uint8", "int4",
-    ];
-    ALL.iter().copied().find(|s| *s == q)
-}
-
-/// The set of families that are both DML-incompatible AND int8-preferred — exposed so the
-/// invariant ("these two lists are the same") can be asserted at runtime and in tests, and so
-/// other slices can iterate the canonical set rather than re-deriving it.
-pub fn dml_incompatible_int8_preferred_families() -> BTreeSet<Family> {
-    [
-        Family::Nemo,
-        Family::Cohere,
-        Family::GigaAm,
-        Family::Kaldi,
-        Family::TOne,
-        Family::SenseVoice,
-        Family::Dolphin,
-    ]
-    .into_iter()
-    .collect()
 }

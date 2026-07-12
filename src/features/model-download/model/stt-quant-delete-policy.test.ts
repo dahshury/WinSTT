@@ -33,7 +33,6 @@ function model(
 ): ModelInfo {
 	return {
 		available: true,
-		backend: "onnx_asr",
 		displayName: id,
 		family,
 		id,

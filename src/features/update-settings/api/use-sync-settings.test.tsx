@@ -224,7 +224,7 @@ describe("performScheduledSave", () => {
 		expect(lastSavedPatch()).toBeUndefined();
 	});
 
-	test("sends a settings:save with the diff and advances lastSavedRef when changes exist", () => {
+	test("sends a settings:save with the diff and advances lastSavedRef when changes exist", async () => {
 		window.nativeBridge = makeApi();
 		_resetIpcLoadTimingForTests();
 		// Build two clearly-divergent settings snapshots so diffAgainstLastSaved
@@ -236,9 +236,37 @@ describe("performScheduledSave", () => {
 		const lastSavedRef: { current: AppSettings | undefined } = {
 			current: baseline,
 		};
-		performScheduledSave(latestSettingsRef, lastSavedRef, recordSave);
+		// Audit #46: performScheduledSave now awaits a confirmed save ack before
+		// advancing the baseline, so the advance assertion must await it too.
+		await performScheduledSave(latestSettingsRef, lastSavedRef, recordSave);
 		expect(lastSavedPatch()).toBeDefined();
 		expect(lastSavedRef.current).toBe(changed);
+	});
+
+	test("does NOT advance lastSavedRef when the save is rejected (stays dirty for retry)", async () => {
+		// Audit #46: a rejected backend write must leave the baseline untouched so
+		// the section reads dirty and is re-sent, instead of silently "clean".
+		window.nativeBridge = makeApi();
+		_resetIpcLoadTimingForTests();
+		const baseline = asSettings({ audio: { sileroSensitivity: 0.4 } });
+		const changed = asSettings({ audio: { sileroSensitivity: 0.7 } });
+		const latestSettingsRef = { current: changed };
+		const lastSavedRef: { current: AppSettings | undefined } = {
+			current: baseline,
+		};
+		let sawError = false;
+		await performScheduledSave(
+			latestSettingsRef,
+			lastSavedRef,
+			() => Promise.reject(new Error("backend down")),
+			{
+				onSaveError: () => {
+					sawError = true;
+				},
+			},
+		);
+		expect(sawError).toBe(true);
+		expect(lastSavedRef.current).toBe(baseline);
 	});
 });
 

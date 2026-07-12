@@ -14,6 +14,7 @@ export const SETTINGS_CONTRACT = {
 		"general.contextAppMode",
 		"general.contextDenyList",
 		"general.contextScreenOcr",
+		"general.dictionaryContextChars",
 		"general.encoderDictionaryEnabled",
 		"general.historyEnabled",
 		"general.historyMaxEntries",
@@ -34,7 +35,6 @@ export const SETTINGS_CONTRACT = {
 		"general.wakeWord",
 		"general.wakeWordSensitivity",
 		"general.wakeWordTimeout",
-		"general.wordCorrectionThreshold",
 		"general.wordByWordPasting",
 		"global.modelUnloadTimeout",
 		"hotkey.pushToTalkKey",
@@ -68,7 +68,6 @@ export const SETTINGS_CONTRACT = {
 		"llm.transforms.reasoningEffort",
 		"llm.transforms.thinkingEffort",
 		"llm.transforms.verbosity",
-		"model.backend",
 		"model.autoDetectLanguage",
 		"model.device",
 		"model.initialPrompt",
@@ -137,6 +136,8 @@ export const SETTINGS_CONTRACT = {
 		"general.onboardedTrack",
 		"integrations.elevenlabs.lastVerifiedAt",
 		"integrations.elevenlabs.verified",
+		// Migration anchor (finding #20) — persisted/compared, never hot-applied.
+		"schemaVersion",
 		"snippets",
 	],
 	noRuntimeEffectYet: [

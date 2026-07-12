@@ -506,6 +506,9 @@ fn model_picker_size_for_kind(kind: &str) -> (f64, f64) {
     match kind {
         "llm-ollama" => (620.0, 620.0),
         "llm-openrouter" => (580.0, 620.0),
+        // Compact device list (keep in sync with `OUTPUT_DEVICE_PICKER_*` in the
+        // renderer's `picker-helpers.ts`); Rust widens it to the trigger width.
+        "output-device" => (320.0, 320.0),
         _ => picker_default_size("model-picker"),
     }
 }
@@ -912,6 +915,7 @@ pub fn open_window(
                             | "stt-realtime"
                             | "stt-cloud"
                             | "tts"
+                            | "output-device"
                     )
                 })
                 .unwrap_or("stt");
@@ -984,14 +988,13 @@ pub fn open_window(
         Ok(())
     })();
 
-    if let Err(e) = show_result {
+    show_result.inspect_err(|_: &String| {
         #[cfg(any(debug_assertions, feature = "context-playground"))]
         if label == "context-playground" {
             crate::winstt::commands::context_playground::stop_context_playground_polling();
             let _ = window.destroy();
         }
-        return Err(e);
-    }
+    })?;
 
     #[cfg(any(debug_assertions, feature = "context-playground"))]
     if close_tray_after_context_open {

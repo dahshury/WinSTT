@@ -15,7 +15,11 @@ import {
 	type VerifyResponse,
 	verifyCredentialCommand,
 } from "@/features/verify-credentials";
-import { isProbedSecretCurrent } from "@/shared/config/settings-schema";
+import {
+	displaySecretValue,
+	isProbedSecretCurrent,
+	SECRET_CLEAR_SENTINEL,
+} from "@/shared/config/settings-schema";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { useSurface } from "@/shared/lib/surface";
 import { OllamaLogo, OpenRouterLogo } from "@/shared/ui/brand-logo";
@@ -33,6 +37,19 @@ const OPENROUTER_KEYS_URL = "https://openrouter.ai/keys";
 /** Same window the OpenAI/ElevenLabs sections use — long enough that a paste
  *  produces one probe, short enough that the verdict lands quickly. */
 const VERIFY_DEBOUNCE_MS = 600;
+
+/** True when `value` parses as an absolute http(s) URL. The endpoint is written
+ *  per-keystroke, so we validate for display only — an invalid value still
+ *  persists (Cluster 1's schema `.catch()` keeps the section from breaking on
+ *  next load); here we just show the user it's wrong before that happens. */
+function isValidEndpointUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return url.protocol === "http:" || url.protocol === "https:";
+	} catch {
+		return false;
+	}
+}
 
 /** Pure mapper from a verify-credentials IPC response to an OpenRouter status
  *  pill state. Pulled out of the component so the async verify runner stays
@@ -198,7 +215,10 @@ export function IntegrationsSettingsPanel() {
 		openrouterReqIdRef.current++;
 		setOpenrouterDraft("");
 		setOpenrouterEditing(false);
-		updateLlmSettings({ openrouterApiKey: "" });
+		// Explicit removal: post the CLEAR sentinel (not "") so the backend performs
+		// a real wipe — an empty incoming secret is now treated as "keep the stored
+		// key" and would silently no-op the removal.
+		updateLlmSettings({ openrouterApiKey: SECRET_CLEAR_SENTINEL });
 		setOpenrouterStatus({ status: "idle" });
 	};
 
@@ -214,15 +234,26 @@ export function IntegrationsSettingsPanel() {
 		clearOpenrouterKey();
 	};
 
-	const hasOpenrouterKey = persistedOpenrouterKey.trim().length > 0;
+	const trimmedEndpoint = endpoint.trim();
+	const endpointError =
+		trimmedEndpoint.length === 0
+			? tLlm("endpointRequired")
+			: isValidEndpointUrl(trimmedEndpoint)
+				? undefined
+				: tLlm("endpointInvalid");
+
+	// The CLEAR sentinel is parked in the store until the backend broadcasts the
+	// cleared value back — treat it as "no key" for every display-derived value.
+	const displayOpenrouterKey = displaySecretValue(persistedOpenrouterKey);
+	const hasOpenrouterKey = displayOpenrouterKey.trim().length > 0;
 	const openrouterLocked = hasOpenrouterKey && !openrouterEditing;
 	const openrouterEditableValue = openrouterEditing
 		? openrouterDraft
-		: persistedOpenrouterKey;
+		: displayOpenrouterKey;
 
 	const openrouterPill = (
 		<CredentialStatusPill
-			apiKey={persistedOpenrouterKey}
+			apiKey={displayOpenrouterKey}
 			chipLevel={chipLevel}
 			status={openrouterStatus}
 			t={t}
@@ -248,6 +279,7 @@ export function IntegrationsSettingsPanel() {
 				<div className="flex flex-col divide-y divide-divider">
 					<div>
 						<SettingField
+							error={endpointError}
 							isDefault={endpoint === DEFAULT_SETTINGS.llm.endpoint}
 							label={tLlm("endpoint")}
 							labelIcon={<OllamaLogo />}
@@ -258,6 +290,7 @@ export function IntegrationsSettingsPanel() {
 						>
 							<ElevatedSurface inline>
 								<TextField
+									error={endpointError !== undefined}
 									onChange={(e) =>
 										updateLlmSettings({ endpoint: e.target.value })
 									}
@@ -300,6 +333,7 @@ export function IntegrationsSettingsPanel() {
 									{openrouterLocked ? (
 										<StoredSecretField
 											aria-label={tLlm("openrouterApiKey")}
+											invalid={openrouterStatus.status === "invalid"}
 											placeholder={tLlm("openrouterApiKeyPlaceholder")}
 										/>
 									) : (

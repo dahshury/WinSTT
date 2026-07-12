@@ -58,3 +58,42 @@ export function parseLoopbackDevices(
 	}
 	return valid;
 }
+
+function normalizeDeviceName(name: string): string {
+	return name.trim().toLowerCase();
+}
+
+/**
+ * Resolve an OUTPUT device (as shown in the picker, keyed by its cpal/browser
+ * display name) to the positional loopback `index` the backend's `loopback:start`
+ * needs. Exact normalized-name match first, then a contains-match for the minor
+ * framing differences between cpal names and WASAPI render-endpoint names. Returns
+ * `null` when no loopback device corresponds — the caller then persists `null`
+ * (the "system default loopback" sentinel), so listen mode falls back gracefully.
+ *
+ * This is the deterministic, backend-resolvable half of an output-device
+ * selection: the browser `sinkId` (persisted alongside as `outputDeviceId`) only
+ * ever resolves inside the window that enumerated it, whereas this index is
+ * enumerated by Rust and is stable across every window. See
+ * `resolveOutputLoopbackDeviceIndex` for the runtime read-side of the same match.
+ */
+export function loopbackIndexForName(
+	loopbackDevices: readonly LoopbackDevice[],
+	name: string,
+): number | null {
+	const target = normalizeDeviceName(name);
+	if (!target) {
+		return null;
+	}
+	const exact = loopbackDevices.find(
+		(device) => normalizeDeviceName(device.name) === target,
+	);
+	if (exact) {
+		return exact.index;
+	}
+	const fuzzy = loopbackDevices.find((device) => {
+		const normalized = normalizeDeviceName(device.name);
+		return normalized.includes(target) || target.includes(normalized);
+	});
+	return fuzzy?.index ?? null;
+}

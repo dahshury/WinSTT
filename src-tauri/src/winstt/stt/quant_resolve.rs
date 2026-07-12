@@ -737,6 +737,8 @@ mod tests {
             ),
             vec![Accelerator::Cpu]
         );
+        // Streaming NeMo RNN-T int8 stays all-CPU (re-verified 2026-07-11 clean-machine: 4.94 s
+        // CPU vs 5.50 s enc-DML hybrid — the int8 encoder's QDQ demotes on DML too).
         assert_eq!(
             override_dml_to_cpu_for_kind(
                 vec![Accelerator::DirectMl, Accelerator::Cpu],

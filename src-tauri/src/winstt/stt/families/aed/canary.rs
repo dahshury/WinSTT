@@ -65,6 +65,17 @@ pub struct CanaryEngine {
     eos_token_id: i64,
     max_sequence_length: usize,
     mel_fb: Array2<f32>,
+    /// DirectML encoder pad-bucket in FEATURE FRAMES (the cohere lesson, ported): the DML EP
+    /// caches its fused graph for exactly ONE input-shape signature per session (first-compiled
+    /// wins), and real dictation has a new length every utterance — so an unpadded encoder pays a
+    /// re-fuse (~0.7 s class) EVERY decode. Padding the (post-normalization) log-mel to one fixed
+    /// T gives the EP a single shape. Unlike cohere, canary's encoder takes a true `length` input
+    /// and emits `encoder_mask`, so we feed the TRUE length and afterwards SLICE the encoder
+    /// output back to the valid frames — the CPU decoder sees natural length (no per-token
+    /// cross-attn cost on pad frames) and transcripts stay exact. `None` off DirectML (no
+    /// per-shape re-fuse there — padding would only add compute) or under
+    /// `WINSTT_CANARY_NO_ENC_PAD`.
+    encoder_pad_bucket: Option<usize>,
     model_name: String,
     providers: Vec<String>,
     /// Device the sessions run on, for binding the carried `decoder_mems` device-resident
@@ -73,6 +84,11 @@ pub struct CanaryEngine {
     device: AllocationDevice,
     device_id: i32,
 }
+
+/// Encoder pad-bucket length in feature frames: 28 s (`EngineKind::max_chunk_seconds` for
+/// NemoAed — the VAD segmenter caps every chunk there, so every segment the app can produce
+/// lands in the one cached encoder shape) at the NeMo 10 ms hop.
+const CANARY_ENC_PAD_BUCKET_FRAMES: usize = 28 * 16_000 / 160;
 
 fn canary_concrete_language(raw: &str) -> Option<&str> {
     let lang = raw.trim();
@@ -206,6 +222,11 @@ impl CanaryEngine {
         } else {
             canary_device(&cfg.providers)
         };
+        // One fixed encoder input shape on DirectML (see the field docs).
+        // WINSTT_CANARY_NO_ENC_PAD disables it (diagnostics / A-B benchmarking).
+        let encoder_pad_bucket = (enc_providers.first() == Some(&Accelerator::DirectMl)
+            && std::env::var("WINSTT_CANARY_NO_ENC_PAD").is_err())
+        .then_some(CANARY_ENC_PAD_BUCKET_FRAMES);
         Ok(CanaryEngine {
             encoder,
             decoder,
@@ -217,6 +238,7 @@ impl CanaryEngine {
             eos_token_id,
             max_sequence_length: 1024,
             mel_fb,
+            encoder_pad_bucket,
             model_name: cfg.model_name.clone(),
             providers: providers_to_strings(&cfg.providers),
             device,
@@ -658,13 +680,30 @@ impl Transcriber for CanaryEngine {
             return Ok(Transcription::default());
         }
         let feat_dim = fbank.ncols();
+        // DirectML pad-bucket: right-pad the (post-normalization) log-mel with zeros to the ONE
+        // fixed T the EP's fused graph is cached for, feeding the TRUE length so the encoder's
+        // internal masks exclude the pad. Padding must happen AFTER `nemo_features`' per-feature
+        // normalization — silence samples padded before it would skew the utterance statistics
+        // and change the valid frames. Clips longer than the bucket run at natural length
+        // (re-fuse, same as before the bucket existed).
+        let feed_rows = match self.encoder_pad_bucket {
+            Some(bucket) if t <= bucket => bucket,
+            _ => t,
+        };
+        let fbank = if feed_rows > t {
+            let mut padded = Array2::<f32>::zeros((feed_rows, feat_dim));
+            padded.slice_mut(ndarray::s![..t, ..]).assign(&fbank.view());
+            padded
+        } else {
+            fbank
+        };
         // `.t()` is an F-order view; force a C-contiguous owned copy before reshaping
         // (into_shape_with_order rejects the transposed layout — was "incompatible memory layout").
         let x = fbank
             .t()
             .as_standard_layout()
             .into_owned()
-            .into_shape_with_order((1, feat_dim, t))
+            .into_shape_with_order((1, feat_dim, feed_rows))
             .map_err(|e| SttError::Inference(format!("canary enc reshape: {e}")))?;
         let x_tensor = Tensor::from_array(x)
             .map_err(|e| SttError::Inference(format!("canary enc tensor: {e}")))?;
@@ -674,9 +713,39 @@ impl Transcriber for CanaryEngine {
             .encoder
             .run(ort::inputs![ "audio_signal" => x_tensor, "length" => len_tensor ])
             .map_err(|e| SttError::Inference(format!("canary encoder run: {e}")))?;
-        let encoder_embeddings = out_to_f32(&enc_out["encoder_embeddings"])?;
-        let encoder_mask = out_to_i64(&enc_out["encoder_mask"])?;
+        let mut encoder_embeddings = out_to_f32(&enc_out["encoder_embeddings"])?;
+        let mut encoder_mask = out_to_i64(&enc_out["encoder_mask"])?;
         drop(enc_out); // release &mut self.encoder (SessionOutputs holds it via Drop) before &self use
+        // Slice a padded encoder output back to the VALID frames (mask-counted) so the decoder
+        // sees natural length — zero per-token cross-attn cost on pad frames, exact transcripts.
+        if feed_rows > t {
+            let s_valid = encoder_mask.iter().filter(|&&v| v != 0).count();
+            let sliced_emb = {
+                let emb3 = encoder_embeddings
+                    .view()
+                    .into_dimensionality::<ndarray::Ix3>()
+                    .map_err(|e| SttError::Inference(format!("canary enc emb dim: {e}")))?;
+                (s_valid > 0 && s_valid < emb3.shape()[1]).then(|| {
+                    emb3.slice(ndarray::s![.., ..s_valid, ..])
+                        .to_owned()
+                        .into_dyn()
+                })
+            };
+            if let Some(emb) = sliced_emb {
+                encoder_embeddings = emb;
+                let sliced_mask = {
+                    let mask2 = encoder_mask
+                        .view()
+                        .into_dimensionality::<ndarray::Ix2>()
+                        .map_err(|e| SttError::Inference(format!("canary enc mask dim: {e}")))?;
+                    mask2
+                        .slice(ndarray::s![.., ..s_valid])
+                        .to_owned()
+                        .into_dyn()
+                };
+                encoder_mask = sliced_mask;
+            }
+        }
         let t_enc = t_start.elapsed();
 
         let prompt = self.prompt_for(opts);

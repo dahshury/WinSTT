@@ -1,7 +1,6 @@
 import {
 	AiEditingIcon,
 	AiMicIcon,
-	AiVoiceIcon,
 	Clock01Icon,
 	CpuIcon,
 	DashboardSpeed02Icon,
@@ -38,6 +37,7 @@ import { Badge } from "@/shared/ui/badge";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import {
 	EntryCard,
+	type EntryCardAccent,
 	type EntryCardMetaPart,
 	EntryCardShell,
 } from "@/shared/ui/entry-card-list";
@@ -277,12 +277,18 @@ function HistoryRow({
 	viewProcessedLabel,
 }: HistoryRowFullProps) {
 	const { entry, kind, tts } = item;
+	// Both audio-backed kinds play through the same machinery: STT rows play the
+	// saved recording, TTS rows the saved synthesis. Rows whose file is gone
+	// (legacy / retention / capture failure) keep an inert play button.
 	const hasPlayableAudio =
-		kind === "transcription" && Boolean(entry.audioFilePath);
+		kind === "transcription"
+			? Boolean(entry.audioFilePath)
+			: kind === "tts" && Boolean(tts?.audioFilePath);
 	const playback = useHistoryPlayback(
 		entry.id,
 		hasPlayableAudio,
 		outputDeviceId,
+		kind === "tts" ? "tts" : "stt",
 	);
 	const transcriptDiff = getEntryTranscriptDiff(entry);
 	const hasOriginal = transcriptDiff !== null;
@@ -325,26 +331,17 @@ function HistoryRow({
 	// Optional parts (wpm, the LLM trio) drop out cleanly when absent. `logo`
 	// swaps the glyph for a maker brand mark (the model chip).
 	const meta: EntryCardMetaPart[] = [];
-	// Kind chip: STT and TTS runs share one table, so each row leads with a
-	// tinted kind marker (blue mic vs orange voice) that scans apart at a
-	// glance. Transform rows keep their body-side accent bubble instead.
-	if (kind === "transcription") {
-		meta.push({
-			icon: AiMicIcon,
-			key: "kind",
-			tint: "text-history-stt",
-			title: labels.kindSpeechToText,
-			value: "STT",
-		});
-	} else if (kind === "tts") {
-		meta.push({
-			icon: AiVoiceIcon,
-			key: "kind",
-			tint: "text-history-tts",
-			title: labels.kindTextToSpeech,
-			value: "TTS",
-		});
-	}
+	// Kind identity lives on the CARD, not the footer: a tinted edge rail (blue
+	// mic vs orange voice vs accent transform) types the whole card and matches
+	// the body-side kind bubble, so the meta strip carries data only. Playable
+	// STT rows — whose bubble slot is taken by the play button — still read as
+	// STT through the rail.
+	const accent: EntryCardAccent =
+		kind === "tts"
+			? { label: labels.kindTextToSpeech, railClass: "bg-history-tts" }
+			: kind === "transform"
+				? { label: labels.transform, railClass: "bg-accent" }
+				: { label: labels.kindSpeechToText, railClass: "bg-history-stt" };
 	meta.push(
 		{
 			icon: Clock01Icon,
@@ -563,8 +560,13 @@ function HistoryRow({
 		meta.push(costChip);
 	}
 	return (
-		<EntryCard footer={meta} singleLine>
+		<EntryCard accent={accent} footer={meta} singleLine>
 			<div className="flex items-start gap-3">
+				{/* The leading slot is the transport control for BOTH audio kinds —
+				    nothing ever replaces the play icon (kind reads through the card's
+				    edge rail). Rows with no saved audio keep an inert, dimmed play
+				    button whose tooltip says why. Transform rows have no audio ever,
+				    so they keep their accent bubble. */}
 				{kind === "transform" ? (
 					<Tooltip content={labels.transform} side="top">
 						<span
@@ -575,32 +577,13 @@ function HistoryRow({
 							<HugeiconsIcon className="size-3.5" icon={AiEditingIcon} />
 						</span>
 					</Tooltip>
-				) : kind === "tts" ? (
-					<Tooltip content={labels.kindTextToSpeech} side="top">
-						<span
-							aria-label={labels.kindTextToSpeech}
-							className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-history-tts/10 text-history-tts"
-							role="img"
-						>
-							<HugeiconsIcon className="size-3.5" icon={AiVoiceIcon} />
-						</span>
-					</Tooltip>
-				) : hasPlayableAudio ? (
+				) : (
 					<PlayButton
 						loading={playback.loading}
 						onToggle={handlePlaybackToggle}
 						playing={playback.playing}
+						unavailable={hasPlayableAudio ? undefined : labels.notRecorded}
 					/>
-				) : (
-					<Tooltip content={labels.kindSpeechToText} side="top">
-						<span
-							aria-label={labels.kindSpeechToText}
-							className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-history-stt/10 text-history-stt"
-							role="img"
-						>
-							<HugeiconsIcon className="size-3.5" icon={AiMicIcon} />
-						</span>
-					</Tooltip>
 				)}
 				<RowTranscript
 					activeIndex={playback.activeIndex}

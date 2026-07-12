@@ -33,6 +33,13 @@
     "close": "閉じる"
   },
   "settings": {
+    "warningDefaultedSections": "一部の設定を読み込めなかったため、既定値にリセットされました: {sections}。他の設定には影響ありません。",
+    "warningHotkeyRewrite": "競合するショートカットが既定値にリセットされました: {hotkeys}。",
+    "warningSaveFailed": "設定を保存できませんでした。変更は保持され、再試行されます。",
+    "hydrationRetrying": "設定を読み込むために再接続しています…",
+    "hydrationErrorTitle": "設定を読み込めませんでした",
+    "hydrationErrorBody": "この問題が解決されるまで、変更は保存されません。",
+    "hydrationRetry": "再試行",
     "title": "設定",
     "resetDefaults": "デフォルトにリセット",
     "resetTitle": "デフォルトにリセットしますか？",
@@ -264,6 +271,7 @@
     "combinedTableTitle": "履歴",
     "filterDateRange": "日付範囲",
     "filterAllTime": "全期間",
+    "filterAll": "すべて",
     "heatmapEarlier": "以前",
     "heatmapLater": "以降",
     "spendingTitle": "コスト",
@@ -691,7 +699,7 @@
     "encoderPause": "Pause",
     "encoderResume": "Resume",
     "encoderReady": "On-device model ready — the dictionary works without LLM cleanup.",
-    "encoderLatencyWarning": "Heads up: this adds a short delay to each transcription (around 200 ms) while the model corrects your terms.",
+    "encoderLatencyWarning": "Heads up: correcting your terms adds a brief delay before pasting — it grows with how many words need fixing, so a sentence is quick and a long passage with several corrections takes a little longer. Use the Dictionary speed setting below to trade speed for accuracy.",
     "requiresCleanup": "Dictionary and snippets are applied by the LLM during cleanup. Turn on dictation cleanup in Processing to use them.",
     "title": "辞書",
     "description": "Whisper に固有名詞、専門用語、ドメイン用語を教えます。文字起こしされた単語がこれらのエントリに音声的に近い場合、正しいスペルに自動的に変換されます。",
@@ -710,10 +718,15 @@
     "emptyState": "辞書エントリはまだありません",
     "clearTitle": "すべての辞書エントリを削除しますか？",
     "clearDescription": "すべての辞書エントリが完全に削除されます。この操作は元に戻せません。",
-    "thresholdLabel": "修正の厳密さ",
-    "thresholdCaption": "サーバーサイドの修正器が受け入れる最大ファジーマッチスコア。低いほど厳格（誤置換が少ない）。",
-    "thresholdTooltip": "決定論的修正器は文字起こし直後、LLM クリーンアップの前にサーバーで実行されます。見逃したものはすべて LLM 修飾子を通じて再度処理されます。",
-    "encoderDownloadedOff": "Model downloaded — turn on to use it."
+    "encoderDownloadedOff": "Model downloaded — turn on to use it.",
+    "contextLabel": "Context around each word",
+    "contextTooltip": "When the dictionary checks whether a spoken word is a mistake, it reads the text around that word for context. Reading less is faster; reading more can catch tricky corrections in long dictation but takes a little longer. The lowest setting is fast and works well for most speech.",
+    "contextLeast": "Least (fastest)",
+    "contextSome": "Some",
+    "contextMore": "More",
+    "contextMost": "Most (thorough)",
+    "contextSectionTitle": "Dictionary speed",
+    "contextDisabled": "Turn on the on-device dictionary below to adjust this."
   },
   "swapFailure": {
     "headline": "{model} を読み込めませんでした",
@@ -834,6 +847,16 @@
     "discardFile": "{name} を破棄"
   },
   "llm": {
+    "endpointRequired": "エンドポイントは必須です。",
+    "endpointInvalid": "有効な URL を入力してください（例: http://localhost:11434）",
+    "translateLanguageRequired": "先に翻訳先の言語を選択してください。",
+    "configPersistFailedTitle": "ストレージに保存できませんでした",
+    "configPersistFailedSave": "この設定は現在のセッションでは利用できますが、ストレージに書き込めませんでした。再起動すると失われます。",
+    "configPersistFailedUpdate": "変更は現在のセッションに適用されましたが、ストレージに書き込めませんでした。",
+    "configPersistFailedDelete": "この設定は現在のセッションから削除されましたが、変更をストレージに書き込めませんでした。",
+    "configPersistFailedReorder": "新しい並び順は現在のセッションに適用されましたが、ストレージに書き込めませんでした。",
+    "smartEndpointDisabledTitle": "スマートエンドポイントをオフにしました",
+    "smartEndpointDisabledBody": "LLM 口述後処理を有効にしたため、録音設定のスマートエンドポイントがオフになりました。両方が同時に発話を確定することはできません。",
     "translateLockedBySttTooltip": "モデルの「英語に翻訳」がオンの間は無効です。",
     "transformHotkey": "ホットキー",
     "transformHotkeyCaption": "現在選択されているテキストに構成された変換を実行するグローバルコンボ。",
@@ -1355,6 +1378,7 @@
     "reasoningEffort": "Reasoning effort",
     "verbosity": "Verbosity",
     "maxOutputTokens": "Max output tokens",
+    "maxOutputTokensInvalid": "正の整数を入力するか、既定値を使う場合は空欄のままにしてください。",
     "modelAuthor": "Model Author",
     "noAuthorsFound": "No authors found.",
     "endpointProvider": "Endpoint Provider",
@@ -1413,7 +1437,11 @@
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
     "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
     "liteTier": "Lite",
-    "liteTierTip": "精度を抑えた、より小型・高速なモデルです。限られたハードウェアでの簡単なタスクに最適です。"
+    "liteTierTip": "精度を抑えた、より小型・高速なモデルです。限られたハードウェアでの簡単なタスクに最適です。",
+    "specFeatures": "機能",
+    "specDetails": "詳細",
+    "specPerformance": "パフォーマンス",
+    "specDescription": "説明"
   },
   "dataGrid": {
     "addRow": "Add row",

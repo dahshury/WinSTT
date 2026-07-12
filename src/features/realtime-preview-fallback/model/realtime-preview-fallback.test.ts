@@ -11,7 +11,6 @@ function model(
 ): ModelInfo {
 	return {
 		displayName: overrides.displayName ?? overrides.id,
-		backend: overrides.backend ?? "onnx_asr",
 		family: overrides.family ?? "whisper",
 		languages: overrides.languages ?? [],
 		supportsLanguageDetection: false,

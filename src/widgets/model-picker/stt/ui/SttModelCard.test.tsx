@@ -37,7 +37,6 @@ function makeModel(overrides: Partial<ModelInfo> = {}): ModelInfo {
 		id: "custom-my-whisper",
 		displayName: "My Whisper",
 		family: "custom",
-		backend: "onnx_asr",
 		languages: [],
 		supportsLanguageDetection: false,
 		sizeLabel: "",

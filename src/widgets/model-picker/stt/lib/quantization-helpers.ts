@@ -108,13 +108,10 @@ export function getQuantizationOptions(model: ModelInfo): QuantizationOption[] {
 }
 
 /**
- * True when the model takes an onnx quantization choice *and* the repo
- * ships more than one precision — a single-variant repo has nothing to pick.
+ * True when the repo ships more than one known precision — a single-variant
+ * repo has nothing to pick.
  */
 export function supportsQuantization(model: ModelInfo): boolean {
-	if (model.backend !== "onnx_asr") {
-		return false;
-	}
 	const known = model.availableQuantizations.filter(isKnownQuantization);
 	return known.length > 1;
 }

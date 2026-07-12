@@ -12,7 +12,6 @@ function model(): ModelInfo {
 		id: "tiny",
 		displayName: "Whisper Tiny",
 		family: "whisper",
-		backend: "faster_whisper",
 		languages: ["en"],
 		supportsLanguageDetection: true,
 		sizeLabel: "39M",

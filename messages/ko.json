@@ -33,6 +33,13 @@
     "close": "닫기"
   },
   "settings": {
+    "warningDefaultedSections": "일부 설정을 읽을 수 없어 기본값으로 초기화되었습니다: {sections}. 다른 설정은 영향을 받지 않습니다.",
+    "warningHotkeyRewrite": "충돌하는 단축키가 기본값으로 초기화되었습니다: {hotkeys}.",
+    "warningSaveFailed": "설정을 저장할 수 없습니다. 변경 사항은 유지되며 다시 시도됩니다.",
+    "hydrationRetrying": "설정을 불러오기 위해 다시 연결하는 중…",
+    "hydrationErrorTitle": "설정을 불러올 수 없습니다",
+    "hydrationErrorBody": "이 문제가 해결될 때까지 변경 사항이 저장되지 않습니다.",
+    "hydrationRetry": "다시 시도",
     "title": "설정",
     "resetDefaults": "기본값으로 재설정",
     "resetTitle": "기본값으로 재설정하시겠습니까?",
@@ -264,6 +271,7 @@
     "combinedTableTitle": "기록",
     "filterDateRange": "기간",
     "filterAllTime": "전체 기간",
+    "filterAll": "전체",
     "heatmapEarlier": "이전",
     "heatmapLater": "이후",
     "spendingTitle": "지출",
@@ -691,7 +699,7 @@
     "encoderPause": "Pause",
     "encoderResume": "Resume",
     "encoderReady": "On-device model ready — the dictionary works without LLM cleanup.",
-    "encoderLatencyWarning": "Heads up: this adds a short delay to each transcription (around 200 ms) while the model corrects your terms.",
+    "encoderLatencyWarning": "Heads up: correcting your terms adds a brief delay before pasting — it grows with how many words need fixing, so a sentence is quick and a long passage with several corrections takes a little longer. Use the Dictionary speed setting below to trade speed for accuracy.",
     "requiresCleanup": "Dictionary and snippets are applied by the LLM during cleanup. Turn on dictation cleanup in Processing to use them.",
     "title": "사전",
     "description": "Whisper에 이름, 전문 용어, 도메인 용어를 가르칩니다. 전사된 단어가 이 항목 중 하나와 음성적으로 유사하면 자동으로 표준 맞춤법으로 교정됩니다.",
@@ -710,10 +718,15 @@
     "emptyState": "사전 항목이 없습니다",
     "clearTitle": "모든 사전 항목을 삭제하시겠습니까?",
     "clearDescription": "모든 사전 항목이 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
-    "thresholdLabel": "교정 엄격도",
-    "thresholdCaption": "서버 측 교정기가 허용하는 최대 퍼지 매칭 점수. 낮을수록 엄격합니다(오탐 교체 감소).",
-    "thresholdTooltip": "결정론적 교정기는 전사 직후, LLM 정리 전에 서버에서 실행됩니다. 누락된 항목은 LLM 수정자를 통해 두 번째 처리됩니다.",
-    "encoderDownloadedOff": "Model downloaded — turn on to use it."
+    "encoderDownloadedOff": "Model downloaded — turn on to use it.",
+    "contextLabel": "Context around each word",
+    "contextTooltip": "When the dictionary checks whether a spoken word is a mistake, it reads the text around that word for context. Reading less is faster; reading more can catch tricky corrections in long dictation but takes a little longer. The lowest setting is fast and works well for most speech.",
+    "contextLeast": "Least (fastest)",
+    "contextSome": "Some",
+    "contextMore": "More",
+    "contextMost": "Most (thorough)",
+    "contextSectionTitle": "Dictionary speed",
+    "contextDisabled": "Turn on the on-device dictionary below to adjust this."
   },
   "swapFailure": {
     "headline": "{model}을(를) 불러올 수 없습니다",
@@ -834,6 +847,16 @@
     "discardFile": "{name} 삭제"
   },
   "llm": {
+    "endpointRequired": "엔드포인트는 필수입니다.",
+    "endpointInvalid": "유효한 URL을 입력하세요. 예: http://localhost:11434",
+    "translateLanguageRequired": "먼저 번역할 언어를 선택하세요.",
+    "configPersistFailedTitle": "저장소에 저장할 수 없습니다",
+    "configPersistFailedSave": "이 구성은 현재 세션에서는 사용할 수 있지만 저장소에 기록되지 못했습니다. 다시 시작하면 사라집니다.",
+    "configPersistFailedUpdate": "변경 사항이 현재 세션에는 적용되었지만 저장소에 기록되지 못했습니다.",
+    "configPersistFailedDelete": "이 구성은 현재 세션에서는 제거되었지만 변경 사항이 저장소에 기록되지 못했습니다.",
+    "configPersistFailedReorder": "새 순서가 현재 세션에는 적용되었지만 저장소에 기록되지 못했습니다.",
+    "smartEndpointDisabledTitle": "스마트 엔드포인트 꺼짐",
+    "smartEndpointDisabledBody": "LLM 받아쓰기 후처리를 켜면서 녹음 설정의 스마트 엔드포인트가 꺼졌습니다. 두 기능이 동시에 발화를 마무리할 수는 없습니다.",
     "translateLockedBySttTooltip": "모델의 ‘영어로 번역’ 옵션이 켜져 있는 동안 비활성화됩니다.",
     "transformHotkey": "단축키",
     "transformHotkeyCaption": "현재 선택된 텍스트에 구성된 변환을 실행하는 전역 단축키.",
@@ -1355,6 +1378,7 @@
     "reasoningEffort": "Reasoning effort",
     "verbosity": "Verbosity",
     "maxOutputTokens": "Max output tokens",
+    "maxOutputTokensInvalid": "양의 정수를 입력하거나 기본값을 사용하려면 비워 두세요.",
     "modelAuthor": "Model Author",
     "noAuthorsFound": "No authors found.",
     "endpointProvider": "Endpoint Provider",
@@ -1413,7 +1437,11 @@
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
     "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
     "liteTier": "Lite",
-    "liteTierTip": "정확도를 낮춘 더 작고 빠른 변형입니다. 제한된 하드웨어에서 빠른 작업에 가장 적합합니다."
+    "liteTierTip": "정확도를 낮춘 더 작고 빠른 변형입니다. 제한된 하드웨어에서 빠른 작업에 가장 적합합니다.",
+    "specFeatures": "기능",
+    "specDetails": "세부 정보",
+    "specPerformance": "성능",
+    "specDescription": "설명"
   },
   "dataGrid": {
     "addRow": "Add row",

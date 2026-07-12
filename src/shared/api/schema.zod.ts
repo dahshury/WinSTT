@@ -91,9 +91,6 @@ const RecorderStateSchema = z.enum([
 ]);
 export type RecorderState = z.infer<typeof RecorderStateSchema>;
 
-export const TranscriberBackendSchema = z.enum(["faster_whisper", "onnx_asr"]);
-export type TranscriberBackend = z.infer<typeof TranscriberBackendSchema>;
-
 export const ModelFamilySchema = z.enum([
 	"whisper",
 	"lite-whisper",

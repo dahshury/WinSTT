@@ -461,7 +461,7 @@ pub(super) fn model_status_from_snapshot(
     } else {
         match (snapshot.downloaded_bytes, snapshot.total_bytes) {
             (Some(downloaded), Some(total)) if total > 0 => {
-                Some(((downloaded as f32) / (total as f32)).clamp(0.0, 1.0))
+                Some(crate::winstt::downloads::progress_fraction_of(downloaded, total) as f32)
             }
             _ => None,
         }

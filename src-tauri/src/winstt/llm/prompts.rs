@@ -320,7 +320,25 @@ pub struct Vocab {
     pub replacement_pairs: Vec<(String, String)>,
     pub snippets: Vec<(String, String)>,
 }
+/// Cap on vocabulary terms injected into the LLM system prompt. A large dictionary would otherwise
+/// bloat the prompt (token cost) and, for small local models, degrade instruction-following and
+/// raise the false-insertion rate the preamble's hard limits try to suppress. Replacement pairs are
+/// NOT capped — they're deterministically re-applied post-pass (`actions::post_process`), so their
+/// prompt presence is a hint, not the guarantee. The most-recently-added terms are kept (dictionary
+/// entries are appended, so the tail is newest).
+const MAX_PROMPT_DICTIONARY_TERMS: usize = 50;
+
 fn build_dictionary_block(dictionary: &[String]) -> String {
+    let injected: &[String] = if dictionary.len() > MAX_PROMPT_DICTIONARY_TERMS {
+        let start = dictionary.len() - MAX_PROMPT_DICTIONARY_TERMS;
+        log::debug!(
+            "[dictation] capping prompt dictionary: {} terms → {MAX_PROMPT_DICTIONARY_TERMS}",
+            dictionary.len()
+        );
+        &dictionary[start..]
+    } else {
+        dictionary
+    };
     let mut lines = vec![
         "The list below is ONLY a spelling reference. Use it solely to fix a".to_string(),
         "word the speaker actually said but that was mis-transcribed: replace".to_string(),
@@ -343,7 +361,7 @@ fn build_dictionary_block(dictionary: &[String]) -> String {
         String::new(),
         "<preferred-terms>".to_string(),
     ];
-    for t in dictionary {
+    for t in injected {
         lines.push(format!("- {t}"));
     }
     lines.push("</preferred-terms>".to_string());

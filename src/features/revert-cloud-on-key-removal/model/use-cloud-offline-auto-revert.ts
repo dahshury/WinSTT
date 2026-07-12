@@ -57,9 +57,7 @@ function revertSttToLocal(currentCloudModel: string): void {
 	useModelSwapStore
 		.getState()
 		.beginSwap("main", currentCloudModel, target.model);
-	useSettingsStore
-		.getState()
-		.updateModelSettings({ model: target.model, backend: target.backend });
+	useSettingsStore.getState().updateModelSettings({ model: target.model });
 	sttReloadModel("main", target.model);
 }
 

@@ -34,7 +34,9 @@ export const ttsSettingsSchema = z.object({
 	// Floor 0.4 matches Supertonic's widened slider (SUPERTONIC_SPEED_MIN); other
 	// engines' sliders still start at 0.5, but the stored value must accept 0.4 so
 	// a Supertonic selection persists without being rejected back to the default.
-	speed: z.number().min(0.4).max(2.0).default(1.0),
+	// `.catch(1.0)`: a persisted out-of-range speed must reset only itself, not
+	// nuke the whole `tts` section to defaults on decode.
+	speed: z.number().min(0.4).max(2.0).default(1.0).catch(1.0),
 	// Always non-empty: TTS the feature stays gated by `enabled`, but the
 	// hotkey itself must always carry a valid combo so the conflict checker
 	// can compare against it and the recorder UI never renders an empty chip.
@@ -68,10 +70,10 @@ export const ttsSettingsSchema = z.object({
 			openrouterModel: z.string().default(""),
 			// OpenRouter voice id from the selected model's supported_voices catalog.
 			openrouterVoice: z.string().default(""),
-			stability: z.number().min(0).max(1).default(0.5),
-			similarity: z.number().min(0).max(1).default(0.75),
-			style: z.number().min(0).max(1).default(0),
-			speed: z.number().min(0.7).max(1.2).default(1.0),
+			stability: z.number().min(0).max(1).default(0.5).catch(0.5),
+			similarity: z.number().min(0).max(1).default(0.75).catch(0.75),
+			style: z.number().min(0).max(1).default(0).catch(0),
+			speed: z.number().min(0.7).max(1.2).default(1.0).catch(1.0),
 			speakerBoost: z.boolean().default(true),
 		})
 		.prefault({}),

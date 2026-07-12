@@ -33,6 +33,13 @@
     "close": "Zamknij"
   },
   "settings": {
+    "warningDefaultedSections": "Niektórych ustawień nie udało się odczytać i przywrócono ich wartości domyślne: {sections}. Pozostałe ustawienia pozostają bez zmian.",
+    "warningHotkeyRewrite": "Skróty powodujące konflikt zostały przywrócone do wartości domyślnych: {hotkeys}.",
+    "warningSaveFailed": "Nie udało się zapisać ustawień. Twoje zmiany zostały zachowane i zostaną ponowione.",
+    "hydrationRetrying": "Ponowne łączenie w celu wczytania ustawień…",
+    "hydrationErrorTitle": "Nie można wczytać ustawień",
+    "hydrationErrorBody": "Twoje zmiany nie zostaną zapisane, dopóki problem nie zostanie rozwiązany.",
+    "hydrationRetry": "Spróbuj ponownie",
     "title": "Ustawienia",
     "resetDefaults": "Przywróć domyślne",
     "resetTitle": "Przywrócić ustawienia domyślne?",
@@ -264,6 +271,7 @@
     "combinedTableTitle": "Historia",
     "filterDateRange": "Zakres dat",
     "filterAllTime": "Cały okres",
+    "filterAll": "Wszystko",
     "heatmapEarlier": "Wcześniej",
     "heatmapLater": "Później",
     "spendingTitle": "Wydatki",
@@ -691,7 +699,7 @@
     "encoderPause": "Pause",
     "encoderResume": "Resume",
     "encoderReady": "On-device model ready — the dictionary works without LLM cleanup.",
-    "encoderLatencyWarning": "Heads up: this adds a short delay to each transcription (around 200 ms) while the model corrects your terms.",
+    "encoderLatencyWarning": "Heads up: correcting your terms adds a brief delay before pasting — it grows with how many words need fixing, so a sentence is quick and a long passage with several corrections takes a little longer. Use the Dictionary speed setting below to trade speed for accuracy.",
     "requiresCleanup": "Dictionary and snippets are applied by the LLM during cleanup. Turn on dictation cleanup in Processing to use them.",
     "title": "Słownik",
     "description": "Naucz Whisper Twoich nazw, żargonu i terminów dziedzinowych. Gdy transkrybowane słowo jest fonetycznie zbliżone do jednego z tych wpisów, jest automatycznie korygowane do kanonicznej pisowni.",
@@ -710,10 +718,15 @@
     "emptyState": "Brak wpisów słownika",
     "clearTitle": "Usunąć wszystkie wpisy słownika?",
     "clearDescription": "Wszystkie wpisy słownika zostaną trwale usunięte. Tej operacji nie można cofnąć.",
-    "thresholdLabel": "Surowość korekty",
-    "thresholdCaption": "Maksymalny wynik rozmytego dopasowania akceptowany przez korektor po stronie serwera. Niższy = surowszy (mniej fałszywych zamian).",
-    "thresholdTooltip": "Deterministyczny korektor działa na serwerze tuż po transkrypcji i PRZED czyszczeniem LLM. Wszystko, co pominie, przechodzi przez modyfikatory LLM w drugim podejściu.",
-    "encoderDownloadedOff": "Model downloaded — turn on to use it."
+    "encoderDownloadedOff": "Model downloaded — turn on to use it.",
+    "contextLabel": "Context around each word",
+    "contextTooltip": "When the dictionary checks whether a spoken word is a mistake, it reads the text around that word for context. Reading less is faster; reading more can catch tricky corrections in long dictation but takes a little longer. The lowest setting is fast and works well for most speech.",
+    "contextLeast": "Least (fastest)",
+    "contextSome": "Some",
+    "contextMore": "More",
+    "contextMost": "Most (thorough)",
+    "contextSectionTitle": "Dictionary speed",
+    "contextDisabled": "Turn on the on-device dictionary below to adjust this."
   },
   "swapFailure": {
     "headline": "Nie można załadować {model}",
@@ -834,6 +847,16 @@
     "discardFile": "Odrzuć {name}"
   },
   "llm": {
+    "endpointRequired": "Endpoint jest wymagany.",
+    "endpointInvalid": "Wprowadź prawidłowy adres URL, np. http://localhost:11434",
+    "translateLanguageRequired": "Najpierw wybierz język docelowy tłumaczenia.",
+    "configPersistFailedTitle": "Nie udało się zapisać w pamięci",
+    "configPersistFailedSave": "Ta konfiguracja jest dostępna w tej sesji, ale nie udało się jej zapisać w pamięci — zostanie utracona po ponownym uruchomieniu.",
+    "configPersistFailedUpdate": "Twoje zmiany zostały zastosowane w tej sesji, ale nie udało się ich zapisać w pamięci.",
+    "configPersistFailedDelete": "Ta konfiguracja została usunięta na potrzeby tej sesji, ale nie udało się zapisać zmiany w pamięci.",
+    "configPersistFailedReorder": "Nowa kolejność została zastosowana w tej sesji, ale nie udało się jej zapisać w pamięci.",
+    "smartEndpointDisabledTitle": "Inteligentny endpoint wyłączony",
+    "smartEndpointDisabledBody": "Włączenie przetwarzania końcowego dyktowania LLM wyłączyło Inteligentny endpoint w ustawieniach Nagrywania — nie mogą jednocześnie finalizować mowy.",
     "translateLockedBySttTooltip": "Wyłączone, gdy w modelu włączona jest opcja Tłumacz na angielski.",
     "transformHotkey": "Skrót",
     "transformHotkeyCaption": "Globalna kombinacja uruchamiająca złożoną transformację na aktualnie zaznaczonym tekście.",
@@ -1355,6 +1378,7 @@
     "reasoningEffort": "Reasoning effort",
     "verbosity": "Verbosity",
     "maxOutputTokens": "Max output tokens",
+    "maxOutputTokensInvalid": "Wprowadź dodatnią liczbę całkowitą lub pozostaw puste, aby użyć wartości domyślnej.",
     "modelAuthor": "Model Author",
     "noAuthorsFound": "No authors found.",
     "endpointProvider": "Endpoint Provider",
@@ -1413,7 +1437,11 @@
     "deleteQuantDescription": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other quantizations of the same model stay cached. You can re-download this variant anytime from the picker.",
     "deleteQuantDescriptionTts": "This removes the on-disk <strong>{quant}</strong> weights for <strong>{name}</strong>. Other precisions of the same model stay cached. You can re-download this variant anytime from the picker.",
     "liteTier": "Lite",
-    "liteTierTip": "Mniejszy, szybszy wariant o obniżonej dokładności — najlepszy do szybkich zadań na ograniczonym sprzęcie."
+    "liteTierTip": "Mniejszy, szybszy wariant o obniżonej dokładności — najlepszy do szybkich zadań na ograniczonym sprzęcie.",
+    "specFeatures": "Funkcje",
+    "specDetails": "Szczegóły",
+    "specPerformance": "Wydajność",
+    "specDescription": "Opis"
   },
   "dataGrid": {
     "addRow": "Add row",

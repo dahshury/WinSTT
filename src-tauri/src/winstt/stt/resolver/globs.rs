@@ -137,6 +137,53 @@ const QUANT_REPO_OVERRIDES: &[(&str, Quantization, &str)] = &[
         Quantization::Int8,
         "Masterx/cohere-transcribe-03-2026-ONNX",
     ),
+    // Parakeet TDT v3 fp16 tier (2026-07-11): istupakov ships only fp32+int8; the fp16
+    // conversion (ORT transformers float16, keep_io_types, parity-verified — measured 2× faster
+    // on DirectML with byte-identical transcripts) lives in a Masterx repo carrying the FULL
+    // fp16 file set incl. vocab/config. Catalog id == onnx_model_name alias, so ONE entry
+    // covers both lookup paths. The v1-era parakeet-ctc/-rnnt exports were converted and are
+    // CPU-correct but produce GARBAGE on the DML EP at fp16 (the lite-whisper disease; the v3
+    // export idiom is unaffected) — no fp16 tier for those two.
+    (
+        "nemo-parakeet-tdt-0.6b-v3",
+        Quantization::Fp16,
+        "Masterx/parakeet-tdt-0.6b-v3-fp16-onnx",
+    ),
+    // Streaming parakeet-unified fp16 tiers (2026-07-12): the sherpa maintainer publishes fp32
+    // and int8 as SEPARATE repos with no fp16; these Masterx repos carry the fp16 conversion of
+    // each fp32 repo's encoder/decoder/joiner + tokens.txt (all tier files resolve from the
+    // override repo). Keyed by BOTH the catalog id and the csukuangfj2 repo id (the engine-load
+    // path resolves by onnx_model_name).
+    (
+        "streaming-parakeet-unified-en-240ms",
+        Quantization::Fp16,
+        "Masterx/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-240ms-fp16",
+    ),
+    (
+        "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-240ms",
+        Quantization::Fp16,
+        "Masterx/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-240ms-fp16",
+    ),
+    (
+        "streaming-parakeet-unified-en-560ms",
+        Quantization::Fp16,
+        "Masterx/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-560ms-fp16",
+    ),
+    (
+        "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-560ms",
+        Quantization::Fp16,
+        "Masterx/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-560ms-fp16",
+    ),
+    (
+        "streaming-parakeet-unified-en-1120ms",
+        Quantization::Fp16,
+        "Masterx/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-1120ms-fp16",
+    ),
+    (
+        "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-1120ms",
+        Quantization::Fp16,
+        "Masterx/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-1120ms-fp16",
+    ),
 ];
 
 /// Like `resolve_repo`, but applies the per-quant repo override first (see `QUANT_REPO_OVERRIDES`).
@@ -328,20 +375,34 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
             g("vocab", "vocab.txt".into()),
         ],
         EngineKind::NemoRnnt | EngineKind::NemoTdt => vec![
+            // TDT's fp16 tier is uniform — it runs all-DML at float precisions (measured
+            // 2026-07-11: fp16 all-DML 231 ms vs fp32 459 ms, transcripts byte-identical).
+            // No fp16 tier exists for the v1 rnnt export (fp16 garbage on the DML EP).
             g("encoder", format!("encoder-model{s}.onnx")),
             g("decoder_joint", format!("decoder_joint-model{s}.onnx")),
             g("vocab", "vocab.txt".into()),
         ],
-        EngineKind::NemoAed => vec![
-            g("encoder", format!("encoder-model{s}.onnx")),
-            g("decoder", format!("decoder-model{s}.onnx")),
-            // KV fast-path artifacts (Masterx re-exports): cross-attn K/V hoist + true-KV-cache
-            // step decoder. Optional — istupakov-era caches don't ship them; the engine falls
-            // back to the legacy decoder_mems loop.
-            go("cross_kv", format!("cross-kv-model{s}.onnx")),
-            go("decoder_kv", format!("decoder-kv-model{s}.onnx")),
-            g("vocab", "vocab.txt".into()),
-        ],
+        EngineKind::NemoAed => {
+            // fp16 tier is MIXED-precision: canary's decode sessions are CPU-pinned (growing
+            // self-KV would re-fuse per token on DML — see canary.rs::load), and fp16 on the
+            // CPU EP is slower than fp32 — so fp16 resolves the fp32 decoder artifacts
+            // alongside the fp16 (DML) encoder.
+            let dec_s = if quant == Quantization::Fp16 {
+                String::new()
+            } else {
+                s.clone()
+            };
+            vec![
+                g("encoder", format!("encoder-model{s}.onnx")),
+                g("decoder", format!("decoder-model{dec_s}.onnx")),
+                // KV fast-path artifacts (Masterx re-exports): cross-attn K/V hoist + true-KV-cache
+                // step decoder. Optional — istupakov-era caches don't ship them; the engine falls
+                // back to the legacy decoder_mems loop.
+                go("cross_kv", format!("cross-kv-model{dec_s}.onnx")),
+                go("decoder_kv", format!("decoder-kv-model{dec_s}.onnx")),
+                g("vocab", "vocab.txt".into()),
+            ]
+        }
         EngineKind::KaldiTransducer => {
             // onnx-asr splits the Kaldi transducer file set by repo layout (models/kaldi.py):
             //   * `KaldiTransducer` (Vosk) nests one dir down: `*/encoder{?q}.onnx`, `*/tokens.txt`.

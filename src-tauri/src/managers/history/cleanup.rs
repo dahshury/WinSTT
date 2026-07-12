@@ -140,20 +140,38 @@ impl HistoryManager {
         Ok(())
     }
 
+    /// Delete TTS rows by id, removing each row's saved synthesis audio first
+    /// (same never-block policy as transcription cleanup).
+    fn delete_tts_entries(&self, rows: &[(i64, Option<String>)]) -> Result<usize> {
+        let conn = self.get_connection()?;
+        let mut deleted_count = 0;
+        for (id, audio_file_name) in rows {
+            if let Some(file_name) = audio_file_name.as_deref() {
+                self.remove_recording_file(file_name);
+            }
+            deleted_count += conn.execute("DELETE FROM tts_history WHERE id = ?1", params![id])?;
+        }
+        Ok(deleted_count)
+    }
+
     fn cleanup_tts_by_count(&self, limit: usize) -> Result<()> {
         let conn = self.get_connection()?;
-        let mut stmt =
-            conn.prepare("SELECT id FROM tts_history ORDER BY timestamp DESC, id DESC")?;
-        let ids = stmt
-            .query_map([], |row| row.get::<_, i64>("id"))?
-            .collect::<rusqlite::Result<Vec<i64>>>()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, audio_file_name FROM tts_history ORDER BY timestamp DESC, id DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>("id")?,
+                    row.get::<_, Option<String>>("audio_file_name")?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+        drop(conn);
 
-        if ids.len() > limit {
-            let mut deleted_count = 0;
-            for id in &ids[limit..] {
-                deleted_count +=
-                    conn.execute("DELETE FROM tts_history WHERE id = ?1", params![id])?;
-            }
+        if rows.len() > limit {
+            let deleted_count = self.delete_tts_entries(&rows[limit..])?;
             if deleted_count > 0 {
                 debug!(
                     "Cleaned up {} old TTS history entries by count",
@@ -175,10 +193,20 @@ impl HistoryManager {
         };
 
         let conn = self.get_connection()?;
-        let deleted_count = conn.execute(
-            "DELETE FROM tts_history WHERE timestamp < ?1",
-            params![cutoff_timestamp],
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, audio_file_name FROM tts_history WHERE timestamp < ?1")?;
+        let rows = stmt
+            .query_map(params![cutoff_timestamp], |row| {
+                Ok((
+                    row.get::<_, i64>("id")?,
+                    row.get::<_, Option<String>>("audio_file_name")?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+        drop(conn);
+
+        let deleted_count = self.delete_tts_entries(&rows)?;
         if deleted_count > 0 {
             debug!(
                 "Cleaned up {} old TTS history entries based on retention period",

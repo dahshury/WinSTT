@@ -3,12 +3,12 @@ import { ArrowDown01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import { cn } from "@/shared/lib/cn";
+import { surfaceBg, surfaceClasses } from "@/shared/lib/surface";
 import {
-	SurfaceProvider,
-	surfaceBg,
-	surfaceClasses,
-} from "@/shared/lib/surface";
-import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+	ComboboxPopupShell,
+	comboboxPopupClassName,
+	optionMatchesQuery,
+} from "@/shared/ui/combobox-base";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import {
@@ -79,13 +79,6 @@ function SelectedCountChip({
 	);
 }
 
-function optionMatches(option: SelectOption, query: string): boolean {
-	return matchesFuzzySearch(
-		[option.label, option.id, option.badge ?? ""],
-		query,
-	);
-}
-
 function summarizeSelection(
 	labels: readonly string[],
 	selectedCountLabel: (count: number) => string,
@@ -116,7 +109,7 @@ export function LanguageMultiCombobox({
 	const [query, setQuery] = useState("");
 	const selected = new Set(value);
 	const visibleOptions = options.filter((option) =>
-		optionMatches(option, query),
+		optionMatchesQuery(option, query),
 	);
 	// Selected chips reflect the full selection in selection order, independent
 	// of the search query, so the summary always shows every chosen language.
@@ -208,85 +201,81 @@ export function LanguageMultiCombobox({
 				closedTrigger
 			)}
 
-			<Combobox.Portal>
-				<SurfaceProvider value={popupLevel}>
-					<Combobox.Positioner
-						className="z-popover outline-none"
-						collisionPadding={8}
-						sideOffset={4}
+			<ComboboxPopupShell popupLevel={popupLevel}>
+				<Combobox.Popup
+					className={comboboxPopupClassName(
+						popupLevel,
+						popupShadow,
+						"searchable-select-popup relative overflow-hidden",
+					)}
+				>
+					<ScrollArea
+						rubberBandOnTouch
+						verticalOnly
+						verticalScrollbarClassName="my-1 me-1"
+						viewportClassName="h-auto py-1 [max-height:min(16rem,var(--available-height))]"
 					>
-						<Combobox.Popup
-							className={`searchable-select-popup relative w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-hidden rounded-lg ${surfaceClasses(popupLevel, popupShadow)}`}
-						>
-							<ScrollArea
-								rubberBandOnTouch
-								verticalOnly
-								verticalScrollbarClassName="my-1 me-1"
-								viewportClassName="h-auto py-1 [max-height:min(16rem,var(--available-height))]"
-							>
-								{selectedOptions.length > 0 ? (
-									<div
-										className={cn(
-											"sticky top-0 z-raised mb-1 border-divider border-b px-2 pt-1 pb-2",
-											popupBg,
-										)}
-									>
-										<div className="px-0.5 pb-1 font-semibold text-[10px] text-foreground-muted uppercase tracking-wider">
-											{selectedHeading}
-										</div>
-										<div className="flex max-h-[4.5rem] flex-wrap gap-1 overflow-y-auto">
-											{selectedSummaryCollapsed ? (
-												<SelectedCountChip
-													label={selectedCountLabel(selectedLabels.length)}
-													tooltip={selectedTooltip}
-												/>
-											) : (
-												selectedOptions.map((option) => (
-													<SelectedChip
-														key={option.id}
-														label={option.label}
-														onRemove={() => toggleOption(option.id)}
-														removeLabel={removeLabel}
-													/>
-												))
-											)}
-										</div>
-									</div>
-								) : null}
-								{visibleOptions.length === 0 ? (
-									<div className="px-2.5 py-2 text-body-sm text-foreground-muted">
-										{emptyLabel}
-									</div>
-								) : (
-									<CheckboxGroup
-										checkedIndices={checkedIndices}
-										className="w-full px-1"
-									>
-										{visibleOptions.map((option, index) => {
-											const checked = selected.has(option.id);
-											return (
-												<CheckboxItem
-													checked={checked}
-													className="py-2"
-													index={index}
-													key={option.id}
-													label={option.label}
-													leading={
-														option.badge ? (
-															<OptionBadge text={option.badge} />
-														) : null
-													}
-													onToggle={() => toggleOption(option.id)}
-												/>
-											);
-										})}
-									</CheckboxGroup>
+						{selectedOptions.length > 0 ? (
+							<div
+								className={cn(
+									"sticky top-0 z-raised mb-1 border-divider border-b px-2 pt-1 pb-2",
+									popupBg,
 								)}
-							</ScrollArea>
-						</Combobox.Popup>
-					</Combobox.Positioner>
-				</SurfaceProvider>
-			</Combobox.Portal>
+							>
+								<div className="px-0.5 pb-1 font-semibold text-[10px] text-foreground-muted uppercase tracking-wider">
+									{selectedHeading}
+								</div>
+								<div className="flex max-h-[4.5rem] flex-wrap gap-1 overflow-y-auto">
+									{selectedSummaryCollapsed ? (
+										<SelectedCountChip
+											label={selectedCountLabel(selectedLabels.length)}
+											tooltip={selectedTooltip}
+										/>
+									) : (
+										selectedOptions.map((option) => (
+											<SelectedChip
+												key={option.id}
+												label={option.label}
+												onRemove={() => toggleOption(option.id)}
+												removeLabel={removeLabel}
+											/>
+										))
+									)}
+								</div>
+							</div>
+						) : null}
+						{visibleOptions.length === 0 ? (
+							<div className="px-2.5 py-2 text-body-sm text-foreground-muted">
+								{emptyLabel}
+							</div>
+						) : (
+							<CheckboxGroup
+								checkedIndices={checkedIndices}
+								className="w-full px-1"
+							>
+								{visibleOptions.map((option, index) => {
+									const checked = selected.has(option.id);
+									return (
+										<CheckboxItem
+											checked={checked}
+											className="py-2"
+											index={index}
+											key={option.id}
+											label={option.label}
+											leading={
+												option.badge ? (
+													<OptionBadge text={option.badge} />
+												) : null
+											}
+											onToggle={() => toggleOption(option.id)}
+										/>
+									);
+								})}
+							</CheckboxGroup>
+						)}
+					</ScrollArea>
+				</Combobox.Popup>
+			</ComboboxPopupShell>
 		</Combobox.Root>
 	);
 }

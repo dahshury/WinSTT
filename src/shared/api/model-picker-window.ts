@@ -4,6 +4,7 @@ import { ipcSend } from "./ipc-client";
 export type ModelPickerKind =
 	| "llm-ollama"
 	| "llm-openrouter"
+	| "output-device"
 	| "stt"
 	| "stt-cloud"
 	| "stt-realtime"

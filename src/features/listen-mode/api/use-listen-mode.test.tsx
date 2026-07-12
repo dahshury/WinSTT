@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import {
 	useCatalogStore,
 	useModelStateStore,
@@ -86,7 +86,6 @@ const streamingModel: ModelInfo = {
 	accuracyScore: 0.8,
 	available: true,
 	availableQuantizations: ["int8"],
-	backend: "onnx_asr",
 	description: "Streaming model",
 	displayName: "Streaming NeMo CTC",
 	errorMessage: "",
@@ -275,6 +274,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	// Unmount any `renderHook` instance left over from the current test so its
+	// effects (loopback event subscriptions, the mode-boundary transcription
+	// reset) stop reacting to global store mutations made by later tests.
+	cleanup();
 	commands.startListen = originalCommands.startListen;
 	commands.stopListen = originalCommands.stopListen;
 	commands.loopbackListDevices = originalCommands.loopbackListDevices;
@@ -728,5 +731,87 @@ describe("useListenMode", () => {
 			cmd: "start_listen",
 			args: { deviceIndex: 3, modelId: STREAMING_MODEL_ID },
 		});
+	});
+
+	test("switching away from listen mode stops the loopback session", async () => {
+		window.nativeBridge = makeApi();
+		setRecordingMode("listen");
+		renderHook(() => useListenMode());
+		await flushAsyncHookEffects();
+
+		act(() => setRecordingMode("ptt"));
+		await flushAsyncHookEffects();
+
+		expect(tauriCommandNames()).toContain("stop_listen");
+	});
+
+	test("a stray loopback-stopped event while still in listen mode does not block stop_listen on a later mode switch", async () => {
+		// Regression test: `onLoopbackStopped` used to null out the mode-tracking
+		// ref on every stopped event (e.g. a backend self-heal or an in-mode
+		// device/model restart round trip), so a stopped event arriving before
+		// the *real* mode switch made the start/stop effect believe it was
+		// never in listen mode and skip calling `stop_listen` -- leaving the
+		// backend loopback running after switching away.
+		window.nativeBridge = makeApi();
+		setRecordingMode("listen");
+		renderHook(() => useListenMode());
+		await flushAsyncHookEffects();
+
+		act(() => {
+			fire(IPC.STT_LOOPBACK_STOPPED);
+		});
+
+		act(() => setRecordingMode("ptt"));
+		await flushAsyncHookEffects();
+
+		expect(tauriCommandNames()).toContain("stop_listen");
+	});
+
+	test("loopback-stopped after leaving listen mode clears stale recording-active state", async () => {
+		window.nativeBridge = makeApi();
+		setRecordingMode("listen");
+		renderHook(() => useListenMode());
+		await flushAsyncHookEffects();
+
+		act(() => setRecordingMode("ptt"));
+		await flushAsyncHookEffects();
+
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			isTranscribing: true,
+			processingPhase: "transcribing",
+			currentRealtime: "leftover listen caption",
+			ephemeral: { kind: "info", text: "stale status", timestamp: 1 },
+		});
+
+		act(() => {
+			fire(IPC.STT_LOOPBACK_STOPPED);
+		});
+
+		const state = useTranscriptionStore.getState();
+		expect(state.isRecordingActive).toBe(false);
+		expect(state.isTranscribing).toBe(false);
+		expect(state.currentRealtime).toBe("");
+		expect(state.ephemeral).toBeNull();
+	});
+
+	test("loopback-stopped while still in listen mode preserves in-flight recording state (in-mode restart)", async () => {
+		window.nativeBridge = makeApi();
+		setRecordingMode("listen");
+		renderHook(() => useListenMode());
+		await flushAsyncHookEffects();
+
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			currentRealtime: "still forming",
+		});
+
+		act(() => {
+			fire(IPC.STT_LOOPBACK_STOPPED);
+		});
+
+		const state = useTranscriptionStore.getState();
+		expect(state.isRecordingActive).toBe(true);
+		expect(state.currentRealtime).toBe("still forming");
 	});
 });

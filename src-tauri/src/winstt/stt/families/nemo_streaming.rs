@@ -51,7 +51,20 @@ fn bind_cache_input<T: ort::value::ValueTypeMarker + ?Sized>(
     .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))
 }
 
-type DecoderState = (ArrayD<f32>, ArrayD<f32>);
+/// Carried predictor step, kept as session-owned `DynValue`s (zero host round-trips):
+/// `decoder_out` is Pred(all emitted tokens) — the joiner's `decoder_outputs` input, reused
+/// across every frame until the next emission — and `post_state` is the LSTM `(h, c)` AFTER
+/// consuming the last token, i.e. the input state for the NEXT emission's predictor run.
+///
+/// Carrying BOTH across chunks (sherpa's 2026 "parakeet unified" decoder semantics) fixes the
+/// classic-sherpa bug this engine inherited: saving only the post-token state and re-running
+/// `Pred(tokens.last(), post_state)` at every chunk start fed the last token to the LSTM TWICE
+/// at each chunk boundary. With the carried pair there is no chunk-start re-run at all — each
+/// token is consumed exactly once, and the per-chunk predictor call disappears as a bonus.
+struct CarriedPred {
+    decoder_out: DynValue,
+    post_state: (DynValue, DynValue),
+}
 
 pub struct NativeNemoStreamingEngine {
     encoder: Session,
@@ -82,6 +95,20 @@ pub struct NativeNemoStreamingEngine {
     device: AllocationDevice,
     device_id: i32,
     stream: NemoStreamState,
+    /// `WINSTT_NEMO_STREAM_PROFILE=1` → per-stage counters printed on finalize.
+    profile: Option<StreamProfile>,
+}
+
+/// Per-stream accumulated stage timings (profiling only; reset with the stream).
+#[derive(Default)]
+struct StreamProfile {
+    feat_ms: f64,
+    encoder_ms: f64,
+    encoder_runs: usize,
+    decoder_ms: f64,
+    decoder_runs: usize,
+    joiner_ms: f64,
+    joiner_runs: usize,
 }
 
 /// Per-stream carried state. The three encoder cache tensors are carried DEVICE-RESIDENT across
@@ -96,7 +123,29 @@ struct NemoStreamState {
     cache_last_channel: Option<DynValue>,
     cache_last_time: Option<DynValue>,
     cache_last_channel_len: Option<DynValue>,
-    decoder_state: DecoderState,
+    /// Carried predictor output + post-token LSTM state (see `CarriedPred`). `None` on a fresh
+    /// stream — primed with `Pred(blank, zeros)` when the first chunk decodes.
+    pred: Option<CarriedPred>,
+}
+
+/// Pull `(decoder_out, post_state)` out of a predictor run's outputs as session-owned
+/// `DynValue`s (output order: `[decoder_out, decoder_length, state0, state1]`).
+fn take_pred_outputs(
+    mut outputs: ort::session::SessionOutputs<'_>,
+    names: &[String],
+) -> SttResult<CarriedPred> {
+    let mut take = |name: &str| {
+        outputs
+            .remove(name)
+            .ok_or_else(|| SttError::Inference(format!("nemo stream decoder produced no {name}")))
+    };
+    let decoder_out = take(names[0].as_str())?;
+    let s0 = take(names[2].as_str())?;
+    let s1 = take(names[3].as_str())?;
+    Ok(CarriedPred {
+        decoder_out,
+        post_state: (s0, s1),
+    })
 }
 
 /// True for a `<...>`-framed special/language token (`<en-US>`, `<unk>`, `<blk>`, …) that the
@@ -142,9 +191,40 @@ fn resolve_prompt_index(
 
 impl NativeNemoStreamingEngine {
     pub fn load(cfg: &EngineConfig) -> SttResult<Self> {
-        let encoder = build_session(file(&cfg.resolved, "encoder")?, &cfg.providers)?;
-        let decoder = build_session(file(&cfg.resolved, "decoder")?, &cfg.providers)?;
-        let joiner = build_session(file(&cfg.resolved, "joiner")?, &cfg.providers)?;
+        // HYBRID device split for QUANTIZED exports on DirectML (measured, nemotron-3.5 1120ms
+        // int8, 66 s clip): the int8 ENCODER is faster on DML than CPU (~117 vs ~186 ms/chunk —
+        // one fixed-shape run, fuses once), but the per-token decoder/joiner runs collapse on DML
+        // (dec ~8-16 ms/run vs 0.6 ms on CPU; join ~2-3 ms vs 0.4 ms) because the QDQ nodes demote
+        // per-op and every tiny run pays kernel-launch overhead. So: encoder → GPU EP, decoder +
+        // joiner → CPU. Float exports keep the full provider list everywhere (fp32 dec/join on DML
+        // ≈ CPU, no QDQ demotion). Escapes: `WINSTT_NEMO_STREAM_DECODER_DML` forces dec/join back
+        // onto the GPU EP; `WINSTT_NEMO_STREAM_ENCODER_CPU` pins the encoder to CPU (isolation).
+        let cpu_only = [Accelerator::Cpu];
+        let dml_primary = cfg.providers.first() == Some(&Accelerator::DirectMl);
+        let quantized = matches!(
+            cfg.resolved.effective_quantization,
+            crate::winstt::stt::Quantization::Int8
+                | crate::winstt::stt::Quantization::Q4
+                | crate::winstt::stt::Quantization::Q4f16
+                | crate::winstt::stt::Quantization::Bnb4
+                | crate::winstt::stt::Quantization::Uint8
+        );
+        let enc_providers: &[Accelerator] =
+            if std::env::var("WINSTT_NEMO_STREAM_ENCODER_CPU").is_ok() {
+                &cpu_only
+            } else {
+                &cfg.providers
+            };
+        let decjoin_providers: &[Accelerator] =
+            if dml_primary && quantized && std::env::var("WINSTT_NEMO_STREAM_DECODER_DML").is_err()
+            {
+                &cpu_only
+            } else {
+                &cfg.providers
+            };
+        let encoder = build_session(file(&cfg.resolved, "encoder")?, enc_providers)?;
+        let decoder = build_session(file(&cfg.resolved, "decoder")?, decjoin_providers)?;
+        let joiner = build_session(file(&cfg.resolved, "joiner")?, decjoin_providers)?;
 
         let metadata = read_custom_metadata(&encoder)?;
         let feature_dim = feat_dim_of(&encoder, "audio_signal");
@@ -199,7 +279,9 @@ impl NativeNemoStreamingEngine {
 
         let vocab = Vocab::load(file(&cfg.resolved, "vocab")?, false, true)?;
         let mel_fb = frontend::build_nemo_mel_filterbank(feature_dim);
-        let (device, device_id) = nemo_stream_device(&cfg.providers);
+        // The carried encoder-cache binding follows the ENCODER session's placement (the decoder/
+        // joiner may be CPU-split above, but the cache tensors only flow encoder→encoder).
+        let (device, device_id) = nemo_stream_device(enc_providers);
         let mut engine = Self {
             encoder,
             decoder,
@@ -225,6 +307,9 @@ impl NativeNemoStreamingEngine {
             device,
             device_id,
             stream: NemoStreamState::empty(),
+            profile: std::env::var("WINSTT_NEMO_STREAM_PROFILE")
+                .is_ok()
+                .then(StreamProfile::default),
         };
         engine.stream = engine.fresh_stream_state();
         Ok(engine)
@@ -245,10 +330,7 @@ impl NativeNemoStreamingEngine {
             cache_last_channel: None,
             cache_last_time: None,
             cache_last_channel_len: None,
-            decoder_state: (
-                ArrayD::<f32>::zeros(IxDyn(&self.decoder_state_shape_0)),
-                ArrayD::<f32>::zeros(IxDyn(&self.decoder_state_shape_1)),
-            ),
+            pred: None,
         }
     }
 
@@ -264,11 +346,15 @@ impl NativeNemoStreamingEngine {
     }
 
     fn process_available_chunks(&mut self, finalize: bool) -> SttResult<bool> {
+        let t_feat = std::time::Instant::now();
         let features = frontend::nemo_features_with_normalization(
             &self.stream.cursor.pcm,
             &self.mel_fb,
             self.normalize_type,
         );
+        if let Some(p) = self.profile.as_mut() {
+            p.feat_ms += t_feat.elapsed().as_secs_f64() * 1000.0;
+        }
         let mut processed_any = false;
         loop {
             // Readiness follows the official streaming RNN-T rule:
@@ -298,7 +384,12 @@ impl NativeNemoStreamingEngine {
                 self.feature_dim
             )));
         }
+        let t_enc = std::time::Instant::now();
         let encoder_out = self.run_encoder(chunk)?;
+        if let Some(p) = self.profile.as_mut() {
+            p.encoder_ms += t_enc.elapsed().as_secs_f64() * 1000.0;
+            p.encoder_runs += 1;
+        }
         self.decode_encoder_out(&encoder_out)
     }
 
@@ -438,103 +529,130 @@ impl NativeNemoStreamingEngine {
         let enc3 = enc
             .into_dimensionality::<ndarray::Ix3>()
             .map_err(|e| SttError::Inference(format!("nemo stream enc dim: {e}")))?;
-        // Encoder output is [1, D, T]. The decoder loop consumes [T, D].
-        Ok(enc3.index_axis_move(Axis(0), 0).reversed_axes().to_owned())
+        // Encoder output is [1, D, T]. The decoder loop consumes [T, D] — force row-major so each
+        // frame row borrows as a contiguous zero-copy joiner input (`reversed_axes` only swaps
+        // strides; a plain `to_owned` would keep the F-order and force a second copy later).
+        Ok(enc3
+            .index_axis_move(Axis(0), 0)
+            .reversed_axes()
+            .as_standard_layout()
+            .into_owned())
     }
 
     fn decode_encoder_out(&mut self, encoder_out: &Array2<f32>) -> SttResult<()> {
-        let last = self
-            .stream
-            .cursor
-            .tokens
-            .last()
-            .copied()
-            .unwrap_or(self.blank_id);
-        let state = self.stream.decoder_state.clone();
-        let (mut decoder_out, mut next_state) = self.run_decoder(last, &state)?;
-        let mut emitted = false;
+        // Ensure contiguous rows so each frame borrows as a zero-copy joiner input below.
+        let enc = encoder_out.as_standard_layout();
+        // Take (or prime) the carried predictor step. Priming happens ONCE per stream — Pred(last
+        // token, zeros); a truly fresh stream primes with blank. Each emitted token advances it,
+        // so tokens are consumed by the LSTM exactly once (see `CarriedPred`).
+        let mut pred = match self.stream.pred.take() {
+            Some(p) => p,
+            None => {
+                let last = self
+                    .stream
+                    .cursor
+                    .tokens
+                    .last()
+                    .copied()
+                    .unwrap_or(self.blank_id);
+                self.prime_pred(last)?
+            }
+        };
 
-        for t in 0..encoder_out.nrows() {
-            let enc_frame = encoder_out.index_axis(Axis(0), t).to_owned();
+        for t in 0..enc.nrows() {
+            let row = enc.row(t);
+            let enc_frame = row.as_slice().ok_or_else(|| {
+                SttError::Inference("nemo stream encoder row not contiguous".into())
+            })?;
             for _ in 0..MAX_SYMBOLS_PER_FRAME {
-                let logits = self.run_joiner(&enc_frame, &decoder_out)?;
+                let logits = self.run_joiner(enc_frame, &pred.decoder_out)?;
                 let (best, _) = argmax_1d(&logits);
                 let token = best as i64;
                 if token == self.blank_id {
                     self.stream.cursor.num_trailing_blanks += 1;
                     break;
                 }
-                emitted = true;
                 self.stream.cursor.tokens.push(token);
                 self.stream.cursor.num_trailing_blanks = 0;
-                let (new_decoder_out, new_next_state) = self.run_decoder(token, &next_state)?;
-                decoder_out = new_decoder_out;
-                next_state = new_next_state;
+                pred = self.step_pred(token, &pred)?;
             }
         }
 
-        if emitted {
-            self.stream.decoder_state = next_state;
-        }
-        self.stream.cursor.frame_offset += encoder_out.nrows();
+        self.stream.pred = Some(pred);
+        self.stream.cursor.frame_offset += enc.nrows();
         Ok(())
     }
 
-    fn run_decoder(
-        &mut self,
-        token: i64,
-        state: &DecoderState,
-    ) -> SttResult<(ArrayD<f32>, DecoderState)> {
+    /// Predictor run priming a fresh stream: `Pred(token, zero LSTM state)`.
+    fn prime_pred(&mut self, token: i64) -> SttResult<CarriedPred> {
+        let t_run = std::time::Instant::now();
         let targets = tensor_i32((1, 1), vec![token as i32])?;
         let target_length = tensor_i32_1d(vec![1])?;
-        let st0 = Tensor::from_array(state.0.clone())
+        let st0 = Tensor::from_array(ArrayD::<f32>::zeros(IxDyn(&self.decoder_state_shape_0)))
             .map_err(|e| SttError::Inference(format!("decoder state0 tensor: {e}")))?;
-        let st1 = Tensor::from_array(state.1.clone())
+        let st1 = Tensor::from_array(ArrayD::<f32>::zeros(IxDyn(&self.decoder_state_shape_1)))
             .map_err(|e| SttError::Inference(format!("decoder state1 tensor: {e}")))?;
-
-        let target_name = self.decoder_input_names[0].as_str();
-        let target_len_name = self.decoder_input_names[1].as_str();
-        let state0_name = self.decoder_input_names[2].as_str();
-        let state1_name = self.decoder_input_names[3].as_str();
         let outputs = self
             .decoder
             .run(ort::inputs![
-                target_name => targets,
-                target_len_name => target_length,
-                state0_name => st0,
-                state1_name => st1,
+                self.decoder_input_names[0].as_str() => targets,
+                self.decoder_input_names[1].as_str() => target_length,
+                self.decoder_input_names[2].as_str() => st0,
+                self.decoder_input_names[3].as_str() => st1,
             ])
             .map_err(|e| SttError::Inference(format!("nemo stream decoder run: {e}")))?;
-        let decoder_out = out_to_f32(&outputs[self.decoder_output_names[0].as_str()])?;
-        let next0 = out_to_f32(&outputs[self.decoder_output_names[2].as_str()])?;
-        let next1 = out_to_f32(&outputs[self.decoder_output_names[3].as_str()])?;
-        drop(outputs);
-        Ok((decoder_out, (next0, next1)))
+        let pred = take_pred_outputs(outputs, &self.decoder_output_names)?;
+        if let Some(p) = self.profile.as_mut() {
+            p.decoder_ms += t_run.elapsed().as_secs_f64() * 1000.0;
+            p.decoder_runs += 1;
+        }
+        Ok(pred)
     }
 
-    fn run_joiner(
-        &mut self,
-        enc_frame: &ndarray::Array1<f32>,
-        decoder_out: &ArrayD<f32>,
-    ) -> SttResult<Vec<f32>> {
-        let enc = enc_frame
-            .view()
-            .into_shape_with_order((1, enc_frame.len(), 1))
-            .map_err(|e| SttError::Inference(format!("joiner enc reshape: {e}")))?
-            .to_owned();
-        let enc_tensor = Tensor::from_array(enc)
-            .map_err(|e| SttError::Inference(format!("joiner enc tensor: {e}")))?;
-        let dec_tensor = Tensor::from_array(decoder_out.clone())
-            .map_err(|e| SttError::Inference(format!("joiner dec tensor: {e}")))?;
+    /// Predictor run advancing the carried step after an emission: `Pred(token, post_state)`.
+    /// The carried states pass as zero-copy views — no host extraction, no re-upload.
+    fn step_pred(&mut self, token: i64, prev: &CarriedPred) -> SttResult<CarriedPred> {
+        let t_run = std::time::Instant::now();
+        let targets = tensor_i32((1, 1), vec![token as i32])?;
+        let target_length = tensor_i32_1d(vec![1])?;
+        let outputs = self
+            .decoder
+            .run(ort::inputs![
+                self.decoder_input_names[0].as_str() => targets,
+                self.decoder_input_names[1].as_str() => target_length,
+                self.decoder_input_names[2].as_str() => prev.post_state.0.view(),
+                self.decoder_input_names[3].as_str() => prev.post_state.1.view(),
+            ])
+            .map_err(|e| SttError::Inference(format!("nemo stream decoder run: {e}")))?;
+        let pred = take_pred_outputs(outputs, &self.decoder_output_names)?;
+        if let Some(p) = self.profile.as_mut() {
+            p.decoder_ms += t_run.elapsed().as_secs_f64() * 1000.0;
+            p.decoder_runs += 1;
+        }
+        Ok(pred)
+    }
+
+    /// Joiner over ONE encoder frame (borrowed zero-copy as `(1, D, 1)`) and the carried
+    /// `decoder_out` (borrowed as a view — reused across frames, never cloned).
+    fn run_joiner(&mut self, enc_frame: &[f32], decoder_out: &DynValue) -> SttResult<Vec<f32>> {
+        let t_run = std::time::Instant::now();
+        let enc_shape = [1usize, enc_frame.len(), 1usize];
+        let enc_ref = ort::value::TensorRef::from_array_view((enc_shape.as_slice(), enc_frame))
+            .map_err(|e| SttError::Inference(format!("joiner enc view: {e}")))?;
         let outputs = self
             .joiner
             .run(ort::inputs![
-                "encoder_outputs" => enc_tensor,
-                "decoder_outputs" => dec_tensor,
+                "encoder_outputs" => enc_ref,
+                "decoder_outputs" => decoder_out.view(),
             ])
             .map_err(|e| SttError::Inference(format!("nemo stream joiner run: {e}")))?;
         let logits = out_to_f32(&outputs["outputs"])?;
-        Ok(logits.iter().copied().take(self.vocab_size).collect())
+        let out = logits.iter().copied().take(self.vocab_size).collect();
+        if let Some(p) = self.profile.as_mut() {
+            p.joiner_ms += t_run.elapsed().as_secs_f64() * 1000.0;
+            p.joiner_runs += 1;
+        }
+        Ok(out)
     }
 
     fn current_text(&self) -> String {
@@ -555,10 +673,7 @@ impl NemoStreamState {
             cache_last_channel: None,
             cache_last_time: None,
             cache_last_channel_len: None,
-            decoder_state: (
-                ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1])),
-                ArrayD::<f32>::zeros(IxDyn(&[1, 1, 1])),
-            ),
+            pred: None,
         }
     }
 }
@@ -609,11 +724,29 @@ impl Transcriber for NativeNemoStreamingEngine {
             .pcm
             .extend_from_slice(&streaming::final_silence_pad());
         self.process_available_chunks(true)?;
+        if let Some(p) = self.profile.as_ref() {
+            eprintln!(
+                "[nemo-stream-profile] feat={:.1}ms enc={:.1}ms/{} runs ({:.1}ms/run) dec={:.1}ms/{} runs ({:.2}ms/run) join={:.1}ms/{} runs ({:.2}ms/run)",
+                p.feat_ms,
+                p.encoder_ms,
+                p.encoder_runs,
+                p.encoder_ms / p.encoder_runs.max(1) as f64,
+                p.decoder_ms,
+                p.decoder_runs,
+                p.decoder_ms / p.decoder_runs.max(1) as f64,
+                p.joiner_ms,
+                p.joiner_runs,
+                p.joiner_ms / p.joiner_runs.max(1) as f64,
+            );
+        }
         Ok(self.current_text())
     }
 
     fn stream_reset(&mut self) {
         self.stream = self.fresh_stream_state();
+        if let Some(p) = self.profile.as_mut() {
+            *p = StreamProfile::default();
+        }
     }
 }
 

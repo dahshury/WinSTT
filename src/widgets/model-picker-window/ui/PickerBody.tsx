@@ -52,6 +52,7 @@ import {
 	type StatesById,
 	type SystemInfo,
 } from "../lib/picker-helpers";
+import { DetachedOutputDevicePicker } from "./DetachedOutputDevicePicker";
 
 /** Realtime-slot wiring, supplied by the host for the `stt-realtime` mode. The
  *  realtime select handler, download gating, main-model context, and source
@@ -477,6 +478,13 @@ export function PickerBody({
 	}
 	if (mode.kind === "tts") {
 		return <DetachedTtsPicker />;
+	}
+	if (mode.kind === "output-device") {
+		return (
+			<DetachedPickerFrame>
+				<DetachedOutputDevicePicker />
+			</DetachedPickerFrame>
+		);
 	}
 	if (mode.kind === "stt-realtime") {
 		return (

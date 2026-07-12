@@ -1,6 +1,6 @@
 [package]
 name = "winstt"
-version = "0.1.3-alpha.5"
+version = "0.1.3-alpha.6"
 description = "WinSTT — local-first speech-to-text"
 authors = ["WinSTT contributors"]
 edition = "2024"
@@ -213,9 +213,47 @@ windows = { version = "0.61.3", features = [
 ] }
 winreg = "0.55"
 
+# Secret storage for cloud API keys on macOS (Keychain) and Linux (Secret Service).
+# Windows keeps its own DPAPI-based store (Win32_Security_Cryptography above), so this
+# is strictly the non-Windows backend. `sync-secret-service` pulls zbus for the Linux
+# D-Bus Secret Service; `crypto-rust` uses a pure-Rust AES impl so we don't need a
+# system libcrypto at link time; `apple-native` uses the macOS Keychain Services API.
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+keyring = { version = "3", features = ["apple-native", "sync-secret-service", "crypto-rust"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
-tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+# Pinned to a specific commit (was the moving `v2.1` branch) for reproducible builds.
+# This is the tip of that branch at pin time; bump the rev deliberately to update.
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "da9c9a8d4eb7f0524a2508988df1a7d9585b4904" }
 objc2-core-audio = { version = "0.3.1", default-features = false, features = ["std", "AudioHardware"] }
+# macOS GPU execution provider for the ONNX STT engine (CoreML), mirroring the
+# Windows DirectML EP above. Non-default features are additive with the base `ort`.
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray", "half", "coreml"] }
+# Typed objc2 framework bindings for the native macOS integration:
+#  - objc2 / objc2-foundation / objc2-app-kit: base runtime + Foundation + AppKit
+#    (NSPanel styling alongside tauri-nspanel).
+#  - objc2-screen-capture-kit: SCStream / SCShareableContent loopback capture.
+#  - objc2-core-media: CMSampleBuffer for the SCStream audio frames.
+#  - objc2-application-services: AXUIElement AX-API for focused-field context.
+#  - dispatch2: GCD queues SCStream delivers its callbacks on.
+# Pinned to the objc2 0.3-framework / 0.6-core line so they interoperate with the
+# existing objc2-core-audio 0.3.1 (same objc2 major) instead of dragging in a second
+# incompatible objc2 tree.
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-screen-capture-kit = "0.3"
+objc2-core-media = "0.3"
+objc2-application-services = "0.3"
+dispatch2 = "0.3"
+
+# Linux AT-SPI accessibility context reader for the winstt_context sidecar
+# (focused-field text / caret). zbus is the D-Bus transport atspi rides on; pin it
+# to the version atspi requires so the two agree. PipeWire loopback capture uses the
+# pw-record/parec subprocess (no crate).
+[target.'cfg(target_os = "linux")'.dependencies]
+atspi = "0.26"
+zbus = "5"
 
 [dev-dependencies]
 tempfile = "3"

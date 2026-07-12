@@ -3,6 +3,7 @@
 // `tts:chunk` wire builder. Self-contained — referenced only where `read_aloud`
 // constructs the sink.
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::Engine as _;
@@ -10,6 +11,105 @@ use tauri::{AppHandle, Emitter};
 use tokio_util::sync::CancellationToken;
 
 use crate::winstt::tts::{ChunkSink, Format, SynthesisChunk};
+
+/// Accumulates a read-aloud session's audio for history persistence: f32 PCM
+/// for local engines (written out as a WAV), raw mp3 bytes for cloud streams
+/// (frame-concatenated — decoders resync on frame headers, so the joined
+/// stream plays as one clip). Capture aborts (drained to `None`) when the
+/// stream changes shape mid-run or exceeds the size cap, so a bad capture can
+/// never produce a corrupt-but-saved file.
+pub(super) struct TtsAudioCapture {
+    inner: Mutex<Option<CaptureBuf>>,
+}
+
+pub(super) struct CapturedTtsAudio {
+    pub(super) format: Format,
+    pub(super) sample_rate: u32,
+    pub(super) channels: u16,
+    pub(super) pcm: Vec<f32>,
+    pub(super) mp3: Vec<u8>,
+}
+
+struct CaptureBuf {
+    format: Format,
+    sample_rate: u32,
+    channels: u16,
+    pcm: Vec<f32>,
+    mp3: Vec<u8>,
+}
+
+/// Hard cap on captured audio (~10 min of 48 kHz stereo f32 ≈ 220 MB would be
+/// absurd; this caps at 64 M samples ≈ 256 MB worst-case transient, and mp3 at
+/// 64 MB). A run that overflows drops its capture entirely rather than saving
+/// a silently truncated clip.
+const MAX_CAPTURE_SAMPLES: usize = 64 * 1024 * 1024;
+const MAX_CAPTURE_MP3_BYTES: usize = 64 * 1024 * 1024;
+
+impl TtsAudioCapture {
+    pub(super) fn new() -> Self {
+        Self {
+            inner: Mutex::new(None),
+        }
+    }
+
+    fn push(&self, chunk: &SynthesisChunk) {
+        let Ok(mut guard) = self.inner.lock() else {
+            return;
+        };
+        let buf = guard.get_or_insert_with(|| CaptureBuf {
+            format: chunk.format,
+            sample_rate: chunk.sample_rate,
+            channels: u16::from(chunk.channels.max(1)),
+            pcm: Vec::new(),
+            mp3: Vec::new(),
+        });
+        // A shape change mid-run (format/rate/channel flip between sentences)
+        // would corrupt the joined clip — abandon the capture for this run.
+        let shape_changed = buf.format != chunk.format
+            || buf.sample_rate != chunk.sample_rate
+            || buf.channels != u16::from(chunk.channels.max(1));
+        if shape_changed {
+            *guard = None;
+            return;
+        }
+        match chunk.format {
+            Format::F32le => {
+                if buf.pcm.len() + chunk.audio.len() > MAX_CAPTURE_SAMPLES {
+                    *guard = None;
+                    return;
+                }
+                buf.pcm.extend_from_slice(&chunk.audio);
+            }
+            Format::Mp3 => {
+                if buf.mp3.len() + chunk.encoded.len() > MAX_CAPTURE_MP3_BYTES {
+                    *guard = None;
+                    return;
+                }
+                buf.mp3.extend_from_slice(&chunk.encoded);
+            }
+        }
+    }
+
+    /// Drain the captured session audio; `None` when nothing was captured or
+    /// the capture was abandoned.
+    pub(super) fn take(&self) -> Option<CapturedTtsAudio> {
+        let buf = self.inner.lock().ok()?.take()?;
+        let empty = match buf.format {
+            Format::F32le => buf.pcm.is_empty(),
+            Format::Mp3 => buf.mp3.is_empty(),
+        };
+        if empty {
+            return None;
+        }
+        Some(CapturedTtsAudio {
+            format: buf.format,
+            sample_rate: buf.sample_rate,
+            channels: buf.channels,
+            pcm: buf.pcm,
+            mp3: buf.mp3,
+        })
+    }
+}
 
 fn base64_padded_len(byte_len: usize) -> usize {
     byte_len.div_ceil(3) * 4
@@ -63,6 +163,9 @@ pub(super) struct EmitChunkSink {
     pub(super) cancelled: CancellationToken,
     /// Monotonic per-read seq for the chunk stream.
     pub(super) seq: AtomicU64,
+    /// Session-audio accumulator for history playback. `None` when history is
+    /// disabled — capture then costs nothing.
+    pub(super) capture: Option<TtsAudioCapture>,
 }
 
 impl ChunkSink for EmitChunkSink {
@@ -81,6 +184,9 @@ impl ChunkSink for EmitChunkSink {
         }
         chunk.seq = self.seq.fetch_add(1, Ordering::Relaxed);
         chunk.is_final = false;
+        if let Some(capture) = &self.capture {
+            capture.push(&chunk);
+        }
         let _ = self
             .app
             .emit("tts:chunk", chunk_payload(&self.request_id, &chunk));

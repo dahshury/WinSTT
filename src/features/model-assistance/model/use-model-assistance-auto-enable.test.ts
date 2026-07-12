@@ -21,7 +21,6 @@ function assistanceModel(id = "crisper-whisper"): ModelInfo {
 	return {
 		id,
 		displayName: "CrisperWhisper",
-		backend: "onnx_asr",
 		family: "whisper",
 		languages: ["en"],
 		supportsLanguageDetection: true,
@@ -58,7 +57,6 @@ function seedSettings({
 			},
 			model: {
 				...DEFAULT_SETTINGS.model,
-				backend: "onnx_asr",
 				model: selectedModel,
 			},
 			quality: {

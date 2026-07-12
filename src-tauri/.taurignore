@@ -1,0 +1,9 @@
+# Tauri dev-watcher ignores (gitignore syntax). In dev the app's cwd is `src-tauri/`,
+# and `portable::store_path` returns a RELATIVE path in non-portable mode, so the settings
+# store writes `winstt-settings.json` (+ `.bak`/`.tmp`/`.corrupt`) into this directory on
+# every boot. Without ignoring them, each write triggers a rebuild -> rerun -> write loop
+# that prevents the app (and the Vite dev server) from ever finishing startup.
+winstt-settings.json*
+
+# Runtime SQLite history DB, if ever written here instead of AppData.
+history.db*

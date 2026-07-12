@@ -9,6 +9,10 @@ import {
 	useModelSwapStore,
 } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
+import {
+	_resetIpcLoadTimingForTests,
+	markIpcLoadResolved,
+} from "@/shared/lib/ipc-load-timing";
 import { _resetSwapFailureTimingForTests } from "@/shared/lib/swap-failure-timing";
 import {
 	adoptCompletedSwap,
@@ -29,7 +33,6 @@ function seedCatalog(): void {
 				id: "tiny",
 				displayName: "tiny",
 				family: "whisper",
-				backend: "faster_whisper",
 				languages: [],
 				supportsLanguageDetection: false,
 				previewCapable: true,
@@ -50,7 +53,6 @@ function seedCatalog(): void {
 				id: "nemo-canary-1b-v2",
 				displayName: "Canary",
 				family: "nemo",
-				backend: "onnx_asr",
 				languages: [],
 				supportsLanguageDetection: false,
 				previewCapable: false,
@@ -71,7 +73,6 @@ function seedCatalog(): void {
 				id: "large-v3-turbo",
 				displayName: "Large v3 Turbo",
 				family: "whisper",
-				backend: "faster_whisper",
 				languages: [],
 				supportsLanguageDetection: false,
 				previewCapable: false,
@@ -126,6 +127,7 @@ beforeEach(() => {
 		isLoaded: true,
 	});
 	_resetSwapFailureTimingForTests();
+	_resetIpcLoadTimingForTests();
 	seedCatalog();
 });
 
@@ -226,6 +228,35 @@ describe("useSyncActiveModel", () => {
 		);
 	});
 
+	test("a bare settings.model change is NOT reverted by stale runtime (regression #3: stale activeMain read)", async () => {
+		// The exact live-traced revert: a model pick lands as a PLAIN settings
+		// change (adoptCompletedSwap / cross-window broadcast) with this window's
+		// swap store still empty (`activeMain: null` — beginSwap only ran in the
+		// initiating picker window). The effect opens the implicit swap itself,
+		// but it used to read `activeMain` BEFORE that beginSwap, so the adoption
+		// branch saw the stale null and reverted the store to the lagging
+		// runtime model ~5ms after the pick — which also emptied the debounced
+		// save's diff, so the pick never persisted (the "reverts to cohere on
+		// every boot" root cause).
+		useConnectionStore.setState({ runtimeInfo: withModel("tiny") });
+		renderHook(() => useSyncActiveModel());
+		// Pick a new model WITHOUT touching the swap store — the pure transition.
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				model: { ...DEFAULT_SETTINGS.model, model: "large-v3-turbo" },
+			},
+			isLoaded: true,
+		});
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		// Not reverted to the stale runtime model…
+		expect(useSettingsStore.getState().settings.model.model).toBe(
+			"large-v3-turbo",
+		);
+		// …and the transition opened the implicit in-flight swap guard.
+		expect(useModelSwapStore.getState().activeMain).toBe("large-v3-turbo");
+	});
+
 	test("swap completion alone does NOT trigger reconciliation against stale runtime (regression #2)", async () => {
 		// Second-order regression: when mainSwapping was a dep, the
 		// transition from true → false (clearing on swap_completed) re-fired
@@ -290,7 +321,14 @@ describe("useSyncActiveModel", () => {
 			expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
 		});
 		// Simulate the late-resolving settingsLoad replacing the whole
-		// settings object with persisted store's stale canary value.
+		// settings object with persisted store's stale canary value. In
+		// production this revert ALWAYS lands inside the 500ms window after
+		// `markIpcLoadResolved()` (useSyncSettings stamps it in the same
+		// `.then` that calls setSettings(loaded)) — that stamp is what tells
+		// the reconciler "this transition is a load revert, not a user pick"
+		// so it re-adopts instead of opening an implicit swap. Stamp it here
+		// to model the real sequence.
+		markIpcLoadResolved();
 		useSettingsStore.setState({
 			settings: {
 				...DEFAULT_SETTINGS,
@@ -387,28 +425,34 @@ describe("shouldOpenImplicitSwap", () => {
 });
 
 describe("resolveSwapCompletedPatch", () => {
+	const catalogModel = (
+		id: string,
+		availableQuantizations: string[],
+	): ModelInfo => ({
+		id,
+		displayName: id,
+		family: "nemo",
+		languages: [],
+		supportsLanguageDetection: false,
+		previewCapable: false,
+		nativeStreaming: false,
+		finalReuseSafe: false,
+		sizeLabel: "",
+		onnxModelName: null,
+		description: "",
+		availableQuantizations,
+		sizeBytesByQuantization: {},
+		available: true,
+		errorMessage: "",
+		localPath: null,
+		speedScore: 0,
+		accuracyScore: 0,
+	});
 	const catalog: ModelInfo[] = [
-		{
-			id: "nemo-canary-1b-v2",
-			displayName: "Canary",
-			family: "nemo",
-			backend: "onnx_asr",
-			languages: [],
-			supportsLanguageDetection: false,
-			previewCapable: false,
-			nativeStreaming: false,
-			finalReuseSafe: false,
-			sizeLabel: "",
-			onnxModelName: null,
-			description: "",
-			availableQuantizations: [],
-			sizeBytesByQuantization: {},
-			available: true,
-			errorMessage: "",
-			localPath: null,
-			speedScore: 0,
-			accuracyScore: 0,
-		},
+		catalogModel("nemo-canary-1b-v2", []),
+		// A model that offers int8 but NOT fp16 — the shape that exposes the
+		// stale-precision rejected-save bug.
+		catalogModel("int8-only-model", ["", "int8"]),
 	];
 
 	test("main pick resolves the paired backend from the catalog", () => {
@@ -419,13 +463,56 @@ describe("resolveSwapCompletedPatch", () => {
 				"tiny",
 				null,
 				catalog,
+				"",
 			),
-		).toEqual({ model: "nemo-canary-1b-v2", backend: "onnx_asr" });
+		).toEqual({ model: "nemo-canary-1b-v2" });
+	});
+
+	test("main adoption resets a precision the new model does not offer", () => {
+		expect(
+			resolveSwapCompletedPatch(
+				"main",
+				"int8-only-model",
+				"tiny",
+				null,
+				catalog,
+				"fp16",
+			),
+		).toEqual({
+			model: "int8-only-model",
+			onnxQuantization: "",
+		});
+	});
+
+	test("main adoption keeps a precision the new model does offer", () => {
+		expect(
+			resolveSwapCompletedPatch(
+				"main",
+				"int8-only-model",
+				"tiny",
+				null,
+				catalog,
+				"int8",
+			),
+		).toEqual({ model: "int8-only-model" });
+	});
+
+	test("main adoption leaves the '' / auto sentinels untouched", () => {
+		expect(
+			resolveSwapCompletedPatch(
+				"main",
+				"int8-only-model",
+				"tiny",
+				null,
+				catalog,
+				"auto",
+			),
+		).toEqual({ model: "int8-only-model" });
 	});
 
 	test("main no-op when the loaded model already matches settings", () => {
 		expect(
-			resolveSwapCompletedPatch("main", "tiny", "tiny", null, catalog),
+			resolveSwapCompletedPatch("main", "tiny", "tiny", null, catalog, ""),
 		).toBeNull();
 	});
 
@@ -436,25 +523,32 @@ describe("resolveSwapCompletedPatch", () => {
 			"tiny",
 			null,
 			catalog,
+			"fp16",
 		);
 		expect(patch).toEqual({
 			model: "elevenlabs:scribe_v1",
-			backend: "onnx_asr",
 		});
 	});
 
 	test("unknown local id (not cloud, not in catalog) yields null — never a bare {model}", () => {
 		expect(
-			resolveSwapCompletedPatch("main", "ghost-model", "tiny", null, catalog),
+			resolveSwapCompletedPatch(
+				"main",
+				"ghost-model",
+				"tiny",
+				null,
+				catalog,
+				"",
+			),
 		).toBeNull();
 	});
 
 	test("empty name is a no-op (e.g. realtime clear — handled by broadcast)", () => {
 		expect(
-			resolveSwapCompletedPatch("main", "", "tiny", null, catalog),
+			resolveSwapCompletedPatch("main", "", "tiny", null, catalog, ""),
 		).toBeNull();
 		expect(
-			resolveSwapCompletedPatch("realtime", "", null, "tiny", catalog),
+			resolveSwapCompletedPatch("realtime", "", null, "tiny", catalog, ""),
 		).toBeNull();
 	});
 
@@ -466,13 +560,14 @@ describe("resolveSwapCompletedPatch", () => {
 				"tiny",
 				"old-rt",
 				catalog,
+				"",
 			),
 		).toEqual({ realtimeModel: "nemo-canary-1b-v2" });
 	});
 
 	test("realtime no-op when it already matches", () => {
 		expect(
-			resolveSwapCompletedPatch("realtime", "rt", "tiny", "rt", catalog),
+			resolveSwapCompletedPatch("realtime", "rt", "tiny", "rt", catalog, ""),
 		).toBeNull();
 	});
 });
@@ -488,8 +583,6 @@ describe("adoptCompletedSwap", () => {
 		adoptCompletedSwap("main", "nemo-canary-1b-v2");
 		const model = useSettingsStore.getState().settings.model;
 		expect(model.model).toBe("nemo-canary-1b-v2");
-		// Backend is resolved from the catalog (the typed ModelPatch couple).
-		expect(model.backend).toBe("onnx_asr");
 	});
 
 	test("is a no-op when the loaded model already matches (initiating window)", () => {

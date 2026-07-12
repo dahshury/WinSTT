@@ -5,6 +5,7 @@ import { cloneElement, type ReactElement } from "react";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { SurfaceProvider, surfaceClasses } from "@/shared/lib/surface";
 import { ModelSpecCard } from "./ModelSpecCard";
+import { InsideModelSpecHoverCardProvider } from "./spec-hover-context";
 import type { ModelSpec } from "./types";
 
 /**
@@ -61,31 +62,33 @@ export function ModelSpecHoverCard({
 		return children;
 	}
 	return (
-		<PreviewCard.Root>
-			<PreviewCard.Trigger
-				closeDelay={CLOSE_DELAY}
-				delay={delay}
-				render={cloneElement(children, {
-					suppressHydrationWarning: true,
-				} as Record<string, unknown>)}
-			/>
-			<PreviewCard.Portal>
-				<SurfaceProvider value={POPUP_LEVEL}>
-					<PreviewCard.Positioner
-						align={align}
-						collisionPadding={12}
-						side={side}
-						sideOffset={sideOffset}
-						style={{ zIndex: Z_INDEX.tooltip }}
-					>
-						<PreviewCard.Popup
-							className={`w-[340px] max-w-[92vw] origin-(--transform-origin) overflow-hidden rounded-xl ${surfaceClasses(POPUP_LEVEL)} font-sans transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 data-[instant]:transition-none`}
+		<InsideModelSpecHoverCardProvider value={true}>
+			<PreviewCard.Root>
+				<PreviewCard.Trigger
+					closeDelay={CLOSE_DELAY}
+					delay={delay}
+					render={cloneElement(children, {
+						suppressHydrationWarning: true,
+					} as Record<string, unknown>)}
+				/>
+				<PreviewCard.Portal>
+					<SurfaceProvider value={POPUP_LEVEL}>
+						<PreviewCard.Positioner
+							align={align}
+							collisionPadding={12}
+							side={side}
+							sideOffset={sideOffset}
+							style={{ zIndex: Z_INDEX.tooltip }}
 						>
-							<ModelSpecCard spec={spec} />
-						</PreviewCard.Popup>
-					</PreviewCard.Positioner>
-				</SurfaceProvider>
-			</PreviewCard.Portal>
-		</PreviewCard.Root>
+							<PreviewCard.Popup
+								className={`w-[340px] max-w-[92vw] origin-(--transform-origin) overflow-hidden rounded-xl ${surfaceClasses(POPUP_LEVEL)} font-sans transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 data-[instant]:transition-none`}
+							>
+								<ModelSpecCard spec={spec} />
+							</PreviewCard.Popup>
+						</PreviewCard.Positioner>
+					</SurfaceProvider>
+				</PreviewCard.Portal>
+			</PreviewCard.Root>
+		</InsideModelSpecHoverCardProvider>
 	);
 }

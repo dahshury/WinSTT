@@ -86,11 +86,7 @@ pub(super) fn emit_model_progress(
     start: Instant,
 ) {
     let (downloaded, total) = agg.totals();
-    let progress = if total > 0 {
-        (downloaded as f64 / total as f64).min(1.0)
-    } else {
-        0.0
-    };
+    let progress = crate::winstt::downloads::progress_fraction_of(downloaded, total);
     let elapsed = start.elapsed().as_secs_f64().max(0.001);
     let speed = (downloaded as f64 / elapsed) as u64;
     let eta = if speed > 0 && total > downloaded {

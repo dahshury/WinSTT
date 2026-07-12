@@ -13,11 +13,10 @@ import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { revertSurfacesForOfflineProvider } from "./use-cloud-offline-auto-revert";
 import { useRevertNoticeStore } from "./revert-notice-store";
 
-function model(id: string, backend = "onnx_asr"): ModelInfo {
+function model(id: string): ModelInfo {
 	return {
 		id,
 		displayName: id,
-		backend,
 		family: "whisper",
 		languages: [],
 		supportsLanguageDetection: false,

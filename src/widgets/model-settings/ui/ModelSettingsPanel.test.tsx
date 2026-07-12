@@ -32,7 +32,6 @@ function rawModel(
 	return {
 		id,
 		display_name: id,
-		backend: "onnx_asr",
 		family: nativeStreaming ? "nemo" : "whisper",
 		languages: ["en"],
 		supports_language_detection: false,

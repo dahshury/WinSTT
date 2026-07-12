@@ -177,7 +177,16 @@ const llmTransformsSchema = z.object({
 
 export const llmSettingsSchema = z.object({
 	// Shared infrastructure (one Ollama instance, one OpenRouter account).
-	endpoint: z.url().default("http://localhost:11434"),
+	// `.catch(...)` is load-bearing: `z.url()` REJECTS a malformed/empty string
+	// (a hand-edit, a sync conflict, or a UI field momentarily holding an
+	// invalid URL), and without the catch that failure nukes the WHOLE `llm`
+	// section back to defaults on the next decode — silently wiping the user's
+	// provider/model/preset config. The catch rehydrates to the canonical
+	// Ollama default so a bad endpoint can only reset the endpoint field.
+	endpoint: z
+		.url()
+		.default("http://localhost:11434")
+		.catch("http://localhost:11434"),
 	openrouterApiKey: z.string().default(""),
 	// Global combo that cycles through the user-ordered post-processing profiles.
 	profileSwapHotkey: z
@@ -194,5 +203,7 @@ export const llmSettingsSchema = z.object({
 	// at the network layer — local LLMs (Ollama cold start) routinely exceed any
 	// finite cap, and a silent abort + un-processed-text paste is misleading.
 	// Kept here so the persisted setting / IPC plumbing / tests stay stable.
-	timeout: z.number().int().min(1000).max(30_000).default(5000),
+	// `.catch(5000)`: a persisted out-of-range value (older build, hand-edit)
+	// would otherwise reject and drag the whole `llm` section to defaults.
+	timeout: z.number().int().min(1000).max(30_000).default(5000).catch(5000),
 });

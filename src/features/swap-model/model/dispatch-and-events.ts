@@ -168,12 +168,10 @@ export function rollbackMain(
 	if (prev === null) {
 		return;
 	}
-	// Resolve backend so the rollback patch is well-formed under the typed
-	// ``ModelPatch`` — writing ``{ model: prev }`` alone is the same drift
-	// pattern that produced model/backend mismatches on disk.
-	const info = getModel(prev);
-	if (info?.backend) {
-		update({ model: prev, backend: info.backend });
+	// Only roll back to a model the catalog can still resolve; a vanished id
+	// isn't a valid selection to restore.
+	if (getModel(prev)) {
+		update({ model: prev });
 	}
 }
 

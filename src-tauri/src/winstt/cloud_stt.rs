@@ -588,6 +588,34 @@ pub fn cloud_models_for(provider: CloudSttProvider) -> &'static [CloudModel] {
     }
 }
 
+/// Serialize the curated cloud-STT catalog to the committed parity fixture
+/// (`spec/fixtures/cloud-stt-models.json`) in the renderer's camelCase `CloudModel`
+/// shape. This is the byte bridge that keeps `ELEVENLABS_CLOUD_MODELS` (here) and
+/// `CURATED_CLOUD_MODELS` (entities/cloud-stt-provider/model/catalog.ts) from drifting:
+/// the Rust test `cloud_models_fixture_matches_committed` asserts the committed file is
+/// current, and the TS test `cloud-stt-models.parity.test.ts` asserts the renderer table
+/// reproduces it. Regenerate via `cargo run --example export_catalog_parity_fixtures`.
+pub fn cloud_models_fixture_json() -> Result<String, serde_json::Error> {
+    let mut map = serde_json::Map::new();
+    for provider in [CloudSttProvider::ElevenLabs, CloudSttProvider::OpenRouter] {
+        let rows: Vec<serde_json::Value> = cloud_models_for(provider)
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "id": m.id,
+                    "displayName": m.display_name,
+                    "description": m.description,
+                    "isDefault": m.is_default,
+                })
+            })
+            .collect();
+        map.insert(provider.id().to_string(), serde_json::Value::Array(rows));
+    }
+    let mut json = serde_json::to_string_pretty(&serde_json::Value::Object(map))?;
+    json.push('\n');
+    Ok(json)
+}
+
 /// Recover the provider from a prefixed `<provider>:<id>` model id, or `None`
 /// for a local-catalog / custom id. Mirrors `providerOf` (catalog.ts).
 pub fn provider_of(model_id: &str) -> Option<CloudSttProvider> {
@@ -1075,6 +1103,19 @@ mod tests {
         assert!(el.iter().any(|m| m.id == "scribe_v1"));
         // OpenRouter has no curated catalog (dynamic scan).
         assert!(cloud_models_for(CloudSttProvider::OpenRouter).is_empty());
+    }
+
+    #[test]
+    fn cloud_models_fixture_matches_committed() {
+        // The committed fixture is the byte bridge to the renderer's CURATED_CLOUD_MODELS.
+        // If this fails, the curated cloud catalog changed — regenerate with
+        // `cargo run --example export_catalog_parity_fixtures` and commit the fixture.
+        let committed = include_str!("../../../spec/fixtures/cloud-stt-models.json");
+        let generated = cloud_models_fixture_json().expect("serialize cloud models");
+        assert_eq!(
+            committed, generated,
+            "spec/fixtures/cloud-stt-models.json is stale — rerun export_catalog_parity_fixtures"
+        );
     }
 
     #[test]

@@ -86,7 +86,6 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			tDict("term"),
 			tDict("replacement"),
 			tDict("autoAddTitle"),
-			tDict("thresholdLabel"),
 			tSnip("title"),
 			tSnip("trigger"),
 			tSnip("expansion"),

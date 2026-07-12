@@ -37,6 +37,16 @@ export const CATEGORY_ICONS: Record<string, IconSvgElement> = {
 	__other__: InfinityIcon,
 };
 
+/**
+ * Icons for the models breakdown. Model ids have no fixed logo (their maker logo
+ * is resolved per-bucket), so this only badges the rolled-up "Other" row with the
+ * same infinity glyph the categories breakdown uses — keeping the two lists'
+ * roll-up rows visually consistent.
+ */
+export const MODEL_ICONS: Record<string, IconSvgElement> = {
+	__other__: InfinityIcon,
+};
+
 interface UsageBarsProps {
 	buckets: UsageBucket[];
 	/** Optional leading icon per bucket, keyed by `UsageBucket.key`. */

@@ -2,25 +2,12 @@
 
 import { DashboardSpeed02Icon, Target02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { performanceScoreColor } from "@/shared/lib/performance-color";
 import { Tooltip } from "@/shared/ui/tooltip";
 
 interface PerfBarsProps {
 	accuracyScore: number;
 	speedScore: number;
-}
-
-/**
- * Map a 0..1 score to the semantic health-bar scale. Higher is better, so a
- * fast-but-sloppy model shows a high speed bar over a low accuracy bar.
- */
-function scoreColor(score: number): string {
-	const t = Math.max(0, Math.min(1, score));
-	if (t < 0.5) {
-		const lowPct = Math.round((1 - t * 2) * 100);
-		return `color-mix(in oklch, var(--color-performance-low) ${lowPct}%, var(--color-performance-mid))`;
-	}
-	const midPct = Math.round((1 - (t - 0.5) * 2) * 100);
-	return `color-mix(in oklch, var(--color-performance-mid) ${midPct}%, var(--color-performance-high))`;
 }
 
 interface PerfBarProps {
@@ -36,7 +23,7 @@ interface PerfBarProps {
  */
 function PerfBar({ icon, label, score }: PerfBarProps) {
 	const pct = Math.round(score * 100);
-	const color = scoreColor(score);
+	const color = performanceScoreColor(score);
 	return (
 		<Tooltip content={`${label} ${pct}%`} side="top">
 			<div

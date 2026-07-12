@@ -223,7 +223,12 @@ describe("useSettingsStore mutators", () => {
 		expect(useSettingsStore.getState().isLoaded).toBe(true);
 	});
 
-	test("setSettings normalizes LLM dictation off when word-by-word pasting is enabled", () => {
+	test("setSettings preserves LLM dictation flags (hydration/broadcast path does not re-normalize)", () => {
+		// Audit #23: setSettings is the hydration / cross-window broadcast path, not
+		// a user edit. It must store the given (already-writer-normalized) value
+		// verbatim instead of silently clearing the user's llm.enabled flags — the
+		// old re-normalization here let an unrelated broadcast wipe those flags, and
+		// the next save then persisted the loss.
 		const before = useSettingsStore.getState().settings;
 		useSettingsStore.getState().setSettings({
 			...before,
@@ -235,7 +240,7 @@ describe("useSettingsStore mutators", () => {
 		});
 
 		const settings = useSettingsStore.getState().settings;
-		expect(settings.llm.dictation.enabled).toBe(false);
+		expect(settings.llm.dictation.enabled).toBe(true);
 		expect(settings.general.wordByWordPasting).toBe(true);
 	});
 

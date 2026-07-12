@@ -9,6 +9,11 @@ import { useGpuInfo } from "@/entities/connection";
 import { useConnectionListener } from "@/features/connect-server";
 import { useDownloadListener } from "@/features/model-download";
 import { useRealtimePreviewFallback } from "@/features/realtime-preview-fallback";
+import {
+	LlmConfigPersistErrorToast,
+	SmartEndpointDisabledNotice,
+} from "@/features/surface-llm-settings-notices";
+import { SettingsWarningToasts } from "@/features/surface-settings-warnings";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { diagBeacon, installWebviewDiag } from "@/shared/lib/winstt-diag";
@@ -69,7 +74,17 @@ export function SettingsBootstrap() {
 			diagBeacon("settings", "SettingsBootstrap render reached");
 		}
 	}, []);
-	return <SettingsPage />;
+	return (
+		<>
+			<SettingsPage />
+			{/* Global settings-window notices — driven by zustand stores in this
+			    window's process (settings-hydration + LLM-config/smart-endpoint),
+			    so they mount here alongside the page rather than inside it. */}
+			<SettingsWarningToasts />
+			<LlmConfigPersistErrorToast />
+			<SmartEndpointDisabledNotice />
+		</>
+	);
 }
 
 renderReactRoot(

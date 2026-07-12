@@ -187,6 +187,18 @@ function EntryCardMetaShelf({
 }
 
 /**
+ * Kind identity for a card: a slim tinted rail hugging the card's leading edge
+ * (spanning body AND footer shelf) so the card type reads at the card level —
+ * not as one more chip crowding the meta strip. `label` is announced to screen
+ * readers in place of the visible kind text the rail replaces.
+ */
+export interface EntryCardAccent {
+	label: string;
+	/** bg-* tint class for the rail (e.g. `bg-history-stt`). */
+	railClass: string;
+}
+
+/**
  * A single elevated card inside an {@link EntryCardShell}: a free-form body
  * region above a recessed meta "shelf" stepped one surface below the card. The
  * card lifts +1 from its substrate and re-provides that level so body controls
@@ -195,10 +207,13 @@ function EntryCardMetaShelf({
  * differ between them.
  */
 export function EntryCard({
+	accent,
 	children,
 	footer,
 	singleLine,
 }: {
+	/** Kind-colored edge rail typing the whole card (history STT/TTS/transform). */
+	accent?: EntryCardAccent;
 	children: ReactNode;
 	footer: EntryCardMetaPart[];
 	/** Keep the footer meta strip on a single line (history rows); overflow
@@ -214,13 +229,28 @@ export function EntryCard({
 			<SurfaceProvider value={cardLevel}>
 				<div
 					className={cn(
-						"flex flex-col gap-2.5 overflow-hidden rounded-xl border border-border px-3.5 py-3",
+						"relative flex flex-col gap-2.5 overflow-hidden rounded-xl border border-border px-3.5 py-3",
 						surfaceClasses(cardLevel, Math.max(cardLevel - 1, 1)),
 						"transition-colors duration-150",
 						surfaceHoverBg(Math.min(cardLevel + 1, 8)),
 						"hover:border-border-hover",
 					)}
 				>
+					{accent ? (
+						// The rail is decorative; the sr-only text carries the kind name the
+						// removed footer chip used to announce. `start-0` keeps it on the
+						// leading edge under RTL; the card's overflow-hidden rounds its ends.
+						<>
+							<span
+								aria-hidden="true"
+								className={cn(
+									"absolute inset-y-0 start-0 w-[3px]",
+									accent.railClass,
+								)}
+							/>
+							<span className="sr-only">{accent.label}</span>
+						</>
+					) : null}
 					{children}
 					{footer.length > 0 ? (
 						<EntryCardMetaShelf

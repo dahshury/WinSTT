@@ -331,10 +331,13 @@ export function ContextAllowedAppsSection({
 
 	return (
 		<SettingField
+			// Surface the allow-list ⇄ master-toggle coupling (below) so emptying
+			// the list doesn't silently switch Context awareness off.
+			caption="Clearing this list turns Context awareness off — at least one app is required."
 			isDefault={isDefaultAllowList}
 			label="Allowed apps"
 			onReset={() => update({ contextAllowList: [...defaultAllowList] })}
-			tooltip="Only selected apps are read for context. Open the combobox to choose from currently running apps."
+			tooltip="Only selected apps are read for context. Open the combobox to choose from currently running apps. Emptying the list disables Context awareness entirely."
 		>
 			<ContextAppsCombobox
 				ariaLabel="Allowed apps"

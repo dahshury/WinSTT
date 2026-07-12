@@ -8,11 +8,44 @@ import {
 	type SettingsRestoreItem,
 } from "@/bindings";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
+import { useSettingsHydrationStore } from "@/features/update-settings";
 import { settingsLoadStrict } from "@/shared/api/ipc-client";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { DialogActionButton, DialogClose } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
 import { AboutActionRow } from "./AboutActionRow";
+
+// Saved LLM configurations live only in this localStorage key (a single combined
+// `{ version, configurations, seededBuiltinIds }` blob owned by
+// `widgets/llm-settings/model/configurations.ts`). They are outside the backend
+// settings tree, so export/import round-trips the raw blob through the transfer
+// file. Keep in sync with `STORAGE_KEY` there.
+const LLM_CONFIGURATIONS_STORAGE_KEY = "winstt:llm-configurations";
+
+/** Read the saved-LLM-configurations blob for inclusion in an export, or null
+ *  when absent / localStorage is unavailable. */
+function readLlmConfigurationsBlob(): string | null {
+	try {
+		return localStorage.getItem(LLM_CONFIGURATIONS_STORAGE_KEY);
+	} catch {
+		return null;
+	}
+}
+
+/** Write an imported saved-LLM-configurations blob back to localStorage. The
+ *  configurations store's `storage`-event listener mirrors it into the live store
+ *  in other windows. No-op when the backup carried no configurations. */
+function restoreLlmConfigurationsBlob(blob: string | null | undefined): void {
+	if (!blob) {
+		return;
+	}
+	try {
+		localStorage.setItem(LLM_CONFIGURATIONS_STORAGE_KEY, blob);
+	} catch {
+		// localStorage unavailable / quota — configurations are a non-critical
+		// convenience, so a failed restore must not fail the whole import.
+	}
+}
 
 function unwrapCommand<T>(result: Result<T, string>): T {
 	if (result.status === "error") {
@@ -42,7 +75,11 @@ async function runSettingsExport(
 	failureMessage: string,
 ): Promise<ExportOutcome> {
 	try {
-		const result = unwrapCommand(await commands.settingsExportFull());
+		// Saved LLM configurations live outside the backend settings tree — pass the
+		// localStorage blob so the Rust export can embed it in the transfer file.
+		const result = unwrapCommand(
+			await commands.settingsExportFull(readLlmConfigurationsBlob()),
+		);
 		if (!(result.cancelled || result.ok)) {
 			return { message: result.error ?? failureMessage, ok: false };
 		}
@@ -66,6 +103,11 @@ async function runSettingsImport(
 				status: "failed",
 			};
 		}
+		// Saved LLM configurations round-trip outside the backend settings tree:
+		// the backend returns the blob it read from the file; write it back to
+		// localStorage so the configurations store's `storage`-event listener
+		// mirrors it into the live store (in other windows).
+		restoreLlmConfigurationsBlob(result.llmConfigurations);
 		const settings = await settingsLoadStrict();
 		return { report: result, settings, status: "imported" };
 	} catch (error) {
@@ -298,6 +340,13 @@ export function SettingsTransferSection(): ReactNode {
 						});
 						return;
 					case "imported":
+						// Trip the settings-hydration generation guard BEFORE applying
+						// the imported tree so any stale in-flight debounced save (this
+						// window or another) discards itself instead of clobbering the
+						// import (finding #37). The backend already persisted + broadcast
+						// the imported tree; this local setSettings only updates the
+						// window immediately.
+						useSettingsHydrationStore.getState().bumpImportGeneration();
 						useSettingsStore.getState().setSettings(result.settings);
 						dispatch({ type: "importSucceeded", report: result.report });
 						return;

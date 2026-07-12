@@ -84,18 +84,6 @@ pub struct ShortcutBinding {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "lowercase")]
-// Legacy AppSettings enum; the WinSTT `settings_schema::OverlayPosition`
-// (with the extra `auto` variant) is the renderer-canonical type, so this one's
-// TS export is suffixed to avoid the duplicate-identifier collision in bindings.ts.
-#[specta(rename = "OverlayPositionLegacy")]
-pub enum OverlayPosition {
-    None,
-    Top,
-    Bottom,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 // Renderer-canonical timeout type is WinSTT `settings_schema::ModelUnloadTimeout`;
 // suffix this inherited one's TS export to break the bindings.ts collision.
@@ -332,26 +320,23 @@ pub struct AppSettings {
     // key is ignored).
     #[serde(default = "default_update_checks_enabled")]
     pub update_checks_enabled: bool,
-    #[serde(default = "default_model")]
-    pub selected_model: String,
+    // NOTE: the legacy `selected_model` / `translate_to_english` / `selected_language` /
+    // `overlay_position` / `model_unload_timeout` fields were removed — each is fully owned by a
+    // canonical `WinsttSettings` field the backend actually reads (`model.model` /
+    // `model.translate_to_english` / `model.language` / `general.overlay_position` /
+    // `global.model_unload_timeout`); the `core` copies had NO reader (only a write-only sync for
+    // the timeout). `#[serde(default)]` on the remaining fields means an older store still carrying
+    // those keys deserializes fine (the unknown keys are ignored).
     #[serde(default)]
     pub selected_microphone: Option<String>,
     #[serde(default)]
     pub clamshell_microphone: Option<String>,
     #[serde(default)]
     pub selected_output_device: Option<String>,
-    #[serde(default = "default_translate_to_english")]
-    pub translate_to_english: bool,
-    #[serde(default = "default_selected_language")]
-    pub selected_language: String,
-    #[serde(default = "default_overlay_position")]
-    pub overlay_position: OverlayPosition,
     #[serde(default = "default_debug_mode")]
     pub debug_mode: bool,
     #[serde(default = "default_log_level")]
     pub log_level: LogLevel,
-    #[serde(default)]
-    pub model_unload_timeout: ModelUnloadTimeout,
     #[serde(default)]
     pub paste_method: PasteMethod,
     #[serde(default)]

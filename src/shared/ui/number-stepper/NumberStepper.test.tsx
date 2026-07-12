@@ -50,6 +50,42 @@ describe("NumberStepper", () => {
 		// implementation-specific aria attributes.
 	});
 
+	test("keeps clamp announcements opt-in", () => {
+		// No aria-live status region unless announceClamp is enabled, so existing
+		// consumers gain no extra DOM.
+		const { container } = render(
+			<NumberStepper max={10} min={0} onChange={() => undefined} value={5} />,
+		);
+		expect(container.querySelector('[role="status"]')).toBeNull();
+	});
+
+	test("announces reaching the max bound when announceClamp is on", () => {
+		const onChange = mock(() => undefined);
+		render(
+			<NumberStepper
+				announceClamp
+				max={5}
+				maxClampLabel="At maximum"
+				min={0}
+				onChange={onChange}
+				step={2}
+				value={4}
+			/>,
+		);
+		const status = document.querySelector('[role="status"]');
+		expect(status).not.toBeNull();
+		// Stepping up by 2 from 4 overshoots max=5; base-ui clamps the change to
+		// 5 and the boundary announcement is surfaced.
+		const incrementBtn = screen.getAllByRole("button").at(-1);
+		fireEvent.pointerDown(incrementBtn!);
+		fireEvent.pointerUp(incrementBtn!);
+		fireEvent.click(incrementBtn!);
+		expect(onChange).toHaveBeenCalledWith(5);
+		expect(document.querySelector('[role="status"]')?.textContent).toBe(
+			"At maximum",
+		);
+	});
+
 	test("keeps value scrubbing opt-in", () => {
 		const { container, rerender } = render(
 			<NumberStepper onChange={() => undefined} value={5} />,

@@ -539,6 +539,13 @@ function IndependentPresetList({
 		getTargetLang(presets),
 	);
 
+	// Translate must never run "to nothing": enabling it requires a target
+	// language. Ticking Translate with no language chosen does NOT commit the
+	// enable — it flips into this "pending language" state, which opens the
+	// otherwise-disabled picker and shows a hint. Choosing a language then commits
+	// the enable; clicking the row again cancels the prompt.
+	const [translatePendingLang, setTranslatePendingLang] = useState(false);
+
 	const builtinCount = INDEPENDENT_PRESETS.length;
 	const checkedIndices = new Set<number>();
 	INDEPENDENT_PRESETS.forEach((key, i) => {
@@ -589,7 +596,32 @@ function IndependentPresetList({
 					setLangCache((prev) => (prev === lang ? prev : lang));
 					if (checked) {
 						onTargetLangChange(lang);
+					} else if (isTranslate && translatePendingLang && lang) {
+						// A language was chosen for a pending Translate enable — commit the
+						// toggle now that the target is known (never enable "to nothing").
+						setTranslatePendingLang(false);
+						onToggle("translate", true, undefined, lang);
 					}
+				};
+				// Gate the Translate toggle behind a chosen language; every other row
+				// toggles straight through.
+				const handleRowToggle = () => {
+					if (isTranslate) {
+						if (checked) {
+							setTranslatePendingLang(false);
+						} else if (!langCache) {
+							// Turning on with no language: prompt instead of committing (a
+							// second click cancels the prompt).
+							setTranslatePendingLang((pending) => !pending);
+							return;
+						}
+					}
+					onToggle(
+						key,
+						!checked,
+						levelCache[key],
+						isTranslate ? langCache : undefined,
+					);
 				};
 				// Translate carries the target language in the same trailing
 				// slot the leveled presets use for the L/M/H switcher — a
@@ -605,16 +637,27 @@ function IndependentPresetList({
 						// Bare + `size="sm"`: the picker self-elevates (no wrapping
 						// ElevatedSurface) and its 18px-tall trigger matches the
 						// leveled rows' `size="sm"` switcher, so the Translate row
-						// stays exactly as tall as the others.
-						<SearchableSelect
-							className="w-44"
-							disabled={!checked}
-							onChange={handleLang}
-							options={languageOptsFor(displayedLang)}
-							placeholder={t("translateLanguagePlaceholder")}
-							size="sm"
-							value={displayedLang}
-						/>
+						// stays exactly as tall as the others. When a language is still
+						// required (pending enable) the picker is enabled and a hint icon
+						// explains why it must be chosen first.
+						<div className="flex items-center gap-1">
+							{translatePendingLang ? (
+								<InfoTooltip content={t("translateLanguageRequired")} />
+							) : null}
+							<SearchableSelect
+								className="w-44"
+								disabled={!(checked || translatePendingLang)}
+								onChange={handleLang}
+								options={languageOptsFor(displayedLang)}
+								placeholder={
+									translatePendingLang
+										? t("translateLanguageRequired")
+										: t("translateLanguagePlaceholder")
+								}
+								size="sm"
+								value={displayedLang}
+							/>
+						</div>
 					);
 				} else if (hasLevel) {
 					trailing = (
@@ -643,14 +686,7 @@ function IndependentPresetList({
 								size={16}
 							/>
 						}
-						onToggle={() =>
-							onToggle(
-								key,
-								!checked,
-								levelCache[key],
-								isTranslate ? langCache : undefined,
-							)
-						}
+						onToggle={handleRowToggle}
 						tooltip={
 							<ModifierTooltipBody
 								after={t(PRESET_TOOLTIP_KEYS[key].after)}
@@ -769,12 +805,33 @@ export function PostProcessingProfilesCombobox({
 	// isn't perpetually "dirty" and its Reset actually clears.
 	const activeConfig =
 		configurations.find((c) => c.id === activeConfigurationId) ?? null;
+	// Compare against the POST-reconcile baseline. A keyless OpenRouter preset is
+	// downshifted to local Ollama with no model; the settings panel then reconciles
+	// in the smallest installed model. Treat that reconcile-fill of an empty local
+	// model as part of the applied baseline (not a user edit) so apply/reset don't
+	// immediately read as "modified" and Reset actually clears the dirty state.
+	const baseline = activeConfig
+		? withAvailableLlmProvider(activeConfig.config, openrouterKey)
+		: null;
+	const reconciledBaseline =
+		baseline &&
+		baseline.provider === "ollama" &&
+		baseline.model === "" &&
+		draft.provider === "ollama"
+			? { ...baseline, model: draft.model }
+			: baseline;
 	const activeModified =
-		activeConfig != null &&
-		!configurationsEqual(
-			withAvailableLlmProvider(activeConfig.config, openrouterKey),
-			draft,
-		);
+		reconciledBaseline != null &&
+		!configurationsEqual(reconciledBaseline, draft);
+	// The combobox shows `matchedId` (the saved config the live settings exactly
+	// match). Once the user edits the active config that match vanishes and the
+	// field would go blank while the dirty Save/Reset actions rendered on a hidden
+	// row. Keep both on ONE row: when nothing matches but the active config is
+	// modified, show the active (dirty) row instead of a blank field, and pin the
+	// dirty marker to whatever row is actually shown.
+	const shownId =
+		matchedId ||
+		(activeModified && activeConfigurationId ? activeConfigurationId : "");
 	const { triggerLevel } = usePopupSurfaceLevels({ selfElevate: false });
 	// Nav arrows cycle prev/next between saved presets, so they need at least two
 	// to do anything. With 0 or 1 preset there is nothing to cycle to — leaving
@@ -787,7 +844,7 @@ export function PostProcessingProfilesCombobox({
 		label: c.name,
 		icon: iconForPostProcessingProfileId(c.id),
 		deletable: true,
-		modified: activeModified && c.id === activeConfigurationId,
+		modified: activeModified && c.id === shownId,
 	}));
 
 	const applyConfiguration = (id: string) => {
@@ -906,7 +963,7 @@ export function PostProcessingProfilesCombobox({
 				reorderAriaLabel={(item) => `Drag ${item.label} to reorder`}
 				resetAriaLabel="Reset to saved settings"
 				saveAriaLabel="Overwrite preset with current settings"
-				value={matchedId}
+				value={shownId}
 			/>
 			<Tooltip content="Next preset">
 				<Button

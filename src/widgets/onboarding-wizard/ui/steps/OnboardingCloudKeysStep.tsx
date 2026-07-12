@@ -80,7 +80,6 @@ const VERIFY_BUTTON_MOTION_PROPS = {
 	whileHover: { y: -1 },
 	whileTap: { scale: 0.97 },
 } as const;
-const CLOUD_MODEL_BACKEND = "onnx_asr" as const;
 const MotionBaseButton = m.create(BaseButton);
 
 /**
@@ -188,7 +187,6 @@ export function OnboardingCloudKeysStep() {
 	const handleModelSelect = (modelId: string) => {
 		updateModelSettings({
 			model: modelId,
-			backend: CLOUD_MODEL_BACKEND,
 			realtimeModel: "",
 		});
 	};

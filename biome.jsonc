@@ -198,8 +198,8 @@
       }
     },
     {
-      // Linting is scoped to the shipped renderer (`src/`), exactly as the
-      // previous setup did (`eslint src`). Everything else — dev/CLI tooling,
+      // Linting is scoped to the shipped renderer (`src/`), as it always has
+      // been. Everything else — dev/CLI tooling,
       // root config, HTML entry points, Playwright e2e/a11y specs — is still
       // FORMATTED by Biome (replacing Prettier) but not linted, so the tooling
       // swap doesn't impose a new lint surface on code CI never gated. Listed

@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import fc from "fast-check";
-import {
-	ModelFamilySchema,
-	TranscriberBackendSchema,
-} from "@/shared/api/schema.zod";
+import { ModelFamilySchema } from "@/shared/api/schema.zod";
 
 // Stub ipc-client so module-load init doesn't blow up — catalog-store.test.ts
 // uses the same pattern.
@@ -14,12 +11,10 @@ const originalNativeBridge = window.nativeBridge;
 
 const { useCatalogStore } = await import("./catalog-store");
 
-const BACKENDS = TranscriberBackendSchema.options;
 const FAMILIES = ModelFamilySchema.options;
 
 interface RawValid {
 	available_quantizations?: string[];
-	backend: (typeof BACKENDS)[number];
 	description: string;
 	display_name: string;
 	family: (typeof FAMILIES)[number];
@@ -84,9 +79,6 @@ function assertInvariants(real: Real, m: Model): void {
 		}
 		if (typeof mdl.displayName !== "string") {
 			throw new Error("displayName missing");
-		}
-		if (!BACKENDS.includes(mdl.backend)) {
-			throw new Error("backend out of enum");
 		}
 		if (!FAMILIES.includes(mdl.family)) {
 			throw new Error("family out of enum");
@@ -186,7 +178,6 @@ class GetModelMissCmd implements fc.Command<Model, Real> {
 const rawValidArb: fc.Arbitrary<RawValid> = fc.record({
 	id: fc.string({ minLength: 1, maxLength: 16 }),
 	display_name: fc.string({ maxLength: 24 }),
-	backend: fc.constantFrom(...BACKENDS),
 	family: fc.constantFrom(...FAMILIES),
 	languages: fc.array(fc.string({ maxLength: 4 }), { maxLength: 5 }),
 	supports_language_detection: fc.boolean(),
@@ -208,7 +199,6 @@ const invalidRawArb = fc.oneof(
 	fc.constant(null),
 	fc.constant(undefined),
 	fc.array(fc.string()),
-	fc.record({ id: fc.string(), backend: fc.constant("unknown_backend") }),
 	fc.record({ id: fc.string(), family: fc.constant("unknown_family") }),
 	fc.record({ displayName: fc.string() }), // camelCase = wrong shape (schema is snake_case)
 );

@@ -1,0 +1,17 @@
+{
+  "elevenlabs": [
+    {
+      "description": "ElevenLabs transcription, multilingual.",
+      "displayName": "Scribe v1",
+      "id": "scribe_v1",
+      "isDefault": true
+    },
+    {
+      "description": "Latest experimental Scribe build.",
+      "displayName": "Scribe v1 (experimental)",
+      "id": "scribe_v1_experimental",
+      "isDefault": false
+    }
+  ],
+  "openrouter": []
+}

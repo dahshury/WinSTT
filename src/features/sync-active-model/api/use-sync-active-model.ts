@@ -11,15 +11,8 @@ import {
 	type ModelSwapKind,
 	onModelSwapCompleted,
 } from "@/shared/api/ipc-client";
-import type { TranscriberBackend } from "@/shared/api/schema.zod";
 import { recentIpcLoadAt } from "@/shared/lib/ipc-load-timing";
 import { recentSwapFailedAt } from "@/shared/lib/swap-failure-timing";
-
-// Cloud transcribers (``provider:model``) aren't catalog entries, so they carry
-// no backend; the server routes them by the ``provider:`` prefix. The typed
-// ``ModelPatch`` still requires a backend whenever ``model`` is set, so persist
-// a benign valid value (mirrors ``CLOUD_MODEL_BACKEND`` in apply-swap.ts).
-const CLOUD_MODEL_BACKEND: TranscriberBackend = "onnx_asr";
 
 // How long after an IPC settingsLoad we consider a settings.model transition
 // as "load-induced" (not a user pick). Crash + state-revert investigation
@@ -206,12 +199,61 @@ export function shouldOpenImplicitSwap(inputs: ImplicitSwapInputs): boolean {
  *   have no entry → the benign cloud backend); a genuinely-unknown local id
  *   yields ``null`` rather than an inconsistent ``{ model }``-without-backend.
  */
+/**
+ * The precision override to fold into a main-model adoption patch, or ``null``
+ * when the carried quantization is already valid for the model being adopted.
+ *
+ * The persisted ``onnxQuantization`` belongs to the PREVIOUS main model. When a
+ * different main model is adopted (post-swap completion, or a runtime fallback)
+ * the catalog list for the NEW model may not offer that precision — e.g. a
+ * ``fp16`` carried onto a model that only ships ``["", "int8"]``. Writing
+ * ``{ model }`` without reconciling the quant persists an invalid
+ * ``{ model, onnxQuantization }`` couple, which the backend's
+ * ``validate_quantization`` (checked against ``model.model``) REJECTS — silently
+ * dropping the WHOLE model-section save so the model change never reaches disk.
+ * That is the "chosen main model reverts to the old one after restart" bug: the
+ * detached picker resolves the quant in its own store, but the main window
+ * adopts via the completion event and kept the stale precision.
+ *
+ * Returns ``""`` (the universal default — every catalog entry ships it and the
+ * server re-resolves it per model) to reset an unavailable precision; ``null``
+ * to leave the carried value untouched. The ``""``/``auto`` sentinels are always
+ * valid, and an unknown/cloud id (no catalog entry / no precision list) can't be
+ * proven invalid, so both keep the carried value.
+ */
+function reconcileAdoptedQuant(
+	modelId: string,
+	currentQuant: string,
+	catalogModels: readonly ModelInfo[],
+): "" | null {
+	if (currentQuant === "" || currentQuant === "auto") {
+		return null;
+	}
+	const entry = catalogModels.find((m) => m.id === modelId);
+	if (!(entry && Array.isArray(entry.availableQuantizations))) {
+		return null;
+	}
+	return entry.availableQuantizations.includes(currentQuant) ? null : "";
+}
+
+/** Fold a reconciled-quant override into a ``{ model }`` patch. */
+function withReconciledQuant(
+	patch: ModelPatch,
+	name: string,
+	currentQuant: string,
+	catalogModels: readonly ModelInfo[],
+): ModelPatch {
+	const override = reconcileAdoptedQuant(name, currentQuant, catalogModels);
+	return override === null ? patch : { ...patch, onnxQuantization: override };
+}
+
 export function resolveSwapCompletedPatch(
 	kind: ModelSwapKind,
 	name: string,
 	settingsModel: string | null,
 	settingsRealtimeModel: string | null,
 	catalogModels: readonly ModelInfo[],
+	settingsQuantization: string,
 ): ModelPatch | null {
 	if (!name) {
 		return null;
@@ -223,14 +265,16 @@ export function resolveSwapCompletedPatch(
 		return null;
 	}
 	const catalogEntry = catalogModels.find((m) => m.id === name);
-	if (catalogEntry?.backend) {
-		return {
-			model: name,
-			backend: catalogEntry.backend as TranscriberBackend,
-		};
+	if (catalogEntry) {
+		return withReconciledQuant(
+			{ model: name },
+			name,
+			settingsQuantization,
+			catalogModels,
+		);
 	}
 	if (providerOf(name) !== null) {
-		return { model: name, backend: CLOUD_MODEL_BACKEND };
+		return { model: name };
 	}
 	return null;
 }
@@ -249,6 +293,7 @@ export function adoptCompletedSwap(kind: ModelSwapKind, name: string): void {
 		store.settings.model?.model ?? null,
 		store.settings.model?.realtimeModel ?? null,
 		useCatalogStore.getState().models,
+		store.settings.model?.onnxQuantization ?? "",
 	);
 	if (patch !== null) {
 		store.updateModelSettings(patch);
@@ -294,7 +339,6 @@ export function useSyncActiveModel(): void {
 		// handles the cold-boot fallback case the original comment block
 		// documents.
 		const previousModel = prevSettingsModelRef.current;
-		const activeMain = useModelSwapStore.getState().activeMain;
 		if (
 			shouldOpenImplicitSwap({
 				previousModel,
@@ -311,6 +355,18 @@ export function useSyncActiveModel(): void {
 		}
 		prevSettingsModelRef.current = settingsModel;
 
+		// Read `activeMain` AFTER the implicit beginSwap above, never before.
+		// Reading it first handed `shouldAdoptRuntimeModel` a STALE null for the
+		// very transition the implicit swap just opened: a fresh user pick
+		// (settings A → B, runtime still A) sailed past the `activeMain === null`
+		// guard and the adoption branch REVERTED the store to the stale runtime
+		// model ~5ms after the pick. The revert then won the 300ms save debounce
+		// (diff vs last-saved became empty), so the pick was BOTH visually undone
+		// ("switching back to <old model> immediately") and never persisted —
+		// the root of the "model reverts to cohere on every boot" loop. A
+		// load-induced revert opens no implicit swap (see shouldOpenImplicitSwap's
+		// ipc-load guard), so the boot-time fallback adoption below still runs.
+		const activeMain = useModelSwapStore.getState().activeMain;
 		if (
 			shouldAdoptRuntimeModel(
 				isLoaded,
@@ -320,31 +376,30 @@ export function useSyncActiveModel(): void {
 				activeMain,
 			)
 		) {
-			// Look up the runtime model in the catalog so we can also patch
-			// `model.backend` to match. Without this, adoptRuntime only fixes
-			// `model.model` and leaves `model.backend` at whatever stale
-			// localStorage / schema-default value the renderer hydrated with
-			// (typically "faster_whisper"). The next disk save then writes
-			// {model: canary, backend: faster_whisper} — and the NEXT
-			// server spawn reads back that wrong pairing, passing
-			// `--backend faster_whisper` for a model whose native engine is
-			// onnx_asr. Server tolerates the mismatch but the picker shows
-			// confusing inconsistencies and any backend-conditional code
-			// downstream (quantization eligibility, fp16 promotion, …)
-			// reads the wrong answer.
-			const catalogEntry = useCatalogStore
-				.getState()
-				.models.find((m) => m.id === runtimeModel);
-			if (catalogEntry?.backend) {
+			// Resolve the runtime model in the catalog so we can reconcile the
+			// carried precision before adopting it.
+			const catalogModels = useCatalogStore.getState().models;
+			const catalogEntry = catalogModels.find((m) => m.id === runtimeModel);
+			if (catalogEntry) {
+				// Reconcile the carried precision the same way the completion-event
+				// adoption does: a fallback model that doesn't offer the persisted
+				// quant would otherwise persist an invalid pair that
+				// `validate_quantization` rejects (dropping the whole save).
+				const quantOverride = reconcileAdoptedQuant(
+					runtimeModel,
+					useSettingsStore.getState().settings.model?.onnxQuantization ?? "",
+					catalogModels,
+				);
 				updateModelSettings({
 					model: runtimeModel,
-					backend: catalogEntry.backend as TranscriberBackend,
+					...(quantOverride === null
+						? {}
+						: { onnxQuantization: quantOverride }),
 				});
 			}
 			// If we can't resolve the runtime model in the catalog we deliberately
-			// SKIP the adoption — patching `{ model }` without a paired backend is
-			// the exact drift the typed ``ModelPatch`` now forbids. The picker's
-			// fallback effect will pick a valid model once the catalog refreshes.
+			// SKIP the adoption — the picker's fallback effect will pick a valid
+			// model once the catalog refreshes.
 		}
 	}, [
 		isLoaded,

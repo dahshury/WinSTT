@@ -52,6 +52,10 @@ export const IPC = {
 	HOTKEY_RELEASED: "hotkey:released",
 	HOTKEY_RECORDING_UPDATE: "hotkey:recording-update",
 	HOTKEY_RECORDING_DONE: "hotkey:recording-done",
+	// Main → renderer: the user bound a modifier-only accelerator (e.g. Ctrl+Alt)
+	// to push-to-talk on a platform that can't arm one. Payload is the attempted
+	// combo string; the renderer surfaces a toast asking for a full hotkey.
+	PTT_MODIFIER_ONLY_UNSUPPORTED: "ptt:modifier-only-unsupported",
 
 	// STT commands (renderer → main)
 	STT_SET_PARAMETER: "stt:set-parameter",
@@ -281,6 +285,7 @@ export const IPC = {
 	TTS_HISTORY_GET_ALL: "tts-history:get-all",
 	TTS_HISTORY_CLEAR: "tts-history:clear",
 	TTS_HISTORY_DELETE: "tts-history:delete",
+	TTS_HISTORY_LOAD_AUDIO: "tts-history:load-audio",
 	TTS_HISTORY_ADDED: "tts-history:added",
 	TTS_HISTORY_DELETED: "tts-history:deleted",
 
@@ -569,6 +574,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.HOTKEY_RELEASED]: ["on"],
 	[IPC.HOTKEY_RECORDING_UPDATE]: ["on"],
 	[IPC.HOTKEY_RECORDING_DONE]: ["on"],
+	[IPC.PTT_MODIFIER_ONLY_UNSUPPORTED]: ["on"],
 	[IPC.HOTKEY_REGISTER]: ["invoke"],
 	[IPC.HOTKEY_UNREGISTER]: ["send"],
 	[IPC.HOTKEY_START_RECORDING]: ["invoke"],
@@ -712,6 +718,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_HISTORY_GET_ALL]: ["invoke"],
 	[IPC.TTS_HISTORY_CLEAR]: ["invoke"],
 	[IPC.TTS_HISTORY_DELETE]: ["invoke"],
+	[IPC.TTS_HISTORY_LOAD_AUDIO]: ["invoke"],
 	[IPC.TTS_HISTORY_ADDED]: ["on"],
 	[IPC.TTS_HISTORY_DELETED]: ["on"],
 

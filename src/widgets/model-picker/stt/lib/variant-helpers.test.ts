@@ -12,7 +12,6 @@ function model(over: Partial<ModelInfo> = {}): ModelInfo {
 		id: "tiny",
 		displayName: "Tiny",
 		family: "whisper",
-		backend: "onnx_asr",
 		languages: [],
 		supportsLanguageDetection: true,
 		sizeLabel: "39M",

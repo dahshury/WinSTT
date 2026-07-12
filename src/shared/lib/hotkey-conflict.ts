@@ -152,3 +152,58 @@ export function resolveHotkeyTriple(
 	}
 	return { values, rewrites };
 }
+
+/**
+ * The full set of five globally-registered hotkeys the runtime registrars can
+ * double-fire on when combos overlap: PTT, repaste, TTS, the text-transform
+ * trigger, and the post-processing profile-swap cycle. `resolveHotkeyTriple`
+ * only reconciled the first three; the transform and profile-swap combos went
+ * out unprotected, so a decode could leave two runtime bindings colliding.
+ * This resolves all five under the same anchor-then-settle policy.
+ */
+export interface HotkeySet extends HotkeyTriple {
+	profileSwapHotkey: string;
+	transformHotkey: string;
+}
+
+export interface HotkeySetResolution {
+	rewrites: Array<keyof HotkeySet>;
+	values: HotkeySet;
+}
+
+// PTT is the anchor (index 0, never rewritten). The rest are settled in order:
+// each is reset to its default if it conflicts with any already-settled combo.
+const HOTKEY_RESOLVE_ORDER: Array<keyof HotkeySet> = [
+	"pushToTalkKey",
+	"repasteHotkey",
+	"ttsHotkey",
+	"transformHotkey",
+	"profileSwapHotkey",
+];
+
+/**
+ * Force-resolve all five hotkeys so no pair has a subset / superset / equal
+ * relationship. `pushToTalkKey` anchors; the remaining four are each reset to
+ * their default when they collide with any earlier-settled binding. Same
+ * defense-in-depth rationale as `resolveHotkeyTriple`, extended to the two
+ * combos (transform + profile-swap) that were previously unguarded.
+ */
+export function resolveHotkeySet(
+	candidate: HotkeySet,
+	defaults: HotkeySet,
+): HotkeySetResolution {
+	const rewrites: Array<keyof HotkeySet> = [];
+	const values: HotkeySet = { ...candidate };
+	const settled: string[] = [values.pushToTalkKey];
+	for (const key of HOTKEY_RESOLVE_ORDER.slice(1)) {
+		const conflicts = settled.some((prior) =>
+			isHotkeyConflict(compareHotkeys(prior, values[key])),
+		);
+		if (conflicts) {
+			values[key] = defaults[key];
+			rewrites.push(key);
+		}
+		settled.push(values[key]);
+	}
+	return { values, rewrites };
+}

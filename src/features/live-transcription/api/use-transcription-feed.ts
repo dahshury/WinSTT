@@ -89,6 +89,36 @@ export function useTranscriptionFeed(): void {
 	const showEphemeral = useTranscriptionStore((s) => s.showEphemeral);
 	const clearEphemeral = useTranscriptionStore((s) => s.clearEphemeral);
 
+	// Switching recording modes emits no recording-lifecycle IPC event today,
+	// so state that only clears on terminal events (full_sentence,
+	// no_audio_detected, stt_session_aborted, transcription_failed) can carry
+	// over into the new mode. Listen mode is the sharpest case: it's
+	// continuous, so its `recording_start` just latches `isRecordingActive`
+	// and nothing ever fires a terminal event to release it -- switching away
+	// left the overlay pill stuck revealed. Reset the per-session UI state at
+	// every mode boundary; harmlessly idempotent alongside terminal-event
+	// resets and the backend's own mode-exit teardown.
+	const prevRecordingModeRef = useRef<string | null>(null);
+	useEffect(() => {
+		const previousMode = prevRecordingModeRef.current;
+		prevRecordingModeRef.current = recordingMode;
+		if (previousMode === null || previousMode === recordingMode) {
+			return;
+		}
+		voiceActivitySeenRef.current = false;
+		clearCompletedSessionTimer();
+		setRecordingActive(false);
+		setTranscribing(false);
+		setRealtimeText("");
+		clearEphemeral();
+	}, [
+		recordingMode,
+		setRecordingActive,
+		setTranscribing,
+		setRealtimeText,
+		clearEphemeral,
+	]);
+
 	useEffect(() => {
 		// On every non-listen recording cycle, wipe the realtime/ephemeral state
 		// and arm `isRecordingActive`. Listen mode is continuous, so

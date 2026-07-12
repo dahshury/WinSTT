@@ -105,3 +105,6 @@ tools/out/
 .codex-remote-attachments/
 .tmp_ab_eval/
 .tmp_e2e/
+
+# Runtime settings written into src-tauri during dev (cwd=src-tauri)
+src-tauri/winstt-settings.json*

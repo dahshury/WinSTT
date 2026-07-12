@@ -9,7 +9,11 @@ import {
 	surfaceClasses,
 } from "@/shared/lib/surface";
 import { cn } from "@/shared/lib/cn";
-import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+import {
+	ComboboxPopupShell,
+	comboboxPopupClassName,
+	optionMatchesQuery,
+} from "@/shared/ui/combobox-base";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 import {
 	CheckIcon,
@@ -161,10 +165,6 @@ function optionById(
 
 function getItemLabel(item: SelectOption | null): string {
 	return item ? item.label : "";
-}
-
-function optionMatchesQuery(item: SelectOption, query: string): boolean {
-	return matchesFuzzySearch([item.label, item.id, item.badge ?? ""], query);
 }
 
 function OptionIcon({
@@ -417,71 +417,65 @@ export function SearchableSelect({
 					</Combobox.Trigger>
 				</div>
 
-				<Combobox.Portal>
-					<SurfaceProvider value={popupLevel}>
-						<Combobox.Positioner
-							className="z-popover outline-none"
-							collisionPadding={8}
-							sideOffset={4}
+				<ComboboxPopupShell popupLevel={popupLevel}>
+					<div className="relative">
+						<Combobox.Popup
+							// Top padding lives on the LIST, not here: a sticky group header pins to
+							// the scroll container's padding edge, so a `pt` on this scroller would
+							// leave a band ABOVE the header where scrolling rows leak through. Keeping
+							// only `pb-1` lets the header pin flush to the popup's top edge.
+							className={comboboxPopupClassName(
+								popupLevel,
+								popupShadow,
+								"searchable-select-popup relative overflow-y-auto pb-1 [max-height:min(15rem,var(--available-height))]",
+							)}
+							ref={popupRef}
 						>
-							<div className="relative">
-								<Combobox.Popup
-									// Top padding lives on the LIST, not here: a sticky group header pins to
-									// the scroll container's padding edge, so a `pt` on this scroller would
-									// leave a band ABOVE the header where scrolling rows leak through. Keeping
-									// only `pb-1` lets the header pin flush to the popup's top edge.
-									className={`searchable-select-popup relative w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-lg ${surfaceClasses(popupLevel, popupShadow)} pb-1 [max-height:min(15rem,var(--available-height))]`}
-									ref={popupRef}
-								>
-									<MenuHighlightLayer containerRef={popupRef} value={value} />
-									<Combobox.Empty className="searchable-select-empty">
-										{t("noResults")}
-									</Combobox.Empty>
-									<Combobox.List className="pt-1 outline-none">
-										{groups
-											? (group: { items: SelectOption[]; value: string }) => {
-													const meta = groupMeta?.get(group.value);
-													return (
-														<Combobox.Group
-															className="flex flex-col"
-															items={group.items}
-															key={group.value}
-														>
-															<GroupHeader
-																badge={meta?.badge}
-																icon={meta?.icon}
-																label={meta?.label ?? group.value}
-																level={popupLevel}
-															/>
-															{group.items.map((item) => (
-																<Row
-																	grouped
-																	item={item}
-																	key={item.id}
-																	renderItemTrailing={renderItemTrailing}
-																	value={value}
-																/>
-															))}
-														</Combobox.Group>
-													);
-												}
-											: (item: SelectOption) => (
-													<Row
-														item={item}
-														key={item.id}
-														renderItemTrailing={renderItemTrailing}
-														value={value}
+							<MenuHighlightLayer containerRef={popupRef} value={value} />
+							<Combobox.Empty className="searchable-select-empty">
+								{t("noResults")}
+							</Combobox.Empty>
+							<Combobox.List className="pt-1 outline-none">
+								{groups
+									? (group: { items: SelectOption[]; value: string }) => {
+											const meta = groupMeta?.get(group.value);
+											return (
+												<Combobox.Group
+													className="flex flex-col"
+													items={group.items}
+													key={group.value}
+												>
+													<GroupHeader
+														badge={meta?.badge}
+														icon={meta?.icon}
+														label={meta?.label ?? group.value}
+														level={popupLevel}
 													/>
-												)}
-									</Combobox.List>
-								</Combobox.Popup>
-								{groups ? (
-									<PopupScrollbarHeaderMask level={popupLevel} />
-								) : null}
-							</div>
-						</Combobox.Positioner>
-					</SurfaceProvider>
-				</Combobox.Portal>
+													{group.items.map((item) => (
+														<Row
+															grouped
+															item={item}
+															key={item.id}
+															renderItemTrailing={renderItemTrailing}
+															value={value}
+														/>
+													))}
+												</Combobox.Group>
+											);
+										}
+									: (item: SelectOption) => (
+											<Row
+												item={item}
+												key={item.id}
+												renderItemTrailing={renderItemTrailing}
+												value={value}
+											/>
+										)}
+							</Combobox.List>
+						</Combobox.Popup>
+						{groups ? <PopupScrollbarHeaderMask level={popupLevel} /> : null}
+					</div>
+				</ComboboxPopupShell>
 			</Combobox.Root>
 		</SurfaceProvider>
 	);

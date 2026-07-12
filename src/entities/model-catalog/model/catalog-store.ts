@@ -1,12 +1,7 @@
 import { z } from "zod";
 import { create } from "zustand";
 import { fetchModelCatalog, onModelCatalog } from "@/shared/api/ipc-client";
-import {
-	type ModelFamily,
-	ModelFamilySchema,
-	type TranscriberBackend,
-	TranscriberBackendSchema,
-} from "@/shared/api/schema.zod";
+import { type ModelFamily, ModelFamilySchema } from "@/shared/api/schema.zod";
 
 export interface ModelInfo {
 	/**
@@ -25,7 +20,6 @@ export interface ModelInfo {
 	 */
 	available: boolean;
 	availableQuantizations: string[];
-	backend: TranscriberBackend;
 	description: string;
 	displayName: string;
 	/** Non-empty only for broken custom-model entries; renders as a tooltip. */
@@ -65,11 +59,14 @@ export interface ModelInfo {
 	finalReuseSafe: boolean;
 }
 
-/** Zod schema for server-sent model catalog items (snake_case). */
-const rawModelInfoSchema = z.object({
+/**
+ * Zod schema for server-sent model catalog items (snake_case). Exported so the
+ * Rust↔TS parity gate (`catalog-model-info.parity.test.ts`) can assert its key
+ * set reproduces the backend's `CatalogModelInfo` DTO (dto.rs).
+ */
+export const rawModelInfoSchema = z.object({
 	id: z.string(),
 	display_name: z.string(),
-	backend: TranscriberBackendSchema,
 	family: ModelFamilySchema,
 	languages: z.array(z.string()),
 	supports_language_detection: z.boolean(),
@@ -128,7 +125,6 @@ function mapModel(raw: RawModelInfo): ModelInfo {
 	return {
 		id: raw.id,
 		displayName: displayNameWithoutStreamingLatency(raw.display_name),
-		backend: raw.backend,
 		family: raw.family,
 		languages: raw.languages,
 		supportsLanguageDetection: raw.supports_language_detection,

@@ -22,7 +22,14 @@ export interface CloudModel {
  * An id present in the generated list but absent here gets a prettified label;
  * a curated id the SDK has dropped is still shown (union, never drops).
  */
-const CURATED_CLOUD_MODELS: Record<CloudSttProvider, readonly CloudModel[]> = {
+// Exported so the Rust↔TS parity gate (`cloud-stt-models.parity.test.ts`) can
+// assert this curated table reproduces the backend's `ELEVENLABS_CLOUD_MODELS`
+// (cloud_stt.rs). Only the curated metadata is the shared surface — `CLOUD_CATALOG`
+// below additionally fuses the AI SDK's generated id list, which is not mirrored.
+export const CURATED_CLOUD_MODELS: Record<
+	CloudSttProvider,
+	readonly CloudModel[]
+> = {
 	// OpenRouter transcription models are fetched live (filtered by
 	// output_modalities=transcription) by `useOpenRouterSttCatalogStore`, so there
 	// is no curated/generated static list — the picker reads its rows from the scan

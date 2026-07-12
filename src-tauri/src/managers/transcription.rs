@@ -67,7 +67,13 @@ pub(crate) fn dc_immune_rms(audio: &[f32]) -> f32 {
 /// hallucinations. Empirically (this repo's own recordings, logged via `[silence-gate]`):
 /// real speech recordings measure RMS ≥ ~0.0074; silence + hallucinated "Thank you."
 /// clips measure ≤ ~0.0014. 0.003 sits cleanly between, with headroom below the quietest
-/// real speech for soft talkers / distant mics.
+/// real speech for soft talkers / distant mics. Applied on BOTH silence-gate paths: the
+/// no-mask path (file / cloud) measures it over the whole buffer; the mask path (mic / PTT)
+/// measures it DC-immune over the mask's SPEECH frames only (see
+/// [`is_silent_recording_with_mask`]), so captured silence can't dilute a soft speaker below
+/// it — while the hallucination band (≤ ~0.0014) still can't slip past. The floor MUST NOT be
+/// lowered on the mask path: Silero-at-0.3 false-fires speech frames onto near-silent audio, so
+/// a lower floor would let hallucinated "Thank you." clips through to the model.
 pub(crate) const SILENCE_AC_FLOOR: f32 = 0.003;
 
 /// The DC offset must exceed the AC RMS by this factor to be classed "all offset, no audio"
@@ -85,21 +91,91 @@ fn next_transcription_request_id() -> String {
     )
 }
 
-/// True when a recording carries no decodable speech — either genuine silence/room-tone (AC RMS
-/// below [`SILENCE_AC_FLOOR`]) or a DC-dominated dead/virtual-mic signal. Shared by the batch
-/// silence gate AND the realtime-reuse guard (a reused live decode must NOT paste hallucinated
-/// text over what the gate would otherwise have rejected). Audio is RAW (pre-`peak_normalize`).
-pub(crate) fn is_silent_recording(audio: &[f32]) -> bool {
+/// True when a recording carries no decodable speech. This is the user's gold-standard gate:
+/// silence must never reach the model, but we never get there by decoding everything.
+///
+/// With a per-frame capture `speech_mask` (mic path — capture is now ungated, so the buffer carries
+/// its own silence), a clip is rejected iff (a) the mask contains ZERO speech frames, OR (b) the
+/// DC-dominated dead/virtual-mic fingerprint, OR (c) the DC-immune RMS OF THE MASK'S SPEECH FRAMES
+/// is below [`SILENCE_AC_FLOOR`]. Measuring the floor over the SPEECH frames — not the whole (now
+/// silence-diluted) buffer — is what lets the mask path share the SAME 0.003 floor as the no-mask
+/// path without dropping a soft speaker in a long, mostly-silent recording: captured silence can't
+/// pull the speech-frame RMS below the floor. The floor MUST stay at 0.003, NOT lower: Silero-at-0.3
+/// false-fires on near-silent frames, so a hallucinated "Thank you." clip (whole-clip RMS ≈ 0.0014,
+/// uniform → speech-frame RMS ≈ 0.0014) carries speech frames in the mask; only a floor at/above
+/// 0.003 rejects that band, whereas a lower floor lets it through to the model to be re-hallucinated.
+///
+/// Without a mask (file / cloud), the legacy behavior is kept exactly: reject iff whole-buffer RMS
+/// is below [`SILENCE_AC_FLOOR`] OR DC-dominated. Shared by the batch silence gate AND the
+/// realtime-reuse guard (a reused live decode must NOT paste hallucinated text over what the gate
+/// would otherwise have rejected). Audio is RAW (pre-`peak_normalize`).
+pub(crate) fn is_silent_recording_with_mask(audio: &[f32], speech_mask: Option<&[bool]>) -> bool {
     if audio.is_empty() {
         return true;
     }
     let (mean, rms) = audio_energy_stats(audio);
     let dc_dominated = mean.abs() > rms * DC_DOMINANCE_RATIO;
-    rms < SILENCE_AC_FLOOR || dc_dominated
+    match speech_mask {
+        Some(mask) => {
+            let no_speech = !mask.iter().any(|&speech| speech);
+            if no_speech || dc_dominated {
+                return true;
+            }
+            speech_masked_rms(audio, mask) < SILENCE_AC_FLOOR
+        }
+        None => rms < SILENCE_AC_FLOOR || dc_dominated,
+    }
+}
+
+/// DC-immune AC RMS measured ONLY over the frames the capture `mask` flags as speech (frame size
+/// [`VAD_FRAME_SAMPLES`]; a trailing partial frame past the mask is ignored). Used by the mask-path
+/// dead-air gate so a genuine soft speaker's energy is judged where the VAD claims speech, not
+/// averaged against the captured silence that now surrounds it. Returns 0 when no speech frame maps
+/// to any samples.
+fn speech_masked_rms(audio: &[f32], mask: &[bool]) -> f32 {
+    let frame = crate::audio_toolkit::vad::VAD_FRAME_SAMPLES;
+    let mut speech: Vec<f32> = Vec::new();
+    for (i, &is_speech) in mask.iter().enumerate() {
+        if !is_speech {
+            continue;
+        }
+        let lo = i * frame;
+        if lo >= audio.len() {
+            break;
+        }
+        let hi = ((i + 1) * frame).min(audio.len());
+        speech.extend_from_slice(&audio[lo..hi]);
+    }
+    if speech.is_empty() {
+        return 0.0;
+    }
+    dc_immune_rms(&speech)
 }
 
 fn native_stream_final_tail_with_silence(tail: &[f32]) -> Vec<f32> {
-    let pad_samples = NATIVE_STREAM_SAMPLE_RATE * NATIVE_STREAM_FINAL_SILENCE_PAD_MS / 1000;
+    native_stream_final_tail_capped(tail, 0)
+}
+
+/// Trailing real silence (in samples) at the END of a capture, derived from its per-frame speech
+/// mask — the count of consecutive non-speech frames at the tail × frame size. Used to shrink the
+/// native-stream finalize pad by the right-context silence the encoder ALREADY captured (capture is
+/// ungated now, so a recording that trailed off into silence carries it).
+fn trailing_silence_samples_from_mask(speech_mask: &[bool]) -> usize {
+    let trailing_frames = speech_mask
+        .iter()
+        .rev()
+        .take_while(|&&speech| !speech)
+        .count();
+    trailing_frames * crate::audio_toolkit::vad::VAD_FRAME_SAMPLES
+}
+
+/// Native-stream finalize tail padded to flush the streaming encoder's right context, appending
+/// only the SHORTFALL: `max(0, 2000 ms − already_silent_samples)`. `already_silent_samples` is the
+/// trailing real silence the capture already carries (0 on the no-mask path → the full 2000 ms, the
+/// unchanged legacy behavior); a recording that ended in ≥ 2000 ms of captured silence gets no pad.
+fn native_stream_final_tail_capped(tail: &[f32], already_silent_samples: usize) -> Vec<f32> {
+    let target = NATIVE_STREAM_SAMPLE_RATE * NATIVE_STREAM_FINAL_SILENCE_PAD_MS / 1000;
+    let pad_samples = target.saturating_sub(already_silent_samples);
     let mut padded = Vec::with_capacity(tail.len() + pad_samples);
     padded.extend_from_slice(tail);
     padded.resize(padded.len() + pad_samples, 0.0);
@@ -632,5 +708,117 @@ mod tests {
         assert_eq!(&padded[..tail.len()], tail.as_slice());
         assert_eq!(padded.len(), tail.len() + expected_pad);
         assert!(padded[tail.len()..].iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn native_stream_final_tail_pads_only_the_shortfall() {
+        let tail = vec![0.1_f32, -0.2, 0.3];
+        let full =
+            super::NATIVE_STREAM_SAMPLE_RATE * super::NATIVE_STREAM_FINAL_SILENCE_PAD_MS / 1000;
+        // Capture already carried 500 ms of trailing silence → only the 1500 ms shortfall is added.
+        let already = super::NATIVE_STREAM_SAMPLE_RATE * 500 / 1000;
+        let padded = super::native_stream_final_tail_capped(&tail, already);
+        assert_eq!(padded.len(), tail.len() + (full - already));
+        // ≥ 2000 ms of captured silence → no pad at all.
+        let over = super::native_stream_final_tail_capped(&tail, full + 10_000);
+        assert_eq!(over.len(), tail.len());
+        // Zero already-silent == the legacy full pad.
+        assert_eq!(
+            super::native_stream_final_tail_capped(&tail, 0).len(),
+            tail.len() + full
+        );
+    }
+
+    #[test]
+    fn trailing_silence_from_mask_counts_tail_non_speech_frames() {
+        let frame = crate::audio_toolkit::vad::VAD_FRAME_SAMPLES;
+        // 3 trailing non-speech frames after a speech run.
+        let mask = [true, true, false, false, false];
+        assert_eq!(super::trailing_silence_samples_from_mask(&mask), 3 * frame);
+        // Ends in speech → zero trailing silence.
+        assert_eq!(super::trailing_silence_samples_from_mask(&[false, true]), 0);
+        // All silence → every frame counts.
+        assert_eq!(
+            super::trailing_silence_samples_from_mask(&[false, false]),
+            2 * frame
+        );
+        assert_eq!(super::trailing_silence_samples_from_mask(&[]), 0);
+    }
+
+    #[test]
+    fn mask_gate_rejects_hallucination_band_and_dead_air_but_passes_real_speech() {
+        let synth = |target_rms: f32| -> Vec<f32> {
+            let amp = target_rms * std::f32::consts::SQRT_2;
+            (0..4800)
+                .map(|i| amp * (i as f32 * 0.2).sin())
+                .collect::<Vec<f32>>()
+        };
+        // A hallucination-band clip (rms 0.0014 — the measured "Thank you." level, cf. the fixture
+        // in `silence_floor_rejects_observed_silence_and_passes_observed_speech`) with speech frames
+        // in the mask must be REJECTED on the mask path: Silero-at-0.3 false-fires speech frames onto
+        // near-silent audio, so a speech-frame mask alone can't be trusted — the 0.003 floor still
+        // gates it, exactly as on the no-mask path. A lower floor here would re-open this band and
+        // paste hallucinated "Thank you." over what should be silence.
+        let hallucination = synth(0.0014);
+        let speech_mask = vec![true, true, true];
+        assert!(super::is_silent_recording_with_mask(
+            &hallucination,
+            Some(&speech_mask)
+        ));
+        // …and WITHOUT a mask (file/cloud), the same clip is rejected by the 0.003 floor too.
+        assert!(super::is_silent_recording_with_mask(&hallucination, None));
+
+        // Genuine soft-but-real speech (rms 0.006, above the 0.003 floor) with speech frames PASSES.
+        let real_speech = synth(0.006);
+        assert!(!super::is_silent_recording_with_mask(
+            &real_speech,
+            Some(&[true, true, true])
+        ));
+
+        // Genuine dead-air below the floor is rejected even if a stray VAD frame is set.
+        let dead_air = synth(0.00004);
+        assert!(super::is_silent_recording_with_mask(
+            &dead_air,
+            Some(&[true])
+        ));
+
+        // A mask with no speech frames is rejected regardless of energy (all-noise, no speech).
+        let loud = synth(0.02);
+        assert!(super::is_silent_recording_with_mask(
+            &loud,
+            Some(&[false, false, false])
+        ));
+        // The same loud clip WITH a speech frame passes.
+        assert!(!super::is_silent_recording_with_mask(&loud, Some(&[true])));
+
+        // DC-dominated dead-mic is rejected on either path.
+        let dc: Vec<f32> = vec![0.5; 4800];
+        assert!(super::is_silent_recording_with_mask(&dc, Some(&[true])));
+        assert!(super::is_silent_recording_with_mask(&dc, None));
+    }
+
+    #[test]
+    fn mask_gate_keeps_soft_speaker_diluted_by_long_captured_silence() {
+        // Capture is ungated: a long PTT hold with one soft word (~0.006 RMS over one frame) then
+        // silence has a WHOLE-BUFFER RMS below the hard floor, yet the masked speech frame carries
+        // real energy. Measuring energy over the SPEECH frames keeps the speaker from being dropped.
+        let f = crate::audio_toolkit::vad::VAD_FRAME_SAMPLES;
+        let amp = 0.006_f32 * std::f32::consts::SQRT_2;
+        let mut audio: Vec<f32> = (0..f).map(|i| amp * (i as f32 * 0.3).sin()).collect();
+        audio.resize(f * 201, 0.0); // 200 frames of trailing captured silence
+        let mut mask = vec![false; 201];
+        mask[0] = true;
+
+        // Whole-buffer RMS is below the 0.003 floor — the no-mask (whole-buffer) gate would have
+        // rejected this clip…
+        let (_, whole_rms) = super::audio_energy_stats(&audio);
+        assert!(
+            whole_rms < super::SILENCE_AC_FLOOR,
+            "diluted whole-buffer RMS should sit below the floor, got {whole_rms}"
+        );
+        // …but the speech-frame energy is well above it, so the mask path keeps the clip: measuring
+        // the SAME 0.003 floor over the speech frames only is what saves the soft speaker.
+        assert!(super::speech_masked_rms(&audio, &mask) >= super::SILENCE_AC_FLOOR);
+        assert!(!super::is_silent_recording_with_mask(&audio, Some(&mask)));
     }
 }

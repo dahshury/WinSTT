@@ -12,7 +12,7 @@ import {
 } from "@/shared/ui/data-grid";
 import { normalizeDictionaryTerm } from "../lib/dictionary-terms";
 
-const EDITABLE_COLUMNS = ["term"] as const;
+const EDITABLE_COLUMNS = ["term", "replacement"] as const;
 
 const isBlankDictionaryEntry = (entry: DictionaryEntry): boolean =>
 	entry.term.trim() === "";
@@ -54,7 +54,18 @@ export function DictionaryTable({ entries, onChange }: DictionaryTableProps) {
 			header: t("term"),
 			id: "term",
 			meta: { cell: { variant: "short-text" }, label: t("term") },
-			minSize: 220,
+			minSize: 160,
+		},
+		{
+			// Optional replacement. Empty → the entry is a vocabulary word (context-
+			// biased toward). Non-empty → a deterministic find→replace pair (`term` is
+			// the misheard form, always rewritten to this value).
+			accessorKey: "replacement",
+			filterFn,
+			header: t("replacement"),
+			id: "replacement",
+			meta: { cell: { variant: "short-text" }, label: t("replacement") },
+			minSize: 160,
 		},
 		{
 			// Function header → the grid renders this column via its own `cell`

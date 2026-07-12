@@ -60,14 +60,92 @@ pub async fn context_list_windows() -> Vec<ContextWindowEntry> {
         .unwrap_or_default()
 }
 
-#[cfg(not(target_os = "windows"))]
+// Non-Windows, non-Linux (macOS et al.): the debug app/window pickers have no
+// portable enumeration source here. macOS GUI-app enumeration would need
+// NSWorkspace.runningApplications (objc2-app-kit); the picker returns empty and
+// the focused-field capture still works via the AX sidecar. Windows targeting has
+// no cross-platform analog (the HWND-scoped path is Windows-only), so it is empty
+// on every non-Windows target.
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 fn list_context_apps_blocking() -> Vec<ContextAppEntry> {
     Vec::new()
 }
 
 #[cfg(not(target_os = "windows"))]
 fn list_context_windows_blocking() -> Vec<ContextWindowEntry> {
+    // No HWND analog off Windows; the HWND-scoped capture path is Windows-only.
     Vec::new()
+}
+
+/// Linux: enumerate the top-level applications the AT-SPI desktop exposes (the
+/// registry root's children). Each application accessible carries its name; that
+/// is the identity the context deny-list matches on. Icons aren't sourced here.
+#[cfg(target_os = "linux")]
+fn list_context_apps_blocking() -> Vec<ContextAppEntry> {
+    // This runs on a Tauri `spawn_blocking` thread. Build the async runtime on a
+    // fresh OS thread so we never start a Tokio runtime inside the app's ambient
+    // one (which would panic), then drive the AT-SPI enumeration to completion.
+    std::thread::spawn(|| {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return Vec::new();
+        };
+        runtime.block_on(atspi_list_apps()).unwrap_or_default()
+    })
+    .join()
+    .unwrap_or_default()
+}
+
+#[cfg(target_os = "linux")]
+async fn atspi_list_apps() -> Option<Vec<ContextAppEntry>> {
+    use std::collections::BTreeSet;
+
+    use atspi::connection::AccessibilityConnection;
+    use atspi::proxy::accessible::{AccessibleProxy, ObjectRefExt};
+    use zbus::proxy::CacheProperties;
+
+    let conn = AccessibilityConnection::new().await.ok()?;
+    let bus = conn.connection();
+
+    // The AT-SPI registry's accessible desktop root; its direct children are the
+    // running applications.
+    let root = AccessibleProxy::builder(bus)
+        .destination("org.a11y.atspi.Registry")
+        .ok()?
+        .path("/org/a11y/atspi/accessible/root")
+        .ok()?
+        .cache_properties(CacheProperties::No)
+        .build()
+        .await
+        .ok()?;
+
+    let mut apps = Vec::new();
+    let mut seen = BTreeSet::new();
+    for child in root.get_children().await.ok()? {
+        let Ok(proxy) = child.as_accessible_proxy(bus).await else {
+            continue;
+        };
+        let name = proxy.name().await.unwrap_or_default();
+        let label = name.trim().to_string();
+        if label.is_empty() {
+            continue;
+        }
+        let id = label.to_lowercase();
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        apps.push(ContextAppEntry {
+            id: id.clone(),
+            label: label.clone(),
+            exe: id,
+            title: Some(label),
+            icon: None,
+        });
+    }
+    apps.sort_by_key(|a| a.label.to_lowercase());
+    Some(apps)
 }
 
 #[cfg(target_os = "windows")]

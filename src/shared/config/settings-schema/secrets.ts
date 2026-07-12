@@ -9,6 +9,29 @@
 export const SECRET_PRESENT_SENTINEL = "__WINSTT_SECRET_PRESENT__";
 
 /**
+ * Sentinel a deliberate user "remove key" action writes into the settings store
+ * so the debounced save carries an explicit CLEAR to the backend. Must be
+ * byte-identical to `SECRET_CLEAR_SENTINEL` in
+ * `src-tauri/src/winstt/settings_store.rs`.
+ *
+ * The backend now treats an EMPTY incoming secret as "keep the stored key" (so a
+ * pre-hydration/programmatic save can't wipe a real DPAPI-sealed key). An empty
+ * string is therefore no longer a wipe — a genuine removal must post this
+ * sentinel, which `preserve_masked_secret` maps to a real clear.
+ */
+export const SECRET_CLEAR_SENTINEL = "__WINSTT_SECRET_CLEAR__";
+
+/**
+ * Normalize a stored secret for DISPLAY. A remove action transiently parks
+ * {@link SECRET_CLEAR_SENTINEL} in the store until the backend's cleared
+ * broadcast lands; the field must render as empty (no key) during that window,
+ * never as a present/locked key or as the raw sentinel text.
+ */
+export function displaySecretValue(value: string): string {
+	return value === SECRET_CLEAR_SENTINEL ? "" : value;
+}
+
+/**
  * Whether a stored secret value still represents the key a verify probe is
  * checking.
  *

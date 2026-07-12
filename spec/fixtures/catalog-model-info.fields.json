@@ -1,0 +1,21 @@
+[
+  "accuracy_score",
+  "available",
+  "available_quantizations",
+  "description",
+  "display_name",
+  "error_message",
+  "family",
+  "final_reuse_safe",
+  "id",
+  "languages",
+  "local_path",
+  "native_streaming",
+  "onnx_model_name",
+  "preview_capable",
+  "size_bytes_by_quantization",
+  "size_label",
+  "speed_score",
+  "supports_language_detection",
+  "supports_realtime"
+]

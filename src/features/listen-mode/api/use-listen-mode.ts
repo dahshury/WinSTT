@@ -220,6 +220,13 @@ export function useListenMode(): void {
 	const prevListenModelIdRef = useRef<string | null>(listenModelId);
 	const lastNonListenModeRef = useRef<RecordingMode>("ptt");
 	const transcriptModeRef = useRef<string | null>(null);
+	// Read inside the loopback-event handlers below, which are subscribed once
+	// on mount (stable `[setListening]` deps) and would otherwise close over a
+	// stale `recordingMode` from that first render forever.
+	const recordingModeRef = useRef<RecordingMode>(recordingMode);
+	useEffect(() => {
+		recordingModeRef.current = recordingMode;
+	}, [recordingMode]);
 
 	// Listen mode owns a continuous subtitle feed. Clear it at mode boundaries
 	// so captions from a previous PTT/toggle dictation cannot become the first
@@ -269,14 +276,37 @@ export function useListenMode(): void {
 			setListening(true, deviceName);
 		});
 		const unsubStopped = onLoopbackStopped(() => {
-			prevModeRef.current = null;
 			setListening(false);
+			// A stopped event while `recordingMode` is still "listen" is a live
+			// restart (the start/stop effect below dropping + relaunching the
+			// same session on a device/model change) -- preserve the continuous
+			// subtitle feed instead of resetting it out from under an in-flight
+			// listen session (see "loopback lifecycle preserves listen captions"
+			// below). Only reconcile the transcription store's per-session state
+			// (isRecordingActive, realtime text, ephemeral status) once the mode
+			// has genuinely left listen, so a loopback teardown that outraces the
+			// mode-boundary effect above still clears the stale pill/session
+			// state. Harmlessly idempotent alongside that effect and the
+			// backend's own mode-exit teardown.
+			//
+			// NB: `prevModeRef` deliberately isn't touched here anymore -- it
+			// used to be nulled on every stopped event, which raced with the
+			// start/stop effect below: a stray/duplicate stopped event arriving
+			// between a real mode switch and that effect's next run made
+			// `wasListen` read back `false`, so `shouldStopLoopback` skipped
+			// calling `loopbackStop()` and the backend loopback kept running
+			// after switching away from listen mode. `prevModeRef` now purely
+			// tracks the last observed `recordingMode`, which is what it's
+			// actually used for.
+			if (recordingModeRef.current !== "listen") {
+				clearTranscription();
+			}
 		});
 		return () => {
 			unsubStarted();
 			unsubStopped();
 		};
-	}, [setListening]);
+	}, [setListening, clearTranscription]);
 
 	// Fetch loopback devices when in listen mode. Tauri owns backend readiness;
 	// the legacy connection flag is only a display concern in this port.

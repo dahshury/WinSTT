@@ -9,16 +9,16 @@ use std::path::{Path, PathBuf};
 /// `espeak-ng-data`. Precedence (parity with `phonemizer`'s lookup):
 ///   1. `ESPEAK_NG_LIBRARY` / `PHONEMIZER_ESPEAK_LIBRARY` / `WINSTT_ESPEAK_LIB`
 ///      explicit shared-lib path (+ `ESPEAK_DATA_PATH` / `PHONEMIZER_ESPEAK_DATA_PATH`).
-///   2. The on-demand `espeakng_loader` runtime under
-///      `%LOCALAPPDATA%/winstt/tts/runtime/espeakng_loader/`.
-///   3. Common system install dirs (`C:\Program Files\eSpeak NG\`, PATH).
+///   2. Windows: the on-demand `espeakng_loader` runtime under
+///      `%LOCALAPPDATA%/winstt/tts/runtime/espeakng_loader/`, then the common
+///      installer dirs (`C:\Program Files\eSpeak NG\`).
+///      Unix: the standard shared-object directories probed by soname, with the
+///      dynamic loader (`ldconfig` / `DYLD` cache) as the last resort.
 ///
 /// Returns None if no shared lib + `espeak-ng-data/phontab` pair is found
 /// (caller falls back to CLI / null or installs the runtime pack).
 pub fn resolve_espeak_lib() -> Option<(PathBuf, Option<PathBuf>)> {
-    let lib_name = espeak_shared_lib_name();
-
-    // (1) explicit lib path override.
+    // (1) explicit lib path override — honored on every platform.
     for var in [
         "ESPEAK_NG_LIBRARY",
         "PHONEMIZER_ESPEAK_LIBRARY",
@@ -35,6 +35,24 @@ pub fn resolve_espeak_lib() -> Option<(PathBuf, Option<PathBuf>)> {
             }
         }
     }
+
+    #[cfg(windows)]
+    {
+        resolve_espeak_lib_windows()
+    }
+    #[cfg(not(windows))]
+    {
+        resolve_espeak_lib_unix()
+    }
+}
+
+/// Windows resolution tier: the on-demand `espeakng_loader` runtime under
+/// `%LOCALAPPDATA%`, an explicit `ESPEAK_DATA_PATH`, then the eSpeak NG installer
+/// directories. `espeakng_loader` ships `espeak-ng-data` beside the DLL, so the
+/// lib's own dir is the data parent.
+#[cfg(windows)]
+fn resolve_espeak_lib_windows() -> Option<(PathBuf, Option<PathBuf>)> {
+    let lib_name = espeak_shared_lib_name();
 
     // Candidate dirs that may contain the shared lib (+ its espeak-ng-data).
     let mut dirs: Vec<PathBuf> = Vec::new();
@@ -65,6 +83,131 @@ pub fn resolve_espeak_lib() -> Option<(PathBuf, Option<PathBuf>)> {
         }
     }
     None
+}
+
+/// Unix resolution tier. Package-managed espeak-ng keeps the shared object apart
+/// from `espeak-ng-data` (the lib under an arch lib dir, the data under
+/// `/usr/share`), so the data home is resolved independently and reused for
+/// whichever lib we find. Never touches `%LOCALAPPDATA%`.
+#[cfg(not(windows))]
+fn resolve_espeak_lib_unix() -> Option<(PathBuf, Option<PathBuf>)> {
+    let data = unix_espeak_data_home();
+
+    // (a) Probe the standard shared-library directories for a versioned or
+    //     unversioned soname (`libespeak-ng.so` / `libespeak-ng.so.1`, or the
+    //     `.dylib` equivalents on macOS).
+    for dir in unix_lib_dirs() {
+        for &name in unix_lib_sonames() {
+            let lib = dir.join(name);
+            if lib.is_file() {
+                return Some((lib, data));
+            }
+        }
+    }
+
+    // (b) Last resort: hand the bare soname to the dynamic loader so it searches
+    //     `LD_LIBRARY_PATH` / the `ldconfig` cache / the `DYLD` fallback paths.
+    //     Only report it once it actually dlopens, so downstream FFI init isn't
+    //     handed a phantom path.
+    for &name in unix_lib_sonames() {
+        if unix_soname_loadable(name) {
+            return Some((PathBuf::from(name), data));
+        }
+    }
+
+    None
+}
+
+/// Standard directories a system espeak-ng shared object lands in.
+#[cfg(all(not(windows), target_os = "macos"))]
+fn unix_lib_dirs() -> Vec<PathBuf> {
+    ["/opt/homebrew/lib", "/usr/local/lib", "/usr/lib"]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn unix_lib_dirs() -> Vec<PathBuf> {
+    [
+        "/usr/lib",
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib/aarch64-linux-gnu",
+        "/usr/local/lib",
+        "/lib",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
+}
+
+/// The shared-object filenames to probe, versioned soname included (system
+/// packages ship `libespeak-ng.so.1`; only the `-dev` package adds the bare
+/// `libespeak-ng.so` symlink).
+#[cfg(all(not(windows), target_os = "macos"))]
+fn unix_lib_sonames() -> &'static [&'static str] {
+    &["libespeak-ng.dylib", "libespeak-ng.1.dylib"]
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn unix_lib_sonames() -> &'static [&'static str] {
+    &["libespeak-ng.so", "libespeak-ng.so.1"]
+}
+
+/// True when the dynamic loader can resolve + map `soname` from its own search
+/// path. Used as the last-resort probe when no hard-coded lib dir hit.
+#[cfg(not(windows))]
+fn unix_soname_loadable(soname: &str) -> bool {
+    // SAFETY: we only dlopen the library to test resolvability and immediately
+    // drop (dlclose) the handle. espeak-ng runs no code at load time; this
+    // mirrors the FFI backend's own `libloading::Library::new` in `mod.rs`.
+    unsafe { libloading::Library::new(soname).is_ok() }
+}
+
+/// The dir that DIRECTLY contains `phontab` for a system espeak-ng install,
+/// honoring `ESPEAK_DATA_PATH` / `PHONEMIZER_ESPEAK_DATA_PATH` first. On Unix the
+/// data ships apart from the lib, under `/usr/share`, an arch lib dir, or (on
+/// Homebrew) `/opt/homebrew/share`.
+#[cfg(not(windows))]
+fn unix_espeak_data_home() -> Option<PathBuf> {
+    for var in ["ESPEAK_DATA_PATH", "PHONEMIZER_ESPEAK_DATA_PATH"] {
+        if let Ok(dp) = std::env::var(var) {
+            let dp = PathBuf::from(dp.trim());
+            if resolve_espeak_data_home(&dp).is_some() {
+                return Some(dp);
+            }
+        }
+    }
+    unix_data_dirs()
+        .into_iter()
+        .find(|candidate| resolve_espeak_data_home(candidate).is_some())
+}
+
+#[cfg(all(not(windows), target_os = "macos"))]
+fn unix_data_dirs() -> Vec<PathBuf> {
+    [
+        "/opt/homebrew/share/espeak-ng-data",
+        "/usr/local/share/espeak-ng-data",
+        "/usr/share/espeak-ng-data",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn unix_data_dirs() -> Vec<PathBuf> {
+    [
+        "/usr/share/espeak-ng-data",
+        "/usr/lib/x86_64-linux-gnu/espeak-ng-data",
+        "/usr/lib/aarch64-linux-gnu/espeak-ng-data",
+        "/usr/local/share/espeak-ng-data",
+        "/usr/local/lib/espeak-ng-data",
+        "/usr/lib/espeak-ng-data",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
 }
 
 /// The espeak-ng shared-lib filename for the current platform.

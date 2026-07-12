@@ -357,9 +357,9 @@ async winsttSetSettings(settings: PartialWinsttSettings) : Promise<Result<SetSet
  * API keys and legacy post-process secrets are represented only by the standard
  * secret-present sentinel, never by plaintext values.
  */
-async settingsExportFull() : Promise<Result<SettingsExportResult, string>> {
+async settingsExportFull(llmConfigurations: string | null) : Promise<Result<SettingsExportResult, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("settings_export_full") };
+    return { status: "ok", data: await TAURI_INVOKE("settings_export_full", { llmConfigurations }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return __commandError__(e);
@@ -1669,6 +1669,18 @@ async ttsHistoryDelete(id: string) : Promise<Result<DeletedResult, string>> {
 }
 },
 /**
+ * `tts-history:load-audio` (STRING id) — saved synthesis audio for a TTS row
+ * as a data URI (`audio/wav` or `audio/mpeg` by extension), or null.
+ */
+async ttsHistoryLoadAudio(id: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_history_load_audio", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
  * `about_get_app_info` — app metadata for About/native surfaces.
  */
 async aboutGetAppInfo() : Promise<AboutAppInfo> {
@@ -2163,7 +2175,7 @@ webview2Version: string; copyright: string }
  * its on-disk size in bytes.
  */
 export type AppDataUsageEntry = { key: string; bytes: number }
-export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; update_checks_enabled?: boolean; selected_model?: string; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPositionLegacy; debug_mode?: boolean; log_level?: LogLevel; model_unload_timeout?: ModelUnloadTimeoutLegacy; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKeyLegacy; mute_while_recording?: boolean; append_trailing_space?: boolean; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number }
+export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; update_checks_enabled?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; debug_mode?: boolean; log_level?: LogLevel; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKeyLegacy; mute_while_recording?: boolean; append_trailing_space?: boolean; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 /**
  * One audio input device in the WinSTT spec `AudioDevice` shape (camelCase).
@@ -2274,11 +2286,7 @@ export type CancelPullResult = { cancelled: boolean }
  * One rich catalog row as the picker consumes it. snake_case on the wire to match
  * `rawModelInfoSchema` (catalog-store.ts) exactly — the renderer does no remapping of the keys.
  */
-export type CatalogModelInfo = { id: string; display_name: string;
-/**
- * Always `"onnx_asr"` post-torch-drop (server `_backend_from_str` defaults to it).
- */
-backend: string; family: string; languages: string[]; supports_language_detection: boolean; size_label: string;
+export type CatalogModelInfo = { id: string; display_name: string; family: string; languages: string[]; supports_language_detection: boolean; size_label: string;
 /**
  * Legacy alias for `preview_capable`. Kept for older renderer builds.
  */
@@ -2654,15 +2662,19 @@ historyMaxEntries?: number;
  */
 recordingRetention?: RecordingRetention;
 /**
- * Server fuzzy-corrector max score (lower=stricter). Range 0..1. HOT-SWAP. Zod `.catch(0.18)`.
- */
-wordCorrectionThreshold?: number;
-/**
  * Master switch for the on-device (encoder) dictionary fallback + its model. When false, the
  * non-LLM vocabulary path is off entirely: the model is never downloaded/run and the
  * Vocabulary tab's dictionary is inert unless LLM cleanup is on. HOT-SWAP. Zod `.catch(true)`.
  */
-encoderDictionaryEnabled?: boolean }
+encoderDictionaryEnabled?: boolean;
+/**
+ * How much surrounding text (bytes each side of a word) the on-device dictionary reads when
+ * judging whether a word is a mis-hearing. Lower = faster (masked-LM cost grows with the square
+ * of the text length); higher reads more context, which can catch borderline corrections in long
+ * dictation but is slower. Default 220 is the fastest step and works for most speech. HOT-SWAP.
+ * Zod `.catch(220)`.
+ */
+dictionaryContextChars?: number }
 export type GlobalSettings = {
 /**
  * Idle-unload policy shared by local STT, realtime preview, local TTS, and
@@ -2900,10 +2912,6 @@ languageCandidates?: string[];
  */
 device?: DeviceType;
 /**
- * Transcriber engine (auto-derived from model id on load). HOT-SWAP.
- */
-backend?: TranscriberBackend;
-/**
  * ONNX file quant suffix (`""`, `int8`, `fp16`, `uint8`, `int4`, `q4`,
  * `q4f16`, `bnb4`). Free-string (not an enum) — the catalog gates valid values per
  * model and the server resolves `""`/`auto`. HOT-SWAP.
@@ -2937,7 +2945,6 @@ effective_quantization: string; estimated_bytes: number; comfortable_on_gpu: boo
  * transcription). HOT-SWAP (retunes the idle-unload daemon in place).
  */
 export type ModelUnloadTimeout = "immediately" | "never" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1"
-export type ModelUnloadTimeoutLegacy = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
 /**
  * The full `fetchModelsWithState` payload: `{ models, states, system_info }`.
  */
@@ -3037,7 +3044,6 @@ export type OverlayMode = "floating-bottom" | "dynamic-island"
  * `general.overlayPosition` — coarse screen-edge gate (distinct from layout style).
  */
 export type OverlayPosition = "auto" | "none" | "top" | "bottom"
-export type OverlayPositionLegacy = "none" | "top" | "bottom"
 /**
  * `PaginatedHistory` (camelCase `hasMore`) returned by `history_list`.
  */
@@ -3198,7 +3204,14 @@ realtime_model: string | null }
  */
 export type SetSettingsResult = { needsRestart: boolean; changedStartupKeys: string[] }
 export type SettingsExportResult = { ok: boolean; cancelled?: boolean | null; error?: string | null; path?: string | null }
-export type SettingsImportResult = { ok: boolean; cancelled?: boolean | null; error?: string | null; path?: string | null; restored: SettingsRestoreItem[]; adjusted: SettingsRestoreItem[] }
+export type SettingsImportResult = { ok: boolean; cancelled?: boolean | null; error?: string | null; path?: string | null; restored: SettingsRestoreItem[]; adjusted: SettingsRestoreItem[];
+/**
+ * Raw saved-LLM-configurations blob (the `winstt:llm-configurations`
+ * localStorage value) recovered from the backup, if present. The renderer
+ * writes this back to localStorage — these configs live outside the backend
+ * settings tree. `None` for older backups that predate the field.
+ */
+llmConfigurations?: string | null }
 export type SettingsRestoreItem = { area: string; status: string; message: string }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 /**
@@ -3249,13 +3262,6 @@ export type ThinkingEffort = "off" | "low" | "medium" | "high"
  * `{ saved }` envelope for `history_toggle`. `null` when the row is missing.
  */
 export type ToggleResult = { saved: boolean | null }
-/**
- * `model.backend` — `TranscriberBackendSchema`.
- * NOTE(port): the Rust engine (slice 03) is a single unified `ort` runtime, so
- * `faster_whisper` is effectively a legacy default that the load path maps to
- * the ONNX engine. Kept for settings round-trip parity with persisted JSON.
- */
-export type TranscriberBackend = "faster_whisper" | "onnx_asr"
 /**
  * Legacy `TranscriptionHistoryEntry` (ipc-client.ts) — the karaoke `HistoryTable`
  * + the settings panel sync. STRING id, epoch-MILLIS timestamp.
@@ -3402,7 +3408,13 @@ costUsd?: number | null;
  * `true` when `costUsd` is a client-side estimate rather than a
  * provider-billed figure. Omitted when there is no cost.
  */
-costIsEstimate?: boolean | null }
+costIsEstimate?: boolean | null;
+/**
+ * Absolute path to the saved synthesis audio (WAV/MP3 under
+ * userData/recordings/). Set only when the file is on disk so the
+ * renderer shows the play button exactly when playback can succeed.
+ */
+audioFilePath?: string | null }
 /**
  * `{ ready }` — the `initTts` result shape (`{ ready: boolean }`).
  */
@@ -3513,7 +3525,14 @@ export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_ac
  * Persisted via the Tauri store (one JSON value). Secrets are encrypted at
  * rest by the persistence layer — they are plaintext on this struct.
  */
-export type WinsttSettings = { global?: GlobalSettings; model?: ModelSettings; quality?: QualitySettings; audio?: AudioSettings; general?: GeneralSettings; hotkey?: HotkeySettings;
+export type WinsttSettings = {
+/**
+ * Persisted schema version (finding #20). Anchors future migrations and lets
+ * a downgrade/upgrade be detected. An older/newer persisted value survives a
+ * read (serde `default` only fills an ABSENT key), so a downgrade can never
+ * silently reset it.
+ */
+schemaVersion?: number; global?: GlobalSettings; model?: ModelSettings; quality?: QualitySettings; audio?: AudioSettings; general?: GeneralSettings; hotkey?: HotkeySettings;
 /**
  * `[]` default; Zod `.catch([])` (pre-v10 entries fail the parser → wiped).
  */

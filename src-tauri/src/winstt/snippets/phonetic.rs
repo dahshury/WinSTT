@@ -65,7 +65,7 @@ fn slice(norm: &[char], start: i64, end: i64) -> String {
     clippy::too_many_lines,
     reason = "Double Metaphone port is kept contiguous to preserve algorithm parity"
 )]
-pub(super) fn double_metaphone(value: &str) -> (String, String) {
+pub(crate) fn double_metaphone(value: &str) -> (String, String) {
     let mut primary = String::new();
     let mut secondary = String::new();
     let mut index: i64 = 0;

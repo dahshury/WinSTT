@@ -5,21 +5,20 @@ use tauri_plugin_store::StoreExt;
 
 use super::defaults::*;
 use super::types::{
-    AppSettings, AutoSubmitKey, ClipboardHandling, ModelUnloadTimeout, OrtAcceleratorSetting,
-    PasteMethod, ShortcutBinding, WhisperAcceleratorSetting,
+    AppSettings, AutoSubmitKey, ClipboardHandling, OrtAcceleratorSetting, PasteMethod,
+    ShortcutBinding, WhisperAcceleratorSetting,
 };
 
 pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
 
 pub fn get_default_settings() -> AppSettings {
-    #[cfg(target_os = "windows")]
+    // Source the transcribe default from the schema constant on EVERY platform so
+    // both stores present the same key. The constant is itself platform-specific
+    // (`LCtrl+LMeta` on Windows, a full accelerator elsewhere — Tauri's global
+    // shortcut backend rejects modifier-only combos). The transcribe binding is
+    // ultimately overridden from the WinSTT tree (`hotkey.pushToTalkKey`) at init,
+    // but keeping this in agreement avoids a stale/divergent fallback default.
     let default_shortcut = crate::winstt::settings_schema::DEFAULT_PUSH_TO_TALK_KEY;
-    #[cfg(target_os = "macos")]
-    let default_shortcut = "option+space";
-    #[cfg(target_os = "linux")]
-    let default_shortcut = "ctrl+space";
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let default_shortcut = "alt+space";
 
     let mut bindings = HashMap::new();
     bindings.insert(
@@ -93,16 +92,11 @@ pub fn get_default_settings() -> AppSettings {
     AppSettings {
         bindings,
         update_checks_enabled: default_update_checks_enabled(),
-        selected_model: "".to_string(),
         selected_microphone: None,
         clamshell_microphone: None,
         selected_output_device: None,
-        translate_to_english: false,
-        selected_language: "auto".to_string(),
-        overlay_position: default_overlay_position(),
         debug_mode: false,
         log_level: default_log_level(),
-        model_unload_timeout: ModelUnloadTimeout::default(),
         paste_method: PasteMethod::default(),
         clipboard_handling: ClipboardHandling::default(),
         auto_submit: default_auto_submit(),

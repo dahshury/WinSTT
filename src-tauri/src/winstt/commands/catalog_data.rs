@@ -29,7 +29,7 @@ mod dto;
 pub use cloud::{CloudCatalogModel, all_cloud_catalog_rows, cloud_catalog_rows};
 pub use dto::{
     CatalogModelInfo, ModelCacheInfo, ModelStateEntry, ModelsWithState, SystemInfoEntry,
-    SystemInfoGpu,
+    SystemInfoGpu, catalog_dto_fields_json,
 };
 
 /// Raw catalog.json row (editorial source of truth). `wer`/`rtfx` are present on every shipped row
@@ -475,7 +475,6 @@ fn to_catalog_row(entry: &RawCatalogEntry, accel: Accelerator) -> CatalogModelIn
     CatalogModelInfo {
         id: entry.id.clone(),
         display_name: display_name_without_language_qualifier(&entry.display_name),
-        backend: "onnx_asr".into(),
         family: entry.family.clone(),
         languages: entry.languages.clone(),
         supports_language_detection: entry.supports_language_detection,
@@ -774,7 +773,6 @@ mod tests {
             .iter()
             .find(|r| r.id == "tiny")
             .expect("whisper tiny present");
-        assert_eq!(tiny.backend, "onnx_asr");
         assert!(!tiny.languages.is_empty());
         assert!(!tiny.description.is_empty());
         assert_eq!(tiny.size_label, "38M");
@@ -926,9 +924,10 @@ mod tests {
             .find(|r| r.id == "streaming-nemotron-3.5-multi-1120ms-int8")
             .expect("streaming nemotron 3.5 row present");
         assert_eq!(streaming_nemotron.display_name, "Streaming Nemotron 3.5");
+        // fp16 tier added 2026-07-11 (2.14× fp32 on DirectML, identical transcript).
         assert_eq!(
             streaming_nemotron.available_quantizations.as_slice(),
-            ["", "int8"]
+            ["", "fp16", "int8"]
         );
 
         let tiny_en = rows

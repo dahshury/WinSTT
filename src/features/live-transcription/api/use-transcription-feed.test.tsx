@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
@@ -40,6 +40,14 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	// Without this, a `renderHook` instance from an earlier test stays mounted
+	// (its effects and store subscriptions still live) into later tests. That
+	// used to be harmless here, but the mode-boundary reset effect below now
+	// reacts to `useSettingsStore` changes -- a later test's `setRecordingMode`
+	// call would replay that reset against a stale instance's leftover
+	// `prevRecordingModeRef`, mutating the shared `useTranscriptionStore` out
+	// from under the test that's actually running.
+	cleanup();
 	window.nativeBridge = originalApi;
 	useSettingsStore.setState({ settings: initialSettings });
 });
@@ -450,5 +458,88 @@ describe("useTranscriptionFeed", () => {
 		expect(typeof state.transcribingStartedAt).toBe("number");
 		expect(state.currentRealtime).toBe("live preview");
 		expect(state.ephemeral?.text).toBe("stale");
+	});
+
+	describe("recording mode change", () => {
+		test("switching away from listen mode clears isRecordingActive and the pill state", () => {
+			// Listen mode is continuous: its `recording_start` only latches
+			// `isRecordingActive` and nothing ever fires a terminal event
+			// (full_sentence/no_audio_detected/etc.) to release it. Switching
+			// modes today emits no recording-lifecycle IPC event either, so
+			// without a mode-change reset this state carries over and the
+			// overlay pill stays stuck revealed after leaving listen mode.
+			setRecordingMode("listen");
+			useTranscriptionStore.setState({
+				isRecordingActive: true,
+				isTranscribing: true,
+				processingPhase: "transcribing",
+				currentRealtime: "live listen caption",
+				ephemeral: { kind: "info", text: "status", timestamp: 1 },
+			});
+			renderHook(() => useTranscriptionFeed(), {
+				wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+			});
+
+			act(() => setRecordingMode("ptt"));
+
+			const state = useTranscriptionStore.getState();
+			expect(state.isRecordingActive).toBe(false);
+			expect(state.isTranscribing).toBe(false);
+			expect(state.processingPhase).toBeNull();
+			expect(state.currentRealtime).toBe("");
+			expect(state.ephemeral).toBeNull();
+		});
+
+		test("switching between two non-listen modes also resets a stale session", () => {
+			setRecordingMode("ptt");
+			useTranscriptionStore.setState({
+				isRecordingActive: true,
+				isTranscribing: true,
+				currentRealtime: "mid dictation",
+			});
+			renderHook(() => useTranscriptionFeed(), {
+				wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+			});
+
+			act(() => setRecordingMode("toggle"));
+
+			const state = useTranscriptionStore.getState();
+			expect(state.isRecordingActive).toBe(false);
+			expect(state.isTranscribing).toBe(false);
+			expect(state.currentRealtime).toBe("");
+		});
+
+		test("mounting the hook does not reset pre-seeded state (no false transition on mount)", () => {
+			setRecordingMode("listen");
+			useTranscriptionStore.setState({
+				isRecordingActive: true,
+				currentRealtime: "already live",
+			});
+
+			renderHook(() => useTranscriptionFeed(), {
+				wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+			});
+
+			const state = useTranscriptionStore.getState();
+			expect(state.isRecordingActive).toBe(true);
+			expect(state.currentRealtime).toBe("already live");
+		});
+
+		test("re-affirming the same recording mode does not reset an active session", () => {
+			setRecordingMode("listen");
+			renderHook(() => useTranscriptionFeed(), {
+				wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+			});
+			useTranscriptionStore.setState({
+				isRecordingActive: true,
+				currentRealtime: "still forming",
+			});
+
+			act(() => setRecordingMode("listen"));
+
+			const state = useTranscriptionStore.getState();
+			expect(state.isRecordingActive).toBe(true);
+			expect(state.currentRealtime).toBe("still forming");
+		});
 	});
 });

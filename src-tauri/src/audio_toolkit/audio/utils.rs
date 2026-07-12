@@ -50,9 +50,21 @@ pub fn verify_wav_file<P: AsRef<Path>>(file_path: P, expected_samples: usize) ->
 
 /// Save audio samples as a WAV file
 pub fn save_wav_file<P: AsRef<Path>>(file_path: P, samples: &[f32]) -> Result<()> {
+    save_wav_file_with_spec(file_path, samples, 16000, 1)
+}
+
+/// Save interleaved f32 samples as an i16 WAV at an arbitrary rate/channel
+/// layout (TTS engines synthesize at their own rates — 22.05/24/44.1 kHz —
+/// unlike the fixed 16 kHz mono STT recordings).
+pub fn save_wav_file_with_spec<P: AsRef<Path>>(
+    file_path: P,
+    samples: &[f32],
+    sample_rate: u32,
+    channels: u16,
+) -> Result<()> {
     let spec = WavSpec {
-        channels: 1,
-        sample_rate: 16000,
+        channels: channels.max(1),
+        sample_rate,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
@@ -61,7 +73,7 @@ pub fn save_wav_file<P: AsRef<Path>>(file_path: P, samples: &[f32]) -> Result<()
 
     // Convert f32 samples to i16 for WAV
     for sample in samples {
-        let sample_i16 = (sample * i16::MAX as f32) as i16;
+        let sample_i16 = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
         writer.write_sample(sample_i16)?;
     }
 

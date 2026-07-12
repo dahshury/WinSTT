@@ -99,6 +99,17 @@ describe("SettingField", () => {
 		expect(onReset).toHaveBeenCalledTimes(0);
 	});
 
+	test("renders no error message by default", () => {
+		renderField(<SettingField label="Speed" />);
+		expect(screen.queryByRole("alert")).toBeNull();
+	});
+
+	test("renders the inline error message when error is set", () => {
+		renderField(<SettingField error="Bad value" label="Speed" />);
+		const alert = screen.getByRole("alert");
+		expect(alert.textContent).toBe("Bad value");
+	});
+
 	test("keeps disabled reasons out of the info tooltip", async () => {
 		renderField(
 			<SettingField

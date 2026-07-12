@@ -20,7 +20,6 @@ function model(id: string): ModelInfo {
 	return {
 		id,
 		displayName: id,
-		backend: "faster_whisper",
 		family: "whisper",
 		languages: ["en"],
 		supportsLanguageDetection: true,
@@ -149,6 +148,66 @@ describe("StatusBar", () => {
 		).not.toBeNull();
 		// The picker's trigger renders the currently-selected model's name.
 		expect(screen.getByText("tiny")).toBeDefined();
+	});
+
+	test("footer shows the realtime model (not the main model) in listen mode", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: { ...initialSettings.general, recordingMode: "listen" },
+				model: {
+					...initialSettings.model,
+					model: "large-v2",
+					realtimeModel: "tiny",
+				},
+				quality: {
+					...initialSettings.quality,
+					useMainModelForRealtime: false,
+				},
+			},
+		});
+		render(
+			<IntlProvider>
+				<StatusBar />
+			</IntlProvider>,
+		);
+		// Listen mode runs the realtime model as the active transcriber (the main
+		// model is unloaded), so the footer chip reflects the realtime slot.
+		act(() => {
+			useModelSwapStore.setState({ activeMain: null, activeRealtime: null });
+		});
+		expect(screen.getByText("tiny")).toBeDefined();
+		expect(screen.queryByText("large-v2")).toBeNull();
+	});
+
+	test("footer keeps the main model in listen mode when realtime reuses it", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: { ...initialSettings.general, recordingMode: "listen" },
+				model: {
+					...initialSettings.model,
+					model: "large-v2",
+					realtimeModel: "tiny",
+				},
+				quality: {
+					...initialSettings.quality,
+					useMainModelForRealtime: true,
+				},
+			},
+		});
+		render(
+			<IntlProvider>
+				<StatusBar />
+			</IntlProvider>,
+		);
+		act(() => {
+			useModelSwapStore.setState({ activeMain: null, activeRealtime: null });
+		});
+		// `useMainModelForRealtime` → the main model IS the realtime engine, so the
+		// chip stays the main-model selector.
+		expect(screen.getByText("large-v2")).toBeDefined();
+		expect(screen.queryByText("tiny")).toBeNull();
 	});
 
 	test("shows the size-free variant name in the footer, not the raw id or param count", () => {

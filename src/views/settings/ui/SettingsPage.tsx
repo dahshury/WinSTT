@@ -142,6 +142,9 @@ const TtsModelPickerHost = lazy(async () => ({
 const OllamaModelManagerDialog = lazy(async () => ({
 	default: (await loadOllamaManager()).OllamaModelManagerDialog,
 }));
+const DictionaryContextControl = lazy(async () => ({
+	default: (await loadDictionary()).DictionaryContextControl,
+}));
 const DictionarySettingsPanel = lazy(async () => ({
 	default: (await loadDictionary()).DictionarySettingsPanel,
 }));
@@ -209,6 +212,7 @@ function VocabularyTab(): ReactNode {
 			model.unload();
 		}
 	};
+	const t = useTranslations("dictionary");
 	// The non-LLM path can act only when the feature is on AND the model is present.
 	const encoderActive = encoderEnabled && model.state === "present";
 	const disabled =
@@ -216,15 +220,24 @@ function VocabularyTab(): ReactNode {
 	return (
 		<>
 			{llmCleanupEnabled ? null : (
-				// Matches a section's own top gap so the encoder card sits the
-				// same distance below the page header as any first section does.
-				<div className="pt-8">
-					<EncoderModelCard
-						enabled={encoderEnabled}
-						model={model}
-						onToggle={handleEncoderToggle}
+				<>
+					{/* Matches a section's own top gap so the encoder card sits the
+					    same distance below the page header as any first section does. */}
+					<div className="pt-8">
+						<EncoderModelCard
+							enabled={encoderEnabled}
+							model={model}
+							onToggle={handleEncoderToggle}
+						/>
+					</div>
+					{/* Below the card: how much context the on-device dictionary reads
+					    per word (speed ↔ accuracy). Greyed until the feature is active,
+					    since it only affects the non-LLM encoder path. */}
+					<DictionaryContextControl
+						disabled={!encoderActive}
+						disabledTooltip={encoderActive ? undefined : t("contextDisabled")}
 					/>
-				</div>
+				</>
 			)}
 			<div
 				className={cn(

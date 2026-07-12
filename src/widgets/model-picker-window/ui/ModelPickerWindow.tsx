@@ -46,7 +46,8 @@ function pickerBodyKey(
 	if (
 		mode.kind === "stt-realtime" ||
 		mode.kind === "stt-cloud" ||
-		mode.kind === "tts"
+		mode.kind === "tts" ||
+		mode.kind === "output-device"
 	) {
 		return mode.kind;
 	}

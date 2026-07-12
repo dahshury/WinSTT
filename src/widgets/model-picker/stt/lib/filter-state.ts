@@ -1,6 +1,7 @@
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+import { countActiveFlags } from "../../core/lib/filter-state";
 import { buildModelSearchCorpus } from "./family-metadata";
 
 export interface SttFilterState {
@@ -22,8 +23,7 @@ export const EMPTY_FILTER_STATE: SttFilterState = {
 const TOGGLE_KEYS = ["cachedOnly", "realtimeOnly", "fitsHardwareOnly"] as const;
 
 export function activeFilterCount(filters: SttFilterState): number {
-	const toggles = TOGGLE_KEYS.filter((key) => filters[key]).length;
-	return toggles + filters.languages.length;
+	return countActiveFlags(filters, TOGGLE_KEYS) + filters.languages.length;
 }
 
 export function hasActiveFilters(filters: SttFilterState): boolean {

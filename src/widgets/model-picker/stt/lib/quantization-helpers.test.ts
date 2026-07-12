@@ -10,7 +10,6 @@ function model(overrides: Partial<ModelInfo> = {}): ModelInfo {
 		id: "m",
 		displayName: "M",
 		family: "nemo",
-		backend: "onnx_asr",
 		languages: ["en"],
 		supportsLanguageDetection: false,
 		sizeLabel: "300M",
@@ -86,17 +85,6 @@ describe("getQuantizationOptions", () => {
 });
 
 describe("supportsQuantization", () => {
-	test("false for non-onnx backends", () => {
-		expect(
-			supportsQuantization(
-				model({
-					backend: "faster_whisper",
-					availableQuantizations: ["", "int8"],
-				}),
-			),
-		).toBe(false);
-	});
-
 	test("false when only a single known precision ships", () => {
 		expect(supportsQuantization(model({ availableQuantizations: [""] }))).toBe(
 			false,

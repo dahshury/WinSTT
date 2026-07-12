@@ -13,8 +13,6 @@ use specta::Type;
 pub struct CatalogModelInfo {
     pub id: String,
     pub display_name: String,
-    /// Always `"onnx_asr"` post-torch-drop (server `_backend_from_str` defaults to it).
-    pub backend: String,
     pub family: String,
     pub languages: Vec<String>,
     pub supports_language_detection: bool,
@@ -102,4 +100,64 @@ pub struct ModelsWithState {
     pub models: Vec<CatalogModelInfo>,
     pub states: Vec<ModelStateEntry>,
     pub system_info: SystemInfoEntry,
+}
+
+/// The exact set of `CatalogModelInfo` wire keys (snake_case), sorted, serialized to the
+/// committed parity fixture (`spec/fixtures/catalog-model-info.fields.json`). This is the byte
+/// bridge that keeps this struct and the renderer's `rawModelInfoSchema` (catalog-store.ts) from
+/// drifting: the Rust test `catalog_dto_fields_match_committed` asserts the fixture is current, and
+/// the TS test `catalog-model-info.parity.test.ts` asserts the zod schema's keys reproduce it — so
+/// a field added on one side without the other fails CI. Derived from a real serialized instance
+/// (not a hand-list) so the fixture cannot lie about what the struct emits. Regenerate via
+/// `cargo run --example export_catalog_parity_fixtures`.
+pub fn catalog_dto_fields_json() -> Result<String, serde_json::Error> {
+    // A zeroed sample: `serde` emits every field (no `skip_serializing_if` on the struct), so the
+    // object's key set is exactly the wire surface — `Option` fields serialize as a present `null`.
+    let sample = CatalogModelInfo {
+        id: String::new(),
+        display_name: String::new(),
+        family: String::new(),
+        languages: Vec::new(),
+        supports_language_detection: false,
+        size_label: String::new(),
+        supports_realtime: false,
+        preview_capable: false,
+        native_streaming: false,
+        final_reuse_safe: false,
+        onnx_model_name: None,
+        description: String::new(),
+        available_quantizations: Vec::new(),
+        size_bytes_by_quantization: BTreeMap::new(),
+        available: false,
+        error_message: String::new(),
+        local_path: None,
+        speed_score: 0.0,
+        accuracy_score: 0.0,
+    };
+    let serde_json::Value::Object(map) = serde_json::to_value(&sample)? else {
+        unreachable!("a struct always serializes to a JSON object");
+    };
+    let mut keys: Vec<&String> = map.keys().collect();
+    keys.sort();
+    let mut json = serde_json::to_string_pretty(&keys)?;
+    json.push('\n');
+    Ok(json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_dto_fields_match_committed() {
+        // The committed fixture is the byte bridge to the renderer's rawModelInfoSchema. If this
+        // fails, a field was added/removed/renamed on CatalogModelInfo — regenerate with
+        // `cargo run --example export_catalog_parity_fixtures` and update the zod schema to match.
+        let committed = include_str!("../../../../../spec/fixtures/catalog-model-info.fields.json");
+        let generated = catalog_dto_fields_json().expect("serialize dto fields");
+        assert_eq!(
+            committed, generated,
+            "spec/fixtures/catalog-model-info.fields.json is stale — rerun export_catalog_parity_fixtures"
+        );
+    }
 }

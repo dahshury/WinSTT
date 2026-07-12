@@ -223,17 +223,27 @@ export function SubtitleOverlay() {
 		return null;
 	}
 
+	// The scrim tracks the strongest visible line so it dissolves in step with
+	// the captions instead of lingering as (or popping out from) a dark band.
+	const scrimOpacity = liveText
+		? 1
+		: Math.max(
+				0,
+				...visibleSubtitleItems.map(({ opacity }) => opacity),
+				showEphemeral ? ephemeralOpacity : 0,
+			);
+
 	return (
-		<div
-			className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center justify-end gap-0.5 px-5 pt-8 pb-2"
-			style={{
-				background:
-					"linear-gradient(to bottom, transparent 0%, var(--color-subtitle-scrim-bottom) 100%)",
-			}}
-		>
+		<div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center justify-end gap-0.5 px-5 pt-10 pb-2">
+			<div
+				aria-hidden
+				className="subtitle-scrim-bloom absolute inset-0"
+				data-subtitle-scrim="true"
+				style={{ opacity: scrimOpacity, transition: SUBTITLE_EXIT_TRANSITION }}
+			/>
 			{visibleSubtitleItems.map(({ item, opacity }) => (
 				<p
-					className="max-w-full text-center font-sans text-body text-foreground leading-snug"
+					className="relative max-w-full text-center font-sans text-body text-foreground leading-snug"
 					data-subtitle-line="true"
 					dir="auto"
 					key={item.id}
@@ -244,7 +254,7 @@ export function SubtitleOverlay() {
 			))}
 			{liveText ? (
 				<p
-					className="max-w-full text-center font-sans text-body text-foreground/60 italic leading-snug"
+					className="relative max-w-full text-center font-sans text-body text-foreground/60 italic leading-snug"
 					data-subtitle-line="live"
 					dir="auto"
 				>
@@ -253,7 +263,7 @@ export function SubtitleOverlay() {
 			) : null}
 			{showEphemeral && ephemeral ? (
 				<p
-					className="max-w-full text-center font-sans text-body text-foreground/70 italic leading-snug"
+					className="relative max-w-full text-center font-sans text-body text-foreground/70 italic leading-snug"
 					data-subtitle-line="ephemeral"
 					dir="auto"
 					style={{ opacity: ephemeralOpacity }}

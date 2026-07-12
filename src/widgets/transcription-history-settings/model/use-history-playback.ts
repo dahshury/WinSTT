@@ -2,9 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import {
 	alignTranscriptionHistoryAudio,
 	loadTranscriptionHistoryAudio,
+	loadTtsHistoryAudio,
 	type WordTiming,
 } from "@/shared/api/ipc-client";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
+
+/** Which history table the clip belongs to — picks the audio loader, and only
+ *  STT recordings get word-alignment (TTS playback has no spoken-word sweep). */
+export type PlaybackSource = "stt" | "tts";
 
 /**
  * Switch the underlying audio sink for an HTMLAudioElement. `setSinkId` is
@@ -82,6 +87,7 @@ export function useHistoryPlayback(
 	entryId: string,
 	hasAudio: boolean,
 	outputDeviceId: string,
+	source: PlaybackSource = "stt",
 ): PlaybackState {
 	const audioRef = useRef<HTMLAudioElement | null>(null);
 	const rafRef = useRef<number | null>(null);
@@ -120,10 +126,15 @@ export function useHistoryPlayback(
 	const beginPlayback = async () => {
 		if (!audioRef.current) {
 			setLoading(true);
-			// Fetch WAV bytes + word timings together on first play.
+			// Fetch the audio + word timings together on first play. TTS clips have
+			// no spoken-word alignment — the seek bar alone carries scrubbing.
 			const [dataUri, timings] = await Promise.all([
-				loadTranscriptionHistoryAudio(entryId),
-				alignTranscriptionHistoryAudio(entryId),
+				source === "tts"
+					? loadTtsHistoryAudio(entryId)
+					: loadTranscriptionHistoryAudio(entryId),
+				source === "tts"
+					? Promise.resolve([])
+					: alignTranscriptionHistoryAudio(entryId),
 			]);
 			setLoading(false);
 			if (!dataUri) {
