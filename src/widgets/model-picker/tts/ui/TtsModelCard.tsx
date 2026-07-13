@@ -11,10 +11,8 @@ import type { ReactNode } from "react";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { Tooltip } from "@/shared/ui/tooltip";
-import {
-	downloadSizeMetaEntry,
-	type MetaEntry,
-} from "../../core/model-card/CardMeta";
+import { downloadSizeMetaEntry } from "../../core/model-card/card-meta-helpers";
+import type { MetaEntry } from "../../core/model-card/CardMeta";
 import { ModelCard } from "../../core/model-card/ModelCard";
 import {
 	type QuantDownloadAction,

@@ -27,6 +27,14 @@ export interface SwitcherOption<T extends string = string> {
 	 *  `currentColor`). Takes precedence over `icon` when both are set — lets a
 	 *  provider toggle show its actual mark instead of a generic glyph. */
 	iconNode?: ReactNode;
+	/** Optional leading icon rendered from the option's live hover/selected
+	 *  state. Takes precedence over `iconNode`/`icon` — lets an option show a
+	 *  glyph that animates when hovered or selected (e.g. the visualizer-style
+	 *  switcher's live mini previews) instead of a static icon. */
+	iconRender?: (state: {
+		isHovered: boolean;
+		isSelected: boolean;
+	}) => ReactNode;
 	label: string;
 	/** Optional click handler invoked when the badge is pressed. Makes the
 	 * badge render as a button instead of a presentational span. */

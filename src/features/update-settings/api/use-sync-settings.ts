@@ -96,6 +96,7 @@ export function useSyncSettings(): void {
 	// Reconcile with the backend store (source of truth) after localStorage hydration.
 	// Without a backend (plain Vite/browser), leave the local cache as the editable
 	// source and suppress backend side effects.
+	// react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- the cleanup below is complete: it flips `cancelled` (guarding every deferred `setSettings`/status write) and clears `retryTimerRef`. The only timer this effect creates is that retry `setTimeout`, assigned inside the async `.catch` continuation, which the rule's data-flow heuristic can't trace back to the effect-scope cleanup.
 	useEffect(() => {
 		const loadBaseline = getSettingsStoreState().settings;
 		let cancelled = false;
@@ -147,6 +148,12 @@ export function useSyncSettings(): void {
 			});
 		return () => {
 			cancelled = true;
+			// Clear this effect's own pending auto-retry timer so a re-run
+			// (retryToken bump) or unmount doesn't leak a `requestRetry()` fire.
+			if (retryTimerRef.current) {
+				clearTimeout(retryTimerRef.current);
+				retryTimerRef.current = null;
+			}
 		};
 		// `retryToken` in the deps re-runs hydration after `requestRetry()`.
 	}, [setHydrationStatus, setSettings, retryToken]);

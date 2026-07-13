@@ -33,7 +33,7 @@ Every model row below carries four catalog figures. They are the same numbers th
     ["RTFx", "Real-time factor — how many seconds of audio it transcribes per wall-clock second.", "Higher = faster"],
     ["Langs", "Number of languages the model can transcribe.", "Higher = broader"],
   ]}
-  caption="RTFx is engine-and-hardware dependent; treat it as a relative ranking, not an absolute throughput guarantee."
+  caption="WER and RTFx are anchored to the Hugging Face Open ASR Leaderboard (English short-form, H200); rows the leaderboard doesn't carry are calibrated estimates on the same scale. RTFx is engine-and-hardware dependent; treat it as a relative ranking, not an absolute throughput guarantee."
 />
 
 All Whisper-family models support the realtime live preview, so any of them can serve as the realtime model as well as the main model.
@@ -46,14 +46,14 @@ These cover all 99 Whisper languages with automatic language detection. Leave **
   head={["Model", "Params", "WER", "RTFx", "Langs", "Default size"]}
   numeric={[1, 2, 3, 4]}
   rows={[
-    ["tiny", "38M", "24.5", "750", "99", "149 MB"],
-    ["base", "73M", "18.0", "510", "99", "262 MB"],
-    ["small", "242M", "13.0", "330", "99", "772 MB"],
-    ["medium", "769M", "9.5", "200", "99", "2.29 GB"],
-    ["large-v3-turbo", "796M", "7.8", "250", "99", "1.13 GB"],
-    ["large-v3", "1.55B", "7.4", "145", "99", "4.54 GB"],
+    ["tiny", "38M", "16.8", "1350", "99", "149 MB"],
+    ["base", "73M", "12.5", "1250", "99", "262 MB"],
+    ["small", "242M", "8.6", "1050", "99", "772 MB"],
+    ["medium", "769M", "7.0", "710", "99", "2.29 GB"],
+    ["large-v3-turbo", "796M", "7.0", "783", "99", "1.13 GB"],
+    ["large-v3", "1.55B", "6.6", "462", "99", "4.54 GB"],
   ]}
-  caption="large-v3-turbo has ~half the parameters of large-v3, runs ~1.7× faster, and trails it by only 0.4 WER — it is the best all-round main model in the family."
+  caption="large-v3-turbo has ~half the parameters of large-v3, runs ~1.7× faster, and trails it by only ~0.5 WER — it is the best all-round main model in the family."
 />
 
 ## English-only models
@@ -64,31 +64,31 @@ The `.en` variants drop the language-detection step. They are single-language (E
   head={["Model", "Params", "WER", "RTFx", "Default size"]}
   numeric={[1, 2, 3]}
   rows={[
-    ["tiny.en", "38M", "22.5", "750", "149 MB"],
-    ["base.en", "74M", "15.5", "510", "262 MB"],
-    ["small.en", "244M", "11.5", "330", "772 MB"],
-    ["medium.en", "769M", "8.8", "200", "4.33 GB"],
+    ["tiny.en", "38M", "14.6", "1350", "149 MB"],
+    ["base.en", "74M", "10.2", "1250", "262 MB"],
+    ["small.en", "244M", "7.4", "1050", "772 MB"],
+    ["medium.en", "769M", "6.3", "710", "4.33 GB"],
   ]}
   caption="The Language selector is hidden for .en models — they are English-only by design and never auto-detect."
 />
 
 ## Lite-Whisper
 
-Lite-Whisper is Efficient-Speech's structurally compressed `large-v3-turbo`. It keeps the full 99-language multilingual coverage but with a lower-rank encoder, so it loads smaller and runs faster than turbo at a modest WER cost. Three points on the size/speed curve:
+Lite-Whisper is Efficient-Speech's structurally compressed `large-v3-turbo`. It keeps the full 99-language multilingual coverage but with a lower-rank encoder, so it downloads smaller and needs less memory than turbo. Note the compression pays off in **footprint, not throughput** — on the leaderboard hardware all three variants run at roughly the same speed as each other and slower than turbo itself. Three points on the size/accuracy curve:
 
 <ModelTable
   head={["Model", "Params", "WER", "RTFx", "Trade-off"]}
   numeric={[1, 2, 3]}
   rows={[
-    ["lite-whisper-large-v3-turbo-acc", "581M", "8.0", "320", "Most accuracy retained"],
-    ["lite-whisper-large-v3-turbo", "534M", "8.5", "380", "Balanced compression"],
-    ["lite-whisper-large-v3-turbo-fast", "474M", "9.5", "500", "Most aggressive compression"],
+    ["lite-whisper-large-v3-turbo-acc", "581M", "6.5", "327", "Least compressed — most accuracy retained"],
+    ["lite-whisper-large-v3-turbo", "534M", "8.1", "335", "Balanced compression"],
+    ["lite-whisper-large-v3-turbo-fast", "474M", "12.9", "340", "Most aggressive compression"],
   ]}
-  caption="All three are 99-language multilingual and support realtime."
+  caption="All three are 99-language multilingual and support realtime. Only -acc is independently measured on the leaderboard; the other two rows are calibrated from upstream's ESB results onto the same scale."
 />
 
-<Callout type="warn" title="The -acc suffix means accelerated, not accurate">
-  Counter-intuitively, `lite-whisper-large-v3-turbo-acc` is the *least* compressed of the three — it keeps the most parameters and therefore the most accuracy. The plain (no-suffix) variant is the balanced middle, and `-fast` is the smallest and quickest. Read by the numbers above, not the suffix.
+<Callout type="warn" title="The -acc suffix means accuracy-preserving, not accelerated">
+  `lite-whisper-large-v3-turbo-acc` (shown as **Accurate** in the picker) is the *least* compressed of the three — it keeps the most parameters and essentially matches turbo's accuracy in ~60% of the size. The plain (no-suffix) variant is the balanced middle, and `-fast` is the smallest, at a real accuracy cost. Read by the numbers above, not the suffix.
 </Callout>
 
 ## Fine-tunes
@@ -99,8 +99,8 @@ Two specialist Whisper-large fine-tunes for narrower jobs. Both are 1.5B-class, 
   head={["Model", "Params", "WER", "RTFx", "Langs", "Specialty"]}
   numeric={[1, 2, 3, 4]}
   rows={[
-    ["crisper-whisper", "1.54B", "6.7", "150", "2", "Verbatim transcription — keeps fillers (um/uh), stutters, and false starts instead of cleaning them up. English + German."],
-    ["breeze-asr-25", "1.55B", "8.0", "150", "99", "MediaTek Breeze — a large-v2 fine-tune tuned for Mandarin/English code-switching."],
+    ["crisper-whisper", "1.54B", "5.8", "33", "2", "Verbatim transcription — keeps fillers (um/uh), stutters, and false starts instead of cleaning them up. English + German."],
+    ["breeze-asr-25", "1.55B", "8.0", "460", "99", "MediaTek Breeze — a large-v2 fine-tune tuned for Mandarin/English code-switching."],
   ]}
   caption="CrisperWhisper is a large-v3 fine-tune (nyrahealth); Breeze ASR 25 is a large-v2 fine-tune that retains the full multilingual vocabulary."
 />
@@ -145,16 +145,16 @@ Whisper precision is set per-model via the picker's quantization badge (see [Com
 
 <BentoGrid cols={3}>
   <BentoCell icon="speed" title="Realtime preview">
-    <strong>tiny</strong> or <strong>base</strong> (or <strong>.en</strong> for English) — 510–750 RTFx keeps the live preview snappy.
+    <strong>tiny</strong> or <strong>base</strong> (or <strong>.en</strong> for English) — 1250–1350 RTFx keeps the live preview snappy.
   </BentoCell>
   <BentoCell icon="quality" title="Best all-round main model">
-    <strong>large-v3-turbo</strong> — 7.8 WER at 250 RTFx and a 1.13 GB download. The default recommendation.
+    <strong>large-v3-turbo</strong> — 7.0 WER at 783 RTFx and a 1.13 GB download. The default recommendation.
   </BentoCell>
   <BentoCell icon="brain" title="Maximum accuracy">
-    <strong>large-v3</strong> — 7.4 WER, the family's accuracy ceiling, at the cost of a 4.54 GB download and the lowest RTFx.
+    <strong>large-v3</strong> — 6.6 WER, the family's accuracy ceiling, at the cost of a 4.54 GB download and roughly half turbo's speed.
   </BentoCell>
-  <BentoCell icon="cpu" title="Smaller GPU / faster turbo">
-    <strong>lite-whisper-large-v3-turbo-acc</strong> — 8.0 WER, 581M params, full multilingual coverage.
+  <BentoCell icon="cpu" title="Turbo quality, smaller footprint">
+    <strong>lite-whisper-large-v3-turbo-acc</strong> — 6.5 WER, 581M params, full multilingual coverage.
   </BentoCell>
   <BentoCell icon="languages" title="English-only boost">
     The <strong>.en</strong> variants shave 1–2 WER off English audio versus their multilingual twins.

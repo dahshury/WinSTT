@@ -110,8 +110,8 @@
    "onnx_model_name": "onnx-community/whisper-tiny",
    "description": "Smallest multilingual Whisper; best for quick notes on low-end hardware.",
    "param_count": 37760640,
-   "wer": 67.8,
-   "rtfx": 750,
+   "wer": 16.8,
+   "rtfx": 1350,
    "available_quantizations": [
     "",
     "fp16",
@@ -235,8 +235,8 @@
    "onnx_model_name": "onnx-community/whisper-base",
    "description": "Light multilingual Whisper; a small accuracy bump without much extra wait.",
    "param_count": 72593920,
-   "wer": 52.1,
-   "rtfx": 510,
+   "wer": 12.5,
+   "rtfx": 1250,
    "available_quantizations": [
     "",
     "fp16",
@@ -360,8 +360,8 @@
    "onnx_model_name": "onnx-community/whisper-small",
    "description": "Practical everyday Whisper; balanced speed and accuracy across many languages.",
    "param_count": 241734912,
-   "wer": 26.4,
-   "rtfx": 330,
+   "wer": 8.6,
+   "rtfx": 1050,
    "available_quantizations": [
     "",
     "fp16",
@@ -485,8 +485,8 @@
    "onnx_model_name": "Xenova/whisper-medium",
    "description": "More careful multilingual Whisper for messier audio when you can wait longer.",
    "param_count": 769000000,
-   "wer": 15.8,
-   "rtfx": 200,
+   "wer": 7.0,
+   "rtfx": 710,
    "available_quantizations": [
     "",
     "fp16",
@@ -757,7 +757,7 @@
    "description": "Tiny English-only Whisper; fastest option for simple English snippets.",
    "param_count": 37760256,
    "wer": 14.6,
-   "rtfx": 750,
+   "rtfx": 1350,
    "available_quantizations": [
     "",
     "fp16",
@@ -784,7 +784,7 @@
    "description": "Light English-only Whisper; clearer than Tiny while staying quick.",
    "param_count": 74000000,
    "wer": 10.2,
-   "rtfx": 510,
+   "rtfx": 1250,
    "available_quantizations": [
     "",
     "fp16",
@@ -811,7 +811,7 @@
    "description": "Everyday English Whisper; reliable notes without the weight of larger models.",
    "param_count": 244000000,
    "wer": 7.4,
-   "rtfx": 330,
+   "rtfx": 1050,
    "available_quantizations": [
     "",
     "fp16",
@@ -838,7 +838,7 @@
    "description": "High-accuracy English Whisper for longer or noisier dictation.",
    "param_count": 769000000,
    "wer": 6.3,
-   "rtfx": 200,
+   "rtfx": 710,
    "available_quantizations": [
     "",
     "fp16",
@@ -963,7 +963,7 @@
    "description": "Best for Taiwanese Mandarin, local terms, and Mandarin-English switching.",
    "param_count": 1545107214,
    "wer": 7.97,
-   "rtfx": 150,
+   "rtfx": 460,
    "available_quantizations": [
     ""
    ],
@@ -1109,8 +1109,8 @@
    "onnx_model_name": "onnx-community/lite-whisper-large-v3-turbo-ONNX",
    "description": "Compressed Turbo for near-large quality with a much smaller footprint.",
    "param_count": 534359083,
-   "wer": 12.6,
-   "rtfx": 380,
+   "wer": 8.1,
+   "rtfx": 335,
    "available_quantizations": [
     "",
     "fp16"
@@ -1122,7 +1122,7 @@
   },
   {
    "id": "lite-whisper-large-v3-turbo-acc",
-   "display_name": "Lite-Whisper Large v3 Turbo (Accelerated)",
+   "display_name": "Lite-Whisper Large v3 Turbo (Accurate)",
    "family": "whisper",
    "languages": [
     "af",
@@ -1351,8 +1351,8 @@
    "onnx_model_name": "onnx-community/lite-whisper-large-v3-turbo-fast-ONNX",
    "description": "Fastest Lite-Whisper for quick local transcription on modest hardware.",
    "param_count": 473840689,
-   "wer": 20.1,
-   "rtfx": 500,
+   "wer": 12.9,
+   "rtfx": 340,
    "available_quantizations": [
     "",
     "fp16"
@@ -1441,7 +1441,7 @@
    "description": "Tiny Korean Moonshine for quick on-device notes.",
    "param_count": 27092835,
    "wer": 15.0,
-   "rtfx": 1800,
+   "rtfx": 3733,
    "available_quantizations": [
     "",
     "fp16",
@@ -1474,7 +1474,7 @@
    "description": "Tiny Arabic Moonshine for quick lightweight dictation.",
    "param_count": 27092835,
    "wer": 15.0,
-   "rtfx": 1800,
+   "rtfx": 3733,
    "available_quantizations": [
     "",
     "fp16",
@@ -1507,7 +1507,7 @@
    "description": "Tiny Vietnamese Moonshine for fast short-form speech.",
    "param_count": 27092835,
    "wer": 15.0,
-   "rtfx": 1800,
+   "rtfx": 3733,
    "available_quantizations": [
     "",
     "fp16",
@@ -1540,7 +1540,7 @@
    "description": "Low-latency Mandarin Moonshine for responsive dictation.",
    "param_count": 61514019,
    "wer": 10.5,
-   "rtfx": 990,
+   "rtfx": 2767,
    "available_quantizations": [
     "",
     "fp16",
@@ -1573,7 +1573,7 @@
    "description": "Low-latency Japanese Moonshine for everyday notes.",
    "param_count": 61514019,
    "wer": 10.5,
-   "rtfx": 990,
+   "rtfx": 2767,
    "available_quantizations": [
     "",
     "fp16",
@@ -1606,7 +1606,7 @@
    "description": "Low-latency Korean Moonshine with more headroom than Tiny.",
    "param_count": 61514019,
    "wer": 10.5,
-   "rtfx": 990,
+   "rtfx": 2767,
    "available_quantizations": [
     "",
     "fp16",
@@ -1639,7 +1639,7 @@
    "description": "Tiny Ukrainian Moonshine for fast short-form speech.",
    "param_count": 27600000,
    "wer": 0.0,
-   "rtfx": 1000,
+   "rtfx": 3733,
    "available_quantizations": [
     "",
     "fp16",
@@ -1672,7 +1672,7 @@
    "description": "Tiny French Moonshine for fast short-form speech.",
    "param_count": 27600000,
    "wer": 0.0,
-   "rtfx": 1000,
+   "rtfx": 3733,
    "available_quantizations": [
     "",
     "fp16",
@@ -1717,8 +1717,8 @@
    "onnx_model_name": "Masterx/cohere-transcribe-03-2026-ONNX",
    "description": "Highest-accuracy open multilingual option; strong across 14 languages.",
    "param_count": 2000000000,
-   "wer": 3.83,
-   "rtfx": 491,
+   "wer": 5.2,
+   "rtfx": 916,
    "available_quantizations": [
     "",
     "fp16",
@@ -1748,7 +1748,7 @@
    "description": "Arabic + English specialised Cohere Transcribe (2B); highest-accuracy open Arabic ASR.",
    "param_count": 2000000000,
    "wer": 11.8,
-   "rtfx": 270,
+   "rtfx": 900,
    "available_quantizations": [
     "",
     "fp16",
@@ -1776,8 +1776,8 @@
    "onnx_model_name": "smcleod/ibm-granite-speech-4.1-2b-plus-onnx",
    "description": "IBM Granite Speech 4.1 Plus autoregressive multilingual ASR with strong punctuation quality.",
    "param_count": 2000000000,
-   "wer": 5.33,
-   "rtfx": 231,
+   "wer": 4.9,
+   "rtfx": 547,
    "available_quantizations": [
     "",
     "int8",
@@ -1805,8 +1805,8 @@
    "onnx_model_name": "smcleod/ibm-granite-speech-4.1-2b-nar-onnx",
    "description": "IBM Granite Speech 4.1 non-autoregressive multilingual ASR with a single-pass editor.",
    "param_count": 2000000000,
-   "wer": 5.33,
-   "rtfx": 231,
+   "wer": 4.95,
+   "rtfx": 2079,
    "available_quantizations": [
     "",
     "int8",
@@ -1909,8 +1909,8 @@
    "onnx_model_name": "andrewleech/qwen3-asr-1.7b-onnx",
    "description": "Alibaba Qwen3-ASR LLM-based multilingual ASR (30 languages, auto language detection), larger 1.7B model. int4-quantized.",
    "param_count": 1700000000,
-   "wer": 5.11,
-   "rtfx": 148,
+   "wer": 5.02,
+   "rtfx": 394,
    "available_quantizations": [
     "int4"
    ],
@@ -2379,10 +2379,12 @@
    "wer": 7.35,
    "rtfx": 0.0,
    "available_quantizations": [
-    ""
+    "",
+    "fp16"
    ],
    "size_bytes_by_quantization": {
-    "": 2514782687
+    "": 2514782687,
+    "fp16": 1258154606
    }
   },
   {
@@ -2400,10 +2402,12 @@
    "wer": 6.52,
    "rtfx": 0.0,
    "available_quantizations": [
-    ""
+    "",
+    "fp16"
    ],
    "size_bytes_by_quantization": {
-    "": 2514782854
+    "": 2514782854,
+    "fp16": 1258154845
    }
   },
   {
@@ -2421,10 +2425,12 @@
    "wer": 6.29,
    "rtfx": 0.0,
    "available_quantizations": [
-    ""
+    "",
+    "fp16"
    ],
    "size_bytes_by_quantization": {
-    "": 2514782856
+    "": 2514782856,
+    "fp16": 1258154847
    }
   },
   {
@@ -2529,9 +2535,97 @@
     "int8"
    ],
    "size_bytes_by_quantization": {
-    "": 139768605,
+    "": 2594173725,
     "int8": 682009070,
     "fp16": 1298053441
+   }
+  },
+  {
+   "id": "streaming-nemotron-3.5-multi-320ms-int8",
+   "display_name": "Streaming Nemotron 3.5 320ms (Multilingual)",
+   "family": "nemo",
+   "languages": [
+    "en",
+    "zh",
+    "ja",
+    "ko",
+    "ar",
+    "ru",
+    "de",
+    "fr",
+    "es",
+    "pt",
+    "it",
+    "nl",
+    "pl",
+    "tr",
+    "hi",
+    "vi",
+    "uk",
+    "el",
+    "cs",
+    "sv"
+   ],
+   "supports_language_detection": true,
+   "supports_realtime": true,
+   "onnx_model_name": "Masterx/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-320ms-2026-06-11",
+   "description": "Multilingual (100+ languages) cache-aware streaming Nemotron 3.5 transducer, 320 ms (lower latency, snappier on-screen text), with whole-utterance language auto-detect. fp32 (best accuracy) + fp16 + int8.",
+   "param_count": 600000000,
+   "wer": 9.49,
+   "rtfx": 1200,
+   "available_quantizations": [
+    "",
+    "fp16",
+    "int8"
+   ],
+   "size_bytes_by_quantization": {
+    "": 2594386463,
+    "int8": 682228559,
+    "fp16": 1298278274
+   }
+  },
+  {
+   "id": "streaming-nemotron-3.5-multi-560ms-int8",
+   "display_name": "Streaming Nemotron 3.5 560ms (Multilingual)",
+   "family": "nemo",
+   "languages": [
+    "en",
+    "zh",
+    "ja",
+    "ko",
+    "ar",
+    "ru",
+    "de",
+    "fr",
+    "es",
+    "pt",
+    "it",
+    "nl",
+    "pl",
+    "tr",
+    "hi",
+    "vi",
+    "uk",
+    "el",
+    "cs",
+    "sv"
+   ],
+   "supports_language_detection": true,
+   "supports_realtime": true,
+   "onnx_model_name": "Masterx/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-2026-06-11",
+   "description": "Multilingual (100+ languages) cache-aware streaming Nemotron 3.5 transducer, 560 ms (balanced latency/accuracy), with whole-utterance language auto-detect. fp32 (best accuracy) + fp16 + int8.",
+   "param_count": 600000000,
+   "wer": 9.12,
+   "rtfx": 1350,
+   "available_quantizations": [
+    "",
+    "fp16",
+    "int8"
+   ],
+   "size_bytes_by_quantization": {
+    "": 2594386367,
+    "int8": 682228444,
+    "fp16": 1298278159
    }
   },
   {
@@ -2601,7 +2695,7 @@
    "description": "Fast Russian transcription with a lightweight feel.",
    "param_count": 109270705,
    "wer": 5.3,
-   "rtfx": 700,
+   "rtfx": 5700,
    "available_quantizations": [
     "",
     "int8"
@@ -2624,7 +2718,7 @@
    "description": "More accurate Russian notes when you can trade a little speed.",
    "param_count": 114078382,
    "wer": 5.3,
-   "rtfx": 550,
+   "rtfx": 5400,
    "available_quantizations": [
     "",
     "int8"
@@ -2647,7 +2741,7 @@
    "description": "Fast Russian GigaAM for broad everyday audio.",
    "param_count": 243000000,
    "wer": 9.2,
-   "rtfx": 600,
+   "rtfx": 5000,
    "available_quantizations": [
     "",
     "int8"
@@ -2670,7 +2764,7 @@
    "description": "Most accurate GigaAM option for Russian speech and calls.",
    "param_count": 243000000,
    "wer": 8.4,
-   "rtfx": 450,
+   "rtfx": 4500,
    "available_quantizations": [
     "",
     "int8"

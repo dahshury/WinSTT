@@ -155,7 +155,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
     },
     ModelEntry {
         id: "lite-whisper-large-v3-turbo-acc",
-        display_name: "Lite-Whisper Large v3 Turbo (Accelerated)",
+        display_name: "Lite-Whisper Large v3 Turbo (Accurate)",
         family: Family::Whisper,
         onnx_model_name: "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX",
         available_quantizations: &["", "fp16"],
@@ -590,6 +590,28 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         // measured 2026-07-11 at 2.14× fp32 on DirectML (66 s clip 1.90 s vs 4.07 s, encoder
         // 22 vs 51 ms/chunk) with an IDENTICAL transcript, at half the download.
         onnx_model_name: "Masterx/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-2026-06-11",
+        available_quantizations: &["", "fp16", "int8"],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        // Lower-latency siblings of the 1120 ms Nemotron above, same nvidia checkpoint re-exported
+        // at att_context_size [56, 3] (320 ms) / [56, 6] (560 ms) via sherpa-onnx's export_onnx.py.
+        // The three latencies collapse into one realtime card whose LatencyShelf lets the user pick
+        // 320/560/1120 ms; each ships fp32 (encoder.onnx + encoder.data), fp16, and int8.
+        id: "streaming-nemotron-3.5-multi-320ms-int8",
+        display_name: "Streaming Nemotron 3.5 320ms (Multilingual)",
+        family: Family::Nemo,
+        onnx_model_name: "Masterx/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-320ms-2026-06-11",
+        available_quantizations: &["", "fp16", "int8"],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemotron-3.5-multi-560ms-int8",
+        display_name: "Streaming Nemotron 3.5 560ms (Multilingual)",
+        family: Family::Nemo,
+        onnx_model_name: "Masterx/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-2026-06-11",
         available_quantizations: &["", "fp16", "int8"],
         param_count: 600_000_000,
         supports_realtime: true,

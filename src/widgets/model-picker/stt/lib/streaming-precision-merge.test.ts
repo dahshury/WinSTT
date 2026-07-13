@@ -89,6 +89,59 @@ describe("streaming latency model merge", () => {
 		).toEqual([80, 160, 560, 1120]);
 	});
 
+	test("groups nemotron-3.5-multi latency rows behind one card", () => {
+		const merged = mergeStreamingLatencyModels(
+			mergeStreamingPrecisionModels([
+				model("streaming-nemotron-3.5-multi-240ms-int8"),
+				model("streaming-nemotron-3.5-multi-560ms-int8"),
+				model("streaming-nemotron-3.5-multi-1120ms-int8"),
+			]),
+		);
+
+		expect(merged).toHaveLength(1);
+		expect(merged[0]?.id).toBe("streaming-nemotron-3.5-multi-1120ms-int8");
+		expect(
+			latencyVariantsForModel(merged[0] ?? model("missing")).map(
+				(v) => v.latencyMs,
+			),
+		).toEqual([240, 560, 1120]);
+	});
+
+	test("collapses same-latency fp32/fp16 + int8 rows into ONE latency chip", () => {
+		// Parakeet-unified ships a fp32+fp16 repo (`-1120ms`) and a SEPARATE int8 repo
+		// (`-1120ms-int8`). The precision-merge can't fuse them (the fp32 row already has two
+		// precisions), so without the same-latency collapse the shelf showed two 1.12 s chips.
+		const fp32fp16: ModelInfo = {
+			...model("streaming-parakeet-unified-en-1120ms"),
+			displayName: "Streaming Parakeet Unified",
+			availableQuantizations: ["", "fp16"],
+			sizeBytesByQuantization: { "": 1000, fp16: 500 },
+		};
+		const int8: ModelInfo = {
+			...model("streaming-parakeet-unified-en-1120ms-int8"),
+			displayName: "Streaming Parakeet Unified",
+			availableQuantizations: ["int8"],
+			sizeBytesByQuantization: { int8: 250 },
+		};
+		const [merged] = mergeStreamingLatencyModels([fp32fp16, int8]);
+		const variants = latencyVariantsForModel(merged ?? model("missing"));
+
+		// One 1120 ms chip — not two.
+		expect(variants.map((v) => v.latencyMs)).toEqual([1120]);
+		const v = variants[0]?.model ?? model("missing");
+		// Its precision sub-shelf carries all three, each routed to its backing repo.
+		expect(v.availableQuantizations).toEqual(["", "fp16", "int8"]);
+		expect(backingModelIdForQuant(v, "")).toBe(
+			"streaming-parakeet-unified-en-1120ms",
+		);
+		expect(backingModelIdForQuant(v, "fp16")).toBe(
+			"streaming-parakeet-unified-en-1120ms",
+		);
+		expect(backingModelIdForQuant(v, "int8")).toBe(
+			"streaming-parakeet-unified-en-1120ms-int8",
+		);
+	});
+
 	test("routes selected low-latency backing ids to the grouped card", () => {
 		const [grouped] = mergeStreamingLatencyModels(
 			mergeStreamingPrecisionModels([

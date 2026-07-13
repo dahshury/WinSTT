@@ -138,12 +138,51 @@ export function languageAutoDetectEnabled(
 	);
 }
 
-export function sourceMayNeedEnglishTranslation(
-	autoDetectLanguage: boolean,
-	candidates: readonly string[],
-): boolean {
-	return (
-		autoDetectLanguage || candidates.some((candidate) => candidate !== "en")
+/**
+ * The set of output languages the model can natively translate INTO. Native
+ * decoder translation differs sharply by family:
+ *   - Multilingual Whisper: the `<|translate|>` task is English-only, so the
+ *     only valid target is `"en"`.
+ *   - NeMo Canary: translates any→any among its catalog languages, so every
+ *     one of `model.languages` is a valid target.
+ * `supportsTranslateToEnglish` gates callers to those two families; this helper
+ * assumes the model already passed that check.
+ */
+function translateTargetCodes(model: ModelInfo): string[] {
+	if (model.id.startsWith("nemo-canary-")) {
+		return [...model.languages];
+	}
+	return ["en"];
+}
+
+/**
+ * Build the target-language options for the Transcriptions-tab translate picker.
+ * A source language is excluded from the targets ONLY when it is definitively
+ * known — exactly one selected spoken language — because translating a language
+ * into itself is a no-op. With several possible spoken languages (or full
+ * auto-detect, where `sourceLanguages` is empty) the engine's own constrained
+ * detection resolves the source per utterance (backend `model_language_options`
+ * leaves the language unpinned; Whisper runs its 3-token lang-id), so every
+ * target stays valid: e.g. spoken = English+German with target English still
+ * makes sense — German gets translated, English passes through unchanged.
+ */
+export function translateTargetOptions(
+	model: ModelInfo | undefined,
+	sourceLanguages: readonly string[],
+): SelectOption[] {
+	if (!model) {
+		return [];
+	}
+	const targets = new Set(translateTargetCodes(model));
+	const excluded = new Set<string>();
+	if (sourceLanguages.length === 1) {
+		const normalized = sourceLanguages[0]?.trim().toLowerCase() ?? "";
+		if (normalized.length > 0) {
+			excluded.add(normalized);
+		}
+	}
+	return ALL_LANG_OPTS.filter(
+		(option) => targets.has(option.id) && !excluded.has(option.id),
 	);
 }
 

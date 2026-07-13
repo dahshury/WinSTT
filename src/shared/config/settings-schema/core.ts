@@ -37,13 +37,20 @@ export const modelSettingsSchema = z.object({
 	onnxQuantization: z.string().default("auto"),
 	initialPrompt: z.string().default(""),
 	initialPromptRealtime: z.string().default(""),
-	// Whisper-native task=translate. When true and the active model is a
-	// multilingual Whisper variant, audio is transcribed AND translated to
-	// English in a single decode (no extra latency, no LLM round-trip).
-	// Ignored when the model lacks translate support (e.g. *.en variants,
-	// non-Whisper families like Moonshine). `.catch(false)` keeps older
-	// builds from wiping the whole model section on a corrupt persisted value.
-	translateToEnglish: z.boolean().default(false).catch(false),
+	// Native decoder translation target. "" = off (plain transcription); a
+	// concrete code (e.g. "en", "de") asks the engine to emit that language in a
+	// single decode (no extra latency, no LLM round-trip). Multilingual Whisper
+	// can only ever target English (<|translate|> is English-only); NeMo Canary
+	// honors the concrete token and translates any→any among its languages. Every
+	// other family silently falls through to normal transcription. `z.preprocess`
+	// migrates the legacy boolean `translateToEnglish` (true → "en"); `.catch("")`
+	// keeps a corrupt persisted value from wiping the whole model section.
+	translateTargetLanguage: z
+		.preprocess(
+			(value) => (typeof value === "boolean" ? (value ? "en" : "") : value),
+			z.string().default(""),
+		)
+		.catch(""),
 });
 
 export const globalSettingsSchema = z.object({

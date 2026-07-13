@@ -28,10 +28,8 @@ export {
 } from "./tts/ui/TtsModelSelector";
 export { AuthorBadge } from "./ui/AuthorBadge";
 export { OpenRouterModelSelector } from "./ui/OpenRouterModelSelector";
-export {
-	openrouterSelectedMeta,
-	OpenRouterSelectedSummary,
-} from "./ui/OpenRouterSelectedSummary";
+export { openrouterSelectedMeta } from "./ui/openrouter-selected-meta";
+export { OpenRouterSelectedSummary } from "./ui/OpenRouterSelectedSummary";
 export {
 	ReasoningEffortDropdown,
 	type ReasoningEffortDropdownProps,

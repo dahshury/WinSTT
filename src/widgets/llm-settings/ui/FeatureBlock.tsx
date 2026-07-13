@@ -10,6 +10,7 @@ import {
 	type LlmFeatureDraft,
 	performFeatureToggle,
 } from "../lib/llm-settings-panel-test-helpers";
+import { resolveUnloadPending } from "./feature-block-helpers";
 import { DictionaryAutoAddControl, ProviderSection } from "./provider-sections";
 import type { FeatureBlockProps, LlmProvider } from "./types";
 import { WarmupStatusBanner } from "./WarmupStatusBanner";
@@ -247,19 +248,6 @@ export function useOllamaWarmTracker(opts: {
 			warmupStatus,
 		),
 	};
-}
-
-/** Pure resolver for the disable-unload spinner — exported for tests. Once
- *  armed (the user disabled the feature), stays true until the backend's
- *  `llm:unload-status` broadcast confirms the eviction batch containing the
- *  model finished. Re-enabling (or leaving the Ollama provider) settles it
- *  immediately: the warm tracker owns the enable side. */
-export function resolveUnloadPending(
-	pendingModel: string | null,
-	provider: LlmProvider,
-	enabled: boolean,
-): boolean {
-	return pendingModel !== null && provider === "ollama" && !enabled;
 }
 
 /** Disable-side twin of {@link useOllamaWarmTracker}: flipping a feature off

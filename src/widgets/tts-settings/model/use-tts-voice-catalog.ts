@@ -48,6 +48,7 @@ export function useTtsVoiceCatalog(
 		updateRef.current = update;
 	});
 
+	// react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- the cleanup below already clears `retryTimer` and cancels in-flight fetches; the timer is assigned inside the nested `fetchVoices` closure, which the rule's data-flow heuristic can't trace back to the effect-scope cleanup.
 	useEffect(() => {
 		if (!enabled) {
 			return;

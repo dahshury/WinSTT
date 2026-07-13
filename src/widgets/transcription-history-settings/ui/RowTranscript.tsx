@@ -167,11 +167,10 @@ export function RowTranscript({
 	// wrapper), which REMOUNTS the paragraph. A callback ref re-attaches the
 	// ResizeObserver to whichever <p> is currently live — a useEffect+useRef
 	// would leave the observer bound to the detached node and flip-flop. Each
-	// transition measures the actually-attached node, so it converges.
-	const observerRef = useRef<ResizeObserver | null>(null);
+	// transition measures the actually-attached node, so it converges. The React
+	// 19 ref-cleanup return disconnects the observer when the node unmounts or the
+	// ref re-attaches, so nothing leaks across the swaps.
 	const measureRef = (node: HTMLParagraphElement | null) => {
-		observerRef.current?.disconnect();
-		observerRef.current = null;
 		if (!node || showWords) {
 			setClamped(false);
 			return;
@@ -180,11 +179,13 @@ export function RowTranscript({
 		// grows with the full content — the gap is the truncation signal.
 		const measure = () => setClamped(node.scrollHeight - node.clientHeight > 1);
 		measure();
-		if (typeof ResizeObserver !== "undefined") {
-			const observer = new ResizeObserver(measure);
-			observer.observe(node);
-			observerRef.current = observer;
+		if (typeof ResizeObserver === "undefined") {
+			return;
 		}
+		const observer = new ResizeObserver(measure);
+		// react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- teardown IS present: this is a React 19 callback ref (not a useEffect), and the `return () => observer.disconnect()` below is invoked as the ref-cleanup when the <p> unmounts or the ref re-attaches. The rule doesn't model callback-ref cleanup returns, so it can't see the disconnect.
+		observer.observe(node);
+		return () => observer.disconnect();
 	};
 
 	const paragraph = (
@@ -205,7 +206,7 @@ export function RowTranscript({
 		>
 			{showWords && words
 				? words.map((word, index) => (
-						<Fragment key={`${word.start}-${index}`}>
+						<Fragment key={`${word.start}-${word.end}-${word.text}`}>
 							{index > 0 ? " " : null}
 							{onSeekWord ? (
 								<button

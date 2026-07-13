@@ -833,11 +833,15 @@ export function PostProcessingProfilesCombobox({
 		matchedId ||
 		(activeModified && activeConfigurationId ? activeConfigurationId : "");
 	const { triggerLevel } = usePopupSurfaceLevels({ selfElevate: false });
-	// Nav arrows cycle prev/next between saved presets, so they need at least two
-	// to do anything. With 0 or 1 preset there is nothing to cycle to — leaving
-	// them enabled would let a click re-apply the lone preset and silently swap the
-	// live provider/model (e.g. onto an OpenRouter cloud config).
-	const navigationDisabled = disabled || configurations.length < 2;
+	// Nav arrows cycle prev/next between saved presets, so they only mean anything
+	// with at least two. With 0 or 1 preset there is nothing to cycle to — and
+	// rendering them permanently disabled sits a dimmed, "behind-level" segment on
+	// either side of the fully-active combobox (opacity-40 kills the surface shadow
+	// so they read as broken cutouts). Drop them entirely instead: the combobox
+	// stands alone with full rounding, and the arrows reappear — enabled and
+	// matching its surface — once a second preset exists. When they ARE shown, the
+	// feature-level `disabled` greys the whole row (combobox + arrows) uniformly.
+	const showNavigation = configurations.length >= 2;
 
 	const items: CreatableComboboxItem[] = configurations.map((c) => ({
 		id: c.id,
@@ -914,43 +918,71 @@ export function PostProcessingProfilesCombobox({
 		applyConfiguration(id);
 	};
 
-	// Each arrow carries the SAME filled surface as the middle combobox (fill +
-	// elevation shadow via surfaceClasses at the same level), so the three read as
-	// equally "poppy" segments of one bar instead of flat/disabled-looking cutouts.
-	// Hover lifts one surface level; hairline dividers separate the segments.
+	// ONE shared plate for the joined group: the wrapper carries the surface
+	// fill + elevation shadow and every segment is transparent, so
+	// [ < | field | > ] reads as a single raised control with hairline dividers.
+	// (Per-segment surfaceClasses stacked three plates whose own shadow
+	// hairlines/insets made the arrows look sunken next to the input.) Hover
+	// brightens a segment one surface step — gated in JS rather than left to
+	// CSS `hover:` alone, because `:hover` still matches on disabled buttons
+	// and the arrows would glow while the whole group is switched off.
 	const navButtonBase = cn(
-		"h-8 w-9 shrink-0 text-foreground-dim transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40",
-		surfaceClasses(triggerLevel),
-		surfaceHoverBg(Math.min(triggerLevel + 1, 8)),
+		"h-8 w-9 shrink-0 bg-transparent text-foreground-dim transition-colors focus-visible:ring-inset focus-visible:ring-offset-0 disabled:cursor-not-allowed",
+		!disabled &&
+			cn(
+				surfaceHoverBg(Math.min(triggerLevel + 1, 8)),
+				"hover:text-foreground",
+			),
 	);
 
 	return (
 		<div
 			aria-label="Post-processing preset navigation"
-			className="flex min-w-0 items-center"
+			className={cn(
+				"flex min-w-0 items-center",
+				// The plate only exists when the arrows render; standalone, the
+				// combobox keeps its own surface + rounding.
+				showNavigation &&
+					cn("overflow-hidden rounded-lg", surfaceClasses(triggerLevel)),
+			)}
 			role="group"
 		>
-			<Tooltip content="Previous preset">
-				<Button
-					aria-label="Previous preset"
-					className={cn(
-						navButtonBase,
-						"rounded-l-lg border-divider-strong border-e",
-					)}
-					disabled={navigationDisabled}
-					onClick={() => applyConfigurationAtOffset(-1)}
-				>
-					<HugeiconsIcon aria-hidden="true" icon={ArrowLeft01Icon} size={15} />
-				</Button>
-			</Tooltip>
+			{showNavigation ? (
+				<Tooltip content="Previous preset">
+					<Button
+						aria-label="Previous preset"
+						// `border-solid` is required: the Button base sets `border-none`
+						// (border-STYLE), so the `border-e` width alone never paints.
+						className={cn(
+							navButtonBase,
+							"border-divider-strong border-e border-solid",
+						)}
+						disabled={disabled}
+						onClick={() => applyConfigurationAtOffset(-1)}
+					>
+						<HugeiconsIcon
+							aria-hidden="true"
+							icon={ArrowLeft01Icon}
+							size={15}
+						/>
+					</Button>
+				</Tooltip>
+			) : null}
 			<CreatableCombobox
+				bareInput={showNavigation}
 				className="w-64 min-w-0 max-w-[40vw]"
 				createLabel={(name) => t("modifierPresetCreate", { name })}
 				deleteAriaLabel={t("playgroundDeletePreset")}
 				disabled={disabled}
 				emptyLabel={t("modifierPresetEmpty")}
 				hideSelectedCheck
-				inputClassName="rounded-none focus-visible:ring-inset focus-visible:ring-offset-0"
+				// Square middle segment only when flanked by arrows; standalone it keeps
+				// the base rounded-lg + normal (non-inset) focus ring.
+				inputClassName={
+					showNavigation
+						? "rounded-none focus-visible:ring-inset focus-visible:ring-offset-0"
+						: ""
+				}
 				items={items}
 				leadingReorderHandle
 				onCreate={handleCreate}
@@ -965,19 +997,25 @@ export function PostProcessingProfilesCombobox({
 				saveAriaLabel="Overwrite preset with current settings"
 				value={shownId}
 			/>
-			<Tooltip content="Next preset">
-				<Button
-					aria-label="Next preset"
-					className={cn(
-						navButtonBase,
-						"rounded-r-lg border-divider-strong border-s",
-					)}
-					disabled={navigationDisabled}
-					onClick={() => applyConfigurationAtOffset(1)}
-				>
-					<HugeiconsIcon aria-hidden="true" icon={ArrowRight01Icon} size={15} />
-				</Button>
-			</Tooltip>
+			{showNavigation ? (
+				<Tooltip content="Next preset">
+					<Button
+						aria-label="Next preset"
+						className={cn(
+							navButtonBase,
+							"border-divider-strong border-s border-solid",
+						)}
+						disabled={disabled}
+						onClick={() => applyConfigurationAtOffset(1)}
+					>
+						<HugeiconsIcon
+							aria-hidden="true"
+							icon={ArrowRight01Icon}
+							size={15}
+						/>
+					</Button>
+				</Tooltip>
+			) : null}
 		</div>
 	);
 }
@@ -1002,12 +1040,12 @@ export function FeaturePresetControls({
 }) {
 	const { t, tc, toneOpts, levelOpts } = model;
 	const activeTone = getToneKey(snapshot.presets);
-	// When the active STT model decodes straight to English, the built-in
-	// "Translate" modifier would translate the transcript a second time — lock
-	// it off for the dictation pass. Transforms operate on already-selected
+	// When the active STT model natively translates to a target language, the
+	// built-in "Translate" modifier would translate the transcript a second time
+	// — lock it off for the dictation pass. Transforms operate on already-selected
 	// text, so the STT toggle has no bearing there (lock stays dictation-only).
 	const sttTranslateOn = useSettingsStore(
-		(s) => s.settings.model?.translateToEnglish ?? false,
+		(s) => (s.settings.model?.translateTargetLanguage ?? "") !== "",
 	);
 	const activeSttModelId = useSettingsStore(
 		(s) => s.settings.model?.model ?? "",

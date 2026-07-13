@@ -84,7 +84,7 @@ export function ShortTextCell<TData>({
 	const prevInitialValueRef = React.useRef(initialValue);
 	// eslint-disable-next-line react-hooks-js/refs -- prev-prop compare-and-set: the condition reads the ref during render to derive cell state when the value prop changes (canonical React derive-on-prop-change idiom)
 	if (initialValue !== prevInitialValueRef.current) {
-		// eslint-disable-next-line react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render, react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
 		prevInitialValueRef.current = initialValue;
 		setValue(initialValue);
 		// eslint-disable-next-line react-hooks-js/refs -- entangled contentEditable DOM sync during prop-change derivation; rewriting risks cursor/focus regressions
@@ -238,7 +238,7 @@ export function LongTextCell<TData>({
 	const prevInitialValueRef = React.useRef(initialValue);
 	// eslint-disable-next-line react-hooks-js/refs -- prev-prop compare-and-set: the condition reads the ref during render to derive cell state when the value prop changes (canonical React derive-on-prop-change idiom)
 	if (initialValue !== prevInitialValueRef.current) {
-		// eslint-disable-next-line react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render, react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
 		prevInitialValueRef.current = initialValue;
 		setValue(initialValue ?? "");
 	}
@@ -421,7 +421,7 @@ export function NumberCell<TData>({
 	const prevInitialValueRef = React.useRef(initialValue);
 	// eslint-disable-next-line react-hooks-js/refs -- prev-prop compare-and-set: the condition reads the ref during render to derive cell state when the value prop changes (canonical React derive-on-prop-change idiom)
 	if (initialValue !== prevInitialValueRef.current) {
-		// eslint-disable-next-line react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render, react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
 		prevInitialValueRef.current = initialValue;
 		setValue(String(initialValue ?? ""));
 	}
@@ -531,7 +531,7 @@ export function UrlCell<TData>({
 	const prevInitialValueRef = React.useRef(initialValue);
 	// eslint-disable-next-line react-hooks-js/refs -- prev-prop compare-and-set: the condition reads the ref during render to derive cell state when the value prop changes (canonical React derive-on-prop-change idiom)
 	if (initialValue !== prevInitialValueRef.current) {
-		// eslint-disable-next-line react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render, react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
 		prevInitialValueRef.current = initialValue;
 		setValue(initialValue ?? "");
 		// eslint-disable-next-line react-hooks-js/refs -- entangled contentEditable DOM sync during prop-change derivation; rewriting risks cursor/focus regressions
@@ -728,7 +728,7 @@ export function CheckboxCell<TData>({
 	const prevInitialValueRef = React.useRef(initialValue);
 	// eslint-disable-next-line react-hooks-js/refs -- prev-prop compare-and-set: the condition reads the ref during render to derive cell state when the value prop changes (canonical React derive-on-prop-change idiom)
 	if (initialValue !== prevInitialValueRef.current) {
-		// eslint-disable-next-line react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render, react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
 		prevInitialValueRef.current = initialValue;
 		setValue(Boolean(initialValue));
 	}
@@ -814,7 +814,7 @@ export function SelectCell<TData>({
 	const prevInitialValueRef = React.useRef(initialValue);
 	// eslint-disable-next-line react-hooks-js/refs -- prev-prop compare-and-set: the condition reads the ref during render to derive cell state when the value prop changes (canonical React derive-on-prop-change idiom)
 	if (initialValue !== prevInitialValueRef.current) {
-		// eslint-disable-next-line react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render, react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
 		prevInitialValueRef.current = initialValue;
 		setValue(initialValue);
 	}
@@ -945,14 +945,14 @@ export function MultiSelectCell<TData>({
 	const prevCellValueRef = React.useRef(cellValue);
 	// eslint-disable-next-line react-hooks-js/refs -- prev-prop compare-and-set: the condition reads the ref during render to derive cell state when the value prop changes (canonical React derive-on-prop-change idiom)
 	if (cellValue !== prevCellValueRef.current) {
-		// eslint-disable-next-line react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render, react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
 		prevCellValueRef.current = cellValue;
 		setSelectedValues(cellValue);
 	}
 
 	// eslint-disable-next-line react-hooks-js/refs -- valid prev-key compare-and-set to reset state when the cell identity changes
 	if (prevCellKeyRef.current !== cellKey) {
-		// eslint-disable-next-line react-hooks-js/refs -- valid prev-key compare-and-set to reset state when the cell identity changes
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render, react-hooks-js/refs -- valid prev-key compare-and-set to reset state when the cell identity changes
 		prevCellKeyRef.current = cellKey;
 		setSearchValue("");
 	}
@@ -961,13 +961,10 @@ export function MultiSelectCell<TData>({
 		if (readOnly) {
 			return;
 		}
-		let newValues: string[] = [];
-		setSelectedValues((curr) => {
-			newValues = curr.includes(value)
-				? curr.filter((v) => v !== value)
-				: [...curr, value];
-			return newValues;
-		});
+		const newValues = selectedValues.includes(value)
+			? selectedValues.filter((v) => v !== value)
+			: [...selectedValues, value];
+		setSelectedValues(newValues);
 		queueMicrotask(() => {
 			tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: newValues });
 			inputRef.current?.focus();
@@ -981,11 +978,8 @@ export function MultiSelectCell<TData>({
 		}
 		event?.stopPropagation();
 		event?.preventDefault();
-		let newValues: string[] = [];
-		setSelectedValues((curr) => {
-			newValues = curr.filter((v) => v !== valueToRemove);
-			return newValues;
-		});
+		const newValues = selectedValues.filter((v) => v !== valueToRemove);
+		setSelectedValues(newValues);
 		queueMicrotask(() => {
 			tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: newValues });
 			inputRef.current?.focus();
@@ -1035,20 +1029,18 @@ export function MultiSelectCell<TData>({
 	const onInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
 		if (event.key === "Backspace" && searchValue === "") {
 			event.preventDefault();
-			let newValues: string[] | null = null;
-			setSelectedValues((curr) => {
-				if (curr.length === 0) {
-					return curr;
-				}
-				newValues = curr.slice(0, -1);
-				return newValues;
-			});
-			queueMicrotask(() => {
-				if (newValues !== null) {
+			if (selectedValues.length > 0) {
+				const newValues = selectedValues.slice(0, -1);
+				setSelectedValues(newValues);
+				queueMicrotask(() => {
 					tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: newValues });
-				}
-				inputRef.current?.focus();
-			});
+					inputRef.current?.focus();
+				});
+			} else {
+				queueMicrotask(() => {
+					inputRef.current?.focus();
+				});
+			}
 		}
 		if (event.key === "Escape") {
 			event.stopPropagation();
@@ -1215,7 +1207,7 @@ export function DateCell<TData>({
 	const prevInitialValueRef = React.useRef(initialValue);
 	// eslint-disable-next-line react-hooks-js/refs -- prev-prop compare-and-set: the condition reads the ref during render to derive cell state when the value prop changes (canonical React derive-on-prop-change idiom)
 	if (initialValue !== prevInitialValueRef.current) {
-		// eslint-disable-next-line react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render, react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
 		prevInitialValueRef.current = initialValue;
 		setValue(initialValue ?? "");
 	}
@@ -1658,7 +1650,7 @@ export function FileCell<TData>({
 	const prevCellValueRef = React.useRef(cellValue);
 	// eslint-disable-next-line react-hooks-js/refs -- prev-prop compare-and-set: the condition reads the ref during render to derive cell state when the value prop changes (canonical React derive-on-prop-change idiom)
 	if (cellValue !== prevCellValueRef.current) {
-		// eslint-disable-next-line react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render, react-hooks-js/refs -- valid prev-prop compare-and-set to derive state on prop change
 		prevCellValueRef.current = cellValue;
 		for (const file of files) {
 			if (file.url) {
@@ -1670,7 +1662,7 @@ export function FileCell<TData>({
 
 	// eslint-disable-next-line react-hooks-js/refs -- valid prev-key compare-and-set to reset state when the cell identity changes
 	if (prevCellKeyRef.current !== cellKey) {
-		// eslint-disable-next-line react-hooks-js/refs -- valid prev-key compare-and-set to reset state when the cell identity changes
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render, react-hooks-js/refs -- valid prev-key compare-and-set to reset state when the cell identity changes
 		prevCellKeyRef.current = cellKey;
 		dispatch({ type: "clearError" });
 	}

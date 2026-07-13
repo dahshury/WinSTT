@@ -35,6 +35,7 @@ export function useGridPageClamp<TData>(table: Table<TData>): void {
 		const pageCount = table.getPageCount();
 		const { pageIndex } = table.getState().pagination;
 		if (pageCount > 0 && pageIndex > pageCount - 1) {
+			// react-doctor-disable-next-line react-doctor/no-pass-live-state-to-parent -- the page index is owned by the TanStack Table instance, not local state, so it cannot be lifted or returned from this hook; pageCount only reflects the new row set after the table re-renders, so the clamp must run in an effect rather than being derived during render.
 			table.setPageIndex(pageCount - 1);
 		}
 	});

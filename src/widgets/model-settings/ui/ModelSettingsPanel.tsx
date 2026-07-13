@@ -31,7 +31,7 @@ import {
 	fixedLanguageValue,
 	languageAutoDetectEnabled,
 	resolveLanguageControlMode,
-	sourceMayNeedEnglishTranslation,
+	translateTargetOptions,
 } from "../lib/language-controls";
 import {
 	buildDeviceOpts,
@@ -234,17 +234,24 @@ function useModelSettingsPanelRender() {
 		if (!selectedIsCloud) {
 			recordLastLocalSttModel(selectedModel);
 		}
+		// react-doctor-disable-next-line react-doctor/exhaustive-deps -- `selectedModel`/`selectedIsCloud` are synchronous derivations of `settings.model` that recompute every render; react-doctor unwraps them to the raw store field, but the derived deps already track it 1:1, so there is no staleness.
 	}, [selectedIsCloud, selectedModel]);
-	const translateSupported =
+	// Target languages the active model can natively translate INTO, minus the
+	// selected source (translating a language into itself is a no-op). Empty when
+	// the model can't translate, is cloud, or the only target equals the source
+	// (e.g. English-source Whisper) — which is exactly when the picker should hide.
+	const translateTargetOpts =
 		!selectedIsCloud &&
 		selectedInfo !== undefined &&
-		supportsTranslateToEnglish(selectedInfo) &&
-		sourceMayNeedEnglishTranslation(
-			effectiveLanguageAutoDetect,
-			languageCandidates,
-		);
+		supportsTranslateToEnglish(selectedInfo)
+			? translateTargetOptions(
+					selectedInfo,
+					effectiveLanguageAutoDetect ? [] : languageCandidates,
+				)
+			: [];
+	const translateSupported = translateTargetOpts.length > 0;
 	useLockLlmTranslate(
-		translateSupported && (settings?.translateToEnglish ?? false),
+		translateSupported && (settings?.translateTargetLanguage ?? "") !== "",
 		llmTranslateEnabled,
 	);
 	const currentQuantization = (settings?.onnxQuantization ??
@@ -316,6 +323,12 @@ function useModelSettingsPanelRender() {
 		!selectedIsCloud &&
 		selectedInfo !== undefined &&
 		isSelectableRealtimeModel(selectedInfo);
+	// A native-streaming main model normally OWNS the realtime slot (auto-reuse):
+	// the realtime picker is frozen and pinned to the main model. In listen mode
+	// that lock is wrong — the main picker is frozen (listen preserves the main
+	// dictation model) and the realtime slot is the ONLY control for the listen
+	// streaming model, so it must unlock so the user can diverge it from main.
+	const realtimeSlotLockedToMain = mainModelCanNativeStream && !isListenMode;
 	const selectedRealtimeInfo = settings?.realtimeModel
 		? getModel(settings.realtimeModel)
 		: undefined;
@@ -325,10 +338,13 @@ function useModelSettingsPanelRender() {
 	const updateIntervalApplies =
 		isListenMode || effectiveRealtimeInfo?.nativeStreaming !== true;
 	const handleRealtimePick = (v: string, quantization?: OnnxQuantization) => {
-		if (mainModelCanNativeStream && v !== selectedModel) {
+		if (realtimeSlotLockedToMain && v !== selectedModel) {
 			return;
 		}
 		controller.handleRealtimeModelChange(v, quantization);
+		// Picking the main model (only possible while it can native-stream) reuses
+		// it; any other pick — reachable in listen mode — is a separate realtime
+		// model, so the reuse flag must clear.
 		const shouldReuseMain = v === selectedModel && mainModelCanNativeStream;
 		if (shouldReuseMain !== useMainModelFlag) {
 			updateQuality({ useMainModelForRealtime: shouldReuseMain });
@@ -339,7 +355,10 @@ function useModelSettingsPanelRender() {
 		if (!mainModelStreamingKnown) {
 			return;
 		}
-		if (mainModelCanNativeStream) {
+		// Only auto-reuse (and pin the realtime slot to the main model) while the
+		// slot is actually locked — i.e. NOT in listen mode, where the realtime
+		// slot is independently editable and must not be snapped back to main.
+		if (realtimeSlotLockedToMain) {
 			if (settings?.realtimeModel !== selectedModel) {
 				update({ realtimeModel: selectedModel });
 			}
@@ -348,11 +367,17 @@ function useModelSettingsPanelRender() {
 			}
 			return;
 		}
-		if (useMainModelFlag) {
+		// The main model can't back the realtime slot (cloud / non-streaming), so a
+		// stale reuse flag must clear. In listen mode the slot is unlocked but the
+		// main model may still be streaming-capable — leave the flag alone there so
+		// the user's separate-vs-reuse choice for listen survives.
+		if (!mainModelCanNativeStream && useMainModelFlag) {
 			updateQuality({ useMainModelForRealtime: false });
 		}
+		// react-doctor-disable-next-line react-doctor/exhaustive-deps -- `selectedModel` and `useMainModelFlag` are synchronous derivations of `settings.model` and `quality.useMainModelForRealtime`; react-doctor unwraps them to the raw store fields, but the derived deps recompute every render and track those fields 1:1, so there is no staleness.
 	}, [
 		mainModelCanNativeStream,
+		realtimeSlotLockedToMain,
 		mainModelStreamingKnown,
 		selectedModel,
 		settings?.realtimeModel,
@@ -412,6 +437,7 @@ function useModelSettingsPanelRender() {
 				systemInfo={systemInfo}
 				t={t}
 				translateSupported={translateSupported}
+				translateTargetOpts={translateTargetOpts}
 				update={update}
 			/>
 			<RealtimeModelSection
@@ -427,7 +453,7 @@ function useModelSettingsPanelRender() {
 				getFitAssessment={getFitAssessment}
 				handleRealtimeModelChange={handleRealtimePick}
 				isSwapping={realtimeSwapping}
-				mainModelCanNativeStream={mainModelCanNativeStream}
+				realtimeSlotLockedToMain={realtimeSlotLockedToMain}
 				mainModelId={selectedModel}
 				mainModelInfo={selectedInfo}
 				updateIntervalApplies={updateIntervalApplies}

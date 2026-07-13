@@ -355,4 +355,15 @@ export const generalSettingsSchema = z.object({
 		.max(1000)
 		.default(220)
 		.catch(220),
+	// When LLM cleanup is on, the dictionary (preferred terms + replacement
+	// pairs) is injected into the cleanup prompt and the LLM owns corrections.
+	// Off = keep the dictionary out of the prompt and offload corrections to
+	// the on-device encoder model instead (replacement pairs stay deterministic
+	// either way). No effect when LLM cleanup is off.
+	llmHandlesDictionary: z.boolean().default(true).catch(true),
+	// When LLM cleanup is on, snippets are injected into the cleanup prompt and
+	// the LLM expands them contextually (the deterministic fuzzy expander is
+	// skipped). Off = keep snippets out of the prompt and rely on deterministic
+	// fuzzy trigger→expansion replacement. No effect when LLM cleanup is off.
+	llmHandlesSnippets: z.boolean().default(true).catch(true),
 });

@@ -91,6 +91,9 @@ pub struct NativeNemoStreamingEngine {
     /// Nemotron-3.5): the value bound to the encoder's 6th `prompt_index` input. `None` for
     /// non-prompt exports (English Nemotron) whose encoder has only the 5 standard inputs.
     prompt_index: Option<i64>,
+    /// `Some` for buffered "parakeet unified" exports (sliding-window offline-style encoder,
+    /// no cache tensors — see `UnifiedWindow`); `None` for cache-aware exports.
+    unified: Option<UnifiedWindow>,
     /// ORT allocation device the sessions run on, for binding the carried encoder cache resident.
     device: AllocationDevice,
     device_id: i32,
@@ -146,6 +149,23 @@ fn take_pred_outputs(
         decoder_out,
         post_state: (s0, s1),
     })
+}
+
+/// Buffered-streaming ("parakeet unified") window constants, from the encoder metadata of a
+/// `streaming_model_type: nemo_parakeet_unified_streaming` export. These exports have NO cache
+/// tensors — the encoder is a plain offline-style graph (`audio_signal`+`length` → `outputs`)
+/// that sherpa's 2026 unified decoder drives with a SLIDING WINDOW: per step it rebuilds
+/// `left+chunk+right` feature frames (zero-padding missing left at stream start / right at the
+/// tail), per-feature-normalizes THE WINDOW, runs the full encoder, then decodes only the CENTER
+/// `chunk_encoder_frames` (starting at `left_encoder_frames`) and advances by
+/// `chunk_feature_frames`. The fixed window shape also means the DML EP fuses the encoder ONCE.
+#[derive(Clone, Copy)]
+struct UnifiedWindow {
+    left_feat: usize,
+    chunk_feat: usize,
+    right_feat: usize,
+    left_enc: usize,
+    chunk_enc: usize,
 }
 
 /// True for a `<...>`-framed special/language token (`<en-US>`, `<unk>`, `<blk>`, …) that the
@@ -228,25 +248,83 @@ impl NativeNemoStreamingEngine {
 
         let metadata = read_custom_metadata(&encoder)?;
         let feature_dim = feat_dim_of(&encoder, "audio_signal");
-        let window_size = streaming::meta_usize(&metadata, "window_size", "NeMo streaming")?;
-        let chunk_shift = streaming::meta_usize(&metadata, "chunk_shift", "NeMo streaming")?;
         let vocab_size = streaming::meta_usize(&metadata, "vocab_size", "NeMo streaming")? + 1;
         let blank_id = vocab_size.saturating_sub(1) as i64;
         let normalize_type =
             frontend::NemoNorm::from_metadata(metadata.get("normalize_type").map(String::as_str));
 
-        let cache_last_channel_shape = vec![
-            1,
-            streaming::meta_usize(&metadata, "cache_last_channel_dim1", "NeMo streaming")?,
-            streaming::meta_usize(&metadata, "cache_last_channel_dim2", "NeMo streaming")?,
-            streaming::meta_usize(&metadata, "cache_last_channel_dim3", "NeMo streaming")?,
-        ];
-        let cache_last_time_shape = vec![
-            1,
-            streaming::meta_usize(&metadata, "cache_last_time_dim1", "NeMo streaming")?,
-            streaming::meta_usize(&metadata, "cache_last_time_dim2", "NeMo streaming")?,
-            streaming::meta_usize(&metadata, "cache_last_time_dim3", "NeMo streaming")?,
-        ];
+        // Two sherpa streaming export flavors share this engine:
+        //   * cache-aware (Nemotron/FastConformer): `window_size`/`chunk_shift` + 3 carried
+        //     cache tensors;
+        //   * buffered "parakeet unified" (`streaming_model_type: nemo_parakeet_unified_streaming`):
+        //     a plain offline-style encoder driven by a sliding left+chunk+right window with
+        //     center-slice decoding — NO cache tensors (see `UnifiedWindow`).
+        let is_unified = metadata
+            .get("streaming_model_type")
+            .is_some_and(|s| s == "nemo_parakeet_unified_streaming")
+            || metadata.get("buffered_streaming").is_some_and(|s| s == "1");
+        let (window_size, chunk_shift, cache_last_channel_shape, cache_last_time_shape, unified) =
+            if is_unified {
+                let u = UnifiedWindow {
+                    left_feat: streaming::meta_usize(
+                        &metadata,
+                        "left_feature_frames",
+                        "NeMo unified streaming",
+                    )?,
+                    chunk_feat: streaming::meta_usize(
+                        &metadata,
+                        "chunk_feature_frames",
+                        "NeMo unified streaming",
+                    )?,
+                    right_feat: streaming::meta_usize(
+                        &metadata,
+                        "right_feature_frames",
+                        "NeMo unified streaming",
+                    )?,
+                    left_enc: streaming::meta_usize(
+                        &metadata,
+                        "left_encoder_frames",
+                        "NeMo unified streaming",
+                    )?,
+                    chunk_enc: streaming::meta_usize(
+                        &metadata,
+                        "chunk_encoder_frames",
+                        "NeMo unified streaming",
+                    )?,
+                };
+                let window = u.left_feat + u.chunk_feat + u.right_feat;
+                (window, u.chunk_feat, Vec::new(), Vec::new(), Some(u))
+            } else {
+                (
+                    streaming::meta_usize(&metadata, "window_size", "NeMo streaming")?,
+                    streaming::meta_usize(&metadata, "chunk_shift", "NeMo streaming")?,
+                    vec![
+                        1,
+                        streaming::meta_usize(
+                            &metadata,
+                            "cache_last_channel_dim1",
+                            "NeMo streaming",
+                        )?,
+                        streaming::meta_usize(
+                            &metadata,
+                            "cache_last_channel_dim2",
+                            "NeMo streaming",
+                        )?,
+                        streaming::meta_usize(
+                            &metadata,
+                            "cache_last_channel_dim3",
+                            "NeMo streaming",
+                        )?,
+                    ],
+                    vec![
+                        1,
+                        streaming::meta_usize(&metadata, "cache_last_time_dim1", "NeMo streaming")?,
+                        streaming::meta_usize(&metadata, "cache_last_time_dim2", "NeMo streaming")?,
+                        streaming::meta_usize(&metadata, "cache_last_time_dim3", "NeMo streaming")?,
+                    ],
+                    None,
+                )
+            };
 
         let decoder_input_names = node_input_names(&decoder);
         let decoder_output_names = node_output_names(&decoder);
@@ -304,6 +382,7 @@ impl NativeNemoStreamingEngine {
             decoder_input_names,
             decoder_output_names,
             prompt_index,
+            unified,
             device,
             device_id,
             stream: NemoStreamState::empty(),
@@ -346,6 +425,9 @@ impl NativeNemoStreamingEngine {
     }
 
     fn process_available_chunks(&mut self, finalize: bool) -> SttResult<bool> {
+        if self.unified.is_some() {
+            return self.process_available_chunks_unified(finalize);
+        }
         let t_feat = std::time::Instant::now();
         let features = frontend::nemo_features_with_normalization(
             &self.stream.cursor.pcm,
@@ -374,6 +456,127 @@ impl NativeNemoStreamingEngine {
             self.stream.cursor.trim_pcm(frontend::NEMO_HOP);
         }
         Ok(processed_any)
+    }
+
+    /// Buffered "parakeet unified" chunk loop (port of sherpa's 2026 unified streaming decoder):
+    /// per step, rebuild the `left+chunk+right` feature window around the chunk start (zero-pad
+    /// the missing left at stream start; the finalize silence pad supplies the right tail),
+    /// per-feature-normalize THE WINDOW (matching sherpa: normalization runs over the copied,
+    /// padded window — the cache-aware whole-buffer normalization would drift as the ring trims),
+    /// run the offline-style encoder, decode only the CENTER encoder frames, advance by
+    /// `chunk_feature_frames`.
+    fn process_available_chunks_unified(&mut self, finalize: bool) -> SttResult<bool> {
+        let Some(u) = self.unified else {
+            return Ok(false);
+        };
+        let t_feat = std::time::Instant::now();
+        // Raw (unnormalized) log-mel over the buffered PCM; the window normalizes itself below.
+        let features = frontend::nemo_features_with_normalization(
+            &self.stream.cursor.pcm,
+            &self.mel_fb,
+            frontend::NemoNorm::None,
+        );
+        if let Some(p) = self.profile.as_mut() {
+            p.feat_ms += t_feat.elapsed().as_secs_f64() * 1000.0;
+        }
+        let window_rows = u.left_feat + u.chunk_feat + u.right_feat;
+        let mut processed_any = false;
+        loop {
+            // Ready when the chunk AND its right context are available past the chunk start
+            // (the left context is history — re-read from the ring, zero-padded at stream start).
+            let rel_start = self.stream.cursor.rel_start();
+            if !streaming::chunk_ready(
+                rel_start,
+                u.chunk_feat + u.right_feat,
+                features.nrows(),
+                finalize,
+            ) {
+                break;
+            }
+            // Assemble the window: rows [rel_start - left_feat, rel_start + chunk + right) of the
+            // available features, zero-padding rows that fall before the buffer (stream start) or
+            // past its end (the finalize tail).
+            let mut window = Array2::<f32>::zeros((window_rows, self.feature_dim));
+            for (w_row, abs) in (0..window_rows)
+                .map(|i| (i, rel_start as isize - u.left_feat as isize + i as isize))
+            {
+                if abs >= 0 && (abs as usize) < features.nrows() {
+                    window.row_mut(w_row).assign(&features.row(abs as usize));
+                }
+            }
+            // Per-feature (per mel bin) normalization over the window, matching the offline
+            // normalizer's unbiased-variance form.
+            if self.normalize_type == frontend::NemoNorm::PerFeature {
+                for m in 0..self.feature_dim {
+                    let col = window.column(m);
+                    let n = col.len() as f32;
+                    let mean = col.sum() / n;
+                    let var = col.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>()
+                        / (n - 1.0).max(1.0);
+                    let std = var.sqrt() + 1e-5;
+                    window.column_mut(m).mapv_inplace(|v| (v - mean) / std);
+                }
+            }
+            let t_enc = std::time::Instant::now();
+            let center = self.run_encoder_unified(&window, &u)?;
+            if let Some(p) = self.profile.as_mut() {
+                p.encoder_ms += t_enc.elapsed().as_secs_f64() * 1000.0;
+                p.encoder_runs += 1;
+            }
+            if center.nrows() > 0 {
+                self.decode_encoder_out(&center)?;
+            }
+            self.stream.cursor.next_chunk_frame += u.chunk_feat;
+            processed_any = true;
+        }
+        if processed_any {
+            self.stream
+                .cursor
+                .trim_pcm_keeping(frontend::NEMO_HOP, u.left_feat);
+        }
+        Ok(processed_any)
+    }
+
+    /// One unified window through the plain offline-style encoder → the CENTER encoder frames
+    /// `[left_enc, left_enc + chunk_enc)` as `(T_center, D)` rows (clamped by `encoded_lengths`).
+    fn run_encoder_unified(
+        &mut self,
+        window: &Array2<f32>,
+        u: &UnifiedWindow,
+    ) -> SttResult<Array2<f32>> {
+        let t = window.nrows();
+        let tr = window.t().as_standard_layout().into_owned();
+        let x = tr
+            .into_shape_with_order((1, self.feature_dim, t))
+            .map_err(|e| SttError::Inference(format!("nemo unified enc reshape: {e}")))?;
+        let x_tensor = Tensor::from_array(x)
+            .map_err(|e| SttError::Inference(format!("nemo unified enc tensor: {e}")))?;
+        let len_tensor = tensor_i64_1d(vec![t as i64])?;
+        let outputs = self
+            .encoder
+            .run(ort::inputs![ "audio_signal" => x_tensor, "length" => len_tensor ])
+            .map_err(|e| SttError::Inference(format!("nemo unified encoder run: {e}")))?;
+        let enc = out_to_f32(&outputs["outputs"])?;
+        let enc_len = out_to_i64(&outputs["encoded_lengths"])?
+            .iter()
+            .next()
+            .copied()
+            .unwrap_or(0)
+            .max(0) as usize;
+        drop(outputs);
+        let enc3 = enc
+            .into_dimensionality::<ndarray::Ix3>()
+            .map_err(|e| SttError::Inference(format!("nemo unified enc dim: {e}")))?;
+        // (1, D, T_enc) → (T_enc, D) rows, then slice the decoded CENTER.
+        let full = enc3
+            .index_axis_move(Axis(0), 0)
+            .reversed_axes()
+            .as_standard_layout()
+            .into_owned();
+        let t_total = full.nrows().min(enc_len);
+        let start = u.left_enc.min(t_total);
+        let end = (u.left_enc + u.chunk_enc).min(t_total);
+        Ok(full.slice(s![start..end, ..]).to_owned())
     }
 
     fn run_feature_chunk(&mut self, chunk: &Array2<f32>) -> SttResult<()> {

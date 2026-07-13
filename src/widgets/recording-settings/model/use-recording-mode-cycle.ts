@@ -4,9 +4,9 @@ import { onRecordingModeCycle, settingsSave } from "@/shared/api/ipc-client";
 import { recordingModePatch } from "../lib/recording-settings-helpers";
 
 /** The order the "hold PTT hotkey + ArrowUp" gesture advances through — must match
- *  the visual chain in `HotkeyShortcutsLegend` (ptt → toggle → listen → wakeword →
+ *  the visual chain in `HotkeyShortcutsLegend` (ptt → toggle → wakeword → listen →
  *  wrap). */
-const MODE_CYCLE_ORDER = ["ptt", "toggle", "listen", "wakeword"] as const;
+const MODE_CYCLE_ORDER = ["ptt", "toggle", "wakeword", "listen"] as const;
 
 type RecordingMode = (typeof MODE_CYCLE_ORDER)[number];
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useVisualizerStore } from "../model/visualizer-store";
+import { useVisualizerStoreApi } from "../model/visualizer-store-context";
 
 /**
  * Generates multiband volume data from WinSTT's single RMS audio level.
@@ -61,6 +61,9 @@ export function computeBandValue(
 }
 
 export function useMultibandVolume(bands: number): number[] {
+	// Store resolves via context so a sandboxed preview store (settings
+	// visualizer-style switcher) drives these bands instead of the global one.
+	const store = useVisualizerStoreApi();
 	const [volumes, setVolumes] = useState<number[]>(() => zeroBands(bands));
 	const rafRef = useRef(0);
 	const bandsRef = useRef(bands);
@@ -79,7 +82,7 @@ export function useMultibandVolume(bands: number): number[] {
 				return;
 			}
 
-			const { audioLevel } = useVisualizerStore.getState();
+			const { audioLevel } = store.getState();
 			const n = bandsRef.current;
 			const time = performance.now() / 1000;
 
@@ -129,7 +132,7 @@ export function useMultibandVolume(bands: number): number[] {
 			rafRef.current = requestAnimationFrame(update);
 		};
 
-		const unsubscribe = useVisualizerStore.subscribe((state, prev) => {
+		const unsubscribe = store.subscribe((state, prev) => {
 			if (
 				state.audioLevel >= SILENCE_THRESHOLD &&
 				prev.audioLevel < SILENCE_THRESHOLD
@@ -147,7 +150,7 @@ export function useMultibandVolume(bands: number): number[] {
 				rafRef.current = 0;
 			}
 		};
-	}, []);
+	}, [store]);
 
 	return volumes;
 }

@@ -15,13 +15,12 @@ import { cn } from "@/shared/lib/cn";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import { Tooltip } from "@/shared/ui/tooltip";
-import { buildQuantTooltipContent, clampPercent } from "./quant-shelf-state";
-import type {
-	QuantCacheState,
-	QuantDownloadSnapshot,
-	QuantShelfEntry,
-	QuantShelfProps,
-} from "./quant-shelf-types";
+import {
+	badgeToneForCache,
+	buildQuantTooltipContent,
+	resolveProgressFillPct,
+} from "./quant-shelf-state";
+import type { QuantShelfEntry, QuantShelfProps } from "./quant-shelf-types";
 
 export type {
 	QuantCacheSnapshot,
@@ -104,36 +103,6 @@ function BadgeIconButton({
 			</BaseButton>
 		</Tooltip>
 	);
-}
-
-/** Idle (non-selected) precision-badge tint, by on-disk state. Muted-semantic
- *  tints (emerald = on disk, amber = partial, neutral = not cached). Exported so
- *  every picker's quant shelf reads with the same palette. */
-function badgeToneForCache(state: QuantCacheState | undefined): string {
-	if (state === "cached") {
-		return "bg-cache-complete/[0.08] text-cache-complete/80 hover:bg-cache-complete/[0.14]";
-	}
-	if (state === "partial") {
-		return "bg-cache-partial/[0.08] text-cache-partial/80 hover:bg-cache-partial/[0.14]";
-	}
-	return "bg-foreground/[0.04] text-foreground-muted hover:bg-foreground/[0.08]";
-}
-
-/** Percentage [0..100] to amber-fill the badge for an in-progress / partly-cached
- *  quant, or `null` to skip the overlay. Active downloads win over the on-disk
- *  snapshot so the bar ticks live. */
-function resolveProgressFillPct(
-	cacheState: QuantCacheState | undefined,
-	cacheProgress: number | null,
-	download: QuantDownloadSnapshot | undefined,
-): number | null {
-	if (download && typeof download.progress === "number") {
-		return clampPercent(download.progress);
-	}
-	if (cacheState === "partial") {
-		return Math.min(99, clampPercent(Math.round((cacheProgress ?? 0) * 100)));
-	}
-	return null;
 }
 
 /** Inner content of the precision-label button — downloading (glyph + live %),

@@ -260,13 +260,7 @@ export function Switcher<T extends string = string>({
 					<AnimatePresence>
 						{selectedRect ? (
 							<motion.div
-								animate={{
-									left: selectedRect.left,
-									top: selectedRect.top,
-									width: selectedRect.width,
-									height: selectedRect.height,
-									opacity: isHoveringOther ? 0.85 : 1,
-								}}
+								animate={{ opacity: isHoveringOther ? 0.85 : 1 }}
 								className={cn(
 									"pointer-events-none absolute rounded-sm ring-1 ring-divider-strong ring-inset",
 									indicatorShadowClass,
@@ -274,61 +268,72 @@ export function Switcher<T extends string = string>({
 								)}
 								initial={false}
 								key="active-indicator"
-								{...(usesColor && selectedOption?.color
-									? { style: { backgroundColor: selectedOption.color } }
-									: {})}
+								layout={true}
+								style={{
+									left: selectedRect.left,
+									top: selectedRect.top,
+									width: selectedRect.width,
+									height: selectedRect.height,
+									...(usesColor && selectedOption?.color
+										? { backgroundColor: selectedOption.color }
+										: {}),
+								}}
 								transition={{
-									...springs.moderate,
+									layout: springs.moderate,
 									opacity: { duration: springs.fast.duration },
 								}}
 							/>
 						) : null}
 					</AnimatePresence>
 
-					<AnimatePresence>
-						{hoverRect && !isHoveringSelected ? (
-							<motion.div
-								animate={{
-									left: hoverRect.left,
-									top: hoverRect.top,
-									width: hoverRect.width,
-									height: hoverRect.height,
-									opacity: 0.5,
-								}}
-								className={cn(
-									"pointer-events-none absolute rounded-sm ring-1 ring-divider ring-inset",
-									hoverBgClass,
-								)}
-								exit={{ opacity: 0, transition: springs.fast.exit }}
-								initial={{
-									left: hoverRect.left,
-									top: hoverRect.top,
-									width: hoverRect.width,
-									height: hoverRect.height,
-									opacity: 0,
-								}}
-								transition={{
-									...springs.fast,
-									opacity: { duration: springs.fast.duration },
-								}}
-							/>
-						) : null}
-					</AnimatePresence>
+					{/* The hover pill fills the option's full rect (`rounded-sm`), but the
+					    track is `rounded-lg`. Without a clip, an edge option's square-ish
+					    pill corner pokes past the track's rounded corner on hover. Clip
+					    the hover pill to the track shape — NOT the whole group (would clip
+					    the focus ring + badges), and NOT the selected pill (its drop
+					    shadow must render outside its box). */}
+					<div className="pointer-events-none absolute inset-0 overflow-hidden rounded-lg">
+						<AnimatePresence>
+							{hoverRect && !isHoveringSelected ? (
+								<motion.div
+									animate={{ opacity: 0.5 }}
+									className={cn(
+										"pointer-events-none absolute rounded-sm ring-1 ring-divider ring-inset",
+										hoverBgClass,
+									)}
+									exit={{ opacity: 0, transition: springs.fast.exit }}
+									initial={{ opacity: 0 }}
+									layout={true}
+									style={{
+										left: hoverRect.left,
+										top: hoverRect.top,
+										width: hoverRect.width,
+										height: hoverRect.height,
+									}}
+									transition={{
+										layout: springs.fast,
+										opacity: { duration: springs.fast.duration },
+									}}
+								/>
+							) : null}
+						</AnimatePresence>
+					</div>
 
 					<AnimatePresence>
 						{focusRect ? (
 							<motion.div
-								animate={{
+								className="pointer-events-none absolute z-overlay rounded-sm border border-accent"
+								exit={{ opacity: 0, transition: springs.fast.exit }}
+								initial={false}
+								layout={true}
+								style={{
 									left: focusRect.left - 2,
 									top: focusRect.top - 2,
 									width: focusRect.width + 4,
 									height: focusRect.height + 4,
 								}}
-								className="pointer-events-none absolute z-overlay rounded-sm border border-accent"
-								exit={{ opacity: 0, transition: springs.fast.exit }}
-								initial={false}
 								transition={{
-									...springs.fast,
+									layout: springs.fast,
 									opacity: { duration: springs.fast.duration },
 								}}
 							/>

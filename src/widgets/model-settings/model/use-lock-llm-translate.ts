@@ -2,14 +2,17 @@ import { useEffect } from "react";
 import { useSettingsStore } from "@/entities/setting";
 
 /**
- * Mutual-exclusion between the STT decoder's "Translate to English" pass and
- * the LLM dictation "Translate" modifier. Both translate the same transcript,
- * so running them together double-translates (and fights over the target
- * language). When the STT toggle is effectively active we drop the `translate`
- * entry from the dictation presets; the LLM panel additionally disables the row
- * so it can't be re-enabled while this holds.
+ * Mutual-exclusion between the STT decoder's native translation (the
+ * Transcriptions-tab "Output Language" picker set to anything other than
+ * "Same as spoken") and the LLM dictation "Translate" modifier. Both translate
+ * the same transcript, so running them together double-translates (and fights
+ * over the target language). When the STT output language is effectively
+ * active we drop the `translate` entry from the dictation presets; the LLM
+ * panel additionally disables the row so it can't be re-enabled while this
+ * holds.
  *
- * One-way by design: turning the STT toggle back off does NOT restore a
+ * One-way by design: resetting Output Language back to "Same as spoken" does
+ * NOT restore a
  * previously-enabled translate modifier (matching Smart-Endpoint
  * mutual-exclusion, which also doesn't auto-restore). The user
  * re-enables it manually — the LLM panel remembers the last target language, so

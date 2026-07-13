@@ -1,11 +1,15 @@
 import {
 	DashboardSpeed02Icon,
 	GlobeIcon,
+	LanguageSkillIcon,
 	LiveStreaming02Icon,
 	NeuralNetworkIcon,
 	Target02Icon,
 } from "@hugeicons/core-free-icons";
-import type { ModelInfo } from "@/entities/model-catalog";
+import {
+	type ModelInfo,
+	supportsTranslateToEnglish,
+} from "@/entities/model-catalog";
 import { publicAsset } from "@/shared/lib/public-asset";
 import type {
 	ModelSpec,
@@ -45,6 +49,17 @@ export function buildSttSpec(model: ModelInfo): ModelSpec {
 			icon: LiveStreaming02Icon,
 			label: "Streaming",
 			description: "Feeds live audio into a stateful streaming decoder.",
+		});
+	}
+	if (supportsTranslateToEnglish(model)) {
+		const canary = model.id.startsWith("nemo-canary-");
+		features.push({
+			key: "translate",
+			icon: LanguageSkillIcon,
+			label: "Translation",
+			description: canary
+				? "Translates speech between its languages in a single decode — pick the output language on the Transcriptions tab."
+				: "Translates non-English speech to English in a single decode — enable it on the Transcriptions tab.",
 		});
 	}
 

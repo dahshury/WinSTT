@@ -1,4 +1,5 @@
 export {
+	applyDeviceSelection,
 	buildInputDeviceOptions,
 	priorityFromReorderedOptions,
 	promoteDeviceNameToTop,
@@ -15,7 +16,6 @@ export {
 	useMicrophoneLevels,
 } from "./ui/MicrophoneLevelMeter";
 export {
-	applyDeviceSelection,
 	InputDeviceSelect,
 	useInputDevicePickerModel,
 	type InputDevicePickerModel,

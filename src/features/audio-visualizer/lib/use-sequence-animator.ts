@@ -41,6 +41,7 @@ export function useSequenceAnimator(
 				cancelAnimationFrame(animationFrameId);
 			}
 		};
+		// react-doctor-disable-next-line react-doctor/exhaustive-deps -- inputsKey is an intentional dependency (not read in the body): it restarts the rAF timer in lockstep with the render-phase index reset so each new input sequence shows frame 0 for a full interval.
 	}, [frameCount, inputsKey, interval]);
 
 	return pickFrame(sequence, inputsAreCurrent ? index : 0);

@@ -101,6 +101,7 @@ export function AudioVisualizerRadial({
 	);
 	const bands = state === "speaking" ? volumeBands : emptyBands(_barCount);
 	const allHighlighted = highlightedIndices.length >= _barCount;
+	const highlightedSet = new Set(highlightedIndices);
 
 	const dotSize = (distanceFromCenter * Math.PI) / _barCount;
 
@@ -130,9 +131,7 @@ export function AudioVisualizerRadial({
 						}}
 					>
 						<div
-							data-lk-highlighted={
-								allHighlighted || highlightedIndices.includes(idx)
-							}
+							data-lk-highlighted={allHighlighted || highlightedSet.has(idx)}
 							data-lk-index={idx}
 							style={{
 								width: dotSize,

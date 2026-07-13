@@ -323,7 +323,7 @@ pub struct AppSettings {
     // NOTE: the legacy `selected_model` / `translate_to_english` / `selected_language` /
     // `overlay_position` / `model_unload_timeout` fields were removed — each is fully owned by a
     // canonical `WinsttSettings` field the backend actually reads (`model.model` /
-    // `model.translate_to_english` / `model.language` / `general.overlay_position` /
+    // `model.translate_target_language` / `model.language` / `general.overlay_position` /
     // `global.model_unload_timeout`); the `core` copies had NO reader (only a write-only sync for
     // the timeout). `#[serde(default)]` on the remaining fields means an older store still carrying
     // those keys deserializes fine (the unknown keys are ignored).

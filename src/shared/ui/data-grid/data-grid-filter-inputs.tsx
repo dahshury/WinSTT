@@ -286,8 +286,9 @@ export function DataGridSelectFilterInput<TData>({
 
 	if (isMultiValueOperator) {
 		const selectedValues = Array.isArray(value) ? value : [];
+		const selectedValuesSet = new Set(selectedValues);
 		const selectedOptions = selectOptions.filter((option) =>
-			selectedValues.includes(option.value),
+			selectedValuesSet.has(option.value),
 		);
 
 		const selectedOptionsWithIcons = selectedOptions.filter(
@@ -344,7 +345,7 @@ export function DataGridSelectFilterInput<TData>({
 							<CommandEmpty>{t("noOptionsFound")}</CommandEmpty>
 							<CommandGroup>
 								{selectOptions.map((option) => {
-									const isSelected = selectedValues.includes(option.value);
+									const isSelected = selectedValuesSet.has(option.value);
 									return (
 										<CommandItem
 											key={option.value}

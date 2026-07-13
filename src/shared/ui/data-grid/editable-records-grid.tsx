@@ -1,5 +1,5 @@
 import type { ColumnDef, Table } from "@tanstack/react-table";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { cellUpdatesBetween } from "@/shared/lib/grid-cell-diff";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { DataGrid } from "./data-grid";
@@ -42,8 +42,6 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 	onChange,
 }: EditableRecordsGridProps<TData>) {
 	const dataRef = useRef(data);
-	// eslint-disable-next-line react-hooks-js/refs -- latest-value ref for grid callbacks invoked outside render
-	dataRef.current = data;
 	const tableRef = useRef<Table<TData> | null>(null);
 	const paginationOptions = useGridPaginationOptions();
 	const { trackCellsUpdate, trackRowsAdd, trackRowsDelete } =
@@ -113,8 +111,13 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 		onRowsDelete,
 		...paginationOptions,
 	});
-	// eslint-disable-next-line react-hooks-js/refs -- stable table handle for add-row callbacks
-	tableRef.current = table;
+	// Latest-value refs for grid callbacks that run outside render (row add/delete,
+	// prune-on-blur). Written after commit so render stays pure; every reader is an
+	// event handler invoked post-commit, so it always observes the latest value.
+	useEffect(() => {
+		dataRef.current = data;
+		tableRef.current = table;
+	});
 	useGridPageClamp(table);
 	const { wrapperRef, onBlur } = usePruneEmptyRows<TData>({
 		dataRef,

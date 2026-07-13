@@ -89,6 +89,29 @@ describe("LlmSettingsPanel", () => {
 			(screen.getByRole("button", { name: "Playground" }) as HTMLButtonElement)
 				.disabled,
 		).toBe(true);
+		// With fewer than two saved presets there is nothing to cycle to — the
+		// nav arrows are not rendered at all (permanently-disabled arrows read
+		// as broken segments beside the combobox).
+		expect(
+			screen.queryByRole("button", { name: "Previous preset" }),
+		).toBeNull();
+		expect(screen.queryByRole("button", { name: "Next preset" })).toBeNull();
+	});
+
+	test("shows nav arrows disabled while post-processing is off once two presets exist", () => {
+		useLlmConfigurationsStore.setState({
+			activeConfigurationId: null,
+			configurations: [
+				savedConfiguration("first", "First", {}),
+				savedConfiguration("second", "Second", {}),
+			],
+		});
+		render(
+			<IntlProvider>
+				<LlmSettingsPanel />
+			</IntlProvider>,
+		);
+
 		expect(
 			(
 				screen.getByRole("button", {

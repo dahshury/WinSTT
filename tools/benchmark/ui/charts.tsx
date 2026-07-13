@@ -2,20 +2,7 @@
 // convention. Model series use a categorical, non-green palette; the heatmap is
 // monochrome teal intensity (value is never encoded as green=good/red=bad).
 
-export const SERIES = [
-	"var(--color-activity)",
-	"#f59e0b",
-	"#a78bfa",
-	"#ec4899",
-	"#22d3ee",
-	"#f472b6",
-	"#facc15",
-	"#818cf8",
-];
-
-export function seriesColor(i: number): string {
-	return SERIES[i % SERIES.length]!;
-}
+import { seriesColor } from "./series-palette";
 
 function niceCeil(v: number): number {
 	if (v <= 0) return 1;

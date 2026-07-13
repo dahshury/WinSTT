@@ -159,8 +159,14 @@ pub struct TranscribeOptions {
     pub language: Option<String>,
     /// Candidate language hints used when `language` is None. Empty means unconstrained auto.
     pub language_candidates: Vec<String>,
-    /// Translate source → English (Whisper prompt mutation / Canary kwarg).
+    /// Translate the source instead of transcribing it (Whisper prompt mutation /
+    /// Canary target-language token). See `translate_target_language`.
     pub translate: bool,
+    /// Output language for the translation when `translate` is set. `None`/empty
+    /// falls back to English. Whisper can only ever emit English (`<|translate|>`
+    /// is English-only), so it ignores a non-English target; NeMo Canary honors
+    /// the concrete `<|lang|>` target token and translates any→any.
+    pub translate_target_language: Option<String>,
     /// Decoder-bias text — Whisper-only (`supports_initial_prompt`). NEVER set
     /// for Canary/Cohere. Must be sanitized upstream (see context slice).
     pub initial_prompt_text: Option<String>,

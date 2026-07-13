@@ -46,6 +46,9 @@ function EnhanceControls() {
 	const customModifiers = dictation?.customModifiers ?? [];
 	const hasSelection = store.selEnd > store.selStart;
 	const scopeEnabled = hasSelection && store.source === "current";
+	// O(1) active-state lookups instead of `.includes()` per chip in the maps below.
+	const selectedPresetSet = new Set(store.selectedPresetKeys);
+	const selectedModifierSet = new Set(store.selectedModifierIds);
 
 	const sourceOptions: SwitcherOption<EnhanceSource>[] = [
 		{ value: "current", label: tp("sourceCurrent") },
@@ -93,7 +96,7 @@ function EnhanceControls() {
 			<div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto">
 				{ALL_PRESET_KEYS.map((key) => (
 					<ModifierChip
-						active={store.selectedPresetKeys.includes(key)}
+						active={selectedPresetSet.has(key)}
 						key={key}
 						label={tl(PRESET_LABEL_KEY[key] ?? key)}
 						onToggle={() => store.togglePreset(key)}
@@ -101,7 +104,7 @@ function EnhanceControls() {
 				))}
 				{customModifiers.map((m) => (
 					<ModifierChip
-						active={store.selectedModifierIds.includes(m.id)}
+						active={selectedModifierSet.has(m.id)}
 						key={m.id}
 						label={m.name || tl("modifierUnnamed")}
 						onToggle={() => store.toggleModifier(m.id)}

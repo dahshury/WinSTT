@@ -90,6 +90,7 @@ export function OptionDragHandle({
 	label?: string | undefined;
 }) {
 	return (
+		// react-doctor-disable-next-line react-doctor/no-static-element-interactions -- not an interactive control: this span is a bubble-phase propagation fence, and the real interactive element (the SortableItemHandle button below) carries the aria-label/keyboard semantics. A role here would misrepresent it to assistive tech.
 		<span
 			className={cn("shrink-0", className)}
 			onClick={stop}

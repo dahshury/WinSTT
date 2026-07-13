@@ -8,13 +8,8 @@ import type {
 	TrialRecord,
 } from "../../lib/postprocess/types";
 import type { BenchmarkConfig, StoredRun } from "../engine/types";
-import {
-	GroupedBars,
-	Heatmap,
-	RubricRadar,
-	Scatter,
-	seriesColor,
-} from "./charts";
+import { GroupedBars, Heatmap, RubricRadar, Scatter } from "./charts";
+import { seriesColor } from "./series-palette";
 
 type View =
 	| "overview"
@@ -244,9 +239,9 @@ function SamplesView(props: { trials: TrialRecord[] }) {
 			hint="What each model actually produced (post thinking-strip + normalize)."
 		>
 			<div className="flex flex-col gap-2">
-				{corpus.slice(0, 40).map((t, i) => (
+				{corpus.slice(0, 40).map((t) => (
 					<div
-						key={`${t.model}:${t.modifierId}:${t.sampleId}:${i}`}
+						key={`${t.model}:${t.modifierId}:${t.sampleKind}:${t.sampleId}:${t.trial}`}
 						className="border-surface-5 rounded-lg border p-3"
 					>
 						<div className="text-foreground-muted mb-1 flex flex-wrap gap-2 text-xs">

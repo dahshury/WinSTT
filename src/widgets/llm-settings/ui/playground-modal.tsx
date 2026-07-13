@@ -312,12 +312,11 @@ function PlaygroundModalBody({
 	// still installed is kept; one that was since deleted is swapped for the
 	// nearest install; an empty selection defaults to the first install. The
 	// resulting pick is remembered by the session-write effect above (it mirrors
-	// every draft change to localStorage). Converges: once `model` names a valid
-	// install the resolver returns null and the effect stops patching.
-	useEffect(() => {
-		if (draft.provider !== "ollama") {
-			return;
-		}
+	// every draft change to localStorage). Adjusted DURING render (not an effect)
+	// so there's no cascading commit — the resolver returns null once `draft.model`
+	// names a valid install, so this converges. See react.dev "You Might Not Need
+	// an Effect" → adjusting state while rendering.
+	if (draft.provider === "ollama") {
 		const next = resolvePlaygroundLocalModel(
 			model.ollamaCatalogState.models,
 			draft.model,
@@ -325,7 +324,7 @@ function PlaygroundModalBody({
 		if (next !== null) {
 			setDraft((prev) => ({ ...prev, model: next }));
 		}
-	}, [draft.provider, draft.model, model.ollamaCatalogState.models]);
+	}
 
 	// The preview runs the composed config directly — it does NOT require the
 	// dictation/transforms feature to be toggled on (the server applies the

@@ -1,6 +1,6 @@
 import { AiMicIcon } from "@hugeicons/core-free-icons";
 import { SttModelSelector } from "@/widgets/model-picker";
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
 import {
 	providerOf,
@@ -99,10 +99,15 @@ interface MainModelSectionProps {
 	systemInfo: SystemInfo;
 	t: TFn;
 	/** True when the active model supports a decoder-level translate
-	 *  path (Whisper multilingual variants or NeMo Canary). The toggle
-	 *  hides for engines that can't honor it — GigaAM, Moonshine,
-	 *  Kaldi/Vosk, Cohere, ``.en`` Whispers — so the UI doesn't lie. */
+	 *  path (Whisper multilingual variants or NeMo Canary) AND at least one
+	 *  target language other than the source is available. The picker hides
+	 *  for engines that can't honor it — GigaAM, Moonshine, Kaldi/Vosk,
+	 *  Cohere, ``.en`` Whispers — so the UI doesn't lie. */
 	translateSupported: boolean;
+	/** Output languages the model can translate INTO, minus the selected
+	 *  source. Whisper resolves to English only; NeMo Canary lists its full
+	 *  language set. Drives the target-language picker below the language row. */
+	translateTargetOpts: SelectOption[];
 	update: UpdateModelFn;
 }
 
@@ -277,6 +282,285 @@ function SourceArea({
 	);
 }
 
+interface LanguageAreaProps {
+	disabled: boolean;
+	disabledTooltip?: string | undefined;
+	langOpts: SelectOption[];
+	languageAutoDetect: boolean;
+	languageAutoDetectSupported: boolean;
+	languageCandidates: string[];
+	languageControlMode: LanguageControlMode;
+	settings: ModelSettings | undefined;
+	t: TFn;
+	update: UpdateModelFn;
+}
+
+/**
+ * The Spoken Language row — a single/candidate/auto language picker plus the
+ * optional "Auto-detect" toggle. Split out of {@link MainModelSection} so that
+ * component stays under the giant-component cap; all language-derived state is
+ * local here and used nowhere else.
+ */
+function LanguageArea({
+	disabled,
+	disabledTooltip,
+	langOpts,
+	languageAutoDetect,
+	languageAutoDetectSupported,
+	languageCandidates,
+	languageControlMode,
+	settings,
+	t,
+	update,
+}: LanguageAreaProps): ReactNode {
+	const effectiveLanguageAutoDetect =
+		languageAutoDetectSupported && languageAutoDetect;
+	const languageCandidateSelectionSupported =
+		languageControlMode === "candidate-auto";
+	const explicitLanguageCandidates = normalizeLanguageCandidatesAllowEmpty(
+		settings?.languageCandidates,
+		langOpts,
+	);
+	const languageComboboxValue = effectiveLanguageAutoDetect
+		? explicitLanguageCandidates
+		: languageCandidates;
+	const fixedLanguage = fixedLanguageValue(
+		settings,
+		languageCandidates,
+		langOpts,
+	);
+	// Per-mode tooltip for the Spoken Language row. The "single" (declared
+	// source) copy is the important one: Canary can't auto-detect, trusts the
+	// setting completely, and emits in this language unless Translate To
+	// overrides — so mismatched speech comes out TRANSLATED, not transcribed.
+	const languageTooltip =
+		languageControlMode === "single"
+			? t("languageTooltipSingle")
+			: languageControlMode === "candidate-auto"
+				? t("languageTooltipCandidateAuto")
+				: t("languageTooltipAuto");
+	return (
+		<SettingField
+			disabled={disabled}
+			disabledTooltip={disabledTooltip}
+			hideReset={disabled}
+			isDefault={
+				!effectiveLanguageAutoDetect &&
+				(settings?.language ?? "en") === DEFAULT_SETTINGS.model.language &&
+				(settings?.languageCandidates?.length ?? 0) === 0 &&
+				(settings?.autoDetectLanguage ?? false) ===
+					DEFAULT_SETTINGS.model.autoDetectLanguage
+			}
+			label={t("language")}
+			tooltip={languageTooltip}
+			labelAddon={
+				languageAutoDetectSupported ? (
+					<Toggle
+						checked={effectiveLanguageAutoDetect}
+						disabled={disabled}
+						label={t("autoDetectLanguage")}
+						onCheckedChange={(enabled) => {
+							if (disabled) {
+								return;
+							}
+							if (enabled) {
+								update({
+									autoDetectLanguage: true,
+									language: "",
+									languageCandidates: languageCandidateSelectionSupported
+										? explicitLanguageCandidates
+										: [],
+								});
+								return;
+							}
+							const next = normalizeLanguageCandidates(
+								[
+									settings?.language ?? "",
+									...languageComboboxValue,
+									...languageCandidates,
+								],
+								langOpts,
+								DEFAULT_SETTINGS.model.language,
+							);
+							update({
+								autoDetectLanguage: false,
+								language: next[0] ?? DEFAULT_SETTINGS.model.language,
+								languageCandidates: languageCandidateSelectionSupported
+									? next
+									: [],
+							});
+						}}
+					/>
+				) : undefined
+			}
+			layout="row"
+			onReset={() =>
+				update({
+					autoDetectLanguage: DEFAULT_SETTINGS.model.autoDetectLanguage,
+					language: DEFAULT_SETTINGS.model.language,
+					languageCandidates: DEFAULT_SETTINGS.model.languageCandidates,
+				})
+			}
+		>
+			{/* Auto-detect DISABLES the picker instead of unmounting it (no
+			    layout jump; the shortlist/pick stays visible while detection
+			    owns the decision). Edit it by turning Auto-detect off. */}
+			{languageCandidateSelectionSupported ? (
+				<ElevatedSurface className="w-52" inline>
+					<LanguageMultiCombobox
+						ariaLabel={t("language")}
+						disabled={disabled || effectiveLanguageAutoDetect}
+						emptyLabel={t("languageNoResults")}
+						onChange={(value) => {
+							if (disabled || effectiveLanguageAutoDetect) {
+								return;
+							}
+							const next = normalizeLanguageCandidates(
+								value,
+								langOpts,
+								DEFAULT_SETTINGS.model.language,
+							);
+							update({
+								autoDetectLanguage: false,
+								language: next[0] ?? DEFAULT_SETTINGS.model.language,
+								languageCandidates: next,
+							});
+						}}
+						options={langOpts}
+						placeholder={t("languagePlaceholder")}
+						removeLabel={(language) => t("languageRemove", { language })}
+						selectedCountLabel={(count) => `${count}+`}
+						selectedHeading={t("languageSelectedHeading")}
+						value={languageComboboxValue}
+					/>
+				</ElevatedSurface>
+			) : (
+				<SearchableSelect
+					className="w-52"
+					disabled={disabled || effectiveLanguageAutoDetect}
+					onChange={(value) => {
+						if (disabled || effectiveLanguageAutoDetect) {
+							return;
+						}
+						update({
+							autoDetectLanguage: false,
+							language: value,
+							languageCandidates: [],
+						});
+					}}
+					options={langOpts}
+					placeholder={t("languagePlaceholder")}
+					value={fixedLanguage}
+				/>
+			)}
+		</SettingField>
+	);
+}
+
+interface TranslateAreaProps {
+	disabled: boolean;
+	disabledTooltip?: string | undefined;
+	settings: ModelSettings | undefined;
+	t: TFn;
+	translateTargetOpts: SelectOption[];
+	update: UpdateModelFn;
+}
+
+/**
+ * Translate To — a toggle + target-language picker over the single persisted
+ * `translateTargetLanguage` field ("" = off). Split out of
+ * {@link MainModelSection} so that component stays under the giant-component
+ * cap; the last-target ref and toggle handler live only here.
+ */
+function TranslateArea({
+	disabled,
+	disabledTooltip,
+	settings,
+	t,
+	translateTargetOpts,
+	update,
+}: TranslateAreaProps): ReactNode {
+	// Translate To is a toggle + target picker over ONE persisted field:
+	// `translateTargetLanguage` ("" = off). The toggle owns on/off, so the
+	// dropdown never lists a "Same as spoken" sentinel — it just disables while
+	// translation is off. The last concrete target is remembered (session-local)
+	// so re-enabling restores it instead of resetting to English.
+	const translateTarget = settings?.translateTargetLanguage ?? "";
+	const translateActive = translateTargetOpts.some(
+		(option) => option.id === translateTarget,
+	);
+	const lastTranslateTarget = useRef("");
+	const setTranslateTarget = (value: string): void => {
+		if (value.length > 0) {
+			lastTranslateTarget.current = value;
+		}
+		update({ translateTargetLanguage: value });
+	};
+	const handleTranslateToggle = (enabled: boolean): void => {
+		if (disabled) {
+			return;
+		}
+		if (!enabled) {
+			if (translateActive) {
+				lastTranslateTarget.current = translateTarget;
+			}
+			update({ translateTargetLanguage: "" });
+			return;
+		}
+		const remembered = lastTranslateTarget.current;
+		const valid = (id: string): boolean =>
+			translateTargetOpts.some((option) => option.id === id);
+		setTranslateTarget(
+			valid(remembered)
+				? remembered
+				: valid("en")
+					? "en"
+					: (translateTargetOpts[0]?.id ?? ""),
+		);
+	};
+	return (
+		<SettingField
+			disabled={disabled}
+			disabledTooltip={disabledTooltip}
+			hideReset={disabled}
+			isDefault={
+				(settings?.translateTargetLanguage ?? "") ===
+				DEFAULT_SETTINGS.model.translateTargetLanguage
+			}
+			label={t("translateTo")}
+			labelAddon={
+				<Toggle
+					aria-label={t("translateToggleAria")}
+					checked={translateActive}
+					disabled={disabled}
+					onCheckedChange={handleTranslateToggle}
+				/>
+			}
+			layout="row"
+			onReset={() =>
+				update({
+					translateTargetLanguage:
+						DEFAULT_SETTINGS.model.translateTargetLanguage,
+				})
+			}
+			tooltip={t("translateToTooltip")}
+		>
+			<SearchableSelect
+				className="w-52"
+				disabled={disabled || !translateActive}
+				onChange={(value) => {
+					if (!(disabled || !translateActive)) {
+						setTranslateTarget(value);
+					}
+				}}
+				options={translateTargetOpts}
+				placeholder={t("translateToPlaceholder")}
+				value={translateActive ? translateTarget : ""}
+			/>
+		</SettingField>
+	);
+}
+
 export function MainModelSection({
 	t,
 	settings,
@@ -304,6 +588,7 @@ export function MainModelSection({
 	handleModelChange,
 	sections,
 	translateSupported,
+	translateTargetOpts,
 }: MainModelSectionProps): ReactNode {
 	const tIntegrations = useTranslations("integrations");
 	const integrations = useSettingsStore((s) => s.settings.integrations);
@@ -337,22 +622,6 @@ export function MainModelSection({
 	// to the local picker — the cloud-key-removal banner already tells the
 	// user what's broken.
 	const effectiveSourceIsCloud = isCloud && hasAnyCloudKey;
-	const effectiveLanguageAutoDetect =
-		languageAutoDetectSupported && languageAutoDetect;
-	const languageCandidateSelectionSupported =
-		languageControlMode === "candidate-auto";
-	const explicitLanguageCandidates = normalizeLanguageCandidatesAllowEmpty(
-		settings?.languageCandidates,
-		langOpts,
-	);
-	const languageComboboxValue = effectiveLanguageAutoDetect
-		? explicitLanguageCandidates
-		: languageCandidates;
-	const fixedLanguage = fixedLanguageValue(
-		settings,
-		languageCandidates,
-		langOpts,
-	);
 
 	return (
 		<SettingSection boxed icon={AiMicIcon} title={t("mainModel")}>
@@ -387,156 +656,38 @@ export function MainModelSection({
 					tIntegrations={tIntegrations}
 				/>
 				{sections.language && (
-					<SettingField
+					<LanguageArea
 						disabled={disabled}
 						disabledTooltip={disabledTooltip}
-						hideReset={disabled}
-						isDefault={
-							!effectiveLanguageAutoDetect &&
-							(settings?.language ?? "en") ===
-								DEFAULT_SETTINGS.model.language &&
-							(settings?.languageCandidates?.length ?? 0) === 0 &&
-							(settings?.autoDetectLanguage ?? false) ===
-								DEFAULT_SETTINGS.model.autoDetectLanguage
-						}
-						label={t("language")}
-						labelAddon={
-							languageAutoDetectSupported ? (
-								<Toggle
-									checked={effectiveLanguageAutoDetect}
-									disabled={disabled}
-									label={t("autoDetectLanguage")}
-									onCheckedChange={(enabled) => {
-										if (disabled) {
-											return;
-										}
-										if (enabled) {
-											update({
-												autoDetectLanguage: true,
-												language: "",
-												languageCandidates: languageCandidateSelectionSupported
-													? explicitLanguageCandidates
-													: [],
-											});
-											return;
-										}
-										const next = normalizeLanguageCandidates(
-											[
-												settings?.language ?? "",
-												...languageComboboxValue,
-												...languageCandidates,
-											],
-											langOpts,
-											DEFAULT_SETTINGS.model.language,
-										);
-										update({
-											autoDetectLanguage: false,
-											language: next[0] ?? DEFAULT_SETTINGS.model.language,
-											languageCandidates: languageCandidateSelectionSupported
-												? next
-												: [],
-										});
-									}}
-								/>
-							) : undefined
-						}
-						layout="row"
-						onReset={() =>
-							update({
-								autoDetectLanguage: DEFAULT_SETTINGS.model.autoDetectLanguage,
-								language: DEFAULT_SETTINGS.model.language,
-								languageCandidates: DEFAULT_SETTINGS.model.languageCandidates,
-							})
-						}
-					>
-						{effectiveLanguageAutoDetect ? undefined : languageCandidateSelectionSupported ? (
-							<ElevatedSurface className="w-52" inline>
-								<LanguageMultiCombobox
-									ariaLabel={t("language")}
-									disabled={disabled}
-									emptyLabel={t("languageNoResults")}
-									onChange={(value) => {
-										if (disabled) {
-											return;
-										}
-										const next = normalizeLanguageCandidates(
-											value,
-											langOpts,
-											DEFAULT_SETTINGS.model.language,
-										);
-										update({
-											autoDetectLanguage: false,
-											language: next[0] ?? DEFAULT_SETTINGS.model.language,
-											languageCandidates: next,
-										});
-									}}
-									options={langOpts}
-									placeholder={t("languagePlaceholder")}
-									removeLabel={(language) => t("languageRemove", { language })}
-									selectedCountLabel={(count) => `${count}+`}
-									selectedHeading={t("languageSelectedHeading")}
-									value={languageComboboxValue}
-								/>
-							</ElevatedSurface>
-						) : (
-							<SearchableSelect
-								className="w-52"
-								disabled={disabled}
-								onChange={(value) => {
-									if (disabled) {
-										return;
-									}
-									update({
-										autoDetectLanguage: false,
-										language: value,
-										languageCandidates: [],
-									});
-								}}
-								options={langOpts}
-								placeholder={t("languagePlaceholder")}
-								value={fixedLanguage}
-							/>
-						)}
-					</SettingField>
+						langOpts={langOpts}
+						languageAutoDetect={languageAutoDetect}
+						languageAutoDetectSupported={languageAutoDetectSupported}
+						languageCandidates={languageCandidates}
+						languageControlMode={languageControlMode}
+						settings={settings}
+						t={t}
+						update={update}
+					/>
 				)}
-				{/* Translate-to-English. Two engine families support it
-				    natively at decoder time — Whisper (multilingual
-				    variants, via the ``<|translate|>`` token in the
-				    decoder prompt) and NeMo Canary (via the
-				    ``target_language`` kwarg on ``recognize``). The
-				    OnnxAsrTranscriber dispatches between the two
-				    paths; the server-side family check (``.en``
-				    variants of Whisper, GigaAM, Moonshine, …) silently
-				    falls through to plain transcription. We expose the
-				    toggle whenever the user's selected catalog family
-				    is one of the two supported. */}
+				{/* Translate To — toggle + target picker for native decoder-time
+				    translation. Whisper multilingual = the ``<|translate|>`` task
+				    (English-only target; with several possible spoken languages
+				    the engine's constrained lang-id resolves the source per
+				    utterance, so English speech passes through unchanged). NeMo
+				    Canary = a true target-language prompt slot, any→any among
+				    its languages. Toggle off = ``translateTargetLanguage: ""``
+				    (output in the spoken language); the dropdown disables
+				    instead of unmounting. Hidden entirely for engines that
+				    can't translate or when the only target equals the single
+				    definitive source, so the UI never lies. */}
 				{translateSupported && (
-					<SettingField
+					<TranslateArea
 						disabled={disabled}
 						disabledTooltip={disabledTooltip}
-						hideReset={disabled}
-						isDefault={
-							(settings?.translateToEnglish ?? false) ===
-							DEFAULT_SETTINGS.model.translateToEnglish
-						}
-						label={t("translateToEnglish")}
-						labelAddon={
-							<Toggle
-								checked={settings?.translateToEnglish ?? false}
-								disabled={disabled}
-								onCheckedChange={(v) => {
-									if (!disabled) {
-										update({ translateToEnglish: v });
-									}
-								}}
-							/>
-						}
-						onReset={() =>
-							update({
-								translateToEnglish: DEFAULT_SETTINGS.model.translateToEnglish,
-							})
-						}
-						tooltip={t("translateToEnglishTooltip")}
+						settings={settings}
+						t={t}
+						translateTargetOpts={translateTargetOpts}
+						update={update}
 					/>
 				)}
 			</div>

@@ -62,6 +62,10 @@ import {
 	DeleteQuantConfirmDialog,
 	type PendingDelete,
 } from "./DeleteQuantConfirmDialog";
+import {
+	getCachedSelectedModel,
+	setCachedSelectedModel,
+} from "./selected-model-metadata-cache";
 import { SttModelSelectorTriggerButton } from "./SttModelSelectorTrigger";
 import {
 	SttModelSelectorView,
@@ -160,15 +164,6 @@ const STT_SELECTOR_UI_STORAGE_KEYS: Record<
 	main: "winstt:model-picker:stt-main-ui",
 	realtime: "winstt:model-picker:stt-realtime-ui",
 };
-const selectedModelMetadataCache = new Map<string, ModelInfo>();
-
-/** Test-only: clear the module-level selected-model metadata cache. Keyed by
- *  `${kind}:${value}`, it persists across renders (and, in a single-process test
- *  run, across test FILES). Many tests reuse `value="tiny"`, so a prior file's
- *  entry bleeds in and yields stale quant/footprint. Reset in `beforeEach`. */
-export function _resetSelectedModelMetadataCacheForTests(): void {
-	selectedModelMetadataCache.clear();
-}
 const DEFAULT_PERSISTED_STT_SELECTOR_UI_STATE: PersistedSttSelectorUiState = {
 	activeRailId: ALL_AUTHORS_RAIL_ID,
 	filters: {
@@ -276,11 +271,11 @@ function SttModelSelectorDetachedTrigger({
 	const resolvedSelectedModel = findDisplayModelByBackingId(baseModels, value);
 	const cachedSelectedModel =
 		value.length > 0 && baseModels.length === 0
-			? (selectedModelMetadataCache.get(selectedCacheKey) ?? null)
+			? getCachedSelectedModel(selectedCacheKey)
 			: null;
 	const selectedModel = resolvedSelectedModel ?? cachedSelectedModel;
 	if (resolvedSelectedModel !== null) {
-		selectedModelMetadataCache.set(selectedCacheKey, resolvedSelectedModel);
+		setCachedSelectedModel(selectedCacheKey, resolvedSelectedModel);
 	}
 	return (
 		<SttModelSelectorTriggerButton
@@ -407,11 +402,11 @@ function useSttModelSelectorPanelState({
 	const resolvedSelectedModel = findDisplayModelByBackingId(baseModels, value);
 	const cachedSelectedModel =
 		value.length > 0 && baseModels.length === 0
-			? (selectedModelMetadataCache.get(selectedCacheKey) ?? null)
+			? getCachedSelectedModel(selectedCacheKey)
 			: null;
 	const selectedModel = resolvedSelectedModel ?? cachedSelectedModel;
 	if (resolvedSelectedModel !== null) {
-		selectedModelMetadataCache.set(selectedCacheKey, resolvedSelectedModel);
+		setCachedSelectedModel(selectedCacheKey, resolvedSelectedModel);
 	}
 	const selectedFamily: FamilyKey | null = selectedModel?.family ?? null;
 	const selectedBaseId =
@@ -549,6 +544,7 @@ function useSttModelSelectorPanelState({
 	// autoscroll can find it.
 	const prevSelectedBaseIdRef = useRef(selectedBaseId);
 	if (prevSelectedBaseIdRef.current !== selectedBaseId) {
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render -- React's documented "store info from previous renders" pattern: the bundle MUST be expanded during render (before Combobox.Item mounts) so Base UI registers the variant into its listRef for open-time autoscroll; an effect runs after commit and would miss that window.
 		prevSelectedBaseIdRef.current = selectedBaseId;
 		if (selectedBaseId !== null) {
 			dispatch({ type: "ensureBundleExpanded", baseId: selectedBaseId });

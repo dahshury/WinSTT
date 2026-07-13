@@ -208,10 +208,25 @@ function DiffText({
 	rejected?: ReadonlySet<number> | undefined;
 	side: "after" | "before";
 }) {
+	// Precomputed character offset into this side's rendered text — a stable, unique
+	// positional identity for each hunk's key (hunk kinds repeat, so kind alone
+	// isn't unique) without keying on the bare array index. Built immutably up front
+	// so the map body never mutates a captured render-phase variable.
+	const textOffsets = diff.hunks.reduce<number[]>((acc, _hunk, i) => {
+		if (i === 0) {
+			acc.push(0);
+		} else {
+			const prev = diff.hunks[i - 1];
+			const prevText = side === "before" ? prev?.before : prev?.after;
+			acc.push((acc[i - 1] ?? 0) + (prevText?.length ?? 0));
+		}
+		return acc;
+	}, []);
 	return (
 		<p className="whitespace-pre-wrap break-words text-body-sm text-foreground leading-relaxed">
 			{diff.hunks.map((hunk, index) => {
 				const text = side === "before" ? hunk.before : hunk.after;
+				const keyOffset = textOffsets[index] ?? 0;
 				if (!text) {
 					return null;
 				}
@@ -232,7 +247,7 @@ function DiffText({
 					}
 				}
 				return (
-					<Fragment key={`${side}-${index}`}>
+					<Fragment key={`${side}-${hunk.kind}-${keyOffset}`}>
 						{index > 0 ? " " : null}
 						<span className={className}>{text}</span>
 					</Fragment>
@@ -264,6 +279,23 @@ export function TranscriptDiffView({
 		? 0
 		: Math.max(diff.changes.length - DIFF_SUMMARY_LIMIT, 0);
 	const changeCount = labels.changeCount(diff.changes.length);
+	// Precomputed offset over change content — a stable, unique key per chip (identical
+	// edits can repeat, so kind + content isn't unique) without the bare array index.
+	// Built immutably up front so the map body never mutates a captured variable.
+	const changeChipOffsets = shownChanges.reduce<number[]>((acc, _change, i) => {
+		if (i === 0) {
+			acc.push(0);
+		} else {
+			const prev = shownChanges[i - 1];
+			acc.push(
+				(acc[i - 1] ?? 0) +
+					(prev?.before?.length ?? 0) +
+					(prev?.after?.length ?? 0) +
+					1,
+			);
+		}
+		return acc;
+	}, []);
 
 	return (
 		<div className="flex flex-col gap-2.5">
@@ -284,15 +316,18 @@ export function TranscriptDiffView({
 			</div>
 
 			<div className="flex flex-wrap gap-1.5">
-				{shownChanges.map((change, index) => (
-					<DiffChangeChip
-						change={change}
-						changeIndex={index}
-						key={`${change.kind}-${index}`}
-						labels={labels}
-						review={review}
-					/>
-				))}
+				{shownChanges.map((change, index) => {
+					const key = `${change.kind}-${changeChipOffsets[index] ?? 0}`;
+					return (
+						<DiffChangeChip
+							change={change}
+							changeIndex={index}
+							key={key}
+							labels={labels}
+							review={review}
+						/>
+					);
+				})}
 				{hiddenChanges > 0 ? (
 					<span className="inline-flex items-center rounded-md bg-foreground/[0.04] px-1.5 py-1 text-[11px] text-foreground-muted leading-none ring-1 ring-divider ring-inset">
 						{labels.moreChanges(hiddenChanges)}

@@ -1,12 +1,6 @@
-import { Button as BaseButton } from "@base-ui/react/button";
-import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { useState } from "react";
 import { useTranslations } from "use-intl";
 import { useLocaleStore } from "@/shared/i18n";
-import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
-import { NAV_BUTTON_CLASS } from "@/shared/ui/calendar-heatmap";
 import { Tooltip } from "@/shared/ui/tooltip";
 import {
 	buildHeatmap,
@@ -29,19 +23,10 @@ const VARIANT_BG = [
 	"bg-activity",
 ];
 
-// One "page" of the rolling year: ~4 months of week columns. Cells flex to
-// fill the panel width, so fewer columns per page = bigger, readable cells —
-// the paging chevrons cover the rest of the year.
-const WEEKS_PER_PAGE = 18;
-
 const WEEKDAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
 
 function formatMonth(date: Date, locale: string): string {
 	return date.toLocaleDateString(locale, { month: "short" });
-}
-
-function formatWeekday(date: Date, locale: string): string {
-	return date.toLocaleDateString(locale, { weekday: "short" });
 }
 
 function formatCellDate(date: Date, locale: string): string {
@@ -117,33 +102,14 @@ function cachedColumns(buckets: DayBucket[]): Column[] {
 	return columns;
 }
 
-/** Localized short weekday names indexed by day-of-week (0 = Sunday). */
-function weekdayNames(locale: string): string[] {
-	// 2024-01-07 is a Sunday; +dow lands on each weekday.
-	return Array.from({ length: 7 }, (_, dow) =>
-		formatWeekday(new Date(2024, 0, 7 + dow), locale),
-	);
-}
-
-const weekdayNamesCache = new Map<string, string[]>();
-
-function cachedWeekdayNames(locale: string): string[] {
-	const cached = weekdayNamesCache.get(locale);
-	if (cached) {
-		return cached;
-	}
-	const names = weekdayNames(locale);
-	weekdayNamesCache.set(locale, names);
-	return names;
-}
-
 /**
- * Short month name per visible column: the first column is always labeled for
- * context, then every column where the month changes.
+ * Short month name per week column: labeled wherever the month changes. The
+ * leading (usually partial) month is labeled too, unless the next label lands
+ * within two columns — a cramped double label reads worse than starting quiet.
  */
-function visibleMonthLabels(visible: Column[], locale: string): string[] {
+function monthLabels(columns: Column[], locale: string): string[] {
 	let lastMonth = -1;
-	return visible.map((col) => {
+	const labels = columns.map((col) => {
 		const firstReal = col.cells.find((c): c is DayBucket => c !== null);
 		if (!firstReal) {
 			return "";
@@ -155,51 +121,29 @@ function visibleMonthLabels(visible: Column[], locale: string): string[] {
 		lastMonth = month;
 		return formatMonth(firstReal.date, locale);
 	});
-}
-
-interface ColumnSlot {
-	/** `null` for the invisible pads that keep the earliest page full-width. */
-	col: Column | null;
-	key: string;
-	label: string;
+	const nextLabel = labels.findIndex((label, i) => i > 0 && label !== "");
+	if (nextLabel !== -1 && nextLabel <= 2) {
+		labels[0] = "";
+	}
+	return labels;
 }
 
 /**
  * A GitHub-style contribution heatmap of the last year of dictation activity —
  * the at-a-glance "are you keeping it up" view that pairs with the streak
  * banner. Read-only: date-range filtering lives in the interactive calendar
- * below it. Shows ~4 months at a time with cells that flex to fill the panel
- * width; the chevrons page back through the rest of the rolling year.
- * Intensity is anchored to the busiest day of the WHOLE year, so paging never
- * rescales the ramp.
+ * below it. The whole rolling year renders at once as ~53 fixed-pitch columns
+ * of small rounded squares with month labels underneath — no paging, no
+ * weekday gutter. Intensity is anchored to the busiest day of the year.
  */
 export function ContributionGraph({ entries }: ContributionGraphProps) {
 	const t = useTranslations("history");
 	const locale = useLocaleStore((s) => s.locale);
 	const emptyBg = surfaceBg(Math.min(useSurface() + 2, 8));
-	// Pages back from the latest window (0 = the most recent ~4 months).
-	const [pageBack, setPageBack] = useState(0);
 
 	const buckets = buildHeatmap(entries);
 	const columns = cachedColumns(buckets);
-	const weekdays = cachedWeekdayNames(locale);
-
-	const totalPages = Math.max(1, Math.ceil(columns.length / WEEKS_PER_PAGE));
-	const page = Math.min(pageBack, totalPages - 1);
-	const end = columns.length - page * WEEKS_PER_PAGE;
-	const visible = columns.slice(Math.max(0, end - WEEKS_PER_PAGE), end);
-	const labels = visibleMonthLabels(visible, locale);
-
-	// Pad the earliest (possibly short) page with invisible leading columns so
-	// cell size stays identical across pages.
-	const slots: ColumnSlot[] = [
-		...Array.from({ length: WEEKS_PER_PAGE - visible.length }, (_, i) => ({
-			col: null,
-			key: `pad-col-${i}`,
-			label: "",
-		})),
-		...visible.map((col, i) => ({ col, key: col.key, label: labels[i] ?? "" })),
-	];
+	const labels = monthLabels(columns, locale);
 
 	let max = 0;
 	for (const bucket of buckets) {
@@ -216,97 +160,47 @@ export function ContributionGraph({ entries }: ContributionGraphProps) {
 		return `${date} · ${cell.wordCount.toLocaleString()} ${t("heatmapWords")}`;
 	};
 
-	const renderColumn = (slot: ColumnSlot) => (
-		<div className="flex min-w-0 flex-1 flex-col gap-[3px]" key={slot.key}>
-			{slot.col === null
-				? WEEKDAY_KEYS.map((dow) => (
-						<div className="aspect-square w-full" key={`${slot.key}-${dow}`} />
-					))
-				: keyedColumnCells(slot.col).map(({ cell, key }) => {
-						if (cell === null) {
-							return <div className="aspect-square w-full" key={key} />;
-						}
-						const level = intensityLevel(cell.wordCount, max);
-						const bg = level === 0 ? emptyBg : VARIANT_BG[level - 1];
-						return (
-							<Tooltip content={cellTitle(cell)} key={cell.dayKey}>
-								<div className={`aspect-square w-full rounded-[4px] ${bg}`} />
-							</Tooltip>
-						);
-					})}
-		</div>
-	);
-
 	return (
-		// max-w caps the aspect-square cells at ~36px so an ultra-wide settings
-		// window doesn't inflate the grid into a wall of tiles; centering keeps
-		// the nav chevrons hugging the grid edges.
-		<div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5">
-			<div className="flex items-center">
-				<div className="flex w-9 shrink-0 items-center">
-					<BaseButton
-						aria-label={t("heatmapEarlier")}
-						className={cn(
-							NAV_BUTTON_CLASS,
-							"disabled:pointer-events-none disabled:opacity-20",
-						)}
-						disabled={page >= totalPages - 1}
-						onClick={() => setPageBack(page + 1)}
-						type="button"
-					>
-						<HugeiconsIcon
-							className="rtl:-scale-x-100"
-							icon={ArrowLeft01Icon}
-							size={14}
-						/>
-					</BaseButton>
+		// max-w-3xl caps the flexing cells at ~11px so the grid reads as a tight
+		// GitHub-style mosaic on wide windows; the min-w + overflow wrapper lets a
+		// narrow window scroll horizontally instead of crushing cells below
+		// legibility.
+		<div className="mx-auto w-full max-w-3xl overflow-x-auto">
+			<div className="flex min-w-[560px] flex-col gap-1.5">
+				<div className="flex gap-[3px]">
+					{columns.map((col) => (
+						<div
+							className="flex min-w-0 flex-1 flex-col gap-[3px]"
+							key={col.key}
+						>
+							{keyedColumnCells(col).map(({ cell, key }) => {
+								if (cell === null) {
+									return <div className="aspect-square w-full" key={key} />;
+								}
+								const level = intensityLevel(cell.wordCount, max);
+								const bg = level === 0 ? emptyBg : VARIANT_BG[level - 1];
+								return (
+									<Tooltip content={cellTitle(cell)} key={cell.dayKey}>
+										<div
+											className={`aspect-square w-full rounded-[3px] ${bg}`}
+										/>
+									</Tooltip>
+								);
+							})}
+						</div>
+					))}
 				</div>
-				<div className="flex min-w-0 flex-1 gap-[3px]">
-					{slots.map((slot) => (
-						<div className="relative h-4 min-w-0 flex-1" key={`m-${slot.key}`}>
-							{slot.label ? (
+				<div className="flex gap-[3px]">
+					{columns.map((col, i) => (
+						<div className="relative h-4 min-w-0 flex-1" key={`m-${col.key}`}>
+							{labels[i] ? (
 								<span className="absolute start-0 whitespace-nowrap text-foreground-muted text-xs-tight">
-									{slot.label}
+									{labels[i]}
 								</span>
 							) : null}
 						</div>
 					))}
 				</div>
-				<div className="flex w-9 shrink-0 items-center justify-end">
-					<BaseButton
-						aria-label={t("heatmapLater")}
-						className={cn(
-							NAV_BUTTON_CLASS,
-							"disabled:pointer-events-none disabled:opacity-20",
-						)}
-						disabled={page === 0}
-						onClick={() => setPageBack(page - 1)}
-						type="button"
-					>
-						<HugeiconsIcon
-							className="rtl:-scale-x-100"
-							icon={ArrowRight01Icon}
-							size={14}
-						/>
-					</BaseButton>
-				</div>
-			</div>
-
-			<div className="flex">
-				<div className="flex w-9 shrink-0 flex-col gap-[3px] overflow-hidden pe-2">
-					{weekdays.map((name) => (
-						<div
-							className="flex flex-1 items-center justify-end whitespace-nowrap text-2xs text-foreground-muted"
-							key={name}
-						>
-							{name}
-						</div>
-					))}
-				</div>
-				<div className="flex min-w-0 flex-1 gap-[3px]">
-					{slots.map(renderColumn)}
-				</div>
-				<div className="w-9 shrink-0" />
 			</div>
 		</div>
 	);

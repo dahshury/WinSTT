@@ -38,16 +38,16 @@ export function buildRecordingModeOptions(t: GeneralT): readonly {
 			preview: "toggle",
 		},
 		{
-			value: "listen",
-			label: t("listen"),
-			icon: EarIcon,
-			preview: "listen",
-		},
-		{
 			value: "wakeword",
 			label: t("wakeWord"),
 			icon: VoiceIcon,
 			preview: "wakeword",
+		},
+		{
+			value: "listen",
+			label: t("listen"),
+			icon: EarIcon,
+			preview: "listen",
 		},
 	] as const;
 }

@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
 import { IPC } from "@/shared/api/ipc-channels";
 import type { LlmProvider } from "./types";
-import { resolveUnloadPending, useOllamaUnloadTracker } from "./FeatureBlock";
+import { resolveUnloadPending } from "./feature-block-helpers";
+import { useOllamaUnloadTracker } from "./FeatureBlock";
 
 /** Instrument the preload-installed bridge so tests can push backend events.
  *  The preload's afterEach reinstalls the default bridge, so no restore needed. */

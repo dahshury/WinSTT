@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
 import type { OpenRouterModel } from "@/shared/api/models";
-import {
-	openrouterSelectedMeta,
-	OpenRouterSelectedSummary,
-} from "./OpenRouterSelectedSummary";
+import { openrouterSelectedMeta } from "./openrouter-selected-meta";
+import { OpenRouterSelectedSummary } from "./OpenRouterSelectedSummary";
 
 const base: OpenRouterModel = {
 	id: "microsoft/mai-transcribe-1.5",

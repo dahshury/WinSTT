@@ -7,12 +7,17 @@ import {
 	CloudDownloadIcon,
 	CpuIcon,
 	GlobeIcon,
+	LanguageSkillIcon,
 	LiveStreaming02Icon,
 	NeuralNetworkIcon,
 	SparklesIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type ModelInfo, resolveQuantCache } from "@/entities/model-catalog";
+import {
+	type ModelInfo,
+	resolveQuantCache,
+	supportsTranslateToEnglish,
+} from "@/entities/model-catalog";
 import type {
 	FitAssessmentEntry,
 	FitSeverity,
@@ -25,18 +30,21 @@ import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { Tooltip } from "@/shared/ui/tooltip";
-import {
-	downloadSizeMetaEntry,
-	type MetaEntry,
-} from "../../core/model-card/CardMeta";
+import { downloadSizeMetaEntry } from "../../core/model-card/card-meta-helpers";
+import type { MetaEntry } from "../../core/model-card/CardMeta";
 import { ModelCard } from "../../core/model-card/ModelCard";
 import {
+	type QuantCacheState,
 	type QuantDownloadAction,
 	type QuantDownloadSnapshot,
 	QuantShelf,
 	type QuantShelfEntry,
 } from "../../core/model-card/QuantShelf";
-import { resolveQuantDownloadState } from "../../core/model-card/quant-shelf-state";
+import {
+	badgeToneForCache,
+	resolveProgressFillPct,
+	resolveQuantDownloadState,
+} from "../../core/model-card/quant-shelf-state";
 import { variantDisplayName } from "../lib/family-helpers";
 import { severityFor } from "../lib/hardware-fit";
 import { formatLanguages } from "../lib/language-names";
@@ -219,6 +227,22 @@ function buildMetaEntries(
 				latency === null
 					? "Feeds new audio into a stateful streaming decoder"
 					: `Feeds new audio into a stateful streaming decoder with ${latency} chunk latency`,
+		});
+	}
+	// Native decoder translation is a catalog-level capability (multilingual
+	// Whisper → English, NeMo Canary → any of its languages), so it reads as a
+	// model fact alongside Streaming/Multilingual. The Transcriptions-tab picker
+	// is where you choose the actual output language; the badge just advertises
+	// that the model can do it at all.
+	if (supportsTranslateToEnglish(model)) {
+		const canary = model.id.startsWith("nemo-canary-");
+		entries.push({
+			key: "translate",
+			icon: LanguageSkillIcon,
+			value: "Translate",
+			tooltip: canary
+				? "Can translate speech between its languages during transcription"
+				: "Can translate non-English speech to English during transcription",
 		});
 	}
 	const fitSeverity = severityFor(state, systemInfo, fitAssessment);
@@ -427,22 +451,6 @@ function quantForLatencyVariant(
 	return (model.availableQuantizations[0] ?? "") as OnnxQuantization;
 }
 
-function latencyToneClass(
-	active: boolean,
-	cacheState: string | undefined,
-): string {
-	if (active) {
-		return "bg-accent/20 text-accent ring-accent/50";
-	}
-	if (cacheState === "cached") {
-		return "bg-cache-complete/[0.08] text-cache-complete/80 ring-border hover:bg-cache-complete/[0.14]";
-	}
-	if (cacheState === "partial") {
-		return "bg-cache-partial/[0.08] text-cache-partial/80 ring-border hover:bg-cache-partial/[0.14]";
-	}
-	return "bg-foreground/[0.04] text-foreground-muted ring-border hover:bg-foreground/[0.08]";
-}
-
 function latencyCacheLabel(
 	cache: ModelStateEntry["cache"] | undefined,
 	download: QuantDownloadSnapshot | undefined,
@@ -529,6 +537,12 @@ function LatencyShelf({
 				const isRecommended = variant.latencyMs === maxLatencyMs;
 				const latencyLabel = formatNativeStreamingLatency(variant.latencyMs);
 				const cacheLabel = latencyCacheLabel(cache, download);
+				const cacheState = cache?.state as QuantCacheState | undefined;
+				const progressFillPct = resolveProgressFillPct(
+					cacheState,
+					cache?.progress ?? null,
+					download,
+				);
 				const canStartDownload =
 					onDownloadAction !== undefined &&
 					!isDownloading &&
@@ -562,9 +576,15 @@ function LatencyShelf({
 								aria-disabled={isDownloading}
 								aria-label={`Use ${latencyLabel} streaming latency`}
 								className={cn(
-									"group/badge inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-[5px] px-2 font-medium text-[10.5px] leading-none ring-1 ring-inset transition-colors",
-									isDownloading && "cursor-default",
-									latencyToneClass(isActive, cache?.state),
+									// Mirror the precision badge exactly: a single ring lives on the
+									// enclosing ButtonGroup, so the inner button carries NO ring of
+									// its own (a second inset ring here is what made these badges
+									// read heavier than the quant badges).
+									"group/badge relative inline-flex h-6 items-center gap-1.5 overflow-hidden rounded-[5px] px-2 font-medium text-[10.5px] leading-none transition-colors",
+									isDownloading ? "cursor-default" : "cursor-pointer",
+									isActive
+										? "bg-accent/20 text-accent"
+										: badgeToneForCache(cacheState),
 								)}
 								onClick={(e) => {
 									e.preventDefault();
@@ -586,6 +606,13 @@ function LatencyShelf({
 								onPointerDown={(e) => e.stopPropagation()}
 								type="button"
 							>
+								{progressFillPct !== null && !isActive ? (
+									<span
+										aria-hidden="true"
+										className="pointer-events-none absolute inset-y-0 left-0 bg-cache-partial/20 transition-[width] duration-200 ease-out motion-reduce:transition-none"
+										style={{ width: `${progressFillPct}%` }}
+									/>
+								) : null}
 								{isRecommended ? (
 									<HugeiconsIcon
 										aria-hidden="true"

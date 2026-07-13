@@ -25,6 +25,12 @@ import type {
 const WARNING_THRESHOLD = 0.8;
 const RAM_USABLE_FRACTION = 0.7;
 
+/** Runtime footprint of the on-device encoder dictionary model (the int8
+ * mmBERT masked-LM, ~310 MB on disk). It isn't in the model catalog and runs
+ * CPU-only (no EP registration — see `encoder_dict/engine.rs`), so its fit is a
+ * fixed RAM check rather than a catalog/quant-scaled one. */
+const ENCODER_DICT_MODEL_BYTES = 310 * 1024 * 1024;
+
 const BYTES_PER_PARAM_BY_QUANT: Record<string, number> = {
 	"": 4,
 	fp32: 4,
@@ -426,6 +432,25 @@ export function assessDictationFitClient(
 	);
 	const freed = freedSlotFootprint(ctx.statesById, ctx.loaded, outgoingId);
 	return dispatchFit(target, required, loadedOther, freed, ctx.live, reasons);
+}
+
+/** CPU-only fit assessment for the on-device encoder dictionary model.
+ *
+ * Unlike catalog STT models, the encoder dictionary isn't in the model
+ * catalog and always runs on CPU (int8, no execution-provider registration),
+ * so we assess its fixed ~310 MB footprint against live RAM only — never VRAM.
+ * Returns the same ``FitAssessmentEntry`` shape as the STT path so it can drive
+ * the shared ``ResourceWarningDialog`` unchanged. ``loadedOther`` is 0 because
+ * ``ram_available_bytes`` already reflects everything currently resident (the
+ * STT model, Ollama, etc.) — we're only judging whether ~310 MB fits on top. */
+export function assessEncoderDictFitClient(
+	live: LiveResourcesEntry,
+	requiredBytes: number = ENCODER_DICT_MODEL_BYTES,
+): FitAssessmentEntry {
+	if (hasNoHardware(live)) {
+		return neitherFit(requiredBytes);
+	}
+	return assessCpuFit(requiredBytes, 0, 0, live, []);
 }
 
 export const TEST_ONLY = {

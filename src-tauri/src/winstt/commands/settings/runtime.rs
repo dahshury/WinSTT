@@ -286,6 +286,16 @@ pub(super) fn apply_encoder_dict_runtime_settings(
     if !previous.general.encoder_dictionary_enabled && next.general.encoder_dictionary_enabled {
         crate::winstt::encoder_dict::preload_async(app);
     }
+    // Offload edge: the Vocabulary tab routed dictionary corrections from the LLM back to the
+    // on-device model (`llmHandlesDictionary` → false), which makes the encoder the dictionary
+    // authority on the very next dictation — preload it now for the same first-dictation
+    // guarantee as the enable edge. Idempotent / no-op when the model isn't downloaded.
+    if next.general.encoder_dictionary_enabled
+        && previous.general.llm_handles_dictionary
+        && !next.general.llm_handles_dictionary
+    {
+        crate::winstt::encoder_dict::preload_async(app);
+    }
 }
 
 fn sync_tts_idle_unload_timeout(app: &AppHandle, timeout: WinsttModelUnloadTimeout) {
@@ -890,6 +900,7 @@ mod tests {
             || previous.global.model_unload_timeout != next.global.model_unload_timeout
             // encoder dictionary — apply_encoder_dict_runtime_settings
             || previous.general.encoder_dictionary_enabled != next.general.encoder_dictionary_enabled
+            || previous.general.llm_handles_dictionary != next.general.llm_handles_dictionary
             // llm — apply_llm_runtime_settings
             || llm_warm_inputs_changed(previous, next)
             || ollama_models_for_enabled_features(previous)
@@ -935,6 +946,9 @@ mod tests {
             ("tts.enabled", |s| s.tts.enabled = true),
             ("general.encoderDictionaryEnabled", |s| {
                 s.general.encoder_dictionary_enabled = false
+            }),
+            ("general.llmHandlesDictionary", |s| {
+                s.general.llm_handles_dictionary = false
             }),
             ("general.historyMaxEntries", |s| {
                 s.general.history_max_entries = 42

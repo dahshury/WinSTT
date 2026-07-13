@@ -1,6 +1,7 @@
-import { create } from "zustand";
+import { create, type StateCreator, type StoreApi } from "zustand";
+import { createStore } from "zustand/vanilla";
 
-interface VisualizerState {
+export interface VisualizerState {
 	/**
 	 * 0-1 normalized RMS audio level from the server.
 	 * Updated externally by the sync hook.
@@ -35,7 +36,7 @@ interface VisualizerState {
 	setSpeaking: (v: boolean) => void;
 }
 
-export const useVisualizerStore = create<VisualizerState>()((set) => ({
+const stateCreator: StateCreator<VisualizerState> = (set) => ({
 	isRecording: false,
 	isSpeaking: false,
 	audioLevel: 0,
@@ -54,4 +55,19 @@ export const useVisualizerStore = create<VisualizerState>()((set) => ({
 	setSpeaking: (v) => set({ isSpeaking: v }),
 	setAudioLevel: (v) => set({ audioLevel: v }),
 	setSentencePulse: (v) => set({ sentencePulse: v }),
-}));
+});
+
+export type VisualizerStoreApi = StoreApi<VisualizerState>;
+
+/**
+ * Creates an ISOLATED visualizer store instance. Used by the settings
+ * visualizer-style previews to drive the real visualizer components with
+ * synthetic audio without touching the app-wide store (and therefore without
+ * animating the real overlay/main-window visualizers).
+ */
+export function createVisualizerStore(): VisualizerStoreApi {
+	return createStore<VisualizerState>()(stateCreator);
+}
+
+/** The app-wide store: fed by the IPC sync hook, read by the live visualizers. */
+export const useVisualizerStore = create<VisualizerState>()(stateCreator);

@@ -126,10 +126,18 @@ pub(in crate::winstt::stt::families) fn canary_prompt_tokens(
         toks[4] = id;
         toks[5] = id;
     }
-    if opts.translate
-        && let Some(&id) = token_to_id.get("<|en|>")
-    {
-        toks[5] = id;
+    if opts.translate {
+        // The target-language slot (position 5) selects what Canary emits. A
+        // configured target renders any→any among its languages; absent/blank
+        // falls back to English (the legacy translate-to-English behavior).
+        let target = opts
+            .translate_target_language
+            .as_deref()
+            .and_then(canary_concrete_language)
+            .unwrap_or("en");
+        if let Some(&id) = token_to_id.get(&format!("<|{target}|>")) {
+            toks[5] = id;
+        }
     }
     toks
 }

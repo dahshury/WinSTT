@@ -375,6 +375,37 @@ mod tests {
     }
 
     #[test]
+    fn canary_prompt_translates_configured_source_to_target_language() {
+        let (base, token_to_id) = canary_prompt_fixture();
+        let opts = TranscribeOptions {
+            language: Some("de".to_string()),
+            translate: true,
+            translate_target_language: Some("fr".to_string()),
+            ..Default::default()
+        };
+
+        let prompt = canary_prompt_tokens(&base, &token_to_id, &opts);
+
+        // source stays German (11); target slot becomes French (12).
+        assert_eq!((prompt[4], prompt[5]), (11, 12));
+    }
+
+    #[test]
+    fn canary_prompt_translate_falls_back_to_english_without_target() {
+        let (base, token_to_id) = canary_prompt_fixture();
+        let opts = TranscribeOptions {
+            language: Some("de".to_string()),
+            translate: true,
+            translate_target_language: None,
+            ..Default::default()
+        };
+
+        let prompt = canary_prompt_tokens(&base, &token_to_id, &opts);
+
+        assert_eq!((prompt[4], prompt[5]), (11, 10));
+    }
+
+    #[test]
     fn canary_prompt_uses_first_candidate_when_language_is_unset() {
         let (base, token_to_id) = canary_prompt_fixture();
         let opts = TranscribeOptions {

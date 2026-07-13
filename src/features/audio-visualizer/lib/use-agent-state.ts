@@ -1,10 +1,10 @@
 import { useSettingsStore } from "@/entities/setting";
 import type { RecordingMode } from "@/shared/config/recording-mode-color";
-import { useVisualizerStore } from "../model/visualizer-store";
+import { useVisualizerState } from "../model/visualizer-store-context";
 import type { AgentState } from "./audio-visualizer";
 
 /** audioLevel above this counts as "speaking" even without a VAD signal (PTT mode). */
-const SPEAKING_LEVEL_THRESHOLD = 0.02;
+export const SPEAKING_LEVEL_THRESHOLD = 0.02;
 
 /** audioLevel above this still registers as audible (used for fade-out and silence-gate). */
 const AUDIBLE_LEVEL_THRESHOLD = 0.01;
@@ -63,7 +63,7 @@ export function useAgentState(): AgentState {
 		(s) => s.settings.general?.recordingMode ?? "ptt",
 	);
 
-	return useVisualizerStore((s) => {
+	return useVisualizerState((s) => {
 		if (!s.isRecording && s.audioLevel < AUDIBLE_LEVEL_THRESHOLD) {
 			return "disconnected";
 		}

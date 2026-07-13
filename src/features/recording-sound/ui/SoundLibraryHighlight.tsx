@@ -96,20 +96,21 @@ export function SoundLibraryHighlight({
 			<AnimatePresence>
 				{rect ? (
 					<motion.div
-						animate={{
-							top: rect.top,
-							left: rect.left,
-							width: rect.width,
-							height: rect.height,
-							opacity: 1,
-						}}
+						animate={{ opacity: 1 }}
 						aria-hidden="true"
 						className={`pointer-events-none absolute rounded-lg ring-1 ring-foreground/[0.06] ring-inset ${surfaceBg(pillLevel)}`}
 						exit={{ opacity: 0, transition: springs.moderate.exit }}
 						initial={false}
 						key="sound-selected"
+						layout={true}
+						style={{
+							top: rect.top,
+							left: rect.left,
+							width: rect.width,
+							height: rect.height,
+						}}
 						transition={{
-							...springs.moderate,
+							layout: springs.moderate,
 							opacity: { duration: springs.fast.duration },
 						}}
 					/>

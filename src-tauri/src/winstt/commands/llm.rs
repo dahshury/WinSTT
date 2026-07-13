@@ -1313,23 +1313,40 @@ pub(crate) fn ollama_tier_model(provider: LlmProvider, model: &str) -> Option<&s
 }
 
 pub(crate) fn build_vocab(settings: &WinsttSettings) -> Vocab {
-    // Vocabulary words = entries WITHOUT a replacement (canonical spellings). Replacement-pair
-    // entries are surfaced only in the <replacement-pairs> block, so their misheard `term` is not
-    // also listed as a "preferred term".
-    let dictionary: Vec<String> = settings
-        .dictionary
-        .iter()
-        .filter(|d| d.replacement.as_deref().map_or("", str::trim).is_empty())
-        .map(|d| d.term.clone())
-        .collect();
-    let snippets: Vec<(String, String)> = settings
-        .snippets
-        .iter()
-        .map(|s| (s.trigger.clone(), s.expansion.clone()))
-        .collect();
+    // Per-section offload toggles (Vocabulary tab): when the user routes a section away from the
+    // LLM, its block is omitted from the prompt entirely and the deterministic path owns it — the
+    // encoder model for dictionary terms, the fuzzy expander for snippets. Replacement pairs ride
+    // with the dictionary toggle prompt-wise, but are deterministically re-applied post-pass
+    // either way (`actions::post_process`).
+    let dictionary: Vec<String> = if settings.general.llm_handles_dictionary {
+        // Vocabulary words = entries WITHOUT a replacement (canonical spellings). Replacement-pair
+        // entries are surfaced only in the <replacement-pairs> block, so their misheard `term` is
+        // not also listed as a "preferred term".
+        settings
+            .dictionary
+            .iter()
+            .filter(|d| d.replacement.as_deref().map_or("", str::trim).is_empty())
+            .map(|d| d.term.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let snippets: Vec<(String, String)> = if settings.general.llm_handles_snippets {
+        settings
+            .snippets
+            .iter()
+            .map(|s| (s.trigger.clone(), s.expansion.clone()))
+            .collect()
+    } else {
+        Vec::new()
+    };
     Vocab {
         dictionary,
-        replacement_pairs: replacement_pairs(settings),
+        replacement_pairs: if settings.general.llm_handles_dictionary {
+            replacement_pairs(settings)
+        } else {
+            Vec::new()
+        },
         snippets,
     }
 }
@@ -1349,4 +1366,73 @@ pub(crate) fn replacement_pairs(settings: &WinsttSettings) -> Vec<(String, Strin
                 .map(|r| (d.term.clone(), r.clone()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::winstt::settings_schema::{DictionaryEntry, SnippetEntry};
+
+    fn settings_with_vocab() -> WinsttSettings {
+        let mut s = WinsttSettings::default();
+        s.dictionary = vec![
+            DictionaryEntry {
+                id: "1".into(),
+                term: "Ollama".into(),
+                auto_added: None,
+                replacement: None,
+            },
+            DictionaryEntry {
+                id: "2".into(),
+                term: "github".into(),
+                auto_added: None,
+                replacement: Some("GitHub".into()),
+            },
+        ];
+        s.snippets = vec![SnippetEntry {
+            id: "3".into(),
+            trigger: "my email".into(),
+            expansion: "user@example.com".into(),
+        }];
+        s
+    }
+
+    #[test]
+    fn vocab_fully_injected_when_llm_handles_both_sections() {
+        let s = settings_with_vocab();
+        assert!(s.general.llm_handles_dictionary);
+        assert!(s.general.llm_handles_snippets);
+        let vocab = build_vocab(&s);
+        assert_eq!(vocab.dictionary, vec!["Ollama".to_string()]);
+        assert_eq!(
+            vocab.replacement_pairs,
+            vec![("github".to_string(), "GitHub".to_string())]
+        );
+        assert_eq!(
+            vocab.snippets,
+            vec![("my email".to_string(), "user@example.com".to_string())]
+        );
+    }
+
+    #[test]
+    fn dictionary_offload_keeps_terms_and_pairs_out_of_the_prompt() {
+        let mut s = settings_with_vocab();
+        s.general.llm_handles_dictionary = false;
+        let vocab = build_vocab(&s);
+        assert!(vocab.dictionary.is_empty());
+        assert!(vocab.replacement_pairs.is_empty());
+        // Snippets are governed by their own toggle and stay injected.
+        assert_eq!(vocab.snippets.len(), 1);
+    }
+
+    #[test]
+    fn snippet_offload_keeps_snippets_out_of_the_prompt() {
+        let mut s = settings_with_vocab();
+        s.general.llm_handles_snippets = false;
+        let vocab = build_vocab(&s);
+        assert!(vocab.snippets.is_empty());
+        // Dictionary is governed by its own toggle and stays injected.
+        assert_eq!(vocab.dictionary.len(), 1);
+        assert_eq!(vocab.replacement_pairs.len(), 1);
+    }
 }

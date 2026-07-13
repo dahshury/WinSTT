@@ -2,7 +2,7 @@
 
 import { AlertCircleIcon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsHydrationStore } from "@/features/update-settings";
 import { cn } from "@/shared/lib/cn";
@@ -29,14 +29,20 @@ export function SettingsHydrationErrorNotice() {
 	const requestRetry = useSettingsHydrationStore((s) => s.requestRetry);
 	const t = useTranslations("settings");
 	const [retrying, setRetrying] = useState(false);
+	const [prevStatus, setPrevStatus] = useState(status);
 	const detailsLevel = Math.min(useSurface() + 4, 8);
 
-	// A fresh error (re-hydration failed again) re-arms the Retry action.
-	useEffect(() => {
+	// A fresh error (re-hydration failed again) re-arms the Retry action so a
+	// following AUTO-retry's loading phase doesn't read as the user's own
+	// "reconnecting". Adjusted DURING render by comparing the previous status —
+	// not in an effect — so there's no extra commit pass. See react.dev
+	// "You Might Not Need an Effect" → adjusting state while rendering.
+	if (status !== prevStatus) {
+		setPrevStatus(status);
 		if (status === "error") {
 			setRetrying(false);
 		}
-	}, [status]);
+	}
 
 	const isRetrying = retrying && status === "loading";
 	if (status !== "error" && !isRetrying) {

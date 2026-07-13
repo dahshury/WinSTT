@@ -152,20 +152,13 @@ export function MenuHighlightLayer({
 	// and shows the hover pill. Suppressed on the selected row (the selected pill
 	// already marks it) so the hover pill only appears when gliding elsewhere.
 	const isHoveringOther = highlightedRect !== null && !highlightedIsSelected;
-	const hoverOrigin = selectedRect ?? highlightedRect;
 
 	return (
 		<LazyMotion features={domAnimation} strict={true}>
 			<AnimatePresence>
 				{selectedRect ? (
 					<motion.div
-						animate={{
-							top: selectedRect.top,
-							left: selectedRect.left,
-							width: selectedRect.width,
-							height: selectedRect.height,
-							opacity: isHoveringOther ? 0.8 : 1,
-						}}
+						animate={{ opacity: isHoveringOther ? 0.8 : 1 }}
 						aria-hidden="true"
 						className={cn(
 							"pointer-events-none absolute rounded-lg ring-1 ring-foreground/[0.06] ring-inset",
@@ -174,8 +167,15 @@ export function MenuHighlightLayer({
 						exit={{ opacity: 0, transition: springs.moderate.exit }}
 						initial={false}
 						key="menu-selected"
+						layout={true}
+						style={{
+							top: selectedRect.top,
+							left: selectedRect.left,
+							width: selectedRect.width,
+							height: selectedRect.height,
+						}}
 						transition={{
-							...springs.moderate,
+							layout: springs.moderate,
 							opacity: { duration: springs.fast.duration },
 						}}
 					/>
@@ -185,29 +185,24 @@ export function MenuHighlightLayer({
 			<AnimatePresence>
 				{isHoveringOther && highlightedRect ? (
 					<motion.div
-						animate={{
-							top: highlightedRect.top,
-							left: highlightedRect.left,
-							width: highlightedRect.width,
-							height: highlightedRect.height,
-							opacity: 1,
-						}}
+						animate={{ opacity: 1 }}
 						aria-hidden="true"
 						className={cn(
 							"pointer-events-none absolute rounded-lg ring-1 ring-divider ring-inset",
 							hoverBgClass,
 						)}
 						exit={{ opacity: 0, transition: springs.fast.exit }}
-						initial={{
-							top: (hoverOrigin ?? highlightedRect).top,
-							left: (hoverOrigin ?? highlightedRect).left,
-							width: (hoverOrigin ?? highlightedRect).width,
-							height: (hoverOrigin ?? highlightedRect).height,
-							opacity: 0,
-						}}
+						initial={{ opacity: 0 }}
 						key="menu-hover"
+						layout={true}
+						style={{
+							top: highlightedRect.top,
+							left: highlightedRect.left,
+							width: highlightedRect.width,
+							height: highlightedRect.height,
+						}}
 						transition={{
-							...springs.fast,
+							layout: springs.fast,
 							opacity: { duration: springs.fast.duration },
 						}}
 					/>

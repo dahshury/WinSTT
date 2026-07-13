@@ -74,10 +74,9 @@ export function HotkeyDisplay({
 					data-tone={tone}
 				>
 					{keys.map((key, i) => (
-						<span
-							className="flex h-full min-w-0 items-center gap-1"
-							key={`${key}-${i}`}
-						>
+						// A hotkey combo never repeats a key, so the formatted keycap is a
+						// stable, unique key — no array index needed.
+						<span className="flex h-full min-w-0 items-center gap-1" key={key}>
 							{i > 0 && (
 								<span
 									aria-hidden

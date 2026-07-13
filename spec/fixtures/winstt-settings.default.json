@@ -41,6 +41,8 @@
     "historyEnabled": true,
     "historyMaxEntries": 1000,
     "liveTranscriptionDisplay": "both",
+    "llmHandlesDictionary": true,
+    "llmHandlesSnippets": true,
     "loopbackDeviceIndex": null,
     "manualToggleStop": false,
     "minimizeToTray": true,
@@ -159,7 +161,7 @@
     "onnxQuantization": "auto",
     "realtimeLanguage": "",
     "realtimeModel": "tiny",
-    "translateToEnglish": false
+    "translateTargetLanguage": ""
   },
   "quality": {
     "earlyTranscriptionOnSilence": 0.2,

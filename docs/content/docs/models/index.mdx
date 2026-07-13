@@ -28,7 +28,7 @@ chosen per-download via [quantization](/docs/models/compute-types).
   <Stat value="73" label="models" />
   <Stat value="11" label="families" />
   <Stat value="99" label="languages (Whisper)" />
-  <Stat value="5.1" label="best WER (Cohere)" />
+  <Stat value="4.9" label="best WER (Granite 4.1 2B Plus)" />
 </StatGrid>
 
 ## The 11 families
@@ -45,7 +45,7 @@ is more accurate; higher **RTFx** (real-time factor) is faster.
     ["Lite-Whisper", "3", "~1.1 GB", "99", "Compressed Whisper Large v3 Turbo — large-model quality at smaller size"],
     ["NeMo", "34", "0.1 – 4 GB", "English, Russian, and 25-lang multilingual", "Fast offline Parakeet / Canary plus native streaming exports"],
     ["Moonshine", "10", "0.1 – 0.7 GB", "EN + per-language fine-tunes", "Lowest-latency real-time on CPU; tiny footprint"],
-    ["Cohere", "1", "~5.1 GB", "14", "Maximum accuracy — #1 on the HF Open ASR leaderboard"],
+    ["Cohere", "1", "~5.1 GB", "14", "Top-tier accuracy — near the top of the HF Open ASR leaderboard"],
     ["Granite Speech", "2", "2.5 – 16 GB", "en · fr · de · es · pt", "IBM autoregressive and non-autoregressive speech models with strong punctuation"],
     ["Qwen3-ASR", "2", "2.0 – 4.1 GB", "30", "Alibaba Qwen LLM-decoder ASR with auto language detection; int4-only downloads"],
     ["SenseVoice", "1", "159 MB", "5 (zh/en/ja/ko/yue)", "Fast East-Asian multilingual in a tiny int8 graph"],
@@ -63,17 +63,17 @@ is more accurate; higher **RTFx** (real-time factor) is faster.
   head={["Model", "Params", "WER", "RTFx", "Languages", "Default size"]}
   numeric={[1, 2, 3]}
   rows={[
-    ["Whisper Tiny", "38M", "24.5", "750", "99", "149 MB"],
-    ["Whisper Large v3 Turbo", "796M", "7.8", "250", "99", "1.1 GB"],
-    ["Moonshine Base", "62M", "8.5", "990", "EN", "711 MB"],
-    ["Parakeet TDT 0.6B v3", "627M", "5.9", "1100", "25", "2.5 GB"],
-    ["Canary 1B v2", "978M", "5.6", "430", "25", "4.0 GB"],
-    ["Cohere Transcribe", "2.0B", "5.1", "270", "14", "5.1 GB"],
-    ["Qwen3-ASR 0.6B", "600M", "—", "—", "30", "2.0 GB"],
-    ["Granite Speech 4.1 2B Plus", "2.0B", "—", "—", "5", "4.1 GB int8"],
-    ["SenseVoice Small", "234M", "7.2", "850", "5", "159 MB"],
+    ["Whisper Tiny", "38M", "16.8", "1350", "99", "149 MB"],
+    ["Whisper Large v3 Turbo", "796M", "7.0", "783", "99", "1.1 GB"],
+    ["Moonshine Base", "62M", "8.6", "2767", "EN", "711 MB"],
+    ["Parakeet TDT 0.6B v3", "627M", "5.7", "6098", "25", "2.5 GB"],
+    ["Canary 1B v2", "978M", "6.4", "1821", "25", "4.0 GB"],
+    ["Cohere Transcribe", "2.0B", "5.2", "916", "14", "5.1 GB"],
+    ["Qwen3-ASR 0.6B", "600M", "5.6", "439", "30", "2.0 GB"],
+    ["Granite Speech 4.1 2B Plus", "2.0B", "4.9", "547", "5", "4.1 GB int8"],
+    ["SenseVoice Small", "234M", "10.6", "850", "5", "159 MB"],
   ]}
-  caption="WER is an averaged reference figure across benchmark sets; your numbers vary with audio, language, and quantization. RTFx is throughput relative to real time on GPU."
+  caption="WER and RTFx are anchored to the HF Open ASR Leaderboard averages (H200); your numbers vary with audio, language, hardware, and quantization."
 />
 
 ## How to pick
@@ -83,12 +83,13 @@ and **language**. Start from what matters most to you.
 
 <BentoGrid cols={2}>
   <BentoCell icon="quality" title="Maximum accuracy">
-    **Cohere Transcribe** (WER 5.1) leads, followed by **Canary 1B v2** and **Parakeet TDT
-    0.6B v3** for European languages, or **Whisper Large v3** for the widest language reach.
+    **Granite Speech 4.1 2B Plus** (WER 4.9) and **Cohere Transcribe** (5.2) lead, with
+    **Parakeet TDT 0.6B v3** close behind for European languages, or **Whisper Large v3**
+    for the widest language reach.
   </BentoCell>
   <BentoCell icon="speed" title="Lowest latency">
-    **Moonshine** (up to 1800 RTFx) is built for real-time English on CPU. For accurate
-    English fast, **Parakeet** clears 1000 RTFx.
+    **Moonshine** (up to ~3700 RTFx) is built for real-time English on CPU. For accurate
+    English fast, **Parakeet** clears 5000 RTFx.
   </BentoCell>
   <BentoCell icon="cpu" title="Smallest footprint">
     **Whisper Tiny** (149 MB), **SenseVoice Small** (159 MB), or **Moonshine Tiny** ship the

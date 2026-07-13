@@ -344,21 +344,29 @@ function DemoPrompt({ mode, pushToTalkKey, wakeWord }: DemoPromptProps) {
 }
 
 function Keycaps({ keys }: { keys: readonly string[] }) {
+	// Precomputed offset over the key labels — a stable, unique React key per keycap
+	// (a combo can repeat a token, e.g. two "Ctrl") without the bare array index.
+	// Built immutably up front so the map body never mutates a captured variable.
+	const keyOffsets = keys.reduce<number[]>((acc, _key, i) => {
+		acc.push(i === 0 ? 0 : (acc[i - 1] ?? 0) + (keys[i - 1]?.length ?? 0) + 1);
+		return acc;
+	}, []);
 	return (
 		<span className="inline-flex items-center gap-1.5">
-			{keys.map((key, index) => (
-				<span
-					className="inline-flex items-center gap-1.5"
-					key={`${key}-${index}`}
-				>
-					{index > 0 ? (
-						<span aria-hidden className="text-foreground-dim">
-							{KEY_SEPARATOR}
-						</span>
-					) : null}
-					<Keycap>{key}</Keycap>
-				</span>
-			))}
+			{keys.map((key, index) => {
+				const isFirst = index === 0;
+				const reactKey = `${key}-${keyOffsets[index] ?? 0}`;
+				return (
+					<span className="inline-flex items-center gap-1.5" key={reactKey}>
+						{isFirst ? null : (
+							<span aria-hidden className="text-foreground-dim">
+								{KEY_SEPARATOR}
+							</span>
+						)}
+						<Keycap>{key}</Keycap>
+					</span>
+				);
+			})}
 		</span>
 	);
 }

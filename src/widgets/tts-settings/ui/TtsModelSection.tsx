@@ -99,11 +99,13 @@ export function TtsModelSection() {
 						installing && "settings-dim pointer-events-none",
 					)}
 				>
+					{/* No reset on the source switcher: "default" is one of the two
+					    visible buttons (clicking Local IS the reset), and forcing a
+					    source change can swap engines or open the model picker — the
+					    STT source and LLM provider switchers follow the same rule. */}
 					<SettingField
-						isDefault={effectiveSource === DEFAULT_SETTINGS.tts.source}
 						label={tIntegrations("sourceLabel")}
 						layout="row"
-						onReset={() => handleSourceChange(DEFAULT_SETTINGS.tts.source)}
 						tooltip={tIntegrations("sourceTooltip")}
 					>
 						<Switcher
@@ -141,12 +143,11 @@ export function TtsModelSection() {
 						/>
 					) : (
 						<>
-							<SettingField
-								isDefault={model === DEFAULT_SETTINGS.tts.model}
-								label={t("model")}
-								onReset={() => handleModelChange(DEFAULT_SETTINGS.tts.model)}
-								tooltip={t("modelCaption")}
-							>
+							{/* No reset on the model picker: reverting to the default model
+							    is a heavy engine swap (and possibly a download if it was
+							    deleted) — same deliberate exclusion as the STT main/realtime
+							    and LLM model pickers. */}
+							<SettingField label={t("model")} tooltip={t("modelCaption")}>
 								<TtsModelSelector
 									currentQuantization={currentTtsQuant}
 									models={ttsModels}

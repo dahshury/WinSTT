@@ -365,7 +365,21 @@ export function DynamicIsland({
 	return (
 		// Panel reveal opacity lives on this wrapper; width and height live on
 		// the inner Motion shell so content updates cannot replay the fade.
-		<div className="t-panel-slide-top" data-open={isVisible ? "true" : "false"}>
+		//
+		// `flatTop` docks the island flush against the physical top bezel. The
+		// shell is a permanently-composited layer (`will-change: transform` on
+		// `.t-panel-slide-top`), and a top-docked composited layer on a
+		// transparent, topmost WebView2 window leaves a 1px subpixel seam at its
+		// top boundary — a thin sliver of desktop shows above the island. Bleed
+		// the flat-top shell 1px past the top edge: the full-screen
+		// `overflow-hidden` container clips the bleed at y=0, so the very top row
+		// is always solid island pixels with no transparent seam. The squared-off
+		// top corners make the clipped pixel invisible.
+		<div
+			className="t-panel-slide-top"
+			data-open={isVisible ? "true" : "false"}
+			style={flatTop ? { marginTop: -1 } : undefined}
+		>
 			<m.div
 				animate={animateTarget}
 				className={baseClasses.join(" ")}

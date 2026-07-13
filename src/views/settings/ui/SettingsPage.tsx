@@ -20,9 +20,9 @@ import {
 	type ReactNode,
 	type RefObject,
 	Suspense,
-	useCallback,
 	useDeferredValue,
 	useEffect,
+	useEffectEvent,
 	useRef,
 	useState,
 } from "react";
@@ -53,8 +53,12 @@ import {
 	useEscapeToClose,
 	useTransparentBody,
 } from "@/shared/lib/window-effects";
+import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 import { ScrollArea } from "@/shared/ui/scroll-area";
-import { useEncoderModel } from "@/widgets/dictionary-settings";
+import {
+	useEncoderFitGate,
+	useEncoderModel,
+} from "@/widgets/dictionary-settings";
 import { useSettingsSearchKeywords } from "../lib/settings-search";
 import { SettingsSidebar, type SidebarLink } from "./SettingsSidebar";
 
@@ -80,6 +84,12 @@ const loadSnippets = () => import("@/widgets/snippets-settings");
 const loadLlm = () => import("@/widgets/llm-settings");
 const loadProcessingExtras = () => import("@/widgets/processing-extras");
 const loadOutput = () => import("@/widgets/output-settings");
+
+// Hoisted out of the reveal effect so the component body holds no raw dynamic
+// `import()` expression — React Compiler can't lower one and bails out of the
+// whole component when it sees it. Dynamic imports are memoized by specifier,
+// so calling this repeatedly just returns the cached module.
+const loadTauriWindowApi = () => import("@tauri-apps/api/window");
 
 // Per-tab module loaders. Hovering/focusing a sidebar tab warms its chunk(s),
 // and the idle prefetch walks every entry so any tab is instant once warm.
@@ -142,6 +152,9 @@ const TtsModelPickerHost = lazy(async () => ({
 const OllamaModelManagerDialog = lazy(async () => ({
 	default: (await loadOllamaManager()).OllamaModelManagerDialog,
 }));
+const AiHandlingSection = lazy(async () => ({
+	default: (await loadDictionary()).AiHandlingSection,
+}));
 const DictionaryContextControl = lazy(async () => ({
 	default: (await loadDictionary()).DictionaryContextControl,
 }));
@@ -187,10 +200,12 @@ const OutputTab = lazy(async () => {
 });
 
 // Composes the Dictionary + Snippets ("vocabulary") tab. The dictionary works with OR without LLM
-// cleanup: the LLM owns it when cleanup is on, otherwise the on-device encoder model does (when the
-// user has it both enabled and downloaded). The encoder card carries the master on/off switch —
-// turning it off disables the feature and removes the model. When neither path can act, the editing
-// UI is disabled (greyed + inert), leaving only the encoder card interactive.
+// cleanup: the LLM owns it when cleanup is on (and the per-section "AI handling" toggle keeps it),
+// otherwise the on-device encoder model does (when the user has it both enabled and downloaded).
+// The encoder card carries the master on/off switch — turning it off disables the feature and
+// removes the model. When neither path can act, the editing UI is disabled (greyed + inert),
+// leaving only the encoder card interactive. Snippets follow the same split: the LLM expands them
+// contextually unless the user offloads them to the deterministic fuzzy expander.
 function VocabularyTab(): ReactNode {
 	const llmCleanupEnabled = useSettingsStore(
 		(s) => s.settings.llm?.dictation?.enabled ?? false,
@@ -198,9 +213,16 @@ function VocabularyTab(): ReactNode {
 	const encoderEnabled = useSettingsStore(
 		(s) => s.settings.general?.encoderDictionaryEnabled ?? true,
 	);
+	const llmHandlesDictionary = useSettingsStore(
+		(s) => s.settings.general?.llmHandlesDictionary ?? true,
+	);
+	const llmHandlesSnippets = useSettingsStore(
+		(s) => s.settings.general?.llmHandlesSnippets ?? true,
+	);
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
 	const model = useEncoderModel();
-	const handleEncoderToggle = (next: boolean) => {
+	const fitGate = useEncoderFitGate();
+	const applyEncoderToggle = (next: boolean) => {
 		// Enable/disable only — the downloaded model stays on disk so re-enabling is instant.
 		// Deleting it (to reclaim ~310 MB) is an explicit action via the card's trash button.
 		updateGeneral({ encoderDictionaryEnabled: next });
@@ -212,18 +234,45 @@ function VocabularyTab(): ReactNode {
 			model.unload();
 		}
 	};
+	const handleEncoderToggle = (next: boolean) => {
+		// Turning it OFF frees memory — always safe, never gated. Turning it ON
+		// loads the ~310 MB encoder session, so gate it against available RAM the
+		// same way STT/LLM models are: a critical mismatch surfaces the shared
+		// resource-warning dialog before the model is enabled.
+		if (next) {
+			fitGate.requestEnable(() => applyEncoderToggle(true));
+		} else {
+			applyEncoderToggle(false);
+		}
+	};
 	const t = useTranslations("dictionary");
+	const tModel = useTranslations("model");
 	// The non-LLM path can act only when the feature is on AND the model is present.
 	const encoderActive = encoderEnabled && model.state === "present";
-	const disabled =
-		!(llmCleanupEnabled || encoderActive) && model.state !== "loading";
+	// The LLM owns a section only when cleanup is on AND its per-section toggle keeps it there;
+	// offloading a section routes it back to its deterministic path (encoder model / fuzzy expander).
+	const llmOwnsDictionary = llmCleanupEnabled && llmHandlesDictionary;
+	const dictionaryDisabled =
+		!(llmOwnsDictionary || encoderActive) && model.state !== "loading";
+	// Deterministic snippet expansion also runs inside the cleanup pass, so snippets are inert
+	// (whichever path expands them) until dictation cleanup is on.
+	const snippetsDisabled = !llmCleanupEnabled;
 	return (
 		<>
-			{llmCleanupEnabled ? null : (
+			{llmCleanupEnabled ? (
+				<Suspense fallback={null}>
+					<AiHandlingSection
+						llmHandlesDictionary={llmHandlesDictionary}
+						llmHandlesSnippets={llmHandlesSnippets}
+						onChange={updateGeneral}
+					/>
+				</Suspense>
+			) : null}
+			{llmOwnsDictionary ? null : (
 				<>
-					{/* Matches a section's own top gap so the encoder card sits the
-					    same distance below the page header as any first section does. */}
-					<div className="pt-8">
+					{/* Without cleanup, matches a section's own top gap so the encoder card sits
+					    the same distance below the page header as any first section does. */}
+					<div className={llmCleanupEnabled ? undefined : "pt-8"}>
 						<EncoderModelCard
 							enabled={encoderEnabled}
 							model={model}
@@ -241,13 +290,42 @@ function VocabularyTab(): ReactNode {
 			)}
 			<div
 				className={cn(
-					disabled && "settings-dim pointer-events-none select-none",
+					dictionaryDisabled && "settings-dim pointer-events-none select-none",
 				)}
-				{...(disabled ? { inert: true } : {})}
+				{...(dictionaryDisabled ? { inert: true } : {})}
 			>
 				<DictionarySettingsPanel />
+			</div>
+			<div
+				className={cn(
+					snippetsDisabled && "settings-dim pointer-events-none select-none",
+				)}
+				{...(snippetsDisabled ? { inert: true } : {})}
+			>
 				<SnippetsSettingsPanel />
 			</div>
+			<ResourceWarningDialog
+				assessment={fitGate.pendingWarning?.assessment ?? null}
+				cancelLabel={tModel("resourceWarning.cancel")}
+				candidateName={t("encoderTitle")}
+				confirmLabel={tModel("resourceWarning.proceedAnyway")}
+				kind="dictation"
+				onCancel={fitGate.clearWarning}
+				onConfirm={() => {
+					const proceed = fitGate.pendingWarning?.proceed;
+					fitGate.clearWarning();
+					proceed?.();
+				}}
+				onOpenChange={(open) => {
+					if (!open) {
+						fitGate.clearWarning();
+					}
+				}}
+				open={fitGate.pendingWarning !== null}
+				t={(key, vars) =>
+					tModel(`resourceWarning.${key}` as Parameters<typeof tModel>[0], vars)
+				}
+			/>
 		</>
 	);
 }
@@ -450,26 +528,26 @@ function useSettingsWindowMotion(
 	const pendingRevealRef = useRef(false);
 	const failsafeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	const setMotionPhase = useCallback((next: SettingsWindowMotionPhase) => {
+	const setMotionPhase = useEffectEvent((next: SettingsWindowMotionPhase) => {
 		phaseRef.current = next;
 		setPhase(next);
-	}, []);
+	});
 
-	const clearCloseTimer = useCallback(() => {
+	const clearCloseTimer = useEffectEvent(() => {
 		if (closeTimerRef.current !== null) {
 			clearTimeout(closeTimerRef.current);
 			closeTimerRef.current = null;
 		}
-	}, []);
+	});
 
-	const clearOpenFrame = useCallback(() => {
+	const clearOpenFrame = useEffectEvent(() => {
 		if (openFrameRef.current !== null) {
 			cancelAnimationFrame(openFrameRef.current);
 			openFrameRef.current = null;
 		}
-	}, []);
+	});
 
-	const playOpen = useCallback(() => {
+	const playOpen = useEffectEvent(() => {
 		clearCloseTimer();
 		clearOpenFrame();
 		// "resetting" (not "closed") commits the start state with transitions
@@ -491,20 +569,20 @@ function useSettingsWindowMotion(
 				setMotionPhase("open");
 			});
 		});
-	}, [clearCloseTimer, clearOpenFrame, setMotionPhase]);
+	});
 
-	const clearRevealFailsafe = useCallback(() => {
+	const clearRevealFailsafe = useEffectEvent(() => {
 		if (failsafeTimerRef.current !== null) {
 			clearTimeout(failsafeTimerRef.current);
 			failsafeTimerRef.current = null;
 		}
-	}, []);
+	});
 
 	// Content-ready gate in front of playOpen. The OS window is TRANSPARENT, so
 	// nothing is visible until the enter animation runs — deferring the reveal
 	// until the active tab's panel has actually mounted guarantees the window
 	// never appears without its content. The failsafe bounds the wait.
-	const requestReveal = useCallback(() => {
+	const requestReveal = useEffectEvent(() => {
 		if (contentReadyRef.current) {
 			pendingRevealRef.current = false;
 			clearRevealFailsafe();
@@ -521,7 +599,7 @@ function useSettingsWindowMotion(
 				}
 			}, REVEAL_FAILSAFE_MS);
 		}
-	}, [clearRevealFailsafe, playOpen]);
+	});
 
 	useEffect(() => {
 		contentReadyRef.current = contentReady;
@@ -530,7 +608,7 @@ function useSettingsWindowMotion(
 			clearRevealFailsafe();
 			playOpen();
 		}
-	}, [clearRevealFailsafe, contentReady, playOpen]);
+	}, [contentReady]);
 
 	useEffect(() => {
 		// Reveal on mount ONLY if the OS window is already on screen. That is the
@@ -548,7 +626,7 @@ function useSettingsWindowMotion(
 		// let SETTINGS_WINDOW_SHOWN (which fires on every real open) drive the
 		// reveal from a clean opacity-0 shell.
 		let cancelled = false;
-		void import("@tauri-apps/api/window")
+		void loadTauriWindowApi()
 			.then(({ getCurrentWindow }) => getCurrentWindow().isVisible())
 			.then((visible) => {
 				if (!cancelled && visible) {
@@ -568,7 +646,9 @@ function useSettingsWindowMotion(
 			clearOpenFrame();
 			clearRevealFailsafe();
 		};
-	}, [clearCloseTimer, clearOpenFrame, clearRevealFailsafe, requestReveal]);
+		// Effect events (clearCloseTimer/clearOpenFrame/clearRevealFailsafe/
+		// requestReveal) are stable and intentionally omitted from deps.
+	}, []);
 
 	// The AUTHORITATIVE replay trigger: Rust emits SETTINGS_WINDOW_SHOWN on
 	// every settings `open_window`, right after show. It fires on every open
@@ -608,7 +688,8 @@ function useSettingsWindowMotion(
 				}
 				requestReveal();
 			}),
-		[requestReveal],
+		// `requestReveal` is a stable effect event; the IPC subscription is mount-only.
+		[],
 	);
 
 	useEffect(() => {
@@ -647,22 +728,30 @@ function useSettingsWindowMotion(
 			document.removeEventListener("visibilitychange", handleVisibilityChange);
 			window.removeEventListener("focus", maybeReplayOpen);
 		};
-	}, [
-		clearCloseTimer,
-		clearOpenFrame,
-		clearRevealFailsafe,
-		requestReveal,
-		setMotionPhase,
-	]);
+		// All helpers used here are stable effect events; listeners are mount-only.
+	}, []);
 
-	const requestClose = useCallback(() => {
+	// Plain function (NOT an effect event): it is returned from the hook and
+	// invoked by the parent's close handler, so it must be safe to pass around.
+	// It only touches refs + the stable `setPhase` setter, so it needs no
+	// memoization. The ref-clearing / phase-setting logic is inlined here rather
+	// than reusing the effect-event helpers, because effect events can only be
+	// called from Effects (or other effect events) in the same component.
+	const requestClose = () => {
 		if (phaseRef.current === "closing" || phaseRef.current === "closed") {
 			return;
 		}
 		pendingRevealRef.current = false;
-		clearRevealFailsafe();
-		clearOpenFrame();
-		setMotionPhase("closing");
+		if (failsafeTimerRef.current !== null) {
+			clearTimeout(failsafeTimerRef.current);
+			failsafeTimerRef.current = null;
+		}
+		if (openFrameRef.current !== null) {
+			cancelAnimationFrame(openFrameRef.current);
+			openFrameRef.current = null;
+		}
+		phaseRef.current = "closing";
+		setPhase("closing");
 		// Request the native hide slightly BEFORE the fade-out completes: the
 		// tail is visually gone already (and the OS window is transparent, so
 		// once opacity hits 0 nothing remains on screen either way), and the
@@ -670,13 +759,14 @@ function useSettingsWindowMotion(
 		closeTimerRef.current = setTimeout(
 			() => {
 				closeTimerRef.current = null;
-				setMotionPhase("closed");
+				phaseRef.current = "closed";
+				setPhase("closed");
 				waitingForReopenRef.current = true;
 				onClosed();
 			},
 			Math.max(0, modalCloseDurationMs() - CLOSE_HIDE_OVERLAP_MS),
 		);
-	}, [clearOpenFrame, clearRevealFailsafe, onClosed, setMotionPhase]);
+	};
 
 	return {
 		motionClassName: settingsMotionClassName(phase),
@@ -685,86 +775,14 @@ function useSettingsWindowMotion(
 	};
 }
 
-export function SettingsPage() {
-	const isLoaded = useSettingsStore((s) => s.isLoaded);
-	const hydrationStatus = useSettingsHydrationStore((s) => s.status);
-	const hydrationError = useSettingsHydrationStore((s) => s.error);
-	const canRenderSettings =
-		isLoaded &&
-		(hydrationStatus === "ready" || hydrationStatus === "unavailable");
-	const shouldSignalReady = canRenderSettings || hydrationStatus === "error";
-	// Auto-revert any cloud surface (STT model / LLM provider / cloud TTS) to a
-	// local engine when its API key is removed. Mounted HERE (not the main
-	// window) because keys are edited in this window and the OpenRouter key
-	// shares the `llm` section with the LLM provider/enabled flags — a revert
-	// from another window loses the cross-window user-dirty merge.
-	useCloudKeyAutoRevert(undefined, hydrationStatus === "ready");
-	const openLlmModelPicker = useLlmModelPickerStore((s) => s.openFor);
-	const openDictationCleanupPicker = () => {
-		openLlmModelPicker("dictation", true);
-	};
-	useModelAssistanceAutoEnable({
-		enabled: canRenderSettings,
-		onOpenOllamaPicker: openDictationCleanupPicker,
-	});
+// Builds the settings sidebar rail. Each link carries per-tab search keywords
+// (section headings + setting names) so the sidebar search surfaces a tab by its
+// contents, not just its label/tooltip. Kept out of SettingsPage so the page
+// component stays focused on window/reveal orchestration.
+function useSettingsSidebarLinks(): SidebarLink[] {
 	const t = useTranslations("settings");
-	// Per-tab search keywords (section headings + setting names) so the sidebar
-	// search surfaces a tab by its contents, not just its label/tooltip.
 	const keywords = useSettingsSearchKeywords();
-	// Controlled tab state so siblings (e.g. the Cloud-disabled badge in
-	// ModelSettingsPanel) can navigate the sidebar by calling setActiveTab.
-	const activeTab = useSettingsTabStore((s) => s.activeTab);
-	const setActiveTab = useSettingsTabStore((s) => s.setActiveTab);
-	// Drive the panel content from a deferred copy of the active tab. When a tab
-	// is clicked, the deferred value lags by a render, so React keeps the current
-	// panel on screen while the next one's (prefetched, microtask-fast) chunk
-	// resolves — no blank fallback flash on the swap.
-	const contentTab = useDeferredValue(activeTab);
-	// The OS window is fully transparent — html/body must be too, or WebView2
-	// paints an opaque page background behind the rounded card.
-	useTransparentBody();
-	// Reveal gate: the window (= the CSS card) must never become visible before
-	// real tab content is in the DOM. Sticky — panels are kept alive after the
-	// first mount, so later opens are ready by construction.
-	const [panelMounted, setPanelMounted] = useState(false);
-	const markPanelMounted = useCallback(() => setPanelMounted(true), []);
-	const contentReady =
-		(canRenderSettings && panelMounted) || hydrationStatus === "error";
-	const { motionClassName, requestClose, shellRef } = useSettingsWindowMotion(
-		windowCloseSelf,
-		contentReady,
-	);
-	const closeActivation = useTouchActivation(requestClose);
-	useEscapeToClose(requestClose);
-
-	// Once the window can render, warm every panel chunk in the background so the
-	// first click on any tab is instant. Deferred to idle so it never competes
-	// with the initial paint of the default tab.
-	useEffect(() => {
-		if (!canRenderSettings) {
-			return;
-		}
-		const ric = window.requestIdleCallback;
-		if (typeof ric === "function") {
-			const handle = ric(() => prefetchAllSettingsPanels(), { timeout: 2000 });
-			return () => window.cancelIdleCallback?.(handle);
-		}
-		const handle = window.setTimeout(prefetchAllSettingsPanels, 200);
-		return () => window.clearTimeout(handle);
-	}, [canRenderSettings]);
-
-	// Honor a cross-window deep-link request (e.g. an onboarding "configure this"
-	// link). A freshly-opened window picks up the pending section on mount; an
-	// already-open window navigates live via the `storage` event.
-	useEffect(() => {
-		const pending = takePendingSettingsSection();
-		if (pending) {
-			setActiveTab(pending);
-		}
-		return subscribePendingSettingsSection(setActiveTab);
-	}, [setActiveTab]);
-
-	const links: SidebarLink[] = [
+	return [
 		{
 			key: "recording",
 			label: t("tabRecording"),
@@ -850,6 +868,94 @@ export function SettingsPage() {
 			keywords: keywords["about"],
 		},
 	];
+}
+
+export function SettingsPage() {
+	const isLoaded = useSettingsStore((s) => s.isLoaded);
+	const hydrationStatus = useSettingsHydrationStore((s) => s.status);
+	const hydrationError = useSettingsHydrationStore((s) => s.error);
+	const canRenderSettings =
+		isLoaded &&
+		(hydrationStatus === "ready" || hydrationStatus === "unavailable");
+	const shouldSignalReady = canRenderSettings || hydrationStatus === "error";
+	// Auto-revert any cloud surface (STT model / LLM provider / cloud TTS) to a
+	// local engine when its API key is removed. Mounted HERE (not the main
+	// window) because keys are edited in this window and the OpenRouter key
+	// shares the `llm` section with the LLM provider/enabled flags — a revert
+	// from another window loses the cross-window user-dirty merge.
+	useCloudKeyAutoRevert(undefined, hydrationStatus === "ready");
+	const openLlmModelPicker = useLlmModelPickerStore((s) => s.openFor);
+	const openDictationCleanupPicker = () => {
+		openLlmModelPicker("dictation", true);
+	};
+	useModelAssistanceAutoEnable({
+		enabled: canRenderSettings,
+		onOpenOllamaPicker: openDictationCleanupPicker,
+	});
+	const t = useTranslations("settings");
+	// Controlled tab state so siblings (e.g. the Cloud-disabled badge in
+	// ModelSettingsPanel) can navigate the sidebar by calling setActiveTab.
+	const activeTab = useSettingsTabStore((s) => s.activeTab);
+	const setActiveTab = useSettingsTabStore((s) => s.setActiveTab);
+	// Drive the panel content from a deferred copy of the active tab. When a tab
+	// is clicked, the deferred value lags by a render, so React keeps the current
+	// panel on screen while the next one's (prefetched, microtask-fast) chunk
+	// resolves — no blank fallback flash on the swap.
+	const contentTab = useDeferredValue(activeTab);
+	// The content ScrollArea is a SINGLE persistent instance reused across every
+	// tab (only the panel children swap), so its scroll offset would otherwise
+	// carry over from the previous tab. Reset to the top on each switch — key on
+	// the immediate activeTab (not the deferred contentTab) so the reset lands as
+	// the new tab becomes active. Mirrors the onboarding wizard's step reset.
+	const contentViewportRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		contentViewportRef.current?.scrollTo({ top: 0 });
+	}, [activeTab]);
+	// The OS window is fully transparent — html/body must be too, or WebView2
+	// paints an opaque page background behind the rounded card.
+	useTransparentBody();
+	// Reveal gate: the window (= the CSS card) must never become visible before
+	// real tab content is in the DOM. Sticky — panels are kept alive after the
+	// first mount, so later opens are ready by construction.
+	const [panelMounted, setPanelMounted] = useState(false);
+	const markPanelMounted = () => setPanelMounted(true);
+	const contentReady =
+		(canRenderSettings && panelMounted) || hydrationStatus === "error";
+	const { motionClassName, requestClose, shellRef } = useSettingsWindowMotion(
+		windowCloseSelf,
+		contentReady,
+	);
+	const closeActivation = useTouchActivation(requestClose);
+	useEscapeToClose(requestClose);
+
+	// Once the window can render, warm every panel chunk in the background so the
+	// first click on any tab is instant. Deferred to idle so it never competes
+	// with the initial paint of the default tab.
+	useEffect(() => {
+		if (!canRenderSettings) {
+			return;
+		}
+		const ric = window.requestIdleCallback;
+		if (typeof ric === "function") {
+			const handle = ric(() => prefetchAllSettingsPanels(), { timeout: 2000 });
+			return () => window.cancelIdleCallback?.(handle);
+		}
+		const handle = window.setTimeout(prefetchAllSettingsPanels, 200);
+		return () => window.clearTimeout(handle);
+	}, [canRenderSettings]);
+
+	// Honor a cross-window deep-link request (e.g. an onboarding "configure this"
+	// link). A freshly-opened window picks up the pending section on mount; an
+	// already-open window navigates live via the `storage` event.
+	useEffect(() => {
+		const pending = takePendingSettingsSection();
+		if (pending) {
+			setActiveTab(pending);
+		}
+		return subscribePendingSettingsSection(setActiveTab);
+	}, [setActiveTab]);
+
+	const links = useSettingsSidebarLinks();
 
 	// Drives the content-side page header. Keyed off the DEFERRED tab so the
 	// title swaps in the same render as the panel body — never a frame ahead of
@@ -928,6 +1034,7 @@ export function SettingsPage() {
 									verticalOnly
 									verticalScrollbarClassName="mb-3 me-1"
 									viewportClassName="settings-scroll-edge-fade px-7 pt-6 pb-5"
+									viewportRef={contentViewportRef}
 								>
 									{/* Page header — the active tab's name + one-line summary lead
 									    the content column, giving each page a clear top-level title
@@ -935,7 +1042,12 @@ export function SettingsPage() {
 									    lose track of). The title keeps clear of the floating close
 									    button via pe-10. */}
 									{canRenderSettings && contentLink ? (
-										<header className="titlebar-drag flex flex-col gap-1.5 pb-0">
+										/* Pull the drag region up through the viewport's top
+										   padding (`pt-6`) so the whole empty band above the title —
+										   not just the title text — is grabbable for moving the
+										   frameless window. `-mt-6 pt-6` cancels then restores the
+										   inset, keeping the title's visual position unchanged. */
+										<header className="titlebar-drag -mt-6 flex flex-col gap-1.5 pt-6 pb-0">
 											<h2 className="min-w-0 pe-10 font-semibold text-[22px] text-foreground leading-tight tracking-[-0.02em]">
 												{contentLink.label}
 											</h2>

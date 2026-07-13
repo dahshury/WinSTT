@@ -15,9 +15,11 @@ import {
 import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import type { SelectOption } from "@/shared/ui/select";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { LanguageMultiCombobox } from "@/shared/ui/language-multi-combobox";
 import { NumberStepper } from "@/shared/ui/number-stepper";
+import { Toggle } from "@/shared/ui/toggle";
 import type {
 	CatalogModels,
 	GetFitAssessment,
@@ -56,8 +58,12 @@ interface RealtimeModelSectionProps {
 		quantization?: OnnxQuantization,
 	) => void;
 	isSwapping: boolean;
-	/** True when the main model can provide native streaming preview output. */
-	mainModelCanNativeStream: boolean;
+	/** True when the realtime slot is locked to (auto-reuses) the main model
+	 *  because the main model can natively stream — the selector is then frozen
+	 *  and pinned to the main model. False in listen mode, where the realtime slot
+	 *  is the editable control for the listen streaming model even if the main
+	 *  model is streaming-capable. */
+	realtimeSlotLockedToMain: boolean;
 	mainModelId: string;
 	mainModelInfo: CatalogModels[number] | undefined;
 	/** True when the worker still uses interval-gated window re-decode. */
@@ -122,7 +128,7 @@ export function RealtimeModelSection({
 	canDeleteQuant,
 	onDownloadAction,
 	onDownloadSnapshot,
-	mainModelCanNativeStream,
+	realtimeSlotLockedToMain,
 	updateIntervalApplies,
 	sourceLanguageSelection,
 	langOpts,
@@ -132,16 +138,18 @@ export function RealtimeModelSection({
 	// The realtime slot is normally a separate native-streaming preview engine.
 	// When the main model itself can natively stream, it owns this slot too.
 	const realtimeModelId = settings?.realtimeModel ?? "";
-	const displayedRealtimeModelId = mainModelCanNativeStream
+	const displayedRealtimeModelId = realtimeSlotLockedToMain
 		? mainModelId
 		: realtimeModelId;
-	const realtimeTooltip = mainModelCanNativeStream
+	const realtimeTooltip = realtimeSlotLockedToMain
 		? `${t("realtimeModelCaption")} ${t("useMainModelTooltip")}`
 		: `${t("realtimeModelCaption")} ${t("realtimeModelTooltip")}`;
-	// The selector is non-interactive either because the main model already
-	// owns the realtime slot (auto-reuse) or because realtime has no enabled
-	// output surface (`disabled`). Both collapse onto the same picker state.
-	const selectorDisabled = mainModelCanNativeStream || disabled;
+	// The selector is non-interactive either because the realtime slot is locked
+	// to the main model (auto-reuse) or because realtime has no enabled output
+	// surface (`disabled`). Both collapse onto the same picker state. In listen
+	// mode the lock is off, so the selector stays live as the streaming-model
+	// control.
+	const selectorDisabled = realtimeSlotLockedToMain || disabled;
 	// The realtime language picker only makes sense for a multilingual realtime model (e.g. the
 	// Nemotron-3.5 prompt model); English-only streaming models auto-transcribe and hide it.
 	const realtimeInfo = catalogModels.find(
@@ -149,6 +157,10 @@ export function RealtimeModelSection({
 	);
 	const realtimeMultilingual = realtimeInfo?.supportsLanguageDetection ?? false;
 	const realtimeLanguageValue = realtimeLanguage ? [realtimeLanguage] : [];
+	// Auto-detect is an outside toggle (matching the main model), NOT an option
+	// inside the combobox: "" = auto-detect, so an empty forced language means
+	// the toggle is on and the concrete-language picker is hidden.
+	const realtimeAutoDetect = realtimeLanguage === "";
 	return (
 		<SettingSection
 			boxed
@@ -206,34 +218,59 @@ export function RealtimeModelSection({
 					</FormControl>
 				</div>
 				{realtimeMultilingual ? (
-					<div>
-						<FormControl
-							controlTooltip={disabled ? disabledTooltip : undefined}
-							disabled={selectorDisabled}
-							label={t("realtimeLanguage")}
-							tooltip={t("realtimeLanguageTooltip")}
-						>
-							<LanguageMultiCombobox
-								ariaLabel={t("realtimeLanguage")}
+					<SettingField
+						disabled={selectorDisabled}
+						disabledTooltip={disabled ? disabledTooltip : undefined}
+						hideReset={selectorDisabled}
+						isDefault={realtimeLanguage === ""}
+						label={t("realtimeLanguage")}
+						labelAddon={
+							<Toggle
+								checked={realtimeAutoDetect}
 								disabled={selectorDisabled}
-								emptyLabel={t("languageNoResults")}
-								onChange={(value) => {
+								label={t("autoDetectLanguage")}
+								onCheckedChange={(enabled) => {
 									if (selectorDisabled) {
 										return;
 									}
-									// Prompt models take a single language; keep the most recently
-									// picked one ("" = auto-detect when cleared).
-									onRealtimeLanguageChange(value.at(-1) ?? "");
+									// On → "" (auto-detect); off → seed a concrete language so the
+									// prompt model has something to force (first supported option).
+									onRealtimeLanguageChange(
+										enabled
+											? ""
+											: (langOpts[0]?.id ?? DEFAULT_SETTINGS.model.language),
+									);
 								}}
-								options={langOpts}
-								placeholder={t("realtimeLanguageAuto")}
-								removeLabel={(language) => t("languageRemove", { language })}
-								selectedCountLabel={(count) => `${count}`}
-								selectedHeading={t("languageSelectedHeading")}
-								value={realtimeLanguageValue}
 							/>
-						</FormControl>
-					</div>
+						}
+						layout="row"
+						onReset={() => onRealtimeLanguageChange("")}
+						tooltip={t("realtimeLanguageTooltip")}
+					>
+						{realtimeAutoDetect ? undefined : (
+							<ElevatedSurface className="w-52" inline>
+								<LanguageMultiCombobox
+									ariaLabel={t("realtimeLanguage")}
+									disabled={selectorDisabled}
+									emptyLabel={t("languageNoResults")}
+									onChange={(value) => {
+										if (selectorDisabled) {
+											return;
+										}
+										// Prompt models take a single language; keep the most recently
+										// picked one. Clearing every language falls back to auto-detect.
+										onRealtimeLanguageChange(value.at(-1) ?? "");
+									}}
+									options={langOpts}
+									placeholder={t("languagePlaceholder")}
+									removeLabel={(language) => t("languageRemove", { language })}
+									selectedCountLabel={(count) => `${count}`}
+									selectedHeading={t("languageSelectedHeading")}
+									value={realtimeLanguageValue}
+								/>
+							</ElevatedSurface>
+						)}
+					</SettingField>
 				) : null}
 				{updateIntervalApplies ? (
 					<SettingField

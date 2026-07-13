@@ -624,10 +624,13 @@ impl SttBackend for WinsttSttBackend {
             language_candidates =
                 crate::winstt::commands::catalog_data::languages_for(&ws.model.model);
         }
+        let translate_target = ws.model.translate_target_language.trim();
         let opts = TranscribeOptions {
             language,
             language_candidates,
-            translate: ws.model.translate_to_english,
+            translate: !translate_target.is_empty(),
+            translate_target_language: (!translate_target.is_empty())
+                .then(|| translate_target.to_string()),
             initial_prompt_text,
             ..Default::default()
         };

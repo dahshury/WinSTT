@@ -96,6 +96,7 @@ export function AudioVisualizerBar({
 	const bands = state === "speaking" ? volumeBands : emptyBands(_barCount);
 	const ids = barIds(_barCount);
 	const allHighlighted = highlightedIndices.length >= _barCount;
+	const highlightedSet = new Set(highlightedIndices);
 
 	return (
 		<div
@@ -109,9 +110,7 @@ export function AudioVisualizerBar({
 				return (
 					<div
 						className={cn(barElementVariants({ size }))}
-						data-lk-highlighted={
-							allHighlighted || highlightedIndices.includes(position)
-						}
+						data-lk-highlighted={allHighlighted || highlightedSet.has(position)}
 						data-lk-index={position}
 						key={id}
 						style={{ height: `${band * 100}%` }}

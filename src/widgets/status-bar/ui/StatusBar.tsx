@@ -38,9 +38,6 @@ export function StatusBar() {
 	const realtimeModel = useSettingsStore(
 		(s) => s.settings.model?.realtimeModel,
 	);
-	const useMainModelForRealtime = useSettingsStore(
-		(s) => s.settings.quality?.useMainModelForRealtime ?? false,
-	);
 	const inputDeviceIndex = useSettingsStore(
 		(s) => s.settings.audio?.inputDeviceIndex,
 	);
@@ -62,15 +59,16 @@ export function StatusBar() {
 	const tAudio = useTranslations("audio");
 	const tModel = useTranslations("model");
 
-	// In listen mode the realtime model is the active transcriber — the main
-	// model is unloaded — so the footer model chip reflects and edits the
-	// realtime slot (clicking opens the realtime picker), mirroring the input/
-	// output device chip which also swaps to its listen-mode variant. In
-	// PTT/toggle the main model is active, so the chip stays the main-model
-	// selector. `useMainModelForRealtime` (or no separate realtime model) means
-	// listen reuses the main model, so the chip keeps showing the main model.
-	const listenUsesRealtimeModel =
-		recordingMode === "listen" && !useMainModelForRealtime && !!realtimeModel;
+	// In listen mode the realtime slot is the active transcriber — the main
+	// dictation model is preserved for other modes — so the footer model chip
+	// reflects and edits the realtime slot (clicking opens the realtime picker),
+	// mirroring the input/output device chip which also swaps to its listen-mode
+	// variant. This holds even when the realtime slot currently reuses the main
+	// model (`useMainModelForRealtime`): listen always edits the streaming model
+	// through the realtime picker, which unlocks in listen mode so the user can
+	// diverge it from main. In PTT/toggle the main model is active, so the chip
+	// stays the main-model selector.
+	const listenUsesRealtimeModel = recordingMode === "listen" && !!realtimeModel;
 	const activeModel = listenUsesRealtimeModel ? realtimeModel : currentModel;
 	const activePickerKind = listenUsesRealtimeModel ? "stt-realtime" : undefined;
 	// The realtime swap lives in `activeRealtime`; only that slot is in flight

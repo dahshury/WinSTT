@@ -177,8 +177,12 @@ export function OpenRouterTtsControls({
 	return (
 		<>
 			<SettingField
+				isDefault={cloud.openrouterVoice === CLOUD_DEFAULTS.openrouterVoice}
 				label={t("voice")}
 				layout="row"
+				onReset={() =>
+					patchCloud({ openrouterVoice: CLOUD_DEFAULTS.openrouterVoice })
+				}
 				tooltip="Voices are loaded from OpenRouter's model catalog for the selected speech model."
 			>
 				<SearchableSelect

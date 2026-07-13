@@ -451,6 +451,10 @@ function AuthorFilterSection({
 	selectedMakers: string[];
 }) {
 	const t = useTranslations("modelPicker");
+	// Build Sets once so each row's favorite/selected lookup is O(1) instead of a
+	// fresh `array.includes()` scan per rendered author.
+	const favoriteSet = new Set(favoriteProviders);
+	const selectedMakerSet = new Set(selectedMakers);
 	return (
 		<>
 			<SearchInput
@@ -468,8 +472,8 @@ function AuthorFilterSection({
 					{filteredAuthors.map((provider) => (
 						<AuthorRow
 							count={providerCounts.get(provider)}
-							isFavorite={favoriteProviders.includes(provider)}
-							isSelected={selectedMakers.includes(provider)}
+							isFavorite={favoriteSet.has(provider)}
+							isSelected={selectedMakerSet.has(provider)}
 							key={provider}
 							onToggleFavorite={onToggleFavorite}
 							onToggleMaker={(maker) =>

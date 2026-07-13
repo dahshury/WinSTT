@@ -180,7 +180,7 @@ describe("StatusBar", () => {
 		expect(screen.queryByText("large-v2")).toBeNull();
 	});
 
-	test("footer keeps the main model in listen mode when realtime reuses it", () => {
+	test("footer reflects the realtime slot in listen mode even when it reuses main", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
@@ -204,10 +204,12 @@ describe("StatusBar", () => {
 		act(() => {
 			useModelSwapStore.setState({ activeMain: null, activeRealtime: null });
 		});
-		// `useMainModelForRealtime` → the main model IS the realtime engine, so the
-		// chip stays the main-model selector.
-		expect(screen.getByText("large-v2")).toBeDefined();
-		expect(screen.queryByText("tiny")).toBeNull();
+		// Listen mode always edits the realtime slot through the realtime picker,
+		// which unlocks in listen mode so the streaming model can diverge from
+		// main — so the chip reflects the realtime slot regardless of the reuse
+		// flag (in a genuine reuse the two ids are equal and this is a no-op).
+		expect(screen.getByText("tiny")).toBeDefined();
+		expect(screen.queryByText("large-v2")).toBeNull();
 	});
 
 	test("shows the size-free variant name in the footer, not the raw id or param count", () => {

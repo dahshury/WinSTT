@@ -122,8 +122,10 @@ pub fn canonical_model_id(id: &str) -> &str {
     match id {
         // The English-only Nemotron (April 2026) was REPLACED by the multilingual Nemotron-3.5
         // (June 2026), which includes English plus 100+ languages. Migrate every persisted old
-        // English-Nemotron selection (all latencies + precisions) — and the interim 560ms 3.5 id —
-        // to the shipped 1120 ms multilingual int8 bundle so a returning user keeps a working choice.
+        // English-Nemotron selection (all latencies + precisions) to the shipped 1120 ms
+        // multilingual int8 bundle so a returning user keeps a working choice. NOTE: the multilingual
+        // 320/560 ms ids (`streaming-nemotron-3.5-multi-{320,560}ms-int8`) are now SHIPPED latency
+        // rows, not deprecated — they must NOT be aliased away here.
         "streaming-nemotron-en-80ms"
         | "streaming-nemotron-en-160ms"
         | "streaming-nemotron-en-560ms"
@@ -131,8 +133,7 @@ pub fn canonical_model_id(id: &str) -> &str {
         | "streaming-nemotron-en-80ms-int8"
         | "streaming-nemotron-en-160ms-int8"
         | "streaming-nemotron-en-560ms-int8"
-        | "streaming-nemotron-en-1120ms-int8"
-        | "streaming-nemotron-3.5-multi-560ms-int8" => "streaming-nemotron-3.5-multi-1120ms-int8",
+        | "streaming-nemotron-en-1120ms-int8" => "streaming-nemotron-3.5-multi-1120ms-int8",
         // Granite Speech 4.1-2b was REPLACED by the 4.1-2b-plus re-export (same AR architecture +
         // graph layout, better training data). Migrate any persisted old-id selection so a user who
         // had the previous model keeps a working choice instead of falling back to `tiny`.

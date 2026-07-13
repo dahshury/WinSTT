@@ -117,9 +117,12 @@ function ComboParts({
 function RecordingBadge({ label }: { label: string }) {
 	return (
 		<motion.div
+			// react-doctor-disable-next-line react-doctor/no-layout-property-animation -- 0→auto width reveal inside AnimatePresence: the rule's documented FP for the intended enter/exit reveal, and a transform-only swap would clip the badge rather than expand it.
 			animate={{ opacity: 1, x: 0, width: "auto" }}
 			className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap"
+			// react-doctor-disable-next-line react-doctor/no-layout-property-animation -- collapse-to-0 width on exit for the same AnimatePresence reveal; not a per-frame layout animation to eliminate.
 			exit={{ opacity: 0, x: 8, width: 0 }}
+			// react-doctor-disable-next-line react-doctor/no-layout-property-animation -- initial 0 width for the AnimatePresence enter reveal, paired with the animate→auto target above.
 			initial={{ opacity: 0, x: 8, width: 0 }}
 			key="recording-badge"
 			transition={{

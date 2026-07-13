@@ -514,6 +514,7 @@ export function ThinkingIndicator({
 				<AnimatePresence initial={false}>
 					{showReasoning && (
 						<m.div
+							// react-doctor-disable-next-line react-doctor/no-layout-property-animation -- 0→auto height reveal inside AnimatePresence with overflow-hidden: the rule's documented FP for the intended expand/collapse, and scaleY would squash the streamed reasoning text.
 							animate={{ opacity: 1, height: "auto" }}
 							className={cn(
 								"flex flex-col items-stretch overflow-hidden",
@@ -521,9 +522,11 @@ export function ThinkingIndicator({
 							)}
 							exit={{
 								opacity: 0,
+								// react-doctor-disable-next-line react-doctor/no-layout-property-animation -- collapse-to-0 height on exit for the same AnimatePresence reveal; not a per-frame layout animation to eliminate.
 								height: 0,
 								transition: springs.slow.exit,
 							}}
+							// react-doctor-disable-next-line react-doctor/no-layout-property-animation -- initial 0 height for the AnimatePresence enter reveal, paired with the animate→auto target above.
 							initial={{ opacity: 0, height: 0 }}
 							key="reasoning-band"
 							transition={springs.slow}

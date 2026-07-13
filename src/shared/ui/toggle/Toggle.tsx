@@ -106,12 +106,17 @@ export function Toggle({
 		if (dragging.current) {
 			return;
 		}
+		// Select the tier inside the effect so the dep list keys off the stable
+		// `reduceMotion` primitive instead of the per-render `travelTransition`
+		// binding — identical trigger set (thumbX moves, or reduced-motion flips),
+		// no spurious re-runs, and the drag guard above is untouched.
+		const transition = reduceMotion ? NO_MOTION : springs.moderate;
 		if (hasMounted.current) {
-			animate(motionX, thumbX, travelTransition);
+			animate(motionX, thumbX, transition);
 		} else {
 			motionX.set(thumbX);
 		}
-	}, [thumbX, motionX, travelTransition]);
+	}, [thumbX, motionX, reduceMotion]);
 
 	function handlePointerDown(e: ReactPointerEvent<HTMLSpanElement>) {
 		if (disabled) {
@@ -227,6 +232,7 @@ export function Toggle({
 					return (
 						<motion.span
 							{...rest}
+							// react-doctor-disable-next-line react-doctor/no-layout-property-animation -- thumb press-squish on a manually-driven motion.span (style={{x:motionX}}); layout prop conflicts with the manual x transform and scaleX/Y would distort the rounded-full radius
 							animate={{ y: thumbY, width: thumbWidth, height: thumbHeight }}
 							className={cn(
 								"absolute top-0 left-0 block rounded-full shadow-sm ring-1",

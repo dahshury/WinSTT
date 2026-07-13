@@ -96,8 +96,8 @@ export function syncModelParams(
 		"onnx_quantization",
 		isInitial,
 	);
-	// `model.translateToEnglish` is persisted canonically via `winstt_set_settings`
-	// (the STT pipeline reads `WinsttSettings.model.translate_to_english`). No legacy
+	// `model.translateTargetLanguage` is persisted canonically via `winstt_set_settings`
+	// (the STT pipeline reads `WinsttSettings.model.translate_target_language`). No legacy
 	// `set_parameter` push: that fed an AppSettings-shadow write nothing read.
 	syncInitialPromptStatics(deps, model, prevModel, isInitial);
 }

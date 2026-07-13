@@ -29,6 +29,14 @@ function normalizeAppId(value: string): string {
 	return value.trim().toLowerCase();
 }
 
+/** Stable code-unit comparator for order-independent allow-list equality. */
+function byCodeUnit(a: string, b: string): number {
+	if (a < b) {
+		return -1;
+	}
+	return a > b ? 1 : 0;
+}
+
 function uniqueNormalized(values: readonly string[]): string[] {
 	const seen = new Set<string>();
 	const out: string[] = [];
@@ -324,7 +332,6 @@ export function ContextAllowedAppsSection({
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
 	const allowList = uniqueNormalized(general?.contextAllowList ?? []);
 	const defaultAllowList = DEFAULT_SETTINGS.general.contextAllowList;
-	const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 	const isDefaultAllowList =
 		allowList.toSorted(byCodeUnit).join(" ") ===
 		defaultAllowList.toSorted(byCodeUnit).join(" ");

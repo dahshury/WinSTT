@@ -111,6 +111,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 		return () => {
 			cancelAnimationFrame(frame);
 		};
+		// react-doctor-disable-next-line react-doctor/exhaustive-deps -- `effectiveOpen` is the derived boolean this effect gates on; react-doctor unwraps it to its four render-primitive sources, but depending on those would re-run (and re-steal focus) while the popup is already open, so the derived value is the correct minimal dependency.
 	}, [effectiveOpen]);
 
 	useEffect(() => {
@@ -129,6 +130,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 			cancelAnimationFrame(firstFrame);
 			cancelAnimationFrame(secondFrame);
 		};
+		// react-doctor-disable-next-line react-doctor/exhaustive-deps -- `effectiveOpen` is the derived open-state boolean; react-doctor unwraps it to its render-primitive sources, but the deferral is guarded by `!effectiveOpen` and `hasRenderedCollection`, so the derived value is the correct minimal dependency and adding the sources would only add redundant re-runs.
 	}, [effectiveOpen, hasRenderedCollection, inline]);
 
 	const renderCollection = inline || hasRenderedCollection;

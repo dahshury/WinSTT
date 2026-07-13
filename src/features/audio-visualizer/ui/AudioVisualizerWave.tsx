@@ -149,10 +149,17 @@ export function AudioVisualizerWave({
 	// reads uniformsRef on each rAF tick, so the next frame picks up the new values).
 	useEffect(() => {
 		uniformsRef.current["uLineWidth"] = { type: "1f", value: _lineWidth };
-		uniformsRef.current["uSmoothing"] = { type: "1f", value: smoothing };
-		uniformsRef.current["uColor"] = { type: "3fv", value: rgbColor };
+		// Compute the derived values inside the effect and depend on the raw
+		// primitives (`blur`, `color`): `blur ?? 0.5` and `hexToRgb(color)` are
+		// recreated every render, so depending on them directly would re-run the
+		// effect every render.
+		uniformsRef.current["uSmoothing"] = { type: "1f", value: blur ?? 0.5 };
+		uniformsRef.current["uColor"] = {
+			type: "3fv",
+			value: hexToRgb(color ?? DEFAULT_COLOR),
+		};
 		uniformsRef.current["uColorShift"] = { type: "1f", value: colorShift };
-	}, [_lineWidth, smoothing, rgbColor, colorShift]);
+	}, [_lineWidth, blur, color, colorShift]);
 
 	// Hook up motion-value-driven animations that write to uniformsRef (zero re-renders)
 	useWaveAnimator(state, uniformsRef);

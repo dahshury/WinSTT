@@ -239,9 +239,9 @@ describe("variantDisplayName", () => {
 		).toBe("Zipformer");
 		expect(
 			variantDisplayName(
-				named("Lite-Whisper Large v3 Turbo (Accelerated)", "lite-whisper"),
+				named("Lite-Whisper Large v3 Turbo (Accurate)", "lite-whisper"),
 			),
-		).toBe("Large v3 Turbo (Accelerated)");
+		).toBe("Large v3 Turbo (Accurate)");
 	});
 
 	test("falls back to the raw name if stripping would empty it", () => {

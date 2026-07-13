@@ -3,7 +3,11 @@ import type {
 	LiveResourcesEntry,
 	ModelStateEntry,
 } from "@/shared/api/ipc-client";
-import { assessDictationFitClient, TEST_ONLY } from "./fit-assessor";
+import {
+	assessDictationFitClient,
+	assessEncoderDictFitClient,
+	TEST_ONLY,
+} from "./fit-assessor";
 
 const GB = 1024 ** 3;
 
@@ -323,5 +327,47 @@ describe("predictedTarget", () => {
 	test("returns 'cpu' when no GPUs but RAM exists and no device requested", () => {
 		const live = liveOf({ ram_total_bytes: 32 * GB, gpus: [] });
 		expect(predictedTarget("", live, null)).toBe("cpu");
+	});
+});
+
+describe("assessEncoderDictFitClient", () => {
+	test("targets CPU/RAM and fits on a roomy host", () => {
+		const result = assessEncoderDictFitClient(
+			liveOf({ ram_available_bytes: 16 * GB }),
+		);
+		expect(result.target).toBe("cpu");
+		expect(result.severity).toBe("ok");
+		expect(result.reasons).toContain("ok");
+	});
+
+	test("critical + exceeds_ram when RAM budget is below the ~310 MB footprint", () => {
+		const result = assessEncoderDictFitClient(
+			liveOf({
+				ram_total_bytes: 2 * GB,
+				ram_available_bytes: 100 * 1024 * 1024,
+			}),
+		);
+		expect(result.severity).toBe("critical");
+		expect(result.reasons).toContain("exceeds_ram");
+	});
+
+	test("ignores VRAM — assessed against RAM even with a big GPU present", () => {
+		const result = assessEncoderDictFitClient(
+			liveOf({
+				ram_total_bytes: 2 * GB,
+				ram_available_bytes: 100 * 1024 * 1024,
+				gpus: [gpuOf({ total: 24 * GB, free: 24 * GB })],
+			}),
+		);
+		expect(result.target).toBe("cpu");
+		expect(result.severity).toBe("critical");
+	});
+
+	test("no hardware → critical neither/exceeds_ram", () => {
+		const result = assessEncoderDictFitClient(
+			liveOf({ ram_total_bytes: 0, ram_available_bytes: 0, gpus: [] }),
+		);
+		expect(result.severity).toBe("critical");
+		expect(result.reasons).toContain("exceeds_ram");
 	});
 });

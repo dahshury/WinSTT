@@ -1,5 +1,5 @@
 import { ComputerIcon, VolumeHighIcon } from "@hugeicons/core-free-icons";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import { loopbackListDevices } from "@/shared/api/ipc-client";
 import type { SelectOption } from "@/shared/ui/select";
@@ -114,6 +114,15 @@ export function useLoopbackDevices(): UseLoopbackDevicesReturn {
 
 	const recordingMode = general?.recordingMode ?? "ptt";
 
+	// Latest selected-device index read through a ref so the device-list fetch
+	// keys only on ENTERING "listen" mode — not on every selection change (which
+	// would needlessly re-list devices, and re-trigger auto-select). The one-time
+	// auto-select is the sole reader, and it wants the value at fetch time.
+	const loopbackDeviceIndexRef = useRef(general?.loopbackDeviceIndex ?? null);
+	useEffect(() => {
+		loopbackDeviceIndexRef.current = general?.loopbackDeviceIndex ?? null;
+	});
+
 	useEffect(() => {
 		if (recordingMode !== "listen") {
 			return;
@@ -123,7 +132,7 @@ export function useLoopbackDevices(): UseLoopbackDevicesReturn {
 
 		const handleDevices = applyDevicesResult({
 			getIsCancelled: () => isCancelled,
-			currentDeviceIndex: general?.loopbackDeviceIndex ?? null,
+			currentDeviceIndex: loopbackDeviceIndexRef.current,
 			setDefaultIndex,
 			setOptions,
 			update,
@@ -136,7 +145,8 @@ export function useLoopbackDevices(): UseLoopbackDevicesReturn {
 		return () => {
 			isCancelled = true;
 		};
-	}, [recordingMode, general?.loopbackDeviceIndex, update]);
+		// react-doctor-disable-next-line react-doctor/exhaustive-deps -- `loopbackDeviceIndexRef.current` is read as a deliberate fresh snapshot: the companion no-dep effect above re-syncs the ref on every render, so it holds the current selection when this effect runs on entry to "listen" mode. The auto-select wants the value at device-list time; depending on `general.loopbackDeviceIndex` directly (the only "missing" reactive value) would re-list devices and re-run auto-select on every manual selection change — exactly what the ref exists to prevent.
+	}, [recordingMode, update]);
 
 	const currentId = resolveCurrentId(
 		general?.loopbackDeviceIndex,

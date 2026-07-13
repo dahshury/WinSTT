@@ -50,6 +50,13 @@ interface Row {
 type DropPlacement = "before" | "after";
 
 interface CreatableComboboxProps {
+	/** Drop the input's own surface fill + elevation shadow (renders
+	 *  `bg-transparent` instead). For joined control groups where a wrapping
+	 *  container carries ONE shared surface plate for every segment — the
+	 *  surface can't be stripped after the fact via `inputClassName` because
+	 *  twMerge doesn't know the custom `shadow-surface-N` scale, so appending
+	 *  `shadow-none` leaves the elevation shadow intact. */
+	bareInput?: boolean;
 	/** Wrapper width/placement classes (e.g. "ml-auto w-56"). */
 	className?: string;
 	/** Row label for the synthesized "create" affordance. */
@@ -110,6 +117,7 @@ const CREATE_ID = "__create__";
  *    pattern) so a fresh value object per render never triggers a re-select loop.
  */
 export function CreatableCombobox({
+	bareInput = false,
 	className,
 	createLabel,
 	deleteAriaLabel,
@@ -262,7 +270,9 @@ export function CreatableCombobox({
 				<div className="relative flex w-full items-center">
 					<Combobox.Input
 						className={cn(
-							`h-8 w-full rounded-lg ${surfaceClasses(inputLevel)} ps-2.5 pe-7 font-inherit text-body text-foreground leading-normal outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${disabled ? "cursor-not-allowed opacity-40" : ""}`,
+							"h-8 w-full rounded-lg ps-2.5 pe-7 font-inherit text-body text-foreground leading-normal outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
+							bareInput ? "bg-transparent" : surfaceClasses(inputLevel),
+							disabled && "cursor-not-allowed opacity-40",
 							inputClassName,
 						)}
 						placeholder={placeholder}

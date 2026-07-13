@@ -95,9 +95,10 @@ function pickCachedQuantForModel(
 	if (cached.length === 0) {
 		return null;
 	}
+	const cachedSet = new Set(cached);
 	const effective = entry?.effective_quantization;
 	const preferred = [preferredQuantization, effective, "", ...cached].find(
-		(q): q is string => q !== undefined && cached.includes(q),
+		(q): q is string => q !== undefined && cachedSet.has(q),
 	);
 	return preferred === undefined ? null : toOnnxQuantization(preferred);
 }

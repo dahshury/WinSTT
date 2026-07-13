@@ -406,9 +406,41 @@ pub struct ModelSettings {
     /// Decoder-bias prompt for the realtime worker (build-time). HOT-SWAP.
     #[serde(default)]
     pub initial_prompt_realtime: String,
-    /// Whisper task=translate (multilingual Whisper only). HOT-SWAP. Zod `.catch(false)`.
-    #[serde(default)]
-    pub translate_to_english: bool,
+    /// Native decoder translation target. `""` = off (plain transcription). A
+    /// concrete code (e.g. `"en"`, `"de"`) asks the engine to emit that language
+    /// instead of the source. Multilingual Whisper can only ever target English
+    /// (`<|translate|>` is English-only), so any non-empty value there behaves as
+    /// "translate to English"; NeMo Canary honors the concrete target token and
+    /// can render any→any among its languages. Every other family silently falls
+    /// through to normal transcription. HOT-SWAP.
+    ///
+    /// Migrates the legacy boolean `translateToEnglish` (`true` → `"en"`).
+    #[serde(
+        default,
+        alias = "translateToEnglish",
+        deserialize_with = "deserialize_translate_target_language"
+    )]
+    pub translate_target_language: String,
+}
+
+/// Accept either the legacy `translateToEnglish` boolean (`true` → `"en"`,
+/// `false`/absent → `""`) or the current string target, so old settings files
+/// keep their translate preference after the field was generalized.
+fn deserialize_translate_target_language<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrString {
+        Bool(bool),
+        String(String),
+    }
+    Ok(match Option::<BoolOrString>::deserialize(deserializer)? {
+        Some(BoolOrString::Bool(true)) => "en".to_string(),
+        Some(BoolOrString::Bool(false)) | None => String::new(),
+        Some(BoolOrString::String(value)) => value,
+    })
 }
 
 impl ModelSettings {
@@ -448,7 +480,7 @@ impl Default for ModelSettings {
             onnx_quantization: "auto".into(),
             initial_prompt: String::new(),
             initial_prompt_realtime: String::new(),
-            translate_to_english: false,
+            translate_target_language: String::new(),
         }
     }
 }
@@ -886,6 +918,19 @@ pub struct GeneralSettings {
     /// Zod `.catch(220)`.
     #[serde(default = "GeneralSettings::default_dictionary_context_chars")]
     pub dictionary_context_chars: i64,
+    /// When LLM cleanup is on, the dictionary (preferred terms + replacement pairs) is injected
+    /// into the cleanup prompt and the LLM owns corrections. Turn OFF to keep the dictionary out
+    /// of the prompt and offload corrections to the on-device encoder model instead (replacement
+    /// pairs stay deterministic either way). No effect when LLM cleanup is off. HOT-SWAP.
+    /// Zod `.catch(true)`.
+    #[serde(default = "GeneralSettings::default_llm_handles_dictionary")]
+    pub llm_handles_dictionary: bool,
+    /// When LLM cleanup is on, snippets are injected into the cleanup prompt and the LLM expands
+    /// them contextually (the deterministic fuzzy expander is skipped). Turn OFF to keep snippets
+    /// out of the prompt and rely on the deterministic fuzzy trigger→expansion replacement
+    /// instead. No effect when LLM cleanup is off. HOT-SWAP. Zod `.catch(true)`.
+    #[serde(default = "GeneralSettings::default_llm_handles_snippets")]
+    pub llm_handles_snippets: bool,
 }
 
 impl GeneralSettings {
@@ -944,6 +989,12 @@ impl GeneralSettings {
         220
     }
     fn default_encoder_dictionary_enabled() -> bool {
+        true
+    }
+    fn default_llm_handles_dictionary() -> bool {
+        true
+    }
+    fn default_llm_handles_snippets() -> bool {
         true
     }
     /// The exact seed list from the Zod schema (also used as Zod's `.catch`).
@@ -1085,6 +1136,8 @@ impl Default for GeneralSettings {
             recording_retention: RecordingRetention::default(),
             encoder_dictionary_enabled: Self::default_encoder_dictionary_enabled(),
             dictionary_context_chars: Self::default_dictionary_context_chars(),
+            llm_handles_dictionary: Self::default_llm_handles_dictionary(),
+            llm_handles_snippets: Self::default_llm_handles_snippets(),
         }
     }
 }
@@ -1965,7 +2018,7 @@ mod tests {
         assert!(s.model.language_candidates.is_empty());
         assert_eq!(s.model.device, DeviceType::Auto);
         assert_eq!(s.model.onnx_quantization, "auto");
-        assert!(!s.model.translate_to_english);
+        assert!(s.model.translate_target_language.is_empty());
         assert_eq!(s.global.model_unload_timeout, ModelUnloadTimeout::Min15);
 
         // quality
@@ -2182,6 +2235,25 @@ mod tests {
         assert_eq!(s.model.model, "tiny"); // sibling defaulted
         assert_eq!(s.general.repaste_hotkey, "LCtrl+LShift+V"); // other section defaulted
         assert!(s.tts.cloud.speaker_boost);
+    }
+
+    #[test]
+    fn legacy_translate_to_english_bool_migrates_to_target_language() {
+        // A settings blob from before the field was generalized carries a boolean
+        // `translateToEnglish`; the deserializer must map it onto the string field.
+        let on: WinsttSettings =
+            serde_json::from_str(r#"{ "model": { "translateToEnglish": true } }"#)
+                .expect("legacy true must parse");
+        assert_eq!(on.model.translate_target_language, "en");
+        let off: WinsttSettings =
+            serde_json::from_str(r#"{ "model": { "translateToEnglish": false } }"#)
+                .expect("legacy false must parse");
+        assert!(off.model.translate_target_language.is_empty());
+        // The current string form is accepted verbatim.
+        let target: WinsttSettings =
+            serde_json::from_str(r#"{ "model": { "translateTargetLanguage": "de" } }"#)
+                .expect("string target must parse");
+        assert_eq!(target.model.translate_target_language, "de");
     }
 
     #[test]

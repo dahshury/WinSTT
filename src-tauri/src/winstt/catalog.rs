@@ -44,11 +44,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_total_count_is_67() {
+    fn catalog_total_count_is_69() {
         assert_eq!(
             STT_CATALOG.len(),
-            67,
-            "catalog.json ships exactly 67 STT models"
+            69,
+            "catalog.json ships exactly 69 STT models"
         );
     }
 
@@ -57,7 +57,7 @@ mod tests {
         let count = |f: Family| STT_CATALOG.iter().filter(|m| m.family == f).count();
         assert_eq!(count(Family::Whisper), 15, "whisper count");
         assert_eq!(count(Family::Moonshine), 10, "moonshine count");
-        assert_eq!(count(Family::Nemo), 27, "nemo count");
+        assert_eq!(count(Family::Nemo), 29, "nemo count");
         assert_eq!(count(Family::Kaldi), 4, "kaldi count");
         assert_eq!(count(Family::GigaAm), 2, "gigaam count");
         assert_eq!(count(Family::Cohere), 2, "cohere count");
@@ -72,7 +72,7 @@ mod tests {
             "custom never appears in the shipped catalog"
         );
         // The family counts must sum to the catalog total.
-        let summed = 15 + 10 + 27 + 4 + 2 + 2 + 2 + 1 + 1 + 1 + 2;
+        let summed = 15 + 10 + 29 + 4 + 2 + 2 + 2 + 1 + 1 + 1 + 2;
         assert_eq!(summed, STT_CATALOG.len());
     }
 
@@ -127,6 +127,16 @@ mod tests {
                 "streaming-nemotron-3.5-multi-1120ms-int8",
                 "streaming-nemotron-3.5-multi-1120ms-int8",
             ),
+            // The 320/560 ms multilingual rows are SHIPPED latency variants, not deprecated —
+            // they must resolve to themselves (never aliased to the 1120 ms bundle).
+            (
+                "streaming-nemotron-3.5-multi-320ms-int8",
+                "streaming-nemotron-3.5-multi-320ms-int8",
+            ),
+            (
+                "streaming-nemotron-3.5-multi-560ms-int8",
+                "streaming-nemotron-3.5-multi-560ms-int8",
+            ),
         ] {
             assert_eq!(canonical_model_id(alias), canonical);
             assert_eq!(find(alias).unwrap().id, canonical);
@@ -140,7 +150,6 @@ mod tests {
             "streaming-nemotron-en-80ms",
             "streaming-nemotron-en-1120ms",
             "streaming-nemotron-en-1120ms-int8",
-            "streaming-nemotron-3.5-multi-560ms-int8",
         ] {
             assert_eq!(
                 canonical_model_id(old),

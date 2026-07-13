@@ -26,6 +26,11 @@ function costText(cost: number, estimate: boolean): string {
 	return `${estimate ? "~" : ""}${formatUsd(cost) ?? "$0.00"}`;
 }
 
+/** Cost-weighted maker radar spoke title: `label · $cost (pct%)`. */
+function makerTitle(slice: AuthorSlice): string {
+	return `${slice.label} · ${formatUsd(slice.count) ?? "$0.00"} (${slice.pct}%)`;
+}
+
 function Card({
 	icon,
 	label,
@@ -109,8 +114,6 @@ const BIG_VALUE =
  */
 export function SpendingSection({ analytics }: SpendingSectionProps) {
 	const t = useTranslations("history");
-	const makerTitle = (slice: AuthorSlice): string =>
-		`${slice.label} · ${formatUsd(slice.count) ?? "$0.00"} (${slice.pct}%)`;
 
 	// A breakdown with a single slice is just the total wearing a different hat —
 	// showing it would echo the same figure beside itself. So each donut/bar chart

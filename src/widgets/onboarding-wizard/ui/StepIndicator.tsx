@@ -79,14 +79,17 @@ export function StepIndicator({
 						<AnimatePresence initial={false} mode="popLayout">
 							{status === "current" ? (
 								<m.span
+									// react-doctor-disable-next-line react-doctor/no-layout-property-animation -- 0→auto width label reveal inside a popLayout AnimatePresence: the rule's documented FP for the intended enter/exit FLIP, and scaleX would distort the mono label text.
 									animate={{ opacity: 1, width: "auto", x: 0 }}
 									className="overflow-hidden whitespace-nowrap pr-1 pl-1.5 text-accent"
 									exit={{
 										opacity: 0,
+										// react-doctor-disable-next-line react-doctor/no-layout-property-animation -- collapse-to-0 width on exit for the same popLayout reveal; not a per-frame layout animation to eliminate.
 										width: 0,
 										x: -4,
 										transition: springs.moderate.exit,
 									}}
+									// react-doctor-disable-next-line react-doctor/no-layout-property-animation -- initial 0 width for the AnimatePresence enter reveal, paired with the animate→auto target above.
 									initial={{ opacity: 0, width: 0, x: 4 }}
 									key="current-label"
 									transition={springs.moderate}

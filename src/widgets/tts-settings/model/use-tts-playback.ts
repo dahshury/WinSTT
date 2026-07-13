@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
 	onTtsFailed,
 	onTtsPlaybackEnded,
@@ -46,6 +46,15 @@ export function useTtsPlayback(): TtsPlayback {
 	const [errorReason, setErrorReason] = useState<string | null>(null);
 	const [previewVoiceId, setPreviewVoiceId] = useState<string | null>(null);
 
+	// Latest playback snapshot, so the terminal (ended/failed) handlers can decide
+	// whether the event targets the active preview WITHOUT reading state inside a
+	// `setPlayback` updater — updaters must stay pure (no nested setState). Written
+	// in an effect (never during render), which is the allowed ref-sync shape.
+	const playbackRef = useRef(playback);
+	useEffect(() => {
+		playbackRef.current = playback;
+	}, [playback]);
+
 	useEffect(
 		() =>
 			onTtsStarted(({ requestId }) => {
@@ -73,29 +82,24 @@ export function useTtsPlayback(): TtsPlayback {
 				// before audio plays, so we never need a wildcard reset — and
 				// a stale empty-id "ended" (from the cancel that precedes
 				// every preview) must NOT clear the freshly-started request.
-				setPlayback((p) => {
-					if (p.requestId !== requestId) {
-						return p;
-					}
-					// Playback truly ended for the active preview — also clear
-					// the per-row affordance inline so we never need a reflex
-					// effect on `playback.requestId === null`.
-					setPreviewVoiceId(null);
-					return { requestId: null, playing: false };
-				});
+				if (playbackRef.current.requestId !== requestId) {
+					return;
+				}
+				// Playback truly ended for the active preview. Both state writes
+				// happen here in the event handler (not inside an updater) so the
+				// `setPlayback` updater stays pure.
+				setPlayback({ requestId: null, playing: false });
+				setPreviewVoiceId(null);
 			}),
 		[],
 	);
 	useEffect(
 		() =>
 			onTtsFailed(({ requestId, reason }) => {
-				setPlayback((p) => {
-					if (p.requestId !== requestId) {
-						return p;
-					}
+				if (playbackRef.current.requestId === requestId) {
+					setPlayback({ requestId: null, playing: false });
 					setPreviewVoiceId(null);
-					return { requestId: null, playing: false };
-				});
+				}
 				setErrorReason(reason);
 			}),
 		[],

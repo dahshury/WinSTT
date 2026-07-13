@@ -12,7 +12,7 @@ import {
 	m,
 	type Variants,
 } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { onSettingsChanged, settingsLoad } from "@/shared/api/ipc-client";
@@ -103,41 +103,44 @@ export function TrayIndicatorPage() {
 	// can tell a genuine dismissal from a swap that landed during the exit tween.
 	const wantVisibleRef = useRef(false);
 
-	const seed = useCallback((settings: AppSettingsOutput) => {
-		prevModeRef.current = (settings.general?.recordingMode ??
-			"ptt") as RecordingMode;
-		prevPresetRef.current =
-			resolveActivePostProcessingPreset(settings.llm.dictation)?.id ?? "";
-		initializedRef.current = true;
-	}, []);
+	useEffect(() => {
+		// Defined inside the effect so they carry no render-fresh identity into the
+		// dependency array — the effect subscribes exactly once (setSettings is a
+		// stable store action) and these helpers close over refs + stable setters.
+		const seed = (settings: AppSettingsOutput) => {
+			prevModeRef.current = (settings.general?.recordingMode ??
+				"ptt") as RecordingMode;
+			prevPresetRef.current =
+				resolveActivePostProcessingPreset(settings.llm.dictation)?.id ?? "";
+			initializedRef.current = true;
+		};
 
-	const reveal = useCallback(async (next: PillContent) => {
-		// Mark "want visible" BEFORE the await so a stale exit-complete that fires
-		// during the IPC round-trip re-shows instead of hiding the window.
-		wantVisibleRef.current = true;
-		// The backend suppresses the pill while the settings window is focused —
-		// respect that verdict rather than flashing a hidden window.
-		const shown = await trayIndicatorShow();
-		if (!shown) {
-			wantVisibleRef.current = false;
-			return;
-		}
-		// Swap content in place and keep (or start) the single pill alive; the
-		// constant AnimatePresence key means a swap morphs the content instead of
-		// restarting an enter/exit, so fast successive switches stay smooth.
-		setContent(next);
-		setActive(true);
-		if (dwellTimerRef.current) {
-			clearTimeout(dwellTimerRef.current);
-		}
-		dwellTimerRef.current = setTimeout(() => {
-			wantVisibleRef.current = false;
-			setActive(false);
-		}, DWELL_MS);
-	}, []);
+		const reveal = async (next: PillContent) => {
+			// Mark "want visible" BEFORE the await so a stale exit-complete that fires
+			// during the IPC round-trip re-shows instead of hiding the window.
+			wantVisibleRef.current = true;
+			// The backend suppresses the pill while the settings window is focused —
+			// respect that verdict rather than flashing a hidden window.
+			const shown = await trayIndicatorShow();
+			if (!shown) {
+				wantVisibleRef.current = false;
+				return;
+			}
+			// Swap content in place and keep (or start) the single pill alive; the
+			// constant AnimatePresence key means a swap morphs the content instead of
+			// restarting an enter/exit, so fast successive switches stay smooth.
+			setContent(next);
+			setActive(true);
+			if (dwellTimerRef.current) {
+				clearTimeout(dwellTimerRef.current);
+			}
+			dwellTimerRef.current = setTimeout(() => {
+				wantVisibleRef.current = false;
+				setActive(false);
+			}, DWELL_MS);
+		};
 
-	const handleChange = useCallback(
-		(settings: AppSettingsOutput) => {
+		const handleChange = (settings: AppSettingsOutput) => {
 			const mode = (settings.general?.recordingMode ?? "ptt") as RecordingMode;
 			const preset = resolveActivePostProcessingPreset(settings.llm.dictation);
 			const presetId = preset?.id ?? "";
@@ -162,11 +165,8 @@ export function TrayIndicatorPage() {
 			if (next) {
 				void reveal(next);
 			}
-		},
-		[reveal],
-	);
+		};
 
-	useEffect(() => {
 		let cancelled = false;
 		let unsub = () => {
 			/* replaced once the async subscription resolves */
@@ -197,7 +197,7 @@ export function TrayIndicatorPage() {
 				clearTimeout(dwellTimerRef.current);
 			}
 		};
-	}, [handleChange, seed, setSettings]);
+	}, [setSettings]);
 
 	const icon =
 		content?.kind === "preset"

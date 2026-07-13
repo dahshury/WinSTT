@@ -1,12 +1,5 @@
-import {
-	AiBeautifyIcon,
-	AudioWave02Icon,
-	BarChartIcon,
-	GridIcon,
-	LayoutBottomIcon,
-	PictureInPictureOnIcon,
-	RadialIcon,
-} from "@hugeicons/core-free-icons";
+import { LayoutBottomIcon, LayoutTopIcon } from "@hugeicons/core-free-icons";
+import { createElement } from "react";
 import type {
 	GeneralSettings,
 	GeneralT,
@@ -15,6 +8,7 @@ import type {
 import {
 	isVisualizerType,
 	type VisualizerType,
+	VisualizerTypePreview,
 } from "@/features/audio-visualizer";
 import { isLocale, type Locale } from "@/shared/i18n";
 import type { SwitcherOption } from "@/shared/ui/switcher";
@@ -46,6 +40,18 @@ function visualizerSizeFromIndex(index: number): VisualizerSizePreset {
 	return VISUALIZER_SIZE_PRESETS[index] ?? "xs";
 }
 
+/**
+ * Builds a leading-icon renderer that shows a live miniature of the given
+ * visualizer type — the REAL component, driven with synthetic speech while the
+ * option is hovered (hover only; a selected-but-unhovered option rests idle).
+ */
+function visualizerPreviewIcon(
+	type: VisualizerType,
+): NonNullable<SwitcherOption["iconRender"]> {
+	return ({ isHovered }) =>
+		createElement(VisualizerTypePreview, { active: isHovered, type });
+}
+
 export function buildVisualizerTypeSwitcherOptions(
 	t: GeneralT,
 ): SwitcherOption[] {
@@ -53,32 +59,27 @@ export function buildVisualizerTypeSwitcherOptions(
 		{
 			value: "bar",
 			label: t("visualizerBar"),
-			icon: BarChartIcon,
-			preview: "viz-bar",
+			iconRender: visualizerPreviewIcon("bar"),
 		},
 		{
 			value: "grid",
 			label: t("visualizerGrid"),
-			icon: GridIcon,
-			preview: "viz-grid",
+			iconRender: visualizerPreviewIcon("grid"),
 		},
 		{
 			value: "radial",
 			label: t("visualizerRadial"),
-			icon: RadialIcon,
-			preview: "viz-radial",
+			iconRender: visualizerPreviewIcon("radial"),
 		},
 		{
 			value: "wave",
 			label: t("visualizerWave"),
-			icon: AudioWave02Icon,
-			preview: "viz-wave",
+			iconRender: visualizerPreviewIcon("wave"),
 		},
 		{
 			value: "aura",
 			label: t("visualizerAura"),
-			icon: AiBeautifyIcon,
-			preview: "viz-aura",
+			iconRender: visualizerPreviewIcon("aura"),
 		},
 	];
 }
@@ -204,7 +205,7 @@ export function buildOverlayModeSwitcherOptions(t: GeneralT): SwitcherOption[] {
 		{
 			value: "dynamic-island",
 			label: t("overlayModeDynamicIsland"),
-			icon: PictureInPictureOnIcon,
+			icon: LayoutTopIcon,
 			preview: "overlay-island",
 		},
 	];

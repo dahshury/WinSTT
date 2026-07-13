@@ -1,6 +1,6 @@
 import type { ValueAnimationTransition } from "motion/react";
 import { useLayoutEffect } from "react";
-import { useVisualizerStore } from "../model/visualizer-store";
+import { useVisualizerState } from "../model/visualizer-store-context";
 import type { Uniforms } from "../ui/ReactShaderToy";
 import type { AgentState } from "./audio-visualizer";
 import { useRefAnimatedValue } from "./use-ref-animated-value";
@@ -45,7 +45,7 @@ export function useAuraAnimator(
 		"1f",
 	);
 
-	const audioLevel = useVisualizerStore((s) => s.audioLevel);
+	const audioLevel = useVisualizerState((s) => s.audioLevel);
 
 	// @crap-exclude rAF callback — covered via E2E (state-driven animation transitions)
 	useLayoutEffect(() => {

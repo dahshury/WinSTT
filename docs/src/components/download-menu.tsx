@@ -3,9 +3,9 @@ import {
   type KeyboardEvent,
   useEffect,
   useId,
-  useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import {
   type DetectedReleasePlatform,
@@ -62,6 +62,43 @@ function focusMenuItem(root: HTMLDivElement | null, index: number): void {
   );
   const item = items?.item(index);
   item?.focus();
+}
+
+// Platform detection reads `navigator`, which only exists on the client. Reading
+// it through useSyncExternalStore keeps the server snapshot ("unknown") and the
+// client snapshot in sync without a set-state-in-effect hydration dance.
+const subscribePlatform = (): (() => void) => () => {};
+
+function getPlatformSnapshot(): DetectedReleasePlatform {
+  if (typeof navigator === "undefined") return "unknown";
+  return detectNavigatorReleasePlatform(navigator);
+}
+
+function getPlatformServerSnapshot(): DetectedReleasePlatform {
+  return "unknown";
+}
+
+function handleMenuKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+
+  const items = Array.from(
+    event.currentTarget.querySelectorAll<HTMLAnchorElement>(
+      ".download-menu-item",
+    ),
+  );
+  if (items.length === 0) return;
+
+  const activeIndex = items.findIndex(
+    (item) => item === document.activeElement,
+  );
+  const direction = event.key === "ArrowDown" ? 1 : -1;
+  const nextIndex =
+    activeIndex === -1
+      ? 0
+      : (activeIndex + direction + items.length) % items.length;
+
+  event.preventDefault();
+  items[nextIndex]?.focus();
 }
 
 function WindowsLogo() {
@@ -143,12 +180,11 @@ export function LatestDownloadMenu({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const [platform, setPlatform] = useState<DetectedReleasePlatform>("unknown");
-
-  useEffect(() => {
-    if (typeof navigator === "undefined") return;
-    setPlatform(detectNavigatorReleasePlatform(navigator));
-  }, []);
+  const platform = useSyncExternalStore(
+    subscribePlatform,
+    getPlatformSnapshot,
+    getPlatformServerSnapshot,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -176,7 +212,7 @@ export function LatestDownloadMenu({
     };
   }, [open]);
 
-  const groups = useMemo(() => menuGroups(platform), [platform]);
+  const groups = menuGroups(platform);
   const showGroupLabels = !isReleasePlatform(platform);
   const firstItemIndex = 0;
 
@@ -194,29 +230,6 @@ export function LatestDownloadMenu({
       event.preventDefault();
       openAndFocusFirstItem();
     }
-  }
-
-  function handleMenuKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-
-    const items = Array.from(
-      event.currentTarget.querySelectorAll<HTMLAnchorElement>(
-        ".download-menu-item",
-      ),
-    );
-    if (items.length === 0) return;
-
-    const activeIndex = items.findIndex(
-      (item) => item === document.activeElement,
-    );
-    const direction = event.key === "ArrowDown" ? 1 : -1;
-    const nextIndex =
-      activeIndex === -1
-        ? 0
-        : (activeIndex + direction + items.length) % items.length;
-
-    event.preventDefault();
-    items[nextIndex]?.focus();
   }
 
   return (

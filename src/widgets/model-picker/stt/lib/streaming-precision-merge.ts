@@ -20,9 +20,9 @@ interface MergeBucket {
 }
 
 const STREAMING_PRECISION_ROW_RE =
-	/^(streaming-(?:nemo-(?:ctc|rnnt)-en-\d+ms|parakeet-unified-en-\d+ms|nemotron-en-\d+ms))(?:-int8)?$/;
+	/^(streaming-(?:nemo-(?:ctc|rnnt)-en-\d+ms|parakeet-unified-en-\d+ms|nemotron-en-\d+ms|nemotron-3\.5-multi-\d+ms))(?:-int8)?$/;
 const STREAMING_LATENCY_GROUP_RE =
-	/^(streaming-(?:nemo-(?:ctc|rnnt)-en|parakeet-unified-en|nemotron-en))(?:-\d+ms)?(?:-int8)?$/;
+	/^(streaming-(?:nemo-(?:ctc|rnnt)-en|parakeet-unified-en|nemotron-en|nemotron-3\.5-multi))(?:-\d+ms)?(?:-int8)?$/;
 const STREAMING_LATENCY_SOURCE_RE = /(?:^|[-_])(\d+)ms(?:[-_]|$)/i;
 
 export function nativeStreamingLatencyMs(
@@ -125,14 +125,87 @@ function latencyVariantForModel(
 	return { latencyMs, model: withoutLatencyVariants(model) };
 }
 
+/** Union two quant lists preserving EVERY published precision (fp16 included) and
+ *  first-seen order. Unlike {@link uniqueQuantizations} — which is scoped to the
+ *  fp32/int8 precision-merge — this keeps fp16 so a same-latency collapse of a
+ *  fp32+fp16 repo with a separate int8 repo exposes all three in the quant shelf. */
+function unionAllQuantizations(
+	a: readonly string[],
+	b: readonly string[],
+): OnnxQuantization[] {
+	const out: OnnxQuantization[] = [];
+	const seen = new Set<string>();
+	for (const quant of [...a, ...b]) {
+		if (!seen.has(quant)) {
+			seen.add(quant);
+			out.push(quant as OnnxQuantization);
+		}
+	}
+	return out;
+}
+
+/** Every quant this model publishes routed to its backing repo id — its explicit
+ *  `quantizationModelIds` first, then its own id for any quant it serves directly. */
+function routesForModel(model: PrecisionRoutedSttModel): QuantizationModelIds {
+	const routes: QuantizationModelIds = {
+		...(model.quantizationModelIds ?? {}),
+	};
+	for (const quant of model.availableQuantizations) {
+		const key = quant as OnnxQuantization;
+		if (routes[key] === undefined) {
+			routes[key] = model.id;
+		}
+	}
+	return routes;
+}
+
+/** Collapse two variants that share a latency (e.g. parakeet-unified's fp32+fp16
+ *  repo and its separate int8 repo, which the precision-merge can't fuse because
+ *  the fp32 row already ships two precisions) into ONE variant whose quant shelf
+ *  carries every precision — so the LatencyShelf shows a single chip per latency,
+ *  not a duplicate. The fp32-publishing row wins the display/primary identity. */
+function mergeSameLatencyVariants(
+	a: StreamingLatencyVariant,
+	b: StreamingLatencyVariant,
+): StreamingLatencyVariant {
+	const [primary, other] = a.model.availableQuantizations.includes("")
+		? [a.model, b.model]
+		: [b.model, a.model];
+	return {
+		latencyMs: a.latencyMs,
+		model: {
+			...primary,
+			availableQuantizations: unionAllQuantizations(
+				primary.availableQuantizations,
+				other.availableQuantizations,
+			),
+			// `primary` wins any shared quant so fp32/fp16 keep resolving to its repo.
+			quantizationModelIds: {
+				...routesForModel(other),
+				...routesForModel(primary),
+			},
+			sizeBytesByQuantization: {
+				...other.sizeBytesByQuantization,
+				...primary.sizeBytesByQuantization,
+			},
+		},
+	};
+}
+
 function uniqueLatencyVariants(
 	variants: readonly StreamingLatencyVariant[],
 ): StreamingLatencyVariant[] {
-	const byKey = new Map<string, StreamingLatencyVariant>();
+	// Key by LATENCY, not id: two rows at the same latency are the same product
+	// choice at different precisions, so they collapse into one chip.
+	const byLatency = new Map<number, StreamingLatencyVariant>();
 	for (const variant of variants) {
-		byKey.set(`${variant.latencyMs}:${variant.model.id}`, variant);
+		const existing = byLatency.get(variant.latencyMs);
+		byLatency.set(
+			variant.latencyMs,
+			existing ? mergeSameLatencyVariants(existing, variant) : variant,
+		);
 	}
-	return [...byKey.values()].toSorted((a, b) => a.latencyMs - b.latencyMs);
+	return [...byLatency.values()].toSorted((a, b) => a.latencyMs - b.latencyMs);
 }
 
 function defaultLatencyVariant(

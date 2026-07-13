@@ -39,19 +39,21 @@ export function CostPie({
 	}
 
 	const single = slices.length === 1;
-	let offset = 0;
-	const arcs = slices.map((slice) => {
+	// Each wedge's start offset is the cumulative circumference of the slices
+	// before it. Computed as a pure prefix-sum per slice (no closure `let`
+	// reassigned across the render) — the slice count is a handful, so the
+	// nested sum is negligible.
+	const arcs = slices.map((slice, index) => {
 		const fraction = slice.cost / total;
 		const gap = single ? 0 : GAP;
-		const dash = Math.max(0, fraction * CIRCUMFERENCE - gap);
-		const arc = {
+		const startFraction =
+			slices.slice(0, index).reduce((sum, s) => sum + s.cost, 0) / total;
+		return {
 			slice,
-			dash,
+			dash: Math.max(0, fraction * CIRCUMFERENCE - gap),
 			// Circles start at 3 o'clock; rotate -90° (via the group) to start at 12.
-			dashOffset: -offset,
+			dashOffset: -startFraction * CIRCUMFERENCE,
 		};
-		offset += fraction * CIRCUMFERENCE;
-		return arc;
 	});
 
 	return (
@@ -100,7 +102,10 @@ export function CostPie({
 				</text>
 				<text
 					className="font-mono uppercase tracking-wide"
-					style={{ fill: "var(--color-foreground-muted)", fontSize: "8px" }}
+					style={{
+						fill: "var(--color-foreground-muted)",
+						fontSize: "var(--text-body-sm)",
+					}}
 					textAnchor="middle"
 					x={CENTER}
 					y={CENTER + 12}

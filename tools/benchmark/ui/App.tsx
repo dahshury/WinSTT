@@ -75,6 +75,7 @@ export function App() {
 	}, [config.openrouterKey]);
 
 	useEffect(() => {
+		// react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- on-mount async data load: scanOllama fetches the Ollama catalog and fetchRuns reads persisted runs over the network; the results can't be derived during render and every setter runs inside an async continuation, not synchronously in the effect body.
 		void scanOllama();
 		void fetchRuns().then(setHistory);
 	}, [scanOllama]);
@@ -88,6 +89,7 @@ export function App() {
 		abortRef.current = controller;
 		const startedAt = new Date().toISOString();
 		const collected: TrialRecord[] = [];
+		// react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/catch/finally in this async handler: the abort-controller lifecycle (assign in try, clear in finally) plus error logging is idiomatic and correct; the Todo only skips memoizing this one handler, it is not a runtime defect, and there is no dynamic import to hoist.
 		try {
 			const { durationMs } = await runBenchmark(config, {
 				signal: controller.signal,

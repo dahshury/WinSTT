@@ -296,13 +296,7 @@ export function CheckboxGroup({
 									}
 									return (
 										<motion.div
-											animate={{
-												top: startRect.top,
-												left: Math.min(startRect.left, endRect.left),
-												width: Math.max(startRect.width, endRect.width),
-												height: endRect.top + endRect.height - startRect.top,
-												opacity: isHoveringOther ? 0.8 : 1,
-											}}
+											animate={{ opacity: isHoveringOther ? 0.8 : 1 }}
 											className={cn(
 												"pointer-events-none absolute rounded-lg ring-1 ring-divider-strong ring-inset",
 												selectedBgClass,
@@ -311,8 +305,15 @@ export function CheckboxGroup({
 											exit={{ opacity: 0, transition: springs.moderate.exit }}
 											initial={false}
 											key={`group-${group.id}`}
+											layout={true}
+											style={{
+												top: startRect.top,
+												left: Math.min(startRect.left, endRect.left),
+												width: Math.max(startRect.width, endRect.width),
+												height: endRect.top + endRect.height - startRect.top,
+											}}
 											transition={{
-												...springs.moderate,
+												layout: springs.moderate,
 												opacity: { duration: springs.fast.duration },
 											}}
 										/>
@@ -323,28 +324,23 @@ export function CheckboxGroup({
 							<AnimatePresence>
 								{activeRect ? (
 									<motion.div
-										animate={{
-											top: activeRect.top,
-											left: activeRect.left,
-											width: activeRect.width,
-											height: activeRect.height,
-											opacity: 1,
-										}}
+										animate={{ opacity: 1 }}
 										className={cn(
 											"pointer-events-none absolute rounded-lg ring-1 ring-divider ring-inset",
 											hoverBgClass,
 										)}
 										exit={{ opacity: 0, transition: springs.fast.exit }}
-										initial={{
+										initial={{ opacity: 0 }}
+										key={session}
+										layout={true}
+										style={{
 											top: activeRect.top,
 											left: activeRect.left,
 											width: activeRect.width,
 											height: activeRect.height,
-											opacity: 0,
 										}}
-										key={session}
 										transition={{
-											...springs.fast,
+											layout: springs.fast,
 											opacity: { duration: springs.fast.duration },
 										}}
 									/>
@@ -354,17 +350,18 @@ export function CheckboxGroup({
 							<AnimatePresence>
 								{focusRect ? (
 									<motion.div
-										animate={{
+										className="pointer-events-none absolute z-overlay rounded-[10px] border border-accent"
+										exit={{ opacity: 0, transition: springs.fast.exit }}
+										initial={false}
+										layout={true}
+										style={{
 											left: focusRect.left - 2,
 											top: focusRect.top - 2,
 											width: focusRect.width + 4,
 											height: focusRect.height + 4,
 										}}
-										className="pointer-events-none absolute z-overlay rounded-[10px] border border-accent"
-										exit={{ opacity: 0, transition: springs.fast.exit }}
-										initial={false}
 										transition={{
-											...springs.fast,
+											layout: springs.fast,
 											opacity: { duration: springs.fast.duration },
 										}}
 									/>

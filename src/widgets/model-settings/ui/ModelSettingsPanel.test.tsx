@@ -9,7 +9,11 @@ import {
 } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useConnectionStore } from "@/entities/connection";
-import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
+import {
+	useCatalogStore,
+	useModelStateStore,
+	useModelSwapStore,
+} from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 
@@ -47,6 +51,9 @@ function rawModel(
 
 beforeEach(() => {
 	useConnectionStore.setState({ gpuInfo: [] });
+	// A swap in flight (leaked cross-file) makes the STT selectors render their
+	// swap target + a "Switching" indicator instead of the settings model.
+	useModelSwapStore.setState({ activeMain: null, activeRealtime: null });
 	useCatalogStore
 		.getState()
 		.setModels([rawModel("tiny", false), rawModel("streaming-en", true)]);
@@ -66,6 +73,9 @@ afterEach(() => {
 	}
 	useConnectionStore.setState({ gpuInfo: [] });
 	useCatalogStore.setState({ models: [], isLoaded: false });
+	// Cross-file pollution of the model-state store can otherwise leak a latched
+	// `isLoaded` + stale `statesById` into a later test's stale-model fallback.
+	useModelStateStore.setState({ isLoaded: false, statesById: {} });
 	useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
 });
 
@@ -221,6 +231,59 @@ describe("ModelSettingsPanel", () => {
 		expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
 	});
 
+	test("unlocks the realtime picker in listen mode when the main model can native-stream", () => {
+		// A native-streaming main model normally OWNS (locks) the realtime slot, so
+		// the realtime picker is frozen. In listen mode the main picker is frozen
+		// instead and the realtime slot is the streaming-model control, so it must
+		// stay editable — otherwise the streaming model is uneditable everywhere.
+		useCatalogStore
+			.getState()
+			.setModels([
+				rawModel("tiny", false),
+				rawModel("streaming-en", true),
+				rawModel("streaming-en2", true),
+			]);
+		// Mark both streaming models cached so the stale-model fallback can't switch
+		// the (native-streaming) main model away before the assertion.
+		const cached = {
+			cache: { state: "cached", progress: 1 },
+			estimated_bytes: 100,
+			comfortable_on_cpu: true,
+			comfortable_on_gpu: true,
+		} as never;
+		useModelStateStore.setState({
+			isLoaded: true,
+			statesById: { "streaming-en": cached, "streaming-en2": cached },
+		});
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				general: {
+					...DEFAULT_SETTINGS.general,
+					recordingMode: "listen",
+				},
+				model: {
+					...DEFAULT_SETTINGS.model,
+					model: "streaming-en",
+					realtimeModel: "streaming-en2",
+				},
+			} as typeof DEFAULT_SETTINGS,
+		});
+		rendered = render(
+			<IntlProvider>
+				<ModelSettingsPanel />
+			</IntlProvider>,
+		);
+
+		// The separate realtime streaming slot stays live (editable) in listen mode
+		// even though the main model is native-streaming — the lock is off, so the
+		// user can diverge the listen streaming model from the main model.
+		const realtimeButton = screen.getByRole("button", {
+			name: /streaming-en2/i,
+		}) as HTMLButtonElement;
+		expect(realtimeButton.disabled).toBe(false);
+	});
+
 	test("hides update interval for a native-streaming realtime model in dictation modes", () => {
 		useSettingsStore.setState({
 			settings: {
@@ -310,7 +373,7 @@ describe("ModelSettingsPanel", () => {
 		);
 
 		expect(screen.queryByText("Auto-detect")).toBeNull();
-		const languageInputs = screen.getAllByLabelText("Language");
+		const languageInputs = screen.getAllByLabelText("Spoken Language");
 		expect(
 			languageInputs.some((input) => !(input as HTMLInputElement).disabled),
 		).toBe(true);
@@ -347,7 +410,7 @@ describe("ModelSettingsPanel", () => {
 		);
 
 		expect(screen.queryByText("Auto-detect")).toBeNull();
-		expect(screen.queryByLabelText("Language")).toBeNull();
+		expect(screen.queryByLabelText("Spoken Language")).toBeNull();
 	});
 
 	test("shows auto-detect for multilingual models that support language detection", () => {
@@ -376,7 +439,7 @@ describe("ModelSettingsPanel", () => {
 		expect(screen.getByText("Auto-detect")).toBeTruthy();
 	});
 
-	test("hides the language picker while auto-detect is enabled", () => {
+	test("disables the language picker while auto-detect is enabled", () => {
 		useCatalogStore.getState().setModels([
 			rawModel("whisper-auto", false, {
 				languages: ["de", "en"],
@@ -403,7 +466,14 @@ describe("ModelSettingsPanel", () => {
 		);
 
 		expect(screen.getByText("Auto-detect")).toBeTruthy();
-		expect(screen.queryByRole("combobox", { name: "Language" })).toBeNull();
+		// The picker stays mounted while auto-detect owns the decision — it just
+		// disables (no layout jump). NOTE: query it byRole, never byLabelText —
+		// happy-dom hangs unboundedly resolving label-text associations for a
+		// Base-UI Combobox wrapped in a Base-UI Field.Label (SettingField).
+		const combobox = screen.getByRole("combobox", {
+			name: "Spoken Language",
+		}) as HTMLInputElement;
+		expect(combobox.disabled).toBe(true);
 	});
 
 	test("lets Whisper users select multiple candidate languages without enabling auto-detect", async () => {
@@ -434,11 +504,14 @@ describe("ModelSettingsPanel", () => {
 
 		expect(screen.getByText("Auto-detect")).toBeTruthy();
 		expect(
-			(screen.getByRole("combobox", { name: "Language" }) as HTMLInputElement)
-				.disabled,
+			(
+				screen.getByRole("combobox", {
+					name: "Spoken Language",
+				}) as HTMLInputElement
+			).disabled,
 		).toBe(false);
 
-		fireEvent.click(screen.getByRole("button", { name: "Language" }));
+		fireEvent.click(screen.getByRole("button", { name: "Spoken Language" }));
 		await act(async () => {
 			await new Promise((resolve) => requestAnimationFrame(resolve));
 		});

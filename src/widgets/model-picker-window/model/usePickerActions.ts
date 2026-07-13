@@ -81,6 +81,15 @@ export function usePickerActions(params: PickerActionsParams): PickerActions {
 	const update = useSettingsStore((s) => s.updateModelSettings);
 	const quality = useSettingsStore((s) => s.settings.quality);
 	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
+	const isListenMode = useSettingsStore(
+		(s) => (s.settings.general?.recordingMode ?? "ptt") === "listen",
+	);
+	// A native-streaming main model normally OWNS the realtime slot, so the
+	// detached realtime picker only re-picks the main model. In listen mode the
+	// realtime slot is the editable listen-streaming-model control, so the lock
+	// lifts and any streaming model can be chosen (mirrors ModelSettingsPanel's
+	// `realtimeSlotLockedToMain`).
+	const realtimeSlotLockedToMain = currentModelCanNativeStream && !isListenMode;
 
 	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } =
 		useQuantActions();
@@ -89,7 +98,10 @@ export function usePickerActions(params: PickerActionsParams): PickerActions {
 		if (!currentModelStreamingKnown) {
 			return;
 		}
-		if (currentModelCanNativeStream) {
+		// Only auto-reuse (pin realtime to main) while the slot is locked — never
+		// in listen mode, where the realtime slot is independently editable and
+		// must not be snapped back to the main model.
+		if (realtimeSlotLockedToMain) {
 			if (modelSettings?.realtimeModel !== currentModel) {
 				update({ realtimeModel: currentModel ?? "" });
 			}
@@ -98,12 +110,18 @@ export function usePickerActions(params: PickerActionsParams): PickerActions {
 			}
 			return;
 		}
-		if (quality?.useMainModelForRealtime ?? false) {
+		// Clear a stale reuse flag only when the main model genuinely can't back
+		// the realtime slot; in listen mode leave the user's reuse choice intact.
+		if (
+			!currentModelCanNativeStream &&
+			(quality?.useMainModelForRealtime ?? false)
+		) {
 			updateQuality({ useMainModelForRealtime: false });
 		}
 	}, [
 		currentModel,
 		currentModelCanNativeStream,
+		realtimeSlotLockedToMain,
 		currentModelStreamingKnown,
 		modelSettings?.realtimeModel,
 		quality?.useMainModelForRealtime,
@@ -121,6 +139,7 @@ export function usePickerActions(params: PickerActionsParams): PickerActions {
 			close();
 		}
 		wasSwappingRef.current = anySwapping;
+		// react-doctor-disable-next-line react-doctor/exhaustive-deps -- `anySwapping` is the combined `mainSwapping || realtimeSwapping` edge this rising-edge detector fires on; react-doctor unwraps it to the two sources, but depending on the derived boolean is exactly right (a main→realtime handoff keeps `anySwapping` true and must not re-trigger a second close).
 	}, [anySwapping]);
 
 	const canDeleteQuant = (modelId: string, quantization: OnnxQuantization) =>
@@ -214,11 +233,12 @@ export function usePickerActions(params: PickerActionsParams): PickerActions {
 		quantization?: OnnxQuantization,
 	) => {
 		// Mirrors `handleRealtimePick` in ModelSettingsPanel: ignore picks other
-		// than the main model while the main model owns the realtime slot, route the
+		// than the main model while the realtime slot is locked to it, route the
 		// change through the swap controller, and keep `useMainModelForRealtime` in
-		// sync. A real swap auto-closes via the swap effect; a no-op re-pick closes
-		// here (a download-confirm keeps the window open until the user confirms).
-		if (currentModelCanNativeStream && modelId !== currentModel) {
+		// sync. In listen mode the lock is off, so a separate streaming model can be
+		// chosen. A real swap auto-closes via the swap effect; a no-op re-pick
+		// closes here (a download-confirm keeps the window open until confirmed).
+		if (realtimeSlotLockedToMain && modelId !== currentModel) {
 			return;
 		}
 		controller.handleRealtimeModelChange(modelId, quantization);

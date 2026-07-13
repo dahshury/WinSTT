@@ -85,6 +85,7 @@ export function useRuntimeModelBreakdown(isGpu: boolean): BreakdownSection[] {
 		if (dictationEnabled && dictationProvider === "ollama" && dictationModel) {
 			void useLlmCatalogStore.getState().scanModels();
 		}
+		// react-doctor-disable-next-line react-doctor/exhaustive-deps -- these three deps are the `?? default` derivations of `dictation.enabled/provider/model`; react-doctor unwraps them to the raw store fields, but the aliases recompute every render and track those fields 1:1, so there is no staleness.
 	}, [dictationEnabled, dictationProvider, dictationModel]);
 
 	// Augment each catalog entry with its maker logo so the breakdown rows

@@ -471,7 +471,11 @@ pub(crate) async fn process_transcription_output(
     // encoder-dict block gated off ⇒ no snapshot ⇒ join is a no-op, text
     // unchanged). `capture_*` self-gates on `context_awareness` + pinned-window
     // validity, so a `Some` here means a real snapshot is in hand.
-    let raw_encoder_dict_will_run = !winstt_dictation_llm
+    // The encoder path runs when the LLM is not the dictionary authority: LLM cleanup off, OR the
+    // Vocabulary tab's per-section toggle offloads dictionary corrections from the LLM back to the
+    // on-device model (`llm_handles_dictionary` = false ⇒ terms are kept OUT of the prompt).
+    let raw_encoder_dict_will_run = (!winstt_dictation_llm
+        || !winstt_settings.general.llm_handles_dictionary)
         && winstt_settings.general.encoder_dictionary_enabled
         && winstt_settings.general.recording_mode != RecordingMode::Listen;
     let captured_context = if winstt_dictation_llm || raw_encoder_dict_will_run {
@@ -500,12 +504,14 @@ pub(crate) async fn process_transcription_output(
         .as_ref()
         .map(format_captured_context)
         .unwrap_or_default();
+    let mut llm_cleanup_succeeded = false;
     if winstt_dictation_llm
         && let Some((processed_text, meta, dict_fixes, side_effects)) =
             process_winstt_dictation_llm(app, &winstt_settings, &final_text, llm_context_fragment)
                 .await
     {
         let llm_failed = meta.error.is_some();
+        llm_cleanup_succeeded = !llm_failed;
         if llm_failed {
             final_text = processed_text;
         } else {
@@ -567,10 +573,7 @@ pub(crate) async fn process_transcription_output(
     // Context-aware encoder correction for VOCABULARY words ("veet"->"Vite", "video" stays "video").
     // This needs the ~310 MB masked-LM, so it stays gated on `encoder_dictionary_enabled`; the model
     // downloads on demand and the whole block is fail-soft (returns text unchanged until ready).
-    if !winstt_dictation_llm
-        && winstt_settings.general.encoder_dictionary_enabled
-        && winstt_settings.general.recording_mode != RecordingMode::Listen
-    {
+    if raw_encoder_dict_will_run {
         let mut terms: Vec<String> = winstt_settings
             .dictionary
             .iter()
@@ -632,7 +635,16 @@ pub(crate) async fn process_transcription_output(
         // WinSTT snippet expansion: deterministic fuzzy trigger→expansion on the finalized
         // text — the LAST step before paste (mirrors applyPostProcessing's replaceWithSnippets,
         // after dictionary correction). Uses the warm in-memory cache; no-op when no snippets.
-        if let Some(snippets) = app.try_state::<Arc<crate::winstt::snippets::SnippetsManager>>() {
+        // Skipped when the LLM owns snippets AND actually ran: with `llm_handles_snippets` on,
+        // the snippets were in the prompt and the model already expanded them in context —
+        // re-running the fuzzy matcher here would double-expand (or mangle text the model chose
+        // to leave alone). On LLM failure (or the toggle offloading snippets to the deterministic
+        // path) this expander is the guarantee, exactly as before.
+        let llm_owns_snippets =
+            llm_cleanup_succeeded && winstt_settings.general.llm_handles_snippets;
+        if !llm_owns_snippets
+            && let Some(snippets) = app.try_state::<Arc<crate::winstt::snippets::SnippetsManager>>()
+        {
             let expanded = snippets.expand_cached(&final_text);
             if expanded != final_text {
                 final_text = expanded;

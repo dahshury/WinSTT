@@ -68,15 +68,24 @@ export function AnimatedValueText({
 		const cls = className === undefined ? {} : { className };
 		return <AnimatedText {...cls} text={text} />;
 	}
+	// Precomputed character offset of each segment in the source string — a stable,
+	// unique positional identity that survives re-renders without keying on the bare
+	// array index (segments can repeat, so content alone isn't unique). Built
+	// immutably up front so the map body never mutates a captured variable.
+	const charOffsets = parts.reduce<number[]>((acc, _part, i) => {
+		acc.push(i === 0 ? 0 : (acc[i - 1] ?? 0) + (parts[i - 1]?.length ?? 0));
+		return acc;
+	}, []);
 	return (
 		<span className={cn("inline-flex flex-wrap items-baseline", className)}>
-			{parts.map((part, index) =>
-				NUMERIC_SEGMENT_ONLY_RE.test(part) ? (
-					<AnimatedNumber key={`${index}-${part}`} value={part} />
+			{parts.map((part, index) => {
+				const key = `${charOffsets[index] ?? 0}-${part}`;
+				return NUMERIC_SEGMENT_ONLY_RE.test(part) ? (
+					<AnimatedNumber key={key} value={part} />
 				) : (
-					<span key={`${index}-${part}`}>{part}</span>
-				),
-			)}
+					<span key={key}>{part}</span>
+				);
+			})}
 		</span>
 	);
 }

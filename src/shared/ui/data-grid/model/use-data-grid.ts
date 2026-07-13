@@ -352,17 +352,18 @@ function useDataGrid<TData>({
 		return visualRowIndexCacheRef.current.map.get(rowId);
 	};
 
-	const columnIds = columns
-		.flatMap((c) => {
-			if (c.id) {
-				return [c.id];
-			}
-			if ("accessorKey" in c) {
-				return [c.accessorKey as string];
-			}
-			return [];
-		})
-		.filter((id): id is string => Boolean(id));
+	const columnIds: string[] = [];
+	for (const c of columns) {
+		let id: string | undefined;
+		if (c.id) {
+			id = c.id;
+		} else if ("accessorKey" in c) {
+			id = c.accessorKey as string;
+		}
+		if (id) {
+			columnIds.push(id);
+		}
+	}
 
 	const navigableColumnIds = columnIds.filter(
 		(c) => !NON_NAVIGABLE_COLUMN_IDS.has(c),
@@ -2253,6 +2254,7 @@ function useDataGrid<TData>({
 	const table = useReactTable(tableOptions);
 
 	if (!tableRef.current) {
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render -- canonical null-guarded lazy-init: captures the table instance once on first render so same-render reads (getVisualRowIndex and others) resolve; deferring to an effect would leave the ref null during first render
 		tableRef.current = table;
 	}
 
@@ -2318,6 +2320,7 @@ function useDataGrid<TData>({
 	});
 
 	if (!rowVirtualizerRef.current) {
+		// react-doctor-disable-next-line react-doctor/no-ref-current-in-render -- canonical null-guarded lazy-init: captures the virtualizer instance once on first render; deferring to an effect would leave the ref null during first render
 		rowVirtualizerRef.current = rowVirtualizer;
 	}
 
@@ -3263,6 +3266,7 @@ function useDataGrid<TData>({
 		};
 	}, [store]);
 
+	// react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- cleanup IS returned: the returned function calls onAutoScrollStop() (cancels rafId, disconnects the ResizeObserver, removes the mousemove/mouseup listeners) and onUnsubscribe(); the rule cannot trace the teardown through those helper calls
 	React.useEffect(() => {
 		let rafId: number | null = null;
 		let mouseX = 0;

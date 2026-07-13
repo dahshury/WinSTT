@@ -279,26 +279,28 @@ interface ApiKeyDialogProps extends DialogProps {
 	onSave: (key: string) => void;
 }
 
-export function ApiKeyDialog({
+function ApiKeyDialogBody({
 	t,
 	tc,
-	isOpen,
 	onClose,
 	onSave,
-	initialKey: _initialKey,
-}: ApiKeyDialogProps) {
+}: {
+	t: TranslateFn;
+	tc: TranslateFn;
+	onClose: () => void;
+	onSave: (key: string) => void;
+}) {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [value, setValue] = useState("");
 	const hasValue = value.trim().length > 0;
 
+	// Focus the field on open. The body is mounted only while the dialog is open
+	// (see ApiKeyDialog), so a fresh mount both blanks `value` and focuses — no
+	// prop-driven reset effect needed. This is only an external-DOM side effect.
 	useEffect(() => {
-		if (!isOpen) {
-			return;
-		}
-		setValue("");
 		const id = window.setTimeout(() => inputRef.current?.focus(), 0);
 		return () => window.clearTimeout(id);
-	}, [isOpen]);
+	}, []);
 
 	const submit = () => {
 		const trimmed = value.trim();
@@ -309,40 +311,56 @@ export function ApiKeyDialog({
 	};
 
 	return (
+		<div className="flex w-[30rem] max-w-[90vw] flex-col gap-4 p-6">
+			<DialogTitle>{t("apiKeyRequired")}</DialogTitle>
+			<DialogDescription>{t("apiKeyRequiredDescription")}</DialogDescription>
+			<PasswordField
+				hideLabel={tc("hidePassword")}
+				onChange={(e) => setValue(e.target.value)}
+				onKeyDown={(e) => {
+					if (e.key === "Enter") {
+						submit();
+					}
+				}}
+				placeholder={t("openrouterApiKeyPlaceholder")}
+				ref={inputRef}
+				revealLabel={tc("showPassword")}
+				value={value}
+			/>
+			<DialogFooter>
+				<DialogActionButton onClick={openSignup} variant="neutral">
+					{t("getApiKey")}
+				</DialogActionButton>
+				<DialogActionButton onClick={onClose} variant="neutral">
+					{tc("cancel")}
+				</DialogActionButton>
+				<DialogActionButton
+					disabled={!hasValue}
+					onClick={submit}
+					variant="accent"
+				>
+					{t("saveAndEnable")}
+				</DialogActionButton>
+			</DialogFooter>
+		</div>
+	);
+}
+
+export function ApiKeyDialog({
+	t,
+	tc,
+	isOpen,
+	onClose,
+	onSave,
+	initialKey: _initialKey,
+}: ApiKeyDialogProps) {
+	// Mount the body only while open so each open re-seeds a blank field (and
+	// resets PasswordField's reveal state) via a fresh mount — no reset effect.
+	return (
 		<Modal isOpen={isOpen} onClose={onClose}>
-			<div className="flex w-[30rem] max-w-[90vw] flex-col gap-4 p-6">
-				<DialogTitle>{t("apiKeyRequired")}</DialogTitle>
-				<DialogDescription>{t("apiKeyRequiredDescription")}</DialogDescription>
-				<PasswordField
-					hideLabel={tc("hidePassword")}
-					key={isOpen ? "open" : "closed"}
-					onChange={(e) => setValue(e.target.value)}
-					onKeyDown={(e) => {
-						if (e.key === "Enter") {
-							submit();
-						}
-					}}
-					placeholder={t("openrouterApiKeyPlaceholder")}
-					ref={inputRef}
-					revealLabel={tc("showPassword")}
-					value={value}
-				/>
-				<DialogFooter>
-					<DialogActionButton onClick={openSignup} variant="neutral">
-						{t("getApiKey")}
-					</DialogActionButton>
-					<DialogActionButton onClick={onClose} variant="neutral">
-						{tc("cancel")}
-					</DialogActionButton>
-					<DialogActionButton
-						disabled={!hasValue}
-						onClick={submit}
-						variant="accent"
-					>
-						{t("saveAndEnable")}
-					</DialogActionButton>
-				</DialogFooter>
-			</div>
+			{isOpen ? (
+				<ApiKeyDialogBody onClose={onClose} onSave={onSave} t={t} tc={tc} />
+			) : null}
 		</Modal>
 	);
 }

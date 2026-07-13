@@ -152,6 +152,10 @@ async function handleTranscribeFile(): Promise<void> {
 	closeTrayMenu();
 }
 
+const handleOpenDevicePicker = (event: MouseEvent<HTMLButtonElement>) => {
+	devicePickerWindowOpen(event.currentTarget.getBoundingClientRect());
+};
+
 function useTrayMenuRender() {
 	const [state, dispatch] = useReducer(
 		trayMenuReducer,
@@ -277,10 +281,6 @@ function useTrayMenuRender() {
 		await settingsSave({
 			general: { ...settings.general, recordingMode: mode },
 		});
-	};
-
-	const handleOpenDevicePicker = (event: MouseEvent<HTMLButtonElement>) => {
-		devicePickerWindowOpen(event.currentTarget.getBoundingClientRect());
 	};
 
 	const handleCheckForUpdates = async () => {

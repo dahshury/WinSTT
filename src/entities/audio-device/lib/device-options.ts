@@ -9,6 +9,7 @@ import {
 	UsbConnected01Icon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
+import type { SelectOption } from "@/shared/ui/select";
 import type { AudioDevice } from "../model/audio-device";
 
 export interface InputDeviceOption {
@@ -169,7 +170,7 @@ function sortOptionsByPriority(
 			rank.set(key, i);
 		}
 	});
-	return [...opts].sort(
+	return opts.toSorted(
 		(a, b) =>
 			(rank.get(deviceNameKey(a.label)) ?? Number.POSITIVE_INFINITY) -
 			(rank.get(deviceNameKey(b.label)) ?? Number.POSITIVE_INFINITY),
@@ -235,6 +236,40 @@ export function priorityFromReorderedOptions(
 				o !== undefined && o.id !== "default",
 		)
 		.map((o) => o.label);
+}
+
+/**
+ * Selection semantics shared by the settings Select and the detached tray
+ * picker. Clicking is still an explicit "use this one", but it must not fight
+ * the preference order: while a priority list exists, the effective mic is
+ * always its top-most connected entry, so a click promotes the chosen device
+ * to the top (and "System default" opts out by clearing the list).
+ */
+export function applyDeviceSelection({
+	id,
+	onChange,
+	onPriorityChange,
+	options,
+	priority,
+}: {
+	id: string;
+	onChange: (inputDeviceIndex: number | null) => void;
+	onPriorityChange?: ((priority: string[]) => void) | undefined;
+	options: readonly SelectOption[];
+	priority: readonly string[];
+}): void {
+	if (id === "default") {
+		onChange(null);
+		if (onPriorityChange && priority.length > 0) {
+			onPriorityChange([]);
+		}
+		return;
+	}
+	onChange(Number.parseInt(id, 10));
+	const name = options.find((o) => o.id === id)?.label;
+	if (onPriorityChange && name && priority.length > 0) {
+		onPriorityChange(promoteDeviceNameToTop(priority, name));
+	}
 }
 
 export interface InputDeviceResult {

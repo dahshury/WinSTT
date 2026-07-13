@@ -985,7 +985,7 @@ async winsttGetParameter(parameter: string) : Promise<JsonValue> {
  *
  * Every persisted setting is owned SOLELY by `WinsttSettings` (written via
  * `winstt_set_settings`, read straight from there by the STT pipeline): `language` /
- * `translate_to_english` / `custom_words` / `initial_prompt` from the STT config, and
+ * `translate_target_language` / `custom_words` / `initial_prompt` from the STT config, and
  * `model_unload_timeout_seconds` whose on-save handler (`apply_model_runtime_settings`)
  * mirrors the value into the `AppSettings` shadow AND warms/reloads the model. So this
  * command has NO settings-write branch — there is no second AppSettings-shadow write
@@ -2674,7 +2674,22 @@ encoderDictionaryEnabled?: boolean;
  * dictation but is slower. Default 220 is the fastest step and works for most speech. HOT-SWAP.
  * Zod `.catch(220)`.
  */
-dictionaryContextChars?: number }
+dictionaryContextChars?: number;
+/**
+ * When LLM cleanup is on, the dictionary (preferred terms + replacement pairs) is injected
+ * into the cleanup prompt and the LLM owns corrections. Turn OFF to keep the dictionary out
+ * of the prompt and offload corrections to the on-device encoder model instead (replacement
+ * pairs stay deterministic either way). No effect when LLM cleanup is off. HOT-SWAP.
+ * Zod `.catch(true)`.
+ */
+llmHandlesDictionary?: boolean;
+/**
+ * When LLM cleanup is on, snippets are injected into the cleanup prompt and the LLM expands
+ * them contextually (the deterministic fuzzy expander is skipped). Turn OFF to keep snippets
+ * out of the prompt and rely on the deterministic fuzzy trigger→expansion replacement
+ * instead. No effect when LLM cleanup is off. HOT-SWAP. Zod `.catch(true)`.
+ */
+llmHandlesSnippets?: boolean }
 export type GlobalSettings = {
 /**
  * Idle-unload policy shared by local STT, realtime preview, local TTS, and
@@ -2927,9 +2942,17 @@ initialPrompt?: string;
  */
 initialPromptRealtime?: string;
 /**
- * Whisper task=translate (multilingual Whisper only). HOT-SWAP. Zod `.catch(false)`.
+ * Native decoder translation target. `""` = off (plain transcription). A
+ * concrete code (e.g. `"en"`, `"de"`) asks the engine to emit that language
+ * instead of the source. Multilingual Whisper can only ever target English
+ * (`<|translate|>` is English-only), so any non-empty value there behaves as
+ * "translate to English"; NeMo Canary honors the concrete target token and
+ * can render any→any among its languages. Every other family silently falls
+ * through to normal transcription. HOT-SWAP.
+ *
+ * Migrates the legacy boolean `translateToEnglish` (`true` → `"en"`).
  */
-translateToEnglish?: boolean }
+translateTargetLanguage?: string }
 /**
  * Per-model cache + fitness state — mirrors the renderer's `ModelStateEntry` (model-state-store.ts).
  */

@@ -18,11 +18,6 @@ const docsUrl = env?.VITE_DOCS_URL ?? "http://localhost:3001";
 const currentAppVersion = env?.VITE_WINSTT_VERSION ?? "0.0.0-alpha.0";
 export const currentReleaseTag = `v${currentAppVersion}`;
 const encodedCurrentReleaseTag = encodeURIComponent(currentReleaseTag);
-export const latestReleaseUrl = `${repositoryUrl}/releases/tag/${encodedCurrentReleaseTag}`;
-const latestStableReleaseUrl = `${repositoryUrl}/releases/latest`;
-export const latestDownloadReleaseUrl = currentAppVersion.includes("-")
-  ? latestReleaseUrl
-  : latestStableReleaseUrl;
 
 function releaseAssetUrl(assetName: string): string {
   return `${repositoryUrl}/releases/download/${encodedCurrentReleaseTag}/${encodeURIComponent(assetName)}`;

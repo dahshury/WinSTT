@@ -53,7 +53,7 @@ const DICTATION_BINDING: &str = "transcribe";
 ///
 /// Every persisted setting is owned SOLELY by `WinsttSettings` (written via
 /// `winstt_set_settings`, read straight from there by the STT pipeline): `language` /
-/// `translate_to_english` / `custom_words` / `initial_prompt` from the STT config, and
+/// `translate_target_language` / `custom_words` / `initial_prompt` from the STT config, and
 /// `model_unload_timeout_seconds` whose on-save handler (`apply_model_runtime_settings`)
 /// mirrors the value into the `AppSettings` shadow AND warms/reloads the model. So this
 /// command has NO settings-write branch — there is no second AppSettings-shadow write
@@ -81,7 +81,7 @@ pub fn winstt_set_parameter(app: AppHandle, parameter: String, value: serde_json
             // Renderer-driven mirror only; the manager owns the authoritative flag.
         }
         // Every other AllowedParameter (model/quant/prompt/vad knobs + the
-        // WinsttSettings-owned `language`/`translate_to_english`/`custom_words`/
+        // WinsttSettings-owned `language`/`translate_target_language`/`custom_words`/
         // `model_unload_timeout_seconds`) is owned by its subsystem slice or persisted
         // canonically via `winstt_set_settings`; accept silently so the renderer's
         // send() is a no-fail fire-and-forget (the reference's set_parameter was also

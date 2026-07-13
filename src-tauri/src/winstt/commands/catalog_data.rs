@@ -681,11 +681,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_parses_67_rows() {
+    fn catalog_parses_69_rows() {
         assert_eq!(
             raw_catalog().len(),
-            67,
-            "embedded catalog must carry all 67 shipped models"
+            69,
+            "embedded catalog must carry all 69 shipped models"
         );
     }
 
@@ -856,7 +856,7 @@ mod tests {
             .iter()
             .filter(|r| r.id.starts_with("streaming-"))
             .collect();
-        assert_eq!(streaming_rows.len(), 20);
+        assert_eq!(streaming_rows.len(), 22);
         for row in streaming_rows {
             let id = &row.id;
             assert!(row.preview_capable, "{id} must be preview-capable");
@@ -872,7 +872,7 @@ mod tests {
             .iter()
             .filter(|r| r.id.starts_with("streaming-"))
             .collect();
-        assert_eq!(streaming_rows.len(), 20);
+        assert_eq!(streaming_rows.len(), 22);
         for row in streaming_rows {
             let id = &row.id;
             assert!(
@@ -936,13 +936,13 @@ mod tests {
             .expect("english-only whisper row present");
         assert_eq!(tiny_en.display_name, "Whisper Tiny");
 
-        let accelerated = rows
+        let accurate = rows
             .iter()
             .find(|r| r.id == "lite-whisper-large-v3-turbo-acc")
-            .expect("accelerated lite-whisper row present");
+            .expect("accuracy-preserving lite-whisper row present");
         assert_eq!(
-            accelerated.display_name,
-            "Lite-Whisper Large v3 Turbo (Accelerated)"
+            accurate.display_name,
+            "Lite-Whisper Large v3 Turbo (Accurate)"
         );
     }
 

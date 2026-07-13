@@ -96,7 +96,9 @@ export function SwitcherOptionToggle<T extends string>({
 			style={style}
 			value={option.value}
 		>
-			{option.iconNode ? (
+			{option.iconRender ? (
+				option.iconRender({ isHovered, isSelected })
+			) : option.iconNode ? (
 				<span aria-hidden="true" className="flex shrink-0 items-center">
 					{option.iconNode}
 				</span>

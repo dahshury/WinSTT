@@ -52,9 +52,15 @@ impl StreamCursor {
     /// advance `base_frame` by the number of whole feature frames dropped. `hop` is the engine's
     /// feature hop in samples (NeMo vs Kaldi). No-op until there is at least one frame to drop.
     pub(super) fn trim_pcm(&mut self, hop: usize) {
-        let keep_from_frame = self
-            .next_chunk_frame
-            .saturating_sub(STREAM_FEATURE_PRE_CONTEXT_FRAMES);
+        self.trim_pcm_keeping(hop, STREAM_FEATURE_PRE_CONTEXT_FRAMES);
+    }
+
+    /// `trim_pcm` with an explicit pre-context width, for engines that RE-READ history each chunk:
+    /// the buffered-streaming ("parakeet unified") window rebuilds `left_feature_frames` of context
+    /// before every chunk, so the ring must retain that many frames instead of the cache-aware
+    /// engines' fixed 3.
+    pub(super) fn trim_pcm_keeping(&mut self, hop: usize, keep_frames: usize) {
+        let keep_from_frame = self.next_chunk_frame.saturating_sub(keep_frames);
         if keep_from_frame <= self.base_frame {
             return;
         }

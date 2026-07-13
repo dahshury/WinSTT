@@ -2,10 +2,8 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "../../test/render-with-intl";
 import { type ModelInfo, useModelSwapStore } from "@/entities/model-catalog";
 import type { ModelStateEntry } from "@/shared/api/ipc-client";
-import {
-	_resetSelectedModelMetadataCacheForTests,
-	SttModelSelector,
-} from "./SttModelSelector";
+import { _resetSelectedModelMetadataCacheForTests } from "./selected-model-metadata-cache";
+import { SttModelSelector } from "./SttModelSelector";
 
 function model(): ModelInfo {
 	return {

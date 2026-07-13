@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "../../test/render-with-intl";
-import type { ModelInfo } from "@/entities/model-catalog";
+import { isVisibleSttModel, type ModelInfo } from "@/entities/model-catalog";
 import { SttModelSelector } from "./SttModelSelector";
 
 function model(
@@ -143,6 +143,41 @@ describe("SttModelSelector streaming filter", () => {
 			"streaming-nemotron-en-1120ms-int8",
 			"int8",
 		);
+	});
+
+	test("Nemotron 3.5 latency rows collapse to one card with a 320/560/1120 picker", () => {
+		// Each Nemotron latency row ships all three precisions inline, and the ids are NOT matched
+		// by STREAMING_EXPORT_VARIANT_RE — so with the real `isVisibleSttModel` prefilter every row
+		// survives and the latency-merge folds them into ONE card whose LatencyShelf offers all three.
+		const nemotron = (ms: number) =>
+			model({
+				id: `streaming-nemotron-3.5-multi-${ms}ms-int8`,
+				displayName: `Streaming Nemotron 3.5 ${ms}ms (Multilingual)`,
+				family: "nemo",
+				nativeStreaming: true,
+				availableQuantizations: ["", "fp16", "int8"],
+			});
+		render(
+			<SttModelSelector
+				currentQuantization=""
+				inline
+				kind="realtime"
+				models={[nemotron(320), nemotron(560), nemotron(1120)]}
+				onChange={mock(() => undefined)}
+				prefilter={isVisibleSttModel}
+				statesById={{}}
+				systemInfo={null}
+				value="streaming-nemotron-3.5-multi-1120ms-int8"
+			/>,
+		);
+
+		// Exactly one LatencyShelf carrying all three chips — proof the rows collapsed into a
+		// single card. (Had they stayed three single-latency cards, each shelf would suppress
+		// itself and there would be zero latency chips.)
+		expect(screen.getAllByLabelText(/streaming latency$/)).toHaveLength(3);
+		expect(screen.getByLabelText("Use 320 ms streaming latency")).toBeDefined();
+		expect(screen.getByLabelText("Use 560 ms streaming latency")).toBeDefined();
+		expect(screen.getByLabelText("Use 1.12 s streaming latency")).toBeDefined();
 	});
 
 	test("merges legacy 80ms and 480ms NeMo precision row ids", () => {

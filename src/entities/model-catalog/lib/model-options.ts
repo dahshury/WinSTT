@@ -158,8 +158,12 @@ const CANONICAL_REALTIME_MODEL_IDS = new Set<string>([
 	"streaming-parakeet-unified-en-1120ms-int8",
 ]);
 
-// The multilingual Nemotron-3.5 (`streaming-nemotron-3.5-multi-*`) is a single shipped row, not one
-// of these collapse-to-canonical export families, so it is intentionally absent here.
+// The multilingual Nemotron-3.5 (`streaming-nemotron-3.5-multi-*`) ships several latency rows
+// (320/560/1120 ms), but it is intentionally absent from BOTH sets above: unlike the parakeet/nemo
+// variants, each Nemotron latency row carries all three precisions inline (["", "fp16", "int8"]), so
+// leaving every row visible lets the streaming latency-merge collapse them into one card whose
+// LatencyShelf offers the real 320/560/1120 ms pick — instead of the prefilter hiding all but the
+// canonical row (which would suppress the picker).
 const STREAMING_EXPORT_VARIANT_RE =
 	/^streaming-(?:nemo-(?:ctc|rnnt)-en(?:-\d+ms)?(?:-int8)?|parakeet-unified-en-\d+ms(?:-int8)?)$/;
 

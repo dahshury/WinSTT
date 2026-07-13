@@ -15,14 +15,14 @@ import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
  *   │                                                                │
  *   │  [hotkey] + [↑]   Cycle mode                                   │
  *   │  ┌─────┐ → ┌──────┐ → ┌──────┐ → ┌──────┐  ↻                  │
- *   │  │ PTT │   │TOGGLE│   │LISTEN│   │ WAKE │                     │
+ *   │  │ PTT │   │TOGGLE│   │ WAKE │   │LISTEN│                     │
  *   │  └─────┘   └──────┘   └──────┘   └──────┘                     │
  *   │                                                                │
  *   │  [Esc]            Cancel transcription                         │
  *   └────────────────────────────────────────────────────────────────┘
  *
  * The mode chain reads left-to-right as the actual `MODE_CYCLE` order
- * (ptt → toggle → listen → wakeword → ptt). The
+ * (ptt → toggle → wakeword → listen → ptt). The
  * currently-active mode is marked with the single app accent (the same
  * selection treatment the model cards use) so the legend doubles as a
  * "you are here" indicator; every other link stays neutral grayscale.
@@ -41,8 +41,8 @@ const ESCAPE_LABEL = "Esc";
 const MODE_CYCLE_ORDER: readonly RecordingMode[] = [
 	"ptt",
 	"toggle",
-	"listen",
 	"wakeword",
+	"listen",
 ] as const;
 
 type ModeLabelKey =
