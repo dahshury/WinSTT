@@ -252,7 +252,7 @@ dispatch2 = "0.3"
 # to the version atspi requires so the two agree. PipeWire loopback capture uses the
 # pw-record/parec subprocess (no crate).
 [target.'cfg(target_os = "linux")'.dependencies]
-atspi = "0.26"
+atspi = "0.30"
 zbus = "5"
 
 [dev-dependencies]
