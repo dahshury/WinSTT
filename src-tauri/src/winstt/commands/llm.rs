@@ -1374,27 +1374,28 @@ mod tests {
     use crate::winstt::settings_schema::{DictionaryEntry, SnippetEntry};
 
     fn settings_with_vocab() -> WinsttSettings {
-        let mut s = WinsttSettings::default();
-        s.dictionary = vec![
-            DictionaryEntry {
-                id: "1".into(),
-                term: "Ollama".into(),
-                auto_added: None,
-                replacement: None,
-            },
-            DictionaryEntry {
-                id: "2".into(),
-                term: "github".into(),
-                auto_added: None,
-                replacement: Some("GitHub".into()),
-            },
-        ];
-        s.snippets = vec![SnippetEntry {
-            id: "3".into(),
-            trigger: "my email".into(),
-            expansion: "user@example.com".into(),
-        }];
-        s
+        WinsttSettings {
+            dictionary: vec![
+                DictionaryEntry {
+                    id: "1".into(),
+                    term: "Ollama".into(),
+                    auto_added: None,
+                    replacement: None,
+                },
+                DictionaryEntry {
+                    id: "2".into(),
+                    term: "github".into(),
+                    auto_added: None,
+                    replacement: Some("GitHub".into()),
+                },
+            ],
+            snippets: vec![SnippetEntry {
+                id: "3".into(),
+                trigger: "my email".into(),
+                expansion: "user@example.com".into(),
+            }],
+            ..Default::default()
+        }
     }
 
     #[test]
