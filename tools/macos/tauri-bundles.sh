@@ -56,6 +56,16 @@ build_args+=(--config "$sidecar_config")
 rm -rf "$bundle_dir/macos" "$bundle_dir/dmg"
 bun run tauri build "${build_args[@]}"
 
+# Unsigned release builds intentionally disable Tauri updater artifacts. Create
+# the portable app archive explicitly so it can still be audited and published.
+app_bundle="$(find "$bundle_dir/macos" -maxdepth 1 -type d -name '*.app' -print -quit)"
+if [ -z "$app_bundle" ]; then
+  echo "No macOS app bundle was produced for $target." >&2
+  exit 1
+fi
+app_archive="$bundle_dir/macos/$(basename "${app_bundle%.app}").app.tar.gz"
+tar -czf "$app_archive" -C "$(dirname "$app_bundle")" "$(basename "$app_bundle")"
+
 rm -rf "$output_dir"
 mkdir -p "$output_dir"
 
