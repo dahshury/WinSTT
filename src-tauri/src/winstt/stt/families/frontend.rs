@@ -394,7 +394,7 @@ pub fn compute_kaldi_fbank(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32>
     let padded = symmetric_pad(samples, pad_left, pad_right);
 
     // features_lens = (orig_len + hop//2) // hop.
-    let num_frames = (orig_len + KALDI_HOP / 2) / KALDI_HOP;
+    let num_frames = kaldi_streaming_frame_count(orig_len);
     if num_frames == 0 {
         return Array2::<f32>::zeros((0, KALDI_N_MELS));
     }
@@ -464,6 +464,14 @@ pub fn compute_kaldi_fbank(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32>
             },
         );
     array2_from_shape_vec((num_frames, KALDI_N_MELS), out_flat, "kaldi fbank")
+}
+
+pub fn kaldi_streaming_frame_count(sample_len: usize) -> usize {
+    if sample_len == 0 {
+        0
+    } else {
+        (sample_len + KALDI_HOP / 2) / KALDI_HOP
+    }
 }
 
 /// Symmetric (mirror) padding of a 1-D signal: `np.pad(x, (pad_left, pad_right), mode="symmetric")`.
@@ -652,7 +660,7 @@ pub fn nemo_features_with_normalization(
     use std::f32::consts::PI;
     let n_mels = fbanks.ncols(); // 80 or 128 — whatever the model declared
     let n = samples.len();
-    let num_frames = n / NEMO_HOP; // == features_lens (waveforms_lens // hop)
+    let num_frames = nemo_streaming_frame_count(n); // == features_lens (waveforms_lens // hop)
     if num_frames == 0 {
         return Array2::<f32>::zeros((0, n_mels));
     }
@@ -728,6 +736,10 @@ pub fn nemo_features_with_normalization(
     log_mel
 }
 
+pub fn nemo_streaming_frame_count(sample_len: usize) -> usize {
+    sample_len / NEMO_HOP
+}
+
 /// Low-Frame-Rate stacking. `window_size` frames per row, step `window_shift`; the final
 /// partial window is right-padded with its last frame. Port of `_apply_lfr`.
 pub fn apply_lfr(features: &Array2<f32>, window_size: usize, window_shift: usize) -> Array2<f32> {
@@ -793,5 +805,26 @@ pub fn apply_dolphin_cmvn(features: &mut Array2<f32>, mean: &[f32], invstd: &[f3
         for (d, v) in row.iter_mut().enumerate() {
             *v = (*v - mean[d]) * invstd[d];
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{kaldi_streaming_frame_count, nemo_streaming_frame_count, KALDI_HOP, NEMO_HOP};
+
+    #[test]
+    fn streaming_frame_counts_match_feature_lengths() {
+        assert_eq!(nemo_streaming_frame_count(0), 0);
+        assert_eq!(nemo_streaming_frame_count(NEMO_HOP - 1), 0);
+        assert_eq!(nemo_streaming_frame_count(NEMO_HOP), 1);
+        assert_eq!(nemo_streaming_frame_count(2 * NEMO_HOP + 7), 2);
+
+        assert_eq!(kaldi_streaming_frame_count(0), 0);
+        assert_eq!(kaldi_streaming_frame_count(KALDI_HOP / 2 - 1), 0);
+        assert_eq!(kaldi_streaming_frame_count(KALDI_HOP / 2), 1);
+        assert_eq!(
+            kaldi_streaming_frame_count(2 * KALDI_HOP + KALDI_HOP / 2 - 1),
+            2
+        );
     }
 }

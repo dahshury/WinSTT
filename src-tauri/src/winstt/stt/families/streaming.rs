@@ -15,6 +15,7 @@ use crate::winstt::stt::{SttError, SttResult};
 pub(super) const SAMPLE_RATE: usize = 16_000;
 /// Silence appended on finalize so the encoder flushes the tail through its receptive field.
 pub(super) const FINAL_SILENCE_PAD_MS: usize = 2_000;
+pub(super) const FINAL_SILENCE_PAD_SAMPLES: usize = SAMPLE_RATE * FINAL_SILENCE_PAD_MS / 1000;
 /// Frames of feature pre-context retained when trimming the PCM ring (mirrors sherpa).
 pub(super) const STREAM_FEATURE_PRE_CONTEXT_FRAMES: usize = 3;
 
@@ -106,9 +107,8 @@ pub(super) fn chunk_ready(
     }
 }
 
-/// `SAMPLE_RATE * FINAL_SILENCE_PAD_MS / 1000` samples of silence appended on finalize.
-pub(super) fn final_silence_pad() -> Vec<f32> {
-    vec![0.0; SAMPLE_RATE * FINAL_SILENCE_PAD_MS / 1000]
+pub(super) fn append_final_silence_pad(pcm: &mut Vec<f32>) {
+    pcm.resize(pcm.len() + FINAL_SILENCE_PAD_SAMPLES, 0.0);
 }
 
 /// Parse a usize streaming-metadata value, with `what` naming the metadata flavour in error text.
