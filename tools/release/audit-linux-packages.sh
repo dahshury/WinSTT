@@ -143,7 +143,14 @@ dpkg-deb -x "$deb" "$audit_root/deb"
 audit_tree "$audit_root/deb" deb
 
 mkdir "$audit_root/rpm"
-(cd "$audit_root/rpm" && rpm2cpio "$rpm" | cpio -idm --quiet)
+rpm_cpio="$audit_root/package.cpio"
+if ! rpm2cpio "$rpm" >"$rpm_cpio"; then
+  echo "Failed to convert RPM payload to a cpio archive: $rpm" >&2
+  exit 1
+fi
+if ! (cd "$audit_root/rpm" && cpio -idm --quiet <"$rpm_cpio"); then
+  echo "RPM extraction reported warnings; validating the extracted tree strictly." >&2
+fi
 audit_tree "$audit_root/rpm" rpm
 
 echo "Linux package audit passed."

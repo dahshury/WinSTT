@@ -438,6 +438,201 @@ pub fn patch_fp16_decoder(path: &Path) -> SttResult<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
+// Granite Speech 4.1 NAR DirectML attention repair
+// ---------------------------------------------------------------------------
+
+const GRANITE_DML_PATCH_SUFFIX: &str = ".winstt_dml_rank4_v1.onnx";
+const ELEM_TYPE_INT64: i32 = 7;
+
+fn int64_initializer(name: String, values: &[i64]) -> TensorProto {
+    TensorProto {
+        dims: vec![values.len() as i64],
+        data_type: ELEM_TYPE_INT64,
+        name,
+        raw_data: values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect(),
+        ..Default::default()
+    }
+}
+
+fn reshape_node(name: String, input: String, shape: String, output: String) -> NodeProto {
+    NodeProto {
+        input: vec![input, shape],
+        output: vec![output],
+        name,
+        op_type: "Reshape".into(),
+        ..Default::default()
+    }
+}
+
+fn patch_granite_nar_attention_graph(graph: &mut GraphProto) -> SttResult<usize> {
+    let mut rewritten = 0usize;
+    let mut nodes = Vec::with_capacity(graph.node.len() + 80);
+    for mut node in std::mem::take(&mut graph.node) {
+        let is_einsum = node.op_type == "Einsum" && node.name.contains("/attn/Einsum");
+        let is_attention_matmul = node.op_type == "MatMul"
+            && (node.name.ends_with("/attn/MatMul") || node.name.ends_with("/attn/MatMul_1"));
+        if !is_einsum && !is_attention_matmul {
+            nodes.push(node);
+            continue;
+        }
+        if node.input.len() < 2 || node.output.len() != 1 {
+            return Err(SttError::SessionCreate(format!(
+                "unexpected Granite NAR attention node signature: {}",
+                node.name
+            )));
+        }
+
+        let prefix = format!("{}/dml_rank4", node.name);
+        let lhs = format!("{prefix}/lhs");
+        let output_4d = format!("{prefix}/output");
+        let original_output = std::mem::replace(&mut node.output[0], output_4d.clone());
+        let lhs_shape_name = format!("{prefix}/lhs_shape");
+        let out_shape_name = format!("{prefix}/out_shape");
+
+        if is_einsum {
+            let equation = node
+                .attribute
+                .iter_mut()
+                .find(|attribute| attribute.name == "equation")
+                .ok_or_else(|| {
+                    SttError::SessionCreate(format!(
+                        "Granite NAR Einsum has no equation attribute: {}",
+                        node.name
+                    ))
+                })?;
+            equation.s = b"bhcd,crd->bhcr".to_vec();
+            graph.initializer.extend([
+                int64_initializer(lhs_shape_name.clone(), &[-1, 8, 200, 128]),
+                int64_initializer(out_shape_name.clone(), &[1, -1, 8, 200, 200]),
+            ]);
+            nodes.push(reshape_node(
+                format!("{prefix}/ReshapeLhs"),
+                node.input[0].clone(),
+                lhs_shape_name,
+                lhs.clone(),
+            ));
+            node.input[0] = lhs;
+            nodes.push(node);
+            nodes.push(reshape_node(
+                format!("{prefix}/RestoreRank5"),
+                output_4d,
+                out_shape_name,
+                original_output,
+            ));
+        } else {
+            let rhs = format!("{prefix}/rhs");
+            let rhs_shape_name = format!("{prefix}/rhs_shape");
+            let is_value_product = node.name.ends_with("/MatMul_1");
+            let (lhs_shape, rhs_shape, out_shape): (&[i64], &[i64], &[i64]) = if is_value_product {
+                (
+                    &[-1, 8, 200, 200],
+                    &[-1, 8, 200, 128],
+                    &[1, -1, 8, 200, 128],
+                )
+            } else {
+                (
+                    &[-1, 8, 200, 128],
+                    &[-1, 8, 128, 200],
+                    &[1, -1, 8, 200, 200],
+                )
+            };
+            graph.initializer.extend([
+                int64_initializer(lhs_shape_name.clone(), lhs_shape),
+                int64_initializer(rhs_shape_name.clone(), rhs_shape),
+                int64_initializer(out_shape_name.clone(), out_shape),
+            ]);
+            nodes.push(reshape_node(
+                format!("{prefix}/ReshapeLhs"),
+                node.input[0].clone(),
+                lhs_shape_name,
+                lhs.clone(),
+            ));
+            nodes.push(reshape_node(
+                format!("{prefix}/ReshapeRhs"),
+                node.input[1].clone(),
+                rhs_shape_name,
+                rhs.clone(),
+            ));
+            node.input[0] = lhs;
+            node.input[1] = rhs;
+            nodes.push(node);
+            nodes.push(reshape_node(
+                format!("{prefix}/RestoreRank5"),
+                output_4d,
+                out_shape_name,
+                original_output,
+            ));
+        }
+        rewritten += 1;
+    }
+    graph.node = nodes;
+    Ok(rewritten)
+}
+
+/// Create and cache a DirectML-safe Granite Speech 4.1 NAR encoder graph beside
+/// the downloaded graph. The external weights remain referenced by their
+/// original relative sidecar name, so this costs only the graph protobuf
+/// (roughly 1.5 MB) and never duplicates the multi-GB weights.
+///
+/// The official ONNX export represents block attention as rank-5 tensors
+/// [B, blocks, heads, context, head_dim]. DirectML's GEMM and Einsum kernels
+/// reject that layout at runtime. Flattening B × blocks to a rank-4 batch for
+/// the two MatMuls and positional Einsum is algebraically identical, then each
+/// result is restored to the original rank-5 shape for the rest of the graph.
+pub fn patch_granite_nar_dml_encoder(source: &Path) -> SttResult<PathBuf> {
+    let stem = source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("encoder");
+    let target = source.with_file_name(format!("{stem}{GRANITE_DML_PATCH_SUFFIX}"));
+    if target.is_file() {
+        return Ok(target);
+    }
+
+    let bytes = std::fs::read(source)
+        .map_err(|e| SttError::SessionCreate(format!("read {}: {e}", source.display())))?;
+    let mut model = ModelProtoReal::decode(bytes.as_slice()).map_err(|e| {
+        SttError::SessionCreate(format!("onnx proto decode {}: {e}", source.display()))
+    })?;
+    let graph = model.graph.as_mut().ok_or_else(|| {
+        SttError::SessionCreate(format!(
+            "Granite NAR encoder has no graph: {}",
+            source.display()
+        ))
+    })?;
+    let rewritten = patch_granite_nar_attention_graph(graph)?;
+    if rewritten != 48 {
+        return Err(SttError::SessionCreate(format!(
+            "Granite NAR DirectML patch expected 48 attention nodes, found {rewritten} in {}",
+            source.display()
+        )));
+    }
+
+    let mut output = Vec::with_capacity(bytes.len() + 64 * 1024);
+    model.encode(&mut output).map_err(|e| {
+        SttError::SessionCreate(format!("onnx proto encode {}: {e}", source.display()))
+    })?;
+    let temp = target.with_extension(format!("onnx.tmp-{}", std::process::id()));
+    std::fs::write(&temp, output)
+        .map_err(|e| SttError::SessionCreate(format!("write {}: {e}", temp.display())))?;
+    if let Err(error) = std::fs::rename(&temp, &target) {
+        if target.is_file() {
+            let _ = std::fs::remove_file(&temp);
+        } else {
+            let _ = std::fs::remove_file(&temp);
+            return Err(SttError::SessionCreate(format!(
+                "install DirectML graph {}: {error}",
+                target.display()
+            )));
+        }
+    }
+    Ok(target)
+}
+
+// ---------------------------------------------------------------------------
 // Pass 2: external-data location enumeration (for the resolver shard check)
 // ---------------------------------------------------------------------------
 
@@ -488,6 +683,71 @@ fn collect_external_locations(graph: &GraphProto, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn granite_nar_attention_patch_flattens_only_block_attention() {
+        let einsum = NodeProto {
+            input: vec!["query".into(), "relative".into()],
+            output: vec!["position_scores".into()],
+            name: "/encoder/layers.0/attn/Einsum".into(),
+            op_type: "Einsum".into(),
+            attribute: vec![AttributeProto {
+                name: "equation".into(),
+                s: b"b m h c d, c r d -> b m h c r".to_vec(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let scores = NodeProto {
+            input: vec!["query".into(), "key".into()],
+            output: vec!["scores".into()],
+            name: "/encoder/layers.0/attn/MatMul".into(),
+            op_type: "MatMul".into(),
+            ..Default::default()
+        };
+        let values = NodeProto {
+            input: vec!["weights".into(), "value".into()],
+            output: vec!["context".into()],
+            name: "/encoder/layers.0/attn/MatMul_1".into(),
+            op_type: "MatMul".into(),
+            ..Default::default()
+        };
+        let untouched = NodeProto {
+            input: vec!["x".into(), "weight".into()],
+            output: vec!["y".into()],
+            name: "/encoder/layers.0/attn/to_q/MatMul".into(),
+            op_type: "MatMul".into(),
+            ..Default::default()
+        };
+        let mut graph = GraphProto {
+            node: vec![einsum, scores, values, untouched],
+            ..Default::default()
+        };
+
+        assert_eq!(patch_granite_nar_attention_graph(&mut graph).unwrap(), 3);
+        assert_eq!(graph.initializer.len(), 8);
+        assert_eq!(graph.node.len(), 12);
+        assert!(graph.node.iter().any(|node| {
+            node.name == "/encoder/layers.0/attn/Einsum"
+                && node
+                    .attribute
+                    .iter()
+                    .any(|attribute| attribute.s == b"bhcd,crd->bhcr")
+        }));
+        assert!(graph.node.iter().any(|node| {
+            node.name == "/encoder/layers.0/attn/to_q/MatMul"
+                && node.input == ["x", "weight"]
+                && node.output == ["y"]
+        }));
+        assert!(graph.node.iter().any(|node| {
+            node.name == "/encoder/layers.0/attn/MatMul/dml_rank4/RestoreRank5"
+                && node.output == ["scores"]
+        }));
+        assert!(graph.node.iter().any(|node| {
+            node.name == "/encoder/layers.0/attn/MatMul_1/dml_rank4/RestoreRank5"
+                && node.output == ["context"]
+        }));
+    }
 
     // Build a tiny fp16-defective merged decoder graph in memory: one `If` node whose two
     // subgraphs each declare their outputs with the OUTER name (`logits`) + fp32 type, but produce

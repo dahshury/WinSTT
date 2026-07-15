@@ -735,7 +735,7 @@ mod tests {
                 EngineKind::GraniteSpeechNar,
                 Quantization::Fp16w
             ),
-            vec![Accelerator::Cpu]
+            vec![Accelerator::DirectMl, Accelerator::Cpu]
         );
         assert_eq!(
             override_dml_to_cpu_for_kind(
